@@ -13,7 +13,7 @@ def load_worker_config(path: str | Path) -> dict[str, Any]:
         return {}
 
     try:
-        import yaml  # type: ignore
+        import yaml
     except Exception as e:  # pragma: no cover
         raise RuntimeError("PyYAML is required to load worker config files.") from e
 
@@ -27,7 +27,7 @@ def load_worker_config(path: str | Path) -> dict[str, Any]:
 
 def save_worker_config(path: str | Path, cfg: dict[str, Any]) -> None:
     try:
-        import yaml  # type: ignore
+        import yaml
     except Exception as e:  # pragma: no cover
         raise RuntimeError("PyYAML is required to save worker config files.") from e
 

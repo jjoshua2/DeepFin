@@ -133,7 +133,8 @@ def test_time_allocation_never_flags_over_a_game() -> None:
                 time_budget_scale=scale,
             )
             spend = lim.deadline_ms
-            assert spend is not None and spend >= 1
+            assert spend is not None
+            assert spend >= 1
             assert spend < remaining, f"would flag: spend={spend} remaining={remaining}"
             remaining = remaining - spend + inc
             assert remaining > 0
@@ -216,7 +217,8 @@ def test_pieces_drive_aggressive_allocation() -> None:
     go = GoArgs(wtime_ms=30000, winc_ms=3000)
     opening = limits_from_go(go, side_to_move_is_white=True, pieces=32)
     middle = limits_from_go(go, side_to_move_is_white=True, pieces=20)
-    assert opening.deadline_ms is not None and middle.deadline_ms is not None
+    assert opening.deadline_ms is not None
+    assert middle.deadline_ms is not None
     # reserve=min(9000, 10*3000)=9000; usable=21000.
     # pieces32: moves_left=round(20*1.5)=30 -> 21000/30 + 1500 = 2200.
     # pieces20: moves_left=round(8*1.5)=12 -> 21000/12 + 1500 = 3250.

@@ -28,6 +28,7 @@ from chess_anti_engine.tune.trial_config import (
     TrialConfig,
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
+import contextlib
 
 log = logging.getLogger(__name__)
 
@@ -278,10 +279,8 @@ def _update_best_regret_checkpoints(
             flush=True,
         )
         traceback.print_exc()
-        try:
+        with contextlib.suppress(Exception):
             shutil.rmtree(slot_dir, ignore_errors=True)
-        except Exception:
-            pass
         return
 
     entries.append({
@@ -297,10 +296,8 @@ def _update_best_regret_checkpoints(
     for ev in evicted:
         ev_dir = best_regret_dir / ev["tag"]
         if ev_dir.exists():
-            try:
+            with contextlib.suppress(Exception):
                 shutil.rmtree(ev_dir)
-            except Exception:
-                pass
 
     atomic_write_text(index_path, json.dumps(entries, indent=2))
 
@@ -384,7 +381,7 @@ def _pid_step_diag_dict(prefix: str, diag: Any | None) -> dict:
     out = {
         f"{prefix}_reason": reason,
         f"{prefix}_reason_code": int(_PID_REASON_CODES.get(reason, -1)),
-        f"{prefix}_changed": int(1 if bool(getattr(diag, "changed", False)) else 0),
+        f"{prefix}_changed": (1 if bool(getattr(diag, "changed", False)) else 0),
         f"{prefix}_value_before": float(getattr(diag, "value_before", 0.0)),
         f"{prefix}_value_after": float(getattr(diag, "value_after", 0.0)),
         f"{prefix}_delta": float(getattr(diag, "applied_delta", 0.0)),
@@ -395,9 +392,7 @@ def _pid_step_diag_dict(prefix: str, diag: Any | None) -> dict:
         f"{prefix}_ema_deadband": float(getattr(diag, "ema_deadband", 0.0)),
         f"{prefix}_history_len": int(getattr(diag, "history_len", 0)),
         f"{prefix}_tighten_gain_applied": float(getattr(diag, "tighten_gain_applied", 1.0)),
-        f"{prefix}_crash_ease_applied": int(
-            1 if bool(getattr(diag, "crash_ease_applied", False)) else 0
-        ),
+        f"{prefix}_crash_ease_applied": (1 if bool(getattr(diag, "crash_ease_applied", False)) else 0),
     }
     # Always emit predicted_value/fit_slope so active-step rows share a stable
     # schema; NaN marks the steps where no fit ran (airbag/degenerate). The
@@ -443,8 +438,8 @@ def _pid_report_dict(pr: PidResult) -> dict:
         "pid_active_levers": "+".join(active) if active else "none",
         "pid_raw_winrate": float(getattr(update, "raw_winrate", 0.0)),
         "pid_observation_se": float(getattr(update, "observation_se", 0.0)),
-        "pid_regret_frozen": int(1 if bool(getattr(update, "regret_frozen", False)) else 0),
-        "pid_nodes_active": int(1 if bool(getattr(update, "nodes_active", False)) else 0),
+        "pid_regret_frozen": (1 if bool(getattr(update, "regret_frozen", False)) else 0),
+        "pid_nodes_active": (1 if bool(getattr(update, "nodes_active", False)) else 0),
         **_pid_step_diag_dict("pid_regret", regret_diag),
         **_pid_step_diag_dict("pid_nodes", nodes_diag),
     }
@@ -861,10 +856,10 @@ def _build_report_dict(
         "backpressure_paused_fraction": float(pause_metrics["paused_fraction"]),
         "backpressure_paused_percent": float(pause_metrics["paused_percent"]),
         "startup_source": str(restore.startup_source),
-        "salvage_warmstart_used": int(1 if restore.seed_warmstart_used else 0),
+        "salvage_warmstart_used": (1 if restore.seed_warmstart_used else 0),
         "salvage_warmstart_slot": int(restore.seed_warmstart_slot),
         "salvage_warmstart_slots_total": int(restore.seed_warmstart_slots_total),
-        "salvage_origin_used": int(1 if restore.salvage_origin_used else 0),
+        "salvage_origin_used": (1 if restore.salvage_origin_used else 0),
         "salvage_origin_slot": int(restore.salvage_origin_slot),
         "salvage_origin_slots_total": int(restore.salvage_origin_slots_total),
         "train_steps_used": int(tr.steps),
@@ -916,7 +911,7 @@ def _build_report_dict(
         "sf_wdl_temperature": float(trainer.sf_wdl_temperature),
         "best_loss": float(best_loss),
         **train_metrics_dict,
-        "gate_passed": int(1 if tr.gate_passed else 0),
+        "gate_passed": (1 if tr.gate_passed else 0),
         "ingest_ms": float(sp.ingest_ms),
         "train_ms": float(tr.train_ms),
         "total_iter_ms": float((time.monotonic() - iter_t0) * 1000.0),

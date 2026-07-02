@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from typing import Any, ClassVar
 
 import chess
 import chess.engine
@@ -174,8 +174,8 @@ def test_validate_syzygy_adjudicator_requires_wdl_tables() -> None:
     module = _load_match_vs_uci_module()
 
     class DtzOnlyTablebase:
-        wdl: dict[str, object] = {}
-        dtz = {"KQvK": object()}
+        wdl: ClassVar[dict[str, object]] = {}
+        dtz: ClassVar[dict[str, object]] = {"KQvK": object()}
 
     with pytest.raises(SystemExit, match="0 WDL"):
         module._validate_syzygy_adjudicator("/tb", DtzOnlyTablebase(), max_pieces=6)
@@ -185,8 +185,8 @@ def test_validate_syzygy_adjudicator_requires_requested_wdl_coverage() -> None:
     module = _load_match_vs_uci_module()
 
     class FiveManOnlyTablebase:
-        wdl = {"KQvKRR": object()}
-        dtz: dict[str, object] = {}
+        wdl: ClassVar[dict[str, object]] = {"KQvKRR": object()}
+        dtz: ClassVar[dict[str, object]] = {}
 
     with pytest.raises(SystemExit, match="only has WDL up to 5 pieces"):
         module._validate_syzygy_adjudicator("/tb", FiveManOnlyTablebase(), max_pieces=6)
@@ -196,8 +196,8 @@ def test_validate_syzygy_adjudicator_reports_table_coverage() -> None:
     module = _load_match_vs_uci_module()
 
     class CoveredTablebase:
-        wdl = {"KQvKR": object(), "KQBNvKP": object()}
-        dtz = {"KQvKRR": object()}
+        wdl: ClassVar[dict[str, object]] = {"KQvKR": object(), "KQBNvKP": object()}
+        dtz: ClassVar[dict[str, object]] = {"KQvKRR": object()}
 
     assert module._validate_syzygy_adjudicator(
         "/tb",
@@ -399,8 +399,8 @@ def test_main_quits_engine_a_if_engine_b_open_fails(
     opened = []
 
     class FakeEngine:
-        id = {"name": "fake"}
-        options: dict[str, object] = {}
+        id: ClassVar[dict[str, str]] = {"name": "fake"}
+        options: ClassVar[dict[str, object]] = {}
 
         def __init__(self) -> None:
             self.quit_called = False

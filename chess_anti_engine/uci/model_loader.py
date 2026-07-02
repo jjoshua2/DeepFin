@@ -88,7 +88,7 @@ def _model_config_from_params(params: dict) -> ModelConfig:
         filtered["phase_piece_thresholds"] = normalize_phase_piece_thresholds(
             filtered["phase_piece_thresholds"]
         )
-    return ModelConfig(**filtered)  # type: ignore[arg-type]
+    return ModelConfig(**filtered)
 
 
 def _model_config_from_arch(arch: dict) -> ModelConfig:
@@ -133,7 +133,7 @@ def _model_config_from_arch(arch: dict) -> ModelConfig:
         payload["phase_piece_thresholds"] = normalize_phase_piece_thresholds(
             payload["phase_piece_thresholds"]
         )
-    return ModelConfig(**payload)  # type: ignore[arg-type]
+    return ModelConfig(**payload)
 
 
 def _history_encoding_from_mapping(mapping: dict | None) -> str | None:

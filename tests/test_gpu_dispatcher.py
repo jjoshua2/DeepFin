@@ -61,7 +61,8 @@ def test_dispatcher_concurrent_callers_get_correct_results():
             # thread buffer contamination.
             np.testing.assert_allclose(pol, baseline[i][0], rtol=1e-5, atol=1e-5)
             np.testing.assert_allclose(wdl, baseline[i][1], rtol=1e-5, atol=1e-5)
-        assert pol is not None and wdl is not None
+        assert pol is not None
+        assert wdl is not None
         results[i] = (pol, wdl)
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(len(inputs))]

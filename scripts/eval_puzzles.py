@@ -34,6 +34,7 @@ from chess_anti_engine.eval import (
 )
 from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+import itertools
 
 DEFAULT_PUZZLE_CSV = "data/puzzles/lichess_2200_2800_n3000.csv"
 DEFAULT_BUCKETS: tuple[tuple[int, int], ...] = ((2200, 2400), (2400, 2600), (2600, 2800))
@@ -45,7 +46,7 @@ def _parse_buckets(spec: str) -> tuple[tuple[int, int], ...]:
     edges = [int(x) for x in spec.split(",") if x.strip()]
     if len(edges) < 2:
         raise argparse.ArgumentTypeError("--rating-buckets needs at least two edges")
-    return tuple(zip(edges[:-1], edges[1:]))
+    return tuple(itertools.pairwise(edges))
 
 
 def _parse_modes(spec: str) -> tuple[str, ...]:

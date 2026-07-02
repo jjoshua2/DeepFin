@@ -86,7 +86,7 @@ class BackgroundShardPrefetcher:
                     return
             try:
                 self._scan_once()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("prefetch scan failed")
             with self._cond:
                 if self._stop:
@@ -105,7 +105,7 @@ class BackgroundShardPrefetcher:
                 continue
             try:
                 arrs, meta = load_shard_arrays(sp)
-            except Exception:  # noqa: BLE001
+            except Exception:
   # Could be a partial write the worker hasn't atomically renamed
   # yet. Skip — next scan will retry. If genuinely corrupt, the
   # iter-time fallback in _process_shard will quarantine via bad/.

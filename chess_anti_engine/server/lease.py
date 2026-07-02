@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from chess_anti_engine.utils.atomic import atomic_write_text
+import contextlib
 
 
 def _load_json_dict(path: Path) -> dict[str, Any] | None:
@@ -197,10 +198,8 @@ def pick_trial_for_lease(
     for tid in available_trials:
         mf = manifest_loader(tid) or {}
         manifests[tid] = mf
-        try:
+        with contextlib.suppress(Exception):
             max_iter = max(max_iter, int(mf.get("training_iteration") or 0))
-        except Exception:
-            pass
         tp = trial_throughput_loader(tid) if callable(trial_throughput_loader) else {}
         if not isinstance(tp, dict):
             tp = {}
@@ -341,7 +340,7 @@ def assign_trial_lease(
     *,
     leases_root: Path,
     username: str,
-    worker_info: dict[str, Any],
+    worker_info: object,
     available_trials: list[str],
     manifest_loader,
     trial_throughput_loader=None,

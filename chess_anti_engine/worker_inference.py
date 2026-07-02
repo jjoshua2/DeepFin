@@ -42,9 +42,7 @@ def maybe_apply_fp8_inference(model: torch.nn.Module) -> torch.nn.Module:
             return False
         if "smolgen" in fqn:
             return False
-        if fqn.endswith(".net.2") and mod.out_features <= 32:
-            return False
-        return True
+        return not (fqn.endswith(".net.2") and mod.out_features <= 32)
 
     try:
         quantize_(

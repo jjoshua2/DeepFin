@@ -158,7 +158,7 @@ def main() -> None:
         print(f"\n{'policy':>18}  {hdr}")
         print(f"{'ORACLE':>18}  " + "  ".join(f"{v:>4.2f}" for v in pooled["oracle"].values()))
         for name, cap in sorted(pooled["features"].items(),
-                                key=lambda kv: -_nan0(list(kv[1].values())[0])):
+                                key=lambda kv: -_nan0(next(iter(kv[1].values())))):
             print(f"{name:>18}  " + "  ".join(f"{v:>4.2f}" for v in cap.values()))
         print(f"{'random':>18}  " + "  ".join(f"{v:>4.2f}" for v in pooled["random"].values()))
 

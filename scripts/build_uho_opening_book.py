@@ -21,11 +21,12 @@ def _iter_pgn_text(path: Path) -> list[tuple[str, str]]:
     if suffixes.endswith(".pgn"):
         return [(path.name, path.read_text(encoding="utf-8", errors="replace"))]
     if suffixes.endswith(".zip"):
-        out: list[tuple[str, str]] = []
         with zipfile.ZipFile(path) as z:
-            for name in z.namelist():
-                if name.lower().endswith(".pgn"):
-                    out.append((Path(name).name, z.read(name).decode("utf-8", errors="replace")))
+            out: list[tuple[str, str]] = [
+                (Path(name).name, z.read(name).decode("utf-8", errors="replace"))
+                for name in z.namelist()
+                if name.lower().endswith(".pgn")
+            ]
         if not out:
             raise ValueError(f"No PGN members found in {path}")
         return out
@@ -117,9 +118,8 @@ def build_book(
             existing_written += 1
 
     raw_seen: set[str] = set()
-    with zipfile.ZipFile(raw_zip) as z:
-        with z.open(raw_member) as f:
-            pgn = io.StringIO(f.read().decode("utf-8", errors="replace"))
+    with zipfile.ZipFile(raw_zip) as z, z.open(raw_member) as f:
+        pgn = io.StringIO(f.read().decode("utf-8", errors="replace"))
     while True:
         game = chess.pgn.read_game(pgn)
         if game is None:

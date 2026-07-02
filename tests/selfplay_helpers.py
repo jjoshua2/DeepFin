@@ -27,7 +27,7 @@ class FakeStockfish(StockfishUCI):
         *,
         nodes: int | None = None,
         syzygy_path: str | None = None,
-    ) -> StockfishResult:  # noqa: ARG002
+    ) -> StockfishResult:
         del syzygy_path
         del nodes
         board = chess.Board(fen)

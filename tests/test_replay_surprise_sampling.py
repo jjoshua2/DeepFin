@@ -119,7 +119,7 @@ def test_array_replay_buffer_capacity_preserves_scalar_metadata():
     })
 
     assert len(buf) == 3
-    chunk = buf._chunks[0]  # noqa: SLF001 - regression test for internal eviction metadata.
+    chunk = buf._chunks[0]
     assert np.asarray(chunk["_policy_size"]).shape == ()
     assert int(np.asarray(chunk["_policy_size"]).item()) == 4672
 
@@ -143,7 +143,7 @@ def test_array_replay_buffer_rejects_out_of_range_gather_indices():
     })
 
     with pytest.raises(ValueError, match="did not match any replay chunk"):
-        buf._gather_rows(np.array([10], dtype=np.int64))  # noqa: SLF001
+        buf._gather_rows(np.array([10], dtype=np.int64))
 
 
 def test_array_replay_buffer_accepts_compact_policy_after_training_supports_it():

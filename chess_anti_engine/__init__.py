@@ -2,8 +2,8 @@
 
 __all__ = [
     "encoding",
-    "moves",
     "model",
+    "moves",
     "replay",
     "selfplay",
     "stockfish",

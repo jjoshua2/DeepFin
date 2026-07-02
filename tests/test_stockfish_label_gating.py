@@ -61,7 +61,7 @@ class _FakePool(StockfishPool):
     def __init__(self) -> None:  # pyright: ignore[reportMissingSuperCall]
         self.calls: list[dict] = []
 
-    def submit(self, fen: str, *, nodes=None, syzygy_path=None):  # noqa: ANN001
+    def submit(self, fen: str, *, nodes=None, syzygy_path=None):
         self.calls.append({"fen": fen, "nodes": nodes, "syzygy_path": syzygy_path})
         fut: Future = Future()
         fut.set_result(StockfishResult(bestmove_uci="a2a3", wdl=np.array([0.0, 1.0, 0.0]), pvs=[]))
@@ -392,7 +392,7 @@ def test_eff_sf_nodes_zero_budget_returns_none():
 
 def test_eff_sf_nodes_rejects_move_and_label_combination() -> None:
     state = _state(has_policy=True)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="cannot be both a move and a label"):
         _eff_sf_nodes(state, 0, for_move=True, for_label=True)
 
 
@@ -404,7 +404,7 @@ def test_generic_submit_threads_label_cap() -> None:
     assert state.stockfish.calls[0]["nodes"] == 40
 
 
-def test_label_cap_warns_when_native_wdl_labels(caplog) -> None:  # noqa: ANN001
+def test_label_cap_warns_when_native_wdl_labels(caplog) -> None:
     """The cap's cost-free rationale assumes cp-logistic labels; the config
     warns when the cap is combined with SF-native WDL labels."""
     import logging

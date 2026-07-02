@@ -86,7 +86,7 @@ def _run_config(
             )
 
         with ThreadPoolExecutor(max_workers=n_threads) as pool:
-            list(pool.map(lambda i: _run_warmup(i), range(n_threads)))
+            list(pool.map(_run_warmup, range(n_threads)))
     else:
         play_batch(
             None, device="cuda", rng=rng,
@@ -112,7 +112,7 @@ def _run_config(
             )
 
         with ThreadPoolExecutor(max_workers=n_threads) as pool:
-            results = list(pool.map(lambda i: _run_bench(i), range(n_threads)))
+            results = list(pool.map(_run_bench, range(n_threads)))
         total_positions = sum(stats.positions for _, stats in results)
         total_games = sum(stats.games for _, stats in results)
     else:

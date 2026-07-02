@@ -107,7 +107,7 @@ class SODAWeightDecayWrapper(torch.optim.Optimizer):
     def last_uw_stats(self) -> dict[str, float]:
         return getattr(self.base, "last_uw_stats", {})
 
-    def add_param_group(self, param_group: dict[str, Any]) -> None:  # type: ignore[override]
+    def add_param_group(self, param_group: dict[str, Any]) -> None:
         if getattr(self, "_initializing", False):
             torch.optim.Optimizer.add_param_group(self, param_group)
             return
@@ -119,10 +119,10 @@ class SODAWeightDecayWrapper(torch.optim.Optimizer):
         self.state = self.base.state
         self._capture_initial_anchors()
 
-    def zero_grad(self, set_to_none: bool = True) -> None:  # type: ignore[override]
+    def zero_grad(self, set_to_none: bool = True) -> None:
         self.base.zero_grad(set_to_none=set_to_none)
 
-    def state_dict(self) -> dict[str, Any]:  # type: ignore[override]
+    def state_dict(self) -> dict[str, Any]:
         out = self.base.state_dict()
         params = [
             param
@@ -137,7 +137,7 @@ class SODAWeightDecayWrapper(torch.optim.Optimizer):
         }
         return out
 
-    def load_state_dict(self, state_dict: dict[str, Any]) -> None:  # type: ignore[override]
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         base_state = dict(state_dict)
         soda_anchors = dict(base_state.pop("soda_anchors", {}))
         self.base.load_state_dict(base_state)
@@ -199,7 +199,7 @@ class SODAWeightDecayWrapper(torch.optim.Optimizer):
 
         self.base.step()
 
-        for group, k, prev_map in prev_by_group:
+        for _group, k, prev_map in prev_by_group:
             beta = 1.0 / float(k + 2)
             for param, prev in prev_map.items():
                 anchor = self._soda_anchors.get(param)

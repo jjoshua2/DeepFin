@@ -335,8 +335,8 @@ def _compute_gumbel_policy_game_stats(records: list[_NetRecord]) -> _GumbelPolic
         non_candidate_top_prob_sum += float(diag.get("non_candidate_top_prob", 0.0))
         argmax_is_candidate_sum += int(float(diag.get("argmax_is_candidate", 0.0)) > 0.5)
         argmax_is_action_sum += int(float(diag.get("argmax_is_action", 0.0)) > 0.5)
-        legal_count_sum += int(round(float(diag.get("legal_count", 0.0))))
-        candidate_count_sum += int(round(float(diag.get("candidate_count", 0.0))))
+        legal_count_sum += round(float(diag.get("legal_count", 0.0)))
+        candidate_count_sum += round(float(diag.get("candidate_count", 0.0)))
 
     return _GumbelPolicyGameStats(
         records=n,

@@ -153,7 +153,8 @@ def test_upgrade_noop_on_v2_chunk_and_rejects_unknown_widths():
     x_v2 = _encode_rows(boards, LC0_HISTORY_LEGACY, "v2_threats")
     chunk = _chunk(x_v2, LC0_HISTORY_LEGACY)
     out, stats = upgrade_arrays_to_v2_threats(chunk)
-    assert out is chunk and stats.upgraded_rows == 0
+    assert out is chunk
+    assert stats.upgraded_rows == 0
     bad = _chunk(x_v2[:, :150], LC0_HISTORY_LEGACY)
     with pytest.raises(ValueError, match="150 input planes"):
         upgrade_arrays_to_v2_threats(bad)
@@ -188,7 +189,8 @@ def test_upgrade_repairs_previously_zero_padded_v2_rows():
     np.testing.assert_array_equal(out["x_lc0_root"], root_v2)
     # repaired chunk is now fully native: rerun is a no-op
     out2, stats2 = upgrade_arrays_to_v2_threats(out)
-    assert out2 is out and stats2.upgraded_rows == 0
+    assert out2 is out
+    assert stats2.upgraded_rows == 0
 
 
 def test_disk_buffer_repairs_zero_padded_v2_shard(tmp_path):
@@ -207,7 +209,8 @@ def test_disk_buffer_repairs_zero_padded_v2_shard(tmp_path):
     )
     batch = np.asarray(buf.sample_batch_arrays(len(boards))["x"], dtype=np.float16)
     threat_rows = {bytes(r) for r in batch[:, V1_INPUT_PLANES:]}
-    assert threat_rows and threat_rows <= {bytes(r) for r in x_v2[:, V1_INPUT_PLANES:]}
+    assert threat_rows
+    assert threat_rows <= {bytes(r) for r in x_v2[:, V1_INPUT_PLANES:]}
 
 
 def test_converter_script_repairs_padded_shard_and_persists_encoding_override(tmp_path):
@@ -235,7 +238,8 @@ def test_upgrade_handles_empty_chunk():
     )
     assert out["x"].shape == (0, V2_INPUT_PLANES, 8, 8)
     assert out["x_lc0_root"].shape == (0, V2_INPUT_PLANES, 8, 8)
-    assert stats.upgraded_rows == 0 and stats.dropout_rows == 0
+    assert stats.upgraded_rows == 0
+    assert stats.dropout_rows == 0
 
 
 def test_upgrade_validation_rejects_corrupted_planes():

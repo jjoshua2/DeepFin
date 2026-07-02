@@ -182,7 +182,7 @@ def _expand_prefix(
                     next_items.append(
                         BeamItem(
                             b,
-                            item.seq + (move.uci(),),
+                            (*item.seq, move.uci()),
                             item.score + math.log(max(prob, 1e-30)),
                         )
                     )

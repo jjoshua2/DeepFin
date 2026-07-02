@@ -69,22 +69,22 @@ def test_warmup_multi_gpu_pucv_gather_exceeds_chunk() -> None:
 def test_reshaping_setoption_marks_warmup_dirty_then_isready_rewarms() -> None:
     worker = MagicMock()
     engine = Engine(worker=worker)
-    assert engine._warmup_dirty is False  # noqa: SLF001
+    assert engine._warmup_dirty is False
 
     # Cosmetic option must NOT dirty the warmup.
-    engine._handle_setoption(CmdSetOption(name="Ponder", value="true"))  # noqa: SLF001
-    assert engine._warmup_dirty is False  # noqa: SLF001
+    engine._handle_setoption(CmdSetOption(name="Ponder", value="true"))
+    assert engine._warmup_dirty is False
 
     # A search-path reshape must dirty it.
-    engine._handle_setoption(CmdSetOption(name="UseVL", value="true"))  # noqa: SLF001
-    assert engine._warmup_dirty is True  # noqa: SLF001
+    engine._handle_setoption(CmdSetOption(name="UseVL", value="true"))
+    assert engine._warmup_dirty is True
 
     rewarms: list[int] = []
-    engine.warmup_search = lambda: rewarms.append(1)  # type: ignore[method-assign]
+    engine.warmup_search = lambda: rewarms.append(1)
 
     engine.dispatch(CmdIsReady())
     assert rewarms == [1]
-    assert engine._warmup_dirty is False  # noqa: SLF001
+    assert engine._warmup_dirty is False
 
     # Nothing changed since: a second isready must NOT re-warm.
     engine.dispatch(CmdIsReady())

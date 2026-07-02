@@ -20,6 +20,7 @@ from scripts.diagnostic_replay_utils import (
     record_skipped_shard as _record_skipped_shard,
     wdl_one_hot as _wdl_one_hot,
 )
+import contextlib
 
 
 DEFAULT_RUN = Path("runs/pbt2_small")
@@ -70,10 +71,8 @@ def _latest_result(trial_dir: Path) -> dict[str, Any]:
         for line in fh:
             if not line.strip():
                 continue
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 latest = json.loads(line)
-            except json.JSONDecodeError:
-                pass
     return latest
 
 
@@ -521,7 +520,7 @@ def main() -> None:
     for spec in slices:
         try:
             arrs, _meta = load_shard_arrays(spec.path, lazy=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Keep age-bucket diagnostics usable while live replay shards are being written.
             _record_skipped_shard(scan, spec.path, exc)
             pos += spec.take
@@ -531,7 +530,7 @@ def main() -> None:
         while local_pos < spec.take:
             global_start = pos + local_pos
             bucket = min(bucket_count - 1, int(global_start * bucket_count / total_positions))
-            bucket_end_global = int(math.ceil((bucket + 1) * total_positions / bucket_count))
+            bucket_end_global = math.ceil((bucket + 1) * total_positions / bucket_count)
             n = min(spec.take - local_pos, max(1, bucket_end_global - global_start))
             sl = slice(row0 + local_pos, row0 + local_pos + n)
 

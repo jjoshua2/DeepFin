@@ -2,10 +2,11 @@
 # Run the project's static-analysis tools over given paths (or `--changed`).
 #
 # Default GATE: ruff + basedpyright + vulture (wall time ~= basedpyright,
-# a few seconds). The gate is kept at ZERO findings (basedpyright: zero after
-# the package baseline). pylint was removed 2026-07-02 — its narrow checks
-# migrated to ruff rules (ARG/B006/G004/SIM115, see pyproject) and
-# basedpyright's flow checks (reportPossiblyUnboundVariable/reportUnreachable).
+# a few seconds). The gate is kept at ZERO findings repo-wide — no
+# basedpyright baseline (burned down to zero and deleted 2026-07-02).
+# pylint was removed 2026-07-02 — its narrow checks migrated to ruff rules
+# (ARG/B006/G004/SIM115, see pyproject) and basedpyright's flow checks
+# (reportPossiblyUnboundVariable/reportUnreachable).
 # Known false positives are suppressed inline — see CLAUDE.md "Static
 # analysis". When a FP appears on a new symbol, fix or suppress in the same
 # commit.
@@ -15,10 +16,13 @@
 # --deep adds the OCCASIONAL-CLEANUP tier (advisory, slow — run before a
 # cleanup pass, not per edit):
 #   * skylos (dead code + circular imports; ~40s, grep-verified tables)
-#   * ruff cleanup report over the opt-in groups (B, SIM, PERF, NPY, RUF,
-#     PT, PLW) — a shopping list, not a gate. Promote a group into the
-#     pyproject gate once it reaches zero findings (PIE/UP/C4 + B009/B010/
-#     B023 were promoted 2026-07-02).
+#   * ruff cleanup report over the not-yet-gated groups (B, NPY) — a
+#     shopping list, not a gate. SIM/PERF/RUF/PT/PLW + B007/B904 were burned
+#     to zero and promoted into the pyproject gate 2026-07-02; what remains
+#     here is only the needs-judgment tail (B905/B008/NPY002) and the
+#     B009/B010 WON'T-GATE (see pyproject).
+#   * shellcheck over scripts/*.sh when shellcheck is installed (advisory —
+#     the ops scripts are load-bearing but findings need judgment).
 #
 # --slop runs scb-check (verbosity/erosion/clone detection + ast-grep anti-pattern
 # rules). Opt-in because its output is noisy and many findings are style
@@ -104,11 +108,9 @@ start_job() {
 }
 
 run_basedpyright() {
-    # basedpyright scope is defined in pyrightconfig.json (package + tests + scripts). It
-    # also respects .basedpyright/baseline.json so existing package drift doesn't
-    # fail CI; refresh the baseline with `basedpyright --writebaseline` after a fix
-    # campaign. Only override scope when the user explicitly names paths, so ad-hoc
-    # invocations on specific files still work.
+    # basedpyright scope is defined in pyrightconfig.json (package + tests + scripts).
+    # No baseline: the repo is kept at zero findings. Only override scope when the
+    # user explicitly names paths, so ad-hoc invocations on specific files still work.
     if [[ $USER_SET_PATHS -eq 1 ]]; then
         "$(tool basedpyright)" "${PATHS[@]}"
     else
@@ -191,18 +193,27 @@ if [[ $RUN_DEEP -eq 1 ]]; then
     # FPs. Explicitly advisory — do not quietly gate on it.
     start_job 1 "skylos (advisory — dead code + circular imports)" "$(tool skylos)" "${PATHS[@]}"
 
-    # Occasional-cleanup shopping list: opt-in ruff groups, advisory.
-    # Promote a group into the pyproject gate once it hits zero findings.
-    # The gate rules ride along so RUF100 (unused-noqa) is judged against the
-    # REAL rule set — without them every gate-rule noqa reads as "unused".
-    # Curated won't-fix ignores (documented decisions, keep the report signal):
-    #   RUF001/2/3  em-dashes/unicode in strings+comments are house style
-    #   PERF203     try/except-in-loop is deliberate robustness in game loops
-    start_job 1 "ruff cleanup report (advisory — B,SIM,PERF,NPY,RUF,PT,PLW)" \
+    # Occasional-cleanup shopping list: the not-yet-gated ruff groups,
+    # advisory. After the 2026-07-02 burn-down promoted SIM/PERF/RUF/PT/PLW
+    # + B007/B904 into the gate, what remains is only the needs-judgment
+    # tail — never autofix these:
+    #   NPY002 (legacy np.random -> Generator CHANGES RNG STREAMS),
+    #   B905 (zip strict= changes semantics per site),
+    #   B008 (call-in-default: often intentional interface defaults)
+    # WON'T-FIX (ignored below): B009/B010 — getattr/setattr-with-constant
+    # is the deliberate idiom for dynamic attrs on torch Modules (WON'T-GATE,
+    # see pyproject).
+    start_job 1 "ruff cleanup report (advisory — B,NPY judgment tail)" \
         env RUFF_CACHE_DIR="$LINT_TMP/ruff-cache" "$(tool ruff)" check \
-        --extend-select B,SIM,PERF,NPY,RUF,PT,PLW \
-        --ignore E741,ARG005,RUF001,RUF002,RUF003,PERF203 \
+        --extend-select B,NPY \
+        --ignore E741,ARG005,SIM105,PERF203,RUF001,RUF002,RUF003,PLW2901,PLW0603,B009,B010 \
         --statistics "${PATHS[@]}"
+
+    # Ops shell scripts (train.sh, salvage, arena drivers) are load-bearing;
+    # shellcheck them when available. Advisory: findings need judgment.
+    if command -v shellcheck >/dev/null 2>&1; then
+        start_job 1 "shellcheck (advisory — scripts/*.sh)" shellcheck scripts/*.sh
+    fi
 fi
 
 if [[ $RUN_SLOP -eq 1 ]]; then

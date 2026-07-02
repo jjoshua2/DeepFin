@@ -743,7 +743,7 @@ def optimize_target_schedule_by_scores(
     # grid. Round to the nearest reachable block count (may overshoot the
     # request by up to half a block) and clamp to the blocks that actually
     # exist so we never keep more units than the source has.
-    blocks_needed = int(round((total_budget - min_budget) / multiple))
+    blocks_needed = round((total_budget - min_budget) / multiple)
     blocks_needed = max(0, min(blocks_needed, len(block_candidates)))
     block_candidates.sort(key=lambda item: item[0], reverse=True)
     for candidate in block_candidates[:blocks_needed]:

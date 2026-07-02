@@ -94,13 +94,19 @@ def _tiny_model() -> torch.nn.Module:
 
 
 class _ZeroEvaluator:
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
         n = int(x.shape[0])
         return np.zeros((n, POLICY_SIZE), dtype=np.float32), np.zeros((n, 3), dtype=np.float32)
 
 
 class _CompactZeroEvaluator:
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
         n = int(x.shape[0])
         full = np.zeros((n, POLICY_SIZE), dtype=np.float32)
         compact = policy_batch_to_encoding(full, policy_encoding=POLICY_ENCODING_LC0_1858)
@@ -811,11 +817,11 @@ def test_gumbel_c_pipeline_path():
         def __init__(self, m):
             self._inner = LocalModelEvaluator(m, device="cpu")
 
-        def evaluate_encoded(self, x):
-            return self._inner.evaluate_encoded(x)
+        def evaluate_encoded(self, x, relations=None):
+            return self._inner.evaluate_encoded(x, relations)
 
-        def evaluate_encoded_async(self, x):
-            pol, wdl = self._inner.evaluate_encoded(x)
+        def evaluate_encoded_async(self, x, relations=None):
+            pol, wdl = self._inner.evaluate_encoded(x, relations)
             import torch
             return torch.from_numpy(pol), torch.from_numpy(wdl), None
 

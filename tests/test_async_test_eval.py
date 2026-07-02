@@ -158,7 +158,8 @@ def test_collect_handles_exception_in_thread(cfg_and_builder):
         batch_size=4, steps=2, device="cpu", source_iter=99,
     )
     metrics, src = aer.collect(timeout=5.0)
-    assert metrics is None and src == -1
+    assert metrics is None
+    assert src == -1
 
 
 def test_load_state_dict_works_through_compile_wrapper(cfg_and_builder, monkeypatch):

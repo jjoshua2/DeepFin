@@ -41,7 +41,10 @@ tree = MCTSTree()
 
 
 class _ModelEvaluator(BatchEvaluator):
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
         with torch.no_grad():
             out = model(torch.from_numpy(x))
         return out["policy"].numpy(), out["wdl"].numpy()
@@ -54,7 +57,7 @@ _ = run_gumbel_root_many_c(
 
 # Profile
 times = []
-for ply in range(N_PLIES):
+for _ply in range(N_PLIES):
     t0 = time.perf_counter()
     result = run_gumbel_root_many_c(
         None, boards, device='cpu', rng=rng, cfg=cfg,

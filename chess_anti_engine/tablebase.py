@@ -31,6 +31,7 @@ import chess.syzygy
 import numpy as np
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
+import contextlib
 
 _log = logging.getLogger(__name__)
 
@@ -87,10 +88,8 @@ def get_tablebase(path: str) -> chess.syzygy.Tablebase | None:
             except (OSError, FileNotFoundError):
                 continue
         if added == 0:
-            try:
+            with contextlib.suppress(OSError):
                 tb.close()
-            except OSError:
-                pass
             return None
         _tablebases[path] = tb
         return tb
@@ -299,7 +298,7 @@ class SyzygyProbe:
   # Material keys like "KQvK" / "KRPvKP" — piece letters are
   # uppercase, 'v' is lowercase; count uppercase only.
             available = max(
-                (sum(c.isupper() for c in k) for k in tb.wdl.keys()),
+                (sum(c.isupper() for c in k) for k in tb.wdl),
                 default=0,
             )
         else:

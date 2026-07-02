@@ -95,9 +95,7 @@ def _buffer_should_flush(
         return False
     if int(target_positions) > 0 and int(buf.positions) >= int(target_positions):
         return True
-    if float(flush_seconds) > 0.0 and (float(now_s) - float(last_send_s)) >= float(flush_seconds):
-        return True
-    return False
+    return bool(float(flush_seconds) > 0.0 and float(now_s) - float(last_send_s) >= float(flush_seconds))
 
 
 def _merge_outcome_stats(dst: dict[str, int], src) -> None:

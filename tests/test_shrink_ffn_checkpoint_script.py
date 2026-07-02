@@ -298,7 +298,8 @@ def test_shrink_checkpoint_preserves_compiled_swa_prefix(tmp_path: Path) -> None
     out_swa = new_ckpt["swa_model"]
     weight_keys = [key for key in out_swa if key != "n_averaged"]
     # Compiled wrapper prefix is preserved (not collapsed to bare module.*).
-    assert weight_keys and all(key.startswith("module._orig_mod.") for key in weight_keys)
+    assert weight_keys
+    assert all(key.startswith("module._orig_mod.") for key in weight_keys)
     assert "n_averaged" in out_swa
     # Pruned tensors still load into the freshly built target architecture.
     stripped = {

@@ -44,39 +44,36 @@ def _make_boards() -> list[chess.Board]:
 class TestEncodePositionSnapshot:
     """Snapshot: capture reference outputs, verify they don't change."""
 
-    boards: list[chess.Board] = []
+    @pytest.fixture
+    def boards(self) -> list[chess.Board]:
+        return _make_boards()
 
-    @pytest.fixture(autouse=True)
-    def _boards(self):
-        self.boards = _make_boards()
-
-    def test_encode_position_deterministic(self):
+    def test_encode_position_deterministic(self, boards):
         """Two calls with same board produce identical output."""
-        for b in self.boards:
+        for b in boards:
             a = encode_position(b, add_features=True)
             b2 = b.copy()
             c = encode_position(b2, add_features=True)
             np.testing.assert_array_equal(a, c, err_msg=f"Non-deterministic for {b.fen()}")
 
-    def test_encode_shape_and_dtype(self):
-        for b in self.boards:
+    def test_encode_shape_and_dtype(self, boards):
+        for b in boards:
             x = encode_position(b, add_features=True)
             assert x.shape == (146, 8, 8), f"Wrong shape for {b.fen()}"
             assert x.dtype == np.float32, f"Wrong dtype for {b.fen()}"
 
-    def test_encode_no_features(self):
-        for b in self.boards:
+    def test_encode_no_features(self, boards):
+        for b in boards:
             x = encode_position(b, add_features=False)
             assert x.shape == (112, 8, 8)
 
-    def test_encode_batch_matches_individual(self):
+    def test_encode_batch_matches_individual(self, boards):
         """encode_positions_batch must match per-board encode_position."""
         try:
             from chess_anti_engine.encoding.encode import encode_positions_batch
         except ImportError:
             pytest.skip("encode_positions_batch not yet implemented")
 
-        boards = self.boards
         batch = encode_positions_batch(boards, add_features=True)
         assert batch.shape == (len(boards), 146, 8, 8)
         assert batch.dtype == np.float32
@@ -88,14 +85,13 @@ class TestEncodePositionSnapshot:
                 err_msg=f"Batch[{i}] mismatch for {b.fen()}",
             )
 
-    def test_encode_batch_no_features_matches_individual(self):
+    def test_encode_batch_no_features_matches_individual(self, boards):
         """encode_positions_batch(add_features=False) must match per-board encoding."""
         try:
             from chess_anti_engine.encoding.encode import encode_positions_batch
         except ImportError:
             pytest.skip("encode_positions_batch not yet implemented")
 
-        boards = self.boards
         batch = encode_positions_batch(boards, add_features=False)
         assert batch.shape == (len(boards), 112, 8, 8)
         assert batch.dtype == np.float32
@@ -107,14 +103,14 @@ class TestEncodePositionSnapshot:
                 err_msg=f"No-feature batch[{i}] mismatch for {b.fen()}",
             )
 
-    def test_encode_fused_matches_original(self):
+    def test_encode_fused_matches_original(self, boards):
         """encode_position_fused must match encode_position exactly."""
         try:
             from chess_anti_engine.encoding.encode import encode_position_fused
         except ImportError:
             pytest.skip("encode_position_fused not yet implemented")
 
-        for b in self.boards:
+        for b in boards:
             ref = encode_position(b, add_features=True)
             fused = encode_position_fused(b)
             np.testing.assert_array_equal(
@@ -122,7 +118,7 @@ class TestEncodePositionSnapshot:
                 err_msg=f"Fused mismatch for {b.fen()}",
             )
 
-    def test_encode_into_buffer(self):
+    def test_encode_into_buffer(self, boards):
         """encode_position_into writes correct data into pre-allocated buffer."""
         try:
             from chess_anti_engine.encoding.encode import encode_position_into
@@ -130,7 +126,7 @@ class TestEncodePositionSnapshot:
             pytest.skip("encode_position_into not yet implemented")
 
         buf = np.zeros((146, 8, 8), dtype=np.float32)
-        for b in self.boards:
+        for b in boards:
             buf[:] = 0.0
             encode_position_into(b, buf)
             ref = encode_position(b, add_features=True)
@@ -139,7 +135,7 @@ class TestEncodePositionSnapshot:
                 err_msg=f"Into-buffer mismatch for {b.fen()}",
             )
 
-    def test_encode_into_buffer_reuse_without_manual_clear(self):
+    def test_encode_into_buffer_reuse_without_manual_clear(self, boards):
         """encode_position_into must fully overwrite a reused buffer."""
         try:
             from chess_anti_engine.encoding.encode import encode_position_into
@@ -147,7 +143,7 @@ class TestEncodePositionSnapshot:
             pytest.skip("encode_position_into not yet implemented")
 
         buf = np.empty((146, 8, 8), dtype=np.float32)
-        for b in self.boards:
+        for b in boards:
             encode_position_into(b, buf)
             ref = encode_position(b, add_features=True)
             np.testing.assert_array_equal(
@@ -155,7 +151,7 @@ class TestEncodePositionSnapshot:
                 err_msg=f"Into-buffer reuse mismatch for {b.fen()}",
             )
 
-    def test_encode_into_buffer_reduced_lc0(self):
+    def test_encode_into_buffer_reduced_lc0(self, boards):
         """Reduced LC0 path should populate only its planes and clear the rest."""
         try:
             from chess_anti_engine.encoding.encode import encode_position_into
@@ -163,7 +159,7 @@ class TestEncodePositionSnapshot:
             pytest.skip("encode_position_into not yet implemented")
 
         buf = np.empty((146, 8, 8), dtype=np.float32)
-        for b in self.boards:
+        for b in boards:
             encode_position_into(b, buf, add_features=False, use_full_lc0=False)
             ref = encode_position(b, add_features=False, use_full_lc0=False)
             np.testing.assert_array_equal(
@@ -172,7 +168,7 @@ class TestEncodePositionSnapshot:
             )
             assert not np.any(buf[ref.shape[0]:]), f"Trailing planes not cleared for {b.fen()}"
 
-    def test_cboard_encode_146_matches_python(self):
+    def test_cboard_encode_146_matches_python(self, boards):
         """CBoard.encode_146() must match encode_position for current-position planes."""
         try:
             from chess_anti_engine.encoding._lc0_ext import CBoard
@@ -181,7 +177,7 @@ class TestEncodePositionSnapshot:
 
         from chess_anti_engine.encoding.cboard_encode import encode_cboard
 
-        for b in self.boards:
+        for b in boards:
             cb = CBoard.from_board(b)
             cb_enc = encode_cboard(cb)
             assert cb_enc.shape == (146, 8, 8), f"Wrong shape for {b.fen()}"

@@ -18,7 +18,7 @@ def test_run_one_phase_falls_back_to_legal_move_on_search_exception(capsys) -> N
     engine = Engine(worker=worker)
     board = chess.Board()
     limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
-    result = engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    result = engine._run_one_phase(limits, is_ponder=False, board=board)
     assert result.bestmove_uci in {m.uci() for m in board.legal_moves}
     assert result.ponder_uci is None
     assert "boom" in capsys.readouterr().out
@@ -30,7 +30,7 @@ def test_run_one_phase_fallback_respects_searchmoves(capsys) -> None:
     engine = Engine(worker=worker)
     board = chess.Board()
     limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=("g1f3",))
-    result = engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    result = engine._run_one_phase(limits, is_ponder=False, board=board)
     assert result.bestmove_uci == "g1f3"
     assert "boom" in capsys.readouterr().out
 
@@ -41,7 +41,7 @@ def test_run_one_phase_fallback_returns_null_when_searchmoves_have_no_legal_move
     engine = Engine(worker=worker)
     board = chess.Board()
     limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=("a1a8",))
-    result = engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    result = engine._run_one_phase(limits, is_ponder=False, board=board)
     assert result.bestmove_uci == "0000"
     assert "boom" in capsys.readouterr().out
 
@@ -74,7 +74,7 @@ def test_run_one_phase_does_not_duplicate_worker_info(capsys) -> None:
     board = chess.Board()
     limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
 
-    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    engine._run_one_phase(limits, is_ponder=False, board=board)
 
     lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("info ")]
     assert len(lines) == 1
@@ -98,7 +98,7 @@ def test_run_one_phase_emits_final_info_when_worker_is_silent(capsys) -> None:
     board = chess.Board()
     limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
 
-    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    engine._run_one_phase(limits, is_ponder=False, board=board)
 
     lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("info ")]
     assert len(lines) == 1
@@ -122,7 +122,7 @@ def test_run_one_phase_disables_terminal_shortcuts_during_ponder() -> None:
     board = chess.Board()
     limits = SearchLimits(deadline_ms=None, max_nodes=None, ponder=True, searchmoves=())
 
-    engine._run_one_phase(limits, is_ponder=True, board=board)  # noqa: SLF001
+    engine._run_one_phase(limits, is_ponder=True, board=board)
 
     assert worker.run.call_args.kwargs["allow_terminal_shortcuts"] is False
 
@@ -143,7 +143,7 @@ def test_run_one_phase_allows_terminal_shortcuts_for_normal_search() -> None:
     board = chess.Board()
     limits = SearchLimits(deadline_ms=1000, max_nodes=None, searchmoves=())
 
-    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    engine._run_one_phase(limits, is_ponder=False, board=board)
 
     assert worker.run.call_args.kwargs["allow_terminal_shortcuts"] is True
 
@@ -164,7 +164,7 @@ def test_run_one_phase_disables_terminal_shortcuts_for_open_ended_search() -> No
     board = chess.Board()
     limits = SearchLimits(deadline_ms=None, max_nodes=None, max_depth=None, searchmoves=())
 
-    engine._run_one_phase(limits, is_ponder=False, board=board)  # noqa: SLF001
+    engine._run_one_phase(limits, is_ponder=False, board=board)
 
     assert limits.is_open_ended()
     assert worker.run.call_args.kwargs["allow_terminal_shortcuts"] is False
@@ -172,12 +172,12 @@ def test_run_one_phase_disables_terminal_shortcuts_for_open_ended_search() -> No
 
 def test_emit_bestmove_omits_ponder_when_option_false(capsys) -> None:
     engine = Engine(worker=MagicMock())
-    engine._options.ponder = False  # noqa: SLF001
+    engine._options.ponder = False
     result = SearchResult(
         bestmove_uci="e2e4", ponder_uci="e7e5",
         nodes=0, pv=(), score_cp=0, tbhits=0,
     )
-    engine._emit_bestmove(result)  # noqa: SLF001
+    engine._emit_bestmove(result)
     out = capsys.readouterr().out
     assert "bestmove e2e4" in out
     assert "ponder" not in out
@@ -185,42 +185,42 @@ def test_emit_bestmove_omits_ponder_when_option_false(capsys) -> None:
 
 def test_emit_bestmove_includes_ponder_when_option_true(capsys) -> None:
     engine = Engine(worker=MagicMock())
-    engine._options.ponder = True  # noqa: SLF001
+    engine._options.ponder = True
     result = SearchResult(
         bestmove_uci="e2e4", ponder_uci="e7e5",
         nodes=0, pv=(), score_cp=0, tbhits=0,
     )
-    engine._emit_bestmove(result)  # noqa: SLF001
+    engine._emit_bestmove(result)
     out = capsys.readouterr().out
     assert "bestmove e2e4 ponder e7e5" in out
 
 
 def test_invalid_position_fen_clears_pending_state() -> None:
     engine = Engine(worker=MagicMock())
-    engine._handle_position(CmdPosition(fen=None, moves=("e2e4",)))  # noqa: SLF001
+    engine._handle_position(CmdPosition(fen=None, moves=("e2e4",)))
 
-    assert engine._pending_moves == [chess.Move.from_uci("e2e4")]  # noqa: SLF001
+    assert engine._pending_moves == [chess.Move.from_uci("e2e4")]
 
-    engine._handle_position(CmdPosition(fen="not a valid fen", moves=()))  # noqa: SLF001
+    engine._handle_position(CmdPosition(fen="not a valid fen", moves=()))
 
-    assert engine._board == chess.Board()  # noqa: SLF001
-    assert engine._pending_fen is None  # noqa: SLF001
-    assert engine._pending_moves == []  # noqa: SLF001
-    assert engine._applied_fen is None  # noqa: SLF001
-    assert engine._applied_moves == ()  # noqa: SLF001
-    assert engine._popped_ponder_move is None  # noqa: SLF001
+    assert engine._board == chess.Board()
+    assert engine._pending_fen is None
+    assert engine._pending_moves == []
+    assert engine._applied_fen is None
+    assert engine._applied_moves == ()
+    assert engine._popped_ponder_move is None
 
 
 def test_isready_does_not_stop_active_search(capsys) -> None:
     engine = Engine(worker=MagicMock())
     thread = MagicMock()
     thread.is_alive.return_value = True
-    engine._search_thread = thread  # noqa: SLF001
+    engine._search_thread = thread
 
-    engine._handle_isready()  # noqa: SLF001
+    engine._handle_isready()
 
     assert capsys.readouterr().out == "readyok\n"
-    assert not engine._stop_event.is_set()  # noqa: SLF001
+    assert not engine._stop_event.is_set()
     thread.join.assert_not_called()
 
 
@@ -241,20 +241,20 @@ def test_handshake_exposes_multi_gpu_pucv_option(capsys) -> None:
 
 def test_use_multi_gpu_pucv_setoption_installs_factories(capsys) -> None:
     worker = MagicMock()
-    factories: list[Callable[[], Any]] = [lambda: object(), lambda: object()]
+    factories: list[Callable[[], Any]] = [object, object]
     engine = Engine(
         worker=worker,
         rebuild_multi_gpu_pucv_factories=lambda max_batch, gather: factories,
     )
 
-    engine._handle_setoption(  # noqa: SLF001
+    engine._handle_setoption(
         CmdSetOption(name="UseMultiGpuPUCV", value="true"),
     )
 
     worker.install_multi_gpu_pucv.assert_called_once_with(
         factories, gather=512, as_factories=True,
     )
-    assert engine._options.use_multi_gpu_pucv is True  # noqa: SLF001
+    assert engine._options.use_multi_gpu_pucv is True
     assert "UseMultiGpuPUCV on" in capsys.readouterr().out
 
 
@@ -262,19 +262,20 @@ def test_pucv_pending_mode_setoption_updates_worker(capsys) -> None:
     worker = MagicMock()
     engine = Engine(worker=worker)
 
-    engine._handle_setoption(  # noqa: SLF001
+    engine._handle_setoption(
         CmdSetOption(name="PUCVPendingMode", value="virtual-mean"),
     )
 
     worker.set_pucv_vloss_mode.assert_called_once_with(1)
-    assert engine._options.pucv_pending_mode == "virtual-mean"  # noqa: SLF001
+    assert engine._options.pucv_pending_mode == "virtual-mean"
     assert "PUCVPendingMode set to virtual-mean" in capsys.readouterr().out
 
 
 def test_eval_cache_entries_setoption_rebuilds_evaluator(capsys) -> None:
     worker = MagicMock()
     class _DummyEval:
-        def evaluate_encoded(self, x: Any) -> tuple[Any, Any]:
+        def evaluate_encoded(self, x: Any, relations: Any = None) -> tuple[Any, Any]:
+            del relations  # interface conformance for BatchEvaluator
             return x, x
 
     rebuilt = _DummyEval()
@@ -286,12 +287,12 @@ def test_eval_cache_entries_setoption_rebuilds_evaluator(capsys) -> None:
 
     engine = Engine(worker=worker, rebuild_evaluator=rebuild)
 
-    engine._handle_setoption(  # noqa: SLF001
+    engine._handle_setoption(
         CmdSetOption(name="EvalCacheEntries", value="256"),
     )
 
     assert calls == [(1024, 256)]
-    assert engine._options.eval_cache_entries == 256  # noqa: SLF001
+    assert engine._options.eval_cache_entries == 256
     worker.set_eval_cache_entries.assert_called_once_with(256)
     worker.set_evaluator.assert_called_once_with(rebuilt)
     assert "EvalCacheEntries set to 256" in capsys.readouterr().out
@@ -299,10 +300,11 @@ def test_eval_cache_entries_setoption_rebuilds_evaluator(capsys) -> None:
 
 def test_eval_cache_entries_reinstalls_multi_gpu_pucv(capsys) -> None:
     worker = MagicMock()
-    factories: list[Callable[[], Any]] = [lambda: object(), lambda: object()]
+    factories: list[Callable[[], Any]] = [object, object]
 
     class _DummyEval:
-        def evaluate_encoded(self, x: Any) -> tuple[Any, Any]:
+        def evaluate_encoded(self, x: Any, relations: Any = None) -> tuple[Any, Any]:
+            del relations  # interface conformance for BatchEvaluator
             return x, x
 
     rebuilt = _DummyEval()
@@ -313,7 +315,7 @@ def test_eval_cache_entries_reinstalls_multi_gpu_pucv(capsys) -> None:
         options=EngineOptions(use_multi_gpu_pucv=True),
     )
 
-    engine._handle_setoption(  # noqa: SLF001
+    engine._handle_setoption(
         CmdSetOption(name="EvalCacheEntries", value="256"),
     )
 
@@ -321,7 +323,7 @@ def test_eval_cache_entries_reinstalls_multi_gpu_pucv(capsys) -> None:
     worker.install_multi_gpu_pucv.assert_called_once_with(
         factories, gather=512, as_factories=True,
     )
-    assert engine._options.use_multi_gpu_pucv is True  # noqa: SLF001
+    assert engine._options.use_multi_gpu_pucv is True
     out = capsys.readouterr().out
     assert "UseMultiGpuPUCV on" in out
     assert "EvalCacheEntries set to 256" in out

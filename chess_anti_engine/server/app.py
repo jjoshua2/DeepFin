@@ -31,6 +31,7 @@ from chess_anti_engine.replay.shard import (
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
 from chess_anti_engine.utils.versioning import version_lt
+import contextlib
 
 # Pending-upload staging dir name (server side of the wire protocol — see
 # ``replay.shard.PENDING_DIR_NAME`` for the canonical constant). Aliased
@@ -283,9 +284,7 @@ def _buffered_upload_ready(
         return False
     if int(target_positions) > 0 and int(acc.positions) >= int(target_positions):
         return True
-    if float(max_age_s) > 0.0 and (float(now_unix) - float(acc.created_at_unix)) >= float(max_age_s):
-        return True
-    return False
+    return bool(float(max_age_s) > 0.0 and float(now_unix) - float(acc.created_at_unix) >= float(max_age_s))
 
 
 def _flush_buffered_upload_to_inbox(
@@ -799,18 +798,14 @@ def create_app(
                     return self
                 except FileExistsError:
                     if time.time() >= deadline:
-                        try:
+                        with contextlib.suppress(Exception):
                             self.path.unlink(missing_ok=True)
-                        except Exception:
-                            pass
                     time.sleep(0.05)
 
         def __exit__(self, _exc_type, _exc, _tb) -> None:
             if self._held:
-                try:
+                with contextlib.suppress(Exception):
                     self.path.unlink(missing_ok=True)
-                except Exception:
-                    pass
 
     def _load_json_stats(path: Path) -> dict[str, Any]:
         if not path.exists():
@@ -835,7 +830,7 @@ def create_app(
                 if model:
                     return model
         device = str(worker_info.get("device") or "").strip().lower()
-        return "cpu" if not device else device
+        return device if device else "cpu"
 
     def _record_gpu_throughput(
         *,
@@ -870,10 +865,8 @@ def create_app(
                     entry["last_hostname"] = hostname
                 cpu_count = worker_info.get("cpu_count")
                 if cpu_count is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         entry["last_cpu_count"] = int(cpu_count)
-                    except Exception:
-                        pass
         entry["last_updated_unix"] = now_unix
         stats[gpu_model] = entry
         atomic_write_text(stats_path, json.dumps(stats, indent=2, sort_keys=True))
@@ -1542,7 +1535,7 @@ def create_app(
             try:
                 return int(payload[k])
             except Exception:
-                raise HTTPException(status_code=400, detail=f"bad int field {k}")
+                raise HTTPException(status_code=400, detail=f"bad int field {k}") from None
 
         def _req_str(k: str) -> str:
             if k not in payload:

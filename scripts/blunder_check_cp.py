@@ -17,6 +17,7 @@ from pathlib import Path
 
 import chess
 import numpy as np
+import contextlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -98,20 +99,14 @@ class SFRaw:
                 move = None
                 for i, tok in enumerate(parts):
                     if tok == "multipv" and i + 1 < len(parts):
-                        try:
+                        with contextlib.suppress(ValueError):
                             mpv = int(parts[i+1])
-                        except ValueError:
-                            pass
                     elif tok == "cp" and i + 1 < len(parts):
-                        try:
+                        with contextlib.suppress(ValueError):
                             cp = int(parts[i+1])
-                        except ValueError:
-                            pass
                     elif tok == "mate" and i + 1 < len(parts):
-                        try:
+                        with contextlib.suppress(ValueError):
                             mate = int(parts[i+1])
-                        except ValueError:
-                            pass
                     elif tok == "wdl" and i + 3 < len(parts):
                         try:
                             w = int(parts[i+1])
@@ -136,10 +131,8 @@ class SFRaw:
         return [per_mpv[k] for k in sorted(per_mpv.keys())]
 
     def close(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._send("quit")
-        except Exception:
-            pass
         try:
             self.p.kill()
             self.p.wait(timeout=5)

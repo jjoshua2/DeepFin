@@ -34,8 +34,10 @@ def test_remap_table_widths():
     dev = torch.device("cpu")
     assert policy_index_remap_table(POLICY_SIZE, POLICY_SIZE, dev) is None
     t = policy_index_remap_table(POLICY_SIZE, COMPACT_POLICY_SIZE, dev)
-    assert t is not None and t.shape == (POLICY_SIZE,)
+    assert t is not None
+    assert t.shape == (POLICY_SIZE,)
     t2 = policy_index_remap_table(COMPACT_POLICY_SIZE, POLICY_SIZE, dev)
-    assert t2 is not None and t2.shape == (COMPACT_POLICY_SIZE,)
+    assert t2 is not None
+    assert t2.shape == (COMPACT_POLICY_SIZE,)
     with pytest.raises(ValueError, match="incompatible"):
         policy_index_remap_table(123, POLICY_SIZE, dev)

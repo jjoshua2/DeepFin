@@ -110,7 +110,7 @@ def _sample_manifest(
                     continue
                 src = 0 if is_sp[i] else 1
                 x = xs_chunk[int(j)]
-                piece_count = int(round(float(x[:12].sum())))
+                piece_count = round(float(x[:12].sum()))
                 ph = phase_bucket(piece_count)
                 if len(strata[(ph, src)]) >= cap:
                     continue
@@ -128,7 +128,9 @@ def _sample_manifest(
     manifest: list[dict] = []
     leftovers: list[dict] = []
     for (ph, src), pool in sorted(strata.items()):
-        rng.shuffle(pool)  # type: ignore[arg-type]
+        # Index permutation instead of rng.shuffle(list): typeshed's ArrayLike
+        # bound for shuffle flip-flops across numpy versions.
+        pool = [pool[int(i)] for i in rng.permutation(len(pool))]
         manifest.extend(pool[:per_stratum])
         leftovers.extend(pool[per_stratum:])
         got = min(len(pool), per_stratum)
@@ -138,7 +140,7 @@ def _sample_manifest(
     # requested size even when e.g. endgame/curriculum is rare.
     shortfall = positions - len(manifest)
     if shortfall > 0 and leftovers:
-        rng.shuffle(leftovers)  # type: ignore[arg-type]
+        leftovers = [leftovers[int(i)] for i in rng.permutation(len(leftovers))]
         manifest.extend(leftovers[:shortfall])
         print(f"[sample] backfilled {min(shortfall, len(leftovers))} from leftovers")
     return manifest
@@ -146,14 +148,15 @@ def _sample_manifest(
 
 def _label_one(eng: StockfishUCI, row: dict, *, nodes: int) -> dict:
     res = eng.search(row["fen"], nodes=nodes)
-    multipv = []
-    for pv in res.pvs or []:
-        multipv.append({
+    multipv = [
+        {
             "move": pv.move_uci,
             "cp": None if pv.cp is None else int(pv.cp),
             "mate": None if pv.mate is None else int(pv.mate),
             "wdl": None if pv.wdl is None else [float(v) for v in pv.wdl],
-        })
+        }
+        for pv in res.pvs or []
+    ]
     if not multipv and res.bestmove_uci:
         multipv.append({"move": res.bestmove_uci, "cp": int(res.cp or 0),
                         "mate": res.mate, "wdl": None})

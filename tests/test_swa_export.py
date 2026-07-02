@@ -62,10 +62,9 @@ def test_swa_export_differs_from_raw_model(tmp_path):
     # At least one parameter should differ between raw and SWA
     any_diff = False
     for key in raw_ckpt["model"]:
-        if key in swa_ckpt["model"]:
-            if not torch.equal(raw_ckpt["model"][key], swa_ckpt["model"][key]):
-                any_diff = True
-                break
+        if key in swa_ckpt["model"] and not torch.equal(raw_ckpt["model"][key], swa_ckpt["model"][key]):
+            any_diff = True
+            break
     assert any_diff, "SWA weights should differ from raw model after training"
 
 

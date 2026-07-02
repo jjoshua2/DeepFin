@@ -23,7 +23,7 @@ def test_build_worker_command_appends_child_workdir():
 
 
 def test_build_worker_command_rejects_user_workdir_override():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="do not pass --work-dir"):
         build_worker_command(
             worker_args=["--server-url", "http://127.0.0.1:8000", "--work-dir", "/tmp/other"],
             worker_dir=Path("/tmp/pool/worker_00"),
@@ -32,7 +32,7 @@ def test_build_worker_command_rejects_user_workdir_override():
 
 
 def test_build_worker_command_rejects_user_shared_cache_override():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="do not pass --shared-cache-dir"):
         build_worker_command(
             worker_args=["--server-url", "http://127.0.0.1:8000", "--shared-cache-dir", "/tmp/other_cache"],
             worker_dir=Path("/tmp/pool/worker_00"),

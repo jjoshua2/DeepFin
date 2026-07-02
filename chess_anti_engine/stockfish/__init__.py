@@ -3,11 +3,11 @@ from .pool import StockfishPool
 from .uci import StockfishPV, StockfishResult, StockfishUCI
 
 __all__ = [
-    "StockfishPV",
-    "StockfishUCI",
-    "StockfishResult",
-    "StockfishPool",
     "DifficultyPID",
     "PIDUpdate",
+    "StockfishPV",
+    "StockfishPool",
+    "StockfishResult",
+    "StockfishUCI",
     "pid_from_config",
 ]

@@ -52,7 +52,7 @@ def apply_compile(model: torch.nn.Module, *, mode: str, device: str) -> torch.nn
         return model
     try:
         wrapped = cast("torch.nn.Module", torch.compile(model, mode=mode))
-    except Exception as exc:  # noqa: BLE001 — last-resort fallback path
+    except Exception as exc:
         logger.warning("torch.compile failed (mode=%s): %s — falling back to eager", mode, exc)
         return model
     if not hasattr(wrapped, "_orig_mod"):

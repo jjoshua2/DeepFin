@@ -73,6 +73,7 @@ from chess_anti_engine.tune.trial_config import (
     TrialConfig,
 )
 from chess_anti_engine.utils.atomic import atomic_write_text
+import contextlib
 
 log = logging.getLogger(__name__)
 
@@ -209,13 +210,11 @@ def _run_net_gating(
         gate_games=tc.gate_games, tc=tc, ds=ds,
     )
     gate_match_idx += 1
-    try:
+    with contextlib.suppress(Exception):
         atomic_write_text(
             gate_state_path,
             json.dumps({"matches": int(gate_match_idx)}, indent=2, sort_keys=True),
         )
-    except Exception:
-        pass
     try:
         trainer.writer.add_scalar("gate/winrate", float(gate_wr), int(gate_match_idx))
         trainer.writer.add_scalar("gate/win", float(gate_w), int(gate_match_idx))
@@ -317,7 +316,7 @@ def _run_training_and_gating(
         train_budget = _compute_train_step_budget(
             positions_added=int(total_positions),
             imported_samples=int(imported_samples_this_iter),
-            replay_size=int(len(buf)),
+            replay_size=len(buf),
             batch_size=int(batch_size),
             accum_steps=int(accum_steps),
             base_max_steps=int(tc.train_steps),
@@ -494,10 +493,8 @@ def _export_selfplay_shards_for_siblings(
                 log.warning("Skipping sibling selfplay shard export for mixed/incompatible replay metadata: %s", exc)
 
     for old in iter_shard_paths(selfplay_shards_dir)[:-keep_iters]:
-        try:
+        with contextlib.suppress(Exception):
             shutil.rmtree(old) if old.is_dir() else old.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def _maybe_share_cross_trial_replay(
@@ -582,7 +579,7 @@ def _compute_replay_window_update(
     if growth_frac is None:
         requested_growth = max(0, int(fixed_growth))
     else:
-        requested_growth = int(math.ceil(max(0, int(positions_ingested)) * frac_used))
+        requested_growth = math.ceil(max(0, int(positions_ingested)) * frac_used)
 
     after = min(max_window, before + requested_growth)
     return after, max(0, after - before), frac_used
@@ -911,13 +908,11 @@ def _finalize_iteration(
   # Persist PID state AFTER observe() so checkpoints carry the
   # post-iteration difficulty.
     if pid is not None:
-        try:
+        with contextlib.suppress(Exception):
             atomic_write_text(
                 ckpt_dir / "pid_state.json",
                 json.dumps(pid.state_dict(), sort_keys=True, indent=2),
             )
-        except Exception:
-            pass
 
   # Save top-3 checkpoints by lowest regret (best-effort). Write to a
   # persistent cross-trial location so Ray's --tune-keep-last-experiments

@@ -278,8 +278,10 @@ def test_two_distinct_keys_yield_two_pending_files_and_independent_flush(tmp_pat
         files={"file": ("b.zarr.tar", tar_b, "application/x-tar")},
         headers=_default_headers(),
     )
-    assert rA.status_code == 200 and rA.json().get("stored") is True
-    assert rB.status_code == 200 and rB.json().get("stored") is True
+    assert rA.status_code == 200
+    assert rA.json().get("stored") is True
+    assert rB.status_code == 200
+    assert rB.json().get("stored") is True
 
     pending = sorted(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
     assert len(pending) == 2, f"expected two pending shards, found {pending}"
@@ -303,7 +305,8 @@ def test_two_distinct_keys_yield_two_pending_files_and_independent_flush(tmp_pat
         files={"file": ("a_extra.zarr.tar", tar_a_extra, "application/x-tar")},
         headers=_default_headers(),
     )
-    assert r_extra.status_code == 200 and r_extra.json().get("stored") is True
+    assert r_extra.status_code == 200
+    assert r_extra.json().get("stored") is True
 
     compacted = list(_compacted_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
     assert len(compacted) == 1, f"expected one compacted shard, found {compacted}"
@@ -345,7 +348,8 @@ def test_recovery_drops_in_flight_when_compacted_token_match_exists(tmp_path) ->
         files={"file": ("shard.zarr.tar", tar_bytes, "application/x-tar")},
         headers=_default_headers(),
     )
-    assert r.status_code == 200 and r.json().get("stored") is True
+    assert r.status_code == 200
+    assert r.json().get("stored") is True
 
     compacted_paths = list(_compacted_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
     assert len(compacted_paths) == 1
@@ -400,7 +404,8 @@ def test_recovery_drops_in_flight_when_compacted_token_match_exists(tmp_path) ->
         files={"file": ("extra.zarr.tar", tar_extra, "application/x-tar")},
         headers=_default_headers(),
     )
-    assert r2.status_code == 200 and r2.json().get("stored") is True
+    assert r2.status_code == 200
+    assert r2.json().get("stored") is True
     # Two compacted shards now: original + the new one. The leftover in-flight
     # samples were NOT replayed.
     assert len(list(_compacted_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))) == 2
@@ -429,7 +434,8 @@ def test_recovery_dedups_worker_retry_against_recovered_pending(tmp_path) -> Non
         files={"file": ("retry.zarr.tar", tar_bytes, "application/x-tar")},
         headers=_default_headers(),
     )
-    assert r.status_code == 200 and r.json().get("stored") is True
+    assert r.status_code == 200
+    assert r.json().get("stored") is True
     assert len(list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))) == 1
     del client_a
 
@@ -466,7 +472,8 @@ def test_recovery_dedups_worker_retry_against_recovered_pending(tmp_path) -> Non
         files={"file": ("more.zarr.tar", tar_more, "application/x-tar")},
         headers=_default_headers(),
     )
-    assert r_more.status_code == 200 and r_more.json().get("stored") is True
+    assert r_more.status_code == 200
+    assert r_more.json().get("stored") is True
     compacted = list(_compacted_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
     assert len(compacted) == 1, compacted
     arrs, _meta = load_shard_arrays(compacted[0])
@@ -498,7 +505,8 @@ def test_recovery_drops_orphan_duplicate_pending_with_same_sha(tmp_path) -> None
         files={"file": ("orig.zarr.tar", tar_bytes, "application/x-tar")},
         headers=_default_headers(),
     )
-    assert r.status_code == 200 and r.json().get("stored") is True
+    assert r.status_code == 200
+    assert r.json().get("stored") is True
 
     pending = list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
     assert len(pending) == 1
@@ -537,7 +545,8 @@ def test_recovery_drops_orphan_duplicate_pending_with_same_sha(tmp_path) -> None
         files={"file": ("more.zarr.tar", tar_more, "application/x-tar")},
         headers=_default_headers(),
     )
-    assert r_more.status_code == 200 and r_more.json().get("stored") is True
+    assert r_more.status_code == 200
+    assert r_more.json().get("stored") is True
     compacted = list(_compacted_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
     assert len(compacted) == 1, compacted
     arrs, _meta = load_shard_arrays(compacted[0])

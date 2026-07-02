@@ -9,10 +9,11 @@ path end-to-end so we can play a game.
 """
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 from collections.abc import Callable
 
 import chess
@@ -53,16 +54,19 @@ if TYPE_CHECKING:
     from chess_anti_engine.inference import BatchEvaluator
 
 
+class _DeepFinLogFileHandler(logging.FileHandler):
+    """Marker subclass so repeat setoption can find and replace our handler."""
+
+
 def _attach_log_file(path: str) -> None:
     """Tee stderr-bound logs into ``path``. Empty path is a no-op (any
     existing FileHandler stays attached — UCI spec has no 'clear' command
     for string options, so we treat empty as 'leave as-is'). Non-empty
     replaces any prior DeepFin file handler."""
-    import logging
     root = logging.getLogger()
-  # Tag our handlers so repeat setoption doesn't stack duplicates.
+  # Our handlers are the marker subclass so repeat setoption doesn't stack duplicates.
     for h in list(root.handlers):
-        if getattr(h, "_deepfin_logfile", False):
+        if isinstance(h, _DeepFinLogFileHandler):
             root.removeHandler(h)
             try:
                 h.close()
@@ -71,14 +75,13 @@ def _attach_log_file(path: str) -> None:
     if not path:
         return
     try:
-        fh = logging.FileHandler(path, mode="a")
+        fh = _DeepFinLogFileHandler(path, mode="a")
     except OSError as exc:
         _println(f"info string LogFile could not open {path!r}: {exc!r}")
         return
     fh.setFormatter(logging.Formatter(
         "%(asctime)s %(name)s %(levelname)s %(message)s"
     ))
-    fh._deepfin_logfile = True  # type: ignore[attr-defined]
     root.addHandler(fh)
     _println(f"info string LogFile attached: {path!r}")
 
@@ -703,7 +706,7 @@ class Engine:
         self._options.syzygy_path = v
         self._install_tablebase(v)
 
-    _SETOPTION_HANDLERS: dict[str, Callable[[Engine, str], None]] = {
+    _SETOPTION_HANDLERS: ClassVar[dict[str, Callable[[Engine, str], None]]] = {
         "hash": _set_hash,
         "ponder": _set_ponder,
         "threads": _set_threads,
@@ -794,7 +797,7 @@ class Engine:
                 optimum_ms=None,
                 abort_factor=self._options.abort_factor,
             )
-        except Exception:  # noqa: BLE001 — warmup is best-effort, never fatal
+        except Exception:
             pass
         finally:
             self._worker.reset_tree()
@@ -819,7 +822,7 @@ class Engine:
   # Defensive: ponder-at-M root-expanded the popped child, so
   # this shouldn't fail. Reset rather than search stale tree.
                     self._worker.reset_tree()
-                self._applied_moves = self._applied_moves + (popped,)
+                self._applied_moves = (*self._applied_moves, popped)
                 real_board.push(popped)
             result = self._run_one_phase(real_limits, is_ponder=False, board=real_board)
   # Gate the emit: if a newer `go` has started, our result is stale

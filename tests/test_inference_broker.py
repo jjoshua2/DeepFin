@@ -429,7 +429,7 @@ def test_slot_inference_client_serializes_threaded_requests() -> None:
             np.zeros((x.shape[0], 3), dtype=np.float32),
         )
 
-    client._evaluate_encoded_locked = _fake_eval  # type: ignore[method-assign]
+    client._evaluate_encoded_locked = _fake_eval
 
     x = np.zeros((1, 146, 8, 8), dtype=np.float32)
     threads = [threading.Thread(target=client.evaluate_encoded, args=(x,)) for _ in range(4)]
@@ -452,7 +452,7 @@ def test_multi_slot_inference_client_fans_out_requests() -> None:
     )
     calls: list[int] = []
 
-    for idx, slot_client in enumerate(client._clients):  # type: ignore[attr-defined]
+    for idx, slot_client in enumerate(client._clients):
         def _fake_eval(
             x: np.ndarray,
             relations: np.ndarray | None = None,
@@ -466,7 +466,7 @@ def test_multi_slot_inference_client_fans_out_requests() -> None:
                 np.zeros((x.shape[0], 3), dtype=np.float32),
             )
 
-        slot_client.evaluate_encoded = _fake_eval  # type: ignore[method-assign]
+        slot_client.evaluate_encoded = _fake_eval
 
     x = np.zeros((1, 146, 8, 8), dtype=np.float32)
     for _ in range(5):
@@ -517,8 +517,8 @@ def test_multi_slot_inference_client_uses_first_free_slot() -> None:
             np.zeros((x.shape[0], 3), dtype=np.float32),
         )
 
-    client._clients[0].evaluate_encoded = _slow_eval  # type: ignore[method-assign,attr-defined]
-    client._clients[1].evaluate_encoded = _fast_eval  # type: ignore[method-assign,attr-defined]
+    client._clients[0].evaluate_encoded = _slow_eval
+    client._clients[1].evaluate_encoded = _fast_eval
 
     x = np.zeros((1, 146, 8, 8), dtype=np.float32)
     slow_thread = threading.Thread(target=client.evaluate_encoded, args=(x,))
@@ -686,7 +686,7 @@ def test_slot_broker_zeroes_outputs_when_model_unavailable(tmp_path: Path) -> No
         slot.batch_size = 2
         slot.policy[:2].fill(7.0)
         slot.wdl[:2].fill(9.0)
-        broker._ensure_model = lambda: None  # type: ignore[method-assign]
+        broker._ensure_model = lambda: None
         broker._process_batch([slot])
         assert slot.state == 2
         assert np.allclose(slot.policy[:2], 0.0)

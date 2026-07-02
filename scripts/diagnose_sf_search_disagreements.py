@@ -235,7 +235,7 @@ def _finalize_stats(stats: dict[str, Any]) -> dict[str, Any]:
 def _push_example(heap: list[tuple[float, int, ExampleRef]], ref: ExampleRef, *, limit: int) -> None:
     if int(limit) <= 0:
         return
-    global _EXAMPLE_SEQ  # noqa: PLW0603
+    global _EXAMPLE_SEQ
     _EXAMPLE_SEQ += 1
     item = (float(ref.gap), int(_EXAMPLE_SEQ), ref)
     if len(heap) < int(limit):
@@ -290,7 +290,7 @@ def _decode_current_board(x: np.ndarray) -> chess.Board:
             rights |= chess.BB_H1 if color == chess.WHITE else chess.BB_H8
     board.castling_rights = rights
     board.ep_square = None
-    board.halfmove_clock = int(round(float(x[109].mean()) * 100.0))
+    board.halfmove_clock = round(float(x[109].mean()) * 100.0)
     board.fullmove_number = 1
     return board
 

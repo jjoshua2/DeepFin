@@ -378,10 +378,9 @@ def select_input_history_arrays(
         if recorded.shape == legacy_x.shape and has.shape == (legacy_x.shape[0],):
             use_recorded = has & convert_rows
             root_x[use_recorded] = recorded[use_recorded]
-    if uses_lc0_root_legacy_meta(hist_enc):
-        if bool(np.any(convert_rows)):
-            patched = _apply_lc0_root_legacy_meta(root_x[convert_rows], legacy_x[convert_rows])
-            root_x[convert_rows] = patched
+    if uses_lc0_root_legacy_meta(hist_enc) and bool(np.any(convert_rows)):
+        patched = _apply_lc0_root_legacy_meta(root_x[convert_rows], legacy_x[convert_rows])
+        root_x[convert_rows] = patched
     out["x"] = root_x
     out[_INPUT_HISTORY_SELECTED_KEY] = np.asarray(hist_enc)
     out[INPUT_HISTORY_ENCODING_ARRAY_KEY] = np.full((n,), hist_enc, dtype=object)
@@ -462,7 +461,7 @@ class _ChainedOptimizer(torch.optim.Optimizer):
         ]
         self.state.clear()
 
-    def add_param_group(self, param_group: dict[str, Any]) -> None:  # type: ignore[override]
+    def add_param_group(self, param_group: dict[str, Any]) -> None:
         if getattr(self, "_initializing", False):
             torch.optim.Optimizer.add_param_group(self, param_group)
             return
@@ -472,7 +471,7 @@ class _ChainedOptimizer(torch.optim.Optimizer):
             "add new parameters to the intended child optimizer directly."
         )
 
-    def zero_grad(self, set_to_none: bool = True) -> None:  # type: ignore[override]
+    def zero_grad(self, set_to_none: bool = True) -> None:
         for opt in self.optimizers:
             opt.zero_grad(set_to_none=set_to_none)
 
@@ -484,10 +483,10 @@ class _ChainedOptimizer(torch.optim.Optimizer):
                 loss = float(loss_i)
         return loss
 
-    def state_dict(self) -> dict[str, Any]:  # type: ignore[override]
+    def state_dict(self) -> dict[str, Any]:
         return {"optimizers": [opt.state_dict() for opt in self.optimizers]}
 
-    def load_state_dict(self, state_dict: dict[str, Any]) -> None:  # type: ignore[override]
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         for opt, opt_state in zip(self.optimizers, state_dict["optimizers"], strict=True):
             opt.load_state_dict(opt_state)
         self.param_groups = [
@@ -1119,9 +1118,7 @@ class Trainer:
             )
         elif optimizer == "adamw":
             self.opt = torch.optim.AdamW(param_groups, lr=lr)
-        elif optimizer == "muon":
-            pass
-        elif optimizer == "aurora":
+        elif optimizer == "muon" or optimizer == "aurora":
             pass
         elif optimizer == "cosmos":
             if matrix_optimizer_scope in ("default", "", "legacy"):
@@ -1136,12 +1133,10 @@ class Trainer:
   # SOAP: Shampoo-like second-order optimizer. Prefer a local
   # `soap.py`; otherwise fall back to pytorch-optimizer's SOAP.
             try:
-                from soap import SOAP  # type: ignore[import] # optional local module
+                from soap import SOAP  # pyright: ignore[reportMissingImports] # optional local module
             except ImportError as exc:
                 try:
-                    from pytorch_optimizer import (
-                        SOAP,  # type: ignore[import] # optional dep
-                    )
+                    from pytorch_optimizer import SOAP
                 except ImportError:
                     raise ImportError(
                         "SOAP optimizer requires either a local `soap.py` module "

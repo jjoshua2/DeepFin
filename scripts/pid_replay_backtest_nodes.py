@@ -198,10 +198,11 @@ def main() -> None:
     print(f"replay starts nodes={initial_nodes}, target_wr={TARGET}, "
           f"max_step_frac={NODES_MAX_STEP_FRAC}, drift_threshold={DRIFT_THRESHOLD}\n")
 
-    results = []
-    for alpha in ALPHAS:
-        for sigma in SIGMAS:
-            results.append(replay(rows, alpha=alpha, sigma=sigma, initial_nodes=initial_nodes))
+    results = [
+        replay(rows, alpha=alpha, sigma=sigma, initial_nodes=initial_nodes)
+        for alpha in ALPHAS
+        for sigma in SIGMAS
+    ]
 
     print(
         f"{'alpha':>6}  {'sigma':>5}  {'acts':>5}  {'drift':>6}  {'floor':>6}  "

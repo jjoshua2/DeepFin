@@ -27,6 +27,7 @@ from chess_anti_engine.model import (
 from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
 from chess_anti_engine.utils.amp import inference_autocast
+import contextlib
 
 log = logging.getLogger(__name__)
 
@@ -100,11 +101,10 @@ def _forward_no_grad(
     sites used to reimplement this inline. ``relations_t`` is forwarded only
     when present so models without the kwarg (TinyNet, AOT nets) still work.
     """
-    with torch.no_grad():
-        with inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
-            if relations_t is not None:
-                return model(xt, relations=relations_t)
-            return model(xt)
+    with torch.no_grad(), inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
+        if relations_t is not None:
+            return model(xt, relations=relations_t)
+        return model(xt)
 
 
 def _relations_to_device(
@@ -145,12 +145,11 @@ def _forward_legal_no_grad(
     use_amp: bool = True,
     amp_dtype: str = "auto",
 ) -> dict[str, torch.Tensor]:
-    with torch.no_grad():
-        with inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
-            if callable(getattr(getattr(model, "_orig_mod", None), "forward_legal_policy", None)):
-                return model(xt, legal_flat=legal_flat, legal_counts=legal_counts)
-            forward_legal = getattr(model, "forward_legal_policy")
-            return forward_legal(xt, legal_flat, legal_counts)
+    with torch.no_grad(), inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
+        if callable(getattr(getattr(model, "_orig_mod", None), "forward_legal_policy", None)):
+            return model(xt, legal_flat=legal_flat, legal_counts=legal_counts)
+        forward_legal = getattr(model, "forward_legal_policy")
+        return forward_legal(xt, legal_flat, legal_counts)
 
 
 def _forward_legal_rows_no_grad(
@@ -163,12 +162,11 @@ def _forward_legal_rows_no_grad(
     use_amp: bool = True,
     amp_dtype: str = "auto",
 ) -> dict[str, torch.Tensor]:
-    with torch.no_grad():
-        with inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
-            if callable(getattr(getattr(model, "_orig_mod", None), "forward_legal_policy_rows", None)):
-                return model(xt, legal_flat=legal_flat, legal_rows=legal_rows)
-            forward_legal = getattr(model, "forward_legal_policy_rows")
-            return forward_legal(xt, legal_flat, legal_rows)
+    with torch.no_grad(), inference_autocast(device=device, enabled=use_amp, dtype=amp_dtype):
+        if callable(getattr(getattr(model, "_orig_mod", None), "forward_legal_policy_rows", None)):
+            return model(xt, legal_flat=legal_flat, legal_rows=legal_rows)
+        forward_legal = getattr(model, "forward_legal_policy_rows")
+        return forward_legal(xt, legal_flat, legal_rows)
 
 
 def _configure_compile_cache(cache_root: Path) -> None:
@@ -1111,8 +1109,16 @@ class _InferenceSlot:
     """Numpy-backed view into a pre-allocated shared memory slot."""
 
     __slots__ = (
-        "_shm", "_layout", "_owns", "_buf",
-        "input", "input_bf16_bits", "policy", "policy_i32", "policy_u16", "wdl",
+        "_buf",
+        "_layout",
+        "_owns",
+        "_shm",
+        "input",
+        "input_bf16_bits",
+        "policy",
+        "policy_i32",
+        "policy_u16",
+        "wdl",
     )
     _buf: memoryview
 
@@ -1188,15 +1194,11 @@ class _InferenceSlot:
         return self._shm.name
 
     def close(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._shm.close()
-        except Exception:
-            pass
         if self._owns:
-            try:
+            with contextlib.suppress(Exception):
                 self._shm.unlink()
-            except Exception:
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -1450,8 +1452,7 @@ class SlotBroker:
         xt = pin_input[:forward_total].to(self.device, non_blocking=True)
 
         first_inf = self._first_inference_pending
-        if first_inf:
-            inf_t0 = time.time()
+        inf_t0 = time.time() if first_inf else 0.0
 
         use_legal_rows_forward = compact_legal and _supports_legal_policy_rows_forward(self._model)
         use_legal_forward = (
@@ -1709,10 +1710,8 @@ class SlotInferenceClient:
         self._slot = None
         self._shm = None
         if shm is not None:
-            try:
+            with contextlib.suppress(Exception):
                 shm.close()
-            except Exception:
-                pass
 
     def _connect(self, *, deadline: float) -> _InferenceSlot:
         while True:
@@ -1727,7 +1726,7 @@ class SlotInferenceClient:
                     raise TimeoutError(
                         f"inference broker slot {self._slot_name!r} was not available "
                         f"after {self._request_timeout_s:.3f}s"
-                    )
+                    ) from None
                 time.sleep(0.01)
                 continue
             _detach_attached_shm_from_resource_tracker(shm)
@@ -1855,7 +1854,7 @@ class SlotInferenceClient:
                     pol, wdl = read(slot)
                     slot.state = _STATE_IDLE
                     return pol, wdl
-                if state == _STATE_SHUTDOWN or state == _STATE_IDLE:
+                if state in (_STATE_SHUTDOWN, _STATE_IDLE):
                     retry = True
                     break
                 if state != _STATE_REQUEST:
@@ -2334,7 +2333,7 @@ class SharedSlotBroker:
             log.info("shared broker: first parallel inference complete (%d trials)", len(results))
 
   # Scatter results back to slots
-        for trial_id, ready, batch_sizes, pol, wdl in results:
+        for _trial_id, ready, batch_sizes, pol, wdl in results:
             pol_np = pol.numpy()
             wdl_np = wdl.numpy()
             start = 0

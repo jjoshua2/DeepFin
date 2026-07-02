@@ -580,7 +580,7 @@ def main() -> None:
         ece = wdl_ece(preds, deep)
         if outcome_idx:
             oc = [
-                wdl_brier(preds[i], np.eye(3)[kept_positions[i].outcome])  # type: ignore[index]
+                wdl_brier(preds[i], np.eye(3)[kept_positions[i].outcome])
                 for i in outcome_idx
             ]
             oc_cell = f"{float(np.mean(oc)):.4f} ({len(outcome_idx)})"

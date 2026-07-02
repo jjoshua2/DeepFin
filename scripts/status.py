@@ -141,7 +141,7 @@ def main() -> None:
     elif active_config:
         # Infer run_dir from config work_dir or config name
         try:
-            import yaml  # type: ignore
+            import yaml
             cfg = yaml.safe_load(Path(active_config).read_text())
             run_dir = Path(cfg.get("work_dir", f"runs/{Path(active_config).stem}"))
         except Exception:

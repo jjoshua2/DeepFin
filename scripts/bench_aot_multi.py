@@ -59,7 +59,7 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
                               stockfish=sf, evaluator=evaluator, games=min(batch_per_thread, 4),
                               opponent=opponent, temp=temp, search=search, opening=opening, game=game)
         with ThreadPoolExecutor(max_workers=n_threads) as pool:
-            list(pool.map(lambda i: _warmup(i), range(n_threads)))
+            list(pool.map(_warmup, range(n_threads)))
     else:
         play_batch(None, device="cuda", rng=rng, stockfish=sf, evaluator=evaluator,
                    games=min(total_batch, 4), opponent=opponent, temp=temp,
@@ -76,7 +76,7 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
                               stockfish=sf, evaluator=evaluator, games=batch_per_thread,
                               opponent=opponent, temp=temp, search=search, opening=opening, game=game)
         with ThreadPoolExecutor(max_workers=n_threads) as pool:
-            results = list(pool.map(lambda i: _bench(i), range(n_threads)))
+            results = list(pool.map(_bench, range(n_threads)))
         total_positions = sum(s.positions for _, s in results)
         total_games = sum(s.games for _, s in results)
     else:

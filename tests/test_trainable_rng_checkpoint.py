@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 
@@ -24,7 +25,7 @@ class _Writer:
 
 
 class _Opt:
-    param_groups = [{"lr": 1e-3}]
+    param_groups: ClassVar[list[dict[str, float]]] = [{"lr": 1e-3}]
 
 
 class _Trainer:
@@ -40,7 +41,7 @@ class _Trainer:
     sf_wdl_conf_power = 1.0
     sf_wdl_draw_scale = 1.0
     sf_wdl_temperature = 1.0
-    _feature_group_dropout = [
+    _feature_group_dropout: ClassVar[list[tuple[str, tuple[int, ...], float]]] = [
         ("king", (), 0.0),
         ("pins", (), 0.0),
         ("pawns", (), 0.0),

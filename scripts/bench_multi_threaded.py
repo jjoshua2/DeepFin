@@ -87,7 +87,7 @@ def _worker_fn(
             )
 
         with ThreadPoolExecutor(max_workers=len(tg)) as pool:
-            list(pool.map(lambda i: _run(i), range(len(tg))))
+            list(pool.map(_run, range(len(tg))))
     else:
         play_batch(
             None, device="cuda", rng=rng,
@@ -117,7 +117,7 @@ def _worker_fn(
             )
 
         with ThreadPoolExecutor(max_workers=len(tg)) as pool:
-            results = list(pool.map(lambda i: _run_bench(i), range(len(tg))))
+            results = list(pool.map(_run_bench, range(len(tg))))
         total_positions = sum(stats.positions for _, stats in results)
         total_games = sum(stats.games for _, stats in results)
     else:

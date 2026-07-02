@@ -16,7 +16,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from chess_anti_engine.stockfish import StockfishUCI  # noqa: E402
+from chess_anti_engine.stockfish import StockfishUCI
 
 REGRET_LIMIT = 0.0925
 SF_PATH = os.environ.get("STOCKFISH_PATH", "stockfish")

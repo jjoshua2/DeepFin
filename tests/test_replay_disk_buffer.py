@@ -364,7 +364,7 @@ def test_prefetched_refresh_is_consumed_before_sync_refresh(tmp_path) -> None:
     # CONSUME path only: stop the thread and keep it stopped so the injected
     # chunk and the post-sample state are fully deterministic.
     buf.close()
-    buf._ensure_prefetch_thread = lambda: None  # type: ignore[method-assign]
+    buf._ensure_prefetch_thread = lambda: None
 
     first_shard = iter_shard_paths(shard_dir)[0]
     arrs, _ = load_shard_arrays(first_shard, lazy=False)
@@ -373,7 +373,7 @@ def test_prefetched_refresh_is_consumed_before_sync_refresh(tmp_path) -> None:
     def _fail_refresh() -> None:
         raise AssertionError("sync refresh should not be used when a prefetched chunk is ready")
 
-    buf._refresh_shuffle_buf = _fail_refresh  # type: ignore[method-assign]
+    buf._refresh_shuffle_buf = _fail_refresh
     sampled = buf.sample_batch_arrays(2, wdl_balance=False)
 
     assert sampled["x"].shape == (2, 146, 8, 8)
@@ -460,7 +460,7 @@ def test_close_discards_late_prefetch_results(tmp_path) -> None:
         release.wait(timeout=2.0)
         return [arrs]
 
-    buf._load_refresh_chunks = _slow_load_refresh_chunks  # type: ignore[method-assign]
+    buf._load_refresh_chunks = _slow_load_refresh_chunks
     buf._schedule_refresh_prefetch()
     assert started.wait(timeout=1.0)
 

@@ -44,9 +44,9 @@ except ImportError:
     _HAS_CBOARD = False
 
 if TYPE_CHECKING:
-    from chess_anti_engine.encoding._lc0_ext import CBoard  # noqa: F401,F811
+    from chess_anti_engine.encoding._lc0_ext import CBoard
     from chess_anti_engine.encoding.cboard_encode import (
-        cboard_from_board_fast,  # noqa: F401,F811
+        cboard_from_board_fast,
     )
 
 
@@ -237,10 +237,7 @@ def run_mcts_many_c(
                             cb.push_index(int(a))
                 else:
                     cb = cb_cache.get(int(node_path[0]))
-                    if cb is not None:
-                        cb = cb.copy()
-                    else:
-                        cb = cboard_from_board_fast(board)
+                    cb = cb.copy() if cb is not None else cboard_from_board_fast(board)
             else:
                 cb = None
             leaf_data.append((leaf_id, node_path, board, cb))

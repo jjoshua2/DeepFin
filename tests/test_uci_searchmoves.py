@@ -61,14 +61,14 @@ def test_reused_root_info_is_restricted_to_searchmoves() -> None:
     tree.backprop(np.array([root, tree.find_child(root, d2d4)], dtype=np.int32), 1.0)
 
     worker = SearchWorker(MagicMock(), device="cpu", n_walkers=1)
-    worker._tree = tree  # noqa: SLF001
-    worker._root_id = root  # noqa: SLF001
+    worker._tree = tree
+    worker._root_id = root
     seen: list[tuple[str, ...]] = []
 
     def _info_cb(**kwargs) -> None:
         seen.append(kwargs["pv"])
 
-    pv_indices, _, _ = worker._maybe_emit_pv_info(  # noqa: SLF001
+    pv_indices, _, _ = worker._maybe_emit_pv_info(
         board=board,
         deadline=Deadline(None),
         last_value=0.0,
@@ -91,7 +91,7 @@ def test_result_ponder_failure_does_not_poison_bestmove(
     returned instead of letting the exception propagate and turning the
     whole search into ``bestmove 0000``."""
     worker = SearchWorker(MagicMock(), device="cpu", n_walkers=1)
-    worker._walker_pool = None  # force single-walker Gumbel path  # noqa: SLF001
+    worker._walker_pool = None  # force single-walker Gumbel path
     board = chess.Board()
     e2e4 = int(move_to_index(chess.Move.from_uci("e2e4"), board))
     e7e5 = int(move_to_index(chess.Move.from_uci("e7e5"), board))
@@ -103,9 +103,9 @@ def test_result_ponder_failure_does_not_poison_bestmove(
         np.array([e2e4, e7e5], dtype=np.int32),
         np.array([0.5, 0.5], dtype=np.float64),
     )
-    worker._tree = tree  # noqa: SLF001
-    worker._root_id = root  # noqa: SLF001
-    worker._last_gumbel_action_idx = e2e4  # noqa: SLF001
+    worker._tree = tree
+    worker._root_id = root
+    worker._last_gumbel_action_idx = e2e4
 
     calls = 0
     original = uci_search._index_to_uci
@@ -119,7 +119,7 @@ def test_result_ponder_failure_does_not_poison_bestmove(
 
     monkeypatch.setattr(uci_search, "_index_to_uci", _raising)
 
-    result = worker._build_final_search_result(  # noqa: SLF001
+    result = worker._build_final_search_result(
         board=board,
         total_nodes=1,
         last_value=0.0,
@@ -148,7 +148,7 @@ def test_ponder_is_not_computed_when_not_requested(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     worker = SearchWorker(MagicMock(), device="cpu", n_walkers=1)
-    worker._walker_pool = None  # force single-walker Gumbel path  # noqa: SLF001
+    worker._walker_pool = None  # force single-walker Gumbel path
     board = chess.Board()
     e2e4 = int(move_to_index(chess.Move.from_uci("e2e4"), board))
 
@@ -159,9 +159,9 @@ def test_ponder_is_not_computed_when_not_requested(
         np.array([e2e4], dtype=np.int32),
         np.array([1.0], dtype=np.float64),
     )
-    worker._tree = tree  # noqa: SLF001
-    worker._root_id = root  # noqa: SLF001
-    worker._last_gumbel_action_idx = e2e4  # noqa: SLF001
+    worker._tree = tree
+    worker._root_id = root
+    worker._last_gumbel_action_idx = e2e4
 
     monkeypatch.setattr(
         uci_search,
@@ -169,7 +169,7 @@ def test_ponder_is_not_computed_when_not_requested(
         lambda *_args, **_kwargs: pytest.fail("ponder reply should not be computed"),
     )
 
-    result = worker._build_final_search_result(  # noqa: SLF001
+    result = worker._build_final_search_result(
         board=board,
         total_nodes=1,
         last_value=0.0,
@@ -186,7 +186,7 @@ def test_ponder_aligns_with_gumbel_bestmove_not_most_visited_root() -> None:
     the ponder reply must come from the Gumbel survivor's child node, not
     from the most-visited root child's reply."""
     worker = SearchWorker(MagicMock(), device="cpu", n_walkers=1)
-    worker._walker_pool = None  # force single-walker Gumbel path  # noqa: SLF001
+    worker._walker_pool = None  # force single-walker Gumbel path
     board = chess.Board()
     e2e4 = int(move_to_index(chess.Move.from_uci("e2e4"), board))
     d2d4 = int(move_to_index(chess.Move.from_uci("d2d4"), board))
@@ -221,11 +221,11 @@ def test_ponder_aligns_with_gumbel_bestmove_not_most_visited_root() -> None:
         np.array([1.0], dtype=np.float64),
     )
 
-    worker._tree = tree  # noqa: SLF001
-    worker._root_id = root  # noqa: SLF001
-    worker._last_gumbel_action_idx = e2e4  # Gumbel survivor, NOT most visited  # noqa: SLF001
+    worker._tree = tree
+    worker._root_id = root
+    worker._last_gumbel_action_idx = e2e4  # Gumbel survivor, NOT most visited
 
-    result = worker._build_final_search_result(  # noqa: SLF001
+    result = worker._build_final_search_result(
         board=board,
         total_nodes=1,
         last_value=0.0,
@@ -246,7 +246,7 @@ def test_sampled_multi_ply_mate_pv_does_not_emit_proven_mate_score() -> None:
     scores in match logs and then disappear on the next root.
     """
     worker = SearchWorker(MagicMock(), device="cpu", n_walkers=1)
-    worker._walker_pool = None  # force single-walker Gumbel path  # noqa: SLF001
+    worker._walker_pool = None  # force single-walker Gumbel path
 
     board = chess.Board()
     board.push_san("f3")
@@ -267,11 +267,11 @@ def test_sampled_multi_ply_mate_pv_does_not_emit_proven_mate_score() -> None:
     child_g2g4 = tree.find_child(root, g2g4)
     tree.expand(child_g2g4, np.array([qd8h4], dtype=np.int32), np.array([1.0], dtype=np.float64))
 
-    worker._tree = tree  # noqa: SLF001
-    worker._root_id = root  # noqa: SLF001
-    worker._last_gumbel_action_idx = g2g4  # noqa: SLF001
+    worker._tree = tree
+    worker._root_id = root
+    worker._last_gumbel_action_idx = g2g4
 
-    result = worker._build_final_search_result(  # noqa: SLF001
+    result = worker._build_final_search_result(
         board=board, total_nodes=2, last_value=0.0, tb_probe=None,
     )
 
@@ -292,7 +292,10 @@ def test_immediate_mate_beats_high_prior_stalemate_root_move() -> None:
             self.calls = 0
             self.stalemate_idx = int(move_to_index(chess.Move.from_uci("g6f7"), board))
 
-        def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        def evaluate_encoded(
+            self, x: np.ndarray, relations: np.ndarray | None = None,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            del relations  # interface conformance for BatchEvaluator
             self.calls += 1
             batch = int(x.shape[0])
             pol = np.full((batch, POLICY_SIZE), -1000.0, dtype=np.float32)
@@ -340,7 +343,10 @@ def test_searchmoves_filter_reaches_c_mate_shortcut() -> None:
     """
 
     class NeutralEvaluator:
-        def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        def evaluate_encoded(
+            self, x: np.ndarray, relations: np.ndarray | None = None,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            del relations  # interface conformance for BatchEvaluator
             batch = int(x.shape[0])
             return (
                 np.zeros((batch, POLICY_SIZE), dtype=np.float32),

@@ -55,10 +55,7 @@ def _progress_csv_for_trial_dir(trial_dir: Path) -> Path | None:
 
 def _trial_record_from_state_item(item) -> dict | None:  # skylos: ignore[ANN001]
     try:
-        if isinstance(item, list) and item:
-            raw = item[0]
-        else:
-            raw = item
+        raw = item[0] if isinstance(item, list) and item else item
         if isinstance(raw, str):
             raw = json.loads(raw)
         return raw if isinstance(raw, dict) else None
@@ -277,8 +274,7 @@ def main() -> None:
     # tune_dir/pause.txt didn't fire its exists() check (root cause never
     # diagnosed; the per-trial marker is the belt-and-suspenders fix).
     pause_targets: list[Path] = [pause_file]
-    for csv in _active_trials(tune_dir):
-        pause_targets.append(csv.parent / "pause.txt")
+    pause_targets.extend(csv.parent / "pause.txt" for csv in _active_trials(tune_dir))
 
     for target in pause_targets:
         if target.exists():

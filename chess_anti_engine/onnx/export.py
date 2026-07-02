@@ -73,7 +73,7 @@ def _quantize_dynamic_ort(
     cfg: OnnxQuantizeConfig,
 ) -> None:
     try:
-        from onnxruntime.quantization import QuantType, quantize_dynamic  # type: ignore
+        from onnxruntime.quantization import QuantType, quantize_dynamic
     except Exception as e:  # pragma: no cover
         raise RuntimeError(
             "INT8 quantization requires onnxruntime with quantization support. "
@@ -81,10 +81,7 @@ def _quantize_dynamic_ort(
         ) from e
 
     wt = str(cfg.weight_type).lower()
-    if wt == "quint8":
-        weight_type = QuantType.QUInt8
-    else:
-        weight_type = QuantType.QInt8
+    weight_type = QuantType.QUInt8 if wt == "quint8" else QuantType.QInt8
 
     extra_options: dict[str, Any] = {"MatMulConstBOnly": True}
 
@@ -106,7 +103,7 @@ def _quantize_dynamic_ort(
         pass
 
     try:
-        import onnx  # type: ignore
+        import onnx
 
         model = onnx.load(str(fp32_path))
 

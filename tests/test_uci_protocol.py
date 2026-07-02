@@ -20,7 +20,7 @@ from chess_anti_engine.uci.protocol import (
 )
 
 
-@pytest.mark.parametrize("line,expected_type", [
+@pytest.mark.parametrize(("line", "expected_type"), [
     ("uci", CmdUci),
     ("isready", CmdIsReady),
     ("ucinewgame", CmdUciNewGame),

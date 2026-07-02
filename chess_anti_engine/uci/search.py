@@ -41,6 +41,7 @@ from chess_anti_engine.tablebase import SyzygyProbe, try_tb_root_move
 from .score import q_to_cp
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
+import contextlib
 
 # _REQUIRED_MCTS_ABI is imported from gumbel_c (canonical owner of the C-path ABI
 # contract), so the SearchWorker construction guard and the run_gumbel_root_many_c
@@ -430,7 +431,7 @@ class SearchWorker:
                 cfg, evaluator_factories=evaluators_or_factories,
             )
   # Keep refs to evaluators built inside workers, for close() teardown.
-            self._pucv_pool_evals = list(self._pucv_pool._evals)  # noqa: SLF001
+            self._pucv_pool_evals = list(self._pucv_pool._evals)
         else:
             self._pucv_pool_evals = list(evaluators_or_factories)
             self._pucv_pool = MultiGpuPucvPool(
@@ -447,10 +448,8 @@ class SearchWorker:
         for ev in self._pucv_pool_evals:
             close = getattr(ev, "close", None)
             if callable(close):
-                try:
+                with contextlib.suppress(Exception):
                     close()
-                except Exception:
-                    pass
         self._pucv_pool_evals = []
         self._pucv_pool_cboard = None
 
@@ -480,7 +479,7 @@ class SearchWorker:
         if self._pucv is not None:
             self._pucv = self._build_pucv()
         if self._pucv_pool is not None:
-            self._pucv_pool._cfg.vloss_mode = mode  # noqa: SLF001
+            self._pucv_pool._cfg.vloss_mode = mode
         self.reset_tree()
 
     def set_use_pucv(self, enabled: bool, *, gather: int | None = None) -> None:
@@ -556,18 +555,14 @@ class SearchWorker:
         for ev in self._pucv_pool_evals:
             close = getattr(ev, "close", None)
             if callable(close):
-                try:
+                with contextlib.suppress(Exception):
                     close()
-                except Exception:
-                    pass
         self._pucv_pool_evals = []
         ev = self._evaluator
         close = getattr(ev, "close", None)
         if callable(close):
-            try:
+            with contextlib.suppress(Exception):
                 close()
-            except Exception:
-                pass
 
     def set_evaluator(self, evaluator: BatchEvaluator) -> None:
         """Swap in a freshly-built (and warmed-up) evaluator. Rebuilds the
@@ -592,10 +587,8 @@ class SearchWorker:
         self.reset_tree()
         close = getattr(old, "close", None)
         if callable(close):
-            try:
+            with contextlib.suppress(Exception):
                 close()
-            except Exception:
-                pass
 
     def set_num_threads(self, n: int) -> None:
         """Rebuild the walker pool at thread count ``n`` (1 = classic Gumbel
@@ -650,7 +643,8 @@ class SearchWorker:
         each line also gets a ``wdl W D L`` field derived from its Q plus
         the root's NN draw-rate estimate.
         """
-        assert self._tree is not None and self._root_id is not None
+        assert self._tree is not None
+        assert self._root_id is not None
         lines = _multipv_lines(
             self._tree,
             self._root_id,
@@ -887,7 +881,8 @@ class SearchWorker:
         need_pv = info_due or max_depth is not None
         if not need_pv:
             return [], last_info_ms, elapsed
-        assert self._tree is not None and self._root_id is not None
+        assert self._tree is not None
+        assert self._root_id is not None
         _, pv_indices = _best_move_and_pv(
             self._tree,
             self._root_id,
@@ -912,7 +907,8 @@ class SearchWorker:
         include_ponder: bool = False,
     ) -> SearchResult:
         """Final snapshot of the searched tree → SearchResult."""
-        assert self._tree is not None and self._root_id is not None
+        assert self._tree is not None
+        assert self._root_id is not None
         bestmove_idx, pv_indices = _best_move_and_pv(
             self._tree, self._root_id,
             allowed_root_indices=allowed_root_indices,
@@ -1409,8 +1405,10 @@ class SearchWorker:
     def _run_walker_chunk(
         self, chunk: int, stop_event: threading.Event,
     ) -> float:
-        assert self._tree is not None and self._root_id is not None
-        assert self._walker_pool is not None and self._walker_cboard is not None
+        assert self._tree is not None
+        assert self._root_id is not None
+        assert self._walker_pool is not None
+        assert self._walker_cboard is not None
         self._walker_pool.run(
             tree=self._tree,
             root_id=self._root_id,
@@ -1459,8 +1457,10 @@ class SearchWorker:
     def _run_pucv_pool_chunk(
         self, chunk: int, stop_event: threading.Event,
     ) -> float:
-        assert self._tree is not None and self._root_id is not None
-        assert self._pucv_pool is not None and self._pucv_pool_cboard is not None
+        assert self._tree is not None
+        assert self._root_id is not None
+        assert self._pucv_pool is not None
+        assert self._pucv_pool_cboard is not None
         self._pucv_pool.run(
             tree=self._tree,
             root_id=self._root_id,
@@ -1495,8 +1495,10 @@ class SearchWorker:
                 )
 
     def _run_pucv_chunk(self, chunk: int) -> float:
-        assert self._tree is not None and self._root_id is not None
-        assert self._pucv is not None and self._pucv_cboard is not None
+        assert self._tree is not None
+        assert self._root_id is not None
+        assert self._pucv is not None
+        assert self._pucv_cboard is not None
         self._pucv.run(
             tree=self._tree,
             root_id=self._root_id,
@@ -1581,9 +1583,9 @@ def _q_to_wdl_permille(q: float, draw_rate: float) -> tuple[int, int, int]:
     w = (q + 1.0 - d) / 2.0
     l = (1.0 - q - d) / 2.0
     return (
-        int(round(w * 1000)),
-        int(round(d * 1000)),
-        int(round(l * 1000)),
+        round(w * 1000),
+        round(d * 1000),
+        round(l * 1000),
     )
 
 

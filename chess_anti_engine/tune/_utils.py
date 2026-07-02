@@ -113,7 +113,7 @@ def concat_array_batches(batches: list[dict[str, np.ndarray]]) -> dict[str, np.n
 
 def to_nonnegative_int(v: object, default: int = 0) -> int:
     try:
-        iv = int(v)  # type: ignore[arg-type] # object input validated by try/except
+        iv = int(v)  # pyright: ignore[reportArgumentType] # object input validated by try/except
         return iv if iv >= 0 else default
     except Exception:
         return default

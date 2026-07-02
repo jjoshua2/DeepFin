@@ -238,7 +238,7 @@ def test_zarr_tar_extract_falls_back_without_filter_kw(tmp_path, monkeypatch) ->
     tar_path.write_bytes(tar_bytes)
     original = tarfile.TarFile.extractall
 
-    def legacy_extractall(self, path=".", members=None, *, numeric_owner=False, filter=None):  # noqa: A002
+    def legacy_extractall(self, path=".", members=None, *, numeric_owner=False, filter=None):
         if filter is not None:
             raise TypeError("extractall() got an unexpected keyword argument 'filter'")
         return original(self, path=path, members=members, numeric_owner=numeric_owner)
@@ -345,7 +345,7 @@ def test_compaction_flush_failure_preserves_accumulator(tmp_path, monkeypatch: p
     original = app_module.save_local_shard_arrays
     calls = {"n": 0}
 
-    def flaky_save(path, *, arrs, meta):  # type: ignore[no-untyped-def]
+    def flaky_save(path, *, arrs, meta):
         # Only flaky for the server compactor's writes (other test setup calls
         # save_local_shard_arrays too, via _build_valid_zarr_tar).
         if str(meta.username) == "server_compactor":

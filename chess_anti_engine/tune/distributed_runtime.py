@@ -289,10 +289,10 @@ def _publish_distributed_trial_state(
     published_worker_wheel_path: Path | None = None
     stale_pause_target_games = int(config.get("distributed_stale_pause_target_games", -1))
     if stale_pause_target_games < 0:
-        stale_pause_target_games = int(math.ceil(
+        stale_pause_target_games = math.ceil(
             float(config.get("games_per_iter", 0))
             * max(0.0, float(config.get("distributed_prev_model_max_fraction", 0.0)))
-        ))
+        )
 
     worker_wheel_raw = str(config.get("worker_wheel_path", "")).strip()
     if worker_wheel_raw:
@@ -1391,7 +1391,7 @@ def _ingest_distributed_selfplay(
     """
     processed_dir.mkdir(parents=True, exist_ok=True)
     target_games = max(1, int(target_games))
-    min_games = max(1, int(math.ceil(float(min_games_fraction) * target_games)))
+    min_games = max(1, math.ceil(float(min_games_fraction) * target_games))
     _now = time.time()
     deadline = _now + float(wait_timeout_s)
   # Hard ceiling: if matching_games never reaches min_games (all workers stale
@@ -1404,7 +1404,7 @@ def _ingest_distributed_selfplay(
   # the prev SHA so further prev-model shards count as stale.
   # Skip if prev == current (discarding would remove the only accepted SHA).
     cap_prev = bool(prev_model_sha) and len(accepted_model_shas) > 1
-    prev_max_games = int(math.ceil(float(prev_model_max_fraction) * target_games)) if cap_prev else 0
+    prev_max_games = math.ceil(float(prev_model_max_fraction) * target_games) if cap_prev else 0
     prev_matching_games_box = [0]
     effective_accepted = set(accepted_model_shas)
 

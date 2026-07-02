@@ -85,7 +85,7 @@ def play_one_random_game(seed: int) -> list[ReplaySample]:
     total_plies = len(records)
     for x, policy, lm, is_white_turn, ply in records:
         # Convert white_wdl to side-to-move-relative wdl
-        if is_white_turn:
+        if is_white_turn:  # noqa: SIM108 — nested ternary would bury the POV flip
             wdl = white_wdl  # 0=stm won, 2=stm lost
         else:
             # Flip: white_wdl 0 (white won) -> 2 (black lost from black's POV)

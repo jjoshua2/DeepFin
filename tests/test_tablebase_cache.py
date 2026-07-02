@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 import chess_anti_engine.tablebase as tablebase
 
 
 class _FakeTablebase:
-    instances: list[_FakeTablebase] = []
+    instances: ClassVar[list[_FakeTablebase]] = []
 
     def __init__(self) -> None:
         self.dirs: list[str] = []

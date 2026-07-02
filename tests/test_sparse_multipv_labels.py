@@ -206,7 +206,8 @@ def test_rebuild_sf_wdl_matches_live():
         )
         meta = np.array([1000, 10, 35, 0, 700, 200], np.int32)
         rebuilt = rebuild_sf_wdl(meta, params)
-        assert live is not None and rebuilt is not None
+        assert live is not None
+        assert rebuilt is not None
         np.testing.assert_allclose(rebuilt, live, atol=1e-5)
 
 
@@ -315,7 +316,7 @@ def test_trainer_default_is_bitwise_unchanged(monkeypatch):
 
     calls = {"n": 0}
 
-    def _spy(arrs, *, params):  # noqa: ARG001 — signature mirrors the real fn
+    def _spy(arrs, *, params):
         del params
         calls["n"] += 1
         return arrs
@@ -352,7 +353,8 @@ def test_trainer_default_is_bitwise_unchanged(monkeypatch):
 
     t.rebuild_sf_targets = False
     out_again = t._sample_batch_host(buf, batch_size=2, mirror_prob=0.0)
-    assert isinstance(out_default, dict) and isinstance(out_again, dict)
+    assert isinstance(out_default, dict)
+    assert isinstance(out_again, dict)
     for k in out_default:
         np.testing.assert_array_equal(out_default[k], out_again[k])
 
@@ -685,7 +687,8 @@ def test_sf_policy_label_smoothing_only_when_uncovered() -> None:
         sf_policy_temp=1.0, sf_policy_label_smooth=0.1,
     )
     assert p_unc[2] > 0.0
-    assert p_unc[0] > p_unc[2] and p_unc[1] > p_unc[2]
+    assert p_unc[0] > p_unc[2]
+    assert p_unc[1] > p_unc[2]
 
 
 def test_native_wdl_stored_as_permille_from_fraction_scale():

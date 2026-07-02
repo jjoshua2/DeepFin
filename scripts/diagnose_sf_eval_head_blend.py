@@ -115,7 +115,7 @@ def _load_samples(
         scan["scanned_positions"] += n
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # A diagnostic run should report and skip bad live replay shards instead of aborting.
             _record_skipped_shard(scan, shard, exc)
             continue
@@ -383,7 +383,7 @@ def _resolve_device(device_arg: str) -> str:
         return device_arg
     try:
         import torch
-    except Exception:  # noqa: BLE001
+    except Exception:
         return "cpu"
     return "cuda" if torch.cuda.is_available() else "cpu"
 

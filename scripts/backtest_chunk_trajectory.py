@@ -98,7 +98,7 @@ def main() -> None:
         # then locate it in the position's legal-move order for the regret lookup.
         try:
             uci = index_to_move(int(act), board).uci()
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None, -1
         return (uci, ucis.index(uci)) if uci in ucis else (uci, -1)
 
@@ -117,17 +117,17 @@ def main() -> None:
             def on_chunk(
                 total_nodes: int, _b=board, _u=ucis, _r=regrets, _s=snaps,
             ) -> None:
-                actions, visits = worker._filtered_root_visits(None)  # noqa: SLF001
+                actions, visits = worker._filtered_root_visits(None)
                 if actions.size == 0:
                     return
-                best = worker._emitted_action(actions, visits, None)  # noqa: SLF001
+                best = worker._emitted_action(actions, visits, None)
                 uci, li = action_to_uci(int(best), _b, _u)
                 tot = float(visits.sum())
                 shares = visits.astype(np.float64) / tot if tot > 0 else visits.astype(np.float64)
                 srt = np.sort(shares)[::-1]
                 ngap = float(srt[0] - srt[1]) if srt.size >= 2 else float(srt[0] if srt.size else 0)
                 rq, qg = 0.0, float("nan")
-                tree, rid = worker._tree, worker._root_id  # noqa: SLF001
+                tree, rid = worker._tree, worker._root_id
                 if tree is not None and rid is not None:
                     rq = float(tree.node_q(rid))
                     ca, _cv, cq = tree.get_children_q(rid, rq)
@@ -140,7 +140,7 @@ def main() -> None:
                     "regret_cp": float(_r[li]) if li >= 0 else float(_r.max()),
                     "visit_gap": ngap, "visit_entropy": _entropy(shares),
                     "q_gap": qg, "root_q": rq,
-                    "shares": {int(a): float(s) for a, s in zip(actions.tolist(), shares.tolist())},
+                    "shares": {int(a): float(s) for a, s in zip(actions, shares)},
                 })
 
             worker.run(

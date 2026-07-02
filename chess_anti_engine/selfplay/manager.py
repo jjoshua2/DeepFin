@@ -52,7 +52,8 @@ def _tb_adjudicate_active_games(state: SelfplayState) -> int:
     so the NN continues training on endgame positions with its own labels
     rather than losing endgame skill entirely.
     """
-    assert state.tb_probe is not None and state.game.syzygy_path is not None
+    assert state.tb_probe is not None
+    assert state.game.syzygy_path is not None
     max_p = state.tb_probe.max_pieces
     adjudicated = 0
     for i in range(state.batch_size):

@@ -128,7 +128,7 @@ def _restore_from_ray_checkpoint(
                 model_only_restore = True
     if model_only_restore:
         _load_model_only(maybe, trainer, device=device, label="checkpoint_model_only")
-        trainer._init_swa()  # noqa: SLF001
+        trainer._init_swa()
         rr.startup_source = "checkpoint_model_only"
     else:
         trainer.load(maybe)
@@ -383,7 +383,7 @@ def _maybe_load_bootstrap(
             print(f"[trial] Reinitialized bootstrap volatility heads: {', '.join(reinit)}")
     trainer.reset_optimizer_reference_weights()
   # Re-sync SWA with the newly loaded weights (AveragedModel deep-copies at init).
-    trainer._init_swa()  # noqa: SLF001
+    trainer._init_swa()
     del ckpt_data
 
 
@@ -555,7 +555,7 @@ def _init_replay_buffers(
     seeded_replay_start = bool(ckpt is not None or restore.seed_warmstart_used or shared_shards_loaded > 0)
     if seeded_replay_start:
         current_window = min(
-            max(int(current_window), int(len(buf)), int(restore.restored_window)),
+            max(int(current_window), len(buf), int(restore.restored_window)),
             int(tc.replay_window_max),
         )
     buf.capacity = int(current_window)

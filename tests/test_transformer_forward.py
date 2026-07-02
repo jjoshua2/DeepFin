@@ -694,7 +694,7 @@ def test_tolerant_load_migrates_fused_qkv_into_compiled_split_qkv():
     fused = ChessNet(fused_cfg).eval()
     split = ChessNet(split_cfg).eval()
     compiled_like = nn.Module()
-    compiled_like._orig_mod = split  # type: ignore[attr-defined]
+    compiled_like._orig_mod = split
 
     load_state_dict_tolerant(compiled_like, fused.state_dict(), label="test")
 
@@ -800,12 +800,8 @@ def test_transformer_arc_adapter_starts_checkpoint_compatible():
 
 def test_transformer_rejects_unknown_pos_encoding():
     cfg = TransformerConfig(in_planes=146, input_pos_encoding="bogus")
-    try:
+    with pytest.raises(ValueError, match="input_pos_encoding"):
         ChessNet(cfg)
-    except ValueError as exc:
-        assert "input_pos_encoding" in str(exc)
-    else:
-        raise AssertionError("expected invalid input_pos_encoding to fail")
 
 
 def test_transformer_legal_policy_matches_dense_logits():

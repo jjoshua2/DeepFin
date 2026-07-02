@@ -78,7 +78,7 @@ def _load_samples(replay_dir: Path, max_shards: int) -> tuple[dict[int, list[Sam
         scan["scanned_positions"] += n
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Replay diagnostics should summarize bad live shards and continue scanning.
             _record_skipped_shard(scan, shard, exc)
             continue
@@ -190,10 +190,7 @@ def _fit_weight(
 ) -> FitRow:
     delta = search - sf
     denom = float(np.dot(delta, delta))
-    if denom <= 1e-12:
-        w_unclamped = 0.0
-    else:
-        w_unclamped = float(np.dot(target - sf, delta) / denom)
+    w_unclamped = 0.0 if denom <= 1e-12 else float(np.dot(target - sf, delta) / denom)
     w_clamped = min(1.0, max(0.0, w_unclamped))
     pred_half = 0.5 * (sf + search)
     pred_opt = sf + w_clamped * delta

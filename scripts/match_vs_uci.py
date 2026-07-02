@@ -50,6 +50,7 @@ import chess
 import chess.engine
 import chess.pgn
 import chess.syzygy
+import contextlib
 
 
 def _positive_int(value: str) -> int:
@@ -427,10 +428,8 @@ def _play_node_limited(
                 except chess.engine.AnalysisComplete:
                     break
                 latest_info.update(info)
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     nodes_seen = max(nodes_seen, int(info.get("nodes", 0)))
-                except (TypeError, ValueError):
-                    pass
                 pv = info.get("pv")
                 if pv:
                     best_from_pv = pv[0]
@@ -448,10 +447,8 @@ def _play_node_limited(
                 time.sleep(0.005)
         best: Any = analysis.wait()
     finally:
-        try:
+        with contextlib.suppress(chess.engine.EngineError):
             analysis.stop()
-        except chess.engine.EngineError:
-            pass
     if nodes_seen:
         latest_info["nodes"] = nodes_seen
     return MoveResult(best.move or best_from_pv, latest_info)

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import contextlib
 
 
 def build_worker_command(*, worker_args: list[str], worker_dir: Path, shared_cache_dir: Path) -> list[str]:
@@ -40,10 +41,8 @@ def _terminate_children(children: list[subprocess.Popen[bytes]], *, timeout_s: f
         try:
             proc.wait(timeout=remaining)
         except subprocess.TimeoutExpired:
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 proc.kill()
-            except ProcessLookupError:
-                pass
     for proc in children:
         if proc.poll() is None:
             try:

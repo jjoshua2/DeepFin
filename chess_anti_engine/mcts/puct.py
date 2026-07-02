@@ -66,7 +66,7 @@ class MCTSConfig:
 
 
 class Node:
-    __slots__ = ("_board", "_move", "_action_idx", "parent", "prior", "N", "W", "children", "expanded", "to_play", "vol")
+    __slots__ = ("N", "W", "_action_idx", "_board", "_move", "children", "expanded", "parent", "prior", "to_play", "vol")
 
     _board: chess.Board | None
     _move: chess.Move | None
@@ -299,6 +299,7 @@ def run_mcts_many(
     evaluator: BatchEvaluator | None = None,
     pre_pol_logits: np.ndarray | None = None,
     pre_wdl_logits: np.ndarray | None = None,
+    cboards: list | None = None,
 ) -> tuple[list[np.ndarray], list[int], list[float], list[np.ndarray]]:
     """Run PUCT MCTS for multiple root boards, batching leaf evaluations.
 
@@ -311,6 +312,7 @@ def run_mcts_many(
     - root Q value
     - legal move mask (POLICY_SIZE,) bool
     """
+    del cboards  # accepted for run_mcts_many_c API parity; python path replays from boards
     if getattr(cfg, "compute_relations", False):
         raise NotImplementedError(
             "dynamic relations are not transported on the PUCT search path; "

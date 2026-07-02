@@ -94,11 +94,11 @@ def decode_board_from_planes(
     if root:
         castle_planes = (105, 104, 107, 106)  # us-K, us-Q, them-K, them-Q
         rule50_raw = float(arr[109, 0, 0])
-        rule50 = int(round(rule50_raw * 100.0)) if hist == "lc0_root_legacy_meta" else int(round(rule50_raw))
+        rule50 = round(rule50_raw * 100.0) if hist == "lc0_root_legacy_meta" else round(rule50_raw)
         ep_plane = arr[110] if hist == "lc0_root_legacy_meta" else None
     else:
         castle_planes = (96, 97, 98, 99)
-        rule50 = int(round(float(arr[102, 0, 0]) * 100.0))
+        rule50 = round(float(arr[102, 0, 0]) * 100.0)
         ep_plane = arr[100]
 
     board = chess.Board(fen=None)
@@ -255,11 +255,8 @@ def expected_and_top1_regret(
     """(expected regret of sampling from probs, regret of argmax move)."""
     p = np.asarray(probs, dtype=np.float64)
     total = float(p.sum())
-    if total <= 0.0:
-        # Degenerate distribution: treat as uniform over legal moves.
-        p = np.full_like(p, 1.0 / max(1, p.size))
-    else:
-        p = p / total
+    # A non-positive total is a degenerate distribution: treat as uniform.
+    p = np.full_like(p, 1.0 / max(1, p.size)) if total <= 0.0 else p / total
     return float((p * regrets).sum()), float(regrets[int(np.argmax(p))])
 
 

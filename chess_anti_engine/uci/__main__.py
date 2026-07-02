@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import io
 import logging
 import os
 import sys
@@ -33,6 +34,7 @@ from .engine import Engine, EngineOptions, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
 from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
+import contextlib
 
 
 def _warmup_evaluator(
@@ -506,10 +508,8 @@ def main() -> int:
 
   # UCI assumes line-buffered I/O. When a GUI pipes stdout, Python defaults
   # to block-buffered, which swallows our responses until the buffer fills.
-    try:
-        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-    except AttributeError:
-        pass
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
 
   # --devices wins over --device when set (explicit multi-GPU list).
     if args.devices:
@@ -649,10 +649,8 @@ def main() -> int:
   # shutdown starts tearing down PyTorch's CUDA context.
         eng = engine_ref[0]
         if eng is not None:
-            try:
+            with contextlib.suppress(Exception):
                 eng.close()
-            except Exception:
-                pass
     return 0
 
 

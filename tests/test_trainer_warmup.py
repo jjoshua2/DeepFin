@@ -113,7 +113,7 @@ def test_select_input_history_arrays_handles_mixed_legacy_and_root_rows() -> Non
 def test_select_input_history_arrays_rejects_root_reselect_mismatch() -> None:
     root = np.zeros((1, 146, 8, 8), dtype=np.float32)
 
-    try:
+    with pytest.raises(ValueError, match="incompatible stored history encodings"):
         select_input_history_arrays(
             {
                 "x": root,
@@ -121,15 +121,12 @@ def test_select_input_history_arrays_rejects_root_reselect_mismatch() -> None:
             },
             input_history_encoding="lc0_root_legacy_meta",
         )
-        assert False, "expected ValueError"
-    except ValueError as exc:
-        assert "incompatible stored history encodings" in str(exc)
 
 
 def test_select_input_history_arrays_rejects_root_storage_for_legacy_model() -> None:
     root = np.zeros((1, 146, 8, 8), dtype=np.float32)
 
-    try:
+    with pytest.raises(ValueError, match="cannot train"):
         select_input_history_arrays(
             {
                 "x": root,
@@ -137,9 +134,6 @@ def test_select_input_history_arrays_rejects_root_storage_for_legacy_model() -> 
             },
             input_history_encoding="legacy",
         )
-        assert False, "expected ValueError"
-    except ValueError as exc:
-        assert "cannot train" in str(exc)
 
 
 def test_select_input_history_arrays_fast_path_handles_uniform_metadata() -> None:
@@ -207,11 +201,8 @@ def test_select_input_history_samples_rejects_root_samples_for_legacy_model() ->
         input_history_encoding="lc0_root",
     )
 
-    try:
+    with pytest.raises(ValueError, match="cannot train"):
         select_input_history_samples([sample], input_history_encoding="legacy")
-        assert False, "expected ValueError"
-    except ValueError as exc:
-        assert "cannot train" in str(exc)
 
 
 def test_selected_input_history_samples_serialize_history_metadata() -> None:
@@ -751,11 +742,8 @@ def test_chained_optimizer_rejects_unroutable_param_group() -> None:
         torch.optim.SGD([p1], lr=0.1),
     ])
 
-    try:
+    with pytest.raises(NotImplementedError, match="cannot route"):
         opt.add_param_group({"params": [torch.nn.Parameter(torch.tensor([3.0]))]})
-        assert False, "expected NotImplementedError"
-    except NotImplementedError as exc:
-        assert "cannot route" in str(exc)
 
 
 def test_muon_matrix_scope_can_target_mlp_without_embed(tmp_path: Path) -> None:

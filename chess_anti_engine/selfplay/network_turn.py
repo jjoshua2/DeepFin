@@ -45,6 +45,7 @@ try:
     from chess_anti_engine.mcts.puct_c import run_mcts_many_c as _run_mcts_many_c
     _HAS_C_TREE = True
 except ImportError:
+    _run_mcts_many_c = run_mcts_many
     _HAS_C_TREE = False
 
 try:
@@ -517,10 +518,12 @@ def _append_records_via_python(
     for j, (idx, probs, a, v) in enumerate(
         zip(net_idxs, probs_list, actions, values_list, strict=True),
     ):
-        assert probs is not None and a is not None and v is not None
+        assert probs is not None
+        assert a is not None
+        assert v is not None
 
         board_before = state.boards[idx]
-        ply_index = int(len(board_before.move_stack))
+        ply_index = len(board_before.move_stack)
         pov_color = board_before.turn
         x_lc0_root = (
             encode_position(

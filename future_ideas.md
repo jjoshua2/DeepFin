@@ -119,7 +119,6 @@ Ideas:
 Non-blocking cleanup from the optimizer/offline-sweep review. These are worth doing, but they are not correctness blockers for the optimizer/config PR.
 
 - **Offline sweep shell driver consolidation**: the `scripts/arch_sweep_*.sh` files repeat the same launch/poll/log/result scaffolding. Replace them with one shared driver plus small per-sweep config files that define only `experiments=()` and common args.
-- **`offline_replay_epoch.py` pyright blanket cleanup**: replace the module-wide pyright disables with either targeted suppressions or a refreshed basedpyright baseline, so future edits still get optional-member/type feedback.
 - **SODA per-step clone optimization**: the current SODA implementation preserves the paper formula exactly by saving pre-base-step weights. Investigate a clone-free formulation only if it can be proven equivalent for Aurora/Muon-style optimizers that may inspect current parameter norms during `base.step()`.
 
 ## Search/training audit bets (2026-06)

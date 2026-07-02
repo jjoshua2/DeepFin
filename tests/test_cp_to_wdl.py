@@ -76,7 +76,7 @@ def test_shorter_mate_more_decisive_than_long_mate():
 
 
 def test_slope_zero_rejected():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="requires slope>0"):
         cp_to_wdl(0, None, slope=0.0, draw_width_cp=80.0)
 
 

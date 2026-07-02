@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from chess_anti_engine.inference_cache import EncodedEvalCache, PucvEvalCache
 
@@ -10,7 +11,10 @@ class _EchoEvaluator:
         self.calls = 0
         self.rows_submitted: list[int] = []
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
         self.calls += 1
         self.rows_submitted.append(int(x.shape[0]))
         n = int(x.shape[0])
@@ -98,12 +102,8 @@ def test_cache_clear_resets_entries_and_stats() -> None:
 def test_cache_rejects_non_batch_input() -> None:
     cache = EncodedEvalCache(_EchoEvaluator(), max_entries=8)
 
-    try:
+    with pytest.raises(ValueError, match="expected encoded batch shape"):
         cache.evaluate_encoded(np.zeros((146, 8, 8), dtype=np.float32))
-    except ValueError as exc:
-        assert "expected encoded batch shape" in str(exc)
-    else:
-        raise AssertionError("expected ValueError")
 
 
 def test_pucv_cache_verifies_encoded_digest_on_fingerprint_hit() -> None:

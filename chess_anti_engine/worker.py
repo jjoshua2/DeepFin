@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, overload
 from collections.abc import Callable
@@ -128,9 +128,7 @@ def _upload_response_allows_pending_delete(response: Any) -> bool:
     # Duplicate uploads return stored=false after the server has already
     # accumulated or recovered the shard; with no rejected flag, local retry
     # would only resend data the server intentionally deduped.
-    if body.get("stored") is False:
-        return True
-    return False
+    return body.get("stored") is False
 
 
 def _upload_response_rejection_reason(response: Any) -> str | None:
@@ -244,10 +242,8 @@ def _collect_worker_info(*, device: str) -> dict[str, object]:
         "device": str(device),
     }
 
-    try:
+    with suppress(Exception):
         out["cpu_count"] = int(os.cpu_count() or 1)
-    except Exception:
-        pass
 
     if torch.cuda.is_available():
         try:
@@ -273,7 +269,7 @@ def _pip_install_wheel(wheel_path: Path) -> None:
 def _restart_process() -> None:
   # Avoid infinite update loops.
     os.environ["CAE_SELF_UPDATED"] = "1"
-    os.execv(sys.executable, [sys.executable] + sys.argv)
+    os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
 def _configure_shared_compile_cache(*, cache_dir: Path) -> None:
@@ -1580,7 +1576,7 @@ class WorkerSession:
             float(delta_positions / max(1e-6, elapsed_s)),
             float(100.0 * delta_callback_s / max(1e-6, elapsed_s)),
             float(100.0 * delta_upload_s / max(1e-6, elapsed_s)),
-            int(len(active)),
+            len(active),
             int(skew),
         )
 
@@ -1819,7 +1815,7 @@ class WorkerSession:
             try:
                 protocol_mismatch = int(req_proto) != int(PROTOCOL_VERSION)
             except Exception:
-                raise SystemExit(f"Bad protocol_version in manifest: {req_proto!r}")
+                raise SystemExit(f"Bad protocol_version in manifest: {req_proto!r}") from None
         min_v = manifest.get("min_worker_version")
         version_too_old = bool(min_v is not None and version_lt(PACKAGE_VERSION, str(min_v)))
         enc = manifest.get("encoding") or {}
@@ -2098,10 +2094,8 @@ class WorkerSession:
         binary_changed = self.sf_path_active != stockfish_path
         if self.sf is None or multipv_changed or syzygy_changed or binary_changed:
             if self.sf is not None:
-                try:
+                with suppress(Exception):
                     self.sf.close()
-                except Exception:
-                    pass
 
             if int(self.args.sf_workers) > 1:
                 self.sf = StockfishPool(
@@ -2320,7 +2314,7 @@ class WorkerSession:
         ``game``), ready for ``play_batch(..., **cfgs)``; ``sf_args`` is
         ``(sf_nodes, sf_multipv, syzygy_path)`` for the Stockfish bring-up.
         """
-        regret_raw = reco.get("opponent_wdl_regret_limit", None)
+        regret_raw = reco.get("opponent_wdl_regret_limit")
   # None must propagate (means "no regret limit"); only cast real values.
         regret_limit = float(regret_raw) if regret_raw is not None else None
   # Syzygy is fully manifest-driven so the server operator can tune
@@ -2576,10 +2570,8 @@ class WorkerSession:
   # Stockfish went silent (DTZ load latency, GPU pressure, etc.).  Kill
   # the process and let _sync_stockfish restart it on the next shard.
             self.log.warning("Stockfish timed out, restarting SF process: %s", exc)
-            try:
+            with suppress(Exception):
                 self.sf.close()
-            except Exception:
-                pass
             self.sf = None
             return None
         except TimeoutError as exc:
@@ -2680,15 +2672,11 @@ class WorkerSession:
 
     def _cleanup(self) -> None:
         if self.inference_client is not None and hasattr(self.inference_client, "close"):
-            try:
+            with suppress(Exception):
                 self.inference_client.close()
-            except Exception:
-                pass
         if self.sf is not None:
-            try:
+            with suppress(Exception):
                 self.sf.close()
-            except Exception:
-                pass
 
 
 if __name__ == "__main__":

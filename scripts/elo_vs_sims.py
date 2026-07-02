@@ -22,6 +22,7 @@ import argparse
 from pathlib import Path
 
 from scripts.arena_standard import add_common_args, default_openings_path, run_arena
+import itertools
 
 
 def _parse_sims(spec: str) -> list[int]:
@@ -52,7 +53,7 @@ def main() -> None:
     )
 
     rows: list[tuple[int, dict]] = []
-    for lo, hi in zip(sims, sims[1:]):
+    for lo, hi in itertools.pairwise(sims):
         print(f"\n[elo_vs_sims] === {hi} sims vs {lo} sims ===")
         record = run_arena(
             candidate=args.checkpoint,

@@ -66,7 +66,7 @@ def _snapshot_dynamo_counters() -> dict[str, dict[str, int]] | None:
     """Snapshot torch._dynamo.utils.counters; returns None if unavailable."""
     try:
         from torch._dynamo.utils import counters
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     return {cat: dict(d) for cat, d in counters.items()}
 
@@ -85,7 +85,7 @@ def _delta_dynamo_counters(
         return None
     try:
         from torch._dynamo.utils import counters
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
     def _delta(cat: str, key: str) -> int:
@@ -316,7 +316,7 @@ class ThreadedDispatcher:
             return False
         try:
             return bool(query())
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
     def _drain_batch(
@@ -407,11 +407,11 @@ class ThreadedDispatcher:
             else:
                 self._evaluator.model = item.model
             self._evaluator.model.eval()
-        except BaseException:  # noqa: BLE001
+        except BaseException:
             try:
                 self._evaluator.model = self._compile_model_on_dispatcher(item.model)
                 self._evaluator.model.eval()
-            except BaseException as fallback_exc:  # noqa: BLE001
+            except BaseException as fallback_exc:
                 item.result["error"] = fallback_exc
         finally:
             item.done.set()
@@ -450,7 +450,7 @@ class ThreadedDispatcher:
                 try:
                     next_handle = self._submit_batch(eval_items, slot, ev)
                     slot = 1 - slot
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception("dispatcher submit failed: %s", exc)
                     for item in eval_items:
                         if not item.future.done():
@@ -479,7 +479,7 @@ class ThreadedDispatcher:
             if pending is not None:
                 try:
                     self._scatter_pending(pending)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.exception("dispatcher scatter failed: %s", exc)
                     for item in pending.items:
                         if not item.future.done():
