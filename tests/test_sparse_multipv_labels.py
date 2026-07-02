@@ -715,3 +715,50 @@ def test_native_wdl_stored_as_permille_from_fraction_scale():
     rows = _collect_sparse_pv_rows(res, turn=True, legal_set={a})
     assert rows is not None
     assert (rows[0][3], rows[0][4]) == (870, 90)
+
+
+def test_sparse_ce_native_wdl_fallback_matches_dense_at_fraction_scale():
+    """Codex P2 (PR #94): candidates with NO cp/mate fall back to native-WDL
+    scoring even with the logistic enabled; the sparse torch path must rescale
+    permille to fractions like target_builder._row_score, or the softmax
+    temperature sees 1000x-scale scores."""
+    from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY
+    from chess_anti_engine.train.losses import soft_cross_entropy
+    from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
+
+    shard_width = 4672
+    params = SfTargetParams(
+        sf_policy_temp=0.012, sf_policy_label_smooth=0.01,
+        sf_wdl_use_cp_logistic=True,
+        sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
+    )
+    legal_full = np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int64)[[100, 200, 300]]
+    raw = np.full((1, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    # native-only candidates: no cp, no mate, permille wdl present
+    raw[0, 0] = (legal_full[0], SF_CP_SENTINEL, 0, 870, 90)
+    raw[0, 1] = (legal_full[1], SF_CP_SENTINEL, 0, 400, 350)
+
+    legal = np.zeros((1, shard_width), np.float32)
+    legal[:, legal_full] = 1.0
+    dense = rebuild_sf_policy_target(
+        raw[0], legal_indices=legal_full, policy_size=shard_width, params=params,
+    )
+    assert dense is not None
+
+    torch.manual_seed(3)
+    logits = torch.randn(1, shard_width)
+    batch = {
+        "sf_multipv_raw": torch.from_numpy(raw.astype(np.int64)),
+        "has_sf_multipv_raw": torch.ones(1),
+        "sf_legal_mask": torch.from_numpy(legal),
+        "has_sf_legal_mask": torch.ones(1),
+        "sf_move_index": torch.tensor([int(legal_full[0])]),
+        "has_sf_move": torch.ones(1),
+    }
+    dense_ce = soft_cross_entropy(logits, torch.from_numpy(dense[None]))
+    sparse_ce, ok = sparse_sf_policy_ce(
+        logits, batch, params=params, legal_aligned=batch["sf_legal_mask"],
+    )
+    assert ok.tolist() == [1.0]
+    torch.testing.assert_close(sparse_ce, dense_ce, atol=1e-5, rtol=1e-5)
