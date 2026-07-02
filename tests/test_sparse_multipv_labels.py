@@ -90,7 +90,7 @@ def test_rebuild_matches_live_construction_synthetic(use_logistic):
     for move_idx, cp, mate, w, d in rows[rows[:, 0] >= 0].tolist():
         pv = StockfishPV(
             move_uci="0000",
-            wdl=None if w < 0 else np.array([w, d, 1000 - w - d], np.float32),
+            wdl=None if w < 0 else np.array([w, d, 1000 - w - d], np.float32) / 1000.0,
             cp=None if cp == SF_CP_SENTINEL else int(cp),
             mate=None if mate == 0 else int(mate),
         )
@@ -152,7 +152,7 @@ def test_rebuild_parity_compact_lc0_1858(use_logistic):
     for move_idx, cp, mate, w, d in rows_full[rows_full[:, 0] >= 0].tolist():
         pv = StockfishPV(
             move_uci="0000",
-            wdl=None if w < 0 else np.array([w, d, 1000 - w - d], np.float32),
+            wdl=None if w < 0 else np.array([w, d, 1000 - w - d], np.float32) / 1000.0,
             cp=None if cp == SF_CP_SENTINEL else int(cp),
             mate=None if mate == 0 else int(mate),
         )
@@ -197,7 +197,7 @@ def test_rebuild_sf_wdl_matches_live():
         params = SfTargetParams(sf_wdl_use_cp_logistic=use_logistic)
         res = StockfishResult(
             bestmove_uci="e2e4",
-            wdl=np.array([700, 200, 100], np.float32),
+            wdl=np.array([700, 200, 100], np.float32) / 1000.0,
             pvs=[], cp=35, mate=None,
         )
         live = _sf_result_wdl_for_record(
@@ -686,3 +686,79 @@ def test_sf_policy_label_smoothing_only_when_uncovered() -> None:
     )
     assert p_unc[2] > 0.0
     assert p_unc[0] > p_unc[2] and p_unc[1] > p_unc[2]
+
+
+def test_native_wdl_stored_as_permille_from_fraction_scale():
+    """_parse_wdl normalizes UCI permille to FRACTIONS; the collectors must
+    rescale to permille per the shard schema. Regression for the dormant bug
+    where int(round(0.87)) stored 0/1 junk in the native-WDL columns."""
+    from types import SimpleNamespace
+
+    from chess_anti_engine.selfplay.stockfish_turn import (
+        _collect_sf_label_meta,
+        _collect_sparse_pv_rows,
+    )
+
+    res = SimpleNamespace(
+        nodes=1000, depth=20, cp=150, mate=None,
+        wdl=np.array([0.87, 0.09, 0.04], np.float32),
+        pvs=[SimpleNamespace(
+            move_uci="e2e4", cp=150, mate=None,
+            wdl=np.array([0.87, 0.09, 0.04], np.float32),
+        )],
+    )
+    meta = _collect_sf_label_meta(res)
+    assert (meta[4], meta[5]) == (870, 90)
+
+    from chess_anti_engine.moves.encode import uci_to_policy_index
+    a = uci_to_policy_index("e2e4", True)
+    rows = _collect_sparse_pv_rows(res, turn=True, legal_set={a})
+    assert rows is not None
+    assert (rows[0][3], rows[0][4]) == (870, 90)
+
+
+def test_sparse_ce_native_wdl_fallback_matches_dense_at_fraction_scale():
+    """Codex P2 (PR #94): candidates with NO cp/mate fall back to native-WDL
+    scoring even with the logistic enabled; the sparse torch path must rescale
+    permille to fractions like target_builder._row_score, or the softmax
+    temperature sees 1000x-scale scores."""
+    from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY
+    from chess_anti_engine.train.losses import soft_cross_entropy
+    from chess_anti_engine.train.sparse_sf_ce import sparse_sf_policy_ce
+
+    shard_width = 4672
+    params = SfTargetParams(
+        sf_policy_temp=0.012, sf_policy_label_smooth=0.01,
+        sf_wdl_use_cp_logistic=True,
+        sf_wdl_cp_slope=0.010, sf_wdl_cp_draw_width=60.0,
+    )
+    legal_full = np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int64)[[100, 200, 300]]
+    raw = np.full((1, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    # native-only candidates: no cp, no mate, permille wdl present
+    raw[0, 0] = (legal_full[0], SF_CP_SENTINEL, 0, 870, 90)
+    raw[0, 1] = (legal_full[1], SF_CP_SENTINEL, 0, 400, 350)
+
+    legal = np.zeros((1, shard_width), np.float32)
+    legal[:, legal_full] = 1.0
+    dense = rebuild_sf_policy_target(
+        raw[0], legal_indices=legal_full, policy_size=shard_width, params=params,
+    )
+    assert dense is not None
+
+    torch.manual_seed(3)
+    logits = torch.randn(1, shard_width)
+    batch = {
+        "sf_multipv_raw": torch.from_numpy(raw.astype(np.int64)),
+        "has_sf_multipv_raw": torch.ones(1),
+        "sf_legal_mask": torch.from_numpy(legal),
+        "has_sf_legal_mask": torch.ones(1),
+        "sf_move_index": torch.tensor([int(legal_full[0])]),
+        "has_sf_move": torch.ones(1),
+    }
+    dense_ce = soft_cross_entropy(logits, torch.from_numpy(dense[None]))
+    sparse_ce, ok = sparse_sf_policy_ce(
+        logits, batch, params=params, legal_aligned=batch["sf_legal_mask"],
+    )
+    assert ok.tolist() == [1.0]
+    torch.testing.assert_close(sparse_ce, dense_ce, atol=1e-5, rtol=1e-5)

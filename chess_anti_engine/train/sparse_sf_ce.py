@@ -17,9 +17,10 @@ dense path uses:
 
     CE = -(1-s) * sum_k p_k * lsm[idx_k]  -  (s / L) * sum_legal lsm
 
-Row scoring mirrors ``target_builder._row_score`` exactly, including the
-native-permille no-rescale quirk (live candidate scores are raw permille
-when SF WDL is present; logistic scores are fractions).
+Row scoring mirrors ``target_builder._row_score`` exactly: logistic scores
+are fractions, and native SF WDL permille is rescaled to the same fraction
+scale (the live path scores fractions — _parse_wdl normalizes — and the
+softmax temperature is scale-sensitive).
 
 Empty-candidate fallback: when a row carries sparse labels but none of its
 candidates is scoreable, the live builder degraded to a one-hot at the
@@ -55,7 +56,7 @@ def _row_scores(
 
     Replicates ``target_builder._row_score``: logistic path takes precedence
     when enabled and cp/mate is present; otherwise native SF WDL permille
-    (deliberately NOT rescaled — matching the live path is the point).
+    rescaled to fractions, matching the live fraction score scale.
     """
     cp = raw[..., 1].to(torch.float32)
     mate = raw[..., 2]
@@ -64,7 +65,7 @@ def _row_scores(
     present = raw[..., 0] >= 0
 
     native_ok = (raw[..., 3] >= 0) & (raw[..., 4] >= 0)
-    native_score = w + 0.5 * d
+    native_score = (w + 0.5 * d) / 1000.0
 
     if not params.sf_wdl_use_cp_logistic:
         return native_score, present & native_ok
