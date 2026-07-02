@@ -94,11 +94,11 @@ def normalize_cuda_device(raw: str) -> torch.device:
         raise ValueError(str(exc)) from exc
     if device.type != "cuda":
         raise ValueError("bench_checkpoint_inference_ab.py requires a CUDA device")
-    if not torch.cuda.is_available():
-        raise ValueError("CUDA is not available")
     # torch stubs type device.index as int, but a bare "cuda" device carries
     # index None at runtime — the cast keeps this check honest under any stubs.
     if cast("int | None", device.index) is None:
+        if not torch.cuda.is_available():
+            raise ValueError("CUDA is not available")
         device = torch.device("cuda", torch.cuda.current_device())
     return device
 
