@@ -14,14 +14,17 @@ Usage:
 What it does:
   1. Creates pause.txt in the tune dir  → trials finish their current iteration
      then hold at the start of the next one (the existing _wait_if_paused hook).
-  2. Snapshots progress.csv row count at pause.  A trial is considered "paused"
-    when it appended >= 1 new row after pause and the row count then stayed
-    flat for one poll cycle. Row count is the right signal — Ray Tune touches
-    progress.csv via metadata sync independent of iter completion, so mtime
-    polling falsely reports "active" forever. Pass --grace-secs only after
-    manually verifying the pause was created exactly at an iteration boundary;
-    otherwise a long in-flight iteration can look indistinguishable from a
-    boundary pause.
+  2. Detects "paused" per trial. PRIMARY signal: the trial's _wait_if_paused
+    writes a `.paused_<trial_id>.ack` next to each pause marker (incl. the
+    persistent tune root) the instant it holds, and we poll for that — so a
+    trial that holds at the boundary BEFORE logging any new row is detected
+    immediately (the old row-count heuristic could not see this and would poll
+    until timeout). FALLBACK (pre-ack trials): row count appended >= 1 after
+    pause then flat for one cycle — Ray Tune touches progress.csv via metadata
+    sync, so mtime polling falsely reports "active" forever; row count is the
+    right heuristic. --grace-secs is a last-resort manual override (a long
+    in-flight iteration also has no post-pause row); the ack makes it unneeded
+    for trials on current code.
   3. Once enough active trials are paused, sends SIGTERM to the tuner, removes
      all pause markers, and runs the resume command. By default this keeps old
      automation semantics by requiring one active trial; pass --wait-all to
@@ -117,6 +120,55 @@ def _row_count(csv: Path) -> int:
             return max(0, sum(1 for _ in f) - 1)
     except OSError:
         return 0
+
+
+def _pause_ack_files(tune_dir: Path, csvs: list[Path], since_ts: float) -> list[Path]:
+    """Per-trial pause-ack files written by the trial's `_wait_if_paused`.
+
+    The trial drops ``.paused_<trial_id>.ack`` next to each pause marker it
+    holds on — including the persistent tune root (== this ``tune_dir``) — the
+    instant it reaches the boundary. This is the deterministic pause signal the
+    progress.csv row-growth heuristic misses when a trial holds *before*
+    appending a post-pause row (it would otherwise poll until timeout). Only
+    acks touched at/after the pause request count (``since_ts``), so a stale ack
+    from a crashed prior run is ignored.
+    """
+    dirs: set[Path] = {tune_dir} | {c.parent for c in csvs}
+    found: dict[str, Path] = {}
+    for d in dirs:
+        try:
+            acks = sorted(d.glob(".paused_*.ack"))
+        except OSError:
+            continue
+        for ack in acks:
+            try:
+                # +1s slack for coarse filesystem mtime granularity.
+                if ack.stat().st_mtime + 1.0 >= since_ts:
+                    found.setdefault(ack.name, ack)
+            except OSError:
+                continue
+    return list(found.values())
+
+
+def _ack_trial_id(ack: Path) -> str:
+    """Extract the trial id embedded in a ``.paused_<id>.ack`` filename."""
+    return ack.name[len(".paused_"):-len(".ack")]
+
+
+def _trial_is_acked(csv: Path, acks: list[Path]) -> bool:
+    """True if some ack belongs to this trial. The trial dir is
+    ``train_trial_<trial_id>_<num>_...``, so anchor the id at the start of the
+    post-prefix stem (followed by ``_`` or end) rather than a loose substring.
+    A loose ``in`` match would (a) let a degenerate ``trial_id="trial"`` fallback
+    match EVERY ``train_trial_*`` dir, and (b) let a sibling id that is a prefix
+    of another (non-zero-padded) collide. Anchoring removes both."""
+    name = csv.parent.name
+    stem = name[len("train_trial_"):] if name.startswith("train_trial_") else name
+    for a in acks:
+        tid = _ack_trial_id(a)
+        if stem == tid or stem.startswith(f"{tid}_"):
+            return True
+    return False
 
 
 def _find_tuner_pid() -> int | None:
@@ -257,13 +309,21 @@ def main() -> None:
             time.sleep(args.poll)
             continue
 
+        # Deterministic signal first: the trial writes a .paused_<id>.ack the
+        # moment it holds, so a boundary-hold is caught even with no post-pause
+        # progress row (the heuristic's blind spot). Row growth is the fallback
+        # for trials running pre-ack code.
+        acks = _pause_ack_files(tune_dir, csvs, pause_created_ts)
         idle_trials: list[tuple[Path, str]] = []
         observations: list[tuple[Path, int, int, str]] = []
         for csv in csvs:
             rc = _row_count(csv)
             snap = snapshot_rows.setdefault(csv, rc)  # late-arriving trial: anchor at first sight
             prev = prev_rows.get(csv, snap)
-            if rc > snap and rc == prev:
+            if _trial_is_acked(csv, acks):
+                state = "PAUSED (ack)"
+                idle_trials.append((csv, state))
+            elif rc > snap and rc == prev:
                 state = "PAUSED"
                 idle_trials.append((csv, state))
             elif (
@@ -333,16 +393,22 @@ def main() -> None:
                     while True:
                         time.sleep(args.poll)
                         csvs2 = _active_trials(tune_dir)
+                        acks2 = _pause_ack_files(tune_dir, csvs2, pause_created_ts)
                         still_idle = 0
                         for c in csvs2:
                             rc = _row_count(c)
                             snap = snapshot_rows.get(c, rc)
                             prev = prev_rows.get(c, snap)
-                            if rc == prev and (
-                                rc > snap
-                                or (
-                                    args.grace_secs >= 0
-                                    and time.time() - pause_created_ts >= args.grace_secs
+                            # Ack is authoritative (matches the main loop); row
+                            # growth + grace remain the fallback for pre-ack code.
+                            if _trial_is_acked(c, acks2) or (
+                                rc == prev
+                                and (
+                                    rc > snap
+                                    or (
+                                        args.grace_secs >= 0
+                                        and time.time() - pause_created_ts >= args.grace_secs
+                                    )
                                 )
                             ):
                                 still_idle += 1
