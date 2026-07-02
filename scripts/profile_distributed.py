@@ -242,7 +242,7 @@ def run_config(
     )
 
     # Launch
-    proc = subprocess.Popen(  # pylint: disable=consider-using-with  # long-lived benchmark subprocess, terminated later
+    proc = subprocess.Popen(  # long-lived benchmark subprocess, terminated later
         [sys.executable, "-m", "chess_anti_engine.run",
          "--config", str(cfg_path), "--mode", "tune"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

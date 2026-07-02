@@ -131,7 +131,7 @@ class StockfishUCI:
         termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
         self._tty_fd = master_fd
         self._read_buf = b""
-        self.proc = subprocess.Popen(  # pylint: disable=consider-using-with  # process outlives __init__ (closed in .close())
+        self.proc = subprocess.Popen(  # process outlives __init__ (closed in .close())
             [self.path],
             stdin=slave_fd,
             stdout=slave_fd,

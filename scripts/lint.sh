@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 # Run the project's static-analysis tools over given paths (or `--changed`).
 #
-# Default: ruff + basedpyright + pylint + vulture + skylos. The active gate is
-# clean (ruff 0, basedpyright 0 after the package baseline, pylint 10/10,
-# vulture 0, skylos A+ with 0 dead); keep it that way. Tests and scripts are
-# clean without baseline entries. Known false positives are suppressed inline
-# — see the directives listed in CLAUDE.md's "Static analysis" section. When a
-# FP appears on a new symbol, either fix the symbol or add the suppression in
-# the same commit.
+# Default GATE: ruff + basedpyright + vulture (wall time ~= basedpyright,
+# a few seconds). The gate is kept at ZERO findings (basedpyright: zero after
+# the package baseline). pylint was removed 2026-07-02 — its narrow checks
+# migrated to ruff rules (ARG/B006/G004/SIM115, see pyproject) and
+# basedpyright's flow checks (reportPossiblyUnboundVariable/reportUnreachable).
+# Known false positives are suppressed inline — see CLAUDE.md "Static
+# analysis". When a FP appears on a new symbol, fix or suppress in the same
+# commit.
 #
-# --fast skips vulture + skylos (they're the slower + noisier ones) for quick
-# per-edit checks where the dead-code sweep isn't needed.
+# --fast skips vulture (negligible now; kept for compat).
+#
+# --deep adds the OCCASIONAL-CLEANUP tier (advisory, slow — run before a
+# cleanup pass, not per edit):
+#   * skylos (dead code + circular imports; ~40s, grep-verified tables)
+#   * ruff cleanup report over the opt-in groups (B, SIM, PERF, NPY, UP,
+#     RUF, C4, PIE, PT, PLW) — a shopping list, not a gate. Promote a group
+#     into the pyproject gate once it reaches zero findings.
 #
 # --slop runs scb-check (verbosity/erosion/clone detection + ast-grep anti-pattern
 # rules). Opt-in because its output is noisy and many findings are style
@@ -18,12 +25,13 @@
 # scores are saved in scripts/scb-baseline.json.
 #
 # Usage:
-#   scripts/lint.sh                     # all tools on package + tests + scripts
-#   scripts/lint.sh path/a.py path/b.py # all tools on given files
-#   scripts/lint.sh --changed           # all tools on changed/untracked .py files
-#   scripts/lint.sh --fast [paths...]   # skip vulture + skylos
+#   scripts/lint.sh                     # gate on package + tests + scripts
+#   scripts/lint.sh path/a.py path/b.py # gate on given files
+#   scripts/lint.sh --changed           # gate on changed/untracked .py files
+#   scripts/lint.sh --fast [paths...]   # skip vulture
+#   scripts/lint.sh --deep [paths...]   # + skylos + ruff cleanup report (advisory)
 #   scripts/lint.sh --slop [paths...]   # also scb-check (verbosity/erosion)
-#   scripts/lint.sh --all               # alias for default (all tools, full paths)
+#   scripts/lint.sh --all               # alias for default
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -32,6 +40,7 @@ LINT_TMP="$(mktemp -d)"
 trap 'rm -rf "$LINT_TMP"' EXIT
 
 RUN_DEAD=1
+RUN_DEEP=0
 RUN_SLOP=0
 USE_CHANGED=0
 PATHS=()
@@ -40,12 +49,12 @@ USER_SET_PATHS=0
 for arg in "$@"; do
     case "$arg" in
         --fast) RUN_DEAD=0 ;;
-        --dead) RUN_DEAD=1 ;;  # noop: default behavior (kept for backwards compat)
+        --dead|--deep) RUN_DEEP=1 ;;
         --slop) RUN_SLOP=1 ;;
         --changed) USE_CHANGED=1 ;;
         --all) ;;  # noop: default behavior
         --help|-h)
-            sed -n '2,22p' "$0"
+            sed -n '2,38p' "$0"
             exit 0
             ;;
         *) PATHS+=("$arg"); USER_SET_PATHS=1 ;;
@@ -167,18 +176,26 @@ echo
 echo "::: running lint tools in parallel"
 start_job 0 "ruff check" env RUFF_CACHE_DIR="$LINT_TMP/ruff-cache" "$(tool ruff)" check "${PATHS[@]}"
 start_job 0 "basedpyright" run_basedpyright
-start_job 0 "pylint (narrow config: 7 semantic checks, see pyproject.toml)" env PYLINTHOME="$LINT_TMP/pylint" "$(tool pylint)" "${PATHS[@]}"
 
 if [[ $RUN_DEAD -eq 1 ]]; then
     # Vulture exits non-zero on findings; under set -e that fails the
     # run, which is what we want — unignored dead code should gate.
     start_job 0 "vulture (dead code, min confidence 80)" "$(tool vulture)" --min-confidence 80 "${PATHS[@]}"
+fi
 
+if [[ $RUN_DEEP -eq 1 ]]; then
     # Skylos exits 0 even with findings (its grep-verify rescues most
     # false positives). Its output tables remain the signal; treat as
     # advisory. Review the tables by eye, add `# skylos: ignore` for
     # FPs. Explicitly advisory — do not quietly gate on it.
     start_job 1 "skylos (advisory — dead code + circular imports)" "$(tool skylos)" "${PATHS[@]}"
+
+    # Occasional-cleanup shopping list: opt-in ruff groups, advisory.
+    # Promote a group into the pyproject gate once it hits zero findings.
+    start_job 1 "ruff cleanup report (advisory — B,SIM,PERF,NPY,UP,RUF,C4,PIE,PT,PLW)" \
+        env RUFF_CACHE_DIR="$LINT_TMP/ruff-cache" "$(tool ruff)" check \
+        --select B,SIM,PERF,NPY,UP,RUF,C4,PIE,PT,PLW --ignore E741,ARG005 \
+        --statistics "${PATHS[@]}"
 fi
 
 if [[ $RUN_SLOP -eq 1 ]]; then

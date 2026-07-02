@@ -535,7 +535,7 @@ def test_launch_inference_broker_does_not_inherit_worker_compile(monkeypatch, tm
         def poll(self) -> int | None:
             return None
 
-    def _fake_popen(cmd, **_kwargs):  # pylint: disable=unused-argument
+    def _fake_popen(cmd, **_kwargs):
         calls.append(list(cmd))
         return DummyProc()
 
@@ -570,7 +570,7 @@ def test_launch_inference_broker_respects_dedicated_compile_flag(monkeypatch, tm
         def poll(self) -> int | None:
             return None
 
-    def _fake_popen(cmd, **_kwargs):  # pylint: disable=unused-argument
+    def _fake_popen(cmd, **_kwargs):
         calls.append(list(cmd))
         return DummyProc()
 

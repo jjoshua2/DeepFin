@@ -308,7 +308,7 @@ def export_seed_pool(args: argparse.Namespace) -> None:
                 seeds_dir=seeds_dir, out_dir=out_dir,
                 copy_replay=copy_replay, replay_root_override=replay_root_override,
             ))
-        except Exception as exc:  # pylint: disable=broad-except  # per-slot isolation
+        except Exception as exc:  # per-slot isolation
             failed_slots.append((int(slot), f"{type(exc).__name__}: {exc}"))
             print(
                 f"[salvage] ERROR: slot {slot:03d} from {td.name} failed "

@@ -46,7 +46,7 @@ def test_download_opening_book_redownloads_when_same_sha_uses_new_filename(
 
     downloads: list[Path] = []
 
-    def _fake_download_and_verify_shared(url: str, *, out_path: Path, expected_sha256: str, headers: dict) -> None:  # pylint: disable=unused-argument  # mock matches real signature
+    def _fake_download_and_verify_shared(url: str, *, out_path: Path, expected_sha256: str, headers: dict) -> None:  # mock matches real signature
         del headers
         assert url == "http://server/v1/opening_book"
         assert expected_sha256 == sha
@@ -93,7 +93,7 @@ def test_download_opening_book_does_not_trust_manifest_path_components(
     sha = _sha256_bytes(book_bytes)
     downloads: list[Path] = []
 
-    def _fake_download_and_verify_shared(url: str, *, out_path: Path, expected_sha256: str, headers: dict) -> None:  # pylint: disable=unused-argument
+    def _fake_download_and_verify_shared(url: str, *, out_path: Path, expected_sha256: str, headers: dict) -> None:
         del url, expected_sha256, headers
         downloads.append(out_path)
         out_path.write_bytes(book_bytes)
