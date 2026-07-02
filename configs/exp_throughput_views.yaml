@@ -69,7 +69,7 @@
 #   150 games × ~20-30 pos = ~3k-5k new samples → up to 15 training steps (256 batch)
 
 seed: 0
-work_dir: runs/pbt2_small
+work_dir: runs/exp_throughput_views  # Isolated from production runs/pbt2_small: train.sh auto-resumes from $WORK_DIR/tune and run.py writes Tune/checkpoint/replay/server state under work_dir, so sharing the production tree would resume the live run with the experiment flags enabled. To warm-start from production, salvage-export a pool and pass --salvage-seed-pool-dir.
 device: cuda
 iterations: 750
 replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).
@@ -397,18 +397,18 @@ tune:
   distributed_prefetch_shards: true
   distributed_async_test_eval: true
   distributed_async_test_eval_timeout_s: 120.0
-  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
+  distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/exp_throughput_views/server/worker_cache  # Isolated from production (see work_dir).
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
   distributed_wait_timeout_seconds: 720  # 2026-05-19: 600->720 to give current-model selfplay more time after lowering stale backlog target.
   distributed_prev_model_max_fraction: 0.60  # 2026-05-19: raise 50%->60% to reduce alternating stale-discard timeout rows while keeping most data current-model.
   distributed_stale_pause_target_games: 1870  # 2026-05-28: scale with 3520 games/iter target.
   distributed_min_games_fraction: 0.90  # 2026-05-28: wait for 90% of target games before timing out.
-  distributed_server_port: 45453
+  distributed_server_port: 45463  # Distinct from production's 45453 so experiment workers can never hit (or be hit by) a live production server.
   distributed_server_host: 0.0.0.0
-  distributed_server_public_url: http://192.168.1.212:45453
-  distributed_server_root_override: /home/josh/projects/chess/runs/pbt2_small/server
-  tune_replay_root_override: /home/josh/projects/chess/runs/pbt2_small/replay
+  distributed_server_public_url: http://192.168.1.212:45463
+  distributed_server_root_override: /home/josh/projects/chess/runs/exp_throughput_views/server  # Isolated from production (see work_dir).
+  tune_replay_root_override: /home/josh/projects/chess/runs/exp_throughput_views/replay  # Isolated from production (see work_dir).
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
   shuffle_buffer_size: 25000  # In-memory shuffle buffer (run26 value)

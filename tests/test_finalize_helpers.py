@@ -20,6 +20,7 @@ import pytest
 
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.selfplay.finalize import (
+    _compute_diff_focus_game_stats,
     _compute_volatility_and_sf_delta,
     _build_replay_samples,
     _sf_terminal_result,
@@ -385,3 +386,28 @@ def test_build_replay_samples_fast_ply_rows_carry_no_aux_policy_targets() -> Non
     assert fast.has_sf_p0 is False
     assert fast.sf_p0_regret is None
     assert fast.has_sf_p0_regret is False
+
+
+def test_diff_focus_kept_excludes_fast_ply_value_rows() -> None:
+    """diff_focus_records only counts policy-bearing records, so the kept
+    count must exclude value-only fast rows too — otherwise games that keep
+    fast rows report keep rates > 1.0 in the replay-filter telemetry."""
+    records = [
+        _fastply_record(ply_index=0, has_policy=True),
+        _fastply_record(ply_index=1, has_policy=False),
+        _fastply_record(ply_index=2, has_policy=True),
+        _fastply_record(ply_index=3, has_policy=False),
+    ]
+    samples = _build_replay_samples(
+        _fastply_state(record_fast_ply_value=True), 0, records,
+        result="1-0", tb_policy_overrides={},
+        vol_targets=[None] * 4, sf_vol_targets=[None] * 4,
+        total_plies_played=4,
+        ply_to_index={0: 0, 1: 1, 2: 2, 3: 3},
+    )
+    assert len(samples) == 4  # 2 policy rows + 2 value-only fast rows
+
+    stats = _compute_diff_focus_game_stats(records, samples)
+    assert stats.records == 2  # policy-bearing records only
+    assert stats.kept == 2  # NOT len(samples) == 4: keep rate stays <= 1.0
+    assert stats.kept <= stats.records

@@ -291,7 +291,11 @@ def _compute_diff_focus_game_stats(
 
     return _DiffFocusGameStats(
         records=n,
-        kept=len(samples),
+        # Count only policy-bearing samples: with record_fast_ply_value the
+        # samples list also carries value-only fast rows (has_policy=0), which
+        # are not in the diff-focus-eligible denominator above — counting them
+        # would report keep rates > 1.0 and corrupt the replay-filter telemetry.
+        kept=sum(1 for s in samples if bool(s.has_policy)),
         keep_prob_sum=keep_sum,
         keep_limited=keep_limited,
         sample_weight_sum=weight_sum,
