@@ -812,3 +812,78 @@ def test_slot_broker_reloads_model_immediately_after_manifest_change(tmp_path: P
         assert broker._model_sha == second_sha
     finally:
         broker.shutdown()
+
+
+class _GatherFakeSlot:
+    """State-only stand-in for _InferenceSlot in gather-window tests."""
+
+    def __init__(self, state: int) -> None:
+        self.state = state
+
+
+def _bare_gather_broker(*, batch_wait_ms: float, adaptive_idle_ms: float, slots: list) -> SlotBroker:
+    broker = object.__new__(SlotBroker)
+    broker.batch_wait_ms = float(batch_wait_ms)
+    broker.adaptive_idle_ms = float(adaptive_idle_ms)
+    broker._slots = slots
+    return broker
+
+
+def test_gather_fixed_window_waits_full_deadline() -> None:
+    # One ready slot, one idle: fixed mode holds the batch open for the whole
+    # window even though nothing new arrives.
+    slots = [_GatherFakeSlot(_STATE_REQUEST), _GatherFakeSlot(0)]
+    broker = _bare_gather_broker(batch_wait_ms=30.0, adaptive_idle_ms=0.0, slots=slots)
+    ready = [slots[0]]
+    t0 = time.monotonic()
+    broker._gather_more_within_window(ready)
+    elapsed_ms = (time.monotonic() - t0) * 1000.0
+    assert elapsed_ms >= 25.0
+    assert ready == [slots[0]]
+
+
+def test_gather_adaptive_dispatches_on_idle() -> None:
+    # Adaptive mode: no arrivals, so the gather returns after ~idle_ms instead
+    # of holding for the full hard cap.
+    slots = [_GatherFakeSlot(_STATE_REQUEST), _GatherFakeSlot(0)]
+    broker = _bare_gather_broker(batch_wait_ms=200.0, adaptive_idle_ms=5.0, slots=slots)
+    ready = [slots[0]]
+    t0 = time.monotonic()
+    broker._gather_more_within_window(ready)
+    elapsed_ms = (time.monotonic() - t0) * 1000.0
+    assert elapsed_ms < 100.0
+    assert ready == [slots[0]]
+
+
+def test_gather_adaptive_arrival_restarts_idle_window() -> None:
+    # A slot arriving mid-gather is collected and restarts the idle countdown.
+    slots = [_GatherFakeSlot(_STATE_REQUEST), _GatherFakeSlot(0), _GatherFakeSlot(0)]
+    broker = _bare_gather_broker(batch_wait_ms=500.0, adaptive_idle_ms=25.0, slots=slots)
+    ready = [slots[0]]
+
+    def _arrive_later() -> None:
+        time.sleep(0.010)
+        slots[1].state = _STATE_REQUEST
+
+    thread = threading.Thread(target=_arrive_later)
+    thread.start()
+    t0 = time.monotonic()
+    broker._gather_more_within_window(ready)
+    elapsed_ms = (time.monotonic() - t0) * 1000.0
+    thread.join()
+    assert slots[1] in ready
+    # First idle window (25ms) alone would end before the arrival-restarted
+    # one (10ms arrival + 25ms fresh idle).
+    assert elapsed_ms >= 30.0
+    assert elapsed_ms < 400.0
+
+
+def test_gather_adaptive_returns_early_when_all_slots_ready() -> None:
+    # Full house: gather returns immediately without waiting out any window.
+    slots = [_GatherFakeSlot(_STATE_REQUEST), _GatherFakeSlot(_STATE_REQUEST)]
+    broker = _bare_gather_broker(batch_wait_ms=500.0, adaptive_idle_ms=50.0, slots=slots)
+    ready = list(slots)
+    t0 = time.monotonic()
+    broker._gather_more_within_window(ready)
+    elapsed_ms = (time.monotonic() - t0) * 1000.0
+    assert elapsed_ms < 50.0

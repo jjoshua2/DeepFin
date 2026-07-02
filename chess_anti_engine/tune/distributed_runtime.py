@@ -820,6 +820,7 @@ def _launch_inference_broker(
         "--input-planes", str(input_plane_count(config.get("input_extra_features"))),
         "--device", str(config.get("distributed_worker_device") or config.get("device", "cpu")),
         "--batch-wait-ms", str(float(config.get("distributed_inference_batch_wait_ms", 5.0))),
+        "--adaptive-idle-ms", str(float(config.get("distributed_inference_adaptive_idle_ms", 0.0))),
         "--compile-mode", _resolve_inference_compile_mode(config),
         "--shared-cache-dir", str(_resolve_shared_cache_root(config, server_root)),
         *(["--compile-inference"] if _resolve_compile_inference(config) else []),

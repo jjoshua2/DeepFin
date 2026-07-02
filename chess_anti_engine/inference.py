@@ -1226,6 +1226,7 @@ class SlotBroker:
         slot_prefix: str,
         compile_mode: str = "reduce-overhead",
         input_planes: int = _CHANNELS,
+        adaptive_idle_ms: float = 0.0,
     ) -> None:
         self.publish_dir = Path(publish_dir)
         self.device = str(device)
@@ -1233,6 +1234,7 @@ class SlotBroker:
         self.compile_mode = str(compile_mode or "reduce-overhead")
         self._first_inference_pending = False
         self.batch_wait_ms = float(batch_wait_ms)
+        self.adaptive_idle_ms = float(adaptive_idle_ms)
         self._model: torch.nn.Module | None = None
         self._model_sha: str | None = None
         self._stop = False
@@ -1589,10 +1591,19 @@ class SlotBroker:
 
         Mutates ``ready`` in place. Exits early if all slots have responded
         (request/response/shutdown — no more can arrive) or the window fills.
+
+        With ``adaptive_idle_ms`` > 0 the fixed window becomes arrival-adaptive:
+        each newly arrived REQUEST slot restarts an idle countdown, and the
+        gather dispatches once no new slot has arrived for ``adaptive_idle_ms``.
+        ``batch_wait_ms`` stays the hard cap on total wait, so a steady trickle
+        of arrivals cannot hold the batch open indefinitely.
         """
         if self.batch_wait_ms <= 0:
             return
-        deadline = time.monotonic() + (self.batch_wait_ms / 1000.0)
+        adaptive = self.adaptive_idle_ms > 0
+        now = time.monotonic()
+        deadline = now + (self.batch_wait_ms / 1000.0)
+        idle_deadline = now + (self.adaptive_idle_ms / 1000.0)
         while time.monotonic() < deadline:
             if all(
                 s.state in (_STATE_REQUEST, _STATE_RESPONSE, _STATE_SHUTDOWN)
@@ -1602,7 +1613,10 @@ class SlotBroker:
             more = [s for s in self._slots if s.state == _STATE_REQUEST and s not in ready]
             if more:
                 ready.extend(more)
+                idle_deadline = time.monotonic() + (self.adaptive_idle_ms / 1000.0)
             if len(ready) >= len(self._slots):
+                return
+            if adaptive and time.monotonic() >= idle_deadline:
                 return
             time.sleep(0.0001)
 
@@ -2443,6 +2457,10 @@ def main() -> int:
         ap.add_argument("--compile-inference", action="store_true")
         ap.add_argument("--compile-mode", type=str, default="reduce-overhead")
         ap.add_argument("--batch-wait-ms", type=float, default=5.0)
+        # > 0 switches _gather_more_within_window to arrival-adaptive mode:
+        # dispatch when no new REQUEST slot arrives for this long, with
+        # --batch-wait-ms as the hard cap on total wait.
+        ap.add_argument("--adaptive-idle-ms", type=float, default=0.0)
         ap.add_argument("--num-slots", type=int, default=2)
         ap.add_argument("--max-batch-per-slot", type=int, default=256)
         ap.add_argument("--slot-prefix", type=str, required=True)
@@ -2485,6 +2503,7 @@ def main() -> int:
         slot_prefix=str(args.slot_prefix),
         compile_mode=str(args.compile_mode),
         input_planes=int(args.input_planes),
+        adaptive_idle_ms=float(args.adaptive_idle_ms),
     )
 
     manifest_path = Path(args.publish_dir).expanduser() / "broker_slots.json"
