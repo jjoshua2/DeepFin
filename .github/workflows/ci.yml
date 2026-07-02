@@ -52,11 +52,12 @@ jobs:
       # ruff is per-file and deterministic, so it gates the whole repo.
       - name: ruff (whole repo)
         run: ruff check chess_anti_engine scripts tests
-      # basedpyright (baseline-aware) and pylint resolve cross-file usage, so we
-      # run them on the PR's changed files — matching the repo's per-file lint
-      # gate. (vulture/skylos are subset-sensitive and their exit codes fold in
+      # basedpyright (baseline-aware) resolves cross-file usage, so we run it
+      # on the PR's changed files — matching the repo's per-file lint gate.
+      # (vulture/skylos are subset-sensitive and their exit codes fold in
       # advisory circular-dependency notes, so they stay the local
-      # scripts/lint.sh gate rather than a CI blocker.)
+      # scripts/lint.sh gate rather than a CI blocker. pylint was removed
+      # 2026-07-02 — its checks migrated to ruff + basedpyright.)
       - name: Type + semantic checks (changed files)
         run: |
           set -euo pipefail
@@ -73,5 +74,3 @@ jobs:
           echo "Changed files:"; echo "$changed"
           # shellcheck disable=SC2086
           basedpyright $changed
-          # shellcheck disable=SC2086
-          pylint $changed

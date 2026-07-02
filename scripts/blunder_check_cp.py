@@ -51,7 +51,7 @@ def walk_positions(n: int, rng: random.Random) -> list[str]:
 
 class SFRaw:
     def __init__(self) -> None:
-        self.p = subprocess.Popen(  # pylint: disable=consider-using-with  # long-lived SF subprocess, explicit close() method
+        self.p = subprocess.Popen(  # long-lived SF subprocess, explicit close() method
             [SF_PATH], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, bufsize=1,
         )

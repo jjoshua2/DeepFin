@@ -57,7 +57,6 @@ dev = [
   "basedpyright>=1.39.9",
   "skylos>=4.27",
   "vulture>=2.16",
-  "pylint>=4.0.6",
   # C extension static analysis (pip-installable, no sudo required)
   "cppcheck>=1.5",     # general C static analyzer (bundles cppcheck binary)
   # For deeper interprocedural analysis, install Facebook infer separately:
@@ -118,10 +117,27 @@ show_missing = true
 skip_covered = false
 
 [tool.ruff.lint]
+# Gate = ruff defaults (pyflakes + core pycodestyle) plus the zero-cost
+# semantic rules that replaced the old narrow pylint config (2026-07-02; each
+# group had 0 findings at adoption or was fixed in the same commit):
+#   ARG    unused arguments        (was pylint unused-argument)
+#   B006   mutable default arg     (was pylint dangerous-default-value)
+#   G004   f-string in logging     (was pylint logging-fstring-interpolation)
+#   SIM115 open() without with     (was pylint consider-using-with)
+#   ISC    implicit str-concat bugs
+#   PLE    pylint error-class rules (ruff's port)
+# pylint's two flow checks live in basedpyright's active gate:
+# reportPossiblyUnboundVariable and reportUnreachable. F541 (default set)
+# covers f-string-without-interpolation. The occasional-cleanup groups
+# (B, SIM, PERF, NPY, UP, RUF, C4, PIE, PT, PLW) run ADVISORY via
+# `scripts/lint.sh --deep` — promote a group here only at zero findings.
+select = ["E4", "E7", "E9", "F", "ARG", "B006", "G004", "SIM115", "ISC", "PLE"]
 # E741: allow single-letter `l` — we use `w/d/l` for win/draw/loss counters
 #       throughout the stats code, and renaming to `losses` would collide with
 #       loss-function variables.
-ignore = ["E741"]
+# ARG005: lambdas take interface-shaped args they often ignore; the old pylint
+#       gate never checked lambdas either (parity).
+ignore = ["E741", "ARG005"]
 
 [tool.vulture]
 # Names that vulture can't see being used. Keep this list small and
@@ -135,18 +151,3 @@ ignore_names = [
   "pairwise_momentum",
 ]
 
-[tool.pylint.main]
-# Narrow pylint scope: disable everything, enable only the semantic checks
-# that ruff and skylos don't cover well. Style/convention noise is left to
-# ruff. Stub files (.pyi) are signatures-only — args are always "unused".
-ignore-patterns = ["^.*\\.pyi$"]
-disable = ["all"]
-enable = [
-  "unused-argument",
-  "possibly-used-before-assignment",
-  "consider-using-with",
-  "logging-fstring-interpolation",
-  "dangerous-default-value",
-  "unreachable",
-  "f-string-without-interpolation",
-]

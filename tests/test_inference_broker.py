@@ -171,7 +171,7 @@ def test_slot_broker_uses_model_legal_policy_forward(tmp_path: Path) -> None:
             super().__init__()
             self.called_legal = False
 
-        def forward(self, x: torch.Tensor):
+        def forward(self, _x: torch.Tensor):
             raise AssertionError("dense policy forward should not be used")
 
         def forward_legal_policy(
@@ -231,7 +231,7 @@ def test_slot_broker_uses_padded_legal_rows_forward(tmp_path: Path) -> None:
             super().__init__()
             self.seen_legal_shape: tuple[int, int] | None = None
 
-        def forward(self, x: torch.Tensor):
+        def forward(self, _x: torch.Tensor):
             raise AssertionError("dense policy forward should not be used")
 
         def forward_legal_policy_rows(
@@ -325,7 +325,7 @@ def test_slot_inference_broker_roundtrip(tmp_path: Path) -> None:
     slot_prefix = "cae-test-slot"
     max_batch = 64
 
-    proc = subprocess.Popen(  # pylint: disable=consider-using-with  # long-lived broker subprocess, explicit terminate in finally
+    proc = subprocess.Popen(  # long-lived broker subprocess, explicit terminate in finally
         [
             sys.executable,
             "-m",

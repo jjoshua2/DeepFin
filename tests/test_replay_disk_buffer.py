@@ -454,7 +454,7 @@ def test_close_discards_late_prefetch_results(tmp_path) -> None:
     started = threading.Event()
     release = threading.Event()
 
-    def _slow_load_refresh_chunks(*, shard_paths, refresh_shards, rng):  # pylint: disable=unused-argument  # mock matches real signature
+    def _slow_load_refresh_chunks(*, shard_paths, refresh_shards, rng):  # mock matches real signature
         del shard_paths, refresh_shards, rng
         started.set()
         release.wait(timeout=2.0)
