@@ -455,9 +455,11 @@ def test_multi_slot_inference_client_fans_out_requests() -> None:
     for idx, slot_client in enumerate(client._clients):  # type: ignore[attr-defined]
         def _fake_eval(
             x: np.ndarray,
+            relations: np.ndarray | None = None,
             *,
             _idx: int = idx,
         ) -> tuple[np.ndarray, np.ndarray]:
+            del relations  # interface conformance for SlotInferenceClient.evaluate_encoded
             calls.append(_idx)
             return (
                 np.zeros((x.shape[0], 4672), dtype=np.float32),
@@ -493,7 +495,10 @@ def test_multi_slot_inference_client_uses_first_free_slot() -> None:
         with calls_lock:
             calls.append(idx)
 
-    def _slow_eval(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _slow_eval(
+        x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for SlotInferenceClient.evaluate_encoded
         _record(0)
         slow_started.set()
         assert release_slow.wait(timeout=1.0)
@@ -502,7 +507,10 @@ def test_multi_slot_inference_client_uses_first_free_slot() -> None:
             np.zeros((x.shape[0], 3), dtype=np.float32),
         )
 
-    def _fast_eval(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _fast_eval(
+        x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for SlotInferenceClient.evaluate_encoded
         _record(1)
         return (
             np.zeros((x.shape[0], 4672), dtype=np.float32),
