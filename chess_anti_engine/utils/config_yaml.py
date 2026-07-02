@@ -124,7 +124,7 @@ _SELFPLAY_KEYS = (
     "selfplay_temperature_decay_moves", "selfplay_temperature_endgame",
     "max_plies",
     "mcts", "mcts_simulations", "mcts_start_simulations", "mcts_ramp_steps", "mcts_ramp_exponent",
-    "playout_cap_fraction", "fast_simulations",
+    "playout_cap_fraction", "full_ply_pair_fraction", "fast_simulations",
     "fpu_reduction", "fpu_at_root", "gumbel_topk", "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
     "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
     "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",

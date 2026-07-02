@@ -36,6 +36,16 @@ class SearchConfig:
     simulations: int = 50
     mcts_type: str = "puct"
     playout_cap_fraction: float = 0.25
+    # Research bet (default 0.0 = off, byte-identical iid schedule): fraction
+    # of base full plies that FORCE the slot's next net turn full too. The
+    # base rate is rescaled to playout_cap_fraction/(1+pair) so the TOTAL
+    # full-ply fraction — and therefore search cost and SF label volume — is
+    # unchanged; fulls just arrive in consecutive pairs. Why: the sf_p0
+    # policy-teacher (one-ply label shift, selfplay rows) only exists where
+    # ply t-1 is ALSO a full labeled ply — iid scheduling makes that
+    # playout_cap_fraction (~25%) of full rows; pairing doubles teacher
+    # coverage for free. 1.0 = every base full is paired (~2x coverage).
+    full_ply_pair_fraction: float = 0.0
     fast_simulations: int = 8
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0

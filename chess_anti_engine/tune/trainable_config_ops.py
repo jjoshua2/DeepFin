@@ -199,6 +199,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
         search=SearchConfig(
             mcts_type=tc.mcts,
             playout_cap_fraction=tc.playout_cap_fraction,
+            full_ply_pair_fraction=tc.full_ply_pair_fraction,
             fast_simulations=tc.fast_simulations,
             fpu_reduction=tc.fpu_reduction,
             fpu_at_root=tc.fpu_at_root,

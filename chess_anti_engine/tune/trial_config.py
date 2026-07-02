@@ -132,6 +132,7 @@ class TrialConfig:
     mcts_ramp_exponent: float = 2.0
     progressive_mcts: bool = True
     playout_cap_fraction: float = 0.25
+    full_ply_pair_fraction: float = 0.0
     fast_simulations: int = 8
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0
@@ -431,6 +432,7 @@ class TrialConfig:
             mcts_ramp_exponent=float(config.get("mcts_ramp_exponent", 2.0)),
             progressive_mcts=bool(config.get("progressive_mcts", True)),
             playout_cap_fraction=float(config.get("playout_cap_fraction", 0.25)),
+            full_ply_pair_fraction=float(config.get("full_ply_pair_fraction", 0.0)),
             fast_simulations=int(config.get("fast_simulations", 8)),
             fpu_reduction=float(config.get("fpu_reduction", 1.2)),
             fpu_at_root=float(config.get("fpu_at_root", 1.0)),

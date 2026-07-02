@@ -584,6 +584,9 @@ class SelfplayState:
     opening_source_arr: list[str]
     consecutive_low_winrate: list[int]
     last_net_full: list[bool]
+    # Pair-scheduling carry: force this slot's next net turn full (see
+    # SearchConfig.full_ply_pair_fraction). Consumed by network_turn.
+    force_full_next: list[bool]
     root_ids: list[int]
     pending_sf_labels: list[Any]
     pending_sf_moves: dict[int, Any]
@@ -701,6 +704,7 @@ class SelfplayState:
             opening_source_arr=opening_source_arr,
             consecutive_low_winrate=[0] * batch_size,
             last_net_full=[True] * batch_size,
+            force_full_next=[False] * batch_size,
             root_ids=[-1] * batch_size,
             pending_sf_labels=[],
             pending_sf_moves={},
@@ -873,6 +877,7 @@ class SelfplayState:
         self.samples_per_game[i] = []
         self.consecutive_low_winrate[i] = 0
         self.last_net_full[i] = True
+        self.force_full_next[i] = False
         self.root_ids[i] = -1  # Reset tree reuse for new game.
         self.pending_sf_moves.pop(i, None)
         self.games_started += 1
