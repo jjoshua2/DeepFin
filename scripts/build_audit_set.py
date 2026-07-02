@@ -128,7 +128,9 @@ def _sample_manifest(
     manifest: list[dict] = []
     leftovers: list[dict] = []
     for (ph, src), pool in sorted(strata.items()):
-        rng.shuffle(pool)  # pyright: ignore[reportArgumentType] — typeshed says ArrayLike; runtime accepts MutableSequence
+        # Index permutation instead of rng.shuffle(list): typeshed's ArrayLike
+        # bound for shuffle flip-flops across numpy versions.
+        pool = [pool[int(i)] for i in rng.permutation(len(pool))]
         manifest.extend(pool[:per_stratum])
         leftovers.extend(pool[per_stratum:])
         got = min(len(pool), per_stratum)
@@ -138,7 +140,7 @@ def _sample_manifest(
     # requested size even when e.g. endgame/curriculum is rare.
     shortfall = positions - len(manifest)
     if shortfall > 0 and leftovers:
-        rng.shuffle(leftovers)  # pyright: ignore[reportArgumentType] — typeshed says ArrayLike; runtime accepts MutableSequence
+        leftovers = [leftovers[int(i)] for i in rng.permutation(len(leftovers))]
         manifest.extend(leftovers[:shortfall])
         print(f"[sample] backfilled {min(shortfall, len(leftovers))} from leftovers")
     return manifest

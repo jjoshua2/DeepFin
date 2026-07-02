@@ -50,8 +50,10 @@ def balance_wdl(
             idxs = rng.choice(len(bucket), size=cap, replace=False)
             out.extend([bucket[int(i)] for i in idxs])
 
-    rng.shuffle(out)  # pyright: ignore[reportArgumentType] # numpy expects ArrayLike; list[dataclass] works at runtime
-    return out
+    # Index permutation instead of rng.shuffle(list): typeshed's ArrayLike
+    # bound for shuffle flip-flops across numpy versions.
+    order = rng.permutation(len(out))
+    return [out[int(i)] for i in order]
 
 
 class ArrayReplayBuffer:
