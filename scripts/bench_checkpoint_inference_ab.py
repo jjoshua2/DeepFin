@@ -2,18 +2,18 @@
 """Compare forward latency for two model checkpoints.
 
 This is a small A/B wrapper around worker-shaped inference: fixed random
-146-plane boards, optional torch.compile, CUDA event timing, and side-by-side
+boards (plane count read from the checkpoint's model config), optional
+torch.compile, CUDA event timing, and side-by-side
 relative speedups. It is useful for checking whether a pruned checkpoint
 actually buys enough inference speed to matter.
 """
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import sys
 import time
-from collections.abc import Generator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -94,28 +94,17 @@ def normalize_cuda_device(raw: str) -> torch.device:
         raise ValueError(str(exc)) from exc
     if device.type != "cuda":
         raise ValueError("bench_checkpoint_inference_ab.py requires a CUDA device")
+    if not torch.cuda.is_available():
+        raise ValueError("CUDA is not available")
+    # torch stubs type device.index as int, but a bare "cuda" device carries
+    # index None at runtime — the cast keeps this check honest under any stubs.
+    if cast("int | None", device.index) is None:
+        device = torch.device("cuda", torch.cuda.current_device())
     return device
 
 
-def _device_index(device: torch.device) -> int | None:
-    # torch stubs type .index as int, but a bare "cuda" device has index None.
-    return cast("int | None", device.index)
-
-
-@contextlib.contextmanager
-def cuda_device_context(device: torch.device) -> Generator[None, None, None]:
-    if _device_index(device) is None:
-        yield
-        return
-    with torch.cuda.device(device):
-        yield
-
-
 def cuda_synchronize(device: torch.device) -> None:
-    if _device_index(device) is None:
-        torch.cuda.synchronize()
-    else:
-        torch.cuda.synchronize(device)
+    torch.cuda.synchronize(device)
 
 
 def _profile_batch(
@@ -126,10 +115,11 @@ def _profile_batch(
     iters: int,
     device: torch.device,
     amp_dtype: str,
+    planes: int,
 ) -> BatchTiming:
     rng = np.random.default_rng(12345 + int(batch))
-    x_cpu = rng.standard_normal((int(batch), 146, 8, 8), dtype=np.float32)
-    with cuda_device_context(device):
+    x_cpu = rng.standard_normal((int(batch), int(planes), 8, 8), dtype=np.float32)
+    with torch.cuda.device(device):
         x = torch.from_numpy(x_cpu).to(device, non_blocking=True)
 
         with torch.inference_mode(), inference_autocast(
@@ -187,9 +177,11 @@ def profile_checkpoint(
     amp_dtype: str,
 ) -> CheckpointTiming:
     print(f"[load] {label}: {checkpoint}")
-    with cuda_device_context(device):
+    with torch.cuda.device(device):
         model = load_model_from_checkpoint(checkpoint, device=str(device)).eval()
         params = sum(param.numel() for param in model.parameters())
+        cfg = getattr(model, "cfg", None)
+        planes = int(cfg.in_planes) if cfg is not None else 146
 
         if compile_mode != "off":
             print(f"[compile] {label}: mode={compile_mode}")
@@ -205,6 +197,7 @@ def profile_checkpoint(
                 iters=iters,
                 device=device,
                 amp_dtype=amp_dtype,
+                planes=planes,
             )
             timings.append(timing)
             print(
