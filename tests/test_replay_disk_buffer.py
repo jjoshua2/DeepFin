@@ -562,3 +562,29 @@ def test_shape_shuffle_priority_skips_chunks_missing_fields(tmp_path) -> None:
     buf.add_many_arrays(_arrays(4672, n=3))       # no gap / search_wdl columns
     pri = buf._active_shuffle_priority()
     np.testing.assert_allclose(pri, 1.0)
+
+
+def test_constructor_shaping_applies_to_resume_seeded_shuffle(tmp_path) -> None:
+    """Codex P2 on PR #104: a resumed buffer seeds its hot pool from existing
+    shards inside __init__, before any live-knob push — the constructor args
+    must already shape those seeded priorities."""
+    d = tmp_path / "replay"
+    buf1 = DiskReplayBuffer(
+        100, shard_dir=d, rng=np.random.default_rng(0),
+        shuffle_cap=100, shard_size=100,
+    )
+    buf1.add_many_arrays(_shaping_arrays(n_full=3, n_fast=4))
+    buf1.flush()
+    buf1.close()
+
+    buf2 = DiskReplayBuffer(
+        100, shard_dir=d, rng=np.random.default_rng(1),
+        shuffle_cap=100, shard_size=100,
+        sf_gap_priority_weight=10.0,
+        fast_low_surprise_priority=0.2,
+    )
+    pri = np.sort(buf2._active_shuffle_priority())
+    # full rows 5.0 + 10*gap(0/0.5/1.0) -> 5/10/15; fast rows agree/flip
+    # alternating -> 0.2/1.0/0.2/1.0.
+    np.testing.assert_allclose(pri, [0.2, 0.2, 1.0, 1.0, 5.0, 10.0, 15.0])
+    buf2.close()

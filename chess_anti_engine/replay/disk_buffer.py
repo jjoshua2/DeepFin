@@ -169,6 +169,8 @@ class DiskReplayBuffer:
         wl_max_ratio: float = 1.5,
         input_planes: int | None = None,
         upgrade_v1_planes: bool = False,
+        sf_gap_priority_weight: float = 0.0,
+        fast_low_surprise_priority: float = 1.0,
     ):
         self.capacity = int(capacity)
         self.rng = rng
@@ -226,9 +228,11 @@ class DiskReplayBuffer:
         self.surprise_mix = 0.5
   # Surprise-priority shaping applied when rows enter the shuffle buffer
   # (sampling frequency only — the stored shard arrays are untouched).
-  # Defaults are no-ops; the tune trainable pushes live values each iteration.
-        self.sf_gap_priority_weight = 0.0
-        self.fast_low_surprise_priority = 1.0
+  # Defaults are no-ops. Must be set BEFORE the resume shard scan below so
+  # the seeded hot pool honors configured shaping (Codex P2 on PR #104);
+  # the tune trainable additionally pushes live values each iteration.
+        self.sf_gap_priority_weight = float(sf_gap_priority_weight)
+        self.fast_low_surprise_priority = float(fast_low_surprise_priority)
         self.draw_cap_frac = float(draw_cap_frac)
         self.wl_max_ratio = float(wl_max_ratio)
 

@@ -547,6 +547,8 @@ def _init_replay_buffers(
         refresh_shards=tc.shuffle_refresh_shards,
         draw_cap_frac=tc.shuffle_draw_cap_frac,
         wl_max_ratio=tc.shuffle_wl_max_ratio,
+        sf_gap_priority_weight=tc.replay_sf_gap_priority_weight,
+        fast_low_surprise_priority=tc.replay_fast_low_surprise_priority,
     )
 
   # Preserve intentionally seeded replay (resume, salvage warmstart, shared-shard
