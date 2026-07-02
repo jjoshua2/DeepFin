@@ -70,6 +70,31 @@ Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-r
 - `configs/pbt2_small.yaml` — **Production config.** 384-dim, 12-layer model (~46M params — per-layer Smolgen + 4 policy heads dominate the count). Distributed selfplay with shared inference broker, PID difficulty controller, PBT/GPBT hyperparameter search. All active training uses this.
 - `configs/default.yaml` — Reference config with BT3-scale model (768-dim, 15-layer, ~105M params). For future larger-model training.
 
+## Experiment protocol — MANDATORY steps
+
+**`docs/experiment_ledger.md` is the canonical experiment record** (verdicts:
+WORKED / FAILED / LIVE-UNREAD, yardstick anchors, revert points). Read it before
+proposing, launching, judging, or reverting ANY experiment. These steps are not
+optional and apply to every assistant/model working in this repo:
+
+1. **Before a training-affecting change goes live** (config key, loss weight,
+   data-pipeline or selfplay change, PR merge that alters training): add a
+   ledger entry with the hypothesis, ONE deciding yardstick (exact command),
+   and a pre-committed kill/success threshold. No entry → don't launch.
+2. **Before big changes**: snapshot weights + optimizer + PID + replay window:
+   `./scripts/train.sh salvage-export --top-n 1 --out data/salvage/<label>`
+   (safe while training runs, ~2.3G) and record it in the ledger's Revert
+   points table. A yaml revert alone is NOT a rollback — the replay window
+   keeps ~a day of data made under the old settings.
+3. **After a readout**: record the verdict in the ledger the same session,
+   judged by the pre-committed rule (not post-hoc reading). "Deferred" is not
+   a verdict.
+4. **One data-affecting change per readout window.** Unavoidable overlaps go
+   in each entry's Confounds line.
+5. **Before running any yardstick**: read the ledger's "Protocol gotchas"
+   (e.g. `audit_targets` needs `--max-positions 2000`; live dashboard signals
+   are flat by design; the PID winrate sample is congestion-biased).
+
 ## Evaluation & experiments
 
 `docs/eval_protocol.md` is the decision protocol. The audit-first rule: every
