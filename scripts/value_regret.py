@@ -39,8 +39,13 @@ def _softmax_rows(a: np.ndarray) -> np.ndarray:
 
 def value_1ply_regret(
     *, checkpoint: str, positions, device: str, batch_size: int, pos_chunk: int,
-) -> tuple[float, dict[int, float]]:
-    """Return (overall mean value-1ply regret cp, {phase: mean cp})."""
+) -> tuple[float, dict[int, float], np.ndarray]:
+    """Return (overall mean regret cp, {phase: mean cp}, per-position regrets).
+
+    The third element is the per-position top-1 regret array (NaN for
+    terminal roots), aligned with ``positions`` — dump it for paired
+    checkpoint comparisons (scripts/paired_compare.py).
+    """
     model = load_model_from_checkpoint(checkpoint, device=device)
     model.eval()
     hist = str(getattr(model, "input_history_encoding", "legacy"))
@@ -101,7 +106,7 @@ def value_1ply_regret(
         ph: float(np.nanmean(top1[phases == ph]))
         for ph in range(3) if (phases == ph).any()
     }
-    return overall, per_phase
+    return overall, per_phase, top1
 
 
 def main() -> None:
@@ -119,6 +124,9 @@ def main() -> None:
                     help="positions buffered per forward pass group (bounds RAM)")
     ap.add_argument("--gpu-mem-fraction", type=float, default=None,
                     help="cap this process's CUDA memory fraction (coexist with training)")
+    ap.add_argument("--dump-per-position", default=None, metavar="PATH",
+                    help="write per-position JSONL (fen, phase, top1 regret cp) for "
+                         "paired checkpoint comparison via scripts/paired_compare.py")
     args = ap.parse_args()
 
     if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
@@ -134,10 +142,20 @@ def main() -> None:
     if args.max_positions > 0:
         positions = positions[: args.max_positions]
     print(f"[value-regret] {len(positions)} positions from {args.audit_set}")
-    overall, per_phase = value_1ply_regret(
+    overall, per_phase, per_position = value_1ply_regret(
         checkpoint=args.checkpoint, positions=positions, device=args.device,
         batch_size=args.batch_size, pos_chunk=args.pos_chunk,
     )
+    if args.dump_per_position:
+        import json
+        with open(args.dump_per_position, "w", encoding="utf-8") as f:
+            for pos, r in zip(positions, per_position, strict=True):
+                f.write(json.dumps({
+                    "fen": pos.fen, "phase": int(pos.phase),
+                    "value": None if np.isnan(r) else float(r),
+                }) + "\n")
+        print(f"[value-regret] per-position dump -> {args.dump_per_position}")
+
     print(f"\n=== value-head 1-ply deep-SF regret @ {args.checkpoint} ===")
     print(f"  OVERALL {overall:.1f} cp (n={len(positions)})")
     for ph in sorted(per_phase):
