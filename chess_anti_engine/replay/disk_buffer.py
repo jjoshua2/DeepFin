@@ -246,6 +246,10 @@ class DiskReplayBuffer:
 
   # Scan existing shards on disk (for resume).
         self._scan_existing_shards()
+  # The seed scan appends to the shuffle pool through the same path as live
+  # ingest; drop that mass so the first pop reports only the first
+  # iteration's appends (Codex P2 on PR #106).
+        self._pmass = self._pmass_zero()
         self._ensure_prefetch_thread()
         self._schedule_refresh_prefetch()
 
@@ -482,12 +486,15 @@ class DiskReplayBuffer:
         pm["rows_fast"] += float((~hp).sum())
         pm["eff_full"] += float(pri[hp].sum())
         pm["eff_fast"] += float(pri[~hp].sum())
+  # Fast rows can carry kl/qd fields, but finalize neutralizes their stored
+  # sampling priority — mask by has_policy so term mass matches what the
+  # effective priorities actually contain.
         if self.diff_focus_pol_scale > 0 and "priority_policy_kl" in arrs and "has_priority_policy_kl" in arrs:
-            has = np.asarray(arrs["has_priority_policy_kl"], dtype=bool)
+            has = np.asarray(arrs["has_priority_policy_kl"], dtype=bool) & hp
             kl = np.nan_to_num(np.asarray(arrs["priority_policy_kl"], dtype=np.float64), nan=0.0)
             pm["kl_term"] += float(np.maximum(kl[has], 0.0).sum()) * self.diff_focus_pol_scale
         if self.diff_focus_q_weight > 0 and "priority_q_delta" in arrs and "has_priority_q_delta" in arrs:
-            has = np.asarray(arrs["has_priority_q_delta"], dtype=bool)
+            has = np.asarray(arrs["has_priority_q_delta"], dtype=bool) & hp
             qd = np.nan_to_num(np.asarray(arrs["priority_q_delta"], dtype=np.float64), nan=0.0)
             pm["qd_term"] += float(np.abs(qd[has]).sum()) * self.diff_focus_q_weight
         if (

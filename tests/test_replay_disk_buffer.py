@@ -635,3 +635,35 @@ def test_priority_mass_stats_tolerate_missing_fields(tmp_path) -> None:
     assert st["replay_pmass_rows_full"] == 3
     assert st["replay_pmass_kl_share"] == 0.0
     assert st["replay_pmass_gap_share"] == 0.0
+
+
+def test_priority_mass_excludes_fast_row_kl_and_seed_scan(tmp_path) -> None:
+    d = tmp_path / "replay"
+    buf = DiskReplayBuffer(
+        100, shard_dir=d, rng=np.random.default_rng(0),
+        shuffle_cap=100, shard_size=7,
+        diff_focus_pol_scale=2.0, diff_focus_q_weight=4.0,
+    )
+    arrs = _shaping_arrays(n_full=3, n_fast=4)
+    # kl present on ALL rows (finalize stores it on fast rows too) — only the
+    # 3 full rows may contribute term mass.
+    arrs["priority_policy_kl"] = np.ones((7,), dtype=np.float16)
+    arrs["has_priority_policy_kl"] = np.ones((7,), dtype=np.uint8)
+    buf.add_many_arrays(arrs)
+    st = buf.pop_priority_mass_stats()
+    total = 3 * 5.0 + 4 * 1.0
+    np.testing.assert_allclose(st["replay_pmass_kl_share"], 3 * 2.0 / total, rtol=1e-3)
+    buf.flush()
+    buf.close()
+
+    # Resume over the same shards: the constructor seed scan must NOT leak
+    # into the first pop.
+    buf2 = DiskReplayBuffer(
+        100, shard_dir=d, rng=np.random.default_rng(1),
+        shuffle_cap=100, shard_size=7,
+        diff_focus_pol_scale=2.0, diff_focus_q_weight=4.0,
+    )
+    st2 = buf2.pop_priority_mass_stats()
+    assert st2["replay_pmass_rows_full"] == 0
+    assert st2["replay_pmass_kl_share"] == 0.0
+    buf2.close()

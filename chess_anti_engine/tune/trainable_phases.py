@@ -869,7 +869,7 @@ def _run_selfplay_phase(
 
 def _finalize_iteration(
     *,
-    replay_priority_stats: dict,
+    replay_priority_stats: dict | None = None,
     tc: TrialConfig,
     trainer,
     pid,
@@ -990,7 +990,7 @@ def _finalize_iteration(
         holdout_generation=holdout_generation,
     )
 
-    report_dict.update(replay_priority_stats)
+    report_dict.update(replay_priority_stats or {})
     tune_report_fn(report_dict, checkpoint=checkpoint)
 
   # Write compact status row (best-effort — never crash the trial).
