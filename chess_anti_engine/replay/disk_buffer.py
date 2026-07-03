@@ -171,6 +171,8 @@ class DiskReplayBuffer:
         upgrade_v1_planes: bool = False,
         sf_gap_priority_weight: float = 0.0,
         fast_low_surprise_priority: float = 1.0,
+        diff_focus_pol_scale: float = 0.0,
+        diff_focus_q_weight: float = 0.0,
     ):
         self.capacity = int(capacity)
         self.rng = rng
@@ -233,6 +235,12 @@ class DiskReplayBuffer:
   # the tune trainable additionally pushes live values each iteration.
         self.sf_gap_priority_weight = float(sf_gap_priority_weight)
         self.fast_low_surprise_priority = float(fast_low_surprise_priority)
+  # Selfplay diff-focus weights, mirrored here ONLY for priority-mass
+  # telemetry (decomposing stored priorities back into kl/qd term mass);
+  # they do not alter sampling. Pushed live alongside the shaping knobs.
+        self.diff_focus_pol_scale = float(diff_focus_pol_scale)
+        self.diff_focus_q_weight = float(diff_focus_q_weight)
+        self._pmass = self._pmass_zero()
         self.draw_cap_frac = float(draw_cap_frac)
         self.wl_max_ratio = float(wl_max_ratio)
 
@@ -394,6 +402,7 @@ class DiskReplayBuffer:
             raw_pri = raw_pri.copy()
             raw_pri[bad] = 1.0
         raw_pri = self._shape_shuffle_priority(arrs, raw_pri)
+        self._accumulate_priority_mass(arrs, raw_pri)
         self._shuffle_priority_store = np.concatenate(
             [self._shuffle_priority_store, raw_pri], axis=0,
         )
@@ -447,6 +456,80 @@ class DiskReplayBuffer:
             low = (~hp) & hs & (zgap < 1.0)
             pri[low] = np.minimum(pri[low], fast_low)
         return pri
+
+    @staticmethod
+    def _pmass_zero() -> dict[str, float]:
+        return {
+            "rows_full": 0.0, "rows_fast": 0.0, "rows_fast_demoted": 0.0,
+            "kl_term": 0.0, "qd_term": 0.0, "gap_term": 0.0,
+            "eff_full": 0.0, "eff_fast": 0.0,
+        }
+
+    def _accumulate_priority_mass(self, arrs: dict[str, np.ndarray], pri: np.ndarray) -> None:
+        """Telemetry: decompose appended sampling-priority mass by source term.
+
+        Uses the mirrored diff-focus weights to reconstruct the kl/qd term
+        mass baked into stored priorities at selfplay time, plus the gap
+        boost and fast-row demotion applied here at append time. Popped once
+        per iteration by the tune trainable (pop_priority_mass_stats).
+        """
+        pm = self._pmass
+        if "has_policy" in arrs:
+            hp = np.asarray(arrs["has_policy"], dtype=bool)
+        else:
+            hp = np.ones(pri.shape[0], dtype=bool)
+        pm["rows_full"] += float(hp.sum())
+        pm["rows_fast"] += float((~hp).sum())
+        pm["eff_full"] += float(pri[hp].sum())
+        pm["eff_fast"] += float(pri[~hp].sum())
+        if self.diff_focus_pol_scale > 0 and "priority_policy_kl" in arrs and "has_priority_policy_kl" in arrs:
+            has = np.asarray(arrs["has_priority_policy_kl"], dtype=bool)
+            kl = np.nan_to_num(np.asarray(arrs["priority_policy_kl"], dtype=np.float64), nan=0.0)
+            pm["kl_term"] += float(np.maximum(kl[has], 0.0).sum()) * self.diff_focus_pol_scale
+        if self.diff_focus_q_weight > 0 and "priority_q_delta" in arrs and "has_priority_q_delta" in arrs:
+            has = np.asarray(arrs["has_priority_q_delta"], dtype=bool)
+            qd = np.nan_to_num(np.asarray(arrs["priority_q_delta"], dtype=np.float64), nan=0.0)
+            pm["qd_term"] += float(np.abs(qd[has]).sum()) * self.diff_focus_q_weight
+        if (
+            self.sf_gap_priority_weight > 0
+            and "priority_sf_search_gap" in arrs
+            and "has_priority_sf_search_gap" in arrs
+        ):
+            has = np.asarray(arrs["has_priority_sf_search_gap"], dtype=bool)
+            gap = np.nan_to_num(np.asarray(arrs["priority_sf_search_gap"], dtype=np.float64), nan=0.0)
+            pm["gap_term"] += float(np.maximum(gap[has], 0.0).sum()) * self.sf_gap_priority_weight
+        if (
+            self.fast_low_surprise_priority < 1.0
+            and "search_wdl" in arrs
+            and "has_search_wdl" in arrs
+            and "has_policy" in arrs
+        ):
+            hs = np.asarray(arrs["has_search_wdl"], dtype=bool)
+            sw = np.asarray(arrs["search_wdl"], dtype=np.float64)
+            z = np.asarray(arrs["wdl_target"])
+            z_q = np.where(z == 0, 1.0, np.where(z == 2, -1.0, 0.0))
+            zgap = np.abs(z_q - (sw[:, 0] - sw[:, 2]))
+            pm["rows_fast_demoted"] += float(((~hp) & hs & (zgap < 1.0)).sum())
+
+    def pop_priority_mass_stats(self) -> dict[str, float]:
+        """Return and reset per-iteration priority-mass telemetry.
+
+        Shares are of the TOTAL effective (post-shaping) priority mass
+        appended to the shuffle buffer since the last pop — i.e. what the
+        surprise half of sampling actually sees.
+        """
+        pm, self._pmass = self._pmass, self._pmass_zero()
+        total = pm["eff_full"] + pm["eff_fast"]
+        n_fast = pm["rows_fast"]
+        return {
+            "replay_pmass_rows_full": pm["rows_full"],
+            "replay_pmass_rows_fast": pm["rows_fast"],
+            "replay_pmass_kl_share": pm["kl_term"] / total if total > 0 else 0.0,
+            "replay_pmass_qd_share": pm["qd_term"] / total if total > 0 else 0.0,
+            "replay_pmass_gap_share": pm["gap_term"] / total if total > 0 else 0.0,
+            "replay_pmass_fast_share": pm["eff_fast"] / total if total > 0 else 0.0,
+            "replay_fast_demoted_frac": pm["rows_fast_demoted"] / n_fast if n_fast > 0 else 0.0,
+        }
 
     def _drop_oldest_from_shuffle(self, count: int) -> None:
         drop = int(max(0, count))

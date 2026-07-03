@@ -588,3 +588,50 @@ def test_constructor_shaping_applies_to_resume_seeded_shuffle(tmp_path) -> None:
     # alternating -> 0.2/1.0/0.2/1.0.
     np.testing.assert_allclose(pri, [0.2, 0.2, 1.0, 1.0, 5.0, 10.0, 15.0])
     buf2.close()
+
+
+def test_priority_mass_stats_decompose_and_reset(tmp_path) -> None:
+    buf = DiskReplayBuffer(
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        shuffle_cap=100, shard_size=100,
+        sf_gap_priority_weight=10.0, fast_low_surprise_priority=0.2,
+        diff_focus_pol_scale=2.0, diff_focus_q_weight=4.0,
+    )
+    arrs = _shaping_arrays(n_full=3, n_fast=4)
+    kl = np.zeros((7,), dtype=np.float16); kl[:3] = 1.0
+    qd = np.zeros((7,), dtype=np.float16); qd[:3] = 0.5
+    has_full = np.zeros((7,), dtype=np.uint8); has_full[:3] = 1
+    arrs["priority_policy_kl"] = kl
+    arrs["has_priority_policy_kl"] = has_full
+    arrs["priority_q_delta"] = qd
+    arrs["has_priority_q_delta"] = has_full
+    buf.add_many_arrays(arrs)
+
+    st = buf.pop_priority_mass_stats()
+    # effective priorities: full [5+0, 5+5, 5+10] = 30; fast [0.2,1,0.2,1] = 2.4
+    total = 30.0 + 2.4
+    assert st["replay_pmass_rows_full"] == 3
+    assert st["replay_pmass_rows_fast"] == 4
+    np.testing.assert_allclose(st["replay_pmass_kl_share"], 3 * 1.0 * 2.0 / total, rtol=1e-3)
+    np.testing.assert_allclose(st["replay_pmass_qd_share"], 3 * 0.5 * 4.0 / total, rtol=1e-3)
+    np.testing.assert_allclose(st["replay_pmass_gap_share"], (0.0 + 5.0 + 10.0) / total, rtol=1e-3)
+    np.testing.assert_allclose(st["replay_pmass_fast_share"], 2.4 / total, rtol=1e-3)
+    np.testing.assert_allclose(st["replay_fast_demoted_frac"], 0.5)
+
+    # pop resets
+    st2 = buf.pop_priority_mass_stats()
+    assert st2["replay_pmass_rows_full"] == 0
+    assert st2["replay_pmass_kl_share"] == 0.0
+
+
+def test_priority_mass_stats_tolerate_missing_fields(tmp_path) -> None:
+    buf = DiskReplayBuffer(
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        shuffle_cap=100, shard_size=100,
+        diff_focus_pol_scale=2.0, diff_focus_q_weight=4.0,
+    )
+    buf.add_many_arrays(_arrays(4672, n=3))    # bare chunk, no optional fields
+    st = buf.pop_priority_mass_stats()
+    assert st["replay_pmass_rows_full"] == 3
+    assert st["replay_pmass_kl_share"] == 0.0
+    assert st["replay_pmass_gap_share"] == 0.0
