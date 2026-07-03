@@ -45,24 +45,33 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.device.startswith("cuda") and args.gpu_mem_fraction:
-        torch.cuda.set_per_process_memory_fraction(float(args.gpu_mem_fraction))
+        # Cap the SELECTED device, not the current one — running the panel on
+        # cuda:1 must not leave that GPU uncapped next to a live trainer.
+        dev = torch.device(args.device)
+        idx = dev.index if dev.index is not None else torch.cuda.current_device()
+        torch.cuda.set_per_process_memory_fraction(float(args.gpu_mem_fraction), idx)
 
     rows = [json.loads(line) for line in open(args.panel)]
     model = load_model_from_checkpoint(args.checkpoint, device=args.device)
     model.eval()
     hist = str(getattr(model, "input_history_encoding", "legacy"))
     extra = str(getattr(model, "input_extra_features", "v1"))
+    # Dynamic-relation checkpoints apply their attention bias only when the
+    # relation tensor is passed — carry it exactly like scripts/value_regret.py.
+    use_rel = bool(getattr(model, "use_dynamic_relations", False))
     ev = LocalModelEvaluator(model, device=args.device)
 
-    encs = [
-        encode_cboard(
-            CBoard.from_board(chess.Board(r["fen_after"])),
-            input_history_encoding=hist, input_extra_features=extra,
-        )
-        for r in rows
-    ]
+    encs: list[np.ndarray] = []
+    rels: list[np.ndarray] = []
+    for r in rows:
+        cb = CBoard.from_board(chess.Board(r["fen_after"]))
+        encs.append(encode_cboard(
+            cb, input_history_encoding=hist, input_extra_features=extra))
+        if use_rel:
+            rels.append(cb.compute_relations())
     with torch.no_grad():
-        _, wdl = ev.evaluate_encoded(np.stack(encs))
+        _, wdl = ev.evaluate_encoded(
+            np.stack(encs), relations=np.stack(rels) if use_rel else None)
     wdl = np.asarray(wdl, dtype=np.float64)
     if not np.allclose(wdl.sum(axis=1), 1.0, atol=1e-3):
         w = wdl - wdl.max(axis=1, keepdims=True)
