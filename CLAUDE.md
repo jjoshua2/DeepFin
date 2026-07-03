@@ -64,6 +64,7 @@ Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-r
 - NEVER run a 256+ sim arena concurrent with training (GPU OOM crashed the live run 2026-06-18). sims-1/32 arenas and `audit_targets`/`value_regret` at small batch + `--gpu-mem-fraction` are safe concurrent.
 - The live YAML is re-read every iteration, and the strict validator rejects the WHOLE reload if it contains a key the running code doesn't know — add new config keys only after restarting onto code that defines them.
 - Live checkpoints get pruned by Ray; before using one as a long-lived reference (arena/audit baseline), copy it out of the tune dir first.
+- **Never `git checkout` in this working tree while a run is live** — the live YAML is part of the tree and is re-read every iteration, so a branch switch can silently revert live experiments (2026-07-02: a checkout rolled back the label uncap, fast-ply revert, and rung-1 blend for 3 iterations). Do all branch work in `git worktree` checkouts, and merge PRs that touch the live yaml promptly.
 
 ## Configs
 

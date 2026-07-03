@@ -61,6 +61,19 @@ Copy checkpoints OUT of the tune dir before long audits (Ray prunes live
 checkpoints). All three GPU yardsticks are safe concurrent with training at the
 listed batch / mem-fraction settings.
 
+**Paired CIs are mandatory for A/B verdicts (2026-07-02).** Both audit scripts
+take `--dump-per-position`; judge any two reads with `scripts/paired_compare.py`
+(value dumps: defaults; audit dumps: `--join-key key --field cand.raw.top1`,
+`cand.search.exp`, ...). Measured paired 95% CI half-widths @n=2000 (2026-07-02
+retro-read): value top-1 ±8.7cp, audit raw E[regret] ±4.3cp, audit search
+E[regret] ±6.6cp (includes Gumbel re-search noise), audit raw top-1 ±9.8cp
+(72% exact ties, so real shifts in the non-tied tail still clear it). Fixed
+±2cp thresholds sit BELOW every one of these — a verdict needs the CI to
+exclude zero, not a point delta. Same-checkpoint re-runs also move the point
+numbers (search E[regret] ~1.3cp, raw metrics ~0.7cp — CUDA jitter flips
+near-tie argmaxes): never compare point numbers from different sessions' runs;
+always re-dump and pair.
+
 **Protocol gotchas** (each cost us a bad reading once):
 - `audit_targets` MUST pass `--max-positions 2000` — the audit set grew to 4000
   positions including an easy opening bucket; uncapped runs are not comparable to
@@ -72,6 +85,19 @@ listed batch / mem-fraction settings.
   without strength changing. Judge difficulty by regret + nodes + n_games together.
 - Match PGNs must be checked for `Termination "time"` — one 19-loss match (c8192,
   Jun 21) was 100% clock forfeits, not chess.
+- **The live yaml is part of the git working tree — a branch switch can silently
+  revert live experiments.** 2026-07-02 incident: the live-config edits were
+  committed on a PR branch; checking out main reverted the on-disk yaml, and the
+  running trial (which re-reads it every iteration) re-capped labels, re-enabled
+  fast-ply rows, and rolled back rung 1 for iters 484–486 before it was caught.
+  Rule: while a run is live, do ALL branch work in `git worktree` checkouts —
+  never `git checkout` in the run's tree — and merge any PR that touches the live
+  yaml promptly so main matches the live intent.
+- `record_fast_ply_value` propagates to selfplay workers LIVE (~30 min), it is
+  NOT restart-gated (proven by the same incident: shards flipped to 100%
+  has_policy after the revert restart, then back to 25% within ~30 min of the
+  stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
+  knob as live unless proven otherwise.
 
 ## Verdicts: WORKED (in production)
 
@@ -98,15 +124,15 @@ listed batch / mem-fraction settings.
 | 2026-07-02 | fp8 PTQ inference | quality-dead at PTQ; needs bf16-vs-fp32 noise baseline first |
 | 2026-06 | policy_temp>1 for play | helps puzzles, hurts real audit (55→88cp) — never tune search on puzzles alone |
 | **2026-07-01→02** | **throughput triple, leg 1: `sf_label_nodes_cap`** | **two-stage kill.** 150k: policy 49.6→55.3, raw top-1 51.5→60.7 at ~60% refill → raised to 400k. 400k: full-refill read @ckpt478 52.2 (>2cp over baseline) and raw top-1 61.7 never recovered → **uncapped (0)** 2026-07-02. The sf_p0/regret policy teacher needs full ~700k-node labels |
-| 2026-07-01→02 | throughput triple, leg 2: `record_fast_ply_value` (75% value-only rows) | **REVERTED 2026-07-02** (bundle restart, protected by ckpt479 pool). Evidence: raw policy top-1 stuck +10cp over baseline through the whole window (trunk dilution — value-only rows crowd the policy gradient) and value 72.4→76.6. Leg 3 (`train_views_per_position 2.5`) KEPT — proportional step budgeting, not implicated. Net throughput-triple verdict: quality-negative; only the views bookkeeping survives |
+| 2026-07-01→02 | throughput triple, leg 2: `record_fast_ply_value` (75% value-only rows) | **REVERTED 2026-07-02** (bundle restart, protected by ckpt479 pool). Evidence: raw policy top-1 stuck +10cp over baseline through the whole window (trunk dilution — value-only rows crowd the policy gradient) and value 72.4→76.6. Leg 3 (`train_views_per_position 2.5`) KEPT — proportional step budgeting, not implicated. Net throughput-triple verdict: quality-negative; only the views bookkeeping survives. **Statistical post-mortem (07-02 late, paired retro-CI 457→478):** raw top-1 +10.95 [+1.49, +21.18] CONFIRMED (endgame-driven, +17.9 [+6.8, +31.3]); search E[regret] +3.9 [−2.5, +10.6] and value +1.1 [−7.6, +9.9] NOT significant — raw top-1 was the only statistically load-bearing kill signal; the kill stands on it |
 | 2026-07-01→02 | flat lower LR (0.0003 sqrt_release → 0.0001 flat, PB2-pinned) | **UNREADABLE — reverted 2026-07-02.** Its watch criterion ("must not slow the policy downtrend") was made unjudgeable by the throughput triple landing the same day. Reverted to 0.0003/sqrt_release in the same bundle restart so the recovery read targets the exact known-good recipe. Lesson: simultaneous launches destroy both readouts. (Mechanic for changing PB2-pinned params: see memory `flat_lower_lr_experiment_live` — yaml alone silently no-ops) |
 
 ## LIVE, UNREAD (as of 2026-07-02 evening — every open loop)
 
 | change | live since | readout & rule |
 |---|---|---|
-| **Return-to-known-good bundle restart** (fast-ply revert + LR revert + #104 code, knobs off) | 2026-07-02 evening | **THE active readout**: over the next window refill (~1-1.5 days), policy net+search / raw top-1 vs **49.6 / 51.5** and value vs **76.6→toward 72.4** (protocol: `--max-positions 2000`). Recovery ⇒ throughput-era damage was config, not permanent; no recovery ⇒ window legacy or trunk state → consider salvage-restart from a clean pool. LR revert applied via the PBT-pinned mechanic (above) and VERIFIED: peak_lr=0.0003 on iter 482. Confound: rung-1 fracs (below) remain live by design |
-| Value-blend rung 1: `search_wdl_frac` 0.35→0.20, `sf_wdl_frac_floor` 0.35→0.45 | iter 477 (07-02) | value_regret per ckpt vs the **76.6 pre-anchor** (ckpt478), judged at the FULL-refill read (post-bundle window). Pre-committed rule: SUCCESS = ≤70.4 (2cp below the 72.4 known-good — evidence rung 1 adds value beyond the bundle recovery); KEEP-BUT-UNREAD = 70.4–75.0 (recovered; bundle confound absorbs credit, rung 1 stays as principled default); KILL = >75.0 at full refill → revert pair 0.35/0.35 (live keys) |
+| **Return-to-known-good bundle restart** (fast-ply revert + LR revert + #104 code, knobs off) | 2026-07-02 evening | **THE active readout**: over the next window refill (~1-1.5 days), policy net+search / raw top-1 vs **49.6 / 51.5** and value vs **76.6→toward 72.4** (protocol: `--max-positions 2000`). Recovery ⇒ throughput-era damage was config, not permanent; no recovery ⇒ window legacy or trunk state → consider salvage-restart from a clean pool. LR revert applied via the PBT-pinned mechanic (above) and VERIFIED: peak_lr=0.0003 on iter 482. Confound: rung-1 fracs (below) remain live by design. **Contamination (07-02 ~21:17–23:5x, iters 484–486): the branch-switch incident (see gotchas) reverted the yaml — fast-ply rows back ON (~150k value-only rows in those shards), labels re-capped 400k, blend back to 0.35/0.35 — restored 23:09, fast-ply-off re-propagation being verified. Recovery-read clock effectively restarts at iter ~487; interpret ckpt510-era reads with this in the window** |
+| Value-blend rung 1: `search_wdl_frac` 0.35→0.20, `sf_wdl_frac_floor` 0.35→0.45 | iter 477 (07-02) | value_regret per ckpt vs the **76.6 pre-anchor** (ckpt478), judged at the FULL-refill read (post-bundle window). Pre-committed rule: SUCCESS = ≤70.4 (2cp below the 72.4 known-good — evidence rung 1 adds value beyond the bundle recovery); KEEP-BUT-UNREAD = 70.4–75.0 (recovered; bundle confound absorbs credit, rung 1 stays as principled default); KILL = >75.0 at full refill → revert pair 0.35/0.35 (live keys). **AMENDED 2026-07-02 late, BEFORE the readout: the ±2–5cp point bands sit inside the value yardstick's measured ±8.7cp paired noise floor — verdict now runs on `paired_compare` vs the ckpt478 dump (`scratchpad/paired_ci_smoke/dump_ckpt478.jsonl`): KILL = CI excludes 0 on the worse side; SUCCESS = CI excludes 0 on the better side; otherwise KEEP-BUT-UNREAD. Point bands demoted to descriptive. Also: iters 484–486 trained on the old blend (incident above) — rung-1 exposure restarts ~487** |
 | PID `sf_pid_regret_tighten_streak_gain` 0.5→1.0 (temporary) | iter ~478 (07-02) | controller mode, not an experiment: restore 0.5 when EMA winrate ≈0.52. Expect the winrate sample to shift again post-uncap (congestion bias) |
 | PR #104 gap-priority sampling — **MERGED, knobs default-off** | code live at bundle restart | activation = yaml `replay_sf_gap_priority_weight: 30` (live-tunable, no restart) AFTER the bundle recovery read banks. Pre-committed rule over one window refill from activation: SUCCESS = blind-spot panel ≤ 16/35 (≥5 positions un-blinded); KILL = panel ≥ 20/35 → set weight back to 0; GUARDRAIL = mean value_regret must not degrade >2cp vs its pre-activation read, else kill regardless of panel. SECONDARY: top-decile-gap resolution rate must turn positive — measure with `PYTHONPATH=. python3 scripts/gap_resolution.py --checkpoint-old <pre> --checkpoint-new <post>` (repro'd the 466→478 finding: top decile +0.0006 vs bottom half +0.0077) |
 | sf_p0 + regret teacher weights | June | proven (see WORKED); leave alone |
@@ -148,7 +174,27 @@ capacity/target (rung 4). Caveats: the 466→478 window had the weak 150k/400k
 teacher and pre-rung-1 blend (SF share of the value target was small), and
 ~30% of top-gap rows may be positions where SF itself is wrong (fortress-type).
 
-Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the full six-signal bake-off lives in the session scratchpad `signal_predictiveness.py` (+ results JSON) — promote it too if it becomes a recurring read.
+**Paired-CI retro-read (2026-07-02 late; PR #107 tooling).** The kill-window
+point verdicts re-judged with paired bootstrap CIs on the frozen v1-2k
+positions (delta = A−B, negative = A better; regret metrics, lower better):
+
+| A vs B | metric | paired delta [95% CI] | verdict |
+|---|---|---|---|
+| ckpt478 vs ckpt457 | audit raw top-1 | **+10.95 [+1.49, +21.18]** | REAL regression; endgame-driven (+17.9 [+6.8, +31.3]) |
+| ckpt478 vs ckpt457 | audit search E[regret] | +3.91 [−2.52, +10.62] | not significant |
+| ckpt478 vs ckpt457 | audit raw E[regret] | +2.12 [−2.02, +6.48] | not significant |
+| ckpt478 vs ckpt457 | value top-1 regret | +7.09 [−0.88, +15.37] | NS overall; **endgame +9.39 [+0.17, +19.00] significant** |
+| ckpt478 vs ckpt466 | value top-1 regret | +1.08 [−7.57, +9.91] | not significant |
+
+Reading: the throughput-window regression is real and **endgame-concentrated**
+(raw policy top-1 and endgame value both clear their CIs; means alone hid the
+phase structure). The headline "value 72.4→76.6" was partly an anchor artifact:
+ckpt457 re-reads 69.5 (not 72.4) with the same protocol — stored point numbers
+drift ~1–3cp across sessions. Consequence: verdicts pair fresh dumps, never
+compare stored point numbers. Dumps banked: `scratchpad/policy_ci/*.jsonl`,
+`scratchpad/paired_ci_smoke/*.jsonl` (ckpt457/466/478, value + audit).
+
+Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the full six-signal bake-off lives in the session scratchpad `signal_predictiveness.py` (+ results JSON) — promote it too if it becomes a recurring read. Paired-CI tooling is checked in (`scripts/paired_compare.py`, PR #107).
 
 ## Open bets, validated but not built
 
@@ -169,8 +215,13 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
 
 1. ~~Fast-ply revert~~ / ~~LR decision~~ / ~~#104 merge~~ — DONE via the bundle
    restart (see LIVE table).
-2. Next full-refill read (~1-2 days): the bundle recovery read — policy vs
-   49.6/51.5, value vs 76.6 (rung-1 overlay), blind-spot panel alongside.
+1b. Verify the 23:09 config restore re-propagated (fresh shards back to
+   has_policy_frac ≈ 1.0); merge PRs #105/#106/#107 so main matches the live
+   config and the branch-switch trap is disarmed.
+2. Next full-refill read (~1-2 days; clock restarted ~iter 487 by the incident):
+   the bundle recovery read — audit + value runs WITH `--dump-per-position`,
+   judged by paired CIs vs the banked ckpt457 dumps (recovery target) and
+   ckpt478 dumps (progress since the kill), blind-spot panel alongside.
 3. Activate the gap boost (`replay_sf_gap_priority_weight: 30`, live yaml edit)
    once the recovery read banks. Judge by panel + tail, not the mean.
 4. Build: tail metrics in value_regret; then the SF-frac ramp PR (per-row SF weight
