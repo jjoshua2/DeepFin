@@ -139,6 +139,46 @@ always re-dump and pair.
 
 ## Analysis findings (offline, no live change)
 
+**Sidecar retro-analysis — the offline yardstick has a seed-noise floor too
+(2026-07-03; all 256 `results.jsonl` under `runs/`, scanner + master CSV in
+`scratchpad/{scan,analyze}_sidecars.py`, `scratchpad/sidecar_master.csv`).**
+The May arch campaign ran its top config (`11l_splitqkv_mlp_out`) at 4 seeds:
+eval_loss 6.301–6.377 (**σ≈0.034**), policy 2.404–2.449 (**σ≈0.019**); five
+other repeat groups agree (2-seed eval ranges 0.005–0.038). Same-seed
+variant-vs-baseline comparisons are partially paired (shared data order), so
+treat the floor as an upper bound — but every June feature verdict sits AT or
+BELOW it: v2_threats −0.039 eval/−0.015 policy, v2_lean +0.022, v3 adds
++0.003..+0.036, smolgen sizes ±0.015. Consequences, per claim:
+(1) *v2_threats helps* — SOLID, not because of the sidecar delta but because it
+replicated on a 2nd window (−0.028) AND has three orthogonal corroborations
+(8-net ablation: attacks_typed +0.067..0.078; prescreen relevance; unique
+search-scaling +0.016 @256 sims where v1 is flat). The 512-game arena
+(+4.8 Elo [−22.7,+32.2]) never resolved it either way.
+(2) *v3 adds hurt* — OVERSTATED. The sidecar deltas are noise-level; the solid
+claim is "v3 adds ≈ 0, and the prescreen explains why" (xray/checks redundancy
+0.82–0.91 = already derived from v2; see/passers relevance ≈ 0). The puzzle
+bench at 256 sims (n=3000, v2 0.601 vs v3 0.570–0.583, 2–3σ binomial) is the
+strongest negative — no v3 net inherits v2's search scaling.
+(3) *v2_lean removal hurts* — UNPROVEN: +0.0217 is ~0.6× the 4-seed eval RANGE,
+single run, no repeat. The defensible claim is "removal shows no gain, and the
+14% speed win wasn't worth an unresolved-sign quality risk". KEEP v2 stands,
+on decision-theory rather than on the point delta.
+Cross-campaign, the only ABOVE-floor offline results ever measured: optimizer
+family (aurora beats soap/cosmos/adamw by 0.14–0.23), smolgen off (+0.48 —
+most load-bearing module in the net), variable-width chain (+0.048 kill), ffn
+budgeted-shrink (−0.035, internally replicated by two shapes), soft-ablation
+policy (+0.019/+0.019 on two windows — replicated, real, and now explained by
+the 41% trunk-gradient share). Everything else (~40 arch variants, zclip grid,
+relbasis/arc/smolscale families, heads16, layers12, bt4embed, deepnorm,
+az4672-vs-lc1858) was within noise at the 1-epoch budget — decisive negatives
+about where NOT to spend future sidecar compute. GOTCHA baked into the CSV:
+runs that change loss composition (soft_ablation, cat_blend_*, sfmove_*,
+exp_cat_*) have INCOMPARABLE eval_loss — judge them on the unchanged
+per-component columns only. PROTOCOL going forward: an offline sidecar verdict
+needs (a) |Δeval| > 0.07 (2× floor), or (b) a 2-seed repeat, or (c) an
+orthogonal corroboration (ablation / prescreen / puzzle-bench / audit) — same
+discipline as the live paired-CI rule.**
+
 **Surprise-signal bake-off (2026-07-02, n=10,612 full rows, 30 recent shards,
 outcomes scored with ckpt478).** Spearman / top-decile-lift of each candidate
 sampling signal vs realized per-row error:
