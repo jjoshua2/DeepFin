@@ -15,27 +15,34 @@ decide; this file records WHAT we decided).
 3. A verdict is WORKED / FAILED / MIXED / UNREAD. "Deferred" is not a verdict.
 4. When reverting, record what returning to known-good means (exact keys/values).
 5. Before any big/data-affecting change: snapshot weights + optimizer + PID + replay
-   window with `./scripts/train.sh salvage-export --top-n 1 --out data/salvage/<label>`
-   (safe while training runs; ~2.3G per snapshot) and record the pool path in the
-   entry. Restore = `./scripts/train.sh salvage-restart <pool>`. Config keys alone
-   are NOT a revert — the window keeps training on the changed data for ~a day.
+   window with `./scripts/train.sh salvage-export --top-n 1 --metric training_iteration
+   --out data/salvage/<label>` (safe while training runs; ~2.3G per snapshot) and
+   record the pool path in the entry. `--metric training_iteration` is REQUIRED for
+   a current-state snapshot: the default metric (`opponent_strength`) selects the
+   best-metric row, which may be an older checkpoint. Restore =
+   `./scripts/train.sh salvage-restart <pool>`. Config keys alone are NOT a revert —
+   the window keeps training on the changed data for ~a day.
 
 ## Revert points (salvage pools)
 
 | snapshot | state captured | restore |
 |---|---|---|
 | `data/salvage/prechange_20260702_ckpt479` | iter 479, 2026-07-02 evening: post-uncap, rung-1 live ~2 iters, PRE fast-ply-revert / PRE LR-decision / PRE #104. 686 shards | `./scripts/train.sh salvage-restart data/salvage/prechange_20260702_ckpt479` |
-| `data/best_pools/` (various) | older best-regret pools, pre-June-17 run | `./scripts/train.sh best-list` |
+| `data/best_pools/` (various) | older best-regret pools, pre-June-17 run | pick a pool from `./scripts/train.sh best-list`, then `./scripts/train.sh salvage-restart data/best_pools/<pool>` |
 
 ## Yardsticks (canonical protocols)
 
 | yardstick | command / protocol | known-good anchor |
 |---|---|---|
-| Policy strength | `scripts/audit_targets.py --sims 32 --max-positions 2000 --seed 0 --sf-effort low` — net+search E[regret] and **raw top-1** (teacher-sensitive) | 49.6 / 51.5 cp @ckpt457 (2026-07-01) |
-| Value ranking | `scripts/value_regret.py --max-positions 2000` — 1-ply deep-SF regret. NOT Brier/ECE (fooled by calibration) | 72.4 cp @ckpt457; BT4 reference **43.0** (2026-07-02) |
-| Blind-spot panel | 35 Cheese-loss collapse positions (scratchpad `blunder_value_probe.py`, 2026-07-02 session) — count net reads "fine" where deep SF says lost | 21/35 blind @ckpt477-478 |
-| Real-game strength | `scripts/arena_standard.py` paired openings, or external engine match | vs full Cheese: 0 wins / 35 real losses (Jun 21, ckpt150-era) |
+| Policy strength | `PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint <ckpt> --sims 32 --batch-size 64 --gpu-mem-fraction 0.15 --max-positions 2000 --seed 0 --sf-effort low` — net+search E[regret] and **raw top-1** (teacher-sensitive) | 49.6 / 51.5 cp @ckpt457 (2026-07-01) |
+| Value ranking | `PYTHONPATH=. python3 scripts/value_regret.py --checkpoint <ckpt> --max-positions 2000 --batch-size 128 --gpu-mem-fraction 0.15` — 1-ply deep-SF regret. NOT Brier/ECE (fooled by calibration) | 72.4 cp @ckpt457; BT4 reference **43.0** (2026-07-02) |
+| Blind-spot panel | `PYTHONPATH=. python3 scripts/blindspot_panel.py --checkpoint <ckpt>` — frozen 35 Cheese-loss collapse positions (`data/blindspot_panel_v1.jsonl`); counts positions the net reads "fine" where deep SF says lost | 21/35 blind @ckpt477-478 |
+| Real-game strength | `PYTHONPATH=. python3 scripts/arena_standard.py` paired openings, or external engine match | vs full Cheese: 0 wins / 35 real losses (Jun 21, ckpt150-era) |
 | Progress-over-time | low-sim cross-checkpoint arena (current vs pinned older ckpt) | not yet cadenced — see Queue |
+
+Copy checkpoints OUT of the tune dir before long audits (Ray prunes live
+checkpoints). All three GPU yardsticks are safe concurrent with training at the
+listed batch / mem-fraction settings.
 
 **Protocol gotchas** (each cost us a bad reading once):
 - `audit_targets` MUST pass `--max-positions 2000` — the audit set grew to 4000
@@ -84,7 +91,7 @@ decide; this file records WHAT we decided).
 | **Return-to-known-good bundle restart** (fast-ply revert + LR revert + #104 code, knobs off) | 2026-07-02 evening | **THE active readout**: over the next window refill (~1-1.5 days), policy net+search / raw top-1 vs **49.6 / 51.5** and value vs **76.6→toward 72.4** (protocol: `--max-positions 2000`). Recovery ⇒ throughput-era damage was config, not permanent; no recovery ⇒ window legacy or trunk state → consider salvage-restart from a clean pool. Confound: rung-1 fracs (below) remain live by design |
 | Value-blend rung 1: `search_wdl_frac` 0.35→0.20, `sf_wdl_frac_floor` 0.35→0.45 | iter 477 (07-02) | value_regret per ckpt over next refill vs the **76.6 pre-anchor** (ckpt478). Success = clean break below 72 toward BT4's 43. Revert pair: 0.35/0.35, live keys |
 | PID `sf_pid_regret_tighten_streak_gain` 0.5→1.0 (temporary) | iter ~478 (07-02) | controller mode, not an experiment: restore 0.5 when EMA winrate ≈0.52. Expect the winrate sample to shift again post-uncap (congestion bias) |
-| PR #104 gap-priority sampling — **MERGED, knobs default-off** | code live at bundle restart | activation = yaml `replay_sf_gap_priority_weight: 30` (live-tunable, no restart) AFTER the bundle recovery read banks. Readout: blind-spot panel (21/35 baseline) + value tail metrics — NOT the mean |
+| PR #104 gap-priority sampling — **MERGED, knobs default-off** | code live at bundle restart | activation = yaml `replay_sf_gap_priority_weight: 30` (live-tunable, no restart) AFTER the bundle recovery read banks. Pre-committed rule over one window refill from activation: SUCCESS = blind-spot panel ≤ 16/35 (≥5 positions un-blinded); KILL = panel ≥ 20/35 → set weight back to 0; GUARDRAIL = mean value_regret must not degrade >2cp vs its pre-activation read, else kill regardless of panel |
 | sf_p0 + regret teacher weights | June | proven (see WORKED); leave alone |
 
 ## Open bets, validated but not built

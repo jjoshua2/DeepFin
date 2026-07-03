@@ -83,3 +83,23 @@ python -m chess_anti_engine.run --config configs/default.yaml --mode train
 ## Review Protocol
 - Optimize for the end state rather than the smallest diff. When review surfaces an improvement, either make it or explicitly decide it is not worth doing.
 - State decisions clearly in review responses and summaries; avoid leaving vague TODOs for choices that should be settled now.
+
+## Experiment Protocol (MANDATORY — all agents)
+
+`docs/experiment_ledger.md` is the canonical experiment record (verdicts, yardstick
+anchors, revert points, decision queue). Read it before proposing, launching,
+judging, or reverting ANY experiment, and follow its rules:
+
+1. Before a training-affecting change goes live: add a ledger entry with the
+   hypothesis, ONE deciding yardstick (exact runnable command), and a
+   pre-committed kill/success threshold. No entry → don't launch.
+2. Before big changes: snapshot weights + optimizer + PID + replay window
+   (`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration
+   --out data/salvage/<label>`) and record it in the ledger's Revert points.
+   A yaml revert alone is NOT a rollback — the replay window keeps ~a day of
+   data made under the old settings.
+3. After a readout: record the verdict in the ledger the same session, judged
+   by the pre-committed rule. "Deferred" is not a verdict.
+4. One data-affecting change per readout window; unavoidable overlaps go in
+   each entry's Confounds.
+5. Before running any yardstick: read the ledger's "Protocol gotchas".
