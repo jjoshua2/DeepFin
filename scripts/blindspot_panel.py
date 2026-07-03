@@ -47,11 +47,12 @@ def main() -> None:
     if args.device.startswith("cuda") and args.gpu_mem_fraction:
         # Cap the SELECTED device, not the current one — running the panel on
         # cuda:1 must not leave that GPU uncapped next to a live trainer.
-        dev = torch.device(args.device)
-        idx = dev.index if dev.index is not None else torch.cuda.current_device()
+        idx = (int(args.device.split(":", 1)[1]) if ":" in args.device
+               else torch.cuda.current_device())
         torch.cuda.set_per_process_memory_fraction(float(args.gpu_mem_fraction), idx)
 
-    rows = [json.loads(line) for line in open(args.panel)]
+    with open(args.panel, encoding="utf-8") as f:
+        rows = [json.loads(line) for line in f]
     model = load_model_from_checkpoint(args.checkpoint, device=args.device)
     model.eval()
     hist = str(getattr(model, "input_history_encoding", "legacy"))
