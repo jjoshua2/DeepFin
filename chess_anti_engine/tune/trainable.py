@@ -583,6 +583,8 @@ def train_trial(config: dict):
   # them before this iteration's ingest makes yaml edits live.
             buf.sf_gap_priority_weight = tc.replay_sf_gap_priority_weight
             buf.fast_low_surprise_priority = tc.replay_fast_low_surprise_priority
+            buf.diff_focus_pol_scale = tc.diff_focus_pol_scale
+            buf.diff_focus_q_weight = tc.diff_focus_q_weight
 
             shard_prefetcher, async_test_eval = _lazy_construct_iter_helpers(
                 shard_prefetcher=shard_prefetcher,
@@ -726,6 +728,7 @@ def train_trial(config: dict):
             _log_pid_iter_summary(iteration_idx=iteration_idx, pid_result=pid_result, sp=sp)
 
             _finalize_iteration(
+                replay_priority_stats=buf.pop_priority_mass_stats(),
                 tc=tc, trainer=trainer, pid=pid,
                 sp=sp, tr=tr, drift=drift,
                 pid_result=pid_result,
