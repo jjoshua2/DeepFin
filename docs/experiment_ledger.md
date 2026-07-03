@@ -199,6 +199,29 @@ co-training volume / gradient share, not head arch or target recipe. Next
 cheap diagnostic: per-head trunk-gradient share (is value starved by the 4
 policy heads?); cheap live lever if starved: w_wdl rebalance rung.**
 
+**Trunk-gradient share diagnostic (2026-07-03 early; scratchpad
+`grad_share_diag.py`, ckpt479 pool weights+window, production loss kwargs from
+trial params.json + live yaml, 8 batches × 256).** Per-component weighted
+trunk-gradient L2 shares: policy_ce 54.9%, **soft_policy_ce 41.1%** (w_soft=1.0
+— an auxiliary at main-head weight), sf_own 11.6%, **blended_wdl 10.7%**,
+categorical 4.6%, sf_own_regret 3.3%, sf_eval 1.2%, rest <1%. Policy-group vs
+value-group ratio **5.9×**; policy-vs-value cosine +0.04 (orthogonal — pure
+budget imbalance, not interference). The search-consumed value head trains the
+trunk with ~1/9 of the budget. GOTCHAS baked into the script: the yaml alone
+builds a WRONG 34M model (v2_threats + w_sf_own* + non-uniform ffn are
+trial-injected — build from the checkpoint's `arch` payload, strict load,
+weights from trial `params.json`); the tolerant loader accepted the wrong model
+silently and produced garbage shares (64% categorical) on the first run.
+Also: 46.2M checkpoint state = 34.7M trainable + 11.5M per-layer Smolgen
+gen_weight buffer mirrors (shared weights).
+**Queued rung — "gradient rebalance" (do NOT stack with #104's window):**
+`w_soft` 1.0→0.5 + `w_wdl` 1.0→1.5 (both live-tunable) → policy:value ratio
+~6:1 → ~2.3:1. Yardsticks: value_regret paired CI vs pre-rung dump (primary,
+must improve); audit policy paired CI (guardrail, no significant regression);
+one window. Rationale: captures the gradient-budget benefit of a value-neck
+topology change with zero restart; the neck stays justified only if this rung
+moves value ranking and then plateaus.
+
 **Paired-CI retro-read (2026-07-02 late; PR #107 tooling).** The kill-window
 point verdicts re-judged with paired bootstrap CIs on the frozen v1-2k
 positions (delta = A−B, negative = A better; regret metrics, lower better):
@@ -249,6 +272,9 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
    ckpt478 dumps (progress since the kill), blind-spot panel alongside.
 3. Activate the gap boost (`replay_sf_gap_priority_weight: 30`, live yaml edit)
    once the recovery read banks. Judge by panel + tail, not the mean.
+3b. After (or instead of — user's call) the gap-boost window: the gradient
+   rebalance rung (`w_soft` 1.0→0.5 + `w_wdl` 1.0→1.5, live-tunable; see
+   Analysis findings). Both levers push value — never live in the same window.
 4. Build: tail metrics in value_regret; then the SF-frac ramp PR (per-row SF weight
    scaled by disagreement — premise validated 61%→70% monotone); then arena cadence
    + loop-health invariant monitor.
