@@ -108,8 +108,47 @@ listed batch / mem-fraction settings.
 | **Return-to-known-good bundle restart** (fast-ply revert + LR revert + #104 code, knobs off) | 2026-07-02 evening | **THE active readout**: over the next window refill (~1-1.5 days), policy net+search / raw top-1 vs **49.6 / 51.5** and value vs **76.6→toward 72.4** (protocol: `--max-positions 2000`). Recovery ⇒ throughput-era damage was config, not permanent; no recovery ⇒ window legacy or trunk state → consider salvage-restart from a clean pool. LR revert applied via the PBT-pinned mechanic (above) and VERIFIED: peak_lr=0.0003 on iter 482. Confound: rung-1 fracs (below) remain live by design |
 | Value-blend rung 1: `search_wdl_frac` 0.35→0.20, `sf_wdl_frac_floor` 0.35→0.45 | iter 477 (07-02) | value_regret per ckpt vs the **76.6 pre-anchor** (ckpt478), judged at the FULL-refill read (post-bundle window). Pre-committed rule: SUCCESS = ≤70.4 (2cp below the 72.4 known-good — evidence rung 1 adds value beyond the bundle recovery); KEEP-BUT-UNREAD = 70.4–75.0 (recovered; bundle confound absorbs credit, rung 1 stays as principled default); KILL = >75.0 at full refill → revert pair 0.35/0.35 (live keys) |
 | PID `sf_pid_regret_tighten_streak_gain` 0.5→1.0 (temporary) | iter ~478 (07-02) | controller mode, not an experiment: restore 0.5 when EMA winrate ≈0.52. Expect the winrate sample to shift again post-uncap (congestion bias) |
-| PR #104 gap-priority sampling — **MERGED, knobs default-off** | code live at bundle restart | activation = yaml `replay_sf_gap_priority_weight: 30` (live-tunable, no restart) AFTER the bundle recovery read banks. Pre-committed rule over one window refill from activation: SUCCESS = blind-spot panel ≤ 16/35 (≥5 positions un-blinded); KILL = panel ≥ 20/35 → set weight back to 0; GUARDRAIL = mean value_regret must not degrade >2cp vs its pre-activation read, else kill regardless of panel |
+| PR #104 gap-priority sampling — **MERGED, knobs default-off** | code live at bundle restart | activation = yaml `replay_sf_gap_priority_weight: 30` (live-tunable, no restart) AFTER the bundle recovery read banks. Pre-committed rule over one window refill from activation: SUCCESS = blind-spot panel ≤ 16/35 (≥5 positions un-blinded); KILL = panel ≥ 20/35 → set weight back to 0; GUARDRAIL = mean value_regret must not degrade >2cp vs its pre-activation read, else kill regardless of panel. SECONDARY: top-decile-gap resolution rate (see Analysis findings) must turn positive |
 | sf_p0 + regret teacher weights | June | proven (see WORKED); leave alone |
+
+## Analysis findings (offline, no live change)
+
+**Surprise-signal bake-off (2026-07-02, n=10,612 full rows, 30 recent shards,
+outcomes scored with ckpt478).** Spearman / top-decile-lift of each candidate
+sampling signal vs realized per-row error:
+
+| signal | policy CE | value err vs SF | value err vs z |
+|---|---|---|---|
+| kl (diff-focus policy term) | **+0.43 / 1.37** | -0.03 / 1.05 | -0.09 / 0.76 |
+| qd (diff-focus q-surprise) | -0.12 / 0.88 | +0.48 / 2.33 | +0.39 / 1.31 |
+| gap (SF-vs-search value gap) | -0.05 / 1.04 | **+0.58 / 2.63** | +0.39 / 1.29 |
+| spd (SF-policy-diff vs p0 teacher) | +0.35 / 1.22 | -0.10 / 1.52 | -0.14 / 1.24 |
+| td2 (hindsight TD, t vs t+2) | -0.05 / 1.03 | +0.39 / 1.74 | +0.36 / 1.29 |
+| zgap (outcome surprise) | -0.06 / 0.95 | +0.37 / 1.24 | +0.93* / 2.25 |
+
+*zgap~verr_z is near-tautological (both measure distance to z).
+
+Takeaways: (1) signals split into two orthogonal families — policy-error
+predictors (kl, spd) and value-error predictors (gap > qd > td2) — no signal
+predicts both, so the additive priority design is right and per-family weights
+should follow this table. (2) `gap` is the best value signal → supports the
+#104 activation exactly as planned. (3) qd is NOT dead weight (+0.48; earlier
+"self-referential ≈ blind" claim was too strong) — keep it. (4) spd is a real
+second policy signal (partially redundant with kl, corr 0.36) — candidate
+add-on AFTER gap-priority reads. (5) td2 is dominated by gap on full rows
+(corr 0.48, weaker) — not worth new plumbing; possible fast-row upgrade only.
+
+**Resolution study (same rows, ckpt466 → ckpt478):** bottom-half-gap rows
+improved (verr_sf 0.087 → 0.080) but **top-decile-gap rows did NOT resolve
+(0.383 → 0.385, slightly worse) despite being in the training window** — the
+microscopic twin of the 21/35 blind-spot persistence. Consequence: gap-priority
+activation gets a SECONDARY readout — top-decile-gap resolution rate must turn
+positive under 4-6x sampling; if it stays ~0, emphasis isn't the bottleneck →
+capacity/target (rung 4). Caveats: the 466→478 window had the weak 150k/400k
+teacher and pre-rung-1 blend (SF share of the value target was small), and
+~30% of top-gap rows may be positions where SF itself is wrong (fortress-type).
+
+Scripts: session scratchpad `signal_predictiveness.py` (+ results JSON).
 
 ## Open bets, validated but not built
 
