@@ -174,6 +174,31 @@ capacity/target (rung 4). Caveats: the 466→478 window had the weak 150k/400k
 teacher and pre-rung-1 blend (SF share of the value target was small), and
 ~30% of top-gap rows may be positions where SF itself is wrong (fortress-type).
 
+**Value-head construction/target screens (2026-07-03 early).** Two offline
+probes of "is the value head badly constructed / is the blend target the
+ranking bottleneck":
+(1) *Co-trained three-head ranking probe* (wdl vs sf_eval vs categorical on the
+same trunk, ckpt457/466/478, v1-2k): sf_eval (pure SF target, identical
+architecture, 10× LESS loss weight) ranks ~4cp better than wdl at 457/478,
+flips at 466 (the 150k-label-cap era — pure-SF distillation tracks teacher
+depth hard). Pooled paired CI −2.31 [−6.52, +2.01] — directional, NOT
+significant. Categorical (mostly-z) consistently worst.
+(2) *Frozen-trunk equal-budget head retrain* (fresh ValueHeads on ckpt478
+trunk, 60k rows / 3000 steps each; scratchpad `frozen_head_screen.py`):
+blend_prod 85.7 < sf_prod 89.6 ≈ sf_wide(256) 90.1 < blend_noecho 91.3. At
+truly equal budget the BLEND trains the better-ranking head; wide ≈ prod says
+head-local capacity is NOT binding. LIMITATION: all fresh heads land ≥10cp
+worse than the co-trained heads (60k rows underfits — val CE overfits by step
+2k), so absolute levels are floor-limited; relative reads only. Also
+blend_noecho reaches the LOWEST val CE yet ranks WORST — CE and ranking
+dissociate again.
+**Combined verdict: no evidence for head mis-construction, and no
+offline-demonstrable blend-target win — re-confirms the June targets-pivot
+lesson from a new angle. The ranking deficit points at trunk scale /
+co-training volume / gradient share, not head arch or target recipe. Next
+cheap diagnostic: per-head trunk-gradient share (is value starved by the 4
+policy heads?); cheap live lever if starved: w_wdl rebalance rung.**
+
 **Paired-CI retro-read (2026-07-02 late; PR #107 tooling).** The kill-window
 point verdicts re-judged with paired bootstrap CIs on the frozen v1-2k
 positions (delta = A−B, negative = A better; regret metrics, lower better):
