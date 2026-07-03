@@ -598,9 +598,12 @@ def test_priority_mass_stats_decompose_and_reset(tmp_path) -> None:
         diff_focus_pol_scale=2.0, diff_focus_q_weight=4.0,
     )
     arrs = _shaping_arrays(n_full=3, n_fast=4)
-    kl = np.zeros((7,), dtype=np.float16); kl[:3] = 1.0
-    qd = np.zeros((7,), dtype=np.float16); qd[:3] = 0.5
-    has_full = np.zeros((7,), dtype=np.uint8); has_full[:3] = 1
+    kl = np.zeros((7,), dtype=np.float16)
+    kl[:3] = 1.0
+    qd = np.zeros((7,), dtype=np.float16)
+    qd[:3] = 0.5
+    has_full = np.zeros((7,), dtype=np.uint8)
+    has_full[:3] = 1
     arrs["priority_policy_kl"] = kl
     arrs["has_priority_policy_kl"] = has_full
     arrs["priority_q_delta"] = qd
