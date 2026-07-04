@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from pathlib import Path
 
 import chess
 import chess.pgn
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -201,47 +204,64 @@ def _sample_from_polyglot(*, rng, path: str, max_plies: int) -> chess.Board:
     return b
 
 
+def _fen_reject_reason(line: str) -> str | None:
+    """Why this FEN is unusable as a seed, or None if it's fine.
+
+    A seed must be parseable, legal, non-terminal (under claim-draw, matching
+    CBoard's cboard_is_game_over which treats halfmove_clock>=100 as over), and
+    have >=2 legal moves (a forced position is skipped by _apply_forced_moves,
+    so the net never faces the seeded decision).
+    """
+    try:
+        board = chess.Board(line)
+    except ValueError:
+        return "unparseable FEN"
+    if not board.is_valid():
+        return "illegal position"  # missing kings, impossible pawns, etc.
+    if board.is_game_over(claim_draw=True):
+        return "terminal position"
+    if board.legal_moves.count() < 2:
+        return "forced (single legal move)"
+    return None
+
+
 @lru_cache(maxsize=8)
 def _load_fen_list(path_str: str) -> tuple[str, ...]:
     """Load a plain-text FEN list (one per line, '#' comments, blanks skipped).
 
-    Every line is validated eagerly — a curated seed file with a bad FEN is a
-    data bug worth failing loudly on, not skipping. Cache keys are path-based
-    like the PGN loader: version the filename to replace a list in place.
+    Malformed/unusable lines are SKIPPED with a logged warning rather than
+    raised — one bad line in a hand-edited or future seed file must not crash
+    the whole worker fleet (Codex review). We raise only when the file yields
+    ZERO usable seeds, so an empty/all-comment/all-bad file fails fast at
+    startup (warm_opening_book_cache) instead of mid-run. Cache keys are
+    path-based like the PGN loader: version the filename to replace a list.
     """
     fens: list[str] = []
+    skipped: list[str] = []
     for lineno, raw in enumerate(Path(path_str).read_text(encoding="utf-8").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        try:
-            board = chess.Board(line)
-        except ValueError as e:
-            raise ValueError(f"invalid FEN at {path_str}:{lineno}: {line!r}") from e
-        # Parseable != playable: chess.Board accepts positions with missing
-        # kings, back-rank pawns, etc., which would crash CBoard/Stockfish
-        # downstream (Codex review).
-        if not board.is_valid():
-            raise ValueError(f"illegal position at {path_str}:{lineno}: {line!r}")
-        # claim_draw=True so 50-move / 3-fold claimable positions count as
-        # terminal — CBoard's cboard_is_game_over() treats halfmove_clock>=100
-        # as over and would finalize such a seed with zero net decisions
-        # (Codex review). A terminal seed produces no training signal.
-        if board.is_game_over(claim_draw=True):
-            raise ValueError(f"terminal position at {path_str}:{lineno}: {line!r}")
-        # A single-legal-move seed is skipped by _apply_forced_moves (no
-        # NN/MCTS, no record), so the net never faces the seeded decision —
-        # useless for blind-spot seeding, so reject it (Codex review).
-        if board.legal_moves.count() < 2:
-            raise ValueError(f"forced (single legal move) at {path_str}:{lineno}: {line!r}")
+        reason = _fen_reject_reason(line)
+        if reason is not None:
+            skipped.append(f"{path_str}:{lineno} ({reason}): {line!r}")
+            continue
         fens.append(line)
+    if skipped:
+        _log.warning(
+            "opening FEN list %s: skipped %d unusable seed(s):\n  %s",
+            path_str, len(skipped), "\n  ".join(skipped),
+        )
+    if not fens:
+        raise ValueError(
+            f"opening FEN list {path_str} has no usable seeds "
+            f"(skipped {len(skipped)}); fix the file and restart",
+        )
     return tuple(fens)
 
 
 def _sample_fen_list(*, rng, path: str) -> chess.Board:
     fens = _load_fen_list(path)
-    if not fens:
-        raise ValueError(f"FEN list has no usable positions: {path}")
     return chess.Board(fens[int(rng.integers(0, len(fens)))])
 
 

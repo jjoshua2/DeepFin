@@ -441,29 +441,41 @@ def _update_aggregate_stats(
         net_col = state.net_color(i)
         side = "net_white" if net_col == chess.WHITE else "net_black"
         if result == "1/2-1/2":
-            state.stats.d += 1
-            c.d = 1
             outcome = "d"
         elif (result == "1-0" and net_col == chess.WHITE) or (
             result == "0-1" and net_col == chess.BLACK
         ):
-            state.stats.w += 1
-            c.w = 1
             outcome = "w"
         else:
-            state.stats.l += 1
-            c.l = 1
             outcome = "l"
+        # Blind-spot FEN seeds force the net onto the historically-losing seat, so
+        # they are systematic losses. They MUST NOT enter the PID winrate sample
+        # (state.stats.w/d/l is reported to the controller, which would otherwise
+        # ease SF across the whole batch) — exclude them exactly like selfplay
+        # games, but still record per-source telemetry so seed performance is
+        # visible via the curriculum_fenlist_* outcome keys.
+        count_in_pid = source != "fenlist"
+        if count_in_pid:
+            if outcome == "d":
+                state.stats.d += 1
+                c.d = 1
+            elif outcome == "w":
+                state.stats.w += 1
+                c.w = 1
+            else:
+                state.stats.l += 1
+                c.l = 1
         _inc_outcome(outcome_stats, f"curriculum_{side}_{outcome}")
         _inc_outcome(outcome_stats, f"curriculum_{source}_{outcome}")
         _inc_outcome(outcome_stats, f"curriculum_{source}_{side}_{outcome}")
 
-        if c.w:
-            state.stats.plies_win += game_plies
-        elif c.d:
-            state.stats.plies_draw += game_plies
-        elif c.l:
-            state.stats.plies_loss += game_plies
+        if count_in_pid:
+            if c.w:
+                state.stats.plies_win += game_plies
+            elif c.d:
+                state.stats.plies_draw += game_plies
+            elif c.l:
+                state.stats.plies_loss += game_plies
 
     _merge_outcome_stats(state.stats.outcome_stats, outcome_stats)
     return c

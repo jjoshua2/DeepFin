@@ -618,7 +618,9 @@ def test_session_asset_change_triggers_restart() -> None:
     session = _bare_worker_session()
     session.args = SimpleNamespace(sf_nodes=None, stockfish_from_server=True)
     session._active_reco = session._snapshot_reco({"sf_nodes": 5000})
-    session._active_assets = ("sha_old", None, None)
+    # 4-tuple (sf, book, book2, fen_list) so the change under test is the SF sha
+    # (sha_old -> sha_NEW), not the tuple length (Codex review, PR #108).
+    session._active_assets = ("sha_old", None, None, None)
     session._active_state = _live_state()
 
     changed = WorkerSession._reco_changed(

@@ -434,13 +434,16 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
             if (
                 live_reload
                 and k in _LAUNCH_FIXED_ASSET_PATH_KEYS
-                and k in config
-                and config[k] != v
+                and config.get(k) != v
             ):
+                # config.get(k) (not `k in config`) so a fresh live-ADD of the
+                # path (absent -> a path) is caught too: the server was launched
+                # without the flag, so advertising the new asset would 404 every
+                # worker. Both add and change require a restart (Codex review).
                 log.warning(
                     "YAML reload: %s changed (%s -> %s) but is server-launch-fixed"
-                    " — skipping (restart to change the seed/book file)",
-                    k, config[k], v,
+                    " — skipping (restart to add/change the seed/book file)",
+                    k, config.get(k), v,
                 )
                 continue
             if k in _TOPOLOGY_KEYS or k in _RESUME_CONSTRUCTION_BOUND_KEYS:
