@@ -1,43 +1,10 @@
-# Blind-spot seed FENs v1 (2026-07-03). fen_before of every first decisive
-# collapse in on-board losses to Cheese 3.2.1 (June 15-21) + rofChade (June 1)
-# — the panel v2 decision points (data/blindspot_panel_v2.jsonl, ledger branch).
-# Net to move in every FEN. Selfplay games seeded here via opening_fen_* keys
-# make the loop face + refute these historically misplayed positions.
-8/6Q1/ppk1p3/2p5/P4P2/3b2K1/8/4q3 w - - 0 47
-2r5/p2kbp2/qpr1p1p1/P2pP2p/3P1P2/nNP4P/1Q3BP1/R4RK1 b - - 4 27
-1r1qk2r/3nnppb/p2b3p/3p4/2Q5/2NP1N2/PP4PP/R1B1KB1R w KQk - 0 14
-r2r2k1/1p1q1pp1/p4PPp/8/1bQ5/3B4/PP1B1p1P/R2K1R2 b - - 1 23
-2kr1b1r/pp1npp1p/2p2np1/5P2/P2N4/8/1PP2P1P/R1BNK2R w KQ - 1 12
-3R4/5pkp/1p2q1p1/p1p5/P1Q2P1B/4rP1P/1b1N1K2/8 b - - 8 32
-1rbqkb1r/p1p2ppp/2p1p3/3pQn2/8/3PP3/PPP2PPP/RNB1K1NR w KQk - 1 8
-8/P5r1/2K5/5k2/3P4/5P1p/5P2/R7 b - - 2 49
-8/5k1p/1B6/p4K2/8/5n2/6p1/3b4 w - - 0 46
-3q1rk1/1pp1bppp/2n2n2/1N1p1b2/1r6/2P1P2P/QB1PBPP1/R3K1NR b KQ - 2 13
-r3r1k1/1p1q1p2/p5p1/b4pPp/P1p2P1P/Rb1pP3/1BN2Q2/3R2K1 w - - 0 25
-6rk/R6p/1prNb2p/3pPpq1/3P4/P2Q2P1/2P4P/5RK1 b - - 0 24
-8/5ppk/7p/5p2/1qb5/4PN2/1r4PP/2Q1R1K1 w - - 18 35
-r4k2/1b1r1pp1/3q1n1p/p1P1RP2/1pP5/7P/P1N2QP1/4RB1K b - - 0 25
-2k1r3/pp1n3p/2pb1np1/6B1/3q3Q/2N5/PPPp1PPP/3R2K1 w - - 2 19
-3r1k2/p3p2p/Pb2R1p1/1p3r2/8/1P3B1P/5PP1/2R3K1 b - - 2 34
-3q1rk1/1b2npp1/pp5p/8/P1r1pNP1/B3P2P/2PbN3/R2Q1RK1 w - - 2 24
-8/kp6/p2p1R2/6P1/1P5K/P4R2/4q3/8 b - - 8 61
-r3r1k1/pp3ppp/2n2q2/b1pp4/P3n3/2P1PN1b/2QPBPPB/RN3RK1 w - - 0 13
-1nbqkb1r/1ppp1ppp/8/3n4/1P6/7P/2PPPPP1/BN1QKBNR b Kk - 0 7
-rn2r1k1/1p3ppp/p1p5/3p3n/6b1/P2P2NP/1PPNB1P1/R3K2R w KQ - 1 16
-r2q3k/pb3rp1/1p2pn2/b1p5/2Q5/P3P1R1/1B1PB2P/2KR4 w - - 2 23
-r3kb1r/3p1pp1/p2q3p/2pn1p2/2Q2n2/4PN2/PB1P2PP/1R1K1B1R w kq - 1 18
-1r6/2pk4/p3n3/4P1p1/1BK5/6PP/P7/5R2 b - - 3 42
-rnbqkbnr/pp3ppp/2p5/3pp3/4P3/3B4/PPPP1PPP/RNBQK1NR w KQkq - 0 4
-rn2k2r/pp1b1ppp/3b1n2/3pP3/7q/2P5/PPB1NPPP/RNBQK2R b KQkq - 0 9
-2kr1b1r/ppp2ppp/4p3/5n2/8/1PPqPPNP/P1RP1Q1P/2BK3R w - - 1 18
-rnbqr1k1/pp3ppp/8/1NppB3/1b6/4PN1P/P1PnBPP1/R2QK2R w KQ - 0 10
-r4r2/1p2b1p1/1qn2nkp/1N3b2/3p3N/1Q2P2P/1B3PP1/R4RK1 b - - 3 18
-8/7p/2p5/1pkb3R/1r1p4/8/p5P1/6K1 w - - 0 46
-4r1k1/4qpp1/pQ5p/8/6n1/6P1/PPP1b1BP/RN4KR b - - 5 22
-r1bq1rk1/3n1p1p/p5p1/bppp2Nn/5P2/P3P3/1BPP2Q1/2KR1BR1 w - - 0 17
-r2kr3/q3b1p1/p2p4/4n1Pp/4Q3/3pN3/PP5P/2R2RK1 w - - 3 26
-5rk1/1p3ppp/p1p5/8/Q1nr4/P2q4/3P1PPP/1NR2RK1 w - - 2 23
-rn2k2r/pp1b1pp1/1q5p/3pPn2/3P3P/5Nb1/PP1QN1B1/R1B2K1R w kq - 1 17
+# Blind-spot seed FENs v1 (2026-07-03). fen_before of the first decisive
+# collapse in on-board losses: Cheese 3.2.1 June 15-16 (iter520 net) +
+# rofChade June 1 — the panel-v2-only decision points (net to move).
+# DELIBERATE HOLDOUT: panel v1's 35 rows (ckpt150-era Cheese losses) are
+# EXCLUDED so the frozen v1 panel measures GENERALIZATION of seeding
+# (transfer to unseen collapse positions), not training-set recall.
+# Seeded via opening_fen_list_path / opening_fen_prob (selfplay/opening.py).
 r3k2r/pp1n1ppp/1qpbpn2/8/3P1BbN/2N5/PPP2QPP/R3KB1R w KQkq - 6 12
 r1b1k1nr/ppp2ppp/2nq4/1B1pp3/Qb6/2P1P3/P2P1PPP/RNB1K1NR b KQkq - 0 6
 r5k1/p1P3pp/3QN1q1/3P1pB1/8/5P2/P6P/2n1q1K1 w - - 0 31

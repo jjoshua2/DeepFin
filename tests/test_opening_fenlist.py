@@ -88,8 +88,10 @@ def test_fenlist_takes_priority_over_book(tmp_path: Path) -> None:
 
 
 def test_production_seed_asset_loads() -> None:
+    # 78 = panel v2 minus the 35 held-out v1 rows (v1 stays a pure
+    # generalization yardstick for the seeding experiment).
     asset = Path(__file__).resolve().parents[1] / "data" / "blindspot_fens_v1.txt"
     if not asset.exists():
         pytest.skip("seed asset not present in this checkout")
     fens = _load_fen_list(str(asset))
-    assert len(fens) == len(set(fens)) == 113
+    assert len(fens) == len(set(fens)) == 78
