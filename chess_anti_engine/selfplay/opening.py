@@ -223,8 +223,17 @@ def _load_fen_list(path_str: str) -> tuple[str, ...]:
         # downstream (Codex review).
         if not board.is_valid():
             raise ValueError(f"illegal position at {path_str}:{lineno}: {line!r}")
-        if board.is_game_over():
+        # claim_draw=True so 50-move / 3-fold claimable positions count as
+        # terminal — CBoard's cboard_is_game_over() treats halfmove_clock>=100
+        # as over and would finalize such a seed with zero net decisions
+        # (Codex review). A terminal seed produces no training signal.
+        if board.is_game_over(claim_draw=True):
             raise ValueError(f"terminal position at {path_str}:{lineno}: {line!r}")
+        # A single-legal-move seed is skipped by _apply_forced_moves (no
+        # NN/MCTS, no record), so the net never faces the seeded decision —
+        # useless for blind-spot seeding, so reject it (Codex review).
+        if board.legal_moves.count() < 2:
+            raise ValueError(f"forced (single legal move) at {path_str}:{lineno}: {line!r}")
         fens.append(line)
     return tuple(fens)
 

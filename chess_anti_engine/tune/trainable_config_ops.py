@@ -382,6 +382,15 @@ _RESUME_CONSTRUCTION_BOUND_KEYS = frozenset(
     k for k in (_MODEL_BUILD_KEYS | _OPTIMIZER_CONSTRUCTION_KEYS) if k != "history_rep_fix"
 )
 
+# Opening-asset file paths served by the distributed server, which captures
+# them at process launch (create_app / --opening-*-path). The manifest
+# publisher re-reads config each iteration, so a live change to any of these
+# would advertise a new SHA while the server still serves the launch-time
+# bytes. Frozen against live reload (restart to change); see the reload guard.
+_LAUNCH_FIXED_ASSET_PATH_KEYS = frozenset({
+    "opening_book_path", "opening_book_path_2", "opening_fen_list_path",
+})
+
 
 def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload: bool = False) -> None:
     """Overlay YAML values into *config*, preserving PB2-searched keys.
@@ -412,6 +421,25 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
             if live_reload and k == "lr_schedule" and k in config and config[k] != v:
                 log.warning(
                     "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
+                    k, config[k], v,
+                )
+                continue
+            # Opening-asset PATHS are captured by the server process at launch
+            # (create_app / --opening-*-path) and served from that snapshot,
+            # while the manifest publisher re-reads config each iteration. A
+            # live path change would advertise the new file's SHA while the
+            # server still serves the old bytes -> worker download-verify
+            # failures (Codex review). Freeze the paths to launch; a value
+            # change needs a restart (which relaunches the server).
+            if (
+                live_reload
+                and k in _LAUNCH_FIXED_ASSET_PATH_KEYS
+                and k in config
+                and config[k] != v
+            ):
+                log.warning(
+                    "YAML reload: %s changed (%s -> %s) but is server-launch-fixed"
+                    " — skipping (restart to change the seed/book file)",
                     k, config[k], v,
                 )
                 continue

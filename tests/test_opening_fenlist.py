@@ -42,6 +42,27 @@ def test_load_rejects_illegal_position(tmp_path: Path) -> None:
         _load_fen_list(path)
 
 
+def test_load_rejects_forced_single_move(tmp_path: Path) -> None:
+    # Exactly one legal move -> _apply_forced_moves skips NN/MCTS, no record.
+    forced = "r5k1/p1P3pp/3QN1q1/3P1pB1/8/5P2/P6P/2n1q1K1 w - - 0 31"
+    assert chess.Board(forced).legal_moves.count() == 1
+    path = _write_list(tmp_path, [forced])
+    with pytest.raises(ValueError, match="forced"):
+        _load_fen_list(path)
+
+
+def test_load_rejects_claim_draw_terminal(tmp_path: Path) -> None:
+    # halfmove_clock >= 100: claimable 50-move draw; CBoard treats it as over,
+    # so it must be rejected even though is_game_over() (no claim) returns False.
+    fifty = "4k3/8/4K3/8/8/8/8/5R2 w - - 100 120"
+    b = chess.Board(fifty)
+    assert not b.is_game_over()
+    assert b.is_game_over(claim_draw=True)
+    path = _write_list(tmp_path, [fifty])
+    with pytest.raises(ValueError, match="terminal position"):
+        _load_fen_list(path)
+
+
 def test_load_rejects_terminal_position(tmp_path: Path) -> None:
     # Fool's mate final position: game over, useless as a game start.
     mate = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
@@ -132,10 +153,10 @@ def test_tb_adjudication_defers_virgin_fenlist_slot(monkeypatch) -> None:
 
 
 def test_production_seed_asset_loads() -> None:
-    # 78 = panel v2 minus the 35 held-out v1 rows (v1 stays a pure
-    # generalization yardstick for the seeding experiment).
+    # 76 = panel v2 minus the 35 held-out v1 rows, minus 2 forced-move seeds
+    # curated out. v1 stays a pure generalization yardstick.
     asset = Path(__file__).resolve().parents[1] / "data" / "blindspot_fens_v1.txt"
     if not asset.exists():
         pytest.skip("seed asset not present in this checkout")
     fens = _load_fen_list(str(asset))
-    assert len(fens) == len(set(fens)) == 78
+    assert len(fens) == len(set(fens)) == 76
