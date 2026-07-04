@@ -238,7 +238,7 @@ class _GumbelPolicyGameStats:
     candidate_count_sum: int = 0
 
 
-_OPENING_SOURCES = {"book1", "book2", "random", "start"}
+_OPENING_SOURCES = {"book1", "book2", "random", "start", "fenlist"}
 
 
 def _opening_source_for_stats(state: SelfplayState, i: int) -> str:

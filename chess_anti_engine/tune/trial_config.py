@@ -172,6 +172,10 @@ class TrialConfig:
     opening_book_max_games_2: int = 200_000
     opening_book_mix_prob_2: float = 0.0
     random_start_plies: int = 0
+  # Blind-spot FEN seeding (see selfplay/opening.py OpeningConfig)
+    opening_fen_list_path: str | None = None
+    opening_fen_prob: float = 0.0
+    opening_fen_net_side_to_move: bool = True
 
   # --- SF policy / game ---
     sf_policy_temp: float = 0.25
@@ -509,6 +513,11 @@ class TrialConfig:
             opening_book_max_games_2=int(config.get("opening_book_max_games_2", 200_000)),
             opening_book_mix_prob_2=float(config.get("opening_book_mix_prob_2", 0.0)),
             random_start_plies=int(config.get("random_start_plies", 0)),
+            opening_fen_list_path=_get("opening_fen_list_path", None),
+            opening_fen_prob=float(config.get("opening_fen_prob", 0.0)),
+            opening_fen_net_side_to_move=bool(
+                config.get("opening_fen_net_side_to_move", True)
+            ),
 
   # --- SF policy / game ---
             sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),

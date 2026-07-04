@@ -226,6 +226,9 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             opening_book_max_games_2=tc.opening_book_max_games_2,
             opening_book_mix_prob_2=tc.opening_book_mix_prob_2,
             random_start_plies=tc.random_start_plies,
+            opening_fen_list_path=tc.opening_fen_list_path,
+            opening_fen_prob=tc.opening_fen_prob,
+            opening_fen_net_side_to_move=tc.opening_fen_net_side_to_move,
         ),
         "diff_focus": DiffFocusConfig(
             enabled=tc.diff_focus_enabled,

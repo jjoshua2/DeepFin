@@ -28,13 +28,14 @@ def _bare_worker_session() -> WorkerSession:
     session._active_reco["sf_nodes"] = 100
   # Test manifests carry no stockfish/opening-book assets, so the session-start
   # fingerprint is all-None; match it so the asset-change gate stays quiet.
-    session._active_assets = (None, None, None)
+    session._active_assets = (None, None, None, None)
     session._last_manifest_poll_s = time.time()
     session._manifest_mtime = None
     session.model_sha = "old-sha"
     session.args = SimpleNamespace()
     session.opening_book_path = None
     session.opening_book_path_2 = None
+    session.opening_fen_list_path = None
     return session
 
 

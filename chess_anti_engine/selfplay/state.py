@@ -673,6 +673,12 @@ class SelfplayState:
         net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
             batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,
         )
+        if opening.opening_fen_net_side_to_move:
+            for i, start in enumerate(starts):
+                # Blind-spot FEN starts: the net must face the seat that
+                # blundered there (the FEN's side to move), not alternate.
+                if start.source == "fenlist":
+                    net_color_arr[i] = 1 if boards[i].turn else 0
         tb_probe, tb_result_arr, tb_adj_roll_arr = _init_tb_state(
             batch_size, rng=rng, game=game,
         )
@@ -879,6 +885,12 @@ class SelfplayState:
         self.done_arr[i] = 0
         self.finalized_arr[i] = 0
         self.net_color_arr[i] = 1 if (self.games_started % 2 == 0) else 0
+        if (
+            opening_start.source == "fenlist"
+            and self.opening.opening_fen_net_side_to_move
+        ):
+            # Mirror create(): net faces the FEN's side to move.
+            self.net_color_arr[i] = 1 if self.boards[i].turn else 0
         sp_frac = max(0.0, min(1.0, float(self.game.selfplay_fraction)))
         self.selfplay_arr[i] = 1 if self.rng.random() < sp_frac else 0
         # Clear TB adjudication stash from the previous game in this slot;
