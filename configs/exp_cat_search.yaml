@@ -348,9 +348,9 @@ tune:
   distributed_prev_model_max_fraction: 0.60  # 2026-05-19: raise 50%->60% to reduce alternating stale-discard timeout rows while keeping most data current-model.
   distributed_stale_pause_target_games: 1870  # 2026-05-28: scale with 3520 games/iter target.
   distributed_min_games_fraction: 0.90  # 2026-05-28: wait for 90% of target games before timing out.
-  distributed_server_port: 45453
+  distributed_server_port: 45464  # Distinct from production's 45453 (and exp_throughput_views' 45463) so this experiment's server can never bind-collide with a live production server, and production-configured remote workers can never connect here and cross-contaminate shards. (Codex/review, PR #109.)
   distributed_server_host: 0.0.0.0
-  distributed_server_public_url: http://192.168.1.212:45453
+  distributed_server_public_url: http://192.168.1.212:45464  # Matches the isolated port above.
   distributed_server_root_override: /home/josh/projects/chess/runs/exp_cat_search/server  # Isolated from production (see work_dir).
   tune_replay_root_override: /home/josh/projects/chess/runs/exp_cat_search/replay  # Isolated from production (see work_dir).
 
