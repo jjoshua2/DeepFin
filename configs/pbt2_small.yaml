@@ -132,7 +132,7 @@ selfplay:
   games_per_iter_start: 3520   # match games_per_iter; ramp disabled. Live-reloadable.
   games_per_iter_ramp_iters: 0
   selfplay_fraction: 0.30  # 2026-04-24: 0.50→0.25; 2026-05-04: 0.25→0.30 (30% selfplay / 70% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
-  record_fast_ply_value: false  # 2026-07-02: REVERTED true->false (throughput-triple leg 2 killed). Evidence: raw policy top-1 51.5->61.7 never recovered (trunk dilution from 75% value-only rows) + value 72.4->76.6 across the leg's window; ledger entry + revert pool data/salvage/prechange_20260702_ckpt479. Restart-gated. 2026-07-01 (PR #91) history: value-only fast rows, ~4x rows/game.
+  record_fast_ply_value: false  # 2026-07-02: REVERTED true->false (throughput-triple leg 2 killed). Evidence: raw policy top-1 51.5->61.7 never recovered (trunk dilution from 75% value-only rows) + value 72.4->76.6 across the leg's window; ledger entry + revert pool data/salvage/prechange_20260702_ckpt479. LIVE-propagated (~30 min): it is a _RECO_RESTART_KEY, so a change triggers an AUTOMATIC worker-session restart — NOT an operator `train.sh restart` (a live YAML flip DOES take effect; the 07-02 branch-switch incident re-propagated it live). 2026-07-01 (PR #91) history: value-only fast rows, ~4x rows/game.
   selfplay_batch: 384   # 2026-07-02 arrival-stream POC: 256->384 (fatten ready-pool so broker batches grow; RAM headroom 71G). Revert to 256 if pos/s flat or RAM/latency degrades.
   max_plies: 450
   history_rep_fix: true  # 2026-06-17: lc0-root repetition-plane correctness fix; affects ~0.2% of positions; net-neutral-to-faster. Propagates as the replay window refills.
@@ -264,7 +264,7 @@ train:
   w_moves_left: 0.02
   sf_wdl_frac: 0.50         # Fraction of WDL target blended from SF labels when available.
   sf_wdl_frac_floor: 0.45   # 2026-07-02 value-ranking exp (BT4 43cp vs our 75.9 on same probe): raise truth-anchor floor 0.35->0.45, cut self-echo below. Live-reload. Revert pair: 0.35/0.35.
-  search_wdl_frac: 0.20     # 2026-07-02 value-ranking exp: 0.35->0.20 — cut the self-referential bootstrap (fast rows carry a ~pure net-eval echo at 35% since the fast-ply harvest; SF anchor now covers only ~10% of value mass). Yardstick: value_regret vs the 70-76cp band + BT4=43.0 ref. Live-reload.
+  search_wdl_frac: 0.20     # 2026-07-02 value-ranking exp (rung 1): 0.35->0.20. STALE PREMISE (Codex review): the original rationale — fast-ply rows carry a ~pure net-eval echo at 35% — no longer holds after record_fast_ply_value was reverted to false the same day; with fast rows gone, every remaining row's search_wdl is a genuine MCTS-averaged root WDL, so 0.20 now under-weights legitimate own-search signal (not just self-echo). Re-examine at the rung-1 read: if value ranking regressed, 0.35 may be the better mix now. Yardstick: value_regret vs the 70-76cp band + BT4=43.0 ref. Live-reload. Revert pair: 0.35/0.35.
   use_adjusted_wdl_target: false  # Opt-in only; regret adjustment applies to the game-outcome fraction, not missing SF/search fallbacks.
   adjusted_wdl_regret_source: sum  # sum|d95|d98|max|h4|h6|h12|h24|h50; d95/d98 are per network record, h* are ply windows.
   adjusted_wdl_regret_scale: 1.0   # For sum/fp16 suffixes, prefer a smaller scale, discounted/horizon source, or positive cap.

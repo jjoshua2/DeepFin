@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 import chess
 import numpy as np
@@ -53,6 +54,8 @@ def main() -> None:
 
     with open(args.panel, encoding="utf-8") as f:
         rows = [json.loads(line) for line in f]
+    if not rows:
+        raise SystemExit(f"panel {args.panel} has no rows (empty or truncated file)")
     model = load_model_from_checkpoint(args.checkpoint, device=args.device)
     model.eval()
     hist = str(getattr(model, "input_history_encoding", "legacy"))
@@ -90,8 +93,18 @@ def main() -> None:
         print(f"{tag:<12} {r['round']:>3} {r['ply']:>4} {r['sf_after']:>8} {net_after:>9.2f}")
 
     n = len(rows)
-    print(f"\npanel n={n} (deep SF says all lost after our move)")
-    print(f"BLIND (net > {BLIND_ABOVE}): {blind}/{n}   [baseline 21/35 @ckpt477]")
+    # Baseline is panel-specific (v1: 21/35 @ckpt477, v2: 54/113 @ckpt500) — a
+    # hardcoded label misannotates whichever panel isn't v1 (Codex review). Show
+    # the matching baseline by panel filename; omit it for an unknown panel
+    # rather than print a wrong anchor.
+    _panel_baselines = {
+        "blindspot_panel_v1.jsonl": "baseline 21/35 @ckpt477",
+        "blindspot_panel_v2.jsonl": "baseline 54/113 @ckpt500",
+    }
+    base = _panel_baselines.get(os.path.basename(args.panel), "")
+    ann = f"   [{base}]" if base else ""
+    print(f"\npanel {os.path.basename(args.panel)} n={n} (deep SF says all lost after our move)")
+    print(f"BLIND (net > {BLIND_ABOVE}): {blind}/{n}{ann}")
     print(f"AWARE (net < {AWARE_BELOW}): {aware}/{n}")
     print(f"in between:        {n - blind - aware}/{n}")
 

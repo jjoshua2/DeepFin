@@ -77,17 +77,29 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.device.startswith("cuda") and args.gpu_mem_fraction:
-        idx = (int(args.device.split(":", 1)[1]) if ":" in args.device
-               else torch.cuda.current_device())
+        try:
+            idx = (int(args.device.split(":", 1)[1]) if ":" in args.device
+                   else torch.cuda.current_device())
+        except (ValueError, IndexError):
+            raise SystemExit(
+                f"invalid --device {args.device!r}; use 'cuda' or 'cuda:N'",
+            ) from None
         torch.cuda.set_per_process_memory_fraction(float(args.gpu_mem_fraction), idx)
 
+    if args.n_shards < 1:
+        # -args.n_shards with n_shards=0 is [-0:] == [0:] == ALL shards, a silent
+        # unbounded load; negative slices from the wrong end (Codex review).
+        raise SystemExit("--n-shards must be >= 1")
     paths = sorted(glob.glob(args.shard_glob))[-args.n_shards:]
     if not paths:
         raise SystemExit(f"no shards match {args.shard_glob}")
     xs, gaps, sf_qs, rels = [], [], [], []
     have_rel = True
     for path in paths:
-        arrs, _meta = load_shard_arrays(path)
+        # lazy=True so only the ~6 keys read below are decompressed, not the
+        # wide unused arrays (policy_target 1858, sf_policy, future_policy,
+        # categorical) — keeps the tool's "GPU-light" footprint (Codex review).
+        arrs, _meta = load_shard_arrays(path, lazy=True)
         need = ("has_policy", "priority_sf_search_gap", "has_priority_sf_search_gap",
                 "sf_wdl", "has_sf_wdl", "x")
         if any(k not in arrs for k in need):
@@ -108,6 +120,15 @@ def main() -> None:
         else:
             have_rel = False
 
+    if not xs:
+        # Every sampled shard was skipped (no priority_sf_search_gap rows) — the
+        # window likely predates #104 gap recording. Fail with a clear message
+        # rather than an opaque "need at least one array to concatenate" (Codex).
+        raise SystemExit(
+            f"no rows carrying priority_sf_search_gap in the newest {len(paths)} "
+            f"shard(s) matching {args.shard_glob}; the window may predate the "
+            f"#104 gap recording — point --shard-glob at newer shards",
+        )
     x = np.concatenate(xs)
     gap = np.concatenate(gaps)
     sf_q = np.concatenate(sf_qs)
@@ -123,9 +144,19 @@ def main() -> None:
     print(f"\n{'gap bucket':>16} {'n':>7} {'verr_old':>9} {'verr_new':>9} {'delta':>8}")
     buckets = [("bottom half", 0, 50), ("p50-p90", 50, 90), ("top decile", 90, 100)]
     for name, lo, hi in buckets:
-        m = (gap >= np.percentile(gap, lo)) & (gap <= np.percentile(gap, hi))
+        plo, phi = np.percentile(gap, lo), np.percentile(gap, hi)
+        # Half-open [plo, phi) so a tied cluster at a percentile edge lands in
+        # exactly one bucket; the top bucket is closed on the right. gap is
+        # float16 (many ties), so inclusive-both bounds double-count a whole
+        # edge cluster into two buckets and bias the top-decile delta — the
+        # #104 secondary decision signal (Codex review).
+        m = (gap >= plo) & ((gap <= phi) if hi == 100 else (gap < phi))
+        n = int(m.sum())
+        if n == 0:
+            print(f"{name:>16} {0:>7} {'—':>9} {'—':>9} {'—':>8}")
+            continue
         d = float(np.mean(verr_old[m]) - np.mean(verr_new[m]))
-        print(f"{name:>16} {int(m.sum()):>7} {np.mean(verr_old[m]):>9.4f} "
+        print(f"{name:>16} {n:>7} {np.mean(verr_old[m]):>9.4f} "
               f"{np.mean(verr_new[m]):>9.4f} {d:>+8.4f}")
     d_all = float(np.mean(verr_old) - np.mean(verr_new))
     print(f"{'ALL':>16} {len(gap):>7} {np.mean(verr_old):>9.4f} "
