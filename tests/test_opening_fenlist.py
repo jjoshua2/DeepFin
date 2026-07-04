@@ -34,6 +34,14 @@ def test_load_rejects_invalid_fen(tmp_path: Path) -> None:
         _load_fen_list(path)
 
 
+def test_load_rejects_illegal_position(tmp_path: Path) -> None:
+    # Parseable but semantically invalid: black has no king.
+    no_king = "8/8/8/8/8/8/8/4K3 w - - 0 1"
+    path = _write_list(tmp_path, [no_king])
+    with pytest.raises(ValueError, match="illegal position"):
+        _load_fen_list(path)
+
+
 def test_load_rejects_terminal_position(tmp_path: Path) -> None:
     # Fool's mate final position: game over, useless as a game start.
     mate = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"
@@ -85,6 +93,42 @@ def test_fenlist_takes_priority_over_book(tmp_path: Path) -> None:
     rng = np.random.default_rng(1)
     for _ in range(10):
         assert sample_starting_board(rng=rng, cfg=cfg).source == "fenlist"
+
+
+def test_tb_adjudication_defers_virgin_fenlist_slot(monkeypatch) -> None:
+    """A TB-eligible FEN seed must survive adjudication until a ply is played."""
+    from types import SimpleNamespace
+    from typing import Any, cast
+
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    from chess_anti_engine.selfplay import manager as mgr
+    from chess_anti_engine.selfplay.state import SelfplayState
+
+    fen = "8/8/8/4k3/8/3K4/4P3/8 w - - 0 1"  # KPvK: TB-eligible at ply 0
+    board = chess.Board(fen)
+    moved = chess.Board(fen)
+    moved.push_uci("e2e4")
+
+    st = cast(Any, object.__new__(SelfplayState))
+    st.batch_size = 3
+    st.done_arr = np.zeros(3, dtype=np.int8)
+    st.finalized_arr = np.zeros(3, dtype=np.int8)
+    st.tb_result_arr = [None, None, None]
+    st.tb_adj_roll_arr = np.ones(3, dtype=np.int8)
+    st.pending_sf_moves = {}
+    # slot 0: virgin fenlist start -> deferred; slot 1: same position from a
+    # book -> adjudicated; slot 2: fenlist AFTER one ply -> adjudicated.
+    st.cboards = [
+        CBoard.from_board(board), CBoard.from_board(board), CBoard.from_board(moved),
+    ]
+    st.opening_source_arr = ["fenlist", "book1", "fenlist"]
+    st.starting_boards = [board.copy(), board.copy(), board.copy()]
+    st.tb_probe = SimpleNamespace(max_pieces=6)
+    st.game = SimpleNamespace(syzygy_path="/nonexistent-tb-path")
+    monkeypatch.setattr(mgr, "tb_adjudicate_result", lambda _b, _p: "1/2-1/2")
+
+    assert mgr._tb_adjudicate_active_games(st) == 2
+    assert list(st.done_arr) == [0, 1, 1]
 
 
 def test_production_seed_asset_loads() -> None:

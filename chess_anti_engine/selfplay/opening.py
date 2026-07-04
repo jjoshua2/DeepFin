@@ -218,6 +218,11 @@ def _load_fen_list(path_str: str) -> tuple[str, ...]:
             board = chess.Board(line)
         except ValueError as e:
             raise ValueError(f"invalid FEN at {path_str}:{lineno}: {line!r}") from e
+        # Parseable != playable: chess.Board accepts positions with missing
+        # kings, back-rank pawns, etc., which would crash CBoard/Stockfish
+        # downstream (Codex review).
+        if not board.is_valid():
+            raise ValueError(f"illegal position at {path_str}:{lineno}: {line!r}")
         if board.is_game_over():
             raise ValueError(f"terminal position at {path_str}:{lineno}: {line!r}")
         fens.append(line)
