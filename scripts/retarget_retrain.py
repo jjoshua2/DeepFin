@@ -47,6 +47,7 @@ import numpy as np
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.model import build_model, load_state_dict_tolerant, model_config_from_flat_config
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
+from chess_anti_engine.uci.model_loader import _model_config_from_arch
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
@@ -101,10 +102,20 @@ def _run_variant(
     # Identical seed per variant: the only difference between runs is the
     # target params, not dropout masks or replay sampling order.
     torch.manual_seed(int(config.get("seed", 0)))
-    model_cfg = model_config_from_flat_config(config)
+
+    # ARCHITECTURE from the checkpoint's own ``arch`` key, NOT the YAML: the
+    # config only carries training/target/sampling params, so building the
+    # model from it silently drops every checkpoint tensor whose shape the
+    # YAML disagrees on (observed: embed.weight + per-layer ffn when the YAML
+    # arch drifted from the trained net) — a partially random-init model that
+    # invalidates the A/B. The stored arch reconstructs the exact model.
+    ckpt = torch.load(str(checkpoint), map_location=device, weights_only=False)
+    if isinstance(ckpt, dict) and ckpt.get("arch"):
+        model_cfg = _model_config_from_arch(ckpt["arch"])
+    else:
+        model_cfg = model_config_from_flat_config(config)
     model = build_model(model_cfg)
 
-    ckpt = torch.load(str(checkpoint), map_location=device, weights_only=False)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     load_state_dict_tolerant(model, state, label=f"retarget-{name}")
 
@@ -120,7 +131,10 @@ def _run_variant(
     # measure nothing.
     buf = DiskReplayBuffer(
         10**9, shard_dir=replay_dir, rng=rng,
-        input_planes=input_plane_count(config.get("input_extra_features")),
+        # Plane count from the resolved arch (the flat config has no top-level
+        # input_extra_features key — reading it there yields None -> 146, which
+        # rejects the 175-plane v2_threats shards and empties the buffer).
+        input_planes=input_plane_count(getattr(model_cfg, "input_extra_features", None)),
         upgrade_v1_planes=bool(config.get("replay_upgrade_v1_planes", False)),
         shuffle_cap=int(config.get("shuffle_buffer_size", 20_000)),
         draw_cap_frac=float(config.get("shuffle_draw_cap_frac", 0.90)),
