@@ -425,6 +425,18 @@ def _init_color_and_selfplay_arrays(
     return net_color_arr, selfplay_arr
 
 
+def _fenlist_net_color(source: str, board: chess.Board, cfg: OpeningConfig) -> int | None:
+    """Net color (1=white, 0=black) for a fenlist-seeded slot: the net faces the
+    FEN's side to move — the seat that historically blundered. None when the slot
+    is not a fenlist seed or the feature is off, so the caller keeps its default
+    alternating color. Shared by create() and recycle_slot() so the rule can't
+    drift between fresh and recycled slots (Codex review, PR #108).
+    """
+    if source == "fenlist" and cfg.opening_fen_net_side_to_move:
+        return 1 if board.turn else 0
+    return None
+
+
 def _init_tb_state(
     batch_size: int, *, rng: np.random.Generator, game: GameConfig,
 ) -> tuple[SyzygyProbe | None, list[str | None], np.ndarray]:
@@ -673,6 +685,10 @@ class SelfplayState:
         net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
             batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,
         )
+        for i, start in enumerate(starts):
+            col = _fenlist_net_color(start.source, boards[i], opening)
+            if col is not None:
+                net_color_arr[i] = col
         tb_probe, tb_result_arr, tb_adj_roll_arr = _init_tb_state(
             batch_size, rng=rng, game=game,
         )
@@ -767,13 +783,36 @@ class SelfplayState:
         )
         return net_idxs, sp_idxs, cur_idxs, all_done
 
+    def _fenlist_awaiting_net_move(self, i: int) -> bool:
+        """True while a fenlist-seeded slot hasn't yet given the net a decision.
+
+        2 plies covers both seatings — the net decides at ply 0 when it is the
+        seed's side to move, ply 1 when the opponent replies first. TB
+        adjudication and the ply-timeout skip such slots so a seed is never
+        finalized with zero training samples (Codex review, PR #108).
+        """
+        if self.starting_boards is None or str(self.opening_source_arr[i]) != "fenlist":
+            return False
+        # cboards[i].ply is the absolute ply (C attr, ~137 for a fullmove-69
+        # seed); starting_boards[i] is a chess.Board so .ply() is a method.
+        return (self.cboards[i].ply - self.starting_boards[i].ply()) < 2
+
     def _mark_timed_out_slots(self, active_idxs: list[int]) -> None:
         """Mark active slots as done if game-over or past ``max_plies``."""
         max_plies = int(self.game.max_plies)
         for i in active_idxs:
-            if not self.done_arr[i] and (
-                self.cboards[i].is_game_over() or self.cboards[i].ply >= max_plies
-            ):
+            if self.done_arr[i]:
+                continue
+            # Count plies PLAYED since the opening, not absolute ply: fenlist
+            # seeds start at an absolute ply ~100+, so `ply >= max_plies` could
+            # time a seed out before the net ever moves if max_plies < seed ply
+            # (Codex review). Books/random/startpos begin near ply 0, so this is
+            # equivalent for them.
+            start_ply = (
+                self.starting_boards[i].ply() if self.starting_boards is not None else 0
+            )
+            played = self.cboards[i].ply - start_ply
+            if self.cboards[i].is_game_over() or played >= max_plies:
                 self.done_arr[i] = 1
 
     def _classify_live_slots_python(
@@ -879,6 +918,9 @@ class SelfplayState:
         self.done_arr[i] = 0
         self.finalized_arr[i] = 0
         self.net_color_arr[i] = 1 if (self.games_started % 2 == 0) else 0
+        col = _fenlist_net_color(opening_start.source, self.boards[i], self.opening)
+        if col is not None:
+            self.net_color_arr[i] = col
         sp_frac = max(0.0, min(1.0, float(self.game.selfplay_fraction)))
         self.selfplay_arr[i] = 1 if self.rng.random() < sp_frac else 0
         # Clear TB adjudication stash from the previous game in this slot;

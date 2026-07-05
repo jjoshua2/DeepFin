@@ -776,6 +776,7 @@ class WorkerSession:
         self.last_model_sha = None
         self.last_ob_sha: str | None = None
         self.last_ob2_sha: str | None = None
+        self.last_fenlist_sha: str | None = None
         self.last_sf_sha: str | None = None
         self.model_cfg_active: ModelConfig | None = None
         self.model = None
@@ -795,6 +796,7 @@ class WorkerSession:
   # Opening book paths (set by _sync_opening_books each iteration).
         self.opening_book_path: str | None = None
         self.opening_book_path_2: str | None = None
+        self.opening_fen_list_path: str | None = None
 
   # Per-iteration state (set during each loop iteration).
         self.model_sha = ""
@@ -1145,7 +1147,12 @@ class WorkerSession:
             return str(rec.get("sha256")) if isinstance(rec, dict) and rec.get("sha256") else None
         from_server = bool(getattr(self.args, "stockfish_from_server", False))
         sf_sha = _sha("stockfish") if from_server else None
-        return (sf_sha, _sha("opening_book"), _sha("opening_book_2"))
+        return (
+            sf_sha,
+            _sha("opening_book"),
+            _sha("opening_book_2"),
+            _sha("opening_fen_list"),
+        )
 
     def _reco_changed(self, manifest: dict, *, source_tag: str) -> bool:
         """Return True (and request session restart) if reco knobs differ from active.
@@ -2051,6 +2058,12 @@ class WorkerSession:
             server_url_fn=self._server_url_for, headers=hdrs, log=self.log,
             last_sha=self.last_ob2_sha,
         )
+        self.opening_fen_list_path, self.last_fenlist_sha = _download_opening_book(
+            manifest, "opening_fen_list", self.cache_dir,
+            cache_prefix="fenlist", default_endpoint="/v1/opening_fen_list",
+            server_url_fn=self._server_url_for, headers=hdrs, log=self.log,
+            last_sha=self.last_fenlist_sha,
+        )
 
     def _sync_stockfish(
         self,
@@ -2300,6 +2313,7 @@ class WorkerSession:
         "random_start_plies",
         "opening_book_prob", "opening_book_max_plies", "opening_book_max_games",
         "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
+        "opening_fen_prob", "opening_fen_net_side_to_move",
         "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     )
 
@@ -2385,6 +2399,14 @@ class WorkerSession:
                 opening_book_max_games_2=int(reco.get("opening_book_max_games_2", 200000)),
                 opening_book_mix_prob_2=float(reco.get("opening_book_mix_prob_2", 0.0)),
                 random_start_plies=self._resolve_reco(reco, "random_start_plies", 0, int),
+                opening_fen_list_path=self.opening_fen_list_path,
+                opening_fen_prob=(
+                    float(reco.get("opening_fen_prob", 0.0))
+                    if self.opening_fen_list_path else 0.0
+                ),
+                opening_fen_net_side_to_move=bool(
+                    reco.get("opening_fen_net_side_to_move", True)
+                ),
             ),
             "game": GameConfig(
                 max_plies=self._resolve_reco(reco, "max_plies", 240, int),

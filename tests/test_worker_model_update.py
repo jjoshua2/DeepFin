@@ -28,13 +28,14 @@ def _bare_worker_session() -> WorkerSession:
     session._active_reco["sf_nodes"] = 100
   # Test manifests carry no stockfish/opening-book assets, so the session-start
   # fingerprint is all-None; match it so the asset-change gate stays quiet.
-    session._active_assets = (None, None, None)
+    session._active_assets = (None, None, None, None)
     session._last_manifest_poll_s = time.time()
     session._manifest_mtime = None
     session.model_sha = "old-sha"
     session.args = SimpleNamespace()
     session.opening_book_path = None
     session.opening_book_path_2 = None
+    session.opening_fen_list_path = None
     return session
 
 
@@ -617,7 +618,9 @@ def test_session_asset_change_triggers_restart() -> None:
     session = _bare_worker_session()
     session.args = SimpleNamespace(sf_nodes=None, stockfish_from_server=True)
     session._active_reco = session._snapshot_reco({"sf_nodes": 5000})
-    session._active_assets = ("sha_old", None, None)
+    # 4-tuple (sf, book, book2, fen_list) so the change under test is the SF sha
+    # (sha_old -> sha_NEW), not the tuple length (Codex review, PR #108).
+    session._active_assets = ("sha_old", None, None, None)
     session._active_state = _live_state()
 
     changed = WorkerSession._reco_changed(

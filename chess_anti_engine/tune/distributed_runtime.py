@@ -335,6 +335,10 @@ def _publish_distributed_trial_state(
         "opening_book_max_games_2": int(config.get("opening_book_max_games_2", 200_000)),
         "opening_book_mix_prob_2": float(config.get("opening_book_mix_prob_2", 0.0)),
         "random_start_plies": int(config.get("random_start_plies", 0)),
+        "opening_fen_prob": float(config.get("opening_fen_prob", 0.0)),
+        "opening_fen_net_side_to_move": bool(
+            config.get("opening_fen_net_side_to_move", True)
+        ),
         "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
         "sf_nodes": int(sf_nodes),
         "sf_move_nodes": int(config.get("sf_move_nodes", 0)),
@@ -424,6 +428,7 @@ def _publish_distributed_trial_state(
     for cfg_key, manifest_key, endpoint in (
         ("opening_book_path", "opening_book", "/v1/opening_book"),
         ("opening_book_path_2", "opening_book_2", "/v1/opening_book_2"),
+        ("opening_fen_list_path", "opening_fen_list", "/v1/opening_fen_list"),
     ):
         raw = config.get(cfg_key)
         if not isinstance(raw, str) or not raw.strip():

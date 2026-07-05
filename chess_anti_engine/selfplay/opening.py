@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from pathlib import Path
 
 import chess
 import chess.pgn
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,23 @@ class OpeningConfig:
 
   # If >0, play this many random legal plies from the start position.
     random_start_plies: int = 0
+
+  # Blind-spot FEN seeding: if set, with probability opening_fen_prob the game
+  # starts from a FEN sampled uniformly from this file (plain text, one FEN
+  # per line; blank lines and lines starting with '#' are skipped) instead of
+  # the book/random/startpos flow. Used to replay positions the net has
+  # historically misplayed (see data/blindspot_fens_v1.txt) so refutations
+  # enter the training distribution — search cannot rescue value-blind
+  # positions, only data can (docs/experiment_ledger.md, 2026-07-03 probe).
+    opening_fen_list_path: str | None = None
+    opening_fen_prob: float = 0.0
+
+  # When a FEN start is used, force the net to play the FEN's side to move
+  # (the seat that blundered there). Without this, color alternation puts the
+  # net on the punisher side half the time — useful data, but the point of
+  # seeding is making the net face the decision it historically got wrong.
+  # Net-vs-net selfplay slots are unaffected (the net plays both seats).
+    opening_fen_net_side_to_move: bool = True
 
 
 @dataclass(frozen=True)
@@ -184,6 +204,67 @@ def _sample_from_polyglot(*, rng, path: str, max_plies: int) -> chess.Board:
     return b
 
 
+def _fen_reject_reason(line: str) -> str | None:
+    """Why this FEN is unusable as a seed, or None if it's fine.
+
+    A seed must be parseable, legal, non-terminal (under claim-draw, matching
+    CBoard's cboard_is_game_over which treats halfmove_clock>=100 as over), and
+    have >=2 legal moves (a forced position is skipped by _apply_forced_moves,
+    so the net never faces the seeded decision).
+    """
+    try:
+        board = chess.Board(line)
+    except ValueError:
+        return "unparseable FEN"
+    if not board.is_valid():
+        return "illegal position"  # missing kings, impossible pawns, etc.
+    if board.is_game_over(claim_draw=True):
+        return "terminal position"
+    if board.legal_moves.count() < 2:
+        return "forced (single legal move)"
+    return None
+
+
+@lru_cache(maxsize=8)
+def _load_fen_list(path_str: str) -> tuple[str, ...]:
+    """Load a plain-text FEN list (one per line, '#' comments, blanks skipped).
+
+    Malformed/unusable lines are SKIPPED with a logged warning rather than
+    raised — one bad line in a hand-edited or future seed file must not crash
+    the whole worker fleet (Codex review). We raise only when the file yields
+    ZERO usable seeds, so an empty/all-comment/all-bad file fails fast at
+    startup (warm_opening_book_cache) instead of mid-run. Cache keys are
+    path-based like the PGN loader: version the filename to replace a list.
+    """
+    fens: list[str] = []
+    skipped: list[str] = []
+    for lineno, raw in enumerate(Path(path_str).read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        reason = _fen_reject_reason(line)
+        if reason is not None:
+            skipped.append(f"{path_str}:{lineno} ({reason}): {line!r}")
+            continue
+        fens.append(line)
+    if skipped:
+        _log.warning(
+            "opening FEN list %s: skipped %d unusable seed(s):\n  %s",
+            path_str, len(skipped), "\n  ".join(skipped),
+        )
+    if not fens:
+        raise ValueError(
+            f"opening FEN list {path_str} has no usable seeds "
+            f"(skipped {len(skipped)}); fix the file and restart",
+        )
+    return tuple(fens)
+
+
+def _sample_fen_list(*, rng, path: str) -> chess.Board:
+    fens = _load_fen_list(path)
+    return chess.Board(fens[int(rng.integers(0, len(fens)))])
+
+
 def _sample_book(*, rng, path: str, max_plies: int, max_games: int) -> chess.Board:
     p = Path(path)
     suffixes = "".join(p.suffixes).lower()
@@ -201,6 +282,8 @@ def _sample_book(*, rng, path: str, max_plies: int, max_games: int) -> chess.Boa
 
 def warm_opening_book_cache(cfg: OpeningConfig) -> None:
     """Preload PGN opening books before launching many selfplay threads."""
+    if cfg.opening_fen_list_path:
+        _load_fen_list(str(cfg.opening_fen_list_path))
     for path, max_plies, max_games in (
         (cfg.opening_book_path, cfg.opening_book_max_plies, cfg.opening_book_max_games),
         (cfg.opening_book_path_2, cfg.opening_book_max_plies_2, cfg.opening_book_max_games_2),
@@ -220,11 +303,22 @@ def sample_starting_board(*, rng, cfg: OpeningConfig) -> OpeningStart:
     """Create a starting position and label its low-cardinality source.
 
     Priority:
+    - with probability opening_fen_prob, use the blind-spot FEN list if provided
     - with probability opening_book_prob, use opening book if provided
       - among book games, use book 2 with opening_book_mix_prob_2, else book 1
     - otherwise use random_start_plies if >0
     - otherwise startpos
     """
+    if (
+        cfg.opening_fen_list_path
+        and float(cfg.opening_fen_prob) > 0.0
+        and float(rng.random()) < float(cfg.opening_fen_prob)
+    ):
+        return OpeningStart(
+            board=_sample_fen_list(rng=rng, path=str(cfg.opening_fen_list_path)),
+            source="fenlist",
+        )
+
     if cfg.opening_book_path and float(rng.random()) < float(cfg.opening_book_prob):
         use_book2 = (
             cfg.opening_book_path_2

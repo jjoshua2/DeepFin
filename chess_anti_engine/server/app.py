@@ -377,6 +377,7 @@ def create_app(
     users_db: str = "users.json",
     opening_book_path: str | None = None,
     opening_book_path_2: str | None = None,
+    opening_fen_list_path: str | None = None,
     max_upload_mb: int = 256,
     min_workers_per_trial: int = 1,
     max_worker_delta_per_rebalance: int = 1,
@@ -1098,6 +1099,15 @@ def create_app(
         p = Path(opening_book_path_2)
         if not p.exists():
             raise HTTPException(status_code=404, detail="opening book 2 not found")
+        return FileResponse(str(p), media_type="application/octet-stream", filename=p.name)
+
+    @app.get("/v1/opening_fen_list")
+    def get_opening_fen_list() -> Any:
+        if opening_fen_list_path is None:
+            raise HTTPException(status_code=404, detail="no opening FEN list configured")
+        p = Path(opening_fen_list_path)
+        if not p.exists():
+            raise HTTPException(status_code=404, detail="opening FEN list not found")
         return FileResponse(str(p), media_type="application/octet-stream", filename=p.name)
 
     def _artifact_from_publish(key: str, *, default_name: str, trial_id: str | None = None) -> Path | None:

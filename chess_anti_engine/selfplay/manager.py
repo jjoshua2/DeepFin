@@ -67,6 +67,13 @@ def _tb_adjudicate_active_games(state: SelfplayState) -> int:
         occ = int(cb.occ_white) | int(cb.occ_black)
         if occ.bit_count() > max_p or int(cb.castling) != 0:
             continue
+        # FEN-seeded games must get at least one NET decision before TB
+        # adjudication, else a TB-eligible endgame seed is finalized with zero
+        # samples. The helper covers both seatings — not just ply 0 — so a
+        # curriculum seed where the opponent replies first (net_side_to_move
+        # False) is also protected until the net moves (Codex review, PR #108).
+        if state._fenlist_awaiting_net_move(i):
+            continue
         board = chess.Board(cb.fen())
         result = tb_adjudicate_result(board, state.game.syzygy_path)
         if result is not None:

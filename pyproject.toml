@@ -1,6 +1,12 @@
 [project]
 name = "chess-anti-engine"
-version = "0.0.1"
+version = "0.0.2"  # 0.0.2: blind-spot FEN seeding. The min_worker_version gate that keeps
+                   # pre-change (0.0.1) workers from mixing non-seeded shards into an
+                   # activated seeding run only fires AFTER `pip install -e .` regenerates
+                   # this into the INSTALLED metadata (version.py reads importlib.metadata,
+                   # not this file) AND the worker wheel is rebuilt at 0.0.2 — a bare
+                   # `train.sh restart` does neither. Activation checklist in
+                   # docs/experiment_ledger.md carries both steps (Codex review, PR #108).
 description = "Chess anti-engine training framework (Phase 1: Python pipeline)"
 requires-python = ">=3.10.12"
 # Core deps are the LITE baseline — exactly what the selfplay client needs

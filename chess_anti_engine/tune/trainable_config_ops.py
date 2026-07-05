@@ -226,6 +226,9 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             opening_book_max_games_2=tc.opening_book_max_games_2,
             opening_book_mix_prob_2=tc.opening_book_mix_prob_2,
             random_start_plies=tc.random_start_plies,
+            opening_fen_list_path=tc.opening_fen_list_path,
+            opening_fen_prob=tc.opening_fen_prob,
+            opening_fen_net_side_to_move=tc.opening_fen_net_side_to_move,
         ),
         "diff_focus": DiffFocusConfig(
             enabled=tc.diff_focus_enabled,
@@ -379,6 +382,15 @@ _RESUME_CONSTRUCTION_BOUND_KEYS = frozenset(
     k for k in (_MODEL_BUILD_KEYS | _OPTIMIZER_CONSTRUCTION_KEYS) if k != "history_rep_fix"
 )
 
+# Opening-asset file paths served by the distributed server, which captures
+# them at process launch (create_app / --opening-*-path). The manifest
+# publisher re-reads config each iteration, so a live change to any of these
+# would advertise a new SHA while the server still serves the launch-time
+# bytes. Frozen against live reload (restart to change); see the reload guard.
+_LAUNCH_FIXED_ASSET_PATH_KEYS = frozenset({
+    "opening_book_path", "opening_book_path_2", "opening_fen_list_path",
+})
+
 
 def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload: bool = False) -> None:
     """Overlay YAML values into *config*, preserving PB2-searched keys.
@@ -410,6 +422,28 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
                 log.warning(
                     "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
                     k, config[k], v,
+                )
+                continue
+            # Opening-asset PATHS are captured by the server process at launch
+            # (create_app / --opening-*-path) and served from that snapshot,
+            # while the manifest publisher re-reads config each iteration. A
+            # live path change would advertise the new file's SHA while the
+            # server still serves the old bytes -> worker download-verify
+            # failures (Codex review). Freeze the paths to launch; a value
+            # change needs a restart (which relaunches the server).
+            if (
+                live_reload
+                and k in _LAUNCH_FIXED_ASSET_PATH_KEYS
+                and config.get(k) != v
+            ):
+                # config.get(k) (not `k in config`) so a fresh live-ADD of the
+                # path (absent -> a path) is caught too: the server was launched
+                # without the flag, so advertising the new asset would 404 every
+                # worker. Both add and change require a restart (Codex review).
+                log.warning(
+                    "YAML reload: %s changed (%s -> %s) but is server-launch-fixed"
+                    " — skipping (restart to add/change the seed/book file)",
+                    k, config.get(k), v,
                 )
                 continue
             if k in _TOPOLOGY_KEYS or k in _RESUME_CONSTRUCTION_BOUND_KEYS:
