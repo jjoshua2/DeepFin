@@ -64,11 +64,38 @@ Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-r
 - NEVER run a 256+ sim arena concurrent with training (GPU OOM crashed the live run 2026-06-18). sims-1/32 arenas and `audit_targets`/`value_regret` at small batch + `--gpu-mem-fraction` are safe concurrent.
 - The live YAML is re-read every iteration, and the strict validator rejects the WHOLE reload if it contains a key the running code doesn't know — add new config keys only after restarting onto code that defines them.
 - Live checkpoints get pruned by Ray; before using one as a long-lived reference (arena/audit baseline), copy it out of the tune dir first.
+- **Never `git checkout` in this working tree while a run is live** — the live YAML is part of the tree and is re-read every iteration, so a branch switch can silently revert live experiments (2026-07-02: a checkout rolled back the label uncap, fast-ply revert, and rung-1 blend for 3 iterations). Do all branch work in `git worktree` checkouts, and merge PRs that touch the live yaml promptly.
 
 ## Configs
 
 - `configs/pbt2_small.yaml` — **Production config.** 384-dim, 12-layer model (~46M params — per-layer Smolgen + 4 policy heads dominate the count). Distributed selfplay with shared inference broker, PID difficulty controller, PBT/GPBT hyperparameter search. All active training uses this.
 - `configs/default.yaml` — Reference config with BT3-scale model (768-dim, 15-layer, ~105M params). For future larger-model training.
+
+## Experiment protocol — MANDATORY steps
+
+**`docs/experiment_ledger.md` is the canonical experiment record** (verdicts:
+WORKED / FAILED / LIVE-UNREAD, yardstick anchors, revert points). Read it before
+proposing, launching, judging, or reverting ANY experiment. These steps are not
+optional and apply to every assistant/model working in this repo:
+
+1. **Before a training-affecting change goes live** (config key, loss weight,
+   data-pipeline or selfplay change, PR merge that alters training): add a
+   ledger entry with the hypothesis, ONE deciding yardstick (exact command),
+   and a pre-committed kill/success threshold. No entry → don't launch.
+2. **Before big changes**: snapshot weights + optimizer + PID + replay window:
+   `./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out data/salvage/<label>`
+   (safe while training runs, ~2.3G; `--metric training_iteration` is REQUIRED —
+   the default metric picks the best-metric row, not the current state) and
+   record it in the ledger's Revert points table. A yaml revert alone is NOT a rollback — the replay window
+   keeps ~a day of data made under the old settings.
+3. **After a readout**: record the verdict in the ledger the same session,
+   judged by the pre-committed rule (not post-hoc reading). "Deferred" is not
+   a verdict.
+4. **One data-affecting change per readout window.** Unavoidable overlaps go
+   in each entry's Confounds line.
+5. **Before running any yardstick**: read the ledger's "Protocol gotchas"
+   (e.g. `audit_targets` needs `--max-positions 2000`; live dashboard signals
+   are flat by design; the PID winrate sample is congestion-biased).
 
 ## Evaluation & experiments
 
@@ -99,10 +126,11 @@ killed without training. Tooling:
 - Flag-gated research bets live in `configs/exp_*.yaml` (each header has
   the sweep plan + kill threshold); ALL flags default off and only enter
   `configs/pbt2_small.yaml` once promoted. Promoted to production:
-  v2_threats planes (2026-06-17), the throughput triple — `sf_label_nodes_cap`,
-  `record_fast_ply_value`, `train_views_per_position` (2026-07-01;
-  `configs/exp_throughput_views.yaml` holds the isolated variant + kill
-  thresholds). Open bets: sparse SF-policy CE (`train.sf_policy_sparse_ce`),
+  v2_threats planes (2026-06-17), `train_views_per_position` (2026-07-01 — the
+  one surviving leg of the throughput triple; `sf_label_nodes_cap` and
+  `record_fast_ply_value` were promoted with it and KILLED 2026-07-02, see
+  docs/experiment_ledger.md; `configs/exp_throughput_views.yaml` holds the
+  isolated variant + kill thresholds). Open bets: sparse SF-policy CE (`train.sf_policy_sparse_ce`),
   soft-policy ablation (`train.soft_policy_min_tv`), volatility-aware Gumbel
   search (`selfplay.volatility_*`, Python search path only). Shelved:
   dynamic board-relation bias (offline ≡ threat planes).
@@ -146,7 +174,7 @@ Implementation details:
 Gumbel MCTS with sequential halving (primary) and PUCT (legacy). C-accelerated tree operations in `_mcts_tree.c` — fused tree traversal + CBoard replay + encoding. `gumbel_c.py` orchestrates the simulation loop with GPU inference pipelining.
 
 ### Selfplay (`selfplay/`)
-`play_batch()` orchestrates games (mostly net-vs-net "selfplay" slots plus a curriculum fraction vs the PID-handicapped SF opponent). Network turns use MCTS + temperature sampling; ~75% of plies are playout-capped "fast" plies (`playout_cap_fraction`/`fast_simulations`), the rest full-sim. `has_policy` ⇔ full ply; with `selfplay.record_fast_ply_value` fast plies are kept as **value-only rows** (the KataGo playout-cap harvest — active in production since 2026-07-01, ~4× rows/game). SF labels (`sf_wdl`/`sf_policy`) attach only to full plies, are queried at P1 (after the net's move) and POV-flipped to the sample; `stockfish.sf_label_nodes_cap` caps label-query nodes independently of the PID opponent budget.
+`play_batch()` orchestrates games (mostly net-vs-net "selfplay" slots plus a curriculum fraction vs the PID-handicapped SF opponent). Network turns use MCTS + temperature sampling; ~75% of plies are playout-capped "fast" plies (`playout_cap_fraction`/`fast_simulations`), the rest full-sim. `has_policy` ⇔ full ply; `selfplay.record_fast_ply_value` can keep fast plies as **value-only rows** (KataGo playout-cap harvest, ~4× rows/game) — tried in production 2026-07-01→02 and REVERTED (trunk dilution + value regression; see docs/experiment_ledger.md). Off in production. SF labels (`sf_wdl`/`sf_policy`) attach only to full plies, are queried at P1 (after the net's move) and POV-flipped to the sample; `stockfish.sf_label_nodes_cap` caps label-query nodes independently of the PID opponent budget.
 
 ### Distributed Selfplay (`tune/distributed_runtime.py`, `server/`)
 Workers run as separate processes, each playing game batches via shared inference broker. Broker (`inference.py: SlotBroker/SharedSlotBroker`) uses pre-allocated shared memory slots with pinned CPU buffers for zero-copy GPU transfer. Workers upload shard files to server inbox; trainable ingests them into the replay buffer each iteration.
