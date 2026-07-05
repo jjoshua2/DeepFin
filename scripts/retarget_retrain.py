@@ -44,6 +44,7 @@ from pathlib import Path
 
 import numpy as np
 
+from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.model import build_model, load_state_dict_tolerant, model_config_from_flat_config
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
@@ -81,12 +82,21 @@ def _run_variant(
     batch_size: int,
     device: str,
     out_dir: Path,
+    rebuild_sf_targets: bool = True,
+    gpu_mem_fraction: float = 0.0,
 ) -> dict:
     config = dict(base_config)
-    config["rebuild_sf_targets"] = True
+    config["rebuild_sf_targets"] = bool(rebuild_sf_targets)
     config.update(overrides)
 
     import torch
+
+    if device.startswith("cuda") and gpu_mem_fraction:
+        # Cap the SELECTED device so sidecar retrains can't OOM a live
+        # trainer sharing the GPU (same convention as the yardstick scripts).
+        idx = (int(device.split(":", 1)[1]) if ":" in device
+               else torch.cuda.current_device())
+        torch.cuda.set_per_process_memory_fraction(float(gpu_mem_fraction), idx)
 
     # Identical seed per variant: the only difference between runs is the
     # target params, not dropout masks or replay sampling order.
@@ -103,9 +113,22 @@ def _run_variant(
     trainer = Trainer(model, model_config=model_cfg, **kwargs)
 
     rng = np.random.default_rng(int(config.get("seed", 0)))
+    # Mirror the production sampling ctor (tune/trainable_init.py) — without
+    # these the offline retrain samples with NO surprise weighting / draw cap
+    # and any replay_* sampling override in a --variant is a silent no-op,
+    # so A/Bs of sampling knobs (e.g. replay_sf_gap_priority_weight) would
+    # measure nothing.
     buf = DiskReplayBuffer(
         10**9, shard_dir=replay_dir, rng=rng,
+        input_planes=input_plane_count(config.get("input_extra_features")),
+        upgrade_v1_planes=bool(config.get("replay_upgrade_v1_planes", False)),
         shuffle_cap=int(config.get("shuffle_buffer_size", 20_000)),
+        draw_cap_frac=float(config.get("shuffle_draw_cap_frac", 0.90)),
+        wl_max_ratio=float(config.get("shuffle_wl_max_ratio", 1.5)),
+        sf_gap_priority_weight=float(config.get("replay_sf_gap_priority_weight", 0.0)),
+        fast_low_surprise_priority=float(config.get("replay_fast_low_surprise_priority", 1.0)),
+        diff_focus_pol_scale=float(config.get("diff_focus_pol_scale", 0.0)),
+        diff_focus_q_weight=float(config.get("diff_focus_q_weight", 0.0)),
     )
     try:
         t0 = time.time()
@@ -146,6 +169,14 @@ def main() -> None:
     ap.add_argument("--out-dir", type=Path, default=Path("runs/retarget"))
     ap.add_argument("--variant", action="append", required=True,
                     help="name:k=v,k=v (':' with empty body = config defaults)")
+    ap.add_argument("--rebuild-sf-targets", default=True,
+                    action=argparse.BooleanOptionalAction,
+                    help="--no-rebuild-sf-targets trains on the shards' stored "
+                         "targets exactly as live training does — required when "
+                         "the A/B is a sampling knob, not a target param")
+    ap.add_argument("--gpu-mem-fraction", type=float, default=0.0,
+                    help="cap this process's share of the selected CUDA device "
+                         "(0 = uncapped); set when running beside a live trainer")
     args = ap.parse_args()
 
     base_config = flatten_run_config_defaults(load_yaml_file(args.config))
@@ -159,7 +190,8 @@ def main() -> None:
             name=name, overrides=overrides, base_config=base_config,
             checkpoint=args.checkpoint, replay_dir=args.replay_dir,
             steps=args.steps, batch_size=batch_size, device=args.device,
-            out_dir=args.out_dir,
+            out_dir=args.out_dir, rebuild_sf_targets=args.rebuild_sf_targets,
+            gpu_mem_fraction=args.gpu_mem_fraction,
         ))
 
     report = args.out_dir / "retarget_report.json"
