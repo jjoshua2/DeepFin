@@ -240,6 +240,9 @@ def _run_variant(
         draw_cap_frac=tc.shuffle_draw_cap_frac,
         wl_max_ratio=tc.shuffle_wl_max_ratio,
         sf_gap_priority_weight=tc.replay_sf_gap_priority_weight,
+        # Offline-experiment knob (no TrialConfig field yet): read straight
+        # from the flat config until it graduates to production.
+        sf_gap_priority_signed=bool(config.get("replay_sf_gap_priority_signed", False)),
         fast_low_surprise_priority=tc.replay_fast_low_surprise_priority,
         diff_focus_pol_scale=tc.diff_focus_pol_scale,
         diff_focus_q_weight=tc.diff_focus_q_weight,

@@ -170,6 +170,7 @@ class DiskReplayBuffer:
         input_planes: int | None = None,
         upgrade_v1_planes: bool = False,
         sf_gap_priority_weight: float = 0.0,
+        sf_gap_priority_signed: bool = False,
         fast_low_surprise_priority: float = 1.0,
         diff_focus_pol_scale: float = 0.0,
         diff_focus_q_weight: float = 0.0,
@@ -234,6 +235,13 @@ class DiskReplayBuffer:
   # the seeded hot pool honors configured shaping (Codex P2 on PR #104);
   # the tune trainable additionally pushes live values each iteration.
         self.sf_gap_priority_weight = float(sf_gap_priority_weight)
+  # Downside-only (signed) gap: when True, boost by max(search_sig - sf_sig, 0)
+  # recomputed from the stored WDL arrays, i.e. ONLY rows where the net's own
+  # search over-values the position vs SF (the over-optimism / collapse
+  # direction). The default abs() gap is symmetric and wastes half its mass on
+  # the net-pessimistic direction, which trains the net MORE optimistic — the
+  # opposite of what the value blind spot needs. Offline-experiment knob.
+        self.sf_gap_priority_signed = bool(sf_gap_priority_signed)
         self.fast_low_surprise_priority = float(fast_low_surprise_priority)
   # Selfplay diff-focus weights, mirrored here ONLY for priority-mass
   # telemetry (decomposing stored priorities back into kl/qd term mass);
@@ -445,7 +453,25 @@ class DiskReplayBuffer:
         if not (shape_full or shape_fast):
             return pri
         pri = pri.copy()
-        if shape_full:
+        if shape_full and self.sf_gap_priority_signed:
+            # Recompute the SIGNED gap from the stored WDL arrays and boost only
+            # the over-optimism direction (net search values > SF). Fail loud if
+            # the arrays are absent so the experiment can't silently degrade to
+            # the abs() behavior it means to replace.
+            if not ("sf_wdl" in arrs and "search_wdl" in arrs
+                    and "has_sf_wdl" in arrs and "has_search_wdl" in arrs):
+                raise RuntimeError(
+                    "sf_gap_priority_signed set but sf_wdl/search_wdl arrays are "
+                    "missing from the shard chunk — cannot compute the signed gap"
+                )
+            sf = np.asarray(arrs["sf_wdl"], dtype=np.float32)
+            sw = np.asarray(arrs["search_wdl"], dtype=np.float32)
+            has = (np.asarray(arrs["has_sf_wdl"], dtype=bool)
+                   & np.asarray(arrs["has_search_wdl"], dtype=bool))
+            signed = (sw[:, 0] - sw[:, 2]) - (sf[:, 0] - sf[:, 2])
+            np.nan_to_num(signed, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+            pri[has] += w_gap * np.maximum(signed[has], 0.0)
+        elif shape_full:
             gap = np.asarray(arrs["priority_sf_search_gap"], dtype=np.float32)
             has = np.asarray(arrs["has_priority_sf_search_gap"], dtype=bool)
             np.nan_to_num(gap, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
