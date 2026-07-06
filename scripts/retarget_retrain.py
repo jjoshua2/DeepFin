@@ -242,7 +242,7 @@ def _run_variant(
         sf_gap_priority_weight=tc.replay_sf_gap_priority_weight,
         # Offline-experiment knob (no TrialConfig field yet): read straight
         # from the flat config until it graduates to production.
-        sf_gap_priority_signed=bool(config.get("replay_sf_gap_priority_signed", False)),
+        sf_gap_priority_signed=tc.replay_sf_gap_priority_signed,
         fast_low_surprise_priority=tc.replay_fast_low_surprise_priority,
         diff_focus_pol_scale=tc.diff_focus_pol_scale,
         diff_focus_q_weight=tc.diff_focus_q_weight,

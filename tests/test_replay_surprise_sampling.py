@@ -211,14 +211,44 @@ def test_signed_gap_priority_boosts_only_over_optimism():
     np.testing.assert_allclose(signed_pri, expected, rtol=1e-5)
 
 
-def test_signed_gap_priority_requires_wdl_arrays():
-    # Signed mode must fail loud, not silently fall back to the abs() gap, when
-    # the WDL arrays needed to recompute the signed gap are absent.
+def test_signed_gap_priority_skips_without_wdl_arrays():
+    # Signed mode gates on sf_wdl/search_wdl (as abs mode gates on its gap
+    # column); a chunk lacking them is skipped, not shaped — no boost, and no
+    # whole-buffer abort. It must NOT silently fall back to the abs() gap.
     arrs = {
         "priority": np.ones(2, np.float32),
         "priority_sf_search_gap": np.array([1.0, 1.0], np.float32),
         "has_priority_sf_search_gap": np.ones(2, bool),
         "wdl_target": np.array([1, 1], np.int8), "has_policy": np.ones(2, bool),
     }
-    with pytest.raises(RuntimeError, match="sf_wdl/search_wdl"):
-        _signed_gap_buffer(True)._shape_shuffle_priority(arrs, np.ones(2, np.float32))
+    pri = _signed_gap_buffer(True)._shape_shuffle_priority(arrs, np.ones(2, np.float32))
+    np.testing.assert_array_equal(pri, np.ones(2, np.float32))
+
+
+def test_signed_gap_priority_mass_matches_signed_boost():
+    # The priority-mass telemetry must sum the signed (downside-only) boost in
+    # signed mode, not the symmetric abs gap (which would over-report ~2x).
+    search_wdl = np.array([[0.9, 0.0, 0.1], [0.1, 0.3, 0.7]], np.float32)  # over-opt, pessimistic
+    sf_wdl = np.array([[0.1, 0.3, 0.7], [0.9, 0.0, 0.1]], np.float32)
+    abs_gap = np.abs(
+        (search_wdl[:, 0] - search_wdl[:, 2]) - (sf_wdl[:, 0] - sf_wdl[:, 2])
+    ).astype(np.float32)
+    arrs = {
+        "priority": np.ones(2, np.float32),
+        "priority_sf_search_gap": abs_gap,
+        "has_priority_sf_search_gap": np.ones(2, bool),
+        "sf_wdl": sf_wdl, "has_sf_wdl": np.ones(2, bool),
+        "search_wdl": search_wdl, "has_search_wdl": np.ones(2, bool),
+        "wdl_target": np.array([1, 1], np.int8), "has_policy": np.ones(2, bool),
+    }
+    b = _signed_gap_buffer(True)
+    b._pmass = b._pmass_zero()
+    b.diff_focus_pol_scale = 0.0
+    b.diff_focus_q_weight = 0.0
+    b._accumulate_priority_mass(arrs, np.ones(2, np.float32))
+    signed_only = np.maximum(
+        (search_wdl[:, 0] - search_wdl[:, 2]) - (sf_wdl[:, 0] - sf_wdl[:, 2]), 0.0
+    )
+    assert b._pmass["gap_term"] == pytest.approx(float(signed_only.sum()) * 30.0)
+    # strictly below the symmetric abs sum (the pessimistic row is dropped)
+    assert float(signed_only.sum()) < float(np.maximum(abs_gap, 0.0).sum())
