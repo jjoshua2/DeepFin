@@ -170,6 +170,7 @@ class DiskReplayBuffer:
         input_planes: int | None = None,
         upgrade_v1_planes: bool = False,
         sf_gap_priority_weight: float = 0.0,
+        sf_gap_priority_signed: bool = False,
         fast_low_surprise_priority: float = 1.0,
         diff_focus_pol_scale: float = 0.0,
         diff_focus_q_weight: float = 0.0,
@@ -234,6 +235,13 @@ class DiskReplayBuffer:
   # the seeded hot pool honors configured shaping (Codex P2 on PR #104);
   # the tune trainable additionally pushes live values each iteration.
         self.sf_gap_priority_weight = float(sf_gap_priority_weight)
+  # Downside-only (signed) gap: when True, boost by max(search_sig - sf_sig, 0)
+  # recomputed from the stored WDL arrays, i.e. ONLY rows where the net's own
+  # search over-values the position vs SF (the over-optimism / collapse
+  # direction). The default abs() gap is symmetric and wastes half its mass on
+  # the net-pessimistic direction, which trains the net MORE optimistic — the
+  # opposite of what the value blind spot needs. Offline-experiment knob.
+        self.sf_gap_priority_signed = bool(sf_gap_priority_signed)
         self.fast_low_surprise_priority = float(fast_low_surprise_priority)
   # Selfplay diff-focus weights, mirrored here ONLY for priority-mass
   # telemetry (decomposing stored priorities back into kl/qd term mass);
@@ -415,6 +423,45 @@ class DiskReplayBuffer:
             axis=0,
         )
 
+    def _gap_boost_and_mask(
+        self, arrs: dict[str, np.ndarray],
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        """Per-row SF-gap boost value and its validity mask, or None if the
+        columns this mode needs are absent (skip — mirroring the abs path,
+        which also skips a chunk without its column).
+
+        Signed mode boosts ONLY the over-optimism direction —
+        ``max(search_sig - sf_sig, 0)`` recomputed from the stored WDL columns —
+        so it must gate on sf_wdl/search_wdl, NOT the stored abs-gap column (the
+        two co-occur on finalize-produced shards, but a WDL-only chunk must
+        still be shaped). Abs mode boosts the stored symmetric
+        ``priority_sf_search_gap``. Shared by ``_shape_shuffle_priority`` and the
+        priority-mass telemetry so the reported ``gap_term`` always matches the
+        mass actually injected.
+        """
+        if self.sf_gap_priority_signed:
+            if not (
+                "sf_wdl" in arrs and "has_sf_wdl" in arrs
+                and "search_wdl" in arrs and "has_search_wdl" in arrs
+            ):
+                return None
+            sf = np.asarray(arrs["sf_wdl"], dtype=np.float32)
+            sw = np.asarray(arrs["search_wdl"], dtype=np.float32)
+            has = (np.asarray(arrs["has_sf_wdl"], dtype=bool)
+                   & np.asarray(arrs["has_search_wdl"], dtype=bool))
+            boost = (sw[:, 0] - sw[:, 2]) - (sf[:, 0] - sf[:, 2])
+        else:
+            if not (
+                "priority_sf_search_gap" in arrs
+                and "has_priority_sf_search_gap" in arrs
+            ):
+                return None
+            has = np.asarray(arrs["has_priority_sf_search_gap"], dtype=bool)
+            boost = np.asarray(arrs["priority_sf_search_gap"], dtype=np.float32)
+        # copy=True: never mutate the caller's arrs in place.
+        boost = np.nan_to_num(boost, nan=0.0, posinf=0.0, neginf=0.0)
+        return boost, has
+
     def _shape_shuffle_priority(self, arrs: dict[str, np.ndarray], pri: np.ndarray) -> np.ndarray:
         """Surprise-priority shaping for the sampling store.
 
@@ -431,25 +478,21 @@ class DiskReplayBuffer:
         """
         w_gap = float(self.sf_gap_priority_weight)
         fast_low = float(self.fast_low_surprise_priority)
-        shape_full = (
-            w_gap > 0.0
-            and "priority_sf_search_gap" in arrs
-            and "has_priority_sf_search_gap" in arrs
-        )
+        gap = self._gap_boost_and_mask(arrs) if w_gap > 0.0 else None
         shape_fast = (
             fast_low < 1.0
             and "search_wdl" in arrs
             and "has_search_wdl" in arrs
             and "has_policy" in arrs
         )
-        if not (shape_full or shape_fast):
+        if gap is None and not shape_fast:
             return pri
         pri = pri.copy()
-        if shape_full:
-            gap = np.asarray(arrs["priority_sf_search_gap"], dtype=np.float32)
-            has = np.asarray(arrs["has_priority_sf_search_gap"], dtype=bool)
-            np.nan_to_num(gap, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-            pri[has] += w_gap * np.maximum(gap[has], 0.0)
+        if gap is not None:
+            # Over-optimism-only boost: signed (downside) gap when
+            # sf_gap_priority_signed, else the stored symmetric abs gap.
+            gap_boost, gap_has = gap
+            pri[gap_has] += w_gap * np.maximum(gap_boost[gap_has], 0.0)
         if shape_fast:
             hp = np.asarray(arrs["has_policy"], dtype=bool)
             hs = np.asarray(arrs["has_search_wdl"], dtype=bool)
@@ -497,14 +540,16 @@ class DiskReplayBuffer:
             has = np.asarray(arrs["has_priority_q_delta"], dtype=bool) & hp
             qd = np.nan_to_num(np.asarray(arrs["priority_q_delta"], dtype=np.float64), nan=0.0)
             pm["qd_term"] += float(np.abs(qd[has]).sum()) * self.diff_focus_q_weight
-        if (
-            self.sf_gap_priority_weight > 0
-            and "priority_sf_search_gap" in arrs
-            and "has_priority_sf_search_gap" in arrs
-        ):
-            has = np.asarray(arrs["has_priority_sf_search_gap"], dtype=bool)
-            gap = np.nan_to_num(np.asarray(arrs["priority_sf_search_gap"], dtype=np.float64), nan=0.0)
-            pm["gap_term"] += float(np.maximum(gap[has], 0.0).sum()) * self.sf_gap_priority_weight
+        if self.sf_gap_priority_weight > 0:
+            # Same (signed or abs) boost the shaper applies, so gap_term reflects
+            # the mass actually injected — not the symmetric abs sum in signed mode.
+            gap = self._gap_boost_and_mask(arrs)
+            if gap is not None:
+                gap_boost, gap_has = gap
+                pm["gap_term"] += (
+                    float(np.maximum(gap_boost[gap_has], 0.0).sum())
+                    * self.sf_gap_priority_weight
+                )
         if (
             self.fast_low_surprise_priority < 1.0
             and "search_wdl" in arrs

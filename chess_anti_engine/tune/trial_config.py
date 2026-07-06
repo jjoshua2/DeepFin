@@ -255,6 +255,7 @@ class TrialConfig:
     # demotion priority for fast value-only rows whose 32-sim search read
     # agreed (within a full point) with the game outcome. 0.0 / 1.0 = off.
     replay_sf_gap_priority_weight: float = 0.0
+    replay_sf_gap_priority_signed: bool = False
     replay_fast_low_surprise_priority: float = 1.0
     shared_shards_dir: str | None = None
 
@@ -597,6 +598,12 @@ class TrialConfig:
             shuffle_wl_max_ratio=float(config.get("shuffle_wl_max_ratio", 1.5)),
             replay_sf_gap_priority_weight=float(
                 config.get("replay_sf_gap_priority_weight", 0.0)),
+            # str().lower() coercion so a stringy "off"/"no"/"false" (which
+            # bool() would read as True) disables signed mode, while a native
+            # YAML bool still works.
+            replay_sf_gap_priority_signed=str(
+                config.get("replay_sf_gap_priority_signed", False),
+            ).strip().lower() in ("1", "true", "yes", "on"),
             replay_fast_low_surprise_priority=float(
                 config.get("replay_fast_low_surprise_priority", 1.0)),
             shared_shards_dir=_get("shared_shards_dir", None),
