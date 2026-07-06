@@ -207,7 +207,7 @@ def resume_model_config_from_arch(arch: dict, config_cfg: ModelConfig) -> ModelC
     ``use_gradient_checkpointing`` field that the manifest spells
     ``gradient_checkpointing``.
 
-    Like the UCI loader (``uci.model_loader._model_config_from_arch``), reject a
+    Like the UCI loader (``uci.model_loader.model_config_from_arch``), reject a
     checkpoint whose ``_schema_version`` is newer than this build or that carries
     unknown topology keys, instead of letting ``model_config_from_manifest_dict``
     silently default them and hide the drift behind the tolerant state-dict
@@ -698,6 +698,7 @@ def load_state_dict_tolerant(
     ckpt_state: dict,
     *,
     label: str = "checkpoint",
+    require_complete: bool = False,
 ) -> None:
     """Load checkpoint into *model*, tolerating shape and key mismatches.
 
@@ -705,6 +706,12 @@ def load_state_dict_tolerant(
     dropped (model keeps its freshly-initialised weights for that layer).
     Missing and unexpected keys are logged but not fatal, allowing
     architecture changes (new layers, renamed modules) to load gracefully.
+
+    With ``require_complete=True`` any drop at all (shape skip, missing or
+    unexpected key, after the compile-prefix/qkv/plane migrations) raises
+    instead. Use this when the model was reconstructed from the checkpoint's
+    own ``arch`` payload, where the load must be exact and a partially
+    random-init model would silently corrupt whatever consumes it.
     """
     model_state = model.state_dict()
     ckpt_state = _normalize_orig_mod_prefix(ckpt_state, model_state=model_state)
@@ -713,6 +720,14 @@ def load_state_dict_tolerant(
     filtered, skipped = _filter_shape_mismatches(ckpt_state, model_state)
 
     missing, unexpected = model.load_state_dict(filtered, strict=False)
+
+    if require_complete and (skipped or missing or unexpected):
+        raise RuntimeError(
+            f"[{label}] Incomplete state-dict load with require_complete=True: "
+            f"shape_skipped={skipped}, missing={missing}, unexpected={unexpected}. "
+            f"The model config claims to match this checkpoint exactly, so any "
+            f"drop means a partially fresh-initialized model."
+        )
 
     # Catastrophic-load detector: if essentially nothing loaded, bail loudly.
     # Trainer would otherwise silently fall back to fresh-init weights and
