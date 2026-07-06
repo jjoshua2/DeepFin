@@ -410,6 +410,17 @@ def _update_aggregate_stats(
     assert c.outcome_stats is not None
     outcome_stats = c.outcome_stats
     _inc_outcome(outcome_stats, f"opening_{source}_games")
+    if source == "fenlist":
+        # Blind-spot FEN seeds are otherwise invisible in result.json (the
+        # per-source outcome_stats aren't plumbed through the ingest-time
+        # `matching_*` counters). Log each finalized seed so its volume/type is
+        # greppable in worker logs: curriculum seeds are starved at high SF
+        # nodes, so `type=selfplay` counts are the ones actually injecting the
+        # SF-labelled blind-spot value data.
+        _LOG.info(
+            "fenlist seed finalized: type=%s result=%s plies=%d",
+            "selfplay" if is_sp else "curriculum", result, int(game_plies),
+        )
 
     if is_sp:
         state.stats.selfplay_games += 1
