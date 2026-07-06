@@ -459,6 +459,24 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             return pin_bf16[:bsz].to(self.device, non_blocking=True)
         return pin_in[:bsz].to(self.device, non_blocking=True)
 
+    def _stage_encoded_input(self, x: np.ndarray, bsz: int, *, slot: int = 0) -> None:
+        """Copy an encoded batch into pinned input ``slot``, tracking bf16 dtype.
+
+        uint16 inputs are bf16-bit-packed: stored raw when a bf16-bits pinned
+        buffer exists, else widened to float32. Sets the per-slot bf16 flag so
+        the forward path interprets the pinned bytes correctly.
+        """
+        if x.dtype == np.uint16:
+            if self._pinned_inputs_bf16_bits_np is not None:
+                self._pinned_inputs_bf16_bits_np[slot][:bsz] = x
+                self._slot_input_bf16[slot] = True
+            else:
+                self._pinned_inputs_np[slot][:bsz] = _bf16_bits_to_float32_np(x)
+                self._slot_input_bf16[slot] = False
+        else:
+            self._pinned_inputs_np[slot][:bsz] = x
+            self._slot_input_bf16[slot] = False
+
     def evaluate_inplace(
         self, bsz: int, *, copy_out: bool = True, slot: int = 0,
         relations: np.ndarray | None = None,
@@ -481,16 +499,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if bsz > self._max_batch:
             raise ValueError(f"batch {bsz} > max {self._max_batch}")
 
-        if x.dtype == np.uint16:
-            if self._pinned_inputs_bf16_bits_np is not None:
-                self._pinned_inputs_bf16_bits_np[0][:bsz] = x
-                self._slot_input_bf16[0] = True
-            else:
-                self._pinned_inputs_np[0][:bsz] = _bf16_bits_to_float32_np(x)
-                self._slot_input_bf16[0] = False
-        else:
-            self._pinned_inputs_np[0][:bsz] = x
-            self._slot_input_bf16[0] = False
+        self._stage_encoded_input(x, bsz)
         return self._run_forward(bsz, copy_out=copy_out, slot=0, relations=relations)
 
     def _run_forward(
@@ -543,16 +552,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         if not self._use_cuda:
             return super().evaluate_encoded_async(x, relations=relations)
 
-        if x.dtype == np.uint16:
-            if self._pinned_inputs_bf16_bits_np is not None:
-                self._pinned_inputs_bf16_bits_np[0][:bsz] = x
-                self._slot_input_bf16[0] = True
-            else:
-                self._pinned_inputs_np[0][:bsz] = _bf16_bits_to_float32_np(x)
-                self._slot_input_bf16[0] = False
-        else:
-            self._pinned_inputs_np[0][:bsz] = x
-            self._slot_input_bf16[0] = False
+        self._stage_encoded_input(x, bsz)
         return self._async_forward(bsz, slot=0, relations=relations)
 
     def evaluate_inplace_async(

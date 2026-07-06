@@ -61,6 +61,29 @@ def _find_params_json(trainer_pt: Path) -> Path | None:
     return None
 
 
+def _normalize_config_fields(d: dict) -> None:
+    """Normalize the per-layer / threshold fields ``ModelConfig`` accepts, in place.
+
+    The only logic shared by the tolerant ``_model_config_from_params`` and the
+    strict ``_model_config_from_arch`` paths: their key-*filtering* philosophies
+    deliberately differ, but both must normalize these three fields identically.
+    """
+    if "ffn_mult_by_layer" in d:
+        d["ffn_mult_by_layer"] = normalize_ffn_mult_by_layer(
+            d["ffn_mult_by_layer"],
+            num_layers=int(d.get("num_layers", 6)),
+        )
+    if "embed_dim_by_layer" in d:
+        d["embed_dim_by_layer"] = normalize_embed_dim_by_layer(
+            d["embed_dim_by_layer"],
+            num_layers=int(d.get("num_layers", 6)),
+        )
+    if "phase_piece_thresholds" in d:
+        d["phase_piece_thresholds"] = normalize_phase_piece_thresholds(
+            d["phase_piece_thresholds"]
+        )
+
+
 def _model_config_from_params(params: dict) -> ModelConfig:
     """Keep only the fields ``ModelConfig`` recognises.
 
@@ -74,20 +97,7 @@ def _model_config_from_params(params: dict) -> ModelConfig:
   # 'use_smolgen' is stored as the negation 'no_smolgen' in some trials.
     if "no_smolgen" in params and "use_smolgen" not in filtered:
         filtered["use_smolgen"] = not bool(params["no_smolgen"])
-    if "ffn_mult_by_layer" in filtered:
-        filtered["ffn_mult_by_layer"] = normalize_ffn_mult_by_layer(
-            filtered["ffn_mult_by_layer"],
-            num_layers=int(filtered.get("num_layers", 6)),
-        )
-    if "embed_dim_by_layer" in filtered:
-        filtered["embed_dim_by_layer"] = normalize_embed_dim_by_layer(
-            filtered["embed_dim_by_layer"],
-            num_layers=int(filtered.get("num_layers", 6)),
-        )
-    if "phase_piece_thresholds" in filtered:
-        filtered["phase_piece_thresholds"] = normalize_phase_piece_thresholds(
-            filtered["phase_piece_thresholds"]
-        )
+    _normalize_config_fields(filtered)
     return ModelConfig(**filtered)
 
 
@@ -119,20 +129,7 @@ def _model_config_from_arch(arch: dict) -> ModelConfig:
             "does not recognise them and would silently default them away. "
             "Upgrade the package or re-save the checkpoint."
         )
-    if "ffn_mult_by_layer" in payload:
-        payload["ffn_mult_by_layer"] = normalize_ffn_mult_by_layer(
-            payload["ffn_mult_by_layer"],
-            num_layers=int(payload.get("num_layers", 6)),
-        )
-    if "embed_dim_by_layer" in payload:
-        payload["embed_dim_by_layer"] = normalize_embed_dim_by_layer(
-            payload["embed_dim_by_layer"],
-            num_layers=int(payload.get("num_layers", 6)),
-        )
-    if "phase_piece_thresholds" in payload:
-        payload["phase_piece_thresholds"] = normalize_phase_piece_thresholds(
-            payload["phase_piece_thresholds"]
-        )
+    _normalize_config_fields(payload)
     return ModelConfig(**payload)
 
 
