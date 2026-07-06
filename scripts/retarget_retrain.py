@@ -3,17 +3,22 @@
 with SF targets REBUILT from sparse MultiPV labels under different params.
 
 For each ``--variant name:k=v,k=v`` this runs a fixed training budget from
-the same starting checkpoint and replay window with
-``train.rebuild_sf_targets`` forced on and the given target params
+the same starting checkpoint and replay window with the given params
 overridden, then writes one checkpoint per variant. This is what turns
-sf_policy_temp / cp-logistic / label-smoothing questions into offline
-retrains instead of weeks-long live A/Bs — judge the resulting checkpoints
-per docs/eval_protocol.md (arena_standard matched_sims vs the base
-checkpoint).
+sf_policy_temp / cp-logistic / label-smoothing and replay-sampling
+questions into offline retrains instead of weeks-long live A/Bs — judge the
+resulting checkpoints per docs/eval_protocol.md (arena_standard matched_sims
+vs the base checkpoint).
+
+SF targets: by default ``train.rebuild_sf_targets`` is forced on (targets
+recomputed from the sparse MultiPV labels) so the A/B isolates a target
+param. Pass ``--no-rebuild-sf-targets`` to train on the shards' stored
+targets exactly as live training does — required when the A/B is a *sampling*
+knob (e.g. replay_sf_gap_priority_weight), not a target param.
 
 Overridable param keys: sf_policy_temp, sf_policy_label_smooth,
-sf_wdl_use_cp_logistic, sf_wdl_cp_slope, sf_wdl_cp_draw_width
-(anything else in the flat config also works, e.g. lr).
+sf_wdl_use_cp_logistic, sf_wdl_cp_slope, sf_wdl_cp_draw_width, and any
+replay_* sampling knob (anything else in the flat config also works, e.g. lr).
 
 Every variant retrains from a COLD optimizer: only the checkpoint's model
 weights are restored; optimizer moments / scheduler / step counters are
@@ -21,7 +26,9 @@ deliberately discarded so all variants share the identical fresh-AdamW
 starting point (warmup per the config). The deltas between variants stay
 meaningful, but the absolute trajectories differ from what a live retune
 that kept the optimizer state would produce. Each variant is seeded
-identically so dropout/sampling noise doesn't pollute the A/B.
+identically, so dropout masks and the buffer's random draws match across
+arms; a replay_* sampling override still (intentionally) changes WHICH rows
+those shared draws select.
 
 Usage::
 
@@ -47,10 +54,44 @@ import numpy as np
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.model import build_model, load_state_dict_tolerant, model_config_from_flat_config
 from chess_anti_engine.replay.disk_buffer import DiskReplayBuffer
+from chess_anti_engine.replay.shard import iter_shard_paths, load_shard_arrays
+from chess_anti_engine.replay.threat_upgrade import V1_INPUT_PLANES
 from chess_anti_engine.train.trainer import Trainer, trainer_kwargs_from_config
 from chess_anti_engine.tune.trial_config import TrialConfig
 from chess_anti_engine.uci.model_loader import model_config_from_arch
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+
+
+def _assert_replay_planes_match(replay_dir: Path, target_planes: int, *, upgrade_v1: bool) -> None:
+    """Fail loud if the replay shards' stored plane width can't feed the arch.
+
+    The empty-buffer guard in ``_run_variant`` only catches the stored>target
+    case (wider shards are rejected -> empty pool). The stored<target case is
+    worse and SILENT: the buffer zero-pads the missing planes, so a v1
+    (146-plane) ``--replay-dir`` against a v2_threats (175-plane) checkpoint
+    trains on all-zero threat planes and prints a success line — an invalid A/B
+    with no error. ``len(buf)`` counts scanned shards regardless of plane width,
+    so it can't detect this; check the actual stored width up front.
+    """
+    paths = iter_shard_paths(replay_dir)
+    if not paths:
+        return  # no shards: the empty-buffer guard reports this with context
+    arrs, _ = load_shard_arrays(paths[0], lazy=True)
+    stored = int(arrs["x"].shape[1])
+    if stored == target_planes:
+        return
+    if stored == V1_INPUT_PLANES and stored < target_planes and upgrade_v1:
+        return  # v1 shards will have their threat planes recomputed — intended
+    detail = (
+        "would be SILENTLY ZERO-PADDED (set replay_upgrade_v1_planes to "
+        "recompute the threat planes instead)" if stored < target_planes
+        else "are wider than the arch and would be rejected"
+    )
+    raise SystemExit(
+        f"replay shards under {replay_dir} store {stored} input planes but the "
+        f"checkpoint arch needs {target_planes}; the {stored}-plane shards {detail}. "
+        "Point --replay-dir at matching shards — the A/B would otherwise be invalid."
+    )
 
 
 def _parse_variant(spec: str) -> tuple[str, dict]:
@@ -96,6 +137,7 @@ def _run_variant(
     rebuild_sf_targets: bool = True,
     gpu_mem_fraction: float = 0.0,
     allow_yaml_arch: bool = False,
+    allow_partial_load: bool = False,
 ) -> dict:
     config = dict(base_config)
     config["rebuild_sf_targets"] = bool(rebuild_sf_targets)
@@ -106,8 +148,12 @@ def _run_variant(
     if device.startswith("cuda") and gpu_mem_fraction:
         # Cap the SELECTED device so sidecar retrains can't OOM a live
         # trainer sharing the GPU (same convention as the yardstick scripts).
-        idx = (int(device.split(":", 1)[1]) if ":" in device
-               else torch.cuda.current_device())
+        tail = device.split(":", 1)[1] if ":" in device else ""
+        if tail and not tail.isdigit():
+            raise SystemExit(
+                f"invalid CUDA device {device!r}: expected 'cuda' or 'cuda:<N>'"
+            )
+        idx = int(tail) if tail else torch.cuda.current_device()
         torch.cuda.set_per_process_memory_fraction(float(gpu_mem_fraction), idx)
 
     # Identical seed per variant so dropout masks and the buffer's random
@@ -121,12 +167,19 @@ def _run_variant(
     # YAML disagrees on (observed: embed.weight + per-layer ffn when the YAML
     # arch drifted from the trained net) — a partially random-init model that
     # invalidates the A/B. The stored arch reconstructs the exact model, and
-    # the load is strict: any dropped tensor aborts the run.
+    # the load is strict: any dropped tensor aborts the run — unless
+    # --allow-partial-load is set, for retargeting a historical checkpoint saved
+    # under drifted model code (arch topology captures the layout, not the code
+    # revision, so a since-added/removed param yields a missing/unexpected key
+    # that every live resume path tolerates).
     # map_location stays "cpu": the Trainer moves the model to `device`, and
     # GPU-loading the whole checkpoint (optimizer state included) would spike
     # exactly the VRAM that --gpu-mem-fraction is trying to protect.
     ckpt = torch.load(str(checkpoint), map_location="cpu", weights_only=False)
-    arch_used = isinstance(ckpt, dict) and bool(ckpt.get("arch"))
+    # Match the sibling loaders (load_model_from_checkpoint, reinit_value_heads,
+    # shrink_ffn): a truthy-but-non-dict ``arch`` must NOT take the arch path,
+    # or model_config_from_arch(arch).get(...) raises an opaque AttributeError.
+    arch_used = isinstance(ckpt, dict) and isinstance(ckpt.get("arch"), dict)
     if arch_used:
         model_cfg = model_config_from_arch(ckpt["arch"])
     elif allow_yaml_arch:
@@ -147,7 +200,8 @@ def _run_variant(
 
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
     load_state_dict_tolerant(
-        model, state, label=f"retarget-{name}", require_complete=arch_used,
+        model, state, label=f"retarget-{name}",
+        require_complete=arch_used and not allow_partial_load,
     )
 
     kwargs = trainer_kwargs_from_config(config)
@@ -168,9 +222,16 @@ def _run_variant(
     # input_extra_features key — reading it there yields None -> 146, which
     # rejects 175-plane v2_threats shards and empties the buffer).
     tc = TrialConfig.from_dict(config)
+    target_planes = input_plane_count(model_cfg.input_extra_features)
+    # Detect a stored<target plane mismatch that DiskReplayBuffer would silently
+    # zero-pad (the len(buf)==0 guard below only catches the stored>target reject
+    # case). Must run before the ctor so a v1-dir-vs-v2-checkpoint aborts loudly.
+    _assert_replay_planes_match(
+        replay_dir, target_planes, upgrade_v1=tc.replay_upgrade_v1_planes,
+    )
     buf = DiskReplayBuffer(
         10**9, shard_dir=replay_dir, rng=rng,
-        input_planes=input_plane_count(model_cfg.input_extra_features),
+        input_planes=target_planes,
         upgrade_v1_planes=tc.replay_upgrade_v1_planes,
         shuffle_cap=tc.shuffle_buffer_size,
         shard_size=tc.shard_size,
@@ -187,7 +248,7 @@ def _run_variant(
         if len(buf) == 0:
             raise SystemExit(
                 f"replay buffer is empty: no shards under {replay_dir} match "
-                f"input_planes={input_plane_count(model_cfg.input_extra_features)} "
+                f"input_planes={target_planes} "
                 "(wrong --replay-dir, or plane-count mismatch with the "
                 "checkpoint arch)"
             )
@@ -242,6 +303,11 @@ def main() -> None:
                          "the checkpoint has no embedded arch key (UNSAFE: a "
                          "drifted YAML arch silently random-inits mismatched "
                          "tensors and invalidates the A/B)")
+    ap.add_argument("--allow-partial-load", action="store_true",
+                    help="tolerate missing/unexpected state-dict keys (logged) "
+                         "instead of aborting, for retargeting a historical "
+                         "checkpoint saved under drifted model code; the "
+                         "mismatched tensors keep fresh init")
     args = ap.parse_args()
 
     base_config = flatten_run_config_defaults(load_yaml_file(args.config))
@@ -258,6 +324,7 @@ def main() -> None:
             out_dir=args.out_dir, rebuild_sf_targets=args.rebuild_sf_targets,
             gpu_mem_fraction=args.gpu_mem_fraction,
             allow_yaml_arch=args.allow_yaml_arch,
+            allow_partial_load=args.allow_partial_load,
         ))
 
     report = args.out_dir / "retarget_report.json"

@@ -6,12 +6,24 @@ the knob under test. These tests pin the guardrails that enforce that.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+import numpy as np
 import pytest
 import torch
 
+import scripts.retarget_retrain as rr
 from chess_anti_engine.model import load_state_dict_tolerant
 from chess_anti_engine.model.transformer import ChessNet, TransformerConfig
 from scripts.retarget_retrain import _parse_variant
+
+
+def _patch_first_shard(monkeypatch, planes: int) -> None:
+    monkeypatch.setattr(rr, "iter_shard_paths", lambda _d: [Path("fake.zarr")])
+    monkeypatch.setattr(
+        rr, "load_shard_arrays",
+        lambda _p, lazy=False: ({"x": np.zeros((1, planes, 8, 8), np.float32)}, {}),
+    )
 
 
 def _tiny_net() -> ChessNet:
@@ -64,6 +76,39 @@ def test_require_complete_raises_on_missing_key() -> None:
         load_state_dict_tolerant(
             dst, dict(state), label="test", require_complete=True,
         )
+
+
+def test_plane_guard_passes_on_exact_match(monkeypatch) -> None:
+    _patch_first_shard(monkeypatch, 175)
+    rr._assert_replay_planes_match(Path("x"), 175, upgrade_v1=False)  # no raise
+
+
+def test_plane_guard_fires_on_silent_zeropad(monkeypatch) -> None:
+    # stored (146) < target (175): the buffer would silently zero-pad the 29
+    # threat planes and report success — the guard must abort loudly instead.
+    _patch_first_shard(monkeypatch, 146)
+    with pytest.raises(SystemExit, match="ZERO-PADDED"):
+        rr._assert_replay_planes_match(Path("x"), 175, upgrade_v1=False)
+
+
+def test_plane_guard_allows_v1_upgrade(monkeypatch) -> None:
+    # v1 (146) shards with replay_upgrade_v1_planes on are recomputed to the 29
+    # threat planes — an intended path, not a silent zero-pad.
+    _patch_first_shard(monkeypatch, 146)
+    rr._assert_replay_planes_match(Path("x"), 175, upgrade_v1=True)  # no raise
+
+
+def test_plane_guard_fires_on_wider_shards(monkeypatch) -> None:
+    # stored (175) > target (146): wider shards would be rejected -> empty pool.
+    _patch_first_shard(monkeypatch, 175)
+    with pytest.raises(SystemExit, match="wider than the arch"):
+        rr._assert_replay_planes_match(Path("x"), 146, upgrade_v1=False)
+
+
+def test_plane_guard_quiet_on_empty_dir(monkeypatch) -> None:
+    # No shards: defer to the empty-buffer guard, don't raise here.
+    monkeypatch.setattr(rr, "iter_shard_paths", lambda _d: [])
+    rr._assert_replay_planes_match(Path("x"), 175, upgrade_v1=False)  # no raise
 
 
 def test_require_complete_raises_on_shape_mismatch() -> None:
