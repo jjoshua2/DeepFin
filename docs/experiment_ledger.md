@@ -257,7 +257,7 @@ weights from trial `params.json`); the tolerant loader accepted the wrong model
 silently and produced garbage shares (64% categorical) on the first run.
 Also: 46.2M checkpoint state = 34.7M trainable + 11.5M per-layer Smolgen
 gen_weight buffer mirrors (shared weights).
-**Queued rung — "gradient rebalance" (do NOT stack with #104's window):**
+**Queued rung — "gradient rebalance" (#104 killed 07-05; this rung now queues behind FEN seeding — never two value levers in one window):**
 `w_soft` 1.0→0.5 + `w_wdl` 1.0→1.5 (both live-tunable) → policy:value ratio
 ~6:1 → ~2.3:1. Yardsticks: value_regret paired CI vs pre-rung dump (primary,
 must improve); audit policy paired CI (guardrail, no significant regression);
@@ -302,25 +302,34 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
 - **Cadenced cross-checkpoint arena + loop-health invariant monitor**: nothing runs on
   a schedule today; every regression so far was found by ad-hoc suspicion.
 
-## Decision queue (2026-07-02 evening, in order)
+## Decision queue (updated 2026-07-05 after the #104 kill; in order)
 
 1. ~~Fast-ply revert~~ / ~~LR decision~~ / ~~#104 merge~~ — DONE via the bundle
-   restart (see LIVE table).
-1b. Verify the 23:09 config restore re-propagated (fresh shards back to
-   has_policy_frac ≈ 1.0); merge PRs #105/#106/#107 so main matches the live
-   config and the branch-switch trap is disarmed.
-2. Next full-refill read (~1-2 days; clock restarted ~iter 487 by the incident):
-   the bundle recovery read — audit + value runs WITH `--dump-per-position`,
-   judged by paired CIs vs the banked ckpt457 dumps (recovery target) and
-   ckpt478 dumps (progress since the kill), blind-spot panel alongside.
-3. Activate the gap boost (`replay_sf_gap_priority_weight: 30`, live yaml edit)
-   once the recovery read banks. Judge by panel + tail, not the mean.
-3b. After (or instead of — user's call) the gap-boost window: the gradient
-   rebalance rung (`w_soft` 1.0→0.5 + `w_wdl` 1.0→1.5, live-tunable; see
-   Analysis findings). Both levers push value — never live in the same window.
-4. Build: tail metrics in value_regret; then the SF-frac ramp PR (per-row SF weight
-   scaled by disagreement — premise validated 61%→70% monotone); then arena cadence
+   restart (see LIVE table). ~~Recovery read~~ — RECOVERED @ckpt524, banked.
+2. ~~Activate the gap boost~~ — **DONE and KILLED (07-04→07-05): activated w=30
+   @iter 526, every pre-committed kill threshold crossed at the ckpt559
+   readout, reverted to 0 @iter ~578 (see LIVE table). Do NOT re-enable at
+   w=30.** A low-w retry (w≈5) is allowed ONLY after it passes an offline
+   `scripts/offline_replay_epoch.py` dose screen (arms w=0/5/30, 2 seeds each;
+   the w=30 arm must reproduce the live damage or the screen is invalid) —
+   and it queues behind FEN seeding regardless.
+3. Post-kill recovery read ~iter 615 (watcher armed): panel v1 + value_regret
+   paired vs ckpt524. Retrace toward ~72 ⇒ proceed; still significantly worse
+   ⇒ salvage-restart from the banked ckpt524 (`scratchpad/recovery_read_ckpt524`).
+4. FEN-seeding activation (next experiment window; row above has the full
+   pre-committed protocol): merged (#108) → `pip install -e .` + 0.0.2 worker
+   wheel → restart → yaml keys, dose `opening_fen_prob: 0.02`. Primary read =
+   held-out panel v1 BLIND; ±2cp value guardrail.
+4b. At the activation pause: Cheese-only match block (~20-40 games; rofChade
+   DROPPED 07-05, user call — g465 already showed the grind mode and no
+   decision changes on the answer; rofChade returns as a graduation match
+   after we take games off Cheese). PRECONDITION: verify UCI time management
+   (the c8192 match was invalidated by 19 time forfeits). Fresh current-net
+   losses = panel v3 mining material.
+5. After FEN seeding reads out: gradient rebalance rung (`w_soft` 1.0→0.5 +
+   `w_wdl` 1.0→1.5) OR teacher-distillation offline screen — pick by what the
+   seeding readout says about the tail. Never two value levers in one window.
+6. Build: tail metrics in value_regret; SF-frac ramp PR (per-row SF weight
+   scaled by disagreement — premise validated 61%→70% monotone); arena cadence
    + loop-health invariant monitor.
-5. Restore `sf_pid_regret_tighten_streak_gain: 0.5` when EMA winrate ≈0.52.
-6. Cheese rematch ONLY after the blind-spot panel moves (current net would still lose
-   — same blunders, 21/35 blind).
+7. Restore `sf_pid_regret_tighten_streak_gain: 0.5` when EMA winrate ≈0.52.
