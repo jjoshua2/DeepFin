@@ -42,7 +42,7 @@ from chess_anti_engine.model import (
 )
 from chess_anti_engine.uci.model_loader import (
     _find_params_json,
-    _model_config_from_arch,
+    model_config_from_arch,
     _model_config_from_params,
 )
 from chess_anti_engine.replay.dataset import collate_arrays
@@ -54,7 +54,7 @@ _FFN_PARAM_RE = re.compile(r"^blocks\.(\d+)\.ffn\.(0|2)\.(weight|bias)$")
 
 def _checkpoint_model_config(ckpt: dict[str, Any], ckpt_path: Path) -> ModelConfig:
     if isinstance(ckpt.get("arch"), dict):
-        return _model_config_from_arch(ckpt["arch"])
+        return model_config_from_arch(ckpt["arch"])
 
     params_path = _find_params_json(ckpt_path)
     if params_path is not None:

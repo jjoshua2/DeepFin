@@ -101,7 +101,7 @@ def _model_config_from_params(params: dict) -> ModelConfig:
     return ModelConfig(**filtered)
 
 
-def _model_config_from_arch(arch: dict) -> ModelConfig:
+def model_config_from_arch(arch: dict) -> ModelConfig:
     """Strict construction from the embedded ``arch`` payload.
 
     Unlike ``_model_config_from_params`` (which filters unknown keys
@@ -188,7 +188,7 @@ def load_model_from_checkpoint(
 
     if model_config is None:
         if isinstance(ckpt, dict) and isinstance(ckpt.get("arch"), dict):
-            model_config = _model_config_from_arch(ckpt["arch"])
+            model_config = model_config_from_arch(ckpt["arch"])
         else:
             if params_path is None:
                 raise FileNotFoundError(

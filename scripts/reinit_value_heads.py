@@ -30,7 +30,7 @@ from torch import nn
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig, build_model, load_state_dict_tolerant
 from chess_anti_engine.uci.model_loader import (
     _find_params_json,
-    _model_config_from_arch,
+    model_config_from_arch,
     _model_config_from_params,
 )
 
@@ -40,7 +40,7 @@ VALUE_HEADS = ("value_wdl", "value_sf_eval", "value_categorical")
 def _checkpoint_model_config(ckpt: dict, ckpt_path: Path) -> ModelConfig:
     """Load the checkpoint's actual architecture, failing loud if absent."""
     if isinstance(ckpt.get("arch"), dict):
-        return _model_config_from_arch(ckpt["arch"])
+        return model_config_from_arch(ckpt["arch"])
 
     params_path = _find_params_json(ckpt_path)
     if params_path is not None:
