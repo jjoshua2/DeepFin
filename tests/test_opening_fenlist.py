@@ -11,6 +11,7 @@ from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     _load_fen_list,
     sample_starting_board,
+    seed_board_from_line,
 )
 
 FEN_BLACK = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
@@ -200,3 +201,76 @@ def test_production_seed_asset_loads() -> None:
         pytest.skip("seed asset not present in this checkout")
     fens = _load_fen_list(str(asset))
     assert len(fens) == len(set(fens)) == 76
+
+
+# ── Seed-history format: '<start_fen> | <uci moves>' ─────────────────────────
+
+_NAJDORF = "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6 b1c3 a7a6"
+_SEED_WITH_HISTORY = f"{chess.STARTING_FEN} | {_NAJDORF}"
+
+
+def _terminal_fen(line: str) -> str:
+    return seed_board_from_line(line).fen()
+
+
+def test_plain_fen_line_has_empty_stack() -> None:
+    b = seed_board_from_line(FEN_BLACK)
+    assert b.fen() == FEN_BLACK
+    assert len(b.move_stack) == 0
+
+
+def test_history_line_replays_to_terminal_with_stack() -> None:
+    b = seed_board_from_line(_SEED_WITH_HISTORY)
+    assert len(b.move_stack) == 10
+    # The terminal position is the seed the net actually faces.
+    expected = chess.Board()
+    for u in _NAJDORF.split():
+        expected.push(chess.Move.from_uci(u))
+    assert b.fen() == expected.fen()
+
+
+def test_history_line_produces_real_history_planes() -> None:
+    # The whole point: a populated move_stack must change the LC0 history planes
+    # vs the same terminal position with an empty stack (which repeat-fills).
+    from chess_anti_engine.encoding.encode import encode_position
+
+    b_hist = seed_board_from_line(_SEED_WITH_HISTORY)
+    b_bare = chess.Board(b_hist.fen())  # same position, no history
+    assert b_hist.fen() == b_bare.fen()
+    e_hist = encode_position(b_hist, add_features=True,
+                             input_history_encoding="lc0_root_legacy_meta",
+                             input_extra_features="v2_threats")
+    e_bare = encode_position(b_bare, add_features=True,
+                             input_history_encoding="lc0_root_legacy_meta",
+                             input_extra_features="v2_threats")
+    assert (e_hist != e_bare).any()  # history planes differ -> real history used
+
+
+def test_illegal_move_in_line_is_skipped(tmp_path: Path) -> None:
+    bad = f"{chess.STARTING_FEN} | e2e4 e7e5 e4d5"  # e4d5 = pawn capture to an empty square
+    path = _write_list(tmp_path, [FEN_BLACK, bad, FEN_WHITE])
+    assert _load_fen_list(path) == (FEN_BLACK, FEN_WHITE)  # bad skipped, good kept
+
+
+def test_inline_comment_is_stripped(tmp_path: Path) -> None:
+    line = f"{_SEED_WITH_HISTORY}  # src=game.pgn round=3 ply=42"
+    path = _write_list(tmp_path, [line])
+    loaded = _load_fen_list(path)
+    assert loaded == (_SEED_WITH_HISTORY,)  # comment gone, seed intact
+    assert len(seed_board_from_line(loaded[0]).move_stack) == 10
+
+
+def test_history_line_terminal_validated_not_start(tmp_path: Path) -> None:
+    # A line whose START is fine but whose TERMINAL is a forced/near-mate spot
+    # is judged on the terminal. Here the terminal has >=2 legal moves -> kept.
+    path = _write_list(tmp_path, [_SEED_WITH_HISTORY])
+    assert _load_fen_list(path) == (_SEED_WITH_HISTORY,)
+
+
+def test_sample_returns_history_board(tmp_path: Path) -> None:
+    path = _write_list(tmp_path, [_SEED_WITH_HISTORY])
+    cfg = OpeningConfig(opening_fen_list_path=path, opening_fen_prob=1.0)
+    start = sample_starting_board(rng=np.random.default_rng(0), cfg=cfg)
+    assert start.source == "fenlist"
+    assert len(start.board.move_stack) == 10
+    assert start.board.fen() == _terminal_fen(_SEED_WITH_HISTORY)

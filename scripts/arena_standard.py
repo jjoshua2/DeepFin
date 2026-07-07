@@ -273,18 +273,20 @@ def load_paired_openings(
 
 
 def _load_unique_fen_boards(path: Path) -> list[chess.Board]:
-    """Validated, deduplicated seed boards from a plain FEN file.
+    """Validated, deduplicated seed boards from a seed list.
 
-    Reuses selfplay's ``_load_fen_list`` (the two consume the SAME seed files):
-    illegal/terminal/forced FENs are SKIPPED with a logged warning — not played
-    as phantom draws or crashed on mid-arena — and a zero-usable-seed file
-    fails fast (its ValueError is surfaced as a clean SystemExit here, so both
-    this and the compile-heuristic count path exit cleanly). Dedup is on the
-    python-chess NORMALIZED FEN, so two equivalent spellings (e.g. a redundant
-    en-passant square that normalizes away) collapse to one board while rows
-    that genuinely differ in halfmove/fullmove counters are both kept.
+    Reuses selfplay's ``_load_fen_list`` + ``seed_board_from_line`` (the two
+    consume the SAME seed files): illegal/terminal/forced seeds are SKIPPED with
+    a logged warning — not played as phantom draws or crashed on mid-arena — and
+    a zero-usable-seed file fails fast (its ValueError is surfaced as a clean
+    SystemExit here, so both this and the compile-heuristic count path exit
+    cleanly). ``<start_fen> | <moves>`` lines replay to the terminal seed with
+    real history. Dedup is on the python-chess NORMALIZED terminal FEN, so two
+    equivalent spellings (e.g. a redundant en-passant square that normalizes
+    away) collapse to one board while rows that genuinely differ in
+    halfmove/fullmove counters are both kept.
     """
-    from chess_anti_engine.selfplay.opening import _load_fen_list
+    from chess_anti_engine.selfplay.opening import _load_fen_list, seed_board_from_line
 
     try:
         fens = _load_fen_list(str(path))
@@ -293,8 +295,8 @@ def _load_unique_fen_boards(path: Path) -> list[chess.Board]:
     seen: set[str] = set()
     boards: list[chess.Board] = []
     for f in fens:
-        board = chess.Board(f)  # already validated by _load_fen_list
-        key = board.fen()  # normalized full FEN (keeps halfmove/fullmove)
+        board = seed_board_from_line(f)  # already validated by _load_fen_list
+        key = board.fen()  # normalized terminal FEN (keeps halfmove/fullmove)
         if key not in seen:
             seen.add(key)
             boards.append(board)
