@@ -31,6 +31,7 @@ from scripts.diagnostic_replay_utils import (
     rmse as _rmse,
     select_shards as _select_shards,
 )
+from scripts.trial_paths import latest_trial_dir
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
@@ -70,13 +71,6 @@ class PairRow:
     target_raw: float
     target_adjusted: float
     path_regret: float
-
-
-def _latest_trial_dir(run_dir: Path) -> Path:
-    trials = sorted((run_dir / "tune").glob("train_trial_*"), key=lambda p: p.stat().st_mtime)
-    if not trials:
-        raise FileNotFoundError(f"No trial directories under {run_dir / 'tune'}")
-    return trials[-1]
 
 
 def _latest_checkpoint(trial_dir: Path) -> Path:
@@ -371,13 +365,6 @@ def _format_cell(value: Any) -> str:
     return str(value)
 
 
-def _try_latest_trial_dir(run_dir: Path) -> Path | None:
-    try:
-        return _latest_trial_dir(run_dir)
-    except FileNotFoundError:
-        return None
-
-
 def _resolve_device(device_arg: str) -> str:
     if device_arg != "auto":
         return device_arg
@@ -422,7 +409,7 @@ def main() -> None:
 
     device = _resolve_device(str(args.device))
 
-    trial_dir = _try_latest_trial_dir(args.run_dir)
+    trial_dir = latest_trial_dir(args.run_dir)
     if args.checkpoint is None and trial_dir is None:
         raise FileNotFoundError(
             f"No trial directories under {args.run_dir / 'tune'}; pass --checkpoint explicitly",

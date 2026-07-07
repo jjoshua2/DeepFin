@@ -24,7 +24,7 @@ from scripts.diagnose_future_eval_bucketed import (
     _load_samples,
     _pairs_for_horizon,
 )
-import contextlib
+from scripts.trial_paths import latest_result, latest_trial_dir
 
 
 DEFAULT_RUN_DIR = Path("runs/pbt2_small")
@@ -127,18 +127,6 @@ def _normalize_mix(name: str, sf: float, search: float, final: float) -> MixCand
     return MixCandidate(name, float(weights[0]), float(weights[1]), float(weights[2]))
 
 
-def _latest_trial_dir(run_dir: Path) -> Path | None:
-    def trial_mtime(trial: Path) -> float:
-        result_path = trial / "result.json"
-        try:
-            return result_path.stat().st_mtime if result_path.exists() else trial.stat().st_mtime
-        except FileNotFoundError:
-            return 0.0
-
-    trials = list((run_dir / "tune").glob("train_trial_*"))
-    return max(trials, key=trial_mtime) if trials else None
-
-
 def _trial_dir_for_replay(run_dir: Path, replay_dir: Path) -> Path | None:
     try:
         rel = replay_dir.resolve().relative_to((run_dir / "replay").resolve())
@@ -148,22 +136,6 @@ def _trial_dir_for_replay(run_dir: Path, replay_dir: Path) -> Path | None:
         return None
     trial_dir = run_dir / "tune" / rel.parts[-2]
     return trial_dir if trial_dir.is_dir() else None
-
-
-def _latest_result(trial_dir: Path | None) -> dict[str, Any]:
-    if trial_dir is None:
-        return {}
-    result_path = trial_dir / "result.json"
-    latest: dict[str, Any] = {}
-    if not result_path.exists():
-        return latest
-    with result_path.open() as fh:
-        for line in fh:
-            if not line.strip():
-                continue
-            with contextlib.suppress(json.JSONDecodeError):
-                latest = json.loads(line)
-    return latest
 
 
 def _config_values(config_path: Path) -> dict[str, Any]:
@@ -176,7 +148,7 @@ def _config_values(config_path: Path) -> dict[str, Any]:
 
 def _current_candidates(run_dir: Path, config_path: Path, *, trial_dir: Path | None = None) -> list[MixCandidate]:
     cfg = _config_values(config_path)
-    latest = _latest_result(trial_dir or _latest_trial_dir(run_dir))
+    latest = latest_result(trial_dir or latest_trial_dir(run_dir))
     rows: list[MixCandidate] = []
     yaml_search = _optional_float(cfg.get("search_wdl_frac"), 0.0) if cfg else None
     reported_sf = latest.get("sf_wdl_frac")

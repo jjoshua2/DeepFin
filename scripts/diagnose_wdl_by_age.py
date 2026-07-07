@@ -22,6 +22,7 @@ from chess_anti_engine.replay.shard import (
 from chess_anti_engine.train.losses import _normalize_sf_wdl_probs, soft_cross_entropy
 from chess_anti_engine.train.trainer import select_input_history_arrays
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
+from scripts.trial_paths import latest_result, latest_trial_dir
 
 
 DEFAULT_RUN = Path("runs/pbt2_small")
@@ -32,13 +33,6 @@ class BandSpec:
     name: str
     start_frac: float
     end_frac: float
-
-
-def _latest_trial_dir(run_dir: Path) -> Path:
-    trials = sorted((run_dir / "tune").glob("train_trial_*"), key=lambda p: p.stat().st_mtime)
-    if not trials:
-        raise FileNotFoundError(f"No Ray trial directories under {run_dir / 'tune'}")
-    return trials[-1]
 
 
 def _replay_dir_for_trial(run_dir: Path, trial_dir: Path) -> Path:
@@ -55,17 +49,6 @@ def _latest_checkpoint(trial_dir: Path) -> Path:
     return checkpoints[-1]
 
 
-def _latest_result(trial_dir: Path) -> dict[str, Any]:
-    result_path = trial_dir / "result.json"
-    last: dict[str, Any] = {}
-    if not result_path.exists():
-        return last
-    with result_path.open() as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                last = json.loads(line)
-    return last
 
 
 def _loss_config(latest: dict[str, Any]) -> dict[str, float]:
@@ -352,10 +335,10 @@ def main() -> None:
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
-    trial_dir = args.trial_dir or _latest_trial_dir(args.run_dir)
+    trial_dir = args.trial_dir or latest_trial_dir(args.run_dir, required=True)
     replay_dir = args.replay_dir or _replay_dir_for_trial(args.run_dir, trial_dir)
     checkpoint = args.checkpoint or _latest_checkpoint(trial_dir)
-    latest = _latest_result(trial_dir)
+    latest = latest_result(trial_dir)
     loss_cfg = _loss_config(latest)
 
     shards = iter_shard_paths(replay_dir)

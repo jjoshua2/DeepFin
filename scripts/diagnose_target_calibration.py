@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import re
 from dataclasses import dataclass
@@ -20,7 +19,7 @@ from scripts.diagnostic_replay_utils import (
     record_skipped_shard as _record_skipped_shard,
     wdl_one_hot as _wdl_one_hot,
 )
-import contextlib
+from scripts.trial_paths import latest_result, latest_trial_dir
 
 
 DEFAULT_RUN = Path("runs/pbt2_small")
@@ -41,39 +40,11 @@ class ShardSlice:
     take: int
 
 
-def _latest_trial_dir(run_dir: Path) -> Path:
-    trials = sorted((run_dir / "tune").glob("train_trial_*"), key=lambda p: p.stat().st_mtime)
-    if not trials:
-        raise FileNotFoundError(f"No Ray trial directories under {run_dir / 'tune'}")
-    return trials[-1]
-
-
-def _try_latest_trial_dir(run_dir: Path) -> Path | None:
-    try:
-        return _latest_trial_dir(run_dir)
-    except FileNotFoundError:
-        return None
-
-
 def _replay_dir_for_trial(run_dir: Path, trial_dir: Path) -> Path:
     replay_dir = run_dir / "replay" / trial_dir.name / "replay_shards"
     if not replay_dir.exists():
         raise FileNotFoundError(f"Replay shard directory does not exist: {replay_dir}")
     return replay_dir
-
-
-def _latest_result(trial_dir: Path) -> dict[str, Any]:
-    result_path = trial_dir / "result.json"
-    latest: dict[str, Any] = {}
-    if not result_path.exists():
-        return latest
-    with result_path.open() as fh:
-        for line in fh:
-            if not line.strip():
-                continue
-            with contextlib.suppress(json.JSONDecodeError):
-                latest = json.loads(line)
-    return latest
 
 
 def _shard_num(path: Path) -> int:
@@ -466,7 +437,7 @@ def main() -> None:
     if int(args.buckets) < 1 or int(args.buckets) > MAX_BUCKETS:
         parser.error(f"--buckets must be between 1 and {MAX_BUCKETS}")
 
-    trial_dir = args.trial_dir or _try_latest_trial_dir(args.run_dir)
+    trial_dir = args.trial_dir or latest_trial_dir(args.run_dir)
     if args.replay_dir is None and trial_dir is None:
         raise FileNotFoundError(
             f"No trial directories under {args.run_dir / 'tune'}; pass --replay-dir explicitly",
@@ -477,7 +448,7 @@ def main() -> None:
         if trial_dir is None:
             raise AssertionError("trial_dir unexpectedly missing")
         replay_dir = _replay_dir_for_trial(args.run_dir, trial_dir)
-    latest = _latest_result(trial_dir) if trial_dir is not None else {}
+    latest = latest_result(trial_dir)
     cfg = _load_loss_config(latest, args)
     if cfg["wdl_blend_mode"] not in WDL_BLEND_MODES:
         parser.error(f"--wdl-blend-mode must be one of {', '.join(WDL_BLEND_MODES)}")
