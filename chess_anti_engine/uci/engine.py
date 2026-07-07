@@ -112,6 +112,10 @@ def emit_handshake(options: EngineOptions) -> None:
     _println(f"option name MultiPV type spin default {options.multi_pv} min 1 max 256")
     _println(f"option name UCI_ShowWDL type check default {'true' if options.show_wdl else 'false'}")
     _println(f"option name MoveOverheadMs type spin default {options.move_overhead_ms} min 0 max 5000")
+    _println(
+        "option name ClockBatchMarginSigmas type string default "
+        f"{options.clock_batch_margin_sigmas}",
+    )
     _println("option name SyzygyPath type string default <empty>")
     _println(f"option name Syzygy50MoveRule type check default {'true' if options.syzygy_50_move_rule else 'false'}")
     _println("option name LogFile type string default <empty>")
@@ -180,6 +184,12 @@ class EngineOptions:
   # the computed deadline before search starts; keeps us off the clock
   # in fast games.
     move_overhead_ms: int = 30
+  # Batch-time-variance clock margin, in std-devs of measured chunk wall-time.
+  # A chunk (GPU batch) can't be stopped mid-flight, so a slow one can overrun a
+  # tight deadline; the search reserves mean + this*std of chunk time before the
+  # hard deadline on clock games. 0 disables (restores the pre-margin behavior).
+  # See chess_anti_engine/uci/search.py:_BATCH_MARGIN_SIGMAS.
+    clock_batch_margin_sigmas: float = 2.0
   # Syzygy semantics: when true, cursed-win/blessed-loss count as draws
   # (matches 50-move-rule play). When false, treat them as decisive
   # (theoretical result — useful for correspondence / analysis).
@@ -627,6 +637,15 @@ class Engine:
             return
         self._options.move_overhead_ms = n
 
+    def _set_clock_batch_margin_sigmas(self, value: str) -> None:
+        try:
+            s = float(value.strip())
+        except ValueError:
+            return
+        s = max(0.0, s)
+        self._options.clock_batch_margin_sigmas = s
+        self._worker.set_batch_margin_sigmas(s)
+
     def _set_syzygy_50_move_rule(self, value: str) -> None:
         self._options.syzygy_50_move_rule = value.strip().lower() == "true"
   # Re-install probe so the new semantics take effect for the
@@ -718,6 +737,7 @@ class Engine:
         "multipv": _set_multi_pv,
         "uci_showwdl": _set_show_wdl,
         "moveoverheadms": _set_move_overhead_ms,
+        "clockbatchmarginsigmas": _set_clock_batch_margin_sigmas,
         "syzygy50moverule": _set_syzygy_50_move_rule,
         "logfile": _set_log_file,
         "minibatchsize": _set_minibatch_size,
