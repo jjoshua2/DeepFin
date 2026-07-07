@@ -42,6 +42,7 @@ from .score import q_to_cp
 from .time_manager import Deadline
 from .walker_pool import WalkerPool, WalkerPoolConfig
 import contextlib
+import time
 
 # _REQUIRED_MCTS_ABI is imported from gumbel_c (canonical owner of the C-path ABI
 # contract), so the SearchWorker construction guard and the run_gumbel_root_many_c
@@ -132,6 +133,26 @@ _ABORT_MIN_STABLE_CHUNKS = 2
 # full _chunk_sims. Lower-bounding nps means we under-spend the budget, never over.
 _BOOTSTRAP_NPS_PER_MS = 6.0
 _MIN_FIRST_CHUNK = 64
+
+# Batch-time-variance clock margin. The deadline is only checked BETWEEN chunks,
+# and a chunk (one GPU batch) can't be interrupted once launched — so a chunk that
+# runs slower than the running-average nps can overrun a tight deadline. That is the
+# time-forfeit mode a fixed MoveOverhead can't cover: batch wall-time varies with the
+# position, tree state, and GPU load, so the right reserve is data-driven, not fixed.
+# Once a few chunks have been timed this search, stop launching new ones when the
+# remaining time is below mean + K*std of measured chunk durations, banking one
+# worst-case batch as margin. Clock games only (``optimum_ms`` set) — movetime / nodes
+# / depth searches asked for exact work and must not stop short. K=2 ≈ a one-sided
+# 97.7% batch-fits bound under a normal approximation; tune via UCI
+# ``ClockBatchMarginSigmas`` (0 disables, restoring the pre-margin behavior).
+_BATCH_MARGIN_SIGMAS = 2.0
+_BATCH_MARGIN_MIN_SAMPLES = 2
+# Cap the reserve at this fraction of the move's starting budget so an
+# anomalously slow early chunk (a transient stall inflating mean+K*std) can't
+# reserve away the whole move and stop the search after one or two chunks — the
+# opposite failure (weak near-instant moves). At normal TCs budget >> chunk so
+# this never binds; it only guards the pathological short-TC / high-variance case.
+_MAX_BATCH_MARGIN_FRACTION = 0.5
 
 
 def _visit_gap(actions: np.ndarray, visits: np.ndarray, best_action: int) -> float:
@@ -314,6 +335,13 @@ class SearchWorker:
   # batches; lower = faster stop latency + fresher tree state on
   # each leaf. Set via UCI `MinibatchSize`.
         self._minibatch_size: int = 0
+  # Clock-margin width in std-devs of measured chunk wall-time (see
+  # `_BATCH_MARGIN_SIGMAS`). Set via UCI `ClockBatchMarginSigmas`; 0 disables.
+        self._batch_margin_sigmas: float = _BATCH_MARGIN_SIGMAS
+  # Per-search Welford accumulator of chunk durations (ms), reset in `run()`.
+        self._batch_n: int = 0
+        self._batch_mean_ms: float = 0.0
+        self._batch_m2_ms: float = 0.0
   # MultiPV: emit this many top-ranked lines per info tick. 1 = one PV
   # (classic behavior). >1 triggers a loop that extracts each of the
   # top-N root children by visits, walks a most-visited PV from each,
@@ -540,6 +568,58 @@ class SearchWorker:
         on the next ``run_gumbel_root_many_c`` call — no rebuild, no
         tree reset. Just read next time."""
         self._minibatch_size = max(0, int(n))
+
+    def set_batch_margin_sigmas(self, sigmas: float) -> None:
+        """Set the batch-time clock-margin width in std-devs (0 disables).
+
+        Read live per stop-check; no rebuild or tree reset. See
+        ``_BATCH_MARGIN_SIGMAS`` for the semantics.
+        """
+        self._batch_margin_sigmas = max(0.0, float(sigmas))
+
+    def _reset_batch_timing(self) -> None:
+        """Clear the per-search chunk-duration accumulator (call in ``run()``)."""
+        self._batch_n = 0
+        self._batch_mean_ms = 0.0
+        self._batch_m2_ms = 0.0
+
+    def _record_batch_ms(self, dt_ms: float) -> None:
+        """Fold one chunk's wall-time into the online mean/variance (Welford)."""
+        self._batch_n += 1
+        delta = dt_ms - self._batch_mean_ms
+        self._batch_mean_ms += delta / self._batch_n
+        self._batch_m2_ms += delta * (dt_ms - self._batch_mean_ms)
+
+    def _batch_margin_ms(self) -> float:
+        """Clock reserve = mean + K*std of measured chunk time.
+
+        Returns 0 until ``_BATCH_MARGIN_MIN_SAMPLES`` chunks have run (no
+        estimate yet) or when the margin is disabled (sigmas <= 0)."""
+        if (
+            self._batch_margin_sigmas <= 0.0
+            or self._batch_n < _BATCH_MARGIN_MIN_SAMPLES
+        ):
+            return 0.0
+        var = self._batch_m2_ms / (self._batch_n - 1)
+        std = var ** 0.5 if var > 0.0 else 0.0
+        return self._batch_mean_ms + self._batch_margin_sigmas * std
+
+    def _clock_time_margin_ms(
+        self, optimum_ms: int | None, start_remaining_ms: int | None,
+    ) -> float:
+        """Capped batch-time reserve passed to the stop check.
+
+        Zero unless this is a clock game (``optimum_ms`` set) — ``movetime`` /
+        ``nodes`` / ``depth`` searches run their exact requested work. Capped at
+        ``_MAX_BATCH_MARGIN_FRACTION`` of the move's starting budget so a bad
+        early chunk estimate can't reserve away the whole move.
+        """
+        if optimum_ms is None:
+            return 0.0
+        m = self._batch_margin_ms()
+        if m > 0.0 and start_remaining_ms is not None:
+            m = min(m, _MAX_BATCH_MARGIN_FRACTION * float(start_remaining_ms))
+        return m
 
     def close(self) -> None:
         """Close the current evaluator. Safe to call multiple times; no-op
@@ -964,6 +1044,7 @@ class SearchWorker:
         stop_event: threading.Event, deadline: Deadline,
         max_nodes: int | None, max_depth: int | None,
         total_nodes: int, pv_len: int,
+        time_margin_ms: float = 0.0,
     ) -> str | None:
         """Return the first-firing stop reason, or ``None`` to keep searching.
 
@@ -971,9 +1052,18 @@ class SearchWorker:
         original sequential-break semantics — ``"tree_bytes"`` only fires when
         no earlier budget/external/depth limit was already hit, which matters
         for the tree-bytes-only final info-cb emission in :meth:`run`.
+
+        ``time_margin_ms`` (clock games only) stops one worst-case batch BEFORE
+        the hard deadline so an un-interruptible chunk can't overrun it — the
+        batch-time-variance guard (see ``_batch_margin_ms``). It ranks with the
+        hard-deadline "external" stop, ahead of the work bounds.
         """
         if stop_event.is_set() or deadline.expired():
             return "external"
+        if time_margin_ms > 0.0:
+            rem = deadline.remaining_ms()
+            if rem is not None and rem < time_margin_ms:
+                return "time_margin"
         if max_nodes is not None and total_nodes >= max_nodes:
             return "max_nodes"
         if max_depth is not None and pv_len >= max_depth:
@@ -1272,6 +1362,8 @@ class SearchWorker:
   # reused across the game, so reset here rather than only on a new position).
         self._abort_last_best = -1
         self._abort_stable_chunks = 0
+  # Fresh chunk-duration stats for this move's batch-time clock margin.
+        self._reset_batch_timing()
 
         tb_probe = self._tb_probe
         if tb_probe is not None:
@@ -1320,6 +1412,9 @@ class SearchWorker:
         last_value = 0.0
         pv_indices: list[int] = []
         elapsed = 0
+  # Starting budget for this move — caps the batch-time margin so a bad early
+  # estimate can't reserve away the whole move (see `_MAX_BATCH_MARGIN_FRACTION`).
+        start_remaining_ms = deadline.remaining_ms()
         while True:
             chunk = self._chunk_budget(allowed_root_indices)
             if max_nodes is not None:
@@ -1350,10 +1445,14 @@ class SearchWorker:
                         )
                     break
 
+            _chunk_t0 = time.monotonic()
             last_value = self._run_one_chunk(
                 chunk, board, stop_event, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
             )
+  # Time the (un-interruptible) chunk so the batch-time clock margin below can
+  # reserve one worst-case batch before the hard deadline.
+            self._record_batch_ms((time.monotonic() - _chunk_t0) * 1000.0)
             total_nodes += int(chunk)
   # Per-chunk instrumentation hook (offline analysis of the accumulating tree —
   # the states the abort actually decides between). Fired after each chunk with
@@ -1369,10 +1468,14 @@ class SearchWorker:
                 allowed_root_indices=allowed_root_indices,
             )
 
+  # Batch-time-variance clock margin: clock games only, capped so a bad early
+  # estimate can't reserve away the whole move (see `_clock_time_margin_ms`).
+            time_margin_ms = self._clock_time_margin_ms(optimum_ms, start_remaining_ms)
             stop_reason = self._should_stop_search(
                 stop_event=stop_event, deadline=deadline,
                 max_nodes=max_nodes, max_depth=max_depth,
                 total_nodes=total_nodes, pv_len=len(pv_indices),
+                time_margin_ms=time_margin_ms,
             )
             if stop_reason is not None:
   # Tree-bytes-only stops emit a final info line; other stop reasons
