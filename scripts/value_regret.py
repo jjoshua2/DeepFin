@@ -160,6 +160,24 @@ def main() -> None:
     print(f"  OVERALL {overall:.1f} cp (n={len(positions)})")
     for ph in sorted(per_phase):
         print(f"  {PHASE_NAMES[ph]:11s} {per_phase[ph]:.1f} cp")
+    # Tail view: the audit mean is tail-dominated (median ~10cp vs mean ~75) and
+    # the >300cp blowups are the Cheese single-collapse failure mode, so the
+    # tail is reported alongside the mean rather than hidden inside it.
+    finite = per_position[~np.isnan(per_position)]
+    if finite.size:
+        print(f"  TAIL {'all':11s} med={float(np.median(finite)):6.1f} "
+              f"P90={float(np.percentile(finite, 90)):7.1f} "
+              f">100cp={100 * float((finite > 100).mean()):5.1f}% "
+              f">300cp={100 * float((finite > 300).mean()):5.1f}%")
+        pos_phases = np.array([int(p.phase) for p in positions])
+        for ph in sorted(per_phase):
+            v = per_position[pos_phases == ph]
+            v = v[~np.isnan(v)]
+            if v.size:
+                print(f"  TAIL {PHASE_NAMES[ph]:11s} med={float(np.median(v)):6.1f} "
+                      f"P90={float(np.percentile(v, 90)):7.1f} "
+                      f">100cp={100 * float((v > 100).mean()):5.1f}% "
+                      f">300cp={100 * float((v > 300).mean()):5.1f}%")
 
 
 if __name__ == "__main__":
