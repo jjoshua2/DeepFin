@@ -1,8 +1,10 @@
 """Canonical Ray trial-dir / result.json discovery (stdlib only).
 
-The diagnose_* scripts and status.py each grew a private copy of "find the
-newest train_trial_* dir and read the last result.json line". This is the one
-home for that logic; the copies should import from here.
+The home for "find the newest train_trial_* dir under run_dir/tune and read the
+last result.json line". The diagnose_* scripts import from here; status.py keeps
+its own finder deliberately — it discovers by live Ray SESSION artifacts
+(``/tmp/ray/session_*/artifacts``), a different root and concern from this
+run_dir/tune scan, so it is not a duplicate of this logic.
 
 Kept dependency-free (pathlib/json/os) so lightweight ops tools (loop_health)
 can use it without pulling numpy.
@@ -19,17 +21,23 @@ def default_run_dir() -> Path:
     return Path(os.environ.get("TRAIN_WORK_DIR", "runs/pbt2_small"))
 
 
-def _trial_sort_key(trial_dir: Path) -> float:
-    """Order trials by result.json mtime (actual iteration progress), falling
-    back to the dir mtime — a trial dir's mtime bumps on any file write
-    (checkpoint prune), so result.json is the truer recency signal."""
+def _trial_sort_key(trial_dir: Path) -> tuple[int, float, str]:
+    """Rank key for a trial dir: (has_result.json, mtime, name).
+
+    A dir WITH result.json always outranks one without — so a freshly-created
+    empty trial dir (its own mtime is 'now' right after a restart) never beats
+    an older but populated trial, which would otherwise make callers read an
+    empty dir. Within each group, order by result.json mtime (the truer recency
+    signal — a trial dir's mtime bumps on any file write, e.g. checkpoint
+    pruning), falling back to dir mtime; the name is a final tiebreak so an
+    mtime tie resolves deterministically instead of by glob/set order."""
     result_path = trial_dir / "result.json"
     try:
         if result_path.exists():
-            return result_path.stat().st_mtime
-        return trial_dir.stat().st_mtime
+            return (1, result_path.stat().st_mtime, trial_dir.name)
+        return (0, trial_dir.stat().st_mtime, trial_dir.name)
     except OSError:
-        return 0.0
+        return (0, 0.0, trial_dir.name)
 
 
 def _candidate_trial_dirs(tune: Path) -> list[Path]:
@@ -37,16 +45,14 @@ def _candidate_trial_dirs(tune: Path) -> list[Path]:
 
     Production nests trials directly (``tune/train_trial_*``); a flat glob
     matches exactly those and cannot pick up a stray backup nested deeper.
-    Only when the flat layout is empty do we fall back to a recursive search,
-    so a session/experiment-nested Ray layout still resolves without the flat
-    case ever seeing unrelated nested dirs.
+    Only when the flat layout is empty do we fall back to a single recursive
+    search, so a session/experiment-nested Ray layout still resolves without
+    the flat case ever seeing unrelated nested dirs.
     """
     flat = [p for p in tune.glob("train_trial_*") if p.is_dir()]
     if flat:
         return flat
-    nested = {p.parent for p in tune.rglob("train_trial_*/result.json")}
-    nested |= {p for p in tune.rglob("train_trial_*") if p.is_dir()}
-    return list(nested)
+    return [p for p in tune.rglob("train_trial_*") if p.is_dir()]
 
 
 @overload
@@ -56,10 +62,10 @@ def latest_trial_dir(run_dir: Path | None = ..., *, required: bool = ...) -> Pat
 def latest_trial_dir(run_dir: Path | None = None, *, required: bool = False) -> Path | None:
     """Newest ``train_trial_*`` dir under ``run_dir/tune``.
 
-    Ranked by ``result.json`` mtime (see ``_trial_sort_key``); the trial-name
-    is a secondary key so an mtime tie resolves deterministically rather than
-    by set/glob iteration order. Returns None when none exist unless
-    ``required`` (then raises FileNotFoundError).
+    Ranked by ``_trial_sort_key`` — a populated trial (has result.json) beats an
+    empty one, then by result.json mtime, then by name for a deterministic tie.
+    Returns None when none exist unless ``required`` (then raises
+    FileNotFoundError).
     """
     run_dir = run_dir or default_run_dir()
     tune = run_dir / "tune"
@@ -68,7 +74,7 @@ def latest_trial_dir(run_dir: Path | None = None, *, required: bool = False) -> 
         if required:
             raise FileNotFoundError(f"No Ray trial directories under {tune}")
         return None
-    return max(trials, key=lambda p: (_trial_sort_key(p), p.name))
+    return max(trials, key=_trial_sort_key)
 
 
 def latest_result(trial_dir: Path | None) -> dict[str, Any]:

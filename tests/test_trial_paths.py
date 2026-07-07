@@ -40,6 +40,19 @@ def test_latest_trial_dir_ranks_by_result_mtime_over_dir_mtime(tmp_path: Path) -
     assert trial_paths.latest_trial_dir(tmp_path) == active
 
 
+def test_latest_trial_dir_skips_empty_new_dir(tmp_path: Path) -> None:
+    # A freshly-created post-restart trial dir has no result.json yet and its
+    # own mtime is 'now'; it must NOT outrank the older populated trial, else
+    # latest_result_path(required=True) would raise on an empty dir.
+    populated = _trial(tmp_path, "train_trial_old", [1, 2])
+    empty = tmp_path / "tune" / "train_trial_new"
+    empty.mkdir(parents=True)
+    os.utime(populated / "result.json", (1_000, 1_000))
+    os.utime(empty, (9_000, 9_000))  # new empty dir mtime is newer
+    assert trial_paths.latest_trial_dir(tmp_path) == populated
+    assert trial_paths.latest_result_path(tmp_path, required=True) == populated / "result.json"
+
+
 def test_latest_trial_dir_tie_is_deterministic(tmp_path: Path) -> None:
     # Equal sort keys must not resolve by PYTHONHASHSEED-salted set order.
     a = _trial(tmp_path, "train_trial_aaaa", [1])

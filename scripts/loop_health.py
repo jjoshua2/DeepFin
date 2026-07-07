@@ -19,8 +19,14 @@ ALERT (exit 1) — needs action:
     stopped), or selfplay_fenlist_games == 0 for 3+ iters while total delivery
     continues (the SF-labelled value-injection sub-stream stopped). Dose 0.02
     => a burst of zeros is drift, a single zero is Poisson noise.
-  - train_steps_used == 0 for 2+ consecutive iters: ingest drought.
-  - games_generated < 100: selfplay collapse.
+  - train_steps_used == 0 for 2+ consecutive iters: a written 0-step iteration.
+    NOTE: the canonical no-games drought suppresses the result.json row
+    entirely (the trainable short-circuits and writes nothing), so a row-scan
+    cannot see it — use --max-age-min to alert on a stale newest row instead.
+  - games_generated < 100: selfplay collapse (demoted to a NOTE on a benign
+    post-restart iteration, which the stale_games marker identifies).
+  - --max-age-min M (opt-in): the newest row's timestamp is older than M
+    minutes — result.json has stopped advancing (stall / no-games drought).
 
 NOTE (informational): pid_ema_winrate > 0.75 (benign restart spike / difficulty
 miscalibration), distributed_stale_games > 0 (benign post-restart marker),
@@ -38,6 +44,7 @@ import argparse
 import json
 import statistics
 import sys
+import time
 from pathlib import Path
 
 from scripts.trial_paths import latest_result_path
@@ -75,14 +82,20 @@ def check_row(
     alerts: list[str] = []
     notes: list[str] = []
 
-    # Value-only-row inflow. Guarded on actual ingest: an iteration that added
-    # no rows reports has_policy_frac 0.0 from an empty denominator, which is a
-    # drought (a separate signal below), not a value-only flood.
+    stale = row.get("distributed_stale_games")
+    stale_n = int(stale) if stale is not None else 0
+    is_restart_iter = stale_n > 0
+
+    # Value-only-row inflow. Guarded on actual ingest AND on a strictly-positive
+    # frac: the producer emits exactly 0.0 both for an empty has_policy
+    # denominator (shards missing the flag) and a genuine but total flood; a
+    # real record_fast_ply_value flood is ~0.25 (has SOME full plies), so
+    # `0 < frac < 0.9` catches the flood without the missing-field false alarm.
     ingested = row.get("replay_positions_ingested")
     if ingested is None:
         ingested = row.get("positions_added")
     hp = row.get("replay_has_policy_frac")
-    if hp is not None and ingested is not None and int(ingested) > 0 and float(hp) < 0.9:
+    if hp is not None and ingested is not None and int(ingested) > 0 and 0.0 < float(hp) < 0.9:
         alerts.append(f"has_policy_frac={float(hp):.3f} <0.9 on {int(ingested)} ingested rows — "
                       "value-only rows entering the window "
                       "(record_fast_ply_value on? live-yaml revert?)")
@@ -94,23 +107,30 @@ def check_row(
         alerts.append("opening_fenlist_games=0 for 3+ consecutive iters — "
                       "FEN seeding stopped delivering entirely")
     if fen_selfplay_alert:
-        alerts.append("selfplay_fenlist_games=0 for 3+ iters while total FEN delivery continues — "
+        alerts.append("selfplay_fenlist_games=0 for 3+ iters — "
                       "the SF-labelled value-injection sub-stream stopped")
     wr = row.get("pid_ema_winrate")
-    if wr is not None and float(wr) < 0.35:
+    # 0.0 is the reported fallback when the PID controller is inactive, not a
+    # real winrate — require strictly positive so a PID-disabled run isn't red.
+    if wr is not None and 0.0 < float(wr) < 0.35:
         alerts.append(f"pid_ema_winrate={float(wr):.3f} <0.35 — airbag territory / weak opponent")
     if steps_zero_streak >= 2:
         alerts.append(f"train_steps_used=0 for {steps_zero_streak} consecutive iters — ingest drought")
     games = row.get("games_generated")
     if games is not None and int(games) < 100:
-        alerts.append(f"games_generated={int(games)} <100 — selfplay collapse")
+        # Workers are still spinning up on the first post-restart iteration, so a
+        # low count there is benign (the tool's own stale-games NOTE) — demote.
+        if is_restart_iter:
+            notes.append(f"games_generated={int(games)} <100 on a restart iter — "
+                         "benign (workers spinning up)")
+        else:
+            alerts.append(f"games_generated={int(games)} <100 — selfplay collapse")
 
     if wr is not None and float(wr) > 0.75:
         notes.append(f"pid_ema_winrate={float(wr):.3f} >0.75 — likely benign "
                      "(post-restart spike / difficulty miscalibration), not airbag")
-    stale = row.get("distributed_stale_games")
-    if stale is not None and int(stale) > 0:
-        notes.append(f"stale_games={int(stale)} — expect a benign winrate spike (restart artifact)")
+    if is_restart_iter:
+        notes.append(f"stale_games={stale_n} — expect a benign winrate spike (restart artifact)")
     if prev is not None:
         r0, r1 = prev.get("wdl_regret"), row.get("wdl_regret")
         if r0 is not None and r1 is not None and float(r0) > 0.0 and float(r1) > 1.4 * float(r0):
@@ -121,29 +141,35 @@ def check_row(
     return alerts, notes
 
 
-def load_rows(path: Path) -> list[dict]:
-    """Parse result.json, skipping a torn trailing line from a live flush.
+def load_rows(path: Path, last: int) -> list[dict]:
+    """Parse the last ``last`` rows of result.json, tolerating a torn tail line.
 
-    A cron read can land while Ray is mid-append; an unparseable line is
-    tolerated (skipped with a stderr note) rather than crashing the monitor.
+    Streams the file through a bounded deque so a long-running result.json is
+    not materialized in full; a cron read can land while Ray is mid-append, so
+    an unparseable line is skipped with a stderr note rather than crashing. A
+    small buffer over ``last`` covers a torn/blank tail line without dropping a
+    real row from the requested window.
     """
-    rows: list[dict] = []
+    from collections import deque
+
     with open(path, encoding="utf-8") as f:
-        lines = f.readlines()
-    for i, line in enumerate(lines):
+        tail = deque(f, maxlen=last + 4)
+    rows: list[dict] = []
+    n = len(tail)
+    for i, line in enumerate(tail):
         line = line.strip()
         if not line:
             continue
         try:
             rows.append(json.loads(line))
         except json.JSONDecodeError:
-            if i == len(lines) - 1:
+            if i == n - 1:
                 print(f"[loop_health] skipped a torn trailing line in {path} "
                       "(live append in progress)", file=sys.stderr)
             else:
-                print(f"[loop_health] skipped unparseable line {i + 1} in {path}",
+                print(f"[loop_health] skipped an unparseable line in {path}",
                       file=sys.stderr)
-    return rows
+    return rows[-last:]
 
 
 def main() -> None:
@@ -155,14 +181,17 @@ def main() -> None:
     ap.add_argument("--expect-fenlist", action=argparse.BooleanOptionalAction, default=None,
                     help="force the FEN-delivery check on/off; default auto-detects from whether "
                          "the scanned window ever delivered a FEN game (so non-FEN trials are green)")
+    ap.add_argument("--max-age-min", type=float, default=None,
+                    help="alert if the newest row's timestamp is older than this many minutes "
+                         "(catches the no-games drought / stall, which writes no result row). "
+                         "Off by default — set it to the expected iteration cadence x ~2.")
     args = ap.parse_args()
     if args.last < 1:
         sys.exit("--last must be >= 1")
 
     path = args.result_json or latest_result_path(required=True)
     assert path is not None  # required=True raises rather than returning None
-    rows = load_rows(path)
-    rows = rows[-args.last:]
+    rows = load_rows(path, args.last)
     if not rows:
         sys.exit(f"no iterations in {path}")
 
@@ -172,7 +201,11 @@ def main() -> None:
     # (--expect-fenlist forces it either way). A non-FEN trial never delivers,
     # so it stays green instead of false-alerting.
     seen_total_fen = any(s.get("opening_fenlist_games", 0) > 0 for s in per_iter_stats)
-    seen_selfplay_fen = any(s.get("selfplay_fenlist_games", 0) > 0 for s in per_iter_stats)
+    # --expect-fenlist forces the check on/off; otherwise auto-detect from
+    # whether the window ever delivered. When forced on, the alerts must fire
+    # even over a window that never delivered (that IS the outage the override
+    # exists to catch), so fen_expected is the ONLY gate below — the seen_*
+    # signals are not ANDed into the alert conditions.
     fen_expected = args.expect_fenlist if args.expect_fenlist is not None else seen_total_fen
 
     times = sorted(float(r["time_this_iter_s"]) for r in rows if r.get("time_this_iter_s"))
@@ -187,13 +220,17 @@ def main() -> None:
         total_fen = stats.get("opening_fenlist_games", 0)
         selfplay_fen = stats.get("selfplay_fenlist_games", 0)
         total_fen_zero = 0 if total_fen > 0 else total_fen_zero + 1
-        # The selfplay sub-stream stopping only matters while total delivery
-        # continues (else the total-delivery alert already covers it).
-        selfplay_fen_zero = 0 if (selfplay_fen > 0 or total_fen == 0) else selfplay_fen_zero + 1
-        steps_zero_streak = 0 if int(row.get("train_steps_used") or 0) > 0 else steps_zero_streak + 1
+        # Count the selfplay-substream streak purely on selfplay delivery — do
+        # NOT reset it on a total-zero iter, or a bursty total stream with
+        # isolated zeros would forever re-arm the counter and mask a dead
+        # substream (the substream is a subset of total, so a real total outage
+        # trips this too, which is fine).
+        selfplay_fen_zero = 0 if selfplay_fen > 0 else selfplay_fen_zero + 1
+        sv = row.get("train_steps_used")
+        steps_zero_streak = steps_zero_streak + 1 if (sv is not None and int(sv) == 0) else 0
 
-        fen_total_alert = fen_expected and seen_total_fen and total_fen_zero >= 3
-        fen_selfplay_alert = fen_expected and seen_selfplay_fen and selfplay_fen_zero >= 3
+        fen_total_alert = fen_expected and total_fen_zero >= 3
+        fen_selfplay_alert = fen_expected and selfplay_fen_zero >= 3
 
         alerts, notes = check_row(
             row, prev, median_iter_s,
@@ -214,6 +251,18 @@ def main() -> None:
         for n in notes:
             print(f"  NOTE:  {n}")
         prev = row
+
+    # Opt-in staleness: the no-games drought writes no new row, so it shows up
+    # as the newest row's timestamp going stale rather than as a scanned value.
+    if args.max_age_min is not None:
+        ts = rows[-1].get("timestamp")
+        if ts is not None:
+            age_min = (time.time() - float(ts)) / 60.0
+            if age_min > args.max_age_min:
+                any_alert = True
+                print(f"  ALERT: newest row is {age_min:.0f} min old "
+                      f"(> {args.max_age_min:.0f}) — result.json not advancing "
+                      "(stall / no-games drought)")
 
     print(f"\n{'ALERTS PRESENT' if any_alert else 'all invariants green'} "
           f"({len(rows)} iters scanned, fen_check={'on' if fen_expected else 'off'}, {path})")
