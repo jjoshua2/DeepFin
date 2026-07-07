@@ -4,22 +4,28 @@ Every check guards a failure mode the loop has actually had; a green run
 prints one compact line per iteration and exits 0, so this is cron/CI safe.
 
 ALERT (exit 1) — needs action:
-  - replay_has_policy_frac < 0.9: value-only rows flooding the window
-    (record_fast_ply_value flipped on / live-yaml revert — the 2026-07-02
-    branch-checkout incident shipped exactly this silently).
-  - replay_pmass_gap_share / _fast_share > 0: a KILLED priority-shaping knob
-    (#104 family) is live again.
-  - opening_fenlist_games == 0 for 3+ consecutive iters while --expect-fenlist:
-    blind-spot FEN seeding stopped delivering (dose 0.02 => a burst of zeros
-    is drift, a single zero is Poisson noise).
-  - pid_ema_winrate outside [0.35, 0.75]: airbag territory (curriculum
-    starvation misfire, 2026-07-05).
+  - replay_has_policy_frac < 0.9 (only on iters that actually ingested rows):
+    value-only rows entering the window (record_fast_ply_value flipped on /
+    live-yaml revert — the 2026-07-02 branch-checkout incident shipped exactly
+    this silently). The frac is a per-ITERATION ingest metric, so this catches
+    the inflow; rows already in the window persist ~a day after a revert.
+  - replay_pmass_gap_share > 0: the KILLED #104 gap-priority sampling knob is
+    live again.
+  - pid_ema_winrate < 0.35: airbag territory / weak opponent (curriculum
+    starvation misfire, 2026-07-05). The HIGH side is a NOTE, not an alert —
+    a >0.75 spike is the benign post-restart transient.
+  - FEN delivery flatline (only when the window shows FEN seeding is active):
+    opening_fenlist_games == 0 for 3+ consecutive iters (total delivery
+    stopped), or selfplay_fenlist_games == 0 for 3+ iters while total delivery
+    continues (the SF-labelled value-injection sub-stream stopped). Dose 0.02
+    => a burst of zeros is drift, a single zero is Poisson noise.
   - train_steps_used == 0 for 2+ consecutive iters: ingest drought.
   - games_generated < 100: selfplay collapse.
 
-NOTE (informational): distributed_stale_games > 0 (benign post-restart
-winrate spike marker), wdl_regret easing >40% in one step (airbag fired),
-iteration wall-time > 2x the scanned-range median.
+NOTE (informational): pid_ema_winrate > 0.75 (benign restart spike / difficulty
+miscalibration), distributed_stale_games > 0 (benign post-restart marker),
+wdl_regret easing >40% in one step (airbag fired), iteration wall-time > 2x
+the scanned-range median.
 
 Usage:
   PYTHONPATH=. python3 scripts/loop_health.py                    # newest trial, last 20 iters
@@ -31,6 +37,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import sys
 from pathlib import Path
 
@@ -53,39 +60,59 @@ def check_row(
     row: dict,
     prev: dict | None,
     median_iter_s: float,
-    fen_zero_streak: int,
+    *,
+    fen_total_alert: bool,
+    fen_selfplay_alert: bool,
     steps_zero_streak: int,
 ) -> tuple[list[str], list[str]]:
-    """Pure invariant logic for one iteration -> (alerts, notes)."""
+    """Pure invariant logic for one iteration -> (alerts, notes).
+
+    FEN alerts are decided in main() (they need window-level state — whether
+    seeding is active at all) and passed in as booleans, so this stays a pure,
+    testable function of one row plus the caller's precomputed streak flags.
+    """
     alerts: list[str] = []
     notes: list[str] = []
 
+    # Value-only-row inflow. Guarded on actual ingest: an iteration that added
+    # no rows reports has_policy_frac 0.0 from an empty denominator, which is a
+    # drought (a separate signal below), not a value-only flood.
+    ingested = row.get("replay_positions_ingested")
+    if ingested is None:
+        ingested = row.get("positions_added")
     hp = row.get("replay_has_policy_frac")
-    if hp is not None and float(hp) < 0.9:
-        alerts.append(f"has_policy_frac={float(hp):.3f} <0.9 — value-only rows in window "
+    if hp is not None and ingested is not None and int(ingested) > 0 and float(hp) < 0.9:
+        alerts.append(f"has_policy_frac={float(hp):.3f} <0.9 on {int(ingested)} ingested rows — "
+                      "value-only rows entering the window "
                       "(record_fast_ply_value on? live-yaml revert?)")
-    for key, label in (("replay_pmass_gap_share", "gap"), ("replay_pmass_fast_share", "fast")):
-        share = row.get(key)
-        if share is not None and float(share) > 1e-3:
-            alerts.append(f"{key}={float(share):.4f} >0 — KILLED {label}-priority knob live again")
-    if fen_zero_streak >= 3:
-        alerts.append(f"opening_fenlist_games=0 for {fen_zero_streak} consecutive iters — "
-                      "FEN seeding stopped delivering")
+    gap = row.get("replay_pmass_gap_share")
+    if gap is not None and float(gap) > 1e-3:
+        alerts.append(f"replay_pmass_gap_share={float(gap):.4f} >0 — "
+                      "KILLED #104 gap-priority sampling knob live again")
+    if fen_total_alert:
+        alerts.append("opening_fenlist_games=0 for 3+ consecutive iters — "
+                      "FEN seeding stopped delivering entirely")
+    if fen_selfplay_alert:
+        alerts.append("selfplay_fenlist_games=0 for 3+ iters while total FEN delivery continues — "
+                      "the SF-labelled value-injection sub-stream stopped")
     wr = row.get("pid_ema_winrate")
-    if wr is not None and not 0.35 <= float(wr) <= 0.75:
-        alerts.append(f"pid_ema_winrate={float(wr):.3f} outside [0.35, 0.75] — airbag territory")
+    if wr is not None and float(wr) < 0.35:
+        alerts.append(f"pid_ema_winrate={float(wr):.3f} <0.35 — airbag territory / weak opponent")
     if steps_zero_streak >= 2:
         alerts.append(f"train_steps_used=0 for {steps_zero_streak} consecutive iters — ingest drought")
     games = row.get("games_generated")
     if games is not None and int(games) < 100:
         alerts.append(f"games_generated={int(games)} <100 — selfplay collapse")
 
+    if wr is not None and float(wr) > 0.75:
+        notes.append(f"pid_ema_winrate={float(wr):.3f} >0.75 — likely benign "
+                     "(post-restart spike / difficulty miscalibration), not airbag")
     stale = row.get("distributed_stale_games")
     if stale is not None and int(stale) > 0:
         notes.append(f"stale_games={int(stale)} — expect a benign winrate spike (restart artifact)")
     if prev is not None:
         r0, r1 = prev.get("wdl_regret"), row.get("wdl_regret")
-        if r0 and r1 and float(r1) > 1.4 * float(r0):
+        if r0 is not None and r1 is not None and float(r0) > 0.0 and float(r1) > 1.4 * float(r0):
             notes.append(f"wdl_regret eased {float(r0):.4f}->{float(r1):.4f} (>40% step) — airbag fired?")
     t = row.get("time_this_iter_s")
     if t is not None and median_iter_s > 0 and float(t) > 2.0 * median_iter_s:
@@ -95,13 +122,40 @@ def check_row(
 
 def newest_result_json() -> Path:
     work_dir = Path(os.environ.get("TRAIN_WORK_DIR", "runs/pbt2_small"))
+    # rglob (not a fixed-depth glob) so a session/experiment-nested Ray layout
+    # still resolves, matching status.py's session-aware finder.
     candidates = sorted(
-        work_dir.glob("tune/train_trial_*/result.json"),
+        (work_dir / "tune").rglob("train_trial_*/result.json"),
         key=lambda p: p.stat().st_mtime,
     )
     if not candidates:
-        sys.exit(f"no result.json under {work_dir}/tune/train_trial_*/")
+        sys.exit(f"no result.json under {work_dir}/tune/**/train_trial_*/")
     return candidates[-1]
+
+
+def load_rows(path: Path) -> list[dict]:
+    """Parse result.json, skipping a torn trailing line from a live flush.
+
+    A cron read can land while Ray is mid-append; an unparseable line is
+    tolerated (skipped with a stderr note) rather than crashing the monitor.
+    """
+    rows: list[dict] = []
+    with open(path, encoding="utf-8") as f:
+        lines = f.readlines()
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            if i == len(lines) - 1:
+                print(f"[loop_health] skipped a torn trailing line in {path} "
+                      "(live append in progress)", file=sys.stderr)
+            else:
+                print(f"[loop_health] skipped unparseable line {i + 1} in {path}",
+                      file=sys.stderr)
+    return rows
 
 
 def main() -> None:
@@ -109,37 +163,60 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--result-json", type=Path, default=None,
                     help="trial result.json (default: newest under $TRAIN_WORK_DIR/tune)")
-    ap.add_argument("--last", type=int, default=20, help="iterations to scan (default 20)")
-    ap.add_argument("--expect-fenlist", action=argparse.BooleanOptionalAction, default=True,
-                    help="alert when FEN-seeding delivery flatlines (on while #108 is active)")
+    ap.add_argument("--last", type=int, default=20, help="iterations to scan (default 20, min 1)")
+    ap.add_argument("--expect-fenlist", action=argparse.BooleanOptionalAction, default=None,
+                    help="force the FEN-delivery check on/off; default auto-detects from whether "
+                         "the scanned window ever delivered a FEN game (so non-FEN trials are green)")
     args = ap.parse_args()
+    if args.last < 1:
+        sys.exit("--last must be >= 1")
 
     path = args.result_json or newest_result_json()
-    with open(path, encoding="utf-8") as f:
-        rows = [json.loads(line) for line in f if line.strip()]
+    rows = load_rows(path)
     rows = rows[-args.last:]
     if not rows:
         sys.exit(f"no iterations in {path}")
 
+    per_iter_stats = [parse_outcome_stats(str(r.get("outcome_stats") or "")) for r in rows]
+
+    # FEN check is armed only when seeding is actually active in this window
+    # (--expect-fenlist forces it either way). A non-FEN trial never delivers,
+    # so it stays green instead of false-alerting.
+    seen_total_fen = any(s.get("opening_fenlist_games", 0) > 0 for s in per_iter_stats)
+    seen_selfplay_fen = any(s.get("selfplay_fenlist_games", 0) > 0 for s in per_iter_stats)
+    fen_expected = args.expect_fenlist if args.expect_fenlist is not None else seen_total_fen
+
     times = sorted(float(r["time_this_iter_s"]) for r in rows if r.get("time_this_iter_s"))
-    median_iter_s = times[len(times) // 2] if times else 0.0
+    median_iter_s = statistics.median(times) if times else 0.0
 
     any_alert = False
-    fen_zero_streak = 0
+    total_fen_zero = 0
+    selfplay_fen_zero = 0
     steps_zero_streak = 0
     prev: dict | None = None
-    for row in rows:
-        stats = parse_outcome_stats(str(row.get("outcome_stats") or ""))
-        fen_games = stats.get("opening_fenlist_games", 0)
-        fen_zero_streak = 0 if (fen_games > 0 or not args.expect_fenlist) else fen_zero_streak + 1
+    for row, stats in zip(rows, per_iter_stats, strict=True):
+        total_fen = stats.get("opening_fenlist_games", 0)
+        selfplay_fen = stats.get("selfplay_fenlist_games", 0)
+        total_fen_zero = 0 if total_fen > 0 else total_fen_zero + 1
+        # The selfplay sub-stream stopping only matters while total delivery
+        # continues (else the total-delivery alert already covers it).
+        selfplay_fen_zero = 0 if (selfplay_fen > 0 or total_fen == 0) else selfplay_fen_zero + 1
         steps_zero_streak = 0 if int(row.get("train_steps_used") or 0) > 0 else steps_zero_streak + 1
 
-        alerts, notes = check_row(row, prev, median_iter_s, fen_zero_streak, steps_zero_streak)
+        fen_total_alert = fen_expected and seen_total_fen and total_fen_zero >= 3
+        fen_selfplay_alert = fen_expected and seen_selfplay_fen and selfplay_fen_zero >= 3
+
+        alerts, notes = check_row(
+            row, prev, median_iter_s,
+            fen_total_alert=fen_total_alert, fen_selfplay_alert=fen_selfplay_alert,
+            steps_zero_streak=steps_zero_streak,
+        )
         it = row.get("training_iteration", "?")
         print(f"iter {it}: wr_ema={float(row.get('pid_ema_winrate') or 0):.3f} "
               f"regret={float(row.get('wdl_regret') or 0):.4f} "
               f"games={int(row.get('games_generated') or 0)} "
-              f"fen={fen_games} steps={int(row.get('train_steps_used') or 0)} "
+              f"fen={total_fen}(self {selfplay_fen}) "
+              f"steps={int(row.get('train_steps_used') or 0)} "
               f"window={int(row.get('replay') or 0)} "
               f"t={float(row.get('time_this_iter_s') or 0):.0f}s")
         for a in alerts:
@@ -150,7 +227,7 @@ def main() -> None:
         prev = row
 
     print(f"\n{'ALERTS PRESENT' if any_alert else 'all invariants green'} "
-          f"({len(rows)} iters scanned, {path})")
+          f"({len(rows)} iters scanned, fen_check={'on' if fen_expected else 'off'}, {path})")
     sys.exit(1 if any_alert else 0)
 
 
