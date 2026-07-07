@@ -43,6 +43,11 @@ def main() -> None:
     ap.add_argument("--panel", default="data/blindspot_panel_v1.jsonl")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--gpu-mem-fraction", type=float, default=0.15)
+    ap.add_argument(
+        "--dump-per-position", default=None,
+        help="write {fen, phase, value} per row (value = net_after collapse "
+        "severity, higher=blinder) for paired_compare.py — mirrors value_regret",
+    )
     args = ap.parse_args()
 
     if args.device.startswith("cuda") and args.gpu_mem_fraction:
@@ -84,13 +89,25 @@ def main() -> None:
 
     print(f"{'src':<12} {'rd':>3} {'ply':>4} {'sf_after':>8} {'net_after':>9}")
     blind = aware = 0
+    severities: list[float] = []
+    dump_recs: list[dict[str, object]] = []
     for r, w in zip(rows, wdl, strict=True):
         # side to move in fen_after is the opponent -> flip to DeepFin POV
         net_after = float(w[2] - w[0])
         blind += net_after > BLIND_ABOVE
         aware += net_after < AWARE_BELOW
+        severities.append(net_after)
+        # value = net_after collapse severity (higher = blinder = worse), so
+        # paired_compare's "A better = lower value" convention holds; join on
+        # fen_after (the scored position). phase carried when the row has it.
+        rec: dict[str, object] = {"fen": r["fen_after"], "value": net_after}
+        if "phase" in r:
+            rec["phase"] = r["phase"]
+        dump_recs.append(rec)
         tag = r["src"].split("cheeseFULL_")[-1][:10]
         print(f"{tag:<12} {r['round']:>3} {r['ply']:>4} {r['sf_after']:>8} {net_after:>9.2f}")
+
+    sev = np.asarray(severities, dtype=np.float64)
 
     n = len(rows)
     # Baseline is panel-specific (v1: 21/35 @ckpt477, v2: 54/113 @ckpt500) — a
@@ -107,6 +124,18 @@ def main() -> None:
     print(f"BLIND (net > {BLIND_ABOVE}): {blind}/{n}{ann}")
     print(f"AWARE (net < {AWARE_BELOW}): {aware}/{n}")
     print(f"in between:        {n - blind - aware}/{n}")
+    # Continuous collapse severity (net_after in DeepFin POV; every position is
+    # lost so lower/more-negative = the net correctly sees it). Less noisy than
+    # the binary BLIND count and paired-comparable across checkpoints via
+    # scripts/paired_compare.py on the --dump-per-position files.
+    print(f"SEVERITY net_after: mean {sev.mean():+.3f}  median {np.median(sev):+.3f}  "
+          f"P90 {np.percentile(sev, 90):+.3f}  (lower=better)")
+
+    if args.dump_per_position:
+        with open(args.dump_per_position, "w", encoding="utf-8") as fout:
+            for rec in dump_recs:
+                fout.write(json.dumps(rec) + "\n")
+        print(f"per-position dump -> {args.dump_per_position}")
 
 
 if __name__ == "__main__":
