@@ -44,12 +44,15 @@ class OpeningConfig:
     random_start_plies: int = 0
 
   # Blind-spot FEN seeding: if set, with probability opening_fen_prob the game
-  # starts from a FEN sampled uniformly from this file (plain text, one FEN
-  # per line; blank lines and lines starting with '#' are skipped) instead of
-  # the book/random/startpos flow. Used to replay positions the net has
-  # historically misplayed (see data/blindspot_fens_v1.txt) so refutations
-  # enter the training distribution — search cannot rescue value-blind
-  # positions, only data can (docs/experiment_ledger.md, 2026-07-03 probe).
+  # starts from a seed sampled uniformly from this file (one seed per line;
+  # blanks, '#' comment lines and inline '# ...' comments are skipped) instead
+  # of the book/random/startpos flow. Each line is either a plain FEN or
+  # '<start_fen> | <uci moves>' (see seed_board_from_line): the latter replays
+  # the moves so the seed carries real LC0 history rather than repeat-filled
+  # planes. Used to replay positions the net has historically misplayed (see
+  # data/blindspot_fens_v1.txt) so refutations enter the training distribution
+  # — search cannot rescue value-blind positions, only data can
+  # (docs/experiment_ledger.md, 2026-07-03 probe).
     opening_fen_list_path: str | None = None
     opening_fen_prob: float = 0.0
 
@@ -204,18 +207,44 @@ def _sample_from_polyglot(*, rng, path: str, max_plies: int) -> chess.Board:
     return b
 
 
-def _fen_reject_reason(line: str) -> str | None:
-    """Why this FEN is unusable as a seed, or None if it's fine.
+def seed_board_from_line(line: str) -> chess.Board:
+    """Build the seed (terminal) board from one FEN-list line.
 
-    A seed must be parseable, legal, non-terminal (under claim-draw, matching
-    CBoard's cboard_is_game_over which treats halfmove_clock>=100 as over), and
-    have >=2 legal moves (a forced position is skipped by _apply_forced_moves,
-    so the net never faces the seeded decision).
+    Line grammar (backward-compatible):
+      ``<fen>``                    plain seed — no move history (repeat-fill).
+      ``<start_fen> | <uci> ...``  start from ``start_fen`` and replay the UCI
+                                   moves; the TERMINAL position is the seed and
+                                   its move_stack carries real LC0 history (the
+                                   ~8 preceding plies), instead of the empty
+                                   stack a bare FEN gets (which the encoder
+                                   repeat-fills — 84/175 planes wrong, a ~14%
+                                   top-1 flip; see docs/experiment_ledger.md).
+
+    Raises ValueError on an unparseable FEN or an illegal move in the line.
+    """
+    fen_part, _, moves_part = line.partition("|")
+    board = chess.Board(fen_part.strip())  # raises ValueError on a bad FEN
+    for tok in moves_part.split():
+        move = chess.Move.from_uci(tok)
+        if move not in board.legal_moves:
+            raise ValueError(f"illegal move {tok!r} in seed line")
+        board.push(move)
+    return board
+
+
+def _fen_reject_reason(line: str) -> str | None:
+    """Why this seed line is unusable, or None if it's fine.
+
+    The seed is the TERMINAL position after replaying any history moves; it must
+    be parseable (FEN + legal moves), legal, non-terminal (under claim-draw,
+    matching CBoard's cboard_is_game_over which treats halfmove_clock>=100 as
+    over), and have >=2 legal moves (a forced position is skipped by
+    _apply_forced_moves, so the net never faces the seeded decision).
     """
     try:
-        board = chess.Board(line)
-    except ValueError:
-        return "unparseable FEN"
+        board = seed_board_from_line(line)
+    except ValueError as exc:
+        return str(exc) if "illegal move" in str(exc) else "unparseable FEN"
     if not board.is_valid():
         return "illegal position"  # missing kings, impossible pawns, etc.
     if board.is_game_over(claim_draw=True):
@@ -227,8 +256,11 @@ def _fen_reject_reason(line: str) -> str | None:
 
 @lru_cache(maxsize=8)
 def _load_fen_list(path_str: str) -> tuple[str, ...]:
-    """Load a plain-text FEN list (one per line, '#' comments, blanks skipped).
+    """Load a seed list (one seed per line, '#' comments, blanks skipped).
 
+    Each line is a seed in the ``seed_board_from_line`` grammar — a plain FEN
+    or ``<start_fen> | <uci moves>`` for real history — with an optional inline
+    ``# ...`` provenance comment (src/round/ply from mining) stripped here.
     Malformed/unusable lines are SKIPPED with a logged warning rather than
     raised — one bad line in a hand-edited or future seed file must not crash
     the whole worker fleet (Codex review). We raise only when the file yields
@@ -241,8 +273,10 @@ def _load_fen_list(path_str: str) -> tuple[str, ...]:
     # utf-8-sig: strip a leading BOM (editors/exporters on Windows add one) so
     # the first FEN — or a first-line '# comment' — is not corrupted.
     for lineno, raw in enumerate(Path(path_str).read_text(encoding="utf-8-sig").splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
+        # Strip an inline '# provenance' comment (neither FEN nor UCI contains
+        # '#'), then whitespace; blank / whole-line-comment lines drop out.
+        line = raw.split("#", 1)[0].strip()
+        if not line:
             continue
         reason = _fen_reject_reason(line)
         if reason is not None:
@@ -264,7 +298,7 @@ def _load_fen_list(path_str: str) -> tuple[str, ...]:
 
 def _sample_fen_list(*, rng, path: str) -> chess.Board:
     fens = _load_fen_list(path)
-    return chess.Board(fens[int(rng.integers(0, len(fens)))])
+    return seed_board_from_line(fens[int(rng.integers(0, len(fens)))])
 
 
 def _sample_book(*, rng, path: str, max_plies: int, max_games: int) -> chess.Board:

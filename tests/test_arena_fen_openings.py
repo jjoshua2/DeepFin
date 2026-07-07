@@ -61,6 +61,22 @@ def test_halfmove_distinct_rows_both_kept(tmp_path: Path) -> None:
     assert {b.fen() for b in boards} == {FEN_A, near_draw}
 
 
+def test_same_terminal_different_history_both_kept(tmp_path: Path) -> None:
+    # Two seeds that replay DIFFERENT preceding plies into the SAME terminal FEN
+    # are distinct model inputs (the encoder consumes move_stack), so dedup must
+    # keep both — keying only on the terminal FEN would drop one.
+    from chess_anti_engine.selfplay.opening import seed_board_from_line
+
+    start = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    a = f"{start} | g1f3 g8f6 f3g1 f6g8 g1f3 g8f6"   # 6-ply shuffle ending Nf3 Nf6
+    b = f"{start} | b1c3 b8c6 c3b1 c6b8 g1f3 g8f6"   # different path, same terminal
+    assert seed_board_from_line(a).fen() == seed_board_from_line(b).fen()  # same terminal
+    path = _write(tmp_path, [a, b])
+    boards = load_fen_openings(path, n_pairs=10, rng=np.random.default_rng(0))
+    assert len(boards) == 2
+    assert {len(bd.move_stack) for bd in boards} == {6}
+
+
 def test_ep_normalization_equivalents_collapse(tmp_path: Path) -> None:
     # Two spellings that python-chess normalizes to the SAME board (a redundant
     # en-passant square that drops to '-') must dedup to one board, else the
