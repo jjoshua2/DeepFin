@@ -673,7 +673,7 @@ def build_result_record(
     candidate: str,
     reference: str,
     openings_path: str,
-    openings_kind: str,
+    openings_kind: str = "book",
     opening_plies: int | None,
     sims_candidate: int | None,
     sims_reference: int | None,
