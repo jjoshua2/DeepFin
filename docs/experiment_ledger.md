@@ -507,7 +507,14 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
    **NEXT READ ~iter 650 (~1 day): PRIMARY held-out panel v1 BLIND vs 23/35
    @ckpt609; SECONDARY v2 seeded-subset; GUARDRAIL value paired CI ±2cp vs
    ckpt609.** If v1 flat but v2-seeded moves: raise dose / add stored-history
-   seeds before judging the idea.
+   seeds before judging the idea. PRE-COMMITTED ROLLBACK TRIGGER (07-07):
+   ckpt524 is still the strongest banked point (current ~3-4cp worse NS
+   overall, endgame −13.7 SIG @609). IF the ~650 FEN readout is a kill AND
+   the following monitor read still shows the endgame slice SIG-worse vs
+   ckpt524, rebase: salvage-restart warm-starting from the banked ckpt524
+   state (`scratchpad/recovery_read_ckpt524/checkpoint_000523/` — trainer +
+   pid + rng; current clean window carries over), FEN seeding kept on.
+   Otherwise CONTINUE stands; don't re-litigate without this trigger firing.
 4b. At the activation pause: Cheese-only match block (~20-40 games; rofChade
    DROPPED 07-05, user call — g465 already showed the grind mode and no
    decision changes on the answer; rofChade returns as a graduation match
@@ -527,6 +534,32 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
    Run the block on the DEDICATED GPU (never concurrent — stable batch times
    keep the margin estimate valid). Fresh current-net losses = panel v3 mining
    material.
+4c. **512×16 BOOTSTRAP LAUNCHED (07-07, gated behind the sidecar chain —
+   user-authorized auto-start when the GPU slot frees).** Fresh-init 63.08M
+   net (embed 512 / 16L / h16 / prod FFN profile interpolated to 16 entries;
+   verified ×1.82 trainable vs 34.7M; SAME inputs/outputs — 175 planes,
+   lc0_1858) trained offline on the frozen iter-647 window
+   (`data/salvage/scaleup_512x16_window_20260707`, 808 shards; the pool is
+   also the rule-2 revert point and the eventual swap vehicle). HYPOTHESIS:
+   the reweighting graveyard's capacity-theft signature means 34.7M is
+   capacity-bound; a fresh larger approximator on the same data reaches
+   parity and unlocks headroom. Mechanics: `offline_replay_epoch.py`
+   fresh-init (no --init-checkpoint; width can't migrate), candidates
+   aurora_mlp_out, batch 256 eager, live-follow static-pool mode
+   (credit-cap 0), 60k-step cap, eval/500 save/1000, hard GPU memcap 0.30 via
+   `scratchpad/scaleup/bootstrap_memcap_wrapper.py` (offline_replay_epoch has
+   no --gpu-mem-fraction; the cap makes the BOOTSTRAP die on overflow, never
+   the live trainer). Driver `scratchpad/scaleup/run_bootstrap_512x16.sh`
+   (detached; log `runs/scaleup_512x16_bootstrap/train.log`). STOP at
+   eval_loss plateau (playbook: static window overfits past it). **SWAP GATE
+   (pre-committed): the live restart happens ONLY at audit parity or better —
+   value_regret AND audit_targets (2000 pos, paired CIs) within +2cp of the
+   then-current live net, panels not worse. Below parity = extend data/steps
+   or kill the size; never swap on hope. Sequencing note: this front-runs the
+   microbench gate (spec section) — acceptable because the bootstrap is sunk
+   compute, not a live commitment; the microbench + Cheese block still gate
+   the SWAP at the restart pause.** Carries the rule-9 from-scratch retest
+   list at the new scale.
 5. After FEN seeding reads out: gradient rebalance rung (`w_soft` 1.0→0.5 +
    `w_wdl` 1.0→1.5) OR teacher-distillation offline screen — pick by what the
    seeding readout says about the tail. Never two value levers in one window.
