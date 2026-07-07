@@ -534,8 +534,24 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
    Run the block on the DEDICATED GPU (never concurrent — stable batch times
    keep the margin estimate valid). Fresh current-net losses = panel v3 mining
    material.
-4c. **512×16 BOOTSTRAP LAUNCHED (07-07, gated behind the sidecar chain —
-   user-authorized auto-start when the GPU slot frees).** Fresh-init 63.08M
+4b2. **LR-PLATEAU PROBE QUEUED (07-07, runs BEFORE 4c via gate ordering —
+   ~10 GPU-h).** USER HYPOTHESIS: the plateau isn't capacity, it's the
+   never-decayed flat LR 0.0003 (the 07-02 flat-lower-LR live test was
+   confounded → UNREADABLE; this is the clean offline version). Arms from
+   the frozen iter-647 checkpoint+window, identical 4500-step cold-optimizer
+   budget: `lr3e4_s0` control (0.0003) / `lr1e4_s0` (3× drop) / `lr3e5_s0`
+   (10× drop). Driver `scratchpad/scaleup/run_lr_probe.sh` (detached, gated
+   on the sidecar chain; provenance check asserts the lr override registered
+   in retarget_report.json — rule 8). **PRE-COMMITTED READ: paired
+   value_regret vs the CONTROL arm.** A drop arm SIG better on broad value ⇒
+   plateau is LR-BOUND ⇒ (a) plan a live LR drop right after the FEN window
+   closes (PBT-pin mechanic: yaml + newest experiment_state edit + restart),
+   (b) the bootstrap's phase-2 LR drops become load-bearing. Both drops ≈
+   control ⇒ capacity story stands, bootstrap is the lever. Single-seed
+   caveat: a win inside the ~7cp seed floor needs an s1 repeat before any
+   live action.
+4c. **512×16 BOOTSTRAP LAUNCHED (07-07, gated behind the sidecar chain +
+   the 4b2 LR probe — user-authorized auto-start when the GPU slot frees).** Fresh-init 63.08M
    net (embed 512 / 16L / h16 / prod FFN profile interpolated to 16 entries;
    verified ×1.82 trainable vs 34.7M; SAME inputs/outputs — 175 planes,
    lc0_1858) trained offline on the frozen iter-647 window
@@ -550,8 +566,15 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
    `scratchpad/scaleup/bootstrap_memcap_wrapper.py` (offline_replay_epoch has
    no --gpu-mem-fraction; the cap makes the BOOTSTRAP die on overflow, never
    the live trainer). Driver `scratchpad/scaleup/run_bootstrap_512x16.sh`
-   (detached; log `runs/scaleup_512x16_bootstrap/train.log`). STOP at
-   eval_loss plateau (playbook: static window overfits past it). **SWAP GATE
+   (detached; log `runs/scaleup_512x16_bootstrap/train.log`). LR PLAN
+   (07-07): phase 1 runs the config schedule (0.0003, sqrt_release ≈ flat);
+   at eval_loss plateau, PHASE 2 = classic step drops — re-invoke with
+   `--init-checkpoint <best-so-far> --lr 0.0001`, then `--lr 0.00003`,
+   stopping each phase at its plateau (offline stationary data wants decay;
+   reactive plateau-triggered drops, NOT a pre-specified step count, because
+   we don't know the plateau step in advance and the eval curve is cheap).
+   STOP each phase at eval_loss plateau (playbook: static window overfits
+   past it). **SWAP GATE
    (pre-committed): the live restart happens ONLY at audit parity or better —
    value_regret AND audit_targets (2000 pos, paired CIs) within +2cp of the
    then-current live net, panels not worse. Below parity = extend data/steps
