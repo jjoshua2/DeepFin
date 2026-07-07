@@ -37,22 +37,29 @@ def _game(ucis: list[str], *, white="deepfin_v1", black="Cheese",
 
 # ── pure core ────────────────────────────────────────────────────────────────
 
-def test_find_first_collapse_picks_first_crossing() -> None:
-    evals = [(0, 40, 20), (2, 30, -200), (4, 10, -500)]  # ply 2 first crosses -150
-    c = find_first_collapse(evals, collapse_cp=-150)
+def test_find_first_collapse_picks_first_decisive_drop() -> None:
+    evals = [(0, 40, 20), (2, 30, -200), (4, 10, -500)]  # ply 2 first ends <-150 w/ big drop
+    c = find_first_collapse(evals, collapse_cp=-150, min_drop=150)
     assert c is not None
     assert c.ply == 2
     assert c.sf_after == -200
 
 
-def test_find_first_collapse_ignores_already_lost() -> None:
-    # Already lost before the move (sf_before < -150) is not a fresh collapse.
-    evals = [(0, -300, -400), (2, -160, -900)]
-    assert find_first_collapse(evals, collapse_cp=-150) is None
+def test_find_first_collapse_includes_already_losing_that_worsens() -> None:
+    # Already losing (-1380) that gets decisively worse (-2993) IS a valid seed
+    # (matches the frozen panels), unlike a not-yet-lost precondition.
+    c = find_first_collapse([(6, -1380, -2993)], collapse_cp=-150, min_drop=150)
+    assert c is not None
+    assert c.ply == 6
 
 
-def test_find_first_collapse_none_when_no_crossing() -> None:
-    assert find_first_collapse([(0, 50, 30), (2, 20, -80)], collapse_cp=-150) is None
+def test_find_first_collapse_skips_small_slips() -> None:
+    # Below threshold but only a tiny worsening -> not a decisive collapse.
+    assert find_first_collapse([(2, -160, -190)], collapse_cp=-150, min_drop=150) is None
+
+
+def test_find_first_collapse_none_when_not_lost_after() -> None:
+    assert find_first_collapse([(0, 50, 30), (2, 220, -80)], collapse_cp=-150, min_drop=150) is None
 
 
 def test_build_seed_record_clamps_history_near_start() -> None:

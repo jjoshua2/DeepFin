@@ -57,14 +57,19 @@ class Collapse:
 
 
 def find_first_collapse(
-    evals: Iterable[tuple[int, int, int]], *, collapse_cp: int,
+    evals: Iterable[tuple[int, int, int]], *, collapse_cp: int, min_drop: int,
 ) -> Collapse | None:
-    """First (ply, sf_before, sf_after) where a DeepFin move crosses the loss
-    threshold: not-yet-lost before (sf_before > collapse_cp) and clearly lost
-    after (sf_after < collapse_cp). Both scores are DeepFin POV. ``evals`` must
-    be in play order and cover only DeepFin's moves."""
+    """First (ply, sf_before, sf_after) that is a decisive collapse: the DeepFin
+    move leaves the position clearly lost (sf_after < collapse_cp) AND worsened
+    it by at least ``min_drop`` cp. Both scores are DeepFin POV; ``evals`` are in
+    play order over DeepFin's moves only.
+
+    NOT gated on being not-yet-lost before the move: the frozen panels include
+    already-losing rows that get decisively worse (e.g. -1380 -> -2993), so an
+    already-lost precondition would silently drop ~half of real collapse seeds
+    (Codex review)."""
     for ply, sf_before, sf_after in evals:
-        if sf_before > collapse_cp and sf_after < collapse_cp:
+        if sf_after < collapse_cp and (sf_before - sf_after) >= min_drop:
             return Collapse(ply=ply, sf_before=sf_before, sf_after=sf_after)
     return None
 
@@ -115,7 +120,7 @@ def _deepfin_lost(game: chess.pgn.Game, color: chess.Color) -> bool:
 
 def mine_game(
     game: chess.pgn.Game, *, src: str = "?", name_needle: str, sf_eval: SfEval,
-    sf_nodes: int, collapse_cp: int, history_plies: int,
+    sf_nodes: int, collapse_cp: int, history_plies: int, min_drop: int = 150,
 ) -> tuple[str, str] | None:
     """Mine one game -> (seed_record, position_key) or None.
 
@@ -145,7 +150,7 @@ def mine_game(
         else:
             board.push(move)
 
-    collapse = find_first_collapse(df_evals, collapse_cp=collapse_cp)
+    collapse = find_first_collapse(df_evals, collapse_cp=collapse_cp, min_drop=min_drop)
     if collapse is None:
         return None
 
@@ -195,13 +200,19 @@ def load_existing_keys(paths: list[str]) -> set[str]:
     return keys
 
 
-def _make_sf_eval(sf_path: str) -> tuple[SfEval, Callable[[], None]]:
+def _make_sf_eval(sf_path: str, syzygy_path: str | None) -> tuple[SfEval, Callable[[], None]]:
     from chess_anti_engine.stockfish.uci import StockfishUCI
+    from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
 
     sf = StockfishUCI(path=sf_path)
 
     def sf_eval(fen: str, nodes: int) -> int | None:
-        return sf.search(fen, nodes=nodes).cp  # None on a mate-only score
+        res = sf.search(fen, nodes=nodes, syzygy_path=syzygy_path)
+        if res.cp is not None:
+            return res.cp
+        # A forced mate is a high-value collapse, not a drop-out: map it to a
+        # large signed cp so the mate side is scored, not skipped (Codex review).
+        return round(mate_to_effective_cp(res.mate)) if res.mate is not None else None
 
     return sf_eval, sf.close
 
@@ -223,7 +234,13 @@ def main() -> None:
     ap.add_argument("--sf-nodes", type=int, default=300_000,
                     help="deep-SF node budget per eval (panel used 300k)")
     ap.add_argument("--collapse-cp", type=int, default=-150,
-                    help="DeepFin-POV cp threshold the blunder crosses (panel: -150)")
+                    help="DeepFin-POV cp the seed is below AFTER the blunder (panel: -150)")
+    ap.add_argument("--min-drop", type=int, default=150,
+                    help="min cp worsening the blunder must cause (filters slips; "
+                         "includes already-losing positions that get decisively worse)")
+    ap.add_argument("--syzygy-path", default=None,
+                    help="Stockfish SyzygyPath for <=6-man endgame rows (production uses "
+                         "stockfish_syzygy_path); without it, endgames get a heuristic score")
     ap.add_argument("--history-plies", type=int, default=8,
                     help="preceding moves stored per seed (LC0 uses 8 history steps)")
     ap.add_argument("--holdout", nargs="*", default=[],
@@ -242,7 +259,7 @@ def main() -> None:
     print(f"[mine] {len(pgns)} PGN files; {len(exclude)} holdout+existing positions excluded",
           flush=True)
 
-    sf_eval, sf_close = _make_sf_eval(args.sf_path)
+    sf_eval, sf_close = _make_sf_eval(args.sf_path, args.syzygy_path)
     records: list[str] = []
     seen: set[str] = set()
     n_games = 0
@@ -256,6 +273,7 @@ def main() -> None:
                     game, src=str(pgn), name_needle=args.deepfin_name_contains,
                     sf_eval=sf_eval, sf_nodes=args.sf_nodes,
                     collapse_cp=args.collapse_cp, history_plies=args.history_plies,
+                    min_drop=args.min_drop,
                 )
                 if mined is None:
                     continue
