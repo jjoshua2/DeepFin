@@ -44,6 +44,15 @@ def test_load_skips_unusable_lines_keeps_good(tmp_path: Path, bad: str) -> None:
     assert _load_fen_list(path) == (FEN_BLACK, FEN_WHITE)
 
 
+def test_load_tolerates_utf8_bom(tmp_path: Path) -> None:
+    # A BOM-prefixed file (common from Windows editors) must not corrupt the
+    # first line — the utf-8-sig read strips it.
+    p = tmp_path / "fens_bom.txt"
+    p.write_text("\n".join([FEN_BLACK, FEN_WHITE]) + "\n", encoding="utf-8-sig")
+    assert p.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert _load_fen_list(str(p)) == (FEN_BLACK, FEN_WHITE)
+
+
 def test_claim_draw_fen_is_the_reason_case() -> None:
     # Guards the specific CBoard-vs-python-chess mismatch: is_game_over() alone
     # (no claim) misses halfmove>=100, which CBoard treats as over.

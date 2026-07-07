@@ -238,7 +238,9 @@ def _load_fen_list(path_str: str) -> tuple[str, ...]:
     """
     fens: list[str] = []
     skipped: list[str] = []
-    for lineno, raw in enumerate(Path(path_str).read_text(encoding="utf-8").splitlines(), 1):
+    # utf-8-sig: strip a leading BOM (editors/exporters on Windows add one) so
+    # the first FEN — or a first-line '# comment' — is not corrupted.
+    for lineno, raw in enumerate(Path(path_str).read_text(encoding="utf-8-sig").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
