@@ -292,11 +292,15 @@ def _load_unique_fen_boards(path: Path) -> list[chess.Board]:
         fens = _load_fen_list(str(path))
     except ValueError as exc:  # zero usable seeds
         raise SystemExit(f"[arena] {exc}") from exc
-    seen: set[str] = set()
+    seen: set[tuple[str, tuple[str, ...]]] = set()
     boards: list[chess.Board] = []
     for f in fens:
         board = seed_board_from_line(f)  # already validated by _load_fen_list
-        key = board.fen()  # normalized terminal FEN (keeps halfmove/fullmove)
+        # Key on the normalized terminal FEN AND the replayed history: two seeds
+        # with the SAME terminal but DIFFERENT preceding plies are distinct model
+        # inputs (the encoder consumes move_stack), so dedup must not collapse
+        # them; ep-equivalent same-history spellings still merge (Codex review).
+        key = (board.fen(), tuple(m.uci() for m in board.move_stack))
         if key not in seen:
             seen.add(key)
             boards.append(board)

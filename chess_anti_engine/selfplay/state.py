@@ -961,6 +961,15 @@ class SelfplayState:
         b = self.boards[i].copy(stack=False)
         for mi in self.move_idx_history[i]:
             b.push(index_to_move(mi, b))
+        # KNOWN LIMITATION (Codex, PR feat/seed-history): copy(stack=False) drops
+        # the opening's preceding moves, so a Python-path (volatility / no-C)
+        # search encodes a seed's LC0 history repeat-filled rather than from its
+        # real prior plies. The production C path preserves it (cboards use
+        # _CBoard.from_board, which keeps opening history — see line ~681), so
+        # this only affects the default-off Python search. A correct fix must
+        # keep encoding-history (seed's prior plies) while tracking repetition
+        # from the opening as the C path does — a single move_stack can't do
+        # both, so it is a focused follow-up, not a one-liner here.
         return b
 
 
