@@ -272,6 +272,47 @@ def load_paired_openings(
     return boards
 
 
+def load_fen_openings(
+    path: Path, *, n_pairs: int, rng: np.random.Generator,
+) -> list[chess.Board]:
+    """Load opening boards from a plain FEN file (one per line, ``#`` comments).
+
+    For blind-spot / seed-list play-outs (e.g. ``data/blindspot_fens_v1.txt``):
+    each FEN is played as a color-swapped pair exactly like book openings. If
+    the file holds more unique rows than ``n_pairs``, a seeded subsample is
+    drawn (reproducible via --seed); if fewer, ALL rows are used and the arena
+    shrinks to ``2 * len(rows)`` games. Boards start with an empty move stack,
+    so history planes repeat-fill — the same encoding selfplay FEN seeds get.
+    """
+    boards: list[chess.Board] = []
+    seen: set[str] = set()
+    with open(path, encoding="utf-8") as f:
+        for lineno, line in enumerate(f, start=1):
+            row = line.strip()
+            if not row or row.startswith("#"):
+                continue
+            try:
+                board = chess.Board(row)
+            except ValueError as exc:
+                raise SystemExit(f"{path}:{lineno}: invalid FEN {row!r} ({exc})") from exc
+            key = board.epd()
+            if key in seen:
+                continue
+            seen.add(key)
+            boards.append(board)
+    if not boards:
+        raise SystemExit(f"no FEN rows in {path}")
+    if len(boards) > n_pairs:
+        idx = rng.choice(len(boards), size=n_pairs, replace=False)
+        boards = [boards[int(i)] for i in sorted(idx)]
+    elif len(boards) < n_pairs:
+        print(
+            f"[arena] FEN list has {len(boards)} unique rows < {n_pairs} requested "
+            f"pairs; using all rows ({2 * len(boards)} games)"
+        )
+    return boards
+
+
 # ---------------------------------------------------------------------------
 # Game play — matched sims (in-process batched MCTS)
 # ---------------------------------------------------------------------------
@@ -697,8 +738,9 @@ def run_arena(
     candidate: str,
     reference: str,
     games: int,
-    openings_path: Path,
+    openings_path: Path | None,
     opening_plies: int,
+    openings_fen: Path | None = None,
     mode: str,
     sims_candidate: int,
     sims_reference: int,
@@ -726,10 +768,17 @@ def run_arena(
     n_pairs = games // 2
     rng = np.random.default_rng(seed)
 
-    print(f"[arena] sampling {n_pairs} openings from {openings_path} (seed={seed})")
-    openings = load_paired_openings(
-        openings_path, n_pairs=n_pairs, max_plies=opening_plies, rng=rng,
-    )
+    if (openings_path is None) == (openings_fen is None):
+        raise SystemExit("exactly one of openings_path / openings_fen is required")
+    if openings_fen is not None:
+        print(f"[arena] loading FEN openings from {openings_fen} (seed={seed})")
+        openings = load_fen_openings(openings_fen, n_pairs=n_pairs, rng=rng)
+    else:
+        assert openings_path is not None
+        print(f"[arena] sampling {n_pairs} openings from {openings_path} (seed={seed})")
+        openings = load_paired_openings(
+            openings_path, n_pairs=n_pairs, max_plies=opening_plies, rng=rng,
+        )
 
     t0 = time.time()
     if mode == "matched_sims":
@@ -835,7 +884,9 @@ def run_arena(
         mode=mode,
         candidate=candidate,
         reference=reference,
-        openings_path=str(openings_path),
+        openings_path=(
+            f"fen:{openings_fen}" if openings_fen is not None else str(openings_path)
+        ),
         opening_plies=opening_plies,
         sims_candidate=sims_candidate if mode == "matched_sims" else None,
         sims_reference=sims_reference if mode == "matched_sims" else None,
@@ -944,6 +995,10 @@ def main() -> None:
                    help="extra args appended to both UCI engine commands in matched_time "
                    "(e.g. '--no-compile')")
     p.add_argument("--label", default=None, help="free-form tag stored in the JSONL record")
+    p.add_argument("--openings-fen", type=Path, default=None,
+                   help="plain FEN file (one per line, # comments) used as paired "
+                        "openings instead of a PGN/Polyglot book — for blind-spot "
+                        "seed-list play-outs; mutually exclusive with --openings")
     p.add_argument("--volatility-q-scale", type=float, default=0.0,
                    help="CANDIDATE-side volatility-aware sigma(q) exponent "
                         "(matched_sims only; forces the Python search path)")
@@ -961,7 +1016,12 @@ def main() -> None:
     add_common_args(p)
     args = p.parse_args()
 
-    openings_path = args.openings if args.openings is not None else default_openings_path()
+    if args.openings_fen is not None and args.openings is not None:
+        raise SystemExit("--openings-fen and --openings are mutually exclusive")
+    openings_path = (
+        None if args.openings_fen is not None
+        else (args.openings if args.openings is not None else default_openings_path())
+    )
 
     # Resolve the matched_sims torch.compile decision (matched_time is a UCI
     # subprocess and unaffected). --no-compile is the back-compat "off" alias and
@@ -1016,6 +1076,7 @@ def main() -> None:
         compile_models=compile_models,
         rolling=not args.no_rolling,
         openings_path=openings_path,
+        openings_fen=args.openings_fen,
         opening_plies=args.opening_plies,
         mode=args.mode,
         sims_candidate=sims_cand,
