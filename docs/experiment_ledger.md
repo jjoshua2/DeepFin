@@ -230,7 +230,13 @@ detected", not "harm proven". ALSO IN THE OVERNIGHT BATCH: `vc_hi_s0/s1`
 (w_categorical 0.30→1.00 — distributional-value emphasis → shared trunk →
 wdl RANKING, the known deficit; the 07-05 queued screen deadlocked with the
 rest of the chain). Read = paired vs w0; a win is live-reloadable (no
-restart). CHAINED BEHIND THE BATCH (07-06, process-liveness gate — never
+restart). **VERDICT (07-07 13:30): KILLED.** Paired vs w0: s0 −11.21
+[−19.50, −3.13] **SIG** (middlegame-driven, −20.9 SIG), s1 −4.93 [−14.06,
++4.06] NS — both point-negative (vregret means 84.6/85.1 vs w0 73.4/80.2);
+panels v1 25/35 and 27/35, worse than control. Upweighting the categorical
+head steals trunk capacity like every other loss-mix move; the ranking
+deficit does not respond to loss reweighting. `w_categorical` stays 0.30.
+CHAINED BEHIND THE BATCH (07-06, process-liveness gate — never
 artifact gates): **uniform-sampling ablation `unif_s0/s1`** — the always-on
 KataGo surprise-priority sampling (hardcoded `surprise_mix=0.5`, KL term =
 99.9% of shaped priority mass live) has NEVER been causally tested, and every
@@ -474,7 +480,9 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
   counted state_dict, which double-counts the BT4-style weight-TIED smolgen gen
   matrices (12 names → 1 tensor) — use named_parameters for counts. GATES:
   (1) FEN readout + fresh Cheese block first; (2) compiled GPU microbench of
-  512×14 at a training pause (FLOPs→wallclock validation); (3) warm start via
+  the SELECTED ladder candidates at a training pause — 512×16 primary, with
+  640×15 / 768×15 as comparison points (FLOPs→wallclock validation must run on
+  the size we'd actually launch); (3) warm start via
   offline distill-bootstrap on the banked window (bootstrap infra +
   offline-recovery playbook), NOT net2net width surgery; (4) carries the rule-9
   from-scratch retest list (surprise_mix, gap-priority class, per-layer-vs-shared
