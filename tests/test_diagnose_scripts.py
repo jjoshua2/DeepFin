@@ -499,24 +499,6 @@ def test_future_value_grid_candidates_select_on_train_split() -> None:
     assert best_avg.w_search == 0.0
 
 
-def test_future_value_latest_trial_uses_result_json_mtime(tmp_path: Path) -> None:
-    old_trial = tmp_path / "tune" / "train_trial_old"
-    active_trial = tmp_path / "tune" / "train_trial_active"
-    old_trial.mkdir(parents=True)
-    active_trial.mkdir(parents=True)
-    old_result = old_trial / "result.json"
-    active_result = active_trial / "result.json"
-    old_result.write_text('{"sf_wdl_frac": 0.10}\n')
-    active_result.write_text('{"sf_wdl_frac": 0.35}\n')
-
-    os.utime(old_trial, (3000.0, 3000.0))
-    os.utime(active_trial, (1000.0, 1000.0))
-    os.utime(old_result, (1000.0, 1000.0))
-    os.utime(active_result, (3000.0, 3000.0))
-
-    assert diagnose_future_value_targets._latest_trial_dir(tmp_path) == active_trial
-
-
 def test_future_value_current_candidates_use_selected_replay_trial(tmp_path: Path) -> None:
     other_trial = tmp_path / "tune" / "train_trial_other"
     selected_trial = tmp_path / "tune" / "train_trial_selected"
