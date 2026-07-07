@@ -272,6 +272,72 @@ def load_paired_openings(
     return boards
 
 
+def _load_unique_fen_boards(path: Path) -> list[chess.Board]:
+    """Validated, deduplicated seed boards from a plain FEN file.
+
+    Reuses selfplay's ``_load_fen_list`` (the two consume the SAME seed files):
+    illegal/terminal/forced FENs are SKIPPED with a logged warning — not played
+    as phantom draws or crashed on mid-arena — and a zero-usable-seed file
+    fails fast (its ValueError is surfaced as a clean SystemExit here, so both
+    this and the compile-heuristic count path exit cleanly). Dedup is on the
+    python-chess NORMALIZED FEN, so two equivalent spellings (e.g. a redundant
+    en-passant square that normalizes away) collapse to one board while rows
+    that genuinely differ in halfmove/fullmove counters are both kept.
+    """
+    from chess_anti_engine.selfplay.opening import _load_fen_list
+
+    try:
+        fens = _load_fen_list(str(path))
+    except ValueError as exc:  # zero usable seeds
+        raise SystemExit(f"[arena] {exc}") from exc
+    seen: set[str] = set()
+    boards: list[chess.Board] = []
+    for f in fens:
+        board = chess.Board(f)  # already validated by _load_fen_list
+        key = board.fen()  # normalized full FEN (keeps halfmove/fullmove)
+        if key not in seen:
+            seen.add(key)
+            boards.append(board)
+    return boards
+
+
+def load_fen_seed_count(path: Path) -> int:
+    """Deduplicated usable-seed count (matches what the arena actually plays)."""
+    return len(_load_unique_fen_boards(path))
+
+
+def load_fen_openings(
+    path: Path, *, n_pairs: int, rng: np.random.Generator,
+) -> list[chess.Board]:
+    """Load opening boards from a plain FEN file (one per line, ``#`` comments).
+
+    For blind-spot / seed-list play-outs (e.g. ``data/blindspot_fens_v1.txt``):
+    each FEN is played as a color-swapped pair exactly like book openings. If
+    the file holds more usable rows than ``n_pairs`` a seeded subsample is drawn
+    (reproducible via --seed) and the drop is logged; if fewer, ALL rows are
+    used and the arena shrinks to ``2 * len(rows)`` games. Boards start with an
+    empty move stack, so history planes repeat-fill — the encoding selfplay FEN
+    seeds get. Validation/dedup live in ``_load_unique_fen_boards``.
+    """
+    boards = _load_unique_fen_boards(path)
+    n_usable = len(boards)
+    if n_usable > n_pairs:
+        idx = rng.choice(n_usable, size=n_pairs, replace=False)
+        boards = [boards[int(i)] for i in sorted(idx)]
+        print(
+            f"[arena] WARNING: FEN list has {n_usable} usable rows > {n_pairs} "
+            f"requested pairs; seeded-subsampling to {n_pairs} and DROPPING "
+            f"{n_usable - n_pairs} curated seeds — raise --games to 2x the row "
+            f"count for full coverage"
+        )
+    elif n_usable < n_pairs:
+        print(
+            f"[arena] FEN list has {len(boards)} usable rows < {n_pairs} requested "
+            f"pairs; using all rows ({2 * len(boards)} games)"
+        )
+    return boards
+
+
 # ---------------------------------------------------------------------------
 # Game play — matched sims (in-process batched MCTS)
 # ---------------------------------------------------------------------------
@@ -620,7 +686,7 @@ def build_result_record(
     candidate: str,
     reference: str,
     openings_path: str,
-    opening_plies: int,
+    opening_plies: int | None,
     sims_candidate: int | None,
     sims_reference: int | None,
     ms_per_move: int | None,
@@ -630,6 +696,7 @@ def build_result_record(
     seed: int,
     device: str,
     duration_s: float,
+    openings_kind: str = "book",
     label: str | None = None,
     volatility_candidate: dict[str, float] | None = None,
 ) -> dict:
@@ -646,6 +713,7 @@ def build_result_record(
         "games": summary.games,
         "pairs": summary.pairs,
         "openings": openings_path,
+        "openings_kind": openings_kind,
         "opening_plies": opening_plies,
         "sims_candidate": sims_candidate,
         "sims_reference": sims_reference,
@@ -697,8 +765,9 @@ def run_arena(
     candidate: str,
     reference: str,
     games: int,
-    openings_path: Path,
+    openings_path: Path | None,
     opening_plies: int,
+    openings_fen: Path | None = None,
     mode: str,
     sims_candidate: int,
     sims_reference: int,
@@ -726,10 +795,17 @@ def run_arena(
     n_pairs = games // 2
     rng = np.random.default_rng(seed)
 
-    print(f"[arena] sampling {n_pairs} openings from {openings_path} (seed={seed})")
-    openings = load_paired_openings(
-        openings_path, n_pairs=n_pairs, max_plies=opening_plies, rng=rng,
-    )
+    if (openings_path is None) == (openings_fen is None):
+        raise SystemExit("exactly one of openings_path / openings_fen is required")
+    if openings_fen is not None:
+        print(f"[arena] loading FEN openings from {openings_fen} (seed={seed})")
+        openings = load_fen_openings(openings_fen, n_pairs=n_pairs, rng=rng)
+    else:
+        assert openings_path is not None
+        print(f"[arena] sampling {n_pairs} openings from {openings_path} (seed={seed})")
+        openings = load_paired_openings(
+            openings_path, n_pairs=n_pairs, max_plies=opening_plies, rng=rng,
+        )
 
     t0 = time.time()
     if mode == "matched_sims":
@@ -835,8 +911,13 @@ def run_arena(
         mode=mode,
         candidate=candidate,
         reference=reference,
-        openings_path=str(openings_path),
-        opening_plies=opening_plies,
+        # Keep openings_path a real filesystem path; record the source kind in
+        # its own field so downstream readers can tell FEN-list runs from book
+        # runs without the path string changing shape. opening_plies is a book
+        # concept, so it is null on the FEN path (it is never applied there).
+        openings_path=str(openings_fen if openings_fen is not None else openings_path),
+        openings_kind="fen" if openings_fen is not None else "book",
+        opening_plies=None if openings_fen is not None else opening_plies,
         sims_candidate=sims_candidate if mode == "matched_sims" else None,
         sims_reference=sims_reference if mode == "matched_sims" else None,
         ms_per_move=ms_per_move if mode == "matched_time" else None,
@@ -944,6 +1025,10 @@ def main() -> None:
                    help="extra args appended to both UCI engine commands in matched_time "
                    "(e.g. '--no-compile')")
     p.add_argument("--label", default=None, help="free-form tag stored in the JSONL record")
+    p.add_argument("--openings-fen", type=Path, default=None,
+                   help="plain FEN file (one per line, # comments) used as paired "
+                        "openings instead of a PGN/Polyglot book — for blind-spot "
+                        "seed-list play-outs; mutually exclusive with --openings")
     p.add_argument("--volatility-q-scale", type=float, default=0.0,
                    help="CANDIDATE-side volatility-aware sigma(q) exponent "
                         "(matched_sims only; forces the Python search path)")
@@ -961,7 +1046,29 @@ def main() -> None:
     add_common_args(p)
     args = p.parse_args()
 
-    openings_path = args.openings if args.openings is not None else default_openings_path()
+    if args.openings_fen is not None and args.openings is not None:
+        raise SystemExit("--openings-fen and --openings are mutually exclusive")
+    openings_path = (
+        None if args.openings_fen is not None
+        else (args.openings if args.openings is not None else default_openings_path())
+    )
+    # Detect an EXPLICIT --opening-plies (any value, incl. the default 16) via
+    # argv, since comparing to the default can't tell "passed 16" from "unset".
+    opening_plies_passed = any(
+        a == "--opening-plies" or a.startswith("--opening-plies=") for a in sys.argv[1:]
+    )
+    if args.openings_fen is not None and opening_plies_passed:
+        raise SystemExit(
+            "--opening-plies has no effect with --openings-fen (FEN seeds are "
+            "whole positions, not book truncations); drop it")
+
+    # The FEN path caps the game count at 2*usable_rows, which main() must know
+    # for the compile heuristic below — a small seed file over-triggers compile
+    # if we size the work off the requested --games. _load_fen_list is cached,
+    # so run_arena's later load reuses this read.
+    effective_games = int(args.games)
+    if args.openings_fen is not None:
+        effective_games = min(effective_games, 2 * load_fen_seed_count(args.openings_fen))
 
     # Resolve the matched_sims torch.compile decision (matched_time is a UCI
     # subprocess and unaffected). --no-compile is the back-compat "off" alias and
@@ -980,7 +1087,7 @@ def main() -> None:
         if args.mode == "matched_sims":
             print("[arena] compile=on -> COMPILE", flush=True)
     else:  # auto
-        work = int(args.games) * int(effective_sims)
+        work = int(effective_games) * int(effective_sims)
         compile_models = work >= AUTO_COMPILE_WORK_THRESHOLD
         if args.mode == "matched_sims":
             if compile_models:
@@ -1016,6 +1123,7 @@ def main() -> None:
         compile_models=compile_models,
         rolling=not args.no_rolling,
         openings_path=openings_path,
+        openings_fen=args.openings_fen,
         opening_plies=args.opening_plies,
         mode=args.mode,
         sims_candidate=sims_cand,
