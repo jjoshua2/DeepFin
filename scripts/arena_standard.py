@@ -272,11 +272,38 @@ def load_paired_openings(
     return boards
 
 
-def load_fen_seed_count(path: Path) -> int:
-    """Number of usable seeds in a FEN list (for the compile-work estimate)."""
+def _load_unique_fen_boards(path: Path) -> list[chess.Board]:
+    """Validated, deduplicated seed boards from a plain FEN file.
+
+    Reuses selfplay's ``_load_fen_list`` (the two consume the SAME seed files):
+    illegal/terminal/forced FENs are SKIPPED with a logged warning — not played
+    as phantom draws or crashed on mid-arena — and a zero-usable-seed file
+    fails fast (its ValueError is surfaced as a clean SystemExit here, so both
+    this and the compile-heuristic count path exit cleanly). Dedup is on the
+    python-chess NORMALIZED FEN, so two equivalent spellings (e.g. a redundant
+    en-passant square that normalizes away) collapse to one board while rows
+    that genuinely differ in halfmove/fullmove counters are both kept.
+    """
     from chess_anti_engine.selfplay.opening import _load_fen_list
 
-    return len(_load_fen_list(str(path)))
+    try:
+        fens = _load_fen_list(str(path))
+    except ValueError as exc:  # zero usable seeds
+        raise SystemExit(f"[arena] {exc}") from exc
+    seen: set[str] = set()
+    boards: list[chess.Board] = []
+    for f in fens:
+        board = chess.Board(f)  # already validated by _load_fen_list
+        key = board.fen()  # normalized full FEN (keeps halfmove/fullmove)
+        if key not in seen:
+            seen.add(key)
+            boards.append(board)
+    return boards
+
+
+def load_fen_seed_count(path: Path) -> int:
+    """Deduplicated usable-seed count (matches what the arena actually plays)."""
+    return len(_load_unique_fen_boards(path))
 
 
 def load_fen_openings(
@@ -285,39 +312,25 @@ def load_fen_openings(
     """Load opening boards from a plain FEN file (one per line, ``#`` comments).
 
     For blind-spot / seed-list play-outs (e.g. ``data/blindspot_fens_v1.txt``):
-    each FEN is played as a color-swapped pair exactly like book openings.
-
-    Validation and bad-line handling reuse selfplay's ``_load_fen_list`` (the
-    two consume the SAME seed files): illegal/terminal/forced FENs are SKIPPED
-    with a logged warning — not silently played as phantom draws or crashed on
-    mid-arena — and a file with ZERO usable seeds fails fast. If the file holds
-    more usable rows than ``n_pairs`` a seeded subsample is drawn (reproducible
-    via --seed) and the drop is logged; if fewer, ALL rows are used and the
-    arena shrinks to ``2 * len(rows)`` games. Boards start with an empty move
-    stack, so history planes repeat-fill — the encoding selfplay FEN seeds get.
+    each FEN is played as a color-swapped pair exactly like book openings. If
+    the file holds more usable rows than ``n_pairs`` a seeded subsample is drawn
+    (reproducible via --seed) and the drop is logged; if fewer, ALL rows are
+    used and the arena shrinks to ``2 * len(rows)`` games. Boards start with an
+    empty move stack, so history planes repeat-fill — the encoding selfplay FEN
+    seeds get. Validation/dedup live in ``_load_unique_fen_boards``.
     """
-    from chess_anti_engine.selfplay.opening import _load_fen_list
-
-    try:
-        fens = _load_fen_list(str(path))
-    except ValueError as exc:  # zero usable seeds
-        raise SystemExit(f"[arena] {exc}") from exc
-    # Dedup on the FULL FEN string (not board.epd(), which drops the halfmove
-    # clock and fullmove number): two rows differing only in those counters are
-    # genuinely distinct test cases (e.g. one a ply short of the 50-move draw).
-    seen: set[str] = set()
-    unique = [f for f in fens if not (f in seen or seen.add(f))]
-    boards = [chess.Board(f) for f in unique]  # already validated by _load_fen_list
-    if len(boards) > n_pairs:
-        idx = rng.choice(len(boards), size=n_pairs, replace=False)
+    boards = _load_unique_fen_boards(path)
+    n_usable = len(boards)
+    if n_usable > n_pairs:
+        idx = rng.choice(n_usable, size=n_pairs, replace=False)
         boards = [boards[int(i)] for i in sorted(idx)]
         print(
-            f"[arena] WARNING: FEN list has {len(unique)} usable rows > {n_pairs} "
+            f"[arena] WARNING: FEN list has {n_usable} usable rows > {n_pairs} "
             f"requested pairs; seeded-subsampling to {n_pairs} and DROPPING "
-            f"{len(unique) - n_pairs} curated seeds — raise --games to 2x the row "
+            f"{n_usable - n_pairs} curated seeds — raise --games to 2x the row "
             f"count for full coverage"
         )
-    elif len(boards) < n_pairs:
+    elif n_usable < n_pairs:
         print(
             f"[arena] FEN list has {len(boards)} usable rows < {n_pairs} requested "
             f"pairs; using all rows ({2 * len(boards)} games)"
@@ -673,7 +686,6 @@ def build_result_record(
     candidate: str,
     reference: str,
     openings_path: str,
-    openings_kind: str = "book",
     opening_plies: int | None,
     sims_candidate: int | None,
     sims_reference: int | None,
@@ -684,6 +696,7 @@ def build_result_record(
     seed: int,
     device: str,
     duration_s: float,
+    openings_kind: str = "book",
     label: str | None = None,
     volatility_candidate: dict[str, float] | None = None,
 ) -> dict:
@@ -1039,7 +1052,12 @@ def main() -> None:
         None if args.openings_fen is not None
         else (args.openings if args.openings is not None else default_openings_path())
     )
-    if args.openings_fen is not None and args.opening_plies != p.get_default("opening_plies"):
+    # Detect an EXPLICIT --opening-plies (any value, incl. the default 16) via
+    # argv, since comparing to the default can't tell "passed 16" from "unset".
+    opening_plies_passed = any(
+        a == "--opening-plies" or a.startswith("--opening-plies=") for a in sys.argv[1:]
+    )
+    if args.openings_fen is not None and opening_plies_passed:
         raise SystemExit(
             "--opening-plies has no effect with --openings-fen (FEN seeds are "
             "whole positions, not book truncations); drop it")

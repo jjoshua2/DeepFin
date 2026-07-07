@@ -53,12 +53,27 @@ def test_illegal_fen_is_skipped_not_fatal(tmp_path: Path) -> None:
 
 def test_halfmove_distinct_rows_both_kept(tmp_path: Path) -> None:
     # Same placement/side/castling/ep, different halfmove clock => distinct test
-    # cases; dedup on the full FEN (not EPD) must keep both.
+    # cases; dedup on the full (normalized) FEN must keep both.
     near_draw = FEN_A.replace(" 3 3", " 98 60")
     path = _write(tmp_path, [FEN_A, near_draw])
     boards = load_fen_openings(path, n_pairs=10, rng=np.random.default_rng(0))
     assert len(boards) == 2
     assert {b.fen() for b in boards} == {FEN_A, near_draw}
+
+
+def test_ep_normalization_equivalents_collapse(tmp_path: Path) -> None:
+    # Two spellings that python-chess normalizes to the SAME board (a redundant
+    # en-passant square that drops to '-') must dedup to one board, else the
+    # position is played twice and double-counted in the pentanomial.
+    import chess
+
+    with_ep = FEN_E  # "... w KQkq c6 0 2" — no legal ep capture
+    normalized = chess.Board(with_ep).fen()  # "... w KQkq - 0 2"
+    assert normalized != with_ep
+    path = _write(tmp_path, [with_ep, normalized])
+    boards = load_fen_openings(path, n_pairs=10, rng=np.random.default_rng(0))
+    assert len(boards) == 1
+    assert load_fen_seed_count(path) == 1
 
 
 def test_seed_selects_which_subset(tmp_path: Path) -> None:
