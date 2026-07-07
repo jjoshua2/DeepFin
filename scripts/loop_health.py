@@ -36,10 +36,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import statistics
 import sys
 from pathlib import Path
+
+from scripts.trial_paths import latest_result_path
 
 
 def parse_outcome_stats(raw: str) -> dict[str, int]:
@@ -120,19 +121,6 @@ def check_row(
     return alerts, notes
 
 
-def newest_result_json() -> Path:
-    work_dir = Path(os.environ.get("TRAIN_WORK_DIR", "runs/pbt2_small"))
-    # rglob (not a fixed-depth glob) so a session/experiment-nested Ray layout
-    # still resolves, matching status.py's session-aware finder.
-    candidates = sorted(
-        (work_dir / "tune").rglob("train_trial_*/result.json"),
-        key=lambda p: p.stat().st_mtime,
-    )
-    if not candidates:
-        sys.exit(f"no result.json under {work_dir}/tune/**/train_trial_*/")
-    return candidates[-1]
-
-
 def load_rows(path: Path) -> list[dict]:
     """Parse result.json, skipping a torn trailing line from a live flush.
 
@@ -171,7 +159,8 @@ def main() -> None:
     if args.last < 1:
         sys.exit("--last must be >= 1")
 
-    path = args.result_json or newest_result_json()
+    path = args.result_json or latest_result_path(required=True)
+    assert path is not None  # required=True raises rather than returning None
     rows = load_rows(path)
     rows = rows[-args.last:]
     if not rows:
