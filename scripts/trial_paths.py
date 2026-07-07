@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 
 def default_run_dir() -> Path:
@@ -32,24 +32,43 @@ def _trial_sort_key(trial_dir: Path) -> float:
         return 0.0
 
 
-def latest_trial_dir(run_dir: Path | None = None, *, required: bool = False) -> Path | None:
-    """Newest ``train_trial_*`` dir under ``run_dir/tune`` (rglob, so a
-    session/experiment-nested Ray layout still resolves).
+def _candidate_trial_dirs(tune: Path) -> list[Path]:
+    """The ``train_trial_*`` dirs under ``tune``, flat layout preferred.
 
-    Returns None when none exist unless ``required`` (then raises
-    FileNotFoundError) — the two call styles the existing copies used.
+    Production nests trials directly (``tune/train_trial_*``); a flat glob
+    matches exactly those and cannot pick up a stray backup nested deeper.
+    Only when the flat layout is empty do we fall back to a recursive search,
+    so a session/experiment-nested Ray layout still resolves without the flat
+    case ever seeing unrelated nested dirs.
+    """
+    flat = [p for p in tune.glob("train_trial_*") if p.is_dir()]
+    if flat:
+        return flat
+    nested = {p.parent for p in tune.rglob("train_trial_*/result.json")}
+    nested |= {p for p in tune.rglob("train_trial_*") if p.is_dir()}
+    return list(nested)
+
+
+@overload
+def latest_trial_dir(run_dir: Path | None = ..., *, required: Literal[True]) -> Path: ...
+@overload
+def latest_trial_dir(run_dir: Path | None = ..., *, required: bool = ...) -> Path | None: ...
+def latest_trial_dir(run_dir: Path | None = None, *, required: bool = False) -> Path | None:
+    """Newest ``train_trial_*`` dir under ``run_dir/tune``.
+
+    Ranked by ``result.json`` mtime (see ``_trial_sort_key``); the trial-name
+    is a secondary key so an mtime tie resolves deterministically rather than
+    by set/glob iteration order. Returns None when none exist unless
+    ``required`` (then raises FileNotFoundError).
     """
     run_dir = run_dir or default_run_dir()
     tune = run_dir / "tune"
-    # A trial dir is one that contains result.json (rglob catches nesting);
-    # de-dup to the dirs themselves.
-    trials = {p.parent for p in tune.rglob("train_trial_*/result.json")}
-    trials |= {p for p in tune.rglob("train_trial_*") if p.is_dir()}
+    trials = _candidate_trial_dirs(tune)
     if not trials:
         if required:
             raise FileNotFoundError(f"No Ray trial directories under {tune}")
         return None
-    return max(trials, key=_trial_sort_key)
+    return max(trials, key=lambda p: (_trial_sort_key(p), p.name))
 
 
 def latest_result(trial_dir: Path | None) -> dict[str, Any]:

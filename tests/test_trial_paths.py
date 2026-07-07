@@ -26,16 +26,43 @@ def test_latest_trial_dir_none_when_empty(tmp_path: Path) -> None:
         trial_paths.latest_trial_dir(tmp_path, required=True)
 
 
-def test_latest_trial_dir_picks_newest_by_result_mtime(tmp_path: Path) -> None:
-    old = _trial(tmp_path, "train_trial_aaaa", [1, 2])
-    new = _trial(tmp_path, "train_trial_bbbb", [1, 2, 3])
-    # Make 'new' the more recently progressed trial regardless of dir mtime.
-    os.utime(old / "result.json", (1_000, 1_000))
-    os.utime(new / "result.json", (2_000, 2_000))
-    assert trial_paths.latest_trial_dir(tmp_path) == new
+def test_latest_trial_dir_ranks_by_result_mtime_over_dir_mtime(tmp_path: Path) -> None:
+    # The load-bearing invariant: rank by result.json mtime, NOT dir mtime.
+    # A dir-mtime implementation would pick 'stale' here (its DIR is newer, as
+    # checkpoint pruning bumps a defunct trial's dir), so the conflict is
+    # deliberate — this test must distinguish the two sort strategies.
+    stale = _trial(tmp_path, "train_trial_aaaa", [1, 2])
+    active = _trial(tmp_path, "train_trial_bbbb", [1, 2, 3])
+    os.utime(stale / "result.json", (1_000, 1_000))
+    os.utime(active / "result.json", (2_000, 2_000))
+    os.utime(stale, (9_000, 9_000))   # defunct trial's DIR mtime bumped newer
+    os.utime(active, (1_000, 1_000))  # active trial's DIR mtime older
+    assert trial_paths.latest_trial_dir(tmp_path) == active
 
 
-def test_latest_trial_dir_resolves_session_nested_layout(tmp_path: Path) -> None:
+def test_latest_trial_dir_tie_is_deterministic(tmp_path: Path) -> None:
+    # Equal sort keys must not resolve by PYTHONHASHSEED-salted set order.
+    a = _trial(tmp_path, "train_trial_aaaa", [1])
+    b = _trial(tmp_path, "train_trial_bbbb", [1])
+    for d in (a, b):
+        os.utime(d / "result.json", (5_000, 5_000))
+    # Secondary key is the path name, so the larger name wins, every run.
+    assert trial_paths.latest_trial_dir(tmp_path) == b
+
+
+def test_latest_trial_dir_prefers_flat_over_nested_stray(tmp_path: Path) -> None:
+    # A flat production trial must win over a stray nested train_trial_* backup
+    # even if the backup's result.json is newer — the flat layout is preferred
+    # and the recursive search is only a fallback when flat is empty.
+    live = _trial(tmp_path, "train_trial_live", [1, 2])
+    stray = _trial(tmp_path, "train_trial_live/backup/train_trial_stray", [1])
+    os.utime(live / "result.json", (1_000, 1_000))
+    os.utime(stray / "result.json", (9_000, 9_000))
+    assert trial_paths.latest_trial_dir(tmp_path) == live
+
+
+def test_latest_trial_dir_resolves_session_nested_layout_when_no_flat(tmp_path: Path) -> None:
+    # No flat trial -> fall back to the recursive search for nested layouts.
     d = _trial(tmp_path, "session_x/artifacts/exp/train_trial_cccc", [5])
     assert trial_paths.latest_trial_dir(tmp_path) == d
 
