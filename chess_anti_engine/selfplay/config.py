@@ -189,6 +189,13 @@ class GameConfig:
   # spanning ~4x fewer games. See configs/exp_throughput_views.yaml.
     record_fast_ply_value: bool = False
 
+  # Inline blind-spot harvesting: if set, finished games append value-blind
+  # positions (net's search says fine, in-loop SF says lost) as seed lines with
+  # real history to this file (selfplay/blindspot_harvest.py). "" = off. Purely
+  # a side output — does NOT change training; the seeds feed back only once the
+  # file is wired into opening_fen_list_path (a separate, gated step).
+    blindspot_harvest_out_path: str = ""
+
     def __post_init__(self) -> None:
         if int(self.sf_label_nodes_cap or 0) > 0 and not self.sf_wdl_use_cp_logistic:
             _LOG.warning(

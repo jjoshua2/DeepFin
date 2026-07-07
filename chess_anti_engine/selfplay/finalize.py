@@ -27,6 +27,10 @@ from chess_anti_engine.moves import (
     policy_vector_to_encoding,
 )
 from chess_anti_engine.replay.buffer import ReplaySample
+from chess_anti_engine.selfplay.blindspot_harvest import (
+    HarvestConfig,
+    run_harvest as run_blindspot_harvest,
+)
 from chess_anti_engine.selfplay.game import _result_to_wdl
 from chess_anti_engine.selfplay.state import (
     CompletedGameBatch,
@@ -1191,6 +1195,22 @@ def finalize_game(
         total_plies_played=int(cb.ply),
         ply_to_index=ply_to_index,
     ))
+
+    harvest_path = getattr(state.game, "blindspot_harvest_out_path", "")
+    if harvest_path and state.starting_boards is not None:
+        # Side output only (never mutates samples); run_blindspot_harvest is
+        # fail-safe (logs + returns 0 on any error, never raises into finalize).
+        starting = state.starting_boards[i]
+        src = str(state.opening_source_arr[i]) if i < len(state.opening_source_arr) else ""
+        gid = _stable_game_id(
+            start_fen=starting.fen(), opening_source=src,
+            move_trace=",".join(str(int(m)) for m in state.move_idx_history[i]),
+            result=result, total_plies_played=int(cb.ply),
+        )
+        run_blindspot_harvest(
+            starting, b, records, has_c_ply=bool(state.has_c_ply),
+            game_id=str(gid), out_path=str(harvest_path), cfg=HarvestConfig(),
+        )
 
     if on_game_complete is not None:
         game_samples = list(all_samples[sample_start:])
