@@ -80,10 +80,12 @@ def score_seeds(checkpoint: str, seed_lines: list[str], *, device: str,
     with torch.no_grad():
         _, wdl = ev.evaluate_encoded(
             np.stack(encs), relations=np.stack(rels) if use_rel else None)
+    # evaluate_encoded returns raw wdl LOGITS; softmax unconditionally (a
+    # conditional guard can skip it when logits happen to ~sum to 1, then
+    # thresholds arbitrary logit scale).
     wdl = np.asarray(wdl, dtype=np.float64)
-    if not np.allclose(wdl.sum(axis=1), 1.0, atol=1e-3):  # logits -> probs
-        w = wdl - wdl.max(axis=1, keepdims=True)
-        wdl = np.exp(w) / np.exp(w).sum(axis=1, keepdims=True)
+    w = wdl - wdl.max(axis=1, keepdims=True)
+    wdl = np.exp(w) / np.exp(w).sum(axis=1, keepdims=True)
     return wdl[:, 0] - wdl[:, 2]  # DeepFin (side-to-move) expected value
 
 

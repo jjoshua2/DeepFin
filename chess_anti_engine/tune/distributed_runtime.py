@@ -360,6 +360,7 @@ def _publish_distributed_trial_state(
         "record_sf_p0_policy": bool(config.get("record_sf_p0_policy", False)),
         "record_sf_p0_regret": bool(config.get("record_sf_p0_regret", False)),
         "record_fast_ply_value": bool(config.get("record_fast_ply_value", False)),
+        "blindspot_harvest_out_path": str(config.get("blindspot_harvest_out_path", "")),
         "categorical_blend_frac": float(config.get("categorical_blend_frac", 0.0)),
         "categorical_search_blend_frac": float(
             config.get("categorical_search_blend_frac", 0.0)

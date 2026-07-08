@@ -33,6 +33,13 @@ class HarvestConfig:
     severe_net_ok: float = 0.5    # auto-feed band (net thinks it is winning)
     severe_sf_lost: float = -0.5  # auto-feed band (SF says clearly lost)
     history_plies: int = 8    # preceding moves stored (LC0 uses 8 history steps)
+    # sf_wdl labels the position AFTER the net's played move; move-selection
+    # temperature can resample a move the SEARCH didn't favor, so a safe search
+    # value + a sampled losing move would look value-blind. Require the played
+    # move to carry at least this much improved-policy weight, so we keep only
+    # blind spots where the net played (near-)its best and was still lost —
+    # not exploration blunders (Codex review).
+    min_played_prob: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -53,9 +60,9 @@ def pre_move_boards(
     record_ply_indices: list[int],
     *,
     opening_len: int,
-) -> list[chess.Board | None]:
-    """Reconstruct each record's PRE-move board (position the net faced), with
-    real history in its move_stack.
+) -> tuple[list[chess.Board | None], list[chess.Move | None]]:
+    """Reconstruct each record's PRE-move board (position the net faced, with
+    real history) and the move the net then PLAYED from it.
 
     Mirrors the syzygy-rescore walk in finalize.py: ``record_ply_index`` equals
     ``len(board_before.move_stack)`` (network_turn.py), so walking the final
@@ -66,13 +73,15 @@ def pre_move_boards(
     for t, ply in enumerate(record_ply_indices):
         at_ply.setdefault(int(ply), t)  # first record at a ply wins (forced-ply dups)
     boards: list[chess.Board | None] = [None] * len(record_ply_indices)
+    played: list[chess.Move | None] = [None] * len(record_ply_indices)
     rb = starting_board.copy()
     for mv in final_move_stack[opening_len:]:
         t = at_ply.get(len(rb.move_stack))
         if t is not None:
             boards[t] = rb.copy()
+            played[t] = mv
         rb.push(mv)
-    return boards
+    return boards, played
 
 
 def seed_line_from_board(board: chess.Board, history_plies: int) -> str:
@@ -89,22 +98,48 @@ def seed_line_from_board(board: chess.Board, history_plies: int) -> str:
     return f"{tmp.fen()} | {moves}"
 
 
+def _played_was_favored(
+    board: chess.Board, played: chess.Move | None, policy_probs: np.ndarray | None,
+    policy_encoding: str, min_prob: float,
+) -> bool:
+    """True if the net's PLAYED move carried >= ``min_prob`` improved-policy
+    weight (so sf_wdl reflects a near-best move, not a temperature blunder).
+    Missing data / an unencodable move -> conservatively False (skip)."""
+    if played is None or policy_probs is None:
+        return False
+    try:
+        from chess_anti_engine.moves.encode import move_to_index_for_encoding
+
+        idx = int(move_to_index_for_encoding(played, board, policy_encoding=policy_encoding))
+        return 0 <= idx < len(policy_probs) and float(policy_probs[idx]) >= min_prob
+    except (ValueError, KeyError, IndexError):
+        return False
+
+
 def harvest_from_records(
-    evals: Sequence[tuple[bool, np.ndarray | None, np.ndarray | None]],
+    evals: Sequence[tuple[bool, np.ndarray | None, np.ndarray | None, np.ndarray | None]],
     boards: Sequence[chess.Board | None],
+    played_moves: Sequence[chess.Move | None],
     *,
     cfg: HarvestConfig,
+    policy_encoding: str,
 ) -> list[HarvestedSeed]:
-    """Pure detection: per record ``(has_policy, search_wdl, sf_wdl)`` aligned
-    with its pre-move ``board``, emit a HarvestedSeed for each value-blind full
-    ply. Value-only / label-less / unreconstructed records are skipped."""
+    """Pure detection: per record ``(has_policy, search_wdl, sf_wdl,
+    policy_probs)`` aligned with its pre-move ``board`` and played move, emit a
+    HarvestedSeed for each value-blind full ply where the net played a move the
+    search favored. Value-only / label-less / unreconstructed / temperature-
+    exploration records are skipped."""
     out: list[HarvestedSeed] = []
-    for (has_policy, search_wdl, sf_wdl), board in zip(evals, boards, strict=True):
+    for (has_policy, search_wdl, sf_wdl, policy_probs), board, played in zip(
+        evals, boards, played_moves, strict=True,
+    ):
         if not has_policy or board is None or search_wdl is None or sf_wdl is None:
             continue
         net_q, sf_q = _q(search_wdl), _q(sf_wdl)
         if not (net_q > cfg.net_ok and sf_q < cfg.sf_lost):
             continue
+        if not _played_was_favored(board, played, policy_probs, policy_encoding, cfg.min_played_prob):
+            continue  # temperature-explored a move the search didn't favor
         severe = net_q >= cfg.severe_net_ok and sf_q <= cfg.severe_sf_lost
         out.append(HarvestedSeed(
             line=seed_line_from_board(board, cfg.history_plies),
@@ -139,6 +174,7 @@ def run_harvest(
     game_id: str,
     out_path: str,
     cfg: HarvestConfig,
+    policy_encoding: str = "lc0_1858",
 ) -> int:
     """Finalize-side wrapper: reconstruct boards, detect blind-spots, append the
     collect band to ``out_path`` and the severe (auto-feed) band to its
@@ -149,7 +185,7 @@ def run_harvest(
             return 0
         opening_len = 0 if has_c_ply else len(starting_board.move_stack)
         ply_indices = [int(rec.ply_index) for rec in records]
-        boards = pre_move_boards(
+        boards, played = pre_move_boards(
             starting_board, list(final_board.move_stack), ply_indices, opening_len=opening_len,
         )
         # Observability (not a hard failure): a full-ply record with no
@@ -161,10 +197,11 @@ def run_harvest(
             _log.debug("harvest: %d full-ply record(s) unaligned in game %s (skipped)",
                        unaligned, game_id)
         evals = [
-            (bool(rec.has_policy), getattr(rec, "search_wdl_est", None), getattr(rec, "sf_wdl", None))
+            (bool(rec.has_policy), getattr(rec, "search_wdl_est", None),
+             getattr(rec, "sf_wdl", None), getattr(rec, "policy_probs", None))
             for rec in records
         ]
-        seeds = harvest_from_records(evals, boards, cfg=cfg)
+        seeds = harvest_from_records(evals, boards, played, cfg=cfg, policy_encoding=policy_encoding)
         if not seeds:
             return 0
         severe_path = severe_path_for(out_path)
