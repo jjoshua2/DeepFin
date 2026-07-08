@@ -16,6 +16,7 @@ not cost a game's training data.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Sequence
@@ -43,6 +44,13 @@ class HarvestConfig:
     # blind spots where the net played (near-)its best and was still lost —
     # not exploration blunders (Codex review).
     min_played_prob: float = 0.1
+    # Auto-feed at most ONE seed per game: the maximum value-discrepancy
+    # (net_q - sf_q) severe row. A single lost game otherwise emits a cluster of
+    # correlated near-duplicate plies as it marches into the loss; one worst-
+    # mismatch per game keeps the auto-feed pool diverse and lets us lower
+    # severe_net_ok to grab every game's worst moment without clustering. The
+    # broad (collect) file still keeps all rows for later threshold tuning.
+    auto_feed_one_per_game: bool = True
 
 
 @dataclass(frozen=True)
@@ -51,6 +59,7 @@ class HarvestedSeed:
     net_q: float
     sf_q: float
     severe: bool
+    ply_index: int = -1   # game ply the blind spot was faced at (-1 = unknown)
 
 
 def _q(wdl: np.ndarray) -> float:
@@ -164,10 +173,14 @@ def harvest_from_records(
     played_moves: Sequence[chess.Move | None],
     *,
     cfg: HarvestConfig,
+    ply_indices: Sequence[int] | None = None,
 ) -> list[HarvestedSeed]:
     """Emit a HarvestedSeed for each value-blind full ply whose pre-move
     ``board`` was reconstructed and whose played move the search favored.
-    Unreconstructed / temperature-exploration records are skipped."""
+    Unreconstructed / temperature-exploration records are skipped. ``ply_indices``
+    (the game ply per record) is stamped onto the seed so downstream analysis can
+    locate it exactly; absent it, the pre-move board's stack length is used (the
+    two are equal — see pre_move_boards)."""
     out: list[HarvestedSeed] = []
     for t, net_q, sf_q in value_blind_candidates(evals, cfg=cfg):
         board, played, policy_probs = boards[t], played_moves[t], evals[t][3]
@@ -175,18 +188,20 @@ def harvest_from_records(
             continue  # not reconstructed (unaligned or not in `wanted`)
         if not _played_was_favored(board, played, policy_probs, cfg.min_played_prob):
             continue  # temperature-explored a move the search didn't favor
+        ply = int(ply_indices[t]) if ply_indices is not None else len(board.move_stack)
         out.append(HarvestedSeed(
             line=seed_line_from_board(board, cfg.history_plies),
-            net_q=net_q, sf_q=sf_q, severe=net_q >= cfg.severe_net_ok,
+            net_q=net_q, sf_q=sf_q, severe=net_q >= cfg.severe_net_ok, ply_index=ply,
         ))
     return out
 
 
 def format_record(seed: HarvestedSeed, *, game_id: str) -> str:
     """One seed-file line: the seed grammar + an inline provenance comment
-    (stripped by the loader). ``sev=1`` marks the auto-feed band."""
+    (stripped by the loader). ``sev=1`` marks the auto-feed band. ``ply=`` is
+    appended last so parsers keyed on ``game=`` are unaffected."""
     return (f"{seed.line}  # nq={seed.net_q:.2f} sq={seed.sf_q:.2f} "
-            f"sev={int(seed.severe)} game={game_id}")
+            f"sev={int(seed.severe)} game={game_id} ply={seed.ply_index}")
 
 
 def severe_path_for(out_path: str) -> str:
@@ -208,6 +223,76 @@ def _worker_path(out_path: str) -> str:
     return f"{root}.p{os.getpid()}{ext}" if ext else f"{out_path}.p{os.getpid()}"
 
 
+def games_path_for(out_path: str) -> str:
+    """Sibling JSONL holding the FULL game for every harvested game — the moves
+    (self-contained replay) plus the per-ply net/SF eval trajectory. Only games
+    that produced a seed are saved (a tiny subset), so disk stays negligible,
+    unlike persisting every selfplay game. Having the whole game means the
+    continuation analysis needs no replay-window join (which ages out) and an
+    opponent MISPLAY can be told from a real SF error post-hoc."""
+    root, _ext = os.path.splitext(out_path)
+    return f"{root}.games.jsonl"
+
+
+def game_record_json(
+    *,
+    game_id: str,
+    root_fen: str,
+    moves: list[str],
+    result: str,
+    is_selfplay: bool,
+    records: list,
+    ply_indices: Sequence[int],
+    seeds: list[HarvestedSeed],
+) -> str:
+    """Compact one-line JSON for a harvested game: replay root + full move list,
+    the per-ply (net_q, sf_q, has_policy) trajectory, and which plies were
+    harvested. ``ply_indices`` is the already-validated int ply per record."""
+    plies = []
+    for rec, ply in zip(records, ply_indices):
+        sw = getattr(rec, "search_wdl_est", None)
+        sf = getattr(rec, "sf_wdl", None)
+        plies.append({
+            "ply": int(ply),
+            "hp": bool(rec.has_policy),
+            "nq": None if sw is None else round(_q(sw), 4),
+            "sq": None if sf is None else round(_q(sf), 4),
+        })
+    seed_plies = [
+        {"ply": s.ply_index, "sev": int(s.severe),
+         "nq": round(s.net_q, 3), "sq": round(s.sf_q, 3)}
+        for s in seeds
+    ]
+    return json.dumps({
+        "game_id": game_id, "root_fen": root_fen, "result": result,
+        "selfplay": bool(is_selfplay), "moves": moves,
+        "seed_plies": seed_plies, "plies": plies,
+    }, separators=(",", ":"))
+
+
+def _save_game(
+    final_board: chess.Board, records: list, ply_indices: Sequence[int],
+    seeds: list[HarvestedSeed], *, game_id: str, out_path: str,
+    result: str, is_selfplay: bool,
+) -> None:
+    """Append the full game record for a harvested game. Own try/except: a
+    game-save failure must not lose the seeds already written or the return count."""
+    try:
+        root = final_board.copy()
+        while root.move_stack:
+            root.pop()
+        line = game_record_json(
+            game_id=game_id, root_fen=root.fen(),
+            moves=[m.uci() for m in final_board.move_stack],
+            result=result, is_selfplay=is_selfplay,
+            records=records, ply_indices=ply_indices, seeds=seeds,
+        )
+        with open(_worker_path(games_path_for(out_path)), "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        _log.exception("blind-spot game-save failed for game %s", game_id)
+
+
 def run_harvest(
     starting_board: chess.Board | None,
     final_board: chess.Board,
@@ -217,12 +302,15 @@ def run_harvest(
     game_id: str,
     out_path: str,
     cfg: HarvestConfig,
+    result: str = "",
+    is_selfplay: bool = False,
 ) -> int:
     """Finalize-side wrapper: gate value-blind plies (cheap), reconstruct only
     those boards, and append the collect band + the severe (auto-feed) band to
-    per-process files (``<out>.pPID`` and ``<out>.severe.pPID``). Returns the
-    count written. NEVER raises into finalize — logs and returns 0 on any
-    error."""
+    per-process files (``<out>.pPID`` and ``<out>.severe.pPID``). Each harvested
+    game's full record (moves + eval trajectory) is also saved to
+    ``<out>.games.pPID.jsonl``. Returns the seed count written. NEVER raises into
+    finalize — logs and returns 0 on any error."""
     try:
         if not out_path or starting_board is None:
             return 0
@@ -247,7 +335,7 @@ def run_harvest(
         if unaligned:
             _log.debug("harvest: %d value-blind record(s) unaligned in game %s (skipped)",
                        unaligned, game_id)
-        seeds = harvest_from_records(evals, boards, played, cfg=cfg)
+        seeds = harvest_from_records(evals, boards, played, cfg=cfg, ply_indices=ply_indices)
         if not seeds:
             return 0
         collect_path = _worker_path(out_path)
@@ -255,10 +343,15 @@ def run_harvest(
             for s in seeds:
                 fh.write(format_record(s, game_id=game_id) + "\n")
         severe = [s for s in seeds if s.severe]
+        if severe and cfg.auto_feed_one_per_game:
+            # one worst-mismatch (max net_q - sf_q) row per game — see HarvestConfig
+            severe = [max(severe, key=lambda s: s.net_q - s.sf_q)]
         if severe:
             with open(_worker_path(severe_path_for(out_path)), "a", encoding="utf-8") as fh:
                 for s in severe:
                     fh.write(format_record(s, game_id=game_id) + "\n")
+        _save_game(final_board, records, ply_indices, seeds, game_id=game_id,
+                   out_path=out_path, result=result, is_selfplay=is_selfplay)
         return len(seeds)
     except Exception:
         # Harvesting is a side output — it must never break finalize or cost a

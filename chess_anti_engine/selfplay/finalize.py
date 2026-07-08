@@ -1210,6 +1210,8 @@ def finalize_game(
         run_blindspot_harvest(
             starting, b, records, has_c_ply=bool(state.has_c_ply),
             game_id=str(gid), out_path=str(harvest_path), cfg=HarvestConfig(),
+            result=result,
+            is_selfplay=bool(state.selfplay_arr[i]) if i < len(state.selfplay_arr) else False,
         )
 
     if on_game_complete is not None:
