@@ -59,8 +59,11 @@ def main() -> None:
     print(f"[gate] {len(uniq)} unique severe seeds; deep SF nodes={args.nodes:,} "
           f"syzygy={args.syzygy_path}")
 
-    eng = StockfishUCI(args.stockfish, nodes=int(args.nodes), hash_mb=int(args.hash_mb),
-                       nice=int(args.nice), syzygy_path=syzygy)
+    def make_engine() -> StockfishUCI:
+        return StockfishUCI(args.stockfish, nodes=int(args.nodes), hash_mb=int(args.hash_mb),
+                            nice=int(args.nice), syzygy_path=syzygy)
+
+    eng = make_engine()
     audit = []
     vetted = []
     t0 = time.time()
@@ -76,7 +79,15 @@ def main() -> None:
                     dsq = round(float(res.wdl[0] - res.wdl[2]), 3)
                     verdict = deep_verdict(dsq, args.deep_lost, args.deep_fine)
             except Exception as e:  # one bad seed must not kill the batch
+                # A timed-out/raised search can leave SF still calculating; its stray
+                # bestmove/info would desync the NEXT seed's search. Recreate the
+                # engine so each admission verdict is clean (Codex #125).
                 fen, verdict, dsq = "", f"ERR:{type(e).__name__}", None
+                try:
+                    eng.close()
+                except Exception:
+                    pass
+                eng = make_engine()
             audit.append({"line": s.line, "fen": fen, "nq": s.nq, "sq": s.sq,
                           "deep_sq": dsq, "deep": verdict, "game": s.game_id})
             if verdict == "LOST":

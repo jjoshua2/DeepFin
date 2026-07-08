@@ -47,8 +47,11 @@ def main() -> None:
     sel = select(rows, args.control_n)
     print(f"[scaling] rechecking {len(sel)} seeds at budgets {budgets} (syzygy={syzygy})")
 
-    eng = StockfishUCI(args.stockfish, nodes=budgets[-1], hash_mb=int(args.hash_mb),
-                       nice=int(args.nice), syzygy_path=syzygy)
+    def make_engine() -> StockfishUCI:
+        return StockfishUCI(args.stockfish, nodes=budgets[-1], hash_mb=int(args.hash_mb),
+                            nice=int(args.nice), syzygy_path=syzygy)
+
+    eng = make_engine()
     results: list[dict] = []
     t0 = time.time()
     try:
@@ -64,7 +67,14 @@ def main() -> None:
                       "verdict": {n: (deep_verdict(sqs[n], args.deep_lost, args.deep_fine)
                                       if sqs[n] is not None else "UNKNOWN") for n in budgets}}
             except Exception as e:  # one bad seed must not kill the sweep
+                # A raised/timed-out search leaves SF calculating -> desyncs later
+                # searches; recreate the engine (Codex #125).
                 r2 = {**r, "fen": "", "deep_sq": {}, "verdict": {}, "err": type(e).__name__}
+                try:
+                    eng.close()
+                except Exception:
+                    pass
+                eng = make_engine()
             results.append(r2)
             if (i + 1) % 10 == 0:
                 print(f"  {i+1}/{len(sel)}  ({time.time()-t0:.0f}s)")

@@ -251,16 +251,23 @@ def classify(seed: Seed, rows: list[GameRow] | None, *,
     # terminal result: did SF still read it lost, or had it recovered.
     upto_c = [q for g, q in fwd if g <= confirm_h]
     recovered = any(q >= recover_to for q in upto_c)
-    # "did SF STILL read it lost" = the eval AS OF the confirm horizon (the deepest
-    # sampled ply <= confirm_h), NOT min() — an early-lost-then-drifts-to-middling
-    # trajectory (e.g. [-0.7, -0.3]) must NOT count as confirmed (Codex #125).
-    stayed_lost = bool(upto_c) and upto_c[-1] <= still_lost and not recovered
-    if stayed_lost:
-        bucket = "CONFIRMED_LOST"
-    elif recovered:
+    if recovered:
+        # A labeled row within the horizon rose to recovery — valid regardless of
+        # any missing later labels.
         bucket = "REFUTED"
     else:
-        bucket = "INCONCLUSIVE"
+        # CONFIRM requires the SF labels to actually REACH the confirm horizon.
+        # "did SF STILL read it lost" = the eval AS OF confirm_h (the deepest labeled
+        # ply <= confirm_h), NOT min() — [-0.7,-0.3] must not confirm. AND if the last
+        # label is before confirm_h while the game continued past it (value-only rows
+        # with no SF label), the horizon eval is UNKNOWN → inconclusive, don't confirm
+        # off a stale shallow eval (Codex #125).
+        last_gap = fwd[-1][0]
+        covered = last_gap >= confirm_h or max_gap <= last_gap
+        if bool(upto_c) and upto_c[-1] <= still_lost and covered:
+            bucket = "CONFIRMED_LOST"
+        else:
+            bucket = "INCONCLUSIVE"
     return Verdict(bucket, best.outcome, t0, profile, reached_terminal)
 
 
@@ -360,8 +367,10 @@ def main() -> None:
                    + buckets.get("UNLOCATED", []))
         with open(args.dump_refuted, "w", encoding="utf-8") as fh:
             for s, v in notconf:
-                fh.write(f"{s.line}  # nq={s.nq:.2f} sq={s.sq:.2f} "
-                         f"bucket={v.bucket} game={s.game_id}\n")
+                # SAME tag order as --dump-all so blindspot_deepsf_calibrate.parse_all
+                # (bucket..sq..outcome..game) can consume it as a recheck input (Codex #125).
+                fh.write(f"{s.line}  # bucket={v.bucket} nq={s.nq:.2f} sq={s.sq:.2f} "
+                         f"outcome={v.outcome} game={s.game_id}\n")
         print(f"\n[continuation] wrote {len(notconf)} not-confirmed seeds -> {args.dump_refuted}")
 
     if args.dump_all:

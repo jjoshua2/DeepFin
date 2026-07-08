@@ -112,9 +112,12 @@ def main() -> None:
     print(f"[deepsf] nodes={args.nodes:,} hash={args.hash_mb}MB syzygy={syzygy} "
           f"stockfish={args.stockfish}")
 
-    eng = StockfishUCI(args.stockfish, nodes=int(args.nodes),
-                       hash_mb=int(args.hash_mb), nice=int(args.nice),
-                       syzygy_path=syzygy)
+    def make_engine() -> StockfishUCI:
+        return StockfishUCI(args.stockfish, nodes=int(args.nodes),
+                            hash_mb=int(args.hash_mb), nice=int(args.nice),
+                            syzygy_path=syzygy)
+
+    eng = make_engine()
     results: list[dict] = []
     t0 = time.time()
     try:
@@ -134,7 +137,14 @@ def main() -> None:
                     r2 = {**r, "fen": fen, "deep_sq": round(dsq, 3),
                           "deep": deep_verdict(dsq, args.deep_lost, args.deep_fine)}
             except Exception as e:  # one bad seed must not kill the run
+                # A raised/timed-out search can leave SF calculating -> desyncs the
+                # next seed; recreate the engine (Codex #125).
                 r2 = {**r, "fen": "", "deep_sq": None, "deep": f"ERR:{type(e).__name__}"}
+                try:
+                    eng.close()
+                except Exception:
+                    pass
+                eng = make_engine()
             results.append(r2)
             if (i + 1) % 10 == 0:
                 print(f"  {i+1}/{len(sel)}  ({time.time()-t0:.0f}s)")
