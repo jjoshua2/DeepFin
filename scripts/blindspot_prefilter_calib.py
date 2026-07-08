@@ -23,6 +23,7 @@ from scripts.blindspot_continuation import (
     classify,
     default_replay_dir,
     load_game_rows,
+    load_game_rows_from_jsonl,
     parse_seeds,
 )
 from scripts.blindspot_deepsf_calibrate import deep_verdict
@@ -51,6 +52,8 @@ def main() -> None:
     ap.add_argument("--deep-jsonl", default="scratchpad/harvest_fp/deepsf_scaling.jsonl")
     ap.add_argument("--deep-budget", type=int, default=0, help="node budget to use as truth (0=deepest)")
     ap.add_argument("--severe-glob", default="data/harvest/blindspot_live.severe.p*.txt")
+    ap.add_argument("--games-glob", default="data/harvest/blindspot_live.games.p*.jsonl",
+                    help="saved full-game records (self-contained; preferred over the shard join)")
     ap.add_argument("--horizons", default="2,4,6,8,10,12,16,20,24,32")
     ap.add_argument("--recover-to", type=float, default=-0.2)
     ap.add_argument("--still-lost", type=float, default=-0.5)
@@ -59,7 +62,13 @@ def main() -> None:
 
     gt = load_ground_truth(args.deep_jsonl, args.deep_budget or None)
     seeds = parse_seeds(sorted(glob.glob(args.severe_glob)))
-    games = load_game_rows(default_replay_dir(), {s.game_id for s in seeds})
+    wanted = {s.game_id for s in seeds}
+    # Prefer the harvester's self-contained saved games; shard fallback for the
+    # rest — so calibration works after the replay window ages out (Codex #125).
+    games = load_game_rows_from_jsonl(sorted(glob.glob(args.games_glob)), wanted)
+    missing = wanted - set(games)
+    if missing:
+        games.update(load_game_rows(default_replay_dir(), missing))
     print(f"[prefilter] ground truth: {len(gt)} seeds from {args.deep_jsonl} "
           f"(budget={'deepest' if not args.deep_budget else args.deep_budget})")
 

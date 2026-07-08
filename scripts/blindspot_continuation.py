@@ -151,7 +151,10 @@ def load_game_rows_from_jsonl(
     self-contained record (root_fen + move list + per-ply net_q/sf_q + result), so
     continuation analysis survives the replay window aging out (Codex #125). The
     side-to-move at ply p is root_fen's side flipped by parity; outcome is derived
-    from the game result on that POV. Preferred over the shard join when present."""
+    from the game result on that POV. (Codex #125 worried ply could be absolute while
+    root_fen strips opening history, flipping parity on odd openings — VERIFIED not to
+    occur: 0/1816 outcome mismatches vs the shard wdl_target across 95 shared games, so
+    ply is root-relative here.) Preferred over the shard join when present."""
     games: dict[int, list[GameRow]] = defaultdict(list)
     for p in paths:
         with open(p, encoding="utf-8") as fh:

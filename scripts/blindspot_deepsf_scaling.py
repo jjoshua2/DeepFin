@@ -57,6 +57,7 @@ def main() -> None:
                 fen = seed_board_from_line(r["line"]).fen()
                 sqs = {}
                 for n in budgets:
+                    eng.new_game()  # cold TT per budget — independent convergence check (Codex #125)
                     res = eng.search(fen, nodes=int(n))
                     sqs[n] = None if res.wdl is None else round(float(res.wdl[0] - res.wdl[2]), 3)
                 r2 = {**r, "fen": fen, "deep_sq": sqs,
