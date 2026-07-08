@@ -150,6 +150,7 @@ _SELFPLAY_KEYS = (
     "record_sf_p0_policy",
     "record_sf_p0_regret",
     "record_fast_ply_value",
+    "blindspot_harvest_out_path",
 )
 
 # model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).

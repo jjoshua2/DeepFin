@@ -202,6 +202,7 @@ class TrialConfig:
     record_sf_p0_policy: bool = False
     record_sf_p0_regret: bool = False
     record_fast_ply_value: bool = False
+    blindspot_harvest_out_path: str = ""
 
   # --- Diff focus ---
     diff_focus_enabled: bool = True
@@ -547,6 +548,7 @@ class TrialConfig:
             record_sf_p0_policy=bool(config.get("record_sf_p0_policy", False)),
             record_sf_p0_regret=bool(config.get("record_sf_p0_regret", False)),
             record_fast_ply_value=bool(config.get("record_fast_ply_value", False)),
+            blindspot_harvest_out_path=str(config.get("blindspot_harvest_out_path", "")),
 
   # --- Diff focus ---
             diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),

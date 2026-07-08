@@ -2290,7 +2290,7 @@ class WorkerSession:
         "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
         "input_history_encoding", "record_lc0_root_input", "history_rep_fix",
         "record_dense_sf_policy", "record_sf_p0_policy", "record_sf_p0_regret",
-        "record_fast_ply_value",
+        "record_fast_ply_value", "blindspot_harvest_out_path",
         "categorical_blend_frac",
         "categorical_search_blend_frac",
         # Syzygy knobs affect adjudication + in-search overrides — without a
@@ -2440,6 +2440,7 @@ class WorkerSession:
                 record_sf_p0_policy=bool(reco.get("record_sf_p0_policy", False)),
                 record_sf_p0_regret=bool(reco.get("record_sf_p0_regret", False)),
                 record_fast_ply_value=bool(reco.get("record_fast_ply_value", False)),
+                blindspot_harvest_out_path=str(reco.get("blindspot_harvest_out_path", "")),
                 categorical_blend_frac=float(reco.get("categorical_blend_frac", 0.0)),
                 categorical_search_blend_frac=float(
                     reco.get("categorical_search_blend_frac", 0.0)

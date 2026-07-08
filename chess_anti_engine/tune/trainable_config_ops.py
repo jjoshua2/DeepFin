@@ -270,6 +270,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             record_sf_p0_policy=tc.record_sf_p0_policy,
             record_sf_p0_regret=tc.record_sf_p0_regret,
             record_fast_ply_value=tc.record_fast_ply_value,
+            blindspot_harvest_out_path=tc.blindspot_harvest_out_path,
         ),
     }
 
