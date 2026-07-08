@@ -64,16 +64,40 @@ class _SeedDoleGate:
     the first caller of a given (trial, iteration) and False thereafter, resetting
     when the iteration advances. The asyncio lock makes the check-and-set atomic
     so concurrent boundary polls can't both win.
+
+    The last-claimed iteration per trial is persisted to ``state_path`` (atomic
+    rename) and reloaded on construction, so a server restart mid-iteration does
+    not re-hand the same iteration's dole (which would double the batch). Best
+    effort: a load/save failure degrades to in-memory only.
     """
 
-    def __init__(self) -> None:
-        self._last_iter: dict[str, int] = {}
+    def __init__(self, state_path: Path | None = None) -> None:
+        self._state_path = state_path
         self._lock = asyncio.Lock()
+        self._last_iter: dict[str, int] = {}
+        if state_path is not None and state_path.exists():
+            try:
+                loaded = json.loads(state_path.read_text(encoding="utf-8"))
+                self._last_iter = {str(k): int(v) for k, v in dict(loaded).items()}
+            except Exception:
+                self._last_iter = {}
+
+    def _persist(self) -> None:
+        if self._state_path is None:
+            return
+        try:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
+            tmp.write_text(json.dumps(self._last_iter), encoding="utf-8")
+            tmp.replace(self._state_path)
+        except Exception:
+            pass  # in-memory state still holds; durability is best-effort
 
     async def claim(self, trial_key: str, training_iteration: int) -> bool:
         async with self._lock:
             if training_iteration > self._last_iter.get(trial_key, -1):
                 self._last_iter[trial_key] = training_iteration
+                self._persist()
                 return True
             return False
 
@@ -478,7 +502,7 @@ def create_app(
     upload_lock = threading.Lock()
     queued_games_cache: dict[str | None, tuple[float, dict[str, int]]] = {}
     queued_games_cache_lock = threading.Lock()
-    seed_dole_gate = _SeedDoleGate()
+    seed_dole_gate = _SeedDoleGate(state_path=root / "seed_dole_gate.json")
 
     from contextlib import asynccontextmanager
 

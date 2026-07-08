@@ -36,6 +36,9 @@ def _bare_worker_session() -> WorkerSession:
     session.opening_book_path = None
     session.opening_book_path_2 = None
     session.opening_fen_list_path = None
+    session._pending_fen_dole = []
+    session._live_dole_queue = None
+    session._dole_lock = threading.Lock()
     return session
 
 
@@ -782,30 +785,29 @@ def test_dole_flag_stashes_seeds_when_no_active_session(tmp_path: Path) -> None:
     assert session._pending_fen_dole == [_DOLE_FEN_A, _DOLE_FEN_B]
 
 
-def test_dole_flag_pushes_onto_live_state(tmp_path: Path) -> None:
+def test_dole_flag_refills_live_queue(tmp_path: Path) -> None:
     session = _dole_session_with_list(tmp_path)
-    session._active_state = SimpleNamespace(fen_dole_queue=None)
+    session._live_dole_queue = []  # a session is running (single or threaded)
     session._maybe_ingest_dole_flag(
         {"dole_fen_seeds": True, "recommended_worker": {"opening_fen_dole_per_iter": 1}},
     )
-    assert session._active_state.fen_dole_queue == [_DOLE_FEN_A, _DOLE_FEN_B]
-    assert session._pending_fen_dole == []  # went to the live session, not stashed
+    assert session._live_dole_queue == [_DOLE_FEN_A, _DOLE_FEN_B]
+    assert session._pending_fen_dole == []  # refilled the live queue, not stashed
 
 
-def test_dole_flag_force_stash_survives_restart(tmp_path: Path) -> None:
-    # A boundary poll that both wins the dole and triggers a session restart must
-    # stash the seeds (not push onto the about-to-die live state), so the
-    # replacement session plays them instead of dropping the batch.
+def test_dole_flag_refill_supersedes_in_place(tmp_path: Path) -> None:
+    # A fresh iteration's dole replaces any undrained backlog IN PLACE, so the
+    # running drainers (single state or every thread) — which all hold this same
+    # list object — see the new batch without a session restart.
     session = _dole_session_with_list(tmp_path)
-    live = SimpleNamespace(fen_dole_queue=None)
-    session._active_state = live
+    live = ["stale-undrained-seed"]
+    session._live_dole_queue = live
     session._maybe_ingest_dole_flag(
         {"dole_fen_seeds": True, "recommended_worker": {"opening_fen_dole_per_iter": 1}},
-        force_stash=True,
     )
-    # Stashed for the next session, and the dying live state is left untouched.
-    assert session._pending_fen_dole == [_DOLE_FEN_A, _DOLE_FEN_B]
-    assert live.fen_dole_queue is None
+    assert session._live_dole_queue == [_DOLE_FEN_A, _DOLE_FEN_B]
+    assert session._live_dole_queue is live  # same object → drainers observe the refill
+    assert session._pending_fen_dole == []
 
 
 def test_dole_flag_repeats_list_n_times(tmp_path: Path) -> None:

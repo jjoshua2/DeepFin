@@ -895,3 +895,16 @@ def test_seed_dole_gate_single_winner_under_concurrency() -> None:
     assert sum(asyncio.run(_burst("t", 5, 4))) == 0
     # Per-trial isolation: a different trial has its own counter.
     assert asyncio.run(gate.claim("other", 5)) is True
+
+
+def test_seed_dole_gate_persists_across_restart(tmp_path: Path) -> None:
+    from chess_anti_engine.server.app import _SeedDoleGate
+
+    state = tmp_path / "seed_dole_gate.json"
+    gate = _SeedDoleGate(state_path=state)
+    assert asyncio.run(gate.claim("t", 7)) is True
+    # A fresh gate (server restart) reloads the claimed iteration from disk and
+    # must NOT re-hand iteration 7's dole (which would double the batch).
+    gate2 = _SeedDoleGate(state_path=state)
+    assert asyncio.run(gate2.claim("t", 7)) is False
+    assert asyncio.run(gate2.claim("t", 8)) is True  # a newer iteration still wins

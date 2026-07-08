@@ -801,12 +801,19 @@ class WorkerSession:
         self.opening_book_path: str | None = None
         self.opening_book_path_2: str | None = None
         self.opening_fen_list_path: str | None = None
-  # Blind-spot FEN seeds doled by the server for the NEXT session start (the
-  # server hands the whole list to exactly one worker-poll per iteration). Set
-  # by _maybe_ingest_dole_flag when no live session is active yet; drained into
-  # play_batch's fen_dole_queue at session start. Mid-session doles go straight
-  # onto the live SelfplayState instead. Empty = no pending dole.
+  # Blind-spot FEN seeds doled by the server (the server hands the whole list to
+  # exactly one worker-poll per iteration). Two-stage delivery:
+  #  * _pending_fen_dole — stash for the NEXT session start (set when no session
+  #    is live; survives model-not-ready / dispatch-failure retries).
+  #  * _live_dole_queue — the shared FIFO the CURRENTLY-running session drains
+  #    (the same object handed to every play_batch, incl. all threads of the
+  #    threaded path). None between sessions. A mid-session dole refills it in
+  #    place so the running selfplay picks up the batch without a restart.
+  # _dole_lock guards refill vs the session-boundary hand-off (drain itself is
+  # lock-free — resolve_slot_opening pops exception-safely, atomic under the GIL).
         self._pending_fen_dole: list[str] = []
+        self._live_dole_queue: list[str] | None = None
+        self._dole_lock = threading.Lock()
 
   # Per-iteration state (set during each loop iteration).
         self.model_sha = ""
@@ -1216,20 +1223,23 @@ class WorkerSession:
         """play_batch on_state_ready hook: stash the live state for live reco."""
         self._active_state = state
 
-    def _maybe_ingest_dole_flag(self, manifest: dict, *, force_stash: bool = False) -> None:
+    def _maybe_ingest_dole_flag(self, manifest: dict) -> None:
         """If the server doled THIS iteration's seed batch to our poll, load the
         whole FEN list and hand it to selfplay.
 
         The server sets ``dole_fen_seeds: true`` on exactly one worker-poll per
         iteration (see the server's seed-dole gate), so total seeded games ==
         N*len(list) per iteration regardless of client count. We play them as
-        selfplay seeds: onto the live SelfplayState if a session is running
-        (replacing any undrained backlog — a fresh iteration's dole supersedes),
-        else stashed for the next session start. ``force_stash`` routes to the
-        stash even when a live state exists — used on a poll that both won the
-        dole and triggered a session restart, so the seeds ride into the
-        replacement session instead of dying on the torn-down state. No-op unless
-        dole mode is on (opening_fen_dole_per_iter>0) and a FEN list is available.
+        selfplay seeds. Delivery depends on whether a session is running:
+          * session live (``_live_dole_queue`` set): refill that shared queue in
+            place — the running selfplay (single OR every thread of the threaded
+            path) drains it, so a fresh iteration's dole supersedes any undrained
+            backlog without a restart;
+          * no session: stash into ``_pending_fen_dole`` for the next session
+            start (survives model-not-ready / dispatch-failure retries — the
+            stash is only cleared once a session actually consumes it).
+        No-op unless dole mode is on (opening_fen_dole_per_iter>0) and a FEN list
+        is available.
 
         Ingestion rides the HTTP manifest poll only (the mtime model-swap fast
         path reads the local manifest file, which never carries the per-request
@@ -1252,14 +1262,16 @@ class WorkerSession:
             )
             return
         queue = list(seeds) * n
-        state = getattr(self, "_active_state", None)
-        if state is not None and not force_stash:
-            state.fen_dole_queue = queue
-            self._pending_fen_dole = []
-            dest = "live session"
-        else:
-            self._pending_fen_dole = queue
-            dest = "next session"
+        with self._dole_lock:
+            live = self._live_dole_queue
+            if live is not None:
+  # Refill in place so the drainers (which hold this same object) see the batch.
+                live.clear()
+                live.extend(queue)
+                dest = "live session"
+            else:
+                self._pending_fen_dole = queue
+                dest = "next session"
         self.log.info(
             "dole: received %d seed(s) x%d -> %s", len(seeds), n, dest,
         )
@@ -1337,17 +1349,18 @@ class WorkerSession:
             reco_changed = self._reco_changed(manifest, source_tag="poll")
             if reco_changed:
   # A boundary poll can both win the dole and trigger a restart (restart-key or
-  # session-start asset change). Swap the model FIRST — that must never be blocked
-  # by dole handling. Then, only if we actually won a dole, refresh the FEN asset
-  # (the restart path skips _sync_assets below) and stash so the replacement
-  # session plays it; the gate is already claimed for this iteration, so a re-poll
-  # returns dole_fen_seeds:false. Best-effort — a book-sync failure must not lose
-  # the (already-done) swap, and force-stash falls back to the current FEN path.
-                self._swap_model_from_manifest(manifest)
+  # session-start asset change). Ingest the dole BEFORE the (fallible) model swap
+  # so a mid-publish download/compile error there — swallowed by the outer except
+  # — can't drop the batch: refresh the FEN asset first (the restart path skips
+  # _sync_assets below, so a changed opening_fen_list would otherwise load stale),
+  # then refill the live queue (undrained seeds ride into the next session as
+  # leftover). Both best-effort; the model swap still runs.
                 if bool(manifest.get("dole_fen_seeds")):
                     with suppress(Exception):
                         self._sync_opening_books(manifest)
-                    self._maybe_ingest_dole_flag(manifest, force_stash=True)
+                    with suppress(Exception):
+                        self._maybe_ingest_dole_flag(manifest)
+                self._swap_model_from_manifest(manifest)
                 return
             self._sync_assets(manifest)
   # Mid-session: if the server doled this iteration's seed batch to this poll,
@@ -2599,17 +2612,24 @@ class WorkerSession:
                 agg[fld.name] = vals[0]
         return BatchStats(**agg)
 
-    def _run_selfplay_threaded(self, *, games_per_batch: int, sf, eval_, cfgs: dict) -> BatchStats:
+    def _run_selfplay_threaded(
+        self, *, games_per_batch: int, sf, eval_, cfgs: dict,
+        fen_dole_queue: list[str] | None = None,
+    ) -> BatchStats:
         """Multi-threaded selfplay: N threads share one GPU evaluator.
 
         Intentionally does NOT wire on_state_ready: there are N independent
         SelfplayStates and on_step runs on only one thread, so live-applying to a
         single state would leave the others on stale config. _active_state stays
         None, so live reco changes correctly fall back to a full restart here
-        (same as pre-live-apply). Threaded selfplay is not the production path
-        (1 continuous worker per GPU; threading is always slower), so the
-        restart-churn this avoids elsewhere is not worth a thread-safe N-state
-        live-apply.
+        (same as pre-live-apply).
+
+        ``fen_dole_queue`` (opt-in dole mode) IS shared across all N threads — each
+        thread's SelfplayState drains the same list, so the server-doled batch is
+        played once in total (not once per thread). The drain is lock-free and
+        thread-safe: resolve_slot_opening pops exception-safely and list.pop(0) is
+        atomic under the GIL, so concurrent threads get distinct seeds and an empty
+        queue simply falls back to normal openings.
         """
         n_threads = min(int(self.args.selfplay_threads), games_per_batch)
         base_games, remainder = divmod(games_per_batch, n_threads)
@@ -2632,6 +2652,7 @@ class WorkerSession:
                 on_timing=self._record_selfplay_phase_timing,
                 on_step=self._check_model_update if tid == 0 else None,
                 stop_fn=self._stop_fn,
+                fen_dole_queue=fen_dole_queue,  # shared across threads (drained once total)
                 **cfgs,
             )
 
@@ -2647,10 +2668,11 @@ class WorkerSession:
         """Run one continuous-selfplay session. Returns None on broker errors that
         we recover from via reset (caller exits the iteration); otherwise BatchStats.
 
-        ``fen_dole_queue`` (opt-in dole mode) seeds the standard single-threaded
-        path's selfplay slots with the server-doled batch. Not wired into the
-        threaded path (non-production; like live-reco it keeps N independent
-        states and would race on one shared queue)."""
+        ``fen_dole_queue`` (opt-in dole mode) is the shared server-doled seed
+        batch; its selfplay slots start from these FENs. Wired into BOTH paths:
+        the single path's one state and every thread of the threaded path drain
+        the SAME list, so total seeded games == its length (drain is exception-safe
+        and atomic under the GIL — see resolve_slot_opening)."""
         assert self.sf is not None  # caller (_run_selfplay) calls _sync_stockfish first
         _eval = self.inference_client or self._direct_evaluator
         try:
@@ -2658,6 +2680,7 @@ class WorkerSession:
                 return self._run_selfplay_threaded(
                     games_per_batch=int(games_per_batch),
                     sf=self.sf, eval_=_eval, cfgs=cfgs,
+                    fen_dole_queue=fen_dole_queue,
                 )
   # Continuous selfplay: 256 slots always full, games recycled on completion.
   # Runs until _stop_selfplay is set (task change, pause, or shutdown).
@@ -2748,14 +2771,14 @@ class WorkerSession:
         self._sync_stockfish(manifest, sf_nodes, sf_multipv, syzygy_path=syzygy_path)
         assert self.sf is not None  # _sync_stockfish always assigns
 
-  # A won session-start dole was stashed into _pending_fen_dole by the outer
-  # loop (or a prior periodic poll) — surviving the model-not-ready and
-  # dispatch-failure retries. Hand a COPY to the session and only drop the stash
-  # once the session actually ran: a recoverable dispatch failure (stats is None)
-  # then replays the batch on the next attempt instead of silently dropping it.
-  # Mid-session doles go straight onto the live SelfplayState via
-  # _periodic_manifest_poll.
-        fen_dole_queue = list(self._pending_fen_dole) or None
+  # Promote the stashed session-start dole into the shared live queue the session
+  # drains (the outer loop / a prior poll stashed it — survives model-not-ready).
+  # The SAME object is handed to play_batch (single path) or every thread (threaded
+  # path), and mid-session doles refill it in place via _periodic_manifest_poll.
+        with self._dole_lock:
+            self._live_dole_queue = list(self._pending_fen_dole)
+            self._pending_fen_dole = []
+        fen_dole_queue = self._live_dole_queue or None
 
         t0 = time.time()
         self._saw_completed_game = False
@@ -2763,9 +2786,16 @@ class WorkerSession:
             games_per_batch=games_per_batch, cfgs=cfgs, need_local_model=need_local_model,
             fen_dole_queue=fen_dole_queue,
         )
+  # Session over: whatever the session did NOT drain is preserved for the next
+  # session start — a normally-stopped-but-empty session (games=0) keeps its full
+  # batch, a recoverable dispatch failure (stats is None) keeps the remainder,
+  # and a fully-drained one clears. Only draining consumes the dole.
+        with self._dole_lock:
+            leftover = list(self._live_dole_queue or [])
+            self._live_dole_queue = None
+            self._pending_fen_dole = leftover
         if stats is None:
             return
-        self._pending_fen_dole = []
         t1 = time.time()
 
         self.log.info(

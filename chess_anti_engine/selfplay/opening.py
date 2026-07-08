@@ -446,9 +446,18 @@ def resolve_slot_opening(
     grammar); the queue only holds lines already validated by ``_load_fen_list``.
     """
     if int(cfg.opening_fen_dole_per_iter) > 0:
-        if is_selfplay and cfg.opening_fen_list_path and fen_dole_queue:
-            line = fen_dole_queue.pop(0)
-            return OpeningStart(board=seed_board_from_line(line), source="fenlist")
+        if is_selfplay and cfg.opening_fen_list_path and fen_dole_queue is not None:
+  # Pop exception-safely: the threaded selfplay path shares ONE queue across N
+  # threads, so a truthiness check + pop() would race (another thread could empty
+  # it in between). list.pop(0) is atomic under the GIL — concurrent callers get
+  # distinct seeds; an empty queue raises IndexError and falls back to a normal
+  # opening. (Single-threaded path: same outcome, no contention.)
+            try:
+                line = fen_dole_queue.pop(0)
+            except IndexError:
+                line = None
+            if line is not None:
+                return OpeningStart(board=seed_board_from_line(line), source="fenlist")
   # Dole mode owns FEN seeding; suppress the probabilistic draw for every slot.
         return sample_starting_board(rng=rng, cfg=cfg, allow_fenlist=False)
 
