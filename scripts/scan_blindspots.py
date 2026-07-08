@@ -89,8 +89,16 @@ def _position_key(x: np.ndarray) -> np.ndarray:
 def load_scan_arrays(shards: list[str], *, want_keys: bool) -> dict[str, np.ndarray]:
     nq, sq, isp, keys = [], [], [], []
     for sh in shards:
-        a, _ = load_shard_arrays(sh)
-        has = np.asarray(a["has_search_wdl"]).astype(bool) & np.asarray(a["has_sf_wdl"]).astype(bool)
+        # lazy: read only the datasets we touch below, not every array (x and
+        # policy-width targets are multi-GB on live shards; --no-diversity then
+        # never loads x at all).
+        a, _ = load_shard_arrays(sh, lazy=True)
+        # Optional columns can be pruned from a shard entirely; a missing has_*
+        # flag means "no such labels here" -> skip the shard, don't KeyError.
+        has_search, has_sf = a.get("has_search_wdl"), a.get("has_sf_wdl")
+        if has_search is None or has_sf is None:
+            continue
+        has = np.asarray(has_search).astype(bool) & np.asarray(has_sf).astype(bool)
         if not has.any():
             continue
         nq.append(_q(np.asarray(a["search_wdl"], np.float32))[has])
