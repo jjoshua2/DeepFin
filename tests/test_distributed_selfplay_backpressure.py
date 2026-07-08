@@ -856,6 +856,27 @@ def test_manifest_no_dole_while_paused(tmp_path: Path) -> None:
     assert [p["dole_fen_seeds"] for p in unpaused] == [True, False]
 
 
+def test_manifest_no_dole_for_non_selfplay_task(tmp_path: Path) -> None:
+    # A non-selfplay (arena) task must NOT consume the single per-iteration dole:
+    # the worker takes its arena path and never ingests, so claiming would drop
+    # the whole batch.
+    fen_path = tmp_path / "blindspot.txt"
+    fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+    _publish_dole_trial(tmp_path, training_iteration=9, dole=1, fen_path=fen_path)
+    # Flip the published task to arena (the publisher always writes selfplay).
+    mf_path = tmp_path / "trials" / "trial_00000" / "publish" / "manifest.json"
+    mf = json.loads(mf_path.read_text(encoding="utf-8"))
+    mf["task"] = {"type": "arena"}
+    mf_path.write_text(json.dumps(mf), encoding="utf-8")
+
+    app = create_app(server_root=tmp_path)
+    polls = _poll_app_n(
+        app, "/v1/trials/trial_00000/manifest",
+        headers=_manifest_poll_headers(worker_id="test-worker"), n=2,
+    )
+    assert all(p["dole_fen_seeds"] is False for p in polls)  # no claim burned on arena
+
+
 def test_seed_dole_gate_single_winner_under_concurrency() -> None:
     from chess_anti_engine.server.app import _SeedDoleGate
 

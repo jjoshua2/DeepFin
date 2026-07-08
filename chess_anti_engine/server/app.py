@@ -1069,15 +1069,22 @@ def create_app(
 
         True only when dole mode is on (recommended_worker.opening_fen_dole_per_iter
         > 0), a FEN list is actually published (top-level ``opening_fen_list``
-        asset present), selfplay is NOT paused, and this poll is the first for the
-        current ``training_iteration`` (arbitrated by ``seed_dole_gate``). Always
-        resolved (True/False) so the worker sees an explicit field."""
+        asset present), the task is selfplay, selfplay is NOT paused, and this poll
+        is the first for the current ``training_iteration`` (arbitrated by
+        ``seed_dole_gate``). Always resolved (True/False) so the worker sees an
+        explicit field."""
         reco = manifest.get("recommended_worker")
         if not isinstance(reco, dict):
             return False
         if int(reco.get("opening_fen_dole_per_iter", 0) or 0) <= 0:
             return False
         if not isinstance(manifest.get("opening_fen_list"), dict):
+            return False
+  # Only a selfplay task can play the seeds. An arena (or other) task would take
+  # the worker's non-selfplay path and never ingest, silently burning the single
+  # per-iteration claim; leave it unclaimed for a selfplay poll instead.
+        task = manifest.get("task") or {"type": "selfplay"}
+        if str((task if isinstance(task, dict) else {}).get("type", "selfplay")).lower() != "selfplay":
             return False
   # Don't burn the single per-iteration claim on a paused poll: the worker drops
   # a paused manifest (returns None from _poll_manifest) before it can ingest the

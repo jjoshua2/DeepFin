@@ -889,6 +889,13 @@ class WorkerSession:
                 if manifest is None:
                     continue
                 self._sync_assets(manifest)
+  # Ingest a won dole HERE — after assets sync (FEN path current), before the
+  # model-not-ready retry and the arena branch below — so a session-start dole
+  # survives those early-continues. Between sessions there is no live state, so
+  # it stashes into _pending_fen_dole for the next _run_selfplay; the stash is
+  # only cleared once a session actually consumes it. (The server won't claim
+  # for a paused/arena/non-selfplay poll, so this is a selfplay dole.)
+                self._maybe_ingest_dole_flag(manifest)
                 if not self.model_sha:
   # Model download failed (mid-publish race); retry next poll.
                     time.sleep(float(self.args.poll_seconds))
@@ -1330,11 +1337,17 @@ class WorkerSession:
             reco_changed = self._reco_changed(manifest, source_tag="poll")
             if reco_changed:
   # A boundary poll can both win the dole and trigger a restart (restart-key or
-  # session-start asset change). The server gate is already claimed for this
-  # iteration, so the replacement session would re-poll with dole_fen_seeds:false
-  # and skip the whole batch — stash the seeds so the new session plays them.
-                self._maybe_ingest_dole_flag(manifest, force_stash=True)
+  # session-start asset change). Swap the model FIRST — that must never be blocked
+  # by dole handling. Then, only if we actually won a dole, refresh the FEN asset
+  # (the restart path skips _sync_assets below) and stash so the replacement
+  # session plays it; the gate is already claimed for this iteration, so a re-poll
+  # returns dole_fen_seeds:false. Best-effort — a book-sync failure must not lose
+  # the (already-done) swap, and force-stash falls back to the current FEN path.
                 self._swap_model_from_manifest(manifest)
+                if bool(manifest.get("dole_fen_seeds")):
+                    with suppress(Exception):
+                        self._sync_opening_books(manifest)
+                    self._maybe_ingest_dole_flag(manifest, force_stash=True)
                 return
             self._sync_assets(manifest)
   # Mid-session: if the server doled this iteration's seed batch to this poll,
@@ -2735,13 +2748,14 @@ class WorkerSession:
         self._sync_stockfish(manifest, sf_nodes, sf_multipv, syzygy_path=syzygy_path)
         assert self.sf is not None  # _sync_stockfish always assigns
 
-  # If this session's lifecycle poll won the server's dole this iteration, the
-  # seeds are stashed here (no live state yet); hand them to play_batch and clear
-  # so a later poll doesn't append to the in-flight queue. Mid-session doles go
-  # straight onto the live SelfplayState via _periodic_manifest_poll.
-        self._maybe_ingest_dole_flag(manifest)
-        fen_dole_queue = self._pending_fen_dole or None
-        self._pending_fen_dole = []
+  # A won session-start dole was stashed into _pending_fen_dole by the outer
+  # loop (or a prior periodic poll) — surviving the model-not-ready and
+  # dispatch-failure retries. Hand a COPY to the session and only drop the stash
+  # once the session actually ran: a recoverable dispatch failure (stats is None)
+  # then replays the batch on the next attempt instead of silently dropping it.
+  # Mid-session doles go straight onto the live SelfplayState via
+  # _periodic_manifest_poll.
+        fen_dole_queue = list(self._pending_fen_dole) or None
 
         t0 = time.time()
         self._saw_completed_game = False
@@ -2751,6 +2765,7 @@ class WorkerSession:
         )
         if stats is None:
             return
+        self._pending_fen_dole = []
         t1 = time.time()
 
         self.log.info(
