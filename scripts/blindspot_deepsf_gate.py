@@ -68,6 +68,7 @@ def main() -> None:
         for i, s in enumerate(uniq):
             try:
                 fen = seed_board_from_line(s.line).fen()
+                eng.new_game()  # cold TT per seed — admission verdict must not warm-start (Codex #125)
                 res = eng.search(fen, nodes=int(args.nodes))
                 if res.wdl is None:
                     verdict, dsq = "UNKNOWN", None

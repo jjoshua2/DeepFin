@@ -151,10 +151,12 @@ def load_game_rows_from_jsonl(
     self-contained record (root_fen + move list + per-ply net_q/sf_q + result), so
     continuation analysis survives the replay window aging out (Codex #125). The
     side-to-move at ply p is root_fen's side flipped by parity; outcome is derived
-    from the game result on that POV. (Codex #125 worried ply could be absolute while
-    root_fen strips opening history, flipping parity on odd openings — VERIFIED not to
-    occur: 0/1816 outcome mismatches vs the shard wdl_target across 95 shared games, so
-    ply is root-relative here.) Preferred over the shard join when present."""
+    from the game result on that POV. (Codex #125 worried an odd-length stripped opening
+    flips this — it does NOT: ply IS absolute (root_fen is an opening position with an
+    offset — verified maxply 77-91 > 62-79 moves on C-ply games), but root_fen's turn
+    field self-encodes the offset parity, so ``root_white == (ply even)`` is the correct
+    RELATIVE parity for any offset. VERIFIED 0/2324 outcome mismatches vs the shard
+    wdl_target across 117 shared games incl 27 C-ply.) Preferred over the shard join."""
     games: dict[int, list[GameRow]] = defaultdict(list)
     for p in paths:
         with open(p, encoding="utf-8") as fh:
@@ -234,10 +236,15 @@ def classify(seed: Seed, rows: list[GameRow] | None, *,
         profile[h] = upto[-1] if upto else None
     reached_terminal = 0 < max_gap <= max(horizons)
 
-    if not fwd:  # seed is the last recorded full ply: no look-ahead runway
-        # Near-terminal: the game ended right after, so the terminal result is a
-        # SHALLOW confirmation (little play intervened) — NOT the confounded
-        # deep-tail terminal the depth profile is built to avoid. Trust a loss.
+    if not fwd:  # no SF-labeled forward rows
+        # Distinguish TRUE near-terminal (no recorded rows after the seed at all →
+        # the game ended right after, so the terminal result is a SHALLOW, trustable
+        # confirmation) from MISSING look-ahead (rows exist after the seed but carry
+        # no SF label — e.g. value-only fast plies when record_fast_ply_value is on).
+        # In the latter the game continued, so trusting the terminal reintroduces the
+        # deep-tail confound the classifier avoids → INCONCLUSIVE (Codex #125).
+        if any(r.ply > t0 for r in rows):
+            return Verdict("INCONCLUSIVE", best.outcome, t0, profile, reached_terminal)
         term = "CONFIRMED_LOST" if best.outcome == 2 else "INCONCLUSIVE"
         return Verdict(term, best.outcome, t0, profile, reached_terminal)
     # Depth-graded verdict at the confirm horizon (default 8 plies), NOT the

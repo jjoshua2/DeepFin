@@ -122,6 +122,7 @@ def main() -> None:
             try:
                 board = seed_board_from_line(r["line"])
                 fen = board.fen()
+                eng.new_game()  # cold TT per seed (Codex #125)
                 res = eng.search(fen, nodes=int(args.nodes))
                 wdl = res.wdl
                 if wdl is None:
