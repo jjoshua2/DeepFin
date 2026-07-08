@@ -1209,7 +1209,7 @@ class WorkerSession:
         """play_batch on_state_ready hook: stash the live state for live reco."""
         self._active_state = state
 
-    def _maybe_ingest_dole_flag(self, manifest: dict) -> None:
+    def _maybe_ingest_dole_flag(self, manifest: dict, *, force_stash: bool = False) -> None:
         """If the server doled THIS iteration's seed batch to our poll, load the
         whole FEN list and hand it to selfplay.
 
@@ -1218,8 +1218,19 @@ class WorkerSession:
         N*len(list) per iteration regardless of client count. We play them as
         selfplay seeds: onto the live SelfplayState if a session is running
         (replacing any undrained backlog — a fresh iteration's dole supersedes),
-        else stashed for the next session start. No-op unless dole mode is on
-        (opening_fen_dole_per_iter>0) and a FEN list is available."""
+        else stashed for the next session start. ``force_stash`` routes to the
+        stash even when a live state exists — used on a poll that both won the
+        dole and triggered a session restart, so the seeds ride into the
+        replacement session instead of dying on the torn-down state. No-op unless
+        dole mode is on (opening_fen_dole_per_iter>0) and a FEN list is available.
+
+        Ingestion rides the HTTP manifest poll only (the mtime model-swap fast
+        path reads the local manifest file, which never carries the per-request
+        ``dole_fen_seeds`` flag). That is fine while the training iteration is
+        longer than the poll interval — production iters are minutes vs a ~30s
+        poll, so exactly one poll per iteration wins the claim — but a smoke
+        config with sub-poll-interval iterations can advance past an unpolled
+        iteration and skip its dole."""
         if not bool(manifest.get("dole_fen_seeds")):
             return
         reco = manifest.get("recommended_worker") or {}
@@ -1235,7 +1246,7 @@ class WorkerSession:
             return
         queue = list(seeds) * n
         state = getattr(self, "_active_state", None)
-        if state is not None:
+        if state is not None and not force_stash:
             state.fen_dole_queue = queue
             self._pending_fen_dole = []
             dest = "live session"
@@ -1318,6 +1329,11 @@ class WorkerSession:
                 return
             reco_changed = self._reco_changed(manifest, source_tag="poll")
             if reco_changed:
+  # A boundary poll can both win the dole and trigger a restart (restart-key or
+  # session-start asset change). The server gate is already claimed for this
+  # iteration, so the replacement session would re-poll with dole_fen_seeds:false
+  # and skip the whole batch — stash the seeds so the new session plays them.
+                self._maybe_ingest_dole_flag(manifest, force_stash=True)
                 self._swap_model_from_manifest(manifest)
                 return
             self._sync_assets(manifest)

@@ -792,6 +792,22 @@ def test_dole_flag_pushes_onto_live_state(tmp_path: Path) -> None:
     assert session._pending_fen_dole == []  # went to the live session, not stashed
 
 
+def test_dole_flag_force_stash_survives_restart(tmp_path: Path) -> None:
+    # A boundary poll that both wins the dole and triggers a session restart must
+    # stash the seeds (not push onto the about-to-die live state), so the
+    # replacement session plays them instead of dropping the batch.
+    session = _dole_session_with_list(tmp_path)
+    live = SimpleNamespace(fen_dole_queue=None)
+    session._active_state = live
+    session._maybe_ingest_dole_flag(
+        {"dole_fen_seeds": True, "recommended_worker": {"opening_fen_dole_per_iter": 1}},
+        force_stash=True,
+    )
+    # Stashed for the next session, and the dying live state is left untouched.
+    assert session._pending_fen_dole == [_DOLE_FEN_A, _DOLE_FEN_B]
+    assert live.fen_dole_queue is None
+
+
 def test_dole_flag_repeats_list_n_times(tmp_path: Path) -> None:
     session = _dole_session_with_list(tmp_path)
     session._maybe_ingest_dole_flag(

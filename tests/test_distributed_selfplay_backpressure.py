@@ -819,6 +819,43 @@ def test_manifest_no_dole_without_published_fen_list(tmp_path: Path) -> None:
     assert "opening_fen_list" not in polls[0]
 
 
+def test_manifest_no_dole_while_paused(tmp_path: Path) -> None:
+    # A paused poll must NOT consume the single per-iteration dole claim: the
+    # worker drops a paused manifest (returns None from _poll_manifest) before it
+    # can ingest the seeds, so claiming here would waste the whole batch. The gate
+    # stays open so a later unpaused poll THIS iteration still wins it.
+    fen_path = tmp_path / "blindspot.txt"
+    fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+
+    def _publish(*, paused: bool) -> None:
+        _publish_distributed_trial_state(
+            trainer=_FakeTrainer(),
+            config={"opening_fen_dole_per_iter": 1, "opening_fen_list_path": str(fen_path)},
+            model_cfg=_model_cfg(),
+            server_root=tmp_path,
+            trial_id="trial_00000",
+            training_iteration=11,
+            trainer_step=11,
+            sf_nodes=1000,
+            mcts_simulations=64,
+            pause_selfplay=paused,
+            pause_reason="training" if paused else "",
+        )
+
+    app = create_app(server_root=tmp_path)
+    headers = _manifest_poll_headers(worker_id="test-worker")
+
+    _publish(paused=True)
+    paused = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=3)
+    assert paused[0]["recommended_worker"]["pause_selfplay"] is True
+    assert all(p["dole_fen_seeds"] is False for p in paused)  # no claim burned
+
+    # Same iteration, now unpaused: the still-unclaimed gate doles to exactly one poll.
+    _publish(paused=False)
+    unpaused = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=2)
+    assert [p["dole_fen_seeds"] for p in unpaused] == [True, False]
+
+
 def test_seed_dole_gate_single_winner_under_concurrency() -> None:
     from chess_anti_engine.server.app import _SeedDoleGate
 
