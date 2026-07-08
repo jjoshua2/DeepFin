@@ -27,10 +27,12 @@ import argparse
 import glob
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
 from chess_anti_engine.replay.shard import load_shard_arrays, shard_index
+from scripts.diagnostic_replay_utils import select_shards
 
 DEFAULT_POSITIONS_PER_ITER = 13500  # ~live ingest/iter; only scales the /iter estimate
 
@@ -86,39 +88,48 @@ def _position_key(x: np.ndarray) -> np.ndarray:
     return key
 
 
-def load_scan_arrays(shards: list[str], *, want_keys: bool) -> dict[str, np.ndarray]:
+def load_scan_arrays(shards: list[str], *, want_keys: bool) -> tuple[dict[str, np.ndarray], int]:
+    """Returns (eval'd-row arrays, total rows scanned). ``total`` counts ALL
+    rows (not just eval'd), so the /iter estimate divides by true ingest."""
     nq, sq, isp, keys = [], [], [], []
+    total_rows = 0
     for sh in shards:
-        # lazy: read only the datasets we touch below, not every array (x and
-        # policy-width targets are multi-GB on live shards; --no-diversity then
-        # never loads x at all).
-        a, _ = load_shard_arrays(sh, lazy=True)
-        # Optional columns can be pruned from a shard entirely; a missing has_*
-        # flag means "no such labels here" -> skip the shard, don't KeyError.
-        has_search, has_sf = a.get("has_search_wdl"), a.get("has_sf_wdl")
-        if has_search is None or has_sf is None:
+        # lazy: read only the datasets we touch (x / policy-width targets are
+        # multi-GB on live shards; --no-diversity then never loads x). Per-shard
+        # try/except: the tool runs beside a live writer that rmtree+renames
+        # shard dirs during compaction, so a mid-rename shard is skipped, not
+        # fatal — matching the production ingest path.
+        try:
+            a, _ = load_shard_arrays(sh, lazy=True)
+            has_search, has_sf = a.get("has_search_wdl"), a.get("has_sf_wdl")
+            if has_search is None or has_sf is None:
+                continue
+            has_search = np.asarray(has_search).astype(bool)
+            total_rows += int(has_search.size)
+            has = has_search & np.asarray(has_sf).astype(bool)
+            if not has.any():
+                continue
+            nq.append(_q(np.asarray(a["search_wdl"], np.float32))[has])
+            sq.append(_q(np.asarray(a["sf_wdl"], np.float32))[has])
+            # is_selfplay is optional (legacy shards may lack it, or tag only
+            # some rows); trust it via has_is_selfplay, else default untagged/
+            # absent to selfplay (~95% majority) rather than KeyError/miscount.
+            n = int(has.sum())
+            raw_isp = a.get("is_selfplay")
+            raw_has_isp = a.get("has_is_selfplay")
+            if raw_isp is None:
+                isp.append(np.ones(n, dtype=bool))
+            else:
+                v = np.asarray(raw_isp).astype(bool)
+                if raw_has_isp is not None:
+                    v = v | ~np.asarray(raw_has_isp).astype(bool)  # untagged -> selfplay
+                isp.append(v[has])
+            if want_keys:
+                # Pass the lazy zarr; _position_key slices [:, :12] so only 12 of
+                # 175 planes are read (not the full float32-upcast tensor).
+                keys.append(_position_key(a["x"])[has])
+        except (FileNotFoundError, KeyError, OSError):
             continue
-        has = np.asarray(has_search).astype(bool) & np.asarray(has_sf).astype(bool)
-        if not has.any():
-            continue
-        nq.append(_q(np.asarray(a["search_wdl"], np.float32))[has])
-        sq.append(_q(np.asarray(a["sf_wdl"], np.float32))[has])
-        # is_selfplay is optional (legacy/bootstrap shards may lack it, or tag
-        # only some rows); trust it only where has_is_selfplay, else default to
-        # selfplay (the ~95% majority) rather than KeyError or miscount as
-        # curriculum. The cur% column is thus a floor on mixed windows.
-        n = int(has.sum())
-        raw_isp = a.get("is_selfplay")
-        raw_has_isp = a.get("has_is_selfplay")
-        if raw_isp is None:
-            isp.append(np.ones(n, dtype=bool))
-        else:
-            v = np.asarray(raw_isp).astype(bool)
-            if raw_has_isp is not None:
-                v = v | ~np.asarray(raw_has_isp).astype(bool)  # untagged -> selfplay
-            isp.append(v[has])
-        if want_keys:
-            keys.append(_position_key(np.asarray(a["x"], np.float32))[has])
     if not nq:
         raise SystemExit("no positions with both search_wdl and sf_wdl in the scanned shards")
     out = {
@@ -127,7 +138,12 @@ def load_scan_arrays(shards: list[str], *, want_keys: bool) -> dict[str, np.ndar
     }
     if want_keys:
         out["pos_key"] = np.concatenate(keys)
-    return out
+    return out, total_rows
+
+
+def _max_shard_index(replay_dir: str) -> int:
+    shards = glob.glob(os.path.join(replay_dir, "shard_*.zarr"))
+    return max((shard_index(s) for s in shards), default=-1)
 
 
 def default_replay_dir() -> str:
@@ -135,16 +151,16 @@ def default_replay_dir() -> str:
     # Two production layouts: the exchange root ($WORK/replay/train_trial_*) and
     # the trial-local dir ($WORK/tune/train_trial_*/replay_shards) used when
     # tune_replay_root_override is unset (e.g. configs/default.yaml).
-    cands = sorted(
-        glob.glob(os.path.join(work, "replay", "train_trial_*", "replay_shards"))
-        + glob.glob(os.path.join(work, "tune", "train_trial_*", "replay_shards")),
-        key=os.path.getmtime,
-    )
+    cands = (glob.glob(os.path.join(work, "replay", "train_trial_*", "replay_shards"))
+             + glob.glob(os.path.join(work, "tune", "train_trial_*", "replay_shards")))
+    cands = [d for d in cands if _max_shard_index(d) >= 0]
     if not cands:
         raise SystemExit(
             f"no replay_shards under {work}/replay/train_trial_*/ or "
             f"{work}/tune/train_trial_*/")
-    return cands[-1]
+    # Pick by highest shard index (append order), not dir mtime — copy/restore/
+    # touch scramble mtimes, the same reason main() selects shards by index.
+    return max(cands, key=_max_shard_index)
 
 
 def _floats(spec: str) -> list[float]:
@@ -161,36 +177,42 @@ def main() -> None:
     ap.add_argument("--positions-per-iter", type=int, default=DEFAULT_POSITIONS_PER_ITER)
     ap.add_argument("--no-diversity", action="store_true", help="skip unique-placement (faster; no x load)")
     args = ap.parse_args()
+    if args.shards < 1:
+        raise SystemExit("--shards must be >= 1")
 
     rdir = args.replay_dir or default_replay_dir()
-    # Select recent shards by numeric shard index, not dir mtime: copied /
-    # restored / touched windows have mtimes that don't reflect append order,
-    # but the buffer treats the shard_NNNNNN index as the window order.
-    shards = sorted(glob.glob(os.path.join(rdir, "shard_*.zarr")), key=shard_index)[-args.shards:]
+    # select_shards sorts by numeric shard index (append order), not dir mtime —
+    # copy/restore/touch scramble mtimes; the buffer orders by shard_NNNNNN.
+    shards = [str(p) for p in select_shards(Path(rdir), args.shards)]
     if not shards:
         raise SystemExit(f"no shards under {rdir}")
-    arr = load_scan_arrays(shards, want_keys=not args.no_diversity)
+    arr, total_rows = load_scan_arrays(shards, want_keys=not args.no_diversity)
     nq, sq, isp = arr["net_q"], arr["sf_q"], arr["is_selfplay"]
     key = arr.get("pos_key")
     n_eval = int(nq.size)
-    iters = n_eval / max(1, args.positions_per_iter)
+    # /iter divides by TOTAL ingested rows (not eval-only) — else a window where
+    # SF labels cover a fraction f of rows would inflate /iter by ~1/f.
+    iters = total_rows / max(1, args.positions_per_iter)
+    show_uniq = key is not None
 
-    print(f"[scan] {len(shards)} shards, {n_eval} positions with both evals "
+    print(f"[scan] {len(shards)} shards, {total_rows} rows ({n_eval} with both evals) "
           f"(~{iters:.1f} iters @ {args.positions_per_iter}/iter); "
           f"selfplay {100 * isp.mean():.1f}% / curriculum {100 * (~isp).mean():.1f}%\n")
-    print(f"{'net_q>':>6} {'sf_q<':>6} {'count':>7} {'%eval':>6} {'/iter':>7} "
-          f"{'cur%':>5} {'sevMed':>7} {'sevP90':>7} {'uniq%':>6}")
-    print("-" * 66)
+    header = (f"{'net_q>':>6} {'sf_q<':>6} {'count':>7} {'%eval':>6} {'/iter':>7} "
+              f"{'cur%':>5} {'sevMed':>7} {'sevP90':>7}")
+    print(header + (f" {'uniq%':>6}" if show_uniq else ""))
+    print("-" * (len(header) + (7 if show_uniq else 0)))
     for net_ok in _floats(args.net_ok):
         for sf_lost in _floats(args.sf_lost):
             s = band_stat(nq, sq, isp, key, net_ok=net_ok, sf_lost=sf_lost)
-            print(f"{s.net_ok:>6.2f} {s.sf_lost:>6.2f} {s.count:>7d} "
-                  f"{100 * s.frac_of_evald:>5.2f}% {s.count / max(iters, 1e-9):>7.1f} "
-                  f"{100 * s.curriculum_frac:>4.0f}% {s.severity_median:>7.2f} "
-                  f"{s.severity_p90:>7.2f} {100 * s.unique_frac:>5.0f}%")
+            row = (f"{s.net_ok:>6.2f} {s.sf_lost:>6.2f} {s.count:>7d} "
+                   f"{100 * s.frac_of_evald:>5.2f}% {s.count / max(iters, 1e-9):>7.1f} "
+                   f"{100 * s.curriculum_frac:>4.0f}% {s.severity_median:>7.2f} "
+                   f"{s.severity_p90:>7.2f}")
+            print(row + (f" {100 * s.unique_frac:>5.0f}%" if show_uniq else ""))
     print("\nseverity = net_q - sf_q (0..2, higher = blinder); /iter estimate scales "
-          "with --positions-per-iter; uniq% = distinct placements among the band "
-          "(diversity for sustaining a high seeding dose).")
+          "with --positions-per-iter" + ("; uniq% = distinct placements among the band "
+          "(diversity for sustaining a high seeding dose)." if show_uniq else "."))
 
 
 if __name__ == "__main__":
