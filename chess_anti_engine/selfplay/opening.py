@@ -63,6 +63,18 @@ class OpeningConfig:
   # Net-vs-net selfplay slots are unaffected (the net plays both seats).
     opening_fen_net_side_to_move: bool = True
 
+  # Seed ONLY selfplay slots (never curriculum/net-vs-SF slots). Curriculum games
+  # play a long SF opponent that saturates the shared StockfishPool, so at a high
+  # dose the short fenlist seeds crowd curriculum completions out of the fixed
+  # per-iteration window and STARVE the PID winrate sample (see the FEN-seed
+  # curriculum-starvation ticket). With this on, raising opening_fen_prob only ever
+  # adds net-vs-net seed games, so the curriculum/PID supply is dose-invariant and
+  # the dose can go much higher. Off = legacy (seed any slot). The SF-labelled
+  # blind-spot VALUE injection rides on selfplay seeds anyway, so the only thing
+  # lost is the curriculum-seed refutation variant. Multiply the intended net dose
+  # by ~1/selfplay_fraction when enabling (seeds land on ~selfplay_fraction of slots).
+    opening_fen_selfplay_only: bool = False
+
 
 @dataclass(frozen=True)
 class OpeningStart:
@@ -335,18 +347,21 @@ def warm_opening_book_cache(cfg: OpeningConfig) -> None:
             )
 
 
-def sample_starting_board(*, rng, cfg: OpeningConfig) -> OpeningStart:
+def sample_starting_board(*, rng, cfg: OpeningConfig, allow_fenlist: bool = True) -> OpeningStart:
     """Create a starting position and label its low-cardinality source.
 
     Priority:
     - with probability opening_fen_prob, use the blind-spot FEN list if provided
+      (only when ``allow_fenlist`` — the caller passes False for curriculum slots
+      when ``opening_fen_selfplay_only`` is set, so seeding never consumes them)
     - with probability opening_book_prob, use opening book if provided
       - among book games, use book 2 with opening_book_mix_prob_2, else book 1
     - otherwise use random_start_plies if >0
     - otherwise startpos
     """
     if (
-        cfg.opening_fen_list_path
+        allow_fenlist
+        and cfg.opening_fen_list_path
         and float(cfg.opening_fen_prob) > 0.0
         and float(rng.random()) < float(cfg.opening_fen_prob)
     ):

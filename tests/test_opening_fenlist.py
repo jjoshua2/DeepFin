@@ -274,3 +274,15 @@ def test_sample_returns_history_board(tmp_path: Path) -> None:
     assert start.source == "fenlist"
     assert len(start.board.move_stack) == 10
     assert start.board.fen() == _terminal_fen(_SEED_WITH_HISTORY)
+
+
+def test_allow_fenlist_gates_seeding(tmp_path: Path) -> None:
+    """Fix A (opening_fen_selfplay_only): a curriculum slot passes allow_fenlist=False
+    and NEVER draws a seed even at prob 1.0, so a high dose can't consume curriculum
+    slots (and starve the PID). A selfplay slot (allow_fenlist=True) still seeds."""
+    path = _write_list(tmp_path, [FEN_BLACK, FEN_WHITE])
+    cfg = OpeningConfig(opening_fen_list_path=path, opening_fen_prob=1.0)  # always seed if allowed
+    rng = np.random.default_rng(0)
+    assert sample_starting_board(rng=rng, cfg=cfg, allow_fenlist=True).source == "fenlist"
+    for _ in range(20):
+        assert sample_starting_board(rng=rng, cfg=cfg, allow_fenlist=False).source != "fenlist"

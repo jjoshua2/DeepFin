@@ -2313,7 +2313,7 @@ class WorkerSession:
         "random_start_plies",
         "opening_book_prob", "opening_book_max_plies", "opening_book_max_games",
         "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
-        "opening_fen_prob", "opening_fen_net_side_to_move",
+        "opening_fen_prob", "opening_fen_net_side_to_move", "opening_fen_selfplay_only",
         "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     )
 
@@ -2407,6 +2407,7 @@ class WorkerSession:
                 opening_fen_net_side_to_move=bool(
                     reco.get("opening_fen_net_side_to_move", True)
                 ),
+                opening_fen_selfplay_only=bool(reco.get("opening_fen_selfplay_only", False)),
             ),
             "game": GameConfig(
                 max_plies=self._resolve_reco(reco, "max_plies", 240, int),

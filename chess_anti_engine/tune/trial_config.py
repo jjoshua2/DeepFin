@@ -176,6 +176,7 @@ class TrialConfig:
     opening_fen_list_path: str | None = None
     opening_fen_prob: float = 0.0
     opening_fen_net_side_to_move: bool = True
+    opening_fen_selfplay_only: bool = False
 
   # --- SF policy / game ---
     sf_policy_temp: float = 0.25
@@ -520,6 +521,7 @@ class TrialConfig:
             opening_fen_net_side_to_move=bool(
                 config.get("opening_fen_net_side_to_move", True)
             ),
+            opening_fen_selfplay_only=bool(config.get("opening_fen_selfplay_only", False)),
 
   # --- SF policy / game ---
             sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),

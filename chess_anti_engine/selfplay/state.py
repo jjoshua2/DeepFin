@@ -675,16 +675,23 @@ class SelfplayState:
                 raise ValueError("play_batch requires model or evaluator")
             evaluator = LocalModelEvaluator(model, device=device)
 
-        starts = [sample_starting_board(rng=rng, cfg=opening) for _ in range(batch_size)]
+        # Roll the selfplay/curriculum type FIRST so fenlist seeding can be gated on
+        # it: with opening_fen_selfplay_only, curriculum slots never draw a seed, so
+        # the dose can't starve the PID curriculum sample (see the starvation ticket).
+        net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
+            batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,
+        )
+        seed_only_sp = bool(opening.opening_fen_selfplay_only)
+        starts = [
+            sample_starting_board(rng=rng, cfg=opening,
+                                  allow_fenlist=(not seed_only_sp) or bool(selfplay_arr[i]))
+            for i in range(batch_size)
+        ]
         boards = [start.board for start in starts]
         opening_source_arr = [start.source for start in starts]
         # Use from_board (not from_raw) to preserve ply count + history from openings.
         cboards = [_CBoard.from_board(b) for b in boards]
         starting_boards = [b.copy() for b in boards]
-
-        net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
-            batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,
-        )
         for i, start in enumerate(starts):
             col = _fenlist_net_color(start.source, boards[i], opening)
             if col is not None:
@@ -908,7 +915,12 @@ class SelfplayState:
         # Local import mirrors create() above.
         from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 
-        opening_start = sample_starting_board(rng=self.rng, cfg=self.opening)
+        # Roll the type FIRST (mirrors create()), then gate fenlist seeding on it so
+        # opening_fen_selfplay_only never seeds a curriculum slot (starvation ticket).
+        sp_frac = max(0.0, min(1.0, float(self.game.selfplay_fraction)))
+        self.selfplay_arr[i] = 1 if self.rng.random() < sp_frac else 0
+        allow_fenlist = (not bool(self.opening.opening_fen_selfplay_only)) or bool(self.selfplay_arr[i])
+        opening_start = sample_starting_board(rng=self.rng, cfg=self.opening, allow_fenlist=allow_fenlist)
         self.boards[i] = opening_start.board
         self.opening_source_arr[i] = opening_start.source
         self.cboards[i] = _CBoard.from_board(self.boards[i])
@@ -921,8 +933,6 @@ class SelfplayState:
         col = _fenlist_net_color(opening_start.source, self.boards[i], self.opening)
         if col is not None:
             self.net_color_arr[i] = col
-        sp_frac = max(0.0, min(1.0, float(self.game.selfplay_fraction)))
-        self.selfplay_arr[i] = 1 if self.rng.random() < sp_frac else 0
         # Clear TB adjudication stash from the previous game in this slot;
         # without this, the stale non-None value would make the adjudicator
         # skip the new game forever. Re-roll the per-game "do I adjudicate"

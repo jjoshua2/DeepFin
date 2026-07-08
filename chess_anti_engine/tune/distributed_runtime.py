@@ -339,6 +339,7 @@ def _publish_distributed_trial_state(
         "opening_fen_net_side_to_move": bool(
             config.get("opening_fen_net_side_to_move", True)
         ),
+        "opening_fen_selfplay_only": bool(config.get("opening_fen_selfplay_only", False)),
         "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
         "sf_nodes": int(sf_nodes),
         "sf_move_nodes": int(config.get("sf_move_nodes", 0)),
