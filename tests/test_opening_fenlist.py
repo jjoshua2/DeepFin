@@ -10,6 +10,7 @@ import pytest
 from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     _load_fen_list,
+    resolve_slot_opening,
     sample_starting_board,
     seed_board_from_line,
 )
@@ -286,3 +287,115 @@ def test_allow_fenlist_gates_seeding(tmp_path: Path) -> None:
     assert sample_starting_board(rng=rng, cfg=cfg, allow_fenlist=True).source == "fenlist"
     for _ in range(20):
         assert sample_starting_board(rng=rng, cfg=cfg, allow_fenlist=False).source != "fenlist"
+
+
+# ── Server-doled seeding (opening_fen_dole_per_iter) ─────────────────────────
+# resolve_slot_opening is the shared consumption logic used by both create() and
+# recycle_slot(); testing it directly needs no C extension.
+
+
+def _dole_cfg(path: str) -> OpeningConfig:
+    # prob=1.0 so a regression that re-enabled the probabilistic draw in dole mode
+    # would visibly seed (source "fenlist") and fail the suppression assertions.
+    return OpeningConfig(
+        opening_fen_list_path=path, opening_fen_dole_per_iter=1, opening_fen_prob=1.0,
+    )
+
+
+def test_dole_selfplay_slot_drains_queue_in_order(tmp_path: Path) -> None:
+    cfg = _dole_cfg(_write_list(tmp_path, [FEN_BLACK, FEN_WHITE]))
+    queue = [FEN_WHITE, FEN_BLACK]  # explicit order, distinct from the file order
+    rng = np.random.default_rng(0)
+    s1 = resolve_slot_opening(rng=rng, cfg=cfg, is_selfplay=True, fen_dole_queue=queue)
+    s2 = resolve_slot_opening(rng=rng, cfg=cfg, is_selfplay=True, fen_dole_queue=queue)
+    assert (s1.source, s1.board.fen()) == ("fenlist", chess.Board(FEN_WHITE).fen())
+    assert (s2.source, s2.board.fen()) == ("fenlist", chess.Board(FEN_BLACK).fen())
+    assert queue == []  # FIFO-drained
+    # Queue empty → dole mode must NOT fall back to the probabilistic seed.
+    s3 = resolve_slot_opening(rng=rng, cfg=cfg, is_selfplay=True, fen_dole_queue=queue)
+    assert s3.source != "fenlist"
+
+
+def test_dole_curriculum_slot_never_drains_queue(tmp_path: Path) -> None:
+    cfg = _dole_cfg(_write_list(tmp_path, [FEN_BLACK]))
+    queue = [FEN_BLACK, FEN_WHITE]
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        s = resolve_slot_opening(rng=rng, cfg=cfg, is_selfplay=False, fen_dole_queue=queue)
+        assert s.source != "fenlist"
+    assert queue == [FEN_BLACK, FEN_WHITE]  # untouched by curriculum slots
+
+
+def test_dole_mode_disables_probability_seed(tmp_path: Path) -> None:
+    # A selfplay slot with an EMPTY queue must not probability-seed while dole is on
+    # (dole owns FEN seeding), even at opening_fen_prob=1.0.
+    cfg = _dole_cfg(_write_list(tmp_path, [FEN_BLACK, FEN_WHITE]))
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        s = resolve_slot_opening(rng=rng, cfg=cfg, is_selfplay=True, fen_dole_queue=[])
+        assert s.source != "fenlist"
+
+
+def test_dole_n_repeats_the_list(tmp_path: Path) -> None:
+    # The worker builds queue = list(seeds) * N; each seed then appears N times.
+    seeds = _load_fen_list(_write_list(tmp_path, [FEN_BLACK, FEN_WHITE]))
+    cfg = OpeningConfig(
+        opening_fen_list_path="dummy", opening_fen_dole_per_iter=2, opening_fen_prob=1.0,
+    )
+    queue = list(seeds) * 2
+    rng = np.random.default_rng(0)
+    drawn = [
+        resolve_slot_opening(rng=rng, cfg=cfg, is_selfplay=True, fen_dole_queue=queue).board.fen()
+        for _ in range(4)
+    ]
+    assert queue == []
+    assert drawn.count(chess.Board(FEN_BLACK).fen()) == 2
+    assert drawn.count(chess.Board(FEN_WHITE).fen()) == 2
+
+
+def test_legacy_mode_defers_to_probability_path(tmp_path: Path) -> None:
+    # dole off (default 0): resolve_slot_opening behaves like the pre-dole path —
+    # the probabilistic draw runs and a passed queue is ignored.
+    cfg = OpeningConfig(opening_fen_list_path=_write_list(tmp_path, [FEN_BLACK, FEN_WHITE]),
+                        opening_fen_prob=1.0)  # opening_fen_dole_per_iter == 0
+    rng = np.random.default_rng(0)
+    assert resolve_slot_opening(
+        rng=rng, cfg=cfg, is_selfplay=True, fen_dole_queue=None,
+    ).source == "fenlist"
+    q = [FEN_BLACK]
+    resolve_slot_opening(rng=rng, cfg=cfg, is_selfplay=True, fen_dole_queue=q)
+    assert q == [FEN_BLACK]  # legacy mode never touches the dole queue
+
+
+def test_legacy_selfplay_only_gate_still_applies(tmp_path: Path) -> None:
+    # dole off + opening_fen_selfplay_only: the #127 allow_fenlist gate still holds
+    # (curriculum slots don't seed; selfplay slots do).
+    cfg = OpeningConfig(
+        opening_fen_list_path=_write_list(tmp_path, [FEN_BLACK, FEN_WHITE]),
+        opening_fen_prob=1.0, opening_fen_selfplay_only=True,
+    )
+    rng = np.random.default_rng(0)
+    assert resolve_slot_opening(
+        rng=rng, cfg=cfg, is_selfplay=False, fen_dole_queue=None,
+    ).source != "fenlist"
+    assert resolve_slot_opening(
+        rng=rng, cfg=cfg, is_selfplay=True, fen_dole_queue=None,
+    ).source == "fenlist"
+
+
+def test_dole_config_round_trips() -> None:
+    # (c) The new key survives the config→TrialConfig→OpeningConfig plumbing.
+    from chess_anti_engine.tune.trainable_config_ops import _play_batch_kwargs
+    from chess_anti_engine.tune.trial_config import TrialConfig
+    from chess_anti_engine.utils.config_yaml import (
+        _SELFPLAY_KEYS,
+        flatten_run_config_defaults,
+    )
+
+    assert "opening_fen_dole_per_iter" in _SELFPLAY_KEYS
+    flat = flatten_run_config_defaults({"selfplay": {"opening_fen_dole_per_iter": 3}})
+    assert flat["opening_fen_dole_per_iter"] == 3
+    tc = TrialConfig.from_dict({"opening_fen_dole_per_iter": 3})
+    assert tc.opening_fen_dole_per_iter == 3
+    opening = _play_batch_kwargs(tc)["opening"]
+    assert opening.opening_fen_dole_per_iter == 3

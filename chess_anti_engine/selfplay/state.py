@@ -33,7 +33,7 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
-from chess_anti_engine.selfplay.opening import OpeningConfig, sample_starting_board
+from chess_anti_engine.selfplay.opening import OpeningConfig, resolve_slot_opening
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.tablebase import SyzygyProbe
@@ -635,6 +635,13 @@ class SelfplayState:
     c_classify: Callable[..., Any] | None = None
     c_temp_resample: Callable[..., Any] | None = None
 
+    # ── Server-doled blind-spot FEN seeds (None/empty = no dole this session) ─
+    # Mutable FIFO of seed lines (seed_board_from_line grammar) handed down by
+    # the worker when the server doles a batch this iteration. create() and
+    # recycle_slot() pop from it for selfplay slots (see resolve_slot_opening);
+    # the worker replaces the whole list each doled iteration.
+    fen_dole_queue: list[str] | None = None
+
     # ── Control counters (mutated by recycle_slot / main loop) ───────────────
     games_started: int = 0
     games_completed: int = 0
@@ -660,6 +667,7 @@ class SelfplayState:
         opening: OpeningConfig,
         diff_focus: DiffFocusConfig,
         game: GameConfig,
+        fen_dole_queue: list[str] | None = None,
     ) -> SelfplayState:
         """Build a ``SelfplayState`` from ``play_batch``'s arguments.
 
@@ -678,13 +686,17 @@ class SelfplayState:
         # Roll the selfplay/curriculum type FIRST so fenlist seeding can be gated on
         # it: with opening_fen_selfplay_only, curriculum slots never draw a seed, so
         # the dose can't starve the PID curriculum sample (see the starvation ticket).
+        # resolve_slot_opening also drains fen_dole_queue for selfplay slots when the
+        # server doled seeds this session (deterministic even coverage).
         net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
             batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,
         )
-        seed_only_sp = bool(opening.opening_fen_selfplay_only)
         starts = [
-            sample_starting_board(rng=rng, cfg=opening,
-                                  allow_fenlist=(not seed_only_sp) or bool(selfplay_arr[i]))
+            resolve_slot_opening(
+                rng=rng, cfg=opening,
+                is_selfplay=bool(selfplay_arr[i]),
+                fen_dole_queue=fen_dole_queue,
+            )
             for i in range(batch_size)
         ]
         boards = [start.board for start in starts]
@@ -759,6 +771,7 @@ class SelfplayState:
             batch_enc_146_lc0_root_legacy_meta_bf16=c_caps.batch_enc_146_lc0_root_legacy_meta_bf16,
             c_classify=c_caps.c_classify,
             c_temp_resample=c_caps.c_temp_resample,
+            fen_dole_queue=fen_dole_queue,
             games_started=batch_size,
         )
 
@@ -917,10 +930,15 @@ class SelfplayState:
 
         # Roll the type FIRST (mirrors create()), then gate fenlist seeding on it so
         # opening_fen_selfplay_only never seeds a curriculum slot (starvation ticket).
+        # resolve_slot_opening also drains fen_dole_queue for selfplay slots so doled
+        # seeds recycle into fresh games across the iteration (interleaved coverage).
         sp_frac = max(0.0, min(1.0, float(self.game.selfplay_fraction)))
         self.selfplay_arr[i] = 1 if self.rng.random() < sp_frac else 0
-        allow_fenlist = (not bool(self.opening.opening_fen_selfplay_only)) or bool(self.selfplay_arr[i])
-        opening_start = sample_starting_board(rng=self.rng, cfg=self.opening, allow_fenlist=allow_fenlist)
+        opening_start = resolve_slot_opening(
+            rng=self.rng, cfg=self.opening,
+            is_selfplay=bool(self.selfplay_arr[i]),
+            fen_dole_queue=self.fen_dole_queue,
+        )
         self.boards[i] = opening_start.board
         self.opening_source_arr[i] = opening_start.source
         self.cboards[i] = _CBoard.from_board(self.boards[i])

@@ -217,6 +217,7 @@ def play_batch(
     opening: OpeningConfig = OpeningConfig(),
     diff_focus: DiffFocusConfig = DiffFocusConfig(),
     game: GameConfig = GameConfig(),
+    fen_dole_queue: list[str] | None = None,
 ) -> tuple[list[ReplaySample], BatchStats]:
     """Play a batch of games.
 
@@ -232,6 +233,11 @@ def play_batch(
 
     Finite mode (target_games > 0 or stop_fn is None): plays exactly
     target_games (or `games` if target_games=0) then returns all samples.
+
+    ``fen_dole_queue`` (opt-in, opening_fen_dole_per_iter>0): a mutable FIFO of
+    seed lines the server doled for this iteration. Selfplay slots drain it (via
+    the SelfplayState, deterministic even coverage); the caller may replace
+    ``state.fen_dole_queue`` live between iterations. None = no doled seeds.
     """
     requested_batch = int(games)
     continuous = stop_fn is not None and int(target_games) <= 0
@@ -259,6 +265,7 @@ def play_batch(
         opening=opening,
         diff_focus=diff_focus,
         game=game,
+        fen_dole_queue=fen_dole_queue,
     )
 
     # Hand the live state to the caller so it can apply live-safe reco changes

@@ -133,7 +133,7 @@ _SELFPLAY_KEYS = (
     "opening_book_path_2", "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
     "random_start_plies",
     "opening_fen_list_path", "opening_fen_prob", "opening_fen_net_side_to_move",
-    "opening_fen_selfplay_only",
+    "opening_fen_selfplay_only", "opening_fen_dole_per_iter",
     "sf_policy_temp", "sf_policy_label_smooth", "soft_policy_temp",
     "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
     "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy", "syzygy_adjudicate",

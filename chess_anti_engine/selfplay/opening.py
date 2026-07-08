@@ -75,6 +75,17 @@ class OpeningConfig:
   # by ~1/selfplay_fraction when enabling (seeds land on ~selfplay_fraction of slots).
     opening_fen_selfplay_only: bool = False
 
+  # Server-doled deterministic seeding (supersedes the probabilistic opening_fen_prob
+  # path when >0). Each iteration the server hands the WHOLE seed list — each seed
+  # once, repeated this many times — to exactly ONE worker poll (see the server dole
+  # gate); that worker plays them as selfplay seeds while every other worker plays
+  # normal games, so total seeded games == N*len(list) per iteration regardless of
+  # the client count and each seed gets EVEN, variance-free coverage (unlike the
+  # Poisson-variance opening_fen_prob draw). While this is >0 the probabilistic draw
+  # in sample_starting_board is disabled for every slot; seeding happens only by
+  # draining the dole queue (resolve_slot_opening). 0 = off (legacy prob path).
+    opening_fen_dole_per_iter: int = 0
+
 
 @dataclass(frozen=True)
 class OpeningStart:
@@ -403,6 +414,55 @@ def sample_starting_board(*, rng, cfg: OpeningConfig, allow_fenlist: bool = True
         )
 
     return OpeningStart(board=chess.Board(), source="start")
+
+
+def resolve_slot_opening(
+    *,
+    rng,
+    cfg: OpeningConfig,
+    is_selfplay: bool,
+    fen_dole_queue: list[str] | None,
+) -> OpeningStart:
+    """Pick one slot's opening position, honoring server-doled seeding.
+
+    Single source of truth shared by ``SelfplayState.create`` and
+    ``recycle_slot`` so the fresh-slot and recycled-slot rules can't drift.
+
+    Dole mode (``opening_fen_dole_per_iter > 0``):
+      * a SELFPLAY slot with a non-empty ``fen_dole_queue`` pops the next queued
+        seed (FIFO, deterministic even coverage) and starts there;
+      * every other slot — curriculum slots, and selfplay slots once the queue
+        is drained — falls back to the book/random/startpos flow with the
+        probabilistic FEN draw DISABLED (``allow_fenlist=False``), because in
+        dole mode seeding happens exclusively via the queue.
+
+    Legacy mode (``opening_fen_dole_per_iter == 0``): defers entirely to
+    ``sample_starting_board``; the probabilistic ``opening_fen_prob`` draw runs,
+    gated by the #127 ``allow_fenlist`` rule (curriculum slots pass ``False``
+    when ``opening_fen_selfplay_only`` is set).
+
+    The seeded board carries real LC0 history exactly like the probabilistic
+    ``fenlist`` path (``seed_board_from_line`` replays the ``fen | moves``
+    grammar); the queue only holds lines already validated by ``_load_fen_list``.
+    """
+    if int(cfg.opening_fen_dole_per_iter) > 0:
+        if is_selfplay and cfg.opening_fen_list_path and fen_dole_queue is not None:
+  # Pop exception-safely: the threaded selfplay path shares ONE queue across N
+  # threads, so a truthiness check + pop() would race (another thread could empty
+  # it in between). list.pop(0) is atomic under the GIL — concurrent callers get
+  # distinct seeds; an empty queue raises IndexError and falls back to a normal
+  # opening. (Single-threaded path: same outcome, no contention.)
+            try:
+                line = fen_dole_queue.pop(0)
+            except IndexError:
+                line = None
+            if line is not None:
+                return OpeningStart(board=seed_board_from_line(line), source="fenlist")
+  # Dole mode owns FEN seeding; suppress the probabilistic draw for every slot.
+        return sample_starting_board(rng=rng, cfg=cfg, allow_fenlist=False)
+
+    allow_fenlist = (not bool(cfg.opening_fen_selfplay_only)) or bool(is_selfplay)
+    return sample_starting_board(rng=rng, cfg=cfg, allow_fenlist=allow_fenlist)
 
 
 def make_starting_board(*, rng, cfg: OpeningConfig) -> chess.Board:
