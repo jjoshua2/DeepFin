@@ -117,23 +117,26 @@ class _Rec:
         self.sf_wdl = sf_wdl
 
 
-def test_run_harvest_writes_loadable_severe_seed(tmp_path) -> None:
-    from chess_anti_engine.selfplay.blindspot_harvest import run_harvest
+def test_run_harvest_splits_severe_into_sibling_file(tmp_path) -> None:
+    from chess_anti_engine.selfplay.blindspot_harvest import run_harvest, severe_path_for
     from chess_anti_engine.selfplay.opening import _load_fen_list
 
     final = _board_after(len(_LINE))
     records = [
-        _Rec(4, True, _wdl(0.6), _wdl(-0.6)),   # value-blind + severe @ ply 4
-        _Rec(6, True, _wdl(0.1), _wdl(0.2)),    # fine -> not harvested @ ply 6
+        _Rec(4, True, _wdl(0.6), _wdl(-0.6)),   # value-blind + SEVERE @ ply 4
+        _Rec(6, True, _wdl(0.3), _wdl(-0.55)),  # value-blind, NOT severe @ ply 6
     ]
     out = tmp_path / "harvest.txt"
     n = run_harvest(chess.Board(), final, records, has_c_ply=True,
                     game_id="g1", out_path=str(out), cfg=_cfg())
-    assert n == 1
-    lines = _load_fen_list(str(out))            # loads + validates via production loader
-    assert len(lines) == 1
-    assert seed_board_from_line(lines[0]).fen() == _board_after(4).fen()
-    assert "sev=1" in out.read_text()
+    assert n == 2                                       # both bands collected
+    assert len(_load_fen_list(str(out))) == 2
+    # The .severe sibling holds ONLY the severe (auto-feed) row.
+    severe_file = severe_path_for(str(out))
+    severe_lines = _load_fen_list(severe_file)
+    assert len(severe_lines) == 1
+    assert seed_board_from_line(severe_lines[0]).fen() == _board_after(4).fen()
+    assert severe_path_for("a/b/harvest.txt").endswith("harvest.severe.txt")
 
 
 def test_run_harvest_off_and_fail_safe(tmp_path) -> None:

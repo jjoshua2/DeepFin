@@ -120,6 +120,16 @@ def format_record(seed: HarvestedSeed, *, game_id: str) -> str:
             f"sev={int(seed.severe)} game={game_id}")
 
 
+def severe_path_for(out_path: str) -> str:
+    """Sibling file holding ONLY the severe (auto-feed) rows.
+
+    The production FEN-list loader strips the inline '# ... sev=..' comment, so
+    pointing opening_fen_list_path at the mixed collect file would feed the
+    broad (sev=0) band too. The severe file is the safe auto-feed target."""
+    root, dot, ext = out_path.rpartition(".")
+    return f"{root}.severe.{ext}" if dot else f"{out_path}.severe"
+
+
 def run_harvest(
     starting_board: chess.Board | None,
     final_board: chess.Board,
@@ -130,8 +140,9 @@ def run_harvest(
     out_path: str,
     cfg: HarvestConfig,
 ) -> int:
-    """Finalize-side wrapper: reconstruct boards, detect blind-spots, append
-    records to ``out_path``. Returns the count written. NEVER raises into
+    """Finalize-side wrapper: reconstruct boards, detect blind-spots, append the
+    collect band to ``out_path`` and the severe (auto-feed) band to its
+    ``.severe`` sibling. Returns the total count written. NEVER raises into
     finalize — logs and returns 0 on any error."""
     try:
         if not out_path or starting_board is None:
@@ -141,6 +152,14 @@ def run_harvest(
         boards = pre_move_boards(
             starting_board, list(final_board.move_stack), ply_indices, opening_len=opening_len,
         )
+        # Observability (not a hard failure): a full-ply record with no
+        # reconstructed board means the ply walk did not align it — the seed is
+        # safely skipped, never mis-emitted, but log so silent gaps are visible.
+        unaligned = sum(1 for rec, bd in zip(records, boards, strict=True)
+                        if bool(rec.has_policy) and bd is None)
+        if unaligned:
+            _log.debug("harvest: %d full-ply record(s) unaligned in game %s (skipped)",
+                       unaligned, game_id)
         evals = [
             (bool(rec.has_policy), getattr(rec, "search_wdl_est", None), getattr(rec, "sf_wdl", None))
             for rec in records
@@ -148,9 +167,15 @@ def run_harvest(
         seeds = harvest_from_records(evals, boards, cfg=cfg)
         if not seeds:
             return 0
+        severe_path = severe_path_for(out_path)
         with open(out_path, "a", encoding="utf-8") as fh:
             for s in seeds:
                 fh.write(format_record(s, game_id=game_id) + "\n")
+        severe = [s for s in seeds if s.severe]
+        if severe:
+            with open(severe_path, "a", encoding="utf-8") as fh:
+                for s in severe:
+                    fh.write(format_record(s, game_id=game_id) + "\n")
         return len(seeds)
     except Exception:
         # Harvesting is a side output — it must never break finalize or cost a
