@@ -249,25 +249,25 @@ def classify(seed: Seed, rows: list[GameRow] | None, *,
         return Verdict(term, best.outcome, t0, profile, reached_terminal)
     # Depth-graded verdict at the confirm horizon (default 8 plies), NOT the
     # terminal result: did SF still read it lost, or had it recovered.
+    # BOTH verdicts read the eval AS OF the confirm horizon (the deepest labeled ply
+    # <= confirm_h), never a transient any()/min() blip — a trajectory that briefly
+    # crosses (e.g. +2=-0.1) but is back lost by the horizon (+8=-0.7) must NOT refute,
+    # and one that dips lost then drifts middling must NOT confirm (Codex #125). AND
+    # the labels must actually REACH the horizon: if the last label is before confirm_h
+    # while the game continued past it (value-only rows, no SF label), the horizon eval
+    # is UNKNOWN -> inconclusive.
     upto_c = [q for g, q in fwd if g <= confirm_h]
-    recovered = any(q >= recover_to for q in upto_c)
-    if recovered:
-        # A labeled row within the horizon rose to recovery — valid regardless of
-        # any missing later labels.
+    horizon_q = upto_c[-1] if upto_c else None
+    last_gap = fwd[-1][0]
+    covered = last_gap >= confirm_h or max_gap <= last_gap
+    if horizon_q is None or not covered:
+        bucket = "INCONCLUSIVE"
+    elif horizon_q >= recover_to:
         bucket = "REFUTED"
+    elif horizon_q <= still_lost:
+        bucket = "CONFIRMED_LOST"
     else:
-        # CONFIRM requires the SF labels to actually REACH the confirm horizon.
-        # "did SF STILL read it lost" = the eval AS OF confirm_h (the deepest labeled
-        # ply <= confirm_h), NOT min() — [-0.7,-0.3] must not confirm. AND if the last
-        # label is before confirm_h while the game continued past it (value-only rows
-        # with no SF label), the horizon eval is UNKNOWN → inconclusive, don't confirm
-        # off a stale shallow eval (Codex #125).
-        last_gap = fwd[-1][0]
-        covered = last_gap >= confirm_h or max_gap <= last_gap
-        if bool(upto_c) and upto_c[-1] <= still_lost and covered:
-            bucket = "CONFIRMED_LOST"
-        else:
-            bucket = "INCONCLUSIVE"
+        bucket = "INCONCLUSIVE"  # middling at the horizon
     return Verdict(bucket, best.outcome, t0, profile, reached_terminal)
 
 
