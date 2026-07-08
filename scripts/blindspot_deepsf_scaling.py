@@ -16,7 +16,14 @@ import time
 
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 from chess_anti_engine.stockfish.uci import StockfishUCI
-from scripts.blindspot_deepsf_calibrate import _DEFAULT_SF, deep_verdict, parse_all, select
+from scripts.blindspot_deepsf_calibrate import (
+    _DEFAULT_SF,
+    deep_verdict,
+    ensure_parent,
+    parse_all,
+    resolve_syzygy,
+    select,
+)
 
 
 def main() -> None:
@@ -32,15 +39,16 @@ def main() -> None:
     ap.add_argument("--out", default="scratchpad/harvest_fp/deepsf_scaling.jsonl")
     ap.add_argument("--nice", type=int, default=15)
     args = ap.parse_args()
+    ensure_parent(args.out)
+    syzygy = resolve_syzygy(args.syzygy_path)  # fail-fast before the long search
     budgets = [int(x) for x in args.nodes_list.split(",") if x.strip()]
 
     rows = parse_all(args.all)
     sel = select(rows, args.control_n)
-    print(f"[scaling] rechecking {len(sel)} seeds at budgets {budgets} "
-          f"(syzygy={args.syzygy_path})")
+    print(f"[scaling] rechecking {len(sel)} seeds at budgets {budgets} (syzygy={syzygy})")
 
     eng = StockfishUCI(args.stockfish, nodes=budgets[-1], hash_mb=int(args.hash_mb),
-                       nice=int(args.nice), syzygy_path=args.syzygy_path or None)
+                       nice=int(args.nice), syzygy_path=syzygy)
     results: list[dict] = []
     t0 = time.time()
     try:

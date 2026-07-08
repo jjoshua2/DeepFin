@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import time
 
@@ -29,6 +30,25 @@ from chess_anti_engine.stockfish.uci import StockfishUCI
 
 _TAG = re.compile(r"bucket=(\w+).*?sq=(-?[0-9.]+).*?outcome=(\w+).*?game=(\d+)")
 _DEFAULT_SF = "/home/josh/projects/chess/e2e_server/publish/stockfish"
+
+
+def ensure_parent(path: str) -> None:
+    """Create the output file's parent dir UP FRONT — else a multi-hour deep-SF
+    run raises FileNotFoundError at the final write and discards results (Codex #125)."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+
+def resolve_syzygy(path: str) -> str | None:
+    """Fail-fast on a missing TB dir: a non-empty syzygy path whose first
+    component is absent would SILENTLY run TB-less and give unreliable endgame
+    verdicts (Codex #125). Pass --syzygy-path '' to run without TB deliberately."""
+    if not path:
+        return None
+    first = path.split(":")[0].split(";")[0]
+    if not os.path.isdir(first):
+        raise SystemExit(f"syzygy path not found: {first!r} — would run deep SF "
+                         f"TB-less (unreliable endgames). Pass --syzygy-path '' to opt out.")
+    return path
 
 
 def parse_all(path: str) -> list[dict]:
@@ -82,12 +102,13 @@ def main() -> None:
     ap.add_argument("--syzygy-path", default="data/syzygy_3-4-5-6",
                     help="syzygy TB dir(s) — exact WDL for endgames the in-loop label misjudges")
     args = ap.parse_args()
+    ensure_parent(args.out)
+    syzygy = resolve_syzygy(args.syzygy_path)  # fail-fast before the long search
 
     rows = parse_all(args.all)
     sel = select(rows, args.control_n)
     print(f"[deepsf] {len(rows)} located seeds; rechecking {len(sel)} "
           f"(all REFUTED+INCONCLUSIVE + {sum(r['bucket']=='CONFIRMED_LOST' for r in sel)} CONFIRMED control)")
-    syzygy = args.syzygy_path or None
     print(f"[deepsf] nodes={args.nodes:,} hash={args.hash_mb}MB syzygy={syzygy} "
           f"stockfish={args.stockfish}")
 

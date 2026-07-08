@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass
@@ -135,6 +136,50 @@ def load_game_rows(replay_dir: str, wanted: set[int]) -> dict[int, list[GameRow]
     return games
 
 
+def _result_to_outcome(result: str, stm_white: bool) -> int:
+    """Game result string -> wdl_target (0=W/1=D/2=L) from the side-to-move POV
+    (matches the replay-shard wdl_target convention)."""
+    if result in ("1-0", "0-1"):
+        return 0 if ((result == "1-0") == stm_white) else 2
+    return 1  # draw / unknown
+
+
+def load_game_rows_from_jsonl(
+    paths: list[str], wanted: set[int] | None = None,
+) -> dict[int, list[GameRow]]:
+    """Per-ply rows from the harvester's saved ``<out>.games.pPID.jsonl`` — the
+    self-contained record (root_fen + move list + per-ply net_q/sf_q + result), so
+    continuation analysis survives the replay window aging out (Codex #125). The
+    side-to-move at ply p is root_fen's side flipped by parity; outcome is derived
+    from the game result on that POV. Preferred over the shard join when present."""
+    games: dict[int, list[GameRow]] = defaultdict(list)
+    for p in paths:
+        with open(p, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    r = json.loads(line)
+                    gid = int(r["game_id"])
+                    root_white = str(r["root_fen"]).split()[1] == "w"
+                except (json.JSONDecodeError, KeyError, IndexError, ValueError):
+                    continue
+                if wanted is not None and gid not in wanted:
+                    continue
+                result, selfplay = str(r.get("result", "")), bool(r.get("selfplay", False))
+                for pl in r.get("plies", []):
+                    ply = int(pl["ply"])
+                    nq, sq = pl.get("nq"), pl.get("sq")
+                    games[gid].append(GameRow(
+                        ply=ply,
+                        net_q=float("nan") if nq is None else float(nq),
+                        sf_q=float("nan") if sq is None else float(sq),
+                        outcome=_result_to_outcome(result, root_white == (ply % 2 == 0)),
+                        selfplay=selfplay,
+                    ))
+    for g in games.values():
+        g.sort(key=lambda r: r.ply)
+    return games
+
+
 @dataclass
 class Verdict:
     bucket: str
@@ -196,7 +241,10 @@ def classify(seed: Seed, rows: list[GameRow] | None, *,
     # terminal result: did SF still read it lost, or had it recovered.
     upto_c = [q for g, q in fwd if g <= confirm_h]
     recovered = any(q >= recover_to for q in upto_c)
-    stayed_lost = bool(upto_c) and min(upto_c) <= still_lost and not recovered
+    # "did SF STILL read it lost" = the eval AS OF the confirm horizon (the deepest
+    # sampled ply <= confirm_h), NOT min() — an early-lost-then-drifts-to-middling
+    # trajectory (e.g. [-0.7, -0.3]) must NOT count as confirmed (Codex #125).
+    stayed_lost = bool(upto_c) and upto_c[-1] <= still_lost and not recovered
     if stayed_lost:
         bucket = "CONFIRMED_LOST"
     elif recovered:
@@ -223,17 +271,27 @@ def main() -> None:
                     help="write not-confirmed seeds here for a deep-SF recheck")
     ap.add_argument("--dump-all", default="",
                     help="write EVERY located seed with its bucket (deep-SF calibration input)")
+    ap.add_argument("--games-glob", default="data/harvest/blindspot_live.games.p*.jsonl",
+                    help="saved full-game records (self-contained; preferred over the shard join)")
     args = ap.parse_args()
     horizons = [int(x) for x in args.horizons.split(",") if x.strip()]
 
     paths = sorted(glob.glob(args.severe_glob))
     seeds = parse_seeds(paths)
     print(f"[continuation] {len(seeds)} unique severe seeds from {len(paths)} file(s)")
-    replay_dir = args.replay_dir or default_replay_dir()
-    print(f"[continuation] replay dir: {replay_dir}")
     wanted = {s.game_id for s in seeds}
-    games = load_game_rows(replay_dir, wanted)
-    print(f"[continuation] {len(games)}/{len(wanted)} game_ids recovered in the window")
+    # Prefer the harvester's self-contained saved games (survive window aging);
+    # fall back to the replay-shard join only for games not saved there (Codex #125).
+    games = load_game_rows_from_jsonl(sorted(glob.glob(args.games_glob)), wanted)
+    from_saved = len(wanted & set(games))
+    missing = wanted - set(games)
+    if missing:
+        replay_dir = args.replay_dir or default_replay_dir()
+        print(f"[continuation] {from_saved} game(s) from saved jsonl; "
+              f"{len(missing)} from replay shards ({replay_dir})")
+        games.update(load_game_rows(replay_dir, missing))
+    print(f"[continuation] {len(wanted & set(games))}/{len(wanted)} game_ids recovered "
+          f"({from_saved} from saved games.jsonl)")
 
     buckets: dict[str, list[tuple[Seed, Verdict]]] = defaultdict(list)
     verdicts: list[tuple[Seed, Verdict]] = []
