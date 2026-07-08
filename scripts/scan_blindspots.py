@@ -30,7 +30,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from chess_anti_engine.replay.shard import load_shard_arrays
+from chess_anti_engine.replay.shard import load_shard_arrays, shard_index
 
 DEFAULT_POSITIONS_PER_ITER = 13500  # ~live ingest/iter; only scales the /iter estimate
 
@@ -103,7 +103,20 @@ def load_scan_arrays(shards: list[str], *, want_keys: bool) -> dict[str, np.ndar
             continue
         nq.append(_q(np.asarray(a["search_wdl"], np.float32))[has])
         sq.append(_q(np.asarray(a["sf_wdl"], np.float32))[has])
-        isp.append(np.asarray(a["is_selfplay"]).astype(bool)[has])
+        # is_selfplay is optional (legacy/bootstrap shards may lack it, or tag
+        # only some rows); trust it only where has_is_selfplay, else default to
+        # selfplay (the ~95% majority) rather than KeyError or miscount as
+        # curriculum. The cur% column is thus a floor on mixed windows.
+        n = int(has.sum())
+        raw_isp = a.get("is_selfplay")
+        raw_has_isp = a.get("has_is_selfplay")
+        if raw_isp is None:
+            isp.append(np.ones(n, dtype=bool))
+        else:
+            v = np.asarray(raw_isp).astype(bool)
+            if raw_has_isp is not None:
+                v = v | ~np.asarray(raw_has_isp).astype(bool)  # untagged -> selfplay
+            isp.append(v[has])
         if want_keys:
             keys.append(_position_key(np.asarray(a["x"], np.float32))[has])
     if not nq:
@@ -119,12 +132,18 @@ def load_scan_arrays(shards: list[str], *, want_keys: bool) -> dict[str, np.ndar
 
 def default_replay_dir() -> str:
     work = os.environ.get("TRAIN_WORK_DIR", "runs/pbt2_small")
+    # Two production layouts: the exchange root ($WORK/replay/train_trial_*) and
+    # the trial-local dir ($WORK/tune/train_trial_*/replay_shards) used when
+    # tune_replay_root_override is unset (e.g. configs/default.yaml).
     cands = sorted(
-        glob.glob(os.path.join(work, "replay", "train_trial_*", "replay_shards")),
+        glob.glob(os.path.join(work, "replay", "train_trial_*", "replay_shards"))
+        + glob.glob(os.path.join(work, "tune", "train_trial_*", "replay_shards")),
         key=os.path.getmtime,
     )
     if not cands:
-        raise SystemExit(f"no replay_shards under {work}/replay/train_trial_*/")
+        raise SystemExit(
+            f"no replay_shards under {work}/replay/train_trial_*/ or "
+            f"{work}/tune/train_trial_*/")
     return cands[-1]
 
 
@@ -144,7 +163,10 @@ def main() -> None:
     args = ap.parse_args()
 
     rdir = args.replay_dir or default_replay_dir()
-    shards = sorted(glob.glob(os.path.join(rdir, "shard_*.zarr")), key=os.path.getmtime)[-args.shards:]
+    # Select recent shards by numeric shard index, not dir mtime: copied /
+    # restored / touched windows have mtimes that don't reflect append order,
+    # but the buffer treats the shard_NNNNNN index as the window order.
+    shards = sorted(glob.glob(os.path.join(rdir, "shard_*.zarr")), key=shard_index)[-args.shards:]
     if not shards:
         raise SystemExit(f"no shards under {rdir}")
     arr = load_scan_arrays(shards, want_keys=not args.no_diversity)
