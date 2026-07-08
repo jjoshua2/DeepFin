@@ -61,7 +61,11 @@ from chess_anti_engine.selfplay.config import (
 )
 from chess_anti_engine.selfplay.manager import BatchStats
 from chess_anti_engine.selfplay.match import play_match_batch
-from chess_anti_engine.selfplay.opening import OpeningConfig, warm_opening_book_cache
+from chess_anti_engine.selfplay.opening import (
+    OpeningConfig,
+    _load_fen_list,
+    warm_opening_book_cache,
+)
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
 from chess_anti_engine.stockfish.uci import StockfishTimeoutError
 from chess_anti_engine.utils import sha256_file as _sha256_file
@@ -797,6 +801,12 @@ class WorkerSession:
         self.opening_book_path: str | None = None
         self.opening_book_path_2: str | None = None
         self.opening_fen_list_path: str | None = None
+  # Blind-spot FEN seeds doled by the server for the NEXT session start (the
+  # server hands the whole list to exactly one worker-poll per iteration). Set
+  # by _maybe_ingest_dole_flag when no live session is active yet; drained into
+  # play_batch's fen_dole_queue at session start. Mid-session doles go straight
+  # onto the live SelfplayState instead. Empty = no pending dole.
+        self._pending_fen_dole: list[str] = []
 
   # Per-iteration state (set during each loop iteration).
         self.model_sha = ""
@@ -1199,6 +1209,43 @@ class WorkerSession:
         """play_batch on_state_ready hook: stash the live state for live reco."""
         self._active_state = state
 
+    def _maybe_ingest_dole_flag(self, manifest: dict) -> None:
+        """If the server doled THIS iteration's seed batch to our poll, load the
+        whole FEN list and hand it to selfplay.
+
+        The server sets ``dole_fen_seeds: true`` on exactly one worker-poll per
+        iteration (see the server's seed-dole gate), so total seeded games ==
+        N*len(list) per iteration regardless of client count. We play them as
+        selfplay seeds: onto the live SelfplayState if a session is running
+        (replacing any undrained backlog — a fresh iteration's dole supersedes),
+        else stashed for the next session start. No-op unless dole mode is on
+        (opening_fen_dole_per_iter>0) and a FEN list is available."""
+        if not bool(manifest.get("dole_fen_seeds")):
+            return
+        reco = manifest.get("recommended_worker") or {}
+        n = int(reco.get("opening_fen_dole_per_iter", 0) or 0)
+        if n <= 0 or not self.opening_fen_list_path:
+            return
+        try:
+            seeds = list(_load_fen_list(str(self.opening_fen_list_path)))
+        except Exception as exc:
+            self.log.warning(
+                "dole: failed to load FEN list %s: %s", self.opening_fen_list_path, exc,
+            )
+            return
+        queue = list(seeds) * n
+        state = getattr(self, "_active_state", None)
+        if state is not None:
+            state.fen_dole_queue = queue
+            self._pending_fen_dole = []
+            dest = "live session"
+        else:
+            self._pending_fen_dole = queue
+            dest = "next session"
+        self.log.info(
+            "dole: received %d seed(s) x%d -> %s", len(seeds), n, dest,
+        )
+
     def _apply_live_reco(self, reco: dict) -> bool:
         """Swap live-safe config onto the running SelfplayState. Returns False if
         no live session is active (caller falls back to a session restart)."""
@@ -1274,6 +1321,9 @@ class WorkerSession:
                 self._swap_model_from_manifest(manifest)
                 return
             self._sync_assets(manifest)
+  # Mid-session: if the server doled this iteration's seed batch to this poll,
+  # push it onto the live SelfplayState (recycled selfplay slots drain it).
+            self._maybe_ingest_dole_flag(manifest)
         except Exception:
             pass
 
@@ -2314,6 +2364,7 @@ class WorkerSession:
         "opening_book_prob", "opening_book_max_plies", "opening_book_max_games",
         "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
         "opening_fen_prob", "opening_fen_net_side_to_move", "opening_fen_selfplay_only",
+        "opening_fen_dole_per_iter",
         "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     )
 
@@ -2408,6 +2459,10 @@ class WorkerSession:
                     reco.get("opening_fen_net_side_to_move", True)
                 ),
                 opening_fen_selfplay_only=bool(reco.get("opening_fen_selfplay_only", False)),
+                opening_fen_dole_per_iter=(
+                    int(reco.get("opening_fen_dole_per_iter", 0))
+                    if self.opening_fen_list_path else 0
+                ),
             ),
             "game": GameConfig(
                 max_plies=self._resolve_reco(reco, "max_plies", 240, int),
@@ -2558,9 +2613,15 @@ class WorkerSession:
 
     def _dispatch_selfplay_one_shard(
         self, *, games_per_batch: int, cfgs: dict, need_local_model: bool,
+        fen_dole_queue: list[str] | None = None,
     ) -> BatchStats | None:
         """Run one continuous-selfplay session. Returns None on broker errors that
-        we recover from via reset (caller exits the iteration); otherwise BatchStats."""
+        we recover from via reset (caller exits the iteration); otherwise BatchStats.
+
+        ``fen_dole_queue`` (opt-in dole mode) seeds the standard single-threaded
+        path's selfplay slots with the server-doled batch. Not wired into the
+        threaded path (non-production; like live-reco it keeps N independent
+        states and would race on one shared queue)."""
         assert self.sf is not None  # caller (_run_selfplay) calls _sync_stockfish first
         _eval = self.inference_client or self._direct_evaluator
         try:
@@ -2583,6 +2644,7 @@ class WorkerSession:
                     on_step=self._check_model_update,
                     on_state_ready=self._set_active_state,
                     stop_fn=self._stop_fn,
+                    fen_dole_queue=fen_dole_queue,
                     **cfgs,
                 )
             finally:
@@ -2657,10 +2719,19 @@ class WorkerSession:
         self._sync_stockfish(manifest, sf_nodes, sf_multipv, syzygy_path=syzygy_path)
         assert self.sf is not None  # _sync_stockfish always assigns
 
+  # If this session's lifecycle poll won the server's dole this iteration, the
+  # seeds are stashed here (no live state yet); hand them to play_batch and clear
+  # so a later poll doesn't append to the in-flight queue. Mid-session doles go
+  # straight onto the live SelfplayState via _periodic_manifest_poll.
+        self._maybe_ingest_dole_flag(manifest)
+        fen_dole_queue = self._pending_fen_dole or None
+        self._pending_fen_dole = []
+
         t0 = time.time()
         self._saw_completed_game = False
         stats = self._dispatch_selfplay_one_shard(
             games_per_batch=games_per_batch, cfgs=cfgs, need_local_model=need_local_model,
+            fen_dole_queue=fen_dole_queue,
         )
         if stats is None:
             return

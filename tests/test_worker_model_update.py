@@ -755,3 +755,75 @@ def test_live_reco_change_without_active_state_restarts() -> None:
 
     assert changed is True
     assert session._stop_selfplay is True
+
+
+# ── Server-doled FEN seeding (_maybe_ingest_dole_flag) ───────────────────────
+
+_DOLE_FEN_A = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
+_DOLE_FEN_B = "rnbqkb1r/pppppppp/5n2/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 2 2"
+
+
+def _dole_session_with_list(tmp_path: Path) -> WorkerSession:
+    session = _bare_worker_session()
+    fen_path = tmp_path / "seeds.txt"
+    fen_path.write_text("\n".join([_DOLE_FEN_A, _DOLE_FEN_B]) + "\n", encoding="utf-8")
+    session.opening_fen_list_path = str(fen_path)
+    session._active_state = None
+    session._pending_fen_dole = []
+    return session
+
+
+def test_dole_flag_stashes_seeds_when_no_active_session(tmp_path: Path) -> None:
+    session = _dole_session_with_list(tmp_path)
+    session._maybe_ingest_dole_flag(
+        {"dole_fen_seeds": True, "recommended_worker": {"opening_fen_dole_per_iter": 1}},
+    )
+    # No live state → stash for the next session start, in file order.
+    assert session._pending_fen_dole == [_DOLE_FEN_A, _DOLE_FEN_B]
+
+
+def test_dole_flag_pushes_onto_live_state(tmp_path: Path) -> None:
+    session = _dole_session_with_list(tmp_path)
+    session._active_state = SimpleNamespace(fen_dole_queue=None)
+    session._maybe_ingest_dole_flag(
+        {"dole_fen_seeds": True, "recommended_worker": {"opening_fen_dole_per_iter": 1}},
+    )
+    assert session._active_state.fen_dole_queue == [_DOLE_FEN_A, _DOLE_FEN_B]
+    assert session._pending_fen_dole == []  # went to the live session, not stashed
+
+
+def test_dole_flag_repeats_list_n_times(tmp_path: Path) -> None:
+    session = _dole_session_with_list(tmp_path)
+    session._maybe_ingest_dole_flag(
+        {"dole_fen_seeds": True, "recommended_worker": {"opening_fen_dole_per_iter": 2}},
+    )
+    assert session._pending_fen_dole == [_DOLE_FEN_A, _DOLE_FEN_B, _DOLE_FEN_A, _DOLE_FEN_B]
+
+
+def test_dole_flag_noop_when_false_or_disabled(tmp_path: Path) -> None:
+    session = _dole_session_with_list(tmp_path)
+    # Flag false → no-op.
+    session._maybe_ingest_dole_flag(
+        {"dole_fen_seeds": False, "recommended_worker": {"opening_fen_dole_per_iter": 1}},
+    )
+    assert session._pending_fen_dole == []
+    # Flag true but dole disabled (0) → no-op.
+    session._maybe_ingest_dole_flag(
+        {"dole_fen_seeds": True, "recommended_worker": {"opening_fen_dole_per_iter": 0}},
+    )
+    assert session._pending_fen_dole == []
+
+
+def test_dole_flag_noop_without_fen_list(tmp_path: Path) -> None:
+    session = _dole_session_with_list(tmp_path)
+    session.opening_fen_list_path = None  # no list available to this worker
+    session._maybe_ingest_dole_flag(
+        {"dole_fen_seeds": True, "recommended_worker": {"opening_fen_dole_per_iter": 1}},
+    )
+    assert session._pending_fen_dole == []
+
+
+def test_dole_per_iter_is_watched_and_restart_keyed() -> None:
+    # Completeness: the OpeningConfig reco.get in _build_selfplay_configs must be
+    # watched (test_every_reco_field_is_watched); it's a restart key (mode switch).
+    assert "opening_fen_dole_per_iter" in WorkerSession._RECO_RESTART_KEYS

@@ -230,6 +230,7 @@ def _play_batch_kwargs(tc: TrialConfig, ds: DifficultyState | None = None) -> di
             opening_fen_prob=tc.opening_fen_prob,
             opening_fen_net_side_to_move=tc.opening_fen_net_side_to_move,
             opening_fen_selfplay_only=tc.opening_fen_selfplay_only,
+            opening_fen_dole_per_iter=tc.opening_fen_dole_per_iter,
         ),
         "diff_focus": DiffFocusConfig(
             enabled=tc.diff_focus_enabled,

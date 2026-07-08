@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -50,6 +51,31 @@ def _compacted_token_suffix(flush_token: str) -> str:
     samples (duplicates in replay).
     """
     return f"_{flush_token}{LOCAL_SHARD_SUFFIX}"
+
+
+class _SeedDoleGate:
+    """Per-iteration blind-spot FEN-seed doling gate.
+
+    ``opening_fen_dole_per_iter`` seeding hands the WHOLE seed list to exactly
+    ONE worker-poll per training iteration (per trial): that worker plays every
+    seed once (×N) as selfplay games while every other worker plays normal
+    games, giving deterministic, variance-free, client-count-independent
+    coverage. This gate is the "exactly one" arbiter: ``claim`` returns True for
+    the first caller of a given (trial, iteration) and False thereafter, resetting
+    when the iteration advances. The asyncio lock makes the check-and-set atomic
+    so concurrent boundary polls can't both win.
+    """
+
+    def __init__(self) -> None:
+        self._last_iter: dict[str, int] = {}
+        self._lock = asyncio.Lock()
+
+    async def claim(self, trial_key: str, training_iteration: int) -> bool:
+        async with self._lock:
+            if training_iteration > self._last_iter.get(trial_key, -1):
+                self._last_iter[trial_key] = training_iteration
+                return True
+            return False
 
 
 def resolve_publish_artifact_path(publish_root: Path, filename: str) -> Path | None:
@@ -452,6 +478,7 @@ def create_app(
     upload_lock = threading.Lock()
     queued_games_cache: dict[str | None, tuple[float, dict[str, int]]] = {}
     queued_games_cache_lock = threading.Lock()
+    seed_dole_gate = _SeedDoleGate()
 
     from contextlib import asynccontextmanager
 
@@ -1014,7 +1041,12 @@ def create_app(
         *,
         x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
-    ) -> Any:
+    ) -> dict[str, Any]:
+        """Build the manifest served to a worker poll (post stale-pause).
+
+        Returns the manifest DICT (not a Response) so the async handler can add
+        the per-request ``dole_fen_seeds`` flag under the seed-dole lock before
+        serializing. Raises HTTPException on 404 (unpublished) / 426 (too old)."""
         _flush_ready_upload_accumulators(trial_id=trial_id, force_age=True, force_all=False)
         mf = _publish_root(trial_id) / "manifest.json"
         if not mf.exists():
@@ -1030,14 +1062,47 @@ def create_app(
             raise HTTPException(status_code=426, detail=reason)
 
         manifest = json.loads(mf.read_text(encoding="utf-8"))
-        return JSONResponse(content=_apply_dynamic_stale_pause(trial_id, manifest))
+        return _apply_dynamic_stale_pause(trial_id, manifest)
+
+    async def _resolve_dole_fen_seeds(trial_id: str | None, manifest: dict[str, Any]) -> bool:
+        """Whether THIS poll should receive the doled seed batch this iteration.
+
+        True only when dole mode is on (recommended_worker.opening_fen_dole_per_iter
+        > 0), a FEN list is actually published (top-level ``opening_fen_list``
+        asset present), and this poll is the first for the current
+        ``training_iteration`` (arbitrated by ``seed_dole_gate``). Always resolved
+        (True/False) so the worker sees an explicit field."""
+        reco = manifest.get("recommended_worker")
+        if not isinstance(reco, dict):
+            return False
+        if int(reco.get("opening_fen_dole_per_iter", 0) or 0) <= 0:
+            return False
+        if not isinstance(manifest.get("opening_fen_list"), dict):
+            return False
+        trial_key = str(_normalize_trial_id(trial_id) or "")
+        training_iteration = int(manifest.get("training_iteration", 0) or 0)
+        return await seed_dole_gate.claim(trial_key, training_iteration)
+
+    async def _serve_manifest(
+        trial_id: str | None,
+        *,
+        x_cae_worker_version: str | None,
+        x_cae_protocol_version: str | None,
+    ) -> Any:
+        manifest = _get_manifest_impl(
+            trial_id,
+            x_cae_worker_version=x_cae_worker_version,
+            x_cae_protocol_version=x_cae_protocol_version,
+        )
+        manifest["dole_fen_seeds"] = await _resolve_dole_fen_seeds(trial_id, manifest)
+        return JSONResponse(content=manifest)
 
     @app.get("/v1/manifest")
     async def get_manifest(
         x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
     ) -> Any:
-        return _get_manifest_impl(
+        return await _serve_manifest(
             None,
             x_cae_worker_version=x_cae_worker_version,
             x_cae_protocol_version=x_cae_protocol_version,
@@ -1049,7 +1114,7 @@ def create_app(
         x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
     ) -> Any:
-        return _get_manifest_impl(
+        return await _serve_manifest(
             trial_id,
             x_cae_worker_version=x_cae_worker_version,
             x_cae_protocol_version=x_cae_protocol_version,

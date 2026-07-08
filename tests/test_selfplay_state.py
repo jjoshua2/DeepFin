@@ -205,3 +205,88 @@ def test_recycle_slot_resets_state_and_rerolls_selfplay():
     assert state.done_arr[0] == 0
     assert state.finalized_arr[0] == 0
     assert state.selfplay_arr[0] == 1  # re-rolled with sp_frac=1.0
+
+
+# ── Server-doled FEN seeding (fen_dole_queue) ────────────────────────────────
+# Wiring test for create()/recycle_slot() draining the queue for selfplay slots.
+
+_FEN_BLACK = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
+_FEN_WHITE = "rnbqkb1r/pppppppp/5n2/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 2 2"
+
+
+def _dole_state(*, batch_size: int, selfplay_fraction: float, fen_dole_queue):
+    rng = np.random.default_rng(0)
+    evaluator = Mock(spec=["evaluate_encoded"])
+    stockfish = Mock(spec=["search", "nodes"])
+    stockfish.nodes = 0
+    # prob=1.0 so a leak of the probabilistic path would visibly seed and fail;
+    # opening_fen_list_path is only a truthiness gate here (the queue holds the
+    # seed lines, so no file is read).
+    opening = OpeningConfig(
+        opening_fen_list_path="dummy", opening_fen_dole_per_iter=1, opening_fen_prob=1.0,
+    )
+    return SelfplayState.create(
+        model=None,
+        device="cpu",
+        rng=rng,
+        stockfish=stockfish,
+        evaluator=evaluator,
+        batch_size=batch_size,
+        continuous=True,
+        target=batch_size,
+        opponent=OpponentConfig(),
+        temp=TemperatureConfig(),
+        search=SearchConfig(),
+        opening=opening,
+        diff_focus=DiffFocusConfig(),
+        game=GameConfig(selfplay_fraction=selfplay_fraction),
+        fen_dole_queue=fen_dole_queue,
+    )
+
+
+def test_create_drains_dole_queue_on_selfplay_slots_in_order():
+    # selfplay_fraction=1.0 → every slot is selfplay; the first len(queue) slots
+    # take the queued seeds in order, the rest fall back (no probabilistic seed).
+    queue = [_FEN_WHITE, _FEN_BLACK]
+    state = _dole_state(batch_size=5, selfplay_fraction=1.0, fen_dole_queue=queue)
+    assert all(state.selfplay_arr[i] == 1 for i in range(5))
+    assert state.opening_source_arr[0] == "fenlist"
+    assert state.opening_source_arr[1] == "fenlist"
+    assert all(state.opening_source_arr[i] != "fenlist" for i in range(2, 5))
+    assert state.boards[0].fen() == chess.Board(_FEN_WHITE).fen()
+    assert state.boards[1].fen() == chess.Board(_FEN_BLACK).fen()
+    assert queue == []  # fully drained
+    # net faces the FEN's side to move (opening_fen_net_side_to_move default True).
+    assert state.net_color(0) == chess.WHITE  # _FEN_WHITE is white-to-move
+    assert state.net_color(1) == chess.BLACK  # _FEN_BLACK is black-to-move
+
+
+def test_create_does_not_seed_curriculum_slots_from_dole_queue():
+    queue = [_FEN_BLACK, _FEN_WHITE]
+    state = _dole_state(batch_size=4, selfplay_fraction=0.0, fen_dole_queue=queue)
+    assert all(state.selfplay_arr[i] == 0 for i in range(4))  # all curriculum
+    assert all(src != "fenlist" for src in state.opening_source_arr)
+    assert queue == [_FEN_BLACK, _FEN_WHITE]  # untouched — dose can't starve PID
+
+
+def test_recycle_slot_consumes_dole_queue_when_selfplay():
+    # Build with an empty queue (nothing seeded at create), then dole mid-session.
+    state = _dole_state(batch_size=2, selfplay_fraction=1.0, fen_dole_queue=[])
+    assert all(src != "fenlist" for src in state.opening_source_arr)
+    state.fen_dole_queue = [_FEN_BLACK]
+    state.game = replace(state.game, selfplay_fraction=1.0)  # re-roll → selfplay
+    state.recycle_slot(0)
+    assert state.selfplay_arr[0] == 1
+    assert state.opening_source_arr[0] == "fenlist"
+    assert state.boards[0].fen() == chess.Board(_FEN_BLACK).fen()
+    assert state.fen_dole_queue == []  # popped
+
+
+def test_recycle_slot_curriculum_leaves_dole_queue_intact():
+    state = _dole_state(batch_size=2, selfplay_fraction=1.0, fen_dole_queue=[])
+    state.fen_dole_queue = [_FEN_BLACK]
+    state.game = replace(state.game, selfplay_fraction=0.0)  # re-roll → curriculum
+    state.recycle_slot(0)
+    assert state.selfplay_arr[0] == 0
+    assert state.opening_source_arr[0] != "fenlist"
+    assert state.fen_dole_queue == [_FEN_BLACK]  # curriculum never drains it

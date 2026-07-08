@@ -723,3 +723,117 @@ def test_train_step_budget_views_drought_fallback_respects_step_cap() -> None:
     )
     assert budget["target_sample_budget"] == 40_000
     assert budget["steps"] == 50  # capped, not 79
+
+
+# ── Server seed-dole gate (opening_fen_dole_per_iter) ────────────────────────
+
+_DOLE_SEED_FEN = "rnbqkb1r/pppppppp/5n2/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 2 2"
+
+
+def _poll_app_n(app, path: str, *, headers: dict[str, str], n: int) -> list[dict]:
+    """GET `path` n times against ONE app instance (shared dole-gate state)."""
+    async def _run() -> list[dict]:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            out: list[dict] = []
+            for _ in range(n):
+                response = await client.get(path, headers=headers)
+                response.raise_for_status()
+                out.append(dict(response.json()))
+            return out
+
+    return asyncio.run(_run())
+
+
+def _publish_dole_trial(tmp_path: Path, *, training_iteration: int, dole: int, fen_path: Path) -> None:
+    _publish_distributed_trial_state(
+        trainer=_FakeTrainer(),
+        config={
+            "opening_fen_dole_per_iter": dole,
+            "opening_fen_list_path": str(fen_path),
+        },
+        model_cfg=_model_cfg(),
+        server_root=tmp_path,
+        trial_id="trial_00000",
+        training_iteration=training_iteration,
+        trainer_step=training_iteration,
+        sf_nodes=1000,
+        mcts_simulations=64,
+    )
+
+
+def test_manifest_doles_fen_seeds_once_per_iteration(tmp_path: Path) -> None:
+    fen_path = tmp_path / "blindspot.txt"
+    fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+    _publish_dole_trial(tmp_path, training_iteration=7, dole=1, fen_path=fen_path)
+
+    app = create_app(server_root=tmp_path)
+    headers = _manifest_poll_headers(worker_id="test-worker")
+    polls = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=3)
+
+    # Plumbing sanity: dole knob rides recommended_worker; the FEN list is an asset.
+    assert polls[0]["recommended_worker"]["opening_fen_dole_per_iter"] == 1
+    assert isinstance(polls[0].get("opening_fen_list"), dict)
+    # Exactly one poll this iteration wins the dole.
+    assert [p["dole_fen_seeds"] for p in polls] == [True, False, False]
+
+    # Next iteration re-opens the gate for exactly one poll (same app instance).
+    _publish_dole_trial(tmp_path, training_iteration=8, dole=1, fen_path=fen_path)
+    polls2 = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=2)
+    assert [p["dole_fen_seeds"] for p in polls2] == [True, False]
+
+
+def test_manifest_no_dole_when_disabled(tmp_path: Path) -> None:
+    fen_path = tmp_path / "blindspot.txt"
+    fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+    _publish_dole_trial(tmp_path, training_iteration=3, dole=0, fen_path=fen_path)  # dole off
+
+    app = create_app(server_root=tmp_path)
+    polls = _poll_app_n(
+        app, "/v1/trials/trial_00000/manifest",
+        headers=_manifest_poll_headers(worker_id="test-worker"), n=2,
+    )
+    assert all(p["dole_fen_seeds"] is False for p in polls)
+
+
+def test_manifest_no_dole_without_published_fen_list(tmp_path: Path) -> None:
+    # dole enabled but the FEN-list file is absent → no opening_fen_list asset →
+    # server never doles (nothing for the worker to load).
+    _publish_distributed_trial_state(
+        trainer=_FakeTrainer(),
+        config={"opening_fen_dole_per_iter": 1, "opening_fen_list_path": str(tmp_path / "missing.txt")},
+        model_cfg=_model_cfg(),
+        server_root=tmp_path,
+        trial_id="trial_00000",
+        training_iteration=5,
+        trainer_step=5,
+        sf_nodes=1000,
+        mcts_simulations=64,
+    )
+    app = create_app(server_root=tmp_path)
+    polls = _poll_app_n(
+        app, "/v1/trials/trial_00000/manifest",
+        headers=_manifest_poll_headers(worker_id="test-worker"), n=1,
+    )
+    assert polls[0]["dole_fen_seeds"] is False
+    assert "opening_fen_list" not in polls[0]
+
+
+def test_seed_dole_gate_single_winner_under_concurrency() -> None:
+    from chess_anti_engine.server.app import _SeedDoleGate
+
+    gate = _SeedDoleGate()
+
+    async def _burst(trial_key: str, it: int, n: int) -> list[bool]:
+        return list(await asyncio.gather(*[gate.claim(trial_key, it) for _ in range(n)]))
+
+    # 64 simultaneous polls at the iteration boundary → exactly one winner.
+    assert sum(asyncio.run(_burst("t", 5, 64))) == 1
+    # Re-polling the same iteration yields no further winners.
+    assert sum(asyncio.run(_burst("t", 5, 8))) == 0
+    # Advancing the iteration re-opens exactly one winner.
+    assert sum(asyncio.run(_burst("t", 6, 16))) == 1
+    # A stale (lower) iteration never wins again.
+    assert sum(asyncio.run(_burst("t", 5, 4))) == 0
+    # Per-trial isolation: a different trial has its own counter.
+    assert asyncio.run(gate.claim("other", 5)) is True
