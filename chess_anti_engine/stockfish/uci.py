@@ -185,6 +185,16 @@ class StockfishUCI:
         with self._lock:
             self.nodes = int(nodes)
 
+    def new_game(self) -> None:
+        """Clear the transposition table (`ucinewgame`) so the next search is a
+        COLD, independent search — needed when re-evaluating one position at
+        several node budgets, else the earlier search's hash warm-starts the
+        later ones and overstates their agreement (Codex #125)."""
+        with self._lock:
+            self._send("ucinewgame")
+            self._send("isready")
+            self._wait_for("readyok")
+
     def _set_syzygy_path_locked(self, syzygy_path: str) -> None:
         if str(syzygy_path) == str(self.syzygy_path or ""):
             return

@@ -1,6 +1,8 @@
 """Inline blind-spot harvesting (selfplay/blindspot_harvest.py)."""
 from __future__ import annotations
 
+import json
+
 import chess
 import numpy as np
 
@@ -168,6 +170,29 @@ def test_run_harvest_splits_severe_into_sibling_file(tmp_path) -> None:
     assert severe_path_for("a/b/harvest.txt") == "a/b/harvest.severe.txt"
 
 
+def test_run_harvest_caps_severe_at_one_per_game(tmp_path) -> None:
+    from chess_anti_engine.selfplay.blindspot_harvest import (
+        _worker_path,
+        run_harvest,
+        severe_path_for,
+    )
+    from chess_anti_engine.selfplay.opening import _load_fen_list
+
+    final = _board_after(len(_LINE))
+    records = [  # two SEVERE rows (net_q>=0.5); ply 6 has the larger net_q-sf_q gap
+        _Rec(4, True, _wdl(0.6), _wdl(-0.6), _probs_favoring(_board_after(4), _LINE[4])),  # gap 1.2
+        _Rec(6, True, _wdl(0.7), _wdl(-0.9), _probs_favoring(_board_after(6), _LINE[6])),  # gap 1.6 (max)
+    ]
+    out = tmp_path / "h.txt"
+    run_harvest(chess.Board(), final, records, has_c_ply=True, game_id="g1",
+                out_path=str(out), cfg=_cfg())
+    # broad file keeps both; auto-feed (severe) collapses to the max-gap row only.
+    assert len(_load_fen_list(_worker_path(str(out)))) == 2
+    severe = _load_fen_list(_worker_path(severe_path_for(str(out))))
+    assert len(severe) == 1
+    assert seed_board_from_line(severe[0]).fen() == _board_after(6).fen()
+
+
 def test_run_harvest_off_and_fail_safe(tmp_path) -> None:
     from chess_anti_engine.selfplay.blindspot_harvest import run_harvest
 
@@ -177,3 +202,55 @@ def test_run_harvest_off_and_fail_safe(tmp_path) -> None:
     bad = [_Rec("not-an-int", True, _wdl(0.6), _wdl(-0.6), None)]
     assert run_harvest(chess.Board(), final, bad, has_c_ply=True, game_id="g",
                        out_path=str(tmp_path / "h.txt"), cfg=_cfg()) == 0
+
+
+# ── full-game save (moves + eval trajectory for each harvested game) ──────────
+
+def test_seed_comment_carries_ply() -> None:
+    seed = HarvestedSeed(line="x", net_q=0.6, sf_q=-0.6, severe=True, ply_index=42)
+    rec = format_record(seed, game_id="g")
+    assert "ply=42" in rec
+    # ply is appended AFTER game= so a game=-keyed parser is unaffected.
+    assert rec.index("game=") < rec.index("ply=")
+
+
+def test_run_harvest_saves_full_game(tmp_path) -> None:
+    from chess_anti_engine.selfplay.blindspot_harvest import (
+        _worker_path,
+        games_path_for,
+        run_harvest,
+    )
+
+    final = _board_after(len(_LINE))
+    records = [
+        _Rec(4, True, _wdl(0.6), _wdl(-0.6), _probs_favoring(_board_after(4), _LINE[4])),   # severe
+        _Rec(6, True, _wdl(0.3), _wdl(-0.55), _probs_favoring(_board_after(6), _LINE[6])),  # broad
+    ]
+    out = tmp_path / "harvest.txt"
+    run_harvest(chess.Board(), final, records, has_c_ply=True, game_id="g1",
+                out_path=str(out), cfg=_cfg(), result="0-1", is_selfplay=False)
+
+    games_file = _worker_path(games_path_for(str(out)))
+    with open(games_file, encoding="utf-8") as fh:
+        lines = [ln for ln in fh.read().splitlines() if ln.strip()]
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["game_id"] == "g1"
+    assert rec["result"] == "0-1"
+    assert rec["selfplay"] is False
+    # root_fen + moves reproduces the whole game (self-contained, no replay join).
+    assert rec["moves"] == _LINE
+    b = chess.Board(rec["root_fen"])
+    for u in rec["moves"]:
+        b.push(chess.Move.from_uci(u))
+    assert b.fen() == final.fen()
+    # per-ply eval trajectory + which plies were harvested (severity).
+    assert [p["ply"] for p in rec["plies"]] == [4, 6]
+    assert [(p["ply"], p["sev"]) for p in rec["seed_plies"]] == [(4, 1), (6, 0)]
+
+
+def test_games_path_for_uses_jsonl_and_no_dotted_dir_bug() -> None:
+    from chess_anti_engine.selfplay.blindspot_harvest import games_path_for
+
+    assert games_path_for("a/b/harvest.txt") == "a/b/harvest.games.jsonl"
+    assert games_path_for("data/run.1/harvest") == "data/run.1/harvest.games.jsonl"
