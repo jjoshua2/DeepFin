@@ -18,7 +18,10 @@ from chess_anti_engine.selfplay.blindspot_harvest import (
 )
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 
-_ENC = "lc0_1858"
+# rec.policy_probs is the internal az_4672 vector (POLICY_SIZE) in production —
+# build the fixture at that size so the size-based index lookup is exercised (a
+# 1858 fixture hid the real bug: indexing 4672 probs with a compact index).
+_ENC = "az_4672"
 _LINE = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "f3g5", "d7d5", "e4d5", "c6a5"]
 
 
@@ -45,7 +48,7 @@ def _probs_favoring(board: chess.Board, uci: str, p: float = 0.9) -> np.ndarray:
 
 
 def _cfg() -> HarvestConfig:
-    return HarvestConfig(net_ok=0.2, sf_lost=-0.5, severe_net_ok=0.5, severe_sf_lost=-0.5)
+    return HarvestConfig(net_ok=0.2, sf_lost=-0.5, severe_net_ok=0.5)
 
 
 # ── board + played-move reconstruction ───────────────────────────────────────
@@ -79,7 +82,7 @@ def test_seed_line_bare_fen_at_game_start() -> None:
 # ── detection (value-blind + played move the search favored) ─────────────────
 
 def _harvest(boards, played, evals, cfg=None):
-    return harvest_from_records(evals, boards, played, cfg=cfg or _cfg(), policy_encoding=_ENC)
+    return harvest_from_records(evals, boards, played, cfg=cfg or _cfg())
 
 
 def test_harvest_flags_value_blind_favored_moves() -> None:
@@ -139,7 +142,11 @@ class _Rec:
 
 
 def test_run_harvest_splits_severe_into_sibling_file(tmp_path) -> None:
-    from chess_anti_engine.selfplay.blindspot_harvest import run_harvest, severe_path_for
+    from chess_anti_engine.selfplay.blindspot_harvest import (
+        _worker_path,
+        run_harvest,
+        severe_path_for,
+    )
     from chess_anti_engine.selfplay.opening import _load_fen_list
 
     final = _board_after(len(_LINE))
@@ -149,13 +156,16 @@ def test_run_harvest_splits_severe_into_sibling_file(tmp_path) -> None:
     ]
     out = tmp_path / "harvest.txt"
     n = run_harvest(chess.Board(), final, records, has_c_ply=True, game_id="g1",
-                    out_path=str(out), cfg=_cfg(), policy_encoding=_ENC)
+                    out_path=str(out), cfg=_cfg())
     assert n == 2
-    assert len(_load_fen_list(str(out))) == 2
-    severe_lines = _load_fen_list(severe_path_for(str(out)))
+    # Per-process files: <out>.pPID and <out>.severe.pPID.
+    assert len(_load_fen_list(_worker_path(str(out)))) == 2
+    severe_lines = _load_fen_list(_worker_path(severe_path_for(str(out))))
     assert len(severe_lines) == 1
     assert seed_board_from_line(severe_lines[0]).fen() == _board_after(4).fen()
-    assert severe_path_for("a/b/harvest.txt").endswith("harvest.severe.txt")
+    # Dotted directory + extensionless file must not misplace the severe file.
+    assert severe_path_for("data/run.1/harvest") == "data/run.1/harvest.severe"
+    assert severe_path_for("a/b/harvest.txt") == "a/b/harvest.severe.txt"
 
 
 def test_run_harvest_off_and_fail_safe(tmp_path) -> None:
@@ -163,7 +173,7 @@ def test_run_harvest_off_and_fail_safe(tmp_path) -> None:
 
     final = _board_after(4)
     assert run_harvest(chess.Board(), final, [], has_c_ply=True, game_id="g",
-                       out_path="", cfg=_cfg(), policy_encoding=_ENC) == 0
+                       out_path="", cfg=_cfg()) == 0
     bad = [_Rec("not-an-int", True, _wdl(0.6), _wdl(-0.6), None)]
     assert run_harvest(chess.Board(), final, bad, has_c_ply=True, game_id="g",
-                       out_path=str(tmp_path / "h.txt"), cfg=_cfg(), policy_encoding=_ENC) == 0
+                       out_path=str(tmp_path / "h.txt"), cfg=_cfg()) == 0

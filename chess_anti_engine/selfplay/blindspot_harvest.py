@@ -17,6 +17,7 @@ not cost a game's training data.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -30,8 +31,10 @@ _log = logging.getLogger(__name__)
 class HarvestConfig:
     net_ok: float = 0.2       # capture band: net thinks fine above this
     sf_lost: float = -0.5     # capture band: SF says lost below this
-    severe_net_ok: float = 0.5    # auto-feed band (net thinks it is winning)
-    severe_sf_lost: float = -0.5  # auto-feed band (SF says clearly lost)
+    # Auto-feed (severe) band: among captured value-blind rows (already sf_q <
+    # sf_lost), the ones where the net was CONFIDENT it was winning. Defined by
+    # net-confidence alone — sf is already constrained by the capture gate.
+    severe_net_ok: float = 0.5
     history_plies: int = 8    # preceding moves stored (LC0 uses 8 history steps)
     # sf_wdl labels the position AFTER the net's played move; move-selection
     # temperature can resample a move the SEARCH didn't favor, so a safe search
@@ -60,6 +63,7 @@ def pre_move_boards(
     record_ply_indices: list[int],
     *,
     opening_len: int,
+    wanted: set[int] | None = None,
 ) -> tuple[list[chess.Board | None], list[chess.Move | None]]:
     """Reconstruct each record's PRE-move board (position the net faced, with
     real history) and the move the net then PLAYED from it.
@@ -68,7 +72,11 @@ def pre_move_boards(
     ``len(board_before.move_stack)`` (network_turn.py), so walking the final
     move stack and matching that count aligns each record to the position just
     before its move. ``opening_len`` skips the opening plies already present in
-    ``starting_board`` on the Python play path (0 on the C-ply path)."""
+    ``starting_board`` on the Python play path (0 on the C-ply path).
+
+    ``wanted`` (record indices) restricts the expensive per-ply Board.copy() to
+    just those records — the caller applies the cheap WDL gate first so the hot
+    path doesn't copy a board for every ply of every game."""
     at_ply: dict[int, int] = {}
     for t, ply in enumerate(record_ply_indices):
         at_ply.setdefault(int(ply), t)  # first record at a ply wins (forced-ply dups)
@@ -77,7 +85,7 @@ def pre_move_boards(
     rb = starting_board.copy()
     for mv in final_move_stack[opening_len:]:
         t = at_ply.get(len(rb.move_stack))
-        if t is not None:
+        if t is not None and (wanted is None or t in wanted):
             boards[t] = rb.copy()
             played[t] = mv
         rb.push(mv)
@@ -98,22 +106,56 @@ def seed_line_from_board(board: chess.Board, history_plies: int) -> str:
     return f"{tmp.fen()} | {moves}"
 
 
+def _probs_encoding(policy_probs: np.ndarray) -> str | None:
+    """The move encoding that indexes ``policy_probs`` — chosen by its length,
+    NOT the config's output encoding. rec.policy_probs is the internal az_4672
+    vector (POLICY_SIZE); indexing it with a compact lc0_1858 index reads the
+    wrong move (Codex/review). Returns None for an unknown size (skip)."""
+    from chess_anti_engine.moves.encode import policy_size_for_encoding
+
+    for enc in ("az_4672", "lc0_1858"):
+        if len(policy_probs) == policy_size_for_encoding(enc):
+            return enc
+    return None
+
+
 def _played_was_favored(
     board: chess.Board, played: chess.Move | None, policy_probs: np.ndarray | None,
-    policy_encoding: str, min_prob: float,
+    min_prob: float,
 ) -> bool:
     """True if the net's PLAYED move carried >= ``min_prob`` improved-policy
     weight (so sf_wdl reflects a near-best move, not a temperature blunder).
     Missing data / an unencodable move -> conservatively False (skip)."""
     if played is None or policy_probs is None:
         return False
+    enc = _probs_encoding(policy_probs)
+    if enc is None:
+        return False
     try:
         from chess_anti_engine.moves.encode import move_to_index_for_encoding
 
-        idx = int(move_to_index_for_encoding(played, board, policy_encoding=policy_encoding))
+        idx = int(move_to_index_for_encoding(played, board, policy_encoding=enc))
         return 0 <= idx < len(policy_probs) and float(policy_probs[idx]) >= min_prob
     except (ValueError, KeyError, IndexError):
         return False
+
+
+def value_blind_candidates(
+    evals: Sequence[tuple[bool, np.ndarray | None, np.ndarray | None, np.ndarray | None]],
+    *,
+    cfg: HarvestConfig,
+) -> list[tuple[int, float, float]]:
+    """(record index, net_q, sf_q) for records passing the CHEAP WDL value-blind
+    gate (no board needed): full ply with both evals, net says fine, SF says
+    lost. The caller reconstructs boards only for these."""
+    out: list[tuple[int, float, float]] = []
+    for t, (has_policy, search_wdl, sf_wdl, _pp) in enumerate(evals):
+        if not has_policy or search_wdl is None or sf_wdl is None:
+            continue
+        net_q, sf_q = _q(search_wdl), _q(sf_wdl)
+        if net_q > cfg.net_ok and sf_q < cfg.sf_lost:
+            out.append((t, net_q, sf_q))
+    return out
 
 
 def harvest_from_records(
@@ -122,28 +164,20 @@ def harvest_from_records(
     played_moves: Sequence[chess.Move | None],
     *,
     cfg: HarvestConfig,
-    policy_encoding: str,
 ) -> list[HarvestedSeed]:
-    """Pure detection: per record ``(has_policy, search_wdl, sf_wdl,
-    policy_probs)`` aligned with its pre-move ``board`` and played move, emit a
-    HarvestedSeed for each value-blind full ply where the net played a move the
-    search favored. Value-only / label-less / unreconstructed / temperature-
-    exploration records are skipped."""
+    """Emit a HarvestedSeed for each value-blind full ply whose pre-move
+    ``board`` was reconstructed and whose played move the search favored.
+    Unreconstructed / temperature-exploration records are skipped."""
     out: list[HarvestedSeed] = []
-    for (has_policy, search_wdl, sf_wdl, policy_probs), board, played in zip(
-        evals, boards, played_moves, strict=True,
-    ):
-        if not has_policy or board is None or search_wdl is None or sf_wdl is None:
-            continue
-        net_q, sf_q = _q(search_wdl), _q(sf_wdl)
-        if not (net_q > cfg.net_ok and sf_q < cfg.sf_lost):
-            continue
-        if not _played_was_favored(board, played, policy_probs, policy_encoding, cfg.min_played_prob):
+    for t, net_q, sf_q in value_blind_candidates(evals, cfg=cfg):
+        board, played, policy_probs = boards[t], played_moves[t], evals[t][3]
+        if board is None:
+            continue  # not reconstructed (unaligned or not in `wanted`)
+        if not _played_was_favored(board, played, policy_probs, cfg.min_played_prob):
             continue  # temperature-explored a move the search didn't favor
-        severe = net_q >= cfg.severe_net_ok and sf_q <= cfg.severe_sf_lost
         out.append(HarvestedSeed(
             line=seed_line_from_board(board, cfg.history_plies),
-            net_q=net_q, sf_q=sf_q, severe=severe,
+            net_q=net_q, sf_q=sf_q, severe=net_q >= cfg.severe_net_ok,
         ))
     return out
 
@@ -160,9 +194,18 @@ def severe_path_for(out_path: str) -> str:
 
     The production FEN-list loader strips the inline '# ... sev=..' comment, so
     pointing opening_fen_list_path at the mixed collect file would feed the
-    broad (sev=0) band too. The severe file is the safe auto-feed target."""
-    root, dot, ext = out_path.rpartition(".")
-    return f"{root}.severe.{ext}" if dot else f"{out_path}.severe"
+    broad (sev=0) band too. The severe file is the safe auto-feed target.
+    Splits the BASENAME only, so a dotted directory ('data/run.1/harvest')
+    doesn't misplace the file."""
+    root, ext = os.path.splitext(out_path)   # ext splits on the basename's last dot
+    return f"{root}.severe{ext}" if ext else f"{out_path}.severe"
+
+
+def _worker_path(out_path: str) -> str:
+    """Per-process file so many workers sharing one configured path don't
+    interleave buffered appends into garbled (dropped) lines."""
+    root, ext = os.path.splitext(out_path)
+    return f"{root}.p{os.getpid()}{ext}" if ext else f"{out_path}.p{os.getpid()}"
 
 
 def run_harvest(
@@ -174,43 +217,46 @@ def run_harvest(
     game_id: str,
     out_path: str,
     cfg: HarvestConfig,
-    policy_encoding: str = "lc0_1858",
 ) -> int:
-    """Finalize-side wrapper: reconstruct boards, detect blind-spots, append the
-    collect band to ``out_path`` and the severe (auto-feed) band to its
-    ``.severe`` sibling. Returns the total count written. NEVER raises into
-    finalize — logs and returns 0 on any error."""
+    """Finalize-side wrapper: gate value-blind plies (cheap), reconstruct only
+    those boards, and append the collect band + the severe (auto-feed) band to
+    per-process files (``<out>.pPID`` and ``<out>.severe.pPID``). Returns the
+    count written. NEVER raises into finalize — logs and returns 0 on any
+    error."""
     try:
         if not out_path or starting_board is None:
             return 0
-        opening_len = 0 if has_c_ply else len(starting_board.move_stack)
-        ply_indices = [int(rec.ply_index) for rec in records]
-        boards, played = pre_move_boards(
-            starting_board, list(final_board.move_stack), ply_indices, opening_len=opening_len,
-        )
-        # Observability (not a hard failure): a full-ply record with no
-        # reconstructed board means the ply walk did not align it — the seed is
-        # safely skipped, never mis-emitted, but log so silent gaps are visible.
-        unaligned = sum(1 for rec, bd in zip(records, boards, strict=True)
-                        if bool(rec.has_policy) and bd is None)
-        if unaligned:
-            _log.debug("harvest: %d full-ply record(s) unaligned in game %s (skipped)",
-                       unaligned, game_id)
         evals = [
             (bool(rec.has_policy), getattr(rec, "search_wdl_est", None),
              getattr(rec, "sf_wdl", None), getattr(rec, "policy_probs", None))
             for rec in records
         ]
-        seeds = harvest_from_records(evals, boards, played, cfg=cfg, policy_encoding=policy_encoding)
+        # Cheap WDL gate FIRST (no board), then reconstruct only the value-blind
+        # plies — a game with no blind spots pays no per-ply Board.copy().
+        candidates = value_blind_candidates(evals, cfg=cfg)
+        if not candidates:
+            return 0
+        ply_indices = [int(rec.ply_index) for rec in records]
+        wanted = {t for t, _nq, _sq in candidates}
+        opening_len = 0 if has_c_ply else len(starting_board.move_stack)
+        boards, played = pre_move_boards(
+            starting_board, list(final_board.move_stack), ply_indices,
+            opening_len=opening_len, wanted=wanted,
+        )
+        unaligned = sum(1 for t, _nq, _sq in candidates if boards[t] is None)
+        if unaligned:
+            _log.debug("harvest: %d value-blind record(s) unaligned in game %s (skipped)",
+                       unaligned, game_id)
+        seeds = harvest_from_records(evals, boards, played, cfg=cfg)
         if not seeds:
             return 0
-        severe_path = severe_path_for(out_path)
-        with open(out_path, "a", encoding="utf-8") as fh:
+        collect_path = _worker_path(out_path)
+        with open(collect_path, "a", encoding="utf-8") as fh:
             for s in seeds:
                 fh.write(format_record(s, game_id=game_id) + "\n")
         severe = [s for s in seeds if s.severe]
         if severe:
-            with open(severe_path, "a", encoding="utf-8") as fh:
+            with open(_worker_path(severe_path_for(out_path)), "a", encoding="utf-8") as fh:
                 for s in severe:
                     fh.write(format_record(s, game_id=game_id) + "\n")
         return len(seeds)

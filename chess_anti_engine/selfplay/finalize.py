@@ -1210,7 +1210,6 @@ def finalize_game(
         run_blindspot_harvest(
             starting, b, records, has_c_ply=bool(state.has_c_ply),
             game_id=str(gid), out_path=str(harvest_path), cfg=HarvestConfig(),
-            policy_encoding=str(state.game.policy_encoding),
         )
 
     if on_game_complete is not None:

@@ -50,7 +50,7 @@ def classify(net_q: np.ndarray, *, resolved_below: float) -> ResolutionSummary:
 
 
 def score_seeds(checkpoint: str, seed_lines: list[str], *, device: str,
-                gpu_mem_fraction: float | None) -> np.ndarray:
+                gpu_mem_fraction: float | None, batch_size: int = 256) -> np.ndarray:
     """DeepFin-POV value ``net_q = W-L`` per seed terminal, scored WITH history."""
     import torch
 
@@ -77,16 +77,23 @@ def score_seeds(checkpoint: str, seed_lines: list[str], *, device: str,
         encs.append(encode_cboard(cb, input_history_encoding=hist, input_extra_features=extra))
         if use_rel:
             rels.append(cb.compute_relations())
-    with torch.no_grad():
-        _, wdl = ev.evaluate_encoded(
-            np.stack(encs), relations=np.stack(rels) if use_rel else None)
-    # evaluate_encoded returns raw wdl LOGITS; softmax unconditionally (a
-    # conditional guard can skip it when logits happen to ~sum to 1, then
-    # thresholds arbitrary logit scale).
-    wdl = np.asarray(wdl, dtype=np.float64)
-    w = wdl - wdl.max(axis=1, keepdims=True)
-    wdl = np.exp(w) / np.exp(w).sum(axis=1, keepdims=True)
-    return wdl[:, 0] - wdl[:, 2]  # DeepFin (side-to-move) expected value
+    enc_arr = np.stack(encs)
+    rel_arr = np.stack(rels) if use_rel else None
+    # Forward in chunks so a few-thousand-seed set does not OOM one batch at the
+    # default 0.15 GPU fraction.
+    out = np.empty(len(encs), dtype=np.float64)
+    for s in range(0, len(encs), batch_size):
+        e = slice(s, s + batch_size)
+        with torch.no_grad():
+            _, wdl = ev.evaluate_encoded(
+                enc_arr[e], relations=rel_arr[e] if rel_arr is not None else None)
+        # evaluate_encoded returns raw wdl LOGITS; softmax unconditionally (a
+        # conditional guard can skip it when logits happen to ~sum to 1).
+        wdl = np.asarray(wdl, dtype=np.float64)
+        w = wdl - wdl.max(axis=1, keepdims=True)
+        wdl = np.exp(w) / np.exp(w).sum(axis=1, keepdims=True)
+        out[e] = wdl[:, 0] - wdl[:, 2]  # DeepFin (side-to-move) expected value
+    return out
 
 
 def load_seed_lines(path: str) -> list[str]:
@@ -109,6 +116,7 @@ def main() -> None:
     ap.add_argument("--out", default=None, help="retire list output (with --retire-below)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--gpu-mem-fraction", type=float, default=0.15)
+    ap.add_argument("--batch-size", type=int, default=256, help="forward-pass chunk (bounds GPU mem)")
     args = ap.parse_args()
 
     seeds = load_seed_lines(args.seeds)
@@ -118,7 +126,8 @@ def main() -> None:
     print("-" * 68)
     last_q: np.ndarray | None = None
     for ckpt in args.checkpoint:
-        q = score_seeds(ckpt, seeds, device=args.device, gpu_mem_fraction=args.gpu_mem_fraction)
+        q = score_seeds(ckpt, seeds, device=args.device,
+                        gpu_mem_fraction=args.gpu_mem_fraction, batch_size=args.batch_size)
         s = classify(q, resolved_below=args.resolved_below)
         print(f"{ckpt.split('/')[-1]:<40} {s.blind:>6} {s.resolved:>9} "
               f"{100 * s.resolved_frac:>9.1f}%")
