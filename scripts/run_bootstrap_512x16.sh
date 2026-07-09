@@ -91,7 +91,7 @@ run_training() {
     --live-target-reuse "$reuse"
     --live-max-steps "$max_steps"
     --live-eval-every-steps 500
-    --live-save-every-steps 1000
+    --live-save-every-steps 500
     --live-idle-exit-after "$IDLE_EXIT"
     --live-plateau-evals "$PLATEAU_EVALS"
     --batch-size 256

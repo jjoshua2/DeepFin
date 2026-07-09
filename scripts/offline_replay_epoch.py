@@ -224,8 +224,24 @@ class _LiveShardSampler:
                 # improved, tail-driven, both phases) had exactly that
                 # signature; the live trainer never trains this way. Mixing
                 # over the cache adds no IO: still one shard load per step.
-                self._load_prepared(path)
-                cached = [(pp, aa) for pp, aa in self._cache.items()]
+                drawn = self._load_prepared(path)
+                # Mix only schema-identical cache entries: shard key sets are
+                # heterogeneous (pre-sf_played-era shards lack 6 sf_played_*
+                # fields), and cross-schema parts KeyError in the merge below.
+                # Worse, the except would evict the DRAWN shard while the
+                # mismatched entry stayed cached, failing every retry (the
+                # 2026-07-09 "failed to sample after repeated shard reloads"
+                # crash). Schema-filtering keeps every field intact for
+                # matching shards; a lone-schema draw degrades to the old
+                # single-shard batch.
+                drawn_keys = frozenset(drawn.keys())
+                cached = [
+                    (pp, aa)
+                    for pp, aa in self._cache.items()
+                    if frozenset(aa.keys()) == drawn_keys
+                ]
+                if not cached:
+                    cached = [(path, drawn)]
                 sizes = np.array(
                     [int(np.asarray(a["x"]).shape[0]) for _, a in cached], dtype=np.float64,
                 )
@@ -242,8 +258,15 @@ class _LiveShardSampler:
                     parts.append(_slice_arrays(cached[ci][1], rows))
                 if len(parts) == 1:
                     return parts[0]
+                # 0-d entries are per-shard scalars _slice_arrays passes
+                # through unsliced — concatenating them raises; batch-level
+                # consumers read them as scalars, so take the first part's.
                 return {
-                    key: np.concatenate([pt[key] for pt in parts], axis=0)
+                    key: (
+                        parts[0][key]
+                        if np.asarray(parts[0][key]).ndim == 0
+                        else np.concatenate([pt[key] for pt in parts], axis=0)
+                    )
                     for key in parts[0]
                 }
             except Exception as exc:
