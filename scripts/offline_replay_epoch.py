@@ -137,7 +137,10 @@ class _LiveShardSampler:
         )
         self.upgrade_v1_planes = bool(upgrade_v1_planes)
         self.target_input_planes = input_plane_count(model_cfg.input_extra_features)
-        self.cache_shards = max(0, int(cache_shards))
+        # Floor 1: batches MIX across the cached shards, so an empty cache
+        # (old --live-cache-shards 0 = "no caching") would make sampling
+        # impossible (final-review note on d27285f).
+        self.cache_shards = max(1, int(cache_shards))
         self._paths: list[Path] = []
         self._positions: np.ndarray = np.zeros((0,), dtype=np.int64)
         self._total_positions = 0
