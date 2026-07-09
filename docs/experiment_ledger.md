@@ -628,8 +628,15 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
    partially-linked zarrs). (b) DATA: live shards are now continuously
    hardlink-fed (30-min loop, atomic-rename) into a DEDICATED pool
    `data/scaleup_pool_512x16` (seeded from the salvage window's 808 + 331
-   shards fed on 07-08) — the salvage pool is a frozen revert point and is
-   NOT fed anymore; the 331 shards fed into it before this amendment are
+   shards fed on 07-08). CONFOUND (explicit): the fed pool retires the
+   original frozen-iter-647-window condition — no longer a clean "same data
+   as the 34.7M net" capacity test; the 512 trains on a superset including
+   dole-seeded blind-spot games. Accepted deliberately: the swap gate is
+   audit parity vs the CURRENT live net (fresher data serves it) and parity,
+   not hypothesis purity, is the deliverable; frozen-window purity remains
+   recoverable from the untouched salvage pool if the capacity question
+   ever needs a clean re-test. The salvage pool is a frozen revert point
+   and is NOT fed anymore; the 331 shards fed into it before this amendment are
    listed in `scratchpad/scaleup/fed_into_salvage_pool.txt` (mtime-dated
    07-08; originals 07-04) and get REMOVED when the current phase1 process
    exits (they're hardlink-preserved in the dedicated pool). (c) DECISION
