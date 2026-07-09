@@ -136,7 +136,7 @@ def load_seed_lines(path: str) -> list[str]:
     resolution read or make the retire step fail closed; the RECONSTRUCTED
     form is what gets scored, so it is what gets validated. Raises if the
     file yields zero usable seeds (mirrors the live fail-fast contract)."""
-    from chess_anti_engine.selfplay.opening import seed_board_from_line
+    from chess_anti_engine.selfplay.opening import _fen_reject_reason, seed_board_from_line
 
     lines: list[str] = []
     with open(path, encoding="utf-8") as fh:
@@ -145,10 +145,20 @@ def load_seed_lines(path: str) -> list[str]:
             body = raw.partition("#")[0].strip()
             if not body:
                 continue
+            # The BODY must pass the LIVE loader's reject predicate — a line
+            # workers skip must not be scored/streaked here (the monitor would
+            # otherwise retire a seed that was never trained). The
+            # RECONSTRUCTED form (lost terminal) additionally has to parse,
+            # since that is the position score_seeds evaluates.
+            reason = _fen_reject_reason(body)
+            if reason is not None:
+                print(f"[seeds] skipping unusable line ({reason}): {raw[:80]}",
+                      file=sys.stderr)
+                continue
             try:
                 seed_board_from_line(reconstruct_lost_line(raw))
             except ValueError as e:
-                print(f"[seeds] skipping unusable line ({e}): {raw[:80]}",
+                print(f"[seeds] skipping line with bad dropped= history ({e}): {raw[:80]}",
                       file=sys.stderr)
                 continue
             lines.append(raw)

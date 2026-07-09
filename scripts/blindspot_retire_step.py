@@ -31,9 +31,14 @@ def _placement(line: str) -> str:
 
     Keyed on the LOST terminal (blame-dropped plies re-appended) so a backed
     seed keeps one stable streak identity even if a later gate run backs the
-    same lost position up a different number of plies.
+    same lost position up a different number of plies. Key keeps side-to-move/
+    castling/ep (clocks ignored) — the gate deliberately emits same-placement
+    seeds differing in those bits as DISTINCT, so retirement must not collapse
+    their streaks (one resolving would retire both). NOTE: this key format
+    change resets existing streak state once (old keys were placement-only) —
+    worst case each seed needs one extra AWARE read before retiring.
     """
-    return seed_board_from_line(reconstruct_lost_line(line)).fen().split()[0]
+    return " ".join(seed_board_from_line(reconstruct_lost_line(line)).fen().split()[:4])
 
 
 def update_streaks(

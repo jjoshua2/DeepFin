@@ -35,7 +35,7 @@ import glob
 import json
 import time
 
-from chess_anti_engine.selfplay.opening import seed_board_from_line
+from chess_anti_engine.selfplay.opening import _fen_reject_reason, seed_board_from_line
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from scripts.blindspot_continuation import parse_seeds
 from scripts.blindspot_deepsf_calibrate import deep_verdict, ensure_parent, resolve_syzygy
@@ -141,6 +141,11 @@ def main() -> None:
                 if args.blame_backup > 0 and moves:
                     for k in range(2, min(len(moves), int(args.blame_backup)) + 1, 2):
                         cand_line = _prefix_line(fen_part, moves, k)
+                        # Live-loader parity: an ancestor the worker would
+                        # reject (terminal / single legal move / illegal) must
+                        # not become the emitted seed — keep walking past it.
+                        if _fen_reject_reason(cand_line) is not None:
+                            continue
                         try:
                             cand_fen = seed_board_from_line(cand_line).fen()
                         except ValueError:
