@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -324,6 +325,10 @@ def _sample_fen_list_line(*, rng, path: str) -> str:
     return fens[int(rng.integers(0, len(fens)))]
 
 
+_WEIGHT_RE = re.compile(r"\bweight=(\d+)\b")
+_MAX_SEED_WEIGHT = 16  # typo guard: one seed can never exceed 16 games/iter/dose
+
+
 @lru_cache(maxsize=8)
 def _load_fen_backed_bodies(path_str: str) -> frozenset[str]:
     """Stripped bodies of seed lines whose comment carries ``dropped=`` —
@@ -346,6 +351,46 @@ def _load_fen_backed_bodies(path_str: str) -> frozenset[str]:
     except OSError:
         return frozenset()
     return frozenset(backed)
+
+
+@lru_cache(maxsize=8)
+def _load_fen_weights(path_str: str) -> dict[str, int]:
+    """Per-seed dole weights from ``weight=N`` line-comment markers.
+
+    The dole plays every list line once per iteration by default; a seed
+    tagged ``# ... weight=3`` is played 3x per iteration (stubborn motifs get
+    more exposure without touching the global dose), and ``weight=0`` soft-
+    retires a seed from the dole without a list rewrite. Weights cap at
+    _MAX_SEED_WEIGHT so a typo cannot flood an iteration. Path-keyed cache
+    like _load_fen_list: version the filename to change weights live.
+    """
+    weights: dict[str, int] = {}
+    try:
+        with open(path_str, encoding="utf-8") as fh:
+            for raw in fh:
+                body, _, comment = raw.rstrip("\n").partition("#")
+                body = body.strip()
+                m = _WEIGHT_RE.search(comment) if body else None
+                if m is not None:
+                    w = min(int(m.group(1)), _MAX_SEED_WEIGHT)
+                    if w != 1:
+                        weights[body] = w
+    except OSError:
+        return {}
+    return weights
+
+
+def expand_dole_seeds(seeds: list[str], path: str | None) -> list[str]:
+    """Expand a dole seed batch by per-seed ``weight=`` markers (default 1)."""
+    if not path:
+        return list(seeds)
+    weights = _load_fen_weights(str(path))
+    if not weights:
+        return list(seeds)
+    out: list[str] = []
+    for s in seeds:
+        out.extend([s] * weights.get(s, 1))
+    return out
 
 
 def _fenlist_source(line: str, path: str | None) -> str:

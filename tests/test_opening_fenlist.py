@@ -500,3 +500,31 @@ def test_backed_fenlist_curriculum_excluded_from_pid_winrate() -> None:
     st = _agg_state("fenlist_backed", selfplay=False, seed_fen=chess.Board().fen())
     _update_aggregate_stats(st, 0, result="0-1", was_adjudicated=False, game_plies=30)
     assert (st.stats.w, st.stats.d, st.stats.l) == (0, 0, 0)
+
+
+def test_dole_seed_weights(tmp_path: Path) -> None:
+    """weight=N comment markers multiply a seed's dole exposure; weight=0
+    soft-retires it; absurd weights cap at _MAX_SEED_WEIGHT; unmarked seeds
+    default to 1. Path-keyed cache -> unique file per test."""
+    from chess_anti_engine.selfplay.opening import _MAX_SEED_WEIGHT, expand_dole_seeds
+
+    start = chess.Board().fen()
+    a = f"{start} | e2e4"
+    b = f"{start} | d2d4"
+    c = f"{start} | c2c4"
+    d = f"{start} | g1f3"
+    seeds_file = tmp_path / "seeds_weights.txt"
+    seeds_file.write_text(
+        f"{a}  # weight=3\n"
+        f"{b}  # weight=0 retired-in-place\n"
+        f"{c}  # weight=999\n"
+        f"{d}  # plain seed, no marker\n",
+        encoding="utf-8",
+    )
+    out = expand_dole_seeds([a, b, c, d], str(seeds_file))
+    assert out.count(a) == 3
+    assert out.count(b) == 0
+    assert out.count(c) == _MAX_SEED_WEIGHT
+    assert out.count(d) == 1
+    # No list path -> identity (probabilistic path / defensive default).
+    assert expand_dole_seeds([a, b], None) == [a, b]
