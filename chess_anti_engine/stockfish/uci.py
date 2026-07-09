@@ -191,9 +191,13 @@ class StockfishUCI:
         several node budgets, else the earlier search's hash warm-starts the
         later ones and overstates their agreement (Codex #125)."""
         with self._lock:
-            self._send("ucinewgame")
-            self._send("isready")
-            self._wait_for("readyok")
+            self._new_game_locked()
+
+    def _new_game_locked(self) -> None:
+        """`ucinewgame` + readyok handshake; caller must hold ``self._lock``."""
+        self._send("ucinewgame")
+        self._send("isready")
+        self._wait_for("readyok")
 
     def _set_syzygy_path_locked(self, syzygy_path: str) -> None:
         if str(syzygy_path) == str(self.syzygy_path or ""):
@@ -252,13 +256,23 @@ class StockfishUCI:
     def search(
         self, fen: str, *, nodes: int | None = None,
         syzygy_path: str | None = None,
+        fresh: bool = False,
     ) -> StockfishResult:
         """Node-limited search from FEN.
 
         If MultiPV>1 is enabled, we attempt to collect (move, wdl) pairs for the
         top lines so the caller can build a soft "SF policy" target distribution.
+
+        ``fresh`` clears the transposition table (``ucinewgame``) first so this
+        is a COLD, independent search. Required when re-querying a position the
+        engine may have just searched at a shallower budget (label escalation):
+        a warm TT would let the shallow pass steer the deep one and overstate
+        their agreement — the same hygiene scripts/blindspot_deepsf_gate.py
+        applies between admission verdicts.
         """
         with self._lock:
+            if fresh:
+                self._new_game_locked()
             if syzygy_path is not None:
                 self._set_syzygy_path_locked(str(syzygy_path))
             self._send(f"position fen {fen}")

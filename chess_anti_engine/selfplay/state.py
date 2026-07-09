@@ -205,6 +205,7 @@ class _NetRecord:
         "sf_played_regret",
         "sf_policy_target",
         "sf_wdl",
+        "sf_wdl_original",
         "x",
         "x_lc0_root",
     )
@@ -227,6 +228,11 @@ class _NetRecord:
     sf_policy_target: np.ndarray | None
     sf_move_index: int | None
     sf_wdl: np.ndarray | None
+    # Pre-escalation label (record POV), set ONLY when sf_label_escalate_*
+    # replaced sf_wdl with a deep re-search — preserved so the blind-spot
+    # harvester judges the ORIGINAL gap (see blindspot_harvest._harvest_sf_wdl)
+    # and finalize can count materially-moved labels. Never emitted to replay.
+    sf_wdl_original: np.ndarray | None
     sf_multipv_raw: np.ndarray | None
     sf_label_meta: np.ndarray | None
     sf_played_move_index: int | None
@@ -262,6 +268,7 @@ class _NetRecord:
         self.sf_policy_target = sf_policy_target
         self.sf_move_index = sf_move_index
         self.sf_wdl = sf_wdl
+        self.sf_wdl_original = None
         self.sf_multipv_raw = None
         self.sf_label_meta = None
         self.sf_played_move_index = None
@@ -618,6 +625,12 @@ class SelfplayState:
     root_ids: list[int]
     pending_sf_labels: list[Any]
     pending_sf_moves: dict[int, Any]
+    # Per-slot count of SF label escalations fired for the CURRENT game
+    # (sf_label_escalate_max_per_game budget; see stockfish_turn). Sized by
+    # create(); reset in recycle_slot. Charged at escalation-submit time —
+    # finalize flushes a game's pending labels before its slot recycles, so
+    # a charge can't leak into the next game.
+    sf_label_escalations: list[int] = field(default_factory=list)
 
     # ── Shared caches (None when C tree unavailable) ─────────────────────────
     mcts_tree: Any = None
@@ -759,6 +772,7 @@ class SelfplayState:
             root_ids=[-1] * batch_size,
             pending_sf_labels=[],
             pending_sf_moves={},
+            sf_label_escalations=[0] * batch_size,
             mcts_tree=c_caps.mcts_tree,
             has_c_ply=c_caps.has_c_ply,
             has_classify_c=c_caps.has_classify_c,
@@ -966,6 +980,8 @@ class SelfplayState:
         self.force_full_next[i] = False
         self.root_ids[i] = -1  # Reset tree reuse for new game.
         self.pending_sf_moves.pop(i, None)
+        if i < len(self.sf_label_escalations):
+            self.sf_label_escalations[i] = 0  # Fresh per-game escalation budget.
         self.games_started += 1
 
     def replay_board(self, i: int) -> chess.Board:

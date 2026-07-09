@@ -66,6 +66,23 @@ def _q(wdl: np.ndarray) -> float:
     return float(wdl[0] - wdl[2])
 
 
+def _harvest_sf_wdl(rec) -> np.ndarray | None:
+    """The in-loop SF label the harvester judges by.
+
+    Label escalation (stockfish_turn, ``sf_label_escalate_*``) can REPLACE
+    ``rec.sf_wdl`` with a deep re-search on exactly the high-disagreement
+    plies this harvester mines — and the deep search usually sides with the
+    net, collapsing the nq/sq gap, so judging the escalated label would hide
+    those positions. Ordering choice: escalation runs at label-ATTACH time
+    (mid-game) while harvesting runs at finalize, so rather than reordering
+    the pipeline the ORIGINAL label is preserved on the record
+    (``sf_wdl_original``) and preferred here — the harvester's severity
+    inputs are escalation-invariant. Training still consumes the escalated
+    ``rec.sf_wdl``."""
+    orig = getattr(rec, "sf_wdl_original", None)
+    return orig if orig is not None else getattr(rec, "sf_wdl", None)
+
+
 def pre_move_boards(
     starting_board: chess.Board,
     final_move_stack: list[chess.Move],
@@ -251,7 +268,7 @@ def game_record_json(
     plies = []
     for rec, ply in zip(records, ply_indices):
         sw = getattr(rec, "search_wdl_est", None)
-        sf = getattr(rec, "sf_wdl", None)
+        sf = _harvest_sf_wdl(rec)  # pre-escalation label, like the harvest gate
         plies.append({
             "ply": int(ply),
             "hp": bool(rec.has_policy),
@@ -316,7 +333,7 @@ def run_harvest(
             return 0
         evals = [
             (bool(rec.has_policy), getattr(rec, "search_wdl_est", None),
-             getattr(rec, "sf_wdl", None), getattr(rec, "policy_probs", None))
+             _harvest_sf_wdl(rec), getattr(rec, "policy_probs", None))
             for rec in records
         ]
         # Cheap WDL gate FIRST (no board), then reconstruct only the value-blind

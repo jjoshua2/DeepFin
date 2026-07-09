@@ -109,6 +109,30 @@ class GameConfig:
     # budget, and curriculum label reuse (free full-strength move futures) is
     # untouched. See configs/exp_throughput_views.yaml.
     sf_label_nodes_cap: int = 0
+  # Research bet (default 0.0 = off; provable no-op: the gate returns before
+  # any engine call and no record field is ever written): adaptive escalation
+  # of the SF label on net-vs-label disagreement. When
+  # |net search root Q - label Q| >= this gap (harvester nq/sq units:
+  # q = wdl[W] - wdl[L] in [-1, 1], record POV), the label query is re-run
+  # cold-TT (ucinewgame) at sf_label_escalate_nodes and the deep result
+  # REPLACES the recorded label (sf_wdl + sf_policy target + sparse rows +
+  # meta). Why: deep-SF audits of harvested net-vs-label disagreements show
+  # the ~700k-node label is WRONG in 70-81% of high-gap cases (deep SF sides
+  # with the net) — escalation fixes that label noise at the source. The
+  # ORIGINAL label is preserved on the record (sf_wdl_original) so the
+  # blind-spot harvester still sees the original gap — otherwise escalation
+  # would hide exactly the positions it mines. Pool (async) label path only;
+  # the sync StockfishUCI fallback path ignores the flag. See
+  # configs/exp_label_escalation.yaml.
+    sf_label_escalate_q_gap: float = 0.0
+  # Node budget for the escalated re-query. Never capped by
+  # sf_label_nodes_cap and never touches the PID opponent budget.
+    sf_label_escalate_nodes: int = 3_000_000
+  # Hard per-game escalation cap — an escalated query costs ~10-30s of SF
+  # CPU; uncapped it would crater selfplay throughput. First-N-over-threshold
+  # (the streaming label path attaches results as they arrive, so a game's
+  # gaps cannot be ranked up front; see _maybe_submit_label_escalation).
+    sf_label_escalate_max_per_game: int = 2
     sf_policy_temp: float = 0.25
     sf_policy_label_smooth: float = 0.05
     sf_wdl_use_cp_logistic: bool = False

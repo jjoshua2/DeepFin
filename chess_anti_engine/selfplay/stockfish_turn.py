@@ -65,6 +65,18 @@ class _PendingSfLabel:
     record: _NetRecord
     turn: bool
     legal_indices: np.ndarray
+    # Escalation context (sf_label_escalate_*, see
+    # _maybe_submit_label_escalation): the query position, slot, and syzygy
+    # path captured at SUBMIT time — by poll time the board has advanced, so
+    # they cannot be recovered from state. Defaults keep legacy constructions
+    # valid; an empty query_fen disables escalation for the entry.
+    query_fen: str = ""
+    slot: int = -1
+    syzygy_path: str | None = None
+    # Set once the escalated re-query replaced ``future``: the ORIGINAL
+    # (shallow) StockfishResult, attached later as ``rec.sf_wdl_original``
+    # (and the airbag fallback if the deep re-query itself fails).
+    escalated_from_res: Any = None
 
 
 def flip_wdl_pov(wdl: np.ndarray) -> np.ndarray:
@@ -300,12 +312,20 @@ def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: lis
         legal_indices = state.cboards[idx].legal_move_indices()
         if legal_indices.size == 0:
             continue
+        # The reused move future was submitted for the CURRENT position (the
+        # board doesn't advance until finish_pending_curriculum_moves pushes
+        # the reply), so capturing the escalation context from the board here
+        # matches the query — the same assumption the turn/legal_indices
+        # snapshot above already makes.
         state.pending_sf_labels.append(
             _PendingSfLabel(
                 future=fut,
                 record=state.samples_per_game[idx][-1],
                 turn=bool(state.cboards[idx].turn),
                 legal_indices=np.asarray(legal_indices, dtype=np.int64).copy(),
+                query_fen=state.cboards[idx].fen(),
+                slot=int(idx),
+                syzygy_path=_sf_syzygy_path_for_slot(state, idx),
             ),
         )
         submitted += 1
@@ -604,7 +624,15 @@ def _process_sf_label_result_for_record(
     res,
     turn: bool,
     legal_indices: np.ndarray,
+    original_res: Any = None,
 ) -> None:
+    """Build + attach the SF label from ``res``.
+
+    ``original_res`` is the shallow pre-escalation result when ``res`` is an
+    escalated deep re-query (sf_label_escalate_*); its label WDL is preserved
+    as ``rec.sf_wdl_original`` for the blind-spot harvester (see
+    blindspot_harvest._harvest_sf_wdl for the ordering rationale).
+    """
     if legal_indices.size == 0:
         return
     sf_policy_temp = float(state.game.sf_policy_temp)
@@ -631,6 +659,10 @@ def _process_sf_label_result_for_record(
         sf_policy_temp=sf_policy_temp,
         sf_policy_label_smooth=sf_policy_label_smooth,
     )
+    # The attach below is idempotent (skips already-labeled records); only tag
+    # sf_wdl_original when THIS call actually stamps the label, so a duplicate
+    # pending entry can't retroactively mark a record as escalated.
+    will_attach = rec.sf_policy_target is None and rec.sf_move_index is None
     _attach_sf_target_to_record(
         rec, p_sf=p_sf, a_idx=a_idx, res=res, legal_indices=legal_indices,
         turn=bool(turn),
@@ -638,6 +670,111 @@ def _process_sf_label_result_for_record(
         sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
         sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
     )
+    if original_res is not None and will_attach:
+        rec.sf_wdl_original = _sf_result_wdl_for_record(
+            original_res,
+            sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
+            sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
+            sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
+        )
+
+
+def _label_q_gap(rec: _NetRecord, label_wdl: np.ndarray | None) -> float | None:
+    """|net search root Q − SF label Q| in the harvester's nq/sq units.
+
+    Both sides are record-POV ``[W, D, L]``; q = W − L in [-1, 1] (the same
+    convention ``blindspot_harvest._q`` uses). ``None`` disables the
+    comparison (either eval missing or malformed).
+    """
+    if label_wdl is None:
+        return None
+    search_wdl = getattr(rec, "search_wdl_est", None)
+    if search_wdl is None:
+        return None
+    sw = np.asarray(search_wdl, dtype=np.float32)
+    lw = np.asarray(label_wdl, dtype=np.float32)
+    if sw.shape != (3,) or lw.shape != (3,):
+        return None
+    return abs(float(sw[0] - sw[2]) - float(lw[0] - lw[2]))
+
+
+def _maybe_submit_label_escalation(
+    state: SelfplayState, pending: _PendingSfLabel, res,
+) -> bool:
+    """Escalate a completed label query to a deep cold-TT re-search on
+    net-vs-label disagreement; returns True when the escalated query is now
+    ``pending.future`` (caller re-queues instead of attaching).
+
+    Research bet (``sf_label_escalate_q_gap``, default 0.0 = OFF — the gate
+    returns before any engine interaction): deep-SF audits of harvested
+    net-vs-label disagreements show the ~700k-node label is wrong in 70-81%
+    of high-gap cases (deep SF sides with the net), so exactly those labels
+    are re-queried at ``sf_label_escalate_nodes`` with ``fresh=True``
+    (ucinewgame — a warm TT from the shallow pass would bias the re-search)
+    and the deep result replaces the recorded label. The escalated submit is
+    independent of the PID opponent budget and of ``sf_label_nodes_cap``.
+
+    Per-game cap: first-N-over-threshold (``sf_label_escalate_max_per_game``).
+    Highest-gap-first ordering is impractical here — labels attach in a
+    STREAMING pipeline (results consumed as they arrive, mid-game), so
+    ranking a game's gaps would mean buffering every label until game end and
+    re-plumbing finalize's flush; not worth it for a ~2-per-game budget.
+    """
+    q_gap = float(getattr(state.game, "sf_label_escalate_q_gap", 0.0) or 0.0)
+    if q_gap <= 0.0:
+        return False  # flag off: provable no-op — nothing below runs
+    if pending.escalated_from_res is not None or not pending.query_fen:
+        return False
+    rec = pending.record
+    if rec.sf_policy_target is not None or rec.sf_move_index is not None:
+        return False  # duplicate pending entry for an already-labeled record
+    if not isinstance(state.stockfish, StockfishPool):
+        return False  # production (pool) label path only
+    label_wdl = _sf_result_wdl_for_record(
+        res,
+        sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
+        sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
+        sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
+    )
+    gap = _label_q_gap(rec, label_wdl)
+    if gap is None or gap < q_gap:
+        return False
+    counts = getattr(state, "sf_label_escalations", None)
+    slot = int(pending.slot)
+    if counts is None or slot < 0 or slot >= len(counts):
+        return False
+    if counts[slot] >= int(getattr(state.game, "sf_label_escalate_max_per_game", 0)):
+        return False
+    counts[slot] += 1
+    pending.escalated_from_res = res
+    pending.future = state.stockfish.submit(
+        pending.query_fen,
+        nodes=max(1, int(getattr(state.game, "sf_label_escalate_nodes", 0))),
+        syzygy_path=pending.syzygy_path,
+        fresh=True,
+    )
+    return True
+
+
+def _resolve_pending_label_result(pending: _PendingSfLabel) -> Any:
+    """``pending.future.result()`` with an escalation airbag: if the deep
+    re-query itself failed, fall back to the ORIGINAL label result — an
+    escalation hiccup must not cost the row the valid shallow label it
+    already had. Clearing ``escalated_from_res`` lets the caller either
+    retry-escalate (bounded by the per-game budget) or attach the original
+    un-marked."""
+    try:
+        return pending.future.result()
+    except Exception:
+        if pending.escalated_from_res is None:
+            raise
+        _LOG.debug(
+            "sf label escalation query failed; keeping original label",
+            exc_info=True,
+        )
+        res = pending.escalated_from_res
+        pending.escalated_from_res = None
+        return res
 
 
 def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
@@ -660,10 +797,12 @@ def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
         legal_indices = state.cboards[idx].legal_move_indices()
         if legal_indices.size == 0:
             continue
+        fen = state.cboards[idx].fen()
+        syzygy_path = _sf_syzygy_path_for_slot(state, idx)
         fut = state.stockfish.submit(
-            state.cboards[idx].fen(),
+            fen,
             nodes=_eff_sf_nodes(state, idx, for_move=False, for_label=True),
-            syzygy_path=_sf_syzygy_path_for_slot(state, idx),
+            syzygy_path=syzygy_path,
         )
         state.pending_sf_labels.append(
             _PendingSfLabel(
@@ -671,6 +810,9 @@ def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
                 record=state.samples_per_game[idx][-1],
                 turn=bool(state.cboards[idx].turn),
                 legal_indices=np.asarray(legal_indices, dtype=np.int64).copy(),
+                query_fen=fen,
+                slot=int(idx),
+                syzygy_path=syzygy_path,
             ),
         )
         submitted += 1
@@ -678,7 +820,14 @@ def submit_async_sf_label_queries(state: SelfplayState, idxs: list[int]) -> int:
 
 
 def poll_async_sf_labels(state: SelfplayState) -> tuple[int, int]:
-    """Attach completed async SF labels. Returns ``(attached, failed)``."""
+    """Attach completed async SF labels. Returns ``(attached, failed)``.
+
+    With label escalation active (``sf_label_escalate_q_gap`` > 0), a
+    completed label whose net-vs-label gap trips the threshold is re-submitted
+    at the deep budget and RE-QUEUED instead of attached, keeping this poll
+    non-blocking; the escalated result attaches on a later poll (or at the
+    finalize flush).
+    """
     if not state.pending_sf_labels:
         return 0, 0
     still_pending: list[_PendingSfLabel] = []
@@ -689,13 +838,17 @@ def poll_async_sf_labels(state: SelfplayState) -> tuple[int, int]:
             still_pending.append(pending)
             continue
         try:
-            res = pending.future.result()
+            res = _resolve_pending_label_result(pending)
+            if _maybe_submit_label_escalation(state, pending, res):
+                still_pending.append(pending)
+                continue
             _process_sf_label_result_for_record(
                 state,
                 rec=pending.record,
                 res=res,
                 turn=pending.turn,
                 legal_indices=pending.legal_indices,
+                original_res=pending.escalated_from_res,
             )
             attached += 1
         except Exception as exc:  # pragma: no cover - defensive drop on SF failure.
@@ -720,13 +873,19 @@ def flush_async_sf_labels_for_records(
             still_pending.append(pending)
             continue
         try:
-            res = pending.future.result()
+            res = _resolve_pending_label_result(pending)
+            if _maybe_submit_label_escalation(state, pending, res):
+                # Finalize path: the record is about to be emitted to replay,
+                # so block on the escalated result now (bounded by the
+                # per-game escalation cap — at most a couple of deep searches).
+                res = _resolve_pending_label_result(pending)
             _process_sf_label_result_for_record(
                 state,
                 rec=pending.record,
                 res=res,
                 turn=pending.turn,
                 legal_indices=pending.legal_indices,
+                original_res=pending.escalated_from_res,
             )
             attached += 1
         except Exception as exc:  # pragma: no cover - defensive drop on SF failure.

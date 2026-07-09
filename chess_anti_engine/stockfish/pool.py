@@ -63,7 +63,14 @@ class StockfishPool:
     def submit(
         self, fen: str, *, nodes: int | None = None,
         syzygy_path: str | None = None,
+        fresh: bool = False,
     ) -> Future[StockfishResult]:
-  # Round-robin assignment
+  # Round-robin assignment. `fresh` requests a cold-TT (ucinewgame) search —
+  # see StockfishUCI.search; used by the label-escalation re-query. Only
+  # forwarded when set, so the default path's engine call stays identical.
         engine = self._engines[next(self._next) % self.num_workers]
+        if fresh:
+            return self._exec.submit(
+                engine.search, fen, nodes=nodes, syzygy_path=syzygy_path, fresh=True,
+            )
         return self._exec.submit(engine.search, fen, nodes=nodes, syzygy_path=syzygy_path)
