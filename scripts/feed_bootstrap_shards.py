@@ -245,7 +245,18 @@ def main() -> int:
             # cancel a bootstrap launch that fed everything else:
             #   ENOENT  = live eviction pruned the source after the settle check
             #   EEXIST/ENOTEMPTY = a concurrent feeder won the publish race
-            if exc.errno in (errno.ENOENT, errno.EEXIST, errno.ENOTEMPTY):
+            # shutil.copytree (the --copy / cross-device path) aggregates
+            # per-child failures into shutil.Error with errno=None — unwrap it
+            # and treat an all-ENOENT bundle as the same prune race.
+            def _is_race(e: OSError) -> bool:
+                if isinstance(e, shutil.Error):
+                    entries = e.args[0] if e.args and isinstance(e.args[0], list) else []
+                    return bool(entries) and all(
+                        "No such file" in str(why) for _s, _d, why in entries
+                    )
+                return e.errno in (errno.ENOENT, errno.EEXIST, errno.ENOTEMPTY)
+
+            if _is_race(exc):
                 raced += 1
             else:
                 failed += 1
@@ -257,7 +268,7 @@ def main() -> int:
                     shutil.rmtree(tmp, ignore_errors=True)
                 else:
                     tmp.unlink(missing_ok=True)
-            print(f"[feed] {'RACE-SKIP' if exc.errno in (errno.ENOENT, errno.EEXIST, errno.ENOTEMPTY) else 'FAIL'} {src.name}: {exc}", file=sys.stderr)
+            print(f"[feed] {'RACE-SKIP' if _is_race(exc) else 'FAIL'} {src.name}: {exc}", file=sys.stderr)
 
     print(
         f"[feed] boot_max_was={boot_max} fed={linked + copied} "
