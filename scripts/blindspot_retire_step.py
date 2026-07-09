@@ -23,12 +23,17 @@ import re
 import sys
 
 from chess_anti_engine.selfplay.opening import seed_board_from_line
-from scripts.blindspot_resolution import load_seed_lines, score_seeds
+from scripts.blindspot_resolution import load_seed_lines, reconstruct_lost_line, score_seeds
 
 
 def _placement(line: str) -> str:
-    """Position key = piece placement only (ignore move counters / ep)."""
-    return seed_board_from_line(line.split("#", 1)[0].strip()).fen().split()[0]
+    """Position key = piece placement only (ignore move counters / ep).
+
+    Keyed on the LOST terminal (blame-dropped plies re-appended) so a backed
+    seed keeps one stable streak identity even if a later gate run backs the
+    same lost position up a different number of plies.
+    """
+    return seed_board_from_line(reconstruct_lost_line(line)).fen().split()[0]
 
 
 def update_streaks(

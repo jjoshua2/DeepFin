@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -72,7 +73,9 @@ def score_seeds(checkpoint: str, seed_lines: list[str], *, device: str,
 
     encs, rels = [], []
     for line in seed_lines:
-        board = seed_board_from_line(line)  # carries the seed's real move history
+        # Score the LOST terminal (blame-dropped plies re-appended), with the
+        # seed's real move history.
+        board = seed_board_from_line(reconstruct_lost_line(line))
         cb = CBoard.from_board(board)
         encs.append(encode_cboard(cb, input_history_encoding=hist, input_extra_features=extra))
         if use_rel:
@@ -96,10 +99,49 @@ def score_seeds(checkpoint: str, seed_lines: list[str], *, device: str,
     return out
 
 
-def load_seed_lines(path: str) -> list[str]:
-    from chess_anti_engine.selfplay.opening import _load_fen_list
+_DROPPED_RE = re.compile(r"\bdropped=([a-h1-8nbrqNBRQ,]+)")
 
-    return list(_load_fen_list(path))
+
+def reconstruct_lost_line(raw: str) -> str:
+    """Scoring line whose terminal is the ORIGINAL deep-LOST position.
+
+    Blame-backed gate emissions (scripts/blindspot_deepsf_gate.py) start
+    games at the earlier DECISION POINT and stash the trimmed plies in the
+    line comment (``dropped=uci,uci,...``). Scoring/retirement must evaluate
+    the LOST terminal — a correct net reads the decision point itself as
+    ~holdable forever, so scoring the emitted terminal would report backed
+    seeds as permanently BLIND and never retire them (Codex #134). Re-append
+    the dropped plies (real history preserved); comment-less or un-backed
+    lines pass through unchanged (minus the comment).
+    """
+    body, _, comment = raw.partition("#")
+    body = body.strip()
+    if not body:
+        return ""
+    m = _DROPPED_RE.search(comment)
+    if m is None:
+        return body
+    moves = " ".join(m.group(1).split(","))
+    if "|" in body:
+        return f"{body} {moves}"
+    return f"{body} | {moves}"
+
+
+def load_seed_lines(path: str) -> list[str]:
+    """Seed lines VERBATIM (comments kept — they carry blame-backup metadata
+    that must survive the retire step's list rewrites), blanks and pure
+    comment lines skipped. Raises if the file yields zero seeds (mirrors
+    _load_fen_list's fail-fast contract)."""
+    lines: list[str] = []
+    with open(path, encoding="utf-8") as fh:
+        for raw in fh:
+            raw = raw.rstrip("\n")
+            body = raw.partition("#")[0].strip()
+            if body:
+                lines.append(raw)
+    if not lines:
+        raise ValueError(f"seed list {path!r} contains no usable seeds")
+    return lines
 
 
 def main() -> None:

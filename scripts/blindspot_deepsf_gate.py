@@ -110,6 +110,7 @@ def main() -> None:
 
     audit = []
     vetted = []
+    emitted_placements: set[str] = set()
     t0 = time.time()
     try:
         for i, s in enumerate(uniq):
@@ -155,9 +156,24 @@ def main() -> None:
                             rec["blame_k"] = k
                             rec["blame_dsq"] = cand_dsq
                             rec["blame_move"] = moves[len(moves) - k]
+                            # Trimmed plies ride the list comment (dropped=)
+                            # so resolution/retirement reconstruct + score the
+                            # LOST terminal — the decision point itself reads
+                            # ~holdable to a correct net, i.e. BLIND forever.
+                            rec["dropped"] = ",".join(moves[len(moves) - k:])
                             break
                         # LOST or MID: still inside the lost line — keep walking.
                 rec["emitted_line"] = emit_line
+                # Dedup on the EMITTED terminal placement: two severe rows can
+                # back up to the same decision point (or share a terminal via
+                # different histories); the dole plays every list line once
+                # per iter, so duplicates would overweight one position.
+                emit_key = seed_board_from_line(emit_line).fen().split()[0]
+                if emit_key in emitted_placements:
+                    rec["deduped_against_emitted"] = True
+                    audit.append(rec)
+                    continue
+                emitted_placements.add(emit_key)
                 vetted.append((s, dsq, emit_line, rec))
             audit.append(rec)
             if (i + 1) % 20 == 0:
@@ -175,7 +191,7 @@ def main() -> None:
             blame = ""
             if "blame_k" in rec:
                 blame = (f" blame_k={rec['blame_k']} blame_dsq={rec['blame_dsq']}"
-                         f" blunder={rec['blame_move']}")
+                         f" blunder={rec['blame_move']} dropped={rec['dropped']}")
             fh.write(f"{emit_line}  # deep_sq={dsq} sq={s.sq:.2f} nq={s.nq:.2f}"
                      f" game={s.game_id}{blame}\n")
 
