@@ -27,9 +27,11 @@ class FakeStockfish(StockfishUCI):
         *,
         nodes: int | None = None,
         syzygy_path: str | None = None,
+        fresh: bool = False,
     ) -> StockfishResult:
         del syzygy_path
         del nodes
+        del fresh
         board = chess.Board(fen)
         move = next(iter(board.legal_moves), chess.Move.null())
         return StockfishResult(bestmove_uci=move.uci(), wdl=self._wdl, pvs=[])

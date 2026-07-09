@@ -61,8 +61,8 @@ class _FakePool(StockfishPool):
     def __init__(self) -> None:  # pyright: ignore[reportMissingSuperCall]
         self.calls: list[dict] = []
 
-    def submit(self, fen: str, *, nodes=None, syzygy_path=None):
-        self.calls.append({"fen": fen, "nodes": nodes, "syzygy_path": syzygy_path})
+    def submit(self, fen: str, *, nodes=None, syzygy_path=None, fresh: bool = False):
+        self.calls.append({"fen": fen, "nodes": nodes, "syzygy_path": syzygy_path, "fresh": fresh})
         fut: Future = Future()
         fut.set_result(StockfishResult(bestmove_uci="a2a3", wdl=np.array([0.0, 1.0, 0.0]), pvs=[]))
         return fut
