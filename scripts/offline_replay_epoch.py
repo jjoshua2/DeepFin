@@ -1064,10 +1064,27 @@ def _train_candidate_live_follow(
     credit_idle_since: float | None = None
     best_eval_loss: float | None = None
     plateau_streak = 0
-    # Warm continuations must not clobber the prior run's trainer_best_eval.pt
-    # on their FIRST eval (best_eval_loss is None -> everything "improves"):
-    # use that eval to SEED the bar instead of saving over the previous best.
-    seed_best_pending = bool(args.init_checkpoint) and plateau_evals > 0
+    # Warm continuations must not clobber the prior run's trainer_best_eval.pt.
+    # Preferred seed for the plateau bar: the loaded best's PERSISTED eval loss
+    # (trainer_best_eval.json) — comparing against our own first eval would let
+    # a later eval that improves only relative to a bad restart point overwrite
+    # the genuinely-better loaded best. Fallback (no sidecar, e.g. a pre-fix
+    # run dir): seed from the first eval. Caveat noted: the eval sample drifts
+    # as the pool grows, so a stale baseline errs conservative (protects the
+    # best file), which is the right direction.
+    seed_best_pending = False
+    if args.init_checkpoint and plateau_evals > 0:
+        sidecar = run_dir / "trainer_best_eval.json"
+        try:
+            best_eval_loss = float(json.loads(sidecar.read_text(encoding="utf-8"))["eval_loss"])
+            print(json.dumps({
+                "event": "live_best_eval_baseline_loaded",
+                "candidate": candidate,
+                "eval_loss": best_eval_loss,
+                "path": str(sidecar),
+            }), flush=True)
+        except (OSError, ValueError, KeyError):
+            seed_best_pending = True
 
     print(json.dumps({
         "event": "live_follow_ready",
@@ -1214,6 +1231,13 @@ def _train_candidate_live_follow(
                     plateau_streak = 0
                     trainer.save(run_dir / "trainer_best_eval.pt")
                     trainer.save(run_dir / "trainer.pt")
+                    # Sidecar so a later `continue` seeds its plateau bar from
+                    # the loaded best's KNOWN loss instead of its own first
+                    # eval (which, when worse, would let a merely-relatively-
+                    # improving later eval overwrite the loaded best).
+                    (run_dir / "trainer_best_eval.json").write_text(
+                        json.dumps({"steps": steps, "eval_loss": cur}) + "\n",
+                        encoding="utf-8")
                     print(json.dumps({
                         "event": "live_best_eval",
                         "candidate": candidate,

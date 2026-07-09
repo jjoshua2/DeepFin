@@ -32,6 +32,9 @@ import time
 from pathlib import Path
 
 _TMP_PREFIX = "._tmp_feed_"
+# The trial whose shards entered the pool as BARE names before per-trial
+# tagging existed (the seed window + the 2026-07-08 feeds all came from it).
+_LEGACY_PRETAG_TRIAL = "train_trial_5fac4_00000_0_lr=0.0003_2026-06-17_22-42-40"
 
 
 def _idx(path: Path) -> int:
@@ -159,10 +162,14 @@ def main() -> int:
 
     live = sorted(live_dir.glob("shard_*.zarr"), key=_idx)
     # Fed check is by TAGGED name (unique per source trial). Bare-name presence
-    # also counts as fed for backward compat with the pre-tag pool contents
-    # (seed window + 07-08 feeds) — those all came from the current trial.
+    # counts as fed ONLY for the legacy trial whose shards populated the pool
+    # pre-tag (seed window + 07-08 feeds) — for any OTHER trial a bare
+    # collision (fresh trials restart at shard_000000) must NOT mask the new
+    # trial's shard, whose tagged destination is distinct.
+    bare_compat = live_dir.parent.name == _LEGACY_PRETAG_TRIAL
+
     def _already_fed(src: Path) -> bool:
-        return _dst_name(src) in boot_names or src.name in boot_names
+        return _dst_name(src) in boot_names or (bare_compat and src.name in boot_names)
 
     # Prefer strictly newer-than-boot-max; also any name not present (safety).
     missing = [p for p in live if not _already_fed(p) and _idx(p) > boot_max]
