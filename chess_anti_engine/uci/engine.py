@@ -595,6 +595,14 @@ class Engine:
             f"info string UseMultiGpuPUCV on "
             f"(devices={len(factories)} gather={gather})"
         )
+  # Same inertness as the Threads>1 walker pool (see _set_threads): the
+  # pool selects with plain PUCT and never reads c_scale/c_visit, so the
+  # tuned Gumbel values silently stop applying while it is installed.
+        _println(
+            "info string note: c_scale/c_visit are inactive on the multi-GPU "
+            "PUCV pool (plain PUCT); a single device with Threads=1 restores "
+            "the c_scale-tuned classic Gumbel path"
+        )
 
     def _set_pucv_pending_mode(self, value: str) -> None:
         normalized = value.strip().lower().replace("_", "-")

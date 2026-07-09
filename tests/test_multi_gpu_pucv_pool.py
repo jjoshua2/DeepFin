@@ -134,6 +134,83 @@ def test_pool_n2_accumulates_visits_no_vloss_leak() -> None:
         pool.close()
 
 
+def test_pool_run_returns_completed_not_target_on_early_stop() -> None:
+    """run() must report the sims actually completed: a pre-set stop_event
+    means workers acquire no budget tokens, so the return is 0, not the
+    requested target (which would inflate the caller's nps/node math)."""
+    ev = _make_evaluator()
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=1, gather=8, vloss_weight=3),
+        evaluators=[ev],
+    )
+    try:
+        tree, rid, cb = _seed_tree()
+        stopped = threading.Event()
+        stopped.set()
+        completed = pool.run(tree=tree, root_id=rid, root_cboard=cb,
+                             target_sims=64, stop_event=stopped)
+        assert completed == 0
+        _, visits = tree.get_children_visits(rid)
+        assert int(visits.sum()) == 0
+
+  # Uninterrupted run consumes the whole budget and reports it.
+        completed = pool.run(tree=tree, root_id=rid, root_cboard=cb,
+                             target_sims=64, stop_event=threading.Event())
+        assert completed == 64
+    finally:
+        pool.close()
+
+
+def test_pool_terminal_only_batches_skip_evaluator() -> None:
+    """With the eval cache off, batches that gathered ONLY terminal leaves
+    must not submit (zeroed) inputs to the evaluator — descend already
+    backpropped the terminal values inline. A stalemate root makes every
+    descent terminal, so the evaluator must never be called."""
+    board = chess.Board("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1")
+    assert board.is_stalemate()
+    ev = _CountingInplaceEvaluator()
+    pool = MultiGpuPucvPool(
+        MultiGpuPucvConfig(n_gpus=1, gather=4),
+        evaluators=[ev],
+    )
+    try:
+        tree = MCTSTree()
+        tree.reserve(1024, 8192)
+        cb = CBoard.from_board(board)
+        rid = tree.add_root(0, 0.0)
+        target = 16
+        completed = pool.run(tree=tree, root_id=rid, root_cboard=cb,
+                             target_sims=target, stop_event=threading.Event())
+        assert completed == target
+        assert ev.calls == 0
+        stats = pool.last_stats()
+        assert stats.terminal_leaves == target
+    finally:
+        pool.close()
+
+
+def test_searchworker_pool_nodes_reflect_completed_sims() -> None:
+    """SearchWorker must account pool chunks by their completed count: with a
+    pre-set stop_event the pool completes nothing, so result.nodes == 0
+    (previously it reported the full requested chunk)."""
+    primary = _make_evaluator(max_batch=64)
+    worker = SearchWorker(
+        primary, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    p0 = _make_evaluator(max_batch=64)
+    p1 = _make_evaluator(max_batch=64)
+    worker.install_multi_gpu_pucv([p0, p1], gather=8, as_factories=False)
+    stopped = threading.Event()
+    stopped.set()
+    result = worker.run(chess.Board(), stop_event=stopped,
+                        deadline=Deadline(2_000), max_nodes=64)
+    assert result.nodes == 0
+    assert len(result.bestmove_uci) >= 4  # bestmove still emitted (root priors)
+    worker.close()
+
+
 def test_pool_zero_target_is_noop() -> None:
     ev = _make_evaluator()
     pool = MultiGpuPucvPool(

@@ -918,7 +918,12 @@ class SearchWorker:
         tb_probe,
         allowed_root_indices: set[int] | None,
         allow_terminal_shortcuts: bool,
-    ) -> float:
+    ) -> tuple[float, int]:
+        """Returns ``(root_value, completed_sims)``. Only the multi-GPU pool
+        reports a real completed count (it can stop mid-chunk on stop_event);
+        the other paths run the full chunk — the gumbel C state machine has no
+        early stop, and walker/pucv report best-effort ``target_sims`` — so
+        they count ``chunk``."""
         if allowed_root_indices is not None:
             # `searchmoves` restriction is only threaded through the single-walker
             # gumbel C path (via allowed_root_indices_batch). The pool / pucv / walker
@@ -929,17 +934,17 @@ class SearchWorker:
             return self._run_gumbel_chunk(
                 chunk, board, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
-            )
+            ), chunk
         if self._pucv_pool is not None:
             return self._run_pucv_pool_chunk(chunk, stop_event)
         if self._walker_pool is not None:
-            return self._run_walker_chunk(chunk, stop_event)
+            return self._run_walker_chunk(chunk, stop_event), chunk
         if self._pucv is not None:
-            return self._run_pucv_chunk(chunk)
+            return self._run_pucv_chunk(chunk), chunk
         return self._run_gumbel_chunk(
             chunk, board, tb_probe, allowed_root_indices,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
-        )
+        ), chunk
 
     def _maybe_emit_pv_info(
         self,
@@ -1446,14 +1451,17 @@ class SearchWorker:
                     break
 
             _chunk_t0 = time.monotonic()
-            last_value = self._run_one_chunk(
+            last_value, completed = self._run_one_chunk(
                 chunk, board, stop_event, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
             )
   # Time the (un-interruptible) chunk so the batch-time clock margin below can
   # reserve one worst-case batch before the hard deadline.
             self._record_batch_ms((time.monotonic() - _chunk_t0) * 1000.0)
-            total_nodes += int(chunk)
+  # Count the sims actually completed, not the requested chunk: a pool chunk
+  # cut short by stop_event would otherwise inflate reported nodes AND the nps
+  # estimate `_time_capped_chunk` sizes later chunks with.
+            total_nodes += int(completed)
   # Per-chunk instrumentation hook (offline analysis of the accumulating tree —
   # the states the abort actually decides between). Fired after each chunk with
   # the cumulative node count; the callback reads worker root state itself.
@@ -1559,19 +1567,19 @@ class SearchWorker:
 
     def _run_pucv_pool_chunk(
         self, chunk: int, stop_event: threading.Event,
-    ) -> float:
+    ) -> tuple[float, int]:
         assert self._tree is not None
         assert self._root_id is not None
         assert self._pucv_pool is not None
         assert self._pucv_pool_cboard is not None
-        self._pucv_pool.run(
+        completed = self._pucv_pool.run(
             tree=self._tree,
             root_id=self._root_id,
             root_cboard=self._pucv_pool_cboard,
             target_sims=chunk,
             stop_event=stop_event,
         )
-        return self._tree.node_q(self._root_id)
+        return self._tree.node_q(self._root_id), int(completed)
 
     def _ensure_pucv_pool_root_expanded(self, board: chess.Board) -> None:
         """Same root-prep contract as walker_pool / pucv: pool workers

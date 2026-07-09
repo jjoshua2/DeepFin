@@ -195,3 +195,95 @@ def test_stress_descent_and_backprop_no_crash():
     # At least one backprop must have landed at the root.
     root_q = t.node_q(rid)
     assert root_q == root_q, "root Q is NaN"  # NaN check via self-inequality
+
+
+def _integrate_fixture(
+    rows: int,
+) -> tuple[MCTSTree, int, int, tuple[np.ndarray, ...]]:
+    """Tree with one root->child edge plus batch_integrate_leaves buffers for
+    ``rows`` identical non-terminal leaves whose path is [root, child].
+    legal_lens are all 0 (no expand attempt) and vloss_weight is passed as 0
+    by callers, so each row is a pure tree_backprop through the shared pair."""
+    max_path = 512  # MCTS_MAX_PATH in _mcts_tree.c
+    t = MCTSTree()
+    t.reserve(64, 256)
+    rid = t.add_root(0, 0.0)
+    t.expand(rid, np.array([7], dtype=np.int32), np.array([1.0], dtype=np.float64))
+    cid = t.find_child(rid, 7)
+
+    path_buf = np.zeros(rows * max_path, dtype=np.int32)
+    for i in range(rows):
+        path_buf[i * max_path] = rid
+        path_buf[i * max_path + 1] = cid
+    path_lens = np.full(rows, 2, dtype=np.int32)
+    legal_buf = np.zeros(rows * 256, dtype=np.int32)
+    legal_lens = np.zeros(rows, dtype=np.int32)
+    is_term = np.zeros(rows, dtype=np.int8)
+    pol = np.zeros((rows, 4672), dtype=np.float32)
+    wdl = np.zeros((rows, 3), dtype=np.float32)
+    wdl[:, 0] = 3.0  # q = softmax-margin of (3,0,0): deterministic, nonzero
+    bufs = (path_buf, path_lens, legal_buf, legal_lens, is_term, pol, wdl)
+    return t, rid, cid, bufs
+
+
+def test_concurrent_backprop_w_sum_is_exact():
+    """W accumulation must be atomic, not just torn-read tolerant.
+
+    8 threads hammer batch_integrate_leaves (GIL released inside) with paths
+    through ONE shared root->child pair, all backpropping the same value q.
+    Because every add is the same q, the accumulator's value depends only on
+    how many adds have completed — so the final W must equal the sequential
+    left fold of `total` adds EXACTLY, in any interleaving. Before the
+    atomic_add_double fix in _mcts_tree.c the plain `W += v` read-modify-write
+    loses colliding updates and this assertion fails reliably at these counts
+    (8 threads x 40 calls x 128 rows on a 2-node path).
+    """
+    n_threads = 8
+    iters = 40
+    rows = 128
+
+    t, rid, cid, bufs = _integrate_fixture(rows)
+    path_buf, path_lens, legal_buf, legal_lens, is_term, pol, wdl = bufs
+
+    # Reference q: one integrate on an identical fresh tree; with N=1 the
+    # child's Q IS the backpropped q (0.0 + q == q).
+    ref, _ref_rid, ref_cid, ref_bufs = _integrate_fixture(1)
+    r_path, r_plens, r_legal, r_llens, r_term, r_pol, r_wdl = ref_bufs
+    ref.batch_integrate_leaves(
+        1, r_path, r_plens, r_legal, r_llens, r_term, r_pol, r_wdl, 0,
+    )
+    q = ref.node_q(ref_cid)
+    assert q != 0.0
+
+    start = threading.Barrier(n_threads)
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            start.wait()
+            for _ in range(iters):
+                t.batch_integrate_leaves(
+                    rows, path_buf, path_lens, legal_buf, legal_lens,
+                    is_term, pol, wdl, 0,
+                )
+        except BaseException as e:  # pragma: no cover — surfaced via assert
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join(timeout=60.0)
+    assert not errors, f"worker crashed: {errors[0]}"
+
+    total = n_threads * iters * rows
+    expected_child = 0.0
+    expected_root = 0.0
+    for _ in range(total):
+        expected_child += q   # leaf perspective: +q per backprop
+        expected_root += -q   # sign alternates up the path
+    # node_q = W/N with N == total; both sides are the same IEEE double
+    # division, so equality holds iff W matches the fold EXACTLY. A lost
+    # update shifts W by a whole |q| (~0.86) — far beyond quotient rounding.
+    assert t.node_q(cid) == expected_child / total
+    assert t.node_q(rid) == expected_root / total

@@ -255,7 +255,11 @@ def test_use_multi_gpu_pucv_setoption_installs_factories(capsys) -> None:
         factories, gather=512, as_factories=True,
     )
     assert engine._options.use_multi_gpu_pucv is True
-    assert "UseMultiGpuPUCV on" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "UseMultiGpuPUCV on" in out
+    # Inert-tuning parity with the Threads>1 warning: the pool is plain PUCT,
+    # so installing it must surface that c_scale/c_visit stop applying.
+    assert "c_scale/c_visit are inactive on the multi-GPU PUCV pool" in out
 
 
 def test_pucv_pending_mode_setoption_updates_worker(capsys) -> None:

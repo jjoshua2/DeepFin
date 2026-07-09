@@ -42,6 +42,7 @@ def _warmup_evaluator(
     *,
     n_walkers: int = 1,
     walker_gather: int = 1,
+    n_devices: int = 1,
     input_history_encoding: str = "legacy",
     input_extra_features: str | None = None,
     compute_relations: bool = False,
@@ -56,6 +57,14 @@ def _warmup_evaluator(
     for the single-game bucket (gumbel_c._BUCKETS). We warm the endpoints
     for the selected path — intermediate sizes fall through the same
     compiled graph once the endpoints are captured.
+
+    ``n_devices``: each shape is issued this many times so a routing chain
+    containing ``MultiGPUDispatcher`` warms EVERY device, not just the
+    first few. Sequential warmup calls always tie on in-flight count (0),
+    and the dispatcher's round-robin tiebreaker cycles ties, so N calls
+    visit all N devices deterministically. A cold device would otherwise
+    pay its compile/capture stall on a mid-game root eval, on the clock
+    and outside the chunk clock-guard.
 
     Warmup is skipped silently on failure — the real ``go`` will see the
     same error and surface it there.
@@ -78,13 +87,14 @@ def _warmup_evaluator(
     for batch in batches:
         xs = np.broadcast_to(encoded, (batch, *encoded.shape)).astype(np.float32, copy=True)
         try:
-            if rel_row is None:
-                evaluator.evaluate_encoded(xs)
-            else:
+            for _ in range(max(1, int(n_devices))):
+                if rel_row is None:
+                    evaluator.evaluate_encoded(xs)
+                else:
   # Warm WITH relations so compile/cudagraph captures the graph the
   # real search will replay (relations change the traced forward).
-                rels = np.broadcast_to(rel_row, (batch, *rel_row.shape)).copy()
-                evaluator.evaluate_encoded(xs, relations=rels)
+                    rels = np.broadcast_to(rel_row, (batch, *rel_row.shape)).copy()
+                    evaluator.evaluate_encoded(xs, relations=rels)
         except Exception:
             break
 
@@ -189,12 +199,20 @@ def _make_evaluator_factory(
   # bypass it when there is no compile mode.
         if compile_mode is not None or (coalesce and n_walkers > 1):
             evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
+  # Warm BELOW the eval cache: EncodedEvalCache dedupes identical rows and
+  # serves full-hit batches without touching the inner evaluator, so warming
+  # through it would compile/capture only the first call's shape on one
+  # device and leave every other shape/device cold. Warming the pre-cache
+  # chain still runs on the coalescer's submitter thread (the thread that
+  # replays cudagraphs in real searches).
+        warm_target = evaluator
         if eval_cache_entries > 0:
             evaluator = EncodedEvalCache(
                 evaluator, max_entries=int(eval_cache_entries),
             )
         _warmup_evaluator(
-            evaluator, n_walkers=n_walkers, walker_gather=walker_gather,
+            warm_target, n_walkers=n_walkers, walker_gather=walker_gather,
+            n_devices=len(devices),
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
             compute_relations=use_relations,
@@ -223,8 +241,18 @@ def _make_multi_gpu_pucv_factory_builder(
         factories = []
         for model, device in zip(models, devices):
             def make_one(m=model, d=device):
+  # Bind this pool worker thread to its device BEFORE compile /
+  # construction / warmup: threads inherit current-device cuda:0, and
+  # cudagraph capture on devices 1..N-1 must not rely on stream
+  # contexts alone (same pattern as inference_threaded /
+  # train.async_eval; project memory records a cudagraph-TLS crash
+  # from exactly this). cpu devices (tests) skip it.
+                import torch
+                dev = torch.device(d)
+                if dev.type == "cuda":
+  # bare "cuda" yields index None; `or 0` collapses None/0 to the default device.
+                    torch.cuda.set_device(dev.index or 0)
                 if compile_mode:
-                    import torch
                     from typing import cast
                     compiled = cast(
                         "torch.nn.Module",
@@ -345,6 +373,44 @@ def _pick_device(arg: str) -> str:
         return "cpu"
 
 
+def _resolve_use_multi_gpu_pucv(flag: bool | None, n_devices: int) -> bool:
+    """Decide whether the multi-GPU PUCV pool is active at startup.
+
+    With one device the pool cannot install (needs >= 2 factories) — always
+    False, keeping single-device behavior identical. With multiple devices
+    the pool is the only path that runs the GPUs concurrently: the routing
+    chain (BatchCoalescingDispatcher over MultiGPUDispatcher) has ONE
+    submitter thread that calls the inner evaluator synchronously, so
+    exactly one GPU is busy at a time — worse than a single device once
+    cache behavior is counted. Hence:
+
+    - ``flag`` unset (None): AUTO-ENABLE the pool and say so on stderr.
+    - ``flag`` explicitly False: honor it, but warn LOUDLY — the serialized
+      routing path is a debugging configuration, not a performance one.
+    """
+    if n_devices <= 1:
+        return False
+    if flag is None:
+        print(
+            f"info: {n_devices} devices and UseMultiGpuPUCV not set — "
+            "auto-enabling the multi-GPU PUCV pool (without it the routing "
+            "dispatcher serializes GPU work; pass --no-multi-gpu-pucv to "
+            "force that debug path)",
+            file=sys.stderr, flush=True,
+        )
+        return True
+    if not flag:
+        print(
+            "WARNING: --no-multi-gpu-pucv with multiple devices — the "
+            "routing dispatcher's single submitter runs the GPUs ONE CALL "
+            "AT A TIME (serialized, at or below single-GPU throughput). "
+            "This configuration is for debugging only.",
+            file=sys.stderr, flush=True,
+        )
+        return False
+    return True
+
+
 def main() -> int:
     p = argparse.ArgumentParser(prog="chess-anti-engine-uci")
   # --checkpoint is required, but we accept DEEPFIN_CKPT as the default so
@@ -447,8 +513,17 @@ def main() -> int:
                    help="per-walker leaf gather (default: 1; lc0-style amplification at 4-8)")
     p.add_argument("--vl-gather", type=int, default=512,
                    help="leaf gather for UseVL and UseMultiGpuPUCV (default: 512)")
-    p.add_argument("--multi-gpu-pucv", action="store_true",
-                   help="with --devices, use shared-tree per-GPU PUCV workers instead of the routing dispatcher")
+  # Tri-state: None = unset (auto-enable with >1 devices), True/False =
+  # explicit. See _resolve_use_multi_gpu_pucv for why unset defaults ON.
+    p.add_argument("--multi-gpu-pucv", dest="multi_gpu_pucv",
+                   action="store_true", default=None,
+                   help="with --devices, use shared-tree per-GPU PUCV workers instead of the "
+                        "routing dispatcher (default: auto-enabled when --devices lists more "
+                        "than one device)")
+    p.add_argument("--no-multi-gpu-pucv", dest="multi_gpu_pucv",
+                   action="store_false",
+                   help="force the routing dispatcher even with multiple --devices "
+                        "(DEBUG ONLY: its single submitter serializes GPU work)")
     p.add_argument("--pucv-pending-mode", choices=["legacy", "virtual-mean"],
                    default="legacy",
                    help="pending accounting for batched PUCV paths (default: legacy)")
@@ -516,7 +591,9 @@ def main() -> int:
         devices = [d.strip() for d in args.devices.split(",") if d.strip()]
     else:
         devices = [_pick_device(args.device)]
-    use_multi_gpu_pucv = bool(args.multi_gpu_pucv and len(devices) > 1)
+    use_multi_gpu_pucv = _resolve_use_multi_gpu_pucv(
+        args.multi_gpu_pucv, len(devices),
+    )
     startup_options = EngineOptions(
         threads=max(1, int(args.walkers)),
         leaf_gather=max(1, int(args.walker_gather)),
@@ -553,8 +630,17 @@ def main() -> int:
   # c_scale / c_visit shape the Gumbel sigma(q) value transform; the PUCT
   # walker pool (n_walkers > 1, the --walkers/Threads default) selects on
   # raw Q and never reads them, so the tuned c_scale=0.025 win only lands on
-  # the classic Gumbel path. Warn so the inert tuning isn't silent.
-            if n_walkers > 1:
+  # the classic Gumbel path. Warn so the inert tuning isn't silent. The
+  # multi-GPU pucv pool is plain PUCT too and overrides both other paths,
+  # so it gets the same warning.
+            if use_multi_gpu_pucv:
+                _println(
+                    "info string c-scale/c-visit are Gumbel-only and ignored "
+                    "while the multi-GPU PUCV pool is active (plain PUCT); "
+                    "run a single device with Threads/--walkers 1 for the "
+                    "c_scale-tuned classic Gumbel path"
+                )
+            elif n_walkers > 1:
                 _println(
                     "info string c-scale/c-visit are Gumbel-only and ignored at "
                     f"walkers={n_walkers} (PUCT walker pool); set Threads/--walkers 1 "
