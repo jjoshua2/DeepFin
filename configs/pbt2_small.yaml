@@ -184,9 +184,9 @@ selfplay:
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
-  # Each iter the server hands the WHOLE 115-seed v3 list to ONE worker poll (durable per-iter
+  # Each iter the server hands the WHOLE 114-seed v3 list to ONE worker poll (durable per-iter
   # gate); played as SELFPLAY slots only → PID-safe by construction (no curriculum starvation,
-  # the failure mode that capped opening_fen_prob at 0.05). dose 1 = each seed once/iter ≈ 115
+  # the failure mode that capped opening_fen_prob at 0.05). dose 1 = each seed once/iter ≈ 114
   # selfplay seeded games/iter. Threaded-path delivery wired+verified. Live-reloadable.
   # KILL: set 0 + opening_fen_prob 0.05. Ledger LIVE-UNREAD row (readout ~iter 725); baseline
   # ckpt686 (v1 16/35, value 74.3), revert trunk data/salvage/pre_dole_ckpt686_20260708.
