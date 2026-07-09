@@ -38,15 +38,39 @@ def _idx(path: Path) -> int:
     return int(m.group(1)) if m else -1
 
 
-def _tree_mtime(path: Path) -> float:
-    """Newest mtime in a shard tree (zarr stores are directories)."""
-    newest = path.stat().st_mtime
-    if path.is_dir():
-        for child in path.rglob("*"):
-            try:
-                newest = max(newest, child.stat().st_mtime)
-            except OSError:
-                continue
+def _discover_live_dir() -> Path | None:
+    """Most recently modified train_trial_*/replay_shards under the run root."""
+    root = Path("/home/josh/projects/chess/runs/pbt2_small/replay")
+    best: tuple[float, Path] | None = None
+    for d in root.glob("train_trial_*/replay_shards"):
+        if not d.is_dir():
+            continue
+        try:
+            mt = d.stat().st_mtime
+        except OSError:
+            continue
+        if best is None or mt > best[0]:
+            best = (mt, d)
+    return best[1] if best is not None else None
+
+
+def _tree_mtime(path: Path) -> float | None:
+    """Newest mtime in a shard tree (zarr stores are directories).
+
+    None when the shard vanished mid-scan (live eviction can prune a source
+    shard between the glob and this stat) — callers treat that as "skip this
+    shard, keep feeding the rest".
+    """
+    try:
+        newest = path.stat().st_mtime
+        if path.is_dir():
+            for child in path.rglob("*"):
+                try:
+                    newest = max(newest, child.stat().st_mtime)
+                except OSError:
+                    continue
+    except OSError:
+        return None
     return newest
 
 
@@ -55,10 +79,10 @@ def main() -> int:
     ap.add_argument(
         "--live-dir",
         type=Path,
-        default=Path(
-            "/home/josh/projects/chess/runs/pbt2_small/replay/"
-            "train_trial_5fac4_00000_0_lr=0.0003_2026-06-17_22-42-40/replay_shards"
-        ),
+        default=None,
+        help="Live trial replay_shards dir. Default: auto-discover the most "
+             "recently modified runs/pbt2_small/replay/train_trial_*/replay_shards "
+             "(a Tune resume/exploit can change the active trial dir).",
     )
     ap.add_argument(
         "--boot-dir",
@@ -84,7 +108,13 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    live_dir: Path = args.live_dir
+    live_dir: Path | None = args.live_dir
+    if live_dir is None:
+        live_dir = _discover_live_dir()
+        if live_dir is None:
+            print("[feed] ERROR: no train_trial_*/replay_shards found to auto-discover", file=sys.stderr)
+            return 2
+        print(f"[feed] live dir (auto): {live_dir}")
     boot_dir: Path = args.boot_dir
     if not live_dir.is_dir():
         print(f"[feed] ERROR: live dir missing: {live_dir}", file=sys.stderr)
@@ -109,7 +139,11 @@ def main() -> int:
     now = time.time()
     settle = max(0.0, float(args.settle_seconds))
     if settle > 0:
-        settled = [p for p in missing if now - _tree_mtime(p) >= settle]
+        settled = []
+        for p_ in missing:
+            mt = _tree_mtime(p_)
+            if mt is not None and now - mt >= settle:
+                settled.append(p_)
         skipped_unsettled = len(missing) - len(settled)
         missing = settled
     else:
@@ -165,12 +199,14 @@ def main() -> int:
             os.rename(tmp, dst)
         except OSError as exc:
             failed += 1
-            for leftover in (tmp, dst):
-                if leftover.exists():
-                    if leftover.is_dir():
-                        shutil.rmtree(leftover, ignore_errors=True)
-                    else:
-                        leftover.unlink(missing_ok=True)
+            # Clean OUR temp only. Never touch dst: if the rename raced a
+            # concurrent feeder that already published this shard, dst is a
+            # valid shard the sampler may be reading.
+            if tmp.exists():
+                if tmp.is_dir():
+                    shutil.rmtree(tmp, ignore_errors=True)
+                else:
+                    tmp.unlink(missing_ok=True)
             print(f"[feed] FAIL {src.name}: {exc}", file=sys.stderr)
 
     print(

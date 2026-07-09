@@ -157,6 +157,7 @@ case "$MODE" in
     # Warm continuation from the best/last checkpoint. Optional 2nd arg = LR
     # override (e.g. 0.0001); omit to inherit the checkpoint's schedule.
     require_no_running_bootstrap
+    wait_for_sidecars
     LR="${2:-}"
     INIT="$(pick_init_ckpt)"
     if [[ -z "$INIT" ]]; then

@@ -12,7 +12,6 @@ import argparse
 import dataclasses
 import json
 import math
-import shutil
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -1065,6 +1064,10 @@ def _train_candidate_live_follow(
     credit_idle_since: float | None = None
     best_eval_loss: float | None = None
     plateau_streak = 0
+    # Warm continuations must not clobber the prior run's trainer_best_eval.pt
+    # on their FIRST eval (best_eval_loss is None -> everything "improves"):
+    # use that eval to SEED the bar instead of saving over the previous best.
+    seed_best_pending = bool(args.init_checkpoint) and plateau_evals > 0
 
     print(json.dumps({
         "event": "live_follow_ready",
@@ -1196,7 +1199,17 @@ def _train_candidate_live_follow(
             # bootstrap playbook says stop the phase there (then LR-drop / refresh).
             if plateau_evals > 0:
                 cur = float(eval_metrics.loss)
-                if best_eval_loss is None or cur < best_eval_loss - plateau_min_delta:
+                if seed_best_pending and best_eval_loss is None:
+                    seed_best_pending = False
+                    best_eval_loss = cur
+                    print(json.dumps({
+                        "event": "live_best_eval_seeded",
+                        "candidate": candidate,
+                        "steps": steps,
+                        "eval_loss": cur,
+                        "init_checkpoint": str(args.init_checkpoint),
+                    }), flush=True)
+                elif best_eval_loss is None or cur < best_eval_loss - plateau_min_delta:
                     best_eval_loss = cur
                     plateau_streak = 0
                     trainer.save(run_dir / "trainer_best_eval.pt")
@@ -1238,6 +1251,16 @@ def _train_candidate_live_follow(
         else:
             stop_reason = "completed"
 
+    # On an eval-plateau stop the in-memory weights are from the NON-improving
+    # tail: park them (forensics), then RESTORE the best checkpoint BEFORE the
+    # final eval so results.jsonl / live_follow_done describe the same weights
+    # the trainer.pt artifact holds (downstream `continue` loads trainer.pt).
+    best_path = run_dir / "trainer_best_eval.pt"
+    restored_best = False
+    if stop_reason == "eval_plateau" and best_path.exists():
+        trainer.save(run_dir / "trainer_final.pt")
+        trainer.load(best_path)
+        restored_best = True
     eval_paths = _limit_shards(iter_shard_paths(args.replay_dir), args)
     eval_arrs = _load_eval_arrs(shard_paths=eval_paths, model_cfg=model_cfg, args=args)
     eval_metrics = trainer.eval_steps(
@@ -1245,22 +1268,14 @@ def _train_candidate_live_follow(
         batch_size=int(args.batch_size),
         steps=max(1, int(args.eval_steps)),
     )
-    # On an eval-plateau stop the in-memory weights are from the NON-improving
-    # tail; keep the conventional trainer.pt artifact pointing at the best
-    # checkpoint (downstream callers load trainer.pt by convention) and park
-    # the final state under trainer_final.pt for forensics.
-    best_path = run_dir / "trainer_best_eval.pt"
-    if stop_reason == "eval_plateau" and best_path.exists():
-        trainer.save(run_dir / "trainer_final.pt")
-        shutil.copy2(str(best_path), str(run_dir / "trainer.pt"))
-    else:
-        trainer.save(run_dir / "trainer.pt")
+    trainer.save(run_dir / "trainer.pt")
     out = {
         "candidate": candidate,
         "optimizer": optimizer,
         "matrix_optimizer_scope": scope,
         "mode": "live_follow",
         "stop_reason": stop_reason,
+        "restored_best_eval": restored_best,
         "matrix_lr_multiplier": float(args.matrix_lr_multiplier),
         "matrix_weight_decay": float(args.matrix_weight_decay),
         "aux_weight_decay": float(args.aux_weight_decay),
