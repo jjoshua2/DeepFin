@@ -432,7 +432,7 @@ def _fenlist_net_color(source: str, board: chess.Board, cfg: OpeningConfig) -> i
     alternating color. Shared by create() and recycle_slot() so the rule can't
     drift between fresh and recycled slots (Codex review, PR #108).
     """
-    if source == "fenlist" and cfg.opening_fen_net_side_to_move:
+    if source.startswith("fenlist") and cfg.opening_fen_net_side_to_move:
         return 1 if board.turn else 0
     return None
 
@@ -811,7 +811,7 @@ class SelfplayState:
         adjudication and the ply-timeout skip such slots so a seed is never
         finalized with zero training samples (Codex review, PR #108).
         """
-        if self.starting_boards is None or str(self.opening_source_arr[i]) != "fenlist":
+        if self.starting_boards is None or not str(self.opening_source_arr[i]).startswith("fenlist"):
             return False
         # cboards[i].ply is the absolute ply (C attr, ~137 for a fullmove-69
         # seed); starting_boards[i] is a chess.Board so .ply() is a method.

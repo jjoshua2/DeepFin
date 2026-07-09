@@ -200,7 +200,13 @@ def main() -> None:
     # FEN check is armed only when seeding is actually active in this window
     # (--expect-fenlist forces it either way). A non-FEN trial never delivers,
     # so it stays green instead of false-alerting.
-    seen_total_fen = any(s.get("opening_fenlist_games", 0) > 0 for s in per_iter_stats)
+    # Both seed kinds count as delivery (plain + blame-backed decision-point
+    # seeds emit their own per-source keys).
+    def _fen_total(s: dict, prefix: str) -> int:
+        return int(s.get(f"{prefix}_fenlist_games", 0)) + int(
+            s.get(f"{prefix}_fenlist_backed_games", 0))
+
+    seen_total_fen = any(_fen_total(s, "opening") > 0 for s in per_iter_stats)
     # --expect-fenlist forces the check on/off; otherwise auto-detect from
     # whether the window ever delivered. When forced on, the alerts must fire
     # even over a window that never delivered (that IS the outage the override
@@ -217,8 +223,8 @@ def main() -> None:
     steps_zero_streak = 0
     prev: dict | None = None
     for row, stats in zip(rows, per_iter_stats, strict=True):
-        total_fen = stats.get("opening_fenlist_games", 0)
-        selfplay_fen = stats.get("selfplay_fenlist_games", 0)
+        total_fen = _fen_total(stats, "opening")
+        selfplay_fen = _fen_total(stats, "selfplay")
         total_fen_zero = 0 if total_fen > 0 else total_fen_zero + 1
         # Count the selfplay-substream streak purely on selfplay delivery — do
         # NOT reset it on a total-zero iter, or a bursty total stream with

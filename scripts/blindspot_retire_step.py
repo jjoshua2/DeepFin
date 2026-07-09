@@ -23,12 +23,22 @@ import re
 import sys
 
 from chess_anti_engine.selfplay.opening import seed_board_from_line
-from scripts.blindspot_resolution import load_seed_lines, score_seeds
+from scripts.blindspot_resolution import load_seed_lines, reconstruct_lost_line, score_seeds
 
 
 def _placement(line: str) -> str:
-    """Position key = piece placement only (ignore move counters / ep)."""
-    return seed_board_from_line(line.split("#", 1)[0].strip()).fen().split()[0]
+    """Position key = piece placement only (ignore move counters / ep).
+
+    Keyed on the LOST terminal (blame-dropped plies re-appended) so a backed
+    seed keeps one stable streak identity even if a later gate run backs the
+    same lost position up a different number of plies. Key keeps side-to-move/
+    castling/ep (clocks ignored) — the gate deliberately emits same-placement
+    seeds differing in those bits as DISTINCT, so retirement must not collapse
+    their streaks (one resolving would retire both). NOTE: this key format
+    change resets existing streak state once (old keys were placement-only) —
+    worst case each seed needs one extra AWARE read before retiring.
+    """
+    return " ".join(seed_board_from_line(reconstruct_lost_line(line)).fen().split()[:4])
 
 
 def update_streaks(
@@ -117,6 +127,20 @@ def main() -> None:
             with open(args.state, encoding="utf-8") as fh:
                 state = json.load(fh)
 
+        # Per-seed net_q dump (next to the state file, tagged by --tag): the
+        # 2026-07-09 stability study had to copy 4 live checkpoints because
+        # only streak counters survive a read — this makes every future
+        # stability/probation analysis free. Fail-soft like everything here.
+        try:
+            dump_path = os.path.join(
+                os.path.dirname(args.state) or ".",
+                f"retire_netq_{args.tag or 'untagged'}.jsonl")
+            with open(dump_path, "w", encoding="utf-8") as fh:
+                for k, qi, ln in zip(keys, q.tolist(), lines):
+                    fh.write(json.dumps({"key": k, "net_q": round(float(qi), 4),
+                                         "line": ln.partition("#")[0].strip()}) + chr(10))
+        except Exception:
+            pass
         retire_keys, resolved_now = update_streaks(
             keys, q.tolist(), state,
             resolved_below=args.resolved_below, min_consecutive=args.min_consecutive)

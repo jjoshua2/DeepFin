@@ -64,6 +64,7 @@ from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     _load_fen_list,
+    expand_dole_seeds,
     warm_opening_book_cache,
 )
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
@@ -1261,7 +1262,10 @@ class WorkerSession:
                 "dole: failed to load FEN list %s: %s", self.opening_fen_list_path, exc,
             )
             return
-        queue = list(seeds) * n
+        # Per-seed weight= markers multiply exposure inside one dose (and
+        # weight=0 soft-retires a seed from the dole); the global n scales
+        # the whole batch.
+        queue = expand_dole_seeds(seeds, str(self.opening_fen_list_path)) * n
         with self._dole_lock:
             live = self._live_dole_queue
             if live is not None:

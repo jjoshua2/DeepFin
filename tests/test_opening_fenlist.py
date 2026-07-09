@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import chess
 import numpy as np
 import pytest
 
+from chess_anti_engine.selfplay.finalize import _update_aggregate_stats
 from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     _load_fen_list,
@@ -14,6 +17,7 @@ from chess_anti_engine.selfplay.opening import (
     sample_starting_board,
     seed_board_from_line,
 )
+from chess_anti_engine.selfplay.state import SelfplayState
 
 FEN_BLACK = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
 FEN_WHITE = "rnbqkb1r/pppppppp/5n2/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 2 2"
@@ -120,12 +124,8 @@ def test_fenlist_takes_priority_over_book(tmp_path: Path) -> None:
 
 def test_tb_adjudication_defers_virgin_fenlist_slot(monkeypatch) -> None:
     """A TB-eligible FEN seed must survive adjudication until a ply is played."""
-    from types import SimpleNamespace
-    from typing import Any, cast
-
     from chess_anti_engine.encoding._lc0_ext import CBoard
     from chess_anti_engine.selfplay import manager as mgr
-    from chess_anti_engine.selfplay.state import SelfplayState
 
     fen = "8/8/8/4k3/8/3K4/4P3/8 w - - 0 1"  # KPvK: TB-eligible at ply 0
     board = chess.Board(fen)
@@ -157,41 +157,98 @@ def test_tb_adjudication_defers_virgin_fenlist_slot(monkeypatch) -> None:
     assert list(st.done_arr) == [0, 1, 1]
 
 
+def _agg_state(source: str, *, selfplay: bool, seed_fen: str | None = None) -> Any:
+    """One-slot bare SelfplayState double for ``_update_aggregate_stats`` tests
+    (pure-Python path, no C extension). ``seed_fen`` populates
+    ``starting_boards`` — the seed-position retention the stm telemetry reads;
+    None models states built without it (must degrade to no stm keys)."""
+    st = cast(Any, object.__new__(SelfplayState))
+    st.selfplay_arr = np.array([1 if selfplay else 0], dtype=np.int8)
+    st.net_color_arr = np.array([1], dtype=np.int8)  # net plays white (curriculum)
+    st.opening_source_arr = [source]
+    st.starting_boards = [chess.Board(seed_fen)] if seed_fen is not None else None
+    st.stats = SimpleNamespace(
+        w=0, d=0, l=0, plies_win=0, plies_draw=0, plies_loss=0,
+        selfplay_games=0, curriculum_games=0,
+        selfplay_adjudicated_games=0, curriculum_adjudicated_games=0,
+        total_draw_games=0, selfplay_draw_games=0, curriculum_draw_games=0,
+        outcome_stats={},
+    )
+    return st
+
+
+def _stm_keys(st: Any) -> list[str]:
+    return [k for k in st.stats.outcome_stats if "_stm_" in k]
+
+
 def test_fenlist_curriculum_excluded_from_pid_winrate() -> None:
     """A blind-spot seed is a systematic loss; it must not enter the PID winrate
     sample (state.stats.w/d/l) or it eases SF across the whole batch — but its
     outcome must still be visible in per-source telemetry (Codex review [1])."""
-    from types import SimpleNamespace
-    from typing import Any, cast
-
-    from chess_anti_engine.selfplay.finalize import _update_aggregate_stats
-    from chess_anti_engine.selfplay.state import SelfplayState
-
-    def mk(source: str) -> Any:
-        st = cast(Any, object.__new__(SelfplayState))
-        st.selfplay_arr = np.array([0], dtype=np.int8)   # curriculum slot
-        st.net_color_arr = np.array([1], dtype=np.int8)  # net plays white
-        st.opening_source_arr = [source]
-        st.stats = SimpleNamespace(
-            w=0, d=0, l=0, plies_win=0, plies_draw=0, plies_loss=0,
-            selfplay_games=0, curriculum_games=0,
-            selfplay_adjudicated_games=0, curriculum_adjudicated_games=0,
-            total_draw_games=0, selfplay_draw_games=0, curriculum_draw_games=0,
-            outcome_stats={},
-        )
-        return st
-
     # net (white) loses -> "0-1"
-    book = mk("book1")
+    book = _agg_state("book1", selfplay=False)
     _update_aggregate_stats(book, 0, result="0-1", was_adjudicated=False, game_plies=40)
     assert book.stats.l == 1  # a normal curriculum loss DOES feed the PID sample
 
-    fen = mk("fenlist")
+    fen = _agg_state("fenlist", selfplay=False, seed_fen=FEN_WHITE)
     _update_aggregate_stats(fen, 0, result="0-1", was_adjudicated=False, game_plies=40)
     assert fen.stats.l == 0            # seed loss EXCLUDED from the PID sample
     assert fen.stats.plies_loss == 0   # and from plies accounting
     assert fen.stats.curriculum_games == 1  # still counted as a game played
     assert fen.stats.outcome_stats.get("curriculum_fenlist_l") == 1  # telemetry kept
+    # stm telemetry is selfplay-only: a curriculum fenlist game must not add it
+    # (the curriculum_fenlist_* keys above already cover that seat).
+    assert _stm_keys(fen) == []
+
+
+# ── Seed-STM outcome telemetry (selfplay_fenlist_stm_{w,d,l}) ─────────────────
+# Seeds are deep-SF-confirmed LOST for the side to move at the seed position; in
+# seeded SELFPLAY both seats are the net, so an stm escape (draw/win) means the
+# game-outcome component of the WDL blend contradicts the deep-SF truth. The
+# telemetry makes that visible per iteration; healthy training keeps stm_l
+# dominant. FEN_WHITE has white to move at the seed, FEN_BLACK black.
+
+
+@pytest.mark.parametrize(
+    ("seed_fen", "result", "expected_key"),
+    [
+        (FEN_WHITE, "1-0", "selfplay_fenlist_stm_w"),
+        (FEN_WHITE, "1/2-1/2", "selfplay_fenlist_stm_d"),
+        (FEN_WHITE, "0-1", "selfplay_fenlist_stm_l"),
+        (FEN_BLACK, "0-1", "selfplay_fenlist_stm_w"),
+        (FEN_BLACK, "1/2-1/2", "selfplay_fenlist_stm_d"),
+        (FEN_BLACK, "1-0", "selfplay_fenlist_stm_l"),
+    ],
+)
+def test_fenlist_selfplay_stm_outcome_telemetry(
+    seed_fen: str, result: str, expected_key: str,
+) -> None:
+    st = _agg_state("fenlist", selfplay=True, seed_fen=seed_fen)
+    _update_aggregate_stats(st, 0, result=result, was_adjudicated=False, game_plies=40)
+    assert st.stats.outcome_stats.get(expected_key) == 1
+    assert _stm_keys(st) == [expected_key]  # exactly one stm key per game
+    # Existing per-source selfplay keys are unchanged alongside the new ones.
+    assert st.stats.outcome_stats.get("selfplay_fenlist_games") == 1
+    if result == "1/2-1/2":
+        assert st.stats.outcome_stats.get("selfplay_fenlist_draws") == 1
+    # Telemetry only: the PID winrate sample stays untouched by selfplay games.
+    assert (st.stats.w, st.stats.d, st.stats.l) == (0, 0, 0)
+
+
+def test_non_fenlist_selfplay_records_no_stm_keys() -> None:
+    st = _agg_state("book1", selfplay=True, seed_fen=FEN_WHITE)
+    _update_aggregate_stats(st, 0, result="1-0", was_adjudicated=False, game_plies=40)
+    assert st.stats.outcome_stats.get("selfplay_book1_games") == 1
+    assert _stm_keys(st) == []
+
+
+def test_fenlist_selfplay_stm_skipped_without_starting_boards() -> None:
+    # starting_boards is Optional on SelfplayState; without the seed board the
+    # stm seat is unknown — degrade to no stm keys rather than crash or guess.
+    st = _agg_state("fenlist", selfplay=True, seed_fen=None)
+    _update_aggregate_stats(st, 0, result="1-0", was_adjudicated=False, game_plies=40)
+    assert st.stats.outcome_stats.get("selfplay_fenlist_games") == 1
+    assert _stm_keys(st) == []
 
 
 def test_production_seed_asset_loads() -> None:
@@ -399,3 +456,75 @@ def test_dole_config_round_trips() -> None:
     assert tc.opening_fen_dole_per_iter == 3
     opening = _play_batch_kwargs(tc)["opening"]
     assert opening.opening_fen_dole_per_iter == 3
+
+
+def test_backed_fenlist_source_detection(tmp_path: Path) -> None:
+    """Lines whose comment carries dropped= are blame-backed decision-point
+    seeds and must resolve to the fenlist_backed opening source; plain lines
+    stay fenlist. Cache is path-keyed, so use a unique file per test."""
+    from chess_anti_engine.selfplay.opening import _fenlist_source
+
+    start = chess.Board().fen()
+    plain = f"{start} | e2e4 e7e5"
+    backed = f"{start} | e2e4"
+    seeds = tmp_path / "seeds_backed_detect.txt"
+    seeds.write_text(
+        f"# header\n{plain}  # deep_sq=-1.0\n"
+        f"{backed}  # deep_sq=-1.0 blame_k=2 blunder=d1h5 dropped=d1h5,b8c6\n",
+        encoding="utf-8",
+    )
+    assert _fenlist_source(plain, str(seeds)) == "fenlist"
+    assert _fenlist_source(backed, str(seeds)) == "fenlist_backed"
+    assert _fenlist_source(backed, None) == "fenlist"  # no list -> default
+
+
+@pytest.mark.parametrize(
+    ("result", "expect"),
+    [("1-0", "w"), ("1/2-1/2", "d"), ("0-1", "l")],
+)
+def test_backed_fenlist_selfplay_stm_keys_split(result: str, expect: str) -> None:
+    """Backed decision-point seeds must aggregate under their OWN stm keys —
+    their health semantics invert the normal fenlist ones (stm escape = the
+    avoidance goal) — and must stay out of the PID winrate sample."""
+    st = _agg_state("fenlist_backed", selfplay=True, seed_fen=chess.Board().fen())
+    c = _update_aggregate_stats(st, 0, result=result, was_adjudicated=False, game_plies=30)
+    assert c is not None
+    assert st.stats.outcome_stats.get(f"selfplay_fenlist_backed_stm_{expect}") == 1
+    assert not any(k.startswith("selfplay_fenlist_stm_") for k in st.stats.outcome_stats)
+    assert (st.stats.w, st.stats.d, st.stats.l) == (0, 0, 0)
+
+
+def test_backed_fenlist_curriculum_excluded_from_pid_winrate() -> None:
+    """count_in_pid must exclude fenlist_backed curriculum games exactly like
+    plain fenlist ones (startswith guard, not equality)."""
+    st = _agg_state("fenlist_backed", selfplay=False, seed_fen=chess.Board().fen())
+    _update_aggregate_stats(st, 0, result="0-1", was_adjudicated=False, game_plies=30)
+    assert (st.stats.w, st.stats.d, st.stats.l) == (0, 0, 0)
+
+
+def test_dole_seed_weights(tmp_path: Path) -> None:
+    """weight=N comment markers multiply a seed's dole exposure; weight=0
+    soft-retires it; absurd weights cap at _MAX_SEED_WEIGHT; unmarked seeds
+    default to 1. Path-keyed cache -> unique file per test."""
+    from chess_anti_engine.selfplay.opening import _MAX_SEED_WEIGHT, expand_dole_seeds
+
+    start = chess.Board().fen()
+    a = f"{start} | e2e4"
+    b = f"{start} | d2d4"
+    c = f"{start} | c2c4"
+    d = f"{start} | g1f3"
+    seeds_file = tmp_path / "seeds_weights.txt"
+    seeds_file.write_text(
+        f"{a}  # weight=3\n"
+        f"{b}  # weight=0 retired-in-place\n"
+        f"{c}  # weight=999\n"
+        f"{d}  # plain seed, no marker\n",
+        encoding="utf-8",
+    )
+    out = expand_dole_seeds([a, b, c, d], str(seeds_file))
+    assert out.count(a) == 3
+    assert out.count(b) == 0
+    assert out.count(c) == _MAX_SEED_WEIGHT
+    assert out.count(d) == 1
+    # No list path -> identity (probabilistic path / defensive default).
+    assert expand_dole_seeds([a, b], None) == [a, b]
