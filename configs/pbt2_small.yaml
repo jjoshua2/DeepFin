@@ -20,9 +20,10 @@ work_dir: runs/pbt2_small
 device: cuda
 iterations: 750
 replay_window_start: 400000   # 2026-04-22 v4: was 20000 (truncated pool to 10/187 shards). Raised so salvage keeps all pool shards (~374k pos).
-replay_window_max: 3000000   # 2026-06-01: 2.5M→3M. Modest short-term noise reduction while keeping policy/target churn visible.
-replay_window_growth_frac: 0.10   # 2026-05-28: grow slowly; retain ~10% of new positions while flushing most incoming data.
+replay_window_max: 1500000   # 2026-07-04: RECOVERY BANKED @ckpt524 (raw top-1 −1.7 and endgame value +1.3 vs ckpt457, both CIs include 0; value 72.15 ≈ the 72.4 known-good) → cap raised 800k→1.5M per the pre-committed plan. NOT back to 3M: 1.5M keeps data-path experiment clocks ~2 days instead of ~5. History: 2026-07-03 3M→800k→250k one-iteration eviction of the fast-ply-contaminated band→800k. Live-reloadable; shrink via enforce_window.
+replay_window_growth_frac: 1.0   # 2026-07-03: retain ALL new (clean) positions while regrowing post deep-cut (~482k @iter524). DROP TO 0.10 when the window reaches ~1.5M cap (~2 days at ~13.5k/iter). Prior: 0.10 (2026-05-28, grow slowly / retain ~10%).
 replay_window_growth: 20000   # Fallback when replay_window_growth_frac is unset.
+replay_sf_gap_priority_weight: 0   # 2026-07-05: EXPERIMENT #104 KILLED at the pre-committed ckpt559 readout — every kill threshold crossed: panel v1 18→24/35 (kill ≥20), v2 47→83/113 (kill ≥57), value_regret 72.1→86.0 paired Δ −13.8 [−22.4,−5.8]. Mechanism WORKED on its target (gap_resolution top-decile Δ +0.067) while bottom-half worsened → capacity theft at w=30; policy unchanged (CI includes 0). Do not re-enable at w=30; a low-w retry is a separate future experiment. History: activated w=30 @iter526 2026-07-04; dry-run 31.7% priority mass. Live-tunable; 0 = off. Baselines @ckpt524: panels 18/35 + 47/113, value 72.15, dumps scratchpad/policy_ci/*_ckpt524.jsonl.
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
@@ -157,6 +158,47 @@ selfplay:
   opening_book_max_games_2: 200000
   opening_book_mix_prob_2: 0.95  # 2026-05-28: favor the stronger/deeper 8-move UHO book; keep 5% shallow 2-move diversity.
   random_start_plies: 2   # Fallback if book unavailable
+  # --- Blind-spot FEN seeding (PR #108) ACTIVATED 2026-07-06 @ckpt612 ---
+  # Start ~2% of games FROM the 76 historically-misplayed positions (panel v2
+  # MINUS v1; panel v1's 35 rows HELD OUT as the generalization yardstick), net
+  # forced onto the blundering seat so SF refutes the losing move on-board. The
+  # 07-03 probe sweep proved search can't rescue these at any depth — only data
+  # can. Pre-activation baselines @ckpt609 (scratchpad/live_read/): value 75.9,
+  # panel v1 23/35 BLIND (PRIMARY), panel v2 70/113 BLIND (secondary).
+  # 2026-07-08 SCALE-UP: v1 FEN seeding WORKED (v1 BLIND 23->16/35 @ckpt669, sev
+  # +0.26 SIG, value guardrail NS). Now feeding v2 = v1 (76) + 68 deep-SF-VETTED
+  # (4M nodes + 6-man TB, deep-LOST) live-harvested blind spots. v3 = v2 minus 30
+  # LEARNED v1 seeds (net_q<=-0.4 @ckpt678, blindspot_resolution.py) = 46 unsolved
+  # v1 + 68 vetted = 114 seeds, 0 panel-v1 overlap. Dose 0.05 (~0.3 game/seed/iter,
+  # ~2x the validated v1 per-seed rate). 07-08 DIAL-DOWN: 0.22/0.17/0.14 STARVED the
+  # PID curriculum sample (seeded games are short + mostly selfplay-tagged + seeded
+  # curriculum excluded from the PID sample) — 323->64->11 games over 3 iters, breached
+  # the 30 floor at iter 685, so reverted to 0.05 to restore PID control. Poison-safe
+  # (deep-vetted -> in-loop SF labels correct). Baseline @ckpt~683 (value 74.3,
+  # v1 16/35). PRIMARY: v1 BLIND severity holds/improves. SECONDARY: vetted-seed
+  # resolution (retire AWARE). GUARDRAIL/KILL: value_regret paired vs baseline
+  # worse >2cp -> revert to 0.02. WATCH: PID sample (seeded curriculum games
+  # excluded from PID) — if sf_pid games < 30 or airbag trips, dial dose down.
+  # Live-reloadable; revert instantly if value moves.
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_v3.txt
+  opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
+  opening_fen_net_side_to_move: true
+  # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
+  # Each iter the server hands the WHOLE 114-seed v3 list to ONE worker poll (durable per-iter
+  # gate); played as SELFPLAY slots only → PID-safe by construction (no curriculum starvation,
+  # the failure mode that capped opening_fen_prob at 0.05). dose 1 = each seed once/iter ≈ 114
+  # selfplay seeded games/iter. Threaded-path delivery wired+verified. Live-reloadable.
+  # KILL: set 0 + opening_fen_prob 0.05. Ledger LIVE-UNREAD row (readout ~iter 725); baseline
+  # ckpt686 (v1 16/35, value 74.3), revert trunk data/salvage/pre_dole_ckpt686_20260708.
+  opening_fen_dole_per_iter: 1
+
+  # 2026-07-08: inline blind-spot harvester COLLECT-ONLY (#124). Finished games
+  # append value-blind positions (net's search says fine, in-loop SF says lost)
+  # as seed lines with real history to <path>.pPID (collect) + .severe.pPID
+  # (auto-feed band). PURE SIDE OUTPUT — does NOT change training; the seeds
+  # feed back only once this is wired into opening_fen_list_path (a later,
+  # ledger-gated step). Off = "".
+  blindspot_harvest_out_path: /home/josh/projects/chess/data/harvest/blindspot_live.txt
 
   mcts: gumbel
   mcts_simulations: 256
