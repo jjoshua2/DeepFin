@@ -23,6 +23,7 @@ NOT the salvage pool, which is a ledgered frozen revert point.
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import re
 import shutil
@@ -39,7 +40,12 @@ def _idx(path: Path) -> int:
 
 
 def _discover_live_dir() -> Path | None:
-    """Most recently modified train_trial_*/replay_shards under the run root."""
+    """Most recently modified train_trial_*/replay_shards that HAS shards.
+
+    A Tune resume/exploit can create (or touch) a newer empty replay dir
+    before any shard lands; ranking by mtime alone would select it and feed
+    nothing while the active trial's shards are ignored.
+    """
     root = Path("/home/josh/projects/chess/runs/pbt2_small/replay")
     best: tuple[float, Path] | None = None
     for d in root.glob("train_trial_*/replay_shards"):
@@ -47,11 +53,27 @@ def _discover_live_dir() -> Path | None:
             continue
         try:
             mt = d.stat().st_mtime
+            if next(iter(d.glob("shard_*.zarr")), None) is None:
+                continue
         except OSError:
             continue
         if best is None or mt > best[0]:
             best = (mt, d)
     return best[1] if best is not None else None
+
+
+def _trial_tag(live_dir: Path) -> str:
+    """Short stable tag identifying the source trial (its dir name hash).
+
+    Published shard names embed it (``shard_NNNNNN.<tag>.zarr``) so shard
+    names are unique ACROSS trials: a fresh exploited trial restarts
+    numbering at shard_000000, and bare basenames as global IDs would both
+    collide with already-fed names and be skipped as "already fed".
+    """
+    import hashlib
+
+    trial = live_dir.parent.name
+    return hashlib.sha1(trial.encode()).hexdigest()[:8]
 
 
 def _tree_mtime(path: Path) -> float | None:
@@ -127,15 +149,25 @@ def main() -> int:
     for stale in boot_dir.glob(f"{_TMP_PREFIX}*"):
         shutil.rmtree(stale, ignore_errors=True) if stale.is_dir() else stale.unlink(missing_ok=True)
 
+    tag = _trial_tag(live_dir)
     boot_names = {p.name for p in boot_dir.glob("shard_*.zarr")}
     boot_idxs = [_idx(p) for p in boot_dir.glob("shard_*.zarr")]
     boot_max = max(boot_idxs) if boot_idxs else -1
 
+    def _dst_name(src: Path) -> str:
+        return f"{src.stem}.{tag}.zarr"
+
     live = sorted(live_dir.glob("shard_*.zarr"), key=_idx)
+    # Fed check is by TAGGED name (unique per source trial). Bare-name presence
+    # also counts as fed for backward compat with the pre-tag pool contents
+    # (seed window + 07-08 feeds) — those all came from the current trial.
+    def _already_fed(src: Path) -> bool:
+        return _dst_name(src) in boot_names or src.name in boot_names
+
     # Prefer strictly newer-than-boot-max; also any name not present (safety).
-    missing = [p for p in live if p.name not in boot_names and _idx(p) > boot_max]
+    missing = [p for p in live if not _already_fed(p) and _idx(p) > boot_max]
     if not missing:
-        missing = [p for p in live if p.name not in boot_names]
+        missing = [p for p in live if not _already_fed(p)]
     now = time.time()
     settle = max(0.0, float(args.settle_seconds))
     if settle > 0:
@@ -163,6 +195,7 @@ def main() -> int:
     linked = 0
     copied = 0
     failed = 0
+    raced = 0
 
     def _link_tree(src: Path, dst: Path) -> None:
         """Recursively hardlink a file/dir tree (zarr shards are directories)."""
@@ -176,8 +209,8 @@ def main() -> int:
             os.link(src, dst)
 
     for src in missing:
-        dst = boot_dir / src.name
-        tmp = boot_dir / f"{_TMP_PREFIX}{src.name}"
+        dst = boot_dir / _dst_name(src)
+        tmp = boot_dir / f"{_TMP_PREFIX}{_dst_name(src)}"
         if dst.exists():
             continue
         try:
@@ -187,18 +220,28 @@ def main() -> int:
                     _link_tree(src, tmp)
                 else:
                     os.link(src, tmp)
-                linked += 1
             else:
                 if src.is_dir():
                     shutil.copytree(src, tmp)
                 else:
                     shutil.copy2(src, tmp)
-                copied += 1
             # Atomic publish: the sampler either sees the complete shard or
             # nothing — never a partial tree it would cache at 0 positions.
             os.rename(tmp, dst)
+            if use_hardlink:
+                linked += 1
+            else:
+                copied += 1
         except OSError as exc:
-            failed += 1
+            # Expected races are SKIPS, not failures — the driver runs this
+            # under `set -euo pipefail`, and one pruned source shard must not
+            # cancel a bootstrap launch that fed everything else:
+            #   ENOENT  = live eviction pruned the source after the settle check
+            #   EEXIST/ENOTEMPTY = a concurrent feeder won the publish race
+            if exc.errno in (errno.ENOENT, errno.EEXIST, errno.ENOTEMPTY):
+                raced += 1
+            else:
+                failed += 1
             # Clean OUR temp only. Never touch dst: if the rename raced a
             # concurrent feeder that already published this shard, dst is a
             # valid shard the sampler may be reading.
@@ -207,11 +250,11 @@ def main() -> int:
                     shutil.rmtree(tmp, ignore_errors=True)
                 else:
                     tmp.unlink(missing_ok=True)
-            print(f"[feed] FAIL {src.name}: {exc}", file=sys.stderr)
+            print(f"[feed] {'RACE-SKIP' if exc.errno in (errno.ENOENT, errno.EEXIST, errno.ENOTEMPTY) else 'FAIL'} {src.name}: {exc}", file=sys.stderr)
 
     print(
         f"[feed] boot_max_was={boot_max} fed={linked + copied} "
-        f"(hardlink={linked} copy={copied} fail={failed} unsettled_skipped={skipped_unsettled}) "
+        f"(hardlink={linked} copy={copied} fail={failed} raced={raced} unsettled_skipped={skipped_unsettled}) "
         f"range={_idx(missing[0])}..{_idx(missing[-1])} "
         f"boot_n_now={sum(1 for _ in boot_dir.glob('shard_*.zarr'))}"
     )
