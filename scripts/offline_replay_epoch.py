@@ -242,8 +242,15 @@ class _LiveShardSampler:
                     parts.append(_slice_arrays(cached[ci][1], rows))
                 if len(parts) == 1:
                     return parts[0]
+                # 0-d entries are per-shard scalars _slice_arrays passes
+                # through unsliced — concatenating them raises; batch-level
+                # consumers read them as scalars, so take the first part's.
                 return {
-                    key: np.concatenate([pt[key] for pt in parts], axis=0)
+                    key: (
+                        parts[0][key]
+                        if np.asarray(parts[0][key]).ndim == 0
+                        else np.concatenate([pt[key] for pt in parts], axis=0)
+                    )
                     for key in parts[0]
                 }
             except Exception as exc:
