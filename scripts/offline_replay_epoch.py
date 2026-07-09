@@ -212,12 +212,37 @@ class _LiveShardSampler:
             idx = int(self.rng.choice(len(self._paths), p=weights / weights.sum()))
             path = self._paths[idx]
             try:
-                arrs = self._load_prepared(path)
-                n = int(np.asarray(arrs["x"]).shape[0])
-                if n <= 0:
+                # Refresh the LRU with the newly drawn shard, then MIX the
+                # batch across every cached shard (rows weighted by shard
+                # size). Single-shard batches (256 rows from ONE iteration's
+                # games, no class balance) let the value head fit per-batch
+                # outcome bias and drift into memorization — the 07-09
+                # frozen-ruler regression (83.6→101.4cp while pool-eval
+                # improved, tail-driven, both phases) had exactly that
+                # signature; the live trainer never trains this way. Mixing
+                # over the cache adds no IO: still one shard load per step.
+                self._load_prepared(path)
+                cached = [(pp, aa) for pp, aa in self._cache.items()]
+                sizes = np.array(
+                    [int(np.asarray(a["x"]).shape[0]) for _, a in cached], dtype=np.float64,
+                )
+                if sizes.sum() <= 0:
                     raise ValueError(f"empty shard {path}")
-                rows = self.rng.integers(0, n, size=int(batch_size), dtype=np.int64)
-                return _slice_arrays(arrs, rows)
+                picks = self.rng.choice(
+                    len(cached), size=int(batch_size), p=sizes / sizes.sum(),
+                )
+                parts = []
+                for ci in np.unique(picks):
+                    k = int((picks == ci).sum())
+                    n = int(sizes[ci])
+                    rows = self.rng.integers(0, n, size=k, dtype=np.int64)
+                    parts.append(_slice_arrays(cached[ci][1], rows))
+                if len(parts) == 1:
+                    return parts[0]
+                return {
+                    key: np.concatenate([pt[key] for pt in parts], axis=0)
+                    for key in parts[0]
+                }
             except Exception as exc:
                 print(json.dumps({
                     "event": "live_shard_skip",
@@ -1552,7 +1577,9 @@ def main() -> None:
         default=1e-4,
         help="Minimum eval_loss improvement to reset the plateau counter.",
     )
-    ap.add_argument("--live-cache-shards", type=int, default=4)
+    ap.add_argument("--live-cache-shards", type=int, default=16,
+                    help="LRU shard cache; batches MIX across all cached shards, so this "
+                         "is also the batch-decorrelation width (was 4 pre-mixing)")
     ap.add_argument(
         "--live-credit-cap-steps",
         type=int,
