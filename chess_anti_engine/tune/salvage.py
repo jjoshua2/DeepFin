@@ -11,6 +11,7 @@ import argparse
 import json
 import re
 import shutil
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +19,13 @@ import numpy as np
 
 from chess_anti_engine.replay.shard import iter_shard_paths
 from chess_anti_engine.tune.replay_exchange import _read_jsonl_rows
+
+# How far (in checkpoint-dir index units) the newest result row may lag the
+# newest on-disk ``checkpoint_*`` dir before we treat result.json as stale.
+# Compared in checkpoint-index units, NOT training_iteration units: the two
+# drift apart across Ray resumes (live trial 2026-07-08: row iter 691 ->
+# checkpoint_000686), so an iteration-based comparison would false-positive.
+_STALE_CHECKPOINT_TOLERANCE = 2
 
 
 def build_pool_manifest_dict(
@@ -81,6 +89,58 @@ def _latest_tune_run_id(tune_dir: Path) -> str | None:
     return best[1] if best is not None else None
 
 
+def _row_iter(row: dict) -> int:
+    """Training iteration of a result row (-1 when absent/malformed)."""
+    itv = row.get("training_iteration", row.get("iter", -1))
+    return int(itv) if isinstance(itv, (int, float)) else -1
+
+
+def _metric_value(row: dict | None, metric_key: str) -> float | None:
+    """Finite numeric ``metric_key`` value of ``row`` (None when unavailable)."""
+    if not isinstance(row, dict):
+        return None
+    v = row.get(metric_key)
+    if isinstance(v, (int, float)) and np.isfinite(float(v)):
+        return float(v)
+    return None
+
+
+def _checkpoint_index(name: str) -> int | None:
+    """Numeric index of a Ray ``checkpoint_NNNNNN`` dir name (None if not one)."""
+    m = re.fullmatch(r"checkpoint_(\d+)", name.strip())
+    return int(m.group(1)) if m else None
+
+
+def _newest_disk_checkpoint(td: Path) -> tuple[int, Path] | None:
+    """Newest ``checkpoint_*`` dir (with ``trainer.pt``) in a trial dir.
+
+    Checkpoint dirs are written directly by the trainable at report time, so
+    unlike ``result.json`` (a Ray sync copy, see ``_plan_seed_export``) they
+    are trustworthy ground truth for what state actually exists on disk.
+    """
+    best: tuple[int, Path] | None = None
+    for d in td.glob("checkpoint_*"):
+        if not d.is_dir() or not (d / "trainer.pt").exists():
+            continue
+        idx = _checkpoint_index(d.name)
+        if idx is None:
+            continue
+        if best is None or idx > best[0]:
+            best = (idx, d)
+    return best
+
+
+def _row_for_checkpoint(rows: list[dict], ckpt_name: str) -> dict | None:
+    """Highest-iteration row whose ``checkpoint_dir_name`` is ``ckpt_name``."""
+    best: dict | None = None
+    for r in rows:
+        if str(r.get("checkpoint_dir_name") or "").strip() != ckpt_name:
+            continue
+        if best is None or _row_iter(r) > _row_iter(best):
+            best = r
+    return best
+
+
 def _pick_best_row(
     rows: list[dict], metric_key: str, td: Path,
 ) -> tuple[float, int, dict] | None:
@@ -99,8 +159,7 @@ def _pick_best_row(
         metric = float(mv)
         if not np.isfinite(metric):
             continue
-        itv = row.get("training_iteration", row.get("iter", -1))
-        it = int(itv) if isinstance(itv, (int, float)) else -1
+        it = _row_iter(row)
         cand = (metric, it, row)
         if best_any is None or (metric, it) > (best_any[0], best_any[1]):
             best_any = cand
@@ -175,9 +234,17 @@ def _copy_replay_shards(src_replay: Path, dst_replay: Path) -> int:
     return copied
 
 
-def _score_trials(tune_dir: Path, run_id: str, metric_key: str) -> list[tuple[float, int, Path, dict]]:
-    """Score every trial under ``run_id`` by ``metric_key`` (best row per trial)."""
-    scored: list[tuple[float, int, Path, dict]] = []
+def _score_trials(
+    tune_dir: Path, run_id: str, metric_key: str,
+) -> list[tuple[float, int, Path, dict, list[dict]]]:
+    """Score every trial under ``run_id`` by ``metric_key`` (best row per trial).
+
+    Returns ``(metric, iter, trial_dir, best_row, all_rows)`` per trial —
+    ``all_rows`` is carried through so ``_plan_seed_export`` can cross-check
+    the pick against the on-disk checkpoints from the same read (re-reading
+    result.json later could observe a different mid-sync state).
+    """
+    scored: list[tuple[float, int, Path, dict, list[dict]]] = []
     for td in sorted(d for d in tune_dir.glob(f"train_trial_{run_id}_*") if d.is_dir()):
         rows = _read_jsonl_rows(td / "result.json")
         if not rows:
@@ -186,7 +253,7 @@ def _score_trials(tune_dir: Path, run_id: str, metric_key: str) -> list[tuple[fl
         if picked is None:
             continue
         metric, it, row = picked
-        scored.append((float(metric), int(it), td, row))
+        scored.append((float(metric), int(it), td, row, rows))
     return scored
 
 
@@ -198,26 +265,115 @@ def _resolve_seed_pool_out_dir(args: argparse.Namespace, run_id: str) -> Path:
     return Path(args.work_dir) / "salvage" / f"{run_id}_{stamp}"
 
 
-def _resolve_row_checkpoint_dir(td: Path, row: dict) -> tuple[Path, str, str]:
-    """Pick the ckpt dir to copy. Returns ``(dir, source_label, row_ckpt_name)``."""
-    row_ckpt_name = row.get("checkpoint_dir_name")
-    row_ckpt_dir = (
-        td / str(row_ckpt_name)
-        if isinstance(row_ckpt_name, str) and row_ckpt_name.strip()
-        else None
+@dataclass
+class _SeedExportPlan:
+    """Which on-disk state to export for a picked result row, and its truth."""
+
+    ckpt_dir: Path
+    ckpt_source: str  # result_row_checkpoint | newest_disk_checkpoint | mutable_ckpt_fallback
+    row: dict | None  # result row matching the EXPORTED state (None if unknown)
+    training_iteration: int | None  # true iteration of the exported state
+    stale_result_rows: bool  # result.json lagged the on-disk checkpoints
+    newest_ckpt_name: str | None
+    row_ckpt_name: str
+
+
+def _plan_seed_export(*, td: Path, rows: list[dict], row: dict, metric_key: str) -> _SeedExportPlan:
+    """Decide which checkpoint dir to export for the picked ``row``.
+
+    Ray's storage-side ``result.json`` is a wholesale sync COPY of the driver
+    staging file (``/tmp/ray/session_*/artifacts/.../driver_artifacts/...``) —
+    a read racing that truncate-and-rewrite, or a driver killed mid-sync,
+    observes a truncated prefix, so the "newest" row can silently lag the
+    on-disk checkpoints by hundreds of iterations (2026-07-08 incident: rows
+    ended at 449 while checkpoint_000682 existed on disk). Checkpoint dirs are
+    written directly by the trainable, so they are the ground truth:
+
+    - ``metric_key == "training_iteration"`` means "snapshot the current
+      state"; when the rows lag the newest on-disk checkpoint beyond
+      ``_STALE_CHECKPOINT_TOLERANCE`` we export the newest on-disk checkpoint
+      instead of the stale row (never silently export older than disk).
+    - Other metrics legitimately pick older rows; we keep the pick but warn
+      that a stale row scan may have missed newer rows, and when falling back
+      to the mutable ``ckpt/`` dir we record its TRUE iteration (near-live)
+      in the manifest rather than mislabelling it with the picked row's.
+    """
+    newest = _newest_disk_checkpoint(td)
+    newest_name = newest[1].name if newest is not None else None
+    row_ckpt_name = str(row.get("checkpoint_dir_name") or "").strip()
+    last_row = max(rows, key=_row_iter)
+    last_idx = _checkpoint_index(str(last_row.get("checkpoint_dir_name") or "").strip())
+    rows_fresh = newest is None or (
+        last_idx is not None and last_idx >= newest[0] - _STALE_CHECKPOINT_TOLERANCE
     )
-    if row_ckpt_dir is not None and (row_ckpt_dir / "trainer.pt").exists():
-        return row_ckpt_dir, "result_row_checkpoint", str(row_ckpt_name)
-    return td / "ckpt", "mutable_ckpt_fallback", str(row_ckpt_name) if isinstance(row_ckpt_name, str) else ""
+
+    if not rows_fresh and newest is not None:
+        print(
+            f"[salvage] WARNING: result.json for {td.name} is STALE — its newest row "
+            f"(iter {_row_iter(last_row)}, checkpoint {last_row.get('checkpoint_dir_name')!r}) "
+            f"lags {newest_name} on disk. result.json in the tune dir is a Ray sync copy "
+            f"and can be a truncated prefix after a killed or in-flight sync."
+        )
+        if metric_key == "training_iteration":
+            match = _row_for_checkpoint(rows, str(newest_name))
+            print(
+                f"[salvage] WARNING: exporting the newest on-disk checkpoint "
+                f"{newest_name} instead of the stale row."
+            )
+            return _SeedExportPlan(
+                ckpt_dir=newest[1],
+                ckpt_source="newest_disk_checkpoint",
+                row=match,
+                training_iteration=_row_iter(match) if match is not None else None,
+                stale_result_rows=True,
+                newest_ckpt_name=newest_name,
+                row_ckpt_name=row_ckpt_name,
+            )
+        print(
+            f"[salvage] WARNING: the best-{metric_key} scan may have missed newer rows."
+        )
+
+    if row_ckpt_name and (td / row_ckpt_name / "trainer.pt").exists():
+        return _SeedExportPlan(
+            ckpt_dir=td / row_ckpt_name,
+            ckpt_source="result_row_checkpoint",
+            row=row,
+            training_iteration=_row_iter(row),
+            stale_result_rows=not rows_fresh,
+            newest_ckpt_name=newest_name,
+            row_ckpt_name=row_ckpt_name,
+        )
+
+    # Mutable ckpt/ fallback: holds NEAR-LIVE state (rewritten every report),
+    # not the picked row's state. Its true iteration is the newest row's when
+    # the rows are fresh, and unknown when they are stale.
+    fallback_row = last_row if rows_fresh else None
+    fallback_iter = _row_iter(last_row) if rows_fresh else None
+    print(
+        f"[salvage] WARNING: using mutable ckpt/ fallback for {td.name} "
+        f"(row checkpoint missing: {row_ckpt_name!r}); ckpt/ holds near-live state "
+        f"(iteration {'unknown' if fallback_iter is None else fallback_iter}), "
+        f"NOT the picked row's (iter {_row_iter(row)})."
+    )
+    return _SeedExportPlan(
+        ckpt_dir=td / "ckpt",
+        ckpt_source="mutable_ckpt_fallback",
+        row=fallback_row,
+        training_iteration=fallback_iter,
+        stale_result_rows=not rows_fresh,
+        newest_ckpt_name=newest_name,
+        row_ckpt_name=row_ckpt_name,
+    )
 
 
 def _export_one_seed(
     *,
     slot: int,
-    metric: float,
-    it: int,
+    picked_metric: float,
+    picked_it: int,
     td: Path,
-    row: dict,
+    plan: _SeedExportPlan,
+    metric_key: str,
     seeds_dir: Path,
     out_dir: Path,
     copy_replay: bool,
@@ -226,18 +382,19 @@ def _export_one_seed(
     seed_dir = seeds_dir / f"slot_{slot:03d}"
     seed_dir.mkdir(parents=True, exist_ok=True)
 
-    ckpt_dir, ckpt_source, row_ckpt_name = _resolve_row_checkpoint_dir(td, row)
-    if ckpt_source != "result_row_checkpoint":
-        print(
-            f"[salvage] WARNING: using fallback ckpt for {td.name} "
-            f"(row checkpoint missing: {row_ckpt_name})"
-        )
     for fn in ("trainer.pt", "pid_state.json", "trial_meta.json", "rng_state.json"):
-        src = ckpt_dir / fn
+        src = plan.ckpt_dir / fn
         if src.exists():
             shutil.copy2(str(src), str(seed_dir / fn))
 
-    pid_state_overrides = _align_pid_state(seed_dir / "pid_state.json", row)
+    # Align the exported pid_state only to the row that actually matches the
+    # exported checkpoint. Aligning to a mismatched (stale) row stamps old
+    # difficulty state onto newer weights — part of the 2026-07-08 incident.
+    pid_state_overrides = (
+        _align_pid_state(seed_dir / "pid_state.json", plan.row)
+        if plan.row is not None
+        else []
+    )
 
     copied_shards = 0
     if copy_replay:
@@ -249,15 +406,22 @@ def _export_one_seed(
 
     return {
         "slot": int(slot),
-        "metric": float(metric),
-        "training_iteration": int(it),
+  # metric/training_iteration describe the EXPORTED state (None = unknown);
+  # picked_row_* keep the metric-pick provenance.
+        "metric": _metric_value(plan.row, metric_key),
+        "training_iteration": plan.training_iteration,
+        "picked_row_metric": float(picked_metric),
+        "picked_row_training_iteration": int(picked_it),
         "source_trial_dir": str(td.resolve()),
-        "checkpoint_source": str(ckpt_source),
-        "checkpoint_dir_name": row_ckpt_name,
+        "checkpoint_source": str(plan.ckpt_source),
+        "checkpoint_dir_name": plan.ckpt_dir.name,
+        "row_checkpoint_dir_name": plan.row_ckpt_name,
+        "newest_disk_checkpoint": plan.newest_ckpt_name,
+        "stale_result_rows": bool(plan.stale_result_rows),
         "seed_dir": str(seed_dir.relative_to(out_dir)),
         "copied_replay_shards": int(copied_shards),
         "pid_state_overrides": list(pid_state_overrides),
-        "result_row": row,
+        "result_row": plan.row,
     }
 
 
@@ -296,15 +460,17 @@ def export_seed_pool(args: argparse.Namespace) -> None:
     copy_replay = bool(getattr(args, "salvage_copy_replay", True))
     entries: list[dict] = []
     failed_slots: list[tuple[int, str]] = []
-    for slot, (metric, it, td, row) in enumerate(selected):
+    for slot, (metric, it, td, row, rows) in enumerate(selected):
   # Each slot is best-effort independently. A single slot's OSError
   # (disk full, permission, source vanishes) or unanticipated failure
   # must not abort the run after we've done expensive replay-shard
   # copies for prior slots — we still want manifest.json to land
   # covering the slots that succeeded.
         try:
+            plan = _plan_seed_export(td=td, rows=rows, row=row, metric_key=metric_key)
             entries.append(_export_one_seed(
-                slot=slot, metric=metric, it=it, td=td, row=row,
+                slot=slot, picked_metric=metric, picked_it=it, td=td,
+                plan=plan, metric_key=metric_key,
                 seeds_dir=seeds_dir, out_dir=out_dir,
                 copy_replay=copy_replay, replay_root_override=replay_root_override,
             ))
@@ -333,8 +499,14 @@ def export_seed_pool(args: argparse.Namespace) -> None:
         f"metric={metric_key} to {out_dir}"
     )
     for e in entries:
+        mv = e["metric"]
+        mstr = "n/a" if mv is None else f"{float(mv):.3f}"
+        itv = e["training_iteration"]
+        istr = "unknown" if itv is None else str(itv)
+        newest = e["newest_disk_checkpoint"] or "-"
         print(
-            f"[salvage] slot={e['slot']:02d} metric={e['metric']:.3f} "
-            f"iter={e['training_iteration']} shards={e['copied_replay_shards']} "
-            f"src={Path(e['source_trial_dir']).name}"
+            f"[salvage] slot={e['slot']:02d} metric={mstr} "
+            f"iter={istr} shards={e['copied_replay_shards']} "
+            f"src={Path(e['source_trial_dir']).name} "
+            f"ckpt={e['checkpoint_dir_name']} (newest on disk: {newest})"
         )
