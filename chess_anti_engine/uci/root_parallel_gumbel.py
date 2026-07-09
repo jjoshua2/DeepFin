@@ -633,7 +633,10 @@ class RootParallelGumbelPool:
                 f"group {owner}, claimed by group {group}"
             )
             self._owned[action] = group
-            self.owner_history.append((phase, action, group))
+            if self.touch_hook is not None:
+  # History is test instrumentation only — unbounded across a long
+  # game, so record it only when a hook shows a test is watching.
+                self.owner_history.append((phase, action, group))
         if self.touch_hook is not None:
             self.touch_hook("claim", action, group)
 
