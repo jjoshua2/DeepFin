@@ -389,6 +389,38 @@ def _plan_seed_export(*, td: Path, rows: list[dict], row: dict, metric_key: str)
     )
 
 
+def _fmt_metric(v: float | None) -> str:
+    return "n/a" if v is None else f"{float(v):.3f}"
+
+
+def _fmt_iter(v: int | None) -> str:
+    return "unknown" if v is None else str(int(v))
+
+
+def _print_dry_run_plan(
+    *,
+    slot: int,
+    picked_metric: float,
+    picked_it: int,
+    td: Path,
+    plan: _SeedExportPlan,
+    metric_key: str,
+) -> None:
+    newest = plan.newest_ckpt_name or "-"
+    row_iter = _row_iter(plan.row) if plan.row is not None else None
+    print(
+        f"[salvage] DRY-RUN slot={slot:02d} "
+        f"picked_metric={picked_metric:.3f} picked_iter={picked_it} "
+        f"export_metric={_fmt_metric(_metric_value(plan.row, metric_key))} "
+        f"export_iter={_fmt_iter(plan.training_iteration)} "
+        f"src={td.name} ckpt={plan.ckpt_dir.name} "
+        f"checkpoint_source={plan.ckpt_source} newest_on_disk={newest} "
+        f"stale_result_rows={bool(plan.stale_result_rows)} "
+        f"row_checkpoint={plan.row_ckpt_name or '-'} "
+        f"matching_row_iter={_fmt_iter(row_iter)}"
+    )
+
+
 def _export_one_seed(
     *,
     slot: int,
@@ -482,6 +514,21 @@ def export_seed_pool(args: argparse.Namespace) -> None:
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
     selected = scored[: min(top_n, len(scored))]
 
+    dry_run = bool(getattr(args, "salvage_dry_run", False))
+    if dry_run:
+        print(
+            f"[salvage] DRY-RUN: planning {len(selected)} seeds from run_id={run_id} "
+            f"metric={metric_key}; no files will be written"
+        )
+        for slot, (metric, it, td, row, rows) in enumerate(selected):
+            plan = _plan_seed_export(td=td, rows=rows, row=row, metric_key=metric_key)
+            _print_dry_run_plan(
+                slot=slot, picked_metric=metric, picked_it=it, td=td,
+                plan=plan, metric_key=metric_key,
+            )
+        print("[salvage] DRY-RUN: no files written")
+        return
+
     out_dir = _resolve_seed_pool_out_dir(args, run_id)
     seeds_dir = out_dir / "seeds"
     seeds_dir.mkdir(parents=True, exist_ok=True)
@@ -528,14 +575,10 @@ def export_seed_pool(args: argparse.Namespace) -> None:
         f"metric={metric_key} to {out_dir}"
     )
     for e in entries:
-        mv = e["metric"]
-        mstr = "n/a" if mv is None else f"{float(mv):.3f}"
-        itv = e["training_iteration"]
-        istr = "unknown" if itv is None else str(itv)
         newest = e["newest_disk_checkpoint"] or "-"
         print(
-            f"[salvage] slot={e['slot']:02d} metric={mstr} "
-            f"iter={istr} shards={e['copied_replay_shards']} "
+            f"[salvage] slot={e['slot']:02d} metric={_fmt_metric(e['metric'])} "
+            f"iter={_fmt_iter(e['training_iteration'])} shards={e['copied_replay_shards']} "
             f"src={Path(e['source_trial_dir']).name} "
             f"ckpt={e['checkpoint_dir_name']} (newest on disk: {newest})"
         )

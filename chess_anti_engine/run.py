@@ -23,6 +23,7 @@ _TUNE_CONFIG_DENYLIST = frozenset({
     "salvage_out_dir",
     "salvage_metric",
     "salvage_copy_replay",
+    "salvage_dry_run",
   # search_optimizer_choices needs list conversion, handled explicitly below.
     "search_optimizer_choices",
 })
@@ -95,6 +96,8 @@ def main() -> None:
                     help="Salvage mode: output directory for exported seeds (default under work_dir/salvage/).")
     ap.add_argument("--salvage-metric", type=str, default="opponent_strength",
                     help="Salvage mode: metric key to rank trials by.")
+    ap.add_argument("--salvage-dry-run", action="store_true",
+                    help="Salvage mode: print selected trials/checkpoints without copying files.")
     copy_group = ap.add_mutually_exclusive_group()
     copy_group.add_argument("--salvage-copy-replay", dest="salvage_copy_replay", action="store_true",
                             help="Salvage mode: copy replay shard windows into exported seeds (default on).")

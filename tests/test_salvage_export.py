@@ -10,6 +10,8 @@ than the newest on-disk checkpoint.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -48,7 +50,7 @@ def _mk_ckpt(td: Path, name: str, *, content: str, pid_nodes: int = 1000) -> Pat
     return d
 
 
-def _args(work_dir: Path, out_dir: Path, metric: str) -> argparse.Namespace:
+def _args(work_dir: Path, out_dir: Path, metric: str, *, dry_run: bool = False) -> argparse.Namespace:
     return argparse.Namespace(
         work_dir=str(work_dir),
         salvage_source_run_id=None,
@@ -56,6 +58,7 @@ def _args(work_dir: Path, out_dir: Path, metric: str) -> argparse.Namespace:
         salvage_top_n=1,
         salvage_out_dir=str(out_dir),
         salvage_copy_replay=False,
+        salvage_dry_run=bool(dry_run),
         tune_replay_root_override="",
         num_samples=1,
     )
@@ -66,6 +69,13 @@ def _export(work_dir: Path, out_dir: Path, metric: str) -> dict:
     manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["top_n"] == 1
     return manifest["entries"][0]
+
+
+def _dry_run(work_dir: Path, out_dir: Path, metric: str) -> str:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        export_seed_pool(_args(work_dir, out_dir, metric, dry_run=True))
+    return buf.getvalue()
 
 
 def _seed_pid(out_dir: Path) -> dict:
@@ -130,6 +140,25 @@ def test_truncated_rows_export_newest_disk_checkpoint(tmp_path: Path) -> None:
   # pid_state must keep the checkpoint's own values, not stale row values.
     assert _seed_pid(out)["nodes"] == 7777
     assert entry["pid_state_overrides"] == []
+
+
+def test_dry_run_prints_plan_without_writing_files(tmp_path: Path) -> None:
+    """Dry-run exposes stale-row checkpoint choice but does not create a pool."""
+    td = tmp_path / "tune" / TRIAL_NAME
+    rows = [_row(i, f"checkpoint_{i - 1:06d}") for i in range(1, 6)]
+    _write_rows(td, rows)
+    _mk_ckpt(td, "checkpoint_000020", content="weights-20")
+
+    out = tmp_path / "pool"
+    output = _dry_run(tmp_path, out, "training_iteration")
+
+    assert "DRY-RUN: planning 1 seeds" in output
+    assert "slot=00" in output
+    assert "ckpt=checkpoint_000020" in output
+    assert "checkpoint_source=newest_disk_checkpoint" in output
+    assert "stale_result_rows=True" in output
+    assert "DRY-RUN: no files written" in output
+    assert not out.exists()
 
 
 def test_training_iteration_top_n_uses_stale_trial_newest_disk_checkpoint(tmp_path: Path) -> None:
