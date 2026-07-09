@@ -141,6 +141,32 @@ def _row_for_checkpoint(rows: list[dict], ckpt_name: str) -> dict | None:
     return best
 
 
+def _last_row_checkpoint_index(rows: list[dict]) -> tuple[dict, int | None]:
+    last_row = max(rows, key=_row_iter)
+    last_idx = _checkpoint_index(str(last_row.get("checkpoint_dir_name") or "").strip())
+    return last_row, last_idx
+
+
+def _rows_fresh_against_newest(rows: list[dict], newest: tuple[int, Path] | None) -> bool:
+    if newest is None:
+        return True
+    _, last_idx = _last_row_checkpoint_index(rows)
+    return last_idx is not None and last_idx >= newest[0] - _STALE_CHECKPOINT_TOLERANCE
+
+
+def _training_iteration_selection_key(
+    metric: float, it: int, td: Path, rows: list[dict],
+) -> tuple[float, int]:
+    newest = _newest_disk_checkpoint(td)
+    if newest is None or _rows_fresh_against_newest(rows, newest):
+        return float(metric), int(it)
+    last_row, last_idx = _last_row_checkpoint_index(rows)
+    estimated_iter = float(newest[0])
+    if last_idx is not None:
+        estimated_iter += float(_row_iter(last_row) - last_idx)
+    return estimated_iter, int(newest[0])
+
+
 def _pick_best_row(
     rows: list[dict], metric_key: str, td: Path,
 ) -> tuple[float, int, dict] | None:
@@ -301,11 +327,8 @@ def _plan_seed_export(*, td: Path, rows: list[dict], row: dict, metric_key: str)
     newest = _newest_disk_checkpoint(td)
     newest_name = newest[1].name if newest is not None else None
     row_ckpt_name = str(row.get("checkpoint_dir_name") or "").strip()
-    last_row = max(rows, key=_row_iter)
-    last_idx = _checkpoint_index(str(last_row.get("checkpoint_dir_name") or "").strip())
-    rows_fresh = newest is None or (
-        last_idx is not None and last_idx >= newest[0] - _STALE_CHECKPOINT_TOLERANCE
-    )
+    last_row, _ = _last_row_checkpoint_index(rows)
+    rows_fresh = _rows_fresh_against_newest(rows, newest)
 
     if not rows_fresh and newest is not None:
         print(
@@ -450,7 +473,13 @@ def export_seed_pool(args: argparse.Namespace) -> None:
             f"No trials with metric '{metric_key}' found under run_id={run_id} in {tune_dir}"
         )
 
-    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    if metric_key == "training_iteration":
+        scored.sort(
+            key=lambda x: _training_iteration_selection_key(x[0], x[1], x[2], x[4]),
+            reverse=True,
+        )
+    else:
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
     selected = scored[: min(top_n, len(scored))]
 
     out_dir = _resolve_seed_pool_out_dir(args, run_id)

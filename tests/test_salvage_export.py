@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from chess_anti_engine.tune.salvage import (
@@ -131,6 +132,32 @@ def test_truncated_rows_export_newest_disk_checkpoint(tmp_path: Path) -> None:
     assert entry["pid_state_overrides"] == []
 
 
+def test_training_iteration_top_n_uses_stale_trial_newest_disk_checkpoint(tmp_path: Path) -> None:
+    """A stale current trial must not lose top-1 selection to older fresh rows."""
+    stale_td = tmp_path / "tune" / TRIAL_NAME
+    stale_rows = [_row(i, f"checkpoint_{i - 1:06d}") for i in range(1, 6)]
+    _write_rows(stale_td, stale_rows)
+    _mk_ckpt(stale_td, "checkpoint_000020", content="weights-20")
+
+    fresh_td = (
+        tmp_path / "tune"
+        / f"train_trial_{RUN_ID}_00001_0_lr=0.0003_2026-01-01_00-00-00"
+    )
+    fresh_rows = [_row(i, f"checkpoint_{i - 1:06d}") for i in range(1, 11)]
+    _write_rows(fresh_td, fresh_rows)
+    _mk_ckpt(fresh_td, "checkpoint_000009", content="weights-9")
+
+    out = tmp_path / "pool"
+    entry = _export(tmp_path, out, "training_iteration")
+
+    assert Path(entry["source_trial_dir"]).name == TRIAL_NAME
+    assert entry["checkpoint_source"] == "newest_disk_checkpoint"
+    assert entry["checkpoint_dir_name"] == "checkpoint_000020"
+    assert entry["stale_result_rows"] is True
+    exported = (out / "seeds" / "slot_000" / "trainer.pt").read_text(encoding="utf-8")
+    assert exported == "weights-20"
+
+
 def test_within_tolerance_keeps_row_checkpoint(tmp_path: Path) -> None:
     """A small row/disk checkpoint-index gap (<= tolerance) is not stale."""
     td = tmp_path / "tune" / TRIAL_NAME
@@ -214,7 +241,6 @@ def test_latest_run_id_mtime_fallback(tmp_path: Path) -> None:
     new = tune_dir / f"train_trial_{RUN_ID}_00000_0_lr=0.0003_2026-02-01_00-00-00"
     old.mkdir(parents=True)
     new.mkdir(parents=True)
-    import os
 
     os.utime(old, (1_000_000, 1_000_000))
     os.utime(new, (2_000_000, 2_000_000))
