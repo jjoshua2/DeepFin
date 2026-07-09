@@ -164,11 +164,14 @@ def main() -> None:
                             break
                         # LOST or MID: still inside the lost line — keep walking.
                 rec["emitted_line"] = emit_line
-                # Dedup on the EMITTED terminal placement: two severe rows can
+                # Dedup on the EMITTED terminal position: two severe rows can
                 # back up to the same decision point (or share a terminal via
                 # different histories); the dole plays every list line once
-                # per iter, so duplicates would overweight one position.
-                emit_key = seed_board_from_line(emit_line).fen().split()[0]
+                # per iter, so duplicates would overweight one position. Key =
+                # placement + side-to-move + castling + ep (clocks ignored) —
+                # same-placement positions differing in those state bits are
+                # genuinely distinct seeds and must both survive.
+                emit_key = " ".join(seed_board_from_line(emit_line).fen().split()[:4])
                 if emit_key in emitted_placements:
                     rec["deduped_against_emitted"] = True
                     audit.append(rec)

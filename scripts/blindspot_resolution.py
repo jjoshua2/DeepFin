@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from dataclasses import dataclass
 
 import numpy as np
@@ -130,15 +131,27 @@ def reconstruct_lost_line(raw: str) -> str:
 def load_seed_lines(path: str) -> list[str]:
     """Seed lines VERBATIM (comments kept — they carry blame-backup metadata
     that must survive the retire step's list rewrites), blanks and pure
-    comment lines skipped. Raises if the file yields zero seeds (mirrors
-    _load_fen_list's fail-fast contract)."""
+    comment lines skipped. Unusable lines are SKIPPED with a warning exactly
+    like the live loader (_load_fen_list) — one bad line must not abort a
+    resolution read or make the retire step fail closed; the RECONSTRUCTED
+    form is what gets scored, so it is what gets validated. Raises if the
+    file yields zero usable seeds (mirrors the live fail-fast contract)."""
+    from chess_anti_engine.selfplay.opening import seed_board_from_line
+
     lines: list[str] = []
     with open(path, encoding="utf-8") as fh:
         for raw in fh:
             raw = raw.rstrip("\n")
             body = raw.partition("#")[0].strip()
-            if body:
-                lines.append(raw)
+            if not body:
+                continue
+            try:
+                seed_board_from_line(reconstruct_lost_line(raw))
+            except ValueError as e:
+                print(f"[seeds] skipping unusable line ({e}): {raw[:80]}",
+                      file=sys.stderr)
+                continue
+            lines.append(raw)
     if not lines:
         raise ValueError(f"seed list {path!r} contains no usable seeds")
     return lines

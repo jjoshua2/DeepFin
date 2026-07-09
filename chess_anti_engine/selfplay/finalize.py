@@ -242,7 +242,7 @@ class _GumbelPolicyGameStats:
     candidate_count_sum: int = 0
 
 
-_OPENING_SOURCES = {"book1", "book2", "random", "start", "fenlist"}
+_OPENING_SOURCES = {"book1", "book2", "random", "start", "fenlist", "fenlist_backed"}
 
 
 def _opening_source_for_stats(state: SelfplayState, i: int) -> str:
@@ -414,7 +414,7 @@ def _update_aggregate_stats(
     assert c.outcome_stats is not None
     outcome_stats = c.outcome_stats
     _inc_outcome(outcome_stats, f"opening_{source}_games")
-    if source == "fenlist":
+    if source.startswith("fenlist"):
         # Blind-spot FEN seeds are otherwise invisible in result.json (the
         # per-source outcome_stats aren't plumbed through the ingest-time
         # `matching_*` counters). Log each finalized seed so its volume/type is
@@ -433,15 +433,19 @@ def _update_aggregate_stats(
         if was_adjudicated:
             state.stats.selfplay_adjudicated_games += 1
             c.selfplay_adjudicated_games = 1
-        if source == "fenlist" and state.starting_boards is not None:
-            # Blind-spot seeds are deep-SF-confirmed LOST for the side to move
-            # at the seed position, and in seeded SELFPLAY both seats are the
-            # net — record the outcome from that blundering seat's perspective
-            # so self-confirmation is visible per iteration. Healthy training
-            # keeps stm_l dominant; frequent stm draws/wins mean the
-            # game-outcome component of the WDL blend is re-teaching "this
-            # position was fine after all". Telemetry only: selfplay games
-            # never enter the PID winrate sample (state.stats.w/d/l).
+        if source.startswith("fenlist") and state.starting_boards is not None:
+            # Outcome from the perspective of the side to move at the seed,
+            # keyed by source so the two seed kinds never mix (their health
+            # semantics are OPPOSITE):
+            #   selfplay_fenlist_stm_*        — seed = deep-SF-confirmed LOST
+            #     position; healthy training keeps stm_l dominant, frequent
+            #     stm draws/wins mean the game-outcome component of the WDL
+            #     blend is re-teaching "this position was fine after all".
+            #   selfplay_fenlist_backed_stm_* — seed = the HOLDABLE decision
+            #     point before the blunder (gate blame-backup); stm draws/
+            #     wins are the avoidance signal, i.e. the GOAL.
+            # Telemetry only: selfplay games never enter the PID winrate
+            # sample (state.stats.w/d/l).
             seed_stm_white = state.starting_boards[i].turn == chess.WHITE
             if result == "1/2-1/2":
                 stm_outcome = "d"
@@ -451,7 +455,7 @@ def _update_aggregate_stats(
                 stm_outcome = "w"
             else:
                 stm_outcome = "l"
-            _inc_outcome(outcome_stats, f"selfplay_fenlist_stm_{stm_outcome}")
+            _inc_outcome(outcome_stats, f"selfplay_{source}_stm_{stm_outcome}")
     else:
         state.stats.curriculum_games += 1
         c.curriculum_games = 1
@@ -488,7 +492,7 @@ def _update_aggregate_stats(
         # ease SF across the whole batch) — exclude them exactly like selfplay
         # games, but still record per-source telemetry so seed performance is
         # visible via the curriculum_fenlist_* outcome keys.
-        count_in_pid = source != "fenlist"
+        count_in_pid = not source.startswith("fenlist")
         if count_in_pid:
             if outcome == "d":
                 state.stats.d += 1

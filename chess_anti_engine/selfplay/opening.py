@@ -319,9 +319,39 @@ def _load_fen_list(path_str: str) -> tuple[str, ...]:
     return tuple(fens)
 
 
-def _sample_fen_list(*, rng, path: str) -> chess.Board:
+def _sample_fen_list_line(*, rng, path: str) -> str:
     fens = _load_fen_list(path)
-    return seed_board_from_line(fens[int(rng.integers(0, len(fens)))])
+    return fens[int(rng.integers(0, len(fens)))]
+
+
+@lru_cache(maxsize=8)
+def _load_fen_backed_bodies(path_str: str) -> frozenset[str]:
+    """Stripped bodies of seed lines whose comment carries ``dropped=`` —
+    blame-backed decision-point seeds (scripts/blindspot_deepsf_gate.py).
+
+    Backed seeds open at a HOLDABLE ancestor of the lost position, so their
+    outcome telemetry means the opposite of a normal fenlist seed's (the
+    seeded side escaping is the GOAL, not self-confirmation) — the opening
+    source distinguishes them so downstream counters never mix the two.
+    Path-keyed cache like _load_fen_list: version the filename to update.
+    """
+    backed: set[str] = set()
+    try:
+        with open(path_str, encoding="utf-8") as fh:
+            for raw in fh:
+                body, _, comment = raw.rstrip("\n").partition("#")
+                body = body.strip()
+                if body and "dropped=" in comment:
+                    backed.add(body)
+    except OSError:
+        return frozenset()
+    return frozenset(backed)
+
+
+def _fenlist_source(line: str, path: str | None) -> str:
+    if path and line in _load_fen_backed_bodies(str(path)):
+        return "fenlist_backed"
+    return "fenlist"
 
 
 def _sample_book(*, rng, path: str, max_plies: int, max_games: int) -> chess.Board:
@@ -376,9 +406,10 @@ def sample_starting_board(*, rng, cfg: OpeningConfig, allow_fenlist: bool = True
         and float(cfg.opening_fen_prob) > 0.0
         and float(rng.random()) < float(cfg.opening_fen_prob)
     ):
+        line = _sample_fen_list_line(rng=rng, path=str(cfg.opening_fen_list_path))
         return OpeningStart(
-            board=_sample_fen_list(rng=rng, path=str(cfg.opening_fen_list_path)),
-            source="fenlist",
+            board=seed_board_from_line(line),
+            source=_fenlist_source(line, cfg.opening_fen_list_path),
         )
 
     if cfg.opening_book_path and float(rng.random()) < float(cfg.opening_book_prob):
@@ -457,7 +488,10 @@ def resolve_slot_opening(
             except IndexError:
                 line = None
             if line is not None:
-                return OpeningStart(board=seed_board_from_line(line), source="fenlist")
+                return OpeningStart(
+                    board=seed_board_from_line(line),
+                    source=_fenlist_source(line, cfg.opening_fen_list_path),
+                )
   # Dole mode owns FEN seeding; suppress the probabilistic draw for every slot.
         return sample_starting_board(rng=rng, cfg=cfg, allow_fenlist=False)
 

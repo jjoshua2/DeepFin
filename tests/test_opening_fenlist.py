@@ -456,3 +456,47 @@ def test_dole_config_round_trips() -> None:
     assert tc.opening_fen_dole_per_iter == 3
     opening = _play_batch_kwargs(tc)["opening"]
     assert opening.opening_fen_dole_per_iter == 3
+
+
+def test_backed_fenlist_source_detection(tmp_path: Path) -> None:
+    """Lines whose comment carries dropped= are blame-backed decision-point
+    seeds and must resolve to the fenlist_backed opening source; plain lines
+    stay fenlist. Cache is path-keyed, so use a unique file per test."""
+    from chess_anti_engine.selfplay.opening import _fenlist_source
+
+    start = chess.Board().fen()
+    plain = f"{start} | e2e4 e7e5"
+    backed = f"{start} | e2e4"
+    seeds = tmp_path / "seeds_backed_detect.txt"
+    seeds.write_text(
+        f"# header\n{plain}  # deep_sq=-1.0\n"
+        f"{backed}  # deep_sq=-1.0 blame_k=2 blunder=d1h5 dropped=d1h5,b8c6\n",
+        encoding="utf-8",
+    )
+    assert _fenlist_source(plain, str(seeds)) == "fenlist"
+    assert _fenlist_source(backed, str(seeds)) == "fenlist_backed"
+    assert _fenlist_source(backed, None) == "fenlist"  # no list -> default
+
+
+@pytest.mark.parametrize(
+    ("result", "expect"),
+    [("1-0", "w"), ("1/2-1/2", "d"), ("0-1", "l")],
+)
+def test_backed_fenlist_selfplay_stm_keys_split(result: str, expect: str) -> None:
+    """Backed decision-point seeds must aggregate under their OWN stm keys —
+    their health semantics invert the normal fenlist ones (stm escape = the
+    avoidance goal) — and must stay out of the PID winrate sample."""
+    st = _agg_state("fenlist_backed", selfplay=True, seed_fen=chess.Board().fen())
+    c = _update_aggregate_stats(st, 0, result=result, was_adjudicated=False, game_plies=30)
+    assert c is not None
+    assert st.stats.outcome_stats.get(f"selfplay_fenlist_backed_stm_{expect}") == 1
+    assert not any(k.startswith("selfplay_fenlist_stm_") for k in st.stats.outcome_stats)
+    assert (st.stats.w, st.stats.d, st.stats.l) == (0, 0, 0)
+
+
+def test_backed_fenlist_curriculum_excluded_from_pid_winrate() -> None:
+    """count_in_pid must exclude fenlist_backed curriculum games exactly like
+    plain fenlist ones (startswith guard, not equality)."""
+    st = _agg_state("fenlist_backed", selfplay=False, seed_fen=chess.Board().fen())
+    _update_aggregate_stats(st, 0, result="0-1", was_adjudicated=False, game_plies=30)
+    assert (st.stats.w, st.stats.d, st.stats.l) == (0, 0, 0)
