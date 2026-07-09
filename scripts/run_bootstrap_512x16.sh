@@ -37,7 +37,9 @@ MEMCAP=0.30
 # so a short idle usually means the feeder is between passes — don't flap).
 IDLE_EXIT=600
 # Stop a run if eval_loss fails to improve for this many evals (eval every 500).
-PLATEAU_EVALS=3
+# Env-overridable: LR-drop continuations improve slowly — the 3500-step
+# eval_plateau stop on 07-09 fired on value-oscillation noise; use 6+ there.
+PLATEAU_EVALS="${PLATEAU_EVALS:-3}"
 MODE="${1:-full}"
 
 mkdir -p "$OUT"
