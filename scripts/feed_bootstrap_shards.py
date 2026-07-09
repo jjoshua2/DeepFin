@@ -3,10 +3,22 @@
 
 The bootstrap live-follow sampler rescans its --replay-dir and credits
 ``target_reuse`` samples per *newly seen* shard path. Feeding new zarrs into
-that directory mid-run extends phase-1 credit; re-feeding at phase 2/3 handoff
-gives the LR-drop phases fresher data too.
+that directory mid-run extends credit and keeps the pool tracking the live
+data distribution (the swap gate compares against the CURRENT live net).
 
-Default: hardlink every live shard with index > bootstrap max (same filesystem).
+Atomicity contract: the sampler rescans between training steps and caches a
+shard's position count PERMANENTLY the first time it sees the path — a
+partially-linked zarr directory would be cached at 0 positions forever. So
+each shard is built under a ``._tmp_feed_`` name (which the ``shard_*.zarr``
+glob never matches) and atomically renamed into place only when complete.
+
+Source settling: a live shard the ingest process is still writing has the
+mirror-image problem, so shards modified within --settle-seconds are skipped
+(they're picked up on the next feed pass).
+
+Default: hardlink every settled live shard with index > pool max (same
+filesystem; ~zero disk). The default pool is the DEDICATED bootstrap pool —
+NOT the salvage pool, which is a ledgered frozen revert point.
 """
 from __future__ import annotations
 
@@ -15,12 +27,27 @@ import os
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
+
+_TMP_PREFIX = "._tmp_feed_"
 
 
 def _idx(path: Path) -> int:
     m = re.search(r"shard_(\d+)", path.name)
     return int(m.group(1)) if m else -1
+
+
+def _tree_mtime(path: Path) -> float:
+    """Newest mtime in a shard tree (zarr stores are directories)."""
+    newest = path.stat().st_mtime
+    if path.is_dir():
+        for child in path.rglob("*"):
+            try:
+                newest = max(newest, child.stat().st_mtime)
+            except OSError:
+                continue
+    return newest
 
 
 def main() -> int:
@@ -36,16 +63,19 @@ def main() -> int:
     ap.add_argument(
         "--boot-dir",
         type=Path,
-        default=Path(
-            "/home/josh/projects/chess/data/salvage/scaleup_512x16_window_20260707/"
-            "seeds/slot_000/replay_shards"
-        ),
+        default=Path("/home/josh/projects/chess/data/scaleup_pool_512x16/replay_shards"),
     )
     ap.add_argument(
         "--max-shards",
         type=int,
         default=0,
         help="If >0, only feed the newest N missing shards (0 = all missing).",
+    )
+    ap.add_argument(
+        "--settle-seconds",
+        type=float,
+        default=120.0,
+        help="Skip live shards whose tree was modified this recently (in-flight ingest writes).",
     )
     ap.add_argument(
         "--copy",
@@ -63,6 +93,10 @@ def main() -> int:
         print(f"[feed] ERROR: boot dir missing: {boot_dir}", file=sys.stderr)
         return 2
 
+    # Sweep temp debris from a crashed prior feed (never visible to the glob).
+    for stale in boot_dir.glob(f"{_TMP_PREFIX}*"):
+        shutil.rmtree(stale, ignore_errors=True) if stale.is_dir() else stale.unlink(missing_ok=True)
+
     boot_names = {p.name for p in boot_dir.glob("shard_*.zarr")}
     boot_idxs = [_idx(p) for p in boot_dir.glob("shard_*.zarr")]
     boot_max = max(boot_idxs) if boot_idxs else -1
@@ -72,11 +106,22 @@ def main() -> int:
     missing = [p for p in live if p.name not in boot_names and _idx(p) > boot_max]
     if not missing:
         missing = [p for p in live if p.name not in boot_names]
+    now = time.time()
+    settle = max(0.0, float(args.settle_seconds))
+    if settle > 0:
+        settled = [p for p in missing if now - _tree_mtime(p) >= settle]
+        skipped_unsettled = len(missing) - len(settled)
+        missing = settled
+    else:
+        skipped_unsettled = 0
     if args.max_shards > 0 and len(missing) > args.max_shards:
         missing = missing[-int(args.max_shards) :]
 
     if not missing:
-        print(f"[feed] nothing to feed (boot_max={boot_max} boot_n={len(boot_names)} live_n={len(live)})")
+        print(
+            f"[feed] nothing to feed (boot_max={boot_max} boot_n={len(boot_names)} "
+            f"live_n={len(live)} unsettled_skipped={skipped_unsettled})"
+        )
         return 0
 
     same_dev = os.stat(live_dir).st_dev == os.stat(boot_dir).st_dev
@@ -98,35 +143,39 @@ def main() -> int:
 
     for src in missing:
         dst = boot_dir / src.name
+        tmp = boot_dir / f"{_TMP_PREFIX}{src.name}"
         if dst.exists():
             continue
         try:
             if use_hardlink:
                 # os.link() on a directory fails (EPERM); zarr stores are dirs.
                 if src.is_dir():
-                    _link_tree(src, dst)
+                    _link_tree(src, tmp)
                 else:
-                    os.link(src, dst)
+                    os.link(src, tmp)
                 linked += 1
             else:
                 if src.is_dir():
-                    shutil.copytree(src, dst)
+                    shutil.copytree(src, tmp)
                 else:
-                    shutil.copy2(src, dst)
+                    shutil.copy2(src, tmp)
                 copied += 1
+            # Atomic publish: the sampler either sees the complete shard or
+            # nothing — never a partial tree it would cache at 0 positions.
+            os.rename(tmp, dst)
         except OSError as exc:
             failed += 1
-            # Clean partial dest so a retry is clean.
-            if dst.exists():
-                if dst.is_dir():
-                    shutil.rmtree(dst, ignore_errors=True)
-                else:
-                    dst.unlink(missing_ok=True)
+            for leftover in (tmp, dst):
+                if leftover.exists():
+                    if leftover.is_dir():
+                        shutil.rmtree(leftover, ignore_errors=True)
+                    else:
+                        leftover.unlink(missing_ok=True)
             print(f"[feed] FAIL {src.name}: {exc}", file=sys.stderr)
 
     print(
         f"[feed] boot_max_was={boot_max} fed={linked + copied} "
-        f"(hardlink={linked} copy={copied} fail={failed}) "
+        f"(hardlink={linked} copy={copied} fail={failed} unsettled_skipped={skipped_unsettled}) "
         f"range={_idx(missing[0])}..{_idx(missing[-1])} "
         f"boot_n_now={sum(1 for _ in boot_dir.glob('shard_*.zarr'))}"
     )

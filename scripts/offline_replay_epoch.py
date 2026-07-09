@@ -12,6 +12,7 @@ import argparse
 import dataclasses
 import json
 import math
+import shutil
 import time
 from collections import OrderedDict
 from pathlib import Path
@@ -639,11 +640,16 @@ def _build_trainer_for_candidate(
     if args.zclip_clip_factor is not None:
         trainer_kwargs["zclip_clip_factor"] = float(args.zclip_clip_factor)
     trainer = Trainer(model, **trainer_kwargs)
-    # Capture group LRs from the freshly built trainer (honors cfg / --lr and
-    # matrix multipliers). trainer.load() restores optimizer+scheduler state
-    # from the checkpoint and would otherwise clobber an intentional phase-2
-    # LR drop.
-    desired_lrs = [float(pg.get("lr", 0.0)) for pg in trainer.opt.param_groups]
+    # Capture the per-group LRs the caller asked for (cfg / --lr, incl. matrix
+    # multipliers). NOT pg["lr"]: Trainer.__init__ ends with _set_initial_lrs(),
+    # which (warmup_steps > 0) sets every param group to the WARMUP-START rate
+    # (~lr_eta_min, e.g. 1e-5) — capturing that would rebase a phase-2 "--lr
+    # 1e-4" drop to 1e-5. The scheduler is constructed BEFORE _set_initial_lrs,
+    # so its base_lrs still hold the true requested per-group rates.
+    _sched0 = getattr(trainer, "_scheduler", None)
+    desired_lrs = [float(v) for v in getattr(_sched0, "base_lrs", None) or []]
+    if not desired_lrs:
+        desired_lrs = [float(pg.get("lr", 0.0)) for pg in trainer.opt.param_groups]
     if args.init_checkpoint:
         trainer.load(Path(args.init_checkpoint))
         if args.lr is not None:
@@ -1239,7 +1245,16 @@ def _train_candidate_live_follow(
         batch_size=int(args.batch_size),
         steps=max(1, int(args.eval_steps)),
     )
-    trainer.save(run_dir / "trainer.pt")
+    # On an eval-plateau stop the in-memory weights are from the NON-improving
+    # tail; keep the conventional trainer.pt artifact pointing at the best
+    # checkpoint (downstream callers load trainer.pt by convention) and park
+    # the final state under trainer_final.pt for forensics.
+    best_path = run_dir / "trainer_best_eval.pt"
+    if stop_reason == "eval_plateau" and best_path.exists():
+        trainer.save(run_dir / "trainer_final.pt")
+        shutil.copy2(str(best_path), str(run_dir / "trainer.pt"))
+    else:
+        trainer.save(run_dir / "trainer.pt")
     out = {
         "candidate": candidate,
         "optimizer": optimizer,

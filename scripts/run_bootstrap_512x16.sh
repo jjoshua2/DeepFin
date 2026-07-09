@@ -1,35 +1,42 @@
 #!/bin/bash
-# 512x16 scale-up bootstrap (2026-07-07; multi-phase fix 2026-07-09).
+# 512x16 scale-up bootstrap driver (2026-07-07; redesigned 2026-07-09).
 #
-# Fresh-init 63.08M net (embed 512 / 16L / h16) on the frozen iter-647 salvage
-# window. Width can't migrate from 384, so this is always fresh-init for phase 1.
+# Fresh-init 63.08M net (embed 512 / 16L / h16) trained offline on the
+# DEDICATED fed pool (data/scaleup_pool_512x16 — seeded from the frozen
+# iter-647 salvage window, then continuously fed live shards by
+# scripts/feed_bootstrap_shards.py; the salvage pool itself is a ledgered
+# frozen revert point and is never mutated).
 #
-# BUG (pre-fix): a single live-follow call with target_reuse=3 + frozen shards
-# spent ~3 epochs of credit then *slept forever* waiting for new positions that
-# never arrive, and never ran the planned LR drops.
+# BUG history (2026-07-08): a single live-follow call with target_reuse=3 on a
+# frozen pool spent ~3 epochs of credit then slept forever; --live-idle-exit-after
+# fixes termination.
 #
-# FIX: phased driver.
-#   phase1  lr=3e-4 (config default)  reuse=3  (~3 epochs) then EXIT on idle
-#   phase2  lr=1e-4  reuse=1  (~1 epoch) from best/last ckpt
-#   phase3  lr=3e-5  reuse=1  (~1 epoch)
-# Each phase also stops early on eval plateau (3 consecutive non-improving evals).
+# DESIGN (2026-07-09): probe-driven, not pre-scripted. The parity probe
+# (value_regret vs the live net, scratchpad/scaleup/parity_probe.log) is the
+# experiment's decision signal. Run ONE training process at a time; when it
+# stops (idle-exit / plateau / max-steps), read the probe trajectory and choose
+# the next lever explicitly:
+#   - far from parity, gap closing  -> `continue` (more data, same LR)
+#   - close to parity, gap flat     -> `continue 0.0001` then `continue 0.00003`
+#     (LR drops to squeeze the tail)
+#   - plateaued far short of parity -> kill per the ledger swap-gate rule
+# There is NO auto-chained kill-and-drop: an automated wrong-LR phase costs a
+# GPU-day (the 07-08 review found exactly that failure mode).
 #
-# Usage:
-#   bash scripts/run_bootstrap_512x16.sh            # full chain, fresh phase1
-#   bash scripts/run_bootstrap_512x16.sh phases-2-3 # only LR drops from current trainer.pt
-#   bash scripts/run_bootstrap_512x16.sh chain-from-running
-#       # watch the already-running phase1 (old binary); when it credit-stalls,
-#       # kill it and run phases 2-3 with the fixed trainer
+# SWAP GATE (pre-committed, ledger 4c): live restart ONLY at audit parity —
+# value_regret + audit_targets (2000 pos, paired CIs) within +2cp of the
+# then-current live net, panels not worse. Below parity = extend/kill.
 set -euo pipefail
 cd /home/josh/projects/chess
 OUT=runs/scaleup_512x16_bootstrap
 CAND=aurora_mlp_out
-SHARDS=data/salvage/scaleup_512x16_window_20260707/seeds/slot_000/replay_shards
+POOL=data/scaleup_pool_512x16/replay_shards
 FFN16="1.5,1.5,1.5,1.5,1.5,1.555556,1.65,1.772222,1.894444,1.666667,1.638889,1.905556,1.783333,1.794444,1.744444,1.5"
 MEMCAP=0.30
-# Static pool: exit ~2 min after credit is gone (a few idle rescans).
-IDLE_EXIT=120
-# Stop a phase if eval_loss fails to improve for this many evals (eval every 500).
+# Static/fed pool: exit ~10 min after credit is gone (feeds land every ~30 min,
+# so a short idle usually means the feeder is between passes — don't flap).
+IDLE_EXIT=600
+# Stop a run if eval_loss fails to improve for this many evals (eval every 500).
 PLATEAU_EVALS=3
 MODE="${1:-full}"
 
@@ -40,10 +47,8 @@ PHASE_LOG="$OUT/phase_driver.log"
 log() { echo "[bootstrap $(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$PHASE_LOG"; }
 
 feed_new_shards() {
-  # Hardlink newest live trial shards into the bootstrap pool so live-follow
-  # rescan grants credit (or phase 2/3 starts with a fresher static window).
-  log "feeding new live shards into $SHARDS"
-  PYTHONPATH=. python3 scripts/feed_bootstrap_shards.py 2>&1 | tee -a "$PHASE_LOG"
+  log "feeding new live shards into $POOL"
+  PYTHONPATH=. python3 scripts/feed_bootstrap_shards.py --boot-dir "$POOL" 2>&1 | tee -a "$PHASE_LOG"
 }
 
 pick_init_ckpt() {
@@ -59,20 +64,20 @@ pick_init_ckpt() {
   fi
 }
 
-run_phase() {
-  local phase_name="$1"
-  local lr_arg="$2"          # empty = omit --lr (use config default 3e-4)
+run_training() {
+  local run_name="$1"
+  local lr_arg="$2"          # empty = omit --lr (fresh: config default; warm: checkpoint schedule)
   local reuse="$3"
   local max_steps="$4"
   local init_ckpt="$5"       # empty = fresh init
 
-  local phase_out="$OUT/${phase_name}.log"
-  log "START $phase_name  lr=${lr_arg:-config_default} reuse=$reuse max_steps=$max_steps init=${init_ckpt:-FRESH}"
+  local run_out="$OUT/${run_name}.log"
+  log "START $run_name lr=${lr_arg:-inherit} reuse=$reuse max_steps=$max_steps init=${init_ckpt:-FRESH}"
 
   local cmd=(
     python3 scripts/bootstrap_memcap_wrapper.py --mem-fraction "$MEMCAP" --
     --config configs/pbt2_small.yaml
-    --replay-dir "$SHARDS"
+    --replay-dir "$POOL"
     --out-dir "$OUT"
     --candidates "$CAND"
     --input-extra-features v2_threats
@@ -97,39 +102,20 @@ run_phase() {
   fi
 
   set +e
-  PYTHONPATH=. nice -n 15 "${cmd[@]}" >>"$phase_out" 2>&1
+  PYTHONPATH=. nice -n 15 "${cmd[@]}" >>"$run_out" 2>&1
   local rc=$?
   set -e
-  # Also append phase log into the combined train.log for continuity.
   {
-    echo "{\"event\": \"phase_boundary\", \"phase\": \"$phase_name\", \"rc\": $rc, \"ts\": \"$(date -Iseconds)\"}"
-    tail -n 5 "$phase_out" 2>/dev/null || true
+    echo "{\"event\": \"run_boundary\", \"run\": \"$run_name\", \"rc\": $rc, \"ts\": \"$(date -Iseconds)\"}"
+    tail -n 5 "$run_out" 2>/dev/null || true
   } >>"$LOG"
-  log "END $phase_name rc=$rc (detail: $phase_out)"
-  # Copy final trainer into a phase-tagged name for forensics.
+  log "END $run_name rc=$rc (detail: $run_out)"
+  # Park a run-tagged copy for forensics; trainer.pt already points at the
+  # best checkpoint when the run stopped on an eval plateau.
   if [[ -f "$OUT/$CAND/trainer.pt" ]]; then
-    cp -f "$OUT/$CAND/trainer.pt" "$OUT/$CAND/trainer_${phase_name}.pt"
+    cp -f "$OUT/$CAND/trainer.pt" "$OUT/$CAND/trainer_${run_name}.pt"
   fi
   return "$rc"
-}
-
-run_phases_2_3() {
-  local init
-  init="$(pick_init_ckpt)"
-  if [[ -z "$init" ]]; then
-    log "ERROR: no checkpoint for phase 2/3 under $OUT/$CAND/"
-    return 1
-  fi
-  # Refresh the pool before each LR-drop phase so we don't fine-tune only on
-  # the original frozen iter-647 window.
-  feed_new_shards
-  log "phase 2/3 warm-start from $init"
-  # ~1 epoch each on the (possibly expanded) pool; headroom + plateau early-stop.
-  run_phase phase2 0.0001 1 10000 "$init" || true
-  feed_new_shards
-  init="$(pick_init_ckpt)"
-  run_phase phase3 0.00003 1 10000 "$init" || true
-  log "LR-drop phases complete"
 }
 
 wait_for_sidecars() {
@@ -149,103 +135,44 @@ wait_for_sidecars() {
   log "gate clear after ${waited}s"
 }
 
-chain_from_running() {
-  # The currently-running phase1 was launched with the OLD binary (no idle-exit).
-  # Watch its train.log for credit_exhausted stalls, then kill and LR-drop.
-  # Also re-feed live shards periodically so phase1 credit keeps growing.
-  log "chain-from-running: watching $LOG for credit_exhausted stalls"
-  local stall_hits=0
-  local loops=0
-  # Immediate feed so the running process can rescan new paths.
-  feed_new_shards
-  while true; do
-    # Avoid matching this script's own argv with pgrep -f: check via pgrep -a + awk.
-    if ! ps -eo args | awk '/bootstrap_memcap_wrapper/ && !/awk/ {found=1} END{exit !found}'; then
-      log "bootstrap_memcap_wrapper gone; starting phases 2-3 if ckpt exists"
-      break
-    fi
-    loops=$((loops + 1))
-    # Re-feed every ~30 min (15 * 120s) while phase1 still trains.
-    if (( loops % 15 == 0 )); then
-      feed_new_shards
-    fi
-    if [[ -f "$LOG" ]]; then
-      # Count recent credit_exhausted lines in the tail
-      local hits
-      hits=$(tail -c 200000 "$LOG" 2>/dev/null | grep -c '"reason": "credit_exhausted"' || true)
-      local steps
-      steps=$(tail -c 100000 "$LOG" 2>/dev/null | grep '"event": "live_progress"' | tail -1 \
-        | python3 -c "import sys,json; 
-try:
-  print(json.loads(sys.stdin.read()).get('steps',0))
-except Exception:
-  print(0)" 2>/dev/null || echo 0)
-      local credit
-      credit=$(tail -c 100000 "$LOG" 2>/dev/null | grep '"event": "live_progress"' | tail -1 \
-        | python3 -c "import sys,json; 
-try:
-  print(json.loads(sys.stdin.read()).get('credit_samples',-1))
-except Exception:
-  print(-1)" 2>/dev/null || echo -1)
-      local positions
-      positions=$(tail -c 100000 "$LOG" 2>/dev/null | grep '"event": "live_progress"' | tail -1 \
-        | python3 -c "import sys,json; 
-try:
-  print(json.loads(sys.stdin.read()).get('positions',0))
-except Exception:
-  print(0)" 2>/dev/null || echo 0)
-      # Stall heuristic: many credit_exhausted events OR credit nearly zero with
-      # steps past ~2.5 epochs (~14.5k on this window).
-      if [[ "${hits:-0}" -ge 3 ]] || { [[ "${credit:-1}" -ge 0 ]] && [[ "${credit:-1}" -lt 256 ]] && [[ "${steps:-0}" -ge 14000 ]]; }; then
-        stall_hits=$((stall_hits + 1))
-        log "stall signal hits=$hits credit=$credit steps=$steps positions=$positions (confirm $stall_hits/2)"
-      else
-        stall_hits=0
-      fi
-      if [[ "$stall_hits" -ge 2 ]]; then
-        log "phase1 stalled — killing memcap wrapper and chaining LR drops"
-        # kill by pid list from ps, not pkill -f (avoids wrapper self-match issues)
-        ps -eo pid,args | awk '/bootstrap_memcap_wrapper/ && !/awk/ {print $1}' | while read -r pid; do
-          kill "$pid" 2>/dev/null || true
-        done
-        sleep 5
-        break
-      fi
-      log "watch: steps=$steps credit=$credit positions=$positions exhausted_hits_in_tail=$hits"
-    fi
-    sleep 120
-  done
-  # Ensure trainer.pt is present (phase1 should have been saving every 1k).
-  if [[ ! -f "$OUT/$CAND/trainer.pt" ]]; then
-    log "ERROR: no trainer.pt after phase1; cannot LR-drop"
-    return 1
+require_no_running_bootstrap() {
+  # Scope the check to THIS run's out-dir so an unrelated memcapped offline
+  # job is never collateral.
+  if ps -eo args | grep -F "bootstrap_memcap_wrapper" | grep -F -- "--out-dir $OUT" | grep -qv grep; then
+    log "ERROR: a bootstrap for $OUT is already running; stop it first (no auto-kill)."
+    exit 1
   fi
-  run_phases_2_3
-  log "chain-from-running DONE"
 }
 
 case "$MODE" in
   full)
+    require_no_running_bootstrap
     wait_for_sidecars
-    log "full multi-phase bootstrap starting"
+    log "fresh-init bootstrap starting (probe-driven; no auto LR chain)"
     feed_new_shards
-    # Phase 1: ~3 epochs (reuse 3); max_steps headroom ~20k; idle-exit ends it.
-    run_phase phase1 "" 3 20000 ""
-    run_phases_2_3
-    log "FULL chain DONE $(date)"
+    run_training run1 "" 3 60000 ""
+    log "run1 done — read scratchpad/scaleup/parity_probe.log before choosing the next lever"
     ;;
-  phases-2-3)
-    run_phases_2_3
-    ;;
-  chain-from-running)
-    chain_from_running
+  continue)
+    # Warm continuation from the best/last checkpoint. Optional 2nd arg = LR
+    # override (e.g. 0.0001); omit to inherit the checkpoint's schedule.
+    require_no_running_bootstrap
+    LR="${2:-}"
+    INIT="$(pick_init_ckpt)"
+    if [[ -z "$INIT" ]]; then
+      log "ERROR: no checkpoint to continue from under $OUT/$CAND/"
+      exit 1
+    fi
+    feed_new_shards
+    STAMP=$(date '+%m%d_%H%M')
+    run_training "cont_${STAMP}_lr${LR:-inherit}" "$LR" 1 60000 "$INIT"
+    log "continuation done — read scratchpad/scaleup/parity_probe.log before choosing the next lever"
     ;;
   feed)
-    # One-shot feed for a live phase-1 process (hardlink new live shards now).
     feed_new_shards
     ;;
   *)
-    echo "Usage: $0 [full|phases-2-3|chain-from-running|feed]" >&2
+    echo "Usage: $0 [full|continue [LR]|feed]" >&2
     exit 2
     ;;
 esac
