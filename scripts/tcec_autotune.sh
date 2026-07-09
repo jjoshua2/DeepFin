@@ -44,11 +44,20 @@ python3 scripts/bench_uci_engine.py --checkpoint "$CHECKPOINT" --device cuda \
   --walker-sweep --nodes "$NODES" --repeats "$REPEATS" 2>&1 | tee -a "$OUT"
 
 if [ -n "$DEVICES" ] && echo "$DEVICES" | grep -q ","; then
-  say "=== phase C: multi-GPU PUCV sweep ($DEVICES) ==="
-  python3 scripts/bench_uci_engine.py --checkpoint "$CHECKPOINT" \
-    --devices "$DEVICES" --pucv-sweep --nodes "$NODES" --repeats "$REPEATS" 2>&1 | tee -a "$OUT"
+  # Scaling curve, not one point: sweep prefixes of the device list
+  # (2, 4, then all N) so we see where multi-GPU stops paying.
+  NDEV=$(echo "$DEVICES" | tr ',' '\n' | wc -l)
+  for take in 2 4 "$NDEV"; do
+    [ "$take" -gt "$NDEV" ] && continue
+    SUBSET=$(echo "$DEVICES" | cut -d, -f1-"$take")
+    [ "$take" -lt 2 ] && continue
+    say "=== phase C: multi-GPU PUCV sweep ($take GPUs: $SUBSET) ==="
+    python3 scripts/bench_uci_engine.py --checkpoint "$CHECKPOINT" \
+      --devices "$SUBSET" --pucv-sweep --nodes "$NODES" --repeats "$REPEATS" 2>&1 | tee -a "$OUT"
+    [ "$take" = "$NDEV" ] && break
+  done
 else
-  say "phase C skipped (pass --devices cuda:0,cuda:1 to test multi-GPU)"
+  say "phase C skipped (pass --devices cuda:0,...,cuda:7 to test multi-GPU scaling)"
 fi
 
 say "=== done — full log: $OUT ==="

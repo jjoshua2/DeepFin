@@ -52,8 +52,14 @@ workflow.
 ## 4. IMPORTANT: one-time compile warm-up (before any clocked game)
 
 The first search after install triggers a one-time `torch.compile`
-(~2 minutes). It is cached on disk afterwards, but **each engine process**
-still pays ~15 s on its very first search. Two rules:
+(~2–3 minutes under the default `max-autotune`). **Caching is automatic and
+persistent — no Triton/Inductor cache paths to configure**: the engine sets
+up a shared TorchInductor + Triton cache at `~/.cache/deepfin/worker_cache`
+by itself (override with the `DEEPFIN_COMPILE_CACHE` env var or
+`--compile-cache-dir` if home is small — it grows to a few GB). Because it
+lives under `$HOME`, it survives reboots. After the one cold compile, a fresh
+engine process pays only ~15 s on its very first search (kernel loading +
+CUDA graph capture), never mid-game. Two rules:
 
 1. **After install, run the warm-up once** (populates the disk cache):
    ```bash
@@ -93,15 +99,25 @@ bash scripts/tcec_autotune.sh --checkpoint /path/to/trainer.pt --devices cuda:0,
 
 Phases: (A) a batching grid over (chunk-sims × candidates × GPU batch), (B) a
 search-parallelism sweep (`--walkers 1/2/4/8`), (C) if 2+ devices are given,
-the experimental multi-GPU parallel-search mode. The first configuration
-includes the one-time compile, which is inside the time budget. From the log
-we will reply with the exact command line to register — typically within the
-same day.
+the experimental multi-GPU parallel-search mode, swept at 2, 4, and all N
+GPUs so we see the scaling curve. The first configuration includes the
+one-time compile, which is inside the time budget. From the log we will
+reply with the exact command line to register — typically within the same
+day.
 
-Reference point: on a single RTX 5090 the engine sustains ~17.6k sims/s with
-the section-3 command line; a batching-saturated data-center GPU should land
-in a similar range or above, and phase C tells us whether a second GPU adds
-anything on your hardware.
+A note on what we will and won't register from the results: the section-3
+command line (`--walkers 1` = classic **Gumbel** search) is our
+quality-validated configuration — all of the engine's search tuning was done
+on it, and raw nps is not playing strength. Phases B/C measure whether the
+alternative parallel-search modes buy throughput on your hardware; if they
+do, we validate their play quality on our side before recommending any
+change. You will never be asked to register a config we haven't
+quality-checked.
+
+Reference point: our development machine is a single RTX 5090 — the same
+silicon as your 8×5090 box — sustaining ~17.6k sims/s per GPU with the
+section-3 command line, so per-GPU numbers should transfer directly and
+phase C tells us what the additional seven GPUs are worth.
 
 ## 7. Known behaviors / troubleshooting
 
