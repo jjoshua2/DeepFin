@@ -433,6 +433,25 @@ def _update_aggregate_stats(
         if was_adjudicated:
             state.stats.selfplay_adjudicated_games += 1
             c.selfplay_adjudicated_games = 1
+        if source == "fenlist" and state.starting_boards is not None:
+            # Blind-spot seeds are deep-SF-confirmed LOST for the side to move
+            # at the seed position, and in seeded SELFPLAY both seats are the
+            # net — record the outcome from that blundering seat's perspective
+            # so self-confirmation is visible per iteration. Healthy training
+            # keeps stm_l dominant; frequent stm draws/wins mean the
+            # game-outcome component of the WDL blend is re-teaching "this
+            # position was fine after all". Telemetry only: selfplay games
+            # never enter the PID winrate sample (state.stats.w/d/l).
+            seed_stm_white = state.starting_boards[i].turn == chess.WHITE
+            if result == "1/2-1/2":
+                stm_outcome = "d"
+            elif (result == "1-0" and seed_stm_white) or (
+                result == "0-1" and not seed_stm_white
+            ):
+                stm_outcome = "w"
+            else:
+                stm_outcome = "l"
+            _inc_outcome(outcome_stats, f"selfplay_fenlist_stm_{stm_outcome}")
     else:
         state.stats.curriculum_games += 1
         c.curriculum_games = 1
