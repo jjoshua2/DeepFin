@@ -1,10 +1,11 @@
 #!/bin/bash
 # Usage: ./scripts/train.sh [start|stop|status|log|restart|salvage-export|salvage-restart|best-save|best-list]
 #
-# salvage-export [--top-n N] [--out DIR] [--metric KEY] [--no-copy-replay]
+# salvage-export [--top-n N] [--out DIR] [--metric KEY] [--no-copy-replay] [--dry-run]
 #   Export top-N trial seeds (checkpoint + replay) from the current tune run
 #   into a salvage pool. Does not touch the running process. If --out is
 #   omitted the pool lands under $WORK_DIR/salvage/<run-id>_<timestamp>/.
+#   --dry-run prints selected trials/checkpoints without copying files.
 #
 # salvage-restart POOL_DIR [--no-pid] [--no-optimizer] [--reinit-volatility] [--donor-config]
 #   Stop training, then start it again pointing at POOL_DIR. Defaults restore
@@ -174,12 +175,14 @@ salvage_export() {
     local out_dir=""
     local metric="opponent_strength"
     local copy_replay="--salvage-copy-replay"
+    local dry_run=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --top-n) top_n="$2"; shift 2 ;;
             --out) out_dir="$2"; shift 2 ;;
             --metric) metric="$2"; shift 2 ;;
             --no-copy-replay) copy_replay="--no-salvage-copy-replay"; shift ;;
+            --dry-run) dry_run="--salvage-dry-run"; shift ;;
             *) echo "Unknown salvage-export arg: $1"; return 1 ;;
         esac
     done
@@ -187,14 +190,19 @@ salvage_export() {
     local out_args=()
     [ -n "$out_dir" ] && out_args=(--salvage-out-dir "$out_dir")
 
-    echo "Exporting top-$top_n salvage seeds from $WORK_DIR (metric=$metric)..."
+    if [ -n "$dry_run" ]; then
+        echo "Planning top-$top_n salvage seeds from $WORK_DIR (metric=$metric, dry-run)..."
+    else
+        echo "Exporting top-$top_n salvage seeds from $WORK_DIR (metric=$metric)..."
+    fi
     PYTHONPATH=. python3 -m chess_anti_engine.run \
         --config "$CONFIG" --mode salvage \
         --work-dir "$WORK_DIR" \
         --salvage-top-n "$top_n" \
         --salvage-metric "$metric" \
         "${out_args[@]}" \
-        "$copy_replay"
+        "$copy_replay" \
+        $dry_run
 }
 
 salvage_restart() {
