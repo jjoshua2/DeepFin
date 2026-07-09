@@ -346,6 +346,11 @@ def _publish_distributed_trial_state(
         "sf_move_nodes": int(config.get("sf_move_nodes", 0)),
         "sf_fast_ply_node_scale": float(config.get("sf_fast_ply_node_scale", 0.25)),
         "sf_label_nodes_cap": int(config.get("sf_label_nodes_cap", 0)),
+        "sf_label_escalate_q_gap": float(config.get("sf_label_escalate_q_gap", 0.0)),
+        "sf_label_escalate_nodes": int(config.get("sf_label_escalate_nodes", 3_000_000)),
+        "sf_label_escalate_max_per_game": int(
+            config.get("sf_label_escalate_max_per_game", 2)
+        ),
         "sf_multipv": int(config.get("sf_multipv", 1)),
         "sf_policy_temp": float(config.get("sf_policy_temp", 0.25)),
         "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),

@@ -257,6 +257,39 @@ def _inc_outcome(stats: dict[str, int], key: str, amount: int = 1) -> None:
     stats[str(key)] = int(stats.get(str(key), 0)) + int(amount)
 
 
+# "Materially moved" threshold for escalated SF labels, in the harvester's q
+# units (q = wdl[W] - wdl[L] in [-1, 1]): the deciding telemetry for the
+# sf_label_escalate_* bet is how often the deep re-search actually changes the
+# label, not just how often it fires.
+_LABEL_ESCALATION_MOVED_Q: float = 0.2
+
+
+def _count_label_escalations(records: list[_NetRecord]) -> tuple[int, int]:
+    """(escalated, materially-moved) SF-label counts for one game's records.
+
+    A record was escalated when the deep re-query replaced its label —
+    stockfish_turn preserves the shallow label as ``sf_wdl_original``. It
+    "moved" when |escalated q − original q| >= _LABEL_ESCALATION_MOVED_Q.
+    Default-off no-op: with escalation disabled no record ever carries
+    ``sf_wdl_original``, so this returns (0, 0) and no outcome key appears.
+    """
+    escalated = 0
+    moved = 0
+    for rec in records:
+        orig = getattr(rec, "sf_wdl_original", None)
+        if orig is None:
+            continue
+        escalated += 1
+        cur = getattr(rec, "sf_wdl", None)
+        if cur is None:
+            continue
+        q_orig = float(orig[0]) - float(orig[2])
+        q_cur = float(cur[0]) - float(cur[2])
+        if abs(q_cur - q_orig) >= _LABEL_ESCALATION_MOVED_Q:
+            moved += 1
+    return escalated, moved
+
+
 def _merge_outcome_stats(dst: dict[str, int], src: dict[str, int]) -> None:
     for key, val in src.items():
         _inc_outcome(dst, str(key), int(val))
@@ -491,6 +524,19 @@ def _update_aggregate_stats(
                 state.stats.plies_draw += game_plies
             elif c.l:
                 state.stats.plies_loss += game_plies
+
+    # sf_label_escalate_* telemetry: fires only when escalation replaced a
+    # label this game (keys stay ABSENT with the flag off — see
+    # _count_label_escalations), and rides the normal outcome_stats plumbing
+    # (state.stats + CompletedGameBatch -> shard meta -> result.json).
+    game_records = getattr(state, "samples_per_game", None)
+    n_escalated, n_moved = (
+        _count_label_escalations(game_records[i]) if game_records is not None else (0, 0)
+    )
+    if n_escalated:
+        _inc_outcome(outcome_stats, "sf_label_escalated", n_escalated)
+    if n_moved:
+        _inc_outcome(outcome_stats, "sf_label_escalated_moved", n_moved)
 
     _merge_outcome_stats(state.stats.outcome_stats, outcome_stats)
     return c
