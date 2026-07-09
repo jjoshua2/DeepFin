@@ -137,7 +137,10 @@ class _LiveShardSampler:
         )
         self.upgrade_v1_planes = bool(upgrade_v1_planes)
         self.target_input_planes = input_plane_count(model_cfg.input_extra_features)
-        self.cache_shards = max(0, int(cache_shards))
+        # Floor 1: batches MIX across the cached shards, so an empty cache
+        # (old --live-cache-shards 0 = "no caching") would make sampling
+        # impossible (final-review note on d27285f).
+        self.cache_shards = max(1, int(cache_shards))
         self._paths: list[Path] = []
         self._positions: np.ndarray = np.zeros((0,), dtype=np.int64)
         self._total_positions = 0
@@ -212,12 +215,37 @@ class _LiveShardSampler:
             idx = int(self.rng.choice(len(self._paths), p=weights / weights.sum()))
             path = self._paths[idx]
             try:
-                arrs = self._load_prepared(path)
-                n = int(np.asarray(arrs["x"]).shape[0])
-                if n <= 0:
+                # Refresh the LRU with the newly drawn shard, then MIX the
+                # batch across every cached shard (rows weighted by shard
+                # size). Single-shard batches (256 rows from ONE iteration's
+                # games, no class balance) let the value head fit per-batch
+                # outcome bias and drift into memorization — the 07-09
+                # frozen-ruler regression (83.6→101.4cp while pool-eval
+                # improved, tail-driven, both phases) had exactly that
+                # signature; the live trainer never trains this way. Mixing
+                # over the cache adds no IO: still one shard load per step.
+                self._load_prepared(path)
+                cached = [(pp, aa) for pp, aa in self._cache.items()]
+                sizes = np.array(
+                    [int(np.asarray(a["x"]).shape[0]) for _, a in cached], dtype=np.float64,
+                )
+                if sizes.sum() <= 0:
                     raise ValueError(f"empty shard {path}")
-                rows = self.rng.integers(0, n, size=int(batch_size), dtype=np.int64)
-                return _slice_arrays(arrs, rows)
+                picks = self.rng.choice(
+                    len(cached), size=int(batch_size), p=sizes / sizes.sum(),
+                )
+                parts = []
+                for ci in np.unique(picks):
+                    k = int((picks == ci).sum())
+                    n = int(sizes[ci])
+                    rows = self.rng.integers(0, n, size=k, dtype=np.int64)
+                    parts.append(_slice_arrays(cached[ci][1], rows))
+                if len(parts) == 1:
+                    return parts[0]
+                return {
+                    key: np.concatenate([pt[key] for pt in parts], axis=0)
+                    for key in parts[0]
+                }
             except Exception as exc:
                 print(json.dumps({
                     "event": "live_shard_skip",
@@ -639,8 +667,35 @@ def _build_trainer_for_candidate(
     if args.zclip_clip_factor is not None:
         trainer_kwargs["zclip_clip_factor"] = float(args.zclip_clip_factor)
     trainer = Trainer(model, **trainer_kwargs)
+    # Capture the per-group LRs the caller asked for (cfg / --lr, incl. matrix
+    # multipliers). NOT pg["lr"]: Trainer.__init__ ends with _set_initial_lrs(),
+    # which (warmup_steps > 0) sets every param group to the WARMUP-START rate
+    # (~lr_eta_min, e.g. 1e-5) — capturing that would rebase a phase-2 "--lr
+    # 1e-4" drop to 1e-5. The scheduler is constructed BEFORE _set_initial_lrs,
+    # so its base_lrs still hold the true requested per-group rates.
+    _sched0 = getattr(trainer, "_scheduler", None)
+    desired_lrs = [float(v) for v in getattr(_sched0, "base_lrs", None) or []]
+    if not desired_lrs:
+        desired_lrs = [float(pg.get("lr", 0.0)) for pg in trainer.opt.param_groups]
     if args.init_checkpoint:
         trainer.load(Path(args.init_checkpoint))
+        if args.lr is not None:
+            for pg, lr in zip(trainer.opt.param_groups, desired_lrs, strict=True):
+                pg["lr"] = float(lr)
+            sched = getattr(trainer, "_scheduler", None)
+            if sched is not None:
+                if hasattr(sched, "base_lrs"):
+                    sched.base_lrs = list(desired_lrs)
+                if hasattr(sched, "_last_lr"):
+                    sched._last_lr = list(desired_lrs)
+            if hasattr(trainer, "_peak_lr"):
+                trainer._peak_lr = float(args.lr)
+            print(json.dumps({
+                "event": "lr_override_after_load",
+                "lr": float(args.lr),
+                "param_group_lrs": list(desired_lrs),
+                "init_checkpoint": str(args.init_checkpoint),
+            }), flush=True)
     return trainer, optimizer, scope
 
 
@@ -1022,10 +1077,42 @@ def _train_candidate_live_follow(
     eval_every = max(0, int(args.live_eval_every_steps))
     report_every = max(1, int(args.live_report_every_steps))
     idle_sleep_s = max(0.0, float(args.live_idle_sleep))
+    # Static pools (frozen salvage dirs) never grow: without an idle-exit the
+    # loop sleeps forever after credit is spent. 0 = legacy wait-forever (true
+    # live shard streams); bootstrap uses a positive value so the phase ends
+    # and the driver can drop LR / start the next phase.
+    idle_exit_after_s = max(0.0, float(args.live_idle_exit_after))
+    plateau_evals = max(0, int(args.live_plateau_evals))
+    plateau_min_delta = float(args.live_plateau_min_delta)
 
     steps = 0
     samples = 0
     t0 = time.time()
+    stop_reason = "max_steps" if max_steps > 0 else "running"
+    credit_idle_since: float | None = None
+    best_eval_loss: float | None = None
+    plateau_streak = 0
+    # Warm continuations must not clobber the prior run's trainer_best_eval.pt.
+    # Preferred seed for the plateau bar: the loaded best's PERSISTED eval loss
+    # (trainer_best_eval.json) — comparing against our own first eval would let
+    # a later eval that improves only relative to a bad restart point overwrite
+    # the genuinely-better loaded best. Fallback (no sidecar, e.g. a pre-fix
+    # run dir): seed from the first eval. Caveat noted: the eval sample drifts
+    # as the pool grows, so a stale baseline errs conservative (protects the
+    # best file), which is the right direction.
+    seed_best_pending = False
+    if args.init_checkpoint and plateau_evals > 0:
+        sidecar = run_dir / "trainer_best_eval.json"
+        try:
+            best_eval_loss = float(json.loads(sidecar.read_text(encoding="utf-8"))["eval_loss"])
+            print(json.dumps({
+                "event": "live_best_eval_baseline_loaded",
+                "candidate": candidate,
+                "eval_loss": best_eval_loss,
+                "path": str(sidecar),
+            }), flush=True)
+        except (OSError, ValueError, KeyError):
+            seed_best_pending = True
 
     print(json.dumps({
         "event": "live_follow_ready",
@@ -1035,6 +1122,8 @@ def _train_candidate_live_follow(
         "target_reuse": target_reuse,
         "initial_credit_samples": int(credit_samples) if math.isfinite(credit_samples) else "inf",
         "credit_cap_steps": int(args.live_credit_cap_steps),
+        "idle_exit_after_s": idle_exit_after_s,
+        "plateau_evals": plateau_evals,
     }), flush=True)
 
     while max_steps <= 0 or steps < max_steps:
@@ -1042,6 +1131,7 @@ def _train_candidate_live_follow(
             new_positions = sampler.rescan()
             if steps > 0 and new_positions > 0:
                 credit_samples = min(credit_samples + float(new_positions) * target_reuse, credit_cap)
+                credit_idle_since = None
             if sampler.total_positions < min_positions:
                 print(json.dumps({
                     "event": "live_follow_wait",
@@ -1058,7 +1148,12 @@ def _train_candidate_live_follow(
             new_positions = sampler.rescan()
             if new_positions > 0:
                 credit_samples = min(credit_samples + float(new_positions) * target_reuse, credit_cap)
+                credit_idle_since = None
                 continue
+            now = time.time()
+            if credit_idle_since is None:
+                credit_idle_since = now
+            idle_for = now - credit_idle_since
             print(json.dumps({
                 "event": "live_follow_wait",
                 "candidate": candidate,
@@ -1067,7 +1162,21 @@ def _train_candidate_live_follow(
                 "positions": sampler.total_positions,
                 "shards": sampler.shard_count,
                 "sleep_s": idle_sleep_s,
+                "idle_for_s": idle_for,
+                "idle_exit_after_s": idle_exit_after_s,
             }), flush=True)
+            if idle_exit_after_s > 0.0 and idle_for >= idle_exit_after_s:
+                stop_reason = "credit_exhausted_idle"
+                print(json.dumps({
+                    "event": "live_follow_stop",
+                    "candidate": candidate,
+                    "reason": stop_reason,
+                    "steps": steps,
+                    "samples": samples,
+                    "positions": sampler.total_positions,
+                    "idle_for_s": idle_for,
+                }), flush=True)
+                break
             time.sleep(idle_sleep_s)
             continue
 
@@ -1075,6 +1184,7 @@ def _train_candidate_live_follow(
         steps += 1
         samples += int(args.batch_size)
         credit_samples -= int(args.batch_size)
+        credit_idle_since = None
 
         if steps % report_every == 0:
             elapsed = time.time() - t0
@@ -1123,13 +1233,86 @@ def _train_candidate_live_follow(
                 batch_size=int(args.batch_size),
                 steps=max(1, int(args.eval_steps)),
             )
-            print(json.dumps({
+            eval_row = {
                 "event": "live_eval",
                 "candidate": candidate,
                 "steps": steps,
                 **{f"eval_{k}": v for k, v in dataclasses.asdict(eval_metrics).items()},
-            }), flush=True)
+            }
+            print(json.dumps(eval_row), flush=True)
+            # Plateau stop: static windows overfit past the eval minimum; the
+            # bootstrap playbook says stop the phase there (then LR-drop / refresh).
+            if plateau_evals > 0:
+                cur = float(eval_metrics.loss)
+                if seed_best_pending and best_eval_loss is None:
+                    seed_best_pending = False
+                    best_eval_loss = cur
+                    print(json.dumps({
+                        "event": "live_best_eval_seeded",
+                        "candidate": candidate,
+                        "steps": steps,
+                        "eval_loss": cur,
+                        "init_checkpoint": str(args.init_checkpoint),
+                    }), flush=True)
+                elif best_eval_loss is None or cur < best_eval_loss - plateau_min_delta:
+                    best_eval_loss = cur
+                    plateau_streak = 0
+                    trainer.save(run_dir / "trainer_best_eval.pt")
+                    trainer.save(run_dir / "trainer.pt")
+                    # Sidecar so a later `continue` seeds its plateau bar from
+                    # the loaded best's KNOWN loss instead of its own first
+                    # eval (which, when worse, would let a merely-relatively-
+                    # improving later eval overwrite the loaded best).
+                    (run_dir / "trainer_best_eval.json").write_text(
+                        json.dumps({"steps": steps, "eval_loss": cur}) + "\n",
+                        encoding="utf-8")
+                    print(json.dumps({
+                        "event": "live_best_eval",
+                        "candidate": candidate,
+                        "steps": steps,
+                        "eval_loss": cur,
+                        "path": str(run_dir / "trainer_best_eval.pt"),
+                    }), flush=True)
+                else:
+                    plateau_streak += 1
+                    print(json.dumps({
+                        "event": "live_plateau_tick",
+                        "candidate": candidate,
+                        "steps": steps,
+                        "eval_loss": cur,
+                        "best_eval_loss": best_eval_loss,
+                        "plateau_streak": plateau_streak,
+                        "plateau_evals": plateau_evals,
+                    }), flush=True)
+                    if plateau_streak >= plateau_evals:
+                        stop_reason = "eval_plateau"
+                        print(json.dumps({
+                            "event": "live_follow_stop",
+                            "candidate": candidate,
+                            "reason": stop_reason,
+                            "steps": steps,
+                            "samples": samples,
+                            "eval_loss": cur,
+                            "best_eval_loss": best_eval_loss,
+                        }), flush=True)
+                        break
 
+    if stop_reason == "running":
+        if max_steps > 0 and steps >= max_steps:
+            stop_reason = "max_steps"
+        else:
+            stop_reason = "completed"
+
+    # On an eval-plateau stop the in-memory weights are from the NON-improving
+    # tail: park them (forensics), then RESTORE the best checkpoint BEFORE the
+    # final eval so results.jsonl / live_follow_done describe the same weights
+    # the trainer.pt artifact holds (downstream `continue` loads trainer.pt).
+    best_path = run_dir / "trainer_best_eval.pt"
+    restored_best = False
+    if stop_reason == "eval_plateau" and best_path.exists():
+        trainer.save(run_dir / "trainer_final.pt")
+        trainer.load(best_path)
+        restored_best = True
     eval_paths = _limit_shards(iter_shard_paths(args.replay_dir), args)
     eval_arrs = _load_eval_arrs(shard_paths=eval_paths, model_cfg=model_cfg, args=args)
     eval_metrics = trainer.eval_steps(
@@ -1143,6 +1326,8 @@ def _train_candidate_live_follow(
         "optimizer": optimizer,
         "matrix_optimizer_scope": scope,
         "mode": "live_follow",
+        "stop_reason": stop_reason,
+        "restored_best_eval": restored_best,
         "matrix_lr_multiplier": float(args.matrix_lr_multiplier),
         "matrix_weight_decay": float(args.matrix_weight_decay),
         "aux_weight_decay": float(args.aux_weight_decay),
@@ -1167,6 +1352,14 @@ def _train_candidate_live_follow(
         "model_config": dataclasses.asdict(model_cfg),
         **{f"eval_{k}": v for k, v in dataclasses.asdict(eval_metrics).items()},
     }
+    print(json.dumps({
+        "event": "live_follow_done",
+        "candidate": candidate,
+        "stop_reason": stop_reason,
+        "steps": steps,
+        "samples": samples,
+        "eval_loss": float(eval_metrics.loss),
+    }), flush=True)
     return out
 
 
@@ -1362,7 +1555,34 @@ def main() -> None:
     ap.add_argument("--live-max-steps", type=int, default=0, help="0 means run until stopped.")
     ap.add_argument("--live-min-positions", type=int, default=0)
     ap.add_argument("--live-idle-sleep", type=float, default=30.0)
-    ap.add_argument("--live-cache-shards", type=int, default=4)
+    ap.add_argument(
+        "--live-idle-exit-after",
+        type=float,
+        default=0.0,
+        help=(
+            "If >0, exit live-follow when credit is exhausted and no new "
+            "positions appear for this many seconds (static/frozen pools). "
+            "0 keeps the legacy wait-forever behavior for true live streams."
+        ),
+    )
+    ap.add_argument(
+        "--live-plateau-evals",
+        type=int,
+        default=0,
+        help=(
+            "If >0, stop the phase after this many consecutive live_eval "
+            "checks without eval_loss improvement (static-window overfit stop)."
+        ),
+    )
+    ap.add_argument(
+        "--live-plateau-min-delta",
+        type=float,
+        default=1e-4,
+        help="Minimum eval_loss improvement to reset the plateau counter.",
+    )
+    ap.add_argument("--live-cache-shards", type=int, default=16,
+                    help="LRU shard cache; batches MIX across all cached shards, so this "
+                         "is also the batch-decorrelation width (was 4 pre-mixing)")
     ap.add_argument(
         "--live-credit-cap-steps",
         type=int,
