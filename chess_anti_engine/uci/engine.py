@@ -105,6 +105,10 @@ def emit_handshake(options: EngineOptions) -> None:
         "option name PUCVPendingMode type combo default "
         f"{options.pucv_pending_mode} var legacy var virtual-mean"
     )
+    _println(
+        "option name SearchParallel type combo default "
+        f"{options.search_parallel} var pucv var gumbel"
+    )
     _println(f"option name VLGather type spin default {options.vl_gather} min 32 max 4096")
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
     _println(f"option name EvalCacheEntries type spin default {options.eval_cache_entries} min 0 max 1048576")
@@ -159,6 +163,13 @@ class EngineOptions:
   # absolute virtual-loss scoring; `virtual-mean` treats in-flight leaves as
   # virtual-mean samples. Set via UCI `PUCVPendingMode`.
     pucv_pending_mode: str = "legacy"
+  # Which multi-GPU search mode drives multi-device searches: `pucv` =
+  # shared-tree PUCT+virtual-loss pool (throughput baseline), `gumbel` =
+  # root-parallel Gumbel over evaluator groups (quality-preserving; the
+  # validated sequential-halving root semantics). Requires >= 2 devices;
+  # single-device configs always run the classic paths. Set via UCI
+  # `SearchParallel`.
+    search_parallel: str = "pucv"
   # Sims per pipeline submit when `UseVL=true`. Sweet spot 384-768 for
   # the 384-dim 10-layer model on RTX 5090. Set via UCI `VLGather`.
     vl_gather: int = 512
@@ -236,6 +247,7 @@ class Engine:
         rebuild_multi_gpu_pucv_factories: (
             Callable[[int, int], list[Callable[[], BatchEvaluator]]] | None
         ) = None,
+        search_devices: tuple[str, ...] | None = None,
         options: EngineOptions | None = None,
     ) -> None:
         self._worker = worker
@@ -244,6 +256,10 @@ class Engine:
   # When None, the MaxBatch setoption silently no-ops.
         self._rebuild_evaluator = rebuild_evaluator
         self._rebuild_multi_gpu_pucv_factories = rebuild_multi_gpu_pucv_factories
+  # Device list backing the per-device factories, threaded through to the
+  # root-parallel Gumbel pool so each group thread can set_device before
+  # its factory compiles (cudagraph TLS). None when unknown (single device).
+        self._search_devices = search_devices
         self._options = options if options is not None else EngineOptions()
         self._worker.set_max_tree_mb(self._options.hash_mb)
   # Set by setoption handlers that reshape the search path / evaluator
@@ -654,6 +670,54 @@ class Engine:
             self._install_multi_gpu_pucv_pool()
         _println(f"info string PUCVPendingMode set to {normalized}")
 
+    def _set_search_parallel(self, value: str) -> None:
+        """Switch the multi-GPU search mode: ``gumbel`` installs the
+        root-parallel Gumbel pool (>= 2 device factories required, else the
+        option reverts to ``pucv``); ``pucv`` tears it down and restores the
+        UseMultiGpuPUCV-controlled routing. Single-device configs never
+        construct the new module — dispatch falls through to the classic
+        paths untouched."""
+        normalized = value.strip().lower()
+        if normalized not in ("pucv", "gumbel"):
+            return
+        if normalized == "gumbel":
+            if self._rebuild_multi_gpu_pucv_factories is None:
+                self._options.search_parallel = "pucv"
+                _println(
+                    "info string SearchParallel gumbel unavailable — "
+                    "no per-device factories wired",
+                )
+                return
+            gather = min(self._options.vl_gather, self._options.max_batch)
+            factories = self._rebuild_multi_gpu_pucv_factories(
+                self._options.max_batch, gather,
+            )
+            if len(factories) < 2:
+                self._options.search_parallel = "pucv"
+                _println(
+                    "info string SearchParallel gumbel unavailable — "
+                    "need at least two devices",
+                )
+                return
+            self._options.search_parallel = "gumbel"
+            self._worker.install_root_parallel_gumbel(
+                factories, gather=gather, as_factories=True,
+                devices=list(self._search_devices) if self._search_devices else None,
+                info_string_cb=_emit_info_string,
+            )
+            self._warmup_dirty = True
+            _println(
+                f"info string SearchParallel gumbel on "
+                f"(groups={len(factories)} gather={gather})",
+            )
+            return
+        self._options.search_parallel = "pucv"
+        self._worker.clear_root_parallel_gumbel()
+        self._warmup_dirty = True
+        _println("info string SearchParallel pucv")
+        if self._options.use_multi_gpu_pucv:
+            self._set_use_multi_gpu_pucv("true")
+
     def _set_vl_gather(self, value: str) -> None:
         n = self._parse_clamped_int(value, lo=32)
         if n is None:
@@ -784,6 +848,7 @@ class Engine:
         "usevl": _set_use_vl,
         "usemultigpupucv": _set_use_multi_gpu_pucv,
         "pucvpendingmode": _set_pucv_pending_mode,
+        "searchparallel": _set_search_parallel,
         "vlgather": _set_vl_gather,
         "multipv": _set_multi_pv,
         "uci_showwdl": _set_show_wdl,
@@ -1056,3 +1121,10 @@ def _println(s: str) -> None:
     with _PRINT_LOCK:
         sys.stdout.write(s + "\n")
         sys.stdout.flush()
+
+
+def _emit_info_string(s: str) -> None:
+    """`info string` emitter handed to search pools (root-parallel Gumbel
+    per-phase lines). Runs on the search thread at phase barriers, protected
+    by the same stdout lock as every other UCI line."""
+    _println(f"info string {s}")

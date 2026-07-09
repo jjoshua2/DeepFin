@@ -35,6 +35,11 @@ from .multi_gpu_pucv_pool import (
     MultiGpuPucvStats,
     MultiGpuPucvWorkerStats,
 )
+from .root_parallel_gumbel import (
+    RootParallelGumbelConfig,
+    RootParallelGumbelPool,
+    RootParallelGumbelStats,
+)
 from chess_anti_engine.moves import index_to_move, move_to_index
 from chess_anti_engine.tablebase import SyzygyProbe, try_tb_root_move
 
@@ -308,6 +313,14 @@ class SearchWorker:
         self._pucv_pool: MultiGpuPucvPool | None = None
         self._pucv_pool_evals: list[Any] = []
         self._pucv_pool_cboard: CBoard | None = None
+  # Root-parallel Gumbel pool (multi-GPU search v2, quality-preserving
+  # alternative to the pucv pool): per-device evaluator groups run each
+  # surviving Gumbel candidate's phase budget in its own subtree of the
+  # shared tree; halving decisions happen at single-threaded phase
+  # barriers. Installed via ``install_root_parallel_gumbel`` — mutually
+  # exclusive with the pucv pool.
+        self._rpg_pool: RootParallelGumbelPool | None = None
+        self._rpg_pool_evals: list[Any] = []
 
   # Persistent tree across calls within a game. Reset on new position.
         self._tree: MCTSTree | None = None
@@ -439,6 +452,7 @@ class SearchWorker:
             raise ValueError("at least one evaluator/factory required")
         # Teardown only — do not rebuild walker/PUCV that we immediately close.
         self.clear_multi_gpu_pucv(restore_fallback=False)
+        self.clear_root_parallel_gumbel()
         if self._walker_pool is not None:
             self._walker_pool.close()
             self._walker_pool = None
@@ -516,6 +530,85 @@ class SearchWorker:
         if self._pucv is None:
             return None
         return self._pucv.cache_stats()
+
+    def install_root_parallel_gumbel(
+        self,
+        evaluators_or_factories: list[Any],
+        *,
+        gather: int = 512,
+        as_factories: bool = False,
+        devices: list[str] | None = None,
+        info_string_cb: Callable[[str], None] | None = None,
+    ) -> None:
+        """Install N per-device evaluator groups driven by
+        ``RootParallelGumbelPool`` (root-parallel Gumbel, design §2).
+
+        Same factory-vs-prebuilt contract as ``install_multi_gpu_pucv``
+        (factories are REQUIRED for torch.compile + cudagraphs; each is
+        invoked on its group's own thread, with ``torch.cuda.set_device``
+        first when ``devices`` is provided). Replaces every other search
+        path until ``clear_root_parallel_gumbel``. Caller holds the search
+        barrier.
+        """
+        if not evaluators_or_factories:
+            raise ValueError("at least one evaluator/factory required")
+        self.clear_root_parallel_gumbel()
+        # Teardown only — install immediately owns the path.
+        self.clear_multi_gpu_pucv(restore_fallback=False)
+        if self._walker_pool is not None:
+            self._walker_pool.close()
+            self._walker_pool = None
+        self._pucv = None
+        cfg = RootParallelGumbelConfig(
+            n_groups=len(evaluators_or_factories),
+            gather=int(gather),
+            c_puct=float(self._cfg.c_puct),
+            fpu_at_root=0.0,
+            fpu_reduction=float(self._cfg.fpu_reduction),
+            vloss_weight=self._vloss_weight,
+  # vloss_mode stays at the config default (virtual-mean): the design pins
+  # the intra-candidate regime; the pucv pool's PUCVPendingMode default
+  # (legacy) deliberately does not leak in here.
+            input_planes=input_plane_count(self._cfg.input_extra_features),
+            compute_relations=bool(self._cfg.compute_relations),
+        )
+        if as_factories:
+            self._rpg_pool = RootParallelGumbelPool(
+                cfg, self._cfg,
+                evaluator_factories=evaluators_or_factories,
+                devices=devices,
+                info_string_cb=info_string_cb,
+            )
+  # Keep refs to evaluators built inside workers, for close() teardown.
+            self._rpg_pool_evals = list(self._rpg_pool._evals)
+        else:
+            self._rpg_pool_evals = list(evaluators_or_factories)
+            self._rpg_pool = RootParallelGumbelPool(
+                cfg, self._cfg,
+                evaluators=evaluators_or_factories,
+                devices=devices,
+                info_string_cb=info_string_cb,
+            )
+        self.reset_tree()
+
+    def clear_root_parallel_gumbel(self) -> None:
+        """Tear down the root-parallel Gumbel pool and revert to the
+        single-evaluator gumbel/walker/pucv routing. Idempotent."""
+        if self._rpg_pool is not None:
+            self._rpg_pool.close()
+            self._rpg_pool = None
+        for ev in self._rpg_pool_evals:
+            close = getattr(ev, "close", None)
+            if callable(close):
+                with contextlib.suppress(Exception):
+                    close()
+        self._rpg_pool_evals = []
+
+    def last_root_parallel_gumbel_stats(self) -> RootParallelGumbelStats | None:
+        """Return stats from the most recent root-parallel Gumbel chunk."""
+        if self._rpg_pool is None:
+            return None
+        return self._rpg_pool.last_stats()
 
     def set_pucv_vloss_mode(self, mode: int) -> None:
         """Set batched-PUCV pending accounting.
@@ -651,6 +744,7 @@ class SearchWorker:
         to drain ``BatchCoalescingDispatcher``'s submitter thread before
         Python tears down PyTorch's CUDA context. Also tears down the
         multi-GPU pucv pool's worker threads if active."""
+        self.clear_root_parallel_gumbel()
         if self._pucv_pool is not None:
             self._pucv_pool.close()
             self._pucv_pool = None
@@ -687,6 +781,7 @@ class SearchWorker:
         # will close the walker next): if install fails we must not leave the
         # worker with no search path.
         self.clear_multi_gpu_pucv(restore_fallback=False)
+        self.clear_root_parallel_gumbel()
         if self._walker_pool is not None:
             self._walker_pool.close()
         self._walker_pool = self._build_walker_pool(self._n_walkers)
@@ -842,6 +937,10 @@ class SearchWorker:
         full. Forcing a rebuild here keeps each search bounded and fully
         budgeted, at the cost of dropping cross-move reuse near the cap.
         """
+        if self._rpg_pool is not None:
+  # Root-parallel Gumbel v1: no cross-move tree reuse — fresh per-candidate
+  # arenas each move (design §2 "Tree reuse across moves", v1 scope).
+            return False
         if self._tree is None or self._root_id is None or self._root_id < 0:
             return False
         b = board.copy(stack=False)
@@ -939,7 +1038,9 @@ class SearchWorker:
         upfront. The classic gumbel path does this internally."""
         if allowed_root_indices is not None:
             return
-        if self._pucv_pool is not None:
+        if self._rpg_pool is not None:
+            self._ensure_rpg_root_prepared(board)
+        elif self._pucv_pool is not None:
             self._ensure_pucv_pool_root_expanded(board)
         elif self._walker_pool is not None:
             self._ensure_walker_root_expanded(board)
@@ -973,6 +1074,8 @@ class SearchWorker:
                 chunk, board, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
             ), chunk
+        if self._rpg_pool is not None:
+            return self._run_rpg_chunk(chunk, stop_event)
         if self._pucv_pool is not None:
             return self._run_pucv_pool_chunk(chunk, stop_event)
         if self._walker_pool is not None:
@@ -1121,11 +1224,17 @@ class SearchWorker:
 
     def _is_shared_tree_path(self, allowed_root_indices: set[int] | None) -> bool:
         """True when the active chunk path mutates the shared tree from multiple
-        threads (walker pool or multi-GPU pucv pool). ``searchmoves`` forces the
+        threads (walker pool, multi-GPU pucv pool, or the root-parallel Gumbel
+        pool — its groups own disjoint candidate subtrees but still allocate
+        nodes from the one shared arena). ``searchmoves`` forces the
         single-thread gumbel path, so it is never shared-tree."""
         if allowed_root_indices is not None:
             return False
-        return self._pucv_pool is not None or self._walker_pool is not None
+        return (
+            self._pucv_pool is not None
+            or self._walker_pool is not None
+            or self._rpg_pool is not None
+        )
 
     def _chunk_budget(self, allowed_root_indices: set[int] | None) -> int:
         """Sims to request from the active path for one chunk.
@@ -1618,6 +1727,44 @@ class SearchWorker:
             stop_event=stop_event,
         )
         return self._tree.node_q(self._root_id), int(completed)
+
+    def _run_rpg_chunk(
+        self, chunk: int, stop_event: threading.Event,
+    ) -> float:
+        """One root-parallel Gumbel chunk. The pool runs a full sequential-
+        halving schedule over ``chunk`` sims (identical budget shape to the
+        classic single-GPU chunk — the per-chunk budget is deliberately NOT
+        scaled by group count, so root decisions at equal total sims match
+        serial Gumbel) and returns the survivor + its completed value; the
+        survivor feeds ``_last_gumbel_action_idx`` exactly like the classic
+        Gumbel chunk so final selection semantics are unchanged."""
+        assert self._rpg_pool is not None
+        value, action = self._rpg_pool.run(
+            target_sims=chunk, stop_event=stop_event,
+        )
+        if action >= 0:
+            self._last_gumbel_action_idx = int(action)
+        return float(value)
+
+    def _ensure_rpg_root_prepared(self, board: chess.Board) -> None:
+        """Root prep for the root-parallel Gumbel pool: create the shared
+        tree, then let the pool install + expand the root (classic-Gumbel
+        priors from the cached root eval) and sample-ready state. Mirrors
+        ``_ensure_pucv_pool_root_expanded``'s contract; ``prepare_root`` is
+        idempotent per (tree, position)."""
+        assert self._rpg_pool is not None
+        assert self._root_pol_logits is not None
+        assert self._root_wdl_logits is not None
+        if self._tree is None:
+            self._tree = MCTSTree()
+            self._tree.reserve(50_000, 500_000)
+            self._root_id = None
+        self._root_id = self._rpg_pool.prepare_root(
+            tree=self._tree,
+            board=board,
+            pol_logits=self._root_pol_logits[0],
+            wdl_logits=self._root_wdl_logits[0],
+        )
 
     def _ensure_pucv_pool_root_expanded(self, board: chess.Board) -> None:
         """Same root-prep contract as walker_pool / pucv: pool workers
