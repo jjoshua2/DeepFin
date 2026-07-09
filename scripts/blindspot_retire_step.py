@@ -122,6 +122,20 @@ def main() -> None:
             with open(args.state, encoding="utf-8") as fh:
                 state = json.load(fh)
 
+        # Per-seed net_q dump (next to the state file, tagged by --tag): the
+        # 2026-07-09 stability study had to copy 4 live checkpoints because
+        # only streak counters survive a read — this makes every future
+        # stability/probation analysis free. Fail-soft like everything here.
+        try:
+            dump_path = os.path.join(
+                os.path.dirname(args.state) or ".",
+                f"retire_netq_{args.tag or 'untagged'}.jsonl")
+            with open(dump_path, "w", encoding="utf-8") as fh:
+                for k, qi, ln in zip(keys, q.tolist(), lines):
+                    fh.write(json.dumps({"key": k, "net_q": round(float(qi), 4),
+                                         "line": ln.partition("#")[0].strip()}) + chr(10))
+        except Exception:
+            pass
         retire_keys, resolved_now = update_streaks(
             keys, q.tolist(), state,
             resolved_below=args.resolved_below, min_consecutive=args.min_consecutive)
