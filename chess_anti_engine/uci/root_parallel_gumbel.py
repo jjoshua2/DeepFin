@@ -180,6 +180,10 @@ class RootParallelGumbelConfig:
     # this independently of the UCI PUCVPendingMode default (which is legacy
     # for the pucv pool).
     vloss_mode: int = 1
+    # Per-group PucvChunker eval-cache capacity (0 = off). Same knob as the
+    # multi-GPU PUCV pool / single-thread UseVL path; each group owns its own
+    # cache (subtrees are disjoint so a shared cache would rarely hit).
+    eval_cache_entries: int = 0
     # Input channel count (146 v1 / 175 v2_threats); sized from the model.
     input_planes: int = _PLANES
     compute_relations: bool = False
@@ -711,6 +715,7 @@ class RootParallelGumbelPool:
                 fpu_reduction=cfg.fpu_reduction,
                 vloss_weight=cfg.vloss_weight,
                 vloss_mode=cfg.vloss_mode,
+                eval_cache_entries=int(cfg.eval_cache_entries),
                 input_planes=cfg.input_planes,
                 compute_relations=cfg.compute_relations,
             )
@@ -763,10 +768,19 @@ class RootParallelGumbelPool:
                 # Classic semantics: every forced sim into a terminal child
                 # backprops the terminal value (visit counts keep accruing so
                 # schedule/scoring arithmetic matches the serial run).
-                n = item.budget - done
-                if n > 0:
-                    path = np.array([arena.cid], dtype=np.int32)
-                    st.tree.backprop_many([path] * n, [arena.terminal_value] * n)
+                # Chunk + poll stop the same way non-terminal work does: a lone
+                # survivor can receive the whole remaining phase budget, and a
+                # single backprop_many([path]*n) would ignore stop_event and
+                # allocate an O(n) Python list (hundreds of ms at 1M+ nodes).
+                gather = max(1, int(self._cfg.gather))
+                batch = max(1, 2 * gather)
+                path = np.array([arena.cid], dtype=np.int32)
+                tv = float(arena.terminal_value)
+                while done < item.budget:
+                    if stop_event is not None and stop_event.is_set():
+                        break
+                    n = min(item.budget - done, batch)
+                    st.tree.backprop_many([path] * n, [tv] * n)
                     done += n
                 return done
             gather = max(1, int(self._cfg.gather))

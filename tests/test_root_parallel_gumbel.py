@@ -683,6 +683,144 @@ def test_searchmoves_fallback_resets_rpg_tree() -> None:
         worker.close()
 
 
+def test_use_multi_gpu_pucv_forces_search_parallel_pucv() -> None:
+    """Enabling UseMultiGpuPUCV must not leave search_parallel=gumbel sticky
+    (MaxBatch would silently reinstall RPG)."""
+    worker = _make_worker()
+
+    def factories(_mb: int, _g: int) -> list[Any]:
+        return [_make_evaluator, _make_evaluator]
+
+    def rebuild_eval(mb: int, _cache: int) -> Any:
+        return _make_evaluator(max_batch=mb)
+
+    engine = Engine(
+        worker,
+        rebuild_evaluator=rebuild_eval,
+        rebuild_multi_gpu_pucv_factories=factories,
+        options=EngineOptions(max_batch=64, eval_cache_entries=0),
+    )
+    try:
+        engine._set_search_parallel("gumbel")
+        assert worker._rpg_pool is not None
+        assert engine._options.search_parallel == "gumbel"
+        engine._set_use_multi_gpu_pucv("true")
+        assert worker._rpg_pool is None
+        assert worker._pucv_pool is not None
+        assert engine._options.search_parallel == "pucv"
+        assert engine._options.use_multi_gpu_pucv is True
+        # MaxBatch must keep PUCV, not flip back to Gumbel.
+        engine._set_max_batch("128")
+        assert engine._options.search_parallel == "pucv"
+        assert worker._pucv_pool is not None
+        assert worker._rpg_pool is None
+    finally:
+        engine.close()
+
+
+def test_threads_under_gumbel_does_not_materialize_walker() -> None:
+    """Threads setoption while SearchParallel=gumbel must not spawn a live
+    walker pool beside RPG; the count is stored for leave-gumbel restore."""
+    worker = _make_worker()
+
+    def factories(_mb: int, _g: int) -> list[Any]:
+        return [_make_evaluator, _make_evaluator]
+
+    engine = Engine(
+        worker,
+        rebuild_multi_gpu_pucv_factories=factories,
+        options=EngineOptions(threads=1),
+    )
+    try:
+        engine._set_search_parallel("gumbel")
+        assert worker._rpg_pool is not None
+        assert worker._walker_pool is None
+        engine._set_threads("4")
+        assert engine._options.threads == 4
+        assert worker._n_walkers == 4
+        assert worker._walker_pool is None, "must not allocate walker beside RPG"
+        assert worker._rpg_pool is not None
+        engine._set_search_parallel("pucv")
+        assert worker._rpg_pool is None
+        assert worker._walker_pool is not None, "leave-gumbel must build walker pool"
+        assert worker._n_walkers == 4
+    finally:
+        engine.close()
+
+
+def test_install_rpg_wires_eval_cache_entries() -> None:
+    """EvalCacheEntries must reach per-group PucvChunkers (not a silent no-op)."""
+    worker = SearchWorker(
+        _make_evaluator(max_batch=64), device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False, temperature=0.0),
+        chunk_sims=64, n_walkers=1, eval_cache_entries=128,
+    )
+    try:
+        worker.install_root_parallel_gumbel(
+            [_make_evaluator(max_batch=64), _make_evaluator(max_batch=64)],
+            gather=8, as_factories=False,
+        )
+        assert worker._rpg_pool is not None
+        assert worker._rpg_pool._cfg.eval_cache_entries == 128
+        for ch in worker._rpg_pool._chunkers:
+            assert ch is not None
+            assert ch.cache_stats() is not None, "chunker must own an eval cache"
+    finally:
+        worker.close()
+
+
+def test_terminal_candidate_respects_stop_event() -> None:
+    """Terminal forced-sim backprop must poll stop between chunks."""
+    from chess_anti_engine.uci.root_parallel_gumbel import (
+        _CandidateArena,
+        _WorkItem,
+    )
+
+    pool = _make_pool(1, gather=8)
+    try:
+        board = chess.Board()
+        pol, wdl = _root_eval()
+        tree = MCTSTree()
+        tree.reserve(50_000, 500_000)
+        rid = pool.prepare_root(
+            tree=tree, board=board, pol_logits=pol, wdl_logits=wdl,
+        )
+        assert pool._state is not None
+        # Expand one legal as a pre-marked terminal child so _run_item takes
+        # the forced-sim path without an NN expand.
+        legal = pool._state.search_legal
+        assert legal.size > 0
+        action = int(legal[0])
+        cid = int(tree.find_child(rid, action))
+        assert cid >= 0
+        arena = _CandidateArena(
+            action=action, cid=cid, terminal_value=1.0, expanded=True,
+        )
+        chunker = pool._chunkers[0]
+        assert chunker is not None
+        # Unstopped: full residual budget is applied (chunked, but complete).
+        done_full = pool._run_item(
+            0, pool._evals[0], chunker,
+            _WorkItem(arena=arena, budget=100, phase_index=0),
+            None,
+        )
+        assert done_full == 100
+
+        # Already stopped: must not apply any residual.
+        stop = threading.Event()
+        stop.set()
+        done_stopped = pool._run_item(
+            0, pool._evals[0], chunker,
+            _WorkItem(arena=arena, budget=50_000, phase_index=0),
+            stop,
+        )
+        assert done_stopped == 0, (
+            f"stopped terminal item must complete 0 sims, got {done_stopped}"
+        )
+    finally:
+        pool.close()
+
+
 # --- construction validation ------------------------------------------------------------
 
 

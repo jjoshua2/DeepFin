@@ -569,6 +569,7 @@ class SearchWorker:
   # vloss_mode stays at the config default (virtual-mean): the design pins
   # the intra-candidate regime; the pucv pool's PUCVPendingMode default
   # (legacy) deliberately does not leak in here.
+            eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),
         )
@@ -659,10 +660,20 @@ class SearchWorker:
         isn't met or ``enabled`` is False, the classic gumbel path is used.
         Resets the tree because pucv accumulates vloss-adjusted Q/N stats
         that don't blend with gumbel's halving stats. Caller holds the
-        search barrier."""
+        search barrier.
+
+        When the root-parallel Gumbel pool is installed, only the intended
+        flag/gather are updated — materializing a live single-thread chunker
+        beside RPG would be inert (dispatch prefers ``_rpg_pool``) but wasteful
+        and confusing. Leave-gumbel reinstall builds the chunker then.
+        """
         enabled = bool(enabled)
         if gather is not None:
             self._pucv_gather = max(1, int(gather))
+        if self._rpg_pool is not None:
+            self._use_pucv = enabled
+            self._pucv = None
+            return
         if enabled == self._use_pucv and self._pucv is not None:
             return
         self._use_pucv = enabled
@@ -827,21 +838,26 @@ class SearchWorker:
         Caller should hold the search barrier — same pattern as
         ``set_tb_probe``.
 
-        When the multi-GPU PUCV pool is active it owns search; only store
-        ``n`` for the next ``clear_multi_gpu_pucv`` restore and skip
-        spawning an idle walker pool.
+        When a multi-GPU pool (RPG or multi-GPU PUCV) is active it owns
+        search; only store ``n`` for the next leave-multi-GPU restore and
+        skip spawning an idle walker pool beside the live path.
         """
         n = max(1, int(n))
+        if self._rpg_pool is not None or self._pucv_pool is not None:
+            self._n_walkers = n
+            if self._walker_pool is not None:
+                self._walker_pool.close()
+                self._walker_pool = None
+            self._pucv = None
+            return
         if n == self._n_walkers:
             return
         self._n_walkers = n
-        if self._pucv_pool is not None:
-            return
         if self._walker_pool is not None:
             self._walker_pool.close()
         self._walker_pool = self._build_walker_pool(n)
-  # pucv requires single-thread; rebuild against the new walker count
-  # (returns None when n != 1, which silently disables the path).
+        # pucv requires single-thread; rebuild against the new walker count
+        # (returns None when n != 1, which silently disables the path).
         if self._use_pucv:
             self._pucv = self._build_pucv()
         self.reset_tree()
