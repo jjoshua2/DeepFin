@@ -305,7 +305,7 @@ def test_uci_searchmoves_uses_filtered_gumbel_path_with_walkers(
     monkeypatch.setattr(worker, "_run_gumbel_chunk", fake_gumbel)
     monkeypatch.setattr(worker, "_run_walker_chunk", fake_walker)
 
-    value = worker._run_one_chunk(
+    value, completed = worker._run_one_chunk(
         4,
         board,
         threading.Event(),
@@ -315,6 +315,7 @@ def test_uci_searchmoves_uses_filtered_gumbel_path_with_walkers(
     )
 
     assert value == 0.25
+    assert completed == 4  # non-pool paths always run the full chunk
     assert calls == [
         (
             "gumbel",

@@ -211,9 +211,12 @@ typedef struct {
      *   - N[] is atomically incremented in tree_backprop
      *   - expanded[] uses acquire/release atomics so "expanded==1" implies
      *     children[] / children_offset[] / num_children[] are fully visible
-     *   - W[] is read racily (torn double is theoretically possible on
-     *     non-x86; on x86_64 aligned 8-byte reads are atomic); stale Q is
-     *     tolerated, matching the lc0 MCTS concurrency model.
+     *   - W[] is WRITTEN with an atomic CAS loop in tree_backprop (a plain
+     *     += loses updates under concurrent backprop — the multi-GPU pucv
+     *     pool runs 8 workers x 512-leaf batches through shared hot nodes,
+     *     a far denser collision regime than the ~2 walkers the old racy
+     *     write was accepted for). Reads stay racy: stale Q is tolerated,
+     *     matching the lc0 MCTS concurrency model.
      *
      * Realloc (tree_grow_nodes) is the only scenario where readers can
      * segfault on a stale pointer. Callers that expect multi-walker use
@@ -842,21 +845,43 @@ static void tree_mark_solved_and_propagate(TreeData *t,
 }
 
 
+/* Atomic W[nid] += v. There is no __atomic_fetch_add for doubles, so CAS
+ * the 8-byte bit pattern (weak CAS in a retry loop, RELAXED like the N[]
+ * increment — only the eventual sum must be exact, not its ordering).
+ * memcpy punning between double and uint64_t keeps the value conversion
+ * strict-aliasing clean; compilers lower it to plain register moves. */
+static inline void atomic_add_double(double *addr, double v) {
+    uint64_t expected = __atomic_load_n((uint64_t *)addr, __ATOMIC_RELAXED);
+    for (;;) {
+        double cur;
+        memcpy(&cur, &expected, sizeof cur);
+        double next = cur + v;
+        uint64_t desired;
+        memcpy(&desired, &next, sizeof desired);
+        if (__atomic_compare_exchange_n((uint64_t *)addr, &expected, desired,
+                                        /*weak=*/1, __ATOMIC_RELAXED,
+                                        __ATOMIC_RELAXED))
+            return;
+        /* CAS failure reloads `expected` with the current bits; retry. */
+    }
+}
+
 /* Backprop value up the path. Value is from leaf's side-to-move perspective.
  * Alternates sign at each level.
  *
  * Thread-safety: N is atomically incremented (RELAXED is fine — we don't
- * need to order backprop against any particular external event). W is
- * non-atomic: on x86_64 aligned 8-byte writes are atomic at the ISA level,
- * and concurrent walkers reading Q can tolerate one-cycle stale W — this
- * is the standard lc0/KataGo concurrency model. Torn-double on non-x86
- * would produce slightly nonsense Q for one walker's select, not a crash. */
+ * need to order backprop against any particular external event). W uses an
+ * atomic CAS add: the old plain += silently lost updates when concurrent
+ * backprops collided on a hot node, biasing its Q toward 0 — tolerable at
+ * ~2 walkers, not at 8 pool workers x 512-leaf batches (multi-GPU pucv).
+ * Concurrent READERS of W stay lock-free and can see one-add-stale Q,
+ * which the lc0/KataGo concurrency model tolerates. */
 static void tree_backprop(TreeData *t, const int32_t *path, int32_t path_len, double value) {
     double v = value;
     for (int32_t i = path_len - 1; i >= 0; i--) {
         int32_t nid = path[i];
         __atomic_fetch_add(&t->N[nid], 1, __ATOMIC_RELAXED);
-        t->W[nid] += v;
+        atomic_add_double(&t->W[nid], v);
         v = -v;
     }
 }

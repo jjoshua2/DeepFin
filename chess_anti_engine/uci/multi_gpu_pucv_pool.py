@@ -139,7 +139,12 @@ class MultiGpuPucvPool:
           This is required for ``torch.compile + cudagraphs`` because
           cudagraph_trees uses thread-local state — a compiled model
           built on thread A cannot be evaluated on thread B (TLS-key
-          missing assertion in cudagraph_trees.py).
+          missing assertion in cudagraph_trees.py). CUDA factories must
+          also call ``torch.cuda.set_device(<their device>)`` first:
+          worker threads inherit current-device ``cuda:0``, and cudagraph
+          capture on devices 1..N-1 must not rely on stream contexts
+          alone (``__main__.make_one`` does this; see also
+          inference_threaded / train.async_eval for the same pattern).
 
         - **Pre-built evaluators**: only safe when the evaluator does NOT
           use cudagraphs (e.g. CPU/eager paths in tests). Validated for
@@ -271,6 +276,11 @@ class MultiGpuPucvPool:
         target_sims: int,
         stop_event: threading.Event,
     ) -> int:
+        """Run up to ``target_sims`` sims; returns the count actually
+        COMPLETED (== target unless ``stop_event`` fired mid-run). Callers
+        use the return for node/nps accounting, so returning the target on
+        an early stop would inflate the nps estimate that sizes the next
+        time-capped chunk."""
         if target_sims <= 0:
             return 0
         if self._shutdown.is_set():
@@ -321,7 +331,11 @@ class MultiGpuPucvPool:
             elapsed,
             [w.leaves for w in self._last_stats.workers],
         )
-        return target_sims
+  # Every budget token a worker acquired became exactly one descended +
+  # integrated leaf (terminal or GPU-evaluated), so the summed worker
+  # leaves ARE the completed sims. Tokens never acquired (early stop)
+  # are correctly excluded.
+        return self._last_stats.leaves
 
     def _worker_loop(self, idx: int) -> None:
         cfg = self._cfg
@@ -440,9 +454,11 @@ class MultiGpuPucvPool:
                 batches += 1
                 leaves += n
                 max_batch = max(max_batch, n)
-                terminal_leaves += int(b["is_term"][:n].sum())
+                n_term = int(b["is_term"][:n].sum())
+                terminal_leaves += n_term
                 next_handle = self._prepare_submit(
                     evaluator, next_slot, next_local, n, enc_view, b, rel,
+                    n_term=n_term,
                 )
             else:
                 next_handle = None
@@ -481,7 +497,17 @@ class MultiGpuPucvPool:
         enc_view: np.ndarray,
         b: dict[str, np.ndarray],
         rel: np.ndarray | None,
+        *,
+        n_term: int,
     ) -> tuple[Any, ...]:
+  # All-terminal batches have nothing to evaluate: descend already
+  # backpropped the terminal leaves inline, so submitting would run the
+  # GPU on zeroed rows whose outputs are discarded. The cache_only
+  # pending shape with no hits materializes zero outputs, and
+  # batch_integrate_leaves skips terminal rows regardless. (The cache-on
+  # path below reaches the same result via its empty miss list.)
+        if n_term >= n:
+            return ("cache_only", buf_idx, n, {}, 0.0)
         cache = self._cache
         if cache is None:
             if rel is None:

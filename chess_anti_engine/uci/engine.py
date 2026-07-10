@@ -534,6 +534,14 @@ class Engine:
         self._options.threads = n
         self._worker.set_num_threads(n)
         self._warmup_dirty = True
+        if self._options.use_multi_gpu_pucv:
+            # Multi-GPU pool owns search; n is stored for clear/restore only.
+            _println(
+                f"info string Threads set to {n} "
+                "(stored; multi-GPU PUCV pool is active — takes effect when "
+                "UseMultiGpuPUCV is off)"
+            )
+            return
         _println(
             f"info string Threads set to {n} "
             f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
@@ -572,13 +580,56 @@ class Engine:
         self._options.use_multi_gpu_pucv = enabled
         if not enabled:
             self._worker.clear_multi_gpu_pucv()
+            # Expand primary back to all devices for the routing/walker path
+            # (rebuild_evaluator closes over use_multi_gpu_pucv → primary_only=False).
+            if (
+                self._rebuild_evaluator is not None
+                and self._rebuild_multi_gpu_pucv_factories is not None
+            ):
+                new_eval = self._rebuild_evaluator(
+                    self._options.max_batch, self._options.eval_cache_entries,
+                )
+                self._worker.set_evaluator(new_eval)
             self._warmup_dirty = True
             _println("info string UseMultiGpuPUCV off")
             return
+        # Shrink primary to device 0 before installing the pool so we don't
+        # keep a full MultiGPUDispatcher stack alongside per-GPU pool evals.
+        if self._rebuild_evaluator is not None:
+            new_eval = self._rebuild_evaluator(
+                self._options.max_batch, self._options.eval_cache_entries,
+            )
+            self._worker.set_evaluator(new_eval)
+        n_devices = self._install_multi_gpu_pucv_pool()
+        if n_devices is None:
+            return
+        self._warmup_dirty = True
+        gather = min(self._options.vl_gather, self._options.max_batch)
+        _println(
+            f"info string UseMultiGpuPUCV on "
+            f"(devices={n_devices} gather={gather})"
+        )
+  # Same inertness as the Threads>1 walker pool (see _set_threads): the
+  # pool selects with plain PUCT and never reads c_scale/c_visit, so the
+  # tuned Gumbel values silently stop applying while it is installed.
+        _println(
+            "info string note: c_scale/c_visit are inactive on the multi-GPU "
+            "PUCV pool (plain PUCT); a single device with Threads=1 restores "
+            "the c_scale-tuned classic Gumbel path"
+        )
+
+    def _install_multi_gpu_pucv_pool(self) -> int | None:
+        """Install/reinstall the multi-GPU pool from current options.
+
+        Returns device count on success, or None (and leaves
+        ``use_multi_gpu_pucv`` False) when factories are missing or fewer
+        than two devices. Does not rebuild the primary evaluator — callers
+        that need a single-device primary do that first.
+        """
         if self._rebuild_multi_gpu_pucv_factories is None:
             self._options.use_multi_gpu_pucv = False
             _println("info string UseMultiGpuPUCV unavailable — no per-device factories wired")
-            return
+            return None
         gather = min(self._options.vl_gather, self._options.max_batch)
         factories = self._rebuild_multi_gpu_pucv_factories(
             self._options.max_batch, gather,
@@ -586,15 +637,11 @@ class Engine:
         if len(factories) < 2:
             self._options.use_multi_gpu_pucv = False
             _println("info string UseMultiGpuPUCV unavailable — need at least two devices")
-            return
+            return None
         self._worker.install_multi_gpu_pucv(
             factories, gather=gather, as_factories=True,
         )
-        self._warmup_dirty = True
-        _println(
-            f"info string UseMultiGpuPUCV on "
-            f"(devices={len(factories)} gather={gather})"
-        )
+        return len(factories)
 
     def _set_pucv_pending_mode(self, value: str) -> None:
         normalized = value.strip().lower().replace("_", "-")
@@ -603,7 +650,8 @@ class Engine:
         self._options.pucv_pending_mode = normalized
         self._worker.set_pucv_vloss_mode(1 if normalized == "virtual-mean" else 0)
         if self._options.use_multi_gpu_pucv:
-            self._set_use_multi_gpu_pucv("true")
+            # Pool config changed (vloss_mode); reinstall only — primary stays.
+            self._install_multi_gpu_pucv_pool()
         _println(f"info string PUCVPendingMode set to {normalized}")
 
     def _set_vl_gather(self, value: str) -> None:
@@ -614,7 +662,8 @@ class Engine:
         if self._options.use_vl:
             self._worker.set_use_pucv(True, gather=n)
         if self._options.use_multi_gpu_pucv:
-            self._set_use_multi_gpu_pucv("true")
+            # gather is a pool-construction param; reinstall without primary rebuild.
+            self._install_multi_gpu_pucv_pool()
   # VLGather reshapes the pucv / multi-GPU per-worker batch, the same way
   # LeafGather reshapes the walker batch — re-warm the configured path.
         self._warmup_dirty = True
@@ -690,7 +739,9 @@ class Engine:
         self._options.max_batch = mb
         self._worker.set_evaluator(new_eval)
         if self._options.use_multi_gpu_pucv:
-            self._set_use_multi_gpu_pucv("true")
+            # Primary already rebuilt at the new max_batch (primary_only=True
+            # while the option is on); only reinstall the pool factories.
+            self._install_multi_gpu_pucv_pool()
   # The rebuilt evaluator's raw forward is warmed, but the SEARCH-path
   # cudagraph is captured separately — re-warm it before the clock.
         self._warmup_dirty = True
@@ -711,7 +762,7 @@ class Engine:
         self._worker.set_eval_cache_entries(n)
         self._worker.set_evaluator(new_eval)
         if self._options.use_multi_gpu_pucv:
-            self._set_use_multi_gpu_pucv("true")
+            self._install_multi_gpu_pucv_pool()
   # Same as MaxBatch: evaluator rebuilt cold, so the search-path
   # cudagraph must be re-warmed before the first real ``go``.
         self._warmup_dirty = True
