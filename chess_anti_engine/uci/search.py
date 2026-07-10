@@ -1785,12 +1785,12 @@ class SearchWorker:
 
     def _run_rpg_chunk(
         self, chunk: int, stop_event: threading.Event,
-    ) -> float:
+    ) -> tuple[float, int]:
         """One root-parallel Gumbel chunk. The pool runs a full sequential-
         halving schedule over ``chunk`` sims (identical budget shape to the
         classic single-GPU chunk — the per-chunk budget is deliberately NOT
         scaled by group count, so root decisions at equal total sims match
-        serial Gumbel) and returns the survivor + its completed value; the
+        serial Gumbel) and returns ``(root_value, completed_sims)``; the
         survivor feeds ``_last_gumbel_action_idx`` exactly like the classic
         Gumbel chunk so final selection semantics are unchanged."""
         assert self._rpg_pool is not None
@@ -1799,7 +1799,11 @@ class SearchWorker:
         )
         if action >= 0:
             self._last_gumbel_action_idx = int(action)
-        return float(value)
+        # Completed sims come from the pool's per-phase stats (a stop_event
+        # can cut the schedule short), keeping nodes/nps accounting honest.
+        stats = self._rpg_pool.last_stats()
+        completed = sum(p.sims_completed for p in stats.phases)
+        return float(value), int(completed)
 
     def _ensure_rpg_root_prepared(
         self,

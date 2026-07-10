@@ -570,14 +570,6 @@ class Engine:
             )
             return
         self._warmup_dirty = True
-        if self._options.use_multi_gpu_pucv:
-            # Multi-GPU pool owns search; n is stored for clear/restore only.
-            _println(
-                f"info string Threads set to {n} "
-                "(stored; multi-GPU PUCV pool is active — takes effect when "
-                "UseMultiGpuPUCV is off)"
-            )
-            return
         _println(
             f"info string Threads set to {n} "
             f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
