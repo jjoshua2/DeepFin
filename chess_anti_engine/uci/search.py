@@ -468,8 +468,16 @@ class SearchWorker:
         self.reset_tree()
 
     def clear_multi_gpu_pucv(self) -> None:
-        """Tear down the multi-GPU pool and revert to single-evaluator
-        gumbel/walker/pucv routing. Idempotent."""
+        """Tear down the multi-GPU pool and restore walker/pucv routing.
+
+        ``install_multi_gpu_pucv`` closes ``_walker_pool`` and nulls ``_pucv``
+        so the pool is the sole search path. Dropping the pool without
+        rebuilding those fallbacks leaves the advertised default
+        ``Threads=2`` on the single-thread Gumbel path (and leaves
+        ``UseVL`` inert even though ``_use_pucv`` is still set). Rebuild
+        the same state ``set_num_threads`` / ``set_use_pucv`` would. Idempotent.
+        """
+        had_pool = self._pucv_pool is not None or bool(self._pucv_pool_evals)
         if self._pucv_pool is not None:
             self._pucv_pool.close()
             self._pucv_pool = None
@@ -480,6 +488,17 @@ class SearchWorker:
                     close()
         self._pucv_pool_evals = []
         self._pucv_pool_cboard = None
+        if not had_pool:
+            return
+        # Restore the path install_multi_gpu_pucv tore down.
+        if self._walker_pool is not None:
+            self._walker_pool.close()
+        self._walker_pool = self._build_walker_pool(self._n_walkers)
+        if self._use_pucv:
+            self._pucv = self._build_pucv()
+        else:
+            self._pucv = None
+        self.reset_tree()
 
     def last_multi_gpu_pucv_stats(self) -> MultiGpuPucvStats | None:
         """Return stats from the most recent multi-GPU PUCV chunk."""

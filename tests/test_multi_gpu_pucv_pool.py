@@ -628,3 +628,59 @@ def test_searchworker_clear_multi_gpu_pucv_reverts() -> None:
                         deadline=deadline, max_nodes=64)
     assert result.bestmove_uci
     worker.close()
+
+
+def test_clear_multi_gpu_pucv_restores_walker_pool() -> None:
+    """UCI opt-out after multi-GPU install must restore Threads>1 walkers.
+
+    install_multi_gpu_pucv closes the walker pool. Without a rebuild on
+    clear, the default Threads=2 path silently falls back to single-thread
+    Gumbel (Codex review on PR #138).
+    """
+    primary = _make_evaluator(max_batch=64)
+    worker = SearchWorker(
+        primary, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=2,
+    )
+    try:
+        assert worker._walker_pool is not None
+        p0 = _make_evaluator(max_batch=64)
+        p1 = _make_evaluator(max_batch=64)
+        worker.install_multi_gpu_pucv([p0, p1], gather=8, as_factories=False)
+        assert worker._pucv_pool is not None
+        assert worker._walker_pool is None
+        worker.clear_multi_gpu_pucv()
+        assert worker._pucv_pool is None
+        assert worker._walker_pool is not None
+        deadline = Deadline(2_000)
+        result = worker.run(
+            chess.Board(), stop_event=threading.Event(),
+            deadline=deadline, max_nodes=64,
+        )
+        assert result.bestmove_uci
+    finally:
+        worker.close()
+
+
+def test_clear_multi_gpu_pucv_restores_use_pucv() -> None:
+    """clear must rebuild single-thread PUCV when UseVL was on under the pool."""
+    primary = _make_evaluator(max_batch=64)
+    worker = SearchWorker(
+        primary, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        worker.set_use_pucv(True, gather=8)
+        assert worker._pucv is not None
+        p0 = _make_evaluator(max_batch=64)
+        p1 = _make_evaluator(max_batch=64)
+        worker.install_multi_gpu_pucv([p0, p1], gather=8, as_factories=False)
+        assert worker._pucv is None
+        assert worker._use_pucv is True
+        worker.clear_multi_gpu_pucv()
+        assert worker._pucv_pool is None
+        assert worker._pucv is not None
+    finally:
+        worker.close()
