@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import time
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, ClassVar
 from collections.abc import Callable
@@ -19,6 +20,7 @@ from collections.abc import Callable
 import chess
 
 from chess_anti_engine.tablebase import SyzygyProbe, get_tablebase
+from chess_anti_engine.utils.gil_probe import GilContentionProbe
 
 from .protocol import (
     CmdGo,
@@ -249,6 +251,7 @@ class Engine:
         ) = None,
         search_devices: tuple[str, ...] | None = None,
         options: EngineOptions | None = None,
+        gil_profile: bool = False,
     ) -> None:
         self._worker = worker
   # Factory that takes a max_batch and returns a warmed-up evaluator
@@ -261,6 +264,7 @@ class Engine:
   # its factory compiles (cudagraph TLS). None when unknown (single device).
         self._search_devices = search_devices
         self._options = options if options is not None else EngineOptions()
+        self._gil_probe = GilContentionProbe(interval_s=0.010) if gil_profile else None
         self._worker.set_max_tree_mb(self._options.hash_mb)
   # Set by setoption handlers that reshape the search path / evaluator
   # (Threads/UseVL/UseMultiGpuPUCV/LeafGather/VLGather/MaxBatch/
@@ -1098,6 +1102,9 @@ class Engine:
         optimum_ms = None if is_ponder else limits.optimum_ms
         deadline = Deadline(deadline_ms=deadline_ms)
         emitted_info = False
+        profile_start = time.perf_counter()
+        if self._gil_probe is not None:
+            self._gil_probe.reset()
 
         def _phase_info_cb(
             *,
@@ -1154,13 +1161,42 @@ class Engine:
                     multipv=None,
                     wdl=None,
                 )
+            self._emit_gil_profile(
+                nodes=result.nodes,
+                elapsed_s=time.perf_counter() - profile_start,
+                is_ponder=is_ponder,
+            )
             return result
         except Exception as exc:  # pragma: no cover — UCI crash-safety
+            self._emit_gil_profile(
+                nodes=0,
+                elapsed_s=time.perf_counter() - profile_start,
+                is_ponder=is_ponder,
+            )
             _println(f"info string search error: {exc!r}")
             fallback = _legal_fallback_move(board, limits.searchmoves)
             return SearchResult(
                 bestmove_uci=fallback, ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
             )
+
+    def _emit_gil_profile(self, *, nodes: int, elapsed_s: float, is_ponder: bool) -> None:
+        probe = self._gil_probe
+        if probe is None:
+            return
+        stats = probe.read_and_reset()
+        mode, threads = self._worker.concurrency_profile()
+        devices = max(1, len(self._search_devices or ()))
+        _println(
+            "info string gil_profile "
+            f"phase={'ponder' if is_ponder else 'main'} mode={mode} "
+            f"threads={threads} devices={devices} nodes={int(nodes)} "
+            f"elapsed_ms={float(elapsed_s) * 1000.0:.1f} "
+            f"samples={stats.samples} rate={stats.sample_rate:.1f}/s "
+            f"delay_mean={stats.mean_ms:.3f}ms "
+            f"p50<={stats.p50_ms:.2f}ms p95<={stats.p95_ms:.2f}ms "
+            f"p99<={stats.p99_ms:.2f}ms max={stats.max_ms:.2f}ms "
+            f"over1ms={stats.over_1ms_pct:.1f}% over5ms={stats.over_5ms_pct:.1f}%"
+        )
 
     def _emit_info(
         self, *,
@@ -1196,6 +1232,8 @@ class Engine:
         (if active) drains its non-daemon submitter before the interpreter
         tears down torch's CUDA context."""
         self._wait_for_search()
+        if self._gil_probe is not None:
+            self._gil_probe.close()
         self._worker.close()
 
   # -- helpers --------------------------------------------------------------

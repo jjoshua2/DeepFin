@@ -249,6 +249,189 @@ production build option for this profile. The reproducible scripts remain for
 future experiments with materially different real-workload profiles; any such
 retry needs a new pre-registered ledger entry.
 
+**Python-to-native candidate profile -- UNREAD (2026-07-10).** Hypothesis:
+despite the existing CBoard/MCTSTree fast paths, at least one production-shaped
+selfplay or replay operation still spends enough wall time in Python-owned
+work to justify a focused C-extension conversion. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/profile_python_native_candidates.py
+--boards 384 --simulations 256 --replay-rows 5000 --batch-size 512 --repeats 7`.
+The benchmark uses deterministic production-width v2 inputs, a zero-cost
+evaluator to expose the CPU/search upper bound, production-sized Gumbel batches,
+and a chunked sparse-policy replay buffer; it reports medians and cProfile
+attribution. Pre-committed SUCCESS for a conversion candidate: a Python-owned
+phase (excluding model inference, Stockfish, filesystem I/O, and NumPy/C calls)
+accounts for at least 10% of its measured workload and at least 10 ms per
+production-shaped call. Otherwise the profile is FAILED and no Python-to-C
+conversion is recommended from these paths. Correctness hashes must be stable
+across repeats. No live/training change or salvage snapshot.
+**PROVENANCE CORRECTION BEFORE VERDICT:** the first invocation's fake evaluator
+did not advertise the production legal-BF16 interface, so leaf logits took the
+dense compact-to-full fallback and falsely attributed 820 ms to policy widening;
+the replay hasher also omitted dict contents. That run is invalid, not a verdict.
+The harness now implements `evaluate_legal_bf16` and hashes sorted dict fields;
+thresholds and command are unchanged for the clean rerun.
+**VERDICT: FAILED.** With the legal-BF16 production path active, Gumbel search
+spent 2.7% project-Python self time (32.7 ms upper bound in a 1.211 s CPU-only
+384-board search); its measured final-policy phase was 35 ms, while compact
+policy widening fell from the invalid run's 820 ms to 0.9 ms. Replay sampling
+took 4.61 ms total per 512-row batch (3.47 ms project-Python upper bound).
+Both exact hashes were stable. Neither path clears the 10% + 10 ms gate, so do
+not convert the remaining Gumbel glue or replay sampler to C.
+
+**Per-game replay-finalization native profile -- UNREAD (2026-07-10).** The
+search/replay screen above does not cover the worker's Python loop that turns a
+completed game's `_NetRecord` rows into replay samples. Hypothesis: production-
+shaped finalization of a 64-record selfplay game is a material remaining Python
+cost. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/profile_python_native_candidates.py --only-finalize --finalize-records
+64 --repeats 7`. Pre-committed SUCCESS: median finalization is at least 10 ms,
+project-Python self time is at least 50%, and its wall time is at least 3% of
+the prior screen's CPU-only per-game search proxy (`64 * 1.210975s / 384 =
+201.8 ms`). Otherwise FAILED. Stable hashes required; no live/training change
+or salvage snapshot.
+**VERDICT: WORKED.** Median finalization was 13.326 ms for 64 records, 76.6%
+project-Python self time, and 6.60% of the CPU-only per-game search proxy, with
+a stable exact hash. The largest single block was `hlgauss_target` (4.54 ms),
+followed by SF-P0 regret construction (3.10 ms). This clears the gate, but the
+HL-Gauss cost is repeated construction of only three outcome kernels under the
+production default blend, so test a semantic-preserving cache before adding C.
+
+**Ternary HL-Gauss cache experiment -- UNREAD (2026-07-10).** Hypothesis:
+caching the immutable `-1/0/+1` HL-Gauss kernels and returning independent
+copies removes most of the largest finalization hotspot without a new native
+ABI. ONE deciding yardstick: the same pinned finalization command above,
+`PYTHONPATH=. taskset -c 15 python3 scripts/profile_python_native_candidates.py
+--only-finalize --finalize-records 64 --repeats 7`. Baseline is 13.326 ms and
+hash `6137f66d62c8e111`. Pre-committed SUCCESS: median <=10.661 ms (>=20%
+faster), exact hash unchanged, a regression test proves returned arrays do not
+alias, and the target/finalization test suites pass. Otherwise FAILED and
+revert the cache. No live/training change or salvage snapshot.
+**VERDICT: FAILED and reverted.** Exact hash stayed `6137f66d62c8e111` and 34
+focused tests passed, but median finalization improved only 13.326 -> 11.852 ms
+(11.1%), short of the pre-committed 20% gate. The cache and its test were
+removed; this result does not justify retaining stateful machinery.
+
+**Ternary HL-Gauss cache modest-gain acceptance rerun -- UNREAD
+(2026-07-10).** User decision after the first gate: small, low-complexity real
+speedups are worth retaining rather than treating 20% as a universal floor.
+Hypothesis: a bounded cache of the immutable `-1/0/+1` outcome kernels, with an
+independent writable copy returned to every replay sample, reproduces the prior
+11.1% finalization gain without aliasing or semantic change. ONE deciding
+yardstick remains `PYTHONPATH=. taskset -c 15 python3
+scripts/profile_python_native_candidates.py --only-finalize --finalize-records
+64 --repeats 7`. Baseline remains 13.326 ms and hash `6137f66d62c8e111`.
+Pre-committed SUCCESS: median <=12.660 ms (>=5% faster), exact hash unchanged,
+an aliasing regression test passes, and the focused finalization/categorical
+tests pass. Otherwise FAILED and revert again. This changes CPU construction
+cost only, not targets or training data meaning; no salvage snapshot.
+**VERDICT: FAILED by the absolute-time rule.** The exact run preserved the
+hash and passed correctness tests but measured 38.978 ms, not <=12.660 ms.
+Every unrelated Python block was simultaneously ~3x slower (for example
+SF-P0 regret 3.10 -> 8.57 ms), showing that core 15 was contended by the live
+workload and the old absolute baseline was not comparable. This is still a
+failed yardstick, not a cache win. The candidate is retained only through the
+immediately following pre-registered paired decision and will be reverted if
+that paired gate fails.
+
+**Ternary HL-Gauss cache paired acceptance -- UNREAD (2026-07-10).**
+Hypothesis: alternating cache-off/cache-on measurements on the same pinned core
+will remove the live-load/frequency confound and reproduce a useful relative
+gain. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/profile_python_native_candidates.py --only-finalize --finalize-records
+64 --repeats 3 --compare-finalize-cache --paired-rounds 5`. Each paired round
+alternates order and compares identical hashes. Pre-committed SUCCESS: median
+cache-on throughput is >=1.05x cache-off, all hashes are identical/stable, the
+independent-copy regression passes, and focused finalization/categorical tests
+pass. Otherwise FAILED and revert the cache. No training/data semantic change
+or salvage snapshot.
+**VERDICT: SUCCESS.** The exact alternating paired command measured uncached
+33.654 ms vs cached 29.487 ms, a **1.141308x (14.1%) finalization speedup**,
+with every run producing the identical stable hash `6137f66d62c8e111`.
+The independent-writable-copy regression and 34 focused finalization /
+categorical tests pass. Keep the bounded 24-entry ternary-kernel cache. Based
+on the clean profile's 6.6% CPU-only finalization share, this is roughly a 0.9%
+end-to-end CPU-only selfplay gain by itself; live phase telemetry now decides
+whether a fused SF-regret/remap helper is worth pursuing for the larger next
+step.
+
+**Vectorized finalization-target experiment -- UNREAD (2026-07-10).**
+Hypothesis: vectorizing the fixed-width MultiPV move remap and SF-P0 regret
+construction removes the repeated per-row policy-encoding/string work that is
+now the largest avoidable finalization cost, without a C ABI. ONE deciding
+yardstick: the same pinned finalization command above. Baseline remains 13.326
+ms and hash `6137f66d62c8e111`. Pre-committed SUCCESS: median <=10.661 ms
+(>=20% faster), exact hash unchanged, randomized parity tests cover compact and
+full policy encodings plus cp/mate/sentinel rows, and focused finalization /
+sparse-label tests pass. Otherwise FAILED and revert. No live/training change
+or salvage snapshot.
+**VERDICT: FAILED and reverted.** The exact hash stayed unchanged and 46
+focused tests passed, but median finalization regressed 13.326 -> 14.049 ms
+(5.4% slower). At only 40 MultiPV rows, temporary NumPy arrays cost more than
+the original scalar loops. The remaining credible conversion is a *fused* C
+finalization helper (HL-Gauss + SF-P0 regret + compact-policy remaps), not a
+piecemeal NumPy rewrite. Based on the profile, eliminating 80-90% of those
+blocks would roughly halve 13.3 ms finalization and save at most ~3-4% of the
+CPU-only selfplay proxy before GPU/Stockfish time; validate against workers'
+existing `selfplay phase stats: ... finalize=` telemetry before implementing a
+new ABI.
+
+**GIL-delay telemetry overhead experiment -- SUCCESS (2026-07-10).**
+Hypothesis: one daemon probe sleeping outside the GIL at 10 ms cadence can
+measure delayed interpreter reacquisition without materially slowing worker or
+match-play Python. The delay is explicitly an upper bound (GIL wait + OS wake
+latency), not a claimed exact GIL percentage. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_gil_probe.py --seconds 5
+--rounds 5 --interval-ms 10`. The script alternates identical deterministic
+CPU-bound rounds with the probe off/on. Pre-committed SUCCESS: probed median
+throughput is >=0.995x control, workload hashes match, and the probe records at
+least 50 samples/s. Otherwise FAILED and do not enable it by default in
+workers; UCI opt-in profiling may still retain it. No training/data change or
+salvage snapshot.
+**VERDICT: SUCCESS.** On the exact pre-registered command, probed throughput
+was 1.004184x control (2,841,983 vs 2,830,140 iterations/s), the deterministic
+hash was stable, and the probe collected 64.3 samples/s. This clears all three
+gates. The 10 ms probe may therefore ship enabled in distributed workers and
+opt-in for UCI match/search profiling. Interpret its delay distribution only
+alongside the existing phase/thread wall-time metrics: it is an upper bound on
+GIL contention plus scheduler/timer latency, not a GIL-held percentage.
+CPU-only end-to-end UCI smoke (`checkpoint_000722`, five positions, 16 nodes,
+`--no-compile --gil-profile`) also passed and aggregated 802 samples: mean
+0.265 ms, worst-search p95 <=2 ms, p99 <=5 ms, max 4.51 ms. This validates the
+UCI plumbing only; it is not a production throughput or walker-count verdict.
+
+**CPython 3.14t worker/match compatibility experiment -- FAILED
+(2026-07-10).** Hypothesis: the lite worker/UCI dependency graph can run under
+the latest CPython 3.14 free-threaded build without any imported native module
+silently re-enabling the GIL. This is a side-by-side `/tmp` environment only;
+it does not replace the live trainer's Python. ONE deciding yardstick after
+building the project extensions in that environment:
+`PYTHONPATH=. /tmp/cae-py314t/bin/python
+scripts/check_free_threading_compat.py`. Pre-committed SUCCESS: NumPy, PyTorch,
+python-chess, PyYAML, requests, zarr, and all three project C extensions import;
+`sys._is_gil_enabled()` remains false after every import; and the focused C
+extension tests pass. Otherwise FAILED: do not upgrade production Python, name
+each blocker, and treat porting it as a prerequisite to any no-GIL throughput
+benchmark. Training/Ray compatibility is a separate diagnostic via
+`--include-training`, not part of this worker/match gate. No training/data
+change or salvage snapshot.
+**VERDICT: FAILED; do not upgrade production Python.** The exact yardstick ran
+under uv-managed CPython 3.14.2t. NumPy 2.5.1, PyTorch 2.12.1+cu130,
+python-chess, PyYAML, and requests imported with the GIL still disabled. zarr
+2.18.7 then imported `numcodecs.blosc`, which emitted CPython's unsupported
+extension warning and globally enabled the GIL. The project constraint
+`zarr<3` resolved numcodecs 0.15.1; no 3.14t wheel exists, and its source build
+took 5m16s but still did not declare free-thread safety. Our three single-phase
+C extensions likewise have neither a `Py_mod_gil` slot nor
+`PyUnstable_Module_SetGIL(..., Py_MOD_GIL_NOT_USED)`, so they are additional
+blockers pending a real shared-state/refcount audit (merely adding the marker
+would be unsafe). The training path is blocked earlier still: Ray 2.53.0 has no
+CPython 3.14 wheel, and current Ray 2.56.0 publishes regular `cp314` Linux
+wheels but no `cp314t` wheel. PyTorch is not the blocker. Reconsider as a
+side-by-side worker/UCI experiment only after (1) porting the project C
+extensions, (2) replacing/upgrading the zarr-2/numcodecs path with a verified
+free-threaded build, and (3) keeping Ray training on its supported interpreter
+until a `cp314t` release exists.
+
 **Gap-priority offline dose screen — the abs() family is DEAD; TRUE signed
 test in flight (07-05→07-07; `scripts/retarget_retrain.py` arms from ckpt524
 over 200 frozen shards, 2 seeds; artifacts `scratchpad/dose_screen/`).**

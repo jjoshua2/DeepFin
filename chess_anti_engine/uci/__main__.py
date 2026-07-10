@@ -339,6 +339,7 @@ def _build_engine(
     rebuild_evaluator=None,
     rebuild_multi_gpu_pucv_factories=None,
     options: EngineOptions | None = None,
+    gil_profile: bool = False,
 ) -> Engine:
     worker = SearchWorker(
         evaluator,
@@ -375,6 +376,7 @@ def _build_engine(
         rebuild_multi_gpu_pucv_factories=rebuild_multi_gpu_pucv_factories,
         search_devices=devices,
         options=options,
+        gil_profile=gil_profile,
     )
   # The two multi-GPU modes are mutually exclusive; the gumbel branch reuses
   # the same per-device evaluator factories as the pucv pool (identical
@@ -530,6 +532,10 @@ def main() -> int:
                         "pieces on the board, not move number; ignored when the GUI sends movestogo.")
     p.add_argument("--log-level", default="WARNING",
                    help="stderr log level (DEBUG|INFO|WARNING). DEBUG enables per-search gumbel profile with GPU-calls/avg-batch.")
+    p.add_argument(
+        "--gil-profile", action="store_true",
+        help="emit per-search delayed-GIL-reacquisition telemetry as UCI info strings",
+    )
   # --walkers > 1 switches from the Gumbel-chunked path to a PUCT walker
   # pool with virtual loss. Better dispatch-bound throughput, no
   # sequential-halving semantics. walkers=2 is ~10x the baseline on CUDA
@@ -766,6 +772,7 @@ def main() -> int:
                 rebuild_evaluator=rebuild_evaluator,
                 rebuild_multi_gpu_pucv_factories=build_pucv_factories,
                 options=startup_options,
+                gil_profile=bool(args.gil_profile),
             )
   # Warm the SEARCH path (not just the evaluator) before reporting ready, so
   # the first real `go` doesn't pay cudagraph capture mid-move and forfeit on

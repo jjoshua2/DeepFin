@@ -391,6 +391,18 @@ class SearchWorker:
         """Toggle WDL emission on info lines. Takes effect next emit."""
         self._show_wdl = bool(enabled)
 
+    def concurrency_profile(self) -> tuple[str, int]:
+        """Current search mode and Python worker-thread count for telemetry."""
+        if self._rpg_pool is not None:
+            return "root_parallel_gumbel", max(1, len(self._rpg_pool_evals))
+        if self._pucv_pool is not None:
+            return "multi_gpu_pucv", max(1, len(self._pucv_pool_evals))
+        if self._walker_pool is not None:
+            return "walker_puct", max(1, int(self._n_walkers))
+        if self._pucv is not None:
+            return "pucv", 1
+        return "gumbel", 1
+
     def _hashfull_permille(self) -> int | None:
         """Tree-memory fill as per-mille of the soft cap (UCI ``hashfull``).
 
