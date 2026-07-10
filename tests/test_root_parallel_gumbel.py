@@ -769,6 +769,145 @@ def test_install_rpg_wires_eval_cache_entries() -> None:
         worker.close()
 
 
+def test_option_matrix_multi_gpu_transitions() -> None:
+    """Focused SearchParallel × UseMultiGpuPUCV × MaxBatch/VLGather/Threads/UseVL
+    matrix: advertised options and live path must stay consistent across
+    transitions (the surface both review passes kept finding bugs on)."""
+    def factories(_mb: int, _g: int) -> list[Any]:
+        return [_make_evaluator, _make_evaluator]
+
+    def rebuild_eval(mb: int, _cache: int) -> Any:
+        return _make_evaluator(max_batch=mb)
+
+    def live_path(worker: SearchWorker) -> str:
+        if worker._rpg_pool is not None:
+            return "rpg"
+        if worker._pucv_pool is not None:
+            return "pucv_pool"
+        if worker._walker_pool is not None:
+            return "walker"
+        if worker._pucv is not None:
+            return "use_vl"
+        return "classic"
+
+    # A: gumbel → multi-pucv (forces sp=pucv) → MaxBatch stays pucv → off
+    # restores UseVL (regression found in option-matrix recheck).
+    worker = SearchWorker(
+        _make_evaluator(max_batch=64), device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=32, add_noise=False, temperature=0.0),
+        chunk_sims=32, n_walkers=1,
+    )
+    worker.set_use_pucv(True, gather=32)
+    engine = Engine(
+        worker,
+        rebuild_evaluator=rebuild_eval,
+        rebuild_multi_gpu_pucv_factories=factories,
+        options=EngineOptions(
+            max_batch=64, use_vl=True, vl_gather=32, threads=1,
+        ),
+    )
+    try:
+        engine._set_search_parallel("gumbel")
+        assert live_path(worker) == "rpg"
+        engine._set_use_multi_gpu_pucv("true")
+        assert live_path(worker) == "pucv_pool"
+        assert engine._options.search_parallel == "pucv"
+        engine._set_max_batch("128")
+        assert live_path(worker) == "pucv_pool"
+        assert engine._options.search_parallel == "pucv"
+        engine._set_use_multi_gpu_pucv("false")
+        assert engine._options.use_multi_gpu_pucv is False
+        assert live_path(worker) == "use_vl", (
+            f"UseVL must be restored after multi-pucv off, got {live_path(worker)}"
+        )
+    finally:
+        engine.close()
+
+    # B: multi-pucv → gumbel (flag preserved) → leave restores multi-pucv
+    worker = _make_worker(chunk_sims=32)
+    engine = Engine(
+        worker,
+        rebuild_multi_gpu_pucv_factories=factories,
+        options=EngineOptions(max_batch=64),
+    )
+    try:
+        engine._set_use_multi_gpu_pucv("true")
+        assert live_path(worker) == "pucv_pool"
+        engine._set_search_parallel("gumbel")
+        assert live_path(worker) == "rpg"
+        assert engine._options.use_multi_gpu_pucv is True
+        engine._set_search_parallel("pucv")
+        assert live_path(worker) == "pucv_pool"
+    finally:
+        engine.close()
+
+    # C: gumbel → Threads/UseVL deferred → leave materialises both intents
+    worker = _make_worker(chunk_sims=32)
+    engine = Engine(
+        worker,
+        rebuild_multi_gpu_pucv_factories=factories,
+        options=EngineOptions(vl_gather=32),
+    )
+    try:
+        engine._set_search_parallel("gumbel")
+        engine._set_threads("4")
+        engine._set_use_vl("true")
+        assert worker._walker_pool is None
+        assert worker._pucv is None
+        assert worker._n_walkers == 4
+        assert worker._use_pucv is True
+        engine._set_search_parallel("pucv")
+        # Threads=4 wins over UseVL (pucv requires n_walkers==1).
+        assert live_path(worker) == "walker"
+        assert worker._n_walkers == 4
+    finally:
+        engine.close()
+
+    # D: multi-pucv → Threads deferred (no dual walker) → off builds walker
+    worker = _make_worker(chunk_sims=32)
+    engine = Engine(
+        worker,
+        rebuild_multi_gpu_pucv_factories=factories,
+        options=EngineOptions(),
+    )
+    try:
+        engine._set_use_multi_gpu_pucv("true")
+        engine._set_threads("4")
+        assert worker._pucv_pool is not None
+        assert worker._walker_pool is None, "must not dual-allocate walker beside multi-pucv"
+        assert worker._n_walkers == 4
+        engine._set_use_multi_gpu_pucv("false")
+        assert live_path(worker) == "walker"
+        assert worker._n_walkers == 4
+    finally:
+        engine.close()
+
+    # E: gumbel → VLGather / EvalCacheEntries keep RPG and apply knobs
+    worker = SearchWorker(
+        _make_evaluator(max_batch=64), device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=32, add_noise=False, temperature=0.0),
+        chunk_sims=32, n_walkers=1, eval_cache_entries=0,
+    )
+    engine = Engine(
+        worker,
+        rebuild_evaluator=rebuild_eval,
+        rebuild_multi_gpu_pucv_factories=factories,
+        options=EngineOptions(max_batch=256, vl_gather=64, eval_cache_entries=0),
+    )
+    try:
+        engine._set_search_parallel("gumbel")
+        engine._set_vl_gather("128")
+        assert live_path(worker) == "rpg"
+        assert worker._rpg_pool is not None
+        assert worker._rpg_pool._cfg.gather == 128
+        engine._set_eval_cache_entries("64")
+        assert live_path(worker) == "rpg"
+        assert worker._rpg_pool is not None
+        assert worker._rpg_pool._cfg.eval_cache_entries == 64
+    finally:
+        engine.close()
+
+
 def test_terminal_candidate_respects_stop_event() -> None:
     """Terminal forced-sim backprop must poll stop between chunks."""
     from chess_anti_engine.uci.root_parallel_gumbel import (

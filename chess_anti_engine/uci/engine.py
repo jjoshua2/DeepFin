@@ -543,18 +543,30 @@ class Engine:
     def _set_ponder(self, value: str) -> None:
         self._options.ponder = value.strip().lower() == "true"
 
+    def _multi_gpu_path_active(self) -> bool:
+        """True when a multi-GPU pool (RPG or PUCV) owns search dispatch."""
+        return (
+            self._options.search_parallel == "gumbel"
+            or self._options.use_multi_gpu_pucv
+        )
+
     def _set_threads(self, value: str) -> None:
         n = self._parse_clamped_int(value, lo=1)
         if n is None:
             return
         self._options.threads = n
         self._worker.set_num_threads(n)
-        if self._options.search_parallel == "gumbel":
-            # Worker stores n_walkers for leave-gumbel restore; live dispatch
-            # still uses the RPG pool.
+        if self._multi_gpu_path_active():
+            # Worker stores n_walkers for leave-multi-GPU restore; live
+            # dispatch still uses the RPG / multi-GPU PUCV pool.
+            mode = (
+                "SearchParallel=gumbel"
+                if self._options.search_parallel == "gumbel"
+                else "UseMultiGpuPUCV"
+            )
             _println(
                 f"info string Threads set to {n} "
-                f"(deferred — SearchParallel=gumbel is active)",
+                f"(deferred — {mode} is active)",
             )
             return
         self._warmup_dirty = True
@@ -592,10 +604,15 @@ class Engine:
         enabled = value.strip().lower() == "true"
         self._options.use_vl = enabled
         self._worker.set_use_pucv(enabled, gather=self._options.vl_gather)
-        if self._options.search_parallel == "gumbel":
+        if self._multi_gpu_path_active():
+            mode = (
+                "SearchParallel=gumbel"
+                if self._options.search_parallel == "gumbel"
+                else "UseMultiGpuPUCV"
+            )
             _println(
                 f"info string UseVL {'on' if enabled else 'off'} "
-                f"(deferred — SearchParallel=gumbel is active; "
+                f"(deferred — {mode} is active; "
                 f"gather={self._options.vl_gather})",
             )
             return
@@ -609,6 +626,7 @@ class Engine:
     def _set_use_multi_gpu_pucv(self, value: str) -> None:
         enabled = value.strip().lower() == "true"
         if not enabled:
+            had_pool = getattr(self._worker, "_pucv_pool", None) is not None
             self._options.use_multi_gpu_pucv = False
             self._worker.clear_multi_gpu_pucv()
             # Expand primary back to all devices for the routing/walker path
@@ -628,6 +646,12 @@ class Engine:
             # sticky without a live pool would fall through to classic.
             if self._options.search_parallel == "gumbel":
                 self._try_install_root_parallel_gumbel()
+            elif had_pool:
+                # install_multi_gpu_pucv tears down walker / UseVL; restore
+                # them the same way leave-Gumbel does. Without this,
+                # gumbel → UseMultiGpuPUCV on (forces sp=pucv) → off leaves
+                # UseVL/Threads flags set but no live path materialised.
+                self._reinstall_configured_search_path(after_leaving_gumbel=True)
             return
         # Shrink primary to device 0 before installing the pool so we don't
         # keep a full MultiGPUDispatcher stack alongside per-GPU pool evals.

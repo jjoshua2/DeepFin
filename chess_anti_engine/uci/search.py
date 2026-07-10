@@ -662,15 +662,15 @@ class SearchWorker:
         that don't blend with gumbel's halving stats. Caller holds the
         search barrier.
 
-        When the root-parallel Gumbel pool is installed, only the intended
-        flag/gather are updated — materializing a live single-thread chunker
-        beside RPG would be inert (dispatch prefers ``_rpg_pool``) but wasteful
-        and confusing. Leave-gumbel reinstall builds the chunker then.
+        When a multi-GPU pool (RPG or multi-GPU PUCV) is installed, only the
+        intended flag/gather are updated — materializing a live single-thread
+        chunker beside those pools would be inert (dispatch prefers the pool)
+        but wasteful. Leave-multi-GPU reinstall builds the chunker then.
         """
         enabled = bool(enabled)
         if gather is not None:
             self._pucv_gather = max(1, int(gather))
-        if self._rpg_pool is not None:
+        if self._rpg_pool is not None or self._pucv_pool is not None:
             self._use_pucv = enabled
             self._pucv = None
             return
