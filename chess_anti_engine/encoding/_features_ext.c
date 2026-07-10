@@ -19,6 +19,25 @@
 
 #include "_features_impl.h"
 
+static int validate_piece_array(PyArrayObject *arr, const char *name) {
+    if (PyArray_TYPE(arr) != NPY_UINT64 || PyArray_NDIM(arr) != 1 ||
+        PyArray_DIM(arr, 0) < 6 || !PyArray_ISCARRAY_RO(arr)) {
+        PyErr_Format(PyExc_ValueError,
+                     "%s must be an aligned native C-contiguous uint64 array with at least 6 elements",
+                     name);
+        return 0;
+    }
+    return 1;
+}
+
+static int validate_king_square(int sq, const char *name) {
+    if (sq < -1 || sq >= 64) {
+        PyErr_Format(PyExc_ValueError, "%s must be -1 or 0..63", name);
+        return 0;
+    }
+    return 1;
+}
+
 static PyObject* py_compute_features(PyObject *self, PyObject *args) {
     PyArrayObject *pieces_us_arr, *pieces_them_arr;
     uint64_t occupied;
@@ -43,6 +62,12 @@ static PyObject* py_compute_features(PyObject *self, PyObject *args) {
                      FEAT_EXTRA_V1, FEAT_EXTRA_V2, FEAT_EXTRA_V3_CHECKS,
                      FEAT_EXTRA_V3_XRAY, FEAT_EXTRA_V3_SEE, FEAT_EXTRA_V3_PASSERS,
                      n_extra);
+        return NULL;
+    }
+    if (!validate_piece_array(pieces_us_arr, "pieces_us") ||
+        !validate_piece_array(pieces_them_arr, "pieces_them") ||
+        !validate_king_square(king_sq_us, "king_sq_us") ||
+        !validate_king_square(king_sq_them, "king_sq_them")) {
         return NULL;
     }
 
@@ -79,6 +104,12 @@ static PyObject* py_compute_relations(PyObject *self, PyObject *args) {
             &king_sq_us, &king_sq_them,
             &turn_white))
         return NULL;
+    if (!validate_piece_array(pieces_us_arr, "pieces_us") ||
+        !validate_piece_array(pieces_them_arr, "pieces_them") ||
+        !validate_king_square(king_sq_us, "king_sq_us") ||
+        !validate_king_square(king_sq_them, "king_sq_them")) {
+        return NULL;
+    }
 
     uint64_t *pus = (uint64_t *)PyArray_DATA(pieces_us_arr);
     uint64_t *pthem = (uint64_t *)PyArray_DATA(pieces_them_arr);

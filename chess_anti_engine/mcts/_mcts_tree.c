@@ -47,6 +47,29 @@ static inline double wdl_logits_to_q(double w, double d, double l) {
     return (ws > 0.0) ? ((ew - el) / ws) : 0.0;
 }
 
+/* N/W are read and updated by multiple GIL-released walker threads. Keep the
+ * operations relaxed (selection tolerates stale statistics), but make each
+ * access atomic so concurrent backprops cannot lose W updates and readers do
+ * not participate in a C data race. GCC's generic __atomic builtins support
+ * floating-point values through a compare/exchange loop. */
+static inline int32_t atomic_load_i32(const int32_t *p) {
+    return __atomic_load_n(p, __ATOMIC_RELAXED);
+}
+
+static inline double atomic_load_double(const double *p) {
+    double value;
+    __atomic_load(p, &value, __ATOMIC_RELAXED);
+    return value;
+}
+
+static inline void atomic_store_double(double *p, double value) {
+    __atomic_store(p, &value, __ATOMIC_RELAXED);
+}
+
+/* atomic_add_double lives next to tree_backprop (see PR #138): uint64 CAS
+ * on the bit pattern. Readers use atomic_load_* above so concurrent select
+ * does not race with that writer. */
+
 static inline float bf16_bits_to_float(uint16_t bits) {
     uint32_t u = ((uint32_t)bits) << 16;
     float f;
@@ -83,26 +106,55 @@ static inline void encoded_row_fingerprint128(
     *out1 = h1;
 }
 
-/* PyArray_FROMANY wrappers: shorten the repeated C-contiguous-array coercion
- * boilerplate at the Python-binding boundaries. Each returns a new reference
- * (or NULL on failure) that the caller must DECREF. */
+/* Input wrappers may coerce. Writable outputs must not: a temporary contiguous
+ * copy would absorb writes and then be discarded without updating the caller. */
 #define FROMANY_1D(obj, dtype) \
-    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 1, 1, NPY_ARRAY_C_CONTIGUOUS))
-#define FROMANY_1D_RW(obj, dtype) \
-    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 1, 1, \
-        NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE))
+    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 1, 1, NPY_ARRAY_CARRAY_RO))
 #define FROMANY_2D(obj, dtype) \
-    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 2, 2, NPY_ARRAY_C_CONTIGUOUS))
-#define FROMANY_2D_RW(obj, dtype) \
-    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 2, 2, \
-        NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE))
-#define FROMANY_4D_RW(obj, dtype) \
-    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 4, 4, \
-        NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE))
+    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 2, 2, NPY_ARRAY_CARRAY_RO))
+
+static PyArrayObject *require_output_array(PyObject *obj, int dtype, int ndim) {
+    if (!PyArray_Check(obj)) {
+        PyErr_SetString(PyExc_TypeError, "output must be a NumPy array");
+        return NULL;
+    }
+    PyArrayObject *arr = (PyArrayObject *)obj;
+    if (PyArray_TYPE(arr) != dtype || PyArray_NDIM(arr) != ndim ||
+        !PyArray_ISCARRAY(arr)) {
+        PyErr_SetString(PyExc_ValueError,
+            "output must be a writable C-contiguous native array with the required dtype and rank");
+        return NULL;
+    }
+    Py_INCREF(arr);
+    return arr;
+}
+
+#define FROMANY_1D_RW(obj, dtype) require_output_array((obj), (dtype), 1)
+#define FROMANY_2D_RW(obj, dtype) require_output_array((obj), (dtype), 2)
+#define FROMANY_4D_RW(obj, dtype) require_output_array((obj), (dtype), 4)
 
 /* Cached PyCBoard type pointer — resolved lazily on first use so we don't
  * need a compile-time dependency on the _lc0_ext module's type object. */
 static PyTypeObject *_cached_cboard_type = NULL;
+
+static int ensure_cboard_type(void) {
+    if (_cached_cboard_type) return 0;
+    PyObject *mod = PyImport_ImportModule("chess_anti_engine.encoding._lc0_ext");
+    if (!mod) return -1;
+    PyObject *type_obj = PyObject_GetAttrString(mod, "CBoard");
+    Py_DECREF(mod);
+    if (!type_obj) return -1;
+    if (!PyType_Check(type_obj) ||
+        ((PyTypeObject *)type_obj)->tp_basicsize != (Py_ssize_t)sizeof(PyCBoard)) {
+        Py_DECREF(type_obj);
+        PyErr_SetString(PyExc_ImportError,
+            "CBoard extension ABI mismatch; rebuild C extensions");
+        return -1;
+    }
+    /* Retain one module-lifetime reference so the cached type cannot dangle. */
+    _cached_cboard_type = (PyTypeObject *)type_obj;
+    return 0;
+}
 
 /* Validate and extract CBoard pointers from a Python list.
  * Returns 0 on success, -1 on error (Python exception set).
@@ -111,15 +163,8 @@ static PyTypeObject *_cached_cboard_type = NULL;
 static int extract_cboards(PyObject *list, int32_t n,
                            CBoard *out_boards, const CBoard **out_ptrs) {
     if (n <= 0) return 0;
+    if (ensure_cboard_type() < 0) return -1;
     PyTypeObject *cb_type = _cached_cboard_type;
-    if (!cb_type) {
-        cb_type = Py_TYPE(PyList_GET_ITEM(list, 0));
-        if (strstr(cb_type->tp_name, "CBoard") == NULL) {
-            PyErr_SetString(PyExc_TypeError, "list elements must be CBoard objects");
-            return -1;
-        }
-        _cached_cboard_type = cb_type;
-    }
     for (int32_t i = 0; i < n; i++) {
         PyObject *item = PyList_GET_ITEM(list, i);
         if (Py_TYPE(item) != cb_type) {
@@ -215,8 +260,9 @@ typedef struct {
      *     += loses updates under concurrent backprop — the multi-GPU pucv
      *     pool runs 8 workers x 512-leaf batches through shared hot nodes,
      *     a far denser collision regime than the ~2 walkers the old racy
-     *     write was accepted for). Reads stay racy: stale Q is tolerated,
-     *     matching the lc0 MCTS concurrency model.
+     *     write was accepted for). Reads use relaxed atomics: selection can
+     *     observe stale Q, matching the lc0 MCTS concurrency model, without
+     *     participating in a C data race.
      *
      * Realloc (tree_grow_nodes) is the only scenario where readers can
      * segfault on a stale pointer. Callers that expect multi-walker use
@@ -225,6 +271,51 @@ typedef struct {
     pthread_mutex_t tree_lock;
     int tree_lock_initialized;
 } TreeData;
+
+static int validate_node_id(const TreeData *t, int32_t node_id, const char *name) {
+    if (node_id < 0 || node_id >= t->node_count) {
+        PyErr_Format(PyExc_ValueError, "%s out of range", name);
+        return 0;
+    }
+    return 1;
+}
+
+/* Range-check policy indices only. `n` may be a batch size (batch_process_ply)
+ * or a per-node legal count — do not cap at CBOARD_MAX_LEGAL_MOVES here. */
+static int validate_policy_index_values(const int32_t *actions, int32_t n) {
+    if (n < 0) {
+        PyErr_SetString(PyExc_ValueError, "policy index count must be non-negative");
+        return 0;
+    }
+    for (int32_t i = 0; i < n; i++) {
+        if (actions[i] < 0 || actions[i] >= 4672) {
+            PyErr_SetString(PyExc_ValueError, "policy index out of range");
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Per-node expand/legal lists: also reject absurd lengths that would overflow
+ * the fixed 256-slot legal buffers used by those call sites. */
+static int validate_policy_indices(const int32_t *actions, int32_t n) {
+    if (n < 0 || n > CBOARD_MAX_LEGAL_MOVES) {
+        PyErr_Format(PyExc_ValueError, "legal/action count must be 0..%d", CBOARD_MAX_LEGAL_MOVES);
+        return 0;
+    }
+    return validate_policy_index_values(actions, n);
+}
+
+static int validate_node_path(const TreeData *t, const int32_t *path, int32_t n) {
+    if (n <= 0 || n > MCTS_MAX_PATH) {
+        PyErr_Format(PyExc_ValueError, "node path length must be 1..%d", MCTS_MAX_PATH);
+        return 0;
+    }
+    for (int32_t i = 0; i < n; i++) {
+        if (!validate_node_id(t, path[i], "path node id")) return 0;
+    }
+    return 1;
+}
 
 
 static int tree_init(TreeData *t) {
@@ -423,8 +514,8 @@ static int32_t tree_add_node(TreeData *t, int32_t parent_id, int32_t action, dou
         if (tree_grow_nodes(t) < 0) return -1;
     }
     int32_t id = t->node_count++;
-    t->N[id] = 0;
-    t->W[id] = 0.0;
+    __atomic_store_n(&t->N[id], 0, __ATOMIC_RELAXED);
+    atomic_store_double(&t->W[id], 0.0);
     t->prior[id] = prior_val;
     t->expanded[id] = 0;
     t->parent[id] = parent_id;
@@ -545,12 +636,13 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
         for (int32_t i = 0; i < n_ch; i++) {
             child_pending += t->virtual_loss[t->child_node[off + i]];
         }
-        parent_N = (double)(t->N[node_id] + vloss_weight * (parent_vl + child_pending));
-        parent_W = t->W[node_id];
-        parent_Q = (t->N[node_id] > 0) ? (parent_W / (double)t->N[node_id]) : 0.0;
+        int32_t parent_visits = atomic_load_i32(&t->N[node_id]);
+        parent_N = (double)(parent_visits + vloss_weight * (parent_vl + child_pending));
+        parent_W = atomic_load_double(&t->W[node_id]);
+        parent_Q = (parent_visits > 0) ? (parent_W / (double)parent_visits) : 0.0;
     } else {
-        parent_N = (double)(t->N[node_id] + vloss_weight * parent_vl);
-        parent_W = t->W[node_id] + (double)(vloss_weight * parent_vl);
+        parent_N = (double)(atomic_load_i32(&t->N[node_id]) + vloss_weight * parent_vl);
+        parent_W = atomic_load_double(&t->W[node_id]) + (double)(vloss_weight * parent_vl);
         parent_Q = (parent_N > 0) ? (parent_W / parent_N) : 0.0;
     }
     double c_sqrt_n = c_puct * sqrt(parent_N > 1.0 ? parent_N : 1.0);
@@ -581,18 +673,20 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
         double w;
         if (vloss_weight > 0 && vloss_mode == VLOSS_MODE_VIRTUAL_MEAN) {
             double pending = (double)(vloss_weight * vl);
-            n = (double)t->N[cid] + pending;
+            int32_t child_visits = atomic_load_i32(&t->N[cid]);
+            double child_w = atomic_load_double(&t->W[cid]);
+            n = (double)child_visits + pending;
             if (pending > 0.0) {
-                double child_ref = (t->N[cid] > 0)
-                    ? (t->W[cid] / (double)t->N[cid])
+                double child_ref = (child_visits > 0)
+                    ? (child_w / (double)child_visits)
                     : -parent_Q;
-                w = t->W[cid] + pending * child_ref;
+                w = child_w + pending * child_ref;
             } else {
-                w = t->W[cid];
+                w = child_w;
             }
         } else {
-            n = (double)(t->N[cid] + vloss_weight * vl);
-            w = t->W[cid] + (double)(vloss_weight * vl);
+            n = (double)(atomic_load_i32(&t->N[cid]) + vloss_weight * vl);
+            w = atomic_load_double(&t->W[cid]) + (double)(vloss_weight * vl);
         }
         double prior = t->prior[cid];
         if (n > 0.0) {
@@ -771,6 +865,7 @@ static int try_forced_collapse(TreeData *t,
     for (int d = 0; d < depth_cap; d++) {
         int n = cboard_legal_move_indices(cb, legal_buf, /*sorted=*/0);
         if (n != 1) return 0;
+        if (*path_len >= MCTS_MAX_PATH) return 0;
         int32_t action = (int32_t)legal_buf[0];
 
         int32_t cur = *leaf_id;
@@ -782,7 +877,6 @@ static int try_forced_collapse(TreeData *t,
         if (child_id < 0) return 0;  /* expand-then-not-found = race; bail */
 
         cboard_push_index(cb, action);
-        if (*path_len >= MCTS_MAX_PATH) return 0;  /* path overflow — bail */
         path_buf[(*path_len)++] = child_id;
         *leaf_id = child_id;
 
@@ -1066,8 +1160,7 @@ static int parse_relations_buffer(
     *out_arr = NULL;
     *out_data = NULL;
     if (obj == NULL || obj == Py_None) return 1;
-    PyArrayObject *arr = (PyArrayObject *)PyArray_FROMANY(
-        obj, NPY_UINT8, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    PyArrayObject *arr = require_output_array(obj, NPY_UINT8, 4);
     if (!arr) return 0;
     if (PyArray_DIM(arr, 0) < n_rows ||
         PyArray_DIM(arr, 1) != FEAT_RELATION_COUNT ||
@@ -1257,7 +1350,8 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         if (n_cands > GSS_MAX_CANDS) n_cands = GSS_MAX_CANDS;
 
         int32_t rid = g->root_ids[bi];
-        double root_Q = (t->N[rid] > 0) ? (t->W[rid] / (double)t->N[rid]) : 0.0;
+        int32_t root_n = atomic_load_i32(&t->N[rid]);
+        double root_Q = (root_n > 0) ? (atomic_load_double(&t->W[rid]) / (double)root_n) : 0.0;
 
         /* Single pass over children: max_visit + mctx mixed-value stats +
          * populate action_to_slot map. */
@@ -1269,12 +1363,12 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         double weighted_q_num = 0.0;
         for (int32_t j = 0; j < n_ch; j++) {
             int32_t cid = t->child_node[off + j];
-            int32_t n = t->N[cid];
+            int32_t n = atomic_load_i32(&t->N[cid]);
             if (n > max_visit) max_visit = n;
             total_visits += n;
             if (n > 0) {
                 double pr = t->prior[cid] > DBL_MIN ? t->prior[cid] : DBL_MIN;
-                double q = -t->W[cid] / (double)n;
+                double q = -atomic_load_double(&t->W[cid]) / (double)n;
                 sum_probs += pr;
                 weighted_q_num += pr * q;
             }
@@ -1289,8 +1383,8 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         double max_q = -INFINITY;
         for (int32_t j = 0; j < n_ch; j++) {
             int32_t cid = t->child_node[off + j];
-            int32_t n = t->N[cid];
-            double q = (n > 0) ? (-t->W[cid] / (double)n) : mixed_value;
+            int32_t n = atomic_load_i32(&t->N[cid]);
+            double q = (n > 0) ? (-atomic_load_double(&t->W[cid]) / (double)n) : mixed_value;
             if (q < min_q) min_q = q;
             if (q > max_q) max_q = q;
         }
@@ -1326,7 +1420,8 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
             int16_t slot = action_to_slot[action];
             if (slot >= 0) {
                 int32_t cid = t->child_node[off + slot];
-                if (t->N[cid] > 0) q_hat = -t->W[cid] / (double)t->N[cid];
+                int32_t child_n = atomic_load_i32(&t->N[cid]);
+                if (child_n > 0) q_hat = -atomic_load_double(&t->W[cid]) / (double)child_n;
                 else q_hat = mixed_value;
             }
             double q_transformed = q_scale * ((q_hat - min_q) / q_denom);
@@ -1510,7 +1605,10 @@ static int32_t gss_prepare_batch(
                 } else {
                     __atomic_store_n(&t->expanded[leaf_id], 1, __ATOMIC_RELEASE);
                 }
-                double q = (t->N[existing] > 0) ? (t->W[existing] / (double)t->N[existing]) : 0.0;
+                int32_t existing_n = atomic_load_i32(&t->N[existing]);
+                double q = (existing_n > 0)
+                    ? (atomic_load_double(&t->W[existing]) / (double)existing_n)
+                    : 0.0;
                 tree_backprop(t, path_buf, path_len, q);
                 tree_ht_insert(t, cb.hash, leaf_id);
                 if (cache_ok) tree_cb_cache_put(t, leaf_id, &cb);
@@ -1856,8 +1954,8 @@ static PyObject *MCTSTree_add_root(MCTSTreeObject *self, PyObject *args) {
         PyErr_SetString(PyExc_MemoryError, "Failed to add root node");
         return NULL;
     }
-    self->tree.N[id] = N;
-    self->tree.W[id] = W;
+    __atomic_store_n(&self->tree.N[id], N, __ATOMIC_RELAXED);
+    atomic_store_double(&self->tree.W[id], W);
     return PyLong_FromLong(id);
 }
 
@@ -1889,6 +1987,12 @@ static PyObject *MCTSTree_expand(MCTSTreeObject *self, PyObject *args) {
 
     const int32_t *act = (const int32_t *)PyArray_DATA(actions_arr);
     const double *pri = (const double *)PyArray_DATA(priors_arr);
+    if (!validate_node_id(&self->tree, node_id, "node_id") ||
+        !validate_policy_indices(act, n)) {
+        Py_DECREF(actions_arr);
+        Py_DECREF(priors_arr);
+        return NULL;
+    }
 
     if (tree_expand(&self->tree, (int32_t)node_id, act, pri, n) < 0) {
         PyErr_SetString(PyExc_MemoryError, "Failed to expand node");
@@ -1931,6 +2035,11 @@ static PyObject *MCTSTree_select_leaves(MCTSTreeObject *self, PyObject *args) {
 
     for (int32_t i = 0; i < n_roots; i++) {
         int32_t root_id = root_ids[i];
+        if (!validate_node_id(&self->tree, root_id, "root_id")) {
+            Py_DECREF(result);
+            Py_DECREF(root_ids_arr);
+            return NULL;
+        }
         int32_t path_len = tree_select_leaf(&self->tree, root_id,
                                              c_puct, fpu_at_root, fpu_reduction,
                                              0, VLOSS_MODE_LEGACY,
@@ -1994,6 +2103,11 @@ static PyObject *MCTSTree_backprop(MCTSTreeObject *self, PyObject *args) {
     int32_t path_len = (int32_t)PyArray_SIZE(path_arr);
     const int32_t *path = (const int32_t *)PyArray_DATA(path_arr);
 
+    if (!validate_node_path(&self->tree, path, path_len)) {
+        Py_DECREF(path_arr);
+        return NULL;
+    }
+
     tree_backprop(&self->tree, path, path_len, value);
 
     Py_DECREF(path_arr);
@@ -2050,15 +2164,9 @@ static PyObject *MCTSTree_walker_descend_puct(MCTSTreeObject *self, PyObject *ar
     }
 
     /* Type-check the CBoard without adding a reference (we only read). */
+    if (ensure_cboard_type() < 0) return NULL;
     PyTypeObject *cb_type = _cached_cboard_type;
-    if (!cb_type) {
-        cb_type = Py_TYPE(root_cb_obj);
-        if (strstr(cb_type->tp_name, "CBoard") == NULL) {
-            PyErr_SetString(PyExc_TypeError, "root_cboard must be a CBoard");
-            return NULL;
-        }
-        _cached_cboard_type = cb_type;
-    } else if (Py_TYPE(root_cb_obj) != cb_type) {
+    if (Py_TYPE(root_cb_obj) != cb_type) {
         PyErr_SetString(PyExc_TypeError, "root_cboard must be a CBoard");
         return NULL;
     }
@@ -2226,11 +2334,17 @@ static PyObject *MCTSTree_walker_integrate_leaf(MCTSTreeObject *self, PyObject *
     TreeData *t = &self->tree;
     int32_t path_len = (int32_t)PyArray_DIM(path_arr, 0);
     const int32_t *path = (const int32_t *)PyArray_DATA(path_arr);
-    int32_t leaf_id = path[path_len - 1];
     int32_t n_legal = (int32_t)PyArray_DIM(legal_arr, 0);
     const int32_t *legal = (const int32_t *)PyArray_DATA(legal_arr);
     const float *pol = (const float *)PyArray_DATA(pol_arr);
     const float *wdl = (const float *)PyArray_DATA(wdl_arr);
+    if (!validate_node_path(t, path, path_len) ||
+        !validate_policy_indices(legal, n_legal)) {
+        Py_DECREF(path_arr); Py_DECREF(legal_arr);
+        Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        return NULL;
+    }
+    int32_t leaf_id = path[path_len - 1];
     double q = wdl_logits_to_q((double)wdl[0], (double)wdl[1], (double)wdl[2]);
 
     /* Expand if not already. tree_expand is idempotent under the tree_lock
@@ -2328,15 +2442,9 @@ static PyObject *MCTSTree_batch_descend_puct(MCTSTreeObject *self, PyObject *arg
     }
     if (n_leaves <= 0) return PyLong_FromLong(0);
 
+    if (ensure_cboard_type() < 0) return NULL;
     PyTypeObject *cb_type = _cached_cboard_type;
-    if (!cb_type) {
-        cb_type = Py_TYPE(root_cb_obj);
-        if (strstr(cb_type->tp_name, "CBoard") == NULL) {
-            PyErr_SetString(PyExc_TypeError, "root_cboard must be a CBoard");
-            return NULL;
-        }
-        _cached_cboard_type = cb_type;
-    } else if (Py_TYPE(root_cb_obj) != cb_type) {
+    if (Py_TYPE(root_cb_obj) != cb_type) {
         PyErr_SetString(PyExc_TypeError, "root_cboard must be a CBoard");
         return NULL;
     }
@@ -2531,6 +2639,28 @@ static PyObject *MCTSTree_batch_integrate_leaves(MCTSTreeObject *self, PyObject 
         return NULL;
     }
 
+    int pol_ndim = PyArray_NDIM(pol_arr);
+    int wdl_ndim = PyArray_NDIM(wdl_arr);
+    int buffers_ok =
+        PyArray_DIM(path_arr, 0) >= (npy_intp)n * MCTS_MAX_PATH &&
+        PyArray_DIM(path_lens_arr, 0) >= n &&
+        PyArray_DIM(legal_arr, 0) >= (npy_intp)n * CBOARD_MAX_LEGAL_MOVES &&
+        PyArray_DIM(legal_lens_arr, 0) >= n &&
+        PyArray_DIM(is_term_arr, 0) >= n;
+    int pol_ok = (pol_ndim == 2)
+        ? (PyArray_DIM(pol_arr, 0) >= n && PyArray_DIM(pol_arr, 1) >= 4672)
+        : (n == 1 && PyArray_DIM(pol_arr, 0) >= 4672);
+    int wdl_ok = (wdl_ndim == 2)
+        ? (PyArray_DIM(wdl_arr, 0) >= n && PyArray_DIM(wdl_arr, 1) >= 3)
+        : (n == 1 && PyArray_DIM(wdl_arr, 0) >= 3);
+    if (!buffers_ok || !pol_ok || !wdl_ok) {
+        Py_DECREF(path_arr); Py_DECREF(path_lens_arr);
+        Py_DECREF(legal_arr); Py_DECREF(legal_lens_arr);
+        Py_DECREF(is_term_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+        PyErr_SetString(PyExc_ValueError, "batch integration buffers have invalid shape");
+        return NULL;
+    }
+
     int32_t *path_data = (int32_t *)PyArray_DATA(path_arr);
     int32_t *path_lens = (int32_t *)PyArray_DATA(path_lens_arr);
     int32_t *legal_data = (int32_t *)PyArray_DATA(legal_arr);
@@ -2541,12 +2671,25 @@ static PyObject *MCTSTree_batch_integrate_leaves(MCTSTreeObject *self, PyObject 
 
     /* Stride between leaves in pol/wdl: contiguous 4672/3 if 2D, else 0
      * (caller passes one row at a time — degenerate for n=1 only). */
-    int pol_ndim = PyArray_NDIM(pol_arr);
-    int wdl_ndim = PyArray_NDIM(wdl_arr);
     npy_intp pol_stride = (pol_ndim == 2) ? PyArray_DIM(pol_arr, 1) : 4672;
     npy_intp wdl_stride = (wdl_ndim == 2) ? PyArray_DIM(wdl_arr, 1) : 3;
 
     TreeData *t = &self->tree;
+
+    for (int i = 0; i < n; i++) {
+        if (is_term[i]) continue;
+        const int32_t *path_i = path_data + (size_t)i * MCTS_MAX_PATH;
+        int32_t plen = path_lens[i];
+        const int32_t *legal_i = legal_data + (size_t)i * CBOARD_MAX_LEGAL_MOVES;
+        int32_t n_legal = legal_lens[i];
+        if (!validate_node_path(t, path_i, plen) ||
+            !validate_policy_indices(legal_i, n_legal)) {
+            Py_DECREF(path_arr); Py_DECREF(path_lens_arr);
+            Py_DECREF(legal_arr); Py_DECREF(legal_lens_arr);
+            Py_DECREF(is_term_arr); Py_DECREF(pol_arr); Py_DECREF(wdl_arr);
+            return NULL;
+        }
+    }
 
     Py_BEGIN_ALLOW_THREADS
     for (int i = 0; i < n; i++) {
@@ -2609,6 +2752,11 @@ static PyObject *MCTSTree_backprop_many(MCTSTreeObject *self, PyObject *args) {
 
         int32_t path_len = (int32_t)PyArray_SIZE(path_arr);
         const int32_t *path = (const int32_t *)PyArray_DATA(path_arr);
+
+        if (!validate_node_path(&self->tree, path, path_len)) {
+            Py_DECREF(path_arr);
+            return NULL;
+        }
 
         tree_backprop(&self->tree, path, path_len, value);
         Py_DECREF(path_arr);
@@ -2691,8 +2839,8 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
     /* Parent's effective N also includes its own in-flight visits so
      * completed_Q for unvisited children reflects the penalized parent. */
     int32_t parent_vl = (vloss_weight > 0) ? t->virtual_loss[node_id] : 0;
-    double parent_N = (double)(t->N[node_id] + vloss_weight * parent_vl);
-    double parent_W = t->W[node_id] + (double)(vloss_weight * parent_vl);
+    double parent_N = (double)(atomic_load_i32(&t->N[node_id]) + vloss_weight * parent_vl);
+    double parent_W = atomic_load_double(&t->W[node_id]) + (double)(vloss_weight * parent_vl);
     double parent_Q = (parent_N > 0) ? (parent_W / parent_N) : 0.0;
 
     /* Two arrays — log_prior and completed_Q — precomputed in the same pass
@@ -2712,7 +2860,7 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
          * `exclude` and skip them in scoring + argmax below. */
         exclude[i] = (any_unsolved_or_draw && cs == SOLVED_WIN) ? 1 : 0;
         int32_t vl = (vloss_weight > 0) ? t->virtual_loss[cid] : 0;
-        int32_t eff_n = t->N[cid] + vloss_weight * vl;
+        int32_t eff_n = atomic_load_i32(&t->N[cid]) + vloss_weight * vl;
         eff_ns[i] = eff_n;
         if (!exclude[i] && eff_n > max_visit) max_visit = eff_n;
         if (!exclude[i]) total_visits += eff_n;
@@ -2727,7 +2875,7 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
             cqs[i] = 0.0;
         } else {
             cqs[i] = (eff_n > 0)
-                ? (-(t->W[cid] + (double)(vloss_weight * vl)) / (double)eff_n)
+                ? (-(atomic_load_double(&t->W[cid]) + (double)(vloss_weight * vl)) / (double)eff_n)
                 : parent_Q;
         }
         if (!exclude[i] && eff_n > 0) {
@@ -2831,7 +2979,7 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
     int32_t root_max_visit = 0;
     if (sel->q_global_scale) {
         for (int32_t i = 0; i < n_ch; i++) {
-            int32_t cn = t->N[t->child_node[off + i]];
+            int32_t cn = atomic_load_i32(&t->N[t->child_node[off + i]]);
             if (cn > root_max_visit) root_max_visit = cn;
         }
     }
@@ -2864,7 +3012,7 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
             /* In-flight walkers count as visits for divergence: if vloss>0
              * on an unvisited child, PUCT still has enough signal to pick a
              * different child for this walker. */
-            int32_t eff_n = t->N[cid];
+            int32_t eff_n = atomic_load_i32(&t->N[cid]);
             if (sel->vloss_weight > 0) eff_n += t->virtual_loss[cid];
             if (eff_n > 0) { any_visited = 1; break; }
             if (t->prior[cid] > best_pri) {
@@ -2902,6 +3050,7 @@ static PyObject *MCTSTree_get_children_visits(MCTSTreeObject *self, PyObject *ar
         return NULL;
 
     TreeData *t = &self->tree;
+    if (!validate_node_id(t, node_id, "node_id")) return NULL;
     int32_t n_ch = t->num_children[node_id];
     int32_t off = t->children_offset[node_id];
 
@@ -2919,7 +3068,7 @@ static PyObject *MCTSTree_get_children_visits(MCTSTreeObject *self, PyObject *ar
 
     for (int32_t i = 0; i < n_ch; i++) {
         a_data[i] = t->child_action[off + i];
-        v_data[i] = t->N[t->child_node[off + i]];
+        v_data[i] = atomic_load_i32(&t->N[t->child_node[off + i]]);
     }
 
     PyObject *result = PyTuple_Pack(2, actions, visits);
@@ -2939,6 +3088,7 @@ static PyObject *MCTSTree_get_children_q(MCTSTreeObject *self, PyObject *args) {
         return NULL;
 
     TreeData *t = &self->tree;
+    if (!validate_node_id(t, node_id, "node_id")) return NULL;
     int32_t n_ch = t->num_children[node_id];
     int32_t off = t->children_offset[node_id];
 
@@ -2958,9 +3108,10 @@ static PyObject *MCTSTree_get_children_q(MCTSTreeObject *self, PyObject *args) {
     for (int32_t i = 0; i < n_ch; i++) {
         int32_t cid = t->child_node[off + i];
         a_data[i] = t->child_action[off + i];
-        v_data[i] = t->N[cid];
-        if (t->N[cid] > 0) {
-            q_data[i] = -t->W[cid] / (double)t->N[cid];
+        int32_t child_n = atomic_load_i32(&t->N[cid]);
+        v_data[i] = child_n;
+        if (child_n > 0) {
+            q_data[i] = -atomic_load_double(&t->W[cid]) / (double)child_n;
         } else {
             q_data[i] = default_q;
         }
@@ -2981,7 +3132,9 @@ static PyObject *MCTSTree_node_q(MCTSTreeObject *self, PyObject *args) {
         return NULL;
 
     TreeData *t = &self->tree;
-    double q = (t->N[node_id] > 0) ? (t->W[node_id] / (double)t->N[node_id]) : 0.0;
+    if (!validate_node_id(t, node_id, "node_id")) return NULL;
+    int32_t node_n = atomic_load_i32(&t->N[node_id]);
+    double q = (node_n > 0) ? (atomic_load_double(&t->W[node_id]) / (double)node_n) : 0.0;
     return PyFloat_FromDouble(q);
 }
 
@@ -3000,6 +3153,14 @@ static PyObject *MCTSTree_mark_solved_path(MCTSTreeObject *self, PyObject *args)
     PyArrayObject *p = FROMANY_1D(path_obj, NPY_INT32);
     if (!p) return NULL;
     npy_intp n = PyArray_DIM(p, 0);
+    if ((status != SOLVED_WIN && status != SOLVED_LOSS &&
+         status != SOLVED_DRAW && status != SOLVED_UNKNOWN) ||
+        !validate_node_path(&self->tree,
+            (const int32_t *)PyArray_DATA(p), (int32_t)n)) {
+        if (!PyErr_Occurred()) PyErr_SetString(PyExc_ValueError, "invalid solved status");
+        Py_DECREF(p);
+        return NULL;
+    }
     tree_mark_solved_and_propagate(&self->tree,
         (const int32_t *)PyArray_DATA(p), (int32_t)n, (int8_t)status);
     Py_DECREF(p);
@@ -3241,6 +3402,15 @@ static PyObject *MCTSTree_expand_from_logits(MCTSTreeObject *self, PyObject *arg
     int32_t n_legal = (int32_t)PyArray_SIZE(legal_arr);
     const int32_t *legal = (const int32_t *)PyArray_DATA(legal_arr);
     const float *logits = (const float *)PyArray_DATA(logits_arr);
+    if (!validate_node_id(&self->tree, node_id, "node_id") ||
+        PyArray_SIZE(logits_arr) < 4672 ||
+        !validate_policy_indices(legal, n_legal)) {
+        if (!PyErr_Occurred())
+            PyErr_SetString(PyExc_ValueError, "logits must contain at least 4672 values");
+        Py_DECREF(legal_arr);
+        Py_DECREF(logits_arr);
+        return NULL;
+    }
 
     if (n_legal <= 0) {
         __atomic_store_n(&self->tree.expanded[node_id], 1, __ATOMIC_RELEASE);
@@ -3469,8 +3639,19 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     PyArrayObject *root_ids_arr = FROMANY_1D(root_ids_obj, NPY_INT32);
     PyArrayObject *budget_arr = FROMANY_1D(budget_obj, NPY_INT32);
     PyArrayObject *root_qs_arr = FROMANY_1D(root_qs_obj, NPY_FLOAT64);
-    PyArrayObject *enc_arr = (PyArrayObject *)PyArray_FROMANY(
-        enc_buf_obj, NPY_NOTYPE, 4, 4, NPY_ARRAY_C_CONTIGUOUS | NPY_ARRAY_WRITEABLE);
+    PyArrayObject *enc_arr = NULL;
+    if (PyArray_Check(enc_buf_obj)) {
+        PyArrayObject *candidate = (PyArrayObject *)enc_buf_obj;
+        if (PyArray_NDIM(candidate) == 4 && PyArray_ISCARRAY(candidate)) {
+            enc_arr = candidate;
+            Py_INCREF(enc_arr);
+        } else {
+            PyErr_SetString(PyExc_ValueError,
+                "enc_buf must be a writable C-contiguous native 4-D array");
+        }
+    } else {
+        PyErr_SetString(PyExc_TypeError, "enc_buf must be a NumPy array");
+    }
 
     if (!root_ids_arr || !budget_arr || !root_qs_arr || !enc_arr) {
         Py_XDECREF(root_ids_arr); Py_XDECREF(budget_arr);
@@ -3969,12 +4150,10 @@ static PyObject *MCTSTree_get_pending_tb_leaves(MCTSTreeObject *self, PyObject *
     }
     int32_t n = s->n_leaves;
 
-    /* Stack buffer sized for max MCTS batch; n_leaves ≤ GSS_GPU_BATCH which
-     * is O(few hundred), so a fixed-size alloca-style array is fine. */
-    int32_t elig_idx[4096];
+    int32_t *elig_idx = n > 0 ? (int32_t *)malloc((size_t)n * sizeof(int32_t)) : NULL;
+    if (n > 0 && !elig_idx) return PyErr_NoMemory();
     int32_t n_elig = 0;
-    int32_t n_scan = (n < 4096) ? n : 4096;
-    for (int32_t i = 0; i < n_scan; i++) {
+    for (int32_t i = 0; i < n; i++) {
         const CBoard *cb = &s->leaf_cboards[i];
         if (cb->castling != 0) continue;
         uint64_t occ = cb->occ[0] | cb->occ[1];
@@ -3984,19 +4163,20 @@ static PyObject *MCTSTree_get_pending_tb_leaves(MCTSTreeObject *self, PyObject *
 
     npy_intp dims[1] = { n_elig };
     PyArrayObject *idx_arr = (PyArrayObject *)PyArray_SimpleNew(1, dims, NPY_INT32);
-    if (!idx_arr) return NULL;
+    if (!idx_arr) { free(elig_idx); return NULL; }
     if (n_elig > 0) {
         memcpy(PyArray_DATA(idx_arr), elig_idx, n_elig * sizeof(int32_t));
     }
     PyObject *lst = PyList_New(n_elig);
-    if (!lst) { Py_DECREF(idx_arr); return NULL; }
+    if (!lst) { free(elig_idx); Py_DECREF(idx_arr); return NULL; }
     for (int32_t j = 0; j < n_elig; j++) {
         PyCBoard *cp = (PyCBoard *)cb_type->tp_alloc(cb_type, 0);
-        if (!cp) { Py_DECREF(idx_arr); Py_DECREF(lst); return NULL; }
+        if (!cp) { free(elig_idx); Py_DECREF(idx_arr); Py_DECREF(lst); return NULL; }
         cp->board = s->leaf_cboards[elig_idx[j]];
         PyList_SET_ITEM(lst, j, (PyObject *)cp);
     }
     PyObject *tup = PyTuple_Pack(2, (PyObject *)idx_arr, lst);
+    free(elig_idx);
     Py_DECREF(idx_arr);
     Py_DECREF(lst);
     return tup;
@@ -4044,6 +4224,11 @@ static PyObject *MCTSTree_mark_tb_solved(MCTSTreeObject *self, PyObject *args) {
         int32_t i = indices[k];
         int8_t status = statuses[k];
         if (status == SOLVED_UNKNOWN) continue;
+        if (status != SOLVED_WIN && status != SOLVED_LOSS && status != SOLVED_DRAW) {
+            Py_DECREF(idx_arr); Py_DECREF(st_arr);
+            PyErr_SetString(PyExc_ValueError, "invalid solved status");
+            return NULL;
+        }
         if (i < 0 || i >= s->n_leaves) continue;
         const int32_t *path = s->path_flat + s->path_offset[i];
         int32_t plen = s->path_count[i];
@@ -4278,6 +4463,9 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     const int32_t *actions = (const int32_t *)PyArray_DATA(act_arr);
     const double *values = (const double *)PyArray_DATA(val_arr);
     const float *mcts_probs = (const float *)PyArray_DATA(probs_arr);
+    /* n is the game/slot batch size (can be 512), not a per-node legal count.
+     * Only range-check each played action's policy index. */
+    if (!validate_policy_index_values(actions, n)) goto fail;
 
     boards = (CBoard *)malloc(n * sizeof(CBoard));
     if (!boards) { PyErr_NoMemory(); goto fail; }

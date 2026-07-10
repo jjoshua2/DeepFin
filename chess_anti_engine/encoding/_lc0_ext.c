@@ -112,6 +112,20 @@ static PyObject* py_encode_piece_planes(PyObject *self, PyObject *args) {
         PyErr_SetString(PyExc_ValueError, "n_steps must be 0..8");
         return NULL;
     }
+    if (PyArray_TYPE(bbs_arr) != NPY_UINT64 || PyArray_NDIM(bbs_arr) != 1 ||
+        !PyArray_ISCARRAY_RO(bbs_arr) ||
+        PyArray_DIM(bbs_arr, 0) < (npy_intp)n_steps * 12) {
+        PyErr_SetString(PyExc_ValueError,
+            "bitboards must be an aligned native C-contiguous uint64 array with at least n_steps*12 elements");
+        return NULL;
+    }
+    if (PyArray_TYPE(turns_arr) != NPY_INT32 || PyArray_NDIM(turns_arr) != 1 ||
+        !PyArray_ISCARRAY_RO(turns_arr) ||
+        PyArray_DIM(turns_arr, 0) < n_steps) {
+        PyErr_SetString(PyExc_ValueError,
+            "turns must be an aligned native C-contiguous int32 array with at least n_steps elements");
+        return NULL;
+    }
 
     uint64_t *bbs = (uint64_t*)PyArray_DATA(bbs_arr);
     int32_t *turns = (int32_t*)PyArray_DATA(turns_arr);
@@ -161,6 +175,14 @@ static PyObject* py_legal_move_policy_indices(PyObject *self, PyObject *args) {
                           &th_p, &th_n, &th_b, &th_r, &th_q, &th_k,
                           &turn, &castle_uk, &castle_uq, &castle_tk, &castle_tq, &ep_sq))
         return NULL;
+    if (turn != BLACK_C && turn != WHITE_C) {
+        PyErr_SetString(PyExc_ValueError, "turn must be 0 (black) or 1 (white)");
+        return NULL;
+    }
+    if (ep_sq < -1 || ep_sq >= 64) {
+        PyErr_SetString(PyExc_ValueError, "ep_square must be -1 or 0..63");
+        return NULL;
+    }
 
     BoardState bs;
     bs.us_pawns = us_p; bs.us_knights = us_n; bs.us_bishops = us_b;
@@ -302,8 +324,15 @@ static PyObject* PyCBoard_from_board(PyTypeObject *type, PyObject *args) {
     /* occupied_co is a list-like indexed by color bool */
     PyObject *occ_co = PyObject_GetAttrString(py_board, "occupied_co");
     if (!occ_co) { Py_DECREF(self); return NULL; }
-    PyObject *occ_w = PyObject_GetItem(occ_co, PyBool_FromLong(1));  /* WHITE=True */
-    PyObject *occ_b = PyObject_GetItem(occ_co, PyBool_FromLong(0));  /* BLACK=False */
+    PyObject *white_key = PyBool_FromLong(1);
+    PyObject *black_key = PyBool_FromLong(0);
+    if (!white_key || !black_key) {
+        Py_XDECREF(white_key); Py_XDECREF(black_key);
+        Py_DECREF(occ_co); Py_DECREF(self); return NULL;
+    }
+    PyObject *occ_w = PyObject_GetItem(occ_co, white_key);  /* WHITE=True */
+    PyObject *occ_b = PyObject_GetItem(occ_co, black_key);  /* BLACK=False */
+    Py_DECREF(white_key); Py_DECREF(black_key);
     Py_DECREF(occ_co);
     if (!occ_w || !occ_b) {
         Py_XDECREF(occ_w); Py_XDECREF(occ_b);
@@ -492,7 +521,7 @@ static PyObject* PyCBoard_from_raw(PyTypeObject *type, PyObject *args) {
     b->turn = turn_int ? WHITE_C : BLACK_C;
     b->castling = (uint8_t)castling_int;
     b->ep_square = cboard_sanitize_ep(ep_sq);
-    b->halfmove_clock = (uint8_t)(hmc > 255 ? 255 : hmc);
+    b->halfmove_clock = (uint8_t)(hmc > 255 ? 255 : (hmc < 0 ? 0 : hmc));
 
     b->hash = cboard_compute_hash(b);
 
