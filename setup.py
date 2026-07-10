@@ -58,8 +58,15 @@ def _ext_compile_args() -> list[str]:
 
 
 def _mcts_compile_args() -> list[str]:
-    """MCTS tree extension gets OpenMP + native SIMD for encoding throughput."""
-    args = ["-O3"] + _warning_flags() + ["-fopenmp", "-march=native"]
+    """MCTS tree extension gets OpenMP; host-native SIMD is opt-in like other exts.
+
+    Default builds stay portable for worker wheels. Set CAE_EXT_NATIVE=1 for
+    local/production machines that want -march=native (same gate as
+    _ext_compile_args).
+    """
+    args = ["-O3"] + _warning_flags() + ["-fopenmp"]
+    if os.environ.get("CAE_EXT_NATIVE", "").strip().lower() in {"1", "true", "yes"}:
+        args.append("-march=native")
     args += _sanitizer_flags()[0]
     return args
 

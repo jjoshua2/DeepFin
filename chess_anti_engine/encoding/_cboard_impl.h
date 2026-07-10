@@ -593,8 +593,11 @@ static int generate_legal_move_indices(const BoardState *bs, int *indices) {
         if (bs->us_castle_k) {
             int r = is_white ? 0 : 7;
             int e = make_sq(4, r), f_sq = make_sq(5, r), g = make_sq(6, r);
+            int rook_sq = make_sq(7, r);
             /* Squares between must be empty */
-            if (!(bs->all_occ & (sq_bit(f_sq) | sq_bit(g)))) {
+            if (king_sq == e && (bs->us_kings & sq_bit(e)) &&
+                (bs->us_rooks & sq_bit(rook_sq)) &&
+                !(bs->all_occ & (sq_bit(f_sq) | sq_bit(g)))) {
                 /* King must not be in check, pass through check, or end in check */
                 int ok = !is_attacked_by(e, bs->all_occ,
                     bs->them_pawns, bs->them_knights, bs->them_bishops,
@@ -612,7 +615,10 @@ static int generate_legal_move_indices(const BoardState *bs, int *indices) {
         if (bs->us_castle_q) {
             int r = is_white ? 0 : 7;
             int e = make_sq(4, r), d = make_sq(3, r), c = make_sq(2, r), b = make_sq(1, r);
-            if (!(bs->all_occ & (sq_bit(d) | sq_bit(c) | sq_bit(b)))) {
+            int rook_sq = make_sq(0, r);
+            if (king_sq == e && (bs->us_kings & sq_bit(e)) &&
+                (bs->us_rooks & sq_bit(rook_sq)) &&
+                !(bs->all_occ & (sq_bit(d) | sq_bit(c) | sq_bit(b)))) {
                 int ok = !is_attacked_by(e, bs->all_occ,
                     bs->them_pawns, bs->them_knights, bs->them_bishops,
                     bs->them_rooks, bs->them_queens, bs->them_kings, 1 - is_white);

@@ -349,3 +349,18 @@ def test_push_index_rejects_unused_lut_slot():
         cb = CBoard.from_board(board)
         with pytest.raises(ValueError, match="on-board"):
             cb.push_index(idx)
+
+
+@pytest.mark.parametrize(
+    "fen",
+    [
+        "4k3/8/8/8/8/8/8/4K3 w K - 0 1",  # kingside rook absent
+        "4k3/8/8/8/8/8/8/R3K3 w Q - 0 1",  # valid queenside control
+        "4k3/8/8/8/8/8/8/R2K3R w KQ - 0 1",  # king off home square
+    ],
+)
+def test_castling_requires_home_king_and_rook(fen: str) -> None:
+    """Raw castling flags must not create a king/rook that is not present."""
+    board = chess.Board(fen)
+    cb = CBoard.from_board(board)
+    assert set(map(int, cb.legal_move_indices())) == _expected_legal_indices(board)

@@ -123,6 +123,48 @@ def test_concurrent_tree_expand_idempotent():
         f"added duplicate children")
 
 
+def test_concurrent_gil_released_backprop_preserves_w_and_n():
+    """Bulk worker backprops must not lose W updates while N stays atomic.
+
+    ``batch_integrate_leaves`` releases the GIL and is called concurrently by
+    the multi-GPU PUCV workers. A plain ``W += q`` loses updates even though N
+    advances atomically, pulling Q toward zero under contention.
+    """
+    t = MCTSTree()
+    rid = t.add_root(0, 0.0)
+
+    n = 256
+    n_threads = 8
+    loops = 100
+    path_buf = np.full(n * 512, rid, dtype=np.int32)
+    path_lens = np.ones(n, dtype=np.int32)
+    legal_buf = np.zeros(n * 256, dtype=np.int32)
+    legal_lens = np.zeros(n, dtype=np.int32)
+    is_term = np.zeros(n, dtype=np.int8)
+    pol = np.zeros((n, 4672), dtype=np.float32)
+    wdl = np.tile(np.array([[30.0, 0.0, -30.0]], dtype=np.float32), (n, 1))
+    barrier = threading.Barrier(n_threads)
+
+    def worker() -> None:
+        barrier.wait()
+        for _ in range(loops):
+            t.batch_integrate_leaves(
+                n, path_buf, path_lens, legal_buf, legal_lens,
+                is_term, pol, wdl, 0,
+            )
+
+    threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join(timeout=30.0)
+    for th in threads:
+        assert not th.is_alive(), "concurrent backprop worker did not finish"
+
+    # softmax([30, 0, -30]) has Q indistinguishable from 1 at this tolerance.
+    assert t.node_q(rid) == pytest.approx(1.0, abs=1e-12)
+
+
 def test_reserve_grows_capacity_without_affecting_data():
     """reserve(cap) pre-grows arrays. After reserve, existing node data is
     preserved and the tree still works normally."""
