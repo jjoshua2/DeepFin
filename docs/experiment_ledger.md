@@ -182,6 +182,73 @@ always re-dump and pair.
 
 ## Analysis findings (offline, no live change)
 
+**Native C LTO build experiment — FAILED (2026-07-09).** Hypothesis:
+link-time optimization can improve the production BF16 CBoard encoder without
+meaningfully slowing the frequent in-place extension rebuild. ONE deciding
+yardstick: `PYTHONPATH=. python3 scripts/bench_native_build_flags.py --modes
+native native-lto --rounds 3 --samples 7`. The script alternates build order,
+forces every rebuild, compares exact float32/BF16 output hashes, and reports
+median build time and encoder throughput. Pre-committed SUCCESS: native+LTO
+BF16 throughput is at least 1% above native, all output hashes match, and its
+median forced-build time is no more than 25% or 3 seconds above native
+(whichever allowance is larger). Otherwise FAILED; float32 throughput is a
+secondary diagnostic only. This changes no training data or live process, so
+no salvage snapshot is required. An exploratory pre-registration probe showed
+roughly +1.4% BF16 and +4% float32 throughput; it is explicitly not the verdict.
+**VERDICT: FAILED by the pre-committed production-BF16 rule.** The independent
+registered run produced native+LTO/native ratios of **0.951 BF16** and 1.025
+float32; exact hashes matched. Median forced-build ratio was 0.883, so build
+time was not a problem, but the deciding BF16 path regressed about 4.9% and
+showed high run variance. Do not enable LTO. The run also exposed a separate
+native-build correctness bug: standalone `_features_ext` took an AVX2 path
+whose plane helpers existed only in `_cboard_impl.h`, yielding an undefined
+symbol at import. That issue is fixed separately; it does not change the LTO
+verdict.
+
+**Native C LTO long-window replication — WORKED (2026-07-09).** The first
+registered LTO experiment retains its FAILED verdict, but its individual
+20-iteration timing windows were only about 20-30ms and showed extreme
+external-load variance (native BF16 155k/180k/181k pos/s; LTO
+231k/118k/172k). Hypothesis: longer, CPU-pinned measurements can resolve
+whether the exploratory small LTO gain was real. ONE deciding yardstick:
+`PYTHONPATH=. python3 scripts/bench_native_build_flags.py --modes native
+native-lto --rounds 5 --samples 7 --iterations 200 --cpu 15`. Pre-committed
+SUCCESS remains: native+LTO median BF16 throughput >=1.01x native, exact output
+hashes match, and median forced-build time is within the larger of 25% or 3s
+of native. Otherwise FAILED. Build order alternates; each reported sample now
+times about 10x more work on a fixed CPU. No live/training change or snapshot.
+**VERDICT: WORKED.** Native+LTO/native ratios were **1.082 BF16** (the
+production path), 0.944 float32 (secondary), and 1.059 forced-build time;
+exact hashes matched across all ten builds. Median build time rose only
+7.94s -> 8.41s (+0.47s). This clears both pre-committed gates, so
+`CAE_EXT_LTO=1` is enabled as an explicit option and recommended together with
+`CAE_EXT_NATIVE=1` for local production BF16 builds. It is not a portable-build
+default because float32 regressed and LTO toolchain support varies.
+
+**Native C PGO experiment — FAILED (2026-07-10).** Hypothesis: a profile
+trained on the production-native mix (BF16/float encoders, move generation and
+board mutation, standalone features, fused per-ply processing, and MCTS
+selection/backprop/WDL conversion) lets GCC improve hot branch layout and
+inlining beyond native+LTO. ONE deciding yardstick: `PYTHONPATH=. python3
+scripts/bench_native_build_flags.py --modes native-lto native-lto-pgo
+--rounds 3 --samples 7 --iterations 200 --cpu 15`. The PGO mode performs a
+clean instrumented build, runs `scripts/train_native_pgo.py`, rebuilds from the
+collected profile, then executes the same CPU-pinned benchmark as the baseline.
+Pre-committed SUCCESS: the geometric mean of BF16 encoding, legal movegen, and
+WDL conversion throughput is >=1.02x native+LTO; no deciding component is below
+0.98x; exact float32/BF16 output hashes match; and the PGO build/import completes
+without missing-profile warnings. Otherwise FAILED. Float32 encoding is a
+secondary diagnostic because production uses BF16. No live/training data change
+or salvage snapshot.
+**VERDICT: FAILED.** Native+LTO+PGO/native+LTO ratios: production geometric
+mean **0.977**, BF16 0.959, WDL conversion 0.967, float32 0.969, movegen
+1.004. Exact hashes matched, every extension produced and consumed profile
+data, and the strict use build had no missing-profile warning, so this is a
+performance failure rather than broken plumbing. Do not expose PGO as a
+production build option for this profile. The reproducible scripts remain for
+future experiments with materially different real-workload profiles; any such
+retry needs a new pre-registered ledger entry.
+
 **Gap-priority offline dose screen — the abs() family is DEAD; TRUE signed
 test in flight (07-05→07-07; `scripts/retarget_retrain.py` arms from ckpt524
 over 200 frozen shards, 2 seeds; artifacts `scratchpad/dose_screen/`).**
