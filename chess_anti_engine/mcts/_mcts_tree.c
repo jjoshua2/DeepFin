@@ -279,9 +279,11 @@ static int validate_node_id(const TreeData *t, int32_t node_id, const char *name
     return 1;
 }
 
-static int validate_policy_indices(const int32_t *actions, int32_t n) {
-    if (n < 0 || n > CBOARD_MAX_LEGAL_MOVES) {
-        PyErr_Format(PyExc_ValueError, "legal/action count must be 0..%d", CBOARD_MAX_LEGAL_MOVES);
+/* Range-check policy indices only. `n` may be a batch size (batch_process_ply)
+ * or a per-node legal count — do not cap at CBOARD_MAX_LEGAL_MOVES here. */
+static int validate_policy_index_values(const int32_t *actions, int32_t n) {
+    if (n < 0) {
+        PyErr_SetString(PyExc_ValueError, "policy index count must be non-negative");
         return 0;
     }
     for (int32_t i = 0; i < n; i++) {
@@ -291,6 +293,16 @@ static int validate_policy_indices(const int32_t *actions, int32_t n) {
         }
     }
     return 1;
+}
+
+/* Per-node expand/legal lists: also reject absurd lengths that would overflow
+ * the fixed 256-slot legal buffers used by those call sites. */
+static int validate_policy_indices(const int32_t *actions, int32_t n) {
+    if (n < 0 || n > CBOARD_MAX_LEGAL_MOVES) {
+        PyErr_Format(PyExc_ValueError, "legal/action count must be 0..%d", CBOARD_MAX_LEGAL_MOVES);
+        return 0;
+    }
+    return validate_policy_index_values(actions, n);
 }
 
 static int validate_node_path(const TreeData *t, const int32_t *path, int32_t n) {
@@ -4450,7 +4462,9 @@ static PyObject *py_batch_process_ply(PyObject *self, PyObject *args) {
     const int32_t *actions = (const int32_t *)PyArray_DATA(act_arr);
     const double *values = (const double *)PyArray_DATA(val_arr);
     const float *mcts_probs = (const float *)PyArray_DATA(probs_arr);
-    if (!validate_policy_indices(actions, n)) goto fail;
+    /* n is the game/slot batch size (can be 512), not a per-node legal count.
+     * Only range-check each played action's policy index. */
+    if (!validate_policy_index_values(actions, n)) goto fail;
 
     boards = (CBoard *)malloc(n * sizeof(CBoard));
     if (!boards) { PyErr_NoMemory(); goto fail; }

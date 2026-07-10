@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -22,6 +23,7 @@ from chess_anti_engine.mcts._mcts_tree import (
     batch_encode_146,
     batch_process_ply,
 )
+from chess_anti_engine.moves import move_to_index
 
 
 def test_piece_plane_encoder_rejects_short_or_wrong_arrays() -> None:
@@ -29,8 +31,10 @@ def test_piece_plane_encoder_rejects_short_or_wrong_arrays() -> None:
         encode_piece_planes(np.zeros(1, np.uint64), np.zeros(8, np.int32), 8)
     with pytest.raises(ValueError, match="turns"):
         encode_piece_planes(np.zeros(96, np.uint64), np.zeros(1, np.int32), 8)
+    # Deliberately wrong dtype — runtime must reject; cast for the type checker.
+    bad_bbs = cast(Any, np.zeros(96, np.int64))
     with pytest.raises(ValueError, match="bitboards"):
-        encode_piece_planes(np.zeros(96, np.int64), np.zeros(8, np.int32), 8)
+        encode_piece_planes(bad_bbs, np.zeros(8, np.int32), 8)
 
 
 def test_feature_bindings_reject_short_piece_arrays() -> None:
@@ -99,8 +103,34 @@ def test_batch_process_rejects_out_of_range_action() -> None:
         )
 
 
+def test_batch_process_ply_accepts_batch_larger_than_max_legal_moves() -> None:
+    """n is slot batch size, not legal-move count — must not cap at 256.
+
+    Production selfplay uses worker batches up to 512; reusing the per-node
+    legal-list validator would raise ValueError for any network turn with
+    more than CBOARD_MAX_LEGAL_MOVES live slots.
+    """
+    n = 257
+    board = chess.Board()
+    action = int(move_to_index(chess.Move.from_uci("e2e4"), board))
+    cboards = [CBoard.from_board(board) for _ in range(n)]
+    pol = np.zeros((n, 4672), np.float32)
+    wdl = np.zeros((n, 3), np.float32)
+    actions = np.full(n, action, dtype=np.int32)
+    values = np.zeros(n, np.float64)
+    mcts = np.zeros((n, 4672), np.float32)
+    # Must not raise "legal/action count must be 0..256".
+    result = batch_process_ply(
+        cboards, pol, wdl, actions, values, mcts,
+        0, 1.0, 1.0, 0.0, 1.0,
+    )
+    assert result is not None
+    assert len(result) >= 12
+    assert result[0].shape[0] == n
+
+
 def test_batch_encoder_rejects_fake_cboard_and_strided_output() -> None:
-    fake_cboard = type("CBoard", (), {})()
+    fake_cboard = cast(Any, type("CBoard", (), {})())
     out = np.zeros((1, 146, 8, 8), np.float32)
     with pytest.raises(TypeError, match="CBoard"):
         batch_encode_146([fake_cboard], out)
