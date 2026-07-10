@@ -244,7 +244,14 @@ def test_walker_pool_stop_event_shortens_run() -> None:
     )
     stop = threading.Event()
     stop.set()  # pre-set so workers exit immediately
-    pool.run(tree=tree, root_id=rid, root_cboard=root_cb,
-             target_sims=1_000_000, stop_event=stop)
-    # Don't assert exact count — at least one worker may have claimed a slot
-    # before the first stop check. Just verify we didn't hang.
+    try:
+        completed = pool.run(
+            tree=tree, root_id=rid, root_cboard=root_cb,
+            target_sims=1_000_000, stop_event=stop,
+        )
+        # Must not report the full target on early stop (inflates UCI nodes/nps).
+        assert completed < 1_000_000
+        # Don't assert exact count — at least one worker may have claimed a slot
+        # before the first stop check. Just verify we didn't hang.
+    finally:
+        pool.close()

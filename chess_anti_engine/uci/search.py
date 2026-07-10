@@ -437,7 +437,8 @@ class SearchWorker:
         """
         if not evaluators_or_factories:
             raise ValueError("at least one evaluator/factory required")
-        self.clear_multi_gpu_pucv()
+        # Teardown only — do not rebuild walker/PUCV that we immediately close.
+        self.clear_multi_gpu_pucv(restore_fallback=False)
         if self._walker_pool is not None:
             self._walker_pool.close()
             self._walker_pool = None
@@ -467,15 +468,19 @@ class SearchWorker:
             )
         self.reset_tree()
 
-    def clear_multi_gpu_pucv(self) -> None:
-        """Tear down the multi-GPU pool and restore walker/pucv routing.
+    def clear_multi_gpu_pucv(self, *, restore_fallback: bool = True) -> None:
+        """Tear down the multi-GPU pool; optionally restore walker/pucv routing.
 
         ``install_multi_gpu_pucv`` closes ``_walker_pool`` and nulls ``_pucv``
         so the pool is the sole search path. Dropping the pool without
         rebuilding those fallbacks leaves the advertised default
         ``Threads=2`` on the single-thread Gumbel path (and leaves
-        ``UseVL`` inert even though ``_use_pucv`` is still set). Rebuild
-        the same state ``set_num_threads`` / ``set_use_pucv`` would. Idempotent.
+        ``UseVL`` inert even though ``_use_pucv`` is still set).
+
+        Pass ``restore_fallback=False`` from callers that immediately rebuild
+        the path they want (``install_multi_gpu_pucv``, ``set_evaluator``) so
+        we do not spawn a walker pool only to tear it down again. Default
+        ``True`` is for UCI opt-out. Idempotent.
         """
         had_pool = self._pucv_pool is not None or bool(self._pucv_pool_evals)
         if self._pucv_pool is not None:
@@ -488,7 +493,7 @@ class SearchWorker:
                     close()
         self._pucv_pool_evals = []
         self._pucv_pool_cboard = None
-        if not had_pool:
+        if not had_pool or not restore_fallback:
             return
         # Restore the path install_multi_gpu_pucv tore down.
         if self._walker_pool is not None:
@@ -677,12 +682,18 @@ class SearchWorker:
         """
         old = self._evaluator
         self._evaluator = evaluator
-        self.clear_multi_gpu_pucv()
+        # Teardown only — rebuild walker/pucv against the new evaluator below.
+        # Always rebuild the fallback path here (even if a multi-GPU reinstall
+        # will close the walker next): if install fails we must not leave the
+        # worker with no search path.
+        self.clear_multi_gpu_pucv(restore_fallback=False)
         if self._walker_pool is not None:
             self._walker_pool.close()
         self._walker_pool = self._build_walker_pool(self._n_walkers)
         if self._use_pucv:
             self._pucv = self._build_pucv()
+        else:
+            self._pucv = None
         self.reset_tree()
         close = getattr(old, "close", None)
         if callable(close):
@@ -695,11 +706,17 @@ class SearchWorker:
         stats accumulate with vloss adjustments that depend on thread count.
         Caller should hold the search barrier — same pattern as
         ``set_tb_probe``.
+
+        When the multi-GPU PUCV pool is active it owns search; only store
+        ``n`` for the next ``clear_multi_gpu_pucv`` restore and skip
+        spawning an idle walker pool.
         """
         n = max(1, int(n))
         if n == self._n_walkers:
             return
         self._n_walkers = n
+        if self._pucv_pool is not None:
+            return
         if self._walker_pool is not None:
             self._walker_pool.close()
         self._walker_pool = self._build_walker_pool(n)
@@ -938,11 +955,13 @@ class SearchWorker:
         allowed_root_indices: set[int] | None,
         allow_terminal_shortcuts: bool,
     ) -> tuple[float, int]:
-        """Returns ``(root_value, completed_sims)``. Only the multi-GPU pool
-        reports a real completed count (it can stop mid-chunk on stop_event);
-        the other paths run the full chunk — the gumbel C state machine has no
-        early stop, and walker/pucv report best-effort ``target_sims`` — so
-        they count ``chunk``."""
+        """Returns ``(root_value, completed_sims)``.
+
+        Multi-GPU pool and walker pool report real completed counts (either
+        can stop mid-chunk on ``stop_event``). Single-thread PUCV and the
+        gumbel C path run the full requested chunk (no early stop), so they
+        count ``chunk``.
+        """
         if allowed_root_indices is not None:
             # `searchmoves` restriction is only threaded through the single-walker
             # gumbel C path (via allowed_root_indices_batch). The pool / pucv / walker
@@ -957,7 +976,7 @@ class SearchWorker:
         if self._pucv_pool is not None:
             return self._run_pucv_pool_chunk(chunk, stop_event)
         if self._walker_pool is not None:
-            return self._run_walker_chunk(chunk, stop_event), chunk
+            return self._run_walker_chunk(chunk, stop_event)
         if self._pucv is not None:
             return self._run_pucv_chunk(chunk), chunk
         return self._run_gumbel_chunk(
@@ -1534,19 +1553,19 @@ class SearchWorker:
 
     def _run_walker_chunk(
         self, chunk: int, stop_event: threading.Event,
-    ) -> float:
+    ) -> tuple[float, int]:
         assert self._tree is not None
         assert self._root_id is not None
         assert self._walker_pool is not None
         assert self._walker_cboard is not None
-        self._walker_pool.run(
+        completed = self._walker_pool.run(
             tree=self._tree,
             root_id=self._root_id,
             root_cboard=self._walker_cboard,
             target_sims=chunk,
             stop_event=stop_event,
         )
-        return self._tree.node_q(self._root_id)
+        return self._tree.node_q(self._root_id), int(completed)
 
     def _run_gumbel_chunk(
         self,

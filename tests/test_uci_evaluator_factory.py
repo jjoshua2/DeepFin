@@ -168,6 +168,63 @@ def test_warmup_covers_every_device_in_routing_chain(
         evaluator.close()
 
 
+def test_primary_only_builds_single_device_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the multi-GPU PUCV pool owns search, the primary stack only needs
+    device 0 (root eval). primary_only=True must not build MultiGPUDispatcher."""
+    from chess_anti_engine.inference_dispatcher import MultiGPUDispatcher
+
+    monkeypatch.setattr(uci_main, "DirectGPUEvaluator", _RecordingDirectEvaluator)
+    monkeypatch.setattr(_RecordingDirectEvaluator, "instances", [])
+    monkeypatch.setattr(uci_main, "_warmup_evaluator", _skip_warmup)
+
+    factory = uci_main._make_evaluator_factory(
+        [_TinyModule(), _TinyModule()],
+        ["cpu:0", "cpu:1"],
+        coalesce=False,
+        n_walkers=1,
+        walker_gather=1,
+        compile_mode=None,
+    )
+    evaluator = factory(max_batch=64, eval_cache_entries=0, primary_only=True)
+    try:
+        assert not isinstance(evaluator, MultiGPUDispatcher)
+        instances = _RecordingDirectEvaluator.instances
+        assert len(instances) == 1
+        assert instances[0].device == "cpu:0"
+    finally:
+        close = getattr(evaluator, "close", None)
+        if callable(close):
+            close()
+
+
+def test_primary_multi_device_default_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without primary_only, multi-device still builds MultiGPUDispatcher."""
+    from chess_anti_engine.inference_dispatcher import MultiGPUDispatcher
+
+    monkeypatch.setattr(uci_main, "DirectGPUEvaluator", _FakeDirectEvaluator)
+    monkeypatch.setattr(uci_main, "_warmup_evaluator", _skip_warmup)
+
+    factory = uci_main._make_evaluator_factory(
+        [_TinyModule(), _TinyModule()],
+        ["cpu:0", "cpu:1"],
+        coalesce=False,
+        n_walkers=1,
+        walker_gather=1,
+        compile_mode=None,
+    )
+    evaluator = factory(max_batch=64, eval_cache_entries=0)
+    try:
+        assert isinstance(evaluator, MultiGPUDispatcher)
+    finally:
+        close = getattr(evaluator, "close", None)
+        if callable(close):
+            close()
+
+
 def test_warmup_runs_below_eval_cache(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

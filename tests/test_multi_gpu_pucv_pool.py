@@ -684,3 +684,44 @@ def test_clear_multi_gpu_pucv_restores_use_pucv() -> None:
         assert worker._pucv is not None
     finally:
         worker.close()
+
+
+def test_clear_multi_gpu_pucv_restore_fallback_false_skips_walker() -> None:
+    """install/set_evaluator pass restore_fallback=False to avoid thrash."""
+    primary = _make_evaluator(max_batch=64)
+    worker = SearchWorker(
+        primary, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=2,
+    )
+    try:
+        p0 = _make_evaluator(max_batch=64)
+        p1 = _make_evaluator(max_batch=64)
+        worker.install_multi_gpu_pucv([p0, p1], gather=8, as_factories=False)
+        assert worker._walker_pool is None
+        worker.clear_multi_gpu_pucv(restore_fallback=False)
+        assert worker._pucv_pool is None
+        assert worker._walker_pool is None  # not rebuilt
+    finally:
+        worker.close()
+
+
+def test_set_num_threads_under_pucv_pool_does_not_spawn_walkers() -> None:
+    primary = _make_evaluator(max_batch=64)
+    worker = SearchWorker(
+        primary, device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        chunk_sims=64, n_walkers=1,
+    )
+    try:
+        p0 = _make_evaluator(max_batch=64)
+        p1 = _make_evaluator(max_batch=64)
+        worker.install_multi_gpu_pucv([p0, p1], gather=8, as_factories=False)
+        assert worker._walker_pool is None
+        worker.set_num_threads(4)
+        assert worker._n_walkers == 4
+        assert worker._walker_pool is None
+        worker.clear_multi_gpu_pucv()
+        assert worker._walker_pool is not None  # restore uses stored n=4
+    finally:
+        worker.close()

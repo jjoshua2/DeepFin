@@ -167,26 +167,46 @@ def _make_evaluator_factory(
     input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
     use_relations = bool(getattr(models[0], "use_dynamic_relations", False))
 
-    def build(max_batch: int, eval_cache_entries: int = 0):
+    def build(
+        max_batch: int,
+        eval_cache_entries: int = 0,
+        *,
+        primary_only: bool = False,
+    ):
+        """Build a primary (root / walker) evaluator stack.
+
+        ``primary_only=True`` forces a single-device stack on ``devices[0]``
+        even when multiple devices were loaded. Used when the multi-GPU PUCV
+        pool owns search concurrency — root eval only needs one device, and
+        building MultiGPUDispatcher *plus* pool factories was ≈2× per-device
+        evaluator/buffer/cudagraph memory after auto-enable made the pool
+        the multi-device default.
+        """
+        active_models = models
+        active_devices = devices
+        if primary_only and len(devices) > 1:
+            active_models = models[:1]
+            active_devices = devices[:1]
+
         if compile_mode:
             import torch
             from typing import cast
             compiled_models = [
                 cast("torch.nn.Module", torch.compile(m, mode=compile_mode))
-                for m in models
+                for m in active_models
             ]
         else:
-            compiled_models = list(models)
+            compiled_models = list(active_models)
 
-        if len(devices) > 1:
+        if len(active_devices) > 1:
             evaluators = [
                 DirectGPUEvaluator(m, device=d, max_batch=max_batch, n_slots=2)
-                for m, d in zip(compiled_models, devices)
+                for m, d in zip(compiled_models, active_devices)
             ]
             evaluator = MultiGPUDispatcher(evaluators)
         else:
             evaluator = DirectGPUEvaluator(
-                compiled_models[0], device=devices[0],
+                compiled_models[0], device=active_devices[0],
                 max_batch=max_batch, n_slots=2,
             )
   # Always wrap in ThreadSafeGPUDispatcher so the UCI `Threads`
@@ -212,7 +232,7 @@ def _make_evaluator_factory(
             )
         _warmup_evaluator(
             warm_target, n_walkers=n_walkers, walker_gather=walker_gather,
-            n_devices=len(devices),
+            n_devices=len(active_devices),
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
             compute_relations=use_relations,
@@ -671,8 +691,24 @@ def main() -> int:
                 if len(devices) > 1
                 else None
             )
+  # Primary stack: when the multi-GPU PUCV pool owns search, only device 0
+  # is needed for root eval (and for the walker fallback after opt-out until
+  # rebuild expands it). Avoid building MultiGPUDispatcher + pool factories
+  # (≈2× per-device memory). rebuild_evaluator closes over startup_options so
+  # MaxBatch / UseMultiGpuPUCV toggles keep the sizing correct.
+            def rebuild_evaluator(
+                max_batch: int, eval_cache_entries: int = 0,
+            ):
+                return build_eval(
+                    max_batch,
+                    eval_cache_entries,
+                    primary_only=bool(startup_options.use_multi_gpu_pucv),
+                )
+
   # Initial build: warms the evaluator too (see factory body).
-            evaluator = build_eval(args.max_batch, startup_options.eval_cache_entries)
+            evaluator = rebuild_evaluator(
+                args.max_batch, startup_options.eval_cache_entries,
+            )
             engine_ref[0] = _build_engine(
                 evaluator=evaluator, primary_device=devices[0],
                 chunk_sims=args.chunk_sims, topk=args.topk,
@@ -692,7 +728,7 @@ def main() -> int:
                 input_extra_features=input_extra_features,
                 policy_encoding=policy_encoding,
                 compute_relations=use_dynamic_relations,
-                rebuild_evaluator=build_eval,
+                rebuild_evaluator=rebuild_evaluator,
                 rebuild_multi_gpu_pucv_factories=build_pucv_factories,
                 options=startup_options,
             )

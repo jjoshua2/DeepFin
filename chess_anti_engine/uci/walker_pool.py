@@ -108,6 +108,10 @@ class WalkerPool:
         self._done = threading.Barrier(cfg.n_walkers + 1)
         self._shutdown = threading.Event()
         self._errors: list[BaseException] = []
+        # Completed sims for the current run (tokens acquired + finished).
+        # Semaphore residual is not portably readable, so walkers count leaves.
+        self._completed_lock = threading.Lock()
+        self._completed: int = 0
 
         self._threads = [
             threading.Thread(
@@ -158,6 +162,7 @@ class WalkerPool:
   # until budget is fully consumed (or stop_event fires).
         with self._job_lock:
             self._errors = []
+            self._completed = 0
             self._job = _Job(
                 tree=tree, root_id=root_id, root_cboard=root_cboard,
                 budget=threading.Semaphore(target_sims),
@@ -171,8 +176,11 @@ class WalkerPool:
   # A dead walker means the tree is underfilled; any bestmove would
   # be based on partial data, so re-raise instead of returning early.
             raise self._errors[0]
-  # Semaphore counter isn't portably readable; best-effort.
-        return target_sims
+  # Return sims actually completed (not target): stop_event mid-run leaves
+  # un-acquired tokens on the semaphore; counting those would inflate UCI
+  # nodes/nps the same way MultiGpuPucvPool used to.
+        with self._completed_lock:
+            return int(self._completed)
 
     def _worker_loop(self, idx: int) -> None:
         cfg = self._cfg
@@ -241,23 +249,26 @@ class WalkerPool:
                     pending_legals.append(legal)
             if acquired == 0:
                 return
-            if not pending_paths:
-                continue
+            if pending_paths:
   # Hot path is full-gather with no terminals → contiguous slice. Fancy
   # indexing copies, so reserve it for the partial-gather case.
-            n_pending = len(pending_slots)
-            if n_pending == gather:
-                xs = enc[:n_pending]
-                rels = rel[:n_pending] if rel is not None else None
-            else:
-                xs = enc[pending_slots]
-                rels = rel[pending_slots] if rel is not None else None
-            if rels is None:
-                pol, wdl_arr = evaluator.evaluate_encoded(xs)
-            else:
-                pol, wdl_arr = evaluator.evaluate_encoded(xs, relations=rels)
-            for k in range(n_pending):
-                tree.walker_integrate_leaf(
-                    pending_paths[k], pending_legals[k],
-                    pol[k], wdl_arr[k], vloss,
-                )
+                n_pending = len(pending_slots)
+                if n_pending == gather:
+                    xs = enc[:n_pending]
+                    rels = rel[:n_pending] if rel is not None else None
+                else:
+                    xs = enc[pending_slots]
+                    rels = rel[pending_slots] if rel is not None else None
+                if rels is None:
+                    pol, wdl_arr = evaluator.evaluate_encoded(xs)
+                else:
+                    pol, wdl_arr = evaluator.evaluate_encoded(xs, relations=rels)
+                for k in range(n_pending):
+                    tree.walker_integrate_leaf(
+                        pending_paths[k], pending_legals[k],
+                        pol[k], wdl_arr[k], vloss,
+                    )
+            # Terminals already backpropped above; NN leaves just integrated.
+            # Every acquired token is one completed sim.
+            with self._completed_lock:
+                self._completed += acquired
