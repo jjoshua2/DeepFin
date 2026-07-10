@@ -59,7 +59,7 @@ Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-r
 
 **Operational gotchas:**
 
-- After pulling changes to `.c`/`.h` files, rebuild in place: `python3 setup.py build_ext --inplace` (NOT `pip install -e .` — the .venv setuptools lacks PEP 660).
+- After pulling changes to `.c`/`.h` files, rebuild in place: `python3 setup.py build_ext --inplace` (NOT `pip install -e .` — the .venv setuptools lacks PEP 660). For the local production BF16 path use `CAE_EXT_NATIVE=1 CAE_EXT_LTO=1 python3 setup.py build_ext --inplace`; keep distributed wheels portable unless every target CPU matches.
 - Scripts that import the C extensions run with `PYTHONPATH=.` (either python works since the 2026-07-02 numpy-2 rebuild — extensions built with numpy-2 headers import under both `/usr/bin/python3` and `.venv`). After a numpy upgrade, `build_ext --inplace` silently reuses stale cached `.so`s — use `--force`.
 - NEVER run a 256+ sim arena concurrent with training (GPU OOM crashed the live run 2026-06-18). sims-1/32 arenas and `audit_targets`/`value_regret` at small batch + `--gpu-mem-fraction` are safe concurrent.
 - The live YAML is re-read every iteration, and the strict validator rejects the WHOLE reload if it contains a key the running code doesn't know — add new config keys only after restarting onto code that defines them.

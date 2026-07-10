@@ -23,6 +23,7 @@ from chess_anti_engine.selfplay.finalize import (
     _compute_diff_focus_game_stats,
     _compute_volatility_and_sf_delta,
     _build_replay_samples,
+    _finalization_hlgauss_target,
     _sf_terminal_result,
 )
 from chess_anti_engine.selfplay.state import _NetRecord, _StatsAcc
@@ -32,6 +33,18 @@ def _sf_res(wdl: list[float]) -> Mock:
     m = Mock()
     m.wdl = wdl
     return m
+
+
+def test_cached_ternary_hlgauss_returns_independent_writable_rows() -> None:
+    first = _finalization_hlgauss_target(1.0, num_bins=32, sigma=0.04)
+    second = _finalization_hlgauss_target(1.0, num_bins=32, sigma=0.04)
+    expected = second.copy()
+
+    assert first.flags.writeable
+    assert second.flags.writeable
+    assert not np.shares_memory(first, second)
+    first[0] = 42.0
+    np.testing.assert_array_equal(second, expected)
 
 
 class TestSfTerminalResult:

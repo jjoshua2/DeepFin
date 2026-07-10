@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 import torch
@@ -40,6 +41,37 @@ def _bare_worker_session() -> WorkerSession:
     session._live_dole_queue = None
     session._dole_lock = threading.Lock()
     return session
+
+
+def test_broker_stats_also_emit_selfplay_phase_stats(monkeypatch) -> None:
+    class _FakeBroker:
+        def __init__(self) -> None:
+            self.stats = {
+                "lifetime_requests": 10,
+                "lifetime_positions": 100,
+                "lifetime_legal_requests": 8,
+                "lifetime_legal_positions": 90,
+                "lifetime_wait_s": 0.2,
+                "lifetime_roundtrip_s": 0.4,
+                "slot_requests": [3, 3, 2, 2],
+                "slots": 4,
+                "max_inflight": 4,
+                "available_slots": 2,
+            }
+
+    monkeypatch.setattr(worker_mod, "MultiSlotInferenceClient", _FakeBroker)
+    session = object.__new__(WorkerSession)
+    session_any = cast(Any, session)
+    session_any.inference_client = _FakeBroker()
+    session_any._last_broker_client_stats_log_s = 0.0
+    session_any._last_broker_client_stats_snapshot = {}
+    session_any.log = Mock()
+    phase_stats = Mock()
+    session_any._maybe_log_selfplay_phase_stats = phase_stats
+
+    WorkerSession._maybe_log_broker_client_stats(session, 60.0)
+
+    phase_stats.assert_called_once_with(60.0)
 
 
 def test_manifest_compat_accepts_compact_lc0_policy() -> None:

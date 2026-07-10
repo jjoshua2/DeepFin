@@ -13,6 +13,7 @@ import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import chess
@@ -62,6 +63,21 @@ _LOG = logging.getLogger("chess_anti_engine.selfplay")
 # A move 1000+ cp worse than SF's best becomes 1.0 (maximally bad); the best
 # move is 0.0. Legal moves absent from the MultiPV default to 1.0.
 SF_OWN_REGRET_CAP_CP = 1000.0
+
+
+@lru_cache(maxsize=24)
+def _cached_ternary_hlgauss(value: float, num_bins: int, sigma: float) -> np.ndarray:
+    """Read-only outcome kernel shared only as a source for per-row copies."""
+    target = hlgauss_target(value, num_bins=num_bins, sigma=sigma)
+    target.setflags(write=False)
+    return target
+
+
+def _finalization_hlgauss_target(value: float, *, num_bins: int, sigma: float) -> np.ndarray:
+    value = float(value)
+    if value in (-1.0, 0.0, 1.0):
+        return _cached_ternary_hlgauss(value, int(num_bins), float(sigma)).copy()
+    return hlgauss_target(value, num_bins=num_bins, sigma=sigma)
 
 
 def _sf_terminal_result(
@@ -784,7 +800,7 @@ def _build_replay_samples(
 
         scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
         suffix_regret = suffix_sf_regret[t]
-        cat = hlgauss_target(
+        cat = _finalization_hlgauss_target(
             categorical_target_value(
                 scalar_v, rec.sf_wdl,
                 blend_frac=getattr(state.game, "categorical_blend_frac", 0.0),
