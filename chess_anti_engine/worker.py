@@ -70,6 +70,7 @@ from chess_anti_engine.selfplay.opening import (
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
 from chess_anti_engine.stockfish.uci import StockfishTimeoutError
 from chess_anti_engine.utils import sha256_file as _sha256_file
+from chess_anti_engine.utils.gil_probe import GilContentionProbe
 from chess_anti_engine.utils.versioning import version_lt
 from chess_anti_engine.version import PACKAGE_NAME, PACKAGE_VERSION, PROTOCOL_VERSION
 from chess_anti_engine.worker_assets import (
@@ -842,6 +843,7 @@ class WorkerSession:
         self._phase_timing_lock = threading.Lock()
         self._phase_timing_s: dict[str, float] = {}
         self._last_phase_timing_snapshot: dict[str, float] = {}
+        self._gil_probe = GilContentionProbe(interval_s=0.010)
   # Manifest-watch state (lazy-init in _check_model_update via getattr fallback).
         self._manifest_path: Path | None = None
         self._manifest_mtime: float | None = None
@@ -1652,6 +1654,7 @@ class WorkerSession:
             int(ds.get("max_inflight", 0)),
             int(ds.get("available_slots", 0)),
         )
+        self._maybe_log_selfplay_phase_stats(elapsed_s)
 
     def _completion_telemetry_delta(self, elapsed_s: float) -> tuple[float, float, float, float, int, int]:
         with self._completion_telemetry_lock:
@@ -1731,6 +1734,16 @@ class WorkerSession:
             pct("finalize"),
             pct("tree_reset"),
             100.0 * total / max(1e-6, float(elapsed_s)),
+        )
+        gil = self._gil_probe.read_and_reset()
+        self.log.info(
+            "gil delay stats: samples=%d rate=%.1f/s mean=%.3fms "
+            "p50<=%.2fms p95<=%.2fms p99<=%.2fms max=%.2fms "
+            "over1ms=%.1f%% over5ms=%.1f%% "
+            "(upper bound: GIL reacquire + OS scheduling)",
+            gil.samples, gil.sample_rate, gil.mean_ms,
+            gil.p50_ms, gil.p95_ms, gil.p99_ms, gil.max_ms,
+            gil.over_1ms_pct, gil.over_5ms_pct,
         )
 
     def _on_completed_game(self, game_batch) -> None:
@@ -2848,6 +2861,7 @@ class WorkerSession:
         self._flush_and_upload_after_shard(manifest, model_sha)
 
     def _cleanup(self) -> None:
+        self._gil_probe.close()
         if self.inference_client is not None and hasattr(self.inference_client, "close"):
             with suppress(Exception):
                 self.inference_client.close()

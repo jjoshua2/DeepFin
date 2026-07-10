@@ -48,6 +48,13 @@ _PUCV_INFO_RE = re.compile(
     r"(?: cache=(?P<cache_hits>\d+)/(?P<cache_requests>\d+)"
     r"\((?P<cache_rate>[\d.]+)%\))?"
 )
+_GIL_PROFILE_RE = re.compile(
+    r"gil_profile .*?threads=(?P<threads>\d+) devices=(?P<devices>\d+) .*?"
+    r"samples=(?P<samples>\d+) rate=(?P<rate>[\d.]+)/s "
+    r"delay_mean=(?P<mean>[\d.]+)ms .*?p95<=(?P<p95>[\d.]+)ms "
+    r"p99<=(?P<p99>[\d.]+)ms max=(?P<max>[\d.]+)ms "
+    r"over1ms=(?P<over1>[\d.]+)% over5ms=(?P<over5>[\d.]+)%"
+)
 
 
 # Representative positions covering the main phases + one tactical spike.
@@ -83,6 +90,7 @@ def _spawn(checkpoint: str, device: str, *,
            compile_model: bool = True,
            compile_mode: str = "max-autotune",
            compile_cache_dir: str | None = None,
+           gil_profile: bool = False,
            log_level: str = "WARNING") -> subprocess.Popen[str]:
     cmd = [sys.executable, "-u", "-m", "chess_anti_engine.uci",
            "--checkpoint", checkpoint,
@@ -108,6 +116,8 @@ def _spawn(checkpoint: str, device: str, *,
         cmd.append("--no-compile")
     if compile_cache_dir:
         cmd.extend(["--compile-cache-dir", compile_cache_dir])
+    if gil_profile:
+        cmd.append("--gil-profile")
     return subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -124,7 +134,10 @@ def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
     elapsed = time.monotonic() - t0
 
     # Parse last info line for nps, nodes, depth, etc.
-    last_info = next((l for l in reversed(lines) if l.startswith("info ")), "")
+    last_info = next(
+        (line for line in reversed(lines) if line.startswith("info ") and " nodes " in line),
+        "",
+    )
     tokens = last_info.split()
     info: dict[str, str] = {}
     i = 0
@@ -177,6 +190,26 @@ def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
             prof_agg["pucv_leaves"] = prof_agg.get("pucv_leaves", 0.0) + info_leaves
         if info_batches > 0:
             prof_agg["pucv_batches"] = prof_agg.get("pucv_batches", 0.0) + info_batches
+    gil_profiles = [_GIL_PROFILE_RE.search(line) for line in lines]
+    gil_profiles = [profile for profile in gil_profiles if profile is not None]
+    if gil_profiles:
+        samples = sum(float(profile["samples"]) for profile in gil_profiles)
+        prof_agg["gil_samples"] = samples
+        prof_agg["gil_mean_weighted_ms"] = sum(
+            float(profile["mean"]) * float(profile["samples"])
+            for profile in gil_profiles
+        )
+        prof_agg["gil_over1_weighted"] = sum(
+            float(profile["over1"]) * float(profile["samples"])
+            for profile in gil_profiles
+        )
+        prof_agg["gil_over5_weighted"] = sum(
+            float(profile["over5"]) * float(profile["samples"])
+            for profile in gil_profiles
+        )
+        prof_agg["gil_p95_max_ms"] = max(float(profile["p95"]) for profile in gil_profiles)
+        prof_agg["gil_p99_max_ms"] = max(float(profile["p99"]) for profile in gil_profiles)
+        prof_agg["gil_max_ms"] = max(float(profile["max"]) for profile in gil_profiles)
 
     return {
         "wall_s": round(elapsed, 3),
@@ -204,6 +237,7 @@ def _run_config(
     compile_model: bool = True,
     compile_mode: str = "max-autotune",
     compile_cache_dir: str | None = None,
+    gil_profile: bool = False,
     log_level: str = "WARNING",
 ) -> None:
     proc = _spawn(checkpoint, device, devices=devices,
@@ -214,6 +248,7 @@ def _run_config(
                   pucv_pending_mode=pucv_pending_mode,
                   compile_model=compile_model, compile_mode=compile_mode,
                   compile_cache_dir=compile_cache_dir,
+                  gil_profile=gil_profile,
                   log_level=log_level)
     reader = _LineReader(proc)
     _send(proc, "uci")
@@ -253,13 +288,14 @@ def _run_config(
         for pos_label, vals in position_stats.items():
             mean = sum(vals) / len(vals)
             print(f"  {pos_label:<20} sims/s avg={mean:>7.1f}  runs={vals}")
-        if profile_runs:
-            agg_calls = sum(p.get("gpu_calls", 0.0) for p in profile_runs)
-            agg_pos = sum(p.get("gpu_pos", 0.0) for p in profile_runs)
-            agg_total = sum(p.get("total_s", 0.0) for p in profile_runs)
-            agg_gpu = sum(p.get("gpu_s", 0.0) for p in profile_runs)
-            agg_prep = sum(p.get("prep_s", 0.0) for p in profile_runs)
-            agg_finish = sum(p.get("finish_s", 0.0) for p in profile_runs)
+        gumbel_runs = [profile for profile in profile_runs if "gpu_calls" in profile]
+        if gumbel_runs:
+            agg_calls = sum(p.get("gpu_calls", 0.0) for p in gumbel_runs)
+            agg_pos = sum(p.get("gpu_pos", 0.0) for p in gumbel_runs)
+            agg_total = sum(p.get("total_s", 0.0) for p in gumbel_runs)
+            agg_gpu = sum(p.get("gpu_s", 0.0) for p in gumbel_runs)
+            agg_prep = sum(p.get("prep_s", 0.0) for p in gumbel_runs)
+            agg_finish = sum(p.get("finish_s", 0.0) for p in gumbel_runs)
             avg_batch = agg_pos / max(1.0, agg_calls)
             gpu_pct = 100.0 * agg_gpu / max(1e-9, agg_total)
             prep_pct = 100.0 * agg_prep / max(1e-9, agg_total)
@@ -285,6 +321,26 @@ def _run_config(
             print(
                 f"  pucv profile: leaves={int(leaves)}  batches={int(batches)}  "
                 f"avg_batch={leaves / max(1.0, batches):.1f}  wall={wall:.3f}s{cache}"
+            )
+        gil_runs = [profile for profile in profile_runs if "gil_samples" in profile]
+        if gil_runs:
+            samples = sum(profile.get("gil_samples", 0.0) for profile in gil_runs)
+            mean_ms = sum(
+                profile.get("gil_mean_weighted_ms", 0.0) for profile in gil_runs
+            ) / max(1.0, samples)
+            over1 = sum(
+                profile.get("gil_over1_weighted", 0.0) for profile in gil_runs
+            ) / max(1.0, samples)
+            over5 = sum(
+                profile.get("gil_over5_weighted", 0.0) for profile in gil_runs
+            ) / max(1.0, samples)
+            p95_max = max(profile.get("gil_p95_max_ms", 0.0) for profile in gil_runs)
+            p99_max = max(profile.get("gil_p99_max_ms", 0.0) for profile in gil_runs)
+            max_ms = max(profile.get("gil_max_ms", 0.0) for profile in gil_runs)
+            print(
+                f"  gil-delay upper bound: samples={int(samples)} mean={mean_ms:.3f}ms "
+                f"worst-search-p95<={p95_max:.2f}ms p99<={p99_max:.2f}ms "
+                f"max={max_ms:.2f}ms over1ms={over1:.1f}% over5ms={over5:.1f}%"
             )
     finally:
         _send(proc, "quit")
@@ -335,6 +391,10 @@ def main() -> int:
     p.set_defaults(coalesce=True)
     p.add_argument("--log-level", default="WARNING",
                    help="DEBUG to see per-search gumbel profile (GPU calls, avg batch, time breakdown).")
+    p.add_argument(
+        "--gil-profile", action="store_true",
+        help="collect and summarize per-search delayed-GIL-reacquisition telemetry",
+    )
     p.add_argument("--no-compile", dest="compile", action="store_false",
                    help="pass --no-compile to the UCI engine")
     p.add_argument("--compile-mode", default="max-autotune",
@@ -374,6 +434,7 @@ def main() -> int:
                         compile_model=args.compile,
                         compile_mode=args.compile_mode,
                         compile_cache_dir=args.compile_cache_dir,
+                        gil_profile=args.gil_profile,
                     )
     elif args.pucv_sweep:
         if not args.devices:
@@ -397,6 +458,7 @@ def main() -> int:
                         compile_model=args.compile,
                         compile_mode=args.compile_mode,
                         compile_cache_dir=args.compile_cache_dir,
+                        gil_profile=args.gil_profile,
                     )
     elif args.sweep:
         # One variable at a time; first row is baseline so we can A/B against it.
@@ -422,6 +484,7 @@ def main() -> int:
                 compile_model=args.compile,
                 compile_mode=args.compile_mode,
                 compile_cache_dir=args.compile_cache_dir,
+                gil_profile=args.gil_profile,
                 log_level=args.log_level,
             )
     elif args.walker_sweep:
@@ -447,6 +510,7 @@ def main() -> int:
                 compile_model=args.compile,
                 compile_mode=args.compile_mode,
                 compile_cache_dir=args.compile_cache_dir,
+                gil_profile=args.gil_profile,
                 log_level=args.log_level,
             )
     else:
@@ -462,6 +526,7 @@ def main() -> int:
             compile_model=args.compile,
             compile_mode=args.compile_mode,
             compile_cache_dir=args.compile_cache_dir,
+            gil_profile=args.gil_profile,
             label="single",
             log_level=args.log_level,
         )

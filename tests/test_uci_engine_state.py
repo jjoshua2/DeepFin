@@ -82,6 +82,23 @@ def test_run_one_phase_does_not_duplicate_worker_info(capsys) -> None:
     assert "wdl 500 0 500" in lines[0]
 
 
+def test_gil_profile_emits_uci_safe_search_metadata(capsys) -> None:
+    worker = MagicMock()
+    worker.concurrency_profile.return_value = ("walker_puct", 4)
+    engine = Engine(worker=worker, search_devices=("cuda:0", "cuda:1"), gil_profile=True)
+    assert engine._gil_probe is not None
+    engine._gil_probe.reset()
+    engine._gil_probe._record_delay(0.002)
+
+    engine._emit_gil_profile(nodes=123, elapsed_s=0.5, is_ponder=False)
+    engine.close()
+
+    output = capsys.readouterr().out
+    assert output.startswith("info string gil_profile ")
+    assert "phase=main mode=walker_puct threads=4 devices=2 nodes=123" in output
+    assert "samples=1" in output
+
+
 def test_run_one_phase_emits_final_info_when_worker_is_silent(capsys) -> None:
     worker = MagicMock()
     worker.run = MagicMock(
