@@ -109,9 +109,9 @@ static inline void encoded_row_fingerprint128(
 /* Input wrappers may coerce. Writable outputs must not: a temporary contiguous
  * copy would absorb writes and then be discarded without updating the caller. */
 #define FROMANY_1D(obj, dtype) \
-    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 1, 1, NPY_ARRAY_C_CONTIGUOUS))
+    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 1, 1, NPY_ARRAY_CARRAY_RO))
 #define FROMANY_2D(obj, dtype) \
-    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 2, 2, NPY_ARRAY_C_CONTIGUOUS))
+    ((PyArrayObject *)PyArray_FROMANY((obj), (dtype), 2, 2, NPY_ARRAY_CARRAY_RO))
 
 static PyArrayObject *require_output_array(PyObject *obj, int dtype, int ndim) {
     if (!PyArray_Check(obj)) {
@@ -260,8 +260,9 @@ typedef struct {
      *     += loses updates under concurrent backprop — the multi-GPU pucv
      *     pool runs 8 workers x 512-leaf batches through shared hot nodes,
      *     a far denser collision regime than the ~2 walkers the old racy
-     *     write was accepted for). Reads stay racy: stale Q is tolerated,
-     *     matching the lc0 MCTS concurrency model.
+     *     write was accepted for). Reads use relaxed atomics: selection can
+     *     observe stale Q, matching the lc0 MCTS concurrency model, without
+     *     participating in a C data race.
      *
      * Realloc (tree_grow_nodes) is the only scenario where readers can
      * segfault on a stale pointer. Callers that expect multi-walker use

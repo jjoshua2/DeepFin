@@ -21,9 +21,9 @@
 
 static int validate_piece_array(PyArrayObject *arr, const char *name) {
     if (PyArray_TYPE(arr) != NPY_UINT64 || PyArray_NDIM(arr) != 1 ||
-        PyArray_DIM(arr, 0) < 6 || !PyArray_IS_C_CONTIGUOUS(arr)) {
+        PyArray_DIM(arr, 0) < 6 || !PyArray_ISCARRAY_RO(arr)) {
         PyErr_Format(PyExc_ValueError,
-                     "%s must be a C-contiguous uint64 array with at least 6 elements",
+                     "%s must be an aligned native C-contiguous uint64 array with at least 6 elements",
                      name);
         return 0;
     }

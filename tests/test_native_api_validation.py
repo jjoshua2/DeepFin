@@ -26,6 +26,15 @@ from chess_anti_engine.mcts._mcts_tree import (
 from chess_anti_engine.moves import move_to_index
 
 
+def _unaligned_array(length: int, dtype: np.dtype[Any]) -> np.ndarray[Any, Any]:
+    """Construct a C-contiguous ndarray whose data starts one byte off alignment."""
+    storage = bytearray(length * dtype.itemsize + 1)
+    array = np.ndarray((length,), dtype=dtype, buffer=storage, offset=1)
+    assert array.flags.c_contiguous
+    assert not array.flags.aligned
+    return array
+
+
 def test_piece_plane_encoder_rejects_short_or_wrong_arrays() -> None:
     with pytest.raises(ValueError, match="bitboards"):
         encode_piece_planes(np.zeros(1, np.uint64), np.zeros(8, np.int32), 8)
@@ -35,6 +44,48 @@ def test_piece_plane_encoder_rejects_short_or_wrong_arrays() -> None:
     bad_bbs = cast(Any, np.zeros(96, np.int64))
     with pytest.raises(ValueError, match="bitboards"):
         encode_piece_planes(bad_bbs, np.zeros(8, np.int32), 8)
+
+
+def test_direct_array_bindings_reject_unaligned_or_byteswapped_inputs() -> None:
+    native_u64 = np.dtype(np.uint64)
+    native_i32 = np.dtype(np.int32)
+    swapped_u64 = native_u64.newbyteorder("S")
+
+    with pytest.raises(ValueError, match="bitboards"):
+        encode_piece_planes(
+            _unaligned_array(96, native_u64), np.zeros(8, native_i32), 8,
+        )
+    with pytest.raises(ValueError, match="turns"):
+        encode_piece_planes(
+            np.zeros(96, native_u64), _unaligned_array(8, native_i32), 8,
+        )
+    with pytest.raises(ValueError, match="bitboards"):
+        encode_piece_planes(
+            np.zeros(96, swapped_u64), np.zeros(8, native_i32), 8,
+        )
+
+    pieces = np.zeros(6, native_u64)
+    with pytest.raises(ValueError, match="pieces_us"):
+        compute_extra_features(
+            _unaligned_array(6, native_u64), pieces, 0, -1, -1, True, -1,
+        )
+    with pytest.raises(ValueError, match="pieces_us"):
+        compute_extra_features(
+            np.zeros(6, swapped_u64), pieces, 0, -1, -1, True, -1,
+        )
+
+
+def test_tree_input_wrappers_copy_unaligned_arrays_safely() -> None:
+    tree = MCTSTree()
+    root = tree.add_root(0, 0.0)
+    actions = _unaligned_array(1, np.dtype(np.int32))
+    priors = _unaligned_array(1, np.dtype(np.float64))
+    actions[0] = 0
+    priors[0] = 1.0
+
+    tree.expand(root, actions, priors)
+    found = tree.find_child(root, 0)
+    assert found >= 0
 
 
 def test_feature_bindings_reject_short_piece_arrays() -> None:

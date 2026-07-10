@@ -113,17 +113,17 @@ static PyObject* py_encode_piece_planes(PyObject *self, PyObject *args) {
         return NULL;
     }
     if (PyArray_TYPE(bbs_arr) != NPY_UINT64 || PyArray_NDIM(bbs_arr) != 1 ||
-        !PyArray_IS_C_CONTIGUOUS(bbs_arr) ||
+        !PyArray_ISCARRAY_RO(bbs_arr) ||
         PyArray_DIM(bbs_arr, 0) < (npy_intp)n_steps * 12) {
         PyErr_SetString(PyExc_ValueError,
-            "bitboards must be a C-contiguous uint64 array with at least n_steps*12 elements");
+            "bitboards must be an aligned native C-contiguous uint64 array with at least n_steps*12 elements");
         return NULL;
     }
     if (PyArray_TYPE(turns_arr) != NPY_INT32 || PyArray_NDIM(turns_arr) != 1 ||
-        !PyArray_IS_C_CONTIGUOUS(turns_arr) ||
+        !PyArray_ISCARRAY_RO(turns_arr) ||
         PyArray_DIM(turns_arr, 0) < n_steps) {
         PyErr_SetString(PyExc_ValueError,
-            "turns must be a C-contiguous int32 array with at least n_steps elements");
+            "turns must be an aligned native C-contiguous int32 array with at least n_steps elements");
         return NULL;
     }
 

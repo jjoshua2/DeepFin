@@ -45,7 +45,7 @@ Status meanings: `pending`, `contract-mapped`, `deep-reviewed`,
 | Cppcheck | reviewed | Missing-return and negative-shift reports were false positives; boundary leads were confirmed independently with ASAN. |
 | ASAN/UBSAN CBoard differential fuzz | passed | 500 lockstep games, seed `0xdeeff15`. |
 | ASAN/UBSAN batch-encode differential fuzz | passed | 120 games in both repetition modes, seed `0xba7c4`. |
-| libFuzzer CBoard run | blocked | `clang` is not installed (`run_fuzz.sh: clang: command not found`). |
+| libFuzzer CBoard run | passed | Clang ASAN/UBSAN coverage-guided run completed 264,174 inputs in 121 seconds (1,446 coverage edges, 9,078 features) with no sanitizer finding. |
 
 ## Review Checklist
 
