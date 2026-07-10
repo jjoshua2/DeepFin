@@ -105,6 +105,10 @@ def emit_handshake(options: EngineOptions) -> None:
         "option name PUCVPendingMode type combo default "
         f"{options.pucv_pending_mode} var legacy var virtual-mean"
     )
+    _println(
+        "option name SearchParallel type combo default "
+        f"{options.search_parallel} var pucv var gumbel"
+    )
     _println(f"option name VLGather type spin default {options.vl_gather} min 32 max 4096")
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
     _println(f"option name EvalCacheEntries type spin default {options.eval_cache_entries} min 0 max 1048576")
@@ -159,6 +163,13 @@ class EngineOptions:
   # absolute virtual-loss scoring; `virtual-mean` treats in-flight leaves as
   # virtual-mean samples. Set via UCI `PUCVPendingMode`.
     pucv_pending_mode: str = "legacy"
+  # Which multi-GPU search mode drives multi-device searches: `pucv` =
+  # shared-tree PUCT+virtual-loss pool (throughput baseline), `gumbel` =
+  # root-parallel Gumbel over evaluator groups (quality-preserving; the
+  # validated sequential-halving root semantics). Requires >= 2 devices;
+  # single-device configs always run the classic paths. Set via UCI
+  # `SearchParallel`.
+    search_parallel: str = "pucv"
   # Sims per pipeline submit when `UseVL=true`. Sweet spot 384-768 for
   # the 384-dim 10-layer model on RTX 5090. Set via UCI `VLGather`.
     vl_gather: int = 512
@@ -236,6 +247,7 @@ class Engine:
         rebuild_multi_gpu_pucv_factories: (
             Callable[[int, int], list[Callable[[], BatchEvaluator]]] | None
         ) = None,
+        search_devices: tuple[str, ...] | None = None,
         options: EngineOptions | None = None,
     ) -> None:
         self._worker = worker
@@ -244,6 +256,10 @@ class Engine:
   # When None, the MaxBatch setoption silently no-ops.
         self._rebuild_evaluator = rebuild_evaluator
         self._rebuild_multi_gpu_pucv_factories = rebuild_multi_gpu_pucv_factories
+  # Device list backing the per-device factories, threaded through to the
+  # root-parallel Gumbel pool so each group thread can set_device before
+  # its factory compiles (cudagraph TLS). None when unknown (single device).
+        self._search_devices = search_devices
         self._options = options if options is not None else EngineOptions()
         self._worker.set_max_tree_mb(self._options.hash_mb)
   # Set by setoption handlers that reshape the search path / evaluator
@@ -527,28 +543,40 @@ class Engine:
     def _set_ponder(self, value: str) -> None:
         self._options.ponder = value.strip().lower() == "true"
 
+    def _multi_gpu_path_active(self) -> bool:
+        """True when a multi-GPU pool (RPG or PUCV) owns search dispatch."""
+        return (
+            self._options.search_parallel == "gumbel"
+            or self._options.use_multi_gpu_pucv
+        )
+
     def _set_threads(self, value: str) -> None:
         n = self._parse_clamped_int(value, lo=1)
         if n is None:
             return
         self._options.threads = n
         self._worker.set_num_threads(n)
-        self._warmup_dirty = True
-        if self._options.use_multi_gpu_pucv:
-            # Multi-GPU pool owns search; n is stored for clear/restore only.
+        if self._multi_gpu_path_active():
+            # Worker stores n_walkers for leave-multi-GPU restore; live
+            # dispatch still uses the RPG / multi-GPU PUCV pool.
+            mode = (
+                "SearchParallel=gumbel"
+                if self._options.search_parallel == "gumbel"
+                else "UseMultiGpuPUCV"
+            )
             _println(
                 f"info string Threads set to {n} "
-                "(stored; multi-GPU PUCV pool is active — takes effect when "
-                "UseMultiGpuPUCV is off)"
+                f"(deferred — {mode} is active)",
             )
             return
+        self._warmup_dirty = True
         _println(
             f"info string Threads set to {n} "
             f"({'walker pool' if n > 1 else 'classic Gumbel path'})"
         )
-  # The walker pool selects on raw Q and never reads c_scale/c_visit (Gumbel
-  # sigma(q) only), so switching to Threads>1 silently drops the tuned
-  # c_scale value. Surface it; Threads=1 restores the c_scale-tuned path.
+        # The walker pool selects on raw Q and never reads c_scale/c_visit (Gumbel
+        # sigma(q) only), so switching to Threads>1 silently drops the tuned
+        # c_scale value. Surface it; Threads=1 restores the c_scale-tuned path.
         if n > 1:
             _println(
                 "info string note: c_scale/c_visit are inactive on the walker pool; "
@@ -568,6 +596,18 @@ class Engine:
         enabled = value.strip().lower() == "true"
         self._options.use_vl = enabled
         self._worker.set_use_pucv(enabled, gather=self._options.vl_gather)
+        if self._multi_gpu_path_active():
+            mode = (
+                "SearchParallel=gumbel"
+                if self._options.search_parallel == "gumbel"
+                else "UseMultiGpuPUCV"
+            )
+            _println(
+                f"info string UseVL {'on' if enabled else 'off'} "
+                f"(deferred — {mode} is active; "
+                f"gather={self._options.vl_gather})",
+            )
+            return
         self._warmup_dirty = True
         _println(
             f"info string UseVL {'on' if enabled else 'off'} "
@@ -577,8 +617,9 @@ class Engine:
 
     def _set_use_multi_gpu_pucv(self, value: str) -> None:
         enabled = value.strip().lower() == "true"
-        self._options.use_multi_gpu_pucv = enabled
         if not enabled:
+            had_pool = getattr(self._worker, "_pucv_pool", None) is not None
+            self._options.use_multi_gpu_pucv = False
             self._worker.clear_multi_gpu_pucv()
             # Expand primary back to all devices for the routing/walker path
             # (rebuild_evaluator closes over use_multi_gpu_pucv → primary_only=False).
@@ -592,6 +633,17 @@ class Engine:
                 self._worker.set_evaluator(new_eval)
             self._warmup_dirty = True
             _println("info string UseMultiGpuPUCV off")
+            # If SearchParallel still advertises gumbel, reinstall it — the
+            # PUCV install tore the RPG pool down, and leaving search_parallel
+            # sticky without a live pool would fall through to classic.
+            if self._options.search_parallel == "gumbel":
+                self._try_install_root_parallel_gumbel()
+            elif had_pool:
+                # install_multi_gpu_pucv tears down walker / UseVL; restore
+                # them the same way leave-Gumbel does. Without this,
+                # gumbel → UseMultiGpuPUCV on (forces sp=pucv) → off leaves
+                # UseVL/Threads flags set but no live path materialised.
+                self._reinstall_configured_search_path(after_leaving_gumbel=True)
             return
         # Shrink primary to device 0 before installing the pool so we don't
         # keep a full MultiGPUDispatcher stack alongside per-GPU pool evals.
@@ -603,15 +655,20 @@ class Engine:
         n_devices = self._install_multi_gpu_pucv_pool()
         if n_devices is None:
             return
+        # Mutual exclusion with SearchParallel=gumbel: the pool install clears
+        # RPG, so the advertised mode must follow or the next MaxBatch
+        # reinstall (which prefers search_parallel) would silently flip back.
+        self._options.use_multi_gpu_pucv = True
+        self._options.search_parallel = "pucv"
         self._warmup_dirty = True
         gather = min(self._options.vl_gather, self._options.max_batch)
         _println(
             f"info string UseMultiGpuPUCV on "
             f"(devices={n_devices} gather={gather})"
         )
-  # Same inertness as the Threads>1 walker pool (see _set_threads): the
-  # pool selects with plain PUCT and never reads c_scale/c_visit, so the
-  # tuned Gumbel values silently stop applying while it is installed.
+        # Same inertness as the Threads>1 walker pool (see _set_threads): the
+        # pool selects with plain PUCT and never reads c_scale/c_visit, so the
+        # tuned Gumbel values silently stop applying while it is installed.
         _println(
             "info string note: c_scale/c_visit are inactive on the multi-GPU "
             "PUCV pool (plain PUCT); a single device with Threads=1 restores "
@@ -649,23 +706,134 @@ class Engine:
             return
         self._options.pucv_pending_mode = normalized
         self._worker.set_pucv_vloss_mode(1 if normalized == "virtual-mean" else 0)
-        if self._options.use_multi_gpu_pucv:
+        if self._options.search_parallel == "gumbel":
+            # RPG pins virtual-mean independently of PUCVPendingMode; nothing
+            # to reinstall, but don't let a stale use_multi_gpu_pucv flag
+            # replace the Gumbel pool.
+            pass
+        elif self._options.use_multi_gpu_pucv:
             # Pool config changed (vloss_mode); reinstall only — primary stays.
             self._install_multi_gpu_pucv_pool()
         _println(f"info string PUCVPendingMode set to {normalized}")
+
+    def _set_search_parallel(self, value: str) -> None:
+        """Switch the multi-GPU search mode: ``gumbel`` installs the
+        root-parallel Gumbel pool (>= 2 device factories required, else the
+        option reverts to ``pucv``); ``pucv`` tears it down and restores the
+        UseMultiGpuPUCV / Threads / UseVL routing. Single-device configs never
+        construct the new module — dispatch falls through to the classic
+        paths untouched."""
+        normalized = value.strip().lower()
+        if normalized not in ("pucv", "gumbel"):
+            return
+        if normalized == "gumbel":
+            if not self._try_install_root_parallel_gumbel():
+                return
+            return
+        self._options.search_parallel = "pucv"
+        self._worker.clear_root_parallel_gumbel()
+        self._warmup_dirty = True
+        _println("info string SearchParallel pucv")
+        # Restore whichever non-RPG path is configured. install_root_parallel
+        # gumbel closed the walker pool and cleared single-thread PUCV, so
+        # leaving only clear_root_parallel_gumbel would fall through to
+        # single-thread classic Gumbel even with Threads>1 / UseVL / PUCV on.
+        self._reinstall_configured_search_path(after_leaving_gumbel=True)
+
+    def _try_install_root_parallel_gumbel(self) -> bool:
+        """Install the RPG pool from current MaxBatch/VLGather. On success
+        sets ``search_parallel=gumbel`` and suppresses the PUCV auto-enable
+        flag so later MaxBatch rebuilds reinstall Gumbel, not PUCV. Returns
+        False (and reverts the option to pucv) when factories are missing
+        or fewer than two devices are available."""
+        if self._rebuild_multi_gpu_pucv_factories is None:
+            self._options.search_parallel = "pucv"
+            _println(
+                "info string SearchParallel gumbel unavailable — "
+                "no per-device factories wired",
+            )
+            return False
+        gather = min(self._options.vl_gather, self._options.max_batch)
+        factories = self._rebuild_multi_gpu_pucv_factories(
+            self._options.max_batch, gather,
+        )
+        if len(factories) < 2:
+            self._options.search_parallel = "pucv"
+            _println(
+                "info string SearchParallel gumbel unavailable — "
+                "need at least two devices",
+            )
+            return False
+        self._options.search_parallel = "gumbel"
+        # search_parallel is the source of truth while Gumbel is selected:
+        # _reinstall_configured_search_path prefers it over use_multi_gpu_pucv
+        # so MaxBatch/EvalCache/VLGather rebuilds reinstall RPG, not PUCV.
+        # The use_multi_gpu_pucv flag is left intact so switching back to
+        # SearchParallel=pucv can restore the multi-GPU PUCV pool.
+        self._worker.install_root_parallel_gumbel(
+            factories, gather=gather, as_factories=True,
+            devices=list(self._search_devices) if self._search_devices else None,
+            info_string_cb=_emit_info_string,
+        )
+        self._warmup_dirty = True
+        _println(
+            f"info string SearchParallel gumbel on "
+            f"(groups={len(factories)} gather={gather})",
+        )
+        return True
+
+    def _reinstall_configured_search_path(
+        self, *, after_leaving_gumbel: bool = False,
+    ) -> None:
+        """Reinstall the search path that ``search_parallel`` / multi-GPU /
+        Threads / UseVL currently advertise.
+
+        Used after evaluator rebuilds (MaxBatch, EvalCacheEntries) and after
+        VLGather reshape so Gumbel mode is not silently dropped when
+        ``set_evaluator`` clears ``_rpg_pool``. Also used when leaving Gumbel
+        so walker/PUCV come back when multi-GPU PUCV is off.
+        """
+        if self._options.search_parallel == "gumbel":
+            if not self._try_install_root_parallel_gumbel():
+                # Install failed (e.g. factories went away) — fall through to
+                # whatever non-Gumbel path is still configured.
+                self._reinstall_configured_search_path(after_leaving_gumbel=True)
+            return
+        if self._options.use_multi_gpu_pucv:
+            if after_leaving_gumbel:
+                # Full enable (may shrink primary to device 0) when returning
+                # from Gumbel to the multi-GPU PUCV pool.
+                self._set_use_multi_gpu_pucv("true")
+            else:
+                # MaxBatch/VLGather already rebuilt the primary; reinstall pool only.
+                self._install_multi_gpu_pucv_pool()
+            return
+        if after_leaving_gumbel:
+            # Rebuild walker / single-thread PUCV from the options that
+            # install_root_parallel_gumbel tore down (n_walkers / _use_pucv
+            # flags survive install; only the live pool/chunker was cleared).
+            self._worker.restore_classic_search_path()
+            if self._options.use_vl:
+                # Toggle so gather is applied even if _use_pucv was already True
+                # (set_use_pucv early-returns when the chunker is non-None).
+                self._worker.set_use_pucv(False)
+                self._worker.set_use_pucv(True, gather=self._options.vl_gather)
 
     def _set_vl_gather(self, value: str) -> None:
         n = self._parse_clamped_int(value, lo=32)
         if n is None:
             return
         self._options.vl_gather = n
-        if self._options.use_vl:
-            self._worker.set_use_pucv(True, gather=n)
-        if self._options.use_multi_gpu_pucv:
-            # gather is a pool-construction param; reinstall without primary rebuild.
-            self._install_multi_gpu_pucv_pool()
-  # VLGather reshapes the pucv / multi-GPU per-worker batch, the same way
-  # LeafGather reshapes the walker batch — re-warm the configured path.
+        if self._options.search_parallel == "gumbel":
+            self._reinstall_configured_search_path()
+        else:
+            if self._options.use_vl:
+                self._worker.set_use_pucv(True, gather=n)
+            if self._options.use_multi_gpu_pucv:
+                # gather is a pool-construction param; reinstall without primary rebuild.
+                self._install_multi_gpu_pucv_pool()
+        # VLGather reshapes the pucv / multi-GPU / RPG per-worker batch, the
+        # same way LeafGather reshapes the walker batch — re-warm the path.
         self._warmup_dirty = True
         _println(f"info string VLGather set to {n}")
 
@@ -738,12 +906,11 @@ class Engine:
         new_eval = self._rebuild_evaluator(mb, self._options.eval_cache_entries)
         self._options.max_batch = mb
         self._worker.set_evaluator(new_eval)
-        if self._options.use_multi_gpu_pucv:
-            # Primary already rebuilt at the new max_batch (primary_only=True
-            # while the option is on); only reinstall the pool factories.
-            self._install_multi_gpu_pucv_pool()
-  # The rebuilt evaluator's raw forward is warmed, but the SEARCH-path
-  # cudagraph is captured separately — re-warm it before the clock.
+        # set_evaluator clears multi-GPU pools; reinstall from search_parallel
+        # (Gumbel) or use_multi_gpu_pucv — not only the PUCV flag.
+        self._reinstall_configured_search_path()
+        # The rebuilt evaluator's raw forward is warmed, but the SEARCH-path
+        # cudagraph is captured separately — re-warm it before the clock.
         self._warmup_dirty = True
         _println(f"info string MaxBatch set to {mb}; evaluator rebuilt + warmed")
 
@@ -761,10 +928,9 @@ class Engine:
         self._options.eval_cache_entries = n
         self._worker.set_eval_cache_entries(n)
         self._worker.set_evaluator(new_eval)
-        if self._options.use_multi_gpu_pucv:
-            self._install_multi_gpu_pucv_pool()
-  # Same as MaxBatch: evaluator rebuilt cold, so the search-path
-  # cudagraph must be re-warmed before the first real ``go``.
+        self._reinstall_configured_search_path()
+        # Same as MaxBatch: evaluator rebuilt cold, so the search-path
+        # cudagraph must be re-warmed before the first real ``go``.
         self._warmup_dirty = True
         _println(f"info string EvalCacheEntries set to {n}; evaluator rebuilt + warmed")
 
@@ -784,6 +950,7 @@ class Engine:
         "usevl": _set_use_vl,
         "usemultigpupucv": _set_use_multi_gpu_pucv,
         "pucvpendingmode": _set_pucv_pending_mode,
+        "searchparallel": _set_search_parallel,
         "vlgather": _set_vl_gather,
         "multipv": _set_multi_pv,
         "uci_showwdl": _set_show_wdl,
@@ -849,16 +1016,35 @@ class Engine:
         own search-path cudagraph and the first real ``go`` pays cold capture
         on those devices. When the pool is active, size the warmup to the same
         per-device budget the real search uses (``search.py:_chunk_budget``:
-        ``max(chunk, gather)`` per device) so every worker gets a full batch."""
+        ``max(chunk, gather)`` per device) so every worker gets a full batch.
+
+        Root-parallel Gumbel: work units are *candidates*, not sim tokens, so
+        raising max_nodes cannot create more first-phase jobs than
+        ``min(topk, n_legal)`` (20 on the start position). Production configs
+        (topk≥16, ≤8 devices) fill every group on startpos; when groups outrun
+        first-phase candidates some stay cold (factory-level
+        ``_warmup_pucv_evaluator`` still covers raw eval shapes). We still size
+        the budget so each active group can complete a full expand + gather
+        batch during the first phase."""
         chunk = int(getattr(self._worker, "_chunk_sims", 512))
         max_nodes = max(256, chunk)
-        pool = getattr(self._worker, "_pucv_pool", None)
-        if pool is not None:
-            n_devices = getattr(pool, "n_devices", None)
-            gather = getattr(pool, "gather", None)
+        pucv_pool = getattr(self._worker, "_pucv_pool", None)
+        if pucv_pool is not None:
+            n_devices = getattr(pucv_pool, "n_devices", None)
+            gather = getattr(pucv_pool, "gather", None)
             if n_devices and gather:
                 per_device = max(chunk, int(gather))
                 max_nodes = max(max_nodes, per_device * int(n_devices))
+        rpg_pool = getattr(self._worker, "_rpg_pool", None)
+        if rpg_pool is not None:
+            n_groups = int(getattr(rpg_pool, "n_groups", 0) or 0)
+            rpg_cfg = getattr(rpg_pool, "_cfg", None)
+            gather = int(getattr(rpg_cfg, "gather", 0) or 0)
+            if n_groups > 0 and gather > 0:
+                # Enough sims that first-phase vpa can cover expand + one
+                # 2×gather batch for every candidate that gets a group.
+                per_group = max(chunk, 1 + 2 * gather)
+                max_nodes = max(max_nodes, per_group * n_groups)
         try:
             self._worker.run(
                 chess.Board(),
@@ -1056,3 +1242,10 @@ def _println(s: str) -> None:
     with _PRINT_LOCK:
         sys.stdout.write(s + "\n")
         sys.stdout.flush()
+
+
+def _emit_info_string(s: str) -> None:
+    """`info string` emitter handed to search pools (root-parallel Gumbel
+    per-phase lines). Runs on the search thread at phase barriers, protected
+    by the same stdout lock as every other UCI line."""
+    _println(f"info string {s}")

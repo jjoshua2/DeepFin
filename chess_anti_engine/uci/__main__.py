@@ -30,7 +30,7 @@ from chess_anti_engine.inference_dispatcher import (
 )
 from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
 
-from .engine import Engine, EngineOptions, _println, emit_handshake
+from .engine import Engine, EngineOptions, _emit_info_string, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
 from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
@@ -330,6 +330,8 @@ def _build_engine(
     vl_gather: int,
     eval_cache_entries: int,
     use_multi_gpu_pucv: bool,
+    use_root_parallel_gumbel: bool = False,
+    devices: tuple[str, ...] | None = None,
     input_history_encoding: str = "legacy",
     input_extra_features: str = "v1",
     policy_encoding: str = "az_4672",
@@ -371,9 +373,22 @@ def _build_engine(
         worker,
         rebuild_evaluator=rebuild_evaluator,
         rebuild_multi_gpu_pucv_factories=rebuild_multi_gpu_pucv_factories,
+        search_devices=devices,
         options=options,
     )
-    if use_multi_gpu_pucv and rebuild_multi_gpu_pucv_factories is not None:
+  # The two multi-GPU modes are mutually exclusive; the gumbel branch reuses
+  # the same per-device evaluator factories as the pucv pool (identical
+  # evaluator interface + warmup; only the search orchestration differs).
+    if use_root_parallel_gumbel and rebuild_multi_gpu_pucv_factories is not None:
+        effective_gather = min(vl_gather, max_batch)
+        factories = rebuild_multi_gpu_pucv_factories(max_batch, effective_gather)
+        if len(factories) >= 2:
+            worker.install_root_parallel_gumbel(
+                factories, gather=effective_gather, as_factories=True,
+                devices=list(devices) if devices else None,
+                info_string_cb=_emit_info_string,
+            )
+    elif use_multi_gpu_pucv and rebuild_multi_gpu_pucv_factories is not None:
         effective_gather = min(vl_gather, max_batch)
         factories = rebuild_multi_gpu_pucv_factories(max_batch, effective_gather)
         if len(factories) >= 2:
@@ -544,6 +559,13 @@ def main() -> int:
                    action="store_false",
                    help="force the routing dispatcher even with multiple --devices "
                         "(DEBUG ONLY: its single submitter serializes GPU work)")
+    p.add_argument("--search-parallel", choices=["pucv", "gumbel"], default="pucv",
+                   help="multi-GPU search mode (requires --devices with >= 2 entries): "
+                        "pucv = shared-tree PUCT+virtual-loss pool (default, throughput "
+                        "baseline); gumbel = root-parallel Gumbel over evaluator groups "
+                        "(quality-preserving — classic sequential-halving root decisions, "
+                        "per-candidate subtrees parallelized across devices). With a single "
+                        "device both values leave the classic search paths untouched.")
     p.add_argument("--pucv-pending-mode", choices=["legacy", "virtual-mean"],
                    default="legacy",
                    help="pending accounting for batched PUCV paths (default: legacy)")
@@ -611,14 +633,25 @@ def main() -> int:
         devices = [d.strip() for d in args.devices.split(",") if d.strip()]
     else:
         devices = [_pick_device(args.device)]
-    use_multi_gpu_pucv = _resolve_use_multi_gpu_pucv(
-        args.multi_gpu_pucv, len(devices),
+  # gumbel mode requires >= 2 devices; with one device the new module is
+  # never constructed and dispatch falls through to the classic paths.
+    use_root_parallel_gumbel = bool(
+        args.search_parallel == "gumbel" and len(devices) > 1,
     )
+  # The two multi-GPU modes are mutually exclusive; gumbel wins when selected.
+  # Otherwise keep #138's tri-state auto-enable for multi-GPU PUCV.
+    if use_root_parallel_gumbel:
+        use_multi_gpu_pucv = False
+    else:
+        use_multi_gpu_pucv = _resolve_use_multi_gpu_pucv(
+            args.multi_gpu_pucv, len(devices),
+        )
     startup_options = EngineOptions(
         threads=max(1, int(args.walkers)),
         leaf_gather=max(1, int(args.walker_gather)),
         use_multi_gpu_pucv=use_multi_gpu_pucv,
         pucv_pending_mode=str(args.pucv_pending_mode),
+        search_parallel="gumbel" if use_root_parallel_gumbel else "pucv",
         vl_gather=max(32, int(args.vl_gather)),
         max_batch=max(64, int(args.max_batch)),
         eval_cache_entries=max(0, int(args.eval_cache_entries)),
@@ -724,6 +757,8 @@ def main() -> int:
                 vl_gather=startup_options.vl_gather,
                 eval_cache_entries=startup_options.eval_cache_entries,
                 use_multi_gpu_pucv=use_multi_gpu_pucv,
+                use_root_parallel_gumbel=use_root_parallel_gumbel,
+                devices=tuple(devices),
                 input_history_encoding=input_history_encoding,
                 input_extra_features=input_extra_features,
                 policy_encoding=policy_encoding,
