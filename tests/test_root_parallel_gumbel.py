@@ -347,6 +347,76 @@ def test_single_legal_move_finishes_without_search() -> None:
         evals_after = sum(ev.calls for ev in pool._evals)
         assert evals_after == evals_before, "finished root must not search"
         assert action == int(move_to_index(legal[0], board))
+        # Finished roots must still report completed sims so SearchWorker
+        # advances total_nodes (go nodes / infinite would otherwise spin).
+        stats = pool.last_stats()
+        assert sum(p.sims_completed for p in stats.phases) == 64
+    finally:
+        pool.close()
+
+
+def test_finished_root_nodes_advance_under_searchworker() -> None:
+    """SearchWorker node accounting must advance on RPG finished roots."""
+    board = chess.Board("k7/8/8/8/8/8/1Q6/K7 b - - 0 1")
+    assert len(list(board.legal_moves)) == 1
+    worker = _make_worker(chunk_sims=32)
+    worker.install_root_parallel_gumbel(
+        [_make_evaluator(max_batch=64), _make_evaluator(max_batch=64)],
+        gather=8, as_factories=False,
+    )
+    try:
+        result = worker.run(
+            board, stop_event=threading.Event(),
+            deadline=Deadline(5_000), max_nodes=32,
+        )
+        assert result.bestmove_uci
+        assert result.nodes >= 32, (
+            f"finished-root RPG must count the chunk, got nodes={result.nodes}"
+        )
+    finally:
+        worker.close()
+
+
+def test_prepare_root_honors_terminal_shortcut_gate() -> None:
+    """allow_terminal_shortcuts=False must skip mate-in-1 finish (ponder/analysis)."""
+    # Back-rank mate in 1: Re8#.
+    board = chess.Board("6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1")
+    legal = list(board.legal_moves)
+    mate_uci = None
+    for m in legal:
+        board.push(m)
+        is_mate = board.is_checkmate()
+        board.pop()
+        if is_mate:
+            mate_uci = m.uci()
+            break
+    assert mate_uci is not None, "fixture must contain a mate-in-1"
+    pol, wdl = _root_eval()
+    # Winning root eval so mate shortcut is eligible under classic rules.
+    wdl = np.array([5.0, 0.0, -5.0], dtype=np.float32)
+
+    pool = _make_pool(1)
+    try:
+        tree = MCTSTree()
+        tree.reserve(10_000, 100_000)
+        pool.prepare_root(
+            tree=tree, board=board, pol_logits=pol, wdl_logits=wdl,
+            allow_terminal_shortcuts=True,
+        )
+        assert pool._state is not None
+        assert pool._state.finished_action is not None, "mate shortcut should fire"
+
+        tree2 = MCTSTree()
+        tree2.reserve(10_000, 100_000)
+        pool.prepare_root(
+            tree=tree2, board=board, pol_logits=pol, wdl_logits=wdl,
+            allow_terminal_shortcuts=False,
+        )
+        assert pool._state is not None
+        assert pool._state.finished_action is None, (
+            "ponder/analysis must not mate-shortcut when gate is off"
+        )
+        assert pool._state.search_legal.size > 1
     finally:
         pool.close()
 
@@ -501,6 +571,116 @@ def test_engine_search_parallel_installs_and_reverts() -> None:
         assert engine._options.search_parallel == "pucv"
     finally:
         engine.close()
+
+
+def test_engine_max_batch_reinstalls_gumbel() -> None:
+    """MaxBatch rebuild must reinstall SearchParallel=gumbel, not drop it."""
+    worker = _make_worker()
+    builds: list[tuple[int, int]] = []
+
+    def factories(mb: int, g: int) -> list[Any]:
+        builds.append((mb, g))
+        return [_make_evaluator, _make_evaluator]
+
+    def rebuild_eval(mb: int, _cache: int) -> Any:
+        return _make_evaluator(max_batch=mb)
+
+    engine = Engine(
+        worker,
+        rebuild_evaluator=rebuild_eval,
+        rebuild_multi_gpu_pucv_factories=factories,
+        options=EngineOptions(max_batch=64, eval_cache_entries=0),
+    )
+    try:
+        engine._set_search_parallel("gumbel")
+        assert worker._rpg_pool is not None
+        n_before = len(builds)
+        engine._set_max_batch("128")
+        assert engine._options.search_parallel == "gumbel"
+        assert worker._rpg_pool is not None, "MaxBatch must reinstall RPG pool"
+        assert len(builds) > n_before
+        assert builds[-1][0] == 128
+    finally:
+        engine.close()
+
+
+def test_engine_leaving_gumbel_restores_use_vl() -> None:
+    """SearchParallel pucv after gumbel must restore UseVL when multi-GPU is off."""
+    worker = _make_worker()
+    # Primary evaluator is 2-slot async so UseVL can install.
+    worker = SearchWorker(
+        _make_evaluator(max_batch=64), device="cpu",
+        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False, temperature=0.0),
+        chunk_sims=64, n_walkers=1,
+    )
+    worker.set_use_pucv(True, gather=32)
+    assert worker._pucv is not None
+
+    def factories(_mb: int, _g: int) -> list[Any]:
+        return [_make_evaluator, _make_evaluator]
+
+    engine = Engine(
+        worker,
+        rebuild_multi_gpu_pucv_factories=factories,
+        options=EngineOptions(use_vl=True, vl_gather=32, use_multi_gpu_pucv=False),
+    )
+    try:
+        engine._set_search_parallel("gumbel")
+        assert worker._rpg_pool is not None
+        assert worker._pucv is None  # install tore down single-thread PUCV
+        engine._set_search_parallel("pucv")
+        assert worker._rpg_pool is None
+        assert worker._pucv is not None, "UseVL path must be restored after leaving Gumbel"
+    finally:
+        engine.close()
+
+
+def test_clear_rpg_invalidates_tree_for_classic() -> None:
+    """Clearing RPG must drop the persistent tree so classic does not score
+    with a stale root N/W left by candidate-only backprop."""
+    worker = _make_worker()
+    worker.install_root_parallel_gumbel(
+        [_make_evaluator(max_batch=64), _make_evaluator(max_batch=64)],
+        gather=8, as_factories=False,
+    )
+    try:
+        worker.run(
+            chess.Board(), stop_event=threading.Event(),
+            deadline=Deadline(10_000), max_nodes=64,
+        )
+        assert worker._tree is not None
+        worker.clear_root_parallel_gumbel()
+        assert worker._rpg_pool is None
+        assert worker._tree is None, "RPG tree must not be reused by classic"
+    finally:
+        worker.close()
+
+
+def test_searchmoves_fallback_resets_rpg_tree() -> None:
+    """searchmoves forces classic Gumbel; any RPG-shaped tree must be dropped."""
+    worker = _make_worker()
+    worker.install_root_parallel_gumbel(
+        [_make_evaluator(max_batch=64), _make_evaluator(max_batch=64)],
+        gather=8, as_factories=False,
+    )
+    try:
+        board = chess.Board()
+        worker.run(
+            board, stop_event=threading.Event(),
+            deadline=Deadline(10_000), max_nodes=64,
+        )
+        assert worker._tree is not None
+        dirty = worker._tree
+        # Same position with searchmoves — classic fallback must not reuse dirty.
+        result = worker.run(
+            board, stop_event=threading.Event(),
+            deadline=Deadline(5_000), max_nodes=32,
+            root_moves=("e2e4",),
+        )
+        assert result.bestmove_uci == "e2e4"
+        assert worker._tree is not dirty, "classic fallback must not reuse RPG tree"
+    finally:
+        worker.close()
 
 
 # --- construction validation ------------------------------------------------------------

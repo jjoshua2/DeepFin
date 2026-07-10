@@ -373,6 +373,7 @@ class RootParallelGumbelPool:
         board: chess.Board,
         pol_logits: np.ndarray,
         wdl_logits: np.ndarray,
+        allow_terminal_shortcuts: bool = True,
     ) -> int:
         """Install the search root in ``tree`` and return its node id.
 
@@ -380,7 +381,9 @@ class RootParallelGumbelPool:
         position keeps the arenas. Mirrors the classic root init in
         ``run_gumbel_root_many_c`` — legal-masked softmax priors from the
         (policy_temp'd, full-space) cached root logits, ``add_root(1,
-        root_q)``, mate shortcut, and terminal-draw pruning at a winning root.
+        root_q)``, and (when ``allow_terminal_shortcuts``) mate shortcut +
+        terminal-draw pruning at a winning root. Single-legal-move finish
+        is NOT gated (matches classic Gumbel).
         """
         fen = board.fen()
         st = self._state
@@ -409,10 +412,15 @@ class RootParallelGumbelPool:
             finished_value = root_q
             rid = int(tree.add_root(1, root_q))
         else:
-            want_draws = root_q > 0.0 and legal_idx.size > 1
-            terminal_mate, terminal_draws = immediate_terminal_cboard_policy_or_draws(
-                root_cb, legal_idx, detect_draws=want_draws,
-            )
+            terminal_mate = None
+            terminal_draws: set[int] = set()
+            if allow_terminal_shortcuts:
+                # Classic: draw scan only on winning multi-legal roots; mate
+                # always detected when shortcuts are allowed.
+                want_draws = root_q > 0.0 and legal_idx.size > 1
+                terminal_mate, terminal_draws = immediate_terminal_cboard_policy_or_draws(
+                    root_cb, legal_idx, detect_draws=want_draws,
+                )
             if root_q > 0.0 and legal_idx.size > 1 and terminal_draws:
                 draw_arr = np.fromiter(terminal_draws, dtype=np.int32)
                 keep = ~np.isin(legal_idx, draw_arr)
@@ -476,6 +484,29 @@ class RootParallelGumbelPool:
             raise RuntimeError("RootParallelGumbelPool is closed")
         if st.finished_action is not None:
             assert st.finished_value is not None
+            # Finished roots never enter a phase, but SearchWorker advances
+            # total_nodes from last_stats().phases. Report the full chunk as
+            # completed (classic gumbel path also counts the requested chunk
+            # on early finish) so go nodes / infinite searches terminate.
+            n = max(1, int(target_sims))
+            survivor = (
+                (int(st.finished_action),)
+                if int(st.finished_action) >= 0
+                else ()
+            )
+            with self._stats_lock:
+                self._last_stats = RootParallelGumbelStats(
+                    target_sims=int(target_sims),
+                    elapsed_seconds=0.0,
+                    phases=(RootParallelPhase(
+                        index=0,
+                        candidates=1,
+                        visits_per_action=n,
+                        sims_completed=n,
+                        survivor_actions=survivor,
+                    ),),
+                    group_sims=tuple(0 for _ in range(self._cfg.n_groups)),
+                )
             return float(st.finished_value), int(st.finished_action)
 
         started = time.perf_counter()

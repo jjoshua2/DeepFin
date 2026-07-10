@@ -593,7 +593,14 @@ class SearchWorker:
 
     def clear_root_parallel_gumbel(self) -> None:
         """Tear down the root-parallel Gumbel pool and revert to the
-        single-evaluator gumbel/walker/pucv routing. Idempotent."""
+        single-evaluator gumbel/walker/pucv routing. Idempotent.
+
+        Always resets the persistent tree: RPG updates only candidate-child
+        N/W and reconstructs the root value in its own scorer, so a reused
+        tree would leave classic ``gss_score_and_halve`` reading a stale
+        ``W[root]/N[root]``.
+        """
+        had_pool = self._rpg_pool is not None
         if self._rpg_pool is not None:
             self._rpg_pool.close()
             self._rpg_pool = None
@@ -603,6 +610,24 @@ class SearchWorker:
                 with contextlib.suppress(Exception):
                     close()
         self._rpg_pool_evals = []
+        if had_pool:
+            self.reset_tree()
+
+    def restore_classic_search_path(self) -> None:
+        """Rebuild walker-pool / single-thread PUCV after multi-GPU teardown.
+
+        ``install_root_parallel_gumbel`` / ``install_multi_gpu_pucv`` close the
+        walker pool and clear ``_pucv`` without touching ``_n_walkers`` /
+        ``_use_pucv``, so ``set_num_threads`` / ``set_use_pucv`` early-return
+        and leave the engine on the single-thread classic Gumbel path. Call
+        this after ``clear_*`` when the configured non-multi-GPU path should
+        come back.
+        """
+        if self._walker_pool is not None:
+            self._walker_pool.close()
+        self._walker_pool = self._build_walker_pool(self._n_walkers)
+        self._pucv = self._build_pucv() if self._use_pucv else None
+        self.reset_tree()
 
     def last_root_parallel_gumbel_stats(self) -> RootParallelGumbelStats | None:
         """Return stats from the most recent root-parallel Gumbel chunk."""
@@ -1033,13 +1058,17 @@ class SearchWorker:
         self,
         board: chess.Board,
         allowed_root_indices: set[int] | None,
+        *,
+        allow_terminal_shortcuts: bool = True,
     ) -> None:
         """Pool paths race on the root's first descent so it must be expanded
         upfront. The classic gumbel path does this internally."""
         if allowed_root_indices is not None:
             return
         if self._rpg_pool is not None:
-            self._ensure_rpg_root_prepared(board)
+            self._ensure_rpg_root_prepared(
+                board, allow_terminal_shortcuts=allow_terminal_shortcuts,
+            )
         elif self._pucv_pool is not None:
             self._ensure_pucv_pool_root_expanded(board)
         elif self._walker_pool is not None:
@@ -1070,6 +1099,12 @@ class SearchWorker:
             # even at Threads>1 — at the cost of single-threaded search for that move.
             # Do NOT "optimize" this back onto the pools without first teaching them to
             # honor allowed_root_indices, or the restriction is silently ignored.
+            #
+            # RPG leaves root N/W at the initial eval (it reconstructs root value
+            # in its own scorer). Classic gss_score_and_halve reads W[root]/N[root],
+            # so drop any RPG-shaped tree before the fallback.
+            if self._rpg_pool is not None:
+                self.reset_tree()
             return self._run_gumbel_chunk(
                 chunk, board, tb_probe, allowed_root_indices,
                 allow_terminal_shortcuts=allow_terminal_shortcuts,
@@ -1557,7 +1592,11 @@ class SearchWorker:
         self._last_gumbel_action_idx = None
         self._seldepth = 0
         self._ensure_root_eval_cached(board, tb_probe)
-        self._pre_expand_root_for_pool(board, allowed_root_indices)
+        self._pre_expand_root_for_pool(
+            board,
+            allowed_root_indices,
+            allow_terminal_shortcuts=allow_terminal_shortcuts,
+        )
 
         total_nodes = 0
         last_info_ms = -1
@@ -1746,7 +1785,12 @@ class SearchWorker:
             self._last_gumbel_action_idx = int(action)
         return float(value)
 
-    def _ensure_rpg_root_prepared(self, board: chess.Board) -> None:
+    def _ensure_rpg_root_prepared(
+        self,
+        board: chess.Board,
+        *,
+        allow_terminal_shortcuts: bool = True,
+    ) -> None:
         """Root prep for the root-parallel Gumbel pool: create the shared
         tree, then let the pool install + expand the root (classic-Gumbel
         priors from the cached root eval) and sample-ready state. Mirrors
@@ -1764,6 +1808,7 @@ class SearchWorker:
             board=board,
             pol_logits=self._root_pol_logits[0],
             wdl_logits=self._root_wdl_logits[0],
+            allow_terminal_shortcuts=allow_terminal_shortcuts,
         )
 
     def _ensure_pucv_pool_root_expanded(self, board: chess.Board) -> None:
