@@ -14,18 +14,22 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import chess
 import numpy as np
 
 from chess_anti_engine.moves import (
+    FULL_TO_COMPACT_POLICY,
     POLICY_SIZE,
     move_to_index_for_encoding,
     policy_index_for_encoding,
     policy_mask_to_encoding,
     policy_size_for_encoding,
     policy_vector_to_encoding,
+)
+from chess_anti_engine.encoding._lc0_ext import (
+    prepare_sf_multipv as _prepare_sf_multipv_c,  # pyright: ignore[reportAttributeAccessIssue]
 )
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.selfplay.blindspot_harvest import (
@@ -763,6 +767,26 @@ def _build_replay_samples(
         total_plies_played=total_plies_played,
     )
     suffix_sf_regret = _suffix_sf_regret_features(records, is_selfplay=is_selfplay_slot)
+    want_sf_p0_regret = bool(
+        is_selfplay_slot and getattr(state.game, "record_sf_p0_regret", False)
+    )
+    prepared_multipv: dict[int, tuple[np.ndarray | None, np.ndarray | None]] = {}
+
+    def prepare_multipv(record_idx: int) -> tuple[np.ndarray | None, np.ndarray | None]:
+        cached = prepared_multipv.get(record_idx)
+        if cached is not None:
+            return cached
+        raw = getattr(records[record_idx], "sf_multipv_raw", None)
+        if raw is None:
+            result: tuple[np.ndarray | None, np.ndarray | None] = (None, None)
+        else:
+            result = _prepare_sf_multipv_for_finalize(
+                np.asarray(raw),
+                policy_encoding=state.game.policy_encoding,
+                want_regret=want_sf_p0_regret,
+            )
+        prepared_multipv[record_idx] = result
+        return result
 
     keep_fast_plies = bool(getattr(state.game, "record_fast_ply_value", False))
     for t, rec in enumerate(records):
@@ -902,10 +926,10 @@ def _build_replay_samples(
                 else None
             )
             if prev_raw is not None:
-                sf_p0_regret = _build_sf_p0_regret_vector(
-                    np.asarray(prev_raw),
-                    policy_encoding=state.game.policy_encoding,
-                )
+                assert prev_idx is not None
+                _, sf_p0_regret = prepare_multipv(prev_idx)
+
+        sf_multipv_padded, _ = prepare_multipv(t)
 
         out.append(
             ReplaySample(
@@ -933,10 +957,7 @@ def _build_replay_samples(
                 ply_index=int(rec.ply_index),
                 has_policy=row_has_policy,
                 sf_wdl=rec.sf_wdl,
-                sf_multipv_raw=_padded_sparse_multipv(
-                    getattr(rec, "sf_multipv_raw", None),
-                    policy_encoding=state.game.policy_encoding,
-                ),
+                sf_multipv_raw=sf_multipv_padded,
                 sf_label_meta=getattr(rec, "sf_label_meta", None),
                 sf_move_index=(
                     None if rec.sf_move_index is None else
@@ -1213,6 +1234,38 @@ def _padded_sparse_multipv(
             int(rows[j, 0]), policy_encoding=policy_encoding,
         )
     return out
+
+
+def _prepare_sf_multipv_python(
+    rows: np.ndarray, *, policy_encoding: str, want_regret: bool,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Reference implementation retained for parity tests and benchmarks."""
+    return (
+        cast(np.ndarray, _padded_sparse_multipv(rows, policy_encoding=policy_encoding)),
+        (
+            _build_sf_p0_regret_vector(rows, policy_encoding=policy_encoding)
+            if want_regret else None
+        ),
+    )
+
+
+def _prepare_sf_multipv_native(
+    rows: np.ndarray, *, policy_encoding: str, want_regret: bool,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    encoded_size = policy_size_for_encoding(policy_encoding)
+    padded, regret = _prepare_sf_multipv_c(
+        np.ascontiguousarray(rows, dtype=np.int16),
+        FULL_TO_COMPACT_POLICY,
+        encoded_size,
+        SF_MULTIPV_RAW_MAX,
+        SF_CP_SENTINEL,
+        SF_OWN_REGRET_CAP_CP,
+        bool(want_regret),
+    )
+    return cast(np.ndarray, padded), cast(np.ndarray | None, regret)
+
+
+_prepare_sf_multipv_for_finalize = _prepare_sf_multipv_native
 
 
 def finalize_game(

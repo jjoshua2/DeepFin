@@ -454,6 +454,39 @@ def _compare_finalize_cache(records_n: int, repeats: int, paired_rounds: int) ->
     print(f"  hashes stable/equal: {stable and len(hashes) == 1} ({', '.join(sorted(hashes))})")
 
 
+def _compare_native_finalize(records_n: int, repeats: int, paired_rounds: int) -> None:
+    native_builder = finalize_module._prepare_sf_multipv_native
+    python_builder = finalize_module._prepare_sf_multipv_python
+    python_times: list[float] = []
+    native_times: list[float] = []
+    hashes: set[str] = set()
+    stable = True
+    try:
+        for round_idx in range(paired_rounds):
+            order = (False, True) if round_idx % 2 == 0 else (True, False)
+            for native_enabled in order:
+                finalize_module._prepare_sf_multipv_for_finalize = (
+                    native_builder if native_enabled else python_builder
+                )
+                result = _bench_finalize(records_n, repeats)
+                (native_times if native_enabled else python_times).append(
+                    float(result["median_s"]),
+                )
+                hashes.add(str(result["hash"]))
+                stable = stable and bool(result["hashes_stable"])
+    finally:
+        finalize_module._prepare_sf_multipv_for_finalize = native_builder
+
+    python_median = float(np.median(np.asarray(python_times, dtype=np.float64)))
+    native_median = float(np.median(np.asarray(native_times, dtype=np.float64)))
+    speedup = python_median / max(native_median, 1e-12)
+    print("\nPaired native SF-finalization comparison")
+    print(f"  Python median: {python_median * 1000.0:.3f} ms")
+    print(f"  native median: {native_median * 1000.0:.3f} ms")
+    print(f"  native speedup: {speedup:.6f}x")
+    print(f"  hashes stable/equal: {stable and len(hashes) == 1} ({', '.join(sorted(hashes))})")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--boards", type=int, default=384)
@@ -464,6 +497,7 @@ def main() -> None:
     parser.add_argument("--finalize-records", type=int, default=0)
     parser.add_argument("--only-finalize", action="store_true")
     parser.add_argument("--compare-finalize-cache", action="store_true")
+    parser.add_argument("--compare-native-finalize", action="store_true")
     parser.add_argument("--paired-rounds", type=int, default=5)
     args = parser.parse_args()
     if args.repeats <= 0:
@@ -472,6 +506,8 @@ def main() -> None:
         raise SystemExit("--paired-rounds must be positive")
     if args.only_finalize and args.finalize_records <= 0:
         raise SystemExit("--only-finalize requires --finalize-records > 0")
+    if args.compare_finalize_cache and args.compare_native_finalize:
+        raise SystemExit("choose only one finalization comparison")
     if not args.only_finalize and min(args.boards, args.simulations, args.replay_rows, args.batch_size) <= 0:
         raise SystemExit("all numeric arguments must be positive")
 
@@ -481,7 +517,9 @@ def main() -> None:
         _print_result("Gumbel C search Python boundary", gumbel)
         _print_result("Disk replay sampling", replay)
     if args.finalize_records > 0:
-        if args.compare_finalize_cache:
+        if args.compare_native_finalize:
+            _compare_native_finalize(args.finalize_records, args.repeats, args.paired_rounds)
+        elif args.compare_finalize_cache:
             _compare_finalize_cache(args.finalize_records, args.repeats, args.paired_rounds)
         else:
             finalize = _bench_finalize(args.finalize_records, args.repeats)
