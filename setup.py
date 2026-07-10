@@ -2,6 +2,7 @@
 
 Environment variables:
   CAE_EXT_NATIVE=1     — add -march=native (non-portable wheels)
+  CAE_EXT_LTO=1        — add -flto at compile and link time
   CAE_EXT_SANITIZE=X   — add -fsanitize=X -fno-omit-frame-pointer -g
                          e.g. CAE_EXT_SANITIZE=address,undefined
                          Requires LD_PRELOAD=$(gcc -print-file-name=libasan.so)
@@ -12,6 +13,10 @@ import os
 
 from setuptools import setup, Extension
 import numpy as np
+
+
+def _env_enabled(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
 
 
 def _warning_flags() -> list[str]:
@@ -33,7 +38,7 @@ def _warning_flags() -> list[str]:
         "-Wno-unused-function",  # _cboard_impl.h has helpers used by some .c files but not others
         "-Wno-missing-field-initializers",  # PyModuleDef has m_slots we leave zero
     ]
-    if os.environ.get("CAE_EXT_WERROR", "").strip().lower() in {"1", "true", "yes"}:
+    if _env_enabled("CAE_EXT_WERROR"):
         flags.append("-Werror")
     return flags
 
@@ -48,11 +53,13 @@ def _sanitizer_flags() -> tuple[list[str], list[str]]:
 
 
 def _ext_compile_args() -> list[str]:
-    args = ["-O3"] + _warning_flags()
+    args = ["-O3", *_warning_flags()]
     # Keep default wheels/source builds portable across machines. Opt in to
     # host-specific tuning only when the builder explicitly requests it.
-    if os.environ.get("CAE_EXT_NATIVE", "").strip().lower() in {"1", "true", "yes"}:
+    if _env_enabled("CAE_EXT_NATIVE"):
         args.append("-march=native")
+    if _env_enabled("CAE_EXT_LTO"):
+        args.append("-flto")
     args += _sanitizer_flags()[0]
     return args
 
@@ -64,15 +71,19 @@ def _mcts_compile_args() -> list[str]:
     local/production machines that want -march=native (same gate as
     _ext_compile_args).
     """
-    args = ["-O3"] + _warning_flags() + ["-fopenmp"]
-    if os.environ.get("CAE_EXT_NATIVE", "").strip().lower() in {"1", "true", "yes"}:
+    args = ["-O3", *_warning_flags(), "-fopenmp"]
+    if _env_enabled("CAE_EXT_NATIVE"):
         args.append("-march=native")
+    if _env_enabled("CAE_EXT_LTO"):
+        args.append("-flto")
     args += _sanitizer_flags()[0]
     return args
 
 
 def _ext_link_args(*, openmp: bool = False) -> list[str]:
     args = list(_sanitizer_flags()[1])
+    if _env_enabled("CAE_EXT_LTO"):
+        args.append("-flto")
     if openmp:
         args.append("-fopenmp")
     return args

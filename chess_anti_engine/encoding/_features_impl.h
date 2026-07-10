@@ -71,6 +71,12 @@
 #include <string.h>
 #include <stdlib.h>  /* abs() */
 
+/* The standalone _features_ext translation unit does not include CBoard, but
+ * its native AVX2 path uses the same bitboard-to-plane helpers. */
+#if defined(__AVX2__) && !defined(BITBOARD_PLANES_IMPL_H)
+#include "_bitboard_planes_impl.h"
+#endif
+
 /* ================================================================
  * Precomputed tables
  * ================================================================ */
