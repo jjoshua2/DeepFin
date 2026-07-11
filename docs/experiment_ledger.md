@@ -1480,7 +1480,9 @@ games/h down >10% sustained, or worker deadlock symptoms (0 games generated
 for 2 consecutive iterations with workers alive), or value/panel guardrails
 of the live swap canary regressing coincident with activation → set
 CAE_WORKER_STOP_ON_PAUSE=1 + restart (no salvage needed — no weights/replay
-surgery). CONFOUND: activates in the swap-readout era; sequenced AFTER the
-~10-iter swap canary read so the canary is clean; the 5-day arena gate
+surgery). CONFOUND: activates in the swap-readout era; user chose immediate
+activation (2026-07-11 evening, ~iter 8) over waiting for the 10-iter canary
+— the per-iteration waste outweighs the small canary confound (no target
+semantics change); the 5-day arena gate
 tolerates a throughput-only change (does not alter targets; data-mix change
 = longer games entering replay, which is the intended fix).
