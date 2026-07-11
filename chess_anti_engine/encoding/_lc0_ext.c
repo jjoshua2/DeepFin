@@ -992,6 +992,170 @@ static PyObject* py_set_history_rep_fix(PyObject *Py_UNUSED(self), PyObject *arg
     Py_RETURN_NONE;
 }
 
+static inline int sf_multipv_row_score(const npy_int16 *row, int cp_sentinel,
+                                       double *score_out) {
+    const int move_idx = (int)row[0];
+    const int cp = (int)row[1];
+    const int mate = (int)row[2];
+    if (move_idx < 0 || (mate == 0 && cp == cp_sentinel)) return 0;
+    if (mate > 0) *score_out = 100000.0 - (double)mate * 100.0;
+    else if (mate < 0) *score_out = -100000.0 - (double)mate * 100.0;
+    else *score_out = (double)cp;
+    return 1;
+}
+
+/* prepare_sf_multipv(rows, full_to_compact, encoded_size, raw_max,
+ *                    cp_sentinel, regret_cap, want_regret)
+ *
+ * Fuses the two finalize-side passes over Stockfish's raw MultiPV rows:
+ * padding/remapping the sparse stored rows and constructing the dense P0
+ * regret vector. All Python/NumPy objects are validated and allocated before
+ * the compute loops release the GIL, so completed games from independent
+ * selfplay threads can finalize concurrently. */
+static PyObject* py_prepare_sf_multipv(PyObject *Py_UNUSED(self), PyObject *args) {
+    PyArrayObject *rows_arr;
+    PyArrayObject *map_arr;
+    int encoded_size;
+    int raw_max;
+    int cp_sentinel;
+    double regret_cap;
+    int want_regret;
+
+    if (!PyArg_ParseTuple(args, "O!O!iiidp",
+                          &PyArray_Type, &rows_arr,
+                          &PyArray_Type, &map_arr,
+                          &encoded_size, &raw_max, &cp_sentinel,
+                          &regret_cap, &want_regret))
+        return NULL;
+
+    if (PyArray_TYPE(rows_arr) != NPY_INT16 || PyArray_NDIM(rows_arr) != 2 ||
+        PyArray_DIM(rows_arr, 1) != 5 || !PyArray_ISCARRAY_RO(rows_arr)) {
+        PyErr_SetString(PyExc_ValueError,
+            "rows must be an aligned native C-contiguous int16 array with shape (K, 5)");
+        return NULL;
+    }
+    if (PyArray_TYPE(map_arr) != NPY_INT32 || PyArray_NDIM(map_arr) != 1 ||
+        !PyArray_ISCARRAY_RO(map_arr) || PyArray_DIM(map_arr, 0) < 4672) {
+        PyErr_SetString(PyExc_ValueError,
+            "full_to_compact must be an aligned native C-contiguous int32 array with at least 4672 entries");
+        return NULL;
+    }
+    if ((encoded_size != 1858 && encoded_size != 4672) || raw_max <= 0 || regret_cap <= 0.0) {
+        PyErr_SetString(PyExc_ValueError,
+            "encoded_size must be 1858 or 4672, raw_max must be positive, and regret_cap must be > 0");
+        return NULL;
+    }
+
+    const npy_intp n_rows = PyArray_DIM(rows_arr, 0);
+    const npy_int16 *rows = (const npy_int16*)PyArray_DATA(rows_arr);
+    const npy_int32 *full_to_compact = (const npy_int32*)PyArray_DATA(map_arr);
+    for (npy_intp i = 0; i < n_rows; ++i) {
+        const int move_idx = (int)rows[i * 5];
+        if (move_idx >= 4672) {
+            PyErr_SetString(PyExc_ValueError, "rows contains a move index outside the 4672 policy space");
+            return NULL;
+        }
+        if (encoded_size == 1858 && move_idx >= 0) {
+            const int encoded_idx = (int)full_to_compact[move_idx];
+            if (encoded_idx < -1 || encoded_idx >= encoded_size) {
+                PyErr_SetString(PyExc_ValueError, "full_to_compact contains an out-of-range entry");
+                return NULL;
+            }
+        }
+    }
+
+    npy_intp padded_dims[2] = {(npy_intp)raw_max, 5};
+    PyArrayObject *padded = (PyArrayObject*)PyArray_EMPTY(2, padded_dims, NPY_INT16, 0);
+    if (!padded) return NULL;
+    npy_int16 *padded_data = (npy_int16*)PyArray_DATA(padded);
+
+    const npy_intp copied_rows = n_rows < (npy_intp)raw_max ? n_rows : (npy_intp)raw_max;
+    npy_intp scored_count = 0;
+    double best_score = -1.0e300;
+    double worst_regret = 0.0;
+
+    Py_BEGIN_ALLOW_THREADS
+    for (int i = 0; i < raw_max; ++i) {
+        npy_int16 *dst = padded_data + (npy_intp)i * 5;
+        dst[0] = -1;
+        dst[1] = (npy_int16)cp_sentinel;
+        dst[2] = 0;
+        dst[3] = -1;
+        dst[4] = -1;
+    }
+    for (npy_intp i = 0; i < copied_rows; ++i) {
+        const npy_int16 *src = rows + i * 5;
+        npy_int16 *dst = padded_data + i * 5;
+        for (int col = 0; col < 5; ++col) dst[col] = src[col];
+        const int move_idx = (int)src[0];
+        if (encoded_size == 1858)
+            dst[0] = move_idx < 0 ? -1 : (npy_int16)full_to_compact[move_idx];
+    }
+    if (want_regret) {
+        for (npy_intp i = 0; i < n_rows; ++i) {
+            const npy_int16 *row = rows + i * 5;
+            double score;
+            if (!sf_multipv_row_score(row, cp_sentinel, &score)) continue;
+            if (score > best_score) best_score = score;
+            ++scored_count;
+        }
+        if (scored_count > 0) {
+            for (npy_intp i = 0; i < n_rows; ++i) {
+                const npy_int16 *row = rows + i * 5;
+                double score;
+                if (!sf_multipv_row_score(row, cp_sentinel, &score)) continue;
+                double regret = (best_score - score) / regret_cap;
+                if (regret < 0.0) regret = 0.0;
+                if (regret > 1.0) regret = 1.0;
+                if (regret > worst_regret) worst_regret = regret;
+            }
+        }
+    }
+    Py_END_ALLOW_THREADS
+
+    PyObject *regret_obj = Py_None;
+    Py_INCREF(Py_None);
+    if (want_regret && scored_count > 0) {
+        npy_intp regret_dims[1] = {(npy_intp)encoded_size};
+        PyArrayObject *regret = (PyArrayObject*)PyArray_EMPTY(1, regret_dims, NPY_FLOAT32, 0);
+        if (!regret) {
+            Py_DECREF(padded);
+            Py_DECREF(regret_obj);
+            return NULL;
+        }
+        npy_float32 *regret_data = (npy_float32*)PyArray_DATA(regret);
+        const npy_float32 default_regret = (npy_float32)((worst_regret + 1.0) / 2.0);
+        Py_BEGIN_ALLOW_THREADS
+        for (int i = 0; i < encoded_size; ++i) regret_data[i] = default_regret;
+        for (npy_intp i = 0; i < n_rows; ++i) {
+            const npy_int16 *row = rows + i * 5;
+            const int move_idx = (int)row[0];
+            double score;
+            if (!sf_multipv_row_score(row, cp_sentinel, &score)) continue;
+            double value = (best_score - score) / regret_cap;
+            if (value < 0.0) value = 0.0;
+            if (value > 1.0) value = 1.0;
+            const int encoded_idx = encoded_size == 4672
+                ? move_idx : (int)full_to_compact[move_idx];
+            if (encoded_idx >= 0 && encoded_idx < encoded_size)
+                regret_data[encoded_idx] = (npy_float32)value;
+        }
+        Py_END_ALLOW_THREADS
+        Py_DECREF(regret_obj);
+        regret_obj = (PyObject*)regret;
+    }
+
+    PyObject *result = PyTuple_New(2);
+    if (!result) {
+        Py_DECREF(padded);
+        Py_DECREF(regret_obj);
+        return NULL;
+    }
+    PyTuple_SET_ITEM(result, 0, (PyObject*)padded);
+    PyTuple_SET_ITEM(result, 1, regret_obj);
+    return result;
+}
+
 static PyMethodDef methods[] = {
     {"set_history_rep_fix", py_set_history_rep_fix, METH_O,
      "set_history_rep_fix(enabled) -> None. Toggle the lc0-root per-slot "
@@ -1003,6 +1167,10 @@ static PyMethodDef methods[] = {
      "Generate sorted legal move policy indices from bitboard state. "
      "legal_move_policy_indices(us_p, us_n, us_b, us_r, us_q, us_k, "
      "th_p, th_n, th_b, th_r, th_q, th_k, turn, ck, cq, tk, tq, ep) -> int32[]"},
+    {"prepare_sf_multipv", py_prepare_sf_multipv, METH_VARARGS,
+     "prepare_sf_multipv(rows, full_to_compact, encoded_size, raw_max, "
+     "cp_sentinel, regret_cap, want_regret) -> (padded_rows, regret_or_none). "
+     "Fused replay-finalization helper; compute loops release the GIL."},
     {NULL, NULL, 0, NULL}
 };
 

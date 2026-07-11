@@ -354,6 +354,36 @@ end-to-end CPU-only selfplay gain by itself; live phase telemetry now decides
 whether a fused SF-regret/remap helper is worth pursuing for the larger next
 step.
 
+**Fused native SF-finalization experiment -- UNREAD (2026-07-10).** Live
+post-restart phase telemetry shows replay finalization accumulating roughly
+10-50 thread-seconds per wall-second during completed-game waves; the GIL makes
+small per-game Python loops amplify across 32 selfplay threads. Hypothesis: one
+native helper that validates each raw MultiPV matrix once, pads/remaps its move
+column, and constructs the dense SF-P0 regret vector while releasing the GIL
+removes the remaining dominant Python finalization blocks without changing
+targets. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/profile_python_native_candidates.py --only-finalize --finalize-records
+64 --repeats 3 --compare-native-finalize --paired-rounds 5`. Each round
+alternates the Python reference and native path on identical data.
+Pre-committed SUCCESS: native median throughput >=1.15x Python, every exact
+finalization hash matches and is stable, randomized parity covers full/compact
+policy encodings plus cp/mate/sentinel/padded rows, and focused native /
+finalization / sparse-label tests pass. Otherwise FAILED and revert the native
+helper. This is a CPU implementation change only; no training-data meaning or
+live config changes, so no salvage snapshot.
+**VERDICT: SUCCESS.** The exact alternating paired yardstick measured Python
+23.761 ms vs native 14.066 ms per 64-record game, a **1.689246x (68.9%)
+finalization speedup**, with the identical stable hash `6137f66d62c8e111` in
+every run. Randomized full/compact parity, mate/cp/sentinel/padding cases, an
+8-thread native stress, and 59 focused tests pass; the strict native+LTO build
+also passes `-Werror`. Keep the fused helper. Because its compute loops release
+the GIL, live completed-game waves should gain more than the scalar timing alone
+suggests; measure that separately rather than inferring a thread-scaling number.
+Two exact-command replications after input-hardening/refactoring measured
+**1.878196x** and **2.436058x**, both with the same exact hash. External load
+moves the absolute times, but all three alternating reads clear the 1.15x gate;
+use the conservative 1.689x first read as the headline until live telemetry.
+
 **Vectorized finalization-target experiment -- UNREAD (2026-07-10).**
 Hypothesis: vectorizing the fixed-width MultiPV move remap and SF-P0 regret
 construction removes the repeated per-row policy-encoding/string work that is
