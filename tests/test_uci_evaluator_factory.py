@@ -30,10 +30,12 @@ class _FakeDirectEvaluator:
         max_batch: int,
         n_slots: int,
         input_bf16: bool = False,
+        legal_bf16: bool = True,
     ) -> None:
         del model, device, n_slots
         self._max_batch = int(max_batch)
         self.input_bf16 = bool(input_bf16)
+        self.supports_legal_bf16 = bool(legal_bf16)
 
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         rows = int(x.shape[0])
@@ -147,6 +149,7 @@ class _RecordingDirectEvaluator(_FakeDirectEvaluator):
         max_batch: int,
         n_slots: int,
         input_bf16: bool = False,
+        legal_bf16: bool = True,
     ) -> None:
         super().__init__(
             model, device=device, max_batch=max_batch, n_slots=n_slots,

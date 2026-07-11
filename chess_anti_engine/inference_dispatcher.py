@@ -72,7 +72,12 @@ class ThreadSafeGPUDispatcher:
 
     @property
     def supports_legal_bf16(self) -> bool:
-        return hasattr(self._eval, "evaluate_legal_bf16")
+        # Honor the inner evaluator's opt-out (CAE_UCI_COMPACT_BF16 gate) —
+        # a bare hasattr would re-enable the compact path the gate disabled.
+        return bool(getattr(
+            self._eval, "supports_legal_bf16",
+            hasattr(self._eval, "evaluate_legal_bf16"),
+        ))
 
     @property
     def max_batch(self) -> int:
@@ -447,4 +452,7 @@ class MultiGPUDispatcher:
 
     @property
     def supports_legal_bf16(self) -> bool:
-        return all(hasattr(evaluator, "evaluate_legal_bf16") for evaluator in self._evals)
+        return all(
+            getattr(e, "supports_legal_bf16", hasattr(e, "evaluate_legal_bf16"))
+            for e in self._evals
+        )

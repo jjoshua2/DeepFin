@@ -203,7 +203,7 @@ def _make_evaluator_factory(
             evaluators = [
                 DirectGPUEvaluator(
                     m, device=d, max_batch=max_batch, n_slots=2,
-                    input_bf16=compact_bf16,
+                    input_bf16=compact_bf16, legal_bf16=compact_bf16,
                 )
                 for m, d in zip(compiled_models, active_devices)
             ]
@@ -211,7 +211,7 @@ def _make_evaluator_factory(
         else:
             evaluator = DirectGPUEvaluator(
                 compiled_models[0], device=active_devices[0],
-                max_batch=max_batch, n_slots=2, input_bf16=compact_bf16,
+                max_batch=max_batch, n_slots=2, input_bf16=compact_bf16, legal_bf16=compact_bf16,
             )
   # Always wrap in ThreadSafeGPUDispatcher so the UCI `Threads`
   # option can bump walker count at runtime without a race. Lock
@@ -287,7 +287,7 @@ def _make_multi_gpu_pucv_factory_builder(
                     compiled = m
                 evaluator = DirectGPUEvaluator(
                     compiled, device=d, max_batch=max_batch, n_slots=2,
-                    input_bf16=compact_bf16,
+                    input_bf16=compact_bf16, legal_bf16=compact_bf16,
                 )
                 _warmup_pucv_evaluator(
                     evaluator,

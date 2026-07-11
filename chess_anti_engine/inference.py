@@ -363,6 +363,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         amp_dtype: str = "auto",
         n_slots: int = 1,
         input_bf16: bool = False,
+        legal_bf16: bool = True,
     ) -> None:
         super().__init__(model, device=device, use_amp=use_amp, amp_dtype=amp_dtype)
         self._max_batch = int(max_batch)
@@ -372,6 +373,12 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
         _pin = self._use_cuda
         self._input_bf16 = bool(input_bf16 and self._use_cuda and use_amp)
+        # Compact legal-policy path opt-out (CAE_UCI_COMPACT_BF16 gate in UCI):
+        # search activation keys on supports_legal_bf16, so a bare hasattr on
+        # evaluate_legal_bf16 would flip match play onto the compact path by
+        # default, before its pre-committed yardstick. Default True preserves
+        # the existing selfplay/broker behavior.
+        self._legal_bf16 = bool(legal_bf16)
         _channels = input_plane_count(getattr(model, "input_extra_features", None))
         self._pinned_inputs: list[torch.Tensor] = [
             torch.empty(
@@ -611,6 +618,10 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             bits = torch.from_numpy(compact).to(torch.bfloat16).view(torch.uint16)
             return bits, torch.from_numpy(wdl), None
         return self._async_forward_legal_bf16(bsz, flat, counts, n_legal, slot=slot)
+
+    @property
+    def supports_legal_bf16(self) -> bool:
+        return self._legal_bf16
 
     def evaluate_legal_bf16(
         self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
