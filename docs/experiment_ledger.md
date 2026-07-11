@@ -1486,3 +1486,16 @@ activation (2026-07-11 evening, ~iter 8) over waiting for the 10-iter canary
 semantics change); the 5-day arena gate
 tolerates a throughput-only change (does not alter targets; data-mix change
 = longer games entering replay, which is the intended fix).
+
+**#147 speed READOUT (2026-07-11 evening, n=1 by design — read early at the
+user's call because PR #149 activates at the next boundary and confounds
+games/h upward).** Only iter 7 is usable (iter 6 = restart iter, skipped per
+rule). Headline: 641 selfplay games/h vs baseline 748-861 looks like -15-20%,
+BUT the baseline iters 3-5 counted 187-198 STALE games/iter (pre-restart
+backlog); iter 7 has stale=0. On a fresh-games basis iter 7 (430 fresh, 641/h)
+BEATS baseline fresh (~386/293/293 → ~440-580/h). The control (trainer
+steps/s) read 0.198 vs 0.27-0.30 baseline — NOT flat, so the rule's
+broker-blame branch doesn't fire anyway; likely cause is the concurrent
+seed-reaudit GPU scoring run during iter 7. VERDICT: NO REGRESSION (pass) —
+fresh-games throughput at or above baseline; positive-speedup claim unproven
+at n=1 and now unreadable (post-#149 iters measure the pause-hold instead).
