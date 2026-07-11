@@ -60,6 +60,7 @@ model:
   use_deepnorm: true  # Epoch-4 candidate topology.
   policy_encoding: lc0_1858  # Keep production auto-resume compatible with the live compact-policy checkpoint stream.
   input_history_encoding: lc0_root_legacy_meta  # Switched live to epoch-6 candidate input; replay keeps recorded LC0-root planes.
+  input_extra_features: v2_threats  # Production default: 175 planes. Keep explicit so fresh/salvage runs cannot fall back to legacy v1/146.
   gradient_checkpointing: false
 
 stockfish:

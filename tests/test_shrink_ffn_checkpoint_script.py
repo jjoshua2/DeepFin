@@ -18,6 +18,7 @@ def _load_shrink_module() -> Any:
 def _small_cfg(*, ffn_mult_by_layer: tuple[float, ...]) -> ModelConfig:
     return ModelConfig(
         kind="transformer",
+        input_extra_features="v1",
         embed_dim=8,
         num_layers=2,
         num_heads=2,

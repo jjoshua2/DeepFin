@@ -10,7 +10,7 @@ import torch
 
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.encoding import encode_positions_batch
-from chess_anti_engine.encoding.features import EXTRA_FEATURES_V1, relation_matrices
+from chess_anti_engine.encoding.features import EXTRA_FEATURES_V2_THREATS, relation_matrices
 from chess_anti_engine.inference import BatchEvaluator, LocalModelEvaluator
 from chess_anti_engine.mcts.puct import (
     Node,
@@ -134,7 +134,7 @@ class GumbelConfig:
     add_noise: bool = True  # Backward-compatible gate; use gumbel_scale for partial noise.
     gumbel_scale: float = 1.0
     input_history_encoding: str = LC0_HISTORY_LEGACY
-    input_extra_features: str = EXTRA_FEATURES_V1
+    input_extra_features: str = EXTRA_FEATURES_V2_THREATS
     policy_encoding: str = MODEL_POLICY_ENCODING
   # Compute dynamic board-relation matrices per eval and pass them to the
   # evaluator as attention-bias input (model.use_dynamic_relations).

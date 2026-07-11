@@ -16,7 +16,10 @@ from chess_anti_engine.model import ModelConfig, build_model
 
 
 def _make_evaluator(n_slots: int = 1) -> DirectGPUEvaluator:
-    cfg = ModelConfig(embed_dim=32, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(
+        embed_dim=32, num_layers=1, num_heads=2, ffn_mult=2.0,
+        input_extra_features="v1",
+    )
     model = build_model(cfg)
     model.eval()
     return DirectGPUEvaluator(

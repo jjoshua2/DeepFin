@@ -32,7 +32,7 @@ from chess_anti_engine.uci.time_manager import Deadline
 
 
 def _make_evaluator(max_batch: int = 64) -> Any:
-    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
     model.eval()
     inner = DirectGPUEvaluator(
@@ -196,7 +196,7 @@ def test_searchworker_pool_nodes_reflect_completed_sims() -> None:
     primary = _make_evaluator(max_batch=64)
     worker = SearchWorker(
         primary, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
     p0 = _make_evaluator(max_batch=64)
@@ -254,7 +254,7 @@ def test_pool_eval_cache_reuses_identical_fresh_tree_leaf() -> None:
 
 
 def test_pool_rejects_single_slot_evaluator() -> None:
-    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
     model.eval()
     bad = DirectGPUEvaluator(
@@ -282,7 +282,7 @@ def test_searchworker_install_multi_gpu_pucv_produces_bestmove() -> None:
     primary = _make_evaluator(max_batch=64)
     worker = SearchWorker(
         primary, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
   # Two pool evaluators (independent of `primary`, used only for root-eval).
@@ -312,7 +312,7 @@ def test_shared_tree_headroom_pregrows_arena_past_fixed_reserve() -> None:
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=512, n_walkers=1,
     )
     try:
@@ -339,7 +339,7 @@ def test_shared_tree_headroom_respects_hash_cap() -> None:
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=512, n_walkers=1,
     )
 
@@ -379,7 +379,7 @@ def test_shared_tree_headroom_uses_free_slots_at_tiny_hash() -> None:
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=512, n_walkers=1,
     )
     try:
@@ -403,7 +403,7 @@ def test_chunk_budget_scales_by_gather_and_devices() -> None:
     primary = _make_evaluator(max_batch=64)
     worker = SearchWorker(
         primary, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
     p0 = _make_evaluator(max_batch=64)
@@ -420,7 +420,7 @@ def test_current_best_root_action_tracks_emitted_move() -> None:
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
     try:
@@ -448,7 +448,7 @@ def test_searchworker_multi_gpu_pucv_multi_chunk_search() -> None:
     primary = _make_evaluator(max_batch=64)
     worker = SearchWorker(
         primary, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
     p0 = _make_evaluator(max_batch=64)
@@ -468,7 +468,7 @@ def test_search_emit_info_reports_hashfull_and_seldepth() -> None:
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
     try:
@@ -499,7 +499,7 @@ def test_root_visit_lead_returns_emitted_move_margin() -> None:
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=32, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=32, add_noise=False),
         chunk_sims=32, n_walkers=1,
     )
     try:
@@ -526,7 +526,7 @@ def test_abort_ready_branches() -> None:
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=32, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=32, add_noise=False),
         chunk_sims=32, n_walkers=1,
     )
     try:
@@ -564,7 +564,7 @@ def test_search_abort_terminates_with_legal_move() -> None:
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
     try:
@@ -589,7 +589,7 @@ def test_time_capped_chunk_shrinks_to_remaining_time() -> None:
     ev = _make_evaluator()
     worker = SearchWorker(
         ev, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
     try:
@@ -615,7 +615,7 @@ def test_searchworker_clear_multi_gpu_pucv_reverts() -> None:
     primary = _make_evaluator(max_batch=64)
     worker = SearchWorker(
         primary, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
     p0 = _make_evaluator(max_batch=64)
@@ -640,7 +640,7 @@ def test_clear_multi_gpu_pucv_restores_walker_pool() -> None:
     primary = _make_evaluator(max_batch=64)
     worker = SearchWorker(
         primary, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=2,
     )
     try:
@@ -668,7 +668,7 @@ def test_clear_multi_gpu_pucv_restores_use_pucv() -> None:
     primary = _make_evaluator(max_batch=64)
     worker = SearchWorker(
         primary, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
     try:
@@ -691,7 +691,7 @@ def test_clear_multi_gpu_pucv_restore_fallback_false_skips_walker() -> None:
     primary = _make_evaluator(max_batch=64)
     worker = SearchWorker(
         primary, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=2,
     )
     try:
@@ -710,7 +710,7 @@ def test_set_num_threads_under_pucv_pool_does_not_spawn_walkers() -> None:
     primary = _make_evaluator(max_batch=64)
     worker = SearchWorker(
         primary, device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64, n_walkers=1,
     )
     try:
