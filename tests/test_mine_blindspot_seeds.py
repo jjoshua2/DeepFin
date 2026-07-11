@@ -103,7 +103,7 @@ def _fake_sf(blunder_after_fen: str):
     return sf
 
 
-def _mine(game: chess.pgn.Game, sf) -> tuple[str, str] | None:
+def _mine(game: chess.pgn.Game, sf) -> list[tuple[str, str]]:
     return mine_game(game, src="t.pgn", name_needle="deepfin", sf_eval=sf,
                      sf_nodes=1, collapse_cp=-150, history_plies=8)
 
@@ -113,8 +113,8 @@ def test_mine_game_emits_blindspot_with_history() -> None:
     blunder_after = _fen_after(_LINE, 7)      # after white's move[6]=f3g5, black to move
     out = mine_game(game, name_needle="deepfin", sf_eval=_fake_sf(blunder_after),
                     src="runs/matches/test.pgn", sf_nodes=1, collapse_cp=-150, history_plies=8)
-    assert out is not None
-    record, key = out
+    assert len(out) == 1
+    record, key = out[0]
     seed_fen = _fen_after(_LINE, 6)           # white to move — the blind-spot
     assert key == position_key(seed_fen)
     board = seed_board_from_line(record.split("#", 1)[0].strip())
@@ -125,11 +125,11 @@ def test_mine_game_emits_blindspot_with_history() -> None:
 
 def test_mine_game_skips_non_loss_forfeit_ambiguous() -> None:
     sf = _fake_sf(_fen_after(_LINE, 7))
-    assert _mine(_game(_LINE, result="1-0"), sf) is None            # DeepFin won
-    assert _mine(_game(_LINE, termination="Time forfeit"), sf) is None
-    assert _mine(_game(_LINE, white="a", black="b"), sf) is None    # ambiguous side
+    assert _mine(_game(_LINE, result="1-0"), sf) == []            # DeepFin won
+    assert _mine(_game(_LINE, termination="Time forfeit"), sf) == []
+    assert _mine(_game(_LINE, white="a", black="b"), sf) == []    # ambiguous side
 
 
 def test_mine_game_none_when_no_collapse() -> None:
     # A fake that never returns a losing eval -> no collapse.
-    assert _mine(_game(_LINE), lambda _fen, _nodes: 30) is None
+    assert _mine(_game(_LINE), lambda _fen, _nodes: 30) == []

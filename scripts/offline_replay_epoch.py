@@ -76,6 +76,24 @@ def _limit_shards(shard_paths: list[Path], args: argparse.Namespace) -> list[Pat
     return shard_paths[-count:] if bool(args.newest_shards) else shard_paths[:count]
 
 
+def _eval_shard_paths(args: argparse.Namespace) -> list[Path]:
+    """Shards to build the eval set from.
+
+    Defaults to --replay-dir (legacy behavior: same pool as training, oldest
+    shards first via _limit_shards). --eval-replay-dir points eval at a
+    separate directory (e.g. a quarantined holdout never fed into training)
+    with its own --eval-max-shards/--eval-newest-shards selection so it
+    doesn't disturb the existing --max-shards/--newest-shards knobs used for
+    training-shard selection.
+    """
+    eval_dir = args.eval_replay_dir or args.replay_dir
+    shard_paths = iter_shard_paths(eval_dir)
+    count = int(args.eval_max_shards)
+    if count <= 0:
+        return shard_paths
+    return shard_paths[-count:] if bool(args.eval_newest_shards) else shard_paths[:count]
+
+
 POLICY_FIELDS = (
     "policy_target",
     "sf_policy_target",
@@ -1249,7 +1267,7 @@ def _train_candidate_live_follow(
             }), flush=True)
 
         if eval_every > 0 and steps % eval_every == 0:
-            eval_paths = _limit_shards(iter_shard_paths(args.replay_dir), args)
+            eval_paths = _eval_shard_paths(args)
             eval_arrs = _load_eval_arrs(shard_paths=eval_paths, model_cfg=model_cfg, args=args)
             eval_metrics = trainer.eval_steps(
                 _as_replay_buffer(_ArraySampler(eval_arrs, np.random.default_rng(int(args.seed) + 999 + steps))),
@@ -1336,7 +1354,7 @@ def _train_candidate_live_follow(
         trainer.save(run_dir / "trainer_final.pt")
         trainer.load(best_path)
         restored_best = True
-    eval_paths = _limit_shards(iter_shard_paths(args.replay_dir), args)
+    eval_paths = _eval_shard_paths(args)
     eval_arrs = _load_eval_arrs(shard_paths=eval_paths, model_cfg=model_cfg, args=args)
     eval_metrics = trainer.eval_steps(
         _as_replay_buffer(_ArraySampler(eval_arrs, np.random.default_rng(int(args.seed) + 999))),
@@ -1399,6 +1417,26 @@ def main() -> None:
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--eval-positions", type=int, default=2048)
     ap.add_argument("--eval-steps", type=int, default=8)
+    ap.add_argument(
+        "--eval-replay-dir",
+        default=None,
+        help="Build the eval set from this dir instead of --replay-dir (e.g. a "
+             "quarantined holdout never fed into training). Default: --replay-dir "
+             "(legacy behavior).",
+    )
+    ap.add_argument(
+        "--eval-max-shards",
+        type=int,
+        default=0,
+        help="Cap the eval shard listing to N shards (0 = all). Independent of "
+             "--max-shards, which only governs training-shard selection.",
+    )
+    ap.add_argument(
+        "--eval-newest-shards",
+        action="store_true",
+        help="When --eval-max-shards is set, use the newest shards instead of "
+             "the oldest (default oldest-first matches --newest-shards' default).",
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument(
         "--init-checkpoint",

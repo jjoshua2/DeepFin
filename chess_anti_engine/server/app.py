@@ -427,7 +427,6 @@ def create_app(
     users_db: str = "users.json",
     opening_book_path: str | None = None,
     opening_book_path_2: str | None = None,
-    opening_fen_list_path: str | None = None,
     max_upload_mb: int = 256,
     min_workers_per_trial: int = 1,
     max_worker_delta_per_rebalance: int = 1,
@@ -1206,13 +1205,21 @@ def create_app(
             raise HTTPException(status_code=404, detail="opening book 2 not found")
         return FileResponse(str(p), media_type="application/octet-stream", filename=p.name)
 
-    @app.get("/v1/opening_fen_list")
-    def get_opening_fen_list() -> Any:
-        if opening_fen_list_path is None:
+    @app.get("/v1/trials/{trial_id}/opening_fen_list")
+    def get_trial_opening_fen_list(trial_id: str) -> Any:
+        # Unlike the two opening-book routes above (server-launch-fixed), this
+        # is served from the manifest-tracked publish_dir copy so a yaml
+        # opening_fen_list_path change takes effect on the next manifest
+        # publish, no restart needed (see _LAUNCH_FIXED_ASSET_PATH_KEYS).
+        # Trial-scoped (unlike opening_book): the manifest that advertises it
+        # is built per-trial (_publish_distributed_trial_state), so the
+        # matching artifact only ever lives under that trial's publish dir —
+        # an un-scoped route defaulting to trial_id=None would read the
+        # wrong (empty) directory whenever the server manages more than the
+        # single default trial.
+        p = _artifact_from_publish("opening_fen_list", default_name="opening_fen_list_live.txt", trial_id=trial_id)
+        if p is None:
             raise HTTPException(status_code=404, detail="no opening FEN list configured")
-        p = Path(opening_fen_list_path)
-        if not p.exists():
-            raise HTTPException(status_code=404, detail="opening FEN list not found")
         return FileResponse(str(p), media_type="application/octet-stream", filename=p.name)
 
     def _artifact_from_publish(key: str, *, default_name: str, trial_id: str | None = None) -> Path | None:

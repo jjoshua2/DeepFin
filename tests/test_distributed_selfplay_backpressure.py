@@ -730,6 +730,18 @@ def test_train_step_budget_views_drought_fallback_respects_step_cap() -> None:
 _DOLE_SEED_FEN = "rnbqkb1r/pppppppp/5n2/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 2 2"
 
 
+def _get_app_bytes(app, path: str) -> bytes:
+    """GET `path` against ONE app instance and return the raw response body."""
+    async def _run() -> bytes:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            response = await client.get(path)
+            response.raise_for_status()
+            return response.content
+
+    return asyncio.run(_run())
+
+
 def _poll_app_n(app, path: str, *, headers: dict[str, str], n: int) -> list[dict]:
     """GET `path` n times against ONE app instance (shared dole-gate state)."""
     async def _run() -> list[dict]:
@@ -908,3 +920,69 @@ def test_seed_dole_gate_persists_across_restart(tmp_path: Path) -> None:
     gate2 = _SeedDoleGate(state_path=state)
     assert asyncio.run(gate2.claim("t", 7)) is False
     assert asyncio.run(gate2.claim("t", 8)) is True  # a newer iteration still wins
+
+
+# ── opening_fen_list_path live reload (no restart needed) ────────────────────
+
+
+def test_opening_fen_list_path_swap_takes_effect_without_restart(tmp_path: Path) -> None:
+    """A yaml opening_fen_list_path change must be servable on the NEXT
+    manifest publish alone — this is the whole point of excluding it from
+    _LAUNCH_FIXED_ASSET_PATH_KEYS (unlike opening_book_path, which really is
+    frozen to the server's launch-time value)."""
+    fen_a = tmp_path / "seeds_a.txt"
+    fen_a.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+    _publish_distributed_trial_state(
+        trainer=_FakeTrainer(), config={"opening_fen_list_path": str(fen_a)},
+        model_cfg=_model_cfg(), server_root=tmp_path, trial_id="trial_00000",
+        training_iteration=1, trainer_step=1, sf_nodes=1000, mcts_simulations=64,
+    )
+    app = create_app(server_root=tmp_path)
+    assert _get_app_bytes(app, "/v1/trials/trial_00000/opening_fen_list") == fen_a.read_bytes()
+
+    # Different path, different content — no server restart, just a second publish.
+    fen_b = tmp_path / "seeds_b.txt"
+    other_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    fen_b.write_text(other_fen + "\n", encoding="utf-8")
+    _publish_distributed_trial_state(
+        trainer=_FakeTrainer(), config={"opening_fen_list_path": str(fen_b)},
+        model_cfg=_model_cfg(), server_root=tmp_path, trial_id="trial_00000",
+        training_iteration=2, trainer_step=2, sf_nodes=1000, mcts_simulations=64,
+    )
+    served = _get_app_bytes(app, "/v1/trials/trial_00000/opening_fen_list")
+    assert served == fen_b.read_bytes()
+    assert served != fen_a.read_bytes()
+
+
+def test_opening_fen_list_path_inplace_edit_detected(tmp_path: Path) -> None:
+    """An in-place content edit at the SAME path must also propagate: this
+    exercises the _sha256_cached fix (mtime added to the cache key) — a
+    (path, size)-only cache would silently keep serving stale bytes if the
+    edit happens not to change the file's byte size."""
+    fen_path = tmp_path / "seeds.txt"
+    fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+    _publish_distributed_trial_state(
+        trainer=_FakeTrainer(), config={"opening_fen_list_path": str(fen_path)},
+        model_cfg=_model_cfg(), server_root=tmp_path, trial_id="trial_00000",
+        training_iteration=1, trainer_step=1, sf_nodes=1000, mcts_simulations=64,
+    )
+    app = create_app(server_root=tmp_path)
+    first = _get_app_bytes(app, "/v1/trials/trial_00000/opening_fen_list")
+    assert first == fen_path.read_bytes()
+
+    # Overwrite in place with same-length content (same byte size as before —
+    # the exact case a (path, size)-keyed cache would miss). Pad to match
+    # _DOLE_SEED_FEN's exact length; this is a raw byte-equality check, not
+    # a seed-grammar parse, so trailing padding doesn't affect the intent.
+    other_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    other_fen = other_fen.ljust(len(_DOLE_SEED_FEN))
+    assert len(other_fen) == len(_DOLE_SEED_FEN)
+    fen_path.write_text(other_fen + "\n", encoding="utf-8")
+    _publish_distributed_trial_state(
+        trainer=_FakeTrainer(), config={"opening_fen_list_path": str(fen_path)},
+        model_cfg=_model_cfg(), server_root=tmp_path, trial_id="trial_00000",
+        training_iteration=2, trainer_step=2, sf_nodes=1000, mcts_simulations=64,
+    )
+    second = _get_app_bytes(app, "/v1/trials/trial_00000/opening_fen_list")
+    assert second == fen_path.read_bytes()
+    assert second != first

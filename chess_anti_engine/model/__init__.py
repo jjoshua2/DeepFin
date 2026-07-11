@@ -58,7 +58,7 @@ class ModelConfig:
     # the same fix. Part of checkpoint/manifest identity — a legacy default
     # would silently feed such a model legacy planes.
     history_rep_fix: bool = False
-    input_extra_features: str = EXTRA_FEATURES_V1
+    input_extra_features: str = EXTRA_FEATURES_V2_THREATS
     use_dynamic_relations: bool = False
     dynamic_relation_count: int = 5
     policy_dynamic_relations: bool = False
@@ -291,7 +291,7 @@ def model_config_from_flat_config(
         ),
         history_rep_fix=bool(cfg.get("history_rep_fix", False)),
         input_extra_features=normalize_extra_features_encoding(
-            cfg.get("input_extra_features", EXTRA_FEATURES_V1)
+            cfg.get("input_extra_features", EXTRA_FEATURES_V2_THREATS)
         ),
         use_dynamic_relations=bool(cfg.get("use_dynamic_relations", False)),
         dynamic_relation_count=int(cfg.get("dynamic_relation_count", 5)),

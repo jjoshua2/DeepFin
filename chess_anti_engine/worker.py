@@ -2172,7 +2172,11 @@ class WorkerSession:
         )
         self.opening_fen_list_path, self.last_fenlist_sha = _download_opening_book(
             manifest, "opening_fen_list", self.cache_dir,
-            cache_prefix="fenlist", default_endpoint="/v1/opening_fen_list",
+            # Trial-scoped (unlike the two opening_book endpoints above) —
+            # the manifest always carries its own "endpoint" in practice, this
+            # is only the defensive fallback, matching the model download's
+            # same trial_api_prefix-based pattern (see model_info handling).
+            cache_prefix="fenlist", default_endpoint=self.trial_api_prefix + "/opening_fen_list",
             server_url_fn=self._server_url_for, headers=hdrs, log=self.log,
             last_sha=self.last_fenlist_sha,
         )

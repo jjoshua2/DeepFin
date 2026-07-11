@@ -76,7 +76,7 @@ class TrialConfig:
     use_deepnorm: bool = False
     policy_encoding: str = "az_4672"
     input_history_encoding: str = "legacy"
-    input_extra_features: str = "v1"
+    input_extra_features: str = "v2_threats"
     use_dynamic_relations: bool = False
     dynamic_relation_count: int = 5
     policy_dynamic_relations: bool = False
@@ -391,7 +391,7 @@ class TrialConfig:
             use_deepnorm=bool(config.get("use_deepnorm", False)),
             policy_encoding=str(config.get("policy_encoding", "az_4672")),
             input_history_encoding=str(config.get("input_history_encoding", "legacy")),
-            input_extra_features=str(config.get("input_extra_features", "v1")),
+            input_extra_features=str(config.get("input_extra_features", "v2_threats")),
             use_dynamic_relations=bool(config.get("use_dynamic_relations", False)),
             dynamic_relation_count=int(config.get("dynamic_relation_count", 5)),
             policy_dynamic_relations=bool(config.get("policy_dynamic_relations", False)),

@@ -24,6 +24,7 @@ model:
   use_deepnorm: false       # startup-only; LC0-style post-norm residual branch scaling
   policy_encoding: lc0_1858  # az_4672 | lc0_1858; startup-only policy target/output encoding. 2026-06-17: az_4672 → lc0_1858 to match production (no config ships the legacy 4672 model output).
   input_history_encoding: legacy  # legacy | lc0_root; startup-only 112-plane history layout
+  input_extra_features: v2_threats  # v2_threats (175 planes) is the default; set v1 explicitly only for a legacy 146-plane checkpoint.
   gradient_checkpointing: false  # ~50% less VRAM, ~20% slower
 
 stockfish:

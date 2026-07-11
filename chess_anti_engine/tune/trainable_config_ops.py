@@ -388,13 +388,18 @@ _RESUME_CONSTRUCTION_BOUND_KEYS = frozenset(
     k for k in (_MODEL_BUILD_KEYS | _OPTIMIZER_CONSTRUCTION_KEYS) if k != "history_rep_fix"
 )
 
-# Opening-asset file paths served by the distributed server, which captures
-# them at process launch (create_app / --opening-*-path). The manifest
-# publisher re-reads config each iteration, so a live change to any of these
-# would advertise a new SHA while the server still serves the launch-time
-# bytes. Frozen against live reload (restart to change); see the reload guard.
+# Opening-BOOK file paths served by the distributed server, which captures
+# them at process launch (create_app / --opening-book-path*). The manifest
+# publisher re-reads config each iteration, so a live change to either of
+# these would advertise a new SHA while the server still serves the
+# launch-time bytes. Frozen against live reload (restart to change); see the
+# reload guard. opening_fen_list_path is NOT in this set — the manifest
+# publisher copies it into publish_dir under a fixed name each iteration
+# (chess_anti_engine/tune/distributed_runtime.py) and the server serves that
+# copy, so a yaml path change there takes effect on the next manifest publish
+# with no restart needed.
 _LAUNCH_FIXED_ASSET_PATH_KEYS = frozenset({
-    "opening_book_path", "opening_book_path_2", "opening_fen_list_path",
+    "opening_book_path", "opening_book_path_2",
 })
 
 
