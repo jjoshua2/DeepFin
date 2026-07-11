@@ -127,6 +127,7 @@ class ThreadedDispatcher:
         target_batch: int | None = None,
         batch_wait_ms: float = 1.0,
         compile_mode: str | None = None,
+        input_bf16: bool = False,
     ) -> None:
   # n_slots=2 is the heart of the async pipeline: while the GPU runs
   # forward K, the dispatcher fills slot 1-K and submits forward K+1.
@@ -137,6 +138,7 @@ class ThreadedDispatcher:
             device=device,
             max_batch=max_batch,
             n_slots=2,
+            input_bf16=input_bf16,
         )
         self._max_batch = int(max_batch)
         self._target_batch = (

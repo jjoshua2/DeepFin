@@ -26,12 +26,23 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 import torch
 
 from chess_anti_engine.inference import BatchEvaluator
 import contextlib
+
+
+@dataclass(slots=True)
+class _CoalesceRequest:
+    x: np.ndarray
+    relations: np.ndarray | None
+    legal_flat: np.ndarray | None
+    legal_counts: np.ndarray | None
+    done: threading.Event
+    result: list
 
 
 class ThreadSafeGPUDispatcher:
@@ -46,6 +57,22 @@ class ThreadSafeGPUDispatcher:
             if relations is not None:
                 return self._eval.evaluate_encoded(x, relations=relations)
             return self._eval.evaluate_encoded(x)
+
+    def evaluate_legal_bf16(
+        self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        with self._lock:
+            return self._eval.evaluate_legal_bf16(  # pyright: ignore[reportAttributeAccessIssue]
+                x, legal_flat, legal_counts,
+            )
+
+    @property
+    def supports_input_bf16_bits(self) -> bool:
+        return bool(getattr(self._eval, "supports_input_bf16_bits", False))
+
+    @property
+    def supports_legal_bf16(self) -> bool:
+        return hasattr(self._eval, "evaluate_legal_bf16")
 
     @property
     def max_batch(self) -> int:
@@ -123,7 +150,7 @@ class BatchCoalescingDispatcher:
         self._inner = inner
         self._max_batch = int(max_batch)
         self._lock = threading.Lock()
-        self._pending: list[tuple[np.ndarray, np.ndarray | None, threading.Event, list]] = []
+        self._pending: list[_CoalesceRequest] = []
         self._wake = threading.Event()
         self._shutdown = threading.Event()
   # Daemon so tests / scripts that forget ``close()`` don't hang at
@@ -158,9 +185,9 @@ class BatchCoalescingDispatcher:
             stranded = self._pending
             self._pending = []
         err = RuntimeError("BatchCoalescingDispatcher is closed")
-        for _, _, ev, res in stranded:
-            res[0] = err
-            ev.set()
+        for request in stranded:
+            request.result[0] = err
+            request.done.set()
         self._wake.set()
         if self._submitter.is_alive():
             self._submitter.join(timeout=30.0)
@@ -182,6 +209,32 @@ class BatchCoalescingDispatcher:
         if n > self._max_batch:
             raise ValueError(
                 f"request batch {n} > coalescer max {self._max_batch}")
+        return self._enqueue(x, relations=relations)
+
+    def evaluate_legal_bf16(
+        self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        counts = np.asarray(legal_counts, dtype=np.int32)
+        flat = np.asarray(legal_flat, dtype=np.int32)
+        if counts.ndim != 1 or counts.shape[0] != int(x.shape[0]):
+            raise ValueError(
+                f"legal_counts must be shape ({x.shape[0]},), got {counts.shape}"
+            )
+        if flat.ndim != 1 or int(counts.sum()) != int(flat.shape[0]):
+            raise ValueError("legal_flat must be 1D with len == sum(legal_counts)")
+        return self._enqueue(x, legal_flat=flat, legal_counts=counts)
+
+    def _enqueue(
+        self,
+        x: np.ndarray,
+        *,
+        relations: np.ndarray | None = None,
+        legal_flat: np.ndarray | None = None,
+        legal_counts: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        n = int(x.shape[0])
+        if n > self._max_batch:
+            raise ValueError(f"request batch {n} > coalescer max {self._max_batch}")
         done = threading.Event()
         result: list[tuple[np.ndarray, np.ndarray] | BaseException | None] = [None]
         with self._lock:
@@ -189,7 +242,9 @@ class BatchCoalescingDispatcher:
   # a submitter thread that's about to exit.
             if self._shutdown.is_set():
                 raise RuntimeError("BatchCoalescingDispatcher is closed")
-            self._pending.append((x, relations, done, result))
+            self._pending.append(_CoalesceRequest(
+                x, relations, legal_flat, legal_counts, done, result,
+            ))
         self._wake.set()
         done.wait()
         got = result[0]
@@ -219,53 +274,78 @@ class BatchCoalescingDispatcher:
   # but defensive) surfaces an error instead of stalling.
                     rows = 0
                     cut = 0
+                    first_legal = self._pending[0].legal_counts is not None
                     for entry in self._pending:
-                        n = entry[0].shape[0]
+                        if (entry.legal_counts is not None) != first_legal:
+                            break
+                        n = entry.x.shape[0]
                         if cut > 0 and rows + n > self._max_batch:
                             break
                         rows += n
                         cut += 1
                     batch = self._pending[:cut]
                     self._pending = self._pending[cut:]
-                xs = np.concatenate([entry[0] for entry in batch], axis=0)
+                xs = np.concatenate([entry.x for entry in batch], axis=0)
   # Relations coalesce exactly like x: all-or-nothing per submit.
   # Mixed submits zero-fill the missing rows (zero matrices == zero
   # bias, identical to the absent-tensor semantics).
                 rels = None
-                if any(entry[1] is not None for entry in batch):
+                if any(entry.relations is not None for entry in batch):
                     rels = np.zeros((xs.shape[0], 5, 64, 64), dtype=np.uint8)
                     off = 0
                     for entry in batch:
-                        n_rows = entry[0].shape[0]
-                        if entry[1] is not None:
-                            rels[off:off + n_rows] = entry[1]
+                        n_rows = entry.x.shape[0]
+                        if entry.relations is not None:
+                            rels[off:off + n_rows] = entry.relations
                         off += n_rows
                 try:
-                    pol, wdl = (
-                        self._inner.evaluate_encoded(xs, relations=rels)
-                        if rels is not None
-                        else self._inner.evaluate_encoded(xs)
-                    )
+                    if first_legal:
+                        legal_flat = np.concatenate([
+                            entry.legal_flat for entry in batch
+                            if entry.legal_flat is not None
+                        ])
+                        legal_counts = np.concatenate([
+                            entry.legal_counts for entry in batch
+                            if entry.legal_counts is not None
+                        ])
+                        pol, wdl = self._inner.evaluate_legal_bf16(
+                            xs, legal_flat, legal_counts,
+                        )
+                    else:
+                        pol, wdl = (
+                            self._inner.evaluate_encoded(xs, relations=rels)
+                            if rels is not None
+                            else self._inner.evaluate_encoded(xs)
+                        )
                 except BaseException as exc:
   # Wake every waiter with the exception so no walker
   # hangs, then drain anything that arrived during the
   # failed submit too.
-                    for _, _, ev, res in batch:
-                        res[0] = exc
-                        ev.set()
+                    for request in batch:
+                        request.result[0] = exc
+                        request.done.set()
                     with self._lock:
                         pending = self._pending
                         self._pending = []
-                    for _, _, ev, res in pending:
-                        res[0] = exc
-                        ev.set()
+                    for request in pending:
+                        request.result[0] = exc
+                        request.done.set()
                     continue
-                offset = 0
-                for x, _, ev, res in batch:
-                    n = x.shape[0]
-                    res[0] = (pol[offset:offset + n], wdl[offset:offset + n])
-                    ev.set()
-                    offset += n
+                row_offset = 0
+                pol_offset = 0
+                for request in batch:
+                    n = request.x.shape[0]
+                    n_pol = (
+                        int(request.legal_counts.sum())
+                        if request.legal_counts is not None else n
+                    )
+                    request.result[0] = (
+                        pol[pol_offset:pol_offset + n_pol],
+                        wdl[row_offset:row_offset + n],
+                    )
+                    request.done.set()
+                    row_offset += n
+                    pol_offset += n_pol
   # Exit only after pending is fully drained — ``close()`` already
   # emptied pending into stranded-err waiters, so at this point
   # there's nothing the submitter can do except leave.
@@ -275,6 +355,17 @@ class BatchCoalescingDispatcher:
     @property
     def max_batch(self) -> int:
         return self._max_batch
+
+    @property
+    def supports_input_bf16_bits(self) -> bool:
+        return bool(getattr(self._inner, "supports_input_bf16_bits", False))
+
+    @property
+    def supports_legal_bf16(self) -> bool:
+        return bool(getattr(
+            self._inner, "supports_legal_bf16",
+            hasattr(self._inner, "evaluate_legal_bf16"),
+        ))
 
 
 class MultiGPUDispatcher:
@@ -310,6 +401,19 @@ class MultiGPUDispatcher:
             with self._select_lock:
                 self._inflight[idx] -= 1
 
+    def evaluate_legal_bf16(
+        self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        idx = self._pick_device()
+        try:
+            with self._locks[idx]:
+                return self._evals[idx].evaluate_legal_bf16(  # pyright: ignore[reportAttributeAccessIssue]
+                    x, legal_flat, legal_counts,
+                )
+        finally:
+            with self._select_lock:
+                self._inflight[idx] -= 1
+
     def _pick_device(self) -> int:
         with self._select_lock:
             best = 0
@@ -333,3 +437,14 @@ class MultiGPUDispatcher:
     def max_batch(self) -> int:
         return int(getattr(self._evals[0], "_max_batch",
                            getattr(self._evals[0], "max_batch", 0)))
+
+    @property
+    def supports_input_bf16_bits(self) -> bool:
+        return all(
+            bool(getattr(evaluator, "supports_input_bf16_bits", False))
+            for evaluator in self._evals
+        )
+
+    @property
+    def supports_legal_bf16(self) -> bool:
+        return all(hasattr(evaluator, "evaluate_legal_bf16") for evaluator in self._evals)

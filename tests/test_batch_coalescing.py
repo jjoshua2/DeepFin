@@ -34,6 +34,55 @@ class _RecordingInner:
                 np.full((n, 3), fill_value=float(n), dtype=np.float32))
 
 
+class _LegalEchoInner(_RecordingInner):
+    supports_input_bf16_bits = True
+
+    def evaluate_legal_bf16(
+        self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        with self._lock:
+            self.submit_sizes.append(x.shape[0])
+        time.sleep(self.submit_sleep)
+        pol = np.asarray(legal_flat, dtype=np.uint16)
+        wdl = np.repeat(x[:, :1, :1, :1].reshape(-1, 1), 3, axis=1).astype(np.float32)
+        assert int(legal_counts.sum()) == int(pol.shape[0])
+        return pol, wdl
+
+
+def test_compact_legal_requests_coalesce_and_slice_by_legal_count() -> None:
+    inner = _LegalEchoInner(submit_sleep=0.02)
+    coalesce = BatchCoalescingDispatcher(inner, max_batch=16)
+    assert coalesce.supports_legal_bf16 is True
+    assert coalesce.supports_input_bf16_bits is True
+    barrier = threading.Barrier(3)
+    results: list[tuple[np.ndarray, np.ndarray] | None] = [None] * 3
+
+    def worker(i: int) -> None:
+        x = np.full((i + 1, 146, 8, 8), i + 10, dtype=np.uint16)
+        counts = np.full((i + 1,), i + 1, dtype=np.int32)
+        legal = np.arange(int(counts.sum()), dtype=np.int32) + i * 100
+        barrier.wait()
+        results[i] = coalesce.evaluate_legal_bf16(x, legal, counts)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=5.0)
+
+    assert all(result is not None for result in results)
+    assert sum(inner.submit_sizes) == 6
+    assert max(inner.submit_sizes) > 1
+    for i, result in enumerate(results):
+        assert result is not None
+        pol, wdl = result
+        expected_n = (i + 1) * (i + 1)
+        np.testing.assert_array_equal(
+            pol, np.arange(expected_n, dtype=np.uint16) + i * 100,
+        )
+        np.testing.assert_array_equal(wdl, np.full((i + 1, 3), i + 10, dtype=np.float32))
+
+
 def test_single_caller_is_batch_one() -> None:
     """One caller, no concurrency — dispatch serializes through as batch=1."""
     inner = _RecordingInner(submit_sleep=0.0)

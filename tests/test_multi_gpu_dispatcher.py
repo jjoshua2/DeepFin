@@ -40,6 +40,7 @@ class _CountingEvaluator:
 def test_multi_gpu_distributes_calls() -> None:
     evaluators = [_CountingEvaluator(f"dev{i}") for i in range(4)]
     dispatcher = MultiGPUDispatcher(evaluators)
+    assert dispatcher.supports_legal_bf16 is False
 
     x = np.zeros((1, 146, 8, 8), dtype=np.float32)
     for _ in range(40):
@@ -100,7 +101,10 @@ def test_multi_gpu_concurrent_callers() -> None:
 def test_multi_gpu_single_device_equivalent() -> None:
     """N=1 should be a valid degenerate case — dispatcher routes all calls
     to the single device, which must work."""
-    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(
+        embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0,
+        input_extra_features="v1",
+    )
     model = build_model(cfg)
     model.eval()
     evaluator = DirectGPUEvaluator(model, device="cpu", max_batch=4, use_amp=False)

@@ -386,6 +386,190 @@ Two exact-command replications after input-hardening/refactoring measured
 moves the absolute times, but all three alternating reads clear the 1.15x gate;
 use the conservative 1.689x first read as the headline until live telemetry.
 
+**Curriculum regret-suffix finalization experiment -- UNREAD (2026-07-10).**
+The selfplay-shaped finalization benchmark returns early from future opponent-
+regret construction and therefore did not measure curriculum games. Hypothesis:
+precomputing integer ply indices and replacing five repeated Python horizon
+walks per record with C-level `bisect` plus `sum` materially reduces curriculum
+finalization while preserving the original ascending floating-point addition
+order. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/profile_python_native_candidates.py --only-finalize --finalize-records
+64 --repeats 3 --compare-curriculum-finalize --paired-rounds 5`. Each round
+alternates the original reference and optimized path on identical curriculum-
+shaped records. Pre-committed SUCCESS: optimized median throughput is >=1.05x
+reference, every exact finalization hash is identical and stable, randomized
+parity covers missing/non-finite/negative regrets and irregular increasing ply
+indices, and focused finalization/adjusted-WDL tests pass. Otherwise FAILED and
+revert the optimization. This changes CPU construction only; no target or live
+config semantics and no salvage snapshot.
+**VERDICT: FAILED and reverted.** The exact alternating yardstick measured the
+reference at 13.319 ms and the `bisect`/`sum` version at 17.635 ms, only
+**0.755268x** reference throughput (24.5% slower), while every run retained the
+identical stable hash `cf16b2dbed33e358`. The C-level search did not offset
+building five list slices and invoking five sums per record. Focused tests and
+lint passed before the timing, but the performance gate failed, so none of the
+runtime, benchmark, or test changes were retained.
+
+**Stockfish host-native PGO build experiment -- UNREAD (2026-07-10).** The
+production engine is the official `Stockfish dev-20260420-ed651aab` generic
+`x86-64-bmi2` binary, while the host is an AMD Ryzen 9 5950X with AVX2/BMI2.
+Hypothesis: rebuilding the identical source release with Stockfish's supported
+`make -j profile-build ARCH=native` path produces a useful node-throughput gain
+without changing deterministic search results. Build in an isolated `/tmp`
+copy; do not replace the live binary during this experiment. ONE deciding
+yardstick: `PYTHONPATH=. python3 scripts/bench_stockfish_build.py --baseline
+/home/josh/local_stockfish/extract/usr/games/stockfish --candidate
+/tmp/stockfish-native/src/stockfish --rounds 5 --cpu 15 --hash-mb 16 --threads
+1 --depth 13`. The harness warms both binaries, alternates order, and uses
+Stockfish's 51-position bench. Pre-committed SUCCESS: candidate median nodes/s
+is >=1.03x baseline, every best-move/node-count semantic hash is identical, and
+the candidate reports the same Stockfish source identity. Otherwise FAILED and
+keep the official BMI2 binary. A successful result still requires a production-
+shaped fixed-node MultiPV confirmation before any live path change. No training
+or data change and no salvage snapshot.
+**VERDICT: FAILED; keep the official BMI2 binary.** The exact alternating
+yardstick measured the official baseline at 1,312,114 nodes/s and the local
+host-native PGO+LTO candidate at 1,167,073 nodes/s, only **0.889460x** baseline
+throughput (11.1% slower). Both binaries identified as
+`Stockfish dev-20260420-ed651aab`; all five rounds produced the identical
+best-move/node semantic hash `433cd809ad16ef93` and node count 2,723,949. The
+source/architecture premise was valid but local GCC 11 code generation lost to
+the official release build, so do not replace the engine and do not run the
+production MultiPV confirmation for this failed candidate.
+
+**Stockfish Clang PGO build experiment -- UNREAD (2026-07-10).** GCC 11
+host-native PGO was 11.1% slower than the official binary, but Clang 14 is now
+installed and Stockfish provides a distinct supported `COMP=clang` PGO+LTO
+recipe. Hypothesis: Clang's code generation closes the release-binary gap and
+produces a useful same-source speedup. Rebuild the isolated source with
+`make -j profile-build ARCH=native COMP=clang GIT_SHA=ed651aab
+GIT_DATE=20260420`; do not touch the live binary. ONE deciding yardstick is the
+same alternating `scripts/bench_stockfish_build.py` command and settings as the
+preceding experiment. Pre-committed SUCCESS: candidate median nodes/s >=1.03x
+the official baseline, exact best-move/node-count hashes match across all
+rounds, and source identity matches. Otherwise FAILED and keep the official
+binary. A win still needs production MultiPV confirmation before deployment.
+No training/data change and no salvage snapshot.
+**VERDICT: FAILED at the toolchain gate; no candidate was deployed or timed.**
+Clang 14 compiled and linked the instrumented binary after redirecting the
+Windows `TMP`/`TEMP` variables to writable `/tmp`, and its PGO training bench
+completed with the exact 2,723,949-node workload. The required profile-use
+stage then failed because matching `llvm-profdata` is not installed (the
+user's package installation could not fetch it). A non-PGO Clang binary would
+not test the registered hypothesis or compare fairly with the release build,
+so this arm ends here and the official BMI2 binary remains production.
+
+**GCC 15.3 Stockfish PGO experiment -- UNREAD (2026-07-10).** GCC 11's
+same-source PGO build was 11.1% slower than the official engine, so the open
+question is compiler generation rather than architecture flags. Hypothesis:
+an isolated, upstream-source GCC 15.3 toolchain closes that gap and may beat
+the official `dev-20260420-ed651aab` BMI2 binary on this Zen 3 host. Build only
+C/C++ under `/tmp/gcc-15.3-install` (no system compiler replacement), then
+rebuild the identical Stockfish source with `make -j profile-build ARCH=native
+COMP=gcc COMPCXX=/tmp/gcc-15.3-install/bin/g++ GIT_SHA=ed651aab
+GIT_DATE=20260420`. ONE deciding yardstick: the same five-round alternating
+`scripts/bench_stockfish_build.py` command/settings as the prior compiler
+experiments. Pre-committed SUCCESS: candidate median nodes/s >=1.03x official,
+all best-move/node hashes are identical, and source identity matches. Otherwise
+FAILED and keep the official binary. A winner still needs a fixed-node MultiPV
+confirmation before deployment. No training/data change or salvage snapshot.
+**VERDICT: FAILED; keep the official Stockfish binary.** The exact five-round
+alternating yardstick measured 541,110 nodes/s for the official binary and
+539,502 nodes/s for the GCC 15.3 host-native PGO+LTO candidate, a **0.997028x**
+ratio versus the required 1.03x. Every run retained node count 2,723,949 and
+semantic hash `433cd809ad16ef93`; both binaries report
+`dev-20260420-ed651aab`. GCC 15 closed GCC 11's 11.1% deficit but did not beat
+the release toolchain, so no MultiPV confirmation or deployment is warranted.
+
+**GCC 15.3 project-extension experiment -- UNREAD (2026-07-10).** Hypothesis:
+GCC 15.3 improves the production BF16 LC0 encoder beyond the current GCC 11
+`-march=native -flto` build without changing any encoded output. ONE deciding
+yardstick: extend the existing controlled compiler harness to alternate
+`gcc11-native-lto` and `gcc15-native-lto`, then run `PYTHONPATH=. python3
+scripts/bench_native_build_flags.py --modes gcc11-native-lto
+gcc15-native-lto --rounds 5 --samples 7 --iterations 200 --cpu 15`. Pre-
+committed SUCCESS: GCC15/GCC11 median BF16 throughput >=1.01x, exact hashes
+match for every extension, the full focused native test set passes under the
+GCC15 build, and no measured component is below 0.98x. Otherwise FAILED and
+rebuild production with GCC 11 native+LTO. This is a compiler-only change with
+no data semantics or salvage snapshot.
+**VERDICT: SUCCESS.** The exact five-round alternating yardstick produced
+GCC15/GCC11 ratios of **1.0272 BF16**, 1.0277 F32, 1.0640 move generation,
+and 1.0761 WDL conversion; production geometric mean **1.0556x**. Every round
+matched the exact F32/BF16 hashes, no component fell below 0.98x, and 138
+focused native tests passed (1 skipped). Keep GCC 15.3 native+LTO for local
+production extension builds. Median forced-build time increased 24.9s ->
+40.4s, an acceptable ~15.6s edit/rebuild cost for the measured runtime gain.
+
+**Native BF16 fallback/match-input experiment -- UNREAD (2026-07-11).** The
+live distributed RL path was re-verified after this entry was drafted: it uses
+`SlotInferenceClient` and `SlotBroker`, which already transport native BF16
+input bits. The remaining widening is limited to the worker-local threaded
+fallback and match-style direct evaluator paths, where `DirectGPUEvaluator` is
+constructed with `input_bf16=False`. Hypothesis: wiring its existing pinned
+BF16 input path removes widening and halves H2D traffic in those paths without
+changing model outputs, because inference autocast already executes the first
+projection in BF16. ONE deciding yardstick: run
+`scripts/bench_worker_legal_policy.py` on the same current checkpoint with
+`--policy-path dense --input-path widened` versus `--policy-path dense
+--input-path native-bf16`, batch 680, max-autotune, three warmups and 20 timed
+iterations, alternating order for three rounds. Pre-committed SUCCESS:
+native/widened median positions/s >=1.03x, exact output hashes match every
+round, and focused dispatcher/broker/MCTS tests pass. Otherwise FAILED and
+leave fallback/match input widening unchanged. This candidate does not claim an
+RL broker gain. Offline inference-only; no data change or salvage snapshot. Run
+this before the legal-policy experiment so each A/B changes only one path.
+
+**Compiled legal-policy inference experiment -- UNREAD (2026-07-11).**
+Production workers already transport only legal policy indices and BF16 input,
+but a compiled model defaults `CAE_COMPILED_LEGAL_POLICY` off and therefore
+executes the dense 1,858-logit policy head before gathering legal logits.
+Hypothesis: compiling the checkpoint's `forward_legal_policy` graph removes
+enough policy-head work to improve worker inference throughput without changing
+BF16 outputs. ONE deciding yardstick: run `scripts/bench_worker_legal_policy.py`
+on the same current checkpoint with `--path dense` and `--path legal`, batch 680,
+32 legal moves/position, `--input-path widened`, max-autotune, three warmups and 20 timed iterations,
+alternating path order for three rounds after the duplicate live Ray trees are
+stopped. Pre-committed SUCCESS: legal/dense median positions/s >=1.03x, every
+round's exact output hash matches between paths, and the focused transformer,
+dispatcher, broker, and native MCTS tests pass. Otherwise FAILED and leave the
+compiled legal gate off. This is an offline inference-only experiment; no data
+or training change and no salvage snapshot.
+
+**UCI compact-BF16 transport experiment -- UNREAD (2026-07-11).** Match play's
+compiled evaluator is wrapped by `ThreadSafeGPUDispatcher` and
+`BatchCoalescingDispatcher`; neither forwards the legal-policy BF16 API or the
+native-BF16 capability, so single-game Gumbel computes/transports dense FP32
+policy outputs and FP32 inputs even though the underlying evaluator and C tree
+support compact legal BF16. Hypothesis: forwarding and coalescing that API,
+with native BF16 pinned inputs enabled under `CAE_UCI_COMPACT_BF16=1`, improves
+match-search throughput without changing selected moves. ONE deciding
+yardstick: alternate three rounds of `CAE_UCI_COMPACT_BF16=0` and `=1` running
+`PYTHONPATH=. python3 scripts/bench_uci_engine.py --checkpoint <current-copy>
+--device cuda --nodes 8192 --repeats 3 --chunk-sims 512 --topk 32 --max-batch
+1024 --compile-mode max-autotune`. Pre-committed SUCCESS: candidate/control
+median aggregate sims/s >=1.05x, every per-position bestmove agrees, no search
+times out, compile counters show no new graph breaks/recompiles, and focused
+dispatcher/Gumbel/UCI tests pass. Otherwise FAILED and keep the env default
+off. Match-inference implementation only; no training/data change or salvage
+snapshot.
+
+**Broker recycled-response coalescing experiment -- UNREAD (2026-07-11).**
+Live post-recovery telemetry shows only ~34-55 positions and 1.3-2.1 of 16
+slots per batch, typically 1.5-3.2k pos/s, despite a 20 ms hard cap and 2 ms
+adaptive-idle window. `_gather_more_within_window` returns immediately when
+all non-ready slots are `RESPONSE`, incorrectly assuming they cannot be
+consumed and become a new `REQUEST` during the window. Hypothesis: allowing
+response slots to recycle until the adaptive idle deadline restores intended
+coalescing and materially raises broker throughput. ONE deciding yardstick at
+the next natural restart: compare ten consecutive steady-state `[broker]`
+windows against the current-session baseline using the same production config;
+pre-committed SUCCESS is median positions/batch >=1.20x and median pos/s >=1.15x,
+with client roundtrip p95 not worse by >10%, exact inference parity tests, and a
+deterministic response-to-request transition test proving recycled slots join
+the pending batch. Otherwise revert the gather condition. No model/data
+semantic change and no salvage snapshot; restart-gated broker implementation.
+
 **Vectorized finalization-target experiment -- UNREAD (2026-07-10).**
 Hypothesis: vectorizing the fixed-width MultiPV move remap and SF-P0 regret
 construction removes the repeated per-row policy-encoding/string work that is
