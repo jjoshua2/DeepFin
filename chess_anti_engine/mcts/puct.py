@@ -59,11 +59,7 @@ class MCTSConfig:
     amp_dtype: str = "auto"
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V2_THREATS
-<<<<<<< HEAD
-    policy_encoding: str = POLICY_ENCODING_AZ_4672
-=======
     policy_encoding: str = MODEL_POLICY_ENCODING
->>>>>>> origin/main
   # PUCT paths do not transport dynamic relations; setting this raises so a
   # relations model can't silently search without its bias (fail loud).
     compute_relations: bool = False

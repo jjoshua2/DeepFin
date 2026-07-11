@@ -135,11 +135,7 @@ class GumbelConfig:
     gumbel_scale: float = 1.0
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V2_THREATS
-<<<<<<< HEAD
-    policy_encoding: str = POLICY_ENCODING_AZ_4672
-=======
     policy_encoding: str = MODEL_POLICY_ENCODING
->>>>>>> origin/main
   # Compute dynamic board-relation matrices per eval and pass them to the
   # evaluator as attention-bias input (model.use_dynamic_relations).
     compute_relations: bool = False
