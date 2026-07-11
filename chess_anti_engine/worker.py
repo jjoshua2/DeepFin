@@ -840,6 +840,12 @@ class WorkerSession:
         self.model_step = 0
         self._saw_completed_game = False
         self._stop_selfplay = False
+  # Train-phase pause: HOLD in-flight games (play_batch pause_fn) instead of
+  # tearing the session down — teardown discards every partial game (~all
+  # slots) each iteration and censors games longer than one selfplay window
+  # out of replay. Env CAE_WORKER_STOP_ON_PAUSE=1 restores the old teardown.
+        self._hold_selfplay = False
+        self._hold_on_pause = os.environ.get("CAE_WORKER_STOP_ON_PAUSE", "") != "1"
         self._upload_buf_lock: threading.Lock | None = None  # set when threaded
         self._pending_upload_lock = threading.Lock()
         self._last_manifest_poll_s: float = 0.0
@@ -908,6 +914,11 @@ class WorkerSession:
     def _stop_fn(self) -> bool:
         """Called every ply by play_batch.  Return True to exit continuous selfplay."""
         return self._stop_selfplay
+
+    def _pause_fn(self) -> bool:
+        """play_batch hold gate: True while the server's train-phase pause is
+        active. A pending stop always wins so teardown is never delayed."""
+        return self._hold_selfplay and not self._stop_selfplay
 
     def run(self) -> None:
         """Main loop."""
@@ -1363,7 +1374,10 @@ class WorkerSession:
   # If paused, stop continuous selfplay so the outer loop can
   # re-poll properly.  Transient failures are retried next cycle.
                 if self.pause_selfplay_active:
-                    self._stop_selfplay = True
+                    if self._hold_on_pause:
+                        self._hold_selfplay = True
+                    else:
+                        self._stop_selfplay = True
                 return
             task_type = str((manifest.get("task") or {}).get("type", "selfplay")).lower()
             if task_type != "selfplay":
@@ -2011,6 +2025,7 @@ class WorkerSession:
             if self.pause_selfplay_active:
                 self.log.info("selfplay pause cleared by server")
                 self.pause_selfplay_active = False
+                self._hold_selfplay = False
             return False
         if not self.pause_selfplay_active:
             self.log.info("selfplay paused by server%s", f": {pause_reason}" if pause_reason else "")
@@ -2708,6 +2723,7 @@ class WorkerSession:
                 on_timing=self._record_selfplay_phase_timing,
                 on_step=self._check_model_update if tid == 0 else None,
                 stop_fn=self._stop_fn,
+                pause_fn=self._pause_fn,
                 fen_dole_queue=fen_dole_queue,  # shared across threads (drained once total)
                 **cfgs,
             )
@@ -2752,6 +2768,7 @@ class WorkerSession:
                     on_step=self._check_model_update,
                     on_state_ready=self._set_active_state,
                     stop_fn=self._stop_fn,
+                    pause_fn=self._pause_fn,
                     fen_dole_queue=fen_dole_queue,
                     **cfgs,
                 )
@@ -2798,6 +2815,7 @@ class WorkerSession:
     def _run_selfplay(self, manifest: dict) -> None:
         """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
         self._stop_selfplay = False
+        self._hold_selfplay = False
         self._last_manifest_poll_s = time.time()
         reco = manifest.get("recommended_worker") or {}
         self._active_reco = self._snapshot_reco(reco)
