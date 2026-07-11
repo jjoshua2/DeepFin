@@ -38,7 +38,7 @@ pytestmark = pytest.mark.skipif(SF_PATH is None, reason="Stockfish not found (ru
 # ---------------------------------------------------------------------------
 
 POLICY_SIZE = 4672
-INPUT_PLANES = 146
+INPUT_PLANES = 175
 
 
 def _stockfish_path() -> str:

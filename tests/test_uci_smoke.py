@@ -32,7 +32,7 @@ def _make_tiny_checkpoint(tmp_path: Path) -> Path:
     model = build_model(cfg)
     torch.save({"model": model.state_dict(), "step": 0}, ckpt_dir / "trainer.pt")
     with (tmp_path / "params.json").open("w") as fh:
-        json.dump({"model": "tiny"}, fh)
+        json.dump({"model": "tiny", "input_extra_features": "v2_threats"}, fh)
     return ckpt_dir
 
 

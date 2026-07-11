@@ -268,7 +268,10 @@ def run_gumbel_root_many_c(
     root_cboards = cboards if cboards is not None else [CBoard.from_board(b) for b in boards]
 
     _has_async = hasattr(eval_impl, 'evaluate_encoded_async')
-    _has_legal_bf16 = hasattr(eval_impl, "evaluate_legal_bf16")
+    _has_legal_bf16 = (
+        hasattr(eval_impl, "evaluate_legal_bf16")
+        and bool(getattr(eval_impl, "supports_legal_bf16", True))
+    )
     _has_input_bf16 = (
         batch_encode_bf16 is not None
         and bool(getattr(eval_impl, "supports_input_bf16_bits", False))

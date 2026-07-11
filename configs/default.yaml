@@ -24,6 +24,7 @@ model:
   use_deepnorm: false       # startup-only; LC0-style post-norm residual branch scaling
   policy_encoding: lc0_1858  # only model encoding; ChessNet hard-codes compact 1858 (az_4672 rejected). Search still uses full 4672 action ids.
   input_history_encoding: legacy  # legacy | lc0_root; startup-only 112-plane history layout
+  input_extra_features: v2_threats  # v2_threats (175 planes) is the default; set v1 explicitly only for a legacy 146-plane checkpoint.
   gradient_checkpointing: false  # ~50% less VRAM, ~20% slower
 
 stockfish:

@@ -28,6 +28,19 @@ BUILD_MODES: dict[str, dict[str, str]] = {
         "CAE_EXT_NATIVE": "1",
         "CAE_EXT_LTO": "1",
     },
+    "gcc11-native-lto": {
+        "CC": "/usr/bin/gcc",
+        "CAE_EXT_NATIVE": "1",
+        "CAE_EXT_LTO": "1",
+    },
+    "gcc15-native-lto": {
+        "CC": os.environ.get(
+            "CAE_GCC15_CC",
+            str(Path.home() / ".local/gcc-15.3/bin/gcc"),
+        ),
+        "CAE_EXT_NATIVE": "1",
+        "CAE_EXT_LTO": "1",
+    },
 }
 
 
@@ -111,7 +124,7 @@ def _mode_environment(mode: str) -> dict[str, str]:
     env = os.environ.copy()
     for name in (
         "CAE_EXT_NATIVE", "CAE_EXT_LTO", "CAE_EXT_SANITIZE",
-        "CFLAGS", "LDFLAGS",
+        "CC", "CFLAGS", "LDFLAGS",
     ):
         env.pop(name, None)
     env.update(BUILD_MODES[mode])

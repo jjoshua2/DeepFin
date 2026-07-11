@@ -46,7 +46,7 @@ from chess_anti_engine.uci.time_manager import Deadline
 
 
 def _make_evaluator(max_batch: int = 64) -> Any:
-    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
     model.eval()
     inner = DirectGPUEvaluator(
@@ -112,7 +112,7 @@ def _make_pool(
 ) -> RootParallelGumbelPool:
     evaluators = [_DeterministicStubEvaluator(sleep_s=sleep_s) for _ in range(g)]
     cfg = RootParallelGumbelConfig(n_groups=g, gather=gather)
-    gcfg = GumbelConfig(
+    gcfg = GumbelConfig(input_extra_features="v1",
         simulations=64, topk=topk, add_noise=True, gumbel_scale=1.0,
         temperature=0.0,
     )
@@ -427,7 +427,7 @@ def test_prepare_root_honors_terminal_shortcut_gate() -> None:
 def _make_worker(chunk_sims: int = 64) -> SearchWorker:
     return SearchWorker(
         _make_evaluator(max_batch=64), device="cpu",
-        gumbel_cfg=GumbelConfig(
+        gumbel_cfg=GumbelConfig(input_extra_features="v1",
             simulations=chunk_sims, add_noise=False, temperature=0.0,
         ),
         chunk_sims=chunk_sims, n_walkers=1,
@@ -610,7 +610,7 @@ def test_engine_leaving_gumbel_restores_use_vl() -> None:
     # Primary evaluator is 2-slot async so UseVL can install.
     worker = SearchWorker(
         _make_evaluator(max_batch=64), device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False, temperature=0.0),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False, temperature=0.0),
         chunk_sims=64, n_walkers=1,
     )
     worker.set_use_pucv(True, gather=32)
@@ -752,7 +752,7 @@ def test_install_rpg_wires_eval_cache_entries() -> None:
     """EvalCacheEntries must reach per-group PucvChunkers (not a silent no-op)."""
     worker = SearchWorker(
         _make_evaluator(max_batch=64), device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False, temperature=0.0),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False, temperature=0.0),
         chunk_sims=64, n_walkers=1, eval_cache_entries=128,
     )
     try:
@@ -794,7 +794,7 @@ def test_option_matrix_multi_gpu_transitions() -> None:
     # restores UseVL (regression found in option-matrix recheck).
     worker = SearchWorker(
         _make_evaluator(max_batch=64), device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=32, add_noise=False, temperature=0.0),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=32, add_noise=False, temperature=0.0),
         chunk_sims=32, n_walkers=1,
     )
     worker.set_use_pucv(True, gather=32)
@@ -885,7 +885,7 @@ def test_option_matrix_multi_gpu_transitions() -> None:
     # E: gumbel → VLGather / EvalCacheEntries keep RPG and apply knobs
     worker = SearchWorker(
         _make_evaluator(max_batch=64), device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=32, add_noise=False, temperature=0.0),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=32, add_noise=False, temperature=0.0),
         chunk_sims=32, n_walkers=1, eval_cache_entries=0,
     )
     engine = Engine(
@@ -965,7 +965,7 @@ def test_terminal_candidate_respects_stop_event() -> None:
 
 def test_pool_rejects_bad_construction() -> None:
     cfg = RootParallelGumbelConfig(n_groups=2)
-    gcfg = GumbelConfig()
+    gcfg = GumbelConfig(input_extra_features="v1", )
     with pytest.raises(ValueError, match="need 2 evaluators"):
         RootParallelGumbelPool(
             cfg, gcfg, evaluators=[_DeterministicStubEvaluator()],

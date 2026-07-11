@@ -70,7 +70,7 @@ def test_gumbel_root_many_empty_diagnostics_shape() -> None:
         [],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(),
+        cfg=GumbelConfig(input_extra_features="v1", ),
         return_diagnostics=True,
     )
 
@@ -79,7 +79,7 @@ def test_gumbel_root_many_empty_diagnostics_shape() -> None:
 
 def _tiny_model() -> torch.nn.Module:
     model = build_model(
-        ModelConfig(
+        ModelConfig(input_extra_features="v1",
             kind="tiny",
             embed_dim=64,
             num_layers=1,
@@ -135,7 +135,7 @@ def test_gumbel_python_takes_immediate_mate_over_high_prior_stalemate():
         [board],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=1, topk=1, temperature=0.0, add_noise=False),
         evaluator=cast(Any, object()),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
@@ -159,7 +159,7 @@ def test_gumbel_c_takes_immediate_mate_over_high_prior_stalemate():
         [board],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=1, topk=1, temperature=0.0, add_noise=False),
         evaluator=cast(Any, object()),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
@@ -183,7 +183,7 @@ def test_gumbel_c_can_disable_terminal_root_shortcuts():
         [board],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=1, topk=1, temperature=0.0, add_noise=False),
         evaluator=cast(Any, object()),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
@@ -228,7 +228,7 @@ def test_gumbel_python_avoids_high_prior_stalemate_when_root_is_winning():
         [board],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=1, topk=1, temperature=0.0, add_noise=False),
         evaluator=_ZeroEvaluator(),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
@@ -254,7 +254,7 @@ def test_gumbel_c_avoids_high_prior_stalemate_when_root_is_winning():
         [board],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=1, topk=1, temperature=0.0, add_noise=False),
         evaluator=_ZeroEvaluator(),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
@@ -273,7 +273,7 @@ def test_gumbel_c_rebuilds_reused_root_missing_allowed_action():
         board,
         root_wdl_logits=np.array([[10.0, -10.0, -10.0]], dtype=np.float32),
     )
-    cfg = GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False)
+    cfg = GumbelConfig(input_extra_features="v1", simulations=1, topk=1, temperature=0.0, add_noise=False)
     tree = MCTSTree()
 
     run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
@@ -328,7 +328,7 @@ def test_gumbel_c_allows_high_prior_stalemate_when_root_is_losing():
         [board],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=1, topk=1, temperature=0.0, add_noise=False),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=1, topk=1, temperature=0.0, add_noise=False),
         evaluator=cast(Any, object()),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
@@ -343,7 +343,7 @@ def test_gumbel_c_allows_high_prior_stalemate_when_root_is_losing():
 def test_gumbel_root_many_returns_values_for_edge_cases():
     # Tiny CPU model is enough; we just want shape/length invariants.
     m = build_model(
-        ModelConfig(
+        ModelConfig(input_extra_features="v1",
             kind="tiny",
             embed_dim=64,
             num_layers=1,
@@ -369,7 +369,7 @@ def test_gumbel_root_many_returns_values_for_edge_cases():
         [b0, b1, chess.Board()],
         device="cpu",
         rng=rng,
-        cfg=GumbelConfig(simulations=8, topk=8, temperature=1.0),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=8, topk=8, temperature=1.0),
     )
 
     assert len(probs_list) == 3
@@ -391,7 +391,7 @@ def test_gumbel_root_many_empty_batch_returns_four_lists():
         [],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=8, topk=8, temperature=1.0),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=8, topk=8, temperature=1.0),
         evaluator=cast(Any, lambda x: (x, x)),
     )
 
@@ -417,7 +417,7 @@ def test_gumbel_root_many_precomputed_logits_matches_direct_path():
     pre_pol = policy_out.detach().float().cpu().numpy()
     pre_wdl = out["wdl"].detach().float().cpu().numpy()
 
-    cfg = GumbelConfig(
+    cfg = GumbelConfig(input_extra_features="v1",
         simulations=8,
         topk=8,
         temperature=0.0,
@@ -464,7 +464,7 @@ def test_gumbel_root_many_accepts_compact_precomputed_logits():
         [board],
         device="cpu",
         rng=np.random.default_rng(123),
-        cfg=GumbelConfig(
+        cfg=GumbelConfig(input_extra_features="v1",
             simulations=1,
             topk=8,
             temperature=0.0,
@@ -493,7 +493,7 @@ def test_gumbel_root_many_honors_per_game_simulation_budgets():
         boards,
         device="cpu",
         rng=np.random.default_rng(123),
-        cfg=GumbelConfig(simulations=8, topk=8, temperature=0.0, add_noise=False),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=8, topk=8, temperature=0.0, add_noise=False),
         evaluator=cast(Any, _ZeroEvaluator()),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
@@ -543,7 +543,7 @@ def test_gumbel_c_applies_tb_root_override_with_precomputed_logits():
         [board],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=4, temperature=1.0, add_noise=False),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=4, temperature=1.0, add_noise=False),
         evaluator=cast(Any, object()),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
@@ -568,7 +568,7 @@ def test_gumbel_c_can_skip_cached_tb_root_override():
         [board],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=4, temperature=1.0, add_noise=False),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=4, temperature=1.0, add_noise=False),
         evaluator=cast(Any, object()),
         pre_pol_logits=pre_pol,
         pre_wdl_logits=pre_wdl,
@@ -594,7 +594,7 @@ def test_gumbel_c_accepts_compact_precomputed_logits():
         [board],
         device="cpu",
         rng=np.random.default_rng(123),
-        cfg=GumbelConfig(
+        cfg=GumbelConfig(input_extra_features="v1",
             simulations=1,
             topk=8,
             temperature=0.0,
@@ -621,7 +621,7 @@ def test_gumbel_python_widens_compact_evaluator_logits():
         [board],
         device="cpu",
         rng=np.random.default_rng(123),
-        cfg=GumbelConfig(
+        cfg=GumbelConfig(input_extra_features="v1",
             simulations=1,
             topk=8,
             temperature=0.0,
@@ -647,7 +647,7 @@ def test_gumbel_c_widens_compact_evaluator_logits():
         [board],
         device="cpu",
         rng=np.random.default_rng(123),
-        cfg=GumbelConfig(
+        cfg=GumbelConfig(input_extra_features="v1",
             simulations=1,
             topk=8,
             temperature=0.0,
@@ -709,7 +709,7 @@ def test_gumbel_root_many_draw_terminal_root_returns_zero_policy():
         [bare_kings],
         device="cpu",
         rng=np.random.default_rng(0),
-        cfg=GumbelConfig(simulations=8, temperature=0.0, add_noise=False),
+        cfg=GumbelConfig(input_extra_features="v1", simulations=8, temperature=0.0, add_noise=False),
     )
 
     assert actions == [0]
@@ -733,7 +733,7 @@ def test_gumbel_c_matches_python_on_history_and_terminal_draws():
     bare_kings = chess.Board("8/8/8/8/8/8/4k3/4K3 w - - 0 1")
     boards = [repeated, opening, bare_kings]
 
-    cfg = GumbelConfig(simulations=16, temperature=0.0, add_noise=False)
+    cfg = GumbelConfig(input_extra_features="v1", simulations=16, temperature=0.0, add_noise=False)
     run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
     py = run_gumbel_root_many(
         model,
@@ -802,7 +802,7 @@ def test_gumbel_c_pipeline_path():
             b.push_san(san)
         boards[i] = b
 
-    cfg = GumbelConfig(simulations=16, temperature=1.0, add_noise=True)
+    cfg = GumbelConfig(input_extra_features="v1", simulations=16, temperature=1.0, add_noise=True)
     run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
 
     # Sequential path (sync evaluator)

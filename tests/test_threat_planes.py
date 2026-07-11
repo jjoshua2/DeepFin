@@ -33,6 +33,12 @@ _ATTACKED_BY_US = 34
 _ATTACKED_BY_THEM = 35
 _HANGING_US = 50
 _HANGING_THEM = 51
+
+
+def test_new_model_defaults_to_v2_threat_planes() -> None:
+    assert ModelConfig().input_extra_features == EXTRA_FEATURES_V2_THREATS
+    assert input_plane_count(ModelConfig().input_extra_features) == 175
+    assert input_plane_count(EXTRA_FEATURES_V1) == 146
 _CHEAPER_US = 52
 _CHEAPER_THEM = 53
 _SAFE_CHECK_N = 54

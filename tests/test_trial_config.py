@@ -15,6 +15,7 @@ def test_from_empty_dict() -> None:
     assert tc.model == "transformer"
     assert tc.categorical_blend_frac == 0.0  # off by default
     assert tc.embed_dim == 256
+    assert tc.input_extra_features == "v2_threats"
     assert tc.lr == 0.0003
     assert tc.optimizer == "nadamw"
     assert tc.sf_nodes == 500

@@ -242,7 +242,7 @@ def test_live_shard_sampler_rescans_and_samples_new_shards(tmp_path) -> None:
     save_local_shard_arrays(local_shard_path(tmp_path, 0), arrs=arrays(3), meta={"positions": 3})
     sampler = _LiveShardSampler(
         replay_dir=tmp_path,
-        model_cfg=ModelConfig(kind="transformer"),
+        model_cfg=ModelConfig(kind="transformer", input_extra_features="v1"),
         rng=np.random.default_rng(1),
         prefer_recorded_lc0_root=False,
         synthetic_lc0_root_history=False,
@@ -263,6 +263,7 @@ def test_live_shard_sampler_rescans_and_samples_new_shards(tmp_path) -> None:
 def test_calibrate_global_board_adapter_hits_requested_rms_ratio(tmp_path) -> None:
     model_cfg = ModelConfig(
         kind="transformer",
+        input_extra_features="v1",
         embed_dim=32,
         num_layers=1,
         num_heads=4,
@@ -306,6 +307,7 @@ def test_calibrate_global_board_adapter_hits_requested_rms_ratio(tmp_path) -> No
 def test_calibrate_global_board_adapter_rejects_checkpoint_init(tmp_path) -> None:
     model_cfg = ModelConfig(
         kind="transformer",
+        input_extra_features="v1",
         embed_dim=32,
         num_layers=1,
         num_heads=4,

@@ -127,6 +127,8 @@ class ThreadedDispatcher:
         target_batch: int | None = None,
         batch_wait_ms: float = 1.0,
         compile_mode: str | None = None,
+        input_bf16: bool = False,
+        legal_bf16: bool = True,
     ) -> None:
   # n_slots=2 is the heart of the async pipeline: while the GPU runs
   # forward K, the dispatcher fills slot 1-K and submits forward K+1.
@@ -137,6 +139,8 @@ class ThreadedDispatcher:
             device=device,
             max_batch=max_batch,
             n_slots=2,
+            input_bf16=input_bf16,
+            legal_bf16=legal_bf16,
         )
         self._max_batch = int(max_batch)
         self._target_batch = (
@@ -207,6 +211,14 @@ class ThreadedDispatcher:
                 "check_dynamic_relations_transport)"
             )
         return self.evaluate(x).result()
+
+    @property
+    def supports_legal_bf16(self) -> bool:
+        # Forward the inner evaluator's opt-out (CAE_UCI_COMPACT_BF16 gate).
+        return bool(getattr(
+            self._evaluator, "supports_legal_bf16",
+            hasattr(self._evaluator, "evaluate_legal_bf16"),
+        ))
 
     def evaluate_legal_bf16(
         self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,

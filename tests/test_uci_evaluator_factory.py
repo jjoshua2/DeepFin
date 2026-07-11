@@ -29,9 +29,13 @@ class _FakeDirectEvaluator:
         device: str,
         max_batch: int,
         n_slots: int,
+        input_bf16: bool = False,
+        legal_bf16: bool = True,
     ) -> None:
         del model, device, n_slots
         self._max_batch = int(max_batch)
+        self.input_bf16 = bool(input_bf16)
+        self.supports_legal_bf16 = bool(legal_bf16)
 
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         rows = int(x.shape[0])
@@ -71,6 +75,52 @@ def test_compiled_single_walker_uses_submitter_dispatcher(
     )
     evaluator = factory(max_batch=64, eval_cache_entries=0)
     assert isinstance(evaluator, BatchCoalescingDispatcher)
+
+
+def test_compact_bf16_env_reaches_direct_evaluator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CAE_UCI_COMPACT_BF16", "1")
+    monkeypatch.setattr(uci_main, "DirectGPUEvaluator", _FakeDirectEvaluator)
+    monkeypatch.setattr(uci_main, "_warmup_evaluator", _skip_warmup)
+    monkeypatch.setattr(torch, "compile", _compile_identity)
+
+    factory = uci_main._make_evaluator_factory(
+        [_TinyModule()], ["cuda"], coalesce=True, n_walkers=1,
+        walker_gather=1, compile_mode="max-autotune",
+    )
+    evaluator = factory(max_batch=64, eval_cache_entries=0)
+    assert isinstance(evaluator, BatchCoalescingDispatcher)
+    thread_safe = evaluator._inner
+    assert isinstance(thread_safe, ThreadSafeGPUDispatcher)
+    assert getattr(thread_safe._eval, "input_bf16", False) is True
+    assert getattr(thread_safe._eval, "supports_legal_bf16", False) is True
+    assert evaluator.supports_legal_bf16 is True
+    evaluator.close()
+
+
+def test_compact_bf16_env_off_disables_legal_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default (env unset / 0) must keep compact legal-policy opt-in off."""
+    monkeypatch.delenv("CAE_UCI_COMPACT_BF16", raising=False)
+    monkeypatch.setattr(uci_main, "DirectGPUEvaluator", _FakeDirectEvaluator)
+    monkeypatch.setattr(uci_main, "_warmup_evaluator", _skip_warmup)
+    monkeypatch.setattr(torch, "compile", _compile_identity)
+
+    factory = uci_main._make_evaluator_factory(
+        [_TinyModule()], ["cuda"], coalesce=True, n_walkers=1,
+        walker_gather=1, compile_mode="max-autotune",
+    )
+    evaluator = factory(max_batch=64, eval_cache_entries=0)
+    assert isinstance(evaluator, BatchCoalescingDispatcher)
+    thread_safe = evaluator._inner
+    assert isinstance(thread_safe, ThreadSafeGPUDispatcher)
+    assert getattr(thread_safe._eval, "input_bf16", True) is False
+    assert getattr(thread_safe._eval, "supports_legal_bf16", True) is False
+    # Outer wrappers must forward the opt-out, not re-enable via hasattr.
+    assert evaluator.supports_legal_bf16 is False
+    assert thread_safe.supports_legal_bf16 is False
     evaluator.close()
 
 
@@ -125,8 +175,13 @@ class _RecordingDirectEvaluator(_FakeDirectEvaluator):
         device: str,
         max_batch: int,
         n_slots: int,
+        input_bf16: bool = False,
+        legal_bf16: bool = True,
     ) -> None:
-        super().__init__(model, device=device, max_batch=max_batch, n_slots=n_slots)
+        super().__init__(
+            model, device=device, max_batch=max_batch, n_slots=n_slots,
+            input_bf16=input_bf16, legal_bf16=legal_bf16,
+        )
         self.device = device
         self.batch_sizes: list[int] = []
         _RecordingDirectEvaluator.instances.append(self)

@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import encode_position, encode_positions_batch
-from chess_anti_engine.encoding.features import EXTRA_FEATURES_V1
+from chess_anti_engine.encoding.features import EXTRA_FEATURES_V2_THREATS
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.inference import (
     BatchEvaluator,
@@ -58,7 +58,7 @@ class MCTSConfig:
     use_amp: bool = True
     amp_dtype: str = "auto"
     input_history_encoding: str = LC0_HISTORY_LEGACY
-    input_extra_features: str = EXTRA_FEATURES_V1
+    input_extra_features: str = EXTRA_FEATURES_V2_THREATS
     policy_encoding: str = MODEL_POLICY_ENCODING
   # PUCT paths do not transport dynamic relations; setting this raises so a
   # relations model can't silently search without its bias (fail loud).

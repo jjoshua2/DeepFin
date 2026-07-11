@@ -363,6 +363,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
         amp_dtype: str = "auto",
         n_slots: int = 1,
         input_bf16: bool = False,
+        legal_bf16: bool = True,
     ) -> None:
         super().__init__(model, device=device, use_amp=use_amp, amp_dtype=amp_dtype)
         self._max_batch = int(max_batch)
@@ -372,6 +373,12 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 
         _pin = self._use_cuda
         self._input_bf16 = bool(input_bf16 and self._use_cuda and use_amp)
+        # Compact legal-policy path opt-out (CAE_UCI_COMPACT_BF16 gate in UCI):
+        # search activation keys on supports_legal_bf16, so a bare hasattr on
+        # evaluate_legal_bf16 would flip match play onto the compact path by
+        # default, before its pre-committed yardstick. Default True preserves
+        # the existing selfplay/broker behavior.
+        self._legal_bf16 = bool(legal_bf16)
         _channels = input_plane_count(getattr(model, "input_extra_features", None))
         self._pinned_inputs: list[torch.Tensor] = [
             torch.empty(
@@ -611,6 +618,42 @@ class DirectGPUEvaluator(LocalModelEvaluator):
             bits = torch.from_numpy(compact).to(torch.bfloat16).view(torch.uint16)
             return bits, torch.from_numpy(wdl), None
         return self._async_forward_legal_bf16(bsz, flat, counts, n_legal, slot=slot)
+
+    @property
+    def supports_legal_bf16(self) -> bool:
+        return self._legal_bf16
+
+    def evaluate_legal_bf16(
+        self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Synchronous compact-policy wrapper used by coalescing dispatchers.
+
+        Pad only the board/count dimension to the compiled bucket. Legal logits
+        remain unpadded, so transport stays proportional to actual legal moves.
+        """
+        if x.ndim != 4:
+            raise ValueError(f"expected 4D input, got {x.ndim}D")
+        real_n = int(x.shape[0])
+        if real_n > self._max_batch:
+            raise ValueError(f"batch {real_n} > max {self._max_batch}")
+        counts = np.asarray(legal_counts, dtype=np.int32)
+        if counts.ndim != 1 or counts.shape[0] != real_n:
+            raise ValueError(
+                f"legal_counts must be shape ({real_n},), got {counts.shape}"
+            )
+        flat = np.asarray(legal_flat, dtype=np.int32)
+        if flat.ndim != 1:
+            raise ValueError(f"legal_flat must be 1D, got {flat.ndim}D")
+        self._stage_encoded_input(x, real_n, slot=0)
+        padded = _compiled_padded_batch_size(real_n, capacity=self._max_batch)
+        if padded > real_n:
+            counts = np.pad(counts, (0, padded - real_n))
+        pol_t, wdl_t, event = self.evaluate_inplace_legal_bf16_async(
+            padded, flat, counts, slot=0,
+        )
+        if event is not None:
+            event.synchronize()
+        return pol_t.numpy().copy(), wdl_t[:real_n].numpy().copy()
 
     def _async_forward(
         self, bsz: int, *, slot: int, relations: np.ndarray | None = None,
@@ -1589,8 +1632,9 @@ class SlotBroker:
     def _gather_more_within_window(self, ready: list) -> None:
         """Block up to ``batch_wait_ms`` for more slots to enter REQUEST state.
 
-        Mutates ``ready`` in place. Exits early if all slots have responded
-        (request/response/shutdown — no more can arrive) or the window fills.
+        Mutates ``ready`` in place. A RESPONSE slot is still eligible: its
+        client can consume the result and submit a new request during this
+        window, so only a full ready set or the timing deadline ends gather.
 
         With ``adaptive_idle_ms`` > 0 the fixed window becomes arrival-adaptive:
         each newly arrived REQUEST slot restarts an idle countdown, and the
@@ -1605,11 +1649,6 @@ class SlotBroker:
         deadline = now + (self.batch_wait_ms / 1000.0)
         idle_deadline = now + (self.adaptive_idle_ms / 1000.0)
         while time.monotonic() < deadline:
-            if all(
-                s.state in (_STATE_REQUEST, _STATE_RESPONSE, _STATE_SHUTDOWN)
-                for s in self._slots
-            ):
-                return
             more = [s for s in self._slots if s.state == _STATE_REQUEST and s not in ready]
             if more:
                 ready.extend(more)
