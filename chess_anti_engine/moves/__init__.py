@@ -4,6 +4,8 @@ from .encode import (
     COMPACT_POLICY_SIZE,
     COMPACT_TO_FULL_POLICY,
     FULL_TO_COMPACT_POLICY,
+    MODEL_POLICY_ENCODING,
+    MODEL_POLICY_SIZE,
     POLICY_ENCODING_AZ_4672,
     POLICY_ENCODING_LC0_1858,
     POLICY_ENCODINGS,
@@ -28,6 +30,7 @@ from .encode import (
     policy_size_for_encoding,
     policy_vector_to_encoding,
     policy_vector_to_full,
+    require_model_policy_encoding,
     sample_move_from_logits,
 )
 
@@ -37,6 +40,8 @@ __all__ = [
     "COMPACT_POLICY_SIZE",
     "COMPACT_TO_FULL_POLICY",
     "FULL_TO_COMPACT_POLICY",
+    "MODEL_POLICY_ENCODING",
+    "MODEL_POLICY_SIZE",
     "POLICY_ENCODINGS",
     "POLICY_ENCODING_AZ_4672",
     "POLICY_ENCODING_LC0_1858",
@@ -61,5 +66,6 @@ __all__ = [
     "policy_size_for_encoding",
     "policy_vector_to_encoding",
     "policy_vector_to_full",
+    "require_model_policy_encoding",
     "sample_move_from_logits",
 ]

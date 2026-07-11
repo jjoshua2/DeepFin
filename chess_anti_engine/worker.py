@@ -2560,7 +2560,7 @@ class WorkerSession:
                 syzygy_adjudicate=bool(reco.get("syzygy_adjudicate", False)),
                 syzygy_adjudicate_fraction=float(reco.get("syzygy_adjudicate_fraction", 1.0)),
                 syzygy_in_search=bool(reco.get("syzygy_in_search", False)),
-                policy_encoding=normalize_policy_encoding(reco.get("policy_encoding", "az_4672")),
+                policy_encoding=normalize_policy_encoding(reco.get("policy_encoding", "lc0_1858")),
                 input_history_encoding=str(reco.get("input_history_encoding", "legacy")),
                 input_extra_features=str(reco.get("input_extra_features", "v1")),
                 record_lc0_root_input=bool(reco.get("record_lc0_root_input", False)),

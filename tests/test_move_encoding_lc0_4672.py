@@ -10,6 +10,8 @@ from chess_anti_engine.moves import (
     COMPACT_POLICY_SIZE,
     COMPACT_TO_FULL_POLICY,
     FULL_TO_COMPACT_POLICY,
+    MODEL_POLICY_ENCODING,
+    MODEL_POLICY_SIZE,
     POLICY_SIZE,
     index_to_move,
     index_to_move_for_encoding,
@@ -24,18 +26,25 @@ from chess_anti_engine.moves import (
     policy_mask_to_encoding,
     policy_vector_to_encoding,
     policy_vector_to_full,
+    require_model_policy_encoding,
 )
 
 
 def test_policy_size_is_4672():
     assert POLICY_SIZE == 64 * 73
     assert COMPACT_POLICY_SIZE == 1858
+    assert MODEL_POLICY_SIZE == COMPACT_POLICY_SIZE
+    assert MODEL_POLICY_ENCODING == "lc0_1858"
     assert COMPACT_TO_FULL_POLICY.shape == (COMPACT_POLICY_SIZE,)
     assert int((FULL_TO_COMPACT_POLICY >= 0).sum()) == COMPACT_POLICY_SIZE
 
 
 def test_lc0_4672_alias_is_legacy_full_policy_encoding():
     assert normalize_policy_encoding("lc0_4672") == "az_4672"
+    assert normalize_policy_encoding(None) == "lc0_1858"
+    assert require_model_policy_encoding("lc0_1858") == "lc0_1858"
+    with pytest.raises(ValueError, match="hard-coded"):
+        require_model_policy_encoding("az_4672")
 
 
 def test_move_to_index_signature_includes_board():

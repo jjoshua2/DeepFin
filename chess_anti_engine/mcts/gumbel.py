@@ -27,7 +27,7 @@ from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_draw_indices,
 )
 from chess_anti_engine.moves import (
-    POLICY_ENCODING_AZ_4672,
+    MODEL_POLICY_ENCODING,
     POLICY_SIZE,
     policy_batch_to_full_if_needed,
 )
@@ -135,7 +135,7 @@ class GumbelConfig:
     gumbel_scale: float = 1.0
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V1
-    policy_encoding: str = POLICY_ENCODING_AZ_4672
+    policy_encoding: str = MODEL_POLICY_ENCODING
   # Compute dynamic board-relation matrices per eval and pass them to the
   # evaluator as attention-bias input (model.use_dynamic_relations).
     compute_relations: bool = False

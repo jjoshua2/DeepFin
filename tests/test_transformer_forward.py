@@ -30,7 +30,7 @@ def test_transformer_forward_shapes():
     m = ChessNet(cfg)
     x = torch.randn(3, 146, 8, 8)
     out = m(x)
-    assert out["policy_own"].shape == (3, 64 * 73)
+    assert out["policy_own"].shape == (3, COMPACT_POLICY_SIZE)
     assert out["wdl"].shape == (3, 3)
     assert out["sf_eval"].shape == (3, 3)
     assert out["categorical"].shape == (3, 32)
@@ -206,7 +206,7 @@ def test_variable_embed_width_forward_with_per_layer_smolgen():
     out = model(x)
 
     assert model.embed_dim_by_layer == (32, 48, 40)
-    assert out["policy_own"].shape == (2, 4672)
+    assert out["policy_own"].shape == (2, COMPACT_POLICY_SIZE)
     assert out["wdl"].shape == (2, 3)
     assert model.value_wdl.token_proj.in_features == 40
 
@@ -229,7 +229,7 @@ def test_variable_embed_width_forward_with_shared_smolgen():
     assert model.smolgen is not None
     assert model.layer_smolgens is None
     assert model.value_wdl.token_proj.in_features == 48
-    assert out["policy_own"].shape == (2, 4672)
+    assert out["policy_own"].shape == (2, COMPACT_POLICY_SIZE)
     assert out["wdl"].shape == (2, 3)
 
 
@@ -359,7 +359,7 @@ def test_transformer_phase_conditioned_outputs_forward_shapes():
     assert m.layer_smolgens[0].phase_embedding is not None
     out = m(_phase_input([8, 16, 32]))
 
-    assert out["policy_own"].shape == (3, 64 * 73)
+    assert out["policy_own"].shape == (3, COMPACT_POLICY_SIZE)
     assert out["wdl"].shape == (3, 3)
 
 
@@ -396,7 +396,7 @@ def test_transformer_per_layer_smolgen_shapes_and_shares_gen_projection():
 
     x = torch.randn(2, 146, 8, 8)
     out = m(x)
-    assert out["policy_own"].shape == (2, 64 * 73)
+    assert out["policy_own"].shape == (2, COMPACT_POLICY_SIZE)
     assert out["wdl"].shape == (2, 3)
 
 
@@ -421,7 +421,7 @@ def test_transformer_pooled_smolgen_forward_and_shapes():
 
     x = torch.randn(2, 146, 8, 8)
     out = m(x)
-    assert out["policy_own"].shape == (2, 64 * 73)
+    assert out["policy_own"].shape == (2, COMPACT_POLICY_SIZE)
     assert out["wdl"].shape == (2, 3)
 
 
@@ -469,7 +469,7 @@ def test_transformer_smolgen_relation_knobs_forward():
 
     x = torch.randn(2, 146, 8, 8)
     out = m(x)
-    assert out["policy_own"].shape == (2, 64 * 73)
+    assert out["policy_own"].shape == (2, COMPACT_POLICY_SIZE)
     assert out["wdl"].shape == (2, 3)
 
 
@@ -495,7 +495,7 @@ def test_transformer_bt4_global_embedding_forward():
 
     x = torch.randn(2, 146, 8, 8)
     out = m(x)
-    assert out["policy_own"].shape == (2, 64 * 73)
+    assert out["policy_own"].shape == (2, COMPACT_POLICY_SIZE)
     assert out["wdl"].shape == (2, 3)
 
 
@@ -565,7 +565,7 @@ def test_transformer_split_qkv_forward_and_deepnorm_init():
 
     x = torch.randn(1, 146, 8, 8)
     out = m(x)
-    assert out["policy_own"].shape[-1] == 64 * 73
+    assert out["policy_own"].shape[-1] == COMPACT_POLICY_SIZE
 
 
 def test_qk_rmsnorm_matches_activation_dtype_under_autocast():
@@ -711,7 +711,7 @@ def test_transformer_nla_toggle():
     m = ChessNet(cfg)
     x = torch.randn(1, 146, 8, 8)
     out = m(x)
-    assert out["policy_own"].shape[-1] == 64 * 73
+    assert out["policy_own"].shape[-1] == COMPACT_POLICY_SIZE
 
 
 def test_transformer_compact_policy_encoding_dense_and_legal_shapes():
@@ -750,7 +750,7 @@ def test_transformer_optional_arc_pos_encoding_and_deepnorm():
     m = ChessNet(cfg)
     x = torch.randn(2, 146, 8, 8)
     out = m(x)
-    assert out["policy_own"].shape == (2, 64 * 73)
+    assert out["policy_own"].shape == (2, COMPACT_POLICY_SIZE)
     assert out["wdl"].shape == (2, 3)
     assert m.embed.in_features == 146 + 64
     assert hasattr(m, "arc_pos_encoding")
@@ -829,7 +829,18 @@ def test_transformer_legal_policy_matches_dense_logits():
         compact = m.forward_legal_policy(x, legal_flat, legal_counts)
 
     rows = torch.repeat_interleave(torch.arange(2), legal_counts)
-    assert torch.allclose(compact["policy_own"], dense["policy_own"][rows, legal_flat])
+    # Dense heads emit compact 1858; legal path still uses full 4672 action ids.
+    # Compare only slots that exist in the compact vocabulary (geometrically
+    # valid move classes). Off-board underpromo planes etc. are not in 1858.
+    from chess_anti_engine.moves import FULL_TO_COMPACT_POLICY
+
+    compact_idx = torch.as_tensor(FULL_TO_COMPACT_POLICY, dtype=torch.long)[legal_flat]
+    in_vocab = compact_idx >= 0
+    assert in_vocab.any()
+    assert torch.allclose(
+        compact["policy_own"][in_vocab],
+        dense["policy_own"][rows[in_vocab], compact_idx[in_vocab]],
+    )
     assert torch.allclose(compact["wdl"], dense["wdl"])
 
 

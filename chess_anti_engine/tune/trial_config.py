@@ -74,7 +74,7 @@ class TrialConfig:
     input_pos_encoding: str = "none"
     qkv_projection: str = "fused"
     use_deepnorm: bool = False
-    policy_encoding: str = "az_4672"
+    policy_encoding: str = "lc0_1858"
     input_history_encoding: str = "legacy"
     input_extra_features: str = "v1"
     use_dynamic_relations: bool = False
@@ -389,7 +389,7 @@ class TrialConfig:
             input_pos_encoding=str(config.get("input_pos_encoding", "none")),
             qkv_projection=str(config.get("qkv_projection", "fused")),
             use_deepnorm=bool(config.get("use_deepnorm", False)),
-            policy_encoding=str(config.get("policy_encoding", "az_4672")),
+            policy_encoding=str(config.get("policy_encoding", "lc0_1858")),
             input_history_encoding=str(config.get("input_history_encoding", "legacy")),
             input_extra_features=str(config.get("input_extra_features", "v1")),
             use_dynamic_relations=bool(config.get("use_dynamic_relations", False)),

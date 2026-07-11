@@ -37,12 +37,18 @@ if TYPE_CHECKING:
 # in oriented (side-to-move) coordinates.
 
 PLANE_COUNT = 73
-POLICY_SIZE = 64 * PLANE_COUNT  # 4672
+POLICY_SIZE = 64 * PLANE_COUNT  # 4672 — MCTS/CBoard action-id space (not model output)
 COMPACT_POLICY_SIZE = 1858
 
 POLICY_ENCODING_AZ_4672 = "az_4672"
 POLICY_ENCODING_LC0_1858 = "lc0_1858"
+# Trained nets and production shards always use compact 1858. Full az_4672 is
+# the fixed search/action-id space (CBoard, MCTS tree edges); convert only at
+# the model↔search boundary. Legacy 4672-wide shards / ONNX LC0 nets may still
+# declare az_4672 as a *storage/output width*, not a ChessNet config option.
 POLICY_ENCODINGS = (POLICY_ENCODING_AZ_4672, POLICY_ENCODING_LC0_1858)
+MODEL_POLICY_ENCODING = POLICY_ENCODING_LC0_1858
+MODEL_POLICY_SIZE = COMPACT_POLICY_SIZE
 
 QUEEN_DIRS: list[tuple[int, int]] = [
     (0, 1),
@@ -202,7 +208,13 @@ COMPACT_MIRROR_POLICY_INV[COMPACT_MIRROR_POLICY_MAP] = np.arange(COMPACT_POLICY_
 
 
 def normalize_policy_encoding(policy_encoding: str | None) -> str:
-    enc = str(policy_encoding or POLICY_ENCODING_AZ_4672).lower()
+    """Canonicalize a policy encoding name.
+
+    ``None`` / empty defaults to the model/training encoding (compact 1858).
+    Full ``az_4672`` remains a valid name for search-width vectors, legacy
+    shards, and external ONNX nets — not for ChessNet construction.
+    """
+    enc = str(policy_encoding or MODEL_POLICY_ENCODING).lower()
     aliases = {
         "az": POLICY_ENCODING_AZ_4672,
         "az_4672": POLICY_ENCODING_AZ_4672,
@@ -219,6 +231,19 @@ def normalize_policy_encoding(policy_encoding: str | None) -> str:
         return aliases[enc]
     except KeyError as exc:
         raise ValueError(f"Unsupported policy_encoding {policy_encoding!r}") from exc
+
+
+def require_model_policy_encoding(policy_encoding: str | None) -> str:
+    """Validate/return the only encoding ChessNet / TinyNet may emit."""
+    enc = normalize_policy_encoding(policy_encoding)
+    if enc != MODEL_POLICY_ENCODING:
+        raise ValueError(
+            f"trained model policy output is hard-coded to {MODEL_POLICY_ENCODING!r} "
+            f"(width {MODEL_POLICY_SIZE}); got {enc!r}. "
+            f"Search still uses full {POLICY_SIZE} action ids via compact→full expand "
+            f"at the MCTS boundary. Use az_4672 only for legacy shard width / ONNX nets."
+        )
+    return enc
 
 
 def policy_size_for_encoding(policy_encoding: str | None) -> int:

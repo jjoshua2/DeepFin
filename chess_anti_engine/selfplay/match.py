@@ -95,7 +95,7 @@ def pick_moves_for_boards(
     """
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(model, "input_extra_features", "v1"))
-    policy_encoding = str(getattr(model, "policy_encoding", "az_4672"))
+    policy_encoding = str(getattr(model, "policy_encoding", "lc0_1858"))
     use_dynamic_relations = bool(getattr(model, "use_dynamic_relations", False))
     # The repetition-plane fix is process-global in the C encoders, so apply
     # THIS model's value before encoding its moves: same-process arenas

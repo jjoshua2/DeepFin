@@ -334,7 +334,7 @@ def _build_engine(
     devices: tuple[str, ...] | None = None,
     input_history_encoding: str = "legacy",
     input_extra_features: str = "v1",
-    policy_encoding: str = "az_4672",
+    policy_encoding: str = "lc0_1858",
     compute_relations: bool = False,
     rebuild_evaluator=None,
     rebuild_multi_gpu_pucv_factories=None,
@@ -708,7 +708,7 @@ def main() -> int:
             models = _load_models(args.checkpoint, devices)
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
             input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
-            policy_encoding = str(getattr(models[0], "policy_encoding", "az_4672"))
+            policy_encoding = str(getattr(models[0], "policy_encoding", "lc0_1858"))
             use_dynamic_relations = bool(getattr(models[0], "use_dynamic_relations", False))
             if use_dynamic_relations:
                 _println(

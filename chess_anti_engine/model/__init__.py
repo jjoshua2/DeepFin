@@ -14,7 +14,10 @@ from chess_anti_engine.encoding.features import (
     normalize_extra_features_encoding,
 )
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_history_encoding
-from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672, normalize_policy_encoding
+from chess_anti_engine.moves import (
+    MODEL_POLICY_ENCODING,
+    require_model_policy_encoding,
+)
 from chess_anti_engine.utils.architecture import (
     normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
@@ -51,7 +54,7 @@ class ModelConfig:
     input_pos_encoding: str = "none"
     qkv_projection: str = "fused"
     use_deepnorm: bool = False
-    policy_encoding: str = POLICY_ENCODING_AZ_4672
+    policy_encoding: str = MODEL_POLICY_ENCODING
     input_history_encoding: str = LC0_HISTORY_LEGACY
     # Gated candidate (see encoding/rep_fix.py): the model was trained on
     # corrected lc0-root repetition planes, so eval-time encoding must apply
@@ -117,7 +120,9 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         input_pos_encoding=str(mc.get("input_pos_encoding", "none")),
         qkv_projection=str(mc.get("qkv_projection", "fused")),
         use_deepnorm=bool(mc.get("use_deepnorm", False)),
-        policy_encoding=normalize_policy_encoding(mc.get("policy_encoding", POLICY_ENCODING_AZ_4672)),
+        policy_encoding=require_model_policy_encoding(
+            mc.get("policy_encoding", MODEL_POLICY_ENCODING)
+        ),
         input_history_encoding=normalize_lc0_history_encoding(mc.get("input_history_encoding", LC0_HISTORY_LEGACY)),
         history_rep_fix=bool(mc.get("history_rep_fix", False)),
         input_extra_features=normalize_extra_features_encoding(mc.get("input_extra_features", EXTRA_FEATURES_V1)),
@@ -153,19 +158,15 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
 # follow the checkpoint, so the rebuilt model matches the saved tensors and the
 # optimizer moments load.
 #
-# Three classes live here:
+# Classes:
 #   * Input encoding identity (e.g. v1 -> v2_threats input planes): the tolerant
 #     loader keeps the rebuilt model's zero-init columns for the widened input
 #     projection, and Trainer.load -> migrate_optimizer_input_plane_state
 #     zero-pads the matching optimizer moments. This IS a warm start.
-#   * policy_encoding: config must win on the output policy format, but there is
-#     NO warm-start remap for it (migrate_optimizer_input_plane_state only pads
-#     INPUT planes). A format switch (e.g. az_4672 -> lc0_1858) changes the
-#     policy-head output width, so the tolerant loader drops those heads as shape
-#     mismatches and they fresh-init; the now wrong-shaped policy-head optimizer
-#     moments fail load_state_dict and the whole optimizer is reinitialised. It
-#     stays config-owned so the model is at least built at the requested format
-#     (config wins), not so the heads carry over.
+#   * policy_encoding is config-owned for manifest/checkpoint identity, but the
+#     trained model is hard-coded to compact lc0_1858 — az_4672 is rejected at
+#     build. Search still expands compact→full 4672 action ids at the MCTS
+#     boundary.
 #   * Zero-init experiment flags whose freshly added parameters are handled by
 #     Trainer._remap_optimizer_state_for_new_params (the dynamic_relation_weight
 #     / policy_relation_weight splice). If these followed the donor arch instead,
@@ -285,7 +286,9 @@ def model_config_from_flat_config(
         input_pos_encoding=str(cfg.get("input_pos_encoding", "none")),
         qkv_projection=str(cfg.get("qkv_projection", "fused")),
         use_deepnorm=bool(cfg.get("use_deepnorm", False)),
-        policy_encoding=normalize_policy_encoding(cfg.get("policy_encoding", POLICY_ENCODING_AZ_4672)),
+        policy_encoding=require_model_policy_encoding(
+            cfg.get("policy_encoding", MODEL_POLICY_ENCODING)
+        ),
         input_history_encoding=normalize_lc0_history_encoding(
             cfg.get("input_history_encoding", LC0_HISTORY_LEGACY)
         ),
@@ -349,7 +352,7 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "input_pos_encoding": str(cfg.input_pos_encoding),
         "qkv_projection": str(cfg.qkv_projection),
         "use_deepnorm": bool(cfg.use_deepnorm),
-        "policy_encoding": normalize_policy_encoding(cfg.policy_encoding),
+        "policy_encoding": require_model_policy_encoding(cfg.policy_encoding),
         "input_history_encoding": normalize_lc0_history_encoding(cfg.input_history_encoding),
         "history_rep_fix": bool(cfg.history_rep_fix),
         "input_extra_features": normalize_extra_features_encoding(cfg.input_extra_features),
@@ -388,7 +391,7 @@ def infer_input_planes(input_extra_features: str | None = None) -> int:
 
 
 def _attach_runtime_model_metadata(model: torch.nn.Module, cfg: ModelConfig) -> torch.nn.Module:
-    setattr(model, "policy_encoding", normalize_policy_encoding(cfg.policy_encoding))
+    setattr(model, "policy_encoding", require_model_policy_encoding(cfg.policy_encoding))
     setattr(model, "input_history_encoding", normalize_lc0_history_encoding(cfg.input_history_encoding))
     setattr(model, "history_rep_fix", bool(cfg.history_rep_fix))
     setattr(model, "input_extra_features", normalize_extra_features_encoding(cfg.input_extra_features))
@@ -415,11 +418,9 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             f"(got {cfg.dynamic_relation_count}); the relation set is fixed "
             "by the C extension / shard schema"
         )
-    policy_encoding = normalize_policy_encoding(cfg.policy_encoding)
+    policy_encoding = require_model_policy_encoding(cfg.policy_encoding)
     in_planes = infer_input_planes(cfg.input_extra_features)
     if cfg.kind == "tiny":
-        if policy_encoding != POLICY_ENCODING_AZ_4672:
-            raise ValueError("tiny model only supports policy_encoding='az_4672'")
         return _attach_runtime_model_metadata(TinyNet(in_planes=in_planes), cfg)
     if cfg.kind == "transformer":
         tcfg = TransformerConfig(
