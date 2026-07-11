@@ -1462,3 +1462,25 @@ restart burst inflates games/h via queued worker shards). SUCCESS = games/h
 holds or improves; REGRESSION = games/h down >15% sustained with trainer
 steps/s flat → suspect #147, consider reverting its broker path. Trainer
 throughput is the control (should be untouched by a broker change).
+
+**Pause-hold (PR #149): stop abandoning in-flight games at the train-phase
+pause — PRE-COMMITTED, activates at the post-canary restart (2026-07-11).**
+Finding (worker logs + code trace): since d9ac008b (03-20) every iteration's
+pause_selfplay tore down play_batch, discarding ~384 in-flight games/worker
+(vs ~180-235 completed per session on the 512 net → ~half of selfplay compute
+discarded) and censoring games longer than one selfplay window out of replay
+entirely. Fix: pause now HOLDS the loop (slots preserved, model hot-swaps at
+unpause); teardown paths unchanged; CAE_WORKER_STOP_ON_PAUSE=1 reverts.
+Hypothesis: games/h up materially (up to ~2x ceiling) AND long-game census
+bias removed (replay mean game plies should RISE). YARDSTICK (one deciding):
+paired games/h + replay avg plies over 3-4 steady-state iterations pre/post
+the activating restart (pre = the #147-readout iterations, same net/window);
+plus the new `in_flight_abandoned` log line ≈0 at pause boundaries. KILL:
+games/h down >10% sustained, or worker deadlock symptoms (0 games generated
+for 2 consecutive iterations with workers alive), or value/panel guardrails
+of the live swap canary regressing coincident with activation → set
+CAE_WORKER_STOP_ON_PAUSE=1 + restart (no salvage needed — no weights/replay
+surgery). CONFOUND: activates in the swap-readout era; sequenced AFTER the
+~10-iter swap canary read so the canary is clean; the 5-day arena gate
+tolerates a throughput-only change (does not alter targets; data-mix change
+= longer games entering replay, which is the intended fix).
