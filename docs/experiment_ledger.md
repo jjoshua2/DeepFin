@@ -169,7 +169,7 @@ always re-dump and pair.
 
 | change | live since | readout & rule |
 |---|---|---|
-| **Server-doled FEN seeding ACTIVATED — switch prob→dole** (`opening_fen_dole_per_iter: 1`, `opening_fen_prob` 0.05→0, live yaml; code = **PR #128** merged, restarted onto `54f4037` @iter 690 resuming ckpt686) | 2026-07-08, ~iter 690 | **Mechanism switch, not a new seed set** (same 114-seed v3 list). Replaces the probabilistic `opening_fen_prob` draw with the deterministic server dole: each iteration the server hands the WHOLE list to one worker poll (durable per-iter gate), played as **selfplay slots only** (`resolve_slot_opening` dole branch → PID-safe by construction; the prob path's curriculum seeding is what forced the 0.22→0.05 dial-down). Dose 1 = each of the 114 seeds played once/iter ≈ **114 selfplay seeded games/iter** (vs the prob path's ~35 mixed games/iter, ~3–27 of them selfplay). **Two coupled effects of the single switch (the confound):** (a) ~3–10× MORE selfplay seed volume = more direct value-label injection; (b) curriculum refutation games (net on the blundering seat, 698k-SF punishes on-board) → **0** — dole is selfplay-only, so the on-board-refutation signal that co-drove the WORKED verdict is dropped. Threaded-path delivery wired + verified (production is `distributed_worker_threaded`; #128 round-3 P1). Baseline @ckpt686 (== the FEN-seeding-WORKED trunk; ledger baseline ckpt683 value 74.3, v1 16/35); banked revert trunk `data/salvage/pre_dole_ckpt686_20260708`. PRIMARY: held-out panel v1 BLIND severity holds/improves vs 16/35 (monitor `scratchpad/live_read/monitor/monitor.log`). SECONDARY: 68 vetted seeds resolve (become AWARE) via `scripts/blindspot_resolution.py`. GUARDRAIL/KILL: `value_regret` (`--max-positions 2000`) paired CI vs the ckpt686 baseline dump worse by >2cp (CI excludes 0 worse side) → REVERT. WATCH: PID sample — dole is selfplay-only so `sf_pid` games should STAY healthy (the whole point vs prob); if it still drops <30 or the airbag trips, that's an unexpected finding. **KILL ACTION (live, instant): `opening_fen_dole_per_iter: 0` + `opening_fen_prob: 0.05` → restores the known-good prob mechanism.** Readout ~1 day (~iter 725). Supersedes the prob-based row below (that mechanism is now off). |
+| **Server-doled FEN seeding ACTIVATED — switch prob→dole** (`opening_fen_dole_per_iter: 1`, `opening_fen_prob` 0.05→0, live yaml; code = **PR #128** merged, restarted onto `54f4037` @iter 690 resuming ckpt686) | 2026-07-08, ~iter 690 | **Mechanism switch, not a new seed set** (same 115-seed v3 list). Replaces the probabilistic `opening_fen_prob` draw with the deterministic server dole: each iteration the server hands the WHOLE list to one worker poll (durable per-iter gate), played as **selfplay slots only** (`resolve_slot_opening` dole branch → PID-safe by construction; the prob path's curriculum seeding is what forced the 0.22→0.05 dial-down). Dose 1 = each of the 115 seeds played once/iter ≈ **115 selfplay seeded games/iter** (vs the prob path's ~35 mixed games/iter, ~3–27 of them selfplay). **Two coupled effects of the single switch (the confound):** (a) ~3–10× MORE selfplay seed volume = more direct value-label injection; (b) curriculum refutation games (net on the blundering seat, 698k-SF punishes on-board) → **0** — dole is selfplay-only, so the on-board-refutation signal that co-drove the WORKED verdict is dropped. Threaded-path delivery wired + verified (production is `distributed_worker_threaded`; #128 round-3 P1). Baseline @ckpt686 (== the FEN-seeding-WORKED trunk; ledger baseline ckpt683 value 74.3, v1 16/35); banked revert trunk `data/salvage/pre_dole_ckpt686_20260708`. PRIMARY: held-out panel v1 BLIND severity holds/improves vs 16/35 (monitor `scratchpad/live_read/monitor/monitor.log`). SECONDARY: 68 vetted seeds resolve (become AWARE) via `scripts/blindspot_resolution.py`. GUARDRAIL/KILL: `value_regret` (`--max-positions 2000`) paired CI vs the ckpt686 baseline dump worse by >2cp (CI excludes 0 worse side) → REVERT. WATCH: PID sample — dole is selfplay-only so `sf_pid` games should STAY healthy (the whole point vs prob); if it still drops <30 or the airbag trips, that's an unexpected finding. **KILL ACTION (live, instant): `opening_fen_dole_per_iter: 0` + `opening_fen_prob: 0.05` → restores the known-good prob mechanism.** Readout ~1 day (~iter 725). Supersedes the prob-based row below (that mechanism is now off). **LIVE PATH UPDATE (2026-07-09):** `opening_fen_list_path` now points at auto-retired `data/blindspot_fens_retire_720.txt` (85 FENs; 16 AWARE seeds dropped from retire_700 by `blindspot_retire_step.py`). Mechanism unchanged (dole still dose 1 over the live list); activation baselines remain ckpt686 / 115-seed v3. |
 | **Harvested blind-spot FEN seeding — v1→v2 SCALE-UP, dose 0.02→0.22** (`opening_fen_list_path`→`data/blindspot_fens_v2.txt`, `opening_fen_prob` 0.22, live yaml) | 2026-07-08, ~iter 683 | Scales the WORKED FEN lever (v1 verdict in the WORKED table): v2 = v1's 76 seeds + **68 deep-SF-VETTED** live-harvested blind spots. Gate: `scripts/blindspot_deepsf_gate.py` on 157 banked severe seeds → 4M nodes + 6-man syzygy TB (`data/syzygy_3-4-5-6`), keep deep-LOST → **68 pass (44%), 87 deep-FINE FPs dropped (56%)**. The gate is LOAD-BEARING: calibration (`scratchpad/harvest_fp/`, deep SF converged 4M=8M=16M, TB-invariant) showed the raw severe band is **~70% false positives** (deep SF agrees with the NET, not the ~700k in-loop label) — feeding the raw `.severe` file would re-label correct positions "lost" via the shallow in-loop SF and UN-TRAIN the net. 0 overlap with held-out panel v1 (generalization metric stays clean); 0 dup with v1. Dose 0.22 targets ~1 game/seed/iter (665 g/iter ÷ 144 seeds) — **11× the validated 2%**, poison-safe ONLY because deep-vetted. Baseline @ckpt~683 (value 74.3, v1 16/35, from the monitor). REVERT TRUNK banked: `data/salvage/pre_v2feed_ckpt678_20260708` (ckpt678 trainer+pid+rng — NOTE: `salvage-export --metric training_iteration` misfired to iter 449 with ~40 stale experiment_state files present, so this is a direct checkpoint copy; nuclear revert = dose→0.02 + hand-built pool from this trunk via the offline-recovery playbook). PRIMARY: held-out panel v1 BLIND severity holds/improves (monitor `scratchpad/live_read/monitor/monitor.log`). SECONDARY: the 68 vetted resolve (become AWARE) via `scripts/blindspot_resolution.py`. GUARDRAIL/KILL: `value_regret` paired CI vs the ckpt683 baseline worse by >2cp → revert dose to 0.02. WATCH: seeded curriculum games are excluded from the PID sample → a 0.22 dose could starve it and trip the airbag (known failure mode `curriculum_starvation`) — if `sf_pid` games <30 or the airbag fires, dial the dose down (`scratchpad/harvest_fp/feed_watch.log`). Dose is live-reloadable — revert instantly. Harvester code (full-game save, one-per-game cap, `ply=` stamp) = **PR #125**. Confound: overlaps the v1 seeds' continued exposure (v1 largely learned already, panel healed 23→16) — v1's isolated verdict is banked, so this reads as the incremental harvested-seed effect. |
 | **Return-to-known-good bundle restart** (fast-ply revert + LR revert + #104 code, knobs off) | 2026-07-02 evening | **THE active readout**: over the next window refill (~1-1.5 days), policy net+search / raw top-1 vs **49.6 / 51.5** and value vs **76.6→toward 72.4** (protocol: `--max-positions 2000`). Recovery ⇒ throughput-era damage was config, not permanent; no recovery ⇒ window legacy or trunk state → consider salvage-restart from a clean pool. LR revert applied via the PBT-pinned mechanic (above) and VERIFIED: peak_lr=0.0003 on iter 482. Confound: rung-1 fracs (below) remain live by design. **Contamination (07-02 ~21:17–23:5x, iters 484–486): the branch-switch incident (see gotchas) reverted the yaml — fast-ply rows back ON (~150k value-only rows in those shards), labels re-capped 400k, blend back to 0.35/0.35 — restored 23:09; fast-ply-off re-propagation VERIFIED (shards 23:57–00:02 back to 100% has_policy). Recovery-read clock effectively restarts at iter ~487; interpret ckpt510-era reads with this in the window.** **Pre-committed recovery rule (added before the readout):** each read dumps per-position and pairs vs the banked ckpt457 dumps (`scratchpad/policy_ci/`). RECOVERED = raw top-1 paired CI vs ckpt457 includes 0 AND endgame-value paired CI includes 0 → bank fresh baseline dumps, proceed to #104 activation. NOT RECOVERED = raw top-1 CI still excludes 0 on the worse side after TWO window refills → stop and rebase: hand-build a salvage pool from the banked ckpt457 trainer + the then-clean replay window (offline-recovery playbook, memory `v2_threats_12layer_live_offline_recovery`) and salvage-restart. Do NOT rebase onto `prechange_20260702_ckpt479` — that pool carries the damaged trunk. **REFILL CLOCK RECALIBRATED (07-03 AM, live telemetry): window = 1.41M rows (not the 3M cap — still growing), turnover ~16.1k rows/iter at ~39 min/iter → ONE refill ≈ 87 iters ≈ 2.4 days (the "~1-1.5 days" assumed fast-ply-era 4× ingest). The fast-ply era ingested ~1.3-1.45M rows ⇒ the window was ~fully contaminated at the iter-487 restart, and ~75% of those rows are value-only — policy training stays diluted until they flush. INTERIM READ @ckpt500 (iter ~501, ~16% refilled; dumps `scratchpad/policy_ci/{dump,vdump}_ckpt500.jsonl`): raw top-1 vs ckpt457 −11.2 [−21.8, −1.7] (endgame −20.9 [−36.4, −7.7]; middlegame +8.0 [−0.6, +19.6] — borderline BETTER); value vs ckpt457 −9.5 [−17.9, −1.4] (endgame −11.5); search E[regret] vs ckpt457 −0.7 NS (search still masks the raw damage); vs ckpt478 everything NS (raw top-1 −0.3, value −2.4) — no movement yet, consistent with 16%. Blind-spot panel 19/35 vs 21/35 baseline. NOT RECOVERED, expected at this refill depth — next read ~50% refill (07-04 AM), full-refill verdict read ~07-05, two-refill rebase deadline ~07-07. **TIMELINE SUPERSEDED by the window cut (row below): contamination flush ≈ 36 iters ≈ 24h → verdict read ~07-04, rebase deadline ~07-05.** TAIL ADDENDUM (same dumps, `scripts/tail_stats.py`): the mean is tail-dominated (median value regret 9–11cp vs mean ~70–80); >300cp blowups 4.2%→5.1% (457→500); paired flips 457→500 = 48 new vs 29 fixed (net +19) — the loop mints new tail blowups faster than it fixes old ones. Add the tail line + flip counts to every future read (secondary, descriptive).** |
 | Value-blend rung 1: `search_wdl_frac` 0.35→0.20, `sf_wdl_frac_floor` 0.35→0.45 | iter 477 (07-02) | value_regret per ckpt vs the **76.6 pre-anchor** (ckpt478), judged at the FULL-refill read (post-bundle window). Pre-committed rule: SUCCESS = ≤70.4 (2cp below the 72.4 known-good — evidence rung 1 adds value beyond the bundle recovery); KEEP-BUT-UNREAD = 70.4–75.0 (recovered; bundle confound absorbs credit, rung 1 stays as principled default); KILL = >75.0 at full refill → revert pair 0.35/0.35 (live keys). **AMENDED 2026-07-02 late, BEFORE the readout: the ±2–5cp point bands sit inside the value yardstick's measured ±8.7cp paired noise floor — verdict now runs on `paired_compare` vs the ckpt478 dump (`scratchpad/paired_ci_smoke/dump_ckpt478.jsonl`): KILL = CI excludes 0 on the worse side; SUCCESS = CI excludes 0 on the better side; otherwise KEEP-BUT-UNREAD. Point bands demoted to descriptive. Also: iters 484–486 trained on the old blend (incident above) — rung-1 exposure restarts ~487** |
@@ -680,6 +680,22 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
 
 ## Open bets, validated but not built
 
+- **SF-label escalation on net-vs-label disagreement — BUILT (PR #135), flags
+  default-off, NOT LAUNCHED** (2026-07-09). HYPOTHESIS: the ~700k-node sf_wdl
+  label is wrong in 70-81% of high net-vs-label-gap cases (deep-SF audits of
+  the harvest band side with the NET), and those wrong labels feed the
+  load-bearing WDL blend daily; re-querying exactly those plies at 3M nodes
+  (cold TT) fixes label noise at the source. Mechanism: `stockfish.
+  sf_label_escalate_q_gap` (0=off) / `_nodes` / `_max_per_game`; original
+  label preserved as `sf_wdl_original` so the harvester still sees the
+  original gap; telemetry `sf_label_escalated{,_moved}`. ACTIVATION (a later,
+  ledgered decision — NOT in the dole readout window): rung 1 = q_gap 0.8 /
+  3M / max 2 via `configs/exp_label_escalation.yaml`. DECIDING YARDSTICK:
+  value_regret paired CI vs the pre-activation banked dump (2000 pos).
+  PRE-COMMITTED KILL: selfplay positions/s drops >10% vs pre-change OR value
+  paired CI worse (excludes 0). SUCCESS: escalated-moved rate >30% with the
+  value guardrail clean → consider rung 2 (q_gap 0.6). Confound guard: do
+  not activate in the same window as any other data-affecting change.
 - **Per-row SF-frac ramp by disagreement** (2026-07-02): shard evidence says when SF
   and our search disagree, SF is right 61%→70% monotonically in gap size — and the
   arbiter (selfplay z) is biased *against* SF, so that's a floor. Design: per-row
@@ -882,6 +898,84 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
    ~146 samples/s eager (~0.57 steps/s ⇒ 60k cap ≈ 29h; plateau watch on
    report.jsonl per the stop rule). Crash log banked:
    `runs/scaleup_512x16_bootstrap/train.log.crashed_v1planes_20260708`.**
+   **SAMPLER INCIDENT (07-09 13:49): the mixed-batch run (cont_0709_1100,
+   mixed sampler + LR 1e-4) died at step ~4950 — "failed to sample a live
+   replay batch after repeated shard reloads". Root cause: pool shards have
+   heterogeneous key sets (29 pre-sf_played-era shards lack 6 sf_played_*
+   fields); once an old-schema shard entered the 16-entry LRU next to new
+   ones, the cross-shard merge KeyError'd on EVERY draw, and the retry
+   handler evicted the innocent DRAWN shard while the mismatched entry
+   stayed cached — 8 strikes, dead. FIX (PR #136, merged): mix only
+   schema-identical cache entries (no silent field drops; lone-schema draw
+   degrades to a single-shard batch), verified against the real pool.
+   RELAUNCHED 14:29 as cont_0709_1429_lr0.0001 from trainer_best_eval.pt
+   (step 4500, eval 4.726 — best of the crashed run; ~450 steps lost).
+   Probe note: the 12:11 probe read 87.9cp overall (down from the unmixed
+   run's 101.4) at only step ~400 of the mixed run — early but directionally
+   the single-shard-correlation diagnosis holding.**
+   **STALE-BAR PLATEAU STOP (07-09 ~15:13): cont_1429 self-stopped at step
+   1500, reason eval_plateau — but the inherited bar (4.726 @4500 via
+   trainer_best_eval.json) is a lucky-outlier eval: the SAME weights
+   re-evaluated at 4.786, neighbors 4.888-4.900, and the pool composition
+   shifts under the feeder, so no new state could beat the bar, get probed,
+   or survive the best-restore. 15:12 probe: 87.8cp, +12.09 [+2.76,+21.55]
+   vs live-710 — mixed sampler arrested the damage (peak 101.4) but the
+   probe kept scoring the same frozen best state. FIX: bar json moved aside
+   (trainer_best_eval.json.stale_bar_20260709, reversible) so the bar
+   re-seeds from the new run's own first eval; relaunched with
+   PLATEAU_EVALS=6, same LR 1e-4 + mixed sampler, init unchanged
+   (trainer_best_eval.pt = the step-4500 weights). Next probe ~18:11 scores
+   genuinely mixed-trained weights for the first time. Lesson: an on-pool
+   eval bar carried across runs on a MOVING pool is not a valid plateau
+   criterion — the frozen-ruler probe stays the only decision signal
+   ([[offline-distillation-value-trap]] corollary).**
+   **DESIGN AMENDMENT (07-09, supersedes the phased-LR plan): probe-driven +
+   fed data.** (a) Found + fixed a second launch-design bug: live-follow with
+   reuse=3 on a frozen pool spends ~3 epochs of credit then sleeps FOREVER
+   (never reaches the 60k cap) — PR #133 (idle-exit, plateau stop,
+   best-eval checkpoint; two Codex P1s fixed in `e24bc96`: LR-override
+   captured warmup-floor rates ⇒ any --lr phase would run at ~1e-5, and the
+   shard feeder could race the sampler's permanent position cache with
+   partially-linked zarrs). (b) DATA: live shards are now continuously
+   hardlink-fed (30-min loop, atomic-rename) into a DEDICATED pool
+   `data/scaleup_pool_512x16` (seeded from the salvage window's 808 + 331
+   shards fed on 07-08). CONFOUND (explicit): the fed pool retires the
+   original frozen-iter-647-window condition — no longer a clean "same data
+   as the 34.7M net" capacity test; the 512 trains on a superset including
+   dole-seeded blind-spot games. Accepted deliberately: the swap gate is
+   audit parity vs the CURRENT live net (fresher data serves it) and parity,
+   not hypothesis purity, is the deliverable; frozen-window purity remains
+   recoverable from the untouched salvage pool if the capacity question
+   ever needs a clean re-test. The salvage pool is a frozen revert point
+   and is NOT fed anymore; the 331 shards fed into it before this amendment are
+   listed in `scratchpad/scaleup/fed_into_salvage_pool.txt` (mtime-dated
+   07-08; originals 07-04) and get REMOVED when the current phase1 process
+   exits (they're hardlink-preserved in the dedicated pool). (c) DECISION
+   SIGNAL: parity probe every 3h (`scratchpad/scaleup/parity_probe.sh` →
+   `parity_probe.log`): value_regret 2000 pos memcapped on the bootstrap's
+   best ckpt, PAIRED vs the newest live monitor vdump. Levers chosen from
+   the probe trajectory when a run stops (far+closing → `continue` = more
+   data at same LR; close+flat → `continue 1e-4` then `3e-5`; plateaued far
+   short → kill). NO auto-chained LR phases. The pre-committed SWAP GATE is
+   unchanged (audit parity: value + audit_targets + panels, paired CIs,
+   +2cp). **FIRST PROBE (07-09 00:04, step 7800, ~4h of training): boot
+   83.6cp overall, paired vs live ckpt690 +12.30 [−1.09, +24.36] — within
+   noise of parity on the VALUE yardstick after 4 hours.** (Policy/panel
+   parity unmeasured so far — value alone does not clear the swap gate.)
+   **PHASE1 ARC CLOSED (07-09 ~08:10, credit-exhausted at ~24.7k steps):
+   probe trajectory 83.6 → 96.1 → 88.9cp (paired vs live +12.3 → +24.9 SIG
+   → +16.1 SIG) = value OSCILLATING sideways, not closing on the ~74 gate,
+   while pool-eval kept improving (eval_wdl also oscillated on-pool) —
+   ruler-vs-pool divergence caught ONLY by the probes. Policy losses
+   improved monotonically throughout (policy parity still unmeasured).
+   Boundary executed: phase1 killed at the stall; salvage pool restored to
+   its pristine 808 (the 331 fed shards moved reversibly to
+   seeds/slot_000/fed_overlay_quarantine_20260709/, still hardlinked in the
+   dedicated pool); CONTINUATION launched 08:13 (fixed driver `continue`:
+   warm-start from the ~24k-step trainer.pt, reuse=1 on the fed pool @2.26M
+   positions, inherited flat LR, best-eval tracking + plateau stop live) —
+   natural ~5h window, then the next probe-driven lever decision. Snapshot
+   trail: scratchpad/scaleup/trainer_snap_step14100.pt + per-probe snaps.**
 5. After FEN seeding reads out: gradient rebalance rung (`w_soft` 1.0→0.5 +
    `w_wdl` 1.0→1.5) OR teacher-distillation offline screen — pick by what the
    seeding readout says about the tail. Never two value levers in one window.
