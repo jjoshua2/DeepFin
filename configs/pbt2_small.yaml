@@ -184,7 +184,14 @@ selfplay:
   # blindspot_fens_retire_<tag>.txt). As of 2026-07-09: retire_720 = 85 FENs
   # (16 AWARE seeds dropped from retire_700). Dole activation used v3 (115);
   # retirement shrinks the list without changing the dole mechanism.
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_720.txt
+  # 2026-07-10: += 64 cheese-match-mined seeds (retire_732's 80 + 64 new =
+  # 144; see docs/experiment_ledger.md). This edit was applied via a restart
+  # (opening_fen_list_path was still _LAUNCH_FIXED_ASSET_PATH_KEYS at the
+  # time). As of this same-day PR, the path is live-reloadable — the server
+  # republishes the current source file every manifest publish, so FUTURE
+  # edits here (new tranche, auto-retirement) take effect on the next
+  # publish, no restart needed.
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_732_cheese64.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).

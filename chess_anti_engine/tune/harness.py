@@ -373,7 +373,6 @@ def _launch_distributed_server(
     for cfg_key, flag in (
         ("opening_book_path", "--opening-book-path"),
         ("opening_book_path_2", "--opening-book-path-2"),
-        ("opening_fen_list_path", "--opening-fen-list-path"),
     ):
         book = base_config.get(cfg_key)
         if isinstance(book, str) and book.strip():
