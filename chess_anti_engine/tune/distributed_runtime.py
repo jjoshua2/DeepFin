@@ -38,7 +38,7 @@ from chess_anti_engine.tune._utils import (
 )
 from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
 from chess_anti_engine.utils import sha256_file
-from chess_anti_engine.utils.atomic import atomic_write_text
+from chess_anti_engine.utils.atomic import atomic_copy2, atomic_write_text
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
 
 log = logging.getLogger(__name__)
@@ -50,12 +50,17 @@ _REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 
 # Cache for SHA256 of static files (opening books, worker wheel) that don't
 # change during a run.  Keyed by (path_str, file_size).
-_static_sha_cache: dict[tuple[str, int], str] = {}
+_static_sha_cache: dict[tuple[str, int, int], str] = {}
 
 
 def _sha256_cached(p: Path) -> str:
-    """SHA256 with caching for files that don't change during a run."""
-    key = (str(p), p.stat().st_size)
+    """SHA256 with caching, keyed on (path, size, mtime) so an edited file at
+    the same path is always rehashed (mtime resolution is coarser than a
+    single write, but a real edit always bumps size or mtime — this is NOT
+    "files that don't change", it just avoids rehashing large static assets
+    like the worker wheel/opening books on every manifest publish)."""
+    st = p.stat()
+    key = (str(p), st.st_size, st.st_mtime_ns)
     cached = _static_sha_cache.get(key)
     if cached is not None:
         return cached
@@ -436,7 +441,6 @@ def _publish_distributed_trial_state(
     for cfg_key, manifest_key, endpoint in (
         ("opening_book_path", "opening_book", "/v1/opening_book"),
         ("opening_book_path_2", "opening_book_2", "/v1/opening_book_2"),
-        ("opening_fen_list_path", "opening_fen_list", "/v1/opening_fen_list"),
     ):
         raw = config.get(cfg_key)
         if not isinstance(raw, str) or not raw.strip():
@@ -449,6 +453,47 @@ def _publish_distributed_trial_state(
             "filename": p.name,
             "sha256": _sha256_cached(p),
         }
+
+    # opening_fen_list_path is LIVE-reloadable (unlike the two book paths
+    # above, which the server still captures once at launch): copy the
+    # CURRENT source file into publish_dir under a FIXED name (mirrors
+    # latest_model.pt — same name every iteration, content/sha differentiate
+    # versions) so a yaml path change takes effect on the NEXT manifest
+    # publish instead of requiring a restart to relaunch the server with a
+    # new launch-time path. atomic_copy2 so a worker mid-GET never reads a
+    # torn write. Always copy (unconditional) and hash fresh (sha256_file,
+    # NOT _sha256_cached): the file is tiny (a few KB-100KB) so both are
+    # free, and this is the one asset here that's actually EXPECTED to
+    # change often — a cache keyed on mtime could tie across two edits
+    # within one filesystem-clock tick (same size, same coarse mtime) and
+    # silently keep advertising a stale hash. Not a concern for the cached
+    # book paths / worker wheel above: those are large and effectively
+    # static for a run's duration, which is exactly what that cache assumes.
+    fen_raw = config.get("opening_fen_list_path")
+    if isinstance(fen_raw, str) and fen_raw.strip():
+        fen_src = Path(fen_raw.strip())
+        if not fen_src.exists():
+            # Live-reloadable => a yaml typo can now dangle mid-run; without
+            # this the manifest entry vanishes silently, workers set their
+            # list to None, and ALL FEN seeding no-ops with nothing in any log.
+            log.warning(
+                "opening_fen_list_path %s does not exist; omitting from manifest "
+                "(FEN seeding disabled until the path resolves)",
+                fen_src,
+            )
+        else:
+            fen_dst = publish_dir / "opening_fen_list_live.txt"
+            atomic_copy2(fen_src, fen_dst)
+            manifest["opening_fen_list"] = {
+                # Trial-scoped (api_prefix), unlike the two hardcoded
+                # /v1/opening_book* endpoints above: the artifact only lives
+                # under THIS trial's publish dir (see the route's docstring
+                # in server/app.py), so a non-scoped URL would be ambiguous
+                # for any server managing more than the single default trial.
+                "endpoint": api_prefix + "/opening_fen_list",
+                "filename": fen_dst.name,
+                "sha256": sha256_file(fen_dst),
+            }
 
     if published_worker_wheel_path is not None and published_worker_wheel_path.exists():
         manifest["worker_wheel"] = {
