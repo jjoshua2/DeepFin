@@ -1451,3 +1451,14 @@ itself (panels + paired value vs pre-swap trunk at ~10 iters, >2cp SIG value
 regression = revert to recover_ckpt751). Confounds: swap readout window —
 accepted deliberately (3 seeds at dole-1/iter cannot plausibly move a 2cp
 value bar; #147 changes no training targets).
+
+**#147 speed check (pre-committed at the 2026-07-11 bundle restart).** #147's
+broker gather fix claims a selfplay-side speedup. Pre-restart baseline on the
+512x16 trial (iters 3-5, steady state, iter 2 excluded as post-restart burst):
+~780-920 games/h selfplay, trainer 0.27-0.30 steps/s / ~140-150 samples/s,
+~2350-2400 s/iter at ~500-620 games/iter. RULE: compare the same metrics over
+the first 3-4 steady-state iterations after the restart (skip the first — the
+restart burst inflates games/h via queued worker shards). SUCCESS = games/h
+holds or improves; REGRESSION = games/h down >15% sustained with trainer
+steps/s flat → suspect #147, consider reverting its broker path. Trainer
+throughput is the control (should be untouched by a broker change).
