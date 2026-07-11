@@ -209,6 +209,8 @@ class _StubNet(torch.nn.Module):
 
     input_history_encoding = "legacy"
     input_extra_features = "v1"
+    # Stub emits full 4672 search-space logits directly (not ChessNet compact).
+    # policy_batch_to_full_if_needed shape-sniffs and passes them through.
     policy_encoding = "az_4672"
     use_dynamic_relations = False
 

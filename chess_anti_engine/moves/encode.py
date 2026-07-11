@@ -37,12 +37,18 @@ if TYPE_CHECKING:
 # in oriented (side-to-move) coordinates.
 
 PLANE_COUNT = 73
-POLICY_SIZE = 64 * PLANE_COUNT  # 4672
+POLICY_SIZE = 64 * PLANE_COUNT  # 4672 — MCTS/CBoard action-id space (not model output)
 COMPACT_POLICY_SIZE = 1858
 
 POLICY_ENCODING_AZ_4672 = "az_4672"
 POLICY_ENCODING_LC0_1858 = "lc0_1858"
+# Trained nets and production shards always use compact 1858. Full az_4672 is
+# the fixed search/action-id space (CBoard, MCTS tree edges); convert only at
+# the model↔search boundary. Legacy 4672-wide shards / ONNX LC0 nets may still
+# declare az_4672 as a *storage/output width*, not a ChessNet config option.
 POLICY_ENCODINGS = (POLICY_ENCODING_AZ_4672, POLICY_ENCODING_LC0_1858)
+MODEL_POLICY_ENCODING = POLICY_ENCODING_LC0_1858
+MODEL_POLICY_SIZE = COMPACT_POLICY_SIZE
 
 QUEEN_DIRS: list[tuple[int, int]] = [
     (0, 1),
@@ -202,7 +208,12 @@ COMPACT_MIRROR_POLICY_INV[COMPACT_MIRROR_POLICY_MAP] = np.arange(COMPACT_POLICY_
 
 
 def normalize_policy_encoding(policy_encoding: str | None) -> str:
-    enc = str(policy_encoding or POLICY_ENCODING_AZ_4672).lower()
+    """Canonicalize a policy *width* name (shard/manifest metadata only).
+
+    Model output and train targets are always compact 1858. ``az_4672`` remains
+    only as the name for full-width search vectors / legacy shards / ONNX nets.
+    """
+    enc = str(policy_encoding or MODEL_POLICY_ENCODING).lower()
     aliases = {
         "az": POLICY_ENCODING_AZ_4672,
         "az_4672": POLICY_ENCODING_AZ_4672,
@@ -227,27 +238,25 @@ def policy_size_for_encoding(policy_encoding: str | None) -> int:
 
 
 def compact_policy_index(full_index: int) -> int:
+    """Map a full 4672 action id → compact 1858 (-1 if not in the vocabulary)."""
     idx = int(full_index)
     if idx < 0 or idx >= POLICY_SIZE:
         return -1
     return int(FULL_TO_COMPACT_POLICY[idx])
 
 
-def full_policy_index(index: int, *, policy_encoding: str | None = None) -> int:
-    enc = normalize_policy_encoding(policy_encoding)
-    idx = int(index)
-    if enc == POLICY_ENCODING_AZ_4672:
-        return idx
+def full_policy_index(compact_index: int) -> int:
+    """Map a compact 1858 index → full 4672 action id (-1 if out of range)."""
+    idx = int(compact_index)
     if idx < 0 or idx >= COMPACT_POLICY_SIZE:
         return -1
     return int(COMPACT_TO_FULL_POLICY[idx])
 
 
+# Aliases kept for call-site stability: train space is always compact.
 def policy_index_for_encoding(full_index: int, *, policy_encoding: str | None = None) -> int:
-    enc = normalize_policy_encoding(policy_encoding)
-    if enc == POLICY_ENCODING_AZ_4672:
-        return int(full_index)
-    return compact_policy_index(int(full_index))
+    del policy_encoding
+    return compact_policy_index(full_index)
 
 
 def policy_indices_for_encoding(
@@ -255,10 +264,8 @@ def policy_indices_for_encoding(
     *,
     policy_encoding: str | None = None,
 ) -> np.ndarray:
-    enc = normalize_policy_encoding(policy_encoding)
+    del policy_encoding
     idx = np.asarray(full_indices, dtype=np.int32)
-    if enc == POLICY_ENCODING_AZ_4672:
-        return idx
     mapped = FULL_TO_COMPACT_POLICY[idx]
     return mapped[mapped >= 0].astype(np.int32, copy=False)
 
@@ -269,7 +276,8 @@ def move_to_index_for_encoding(
     *,
     policy_encoding: str | None = None,
 ) -> int:
-    return policy_index_for_encoding(move_to_index(move, board), policy_encoding=policy_encoding)
+    del policy_encoding
+    return compact_policy_index(move_to_index(move, board))
 
 
 def index_to_move_for_encoding(
@@ -278,9 +286,10 @@ def index_to_move_for_encoding(
     *,
     policy_encoding: str | None = None,
 ) -> chess.Move:
-    full_index = full_policy_index(index, policy_encoding=policy_encoding)
+    del policy_encoding
+    full_index = full_policy_index(index)
     if full_index < 0:
-        raise ValueError(f"invalid policy index {index} for encoding {policy_encoding!r}")
+        raise ValueError(f"invalid compact policy index {index}")
     return index_to_move(full_index, board)
 
 
@@ -289,7 +298,8 @@ def legal_move_indices_for_encoding(
     *,
     policy_encoding: str | None = None,
 ) -> np.ndarray:
-    return policy_indices_for_encoding(legal_move_indices(board), policy_encoding=policy_encoding)
+    del policy_encoding
+    return policy_indices_for_encoding(legal_move_indices(board))
 
 
 def legal_move_mask_for_encoding(
@@ -297,76 +307,12 @@ def legal_move_mask_for_encoding(
     *,
     policy_encoding: str | None = None,
 ) -> np.ndarray:
-    enc = normalize_policy_encoding(policy_encoding)
-    if enc == POLICY_ENCODING_AZ_4672:
-        return legal_move_mask(board)
+    del policy_encoding
     mask = np.zeros((COMPACT_POLICY_SIZE,), dtype=np.bool_)
-    idx = legal_move_indices_for_encoding(board, policy_encoding=enc)
+    idx = legal_move_indices_for_encoding(board)
     if idx.size > 0:
         mask[idx] = True
     return mask
-
-
-def policy_vector_to_encoding(
-    policy: np.ndarray,
-    *,
-    policy_encoding: str | None = None,
-) -> np.ndarray:
-    enc = normalize_policy_encoding(policy_encoding)
-    p = np.asarray(policy)
-    if enc == POLICY_ENCODING_AZ_4672:
-        if p.shape != (POLICY_SIZE,):
-            raise ValueError(f"policy must be ({POLICY_SIZE},), got {p.shape}")
-        return p
-    if p.shape == (COMPACT_POLICY_SIZE,):
-        return p
-    if p.shape != (POLICY_SIZE,):
-        raise ValueError(
-            f"policy must be ({POLICY_SIZE},) or ({COMPACT_POLICY_SIZE},), got {p.shape}",
-        )
-    return _renormalize_policy_vector(p[COMPACT_TO_FULL_POLICY])
-
-
-def policy_mask_to_encoding(
-    mask: np.ndarray,
-    *,
-    policy_encoding: str | None = None,
-) -> np.ndarray:
-    enc = normalize_policy_encoding(policy_encoding)
-    m = np.asarray(mask)
-    if enc == POLICY_ENCODING_AZ_4672:
-        if m.shape != (POLICY_SIZE,):
-            raise ValueError(f"policy mask must be ({POLICY_SIZE},), got {m.shape}")
-        return m
-    if m.shape == (COMPACT_POLICY_SIZE,):
-        return m
-    if m.shape != (POLICY_SIZE,):
-        raise ValueError(
-            f"policy mask must be ({POLICY_SIZE},) or ({COMPACT_POLICY_SIZE},), got {m.shape}",
-        )
-    return m[COMPACT_TO_FULL_POLICY]
-
-
-def policy_batch_to_encoding(
-    policies: np.ndarray,
-    *,
-    policy_encoding: str | None = None,
-) -> np.ndarray:
-    enc = normalize_policy_encoding(policy_encoding)
-    p = np.asarray(policies)
-    if p.ndim != 2:
-        raise ValueError(f"policies must be 2D, got {p.shape}")
-    if enc == POLICY_ENCODING_AZ_4672:
-        if int(p.shape[1]) != int(POLICY_SIZE):
-            raise ValueError(f"policies must be (N,{POLICY_SIZE}), got {p.shape}")
-        return p
-    if int(p.shape[1]) == int(COMPACT_POLICY_SIZE):
-        return p
-    if int(p.shape[1]) != int(POLICY_SIZE):
-        raise ValueError(
-            f"policies must be (N,{POLICY_SIZE}) or (N,{COMPACT_POLICY_SIZE}), got {p.shape}",
-        )
-    return _renormalize_policy_batch(p[:, COMPACT_TO_FULL_POLICY])
 
 
 def _renormalize_policy_vector(policy: np.ndarray) -> np.ndarray:
@@ -384,20 +330,79 @@ def _renormalize_policy_batch(policies: np.ndarray) -> np.ndarray:
     return out.astype(np.asarray(policies).dtype, copy=False)
 
 
+def policy_vector_to_encoding(
+    policy: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+) -> np.ndarray:
+    """Project a policy vector into compact 1858 train/model space.
+
+    Already-compact vectors pass through. Full 4672 vectors are gathered onto
+    the geometrically valid subset and renormalized. ``policy_encoding`` is
+    ignored (kept for call-site compatibility).
+    """
+    del policy_encoding
+    p = np.asarray(policy)
+    if p.shape == (COMPACT_POLICY_SIZE,):
+        return p
+    if p.shape != (POLICY_SIZE,):
+        raise ValueError(
+            f"policy must be ({POLICY_SIZE},) or ({COMPACT_POLICY_SIZE},), got {p.shape}",
+        )
+    return _renormalize_policy_vector(p[COMPACT_TO_FULL_POLICY])
+
+
+def policy_mask_to_encoding(
+    mask: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+) -> np.ndarray:
+    """Project a legal/value mask into compact 1858 space (no renormalize)."""
+    del policy_encoding
+    m = np.asarray(mask)
+    if m.shape == (COMPACT_POLICY_SIZE,):
+        return m
+    if m.shape != (POLICY_SIZE,):
+        raise ValueError(
+            f"policy mask must be ({POLICY_SIZE},) or ({COMPACT_POLICY_SIZE},), got {m.shape}",
+        )
+    return m[COMPACT_TO_FULL_POLICY]
+
+
+def policy_batch_to_encoding(
+    policies: np.ndarray,
+    *,
+    policy_encoding: str | None = None,
+) -> np.ndarray:
+    """Batch form of :func:`policy_vector_to_encoding`."""
+    del policy_encoding
+    p = np.asarray(policies)
+    if p.ndim != 2:
+        raise ValueError(f"policies must be 2D, got {p.shape}")
+    if int(p.shape[1]) == int(COMPACT_POLICY_SIZE):
+        return p
+    if int(p.shape[1]) != int(POLICY_SIZE):
+        raise ValueError(
+            f"policies must be (N,{POLICY_SIZE}) or (N,{COMPACT_POLICY_SIZE}), got {p.shape}",
+        )
+    return _renormalize_policy_batch(p[:, COMPACT_TO_FULL_POLICY])
+
+
 def policy_vector_to_full(
     policy: np.ndarray,
     *,
     policy_encoding: str | None = None,
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    enc = normalize_policy_encoding(policy_encoding)
+    """Expand compact 1858 → full 4672 (or pass through full)."""
+    del policy_encoding
     p = np.asarray(policy)
-    if enc == POLICY_ENCODING_AZ_4672:
-        if p.shape != (POLICY_SIZE,):
-            raise ValueError(f"policy must be ({POLICY_SIZE},), got {p.shape}")
+    if p.shape == (POLICY_SIZE,):
         return p
     if p.shape != (COMPACT_POLICY_SIZE,):
-        raise ValueError(f"compact policy must be ({COMPACT_POLICY_SIZE},), got {p.shape}")
+        raise ValueError(
+            f"policy must be ({POLICY_SIZE},) or ({COMPACT_POLICY_SIZE},), got {p.shape}",
+        )
     out = np.full((POLICY_SIZE,), fill_value, dtype=p.dtype)
     out[COMPACT_TO_FULL_POLICY] = p
     return out
@@ -409,16 +414,17 @@ def policy_batch_to_full(
     policy_encoding: str | None = None,
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    enc = normalize_policy_encoding(policy_encoding)
+    """Batch form of :func:`policy_vector_to_full`."""
+    del policy_encoding
     p = np.asarray(policies)
     if p.ndim != 2:
         raise ValueError(f"policies must be 2D, got {p.shape}")
-    if enc == POLICY_ENCODING_AZ_4672:
-        if int(p.shape[1]) != int(POLICY_SIZE):
-            raise ValueError(f"policies must be (N,{POLICY_SIZE}), got {p.shape}")
+    if int(p.shape[1]) == int(POLICY_SIZE):
         return p
     if int(p.shape[1]) != int(COMPACT_POLICY_SIZE):
-        raise ValueError(f"compact policies must be (N,{COMPACT_POLICY_SIZE}), got {p.shape}")
+        raise ValueError(
+            f"policies must be (N,{POLICY_SIZE}) or (N,{COMPACT_POLICY_SIZE}), got {p.shape}",
+        )
     out = np.full((int(p.shape[0]), POLICY_SIZE), fill_value, dtype=p.dtype)
     out[:, COMPACT_TO_FULL_POLICY] = p
     return out
@@ -430,19 +436,9 @@ def policy_batch_to_full_if_needed(
     policy_encoding: str | None = None,
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    """Return full 4672 policy rows, using the declared source encoding.
-
-    Search always consumes full action ids. Model outputs may already be full,
-    or may be compact LC0-1858 rows. Avoid shape-sniffing "any non-full means
-    compact" at call sites: the explicit policy encoding decides which
-    projection is legal and wrong-width arrays fail loudly.
-    """
-    p = np.asarray(policies)
-    if p.ndim != 2:
-        raise ValueError(f"policies must be 2D, got {p.shape}")
-    if int(p.shape[1]) == int(POLICY_SIZE):
-        return p
-    return policy_batch_to_full(p, policy_encoding=policy_encoding, fill_value=fill_value)
+    """Shape-based expand for search: full stays full, compact scatters to 4672."""
+    del policy_encoding
+    return policy_batch_to_full(policies, fill_value=fill_value)
 
 
 def _build_index_to_move_lut() -> np.ndarray:

@@ -12,12 +12,9 @@ from torch.utils.checkpoint import checkpoint as grad_checkpoint
 from chess_anti_engine.moves import (
     COMPACT_POLICY_SIZE,
     COMPACT_TO_FULL_POLICY,
-    POLICY_ENCODING_AZ_4672,
-    POLICY_ENCODING_LC0_1858,
-    POLICY_SIZE,
+    MODEL_POLICY_ENCODING,
+    MODEL_POLICY_SIZE,
     build_policy_gather_tables,
-    normalize_policy_encoding,
-    policy_size_for_encoding,
 )
 from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
 
@@ -137,7 +134,7 @@ def _normalize_attention_bias(bias: torch.Tensor, mode: str, *, eps: float = 1e-
 
 
 class AttentionPolicyHead(nn.Module):
-    """Attention-based policy head that emits LC0-style policy logits.
+    """Attention-based policy head that emits compact LC0-1858 policy logits.
 
     We compute from->to logits via scaled dot-product between from-square queries
     and to-square keys, then gather those logits into the LC0 73-plane encoding:
@@ -145,10 +142,10 @@ class AttentionPolicyHead(nn.Module):
     - planes 56..63: knight moves
     - planes 64..72: underpromotions (separate linear head)
 
-    By default output is the legacy padded `(B, 4672)` tensor, indexed as
-    `from_sq * 73 + plane`. With `policy_encoding="lc0_1858"` dense forward
-    gathers only geometrically valid LC0 move classes, while `forward_legal*`
-    still accepts full 4672 action ids for the MCTS/CBoard action space.
+    Dense forward builds the intermediate ``from_sq * 73 + plane`` (4672) packing
+    then gathers only geometrically valid move classes → ``(B, 1858)``.
+    ``forward_legal*`` still accepts full 4672 action ids for the MCTS/CBoard
+    action space; inference expands compact logits to 4672 for search.
     """
 
   # Registered as buffers in __init__ via register_buffer; these declarations are
@@ -162,12 +159,10 @@ class AttentionPolicyHead(nn.Module):
         self,
         embed_dim: int,
         policy_dim: int | None = None,
-        *,
-        policy_encoding: str | None = None,
     ):
         super().__init__()
-        self.policy_encoding = normalize_policy_encoding(policy_encoding)
-        self.policy_size = policy_size_for_encoding(self.policy_encoding)
+        self.policy_encoding = MODEL_POLICY_ENCODING
+        self.policy_size = MODEL_POLICY_SIZE
         if policy_dim is None:
             policy_dim = embed_dim
         self.q = nn.Linear(embed_dim, policy_dim)
@@ -218,14 +213,9 @@ class AttentionPolicyHead(nn.Module):
         up = torch.where(self.promo_from.unsqueeze(0).unsqueeze(-1), up, neg_inf)
 
         logits = torch.cat([logits_64, up], dim=-1)  # (B,64,73)
-        out = logits.reshape(b, 64 * 73)
-        if self.policy_encoding == POLICY_ENCODING_LC0_1858:
-            out = out.index_select(dim=-1, index=self.compact_to_full)
-            assert self.policy_size == COMPACT_POLICY_SIZE
-            assert out.shape[-1] == COMPACT_POLICY_SIZE
-        else:
-            assert self.policy_size == POLICY_SIZE
-            assert out.shape[-1] == POLICY_SIZE
+        # Intermediate AZ packing is from*73+plane (4672); emit compact 1858 only.
+        out = logits.reshape(b, 64 * 73).index_select(dim=-1, index=self.compact_to_full)
+        assert out.shape[-1] == COMPACT_POLICY_SIZE
         return out
 
     def forward_legal(
@@ -667,7 +657,7 @@ class TransformerConfig:
     input_pos_encoding: str = "none"
     qkv_projection: str = "fused"
     use_deepnorm: bool = False
-    policy_encoding: str = POLICY_ENCODING_AZ_4672
+    policy_encoding: str = MODEL_POLICY_ENCODING
   # Dynamic board-relation attention bias (exact board relations computed in
   # C alongside the feature planes; see features.relation_matrices).
     use_dynamic_relations: bool = False
@@ -783,8 +773,9 @@ class ChessNet(nn.Module):
         self.resid_channel_dropout = 0.0
         self.resid_channel_balance_weight = 0.0
         self._last_channel_balance_loss: torch.Tensor | None = None
-        self.policy_encoding = normalize_policy_encoding(cfg.policy_encoding)
-        self.policy_size = policy_size_for_encoding(self.policy_encoding)
+        # Policy width is hard-coded compact; cfg.policy_encoding is identity only.
+        self.policy_encoding = MODEL_POLICY_ENCODING
+        self.policy_size = MODEL_POLICY_SIZE
         self.input_global_embedding = str(cfg.input_global_embedding).lower().strip()
         if self.input_global_embedding not in ("none", "bt4_board", "bt4_board_adapter"):
             raise ValueError(f"Unsupported input_global_embedding: {cfg.input_global_embedding!r}")
@@ -1002,10 +993,10 @@ class ChessNet(nn.Module):
         if cfg.use_deepnorm:
             self._apply_deepnorm_init()
 
-        self.policy_own = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
-        self.policy_soft = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
-        self.policy_sf = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
-        self.policy_future = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
+        self.policy_own = AttentionPolicyHead(output_embed_dim)
+        self.policy_soft = AttentionPolicyHead(output_embed_dim)
+        self.policy_sf = AttentionPolicyHead(output_embed_dim)
+        self.policy_future = AttentionPolicyHead(output_embed_dim)
 
         self.value_wdl = ValueHead(output_embed_dim, 3)
         self.value_sf_eval = ValueHead(output_embed_dim, 3)

@@ -26,7 +26,7 @@ import torch
 from chess_anti_engine.encoding import encode_position
 from chess_anti_engine.mcts import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.gumbel import GumbelConfig
-from chess_anti_engine.moves.encode import index_to_move_for_encoding, move_to_index_for_encoding
+from chess_anti_engine.moves.encode import index_to_move, move_to_index_for_encoding
 
 # Default rating buckets for Lichess-style evaluation, matching the LC0 blog
 # (https://lczero.org/blog/2024/02/...) coarse buckets.
@@ -376,15 +376,7 @@ def run_puzzle_eval(
         def _search(bs: list[chess.Board]):
             return run_gumbel_root_many_c(model, bs, device=device, rng=rng, cfg=g_cfg)[1]
 
-        # The C gumbel tree operates entirely in full az_4672 space: the model's
-        # (possibly compact lc0_1858) logits are scattered to POLICY_SIZE=4672 via
-        # _policy_logits_to_full BEFORE any tree work, and run_gumbel_root_many_c
-        # returns 4672-space action indices regardless of the model's
-        # policy_encoding. (See the production decode in selfplay/match.py, which
-        # uses plain index_to_move for these same actions.) Decode in az_4672 —
-        # decoding in g_cfg.policy_encoding would crash (idx >= 1858) or pick the
-        # wrong move for an lc0_1858 net.
-        action_encoding = None
+        # C gumbel returns full 4672 action ids (logits expanded before search).
     else:
         # Thread the checkpoint's own encoding into the PUCT config for the same
         # reason the gumbel branch does (above): MCTSConfig defaults to v1/legacy/
@@ -408,9 +400,6 @@ def run_puzzle_eval(
         def _search(bs: list[chess.Board]):
             return run_mcts_many(model, bs, device=device, rng=rng, cfg=cfg)[1]
 
-        # The legacy PUCT path returns full az_4672 indices.
-        action_encoding = None
-
     total = len(suite)
     correct_flags = [False] * total
 
@@ -422,8 +411,8 @@ def run_puzzle_eval(
         actions = _search(boards)
 
         for offset, (puzzle, action_idx) in enumerate(zip(batch_puzzles, actions)):
-            chosen = index_to_move_for_encoding(
-                int(action_idx), puzzle.board, policy_encoding=action_encoding)
+            # Search action ids are always full 4672 space.
+            chosen = index_to_move(int(action_idx), puzzle.board)
             if chosen in puzzle.best_moves:
                 correct_flags[start + offset] = True
 
@@ -496,10 +485,6 @@ def run_policy_sequence_eval(
         for i, p in enumerate(suite.puzzles)
         if p.solution_sequence or p.best_moves
     ]
-    # Legal-move indices must match the model's policy head width (compact
-    # lc0_1858 vs az_4672); using the wrong encoding indexes out of bounds.
-    _pol_enc = getattr(model, "policy_encoding", None)
-
     while active:
         # Forward all active boards in batches; pick legal-argmax move per board.
         boards = [b for _, b, _ in active]
@@ -519,7 +504,8 @@ def run_policy_sequence_eval(
                           else out["policy"]).float().cpu().numpy()
             for j, b in enumerate(chunk):
                 legal = list(b.legal_moves)
-                legal_idxs = [move_to_index_for_encoding(m, b, policy_encoding=_pol_enc) for m in legal]
+                # Model logits are compact 1858.
+                legal_idxs = [move_to_index_for_encoding(m, b) for m in legal]
                 picks.append(legal[int(np.argmax(pol_logits[j, legal_idxs]))])
 
         next_active: list[tuple[int, chess.Board, int]] = []

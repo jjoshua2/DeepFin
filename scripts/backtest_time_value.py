@@ -99,7 +99,7 @@ class _Searcher:
         model.eval()
         self._hist = str(getattr(model, "input_history_encoding", "legacy"))
         self._extra = str(getattr(model, "input_extra_features", "v1"))
-        self._pol_enc = str(getattr(model, "policy_encoding", "az_4672"))
+        self._pol_enc = str(getattr(model, "policy_encoding", "lc0_1858"))
         self._use_rel = bool(getattr(model, "use_dynamic_relations", False))
         if compile_mode:
   # Same shared TorchInductor/Triton cache as the engine + training, so repeat

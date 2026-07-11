@@ -387,13 +387,10 @@ def _compute_resign_weights(
     return sample_weights
 
 
-def _expand_policy_logits_for_ply(
-    pol_logits: np.ndarray,
-    *,
-    policy_encoding: str,
-) -> np.ndarray:
+def _expand_policy_logits_for_ply(pol_logits: np.ndarray) -> np.ndarray:
+    """Expand compact model logits to full 4672 for search consumers."""
     pol = np.asarray(pol_logits, dtype=np.float32)
-    return policy_batch_to_full_if_needed(pol, policy_encoding=policy_encoding, fill_value=-1e9)
+    return policy_batch_to_full_if_needed(pol, fill_value=-1e9)
 
 
 def _append_records_via_c(
@@ -411,10 +408,7 @@ def _append_records_via_c(
     values_arr = np.array(values_list, dtype=np.float64)
     # All slots filled by _run_mcts_group above; cast for np.stack's strict ArrayLike protocol.
     probs_arr = np.stack(cast("list[np.ndarray]", probs_list)).astype(np.float32, copy=False)
-    pol_logits_full = _expand_policy_logits_for_ply(
-        pol_logits,
-        policy_encoding=state.game.policy_encoding,
-    )
+    pol_logits_full = _expand_policy_logits_for_ply(pol_logits)
 
     assert state.c_process_ply is not None
     alt_lc0_root_xs = None
@@ -505,10 +499,7 @@ def _append_records_via_python(
     df_p_s = float(diff_focus.pol_scale)
     df_slope = float(diff_focus.slope)
     df_min = float(diff_focus.min_keep)
-    pol_logits_full = _expand_policy_logits_for_ply(
-        pol_logits,
-        policy_encoding=state.game.policy_encoding,
-    )
+    pol_logits_full = _expand_policy_logits_for_ply(pol_logits)
 
     # ``not state.has_c_ply`` ⇒ ``state.batch_enc_146 is None``
     # (coupled import in SelfplayState.create) ⇒ ``_use_inplace is False``
