@@ -28,7 +28,7 @@ from chess_anti_engine.uci.time_manager import Deadline
 
 
 def _make_dispatcher(max_batch: int = 64):
-    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
     model.eval()
     inner = DirectGPUEvaluator(
@@ -122,7 +122,7 @@ def test_pucv_no_vloss_leak() -> None:
 
 def test_pucv_rejects_single_slot_evaluator() -> None:
     """n_slots=1 evaluators can't pipeline — preflight catch."""
-    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
     model.eval()
     inner = DirectGPUEvaluator(
@@ -174,7 +174,7 @@ def test_searchworker_use_pucv_produces_bestmove() -> None:
     worker = SearchWorker(
         dispatcher,
         device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64,
         n_walkers=1,
     )
@@ -196,7 +196,7 @@ def test_searchworker_use_pucv_silently_disables_with_threads_gt_1() -> None:
     worker = SearchWorker(
         dispatcher,
         device="cpu",
-        gumbel_cfg=GumbelConfig(simulations=64, add_noise=False),
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
         chunk_sims=64,
         n_walkers=2,  # walker pool engaged
     )

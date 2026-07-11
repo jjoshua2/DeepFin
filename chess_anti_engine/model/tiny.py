@@ -3,14 +3,16 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import MODEL_POLICY_ENCODING, MODEL_POLICY_SIZE
 
 
 class TinyNet(nn.Module):
-    """Small model: (C,8,8) -> policy logits (POLICY_SIZE) and WDL logits (3)."""
+    """Small model: (C,8,8) -> compact policy logits (1858) and WDL logits (3)."""
 
     def __init__(self, in_planes: int):
         super().__init__()
+        self.policy_encoding = MODEL_POLICY_ENCODING
+        self.policy_size = MODEL_POLICY_SIZE
         self.trunk = nn.Sequential(
             nn.Conv2d(in_planes, 64, kernel_size=3, padding=1),
             nn.Mish(),
@@ -22,7 +24,7 @@ class TinyNet(nn.Module):
         self.policy = nn.Sequential(
             nn.Linear(64, 256),
             nn.Mish(),
-            nn.Linear(256, POLICY_SIZE),
+            nn.Linear(256, MODEL_POLICY_SIZE),
         )
         self.wdl = nn.Sequential(
             nn.Linear(64, 64),

@@ -16,7 +16,7 @@ import numpy as np
 
 from chess_anti_engine.encoding.encode import encode_position
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_ROOT_LEGACY_META
-from chess_anti_engine.moves import index_to_move_for_encoding
+from chess_anti_engine.moves import index_to_move, index_to_move_for_encoding
 from chess_anti_engine.replay.shard import load_shard_arrays, shard_positions
 
 
@@ -297,7 +297,11 @@ def _decode_current_board(x: np.ndarray) -> chess.Board:
 
 def _decode_example(ref: ExampleRef) -> dict[str, Any]:
     arrs, meta = load_shard_arrays(ref.shard, lazy=True)
-    policy_encoding = "lc0_1858" if int(meta.get("policy_size") or 4672) == 1858 else None
+    # Legacy 4672-wide shards store FULL-space indices; index_to_move_for_encoding
+    # is now compact-only, so decode by the shard's stored width, not via the
+    # (removed) az_4672 passthrough — a full index <1858 would otherwise decode
+    # to a silently WRONG move.
+    shard_is_compact = int(meta.get("policy_size") or 4672) == 1858
     x = np.asarray(arrs["x"][ref.row], dtype=np.float32)
     pre = _decode_current_board(x)
     policy = np.asarray(arrs["policy_target"][ref.row], dtype=np.float32)
@@ -307,7 +311,11 @@ def _decode_example(ref: ExampleRef) -> dict[str, Any]:
     post = pre.copy(stack=False)
     net_legal = False
     try:
-        net_move = index_to_move_for_encoding(top_idx, pre, policy_encoding=policy_encoding)
+        net_move = (
+            index_to_move_for_encoding(top_idx, pre)
+            if shard_is_compact
+            else index_to_move(top_idx, pre)
+        )
         net_legal = bool(net_move in pre.legal_moves)
         if net_legal:
             post.push(net_move)
@@ -319,7 +327,11 @@ def _decode_example(ref: ExampleRef) -> dict[str, Any]:
     sf_legal = False
     if sf_idx >= 0:
         try:
-            sf_move = index_to_move_for_encoding(sf_idx, post, policy_encoding=policy_encoding)
+            sf_move = (
+                index_to_move_for_encoding(sf_idx, post)
+                if shard_is_compact
+                else index_to_move(sf_idx, post)
+            )
             sf_legal = bool(sf_move in post.legal_moves)
         except Exception:
             sf_move = None

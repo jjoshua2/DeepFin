@@ -472,7 +472,16 @@ def _publish_distributed_trial_state(
     fen_raw = config.get("opening_fen_list_path")
     if isinstance(fen_raw, str) and fen_raw.strip():
         fen_src = Path(fen_raw.strip())
-        if fen_src.exists():
+        if not fen_src.exists():
+            # Live-reloadable => a yaml typo can now dangle mid-run; without
+            # this the manifest entry vanishes silently, workers set their
+            # list to None, and ALL FEN seeding no-ops with nothing in any log.
+            log.warning(
+                "opening_fen_list_path %s does not exist; omitting from manifest "
+                "(FEN seeding disabled until the path resolves)",
+                fen_src,
+            )
+        else:
             fen_dst = publish_dir / "opening_fen_list_live.txt"
             atomic_copy2(fen_src, fen_dst)
             manifest["opening_fen_list"] = {

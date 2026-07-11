@@ -8,10 +8,14 @@ from chess_anti_engine.stockfish.uci import StockfishResult, StockfishUCI
 
 
 class UniformPolicyValueModel(torch.nn.Module):
+    """Stub net: compact 1858 policy (same width as ChessNet); search expands to 4672."""
+
+    policy_encoding = "lc0_1858"
+
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         batch_size = x.shape[0]
         return {
-            "policy": torch.zeros((batch_size, 4672), dtype=torch.float32, device=x.device),
+            "policy": torch.zeros((batch_size, 1858), dtype=torch.float32, device=x.device),
             "wdl": torch.zeros((batch_size, 3), dtype=torch.float32, device=x.device),
         }
 

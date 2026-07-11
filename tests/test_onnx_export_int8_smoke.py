@@ -33,7 +33,7 @@ def test_onnx_export_int8_smoke_cpu(tmp_path: Path):
     assert fp32_path.exists()
     assert int8_path.exists()
 
-    x = torch.randn(2, 146, 8, 8, dtype=torch.float32)
+    x = torch.randn(2, 175, 8, 8, dtype=torch.float32)
     x_np = x.cpu().numpy()
 
     sess_fp32 = ort.InferenceSession(str(fp32_path), providers=["CPUExecutionProvider"])

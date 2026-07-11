@@ -29,7 +29,7 @@ def test_onnx_export_and_parity_cpu(tmp_path: Path):
     assert onnx_path.exists()
 
     # Compare ORT vs torch on a deterministic input.
-    x = torch.randn(2, 146, 8, 8, dtype=torch.float32)
+    x = torch.randn(2, 175, 8, 8, dtype=torch.float32)
     with torch.no_grad():
         out = model(x)
         policy = out.get("policy", out["policy_own"]).detach().cpu().numpy()

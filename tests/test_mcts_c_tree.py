@@ -173,7 +173,7 @@ def test_tree_reset_compact_releases_high_water_buffers():
 
 @pytest.fixture(scope="module")
 def tiny_model():
-    m = build_model(ModelConfig(kind="tiny"))
+    m = build_model(ModelConfig(input_extra_features="v1", kind="tiny"))
     m.eval()
     return m
 
@@ -182,7 +182,7 @@ def test_run_mcts_many_c_basic(tiny_model):
     """C MCTS produces valid output (correct shapes, legal actions)."""
     boards = [chess.Board()]
     rng = np.random.default_rng(42)
-    cfg = MCTSConfig(simulations=16, temperature=1.0)
+    cfg = MCTSConfig(input_extra_features="v1", simulations=16, temperature=1.0)
 
     probs, actions, _values, masks = run_mcts_many_c(
         tiny_model, boards, device="cpu", rng=rng, cfg=cfg,
@@ -210,7 +210,7 @@ def test_run_mcts_many_c_multi_board(tiny_model):
     b2.push_san("e5")
     boards.append(b2)
 
-    cfg = MCTSConfig(simulations=8, temperature=1.0)
+    cfg = MCTSConfig(input_extra_features="v1", simulations=8, temperature=1.0)
     probs, actions, _values, masks = run_mcts_many_c(
         tiny_model, boards, device="cpu", rng=rng, cfg=cfg,
     )
@@ -225,7 +225,7 @@ def test_run_mcts_many_c_multi_board(tiny_model):
 
 def test_run_mcts_many_c_terminal():
     """C MCTS handles terminal positions (scholars mate)."""
-    model = build_model(ModelConfig(kind="tiny"))
+    model = build_model(ModelConfig(input_extra_features="v1", kind="tiny"))
     model.eval()
 
     # Fool's mate
@@ -235,7 +235,7 @@ def test_run_mcts_many_c_terminal():
     assert b.is_checkmate()
 
     rng = np.random.default_rng(0)
-    cfg = MCTSConfig(simulations=8)
+    cfg = MCTSConfig(input_extra_features="v1", simulations=8)
     # Should not crash on terminal position
     probs, _actions, _values, _masks = run_mcts_many_c(
         model, [b], device="cpu", rng=rng, cfg=cfg,
@@ -250,7 +250,7 @@ def test_run_mcts_many_draw_terminal_root_returns_zero_policy(tiny_model):
     assert bare_kings.is_game_over()
     assert bare_kings.result(claim_draw=True) == "1/2-1/2"
 
-    cfg = MCTSConfig(simulations=8, temperature=0.0)
+    cfg = MCTSConfig(input_extra_features="v1", simulations=8, temperature=0.0)
     for fn in (run_mcts_many, run_mcts_many_c):
         probs, actions, values, masks = fn(
             tiny_model,
@@ -268,7 +268,7 @@ def test_run_mcts_many_draw_terminal_root_returns_zero_policy(tiny_model):
 def test_c_vs_python_same_root_q(tiny_model):
     """C and Python MCTS should produce the same root Q value (deterministic, no Dirichlet)."""
     board = chess.Board()
-    cfg = MCTSConfig(simulations=32, dirichlet_eps=0.0, temperature=0.0)
+    cfg = MCTSConfig(input_extra_features="v1", simulations=32, dirichlet_eps=0.0, temperature=0.0)
 
     rng_py = np.random.default_rng(123)
     rng_c = np.random.default_rng(123)
@@ -293,7 +293,7 @@ def test_c_vs_python_match_on_history_rich_position():
     rng_state = torch.get_rng_state()
     try:
         torch.manual_seed(0)
-        model = build_model(ModelConfig(kind="tiny"))
+        model = build_model(ModelConfig(input_extra_features="v1", kind="tiny"))
     finally:
         torch.set_rng_state(rng_state)
     model.eval()
@@ -302,7 +302,7 @@ def test_c_vs_python_match_on_history_rich_position():
     for uci in ["g1f3", "g8f6", "f3g1", "f6g8", "g1f3", "g8f6"]:
         board.push(chess.Move.from_uci(uci))
 
-    cfg = MCTSConfig(simulations=16, dirichlet_eps=0.0, temperature=0.0)
+    cfg = MCTSConfig(input_extra_features="v1", simulations=16, dirichlet_eps=0.0, temperature=0.0)
     probs_py, actions_py, values_py, masks_py = run_mcts_many(
         model,
         [board],
@@ -333,7 +333,7 @@ def test_run_mcts_many_precomputed_logits_matches_direct_path(tiny_model):
         b2.push_san(san)
     boards.append(b2)
 
-    cfg = MCTSConfig(simulations=12, dirichlet_eps=0.0, temperature=0.0)
+    cfg = MCTSConfig(input_extra_features="v1", simulations=12, dirichlet_eps=0.0, temperature=0.0)
 
     for board in boards:
         xs = encode_positions_batch([board], add_features=True)
@@ -454,16 +454,20 @@ def test_root_log_value_transform_and_abi() -> None:
     assert set(PLAY_SEARCH_DEFAULTS) <= set(GumbelConfig.__dataclass_fields__)
 
     torch.manual_seed(0)
-    m = build_model(ModelConfig(embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False)).eval()
+    m = build_model(ModelConfig(input_extra_features="v1", embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False)).eval()
     board = chess.Board()
     legal = set(board.legal_moves)
     # Legacy linear root AND production root-log must each run and pick a legal move
     # — i.e. the new C args thread through without breaking the search. (Built
     # explicitly rather than **-unpacked so the kwarg types stay checkable.)
-    cfg_legacy = GumbelConfig(simulations=32, add_noise=False, temperature=0.0)
+    cfg_legacy = GumbelConfig(
+        simulations=32, add_noise=False, temperature=0.0,
+        input_extra_features="v1",
+    )
     cfg_root_log = GumbelConfig(
         simulations=32, add_noise=False, temperature=0.0,
         c_visit_root=900.0, c_scale_root=7.0, q_visit_exp_root=-1.0,
+        input_extra_features="v1",
     )
     for cfg in (cfg_legacy, cfg_root_log):
         _probs, actions, *_ = run_gumbel_root_many_c(

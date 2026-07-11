@@ -5,15 +5,18 @@ import torch
 
 from chess_anti_engine.eval.puzzles import Puzzle, PuzzleSuite, run_policy_sequence_eval
 from chess_anti_engine.moves import move_to_index
+from chess_anti_engine.moves.encode import MODEL_POLICY_SIZE, compact_policy_index
 
 
 class _SingleMovePolicy(torch.nn.Module):
+    """Stub net emitting compact lc0_1858 logits, like every real model."""
+
     def __init__(self, *, board: chess.Board, move: chess.Move) -> None:
         super().__init__()
-        self.move_idx = move_to_index(move, board)
+        self.move_idx = compact_policy_index(move_to_index(move, board))
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
-        policy = torch.zeros((x.shape[0], 4672), dtype=torch.float32)
+        policy = torch.zeros((x.shape[0], MODEL_POLICY_SIZE), dtype=torch.float32)
         policy[:, self.move_idx] = 100.0
         return {"policy_own": policy}
 

@@ -34,7 +34,7 @@ from chess_anti_engine.uci.walker_pool import WalkerPool, WalkerPoolConfig
 def _make_tiny_checkpoint(tmp_path: Path) -> Path:
     ckpt_dir = tmp_path / "checkpoint_000001"
     ckpt_dir.mkdir()
-    cfg = ModelConfig(kind="tiny")
+    cfg = ModelConfig(input_extra_features="v1", kind="tiny")
     model = build_model(cfg)
     torch.save({"model": model.state_dict(), "step": 0}, ckpt_dir / "trainer.pt")
     with (tmp_path / "params.json").open("w") as fh:
@@ -85,7 +85,7 @@ def test_walkers_flag_produces_bestmove(tiny_checkpoint: Path) -> None:
 def test_walker_pool_accumulates_visits() -> None:
     """WalkerPool against a shared tree: after run, root visits >= target
     (vloss doesn't prevent real visits, only nudges concurrent descent)."""
-    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
     model.eval()
     evaluator = DirectGPUEvaluator(model, device="cpu", max_batch=4, use_amp=False)
@@ -138,7 +138,7 @@ def test_walker_pool_gather_amplifies_batch() -> None:
                 self.submit_sizes.append(int(x.shape[0]))
             return self._inner.evaluate_encoded(x, relations)
 
-    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
     model.eval()
     inner = DirectGPUEvaluator(model, device="cpu", max_batch=16, use_amp=False)
@@ -191,7 +191,7 @@ def test_walker_pool_gather_default_is_one() -> None:
                 self.submit_sizes.append(int(x.shape[0]))
             return self._inner.evaluate_encoded(x, relations)
 
-    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
     model.eval()
     inner = DirectGPUEvaluator(model, device="cpu", max_batch=4, use_amp=False)
@@ -222,7 +222,7 @@ def test_walker_pool_gather_default_is_one() -> None:
 
 
 def test_walker_pool_stop_event_shortens_run() -> None:
-    cfg = ModelConfig(embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(input_extra_features="v1", embed_dim=16, num_layers=1, num_heads=2, ffn_mult=2.0)
     model = build_model(cfg)
     model.eval()
     evaluator = DirectGPUEvaluator(model, device="cpu", max_batch=4, use_amp=False)

@@ -292,6 +292,7 @@ def test_slot_inference_broker_roundtrip(tmp_path: Path) -> None:
 
     model_cfg = ModelConfig(
         kind="tiny",
+        input_extra_features="v1",
         embed_dim=64,
         num_layers=1,
         num_heads=4,
@@ -757,6 +758,7 @@ def test_slot_broker_reloads_model_immediately_after_manifest_change(tmp_path: P
 
     model_cfg = ModelConfig(
         kind="tiny",
+        input_extra_features="v1",
         embed_dim=64,
         num_layers=1,
         num_heads=4,
@@ -876,6 +878,23 @@ def test_gather_adaptive_arrival_restarts_idle_window() -> None:
     # one (10ms arrival + 25ms fresh idle).
     assert elapsed_ms >= 30.0
     assert elapsed_ms < 400.0
+
+
+def test_gather_collects_response_slot_recycled_to_request() -> None:
+    slots = [_GatherFakeSlot(_STATE_REQUEST), _GatherFakeSlot(_STATE_RESPONSE)]
+    broker = _bare_gather_broker(batch_wait_ms=100.0, adaptive_idle_ms=10.0, slots=slots)
+    ready = [slots[0]]
+
+    def _consume_and_resubmit() -> None:
+        time.sleep(0.003)
+        slots[1].state = _STATE_REQUEST
+
+    thread = threading.Thread(target=_consume_and_resubmit)
+    thread.start()
+    broker._gather_more_within_window(ready)
+    thread.join()
+
+    assert slots[1] in ready
 
 
 def test_gather_adaptive_returns_early_when_all_slots_ready() -> None:

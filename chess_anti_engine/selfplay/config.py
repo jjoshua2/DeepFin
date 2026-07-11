@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from chess_anti_engine.encoding.features import EXTRA_FEATURES_V2_THREATS
 from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
-from chess_anti_engine.moves import POLICY_ENCODING_AZ_4672
+from chess_anti_engine.moves import MODEL_POLICY_ENCODING
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 
 _LOG = logging.getLogger(__name__)
@@ -171,7 +171,7 @@ class GameConfig:
     # Optional 3rd blend source for the categorical target: the net's own search
     # WDL (mirrors the main value head's search_wdl_frac). 0.0 = SF-only blend.
     categorical_search_blend_frac: float = 0.0
-    policy_encoding: str = POLICY_ENCODING_AZ_4672
+    policy_encoding: str = MODEL_POLICY_ENCODING
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V2_THREATS
     record_lc0_root_input: bool = False

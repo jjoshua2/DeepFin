@@ -31,6 +31,7 @@ import torch
 
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 from chess_anti_engine.utils.amp import inference_autocast
+from chess_anti_engine.model import infer_input_planes
 
 
 def _parse_batches(batch: int, batches: str) -> list[int]:
@@ -54,10 +55,12 @@ def _profile_batch(
     device: str,
     use_amp: bool,
     amp_dtype: str,
+    input_planes: int,
 ) -> dict[str, Any]:
-    # Random board-shaped input. 146 planes x 8 x 8 matches our encoding.
+    # Match the checkpoint's declared encoding. Production v2_threats uses
+    # 175 planes; older v1 checkpoints use 146.
     rng = np.random.default_rng(42 + batch)
-    x_cpu = rng.standard_normal((batch, 146, 8, 8), dtype=np.float32)
+    x_cpu = rng.standard_normal((batch, input_planes, 8, 8), dtype=np.float32)
     x = torch.from_numpy(x_cpu).to(device, non_blocking=True)
 
     print(f"[profile] warmup batch={batch} ({warmup} iters)")
@@ -168,6 +171,12 @@ def main() -> None:
 
     print(f"[profile] loading {args.checkpoint}")
     model = load_model_from_checkpoint(args.checkpoint, device=args.device).eval()
+    input_extra_features = getattr(model, "input_extra_features", None)
+    input_planes = infer_input_planes(input_extra_features)
+    print(
+        f"[profile] input encoding={input_extra_features!r} "
+        f"planes={input_planes}"
+    )
 
     if args.mode != "off":
         print(f"[profile] compiling with mode={args.mode}")
@@ -177,7 +186,24 @@ def main() -> None:
     else:
         compiled = model
 
-    # Graph break + recompile diagnostics
+    results = [
+        _profile_batch(
+            compiled,
+            model,
+            batch=batch,
+            warmup=args.warmup,
+            iters=args.iters,
+            device=args.device,
+            use_amp=args.amp_dtype != "off",
+            amp_dtype=args.amp_dtype,
+            input_planes=input_planes,
+        )
+        for batch in batches
+    ]
+
+    # torch.compile is lazy, so counters are meaningful only after warmup and
+    # timing have executed the graph. Reading them immediately after wrapping
+    # the model incorrectly reports zero captures.
     if args.mode != "off":
         try:
             from torch._dynamo.utils import counters
@@ -194,20 +220,6 @@ def main() -> None:
                 print("[profile] OK: full graph captured, no breaks")
         except Exception as exc:
             print(f"[profile] dynamo counters unavailable: {exc}")
-
-    results = [
-        _profile_batch(
-            compiled,
-            model,
-            batch=batch,
-            warmup=args.warmup,
-            iters=args.iters,
-            device=args.device,
-            use_amp=args.amp_dtype != "off",
-            amp_dtype=args.amp_dtype,
-        )
-        for batch in batches
-    ]
     print()
     print("Read these:")
     print("  * wall ≈ gpu  →  CUDA graphs effective, no host slack to hide")

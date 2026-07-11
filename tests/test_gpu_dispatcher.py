@@ -17,7 +17,10 @@ from chess_anti_engine.model import ModelConfig, build_model
 
 
 def _make_evaluator() -> DirectGPUEvaluator:
-    cfg = ModelConfig(embed_dim=32, num_layers=1, num_heads=2, ffn_mult=2.0)
+    cfg = ModelConfig(
+        embed_dim=32, num_layers=1, num_heads=2, ffn_mult=2.0,
+        input_extra_features="v1",
+    )
     model = build_model(cfg)
     model.eval()
     return DirectGPUEvaluator(model, device="cpu", max_batch=16, use_amp=False)
@@ -90,7 +93,26 @@ def test_dispatcher_forwards_inplace_and_async_apis():
     assert hasattr(dispatcher, "evaluate_encoded_async")
     assert hasattr(dispatcher, "get_input_buffer")
     assert hasattr(dispatcher, "evaluate_inplace_async")
+    assert hasattr(dispatcher, "evaluate_legal_bf16")
+    assert dispatcher.supports_legal_bf16 is True
+    assert dispatcher.supports_input_bf16_bits is False
     assert dispatcher.n_slots == evaluator.n_slots
+
+
+def test_dispatcher_forwards_compact_legal_bf16() -> None:
+    evaluator = _make_evaluator()
+    dispatcher = ThreadSafeGPUDispatcher(evaluator)
+    x = np.random.default_rng(4).standard_normal((2, 146, 8, 8), dtype=np.float32)
+    counts = np.asarray([2, 1], dtype=np.int32)
+    legal = np.asarray([0, 7, 64], dtype=np.int32)
+
+    dense, expected_wdl = dispatcher.evaluate_encoded(x)
+    rows = np.repeat(np.arange(2), counts)
+    expected_pol = torch.from_numpy(dense[rows, legal]).to(torch.bfloat16).view(torch.uint16).numpy()
+    pol, wdl = dispatcher.evaluate_legal_bf16(x, legal, counts)
+
+    np.testing.assert_array_equal(pol, expected_pol)
+    np.testing.assert_allclose(wdl, expected_wdl, rtol=1e-5, atol=1e-5)
 
 
 def test_dispatcher_exposes_max_batch():

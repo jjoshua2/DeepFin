@@ -132,11 +132,7 @@ def run_mcts_many_c(
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_all = np.asarray(pre_pol_logits, dtype=np.float32)
-        pol_logits_all = policy_batch_to_full_if_needed(
-            pol_logits_all,
-            policy_encoding=cfg.policy_encoding,
-            fill_value=-1e9,
-        )
+        pol_logits_all = policy_batch_to_full_if_needed(pol_logits_all, fill_value=-1e9)
         wdl_logits_all = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace and root_cboards is not None:
         root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]

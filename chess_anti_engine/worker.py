@@ -113,6 +113,24 @@ _MANIFEST_STATE_ACTIVE = "active"
 _MANIFEST_STATE_PAUSED = "paused_selfplay"
 
 
+def _require_compact_policy_encoding(raw: object) -> str:
+    """Reject az_4672 as a recording encoding (stale/legacy server manifest).
+
+    Models only emit compact 1858 and finalize writes compact train targets
+    unconditionally, but GameConfig-driven widths (e.g. the TB one-hot
+    override in selfplay/finalize.py) still honor the declared encoding — an
+    accepted az_4672 would silently write compact indices into 4672-wide
+    vectors instead of failing loudly here.
+    """
+    enc = normalize_policy_encoding(str(raw) if raw is not None else None)
+    if enc != POLICY_ENCODING_LC0_1858:
+        raise SystemExit(
+            f"policy_encoding {raw!r} unsupported: recording is compact "
+            f"{POLICY_ENCODING_LC0_1858} only (stale server manifest?)",
+        )
+    return enc
+
+
 def _upload_response_allows_pending_delete(response: Any) -> bool:
     """True when a worker may delete its local pending shard after upload.
 
@@ -2564,7 +2582,7 @@ class WorkerSession:
                 syzygy_adjudicate=bool(reco.get("syzygy_adjudicate", False)),
                 syzygy_adjudicate_fraction=float(reco.get("syzygy_adjudicate_fraction", 1.0)),
                 syzygy_in_search=bool(reco.get("syzygy_in_search", False)),
-                policy_encoding=normalize_policy_encoding(reco.get("policy_encoding", "az_4672")),
+                policy_encoding=_require_compact_policy_encoding(reco.get("policy_encoding")),
                 input_history_encoding=str(reco.get("input_history_encoding", "legacy")),
                 input_extra_features=str(reco.get("input_extra_features", "v1")),
                 record_lc0_root_input=bool(reco.get("record_lc0_root_input", False)),

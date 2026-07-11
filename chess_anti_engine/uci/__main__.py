@@ -166,6 +166,7 @@ def _make_evaluator_factory(
     input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
     use_relations = bool(getattr(models[0], "use_dynamic_relations", False))
+    compact_bf16 = os.environ.get("CAE_UCI_COMPACT_BF16", "0") == "1"
 
     def build(
         max_batch: int,
@@ -200,14 +201,17 @@ def _make_evaluator_factory(
 
         if len(active_devices) > 1:
             evaluators = [
-                DirectGPUEvaluator(m, device=d, max_batch=max_batch, n_slots=2)
+                DirectGPUEvaluator(
+                    m, device=d, max_batch=max_batch, n_slots=2,
+                    input_bf16=compact_bf16, legal_bf16=compact_bf16,
+                )
                 for m, d in zip(compiled_models, active_devices)
             ]
             evaluator = MultiGPUDispatcher(evaluators)
         else:
             evaluator = DirectGPUEvaluator(
                 compiled_models[0], device=active_devices[0],
-                max_batch=max_batch, n_slots=2,
+                max_batch=max_batch, n_slots=2, input_bf16=compact_bf16, legal_bf16=compact_bf16,
             )
   # Always wrap in ThreadSafeGPUDispatcher so the UCI `Threads`
   # option can bump walker count at runtime without a race. Lock
@@ -255,6 +259,7 @@ def _make_multi_gpu_pucv_factory_builder(
     input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
     use_relations = bool(getattr(models[0], "use_dynamic_relations", False))
+    compact_bf16 = os.environ.get("CAE_UCI_COMPACT_BF16", "0") == "1"
 
     def build(max_batch: int, gather: int):
         effective_gather = min(max(1, int(gather)), int(max_batch))
@@ -282,6 +287,7 @@ def _make_multi_gpu_pucv_factory_builder(
                     compiled = m
                 evaluator = DirectGPUEvaluator(
                     compiled, device=d, max_batch=max_batch, n_slots=2,
+                    input_bf16=compact_bf16, legal_bf16=compact_bf16,
                 )
                 _warmup_pucv_evaluator(
                     evaluator,
@@ -334,7 +340,7 @@ def _build_engine(
     devices: tuple[str, ...] | None = None,
     input_history_encoding: str = "legacy",
     input_extra_features: str = "v1",
-    policy_encoding: str = "az_4672",
+    policy_encoding: str = "lc0_1858",
     compute_relations: bool = False,
     rebuild_evaluator=None,
     rebuild_multi_gpu_pucv_factories=None,
@@ -708,7 +714,7 @@ def main() -> int:
             models = _load_models(args.checkpoint, devices)
             input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
             input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
-            policy_encoding = str(getattr(models[0], "policy_encoding", "az_4672"))
+            policy_encoding = str(getattr(models[0], "policy_encoding", "lc0_1858"))
             use_dynamic_relations = bool(getattr(models[0], "use_dynamic_relations", False))
             if use_dynamic_relations:
                 _println(

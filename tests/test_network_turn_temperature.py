@@ -36,7 +36,7 @@ def test_compact_policy_logits_expand_before_ply_processing() -> None:
     full[0, COMPACT_TO_FULL_POLICY] = np.arange(COMPACT_TO_FULL_POLICY.shape[0], dtype=np.float32)
     compact = policy_batch_to_encoding(full, policy_encoding="lc0_1858")
 
-    expanded = _expand_policy_logits_for_ply(compact, policy_encoding="lc0_1858")
+    expanded = _expand_policy_logits_for_ply(compact)
 
     assert expanded.shape == (1, POLICY_SIZE)
     np.testing.assert_array_equal(expanded[0, COMPACT_TO_FULL_POLICY], compact[0])

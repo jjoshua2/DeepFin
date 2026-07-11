@@ -27,7 +27,7 @@ from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_draw_indices,
 )
 from chess_anti_engine.moves import (
-    POLICY_ENCODING_AZ_4672,
+    MODEL_POLICY_ENCODING,
     POLICY_SIZE,
     policy_batch_to_full_if_needed,
 )
@@ -135,7 +135,11 @@ class GumbelConfig:
     gumbel_scale: float = 1.0
     input_history_encoding: str = LC0_HISTORY_LEGACY
     input_extra_features: str = EXTRA_FEATURES_V2_THREATS
+<<<<<<< HEAD
     policy_encoding: str = POLICY_ENCODING_AZ_4672
+=======
+    policy_encoding: str = MODEL_POLICY_ENCODING
+>>>>>>> origin/main
   # Compute dynamic board-relation matrices per eval and pass them to the
   # evaluator as attention-bias input (model.use_dynamic_relations).
     compute_relations: bool = False
@@ -171,11 +175,7 @@ def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
 
 def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
     pol = apply_policy_temp(np.asarray(pol_logits, dtype=np.float32), cfg=cfg)
-    return policy_batch_to_full_if_needed(
-        pol,
-        policy_encoding=cfg.policy_encoding,
-        fill_value=-1e9,
-    )
+    return policy_batch_to_full_if_needed(pol, fill_value=-1e9)
 
 
 def gumbel_policy_diagnostics(
