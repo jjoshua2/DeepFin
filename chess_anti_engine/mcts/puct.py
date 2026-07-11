@@ -329,11 +329,7 @@ def run_mcts_many(
 
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         pol_logits_all = np.asarray(pre_pol_logits, dtype=np.float32)
-        pol_logits_all = policy_batch_to_full_if_needed(
-            pol_logits_all,
-            policy_encoding=cfg.policy_encoding,
-            fill_value=-1e9,
-        )
+        pol_logits_all = policy_batch_to_full_if_needed(pol_logits_all, fill_value=-1e9)
         roots = [
             _init_root_from_logits(
                 b, pol_logits=pol_logits_all[i], wdl_logits=pre_wdl_logits[i],

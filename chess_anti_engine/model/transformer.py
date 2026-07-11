@@ -15,7 +15,6 @@ from chess_anti_engine.moves import (
     MODEL_POLICY_ENCODING,
     MODEL_POLICY_SIZE,
     build_policy_gather_tables,
-    require_model_policy_encoding,
 )
 from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
 
@@ -160,17 +159,9 @@ class AttentionPolicyHead(nn.Module):
         self,
         embed_dim: int,
         policy_dim: int | None = None,
-        *,
-        policy_encoding: str | None = None,
     ):
         super().__init__()
-        # policy_encoding is accepted for call-site compatibility but only the
-        # compact model encoding is legal (require raises on az_4672).
-        self.policy_encoding = (
-            require_model_policy_encoding(policy_encoding)
-            if policy_encoding is not None
-            else MODEL_POLICY_ENCODING
-        )
+        self.policy_encoding = MODEL_POLICY_ENCODING
         self.policy_size = MODEL_POLICY_SIZE
         if policy_dim is None:
             policy_dim = embed_dim
@@ -782,7 +773,8 @@ class ChessNet(nn.Module):
         self.resid_channel_dropout = 0.0
         self.resid_channel_balance_weight = 0.0
         self._last_channel_balance_loss: torch.Tensor | None = None
-        self.policy_encoding = require_model_policy_encoding(cfg.policy_encoding)
+        # Policy width is hard-coded compact; cfg.policy_encoding is identity only.
+        self.policy_encoding = MODEL_POLICY_ENCODING
         self.policy_size = MODEL_POLICY_SIZE
         self.input_global_embedding = str(cfg.input_global_embedding).lower().strip()
         if self.input_global_embedding not in ("none", "bt4_board", "bt4_board_adapter"):
@@ -1001,10 +993,10 @@ class ChessNet(nn.Module):
         if cfg.use_deepnorm:
             self._apply_deepnorm_init()
 
-        self.policy_own = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
-        self.policy_soft = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
-        self.policy_sf = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
-        self.policy_future = AttentionPolicyHead(output_embed_dim, policy_encoding=self.policy_encoding)
+        self.policy_own = AttentionPolicyHead(output_embed_dim)
+        self.policy_soft = AttentionPolicyHead(output_embed_dim)
+        self.policy_sf = AttentionPolicyHead(output_embed_dim)
+        self.policy_future = AttentionPolicyHead(output_embed_dim)
 
         self.value_wdl = ValueHead(output_embed_dim, 3)
         self.value_sf_eval = ValueHead(output_embed_dim, 3)

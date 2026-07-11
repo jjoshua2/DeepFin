@@ -30,7 +30,6 @@ from .encode import (
     policy_size_for_encoding,
     policy_vector_to_encoding,
     policy_vector_to_full,
-    require_model_policy_encoding,
     sample_move_from_logits,
 )
 
@@ -66,6 +65,5 @@ __all__ = [
     "policy_size_for_encoding",
     "policy_vector_to_encoding",
     "policy_vector_to_full",
-    "require_model_policy_encoding",
     "sample_move_from_logits",
 ]

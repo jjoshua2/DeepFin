@@ -6,10 +6,7 @@ import json
 import chess
 import numpy as np
 
-from chess_anti_engine.moves.encode import (
-    move_to_index_for_encoding,
-    policy_size_for_encoding,
-)
+from chess_anti_engine.moves.encode import POLICY_SIZE, move_to_index
 from chess_anti_engine.selfplay.blindspot_harvest import (
     HarvestConfig,
     HarvestedSeed,
@@ -20,10 +17,7 @@ from chess_anti_engine.selfplay.blindspot_harvest import (
 )
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 
-# rec.policy_probs is the internal az_4672 vector (POLICY_SIZE) in production —
-# build the fixture at that size so the size-based index lookup is exercised (a
-# 1858 fixture hid the real bug: indexing 4672 probs with a compact index).
-_ENC = "az_4672"
+# rec.policy_probs is the internal full-4672 vector from search in production.
 _LINE = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "f3g5", "d7d5", "e4d5", "c6a5"]
 
 
@@ -42,9 +36,8 @@ def _board_after(n: int) -> chess.Board:
 
 def _probs_favoring(board: chess.Board, uci: str, p: float = 0.9) -> np.ndarray:
     """policy_probs with weight p on the given legal move (the rest uniform)."""
-    v = np.full((policy_size_for_encoding(_ENC),), (1.0 - p) / policy_size_for_encoding(_ENC),
-                dtype=np.float32)
-    idx = int(move_to_index_for_encoding(chess.Move.from_uci(uci), board, policy_encoding=_ENC))
+    v = np.full((POLICY_SIZE,), (1.0 - p) / POLICY_SIZE, dtype=np.float32)
+    idx = int(move_to_index(chess.Move.from_uci(uci), board))
     v[idx] = p
     return v
 

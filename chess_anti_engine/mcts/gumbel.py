@@ -171,11 +171,7 @@ def apply_policy_temp(pol: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
 
 def _policy_logits_to_full(pol_logits: np.ndarray, *, cfg: GumbelConfig) -> np.ndarray:
     pol = apply_policy_temp(np.asarray(pol_logits, dtype=np.float32), cfg=cfg)
-    return policy_batch_to_full_if_needed(
-        pol,
-        policy_encoding=cfg.policy_encoding,
-        fill_value=-1e9,
-    )
+    return policy_batch_to_full_if_needed(pol, fill_value=-1e9)
 
 
 def gumbel_policy_diagnostics(

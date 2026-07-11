@@ -132,36 +132,36 @@ def seed_line_from_board(board: chess.Board, history_plies: int) -> str:
     return f"{tmp.fen()} | {moves}"
 
 
-def _probs_encoding(policy_probs: np.ndarray) -> str | None:
-    """The move encoding that indexes ``policy_probs`` — chosen by its length,
-    NOT the config's output encoding. rec.policy_probs is the internal az_4672
-    vector (POLICY_SIZE); indexing it with a compact lc0_1858 index reads the
-    wrong move (Codex/review). Returns None for an unknown size (skip)."""
-    from chess_anti_engine.moves.encode import policy_size_for_encoding
-
-    for enc in ("az_4672", "lc0_1858"):
-        if len(policy_probs) == policy_size_for_encoding(enc):
-            return enc
-    return None
-
-
 def _played_was_favored(
     board: chess.Board, played: chess.Move | None, policy_probs: np.ndarray | None,
     min_prob: float,
 ) -> bool:
     """True if the net's PLAYED move carried >= ``min_prob`` improved-policy
     weight (so sf_wdl reflects a near-best move, not a temperature blunder).
-    Missing data / an unencodable move -> conservatively False (skip)."""
+    Missing data / an unencodable move -> conservatively False (skip).
+
+    ``rec.policy_probs`` is the internal full-4672 vector from search; compact
+    1858 vectors are also accepted (width-sniffed).
+    """
     if played is None or policy_probs is None:
         return False
-    enc = _probs_encoding(policy_probs)
-    if enc is None:
-        return False
     try:
-        from chess_anti_engine.moves.encode import move_to_index_for_encoding
+        from chess_anti_engine.moves.encode import (
+            COMPACT_POLICY_SIZE,
+            POLICY_SIZE,
+            compact_policy_index,
+            move_to_index,
+        )
 
-        idx = int(move_to_index_for_encoding(played, board, policy_encoding=enc))
-        return 0 <= idx < len(policy_probs) and float(policy_probs[idx]) >= min_prob
+        full_idx = int(move_to_index(played, board))
+        n = len(policy_probs)
+        if n == POLICY_SIZE:
+            idx = full_idx
+        elif n == COMPACT_POLICY_SIZE:
+            idx = compact_policy_index(full_idx)
+        else:
+            return False
+        return 0 <= idx < n and float(policy_probs[idx]) >= min_prob
     except (ValueError, KeyError, IndexError):
         return False
 

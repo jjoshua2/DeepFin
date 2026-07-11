@@ -11,7 +11,6 @@ from chess_anti_engine.encoding._lc0_ext import (
 from chess_anti_engine.moves import (
     COMPACT_TO_FULL_POLICY,
     FULL_TO_COMPACT_POLICY,
-    POLICY_ENCODING_AZ_4672,
     POLICY_ENCODING_LC0_1858,
 )
 from chess_anti_engine.selfplay.finalize import (
@@ -20,11 +19,9 @@ from chess_anti_engine.selfplay.finalize import (
 )
 
 
-@pytest.mark.parametrize("policy_encoding", [POLICY_ENCODING_AZ_4672, POLICY_ENCODING_LC0_1858])
 @pytest.mark.parametrize("want_regret", [False, True])
-def test_native_sf_finalize_matches_python_randomized(
-    policy_encoding: str, want_regret: bool,
-) -> None:
+def test_native_sf_finalize_matches_python_randomized(want_regret: bool) -> None:
+    policy_encoding = POLICY_ENCODING_LC0_1858
     rng = np.random.default_rng(8127)
     valid_moves = np.asarray(COMPACT_TO_FULL_POLICY, dtype=np.int16)
     for n_rows in (0, 1, 7, 40, 55):

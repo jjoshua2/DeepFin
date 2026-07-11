@@ -14,10 +14,7 @@ from chess_anti_engine.encoding.features import (
     normalize_extra_features_encoding,
 )
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_history_encoding
-from chess_anti_engine.moves import (
-    MODEL_POLICY_ENCODING,
-    require_model_policy_encoding,
-)
+from chess_anti_engine.moves import MODEL_POLICY_ENCODING
 from chess_anti_engine.utils.architecture import (
     normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
@@ -120,9 +117,8 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         input_pos_encoding=str(mc.get("input_pos_encoding", "none")),
         qkv_projection=str(mc.get("qkv_projection", "fused")),
         use_deepnorm=bool(mc.get("use_deepnorm", False)),
-        policy_encoding=require_model_policy_encoding(
-            mc.get("policy_encoding", MODEL_POLICY_ENCODING)
-        ),
+        # Always compact; model heads ignore any other declared width.
+        policy_encoding=MODEL_POLICY_ENCODING,
         input_history_encoding=normalize_lc0_history_encoding(mc.get("input_history_encoding", LC0_HISTORY_LEGACY)),
         history_rep_fix=bool(mc.get("history_rep_fix", False)),
         input_extra_features=normalize_extra_features_encoding(mc.get("input_extra_features", EXTRA_FEATURES_V1)),
@@ -163,10 +159,8 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
 #     loader keeps the rebuilt model's zero-init columns for the widened input
 #     projection, and Trainer.load -> migrate_optimizer_input_plane_state
 #     zero-pads the matching optimizer moments. This IS a warm start.
-#   * policy_encoding is config-owned for manifest/checkpoint identity, but the
-#     trained model is hard-coded to compact lc0_1858 — az_4672 is rejected at
-#     build. Search still expands compact→full 4672 action ids at the MCTS
-#     boundary.
+#   * policy_encoding is fixed to compact lc0_1858 on every build (manifest
+#     identity only). Search expands compact→full 4672 action ids at MCTS.
 #   * Zero-init experiment flags whose freshly added parameters are handled by
 #     Trainer._remap_optimizer_state_for_new_params (the dynamic_relation_weight
 #     / policy_relation_weight splice). If these followed the donor arch instead,
@@ -286,9 +280,7 @@ def model_config_from_flat_config(
         input_pos_encoding=str(cfg.get("input_pos_encoding", "none")),
         qkv_projection=str(cfg.get("qkv_projection", "fused")),
         use_deepnorm=bool(cfg.get("use_deepnorm", False)),
-        policy_encoding=require_model_policy_encoding(
-            cfg.get("policy_encoding", MODEL_POLICY_ENCODING)
-        ),
+        policy_encoding=MODEL_POLICY_ENCODING,
         input_history_encoding=normalize_lc0_history_encoding(
             cfg.get("input_history_encoding", LC0_HISTORY_LEGACY)
         ),
@@ -352,7 +344,7 @@ def model_config_to_manifest_dict(cfg: ModelConfig) -> dict:
         "input_pos_encoding": str(cfg.input_pos_encoding),
         "qkv_projection": str(cfg.qkv_projection),
         "use_deepnorm": bool(cfg.use_deepnorm),
-        "policy_encoding": require_model_policy_encoding(cfg.policy_encoding),
+        "policy_encoding": MODEL_POLICY_ENCODING,
         "input_history_encoding": normalize_lc0_history_encoding(cfg.input_history_encoding),
         "history_rep_fix": bool(cfg.history_rep_fix),
         "input_extra_features": normalize_extra_features_encoding(cfg.input_extra_features),
@@ -391,7 +383,7 @@ def infer_input_planes(input_extra_features: str | None = None) -> int:
 
 
 def _attach_runtime_model_metadata(model: torch.nn.Module, cfg: ModelConfig) -> torch.nn.Module:
-    setattr(model, "policy_encoding", require_model_policy_encoding(cfg.policy_encoding))
+    setattr(model, "policy_encoding", MODEL_POLICY_ENCODING)
     setattr(model, "input_history_encoding", normalize_lc0_history_encoding(cfg.input_history_encoding))
     setattr(model, "history_rep_fix", bool(cfg.history_rep_fix))
     setattr(model, "input_extra_features", normalize_extra_features_encoding(cfg.input_extra_features))
@@ -418,7 +410,6 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             f"(got {cfg.dynamic_relation_count}); the relation set is fixed "
             "by the C extension / shard schema"
         )
-    policy_encoding = require_model_policy_encoding(cfg.policy_encoding)
     in_planes = infer_input_planes(cfg.input_extra_features)
     if cfg.kind == "tiny":
         return _attach_runtime_model_metadata(TinyNet(in_planes=in_planes), cfg)
@@ -444,7 +435,7 @@ def build_model(cfg: ModelConfig) -> torch.nn.Module:
             input_pos_encoding=str(cfg.input_pos_encoding),
             qkv_projection=str(cfg.qkv_projection),
             use_deepnorm=bool(cfg.use_deepnorm),
-            policy_encoding=policy_encoding,
+            policy_encoding=MODEL_POLICY_ENCODING,
             use_dynamic_relations=bool(cfg.use_dynamic_relations),
             dynamic_relation_count=int(cfg.dynamic_relation_count),
             policy_dynamic_relations=bool(cfg.policy_dynamic_relations),
