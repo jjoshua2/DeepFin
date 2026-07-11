@@ -210,6 +210,7 @@ def play_batch(
     on_step: Callable[[], None] | None = None,
     on_state_ready: Callable[[SelfplayState], None] | None = None,
     stop_fn: Callable[[], bool] | None = None,
+    pause_fn: Callable[[], bool] | None = None,
     # Config groups (frozen dataclasses with sensible defaults).
     opponent: OpponentConfig = OpponentConfig(),
     temp: TemperatureConfig = TemperatureConfig(),
@@ -238,6 +239,16 @@ def play_batch(
     seed lines the server doled for this iteration. Selfplay slots drain it (via
     the SelfplayState, deterministic even coverage); the caller may replace
     ``state.fen_dole_queue`` live between iterations. None = no doled seeds.
+
+    ``pause_fn`` (continuous mode): while it returns True the loop HOLDS —
+    no new work is scheduled but every in-flight game keeps its state — and
+    resumes where it left off once it returns False. This is how the
+    train-phase selfplay pause preserves partial games instead of abandoning
+    them (pre-2026-07 behavior was a full session teardown per iteration,
+    discarding ~all in-flight slots and censoring any game longer than one
+    selfplay window out of the replay buffer). ``on_step`` keeps being called
+    during the hold so the caller's manifest poll can clear the pause and
+    hot-swap the freshly trained model before play resumes.
     """
     requested_batch = int(games)
     continuous = stop_fn is not None and int(target_games) <= 0
@@ -293,6 +304,16 @@ def play_batch(
                 on_timing("check_model", time.perf_counter() - t0)
         if stop_fn is not None and stop_fn():
             break
+
+        if pause_fn is not None and pause_fn():
+            t0 = time.perf_counter()
+            while pause_fn() and not (stop_fn is not None and stop_fn()):
+                if on_step is not None:
+                    on_step()
+                time.sleep(0.25)
+            if on_timing is not None:
+                on_timing("pause_hold", time.perf_counter() - t0)
+            continue  # re-check stop_fn before scheduling any work
 
         if state.pending_sf_labels:
             t0 = time.perf_counter()
@@ -388,6 +409,16 @@ def play_batch(
         t_net / max(0.001, t_net + t_sf) * 100,
         t_sf / max(0.001, t_net + t_sf) * 100,
     )
+    if continuous:
+        # Quantifies the session-teardown waste: in-flight games at exit are
+        # unfinalized and their compute is discarded. With the pause hold this
+        # should only be paid at REAL teardowns (restart-keyed reco change,
+        # task/trial reassignment, shutdown), not every iteration.
+        _in_flight = max(0, int(state.games_started) - int(state.games_completed))
+        logging.getLogger("chess_anti_engine.worker").info(
+            "play_batch exit: completed=%d started=%d in_flight_abandoned=%d",
+            int(state.games_completed), int(state.games_started), _in_flight,
+        )
     sf_nodes = int(getattr(stockfish, "nodes", 0) or 0)
     return all_samples, state.stats.to_batch_stats(
         games=state.games_completed,
