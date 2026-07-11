@@ -1536,6 +1536,11 @@ class WorkerSession:
   # Tier 2: mtime changed — read and potentially swap model / reco
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if self._hold_selfplay:
+  # Held: the freshly published manifest is the unpause signal —
+  # _check_pause_selfplay clears pause_selfplay_active/_hold_selfplay
+  # when the pause flag dropped (and just short-sleeps if still paused).
+                self._check_pause_selfplay(manifest)
             reco_changed = self._reco_changed(manifest, source_tag="mtime")
             self._swap_model_from_manifest(manifest)
             if reco_changed:
@@ -2030,7 +2035,13 @@ class WorkerSession:
         if not self.pause_selfplay_active:
             self.log.info("selfplay paused by server%s", f": {pause_reason}" if pause_reason else "")
             self.pause_selfplay_active = True
-        sleep_s = max(0.1, float(self.args.poll_seconds))
+  # While hold-on-pause is active the play_batch hold loop paces retries and
+  # the tier-2 mtime check must keep running to catch the unpause manifest
+  # promptly — a full poll_seconds sleep here would starve it and idle the
+  # GPU for up to ~30s after every training phase. The old teardown path
+  # (CAE_WORKER_STOP_ON_PAUSE=1) keeps the long sleep: its outer loop has no
+  # other pacing.
+        sleep_s = 1.0 if self._hold_on_pause else max(0.1, float(self.args.poll_seconds))
         time.sleep(sleep_s)
         self.manifest_state = _MANIFEST_STATE_PAUSED
         self.manifest_state_elapsed_s = sleep_s
