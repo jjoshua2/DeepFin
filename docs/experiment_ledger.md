@@ -1169,3 +1169,296 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
    scaled by disagreement — premise validated 61%→70% monotone); arena cadence
    + loop-health invariant monitor.
 7. Restore `sf_pid_regret_tighten_streak_gain: 0.5` when EMA winrate ≈0.52.
+
+**512x16 bootstrap: on-pool eval methodology fix + step-triggered parity probe
+(2026-07-10, tooling not a hypothesis test — no kill threshold needed).**
+Diagnosed two compounding bugs while reading a plateau on `cont_0710_1114_lr0.00003`:
+(a) `offline_replay_epoch.py`'s live-follow eval (`_load_eval_arrs`) built its
+2048-position eval set from `iter_shard_paths(args.replay_dir)` sorted ascending
+with no shard cap — since eval_positions=2048 fills from 1-2 shards, this was
+the SAME ~2048 positions (the pool's oldest surviving shards) re-evaluated
+every 500 steps for the run's entire life, not a rolling/representative
+sample. `best_eval_loss` set early (step 2000) was never re-beaten afterward —
+the model drifting off a frozen 2048-position snapshot, not a real capability
+plateau (code already anticipated this: "static windows overfit past the eval
+minimum" comment at the plateau-stop site). (b) `parity_probe.sh` (the
+trusted frozen-ruler signal) read its `steps=` field from a hardcoded
+`train.log` that the phased driver (`run_bootstrap_512x16.sh`) writes but the
+current ad-hoc `continue`-launch workflow does NOT — that file went stale
+2026-07-10 03:49 and every probe since (06:11/09:11/12:12, all "steps=400")
+was silently reading dead state, independent of the overnight pause.
+FIX (both tooling-only, no training-target change):
+1. `feed_bootstrap_shards.py`: deterministic 1-in-40 (2.5%, by source shard
+   index mod 40 — stable regardless of scan order) quarantine split to a new
+   `--holdout-dir` (`data/scaleup_pool_512x16/holdout_shards`), never fed
+   into `--boot-dir`. Smoke-tested (100 fake shards → 97/3 split, idempotent
+   re-run, incremental-feed correctness) before touching the live feeder.
+2. `offline_replay_epoch.py`: new `--eval-replay-dir` (+ independent
+   `--eval-max-shards`/`--eval-newest-shards`, decoupled from the existing
+   training-shard `--max-shards`/`--newest-shards`) lets live-follow eval
+   point at the quarantined holdout instead of the training pool. Default
+   (unset) preserves exact legacy behavior for every other caller of this
+   script (the offline multi-candidate sweep path was deliberately left
+   untouched — out of scope, don't want to silently change sweep results).
+3. `parity_probe.sh`: new `step-loop` mode reads `steps=` from the newest
+   `cont_*.log` by mtime (not the stale `train.log`) and fires a probe every
+   `STEP_INTERVAL` (default 1500) steps of real progress, plus immediately on
+   any run-stop event (`live_follow_stop`/`live_follow_done`/`candidate_done`/
+   `run_boundary`) — closes the gap between a run plateauing and the next
+   lever decision having fresh evidence, instead of waiting up to the old
+   fixed 3h timer. Measured probe cost ~46-60s wall-clock, GPU-mem-isolated
+   from the trainer (0.15 vs the trainer's 0.30 `--mem-fraction`) — no
+   visible throughput dip in the one window directly measured; at 1500-step
+   cadence (~33-50min at current ~130 samples/s) that's ~2-3% worst-case
+   overhead. Old fixed-interval `loop` mode kept for other callers.
+   Deliberately did NOT fold the probe into the in-loop stop/LR-drop
+   decision (the other option discussed) — would require running
+   value_regret as a subprocess from inside the training loop and would make
+   the stop decision relative to a MOVING target (delta vs whichever live
+   vdump exists at that instant), reintroducing the same moving-bar noise
+   trap as the STALE-BAR PLATEAU incident above. Kept parity fully separate,
+   deliberately, per that lesson.
+Swapped the live watcher from `loop` to `step-loop` (pid 32251 killed, new
+pid 118961) — first real read (2026-07-10 13:44, steps=4950 finally correct,
+was always reading the dead train.log's frozen "400" before): **boot 75.8cp,
+paired vs live +9.81 [+1.32, +18.71]** — meaningfully closer to parity than
+the stale 88.0cp/+22.02 reading that persisted through the entire overnight
+pause; the lr=3e-5 leg may be working, first *real* evidence either way.
+CAVEAT: `--eval-replay-dir`/holdout-quarantine only takes effect on the NEXT
+`continue` launch — `cont_0710_1114_lr0.00003` is still running against the
+OLD (stale-oldest-shards) eval set until it stops or is relaunched; its
+on-pool `eval_plateau` bookkeeping should still be read with that caveat
+until then.
+UPDATE (13:59): relaunched right after the step-5500 checkpoint (minimal lost
+compute) as `cont_0710_1359_lr0.00003_holdout`, same lr=3e-5/warm-start,
+`--eval-replay-dir` added. **TRUE HOLDOUT BASELINE measured (14:11) to
+resolve the transitional-bar caveat**: snapshotted the exact pre-relaunch
+warm-start weights (`trainer_best_eval.pt` at that moment, saved as
+`scratchpad/scaleup/baseline_check/pre_holdout_snapshot.pt`) and ran a
+1-step (lr=3e-5, negligible drift), eval-only pass against the NEW holdout
+set in an isolated `--out-dir` (never touches the live run's checkpoints):
+**eval_loss = 4.75008** — confirms the caveat was real: the live run's own
+seeded plateau bar (4.6379, from the OLD stale-shard eval) is NOT the right
+number to compare against; 4.75008 is the correct apples-to-apples "before"
+for judging whether `cont_0710_1359_lr0.00003_holdout`'s own evals (first
+one due ~step 500, ~14:15) represent real improvement. Gotcha hit twice
+retrying this: `--mem-fraction 0.10` and `0.25` both OOM'd on this 512x16
+model's forward pass (8GB wasn't enough even for a single step) — 0.30 (the
+live run's own value) is the correct floor for this architecture; don't
+retry below it.
+**FIRST REAL EVAL under the new methodology (step 500, ~14:15): eval_loss
+4.68409 vs the 4.75008 baseline = -0.066 (-1.39%), genuine improvement.** But
+the run's own plateau bookkeeping logged it as a `live_plateau_tick`
+(streak 1/6), not a new best — still comparing against the stale seeded bar
+(4.6379) from the OLD methodology, which this doesn't beat. `trainer.pt`
+(saved every 500 steps regardless of plateau status) reflects the improving
+weights; `trainer_best_eval.pt` does not update until/unless a later eval
+beats 4.6379 specifically — and the probe prefers `trainer_best_eval.pt`
+when present, so probe readings will lag the real trajectory until that
+resolves. FIX (same playbook as the 07-09 stale-bar incident, already
+anticipated in the code's own comment at the seed site — "a stale baseline
+errs conservative, which is the right direction"): moved
+`trainer_best_eval.json` aside to `trainer_best_eval.json.stale_bar_baseline_swap_20260710`
+(reversible; `.pt` left in place — the WEIGHTS are still legitimate, only
+the recorded loss value was incomparable). Scope: only affects a FUTURE
+`continue` launch (self-seeds from its own first eval instead) — does
+NOT change `cont_0710_1359_lr0.00003_holdout`'s already-in-memory bar; that
+run keeps ticking plateau against 4.6379 until it stops or beats it. Manual
+tracking of the raw eval_loss trajectory vs the 4.75008 baseline is the
+trustworthy read until then.
+**CONTAMINATION BUG found + fixed (14:2x): 4 of 21 holdout shards
+(031120/031160/031200/031240) were ALSO present in the training pool** —
+`feed_bootstrap_shards.py`'s `_is_holdout()` was a pure function of source
+index, so a shard already fed to `--boot-dir` (all of them, pre-fix — the
+old code fed everything with no split) could still be routed to
+`--holdout-dir` later if its index happened to land on a holdout slot,
+since the holdout dedup check only looked at `holdout_names`, never
+`boot_names`. FIX: `_is_holdout()` now returns False if the shard is
+already in `boot_names`, regardless of index — holdout membership is
+"never trained on," not just "right index." Contaminated shards moved to
+scratchpad for forensics; holdout now 17/17 clean (verified zero overlap).
+**Our two eval numbers (4.75008 baseline, 4.68409 @step500) are UNAFFECTED**
+— `_eval_shard_paths` fills to `--eval-positions` in ascending order and
+only needed shard_030480(+030520), neither contaminated; pure luck of
+which shards sorted first, not a property of the fix. Separately flagged
+by the user: the on-pool holdout, even clean, is still a 2.5% slice of the
+SAME self-play stream the model trains on — same-distribution, not an
+independent benchmark. Reordering which shards get read
+(`--eval-newest-shards`) doesn't change that. Framing going forward: this
+holdout is a cheap same-distribution plateau/memorization-detection signal
+only; it does NOT replace the parity probe (deep-SF-anchored, genuinely
+out-of-training-loop) as the trusted quality signal. Not building a fully
+independent holdout corpus — redundant with what the probe already is.
+**`cont_0710_1359_lr0.00003_holdout` ran to its `eval_plateau` stop (step
+7000, 17:31): on-pool eval_loss best 4.588688 (from the 4.75008 baseline —
+genuine -3.4%), but the parity probe (`scripts/paired_compare.py`, sign
+convention: delta = A-B, negative = A better) showed boot vs live ckpt722
+flat at **+7 to +10cp WORSE** the whole afternoon (SIG in 5/6 readings, final
++9.29 [+0.76, +18.51]) — the on-pool plateau does not track the metric that
+actually matters, so stopping on it was actively counterproductive here.
+FIX (2026-07-10 21:20): relaunched as `cont_0710_2120_lr0.00003_noplateau`
+with `--live-plateau-evals 0` (disables the stop entirely — confirmed via
+its own `live_follow_ready` log line: `"plateau_evals": 0`) and
+`--live-max-steps 0` ("run until stopped" per the flag's own help text),
+warm-started from the plateaued `trainer_best_eval.pt`, same lr=3e-5,
+`--replay-dir`/`--eval-replay-dir` pointed at the live `feed_bootstrap_shards.py`
+pool (`data/scaleup_pool_512x16/{replay_shards,holdout_shards}`, fed every
+30 min by `scratchpad/scaleup/feed_loop.sh`, already running throughout).
+This makes the sidecar behave like the main live loop — continuous ingest
+of freshly-fed selfplay shards, periodic `trainer.pt` checkpoints, no
+artificial stop — instead of requiring a manual re-`continue` every time the
+on-pool metric plateaus. `trainer_best_eval.pt`/`.json` will no longer
+update (that tracking is gated on `plateau_evals > 0`) — `trainer.pt` is now
+the only checkpoint and is the one to warm-start any future leg from. The
+step-loop `parity_probe.sh` (already running, fires every 1500 steps + on
+any stop event) is now the sole governing signal for this sidecar; it will
+also fire once on `credit_exhausted_idle` if live data ever stops flowing
+for `--live-idle-exit-after` (600s, unchanged) — that remains the only
+"real" exit path.
+**PROBE BLINDNESS FIX (22:29): the no-plateau regime broke the probe** —
+`probe_once` preferred `trainer_best_eval.pt` when present, which this run
+never updates, so the 21:23/22:18 probes scored the SAME frozen 16:00
+weights (identical 75.3cp/+1.84 lines while training advanced past step
+1550). Fixed to score the NEWEST of best-eval/trainer.pt by mtime (in a
+plateau-tracked run trainer.pt saves every 500 steps regardless, so
+"latest trajectory" is what the lever decision should see in both regimes
+— the stale-bar incident already showed best-eval can freeze on a lucky
+outlier). Watcher restarted; verified 22:32: `ckpt=trainer.pt`, boot 77.3cp,
++3.89 [−4.91, +12.68] NS vs vdump_732 — first genuine reading of the
+no-plateau run's own weights.
+**FIRST FULL SWAP-GATE MEASUREMENT (07-10 22:32-22:5x,
+`scratchpad/scaleup/gateread/`): GATE FAILS — on PANELS ONLY, and
+decisively.** Boot snapshot = trainer.pt @~step 1650 of the no-plateau run
+(≈30k cumulative steps); live side = ckpt737 audit dump + ckpt732 monitor
+dumps. The policy half of the gate had NEVER been measured before this.
+(1) VALUE: +3.89 [−4.91, +12.68] NS (probe, same-night) — passes.
+(2) AUDIT POLICY (2000 pos, paired vs ckpt737 dump, join `key`): search
+E[regret] +0.20 [−7.93, +9.39] and search top-1 −0.10 [−8.75, +9.47] —
+DEAD PARITY; raw E[regret] −2.14 [−6.48, +2.13] NS, raw top-1 −5.90
+[−16.94, +5.74] NS (boot point-worse on raw, search fully masks it) —
+passes the letter of the gate.
+(3) PANELS: boot v1 BLIND **26/35** vs live 13/35, severity paired −0.28
+[−0.37, −0.19] SIG WORSE; v2 **77/113** vs 43/113, −0.26 [−0.31, −0.21]
+SIG WORSE — "panels not worse" FAILS by a factor of ~2 on both panels.
+READING: the boot reached broad-ruler parity (value + search policy) at
+~30k offline steps — strong evidence FOR the capacity hypothesis — but has
+essentially NONE of the blind-spot/tail knowledge the live net spent 5
+weeks of FEN-seeded RL acquiring (the panels measure exactly that; the fed
+pool contains dole-seeded shards but at far lower concentration than the
+live loop's replay window ever held them). Raw-policy top-1 (−5.9 NS) is
+the other lagging axis. IMPLICATION: the swap decision is now a
+tail-transfer problem, not a broad-quality problem — levers in rough order
+of cheapness: (a) keep feeding (panels should close slowly as dole-seeded
+shards accumulate in the pool), (b) preferentially over-feed seeded/
+blind-spot-heavy shards to the sidecar (offline analog of the seeding
+lever; screenable vs the panel dumps in hours), (c) swap below panel
+parity and rebuild awareness in-loop post-swap — (c) violates the
+pre-committed gate and risks re-learning what took 5 weeks; not on the
+table without a deliberate gate amendment. Re-measure panels at the next
+natural pause (they're ~4 min each on the boot ckpt); the paired command
+set is banked in `gateread/run_gateread.sh`.
+
+**SEEDED OVER-FEED LAUNCHED (lever b) 2026-07-10 ~23:00** — hardlink-duplicated
+the dole-era pool slice (598 shards, idx >= 30749, first fed 07-08 = dole
+launch) 2x each via `scratchpad/scaleup/overfeed_seeded.sh` (undo:
+`overfeed_seeded.sh undo`); pool 1406 -> 2602 entries, dole-era sampling
+weight ~42% -> ~69% (~live-window recent-data concentration). No code
+changes; the sampler credits the dups as fresh positions so the extra step
+credit lands on the seeded slice. Hypothesis: the panel gap is a data-dose
+problem, closable offline. YARDSTICK (pre-committed): panels v1+v2 on the
+boot ckpt after >=12k more steps, paired vs the live732 dumps — auto-runs
+via `gateread/panels_recheck.sh` (log: `gateread/panels_recheck.log`).
+SUCCESS = v1 BLIND materially toward 13/35 with the paired-sev CI clearly
+better than the pre-overfeed −0.28 (and the value probe not regressing,
+watched by the step-loop probe). FAIL = panels ~unmoved after a full
+overnight of ~69%-seeded training → evidence that tail knowledge transfers
+only in-loop → the case for a deliberate gate amendment (swap at broad
+parity, let live dole seeding close the tail), NOT for more sidecar seed
+engineering. Confound: the same-night no-plateau continuation
+(cont_0710_2120, lr 3e-5) is the only other change in the window.
+
+**OVER-FEED READOUT 2026-07-11 04:05 — VERDICT: WORKED (by the pre-committed
+rule); gate NOT yet passed, continue.** After ~10.3k over-fed steps
+(recheck @step 12100): panel v1 BLIND 26/35 → 22/35 (live 13/35), paired
+sev gap vs live732 shrank 0.28 → 0.14 [0.06, 0.22]; v2 BLIND 77/113 →
+55/113 (live 43/113), sev gap 0.26 → 0.11 [0.06, 0.15]. Both CIs clearly
+exclude the pre-overfeed gap = SUCCESS per the pre-committed rule; the
+panel deficit is a DATA-DOSE problem, not an in-loop-only transfer problem.
+Value stayed clean through the dose (probe 00:21: 72.5cp, −0.96 NS vs
+live732 — first negative point delta ever; 01:07 +1.43 NS). DECISION: do
+NOT swap yet (panels still short of the 13/35 / 43/113 gate bar); keep the
+over-fed training running — gap halved in one night, so parity is
+plausibly 1-2 more nights out. Re-run `gateread/panels_recheck.sh`
+(MIN_STEPS bumped) or the full `run_gateread.sh` before any swap call.
+
+**DOSE-2 KILLED 2026-07-11 11:53 — value regression (pre-committed kill).**
+Dose 1 exhausted credit at step 19180 (natural stop); a second continuation
+(cont_0711_0757, fresh full credit over the SAME over-fed pool) re-trained
+the same data and the value probe degraded monotonically: 84.4 → 81.1 →
+84.7 → 91.5cp, +19.33 [+8.65, +30.48] SIG vs live742 — the
+offline-distillation value trap firing on a repeat epoch. Killed at step
+13050; degraded weights banked (`gateread/boot_dose2_step13050_degraded.pt`,
+forensics only — do NOT use). LESSON: the over-feed dose is ONE-PASS; fresh
+credit over an already-consumed pool = memorization, not tail transfer.
+**Swap candidate = dose-1 step-12100 snapshot**
+(`gateread/boot_snap_recheck_0711_0404.pt`): panels v1 22/35 / v2 55/113,
+value 76.9cp +4.76 [−3.96, +13.86] NS vs live742
+(`gateread/vdump_boot_0404snap.jsonl`). Remaining panel gap needs FRESH
+seeded data (live feed drip or post-swap in-loop), not more epochs.
+
+**ARENA READ + GATE AMENDMENT — SWAP APPROVED 2026-07-11 (user decision).**
+Paired-opening arenas, boot dose-1 snapshot (`boot_snap_recheck_0711_0404.pt`)
+vs banked live ckpt737, production search settings: **sims=1 (raw policy):
++9.6 Elo [−22.9, +42.2]** over 200 pairs — statistical parity, boot
+point-ahead (`arena/sims1.jsonl`). **sims=32: −66.2 [−115.1, −19.7]** at 93
+pairs, SIG behind — the gap appears only under search
+(`arena/sims32.jsonl`, stopped at ~100 pairs by design; the 400-game run
+OOM'd twice concurrent with training — 512×16 search ≈ 700MB/game, eager
+32-concurrent ≈ 22.5GB, do NOT run vs a live trainer). Search-tuning
+sensitivity deliberately NOT tested (user call: pre-selfplay tuning has no
+shelf life). AMENDMENT RATIONALE: the original gate (panels not worse)
+assumed offline feeding could reach panel parity; dose-2 proved the offline
+path is exhausted, the 46M net is the plateaued one (all reweighting dead,
+value flat 3 weeks), boot learns faster (broad parity in 30k steps from
+init), sims=1 parity says the nets are equal ex-search, and the sims-32
+deficit is a search-integration gap that in-loop selfplay (training under
+its own search) fixes fastest — precisely what the sidecar cannot teach.
+**PRE-COMMITTED REVERT RULE: after ~5 days (or ~50 iters) post-swap, run a
+32-sim cross-series arena, new net vs banked ckpt751 trunk
+(`data/salvage/recover_ckpt751_20260711`); if not at parity or better
+(CI excludes 0 on the losing side), salvage-restart the 46M trunk. Panels +
+paired value at ~10 iters as the early canary (regression >2cp SIG = early
+revert).** Runbook: `scratchpad/scaleup/swap_runbook.md` (trigger section
+amended this session).
+
+**cheese64 tranche FIRST READOUT @ckpt742 (2026-07-11 01:38) — ON TRACK.**
+Pre-committed primary (v1 holds/improves vs 13/35): HELD at 13/35. v2
+improved 43 → 38/113 (new best). Value 72.1cp, +3.73 NS vs 609 — kill
+condition (value worse >2cp paired vs ckpt732) not triggered. Retirement
+resolved 37/144, retired 6 → pool 138 (`blindspot_fens_retire_742.txt`).
+
+**Seed reinstatement for the 512 net + restart onto #147 — LIVE-UNREAD (2026-07-11, ~iter 6 of trial 4c17c).**
+Re-audit of all 40 ever-retired blind-spot seeds against the swap net
+(4c17c ckpt_000004): 30 read AWARE (<= -0.4) — retirements transfer; 3 read
+still-BLIND (> -0.2; +0.47/+0.45/-0.18) and are REINSTATED with fresh streak
+state → `data/blindspot_fens_reinstate512_20260711.txt` (141 seeds =
+retire_742 + 3). Active-list removals left to the 2x-consecutive auto-retire
+(single-read churn 35-47%). Per-seed netq: scratchpad/seed_reaudit/ (session
+scratchpad). Bundled into the SAME restart: PR #147 (broker gather fix,
+UCI compact-bf16 gate fix 37c96dce, explicit v2_threats yaml default) —
+performance/plumbing only, no target semantics. Yardstick: the swap canary
+itself (panels + paired value vs pre-swap trunk at ~10 iters, >2cp SIG value
+regression = revert to recover_ckpt751). Confounds: swap readout window —
+accepted deliberately (3 seeds at dole-1/iter cannot plausibly move a 2cp
+value bar; #147 changes no training targets).
+
+**#147 speed check (pre-committed at the 2026-07-11 bundle restart).** #147's
+broker gather fix claims a selfplay-side speedup. Pre-restart baseline on the
+512x16 trial (iters 3-5, steady state, iter 2 excluded as post-restart burst):
+~780-920 games/h selfplay, trainer 0.27-0.30 steps/s / ~140-150 samples/s,
+~2350-2400 s/iter at ~500-620 games/iter. RULE: compare the same metrics over
+the first 3-4 steady-state iterations after the restart (skip the first — the
+restart burst inflates games/h via queued worker shards). SUCCESS = games/h
+holds or improves; REGRESSION = games/h down >15% sustained with trainer
+steps/s flat → suspect #147, consider reverting its broker path. Trainer
+throughput is the control (should be untouched by a broker change).

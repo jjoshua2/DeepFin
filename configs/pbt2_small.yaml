@@ -42,10 +42,15 @@ salvage_reinit_volatility_heads: false  # Keep volatility heads from trial 3
 
 model:
   kind: transformer
-  embed_dim: 384     # ~15M params, ~0.7 GB optimizer state for 4 trials in 32 GB VRAM
-  num_layers: 12  # Matches the running v2 checkpoint (trial 5fac4). (An 11L epoch-4 candidate was probed separately; not the live topology.)
-  num_heads: 12
-  ffn_mult: 1.5
+  # 512x16 SWAP 2026-07-11 (ledger: "ARENA READ + GATE AMENDMENT"): topology
+  # switched from 384x12x12 (trial 5fac4 lineage, ~46M) to the offline-boot
+  # 512x16x16 profile. Must match the boot checkpoint's run_config exactly —
+  # revert vehicle: data/salvage/recover_ckpt751_20260711 (46M trunk).
+  embed_dim: 512
+  num_layers: 16
+  num_heads: 16
+  ffn_mult: 1.5  # base value; per-layer profile below takes precedence
+  ffn_mult_by_layer: [1.5, 1.5, 1.5, 1.5, 1.5, 1.555556, 1.65, 1.772222, 1.894444, 1.666667, 1.638889, 1.905556, 1.783333, 1.794444, 1.744444, 1.5]
   use_smolgen: true  # Pin to true (we know smolgen helps from spec)
   smolgen_mode: per_layer  # Epoch-4 candidate topology: per-layer dynamic attention bias.
   smolgen_bias_scale: layer_head
@@ -186,13 +191,11 @@ selfplay:
   # (16 AWARE seeds dropped from retire_700). Dole activation used v3 (115);
   # retirement shrinks the list without changing the dole mechanism.
   # 2026-07-10: += 64 cheese-match-mined seeds (retire_732's 80 + 64 new =
-  # 144; see docs/experiment_ledger.md). This edit was applied via a restart
-  # (opening_fen_list_path was still _LAUNCH_FIXED_ASSET_PATH_KEYS at the
-  # time). As of this same-day PR, the path is live-reloadable — the server
-  # republishes the current source file every manifest publish, so FUTURE
-  # edits here (new tranche, auto-retirement) take effect on the next
-  # publish, no restart needed.
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_732_cheese64.txt
+  # 144; see docs/experiment_ledger.md). opening_fen_list_path is
+  # live-reloadable (server republishes the source file every manifest
+  # publish) — edits here (new tranche, auto-retirement, reinstatement)
+  # take effect on the next publish, no restart needed.
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_reinstate512_20260711.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
