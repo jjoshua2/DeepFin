@@ -2014,3 +2014,21 @@ none clears the 0.85 success gate; a scoped process-global Blosc mutation is
 not justified for an 8.7% noisy scheduling point gain. Retain the library
 default and the independently successful zstd2 change. The one-off benchmark
 was removed rather than shipped as maintenance surface.
+
+**Dense x_lc0_root shard-stack experiment -- UNREAD (2026-07-12).** Production
+rows carry the alternate LC0-root planes densely, but `samples_to_arrays`
+currently zero-allocates the optional array and casts/copies 500 rows through
+the generic Python loop. Hypothesis: when every row carries `x_lc0_root`, one
+dtype-aware stack plus filled presence flags is faster and exact, while the
+existing generic path remains for mixed/missing shards. ONE deciding yardstick:
+paired real-pipeline runs of `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_worker_shard_pipeline.py --positions 500 --rounds 7`. SUCCESS:
+conversion <=0.90x and total materialization <=0.97x baseline, exact stable
+full hash/tar size, dense and mixed optional-field tests pass. KILL: conversion
+>0.98x or parity failure; otherwise MIXED. No semantic/live change.
+**VERDICT: FAILED and reverted.** Paired production-pipeline reads measured
+baseline/candidate conversion 132.000/148.444ms (1.125x) and total
+materialization 336.195/360.219ms (1.071x), over the kill threshold, while the
+exact hash `4f4eb31bc2e62c50` and 1,679,360-byte tar stayed unchanged. The
+preallocated row-assignment path is faster than another dense stack for this
+optional field; retain it.
