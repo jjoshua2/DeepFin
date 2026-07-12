@@ -341,6 +341,30 @@ def test_worker_buffer_preserves_original_model_metadata_across_retries(tmp_path
     assert meta["model_step"] == 21
 
 
+def test_worker_pending_shard_names_are_unique_with_same_metadata_and_time(tmp_path) -> None:
+    paths = []
+    for _ in range(2):
+        buf = _BufferedUpload()
+        _buffer_add_completed_game(
+            buf=buf,
+            game_batch=_game_batch(2),
+            now_s=500.0,
+            model_sha="same-model",
+            model_step=21,
+        )
+        shard_path, _ = _flush_upload_buffer_to_pending(
+            pending_dir=tmp_path,
+            username="worker",
+            buf=buf,
+            now_s=501.0,
+        )
+        assert shard_path is not None
+        paths.append(shard_path)
+
+    assert paths[0] != paths[1]
+    assert all(path.exists() for path in paths)
+
+
 def test_worker_buffer_tags_pending_shards_with_trial_id(tmp_path) -> None:
     buf = _BufferedUpload()
     _buffer_add_completed_game(
