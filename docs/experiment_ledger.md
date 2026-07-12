@@ -1959,3 +1959,35 @@ stack-then-cast at 52.572ms and direct typed construction at 53.141ms, ratio
 `ab8a3ddae7131ca8`. NumPy's stack path offsets the avoided temporary with more
 efficient bulk copying; retain the original implementation. The one-off
 candidate harness was removed rather than adding dead tooling.
+
+**NumPy stack-dtype fusion experiment -- UNREAD (2026-07-12).** NumPy 2 exposes
+a distinct `np.stack(..., dtype=np.float16)` kernel, unlike the failed generic
+`np.asarray(list, dtype=...)` path. Hypothesis: dtype-aware stack fuses the
+bulk stack/cast without sacrificing the optimized stack implementation. ONE
+deciding yardstick: `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_shard_stack_dtype.py --positions 500 --rounds 9`. SUCCESS:
+candidate <=0.85x reference with exact stable hash and shard tests; KILL >0.98x
+or parity failure; otherwise MIXED. Requires NumPy 2, already the production
+environment; packaging compatibility must be checked before shipping.
+**VERDICT: MIXED.** Nine alternating rounds measured 66.817ms reference vs
+56.855ms dtype-aware stack, ratio 0.850898, missing the 0.850000 success cutoff
+by 0.09 percentage point while retaining exact hash `572af13523110668`. Do not
+call this first gate WORKED. The candidate is retained only for the separately
+registered modest-gain replication below because it also removes the explicit
+post-stack cast and the user-approved policy accepts small simplifying wins.
+
+**NumPy stack-dtype modest-gain replication -- UNREAD (2026-07-12).**
+Hypothesis: the exact alternating rerun reproduces a useful >=5% gain from the
+simpler dtype-aware stack despite missing the intentionally aggressive first
+gate. ONE deciding yardstick is the same nine-round command. SUCCESS: candidate
+<=0.95x, exact stable hash, NumPy 1.24 API compatibility confirmed, full
+pipeline >=2% faster, and shard tests/lint pass. Otherwise FAILED and revert.
+No semantic/live change.
+**VERDICT: WORKED.** The exact replication measured 56.682ms reference vs
+52.918ms dtype-aware stack, ratio 0.934 (6.6% faster), with exact stable hash
+`572af13523110668`. NumPy documents the `dtype` stack parameter as added in
+1.24, exactly the project's minimum dependency. Through the real zstd2 writer,
+conversion improved 149.559→138.506ms and total materialization
+378.597→362.847ms (4.2%), with unchanged full array hash `4f4eb31bc2e62c50`
+and 2,406,400-byte tar. All 58 shard/server/worker-buffer tests pass and lint is
+clean. Keep the simpler dtype-aware stack.

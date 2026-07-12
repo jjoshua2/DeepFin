@@ -875,8 +875,10 @@ def samples_to_arrays(samples: list[ReplaySample]) -> dict[str, np.ndarray]:
     policy_size = int(np.asarray(samples[0].policy_target).shape[0])
 
     arrs: dict[str, np.ndarray] = {
-        "x": _f16(np.stack([s.x for s in samples], axis=0)),
-        "policy_target": _f16(np.stack([s.policy_target for s in samples], axis=0)),
+        "x": np.stack([s.x for s in samples], axis=0, dtype=np.float16),
+        "policy_target": np.stack(
+            [s.policy_target for s in samples], axis=0, dtype=np.float16,
+        ),
         "wdl_target": np.array([int(s.wdl_target) for s in samples], dtype=np.int8),
         "priority": np.array([float(getattr(s, "priority", 1.0)) for s in samples], dtype=np.float32),
         "has_policy": _u8(np.array(
