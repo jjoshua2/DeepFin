@@ -347,6 +347,7 @@ def _publish_distributed_trial_state(
         "opening_fen_selfplay_only": bool(config.get("opening_fen_selfplay_only", False)),
         "opening_fen_dole_per_iter": int(config.get("opening_fen_dole_per_iter", 0)),
         "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
+        "slot_oversubscribe": float(config.get("slot_oversubscribe", 1.0)),
         "sf_nodes": int(sf_nodes),
         "sf_move_nodes": int(config.get("sf_move_nodes", 0)),
         "sf_fast_ply_node_scale": float(config.get("sf_fast_ply_node_scale", 0.25)),

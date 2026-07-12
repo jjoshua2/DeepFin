@@ -119,7 +119,7 @@ _STOCKFISH_LEGACY: dict[str, str] = {
 # selfplay section: all 1:1 passthrough.
 _SELFPLAY_KEYS = (
     "games_per_iter", "games_per_iter_start", "games_per_iter_ramp_iters",
-    "selfplay_batch", "selfplay_fraction",
+    "selfplay_batch", "selfplay_fraction", "slot_oversubscribe",
     "temperature", "temperature_drop_plies", "temperature_after",
     "temperature_decay_start_move", "temperature_decay_moves", "temperature_endgame",
     "selfplay_temperature", "selfplay_temperature_decay_start_move",
