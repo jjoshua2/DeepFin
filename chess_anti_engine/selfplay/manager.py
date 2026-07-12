@@ -339,6 +339,7 @@ def play_batch(
 
         t0 = time.perf_counter()
         net_idxs, sp_opp_idxs, cur_opp_idxs, all_done = state.classify_active_slots()
+        classified_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
         if state.pending_sf_moves:
             pending = set(state.pending_sf_moves)
             net_idxs = [idx for idx in net_idxs if idx not in pending]
@@ -346,13 +347,25 @@ def play_batch(
             cur_opp_idxs = [idx for idx in cur_opp_idxs if idx not in pending]
         if on_timing is not None:
             on_timing("classify", time.perf_counter() - t0)
+            on_timing("slot_observations", 1.0)
+            on_timing("runnable_net_sum", float(len(net_idxs)))
+            on_timing("runnable_sp_opp_sum", float(len(sp_opp_idxs)))
+            on_timing("runnable_cur_opp_sum", float(len(cur_opp_idxs)))
+            on_timing(
+                "sf_pending_excluded_sum",
+                float(classified_count - len(net_idxs) - len(sp_opp_idxs) - len(cur_opp_idxs)),
+            )
+            on_timing(
+                "games_in_flight_sum",
+                float(max(0, state.games_started - state.games_completed)),
+            )
         if all_done:
             break
         if not net_idxs and not sp_opp_idxs and not cur_opp_idxs and state.pending_sf_moves:
             t0 = time.perf_counter()
             finish_pending_curriculum_moves(state, block=True)
             if on_timing is not None:
-                on_timing("sf_finish_curriculum", time.perf_counter() - t0)
+                on_timing("sf_block_starved", time.perf_counter() - t0)
             t0 = time.perf_counter()
             _finalize_completed_slots(
                 state, all_samples=all_samples,

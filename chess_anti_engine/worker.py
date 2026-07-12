@@ -1736,7 +1736,8 @@ class WorkerSession:
         phases = (
             "check_model", "tb_adjudicate", "classify", "network",
             "sf_submit_curriculum", "sf_submit_label",
-            "sf_finish_curriculum", "sf_finish_label", "sf_label_poll",
+            "sf_finish_curriculum", "sf_block_starved",
+            "sf_finish_label", "sf_label_poll",
             "finalize", "tree_reset",
         )
         with self._phase_timing_lock:
@@ -1754,11 +1755,27 @@ class WorkerSession:
         def pct(phase: str) -> float:
             return 100.0 * float(deltas[phase]) / max(1e-6, float(elapsed_s))
 
+        observations = max(
+            1.0,
+            float(current.get("slot_observations", 0.0))
+            - float(previous.get("slot_observations", 0.0)),
+        )
+
+        def observed_mean(metric: str) -> float:
+            delta = max(
+                0.0,
+                float(current.get(metric, 0.0)) - float(previous.get(metric, 0.0)),
+            )
+            return delta / observations
+
         self.log.info(
             "selfplay phase stats: check=%.1f%% tb=%.1f%% classify=%.1f%% "
             "network=%.1f%% sf_submit_cur=%.1f%% sf_submit_label=%.1f%% "
-            "sf_finish_cur=%.1f%% sf_finish_label=%.1f%% sf_label_poll=%.1f%% "
-            "finalize=%.1f%% tree_reset=%.1f%% total_thread=%.1f%%",
+            "sf_finish_cur=%.1f%% sf_block_starved=%.1f%% "
+            "sf_finish_label=%.1f%% sf_label_poll=%.1f%% "
+            "finalize=%.1f%% tree_reset=%.1f%% total_thread=%.1f%% "
+            "runnable_avg=%.1f/%.1f/%.1f pending_excluded_avg=%.1f "
+            "in_flight_avg=%.1f",
             pct("check_model"),
             pct("tb_adjudicate"),
             pct("classify"),
@@ -1766,11 +1783,17 @@ class WorkerSession:
             pct("sf_submit_curriculum"),
             pct("sf_submit_label"),
             pct("sf_finish_curriculum"),
+            pct("sf_block_starved"),
             pct("sf_finish_label"),
             pct("sf_label_poll"),
             pct("finalize"),
             pct("tree_reset"),
             100.0 * total / max(1e-6, float(elapsed_s)),
+            observed_mean("runnable_net_sum"),
+            observed_mean("runnable_sp_opp_sum"),
+            observed_mean("runnable_cur_opp_sum"),
+            observed_mean("sf_pending_excluded_sum"),
+            observed_mean("games_in_flight_sum"),
         )
         gil = self._gil_probe.read_and_reset()
         self.log.info(
