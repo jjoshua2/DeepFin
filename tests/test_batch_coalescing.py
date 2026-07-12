@@ -23,11 +23,13 @@ class _RecordingInner:
     def __init__(self, submit_sleep: float = 0.01) -> None:
         self.submit_sleep = submit_sleep
         self.submit_sizes: list[int] = []
+        self.inputs: list[np.ndarray] = []
         self._lock = threading.Lock()
 
     def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         with self._lock:
             self.submit_sizes.append(x.shape[0])
+            self.inputs.append(x)
         time.sleep(self.submit_sleep)
         n = x.shape[0]
         return (np.full((n, 4672), fill_value=float(n), dtype=np.float32),
@@ -37,11 +39,19 @@ class _RecordingInner:
 class _LegalEchoInner(_RecordingInner):
     supports_input_bf16_bits = True
 
+    def __init__(self, submit_sleep: float = 0.01) -> None:
+        super().__init__(submit_sleep)
+        self.legal_flats: list[np.ndarray] = []
+        self.legal_counts: list[np.ndarray] = []
+
     def evaluate_legal_bf16(
         self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         with self._lock:
             self.submit_sizes.append(x.shape[0])
+            self.inputs.append(x)
+            self.legal_flats.append(legal_flat)
+            self.legal_counts.append(legal_counts)
         time.sleep(self.submit_sleep)
         pol = np.asarray(legal_flat, dtype=np.uint16)
         wdl = np.repeat(x[:, :1, :1, :1].reshape(-1, 1), 3, axis=1).astype(np.float32)
@@ -92,6 +102,21 @@ def test_single_caller_is_batch_one() -> None:
     assert pol.shape == (1, 4672)
     assert wdl.shape == (1, 3)
     assert inner.submit_sizes == [1]
+    assert inner.inputs[0] is x
+
+
+def test_single_compact_caller_reuses_input_and_legal_arrays() -> None:
+    inner = _LegalEchoInner(submit_sleep=0.0)
+    coalesce = BatchCoalescingDispatcher(inner, max_batch=128)
+    x = np.zeros((4, 175, 8, 8), dtype=np.uint16)
+    counts = np.full((4,), 2, dtype=np.int32)
+    legal = np.arange(8, dtype=np.int32)
+
+    coalesce.evaluate_legal_bf16(x, legal, counts)
+
+    assert inner.inputs[0] is x
+    assert inner.legal_flats[0] is legal
+    assert inner.legal_counts[0] is counts
 
 
 def test_concurrent_callers_coalesce() -> None:

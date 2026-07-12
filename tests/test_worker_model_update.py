@@ -25,6 +25,8 @@ def _bare_worker_session() -> WorkerSession:
     session.leased_trial_id = "trial_00000"
     session.pause_selfplay_active = False
     session._stop_selfplay = False
+    session._hold_selfplay = False
+    session._hold_on_pause = True
     session._active_reco = dict.fromkeys(WorkerSession._RECO_RESTART_KEYS)
     session._active_reco["sf_nodes"] = 100
   # Test manifests carry no stockfish/opening-book assets, so the session-start

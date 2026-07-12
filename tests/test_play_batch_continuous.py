@@ -202,3 +202,87 @@ def test_continuous_mode_respects_on_step_callback():
 
     # on_step should fire at least once per main-loop iteration.
     assert len(step_calls) > 0
+
+
+def test_pause_fn_holds_without_abandoning_and_resumes():
+    """pause_fn=True holds the loop (no exit, state preserved); games keep
+    completing after release. on_timing must record the hold duration."""
+    model = UniformPolicyValueModel().eval()
+    rng = np.random.default_rng(2)
+
+    completed: list[CompletedGameBatch] = []
+    timings: dict[str, float] = {}
+    pause_state = {"paused": False, "pause_polls": 0}
+
+    def _pause() -> bool:
+        # Engage the pause once the first game lands; release after a few polls.
+        if completed and not pause_state["paused"] and pause_state["pause_polls"] == 0:
+            pause_state["paused"] = True
+        if pause_state["paused"]:
+            pause_state["pause_polls"] += 1
+            if pause_state["pause_polls"] >= 3:
+                pause_state["paused"] = False
+        return bool(pause_state["paused"])
+
+    def _stop() -> bool:
+        return len(completed) >= 3
+
+    def _on_timing(key: str, dt: float) -> None:
+        timings[key] = timings.get(key, 0.0) + dt
+
+    samples, stats = play_batch(
+        model, device="cpu", rng=rng,
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
+        games=2,
+        target_games=0,
+        stop_fn=_stop,
+        pause_fn=_pause,
+        on_game_complete=completed.append,
+        on_timing=_on_timing,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=2, selfplay_fraction=1.0),
+    )
+
+    assert samples == []
+    # The pause engaged (was polled through its release sequence) ...
+    assert pause_state["pause_polls"] >= 3
+    assert "pause_hold" in timings
+    # ... and games kept completing after the hold released.
+    assert len(completed) >= 3
+    assert stats.games >= 3
+
+
+def test_stop_during_pause_exits_promptly():
+    """A stop that fires while the loop is held must exit the session
+    (teardown always wins over hold; no deadlock)."""
+    model = UniformPolicyValueModel().eval()
+    rng = np.random.default_rng(3)
+
+    calls = {"on_step": 0}
+    stop = {"flag": False}
+
+    def _on_step() -> None:
+        calls["on_step"] += 1
+        if calls["on_step"] >= 5:
+            stop["flag"] = True
+
+    samples, stats = play_batch(
+        model, device="cpu", rng=rng,
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
+        games=2,
+        target_games=0,
+        stop_fn=lambda: stop["flag"],
+        pause_fn=lambda: True,  # never released
+        on_step=_on_step,
+        on_game_complete=lambda _cg: None,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=2, selfplay_fraction=1.0),
+    )
+    assert samples == []
+    assert stats.games == 0  # held from the start; nothing completed, no hang
