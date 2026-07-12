@@ -385,14 +385,16 @@ def _warmup_engine(
     *,
     nodes: int | None,
     label: str,
+    timeout_s: float = _WARMUP_TIMEOUT_S,
 ) -> None:
     if nodes is None:
         return
     print(f"[match] warming {label}: {nodes} nodes (off-clock)", flush=True)
     started = time.monotonic()
     # Generous timeout: the warmup's first search pays the one-time torch.compile
-    # (max-autotune, ~15-60s+); the node-derived deadline would cancel it and crash.
-    result = _play_node_limited(eng, chess.Board(), nodes=nodes, timeout_s=_WARMUP_TIMEOUT_S)
+    # (max-autotune); the 512x16 net compiles in >300s cold, so the deadline is a
+    # flag — the node-derived deadline would cancel the compile and crash.
+    result = _play_node_limited(eng, chess.Board(), nodes=nodes, timeout_s=timeout_s)
     elapsed = time.monotonic() - started
     info = result.info
     nodes_seen = _info_int(info.get("nodes"))
@@ -746,6 +748,10 @@ def main() -> None:
     p.add_argument("--warmup-nodes", type=_positive_int, default=None, help="run an unrated warmup search for both engines")
     p.add_argument("--warmup-nodes-a", type=_positive_int, default=None, help="run an unrated warmup search for engine A")
     p.add_argument("--warmup-nodes-b", type=_positive_int, default=None, help="run an unrated warmup search for engine B")
+    p.add_argument("--warmup-timeout-s", type=float, default=_WARMUP_TIMEOUT_S,
+                   help="off-clock warmup deadline; must exceed the one-time torch.compile of a neural engine")
+    p.add_argument("--warmup-timeout-s", type=float, default=_WARMUP_TIMEOUT_S,
+                   help="off-clock warmup deadline; must exceed the one-time torch.compile of a neural engine")
     p.add_argument("--option-a", action="append", default=[], help="Set UCI option on A (Name=Value)")
     p.add_argument("--option-b", action="append", default=[], help="Set UCI option on B (Name=Value)")
     p.add_argument(
@@ -818,7 +824,8 @@ def main() -> None:
         eng_a = _open_engine(args.engine_a)
         _set_options(eng_a, opts_a)
         print(f"[match]   id={eng_a.id.get('name', '?')!r}")
-        _warmup_engine(eng_a, nodes=warmup_nodes_a, label=args.label_a)
+        _warmup_engine(eng_a, nodes=warmup_nodes_a, label=args.label_a,
+                       timeout_s=float(args.warmup_timeout_s))
 
         print(f"[match] opening B: {args.engine_b}")
         eng_b = _open_engine(args.engine_b)
