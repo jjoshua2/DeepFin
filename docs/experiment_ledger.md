@@ -1741,3 +1741,49 @@ both flushed its completed game durably and returned without waiting. The broad
 worker sweep passed 94/94, and ruff + basedpyright + vulture were clean. The
 production outcome remains explicitly unread until a natural restart supplies
 the broker completion telemetry above.
+
+**Replay-finalization policy projection cache -- UNREAD (2026-07-12).** A
+production-shaped 100-record profile measures 19.35ms/game in replay-sample
+construction; policy-vector projection/renormalization costs 3.09ms and legal
+mask projection 2.95ms. Each row is projected once for its own sample and again
+as the two-ply-earlier sample's future target. Hypothesis: game-local lazy
+caches keyed by record index preserve the immutable encoded arrays and remove
+the duplicate gathers/normalizations, improving finalization without changing
+any target values. ONE deciding yardstick:
+`taskset -c 15 python3 scripts/profile_python_native_candidates.py
+--only-finalize --finalize-records 100 --repeats 50`, paired baseline/candidate
+in alternating rounds with output hashes. SUCCESS: candidate median <=0.92x
+baseline and exact stable output hash; KILL: >0.98x, any parity/test failure, or
+any target alias is mutated downstream. Otherwise MIXED. This is sample-build
+scheduling only; no live activation, salvage, or data readout is needed.
+**VERDICT: FAILED and reverted.** Three alternating 50-repeat pairs produced
+baseline/candidate medians 20.512/19.099ms, 19.011/19.103ms, and
+18.934/20.587ms. The candidate ratios were 0.931, 1.005, and 1.087 (geometric
+mean ~1.006, slightly slower), while every run retained the exact stable hash
+`a8f5fc45063e6f40`. Saved gathers did not repay per-row dictionary/helper
+overhead under the contended production host, and the cache added complexity;
+do not ship it. The result also rejects the tiny list-copy cleanup as a speed
+PR: that copy is below the measured conversion noise and removing it alone is
+not a meaningful simplification.
+
+**Redundant policy-temperature normalization experiment -- UNREAD
+(2026-07-12).** `apply_policy_temperature` currently computes `p/sum(p)`,
+raises that vector to `1/T`, then normalizes again. The first scalar division
+cancels exactly in real arithmetic because the final normalization removes the
+common `sum(p)^(-1/T)` factor. Hypothesis: power the nonnegative input directly
+and normalize once, reducing both code and one full-vector sum/division per
+policy row with equivalent float32 targets. ONE deciding yardstick: three
+alternating baseline/candidate runs of `taskset -c 15 python3
+scripts/profile_python_native_candidates.py --only-finalize --finalize-records
+100 --repeats 50`. SUCCESS: candidate geometric-mean ratio <=0.98, randomized
+positive/zero/negative-input parity has max absolute error <=1e-7 and matching
+degenerate behavior, and temperature/finalization tests pass. KILL: ratio
+>1.00, parity exceeds the tolerance, or tests fail; otherwise MIXED. This is a
+mathematically equivalent CPU simplification, not a training/config experiment;
+no salvage or live readout is required.
+**VERDICT: FAILED and reverted.** The production-shaped finalization hash stayed
+exact (`a8f5fc45063e6f40`), but the two completed baseline/candidate pairs were
+19.615/20.549ms and 18.934/19.859ms: ratios 1.048 and 1.049, decisively over
+the >1.00 kill rule. Removing a mathematically redundant division did not
+remove measurable wall work in this NumPy-sized regime and made the measured
+path slower, so the original implementation remains.
