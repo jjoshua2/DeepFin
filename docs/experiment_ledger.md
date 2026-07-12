@@ -1651,5 +1651,7 @@ scratchpad/canary_512_iter20/), watch panel v2 drift.
 train_views_per_position=2.5 (verified: steps track ingest ~2x). Window
 left at 1.5M: position-count semantics unchanged, but at ~2x ingest the
 window now spans ~1 DAY of data, not ~2 — experiment clocks and revert
-contamination both halve. Revisit the cap (known-good prior: 3M) only on
-overfit symptoms (test/train gap) or a negative iter-35 canary.
+contamination both halve. User decision (2026-07-12): window increase
+1.5M->3M PLANNED FOR LATER (restore ~2-day data lifetime at the new ingest
+rate); not now, to avoid stacking another data change into the swap/speedup
+readout window. Per-position reuse stays pinned at 2.5 views by design.
