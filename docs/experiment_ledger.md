@@ -1655,3 +1655,32 @@ contamination both halve. User decision (2026-07-12): window increase
 1.5M->3M PLANNED FOR LATER (restore ~2-day data lifetime at the new ingest
 rate); not now, to avoid stacking another data change into the swap/speedup
 readout window. Per-position reuse stays pinned at 2.5 views by design.
+
+**PLANNED (drafted 2026-07-12, NOT LIVE — activate only after the swap/dole
+readout window closes, alongside or after the v4 feed, never in the same
+window as another data change): curriculum-seed refutation (SF-side seeding
+at low dose).** HYPOTHESIS: the "fed but not learned" clusters (KDEF family
+~0.59 blind despite 32 seeds; M_QLESS) need ON-BOARD REFUTATION — SF actually
+punishing the bad plan move-by-move — which the selfplay-only dole cannot
+provide (its SF signal is labels only; the stm telemetry exists because two
+blind nets can agree a lost seed is fine). History: the prob-path curriculum
+seeding co-drove the v1 WORKED verdict before the dole switch dropped it to
+zero. Both original objections are resolved: (a) PID pollution — fixed in
+code, finalize.py excludes fenlist* games from the PID sample; (b) SF-pool
+starvation — the PID sample is now 400+ games/iter post-speedup (was ~5-7),
+so a small crowding cost is affordable. CHANGE: keep the dole
+(opening_fen_dole_per_iter: 1) AND set opening_fen_prob: 0.02 with
+opening_fen_selfplay_only: false (legacy prob path seeds curriculum slots;
+net forced onto the blundering seat per opening_fen_net_side_to_move).
+YARDSTICK (one deciding): held-out panel severity on the stubborn clusters —
+panel v1 BLIND count + v2 KDEF/M_QLESS subset vs the activation-day read,
+judged at +10-15 iters by paired severity (scripts/paired_compare.py on the
+per-position panel dumps). GUARDRAILS/KILL: (1) PID pooled sample n drops
+below ~200/iter sustained (crowding) → revert prob to 0; (2) value_regret
+paired CI vs activation-day dump >2cp worse → revert; (3) sf_block_starved
+steady-state degrades materially vs the pre-activation iterations → revert.
+BASELINE: bank a salvage-export + value dump + panel dumps at activation.
+CONFOUND to record at launch: shares the window with nothing (hard rule);
+if activated same restart as the v4 feed, the two are ONE combined entry
+with a combined kill. Stacks with the SF-pool-sizing lever (more SF procs
+pays for refutation games + PID sample together).
