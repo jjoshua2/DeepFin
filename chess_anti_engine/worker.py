@@ -885,6 +885,10 @@ class WorkerSession:
   # in-flight games, so live apply now matters). Emptied between sessions.
         self._live_states: list[Any] = []
         self._live_states_lock = threading.Lock()
+  # (new_game, new_opp, sf_nodes) from the latest in-session live apply;
+  # transplanted onto any state that registers after that apply. None when no
+  # apply has run this session.
+        self._pending_live_override: tuple[Any, Any, int] | None = None
         self._evaluator_model_id: int | None = None
 
     def _build_evaluator(
@@ -1261,15 +1265,46 @@ class WorkerSession:
         """play_batch on_state_ready hook: register a live state for live reco.
 
         Called once per play_batch session start — once total on the single
-        path, once per thread on the threaded path."""
+        path, once per thread on the threaded path. If a live reco apply
+        already ran this session (threads register over ms-s while publishes
+        land any time), the stashed override is transplanted onto the late
+        registrant here, under the same lock — otherwise it would run the
+        whole continuous session on session-start config (stale regret) while
+        _active_reco already claims the new values."""
         with self._live_states_lock:
             self._live_states.append(state)
+            if self._pending_live_override is not None:
+                self._transplant_live_fields(state, *self._pending_live_override)
 
     def _clear_live_states(self) -> None:
-        """Drop all registered states so a between-session reco poll restarts
-        cleanly rather than mutating dead states."""
+        """Drop all registered states (and the session's pending live override)
+        so a between-session reco poll restarts cleanly rather than mutating
+        dead states."""
         with self._live_states_lock:
             self._live_states.clear()
+            self._pending_live_override = None
+
+    @staticmethod
+    def _transplant_live_fields(
+        state: Any, new_game: Any, new_opp: Any, sf_nodes: int,
+    ) -> None:
+        """Transplant ONLY the live-safe fields onto one running state's config
+        (never the whole rebuilt config — session-fixed fields must not change
+        mid-session). Must stay in sync with _RECO_LIVE_KEYS (asserted by
+        test_every_live_key_is_transplanted)."""
+        game = dataclasses.replace(
+            state.game,
+            selfplay_fraction=new_game.selfplay_fraction,
+            sf_fast_ply_node_scale=new_game.sf_fast_ply_node_scale,
+            sf_label_nodes_cap=new_game.sf_label_nodes_cap,
+            sf_label_escalate_q_gap=new_game.sf_label_escalate_q_gap,
+            sf_label_escalate_nodes=new_game.sf_label_escalate_nodes,
+            sf_label_escalate_max_per_game=new_game.sf_label_escalate_max_per_game,
+        )
+        opponent = dataclasses.replace(
+            state.opponent, wdl_regret_limit=new_opp.wdl_regret_limit,
+        )
+        state.apply_live_overrides(game=game, opponent=opponent, base_nodes=sf_nodes)
 
     def _maybe_ingest_dole_flag(self, manifest: dict) -> None:
         """If the server doled THIS iteration's seed batch to our poll, load the
@@ -1358,20 +1393,15 @@ class WorkerSession:
   # test_every_live_key_is_transplanted). recycle_slot / the stockfish turn read
   # these refs fresh, so the swap takes effect immediately.
         new_game, new_opp = cfgs["game"], cfgs["opponent"]
-        for state in states:
-            game = dataclasses.replace(
-                state.game,
-                selfplay_fraction=new_game.selfplay_fraction,
-                sf_fast_ply_node_scale=new_game.sf_fast_ply_node_scale,
-                sf_label_nodes_cap=new_game.sf_label_nodes_cap,
-                sf_label_escalate_q_gap=new_game.sf_label_escalate_q_gap,
-                sf_label_escalate_nodes=new_game.sf_label_escalate_nodes,
-                sf_label_escalate_max_per_game=new_game.sf_label_escalate_max_per_game,
-            )
-            opponent = dataclasses.replace(
-                state.opponent, wdl_regret_limit=new_opp.wdl_regret_limit,
-            )
-            state.apply_live_overrides(game=game, opponent=opponent, base_nodes=sf_nodes)
+  # Apply under the registry lock and stash the override inside the same
+  # critical section: a thread registering concurrently either lands before
+  # the apply (gets the loop) or after (gets the stash in
+  # _register_live_state) — no ordering can leave it on stale config.
+        with self._live_states_lock:
+            states = list(self._live_states)
+            for state in states:
+                self._transplant_live_fields(state, new_game, new_opp, sf_nodes)
+            self._pending_live_override = (new_game, new_opp, int(sf_nodes))
         self._set_sf_nodes(sf_nodes)
         last = states[-1]
         self.log.info(

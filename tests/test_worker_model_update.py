@@ -44,6 +44,7 @@ def _bare_worker_session() -> WorkerSession:
     session._dole_lock = threading.Lock()
     session._live_states = []
     session._live_states_lock = threading.Lock()
+    session._pending_live_override = None
     return session
 
 
@@ -822,9 +823,67 @@ def test_apply_live_reco_updates_all_registered_states() -> None:
         assert st.base_nodes == 6000
 
 
+def test_late_registration_receives_pending_live_override() -> None:
+    """Review finding (PR #153): a thread that registers AFTER an in-session
+    live apply must be transplanted with the applied values at registration —
+    otherwise it silently runs the whole continuous session on session-start
+    config while _active_reco already claims the new values."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._live_states = [_live_state()]
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+
+    applied = WorkerSession._apply_live_reco(
+        session, {"sf_nodes": 6000, "selfplay_fraction": 0.50},
+    )
+    assert applied is True
+
+    late = _live_state()
+    WorkerSession._register_live_state(session, late)
+
+    st = cast(Any, late)
+    assert st.game.selfplay_fraction == 0.50
+    assert st.base_nodes == 6000
+
+
+def test_clear_live_states_drops_registry_and_pending_override() -> None:
+    """After _clear_live_states (between sessions) an apply must return False
+    (restart fallback), and a fresh registration must NOT inherit the previous
+    session's override — the new session was built from the current reco."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._live_states = [_live_state()]
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+    assert WorkerSession._apply_live_reco(
+        session, {"sf_nodes": 6000, "selfplay_fraction": 0.50},
+    ) is True
+    assert session._pending_live_override is not None
+
+    WorkerSession._clear_live_states(session)
+
+    assert WorkerSession._apply_live_reco(
+        session, {"sf_nodes": 7000, "selfplay_fraction": 0.60},
+    ) is False
+    fresh = _live_state()
+    WorkerSession._register_live_state(session, fresh)
+    assert cast(Any, fresh).game.selfplay_fraction != 0.50  # no stale override
+
+
+def test_threaded_path_wires_state_registration() -> None:
+    """Wiring guard: _run_selfplay_threaded must register every thread's state
+    (the pre-#153 behavior skipped this, so live keys like PID regret caused a
+    full session teardown abandoning all in-flight games)."""
+    import inspect
+    src = inspect.getsource(WorkerSession._run_selfplay_threaded)
+    assert "on_state_ready=self._register_live_state" in src
+    assert "_clear_live_states" in src
+
+
 def test_live_reco_change_without_active_state_restarts() -> None:
-    """A live-key change with no running session (threaded mode / between
-    sessions) must fall back to a session restart so the change isn't lost."""
+    """A live-key change with no running session (between sessions — the
+    registry is empty) must fall back to a session restart so the change
+    isn't lost. Threaded mode now registers every thread's state, so this
+    fallback no longer fires there while a session is live."""
     session = _bare_worker_session()
     session.args = SimpleNamespace(sf_nodes=None)
     session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "selfplay_fraction": 0.30})
