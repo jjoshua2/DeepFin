@@ -290,12 +290,16 @@ class BatchCoalescingDispatcher:
                         cut += 1
                     batch = self._pending[:cut]
                     self._pending = self._pending[cut:]
-                xs = np.concatenate([entry.x for entry in batch], axis=0)
+                singleton = len(batch) == 1
+                xs = (
+                    batch[0].x if singleton
+                    else np.concatenate([entry.x for entry in batch], axis=0)
+                )
   # Relations coalesce exactly like x: all-or-nothing per submit.
   # Mixed submits zero-fill the missing rows (zero matrices == zero
   # bias, identical to the absent-tensor semantics).
-                rels = None
-                if any(entry.relations is not None for entry in batch):
+                rels = batch[0].relations if singleton else None
+                if not singleton and any(entry.relations is not None for entry in batch):
                     rels = np.zeros((xs.shape[0], 5, 64, 64), dtype=np.uint8)
                     off = 0
                     for entry in batch:
@@ -305,14 +309,20 @@ class BatchCoalescingDispatcher:
                         off += n_rows
                 try:
                     if first_legal:
-                        legal_flat = np.concatenate([
-                            entry.legal_flat for entry in batch
-                            if entry.legal_flat is not None
-                        ])
-                        legal_counts = np.concatenate([
-                            entry.legal_counts for entry in batch
-                            if entry.legal_counts is not None
-                        ])
+                        if singleton:
+                            legal_flat = batch[0].legal_flat
+                            legal_counts = batch[0].legal_counts
+                            assert legal_flat is not None
+                            assert legal_counts is not None
+                        else:
+                            legal_flat = np.concatenate([
+                                entry.legal_flat for entry in batch
+                                if entry.legal_flat is not None
+                            ])
+                            legal_counts = np.concatenate([
+                                entry.legal_counts for entry in batch
+                                if entry.legal_counts is not None
+                            ])
                         pol, wdl = self._inner.evaluate_legal_bf16(
                             xs, legal_flat, legal_counts,
                         )
