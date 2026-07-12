@@ -1641,5 +1641,8 @@ intent (catch in-loop value collapse) did NOT occur. Since swap: value flat,
 v1 flat, v2 drifted 55->63/113 (mild negative, watch), policy/search regret
 at PARITY with search E[regret] point-AHEAD (-1.70 NS) — consistent with the
 swap thesis (search-integration gap, selfplay fixes it, judged at the 5-day
-sims-32 arena). DECISION: escalated to user (revert vs hold); the rule's
-trunk-baseline conflated the accepted swap-time gap with regression.
+sims-32 arena). DECISION (user, 2026-07-12): HOLD to the 5-day sims-32 arena gate — no
+in-loop regression occurred; the rule's trunk-baseline conflated the accepted
+swap-time gap with regression. Follow-ups: repeat this canary ~iter 35
+(baseline = the boot net AND the trunk, both banked dumps in
+scratchpad/canary_512_iter20/), watch panel v2 drift.
