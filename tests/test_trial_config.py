@@ -20,6 +20,7 @@ def test_from_empty_dict() -> None:
     assert tc.optimizer == "nadamw"
     assert tc.sf_nodes == 500
     assert tc.sf_move_nodes == 0
+    assert tc.slot_oversubscribe == 1.0
     assert tc.mcts_simulations == 50
     assert tc.gumbel_topk == 16
     assert tc.gumbel_c_scale == 0.1
@@ -71,10 +72,12 @@ def test_from_dict_overrides() -> None:
         "syzygy_adjudicate_fraction": 0.25,
         "syzygy_in_search": True,
         "categorical_blend_frac": 0.5,
+        "slot_oversubscribe": 2.0,
     })
     assert tc.lr == 0.001
     assert tc.sf_nodes == 5000
     assert tc.sf_move_nodes == 10000
+    assert tc.slot_oversubscribe == 2.0
     assert tc.mcts_simulations == 100
     assert tc.gumbel_topk == 24
     assert tc.gumbel_c_scale == 0.2
@@ -331,6 +334,12 @@ def test_curriculum_gumbel_scale_rejects_invalid_values(value: float) -> None:
 def test_curriculum_gumbel_scale_after_rejects_invalid_values(value: float) -> None:
     with pytest.raises(ValueError, match="curriculum_gumbel_scale_after"):
         TrialConfig.from_dict({"curriculum_gumbel_scale_after": value})
+
+
+@pytest.mark.parametrize("value", [0.99, float("inf"), float("nan")])
+def test_slot_oversubscribe_rejects_invalid_values(value: float) -> None:
+    with pytest.raises(ValueError, match="slot_oversubscribe"):
+        TrialConfig.from_dict({"slot_oversubscribe": value})
 
 
 def test_games_per_iter_start_fallback() -> None:

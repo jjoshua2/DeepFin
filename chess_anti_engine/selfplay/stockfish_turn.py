@@ -334,17 +334,24 @@ def submit_async_sf_labels_from_curriculum_moves(state: SelfplayState, idxs: lis
 
 def finish_pending_curriculum_moves(
     state: SelfplayState, *, block: bool = False,
+    block_timeout_s: float | None = None,
 ) -> int:
     """Apply completed pending curriculum moves.
 
     If ``block`` is true and no move is ready, wait only until the first
-    Stockfish move completes. This avoids per-step head-of-line blocking while
-    still making progress when all runnable slots are waiting on Stockfish.
+    Stockfish move completes, or for ``block_timeout_s`` when supplied. This
+    avoids per-step head-of-line blocking while still making progress when all
+    runnable slots are waiting, while a bounded wait lets stop/pause/model
+    checks regain control promptly.
     """
     if not state.pending_sf_moves:
         return 0
     if block and not any(fut.done() for fut in state.pending_sf_moves.values()):
-        wait(tuple(state.pending_sf_moves.values()), return_when=FIRST_COMPLETED)
+        wait(
+            tuple(state.pending_sf_moves.values()),
+            timeout=block_timeout_s,
+            return_when=FIRST_COMPLETED,
+        )
 
     completed: list[tuple[int, Any]] = []
     for idx, fut in list(state.pending_sf_moves.items()):

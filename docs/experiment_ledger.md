@@ -184,6 +184,35 @@ always re-dump and pair.
 
 ## Analysis findings (offline, no live change)
 
+**Selfplay Stockfish-wait overlap experiment -- UNREAD / DEFAULT-OFF
+(2026-07-11).** Live 512x16 worker telemetry attributed roughly 2700-3200%
+cumulative thread time to the combined curriculum-SF finish phase versus only
+38-60% to network work: many selfplay threads exhaust their runnable slots and
+block for a high-node Stockfish opponent move. Hypothesis: continuous-mode
+slot oversubscription keeps independent selfplay/network work runnable while
+curriculum slots wait, increasing completed games/hour without changing any
+search, Stockfish, PID, target, or per-game semantics. Code ships with
+`slot_oversubscribe: 1.0` (exact current behavior); activation is a separate
+restart-gated config change. ONE deciding yardstick: compare four consecutive
+steady 60-second worker telemetry windows at 1.0 against four at 2.0 on the
+same 512x16 topology and model, using aggregate `complete_gps` as primary and
+the new `sf_block_starved` phase share as mechanism check. Pre-committed
+SUCCESS: candidate median completed games/s >=1.15x baseline AND median
+`sf_block_starved` share falls >=50%. KILL: completed games/s <1.05x, any
+per-game synthetic parity failure, worker RSS grows by >4 GiB, or broker
+request p95 grows >20%. Otherwise MIXED and revert to 1.0. Strength guards are
+unchanged by construction; record SF node/regret/PID values as provenance.
+Revert is `slot_oversubscribe: 1.0` plus restart. No salvage snapshot is needed
+because scheduling changes game concurrency only and the revert is immediate;
+do not overlap activation with another data/config experiment.
+Activation watch item (review 2026-07-11): the factor multiplies ALL slots
+including curriculum, so concurrent SF opponent queries scale ~linearly with
+it — watch SF pool queue depth / curriculum pending depth alongside
+`sf_block_starved`; deepened SF queueing is the plausible route to the broker
+p95 / RSS kill criteria. Multiply-all is deliberate: oversubscribing only
+selfplay-classified slots would shift the effective selfplay/curriculum data
+mix and turn this scheduling-only change into a data-mix change.
+
 **UCI discarded chunk-result elision experiment -- UNREAD (2026-07-11).**
 Match search calls `run_gumbel_root_many_c` once per search chunk, but
 `SearchWorker._run_gumbel_chunk` consumes only the selected action, value,

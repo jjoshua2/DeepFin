@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections.abc import Callable
 from typing import Any
@@ -211,6 +212,7 @@ def play_batch(
     on_state_ready: Callable[[SelfplayState], None] | None = None,
     stop_fn: Callable[[], bool] | None = None,
     pause_fn: Callable[[], bool] | None = None,
+    slot_oversubscribe: float = 1.0,
     # Config groups (frozen dataclasses with sensible defaults).
     opponent: OpponentConfig = OpponentConfig(),
     temp: TemperatureConfig = TemperatureConfig(),
@@ -249,11 +251,23 @@ def play_batch(
     selfplay window out of the replay buffer). ``on_step`` keeps being called
     during the hold so the caller's manifest poll can clear the pause and
     hot-swap the freshly trained model before play resumes.
+
+    ``slot_oversubscribe`` multiplies concurrent slots only in continuous
+    mode. Finite calls still play exactly their requested target. The default
+    1.0 preserves current scheduling; values above one provide independent
+    network work while curriculum slots wait on asynchronous Stockfish moves.
     """
     requested_batch = int(games)
     continuous = stop_fn is not None and int(target_games) <= 0
     target = int(target_games) if int(target_games) > 0 else requested_batch
     batch_size = min(requested_batch, target)
+    slot_factor = float(slot_oversubscribe)
+    if not math.isfinite(slot_factor) or slot_factor < 1.0:
+        raise ValueError(
+            f"slot_oversubscribe must be finite and >= 1.0, got {slot_oversubscribe!r}"
+        )
+    if continuous:
+        batch_size = max(batch_size, math.ceil(requested_batch * slot_factor))
     if batch_size <= 0:
         raise ValueError("play_batch requires at least one game")
 
@@ -339,20 +353,41 @@ def play_batch(
 
         t0 = time.perf_counter()
         net_idxs, sp_opp_idxs, cur_opp_idxs, all_done = state.classify_active_slots()
+        classified_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
         if state.pending_sf_moves:
             pending = set(state.pending_sf_moves)
             net_idxs = [idx for idx in net_idxs if idx not in pending]
             sp_opp_idxs = [idx for idx in sp_opp_idxs if idx not in pending]
             cur_opp_idxs = [idx for idx in cur_opp_idxs if idx not in pending]
         if on_timing is not None:
+            pending_excluded = (
+                classified_count - len(net_idxs) - len(sp_opp_idxs) - len(cur_opp_idxs)
+            )
+            runnable_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
             on_timing("classify", time.perf_counter() - t0)
+            on_timing("slot_observations", 1.0)
+            on_timing("runnable_net_sum", float(len(net_idxs)))
+            on_timing("runnable_sp_opp_sum", float(len(sp_opp_idxs)))
+            on_timing("runnable_cur_opp_sum", float(len(cur_opp_idxs)))
+            on_timing(
+                "sf_pending_excluded_sum",
+                float(pending_excluded),
+            )
+            if pending_excluded > 0 and runnable_count > 0:
+                on_timing("sf_pending_with_runnable_steps", 1.0)
+            on_timing(
+                "games_in_flight_sum",
+                float(max(0, state.games_started - state.games_completed)),
+            )
         if all_done:
             break
         if not net_idxs and not sp_opp_idxs and not cur_opp_idxs and state.pending_sf_moves:
             t0 = time.perf_counter()
-            finish_pending_curriculum_moves(state, block=True)
+            finish_pending_curriculum_moves(
+                state, block=True, block_timeout_s=0.05,
+            )
             if on_timing is not None:
-                on_timing("sf_finish_curriculum", time.perf_counter() - t0)
+                on_timing("sf_block_starved", time.perf_counter() - t0)
             t0 = time.perf_counter()
             _finalize_completed_slots(
                 state, all_samples=all_samples,
