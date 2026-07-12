@@ -1778,7 +1778,7 @@ network overlap. Hypothesis: production-shaped 500-position shard conversion
 and zarr creation cost >=50ms and >=50% of the local conversion+zarr+tar
 pipeline, justifying a follow-up ownership-transfer queue that writes detached
 buffers outside selfplay threads. ONE deciding yardstick:
-`TMPDIR=/tmp taskset -c 15 python3 scripts/bench_worker_shard_pipeline.py
+`PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3 scripts/bench_worker_shard_pipeline.py
 --positions 500 --rounds 7`. SUCCESS: both thresholds hold with stable array
 hash/tar size and round-trip validation; otherwise FAILED and do not add an
 asynchronous buffer queue. This is offline profiling only; no live/data change
@@ -1798,7 +1798,7 @@ the queue head.
 **Detached shard-materialization experiment -- UNREAD (2026-07-12).**
 Hypothesis: swapping a full `_BufferedUpload` for a fresh buffer under the
 model-tag lock, then letting the single existing pending uploader materialize
-the detached owner, removes the ~492ms completion lock convoy without losing or
+the detached owner, removes the ~557ms completion lock convoy without losing or
 duplicating samples. ONE deciding yardstick: focused worker/upload tests plus a
 deterministic two-callback test that blocks the first materializer while the
 second callback detaches another full buffer and returns. SUCCESS: second
@@ -1823,6 +1823,54 @@ and detached positions triggered the existing global OOM cap. Validation:
 the queue; after the next natural restart, use broker completion telemetry and
 games/hour to quantify the production gain rather than extrapolating the
 557ms lock-hold removal into a headline throughput percentage.
+
+**Worker zarr codec experiment -- UNREAD (2026-07-12).** Corrected
+production-shaped profiling attributes 401.7ms of each 500-position flush to
+Blosc zstd level 3, the largest remaining shard-pipeline cost after detached
+materialization. Hypothesis: a lower-cost lossless Blosc codec/level materially
+reduces worker CPU and uploader occupancy without making local/network shards
+unreasonably larger. ONE deciding yardstick: `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_worker_shard_codecs.py --positions 500 --rounds 7`, alternating
+zstd3 baseline with zstd1 and lz4 level 1/3 on identical pruned production-width
+arrays. SUCCESS: one candidate median write time <=0.85x baseline, stored bytes
+<=1.50x, eager read time <=1.10x, and exact decoded core-array hashes in every
+round; choose the fastest qualifying candidate. Otherwise FAILED and retain
+zstd3. Focused shard/server/worker tests and lint must pass before shipping.
+This changes lossless storage representation only, not samples or training
+semantics; no salvage/live readout.
+**VERDICT: FAILED for the registered candidates.** zstd1 write ratio 0.534 and
+size ratio 1.256 passed, but eager-read ratio 1.142 exceeded the 1.10 guardrail.
+LZ4 levels 1/3 wrote at 0.424/0.396x and read faster, but inflated storage and
+network bytes 3.805/3.811x, far beyond 1.50. All decoded hashes were the exact
+stable `656869c08d2bcc3e`. Retain zstd3 unless the separately registered middle
+zstd2 dose below passes every original constraint.
+
+**Worker zarr codec zstd2 middle-dose experiment -- UNREAD (2026-07-12).**
+The first dose ladder brackets the tradeoff: zstd3 is compact/slow, zstd1 is
+fast but narrowly misses the read guardrail, and LZ4 is size-dead. Hypothesis:
+zstd2 preserves enough decode/compression behavior to satisfy all three
+original constraints while materially reducing writes. ONE deciding yardstick
+is the same seven-round codec command, now including zstd2. SUCCESS: zstd2
+write <=0.85x zstd3, bytes <=1.50x, eager read <=1.10x, exact stable decoded
+hash. Otherwise FAILED and retain zstd3. No semantic/live change.
+**VERDICT: WORKED.** Two seven-round alternating runs measured zstd2 write
+ratios 0.486 and 0.537, eager-read ratios 0.811 and 1.081, and identical byte
+ratio 1.070 (2,213,225 vs 2,068,037). Every decoded core array retained exact
+stable hash `656869c08d2bcc3e`. Both independent runs clear every gate; use the
+conservative second ratios as the headline. zstd2 is the selected local shard
+codec; validate the production writer end to end before merge.
+**PRODUCTION-WRITER VALIDATION:** the first pipeline invocation omitted the
+repo-required `PYTHONPATH=.` and therefore imported the live checkout's zstd3
+writer; it is invalid. Import provenance was then printed and verified as this
+worktree's `replay/shard.py`. The corrected real-writer run measured
+`samples_to_arrays` 157.488ms, zarr2 write 235.862ms, and tar 32.379ms: zarr
+write is 41.3% below the corrected zstd3 pipeline anchor (401.695ms), while tar
+bytes rise only 6.3% (2,406,400 vs 2,263,040) and the exact array hash remains
+`4f4eb31bc2e62c50`. This confirms the selected codec through the actual writer.
+Validation: 58/58 replay-shard, server-upload, and worker-buffer tests pass;
+ruff + basedpyright + vulture are clean. Production activation requires only
+the next worker/server restart onto the merged writer; old zstd3 and new zstd2
+shards remain mutually readable through zarr codec metadata.
 
 **Replay-finalization policy projection cache -- UNREAD (2026-07-12).** A
 production-shaped 100-record profile measures 19.35ms/game in replay-sample
