@@ -750,8 +750,6 @@ def main() -> None:
     p.add_argument("--warmup-nodes-b", type=_positive_int, default=None, help="run an unrated warmup search for engine B")
     p.add_argument("--warmup-timeout-s", type=float, default=_WARMUP_TIMEOUT_S,
                    help="off-clock warmup deadline; must exceed the one-time torch.compile of a neural engine")
-    p.add_argument("--warmup-timeout-s", type=float, default=_WARMUP_TIMEOUT_S,
-                   help="off-clock warmup deadline; must exceed the one-time torch.compile of a neural engine")
     p.add_argument("--option-a", action="append", default=[], help="Set UCI option on A (Name=Value)")
     p.add_argument("--option-b", action="append", default=[], help="Set UCI option on B (Name=Value)")
     p.add_argument(
