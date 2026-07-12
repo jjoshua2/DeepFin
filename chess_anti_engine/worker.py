@@ -875,10 +875,16 @@ class WorkerSession:
   # Session-start asset SHAs (SF binary, opening books) — a mid-run change to
   # these can't be live-applied, so it forces a restart. Set in _run_selfplay.
         self._active_assets: tuple | None = None
-  # Reference to the live SelfplayState during a continuous session, used to
+  # Live SelfplayState registry for the running continuous session, used to
   # apply live-safe reco changes (selfplay_fraction / regret / SF nodes) in
-  # place without bouncing the session. None between sessions / threaded mode.
-        self._active_state: Any | None = None
+  # place without bouncing the session. The single path registers its one
+  # state; the threaded path registers one per thread (a live apply must reach
+  # ALL of them — updating only one would leave the rest on stale config,
+  # which is why the threaded path historically fell back to a full restart;
+  # post pause-hold/oversubscribe that restart abandons ~2x games_per_batch
+  # in-flight games, so live apply now matters). Emptied between sessions.
+        self._live_states: list[Any] = []
+        self._live_states_lock = threading.Lock()
         self._evaluator_model_id: int | None = None
 
     def _build_evaluator(
@@ -1251,9 +1257,19 @@ class WorkerSession:
         self._stop_selfplay = True
         return True
 
-    def _set_active_state(self, state: Any) -> None:
-        """play_batch on_state_ready hook: stash the live state for live reco."""
-        self._active_state = state
+    def _register_live_state(self, state: Any) -> None:
+        """play_batch on_state_ready hook: register a live state for live reco.
+
+        Called once per play_batch session start — once total on the single
+        path, once per thread on the threaded path."""
+        with self._live_states_lock:
+            self._live_states.append(state)
+
+    def _clear_live_states(self) -> None:
+        """Drop all registered states so a between-session reco poll restarts
+        cleanly rather than mutating dead states."""
+        with self._live_states_lock:
+            self._live_states.clear()
 
     def _maybe_ingest_dole_flag(self, manifest: dict) -> None:
         """If the server doled THIS iteration's seed batch to our poll, load the
@@ -1312,10 +1328,11 @@ class WorkerSession:
         )
 
     def _apply_live_reco(self, reco: dict) -> bool:
-        """Swap live-safe config onto the running SelfplayState. Returns False if
-        no live session is active (caller falls back to a session restart)."""
-        state = getattr(self, "_active_state", None)
-        if state is None:
+        """Swap live-safe config onto every registered SelfplayState. Returns
+        False if no live session is active (caller falls back to a restart)."""
+        with self._live_states_lock:
+            states = list(self._live_states)
+        if not states:
             return False
         try:
             cfgs, (sf_nodes, _sf_multipv, _sz) = self._build_selfplay_configs(reco)
@@ -1341,25 +1358,28 @@ class WorkerSession:
   # test_every_live_key_is_transplanted). recycle_slot / the stockfish turn read
   # these refs fresh, so the swap takes effect immediately.
         new_game, new_opp = cfgs["game"], cfgs["opponent"]
-        game = dataclasses.replace(
-            state.game,
-            selfplay_fraction=new_game.selfplay_fraction,
-            sf_fast_ply_node_scale=new_game.sf_fast_ply_node_scale,
-            sf_label_nodes_cap=new_game.sf_label_nodes_cap,
-            sf_label_escalate_q_gap=new_game.sf_label_escalate_q_gap,
-            sf_label_escalate_nodes=new_game.sf_label_escalate_nodes,
-            sf_label_escalate_max_per_game=new_game.sf_label_escalate_max_per_game,
-        )
-        opponent = dataclasses.replace(
-            state.opponent, wdl_regret_limit=new_opp.wdl_regret_limit,
-        )
-        state.apply_live_overrides(game=game, opponent=opponent, base_nodes=sf_nodes)
+        for state in states:
+            game = dataclasses.replace(
+                state.game,
+                selfplay_fraction=new_game.selfplay_fraction,
+                sf_fast_ply_node_scale=new_game.sf_fast_ply_node_scale,
+                sf_label_nodes_cap=new_game.sf_label_nodes_cap,
+                sf_label_escalate_q_gap=new_game.sf_label_escalate_q_gap,
+                sf_label_escalate_nodes=new_game.sf_label_escalate_nodes,
+                sf_label_escalate_max_per_game=new_game.sf_label_escalate_max_per_game,
+            )
+            opponent = dataclasses.replace(
+                state.opponent, wdl_regret_limit=new_opp.wdl_regret_limit,
+            )
+            state.apply_live_overrides(game=game, opponent=opponent, base_nodes=sf_nodes)
         self._set_sf_nodes(sf_nodes)
+        last = states[-1]
         self.log.info(
-            "live reco: selfplay_fraction=%.3f regret=%s sf_nodes=%d",
-            float(state.game.selfplay_fraction),
-            (f"{state.opponent.wdl_regret_limit:.4f}")
-            if state.opponent.wdl_regret_limit is not None else "none",
+            "live reco (%d state(s)): selfplay_fraction=%.3f regret=%s sf_nodes=%d",
+            len(states),
+            float(last.game.selfplay_fraction),
+            (f"{last.opponent.wdl_regret_limit:.4f}")
+            if last.opponent.wdl_regret_limit is not None else "none",
             int(sf_nodes),
         )
         return True
@@ -2730,11 +2750,15 @@ class WorkerSession:
     ) -> BatchStats:
         """Multi-threaded selfplay: N threads share one GPU evaluator.
 
-        Intentionally does NOT wire on_state_ready: there are N independent
-        SelfplayStates and on_step runs on only one thread, so live-applying to a
-        single state would leave the others on stale config. _active_state stays
-        None, so live reco changes correctly fall back to a full restart here
-        (same as pre-live-apply).
+        Every thread registers its SelfplayState via on_state_ready, and
+        _apply_live_reco updates ALL registered states — so live keys (PID
+        regret/nodes, selfplay_fraction, label knobs) apply in place with no
+        session restart. This path used to skip registration and fall back to
+        a restart; post pause-hold/oversubscribe that restart abandons ~2x
+        games_per_batch in-flight games every time the PID moves a lever, so
+        the fallback stopped being cheap. apply_live_overrides is a ref swap
+        (consumers read the config fresh per step), so cross-thread mutation
+        is safe without per-state locks.
 
         ``fen_dole_queue`` (opt-in dole mode) IS shared across all N threads — each
         thread's SelfplayState drains the same list, so the server-doled batch is
@@ -2763,15 +2787,19 @@ class WorkerSession:
                 on_game_complete=_on_game_thread_safe,
                 on_timing=self._record_selfplay_phase_timing,
                 on_step=self._check_model_update if tid == 0 else None,
+                on_state_ready=self._register_live_state,
                 stop_fn=self._stop_fn,
                 pause_fn=self._pause_fn,
                 fen_dole_queue=fen_dole_queue,  # shared across threads (drained once total)
                 **cfgs,
             )
 
-        with ThreadPoolExecutor(max_workers=n_threads) as pool:
-            futures = [pool.submit(_run_one_thread, i) for i in range(n_threads)]
-            all_stats = [f.result()[1] for f in futures]
+        try:
+            with ThreadPoolExecutor(max_workers=n_threads) as pool:
+                futures = [pool.submit(_run_one_thread, i) for i in range(n_threads)]
+                all_stats = [f.result()[1] for f in futures]
+        finally:
+            self._clear_live_states()
         return self._aggregate_thread_stats(all_stats)
 
     def _dispatch_selfplay_one_shard(
@@ -2807,16 +2835,14 @@ class WorkerSession:
                     on_game_complete=self._on_completed_game,
                     on_timing=self._record_selfplay_phase_timing,
                     on_step=self._check_model_update,
-                    on_state_ready=self._set_active_state,
+                    on_state_ready=self._register_live_state,
                     stop_fn=self._stop_fn,
                     pause_fn=self._pause_fn,
                     fen_dole_queue=fen_dole_queue,
                     **cfgs,
                 )
             finally:
-  # Drop the reference so a between-session reco poll restarts cleanly
-  # rather than mutating a dead state.
-                self._active_state = None
+                self._clear_live_states()
             return stats
         except StockfishTimeoutError as exc:
   # Stockfish went silent (DTZ load latency, GPU pressure, etc.).  Kill
