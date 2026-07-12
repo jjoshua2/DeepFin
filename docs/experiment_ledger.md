@@ -1941,3 +1941,117 @@ original zstd3+shuffle pipeline, total materialization falls 556.893→359.322ms
 array hash `4f4eb31bc2e62c50`. All 58 replay-shard/server-upload/worker-buffer
 tests pass; ruff + basedpyright + vulture are clean. This supersedes zstd2 byte-
 shuffle as the codec change to publish.
+
+**Shard stack+cast fusion experiment -- UNREAD (2026-07-12).** The corrected
+500-position pipeline spends ~155ms in `samples_to_arrays`; required `x` and
+`policy_target` currently allocate full float32 stacks and then allocate/copy
+again to float16. Hypothesis: constructing those stacks directly at storage
+dtype removes the float32 temporaries and one memory pass, reducing conversion
+time and peak transient bytes with exact float16 arrays. ONE deciding yardstick:
+`PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_shard_stack_cast.py --positions 500 --rounds 9`. SUCCESS: direct
+typed construction median <=0.85x stack-then-cast, exact stable hashes/shapes,
+and the full pipeline plus shard tests pass. KILL: ratio >0.98 or parity failure;
+otherwise MIXED. No storage/data semantic or live change.
+**VERDICT: FAILED; no code change.** Nine alternating rounds measured
+stack-then-cast at 52.572ms and direct typed construction at 53.141ms, ratio
+1.011 over the kill threshold. Both paths retained exact stable hash
+`ab8a3ddae7131ca8`. NumPy's stack path offsets the avoided temporary with more
+efficient bulk copying; retain the original implementation. The one-off
+candidate harness was removed rather than adding dead tooling.
+
+**NumPy stack-dtype fusion experiment -- UNREAD (2026-07-12).** NumPy 2 exposes
+a distinct `np.stack(..., dtype=np.float16)` kernel, unlike the failed generic
+`np.asarray(list, dtype=...)` path. Hypothesis: dtype-aware stack fuses the
+bulk stack/cast without sacrificing the optimized stack implementation. ONE
+deciding yardstick: `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_shard_stack_dtype.py --positions 500 --rounds 9`. SUCCESS:
+candidate <=0.85x reference with exact stable hash and shard tests; KILL >0.98x
+or parity failure; otherwise MIXED. Requires NumPy 2, already the production
+environment; packaging compatibility must be checked before shipping.
+**VERDICT: MIXED.** Nine alternating rounds measured 66.817ms reference vs
+56.855ms dtype-aware stack, ratio 0.850898, missing the 0.850000 success cutoff
+by 0.09 percentage point while retaining exact hash `572af13523110668`. Do not
+call this first gate WORKED. The candidate is retained only for the separately
+registered modest-gain replication below because it also removes the explicit
+post-stack cast and the user-approved policy accepts small simplifying wins.
+
+**NumPy stack-dtype modest-gain replication -- UNREAD (2026-07-12).**
+Hypothesis: the exact alternating rerun reproduces a useful >=5% gain from the
+simpler dtype-aware stack despite missing the intentionally aggressive first
+gate. ONE deciding yardstick is the same nine-round command. SUCCESS: candidate
+<=0.95x, exact stable hash, NumPy 1.24 API compatibility confirmed, full
+pipeline >=2% faster, and shard tests/lint pass. Otherwise FAILED and revert.
+No semantic/live change.
+**VERDICT: WORKED.** The exact replication measured 56.682ms reference vs
+52.918ms dtype-aware stack, ratio 0.934 (6.6% faster), with exact stable hash
+`572af13523110668`. NumPy documents the `dtype` stack parameter as added in
+1.24, exactly the project's minimum dependency. Through the real zstd2 writer,
+conversion improved 149.559→138.506ms and total materialization
+378.597→362.847ms (4.2%), with unchanged full array hash `4f4eb31bc2e62c50`
+and 2,406,400-byte tar. All 58 shard/server/worker-buffer tests pass and lint is
+clean. Keep the simpler dtype-aware stack.
+
+**Concurrent Blosc thread-count experiment -- UNREAD (2026-07-12).**
+`numcodecs.blosc.get_nthreads()` defaults to 8 in every worker process; four
+simultaneous shard writes can therefore launch 32 compression threads on the
+8-physical-core production host, alongside Stockfish/selfplay. Hypothesis:
+limiting each worker's zstd2 write to 1/2/4 threads improves aggregate four-
+worker completion time by reducing oversubscription. ONE deciding yardstick:
+`PYTHONPATH=. TMPDIR=/tmp taskset -c 0,2,4,6,8,10,12,14 python3
+scripts/bench_concurrent_shard_writers.py --positions 500 --workers 4 --rounds
+7`, alternating Blosc thread counts 1/2/4/8 on identical arrays and eight
+physical cores. SUCCESS: a lower count median aggregate wall <=0.85x 8-thread
+baseline, exact stable decoded hashes and sizes; choose fastest qualifier. KILL:
+all lower counts >0.95x; otherwise MIXED. A production change must scope/restore
+the process-global Blosc setting around the single serialized writer and pass
+shard/worker tests. No data semantics/live activation.
+**VERDICT: MIXED; no production change.** Four-worker medians relative to the
+8-thread default were: 1 thread 0.935x, 2 threads 1.021x, and 4 threads 0.913x.
+All outputs had identical 2,213,225-byte size and exact stable hash
+`bd974f1197c70c97`. Lower thread counts reduce oversubscription slightly, but
+none clears the 0.85 success gate; a scoped process-global Blosc mutation is
+not justified for an 8.7% noisy scheduling point gain. Retain the library
+default and the independently successful zstd2 change. The one-off benchmark
+was removed rather than shipped as maintenance surface.
+
+**Dense x_lc0_root shard-stack experiment -- UNREAD (2026-07-12).** Production
+rows carry the alternate LC0-root planes densely, but `samples_to_arrays`
+currently zero-allocates the optional array and casts/copies 500 rows through
+the generic Python loop. Hypothesis: when every row carries `x_lc0_root`, one
+dtype-aware stack plus filled presence flags is faster and exact, while the
+existing generic path remains for mixed/missing shards. ONE deciding yardstick:
+paired real-pipeline runs of `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_worker_shard_pipeline.py --positions 500 --rounds 7`. SUCCESS:
+conversion <=0.90x and total materialization <=0.97x baseline, exact stable
+full hash/tar size, dense and mixed optional-field tests pass. KILL: conversion
+>0.98x or parity failure; otherwise MIXED. No semantic/live change.
+**VERDICT: FAILED and reverted.** Paired production-pipeline reads measured
+baseline/candidate conversion 132.000/148.444ms (1.125x) and total
+materialization 336.195/360.219ms (1.071x), over the kill threshold, while the
+exact hash `4f4eb31bc2e62c50` and 1,679,360-byte tar stayed unchanged. The
+preallocated row-assignment path is faster than another dense stack for this
+optional field; retain it.
+
+**Worker duplicate-value-validation experiment -- UNREAD (2026-07-12).** The
+worker's trusted `ReplaySample` conversion scans every dense array for finite,
+range, and distribution validity before local zarr write; the server then
+eagerly reloads the upload and executes the same `validate_arrays` before
+acceptance. Hypothesis: retain structural/declaration validation locally but
+defer full value scans to the authoritative server for worker-generated shards,
+removing duplicate CPU without weakening the training trust boundary. All
+other `save_local_shard_arrays` callers retain full validation by default. ONE
+deciding yardstick: paired `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_worker_shard_pipeline.py --positions 500 --rounds 7`. SUCCESS:
+total materialization <=0.90x baseline, exact hash/tar size, a deliberately
+NaN worker shard is writable locally only through the explicit option and is
+rejected/quarantined by the server, default writer still rejects it, and
+worker/server/shard tests pass. KILL: >0.98x or any validation-boundary failure;
+otherwise MIXED. No accepted data semantics/live change.
+**VERDICT: MIXED; reverted.** The paired pipeline measured baseline/candidate
+total materialization 370.326/339.809ms (0.918x), short of the 0.90 success
+gate, while the directly affected zarr stage moved only 209.067/203.215ms
+(0.972x). Conversion noise supplied most of the apparent total gain. Exact
+hash `4f4eb31bc2e62c50` and 1,679,360-byte tar matched, but a 2.8% stage gain
+does not justify weakening early local fault detection or adding a validation
+mode. Keep full worker and server validation.
