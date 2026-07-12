@@ -180,7 +180,7 @@ always re-dump and pair.
 | PR #104 gap-priority sampling — ACTIVATED 07-04 ~00:45, **KILLED 07-05 @ckpt559 readout — every kill threshold crossed** (`replay_sf_gap_priority_weight` 30→0, live yaml) | iter ~526 (activation) → ~577 (revert) | **Activation baselines @ckpt524** (recovery banked the same read): panel v1 18/35, panel v2 47/113, value 72.15, raw top-1 52.5; dumps `scratchpad/policy_ci/{dump,vdump}_ckpt524.jsonl`. RULES: v1 (frozen, primary, unchanged): SUCCESS ≤16/35, KILL ≥20/35. v2 secondary — RE-ANCHORED PRE-ACTIVATION (documented, not silent: the original ≤44/≥60 was set vs 54/113 @ckpt500, but recovery healed the panel to 47 before #104 ever ran; thresholds re-derived vs 47 with the same ±2σ logic): SUCCESS ≤40/113, KILL ≥57/113. GUARDRAIL: paired value CI vs ckpt524 worse by >2cp = kill. SECONDARY READOUT: gap_resolution rate (top-decile-gap rows resolving; surprise-bakeoff finding was they do NOT resolve at baseline). Read after ~1 day (~35 iters). Do NOT start the rebalance rung or FEN seeding in this window. (gap_resolution measured with `PYTHONPATH=. python3 scripts/gap_resolution.py --checkpoint-old <pre> --checkpoint-new <post>` — repro'd the 466→478 finding: top decile +0.0006 vs bottom half +0.0077.) **PRE-ACTIVATION DRY-RUN (07-03, 16.5k rows / 25 newest clean shards): recording works (`has_priority_sf_search_gap` on 97.7% of rows; gap mean 0.132, p90 0.32, p99 0.75 value-units). At w=30 the gap term is 31.7% of priority mass; sampling gets BROADER not narrower (ESS 0.502→0.608, top-1% mass 5.9→4.6% — the flat-ish gap term dilutes the heavy-tailed base surprise); corr(base, gap)=+0.07 → orthogonal targeting; top-decile-GAP rows' priority-half mass 12.4%→20.3% (~1.6×; overall ~1.35× after the uniform sampling half). Verdict: safe to activate, moderate re-targeting, no starvation. w=60 adds nothing (ESS/top-mass identical) — 30 is the right first rung** **VERDICT READ @ckpt559 (07-05; ~21.6h/34 iters exposure at the read, ~51 iters total before the revert landed; dumps `scratchpad/policy_ci/{dump,vdump}_ckpt559.jsonl`, banked ckpt `scratchpad/recovery_read_ckpt559`): KILLED — every pre-committed kill threshold crossed. Panel v1 18→24/35 (kill ≥20); panel v2 47→83/113 (kill ≥57; worst point ever recorded); value_regret 72.15→85.96, paired Δ −13.81 [−22.42, −5.83] SIG, endgame-driven (−17.0 [−29.3, −6.0]) — the >2cp guardrail blown ~7×. Policy raw top-1 Δ −4.97 [−14.17, +2.31] NS ⇒ a pure VALUE regression. SECONDARY (gap_resolution 524→559, 10,718 rows / 30 newest shards): the mechanism WORKED on its own target — top-decile-gap verr 0.489→0.422 (Δ +0.0666 positive, exactly what the rule asked for) — while the bottom half WORSENED (−0.0088); with ALL-replay delta +0.0038 (fine on its own training distribution) against −13.8cp on the frozen audit set, the signature is distribution shift / capacity theft: at ~36% of priority mass (live pmass_gap_share 0.35–0.38 ≈ dry-run 0.317) the trunk reallocated toward the gap rows at the broad distribution's expense. (Alternative reading not excluded: gap rows are where search and the SF label disagree — oversampling trains hard toward SF labels precisely on contested positions, i.e., label quality, not just capacity. Either way w=30 is net-negative.) CONFOUNDS DEFEATED: window regrowth (658k→913k across the window) ran under the SAME growth_frac-1.0 retain-all regime as the IMPROVING 500→524 segment; the iter-544 restart artifact is winrate-telemetry-only; ckpt524 was not a lucky baseline (arc 500/510/524 = 79.0/72.2/72.1 value, 19/18/18 v1, 55/47 v2 — ckpt559 is the worst point on all three). REVERTED to 0 (live yaml, ~iter 577) — the pre-committed kill action; ckpt524 REMAINS the canonical baseline. LESSON (2nd instance after the w_sf_move upweight): reweighting existing rows toward hard/disagreement rows at high mass is net-negative at 46M scale even when the target rows measurably resolve; a low-w retry (w≈5, ~8% mass) is a legitimate future experiment but is DOMINATED by FEN seeding (#108) for the next window — seeding adds NEW states instead of reweighting old ones. RECOVERY WATCH: sampling weights reverted with the data itself clean, so the head should re-fit fast; read panel v1 + value_regret at ~iter 610–620 (~1 day) — significant retrace toward ~72 ⇒ continue; still significantly worse vs ckpt524 ⇒ salvage-restart from the banked ckpt524 (`scratchpad/recovery_read_ckpt524`, offline-recovery playbook). **RECOVERY READ @ckpt609 (07-06; dumps `scratchpad/live_read/vdump_ckpt609.jsonl`): rule says CONTINUE — value 85.96→75.86, paired vs ckpt524 −3.72 [−13.88, +6.02] NS overall (was −13.81 SIG at the kill read) ⇒ not "still significantly worse", no salvage. Slices are NOT symmetric: endgame still −13.70 [−27.26, −1.56] SIG worse vs 524, middlegame +16.18 [+1.75, +33.14] SIG better; panels v1 23/35, v2 70/113 (healing from 83, still above the 47 bank). The residual endgame/tail damage is exactly the blind-spot mode → handed to the FEN-seeding window with ckpt609 as its pre-activation baseline (banked: value 75.86, v1 23/35, v2 70/113).** |
 | sf_p0 + regret teacher weights | June | proven (see WORKED); leave alone |
 | **Blind-spot FEN pool += 64 cheese-match-mined seeds** (`opening_fen_list_path`→`data/blindspot_fens_retire_732_cheese64.txt`, retire_732's 80 + 64 new = 144; live yaml, restart-gated at time of activation — see the live-reload mechanism entry directly below, which removes this gate going forward) | 2026-07-10, restart after iter 742/ckpt736 | Same lever as the WORKED v1 batch and the v1→v2 scale-up row above — adds a THIRD tranche, this one mined from the cheese_20260709_2357_checkpoint_000722 match (60 games, 48 losses) via the extended `scripts/mine_blindspot_seeds.py` (this session): 48 first-decisive-collapse seeds (existing method, one per loss) + 16 value-mismatch seeds (NEW criterion — deep-SF expected score vs DeepFin's own self-reported move-log eval, both converted to a common [-1,1] expected-score scale via `cp_to_wdl`/the algebraic inverse of `q_to_cp` so the comparison isn't a raw-cp scale artifact; gap ≥0.5, only emitted when ≥8 plies from that game's collapse ply so both signals get captured without near-duplicate seeds). All 64 deep-SF-vetted at mining time (300k nodes + 6-man TB, same standard as the v2 68-seed harvest). 0 overlap with panel v1/v2 (excluded via `--holdout`) and 0 overlap with v1/v2/v3/retire_722 (excluded via `--existing`); verified 0 placement-key dupes within the merged 144-seed file and all 144 lines parse via the live loader's own reject predicate. Baseline @ckpt732 (the last monitor read pre-merge, `scratchpad/live_read/monitor/monitor.log`): v1 BLIND 13/35 (severity paired +0.24 SIG vs ckpt609), v2 BLIND 43/113, value_regret 73.5cp (paired vs ckpt609 +2.41 [-5.76, +10.37] NS). PRIMARY: held-out panel v1 BLIND count/severity holds or improves vs 13/35 (these 64 seeds are not panel members — same generalization logic as v1/v2). GUARDRAIL/KILL: `value_regret` paired CI vs the ckpt732 baseline worse by >2cp (CI excludes 0 on the worse side) → revert. WATCH: pool nearly doubles (80→144) so doled selfplay-seeded games/iter roughly doubles too at `opening_fen_dole_per_iter: 1` — dole is selfplay-only by construction (PID-safe, established), but if `sf_pid` games <30 or the airbag trips, that's an unexpected finding, dial dose down. Readout via the existing monitor_fen.sh cadence (next scheduled read once checkpoint reaches 742, no new tooling). REVERT: `opening_fen_list_path` → `data/blindspot_fens_retire_732.txt` + restart — no salvage snapshot needed (pure opening-seed-pool change, doesn't touch weights/optimizer/replay). |
-| **`opening_fen_list_path` live-reload mechanism** (server code, no training-target change) | 2026-07-10 | Fixes the gap this session's cheese64 addition (row above) worked around by restarting: `opening_fen_list_path` was one of `_LAUNCH_FIXED_ASSET_PATH_KEYS` (`trainable_config_ops.py`) — captured once at server-process launch, silently inert to any later yaml edit (the strict live-reload validator only *warns*, never errors, so this was easy to miss). Extended the SAME manifest/publish-dir pattern already proven for `model.pt`/stockfish binaries: `_publish_distributed_trial_state` (`distributed_runtime.py`) now copies the current source file into the trial's publish dir under a fixed name every iteration and advertises a freshly-computed sha (unconditional copy + direct `sha256_file`, not the mtime-keyed `_sha256_cached` used for the launch-fixed book paths — this asset is expected to change often, and mtime-tie risk on a small frequently-edited file was judged not worth the coarseness); a new trial-scoped route `GET /v1/trials/{trial_id}/opening_fen_list` (`server/app.py`) serves it via `_artifact_from_publish`, mirroring the existing stockfish route; worker download path updated to the trial-scoped endpoint (`worker.py`) for consistency with the model-download fallback pattern. Removed `opening_fen_list_path` from `_LAUNCH_FIXED_ASSET_PATH_KEYS` and the now-dead `--opening-fen-list-path` CLI plumbing (`run_server.py`, `harness.py`). Net effect: from this deploy forward, a yaml `opening_fen_list_path` change (new tranche, auto-retirement, a full swap) takes effect on the NEXT manifest publish — no restart. Coverage: `tests/test_distributed_selfplay_backpressure.py::test_opening_fen_list_path_swap_takes_effect_without_restart` (path change, same running app instance) and `::test_opening_fen_list_path_inplace_edit_detected` (in-place content edit at the same path, exercises the freshness fix). Full suite green pre-merge. No kill threshold — this is infra, not a training-target hypothesis; the FIRST real-world proof is the next time the pool changes without a restart, watch for it in the monitor_fen.sh cadence. |
+| **`opening_fen_list_path` live-reload mechanism** (server code, no training-target change) | 2026-07-10 | Fixes the gap this session's cheese64 addition (row above) worked around by restarting: `opening_fen_list_path` was one of `_LAUNCH_FIXED_ASSET_PATH_KEYS` (`trainable_config_ops.py`) — captured once at server-process launch, silently inert to any later yaml edit (the strict live-reload validator only *warns*, never errors, so this was easy to miss). Extended the SAME manifest/publish-dir pattern already proven for `model.pt`/stockfish binaries: `_publish_distributed_trial_state` (`distributed_runtime.py`) now copies the current source file into the trial's publish dir under a fixed name every iteration and advertises a freshly-computed sha (unconditional copy + direct `sha256_file`, not the mtime-keyed `_sha256_cached` used for the launch-fixed book paths — this asset is expected to change often, and mtime-tie risk on a small frequently-edited file was judged not worth the coarseness); a new trial-scoped route `GET /v1/trials/{trial_id}/opening_fen_list` (`server/app.py`) serves it via `_artifact_from_publish`, mirroring the existing stockfish route; worker download path updated to the trial-scoped endpoint (`worker.py`) for consistency with the model-download fallback pattern. Removed `opening_fen_list_path` from `_LAUNCH_FIXED_ASSET_PATH_KEYS` and the now-dead `--opening-fen-list-path` CLI plumbing (`run_server.py`, `harness.py`). Net effect: from this deploy forward, a yaml `opening_fen_list_path` change (new tranche, auto-retirement, a full swap) takes effect on the NEXT manifest publish — no restart. Coverage: `tests/test_distributed_selfplay_backpressure.py::test_opening_fen_list_path_swap_takes_effect_without_restart` (path change, same running app instance) and `::test_opening_fen_list_path_inplace_edit_detected` (in-place content edit at the same path, exercises the freshness fix). Full suite green pre-merge. No kill threshold — this is infra, not a training-target hypothesis; the FIRST real-world proof is the next time the pool changes without a restart, watch for it in the monitor_fen.sh cadence. **PROVEN 2026-07-11: the reinstate512 list swap (138→141) republished to `opening_fen_list_live.txt` (141 seeds verified) on the first manifest publish after the yaml edit — the mechanism works.** |
 
 ## Analysis findings (offline, no live change)
 
@@ -1544,3 +1544,143 @@ restart burst inflates games/h via queued worker shards). SUCCESS = games/h
 holds or improves; REGRESSION = games/h down >15% sustained with trainer
 steps/s flat → suspect #147, consider reverting its broker path. Trainer
 throughput is the control (should be untouched by a broker change).
+
+**Pause-hold (PR #149): stop abandoning in-flight games at the train-phase
+pause — PRE-COMMITTED, activates at the post-canary restart (2026-07-11).**
+Finding (worker logs + code trace): since d9ac008b (03-20) every iteration's
+pause_selfplay tore down play_batch, discarding ~384 in-flight games/worker
+(vs ~180-235 completed per session on the 512 net → ~half of selfplay compute
+discarded) and censoring games longer than one selfplay window out of replay
+entirely. Fix: pause now HOLDS the loop (slots preserved, model hot-swaps at
+unpause); teardown paths unchanged; CAE_WORKER_STOP_ON_PAUSE=1 reverts.
+Hypothesis: games/h up materially (up to ~2x ceiling) AND long-game census
+bias removed (replay mean game plies should RISE). YARDSTICK (one deciding):
+paired games/h + replay avg plies over 3-4 steady-state iterations pre/post
+the activating restart (pre = the #147-readout iterations, same net/window);
+plus the new `in_flight_abandoned` log line ≈0 at pause boundaries. KILL:
+games/h down >10% sustained, or worker deadlock symptoms (0 games generated
+for 2 consecutive iterations with workers alive), or value/panel guardrails
+of the live swap canary regressing coincident with activation → set
+CAE_WORKER_STOP_ON_PAUSE=1 + restart (no salvage needed — no weights/replay
+surgery). CONFOUND: activates in the swap-readout era; user chose immediate
+activation (2026-07-11 evening, ~iter 8) over waiting for the 10-iter canary
+— the per-iteration waste outweighs the small canary confound (no target
+semantics change); the 5-day arena gate
+tolerates a throughput-only change (does not alter targets; data-mix change
+= longer games entering replay, which is the intended fix).
+
+**#147 speed READOUT (2026-07-11 evening, n=1 by design — read early at the
+user's call because PR #149 activates at the next boundary and confounds
+games/h upward).** Only iter 7 is usable (iter 6 = restart iter, skipped per
+rule). Headline: 641 selfplay games/h vs baseline 748-861 looks like -15-20%,
+BUT the baseline iters 3-5 counted 187-198 STALE games/iter (pre-restart
+backlog); iter 7 has stale=0. On a fresh-games basis iter 7 (430 fresh, 641/h)
+BEATS baseline fresh (~386/293/293 → ~440-580/h). The control (trainer
+steps/s) read 0.198 vs 0.27-0.30 baseline — NOT flat, so the rule's
+broker-blame branch doesn't fire anyway; likely cause is the concurrent
+seed-reaudit GPU scoring run during iter 7. VERDICT: NO REGRESSION (pass) —
+fresh-games throughput at or above baseline; positive-speedup claim unproven
+at n=1 and now unreadable (post-#149 iters measure the pause-hold instead).
+
+**slot_oversubscribe ACTIVATION 2.0 (2026-07-12 ~00:00, restart @iter 9, LIVE).**
+User chose immediate activation bundled with the #149 pause-hold restart era
+(iteration had just begun; minimal compute lost). `selfplay.slot_oversubscribe: 2.0`
+added to the live yaml AT the restart onto merged #151 code (restart-gated
+key; added only once the running code defines it, per the live-yaml-key rule).
+CI never triggered on PR #151 (zero workflow runs; close/reopen didn't kick
+it) — merged on the strength of the full LOCAL test suite + lint gate in the
+PR worktree plus the adversarial review (0 bugs). Yardstick per the #151
+ledger entry (complete_gps + sf_block_starved share), read against the
+post-#149 iterations 9+ — CONFOUND: #149 pause-hold and #150 coalescer
+activate in the same window, so per-change attribution is impossible; the
+combined games/h vs the iter-7 fresh-games baseline (641/h) is the deciding
+number, and sf_block_starved share is #151's mechanism-specific check. WATCH:
+SF pool queue depth (selfplay_fraction is 0.30 → ~2x concurrent curriculum SF
+queries at factor 2.0), worker RSS (+0.5-1.8G expected), broker p95. KILL
+(any): games/h below the 641/h baseline sustained 2 iters, worker RSS growth
+>4G, broker p95 +20% → revert `slot_oversubscribe: 1.0` + restart (immediate,
+no salvage).
+
+**Triple-restart READOUT (iters 10-12, 2026-07-12 session): WORKED.** Combined
+games/h vs the 641/h iter-7 fresh baseline: 1142 / 807 / 1142 (+78% clean
+iters, +52% blended) — far above the +15% bar. #149 mechanism confirmed:
+replay avg plies 105 -> 119-122 (long-game censoring gone), zero abandonment
+at training-pause boundaries, trainer steps/s healthy (0.30-0.31), GIL settled
+~1.1ms. #151 mechanism partial: sf_block_starved 0% during burst but ~2300%
+of thread time again in steady state — the residual wall is SF pool capacity
+(~20 procs serving 2x concurrent curriculum queries), not slot scheduling;
+next speedup lever = SF pool sizing, NOT a higher factor. No kill criterion
+hit (RSS fine, broker wait_ms ~0.03).
+BUG FOUND during readout: a restart-classified recommended_worker key is
+flapping — teardown restarts at the END of iters 10 and 12 (not 11), each
+abandoning ~768 in-flight games, making every post-flap iteration ~807/h vs
+1142/h. Worker log doesn't name the key; manifest-diff trap armed. Fix =
+identify + either make the key live-applied or stop the server flapping it;
+worth ~+35% games/h on affected iterations.
+
+**Threaded live-reco fix (PR #153) ACTIVATED at restart (2026-07-12 ~04:30).**
+Root cause of the flapping teardowns found in the triple-restart readout:
+`opponent_wdl_regret_limit` (LIVE key) fell back to a full session restart
+because the threaded path never registered states for live apply — every PID
+lever move past deadband abandoned ~768 in-flight games (1142 vs 807 games/h
+alternation). Fix: lock-guarded state registry, live fields transplanted onto
+ALL thread states + late registrants (review race closed). YARDSTICK: worker
+logs show `live reco (N state(s))` and NO `restarting selfplay session` at
+PID moves; games/h holds ~1142 on ALL iterations. KILL: 0 games for 2
+consecutive iters with workers alive, or games/h below the 641 baseline →
+revert = git revert PR #153 + restart.
+
+**SWAP CANARY READ @iter 20 (2026-07-12, scratchpad/canary_512_iter20/).**
+Rule-as-written (live vs 46M ckpt751 trunk, >2cp SIG = early revert): FIRED —
+paired value +8.42cp [+0.09, +16.86] SIG-marginal, panels v1 22/35 vs 11/35,
+v2 63/113 vs 33/113. BUT the baseline disambiguation probe (same ruler on the
+swap-time boot net data/salvage/swap_512x16_20260711) shows the gap is
+PRE-EXISTING, not RL-caused: boot 76.9cp vs live 77.6cp, paired +0.74 NS
+[-8.26, +9.60]; panel v1 unchanged from swap-time (22/35). The canary's
+intent (catch in-loop value collapse) did NOT occur. Since swap: value flat,
+v1 flat, v2 drifted 55->63/113 (mild negative, watch), policy/search regret
+at PARITY with search E[regret] point-AHEAD (-1.70 NS) — consistent with the
+swap thesis (search-integration gap, selfplay fixes it, judged at the 5-day
+sims-32 arena). DECISION (user, 2026-07-12): HOLD to the 5-day sims-32 arena gate — no
+in-loop regression occurred; the rule's trunk-baseline conflated the accepted
+swap-time gap with regression. Follow-ups: repeat this canary ~iter 35
+(baseline = the boot net AND the trunk, both banked dumps in
+scratchpad/canary_512_iter20/), watch panel v2 drift.
+
+**Post-speedup knob check (2026-07-12): NO CHANGES.** Steps auto-scale via
+train_views_per_position=2.5 (verified: steps track ingest ~2x). Window
+left at 1.5M: position-count semantics unchanged, but at ~2x ingest the
+window now spans ~1 DAY of data, not ~2 — experiment clocks and revert
+contamination both halve. User decision (2026-07-12): window increase
+1.5M->3M PLANNED FOR LATER (restore ~2-day data lifetime at the new ingest
+rate); not now, to avoid stacking another data change into the swap/speedup
+readout window. Per-position reuse stays pinned at 2.5 views by design.
+
+**PLANNED (drafted 2026-07-12, NOT LIVE — activate only after the swap/dole
+readout window closes, alongside or after the v4 feed, never in the same
+window as another data change): curriculum-seed refutation (SF-side seeding
+at low dose).** HYPOTHESIS: the "fed but not learned" clusters (KDEF family
+~0.59 blind despite 32 seeds; M_QLESS) need ON-BOARD REFUTATION — SF actually
+punishing the bad plan move-by-move — which the selfplay-only dole cannot
+provide (its SF signal is labels only; the stm telemetry exists because two
+blind nets can agree a lost seed is fine). History: the prob-path curriculum
+seeding co-drove the v1 WORKED verdict before the dole switch dropped it to
+zero. Both original objections are resolved: (a) PID pollution — fixed in
+code, finalize.py excludes fenlist* games from the PID sample; (b) SF-pool
+starvation — the PID sample is now 400+ games/iter post-speedup (was ~5-7),
+so a small crowding cost is affordable. CHANGE: keep the dole
+(opening_fen_dole_per_iter: 1) AND set opening_fen_prob: 0.02 with
+opening_fen_selfplay_only: false (legacy prob path seeds curriculum slots;
+net forced onto the blundering seat per opening_fen_net_side_to_move).
+YARDSTICK (one deciding): held-out panel severity on the stubborn clusters —
+panel v1 BLIND count + v2 KDEF/M_QLESS subset vs the activation-day read,
+judged at +10-15 iters by paired severity (scripts/paired_compare.py on the
+per-position panel dumps). GUARDRAILS/KILL: (1) PID pooled sample n drops
+below ~200/iter sustained (crowding) → revert prob to 0; (2) value_regret
+paired CI vs activation-day dump >2cp worse → revert; (3) sf_block_starved
+steady-state degrades materially vs the pre-activation iterations → revert.
+BASELINE: bank a salvage-export + value dump + panel dumps at activation.
+CONFOUND to record at launch: shares the window with nothing (hard rule);
+if activated same restart as the v4 feed, the two are ONE combined entry
+with a combined kill. Stacks with the SF-pool-sizing lever (more SF procs
+pays for refutation games + PID sample together).
