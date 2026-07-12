@@ -205,6 +205,13 @@ unchanged by construction; record SF node/regret/PID values as provenance.
 Revert is `slot_oversubscribe: 1.0` plus restart. No salvage snapshot is needed
 because scheduling changes game concurrency only and the revert is immediate;
 do not overlap activation with another data/config experiment.
+Activation watch item (review 2026-07-11): the factor multiplies ALL slots
+including curriculum, so concurrent SF opponent queries scale ~linearly with
+it — watch SF pool queue depth / curriculum pending depth alongside
+`sf_block_starved`; deepened SF queueing is the plausible route to the broker
+p95 / RSS kill criteria. Multiply-all is deliberate: oversubscribing only
+selfplay-classified slots would shift the effective selfplay/curriculum data
+mix and turn this scheduling-only change into a data-mix change.
 
 **Native C LTO build experiment — FAILED (2026-07-09).** Hypothesis:
 link-time optimization can improve the production BF16 CBoard encoder without

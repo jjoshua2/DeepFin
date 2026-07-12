@@ -128,8 +128,15 @@ def test_continuous_mode_recycles_slots_beyond_initial_batch():
     assert samples == []
 
 
-def test_continuous_slot_oversubscribe_adds_slots_without_changing_results():
-    """Oversubscription increases only concurrency; game outcomes stay identical."""
+def test_continuous_slot_oversubscribe_multiplies_slots_and_completes():
+    """Oversubscription multiplies concurrent slots and games still complete.
+
+    Asserts the concurrency property only (state.batch_size scales with the
+    factor; at least as many games finish). Per-game outcome identity across
+    factors is NOT claimed — scheduling interleaving differs by construction,
+    and the FakeStockfish + max_plies=2 setup would make such a claim vacuous
+    (nearly every game adjudicates to the same draw tuple).
+    """
 
     def _run(factor: float) -> tuple[int, list[tuple[int, int, int, int]]]:
         completed: list[CompletedGameBatch] = []
@@ -160,7 +167,6 @@ def test_continuous_slot_oversubscribe_adds_slots_without_changing_results():
     assert baseline_slots == 2
     assert extra_slots == 4
     assert len(oversubscribed) >= len(baseline)
-    assert set(oversubscribed) == set(baseline)
 
 
 def test_finite_mode_ignores_slot_oversubscribe_and_keeps_exact_target():
@@ -217,6 +223,40 @@ def test_pending_curriculum_slot_does_not_block_runnable_selfplay_slot():
 
     assert timings.get("sf_pending_with_runnable_steps", 0.0) > 0.0
     assert len(completed) >= 2
+
+
+def test_starved_block_time_attributed_to_sf_block_starved_not_finish_cur():
+    """The ledger yardstick reads `sf_block_starved` as the true starved-wait
+    share; a refactor that re-lumps the blocked wait into `sf_finish_curriculum`
+    would silently break that mechanism check. Curriculum-only slots with a
+    slow SF pool must accumulate the wait under sf_block_starved."""
+    pool = _DelayedStockfishPool(0.1)
+    completed: list[CompletedGameBatch] = []
+    timings: dict[str, float] = {}
+
+    try:
+        play_batch(
+            UniformPolicyValueModel().eval(), device="cpu",
+            rng=np.random.default_rng(16), stockfish=pool,
+            games=1, target_games=0,
+            stop_fn=lambda: len(completed) >= 1,
+            on_game_complete=completed.append,
+            on_timing=lambda key, value: timings.__setitem__(
+                key, timings.get(key, 0.0) + value,
+            ),
+            temp=TemperatureConfig(temperature=1.0),
+            search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+            opening=OpeningConfig(random_start_plies=0),
+            diff_focus=DiffFocusConfig(enabled=False),
+            game=GameConfig(max_plies=4, selfplay_fraction=0.0),
+        )
+    finally:
+        pool.close()
+
+    starved = timings.get("sf_block_starved", 0.0)
+    finish_cur = timings.get("sf_finish_curriculum", 0.0)
+    assert starved > 0.05  # the 0.1s SF delays must land here
+    assert finish_cur < starved  # non-blocking polls only, never the wait
 
 
 def test_pause_with_pending_curriculum_future_holds_then_resumes():
