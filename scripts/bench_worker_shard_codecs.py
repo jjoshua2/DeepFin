@@ -46,6 +46,7 @@ def main() -> None:
     codecs = {
         "zstd3": Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE),
         "zstd2": Blosc(cname="zstd", clevel=2, shuffle=Blosc.SHUFFLE),
+        "zstd2_bit": Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE),
         "zstd1": Blosc(cname="zstd", clevel=1, shuffle=Blosc.SHUFFLE),
         "lz4_1": Blosc(cname="lz4", clevel=1, shuffle=Blosc.SHUFFLE),
         "lz4_3": Blosc(cname="lz4", clevel=3, shuffle=Blosc.SHUFFLE),

@@ -1917,3 +1917,27 @@ exact (`a8f5fc45063e6f40`), but the two completed baseline/candidate pairs were
 the >1.00 kill rule. Removing a mathematically redundant division did not
 remove measurable wall work in this NumPy-sized regime and made the measured
 path slower, so the original implementation remains.
+
+**zstd2 bit-shuffle experiment -- UNREAD (2026-07-12).** The selected zstd2
+codec uses Blosc byte-shuffle. Hypothesis: bit-shuffle better exposes the
+binary-plane/float16 structure and either reduces write time or stored bytes
+without harming the other dimension. ONE deciding yardstick: the same
+`PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_worker_shard_codecs.py --positions 500 --rounds 7`, adding a
+zstd2+bitshuffle arm. SUCCESS: versus zstd2+shuffle, either (a) write <=0.95x
+and bytes <=1.00x, or (b) bytes <=0.90x and write <=1.05x; eager read <=1.10x
+and exact stable hash in both cases. Otherwise FAILED and retain byte-shuffle.
+No semantic/live change.
+**VERDICT: WORKED.** Seven alternating rounds measured bit-shuffle vs selected
+zstd2 byte-shuffle at 128.207 vs 154.605ms write (0.829x), 25.396 vs 27.572ms
+eager read (0.921x), and 1,479,580 vs 2,213,225 bytes (0.669x), with exact
+stable decoded hash `656869c08d2bcc3e`. It clears both success routes and is
+also smaller than the original zstd3+shuffle shard. Promote zstd2+bitshuffle
+and validate through the production writer.
+**PRODUCTION-WRITER VALIDATION:** the real writer measured conversion 158.222ms,
+zstd2+bitshuffle write 201.100ms, and tar 25.306ms. Against the corrected
+original zstd3+shuffle pipeline, total materialization falls 556.893→359.322ms
+(35.5%) and tar bytes fall 2,263,040→1,679,360 (25.8%), with unchanged exact
+array hash `4f4eb31bc2e62c50`. All 58 replay-shard/server-upload/worker-buffer
+tests pass; ruff + basedpyright + vulture are clean. This supersedes zstd2 byte-
+shuffle as the codec change to publish.
