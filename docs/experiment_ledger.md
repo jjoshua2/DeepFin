@@ -1552,3 +1552,22 @@ broker-blame branch doesn't fire anyway; likely cause is the concurrent
 seed-reaudit GPU scoring run during iter 7. VERDICT: NO REGRESSION (pass) —
 fresh-games throughput at or above baseline; positive-speedup claim unproven
 at n=1 and now unreadable (post-#149 iters measure the pause-hold instead).
+
+**slot_oversubscribe ACTIVATION 2.0 (2026-07-12 ~00:00, restart @iter 9, LIVE).**
+User chose immediate activation bundled with the #149 pause-hold restart era
+(iteration had just begun; minimal compute lost). `selfplay.slot_oversubscribe: 2.0`
+added to the live yaml AT the restart onto merged #151 code (restart-gated
+key; added only once the running code defines it, per the live-yaml-key rule).
+CI never triggered on PR #151 (zero workflow runs; close/reopen didn't kick
+it) — merged on the strength of the full LOCAL test suite + lint gate in the
+PR worktree plus the adversarial review (0 bugs). Yardstick per the #151
+ledger entry (complete_gps + sf_block_starved share), read against the
+post-#149 iterations 9+ — CONFOUND: #149 pause-hold and #150 coalescer
+activate in the same window, so per-change attribution is impossible; the
+combined games/h vs the iter-7 fresh-games baseline (641/h) is the deciding
+number, and sf_block_starved share is #151's mechanism-specific check. WATCH:
+SF pool queue depth (selfplay_fraction is 0.30 → ~2x concurrent curriculum SF
+queries at factor 2.0), worker RSS (+0.5-1.8G expected), broker p95. KILL
+(any): games/h below the 641/h baseline sustained 2 iters, worker RSS growth
+>4G, broker p95 +20% → revert `slot_oversubscribe: 1.0` + restart (immediate,
+no salvage).
