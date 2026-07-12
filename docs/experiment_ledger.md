@@ -1684,3 +1684,16 @@ CONFOUND to record at launch: shares the window with nothing (hard rule);
 if activated same restart as the v4 feed, the two are ONE combined entry
 with a combined kill. Stacks with the SF-pool-sizing lever (more SF procs
 pays for refutation games + PID sample together).
+
+**INCIDENT (found 2026-07-12): FEN seed injection silently OFF since the
+07-11 swap restart.** Pause-hold (#149) sessions start before the first dole
+arrives; `fen_dole_queue = self._live_dole_queue or None` handed the session
+None and every dole refilled an orphaned list ("dole: received 141 seed(s)
+-> live session" logged every iteration, ZERO fenlist outcome keys in 40
+recent shards — all selfplay games came from books). Fix = PR #154
+(_promote_pending_dole hands the queue OBJECT, empty or not); worker code,
+restart-gated — ACTIVATE AT THE ITER-35 PAUSE. CONFOUNDS: (a) the iter-20
+canary's panel-v2 drift (55->63/113) happened in a NO-SEED window — re-read
+after seeds resume before treating drift as a swap property; (b) the dole
+LIVE-UNREAD readout clock restarts at fix activation; (c) retirement reads
+between 07-11 and activation scored a net trained WITHOUT seed exposure.
