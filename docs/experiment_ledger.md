@@ -2032,3 +2032,26 @@ materialization 336.195/360.219ms (1.071x), over the kill threshold, while the
 exact hash `4f4eb31bc2e62c50` and 1,679,360-byte tar stayed unchanged. The
 preallocated row-assignment path is faster than another dense stack for this
 optional field; retain it.
+
+**Worker duplicate-value-validation experiment -- UNREAD (2026-07-12).** The
+worker's trusted `ReplaySample` conversion scans every dense array for finite,
+range, and distribution validity before local zarr write; the server then
+eagerly reloads the upload and executes the same `validate_arrays` before
+acceptance. Hypothesis: retain structural/declaration validation locally but
+defer full value scans to the authoritative server for worker-generated shards,
+removing duplicate CPU without weakening the training trust boundary. All
+other `save_local_shard_arrays` callers retain full validation by default. ONE
+deciding yardstick: paired `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_worker_shard_pipeline.py --positions 500 --rounds 7`. SUCCESS:
+total materialization <=0.90x baseline, exact hash/tar size, a deliberately
+NaN worker shard is writable locally only through the explicit option and is
+rejected/quarantined by the server, default writer still rejects it, and
+worker/server/shard tests pass. KILL: >0.98x or any validation-boundary failure;
+otherwise MIXED. No accepted data semantics/live change.
+**VERDICT: MIXED; reverted.** The paired pipeline measured baseline/candidate
+total materialization 370.326/339.809ms (0.918x), short of the 0.90 success
+gate, while the directly affected zarr stage moved only 209.067/203.215ms
+(0.972x). Conversion noise supplied most of the apparent total gain. Exact
+hash `4f4eb31bc2e62c50` and 1,679,360-byte tar matched, but a 2.8% stage gain
+does not justify weakening early local fault detection or adding a validation
+mode. Keep full worker and server validation.
