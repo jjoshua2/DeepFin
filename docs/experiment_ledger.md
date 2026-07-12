@@ -1941,3 +1941,21 @@ original zstd3+shuffle pipeline, total materialization falls 556.893→359.322ms
 array hash `4f4eb31bc2e62c50`. All 58 replay-shard/server-upload/worker-buffer
 tests pass; ruff + basedpyright + vulture are clean. This supersedes zstd2 byte-
 shuffle as the codec change to publish.
+
+**Shard stack+cast fusion experiment -- UNREAD (2026-07-12).** The corrected
+500-position pipeline spends ~155ms in `samples_to_arrays`; required `x` and
+`policy_target` currently allocate full float32 stacks and then allocate/copy
+again to float16. Hypothesis: constructing those stacks directly at storage
+dtype removes the float32 temporaries and one memory pass, reducing conversion
+time and peak transient bytes with exact float16 arrays. ONE deciding yardstick:
+`PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_shard_stack_cast.py --positions 500 --rounds 9`. SUCCESS: direct
+typed construction median <=0.85x stack-then-cast, exact stable hashes/shapes,
+and the full pipeline plus shard tests pass. KILL: ratio >0.98 or parity failure;
+otherwise MIXED. No storage/data semantic or live change.
+**VERDICT: FAILED; no code change.** Nine alternating rounds measured
+stack-then-cast at 52.572ms and direct typed construction at 53.141ms, ratio
+1.011 over the kill threshold. Both paths retained exact stable hash
+`ab8a3ddae7131ca8`. NumPy's stack path offsets the avoided temporary with more
+efficient bulk copying; retain the original implementation. The one-off
+candidate harness was removed rather than adding dead tooling.
