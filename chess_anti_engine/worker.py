@@ -813,6 +813,7 @@ class WorkerSession:
         self.manifest_state_elapsed_s: float | None = None
         self.upload_buf = _BufferedUpload()
         self.last_successful_send_s = time.time()
+        self._last_upload_flush_s = self.last_successful_send_s
 
         self.last_best_sha = None
         self.best_model = None
@@ -1033,6 +1034,20 @@ class WorkerSession:
     def _upload_pending_shards(self, *, default_elapsed_s: float | None = None) -> float | None:
         with self._pending_upload_lock:
             return self._upload_pending_shards_locked(default_elapsed_s=default_elapsed_s)
+
+    def _try_upload_pending_shards(self, *, default_elapsed_s: float | None = None) -> float | None:
+        """Drain pending shards unless another callback is already doing so.
+
+        Shards are durable before this is called.  A busy uploader is therefore
+        a reason to defer, not to stall a selfplay completion thread; the next
+        flush or the session-end blocking drain retries every pending shard.
+        """
+        if not self._pending_upload_lock.acquire(blocking=False):
+            return None
+        try:
+            return self._upload_pending_shards_locked(default_elapsed_s=default_elapsed_s)
+        finally:
+            self._pending_upload_lock.release()
 
     def _report_bad_pending_shard(self, payload: dict[str, object]) -> None:
         try:
@@ -1723,12 +1738,15 @@ class WorkerSession:
         if delta_requests <= 0:
             return
 
+        completion_stats = self._completion_telemetry_delta(elapsed_s)
         self.log.info(
             "broker client stats: requests=%d(+%d) rows_per_req=%.1f "
             "req_s=%.1f pos_s=%.0f wait_ms=%.2f roundtrip_ms=%.2f "
             "wait_thread_busy=%.1f%% roundtrip_thread_busy=%.1f%% "
             "legal_req=%.1f%% legal_pos=%.1f%% slots_active=%d/%d "
-            "slot_req_skew=%d max_inflight=%d available=%d",
+            "slot_req_skew=%d max_inflight=%d available=%d "
+            "complete_gps=%.2f complete_pos_s=%.0f callback_busy=%.1f%% "
+            "upload_busy=%.1f%% active_threads=%d thread_game_skew=%d",
             requests, delta_requests,
             float(delta_positions / max(1, delta_requests)),
             float(delta_requests / max(1e-6, elapsed_s)),
@@ -1744,6 +1762,7 @@ class WorkerSession:
             int(slot_skew),
             int(ds.get("max_inflight", 0)),
             int(ds.get("available_slots", 0)),
+            *completion_stats,
         )
         self._maybe_log_selfplay_phase_stats(elapsed_s)
 
@@ -1868,63 +1887,73 @@ class WorkerSession:
         upload_s = 0.0
         now_s = time.time()
         self._saw_completed_game = True
-        try:
-            _buffer_add_completed_game(
-                buf=self.upload_buf,
-                game_batch=game_batch,
-                now_s=now_s,
-                model_sha=self.model_sha,
-                model_step=self.model_step,
-                max_positions=int(self.args.upload_max_buffered_positions),
-            )
-        except ValueError as exc:
-            if str(exc) != "buffered upload model metadata mismatch":
-                raise
-            old_sha = str(self.upload_buf.model_sha or "")
-            old_step = int(self.upload_buf.model_step or 0)
-            self.log.warning(
-                "upload buffer model metadata changed old_sha=%s old_step=%d "
-                "new_sha=%s new_step=%d; flushing buffered shard before retry",
-                old_sha[:8],
-                old_step,
-                str(self.model_sha)[:8],
-                int(self.model_step),
-            )
-            shard_path, elapsed_s = _flush_upload_buffer_to_pending(
+        flushed_elapsed_s: float | None = None
+        buf_lock = getattr(self, "_upload_buf_lock", None)
+        with buf_lock if buf_lock is not None else nullcontext():
+            try:
+                _buffer_add_completed_game(
+                    buf=self.upload_buf,
+                    game_batch=game_batch,
+                    now_s=now_s,
+                    model_sha=self.model_sha,
+                    model_step=self.model_step,
+                    max_positions=int(self.args.upload_max_buffered_positions),
+                )
+            except ValueError as exc:
+                if str(exc) != "buffered upload model metadata mismatch":
+                    raise
+                old_sha = str(self.upload_buf.model_sha or "")
+                old_step = int(self.upload_buf.model_step or 0)
+                self.log.warning(
+                    "upload buffer model metadata changed old_sha=%s old_step=%d "
+                    "new_sha=%s new_step=%d; flushing buffered shard before retry",
+                    old_sha[:8],
+                    old_step,
+                    str(self.model_sha)[:8],
+                    int(self.model_step),
+                )
+                shard_path, elapsed_s = _flush_upload_buffer_to_pending(
+                    pending_dir=self.pending_dir,
+                    username=str(self.args.username),
+                    buf=self.upload_buf,
+                    now_s=now_s,
+                    trial_id=self.leased_trial_id or self.fixed_trial_id or None,
+                )
+                if shard_path is not None:
+                    flushed_elapsed_s = float(elapsed_s)
+                    self._last_upload_flush_s = float(now_s)
+                _buffer_add_completed_game(
+                    buf=self.upload_buf,
+                    game_batch=game_batch,
+                    now_s=now_s,
+                    model_sha=self.model_sha,
+                    model_step=self.model_step,
+                    max_positions=int(self.args.upload_max_buffered_positions),
+                )
+            shard_path, elapsed_s = _maybe_flush_upload_buffer(
                 pending_dir=self.pending_dir,
                 username=str(self.args.username),
                 buf=self.upload_buf,
                 now_s=now_s,
+                last_send_s=max(
+                    float(self.last_successful_send_s),
+                    float(getattr(self, "_last_upload_flush_s", 0.0)),
+                ),
+                target_positions=int(self.args.upload_target_positions),
+                flush_seconds=float(self.args.upload_flush_seconds),
+                force=False,
                 trial_id=self.leased_trial_id or self.fixed_trial_id or None,
             )
             if shard_path is not None:
-                upload_t0 = time.perf_counter()
-                uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
-                upload_s += time.perf_counter() - upload_t0
-                if uploaded_at is not None:
-                    self.last_successful_send_s = float(uploaded_at)
-            _buffer_add_completed_game(
-                buf=self.upload_buf,
-                game_batch=game_batch,
-                now_s=now_s,
-                model_sha=self.model_sha,
-                model_step=self.model_step,
-                max_positions=int(self.args.upload_max_buffered_positions),
-            )
-        shard_path, elapsed_s = _maybe_flush_upload_buffer(
-            pending_dir=self.pending_dir,
-            username=str(self.args.username),
-            buf=self.upload_buf,
-            now_s=now_s,
-            last_send_s=self.last_successful_send_s,
-            target_positions=int(self.args.upload_target_positions),
-            flush_seconds=float(self.args.upload_flush_seconds),
-            force=False,
-            trial_id=self.leased_trial_id or self.fixed_trial_id or None,
-        )
-        if shard_path is not None:
+                flushed_elapsed_s = float(elapsed_s)
+                self._last_upload_flush_s = float(now_s)
+
+        # Pending uploads have their own lock.  Keep HTTP and tar packing out of
+        # the upload-buffer/model-tag critical section so other selfplay threads
+        # can finish games while one callback sends a shard.
+        if flushed_elapsed_s is not None:
             upload_t0 = time.perf_counter()
-            uploaded_at = self._upload_pending_shards(default_elapsed_s=float(elapsed_s))
+            uploaded_at = self._try_upload_pending_shards(default_elapsed_s=flushed_elapsed_s)
             upload_s += time.perf_counter() - upload_t0
             if uploaded_at is not None:
                 self.last_successful_send_s = float(uploaded_at)
@@ -2807,10 +2836,6 @@ class WorkerSession:
         lock = threading.Lock()
         self._upload_buf_lock = lock  # shared with _check_model_update
 
-        def _on_game_thread_safe(game_batch):
-            with lock:
-                self._on_completed_game(game_batch)
-
         seeds = [int(self.rng.integers(2**63)) for _ in range(n_threads)]
 
         def _run_one_thread(tid):
@@ -2818,7 +2843,7 @@ class WorkerSession:
                 None, device=str(self.device), rng=np.random.default_rng(seeds[tid]),
                 stockfish=sf, evaluator=eval_,
                 games=thread_games[tid],
-                on_game_complete=_on_game_thread_safe,
+                on_game_complete=self._on_completed_game,
                 on_timing=self._record_selfplay_phase_timing,
                 on_step=self._check_model_update if tid == 0 else None,
                 on_state_ready=self._register_live_state,

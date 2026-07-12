@@ -71,6 +71,13 @@ def test_broker_stats_also_emit_selfplay_phase_stats(monkeypatch) -> None:
     session_any._last_broker_client_stats_log_s = 0.0
     session_any._last_broker_client_stats_snapshot = {}
     session_any.log = Mock()
+    session_any._completion_telemetry_lock = threading.Lock()
+    session_any._completion_games = 0
+    session_any._completion_positions = 0
+    session_any._completion_callback_s = 0.0
+    session_any._completion_upload_s = 0.0
+    session_any._completion_by_thread = {}
+    session_any._last_completion_stats_snapshot = (0, 0, 0.0, 0.0, {})
     phase_stats = Mock()
     session_any._maybe_log_selfplay_phase_stats = phase_stats
 
@@ -439,7 +446,7 @@ def test_completed_game_metadata_mismatch_flushes_before_retry(monkeypatch, tmp_
 
     monkeypatch.setattr(worker_mod, "_flush_upload_buffer_to_pending", _fake_flush)
     monkeypatch.setattr(worker_mod, "_maybe_flush_upload_buffer", _fake_maybe_flush)
-    cast(Any, session)._upload_pending_shards = _fake_upload_pending_shards
+    cast(Any, session)._try_upload_pending_shards = _fake_upload_pending_shards
 
     game_batch = SimpleNamespace(samples=[object(), object()], positions=2, games=1, w=1)
 
@@ -454,6 +461,69 @@ def test_completed_game_metadata_mismatch_flushes_before_retry(monkeypatch, tmp_
     assert session.upload_buf.positions == 2
     assert session._completion_games == 1
     assert session._completion_positions == 2
+
+
+def test_completed_game_does_not_wait_for_active_shard_upload(
+    monkeypatch, tmp_path: Path,
+) -> None:
+    session = object.__new__(WorkerSession)
+    session.log = logging.getLogger("test.worker_model_update")
+    session.model_sha = "model-sha"
+    session.model_step = 1
+    session.pending_dir = tmp_path
+    session.leased_trial_id = "trial_00000"
+    session.fixed_trial_id = ""
+    session.args = SimpleNamespace(
+        username="worker",
+        upload_max_buffered_positions=0,
+        upload_target_positions=1,
+        upload_flush_seconds=999.0,
+    )
+    session.last_successful_send_s = 100.0
+    session.upload_buf = _BufferedUpload()
+    upload_buf_lock = threading.Lock()
+    session._upload_buf_lock = upload_buf_lock
+    session._completion_telemetry_lock = threading.Lock()
+    session._completion_games = 0
+    session._completion_positions = 0
+    session._completion_callback_s = 0.0
+    session._completion_upload_s = 0.0
+    session._completion_by_thread = {}
+
+    upload_started = threading.Event()
+    release_upload = threading.Event()
+
+    def _fake_maybe_flush(**kwargs):
+        assert upload_buf_lock.locked()
+        kwargs["buf"].reset()
+        return tmp_path / "pending.zarr", 1.0
+
+    def _fake_upload_pending_shards_locked(*, default_elapsed_s: float | None = None) -> float:
+        assert default_elapsed_s == 1.0
+        upload_started.set()
+        assert release_upload.wait(timeout=2.0)
+        return 200.0
+
+    monkeypatch.setattr(worker_mod, "_maybe_flush_upload_buffer", _fake_maybe_flush)
+    session._pending_upload_lock = threading.Lock()
+    cast(Any, session)._upload_pending_shards_locked = _fake_upload_pending_shards_locked
+    game_batch = SimpleNamespace(samples=[object(), object()], positions=2, games=1, w=1)
+
+    first = threading.Thread(target=WorkerSession._on_completed_game, args=(session, game_batch))
+    first.start()
+    assert upload_started.wait(timeout=2.0)
+
+    second = threading.Thread(target=WorkerSession._on_completed_game, args=(session, game_batch))
+    second.start()
+    second.join(timeout=1.0)
+    assert not second.is_alive(), "next completion waited for unrelated shard HTTP upload"
+    assert session.upload_buf.positions == 0
+
+    release_upload.set()
+    first.join(timeout=2.0)
+    assert not first.is_alive()
+    assert session._completion_games == 2
+    assert session._completion_positions == 4
 
 
 def test_require_reco_raises_when_sf_nodes_set_nowhere() -> None:

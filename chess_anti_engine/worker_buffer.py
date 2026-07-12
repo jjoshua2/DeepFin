@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -262,7 +263,10 @@ def _flush_upload_buffer_to_pending(
     if buf.model_step is None:
         raise ValueError("buffered upload missing model step")
     ts = int(now_s)
-    shard_path = pending_dir / f"{ts}_{model_sha[:8]}_{buf.games}g_{buf.positions}p{LOCAL_SHARD_SUFFIX}"
+    token = secrets.token_hex(4)
+    shard_path = pending_dir / (
+        f"{ts}_{model_sha[:8]}_{buf.games}g_{buf.positions}p_{token}{LOCAL_SHARD_SUFFIX}"
+    )
     elapsed_s = _buffer_elapsed_s(buf=buf, now_s=now_s)
     meta = ShardMeta(
         username=str(username),
