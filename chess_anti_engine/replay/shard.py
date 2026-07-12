@@ -1302,7 +1302,7 @@ def save_local_shard_arrays(
         # needed.
         attrs = _meta_with_policy(meta, arrs=stored)
         g.attrs.update(attrs)
-        compressor = Blosc(cname="zstd", clevel=3, shuffle=Blosc.SHUFFLE)
+        compressor = Blosc(cname="zstd", clevel=2, shuffle=Blosc.BITSHUFFLE)
         for name, value in stored.items():
             if str(name).startswith("_"):
                 continue
