@@ -1697,3 +1697,18 @@ canary's panel-v2 drift (55->63/113) happened in a NO-SEED window — re-read
 after seeds resume before treating drift as a swap property; (b) the dole
 LIVE-UNREAD readout clock restarts at fix activation; (c) retirement reads
 between 07-11 and activation scored a net trained WITHOUT seed exposure.
+
+**Pause-hold invariant audit (2026-07-12, post-#154; report:
+scratchpad/pausehold_audit_report.md).** Static end-to-end audit for more
+#154-class bugs (session-start-only state vs hours-long #149 sessions): every
+_RECO_LIVE_KEY verified to reach a RUNNING session; restart-key coverage
+complete; threaded path sound. One structural finding ACCEPTED BY DESIGN:
+held games span model publishes — early plies searched by the previous
+weights are tagged with the NEW model sha at completion (~games_per_batch x
+oversubscribe games per pause). Standard continuous-selfplay behavior
+(LC0/KataGo train on such games); alternatives re-create the #149 waste.
+Consequence for readers: "fresh-sha games" slightly overstate on-policy
+freshness right after each publish. Hardening landed with this entry: TB
+adjudication gate follows live state.game; dole-queue docstring forbids
+rebinding (the #154 footgun); mid-session poll failures now log a warning
+instead of a bare pass.

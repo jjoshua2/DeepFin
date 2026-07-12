@@ -7,7 +7,7 @@ from __future__ import annotations
 import threading
 import time
 from concurrent.futures import Future
-from typing import Any
+from typing import Any, cast
 
 import chess
 import numpy as np
@@ -522,3 +522,52 @@ def test_stop_during_pause_exits_promptly():
     )
     assert samples == []
     assert stats.games == 0  # held from the start; nothing completed, no hang
+
+
+def test_tb_adjudicate_gate_reads_state_game(monkeypatch):
+    """play_batch's TB gate must follow state.game, not the closed-over session game.
+
+    Session starts with syzygy_adjudicate=False (closed-over ``game`` stays False).
+    on_state_ready installs a non-None tb_probe and flips state.game to True.
+    If the gate still closed over session-start ``game``, adjudication never runs.
+    """
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from chess_anti_engine.selfplay import manager as mgr
+
+    calls: list[int] = []
+
+    def _spy(state: Any) -> int:
+        calls.append(1)
+        return 0
+
+    monkeypatch.setattr(mgr, "_tb_adjudicate_active_games", _spy)
+
+    model = UniformPolicyValueModel().eval()
+    rng = np.random.default_rng(4)
+    steps = {"n": 0}
+
+    def _on_ready(state: SelfplayState) -> None:
+        state.tb_probe = cast(Any, SimpleNamespace(max_pieces=6))
+        state.game = replace(state.game, syzygy_adjudicate=True)
+
+    def _stop() -> bool:
+        steps["n"] += 1
+        return bool(calls) or steps["n"] >= 30
+
+    play_batch(
+        model, device="cpu", rng=rng,
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
+        games=1,
+        target_games=0,
+        stop_fn=_stop,
+        on_state_ready=_on_ready,
+        on_game_complete=lambda _cg: None,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=2, selfplay_fraction=1.0, syzygy_adjudicate=False),
+    )
+    assert calls, "TB gate must call adjudicate when state.game.syzygy_adjudicate is True"
