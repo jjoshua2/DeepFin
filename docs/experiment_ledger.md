@@ -184,6 +184,59 @@ always re-dump and pair.
 
 ## Analysis findings (offline, no live change)
 
+**UCI discarded chunk-result elision experiment -- UNREAD (2026-07-11).**
+Match search calls `run_gumbel_root_many_c` once per search chunk, but
+`SearchWorker._run_gumbel_chunk` consumes only the selected action, value,
+tree, and root id. The generic RL-facing function still constructs an improved
+full policy and legal mask on every chunk; at 8,192 nodes and 512-node chunks
+that discarded Python/NumPy work repeats 16 times per move. Hypothesis: an
+explicit `return_policy=False` match path that computes only the deterministic
+best action and its child value improves single-game search throughput without
+changing search state or decisions. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_uci_chunk_results.py --nodes
+8192 --chunk-sims 512 --rounds 7 --repeats 5`. The harness alternates generic
+and lean paths on identical positions with a deterministic evaluator and fresh
+trees. Pre-committed SUCCESS: lean/generic median simulations/s >=1.03x, and
+every paired run has identical selected-action, value, root-child-visit, and
+tree-state hashes. Otherwise FAILED and retain the generic result construction.
+Focused Gumbel-C and UCI search tests plus repo lint must pass. This changes
+match result packaging only; RL/selfplay keeps the default full-policy return.
+No training/data change and no salvage snapshot.
+**VERDICT: FAILED and reverted.** The exact seven-round alternating yardstick
+measured generic result construction at 35,638 simulations/s and the lean path
+at 36,701 simulations/s, a **1.029830x** ratio versus the precommitted
+1.030000x requirement. Every run retained exact action/value/root-visit/tree
+state hash `0f95b11ec58a0604`, and focused tests plus lint passed. The discarded
+policy/mask packaging is measurable, but this isolated gain missed the gate by
+0.017 percentage points; do not carry the extra API/runtime branch alone.
+
+**Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
+single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
+graph work on one submitter thread, but each drain unconditionally executes
+`np.concatenate` for encoded inputs and compact legal arrays even when the
+batch contains one request. That copies roughly 22 MB for a 512x175 FP32 leaf
+batch (11 MB for native BF16) while providing no coalescing. Hypothesis: aliasing
+the original arrays for singleton drains, while retaining concatenation for
+two or more requests, materially removes CPU packing cost with identical
+inputs/results. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_coalescer_singleton_pack.py --batch 512 --planes 175 --legal-per
+32 --iterations 500 --rounds 7`. The harness alternates old copy packing and
+singleton alias packing on fixed production-shaped BF16/legal arrays. Pre-
+committed SUCCESS: optimized/reference median packing throughput >=5.0x, exact
+array contents match, the optimized objects share memory with the inputs, and
+coalescer/dispatcher/Gumbel/UCI focused tests plus repo lint pass. Otherwise
+FAILED and retain unconditional concatenation. No training/data change and no
+salvage snapshot.
+**VERDICT: WORKED.** The exact seven-round alternating yardstick measured 819
+singleton packs/s for unconditional concatenation and 9,252,576 packs/s for
+aliasing, a **11,295.8x packing-mechanism ratio**. Each production-shaped BF16
+compact-policy request avoids copying 11,536,384 bytes; FP32 inputs avoid about
+twice that. Every packed array matched exactly and all optimized outputs shared
+memory with their source. This is intentionally a mechanism result, not a claim
+that whole-engine throughput rises by the same ratio: GPU inference and C tree
+work remain. Keep the simple singleton fast path; multi-request drains retain
+the original concatenation/coalescing behavior.
+
 **Native C LTO build experiment — FAILED (2026-07-09).** Hypothesis:
 link-time optimization can improve the production BF16 CBoard encoder without
 meaningfully slowing the frequent in-place extension rebuild. ONE deciding
