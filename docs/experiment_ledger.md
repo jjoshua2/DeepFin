@@ -618,6 +618,33 @@ dispatcher, broker, and native MCTS tests pass. Otherwise FAILED and leave the
 compiled legal gate off. This is an offline inference-only experiment; no data
 or training change and no salvage snapshot.
 
+**Stockfish MultiPV final-line parsing experiment -- UNREAD (2026-07-12).**
+Production uses MultiPV 40. `StockfishUCI.search` currently scans every token
+list several times, allocates a normalized NumPy WDL vector, and constructs a
+`StockfishPV` for every intermediate-depth info line, even though the next
+depth overwrites that PV entry. Hypothesis: one token scan per line plus raw
+latest-PV retention, normalizing/materializing only the final line for each PV,
+reduces worker GIL/CPU cost without changing UCI results. ONE deciding
+yardstick: `PYTHONPATH=. python3 scripts/bench_stockfish_info_parser.py
+--multipv 40 --depths 30 --rounds 9 --iterations 250`. The benchmark
+alternates the exact old parse/update loop with the candidate on identical
+production-shaped streams. Pre-committed SUCCESS: candidate/reference median
+streams/s >=1.50x, exact result hashes match in every round, and focused UCI,
+Stockfish-label, sparse-MultiPV, and end-to-end smoke tests plus repo lint pass.
+Otherwise revert. This changes parsing/materialization only: engine commands,
+node budgets, final PVs, WDL/CP/mate values, search decisions, and targets stay
+identical. No live/training change and no salvage snapshot.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+56.893 reference streams/s and 104.282 candidate streams/s, a **1.83295x**
+parser speedup. All rounds retained exact result hash
+`f457ed0c5c4d1c71dc368830c9899e68ec65ad649dfd2d5eb5a23ff31f2485e1`.
+On the representative 1,200-line stream this removes about 7.99 ms of Python
+parsing/materialization per query. This is deliberately a parser/GIL result,
+not a whole-game throughput claim; Stockfish node search remains dominant.
+The non-primary MultiPV-1 guard also improved 1.58656x (2,188.56 -> 3,472.28
+30-line streams/s, exact hash), so the accumulator does not trade away the
+single-PV path used by smokes and some analysis tools.
+
 **UCI compact-BF16 transport experiment -- UNREAD (2026-07-11).** Match play's
 compiled evaluator is wrapped by `ThreadSafeGPUDispatcher` and
 `BatchCoalescingDispatcher`; neither forwards the legal-policy BF16 API or the
