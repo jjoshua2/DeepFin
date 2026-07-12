@@ -1457,8 +1457,12 @@ class WorkerSession:
   # Mid-session: if the server doled this iteration's seed batch to this poll,
   # push it onto the live SelfplayState (recycled selfplay slots drain it).
             self._maybe_ingest_dole_flag(manifest)
-        except Exception:
-            pass
+        except Exception as _exc:
+            self.log.warning(
+                "mid-session manifest poll failed (dole/live-reco/assets may lag): %s",
+                _exc,
+                exc_info=True,
+            )
 
     def _resolve_local_manifest_path(self) -> Path | None:
         """Lazily compute the on-disk manifest path; cached on self."""

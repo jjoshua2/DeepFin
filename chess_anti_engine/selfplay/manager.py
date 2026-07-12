@@ -239,8 +239,9 @@ def play_batch(
 
     ``fen_dole_queue`` (opt-in, opening_fen_dole_per_iter>0): a mutable FIFO of
     seed lines the server doled for this iteration. Selfplay slots drain it (via
-    the SelfplayState, deterministic even coverage); the caller may replace
-    ``state.fen_dole_queue`` live between iterations. None = no doled seeds.
+    the SelfplayState, deterministic even coverage). Mid-session refill must
+    mutate the SHARED list in place; never rebind ``state.fen_dole_queue``
+    (that orphans the worker's live queue — PR #154). None = no doled seeds.
 
     ``pause_fn`` (continuous mode): while it returns True the loop HOLDS —
     no new work is scheduled but every in-flight game keeps its state — and
@@ -345,7 +346,8 @@ def play_batch(
         # game gets marked done; classify then skips it and finalize uses the
         # stashed TB result. Runs at most once per game (state.tb_result_arr
         # is the idempotency key).
-        if state.tb_probe is not None and game.syzygy_adjudicate:
+        # state.game (not closed-over session-start ``game``) — matches recycle.
+        if state.tb_probe is not None and state.game.syzygy_adjudicate:
             t0 = time.perf_counter()
             _tb_adjudicate_active_games(state)
             if on_timing is not None:
