@@ -1646,3 +1646,10 @@ in-loop regression occurred; the rule's trunk-baseline conflated the accepted
 swap-time gap with regression. Follow-ups: repeat this canary ~iter 35
 (baseline = the boot net AND the trunk, both banked dumps in
 scratchpad/canary_512_iter20/), watch panel v2 drift.
+
+**Post-speedup knob check (2026-07-12): NO CHANGES.** Steps auto-scale via
+train_views_per_position=2.5 (verified: steps track ingest ~2x). Window
+left at 1.5M: position-count semantics unchanged, but at ~2x ingest the
+window now spans ~1 DAY of data, not ~2 — experiment clocks and revert
+contamination both halve. Revisit the cap (known-good prior: 3M) only on
+overfit symptoms (test/train gap) or a negative iter-35 canary.
