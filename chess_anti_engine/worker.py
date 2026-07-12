@@ -2909,6 +2909,23 @@ class WorkerSession:
             _prune_cached_models(cache_dir=self.cache_dir, keep_shas={model_sha, best_sha})
         self._upload_pending_shards(default_elapsed_s=0.0)
 
+    def _promote_pending_dole(self) -> list[str]:
+        """Promote the stashed session-start dole into the shared live queue.
+
+        Returns the live queue OBJECT (possibly empty) that the session must
+        hold for its whole lifetime: with pause-hold sessions running for hours,
+        the first dole usually arrives MID-session, and _maybe_ingest_dole_flag
+        refills this same list in place. Returning None on empty (the old
+        ``or None``) orphaned the queue — the session had nothing to drain and
+        every subsequent dole refilled a list nobody held (seed injection
+        silently off for the whole session; found 2026-07-12, seeds dead since
+        the 07-11 swap restart).
+        """
+        with self._dole_lock:
+            self._live_dole_queue = list(self._pending_fen_dole)
+            self._pending_fen_dole = []
+            return self._live_dole_queue
+
     def _run_selfplay(self, manifest: dict) -> None:
         """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
         self._stop_selfplay = False
@@ -2946,10 +2963,7 @@ class WorkerSession:
   # drains (the outer loop / a prior poll stashed it — survives model-not-ready).
   # The SAME object is handed to play_batch (single path) or every thread (threaded
   # path), and mid-session doles refill it in place via _periodic_manifest_poll.
-        with self._dole_lock:
-            self._live_dole_queue = list(self._pending_fen_dole)
-            self._pending_fen_dole = []
-        fen_dole_queue = self._live_dole_queue or None
+        fen_dole_queue = self._promote_pending_dole()
 
         t0 = time.time()
         self._saw_completed_game = False
