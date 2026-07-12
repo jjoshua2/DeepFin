@@ -1692,7 +1692,9 @@ None and every dole refilled an orphaned list ("dole: received 141 seed(s)
 -> live session" logged every iteration, ZERO fenlist outcome keys in 40
 recent shards — all selfplay games came from books). Fix = PR #154
 (_promote_pending_dole hands the queue OBJECT, empty or not); worker code,
-restart-gated — ACTIVATE AT THE ITER-35 PAUSE. CONFOUNDS: (a) the iter-20
+restart-gated — ACTIVATED EARLY 2026-07-12 (user call: pulled the iter-35
+pause forward; restart bundled with the Cheese block, canary probes stay at
+~iter 35 concurrent-safe). CONFOUNDS: (a) the iter-20
 canary's panel-v2 drift (55->63/113) happened in a NO-SEED window — re-read
 after seeds resume before treating drift as a swap property; (b) the dole
 LIVE-UNREAD readout clock restarts at fix activation; (c) retirement reads
