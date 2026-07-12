@@ -203,6 +203,19 @@ def test_build_selfplay_configs_consumes_history_rep_fix() -> None:
     assert "history_rep_fix" in WorkerSession._RECO_RESTART_KEYS
 
 
+def test_build_selfplay_configs_consumes_slot_oversubscribe() -> None:
+    session = _bare_worker_session()
+
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(
+        session, {"sf_nodes": 5000, "slot_oversubscribe": 2.0},
+    )
+    assert cfgs["slot_oversubscribe"] == 2.0
+
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, {"sf_nodes": 5000})
+    assert cfgs["slot_oversubscribe"] == 1.0
+    assert "slot_oversubscribe" in WorkerSession._RECO_RESTART_KEYS
+
+
 def test_build_selfplay_configs_consumes_categorical_blend_frac() -> None:
     """The published categorical_blend_frac must reach the worker GameConfig —
     otherwise distributed workers silently emit legacy ternary categorical

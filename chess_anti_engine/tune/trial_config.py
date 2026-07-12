@@ -41,6 +41,13 @@ def _nonnegative_float(value: Any, *, name: str) -> float:
     return val
 
 
+def _at_least_one_float(value: Any, *, name: str) -> float:
+    val = float(value)
+    if not math.isfinite(val) or val < 1.0:
+        raise ValueError(f"{name} must be finite and >= 1.0, got {value!r}")
+    return val
+
+
 @dataclass
 class TrialConfig:
     """Typed, validated view of the flat Ray Tune config dict.
@@ -124,6 +131,7 @@ class TrialConfig:
     games_per_iter_ramp_iters: int = 0
     selfplay_batch: int = 10
     selfplay_fraction: float = 0.0
+    slot_oversubscribe: float = 1.0
     max_plies: int = 240
     mcts: str = "puct"
     mcts_simulations: int = 50
@@ -441,6 +449,9 @@ class TrialConfig:
             games_per_iter_ramp_iters=int(config.get("games_per_iter_ramp_iters", 0)),
             selfplay_batch=int(config.get("selfplay_batch", 10)),
             selfplay_fraction=float(config.get("selfplay_fraction", 0.0)),
+            slot_oversubscribe=_at_least_one_float(
+                config.get("slot_oversubscribe", 1.0), name="slot_oversubscribe",
+            ),
             max_plies=int(config.get("max_plies", 240)),
             mcts=str(config.get("mcts", "puct")),
             mcts_simulations=int(config.get("mcts_simulations", 50)),

@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 import torch
 
+from chess_anti_engine.moves.encode import MODEL_POLICY_ENCODING, policy_size_for_encoding
 from tests.stockfish_binary import find_stockfish
 
 # ---------------------------------------------------------------------------
@@ -37,7 +38,9 @@ pytestmark = pytest.mark.skipif(SF_PATH is None, reason="Stockfish not found (ru
 # Helpers
 # ---------------------------------------------------------------------------
 
-POLICY_SIZE = 4672
+# Follows the production model policy encoding (lc0_1858 since the June 2026
+# migration; az_4672 is retired as a model output).
+POLICY_SIZE = policy_size_for_encoding(MODEL_POLICY_ENCODING)
 INPUT_PLANES = 175
 
 

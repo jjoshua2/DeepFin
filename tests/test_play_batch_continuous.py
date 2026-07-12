@@ -4,6 +4,12 @@ These tests lock down behavior prior to the Phase 5 refactor of play_batch.
 """
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import Future
+from typing import Any
+
+import chess
 import numpy as np
 
 from chess_anti_engine.selfplay import play_batch
@@ -15,7 +21,43 @@ from chess_anti_engine.selfplay.config import (
 )
 from chess_anti_engine.selfplay.manager import CompletedGameBatch
 from chess_anti_engine.selfplay.opening import OpeningConfig
+from chess_anti_engine.selfplay.state import SelfplayState
+from chess_anti_engine.selfplay.stockfish_turn import finish_pending_curriculum_moves
+from chess_anti_engine.stockfish.pool import StockfishPool
+from chess_anti_engine.stockfish.uci import StockfishResult
 from tests.selfplay_helpers import FakeStockfish, UniformPolicyValueModel
+
+
+class _DelayedStockfishPool(StockfishPool):
+    """StockfishPool-shaped fake whose result futures complete after a delay."""
+
+    def __init__(self, delay_s: float):  # pyright: ignore[reportMissingSuperCall]
+        self.nodes = 1
+        self.delay_s = float(delay_s)
+        self._timers: list[threading.Timer] = []
+
+    def submit(
+        self, fen: str, *, nodes: int | None = None,
+        syzygy_path: str | None = None, fresh: bool = False,
+    ) -> Future[StockfishResult]:
+        del nodes, syzygy_path, fresh
+        board = chess.Board(fen)
+        move = next(iter(board.legal_moves), chess.Move.null())
+        result = StockfishResult(
+            bestmove_uci=move.uci(),
+            wdl=np.asarray([0.0, 1.0, 0.0], dtype=np.float32),
+            pvs=[],
+        )
+        future: Future[StockfishResult] = Future()
+        timer = threading.Timer(self.delay_s, future.set_result, args=(result,))
+        timer.daemon = True
+        self._timers.append(timer)
+        timer.start()
+        return future
+
+    def close(self) -> None:
+        for timer in self._timers:
+            timer.join(timeout=max(0.1, self.delay_s * 2.0))
 
 
 def test_continuous_mode_stops_on_stop_fn_and_delivers_via_callback():
@@ -84,6 +126,200 @@ def test_continuous_mode_recycles_slots_beyond_initial_batch():
     assert stats.games >= 4
     assert len(completed) >= 4
     assert samples == []
+
+
+def test_continuous_slot_oversubscribe_multiplies_slots_and_completes():
+    """Oversubscription multiplies concurrent slots and games still complete.
+
+    Asserts the concurrency property only (state.batch_size scales with the
+    factor; at least as many games finish). Per-game outcome identity across
+    factors is NOT claimed — scheduling interleaving differs by construction,
+    and the FakeStockfish + max_plies=2 setup would make such a claim vacuous
+    (nearly every game adjudicates to the same draw tuple).
+    """
+
+    def _run(factor: float) -> tuple[int, list[tuple[int, int, int, int]]]:
+        completed: list[CompletedGameBatch] = []
+        batch_sizes: list[int] = []
+        _samples, _stats = play_batch(
+            UniformPolicyValueModel().eval(), device="cpu",
+            rng=np.random.default_rng(12),
+            stockfish=FakeStockfish([0.0, 1.0, 0.0]),
+            games=2, target_games=0,
+            stop_fn=lambda: len(completed) >= 2,
+            on_state_ready=lambda state: batch_sizes.append(state.batch_size),
+            on_game_complete=completed.append,
+            slot_oversubscribe=factor,
+            temp=TemperatureConfig(temperature=1.0),
+            search=SearchConfig(
+                simulations=1, playout_cap_fraction=1.0, fast_simulations=1,
+            ),
+            opening=OpeningConfig(random_start_plies=0),
+            diff_focus=DiffFocusConfig(enabled=False),
+            game=GameConfig(max_plies=2, selfplay_fraction=1.0),
+        )
+        results = [(game.w, game.d, game.l, game.total_game_plies) for game in completed]
+        return batch_sizes[0], results
+
+    baseline_slots, baseline = _run(1.0)
+    extra_slots, oversubscribed = _run(2.0)
+
+    assert baseline_slots == 2
+    assert extra_slots == 4
+    assert len(oversubscribed) >= len(baseline)
+
+
+def test_finite_mode_ignores_slot_oversubscribe_and_keeps_exact_target():
+    completed: list[CompletedGameBatch] = []
+    batch_sizes: list[int] = []
+    _samples, stats = play_batch(
+        UniformPolicyValueModel().eval(), device="cpu",
+        rng=np.random.default_rng(13),
+        stockfish=FakeStockfish([0.0, 1.0, 0.0]),
+        games=2, target_games=3,
+        on_state_ready=lambda state: batch_sizes.append(state.batch_size),
+        on_game_complete=completed.append,
+        slot_oversubscribe=3.0,
+        temp=TemperatureConfig(temperature=1.0),
+        search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+        opening=OpeningConfig(random_start_plies=0),
+        diff_focus=DiffFocusConfig(enabled=False),
+        game=GameConfig(max_plies=2, selfplay_fraction=1.0),
+    )
+
+    assert batch_sizes == [2]
+    assert stats.games == 3
+    assert len(completed) == 3
+
+
+def test_pending_curriculum_slot_does_not_block_runnable_selfplay_slot():
+    """A pending SF opponent move must overlap runnable work in another slot."""
+    pool = _DelayedStockfishPool(0.2)
+    completed: list[CompletedGameBatch] = []
+    timings: dict[str, float] = {}
+
+    def _set_mixed_slots(state: SelfplayState) -> None:
+        state.selfplay_arr[:] = np.asarray([False, True], dtype=np.bool_)
+
+    try:
+        play_batch(
+            UniformPolicyValueModel().eval(), device="cpu",
+            rng=np.random.default_rng(14), stockfish=pool,
+            games=2, target_games=0,
+            stop_fn=lambda: len(completed) >= 2,
+            on_state_ready=_set_mixed_slots,
+            on_game_complete=completed.append,
+            on_timing=lambda key, value: timings.__setitem__(
+                key, timings.get(key, 0.0) + value,
+            ),
+            temp=TemperatureConfig(temperature=1.0),
+            search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+            opening=OpeningConfig(random_start_plies=0),
+            diff_focus=DiffFocusConfig(enabled=False),
+            game=GameConfig(max_plies=4, selfplay_fraction=0.5),
+        )
+    finally:
+        pool.close()
+
+    assert timings.get("sf_pending_with_runnable_steps", 0.0) > 0.0
+    assert len(completed) >= 2
+
+
+def test_starved_block_time_attributed_to_sf_block_starved_not_finish_cur():
+    """The ledger yardstick reads `sf_block_starved` as the true starved-wait
+    share; a refactor that re-lumps the blocked wait into `sf_finish_curriculum`
+    would silently break that mechanism check. Curriculum-only slots with a
+    slow SF pool must accumulate the wait under sf_block_starved."""
+    pool = _DelayedStockfishPool(0.1)
+    completed: list[CompletedGameBatch] = []
+    timings: dict[str, float] = {}
+
+    try:
+        play_batch(
+            UniformPolicyValueModel().eval(), device="cpu",
+            rng=np.random.default_rng(16), stockfish=pool,
+            games=1, target_games=0,
+            stop_fn=lambda: len(completed) >= 1,
+            on_game_complete=completed.append,
+            on_timing=lambda key, value: timings.__setitem__(
+                key, timings.get(key, 0.0) + value,
+            ),
+            temp=TemperatureConfig(temperature=1.0),
+            search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+            opening=OpeningConfig(random_start_plies=0),
+            diff_focus=DiffFocusConfig(enabled=False),
+            game=GameConfig(max_plies=4, selfplay_fraction=0.0),
+        )
+    finally:
+        pool.close()
+
+    starved = timings.get("sf_block_starved", 0.0)
+    finish_cur = timings.get("sf_finish_curriculum", 0.0)
+    assert starved > 0.05  # the 0.1s SF delays must land here
+    assert finish_cur < starved  # non-blocking polls only, never the wait
+
+
+def test_pause_with_pending_curriculum_future_holds_then_resumes():
+    pool = _DelayedStockfishPool(0.05)
+    completed: list[CompletedGameBatch] = []
+    timings: dict[str, float] = {}
+    live_state: list[SelfplayState] = []
+    pause_polls = 0
+
+    def _pause() -> bool:
+        nonlocal pause_polls
+        if not live_state or not live_state[0].pending_sf_moves:
+            return False
+        pause_polls += 1
+        return pause_polls < 3
+
+    try:
+        play_batch(
+            UniformPolicyValueModel().eval(), device="cpu",
+            rng=np.random.default_rng(15), stockfish=pool,
+            games=2, target_games=0,
+            stop_fn=lambda: len(completed) >= 2,
+            pause_fn=_pause,
+            on_state_ready=live_state.append,
+            on_game_complete=completed.append,
+            on_timing=lambda key, value: timings.__setitem__(
+                key, timings.get(key, 0.0) + value,
+            ),
+            temp=TemperatureConfig(temperature=1.0),
+            search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+            opening=OpeningConfig(random_start_plies=0),
+            diff_focus=DiffFocusConfig(enabled=False),
+            game=GameConfig(max_plies=4, selfplay_fraction=0.0),
+        )
+    finally:
+        pool.close()
+
+    assert pause_polls >= 3
+    assert timings.get("pause_hold", 0.0) > 0.0
+    assert len(completed) >= 2
+
+
+def test_blocking_pending_move_wait_is_bounded():
+    future: Future[StockfishResult] = Future()
+    state: Any = type("PendingState", (), {"pending_sf_moves": {0: future}})()
+    late_result = StockfishResult(
+        bestmove_uci="e2e4",
+        wdl=np.asarray([0.0, 1.0, 0.0], dtype=np.float32),
+        pvs=[],
+    )
+    timer = threading.Timer(0.2, future.set_result, args=(late_result,))
+    timer.daemon = True
+    timer.start()
+    started = time.perf_counter()
+    finished = finish_pending_curriculum_moves(
+        state, block=True, block_timeout_s=0.02,
+    )
+    elapsed = time.perf_counter() - started
+
+    assert finished == 0
+    assert 0.015 <= elapsed < 0.15
+    timer.join(timeout=0.5)
+    assert future.done()
 
 
 def test_continuous_mode_stats_sum_matches_callback_sum():
