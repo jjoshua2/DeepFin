@@ -1991,3 +1991,26 @@ conversion improved 149.559→138.506ms and total materialization
 378.597→362.847ms (4.2%), with unchanged full array hash `4f4eb31bc2e62c50`
 and 2,406,400-byte tar. All 58 shard/server/worker-buffer tests pass and lint is
 clean. Keep the simpler dtype-aware stack.
+
+**Concurrent Blosc thread-count experiment -- UNREAD (2026-07-12).**
+`numcodecs.blosc.get_nthreads()` defaults to 8 in every worker process; four
+simultaneous shard writes can therefore launch 32 compression threads on the
+8-physical-core production host, alongside Stockfish/selfplay. Hypothesis:
+limiting each worker's zstd2 write to 1/2/4 threads improves aggregate four-
+worker completion time by reducing oversubscription. ONE deciding yardstick:
+`PYTHONPATH=. TMPDIR=/tmp taskset -c 0,2,4,6,8,10,12,14 python3
+scripts/bench_concurrent_shard_writers.py --positions 500 --workers 4 --rounds
+7`, alternating Blosc thread counts 1/2/4/8 on identical arrays and eight
+physical cores. SUCCESS: a lower count median aggregate wall <=0.85x 8-thread
+baseline, exact stable decoded hashes and sizes; choose fastest qualifier. KILL:
+all lower counts >0.95x; otherwise MIXED. A production change must scope/restore
+the process-global Blosc setting around the single serialized writer and pass
+shard/worker tests. No data semantics/live activation.
+**VERDICT: MIXED; no production change.** Four-worker medians relative to the
+8-thread default were: 1 thread 0.935x, 2 threads 1.021x, and 4 threads 0.913x.
+All outputs had identical 2,213,225-byte size and exact stable hash
+`bd974f1197c70c97`. Lower thread counts reduce oversubscription slightly, but
+none clears the 0.85 success gate; a scoped process-global Blosc mutation is
+not justified for an 8.7% noisy scheduling point gain. Retain the library
+default and the independently successful zstd2 change. The one-off benchmark
+was removed rather than shipped as maintenance surface.
