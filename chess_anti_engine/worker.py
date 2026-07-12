@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import dataclasses
 import getpass
 import json
@@ -83,9 +84,9 @@ from chess_anti_engine.worker_assets import (
 )
 from chess_anti_engine.worker_buffer import (
     _buffer_add_completed_game,
+    _buffer_should_flush,
     _BufferedUpload,
     _flush_upload_buffer_to_pending,
-    _maybe_flush_upload_buffer,
     _pending_elapsed_path,
 )
 from chess_anti_engine.worker_config import load_worker_config, save_worker_config
@@ -849,6 +850,10 @@ class WorkerSession:
         self._hold_on_pause = os.environ.get("CAE_WORKER_STOP_ON_PAUSE", "") != "1"
         self._upload_buf_lock: threading.Lock | None = None  # set when threaded
         self._pending_upload_lock = threading.Lock()
+        self._pending_buffer_flushes: deque[
+            tuple[_BufferedUpload, float, str | None, int]
+        ] = deque()
+        self._pending_buffer_positions = 0
         self._last_manifest_poll_s: float = 0.0
         self._last_dispatcher_stats_log_s: float = time.time()
         self._last_dispatcher_stats_snapshot: tuple[int, int, int, float, float, float, float, float] = (
@@ -1031,9 +1036,66 @@ class WorkerSession:
             )
         return None
 
+    def _queue_upload_buffer_locked(self, *, now_s: float) -> bool:
+        """Detach the active buffer in O(1); caller holds ``_upload_buf_lock``."""
+        positions = int(self.upload_buf.positions)
+        if positions <= 0 or not self.upload_buf.samples:
+            return False
+        queued = self.upload_buf
+        self.upload_buf = _BufferedUpload()
+        trial_id = self.leased_trial_id or self.fixed_trial_id or None
+        pending = getattr(self, "_pending_buffer_flushes", None)
+        if pending is None:
+            pending = deque()
+            self._pending_buffer_flushes = pending
+        pending.append((queued, float(now_s), trial_id, positions))
+        self._pending_buffer_positions = int(
+            getattr(self, "_pending_buffer_positions", 0),
+        ) + positions
+        return True
+
+    def _materialize_queued_buffers_locked(self) -> float | None:
+        """Write detached buffers to durable pending shards outside the buffer lock.
+
+        The caller holds ``_pending_upload_lock``, so exactly one thread owns
+        materialization.  A failed write leaves the untouched buffer at the
+        queue head for retry; successful writes reset and remove it.
+        """
+        latest_elapsed_s: float | None = None
+        while True:
+            buf_lock = getattr(self, "_upload_buf_lock", None)
+            with buf_lock if buf_lock is not None else nullcontext():
+                pending = getattr(self, "_pending_buffer_flushes", None)
+                if not pending:
+                    break
+                queued, queued_at_s, trial_id, positions = pending[0]
+            shard_path, elapsed_s = _flush_upload_buffer_to_pending(
+                pending_dir=self.pending_dir,
+                username=str(self.args.username),
+                buf=queued,
+                now_s=queued_at_s,
+                trial_id=trial_id,
+            )
+            if shard_path is None:
+                raise RuntimeError("queued upload buffer unexpectedly empty")
+            with buf_lock if buf_lock is not None else nullcontext():
+                head = pending.popleft()
+                if head[0] is not queued:
+                    raise RuntimeError("queued upload buffer order changed")
+                self._pending_buffer_positions = max(
+                    0, int(self._pending_buffer_positions) - int(positions),
+                )
+            latest_elapsed_s = float(elapsed_s)
+        return latest_elapsed_s
+
     def _upload_pending_shards(self, *, default_elapsed_s: float | None = None) -> float | None:
         with self._pending_upload_lock:
-            return self._upload_pending_shards_locked(default_elapsed_s=default_elapsed_s)
+            queued_elapsed_s = self._materialize_queued_buffers_locked()
+            return self._upload_pending_shards_locked(
+                default_elapsed_s=(
+                    queued_elapsed_s if queued_elapsed_s is not None else default_elapsed_s
+                ),
+            )
 
     def _try_upload_pending_shards(self, *, default_elapsed_s: float | None = None) -> float | None:
         """Drain pending shards unless another callback is already doing so.
@@ -1045,7 +1107,12 @@ class WorkerSession:
         if not self._pending_upload_lock.acquire(blocking=False):
             return None
         try:
-            return self._upload_pending_shards_locked(default_elapsed_s=default_elapsed_s)
+            queued_elapsed_s = self._materialize_queued_buffers_locked()
+            return self._upload_pending_shards_locked(
+                default_elapsed_s=(
+                    queued_elapsed_s if queued_elapsed_s is not None else default_elapsed_s
+                ),
+            )
         finally:
             self._pending_upload_lock.release()
 
@@ -1887,7 +1954,7 @@ class WorkerSession:
         upload_s = 0.0
         now_s = time.time()
         self._saw_completed_game = True
-        flushed_elapsed_s: float | None = None
+        queued_for_flush = False
         buf_lock = getattr(self, "_upload_buf_lock", None)
         with buf_lock if buf_lock is not None else nullcontext():
             try:
@@ -1898,6 +1965,7 @@ class WorkerSession:
                     model_sha=self.model_sha,
                     model_step=self.model_step,
                     max_positions=int(self.args.upload_max_buffered_positions),
+                    buffered_positions_offset=int(getattr(self, "_pending_buffer_positions", 0)),
                 )
             except ValueError as exc:
                 if str(exc) != "buffered upload model metadata mismatch":
@@ -1912,15 +1980,8 @@ class WorkerSession:
                     str(self.model_sha)[:8],
                     int(self.model_step),
                 )
-                shard_path, elapsed_s = _flush_upload_buffer_to_pending(
-                    pending_dir=self.pending_dir,
-                    username=str(self.args.username),
-                    buf=self.upload_buf,
-                    now_s=now_s,
-                    trial_id=self.leased_trial_id or self.fixed_trial_id or None,
-                )
-                if shard_path is not None:
-                    flushed_elapsed_s = float(elapsed_s)
+                if self._queue_upload_buffer_locked(now_s=now_s):
+                    queued_for_flush = True
                     self._last_upload_flush_s = float(now_s)
                 _buffer_add_completed_game(
                     buf=self.upload_buf,
@@ -1929,10 +1990,9 @@ class WorkerSession:
                     model_sha=self.model_sha,
                     model_step=self.model_step,
                     max_positions=int(self.args.upload_max_buffered_positions),
+                    buffered_positions_offset=int(getattr(self, "_pending_buffer_positions", 0)),
                 )
-            shard_path, elapsed_s = _maybe_flush_upload_buffer(
-                pending_dir=self.pending_dir,
-                username=str(self.args.username),
+            if _buffer_should_flush(
                 buf=self.upload_buf,
                 now_s=now_s,
                 last_send_s=max(
@@ -1941,19 +2001,15 @@ class WorkerSession:
                 ),
                 target_positions=int(self.args.upload_target_positions),
                 flush_seconds=float(self.args.upload_flush_seconds),
-                force=False,
-                trial_id=self.leased_trial_id or self.fixed_trial_id or None,
-            )
-            if shard_path is not None:
-                flushed_elapsed_s = float(elapsed_s)
+            ) and self._queue_upload_buffer_locked(now_s=now_s):
+                queued_for_flush = True
                 self._last_upload_flush_s = float(now_s)
 
-        # Pending uploads have their own lock.  Keep HTTP and tar packing out of
-        # the upload-buffer/model-tag critical section so other selfplay threads
-        # can finish games while one callback sends a shard.
-        if flushed_elapsed_s is not None:
+        # One callback owns detached-buffer materialization + upload. Other
+        # callbacks continue immediately on a fresh active buffer.
+        if queued_for_flush:
             upload_t0 = time.perf_counter()
-            uploaded_at = self._try_upload_pending_shards(default_elapsed_s=flushed_elapsed_s)
+            uploaded_at = self._try_upload_pending_shards()
             upload_s += time.perf_counter() - upload_t0
             if uploaded_at is not None:
                 self.last_successful_send_s = float(uploaded_at)

@@ -9,6 +9,7 @@ from pathlib import Path
 from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import (
+    delete_shard_path,
     LOCAL_SHARD_SUFFIX,
     ShardMeta,
     samples_to_arrays,
@@ -121,17 +122,19 @@ def _buffer_add_completed_game(
     model_sha: str,
     model_step: int,
     max_positions: int = 0,
+    buffered_positions_offset: int = 0,
 ) -> None:
     if getattr(game_batch, "positions", 0) <= 0 or not getattr(game_batch, "samples", None):
         return
     new_positions = int(getattr(game_batch, "positions", 0))
-    if max_positions > 0 and int(buf.positions) + new_positions > int(max_positions):
+    total_buffered = int(buffered_positions_offset) + int(buf.positions)
+    if max_positions > 0 and total_buffered + new_positions > int(max_positions):
   # Backstop: if flush-to-disk has been failing, drop rather than OOM.
   # Normal flow flushes at upload_target_positions; this cap only bites
   # when something is wrong (disk full, permissions, etc.).
         log.warning(
             "upload buffer at %d positions; dropping %d-position game batch (cap=%d)",
-            int(buf.positions), new_positions, int(max_positions),
+            total_buffered, new_positions, int(max_positions),
         )
         return
     incoming_rep_fix = bool(getattr(game_batch, "history_rep_fix", False))
@@ -328,8 +331,14 @@ def _flush_upload_buffer_to_pending(
         outcome_stats=dict(buf.outcome_stats),
     )
     arrs = samples_to_arrays(list(buf.samples))
-    save_local_shard_arrays(shard_path, arrs=arrs, meta=meta)
-    _pending_elapsed_path(shard_path).write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
+    elapsed_path = _pending_elapsed_path(shard_path)
+    try:
+        save_local_shard_arrays(shard_path, arrs=arrs, meta=meta)
+        elapsed_path.write_text(f"{float(elapsed_s):.6f}\n", encoding="utf-8")
+    except BaseException:
+        delete_shard_path(shard_path)
+        elapsed_path.unlink(missing_ok=True)
+        raise
     buf.reset()
     return shard_path, float(elapsed_s)
 

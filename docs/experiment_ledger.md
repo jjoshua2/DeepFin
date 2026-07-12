@@ -1769,6 +1769,61 @@ worker sweep passed 94/94, and ruff + basedpyright + vulture were clean. The
 production outcome remains explicitly unread until a natural restart supplies
 the broker completion telemetry above.
 
+**Worker shard-materialization profile -- UNREAD (2026-07-12).** PR #159 moves
+tar packing and HTTP outside the completion lock, but
+`samples_to_arrays` plus compressed zarr creation still run inside it. The
+post-oversubscription worker showed 2400-5000% cumulative `finalize` time during
+completion waves, so disk materialization may remain a lock convoy even after
+network overlap. Hypothesis: production-shaped 500-position shard conversion
+and zarr creation cost >=50ms and >=50% of the local conversion+zarr+tar
+pipeline, justifying a follow-up ownership-transfer queue that writes detached
+buffers outside selfplay threads. ONE deciding yardstick:
+`TMPDIR=/tmp taskset -c 15 python3 scripts/bench_worker_shard_pipeline.py
+--positions 500 --rounds 7`. SUCCESS: both thresholds hold with stable array
+hash/tar size and round-trip validation; otherwise FAILED and do not add an
+asynchronous buffer queue. This is offline profiling only; no live/data change
+or salvage snapshot.
+**PROVENANCE CORRECTION BEFORE VERDICT:** the first harness reused one identical
+board tensor for all 500 rows, making compression unrealistically easy. It was
+corrected before judging the implementation to generate a distinct binary
+175-plane tensor per position; thresholds and command are unchanged.
+**VERDICT: WORKED.** Seven corrected measured rounds at 500 positions produced
+median `samples_to_arrays` 155.198ms, compressed-zarr write 401.695ms, and tar
+packing 29.043ms. The 556.893ms materialization section is 95.04% of the local
+pipeline, with stable array hash `4f4eb31bc2e62c50` and stable 2,263,040-byte
+tar. This clears both gates by a wider margin; proceed with detached-buffer
+ownership transfer, keeping a global queued-position cap and failure retry at
+the queue head.
+
+**Detached shard-materialization experiment -- UNREAD (2026-07-12).**
+Hypothesis: swapping a full `_BufferedUpload` for a fresh buffer under the
+model-tag lock, then letting the single existing pending uploader materialize
+the detached owner, removes the ~492ms completion lock convoy without losing or
+duplicating samples. ONE deciding yardstick: focused worker/upload tests plus a
+deterministic two-callback test that blocks the first materializer while the
+second callback detaches another full buffer and returns. SUCCESS: second
+callback completes before release, exact game/position totals are retained
+across active+queued+pending state, same-second shards have unique paths,
+materialization failure retains the original queue head, queued positions count
+toward the OOM cap, and all worker tests/lint pass. KILL: any invariant fails;
+otherwise WORKED. Runtime outcome after a natural restart is lower steady
+`finalize` thread-time and higher completed games/hour, but is not the merge
+gate because the offline lock hold falls from measured disk time to O(1) owner
+transfer. No data semantics/config/salvage change.
+**VERDICT: WORKED OFFLINE; production read pending.** The deterministic
+two-callback test held the first callback in materialization/upload while the
+second detached another complete buffer and returned before release; exact
+positions remained split between the first durable materialization and the
+second queued owner. Failure injection retained the original queue head and
+position count; sidecar failure removed the partial zarr while preserving the
+source buffer; same-second identical metadata produced distinct durable paths;
+and detached positions triggered the existing global OOM cap. Validation:
+70/70 focused worker/upload tests, 155/155 broad worker/shard/distributed tests,
+15/15 continuous-selfplay tests, and ruff + basedpyright + vulture clean. Keep
+the queue; after the next natural restart, use broker completion telemetry and
+games/hour to quantify the production gain rather than extrapolating the
+557ms lock-hold removal into a headline throughput percentage.
+
 **Replay-finalization policy projection cache -- UNREAD (2026-07-12).** A
 production-shaped 100-record profile measures 19.35ms/game in replay-sample
 construction; policy-vector projection/renormalization costs 3.09ms and legal

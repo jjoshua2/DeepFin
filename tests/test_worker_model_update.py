@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 import json
 import logging
 import re
@@ -10,13 +11,16 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
 import torch
+from chess_anti_engine.replay import ReplaySample
+from chess_anti_engine.replay.shard import load_shard_arrays
 from chess_anti_engine.model import ModelConfig
 import chess_anti_engine.worker as worker_mod
 from chess_anti_engine.selfplay.manager import BatchStats
 from chess_anti_engine.worker import WorkerSession
-from chess_anti_engine.worker_buffer import _BufferedUpload
+from chess_anti_engine.worker_buffer import _buffer_add_completed_game, _BufferedUpload
 
 
 def _bare_worker_session() -> WorkerSession:
@@ -395,7 +399,7 @@ def test_threaded_local_model_swap_keeps_buffer_metadata_atomic(monkeypatch, tmp
     assert session.last_model_sha == new_sha
 
 
-def test_completed_game_metadata_mismatch_flushes_before_retry(monkeypatch, tmp_path: Path) -> None:
+def test_completed_game_metadata_mismatch_flushes_before_retry(tmp_path: Path) -> None:
     session = object.__new__(WorkerSession)
     session.log = logging.getLogger("test.worker_model_update")
     session.model_sha = "new-sha"
@@ -425,37 +429,22 @@ def test_completed_game_metadata_mismatch_flushes_before_retry(monkeypatch, tmp_
     session._completion_upload_s = 0.0
     session._completion_by_thread = {}
 
-    flushed: list[tuple[str | None, int | None, int]] = []
-    uploaded_elapsed: list[float | None] = []
-    maybe_flush_seen: list[tuple[str | None, int | None, int]] = []
+    queued: list[tuple[str | None, int | None, int]] = []
 
-    def _fake_flush(**kwargs):
-        buf = kwargs["buf"]
-        flushed.append((buf.model_sha, buf.model_step, buf.positions))
-        buf.reset()
-        return tmp_path / "old-shard.zarr", 12.5
-
-    def _fake_upload_pending_shards(*, default_elapsed_s: float | None = None) -> float:
-        uploaded_elapsed.append(default_elapsed_s)
+    def _fake_try_upload_pending_shards(*, default_elapsed_s: float | None = None) -> float:
+        del default_elapsed_s
+        old_buf = session._pending_buffer_flushes[0][0]
+        queued.append((old_buf.model_sha, old_buf.model_step, old_buf.positions))
         return 200.0
 
-    def _fake_maybe_flush(**kwargs):
-        buf = kwargs["buf"]
-        maybe_flush_seen.append((buf.model_sha, buf.model_step, buf.positions))
-        return None, 0.0
-
-    monkeypatch.setattr(worker_mod, "_flush_upload_buffer_to_pending", _fake_flush)
-    monkeypatch.setattr(worker_mod, "_maybe_flush_upload_buffer", _fake_maybe_flush)
-    cast(Any, session)._try_upload_pending_shards = _fake_upload_pending_shards
+    cast(Any, session)._try_upload_pending_shards = _fake_try_upload_pending_shards
 
     game_batch = SimpleNamespace(samples=[object(), object()], positions=2, games=1, w=1)
 
     WorkerSession._on_completed_game(session, game_batch)
 
-    assert flushed == [("old-sha", 1, 1)]
-    assert uploaded_elapsed == [12.5]
+    assert queued == [("old-sha", 1, 1)]
     assert session.last_successful_send_s == 200.0
-    assert maybe_flush_seen == [("new-sha", 2, 2)]
     assert session.upload_buf.model_sha == "new-sha"
     assert session.upload_buf.model_step == 2
     assert session.upload_buf.positions == 2
@@ -492,9 +481,11 @@ def test_completed_game_does_not_wait_for_active_shard_upload(
 
     upload_started = threading.Event()
     release_upload = threading.Event()
+    materialized_positions: list[int] = []
 
-    def _fake_maybe_flush(**kwargs):
-        assert upload_buf_lock.locked()
+    def _fake_flush(**kwargs):
+        assert not upload_buf_lock.locked()
+        materialized_positions.append(int(kwargs["buf"].positions))
         kwargs["buf"].reset()
         return tmp_path / "pending.zarr", 1.0
 
@@ -504,7 +495,7 @@ def test_completed_game_does_not_wait_for_active_shard_upload(
         assert release_upload.wait(timeout=2.0)
         return 200.0
 
-    monkeypatch.setattr(worker_mod, "_maybe_flush_upload_buffer", _fake_maybe_flush)
+    monkeypatch.setattr(worker_mod, "_flush_upload_buffer_to_pending", _fake_flush)
     session._pending_upload_lock = threading.Lock()
     cast(Any, session)._upload_pending_shards_locked = _fake_upload_pending_shards_locked
     game_batch = SimpleNamespace(samples=[object(), object()], positions=2, games=1, w=1)
@@ -518,12 +509,85 @@ def test_completed_game_does_not_wait_for_active_shard_upload(
     second.join(timeout=1.0)
     assert not second.is_alive(), "next completion waited for unrelated shard HTTP upload"
     assert session.upload_buf.positions == 0
+    assert session._pending_buffer_positions == 2
+    assert sum(materialized_positions) + session._pending_buffer_positions == 4
 
     release_upload.set()
     first.join(timeout=2.0)
     assert not first.is_alive()
     assert session._completion_games == 2
     assert session._completion_positions == 4
+
+
+def test_failed_detached_buffer_materialization_stays_queued(monkeypatch, tmp_path: Path) -> None:
+    session = object.__new__(WorkerSession)
+    session.pending_dir = tmp_path
+    session.args = SimpleNamespace(username="worker")
+    session._upload_buf_lock = threading.Lock()
+    queued = _BufferedUpload(samples=cast(Any, [object()]), positions=3, games=1)
+    session._pending_buffer_flushes = deque([
+        (queued, 100.0, "trial_00000", 3),
+    ])
+    session._pending_buffer_positions = 3
+
+    def _fail_flush(**_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(worker_mod, "_flush_upload_buffer_to_pending", _fail_flush)
+
+    with pytest.raises(OSError, match="disk full"):
+        WorkerSession._materialize_queued_buffers_locked(session)
+
+    assert len(session._pending_buffer_flushes) == 1
+    assert session._pending_buffer_flushes[0][0] is queued
+    assert queued.positions == 3
+    assert session._pending_buffer_positions == 3
+
+
+def test_detached_buffer_materializes_losslessly_to_pending_shard(tmp_path: Path) -> None:
+    session = object.__new__(WorkerSession)
+    session.pending_dir = tmp_path
+    session.args = SimpleNamespace(username="worker")
+    session.leased_trial_id = "trial_00000"
+    session.fixed_trial_id = ""
+    session._upload_buf_lock = threading.Lock()
+    session._pending_buffer_flushes = deque()
+    session._pending_buffer_positions = 0
+    session.upload_buf = _BufferedUpload()
+    policy = np.zeros((1858,), dtype=np.float32)
+    policy[0] = 1.0
+    sample = ReplaySample(
+        x=np.zeros((175, 8, 8), dtype=np.float32),
+        policy_target=policy,
+        wdl_target=1,
+    )
+    game_batch = SimpleNamespace(samples=[sample], positions=1, games=1, w=1)
+    _buffer_add_completed_game(
+        buf=session.upload_buf,
+        game_batch=game_batch,
+        now_s=100.0,
+        model_sha="model-sha",
+        model_step=7,
+    )
+
+    with session._upload_buf_lock:
+        assert WorkerSession._queue_upload_buffer_locked(session, now_s=101.0)
+    assert session.upload_buf.positions == 0
+    assert session._pending_buffer_positions == 1
+
+    elapsed_s = WorkerSession._materialize_queued_buffers_locked(session)
+
+    assert elapsed_s == 1.0
+    assert session._pending_buffer_positions == 0
+    assert not session._pending_buffer_flushes
+    shards = list(tmp_path.glob("*.zarr"))
+    assert len(shards) == 1
+    arrays, meta = load_shard_arrays(shards[0])
+    assert int(arrays["x"].shape[0]) == 1
+    assert int(meta["positions"]) == 1
+    assert meta["model_sha256"] == "model-sha"
+    assert meta["model_step"] == 7
+    assert meta["run_id"] == "trial_00000"
 
 
 def test_require_reco_raises_when_sf_nodes_set_nowhere() -> None:
