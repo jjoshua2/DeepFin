@@ -1617,3 +1617,15 @@ abandoning ~768 in-flight games, making every post-flap iteration ~807/h vs
 1142/h. Worker log doesn't name the key; manifest-diff trap armed. Fix =
 identify + either make the key live-applied or stop the server flapping it;
 worth ~+35% games/h on affected iterations.
+
+**Threaded live-reco fix (PR #153) ACTIVATED at restart (2026-07-12 ~04:30).**
+Root cause of the flapping teardowns found in the triple-restart readout:
+`opponent_wdl_regret_limit` (LIVE key) fell back to a full session restart
+because the threaded path never registered states for live apply — every PID
+lever move past deadband abandoned ~768 in-flight games (1142 vs 807 games/h
+alternation). Fix: lock-guarded state registry, live fields transplanted onto
+ALL thread states + late registrants (review race closed). YARDSTICK: worker
+logs show `live reco (N state(s))` and NO `restarting selfplay session` at
+PID moves; games/h holds ~1142 on ALL iterations. KILL: 0 games for 2
+consecutive iters with workers alive, or games/h below the 641 baseline →
+revert = git revert PR #153 + restart.
