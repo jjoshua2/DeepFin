@@ -1629,3 +1629,17 @@ logs show `live reco (N state(s))` and NO `restarting selfplay session` at
 PID moves; games/h holds ~1142 on ALL iterations. KILL: 0 games for 2
 consecutive iters with workers alive, or games/h below the 641 baseline →
 revert = git revert PR #153 + restart.
+
+**SWAP CANARY READ @iter 20 (2026-07-12, scratchpad/canary_512_iter20/).**
+Rule-as-written (live vs 46M ckpt751 trunk, >2cp SIG = early revert): FIRED —
+paired value +8.42cp [+0.09, +16.86] SIG-marginal, panels v1 22/35 vs 11/35,
+v2 63/113 vs 33/113. BUT the baseline disambiguation probe (same ruler on the
+swap-time boot net data/salvage/swap_512x16_20260711) shows the gap is
+PRE-EXISTING, not RL-caused: boot 76.9cp vs live 77.6cp, paired +0.74 NS
+[-8.26, +9.60]; panel v1 unchanged from swap-time (22/35). The canary's
+intent (catch in-loop value collapse) did NOT occur. Since swap: value flat,
+v1 flat, v2 drifted 55->63/113 (mild negative, watch), policy/search regret
+at PARITY with search E[regret] point-AHEAD (-1.70 NS) — consistent with the
+swap thesis (search-integration gap, selfplay fixes it, judged at the 5-day
+sims-32 arena). DECISION: escalated to user (revert vs hold); the rule's
+trunk-baseline conflated the accepted swap-time gap with regression.
