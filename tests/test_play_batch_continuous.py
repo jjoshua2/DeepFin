@@ -538,7 +538,7 @@ def test_tb_adjudicate_gate_reads_state_game(monkeypatch):
 
     calls: list[int] = []
 
-    def _spy(state: Any) -> int:
+    def _spy(_state: Any) -> int:
         calls.append(1)
         return 0
 
