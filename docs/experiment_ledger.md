@@ -1712,3 +1712,32 @@ freshness right after each publish. Hardening landed with this entry: TB
 adjudication gate follows live state.game; dole-queue docstring forbids
 rebinding (the #154 footgun); mid-session poll failures now log a warning
 instead of a bare pass.
+
+**Completion/upload overlap experiment -- WORKED OFFLINE; production read pending
+(2026-07-12).** Post-#151
+telemetry shows completion waves accumulating roughly 2400-5000% of wall time
+in `finalize`, while broker waits and the GIL probe are small. Threaded workers
+currently hold the shared upload-buffer/model-tag lock across pending-shard tar
+packing and HTTP upload, serializing all 32 completion callbacks behind network
+I/O. Hypothesis: restrict that lock to upload-buffer mutation and atomic
+pending-shard creation, then use the existing independent pending-upload lock
+for tar/HTTP work; this increases completion throughput without changing game,
+sample, shard, model-tag, or retry semantics. ONE deciding offline yardstick:
+`TMPDIR=/tmp python3 -m pytest -q tests/test_worker_model_update.py
+tests/test_worker_upload_response.py tests/test_worker_small_uploads.py`, plus
+the concurrency regression
+`test_completed_game_does_not_wait_for_active_shard_upload`. SUCCESS: all
+focused tests pass and a second callback completes while the first is held in a
+synthetic upload; KILL: any lost/duplicated positions, model metadata mismatch,
+upload outside the existing pending-upload serialization, or callback remains
+blocked. Runtime mechanism read after the next natural restart: broker logs must
+show `upload_busy > 0` without the same upload time appearing as serialized
+completion lock-wait; overall games/hour is the production outcome but is not a
+merge gate because training phase mix is nonstationary. No salvage/revert is
+needed: this is scheduling-only, and revert is the code commit. **OFFLINE
+VERDICT: WORKED.** The deciding focused gate passed 65/65; the concurrency test
+held the first callback inside the pending uploader while a second callback
+both flushed its completed game durably and returned without waiting. The broad
+worker sweep passed 94/94, and ruff + basedpyright + vulture were clean. The
+production outcome remains explicitly unread until a natural restart supplies
+the broker completion telemetry above.
