@@ -545,7 +545,7 @@ def test_live_reco_change_applies_without_restart() -> None:
 
     assert changed is False
     assert session._stop_selfplay is False
-    st = cast(Any, session._live_states[0])
+    st = session._live_states[0]
     assert st.game.selfplay_fraction == 0.50
     assert st.base_nodes == 6000
     assert captured == {"nodes": 6000}
@@ -569,7 +569,7 @@ def test_apply_live_reco_transplants_only_live_fields() -> None:
     )
 
     assert applied is True
-    st = cast(Any, session._live_states[0])
+    st = session._live_states[0]
     assert st.game.selfplay_fraction == 0.50  # live field applied
     assert st.game.max_plies == 137  # session-fixed field preserved
 
@@ -651,7 +651,7 @@ def test_every_live_key_is_transplanted() -> None:
         baseline = {"sf_nodes": 5000, key: base}
         applied = WorkerSession._apply_live_reco(session, {**baseline, key: changed})
         assert applied is True
-        assert get(cast(Any, session._live_states[0])) == changed, f"live key {key} not transplanted"
+        assert get(session._live_states[0]) == changed, f"live key {key} not transplanted"
 
 
 def test_sf_multipv_change_triggers_restart() -> None:
@@ -818,7 +818,7 @@ def test_apply_live_reco_updates_all_registered_states() -> None:
     )
 
     assert applied is True
-    for st in map(lambda x: cast(Any, x), states):
+    for st in states:
         assert st.game.selfplay_fraction == 0.50
         assert st.base_nodes == 6000
 
@@ -841,7 +841,7 @@ def test_late_registration_receives_pending_live_override() -> None:
     late = _live_state()
     WorkerSession._register_live_state(session, late)
 
-    st = cast(Any, late)
+    st = late
     assert st.game.selfplay_fraction == 0.50
     assert st.base_nodes == 6000
 
@@ -866,7 +866,7 @@ def test_clear_live_states_drops_registry_and_pending_override() -> None:
     ) is False
     fresh = _live_state()
     WorkerSession._register_live_state(session, fresh)
-    assert cast(Any, fresh).game.selfplay_fraction != 0.50  # no stale override
+    assert fresh.game.selfplay_fraction != 0.50  # no stale override
 
 
 def test_threaded_path_wires_state_registration() -> None:
