@@ -1600,3 +1600,20 @@ queries at factor 2.0), worker RSS (+0.5-1.8G expected), broker p95. KILL
 (any): games/h below the 641/h baseline sustained 2 iters, worker RSS growth
 >4G, broker p95 +20% → revert `slot_oversubscribe: 1.0` + restart (immediate,
 no salvage).
+
+**Triple-restart READOUT (iters 10-12, 2026-07-12 session): WORKED.** Combined
+games/h vs the 641/h iter-7 fresh baseline: 1142 / 807 / 1142 (+78% clean
+iters, +52% blended) — far above the +15% bar. #149 mechanism confirmed:
+replay avg plies 105 -> 119-122 (long-game censoring gone), zero abandonment
+at training-pause boundaries, trainer steps/s healthy (0.30-0.31), GIL settled
+~1.1ms. #151 mechanism partial: sf_block_starved 0% during burst but ~2300%
+of thread time again in steady state — the residual wall is SF pool capacity
+(~20 procs serving 2x concurrent curriculum queries), not slot scheduling;
+next speedup lever = SF pool sizing, NOT a higher factor. No kill criterion
+hit (RSS fine, broker wait_ms ~0.03).
+BUG FOUND during readout: a restart-classified recommended_worker key is
+flapping — teardown restarts at the END of iters 10 and 12 (not 11), each
+abandoning ~768 in-flight games, making every post-flap iteration ~807/h vs
+1142/h. Worker log doesn't name the key; manifest-diff trap armed. Fix =
+identify + either make the key live-applied or stop the server flapping it;
+worth ~+35% games/h on affected iterations.
