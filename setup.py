@@ -60,6 +60,11 @@ def _ext_compile_args() -> list[str]:
         args.append("-march=native")
     if _env_enabled("CAE_EXT_LTO"):
         args.append("-flto")
+    if _env_enabled("CAE_EXT_NATIVE") and _env_enabled("CAE_EXT_LTO"):
+        # Preserve the effective native architecture and LTO codegen recipe
+        # in the ELF so the production startup guard can reject a plain GCC15
+        # portable rebuild. GCC expands -march=native in this section.
+        args.append("-frecord-gcc-switches")
     args += _sanitizer_flags()[0]
     return args
 
@@ -76,6 +81,8 @@ def _mcts_compile_args() -> list[str]:
         args.append("-march=native")
     if _env_enabled("CAE_EXT_LTO"):
         args.append("-flto")
+    if _env_enabled("CAE_EXT_NATIVE") and _env_enabled("CAE_EXT_LTO"):
+        args.append("-frecord-gcc-switches")
     args += _sanitizer_flags()[0]
     return args
 

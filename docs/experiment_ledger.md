@@ -582,6 +582,12 @@ matched the exact F32/BF16 hashes, no component fell below 0.98x, and 138
 focused native tests passed (1 skipped). Keep GCC 15.3 native+LTO for local
 production extension builds. Median forced-build time increased 24.9s ->
 40.4s, an acceptable ~15.6s edit/rebuild cost for the measured runtime gain.
+**DEPLOYMENT HARDENING (2026-07-12):** `scripts/build_production_extensions.py`
+now makes that winning recipe the explicit local-production rebuild path:
+validated `~/.local/gcc-15.3/bin/gcc` (or `CAE_GCC15_CC`) + native + LTO.
+The stale-extension startup check points to this wrapper, preventing a routine
+post-edit rebuild from silently replacing the winning binaries with the
+portable GCC11 recipe. Portable package/wheel builds remain unchanged.
 
 **Native BF16 fallback/match-input experiment -- UNREAD (2026-07-11).** The
 live distributed RL path was re-verified after this entry was drafted: it uses

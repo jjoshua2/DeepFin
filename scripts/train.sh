@@ -84,7 +84,8 @@ check_c_extensions() {
     if [ "${TRAIN_SKIP_C_EXT_CHECK:-0}" = "1" ]; then
         return 0
     fi
-    PYTHONPATH=. python3 scripts/check_c_extensions_fresh.py --quiet
+    PYTHONPATH=. python3 scripts/check_c_extensions_fresh.py --quiet \
+        --min-gcc-major 15 --require-production-recipe
 }
 
 start() {
