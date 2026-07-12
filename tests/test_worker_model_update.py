@@ -42,6 +42,9 @@ def _bare_worker_session() -> WorkerSession:
     session._pending_fen_dole = []
     session._live_dole_queue = None
     session._dole_lock = threading.Lock()
+    session._live_states = []
+    session._live_states_lock = threading.Lock()
+    session._pending_live_override = None
     return session
 
 
@@ -531,7 +534,7 @@ def test_live_reco_change_applies_without_restart() -> None:
     session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "selfplay_fraction": 0.30})
 
     captured: dict[str, Any] = {}
-    session._active_state = _live_state()
+    session._live_states = [_live_state()]
     cast(Any, session).sf = SimpleNamespace(set_nodes=lambda n: captured.update(nodes=n))
 
     changed = WorkerSession._reco_changed(
@@ -542,7 +545,7 @@ def test_live_reco_change_applies_without_restart() -> None:
 
     assert changed is False
     assert session._stop_selfplay is False
-    st = cast(Any, session._active_state)
+    st = session._live_states[0]
     assert st.game.selfplay_fraction == 0.50
     assert st.base_nodes == 6000
     assert captured == {"nodes": 6000}
@@ -557,7 +560,7 @@ def test_apply_live_reco_transplants_only_live_fields() -> None:
     to a restart, not the live path."""
     session = _bare_worker_session()
     session.args = SimpleNamespace(sf_nodes=None)
-    session._active_state = _live_state()  # max_plies=137
+    session._live_states = [_live_state()]  # max_plies=137
     cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
 
     applied = WorkerSession._apply_live_reco(
@@ -566,7 +569,7 @@ def test_apply_live_reco_transplants_only_live_fields() -> None:
     )
 
     assert applied is True
-    st = cast(Any, session._active_state)
+    st = session._live_states[0]
     assert st.game.selfplay_fraction == 0.50  # live field applied
     assert st.game.max_plies == 137  # session-fixed field preserved
 
@@ -578,7 +581,7 @@ def test_apply_live_reco_falls_back_to_restart_on_build_error(caplog: Any) -> No
     worker at the old config."""
     session = _bare_worker_session()
     session.args = SimpleNamespace(sf_nodes=None)
-    session._active_state = _live_state()
+    session._live_states = [_live_state()]
     cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
 
     # mcts_simulations must be int(); a non-numeric string raises ValueError.
@@ -643,12 +646,12 @@ def test_every_live_key_is_transplanted() -> None:
     for key, (base, changed, get) in cases.items():
         session = _bare_worker_session()
         session.args = SimpleNamespace(sf_nodes=None)
-        session._active_state = _live_state()
+        session._live_states = [_live_state()]
         cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
         baseline = {"sf_nodes": 5000, key: base}
         applied = WorkerSession._apply_live_reco(session, {**baseline, key: changed})
         assert applied is True
-        assert get(cast(Any, session._active_state)) == changed, f"live key {key} not transplanted"
+        assert get(session._live_states[0]) == changed, f"live key {key} not transplanted"
 
 
 def test_sf_multipv_change_triggers_restart() -> None:
@@ -658,7 +661,7 @@ def test_sf_multipv_change_triggers_restart() -> None:
     session = _bare_worker_session()
     session.args = SimpleNamespace(sf_nodes=None)
     session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "sf_multipv": 5})
-    session._active_state = _live_state()
+    session._live_states = [_live_state()]
 
     changed = WorkerSession._reco_changed(
         session,
@@ -680,7 +683,7 @@ def test_session_asset_change_triggers_restart() -> None:
     # 4-tuple (sf, book, book2, fen_list) so the change under test is the SF sha
     # (sha_old -> sha_NEW), not the tuple length (Codex review, PR #108).
     session._active_assets = ("sha_old", None, None, None)
-    session._active_state = _live_state()
+    session._live_states = [_live_state()]
 
     changed = WorkerSession._reco_changed(
         session,
@@ -798,13 +801,93 @@ def test_reco_restart_keys_have_no_duplicates() -> None:
     assert not (set(WorkerSession._RECO_LIVE_KEYS) & set(restart)), "live/restart overlap"
 
 
+def test_apply_live_reco_updates_all_registered_states() -> None:
+    """Threaded selfplay registers one state per thread; a live reco change must
+    reach EVERY registered state — updating only one would leave the other
+    threads generating under stale PID settings (the pre-fix behavior was a
+    full session restart, which post pause-hold/oversubscribe abandons ~2x
+    games_per_batch in-flight games on every PID lever move)."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    states = [_live_state(), _live_state(), _live_state()]
+    session._live_states = list(states)
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+
+    applied = WorkerSession._apply_live_reco(
+        session, {"sf_nodes": 6000, "selfplay_fraction": 0.50},
+    )
+
+    assert applied is True
+    for st in states:
+        assert st.game.selfplay_fraction == 0.50
+        assert st.base_nodes == 6000
+
+
+def test_late_registration_receives_pending_live_override() -> None:
+    """Review finding (PR #153): a thread that registers AFTER an in-session
+    live apply must be transplanted with the applied values at registration —
+    otherwise it silently runs the whole continuous session on session-start
+    config while _active_reco already claims the new values."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._live_states = [_live_state()]
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+
+    applied = WorkerSession._apply_live_reco(
+        session, {"sf_nodes": 6000, "selfplay_fraction": 0.50},
+    )
+    assert applied is True
+
+    late = _live_state()
+    WorkerSession._register_live_state(session, late)
+
+    st = late
+    assert st.game.selfplay_fraction == 0.50
+    assert st.base_nodes == 6000
+
+
+def test_clear_live_states_drops_registry_and_pending_override() -> None:
+    """After _clear_live_states (between sessions) an apply must return False
+    (restart fallback), and a fresh registration must NOT inherit the previous
+    session's override — the new session was built from the current reco."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None)
+    session._live_states = [_live_state()]
+    cast(Any, session).sf = SimpleNamespace(set_nodes=lambda _n: None)
+    assert WorkerSession._apply_live_reco(
+        session, {"sf_nodes": 6000, "selfplay_fraction": 0.50},
+    ) is True
+    assert session._pending_live_override is not None
+
+    WorkerSession._clear_live_states(session)
+
+    assert WorkerSession._apply_live_reco(
+        session, {"sf_nodes": 7000, "selfplay_fraction": 0.60},
+    ) is False
+    fresh = _live_state()
+    WorkerSession._register_live_state(session, fresh)
+    assert fresh.game.selfplay_fraction != 0.50  # no stale override
+
+
+def test_threaded_path_wires_state_registration() -> None:
+    """Wiring guard: _run_selfplay_threaded must register every thread's state
+    (the pre-#153 behavior skipped this, so live keys like PID regret caused a
+    full session teardown abandoning all in-flight games)."""
+    import inspect
+    src = inspect.getsource(WorkerSession._run_selfplay_threaded)
+    assert "on_state_ready=self._register_live_state" in src
+    assert "_clear_live_states" in src
+
+
 def test_live_reco_change_without_active_state_restarts() -> None:
-    """A live-key change with no running session (threaded mode / between
-    sessions) must fall back to a session restart so the change isn't lost."""
+    """A live-key change with no running session (between sessions — the
+    registry is empty) must fall back to a session restart so the change
+    isn't lost. Threaded mode now registers every thread's state, so this
+    fallback no longer fires there while a session is live."""
     session = _bare_worker_session()
     session.args = SimpleNamespace(sf_nodes=None)
     session._active_reco = session._snapshot_reco({"sf_nodes": 5000, "selfplay_fraction": 0.30})
-    session._active_state = None
+    session._live_states = []
 
     changed = WorkerSession._reco_changed(
         session,
@@ -827,7 +910,7 @@ def _dole_session_with_list(tmp_path: Path) -> WorkerSession:
     fen_path = tmp_path / "seeds.txt"
     fen_path.write_text("\n".join([_DOLE_FEN_A, _DOLE_FEN_B]) + "\n", encoding="utf-8")
     session.opening_fen_list_path = str(fen_path)
-    session._active_state = None
+    session._live_states = []
     session._pending_fen_dole = []
     return session
 
