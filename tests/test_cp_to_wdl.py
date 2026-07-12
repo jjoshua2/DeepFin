@@ -115,3 +115,25 @@ def test_uci_parser_clears_stale_cp_when_latest_score_is_mate():
     ])
     assert res.cp is None
     assert res.mate == -2
+
+
+def test_uci_parser_keeps_only_final_line_per_multipv_rank():
+    res = _parse_stockfish_lines([
+        "info depth 1 multipv 2 score cp 10 wdl 400 500 100 nodes 100 pv d2d4",
+        "info depth 1 multipv 1 score cp 20 wdl 500 400 100 nodes 110 pv e2e4",
+        "info depth 2 multipv 2 score mate -3 wdl 0 0 1000 nodes 200 pv c2c4",
+        "info depth 2 multipv 1 score cp 42 wdl 600 300 100 nodes 210 pv g1f3",
+        "bestmove g1f3",
+    ])
+
+    assert res.bestmove_uci == "g1f3"
+    assert res.nodes == 210
+    assert res.depth == 2
+    assert res.cp == 42
+    assert res.mate is None
+    assert res.wdl is not None
+    assert res.wdl.tolist() == pytest.approx([0.6, 0.3, 0.1])
+    assert [pv.move_uci for pv in res.pvs] == ["g1f3", "c2c4"]
+    assert res.pvs[0].cp == 42
+    assert res.pvs[1].cp is None
+    assert res.pvs[1].mate == -3
