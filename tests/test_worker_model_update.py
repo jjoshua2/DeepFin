@@ -980,6 +980,30 @@ def test_dole_flag_noop_without_fen_list(tmp_path: Path) -> None:
     assert session._pending_fen_dole == []
 
 
+def test_promote_pending_dole_returns_live_object_when_empty(tmp_path: Path) -> None:
+    # THE 2026-07-12 BUG: a pause-hold session starts before any dole arrives,
+    # so the pending stash is empty. The session must still hold the live queue
+    # OBJECT — `or None` here orphaned it, and every mid-session dole refilled a
+    # list nobody drained (seed injection silently off since the 07-11 swap).
+    session = _dole_session_with_list(tmp_path)
+    queue = session._promote_pending_dole()
+    assert queue == []
+    assert queue is session._live_dole_queue  # same object, refillable in place
+    session._maybe_ingest_dole_flag(
+        {"dole_fen_seeds": True, "recommended_worker": {"opening_fen_dole_per_iter": 1}},
+    )
+    assert queue == [_DOLE_FEN_A, _DOLE_FEN_B]  # the session's handle sees the refill
+
+
+def test_promote_pending_dole_moves_stash_into_live_queue(tmp_path: Path) -> None:
+    session = _dole_session_with_list(tmp_path)
+    session._pending_fen_dole = [_DOLE_FEN_A]
+    queue = session._promote_pending_dole()
+    assert queue == [_DOLE_FEN_A]
+    assert queue is session._live_dole_queue
+    assert session._pending_fen_dole == []
+
+
 def test_dole_per_iter_is_watched_and_restart_keyed() -> None:
     # Completeness: the OpeningConfig reco.get in _build_selfplay_configs must be
     # watched (test_every_reco_field_is_watched); it's a restart key (mode switch).
