@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+from chess_anti_engine.train import aurora as aurora_module
 from chess_anti_engine.train.aurora import AuroraWithAuxAdam, _aurora_update, _polar_express
 
 
@@ -55,6 +56,101 @@ def test_aurora_update_accepts_polar_express_fp16_request():
     assert torch.isfinite(update).all()
 
 
+def test_aurora_skipped_uw_telemetry_preserves_state_and_final_stats():
+    torch.manual_seed(29)
+    reference_param = torch.nn.Parameter(torch.randn(16, 8))
+    sampled_param = torch.nn.Parameter(reference_param.detach().clone())
+    reference = AuroraWithAuxAdam(
+        [{"params": [reference_param], "lr": 0.01, "use_aurora": True}],
+        aurora_polar_steps=3,
+    )
+    sampled = AuroraWithAuxAdam(
+        [{"params": [sampled_param], "lr": 0.01, "use_aurora": True}],
+        aurora_polar_steps=3,
+    )
+    for step in range(3):
+        grad = torch.randn_like(reference_param)
+        reference_param.grad = grad.clone()
+        sampled_param.grad = grad.clone()
+        sampled.set_collect_uw_stats(step == 2)
+        reference.step()
+        sampled.step()
+
+    torch.testing.assert_close(sampled_param, reference_param, rtol=0.0, atol=0.0)
+    torch.testing.assert_close(
+        sampled.state[sampled_param]["momentum_buffer"],
+        reference.state[reference_param]["momentum_buffer"],
+        rtol=0.0,
+        atol=0.0,
+    )
+    assert sampled.last_uw_stats == reference.last_uw_stats
+
+
+def test_aurora_coalesced_finite_checks_preserve_exact_state():
+    torch.manual_seed(31)
+    initial = [torch.randn(16, 8), torch.randn(12, 6)]
+    reference_params = [torch.nn.Parameter(tensor.clone()) for tensor in initial]
+    coalesced_params = [torch.nn.Parameter(tensor.clone()) for tensor in initial]
+    reference = AuroraWithAuxAdam(
+        [{"params": reference_params, "lr": 0.01, "use_aurora": True}],
+        aurora_polar_steps=3,
+        aurora_coalesce_finite_checks=False,
+    )
+    coalesced = AuroraWithAuxAdam(
+        [{"params": coalesced_params, "lr": 0.01, "use_aurora": True}],
+        aurora_polar_steps=3,
+        aurora_coalesce_finite_checks=True,
+    )
+    reference.set_collect_uw_stats(False)
+    coalesced.set_collect_uw_stats(False)
+    for _ in range(2):
+        gradients = [torch.randn_like(tensor) for tensor in initial]
+        for reference_param, coalesced_param, gradient in zip(
+            reference_params, coalesced_params, gradients, strict=True,
+        ):
+            reference_param.grad = gradient.clone()
+            coalesced_param.grad = gradient.clone()
+        reference.step()
+        coalesced.step()
+
+    for reference_param, coalesced_param in zip(
+        reference_params, coalesced_params, strict=True,
+    ):
+        torch.testing.assert_close(coalesced_param, reference_param, rtol=0.0, atol=0.0)
+        torch.testing.assert_close(
+            coalesced.state[coalesced_param]["momentum_buffer"],
+            reference.state[reference_param]["momentum_buffer"],
+            rtol=0.0,
+            atol=0.0,
+        )
+
+
+def test_aurora_coalesced_nonfinite_check_precedes_parameter_updates(monkeypatch):
+    params = [
+        torch.nn.Parameter(torch.full((4, 3), 1.0)),
+        torch.nn.Parameter(torch.full((4, 3), 2.0)),
+    ]
+    before = [param.detach().clone() for param in params]
+    optimizer = AuroraWithAuxAdam(
+        [{"params": params, "lr": 0.1, "use_aurora": True}],
+        aurora_coalesce_finite_checks=True,
+    )
+    calls = 0
+
+    def fake_update(update: torch.Tensor, **_kwargs) -> torch.Tensor:
+        nonlocal calls
+        calls += 1
+        return torch.ones_like(update) if calls == 1 else torch.full_like(update, float("nan"))
+
+    monkeypatch.setattr(aurora_module, "_aurora_update", fake_update)
+    for param in params:
+        param.grad = torch.ones_like(param)
+    with pytest.raises(RuntimeError, match="non-finite matrix update"):
+        optimizer.step()
+    for param, original in zip(params, before, strict=True):
+        torch.testing.assert_close(param, original, rtol=0.0, atol=0.0)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="fp16 matmul path is CUDA-only")
 def test_polar_express_uses_fp16_inner_matmuls_on_cuda():
     mat = torch.randn(8, 3, device="cuda", dtype=torch.float32)
@@ -62,6 +158,52 @@ def test_polar_express_uses_fp16_inner_matmuls_on_cuda():
     assert out.dtype == torch.float32
     assert out.shape == mat.shape
     assert torch.isfinite(out).all()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graphs require CUDA")
+def test_aurora_cuda_graph_matches_eager_optimizer_state():
+    torch.manual_seed(37)
+    initial = torch.randn(32, 16, device="cuda")
+    eager_params = [torch.nn.Parameter(initial.clone()), torch.nn.Parameter(initial.clone() * 2)]
+    graph_params = [torch.nn.Parameter(param.detach().clone()) for param in eager_params]
+    eager = AuroraWithAuxAdam(
+        [{"params": eager_params, "lr": 0.01, "use_aurora": True}],
+        aurora_pp_iterations=3,
+        aurora_polar_steps=3,
+        aurora_polar_method="polar_express",
+        aurora_polar_dtype="fp16",
+        aurora_cuda_graphs=False,
+    )
+    graphed = AuroraWithAuxAdam(
+        [{"params": graph_params, "lr": 0.01, "use_aurora": True}],
+        aurora_pp_iterations=3,
+        aurora_polar_steps=3,
+        aurora_polar_method="polar_express",
+        aurora_polar_dtype="fp16",
+        aurora_cuda_graphs=True,
+    )
+    eager.set_collect_uw_stats(False)
+    graphed.set_collect_uw_stats(False)
+    for _ in range(2):
+        gradients = [torch.randn_like(initial), torch.randn_like(initial)]
+        for eager_param, graph_param, grad in zip(
+            eager_params, graph_params, gradients, strict=True,
+        ):
+            eager_param.grad = grad.clone()
+            graph_param.grad = grad.clone()
+        eager.step()
+        graphed.step()
+
+    for eager_param, graph_param in zip(eager_params, graph_params, strict=True):
+        torch.testing.assert_close(graph_param, eager_param, rtol=0.0, atol=0.0)
+        torch.testing.assert_close(
+            graphed.state[graph_param]["momentum_buffer"],
+            eager.state[eager_param]["momentum_buffer"],
+            rtol=0.0,
+            atol=0.0,
+        )
+    assert len(eager._update_graphs) == 0
+    assert len(graphed._update_graphs) == 2
 
 
 def test_aurora_uw_floor_scales_relative_update():
@@ -81,6 +223,7 @@ def test_aurora_uw_floor_scales_relative_update():
 
     before = mat.detach().clone()
     mat.grad = torch.randn_like(mat) * 1e-3
+    opt.set_collect_uw_stats(False)
     opt.step()
 
     rel_step = (mat.detach() - before).float().norm() / before.float().norm()

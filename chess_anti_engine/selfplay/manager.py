@@ -4,6 +4,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, wait
 from typing import Any
 
 import chess
@@ -31,6 +32,7 @@ from chess_anti_engine.selfplay.state import (
 from chess_anti_engine.selfplay.stockfish_turn import (
     finish_sf_annotation_and_moves,
     finish_pending_curriculum_moves,
+    has_pending_sf_labels_for_records,
     poll_async_sf_labels,
     submit_async_curriculum_move_queries,
     submit_async_sf_labels_from_curriculum_moves,
@@ -186,15 +188,35 @@ def _finalize_completed_slots(
     batch_size: int,
     continuous: bool,
     target: int,
+    defer_pending_labels: bool = False,
 ) -> None:
     """Finalize done-but-not-yet-finalized games; recycle slots while target allows."""
     for i in range(batch_size):
         if state.done_arr[i] and not state.finalized_arr[i]:
+            if (
+                defer_pending_labels
+                and has_pending_sf_labels_for_records(state, state.samples_per_game[i])
+            ):
+                continue
             finalize_game(state, i, all_samples, on_game_complete)
             state.finalized_arr[i] = 1
             state.games_completed += 1
             if continuous or state.games_started < target:
                 state.recycle_slot(i)
+
+
+def _wait_for_starved_sf(state: SelfplayState) -> None:
+    """Wait at most one control interval when no board can advance."""
+    if state.pending_sf_moves:
+        finish_pending_curriculum_moves(
+            state, block=True, block_timeout_s=0.05,
+        )
+    elif state.pending_sf_labels:
+        wait(
+            tuple(pending.future for pending in state.pending_sf_labels),
+            timeout=0.05,
+            return_when=FIRST_COMPLETED,
+        )
 
 
 def play_batch(
@@ -239,8 +261,9 @@ def play_batch(
 
     ``fen_dole_queue`` (opt-in, opening_fen_dole_per_iter>0): a mutable FIFO of
     seed lines the server doled for this iteration. Selfplay slots drain it (via
-    the SelfplayState, deterministic even coverage); the caller may replace
-    ``state.fen_dole_queue`` live between iterations. None = no doled seeds.
+    the SelfplayState, deterministic even coverage). Mid-session refill must
+    mutate the SHARED list in place; never rebind ``state.fen_dole_queue``
+    (that orphans the worker's live queue — PR #154). None = no doled seeds.
 
     ``pause_fn`` (continuous mode): while it returns True the loop HOLDS —
     no new work is scheduled but every in-flight game keeps its state — and
@@ -317,6 +340,23 @@ def play_batch(
             if on_timing is not None:
                 on_timing("check_model", time.perf_counter() - t0)
         if stop_fn is not None and stop_fn():
+            # Continuous scheduling may have deferred a completed game while
+            # its label was still running. Preserve those finished games at a
+            # true teardown; only genuinely in-flight boards remain abandoned.
+            t0 = time.perf_counter()
+            if state.pending_sf_labels:
+                poll_async_sf_labels(state)
+            _finalize_completed_slots(
+                state,
+                all_samples=all_samples,
+                on_game_complete=on_game_complete,
+                batch_size=batch_size,
+                continuous=continuous,
+                target=target,
+                defer_pending_labels=False,
+            )
+            if on_timing is not None:
+                on_timing("finalize", time.perf_counter() - t0)
             break
 
         if pause_fn is not None and pause_fn():
@@ -345,7 +385,8 @@ def play_batch(
         # game gets marked done; classify then skips it and finalize uses the
         # stashed TB result. Runs at most once per game (state.tb_result_arr
         # is the idempotency key).
-        if state.tb_probe is not None and game.syzygy_adjudicate:
+        # state.game (not closed-over session-start ``game``) — matches recycle.
+        if state.tb_probe is not None and state.game.syzygy_adjudicate:
             t0 = time.perf_counter()
             _tb_adjudicate_active_games(state)
             if on_timing is not None:
@@ -355,10 +396,9 @@ def play_batch(
         net_idxs, sp_opp_idxs, cur_opp_idxs, all_done = state.classify_active_slots()
         classified_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
         if state.pending_sf_moves:
-            pending = set(state.pending_sf_moves)
-            net_idxs = [idx for idx in net_idxs if idx not in pending]
-            sp_opp_idxs = [idx for idx in sp_opp_idxs if idx not in pending]
-            cur_opp_idxs = [idx for idx in cur_opp_idxs if idx not in pending]
+            # Pending moves originate in cur_opp_idxs, and their boards do not
+            # advance into another partition until the future is removed.
+            cur_opp_idxs = [idx for idx in cur_opp_idxs if idx not in state.pending_sf_moves]
         if on_timing is not None:
             pending_excluded = (
                 classified_count - len(net_idxs) - len(sp_opp_idxs) - len(cur_opp_idxs)
@@ -381,18 +421,24 @@ def play_batch(
             )
         if all_done:
             break
-        if not net_idxs and not sp_opp_idxs and not cur_opp_idxs and state.pending_sf_moves:
+        if (
+            not net_idxs
+            and not sp_opp_idxs
+            and not cur_opp_idxs
+            and (state.pending_sf_moves or state.pending_sf_labels)
+        ):
             t0 = time.perf_counter()
-            finish_pending_curriculum_moves(
-                state, block=True, block_timeout_s=0.05,
-            )
+            _wait_for_starved_sf(state)
             if on_timing is not None:
                 on_timing("sf_block_starved", time.perf_counter() - t0)
             t0 = time.perf_counter()
+            if state.pending_sf_labels:
+                poll_async_sf_labels(state)
             _finalize_completed_slots(
                 state, all_samples=all_samples,
                 on_game_complete=on_game_complete,
                 batch_size=batch_size, continuous=continuous, target=target,
+                defer_pending_labels=continuous,
             )
             if on_timing is not None:
                 on_timing("finalize", time.perf_counter() - t0)
@@ -413,6 +459,7 @@ def play_batch(
             state, all_samples=all_samples,
             on_game_complete=on_game_complete,
             batch_size=batch_size, continuous=continuous, target=target,
+            defer_pending_labels=continuous,
         )
         if on_timing is not None:
             on_timing("finalize", time.perf_counter() - t0)

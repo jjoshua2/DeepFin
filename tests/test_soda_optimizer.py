@@ -77,3 +77,20 @@ def test_soda_load_state_requires_anchors_for_marked_params() -> None:
 
     with pytest.raises(ValueError, match="missing anchors"):
         opt.load_state_dict(state)
+
+
+def test_soda_forwards_uw_stats_collection() -> None:
+    class _StatsSGD(torch.optim.SGD):
+        def __init__(self, params) -> None:
+            super().__init__(params, lr=0.1)
+            self.collect_calls: list[bool] = []
+
+        def set_collect_uw_stats(self, collect: bool) -> None:
+            self.collect_calls.append(bool(collect))
+
+    param = torch.nn.Parameter(torch.tensor([1.0]))
+    base = _StatsSGD([param])
+    wrapper = SODAWeightDecayWrapper(base)
+    wrapper.set_collect_uw_stats(False)
+    wrapper.set_collect_uw_stats(True)
+    assert base.collect_calls == [False, True]

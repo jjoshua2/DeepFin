@@ -779,6 +779,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "aurora_polar_method": str(config.get("aurora_polar_method", "simple")),
         "aurora_polar_dtype": str(config.get("aurora_polar_dtype", "auto")),
         "aurora_polar_safety": _f("aurora_polar_safety", 1.01),
+        "aurora_cuda_graphs": bool(config.get("aurora_cuda_graphs", True)),
         "cosmos_rank": _f("cosmos_rank", 64, int),
         "cosmos_gamma": _f("cosmos_gamma", 0.2),
         "swa_start": _f("swa_start", 0, int),
@@ -869,6 +870,7 @@ class Trainer:
         aurora_polar_method: str = "simple",
         aurora_polar_dtype: str = "auto",
         aurora_polar_safety: float = 1.01,
+        aurora_cuda_graphs: bool = True,
         cosmos_rank: int = 64,
         cosmos_gamma: float = 0.2,
         swa_start: int = 0,
@@ -1042,6 +1044,7 @@ class Trainer:
                     aurora_polar_method=str(aurora_polar_method),
                     aurora_polar_dtype=str(aurora_polar_dtype),
                     aurora_polar_safety=float(aurora_polar_safety),
+                    aurora_cuda_graphs=bool(aurora_cuda_graphs),
                 )
         elif optimizer == "cosmos_fast":
             hd, hnd, ad, and_ = _split_decay_groups(
@@ -1857,6 +1860,7 @@ class Trainer:
         buf: ReplayBuffer,
         batch_size: int,
         update_lr: bool = True,
+        collect_optimizer_stats: bool = True,
     ) -> tuple[int, float]:
         """Run accum_steps microbatches, do zclip + opt.step + lr update.
 
@@ -1904,6 +1908,9 @@ class Trainer:
                 self.writer.add_scalar("zclip/hard_clipped", zclip_stats["hard_clip"], self.step)
                 self.writer.add_scalar("zclip/clipped", zclip_stats["clipped"], self.step)
         opt_step_start = time.perf_counter()
+        set_collect_uw_stats = getattr(self.opt, "set_collect_uw_stats", None)
+        if callable(set_collect_uw_stats):
+            set_collect_uw_stats(bool(collect_optimizer_stats))
         self.opt.step()
         opt_step_time_s = time.perf_counter() - opt_step_start
         if update_lr:
@@ -1940,6 +1947,7 @@ class Trainer:
                     step_sums=step_sums, step_acc_sums=step_acc_sums,
                     buf=buf, batch_size=batch_size,
                     update_lr=not local_release_cycle,
+                    collect_optimizer_stats=train_steps_done + 1 >= requested_steps,
                 )
                 opt_step_time_s += this_opt_time
             except RuntimeError as exc:

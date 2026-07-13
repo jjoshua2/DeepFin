@@ -8,7 +8,7 @@ import torch
 
 from chess_anti_engine.encoding import encode_positions_batch
 from chess_anti_engine.inference import _policy_output
-from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts._mcts_tree import MCTSTree, classify_games
 from chess_anti_engine.mcts.puct import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.puct_c import run_mcts_many_c
 from chess_anti_engine.model import ModelConfig, build_model
@@ -35,6 +35,33 @@ def _require_cboard():
 def _require_c_compute():
     assert _c_compute is not None
     return _c_compute
+
+
+def test_classify_games_checked_default_and_authoritative_done_mode():
+    cboard_cls = _require_cboard()
+    board = chess.Board()
+    for san in ["f3", "e5", "g4", "Qh4#"]:
+        board.push_san(san)
+    assert board.is_checkmate()
+    cboards = [cboard_cls.from_board(board)]
+    net_color = np.array([0], dtype=np.int8)
+    done = np.zeros(1, dtype=np.int8)
+    finalized = np.zeros(1, dtype=np.int8)
+    selfplay = np.zeros(1, dtype=np.int8)
+    starting_ply = np.array([board.ply()], dtype=np.int32)
+
+    checked = classify_games(
+        cboards, net_color, done, finalized, selfplay, starting_ply, 450,
+    )
+    assert done[0] == 1
+    assert sum(group.size for group in checked) == 0
+
+    done[0] = 0
+    authoritative = classify_games(
+        cboards, net_color, done, finalized, selfplay, starting_ply, 450, False,
+    )
+    assert done[0] == 0
+    assert sum(group.size for group in authoritative) == 1
 
 
 # ── Low-level tree tests ─────────────────────────────────────────────────

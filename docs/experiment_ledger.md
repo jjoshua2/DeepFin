@@ -213,6 +213,29 @@ p95 / RSS kill criteria. Multiply-all is deliberate: oversubscribing only
 selfplay-classified slots would shift the effective selfplay/curriculum data
 mix and turn this scheduling-only change into a data-mix change.
 
+**UCI abort root-snapshot reuse experiment -- UNREAD (2026-07-13).** The
+match time-manager calls `_filtered_root_visits` in `_root_visit_lead` and then
+again in `_move_is_decided` on every ordinary abort check (and a third time on
+the non-leading-survivor branch), crossing the native boundary and allocating
+duplicate NumPy arrays despite the helper's once-per-chunk contract. Hypothesis:
+fetch one filtered root snapshot in `_abort_ready` and pass it through lead,
+forced-move, visit-gap, and stability decisions. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_uci_abort_snapshot.py
+--children 32 --iterations 200000 --rounds 9`. SUCCESS: candidate/reference
+median time <=0.80, exact abort decisions and stability state over forced,
+leading, trailing, filtered, and provable-bank cases, exactly one root snapshot
+per check, focused UCI time/search tests and lint pass. KILL: ratio >0.95 or any
+decision/state mismatch; otherwise MIXED and retain only if the final code is a
+net simplification. Match scheduling only; no training/data/config change or
+salvage.
+**VERDICT: FAILED and reverted.** The exact nine-round alternating yardstick
+measured 8.366475194s with repeated snapshots and 8.284874931s with one shared
+snapshot, ratio **0.990247**: only 0.98% faster, beyond the pre-committed 0.95
+kill threshold. Native snapshot calls did fall exactly 399,998 -> 200,000 and
+abort decisions matched, confirming the duplicate read but showing it is not a
+material cost. The optional snapshot plumbing was not a net simplification, so
+remove the runtime and harness changes; retain existing match behavior.
+
 **UCI discarded chunk-result elision experiment -- UNREAD (2026-07-11).**
 Match search calls `run_gumbel_root_many_c` once per search chunk, but
 `SearchWorker._run_gumbel_chunk` consumes only the selected action, value,
@@ -238,6 +261,735 @@ at 36,701 simulations/s, a **1.029830x** ratio versus the precommitted
 state hash `0f95b11ec58a0604`, and focused tests plus lint passed. The discarded
 policy/mask packaging is measurable, but this isolated gain missed the gate by
 0.017 percentage points; do not carry the extra API/runtime branch alone.
+
+**Zero-floor Aurora telemetry sampling experiment -- UNREAD (2026-07-12).**
+Production uses `aurora_uw_floor: 0`, but every optimizer step still computes
+FP32 weight/update Frobenius norms for every Aurora matrix, builds ratio/scale
+lists, runs quantiles, and synchronizes the resulting telemetry to the host.
+Those values do not influence an update when the floor is zero; only the final
+iteration report and periodic TensorBoard samples consume them. Live iters
+32--36 attribute 33--35% of trainer wall time to `optimizer_step_time_s`.
+Hypothesis: collecting update/weight telemetry only on TensorBoard-reporting
+steps and the final requested step removes this semantically dead work while
+preserving exact optimizer/model state and fresh final metrics. ONE deciding
+yardstick: `PYTHONPATH=. taskset -c 15 python3 scripts/bench_aurora_stats.py
+--rounds 7 --steps 10 --matrices 8 --size 256`. The harness alternates
+always-on reference and sampled telemetry on identical deterministic CPU
+matrices/gradients, timing complete Aurora steps. Pre-committed SUCCESS:
+sampled/reference median optimizer throughput >=1.03x, every parameter and
+momentum-buffer hash is exact after every round, sampled final UW statistics
+equal the reference, and Aurora/trainer/SODA focused tests plus repo lint pass.
+Otherwise revert and retain per-step telemetry. When `aurora_uw_floor > 0`,
+per-matrix ratios remain mandatory for update scaling; the optimization may
+skip only summary collection between reporting steps. No target/data/config
+meaning changes and no salvage snapshot.
+**VERDICT: FAILED and reverted.** The exact alternating yardstick measured
+1.465272s for always-on telemetry and 1.519525s for sampled telemetry, only
+**0.964296x** reference throughput versus the 1.03x gate. Every round retained
+exact parameter/momentum hash
+`b6745aa3faab08b70a476de8b7fe730a6b0253d6f64dd3d92bc877c0ec0515b3`,
+and final UW statistics matched exactly. On this pinned CPU mechanism test the
+norm/quantile work was hidden under Aurora's matrix iteration and external
+variance; do not keep the extra telemetry control flow without a GPU result
+that clears a separately registered gate.
+
+**Aurora polar addmm fusion experiment -- UNREAD (2026-07-12).** Production
+Aurora (`polar_express`, 8 steps, FP16 on CUDA) currently evaluates each
+quintic step as `a*x + (b*XXt + c*(XXt@XXt))@x`, launching separate
+pointwise scale/add kernels around both GEMMs for every selected matrix.
+`torch.addmm` expresses the same polynomial while allowing each scale/add to
+fuse into its GEMM epilogue. Hypothesis: two `addmm` calls per polar step
+materially reduce full polar-factor time without a meaningful numerical
+change. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_aurora_addmm.py --rounds 7 --repeats 5 --matrices 8 --rows 256
+--cols 512 --steps 8`. The harness alternates the existing expression and
+candidate on identical deterministic FP32 CPU matrices (the implementation's
+CPU fallback), timing the full 8-step polar transform. Pre-committed SUCCESS:
+candidate/reference median throughput >=1.05x, every result is finite, maximum
+absolute error <=2e-5 and maximum relative error <=2e-4, a full Aurora-step
+parity test passes at `rtol=2e-4, atol=2e-5`, and Aurora/trainer tests plus repo
+lint pass. Otherwise revert. This is an algebraically equivalent optimizer
+implementation change; no target/data/config meaning and no salvage snapshot.
+**VERDICT: FAILED and reverted.** The exact seven-round alternating yardstick
+measured 33.641 reference matrices/s and 41.251 candidate matrices/s, a
+**1.226199x** throughput ratio that cleared the speed gate. Maximum absolute
+error was only `6.85453415e-07`, and the full Aurora optimizer-step parity test
+passed at the registered combined tolerance, but raw maximum relative error
+was `0.738535106` around near-zero outputs versus the pre-committed `2e-4`
+limit. The candidate therefore failed the complete acceptance rule. Do not
+promote this algebraic fusion without a newly registered evaluation whose
+numerical criterion explicitly handles near-zero values and CUDA FP16 behavior.
+
+**Aurora polar addmm CUDA replication -- UNREAD (2026-07-12).** The first
+fusion gate found a real 1.226x CPU gain and sub-micro absolute differences,
+but correctly failed its pre-committed raw relative-error limit because values
+arbitrarily close to zero make that metric unbounded. Hypothesis: the same
+algebraic `addmm` fusion also improves production CUDA FP16 Polar Express, with
+differences bounded at the scale of FP16 rounding and no meaningful optimizer
+update drift. ONE deciding yardstick has two required arms: rerun the registered
+CPU command, then run `PYTHONPATH=. python3 scripts/bench_aurora_addmm.py
+--device cuda --rounds 9 --repeats 10 --matrices 16 --rows 512 --cols 896
+--steps 8`. Both arms alternate order and synchronize their device. SUCCESS:
+candidate/reference median throughput >=1.05x in both arms; CPU maximum
+absolute error <=2e-5 and `torch.testing.assert_close` passes at `rtol=2e-4,
+atol=2e-5`; CUDA maximum absolute error <=2e-3, normalized L2 error <=5e-4,
+and cosine similarity >=0.999999; full production-shaped Aurora update parity
+passes at `rtol=5e-3, atol=2e-3`; focused tests and lint pass. Otherwise revert.
+The CUDA arm allocates only small eager tensors and does not compile or change
+the live trainer. This remains algebraically equivalent implementation work;
+no target/data/config meaning and no salvage snapshot.
+**VERDICT: FAILED and reverted.** The corrected CPU arm measured 36.162
+reference and 41.279 candidate matrices/s (**1.141526x**), maximum absolute
+error `6.85453415e-07`, normalized L2 `1.92288167e-06`, cosine 1.0, and passed
+full-update parity. The production-shaped CUDA FP16 arm measured 299.546 vs
+398.649 matrices/s (**1.330842x**) and passed maximum absolute error
+(`0.000793457031`) plus full-update parity, but normalized L2 error was
+`0.0029939115` versus the `5e-4` gate and minimum cosine was `0.99999547`
+versus `0.999999`. The full two-epilogue fusion is fast but fails the complete
+numerical rule; test its two independent fusion sites separately rather than
+accepting larger accumulated FP16 rounding drift.
+
+**Aurora partial addmm fusion dose ladder -- UNREAD (2026-07-12).** Full
+two-epilogue fusion is 1.33x faster on CUDA but accumulates too much FP16 polar
+drift. Hypothesis: fusing only the inner polynomial (`b*XXt+c*XXt@XXt`) or only
+the outer update (`a*x+polynomial@x`) retains a useful kernel-launch reduction
+and one candidate stays inside the prior strict numerical limits. ONE deciding
+yardstick: extend the same alternating CPU and production-shaped CUDA commands
+to compare `inner`, `outer`, and `full` against `reference`. SUCCESS: choose
+the fastest partial candidate with >=1.05x median throughput on both CPU and
+CUDA, CPU max absolute <=2e-5 and assert-close at `rtol=2e-4, atol=2e-5`, CUDA
+max absolute <=2e-3, normalized L2 <=5e-4, cosine >=0.999999, full Aurora
+update parity at `rtol=5e-3, atol=2e-3`, focused tests, and lint. Otherwise
+FAILED and keep the original expression. This is offline eager math only; no
+live trainer mutation, target/data/config change, or salvage snapshot.
+**VERDICT: FAILED; no runtime change.** On CPU, inner-only fusion measured
+1.064536x and passed every numerical limit, while outer-only measured only
+1.043054x and missed the speed gate. On production-shaped CUDA FP16, inner
+measured **1.207337x** and outer **1.129477x**, but their normalized L2 errors
+were `0.00294561288` and `0.00297925738`, and cosine minima were
+`0.999995589` and `0.99999547`; both miss the same `5e-4` and `0.999999`
+limits that rejected full fusion. Maximum absolute errors stayed below 0.001
+and full-update parity passed, but neither partial candidate satisfies the
+complete rule. Remove the dose-ladder harness and retain the original
+operation ordering.
+
+**Pending-slot direct-membership simplification -- UNREAD (2026-07-12).** Live
+worker telemetry attributes roughly 20--30% of active selfplay orchestration
+thread-time to classification. Every scheduler pass with outstanding SF work
+copies `pending_sf_moves` into a temporary set, then filters three short index
+lists; the dictionary already provides O(1) key membership. Hypothesis: test
+membership directly against the dictionary, removing one allocation/copy per
+pass with identical results. ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_pending_slot_filter.py --batch-size 32 --pending 24 --rounds 9
+--iterations 1000000`, alternating set-copy and direct-dict filtering with
+production-sized deterministic groups. SUCCESS: direct/reference median
+throughput >=1.10x, exact outputs for randomized pending subsets, focused
+selfplay/manager/continuous tests, and lint pass. Otherwise revert. This is a
+small Python scheduling simplification; no live activation, data/config
+meaning, or salvage snapshot.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+397,463 set-copy filters/s and 460,872 direct-dictionary filters/s, a
+**1.159535x** mechanism speedup. One thousand randomized pending subsets
+retained exact group outputs. Validation passed 65/65 focused continuous,
+threaded, state, timeout, and distributed-backpressure tests after a clean
+GCC15 native+LTO extension build; ruff, basedpyright, and vulture are clean.
+Keep the allocation-free direct membership checks. This improves only the
+classification/filter slice, not whole-worker throughput by 15.9%.
+
+**C classifier direct-list return experiment -- UNREAD (2026-07-12).** The C
+selfplay classifier releases the GIL for board scans but then allocates three
+NumPy arrays, copies temporary index buffers into them, returns to Python, and
+Python immediately allocates three lists and boxes every index through
+`.tolist()`. Hypothesis: an optional direct-list result mode preserves the same
+GIL-free scan while removing the transient arrays, copies, and Python
+conversions. ONE deciding yardstick: after a clean production extension build,
+run `PYTHONPATH=. taskset -c 15 python3 scripts/bench_classify_return.py
+--batch-size 32 --rounds 9 --iterations 200000`, alternating the current array
+return plus `.tolist()` against direct lists on identical CBoards and companion
+arrays. SUCCESS: direct/reference median throughput >=1.10x, exact partitions
+and `done` mutations across randomized board/flag states, C-classifier/state/
+continuous/threaded tests pass, and C warnings plus repo lint are clean.
+Otherwise revert. The existing array return remains the default public API;
+only internal `SelfplayState` opts into lists. No live activation, data/config
+meaning, or salvage snapshot.
+**VERDICT: FAILED and reverted.** The exact nine-round alternating yardstick
+measured 33,447 classifications/s for the existing NumPy-plus-`.tolist()` path
+and 35,807 classifications/s for direct C lists, only **1.070557x** versus the
+1.10 gate. One thousand randomized flag states retained exact partitions and
+identical `done` mutation, and the GCC15 native+LTO build was warning-clean.
+The board scan and GIL transition dominate enough that a 7.1% mechanism gain
+does not justify another native API mode; retain the existing return contract.
+
+**Curriculum-only pending-slot filtering experiment -- UNREAD (2026-07-12).**
+Pending move futures are created only from `cur_opp_idxs`, and the board does
+not advance until that future is removed and applied; therefore every pending
+slot remains in the curriculum-opponent partition. The scheduler nevertheless
+rebuilds all three net/selfplay/curriculum lists to exclude pending keys on
+every pass. Hypothesis: filtering only `cur_opp_idxs` removes two unnecessary
+list allocations and scans while preserving the lifecycle invariant. ONE
+deciding yardstick: `taskset -c 15 python3
+scripts/bench_pending_group_filter.py --batch-size 32 --pending 24 --rounds 9
+--iterations 1000000`, alternating three-group and curriculum-only filtering
+with randomized partitions whose pending keys are a subset of curriculum.
+SUCCESS: candidate/reference median throughput >=1.10x, exact outputs for
+1,000 randomized invariant-respecting cases, focused curriculum/continuous/
+threaded selfplay tests, and lint pass. Otherwise revert. This is a scheduling
+simplification only; no live activation, data/config meaning, or salvage.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+463,425 three-group filters/s and 812,741 curriculum-only filters/s, a
+**1.753772x** speedup for the affected scheduler slice. One thousand randomized
+partitions with pending keys constrained to the curriculum group retained exact
+outputs. The lifecycle invariant is structural: only curriculum indices are
+submitted, and their board cannot advance into another partition until the
+future is removed and applied. Validation passed 86/86 curriculum-label,
+continuous, threaded, state, timeout, and backpressure tests after a clean
+GCC15 native+LTO rebuild; lint is clean. Keep the two-list allocation removal;
+this is not a claim of 75.4% whole-worker throughput.
+
+**Ready-only Stockfish future scan experiment -- UNREAD (2026-07-12).** Each
+nonblocking curriculum poll currently materializes `list(pending.items())`
+before checking readiness, then allocates a second list for completed results.
+Live workers usually hold roughly 24 pending futures and complete zero or one
+per scheduler pass. Hypothesis: collect only ready `(index, future)` pairs while
+the dictionary remains unchanged, then remove those pairs in a second phase;
+this retains mutation safety while avoiding allocation proportional to all
+pending work. ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_pending_future_scan.py --pending 24 --ready 1 --rounds 9
+--iterations 1000000`, alternating snapshot-all and ready-only collection.
+SUCCESS: candidate/reference median throughput >=1.15x, exact ready/result/
+remaining state across 1,000 randomized cases, focused curriculum/continuous
+selfplay tests, and lint pass. Otherwise revert. Scheduling-only; no live
+activation, data/config meaning, or salvage.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+250,980 snapshot-all scans/s and 313,877 ready-only scans/s, a **1.250606x**
+speedup for pending-future collection. One thousand randomized readiness maps
+retained exact completed results and remaining dictionary order/state.
+Validation passed 74/74 curriculum-label, continuous, threaded, timeout, and
+backpressure tests after a clean GCC15 native+LTO extension build; ruff,
+basedpyright, and vulture are clean. Keep the ready-only collection; this
+improves the polling slice rather than whole-worker throughput by 25.1%.
+
+**Zero-ready async-label poll fast path -- UNREAD (2026-07-12).** Async SF
+label polling rebuilds `pending_sf_labels` into a fresh list on every scheduler
+pass even when no future is ready; live timing shows this poll runs continuously
+while label work is outstanding. Hypothesis: a readiness precheck returns the
+unchanged list immediately in the common zero-ready case, avoiding the list
+allocation and appends; when any result is ready, the existing resolution path
+runs unchanged. ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_pending_label_poll.py --pending 128 --rounds 9 --iterations
+100000`, alternating rebuild-all and zero-ready-fast-path polls. SUCCESS:
+candidate/reference median throughput >=1.25x for zero-ready polls, exact
+pending/completed outcomes across 1,000 randomized readiness patterns, focused
+SF-label/continuous/threaded tests, and lint pass. Otherwise revert. Scheduling
+only; no live activation, target/config meaning, or salvage.
+**VERDICT: FAILED and reverted.** The exact nine-round alternating yardstick
+measured 52,153 rebuild-all polls/s and 58,394 zero-ready fast-path polls/s,
+only **1.119667x** versus the 1.25 gate. One thousand randomized readiness
+patterns retained exact pending/completed outcomes, but the modest zero-ready
+gain does not justify an additional scan on polls that do contain ready work.
+Keep the single-pass rebuild logic.
+
+**Starved Stockfish wait pre-scan experiment -- UNREAD (2026-07-12).** The
+manager first performs a nonblocking ready-only poll, then, when every runnable
+slot is still awaiting Stockfish, `finish_pending_curriculum_moves(block=True)`
+scans every future with `done()` before constructing the same tuple for
+`wait(FIRST_COMPLETED)`. Calling `wait` directly is race-safe: it returns
+immediately if a future completed after the preceding poll. Hypothesis:
+removing the redundant condition-lock scan reduces starved scheduling overhead
+without changing timeout or completion behavior. ONE deciding yardstick:
+`taskset -c 15 python3 scripts/bench_stockfish_wait_prescan.py --pending 24
+--rounds 9 --iterations 10000`, alternating pre-scan+wait and direct wait with
+zero-ready futures, plus a ready-future arm. SUCCESS: direct/reference median
+throughput >=1.10x for zero-ready, >=0.90x for one-ready, identical done/not-
+done sets, focused curriculum/continuous tests, and lint pass. Otherwise
+revert. Scheduling-only; no live/config/data change or salvage.
+**VERDICT: FAILED and reverted.** The exact alternating yardstick measured
+direct wait at **1.330696x** pre-scan throughput with zero ready futures, but
+only **0.600713x** when one future was ready, far below the 0.90 race-case
+guardrail. Ready-index outcomes matched exactly. Keep the pre-scan: avoiding a
+`wait` call after completion is materially valuable when a future resolves
+between the preceding nonblocking poll and the starved blocking path.
+
+**CUDA final-step Aurora telemetry experiment -- UNREAD (2026-07-12).** The
+earlier CPU telemetry-sampling arm was noisy/slower, but production runs Aurora
+on CUDA and attributes roughly one third of trainer wall time to optimizer
+steps. With `aurora_uw_floor: 0`, per-matrix FP32 weight/update norms and UW
+quantiles cannot affect parameters; only `train_steps()`'s final metrics consume
+`last_uw_stats`. Hypothesis: collect UW telemetry on the final optimizer step
+of each train window (and always when the floor is positive), preserving fresh
+reported statistics while removing unnecessary CUDA reductions and host
+synchronization from preceding steps. ONE deciding yardstick: `PYTHONPATH=.
+python3 scripts/bench_aurora_stats_cuda.py --rounds 7 --steps 5 --matrices 8
+--rows 512 --cols 896`, alternating always-on and final-only telemetry across
+complete production-config Aurora steps. SUCCESS: final-only/reference median
+throughput >=1.03x, exact parameter and momentum hashes after every round,
+identical final UW statistics, positive-floor behavior unchanged, focused
+Aurora/trainer/SODA tests, and lint pass. Otherwise revert. This changes
+telemetry scheduling only, not updates, targets, config, or replay; no salvage.
+**VERDICT: WORKED.** The exact seven-round CUDA yardstick measured 0.886610s
+for five always-on steps and 0.829691s for final-only telemetry, a
+**1.068602x** complete-optimizer throughput gain. Every round retained exact
+parameter/momentum hash
+`b20bd8e4aaabab15427b3c72a09b5e626d77946ded65030d69e7ac0210aa79e0`,
+and final UW statistics were identical. Positive-floor tests confirm telemetry
+and scaling remain mandatory even when collection is disabled; SODA forwards
+the control, and trainer coverage confirms only the final train-window step
+collects. Validation: 51/51 Aurora/SODA/trainer tests plus clean ruff,
+basedpyright, and vulture. Keep final-step collection; the live run activates
+it only after restart onto this code.
+
+**Compiled Aurora Polar Express experiment -- UNREAD (2026-07-12).** Eager
+`addmm` fusion was fast but rejected for accumulated FP16 drift. The original
+Polar Express expression still launches several pointwise kernels around each
+GEMM. Hypothesis: `torch.compile` with dynamic matrix width fuses graph-level
+pointwise work while retaining the source arithmetic closely enough to satisfy
+the strict numerical gate. ONE deciding yardstick: `PYTHONPATH=.
+TORCHINDUCTOR_CACHE_DIR=/tmp/cae-aurora-inductor python3
+scripts/bench_aurora_compile.py --rounds 7 --repeats 10 --matrices 8 --rows
+512 --steps 8`, alternating eager and compiled transforms across production
+FFN widths after warmup. SUCCESS: compiled/eager median throughput >=1.10x,
+initial compile <=120s, no more than two unique graph compilations across the
+width ladder, max absolute error <=2e-3, normalized L2 <=5e-4, cosine
+>=0.999999, full Aurora update parity at `rtol=5e-3, atol=2e-3`, focused tests,
+and lint. Otherwise revert. This is offline eager/compiled optimizer math only;
+no live activation, target/config/data change, or salvage.
+**VERDICT: FAILED and reverted.** With a fresh Inductor cache, compile warmup
+took 38.903s and steady compiled throughput was **4.431306x** eager (1178.146
+vs 265.869 matrices/s). However maximum normalized L2 error was
+`0.00341379573` and minimum cosine `0.999994278`, failing the `5e-4` and
+`0.999999` numerical gates despite maximum absolute error below 0.001. The
+first measured compiled round also fell to 29.298 matrices/s as additional
+production widths compiled, so the two-graph dynamic-width condition was not
+met. Do not use Inductor-rewritten Polar Express; pursue exact eager-kernel
+CUDA graph replay instead.
+
+**CUDA-graph Aurora Polar Express experiment -- UNREAD (2026-07-12).** The
+Inductor arm proved launch overhead is large but altered FP16 arithmetic.
+Hypothesis: capture the unchanged eager Polar Express kernels in one CUDA graph
+per fixed production matrix shape, copy each update into a static input, and
+replay them with bitwise-identical output while eliminating repeated Python and
+launch overhead. ONE deciding yardstick: `PYTHONPATH=. python3
+scripts/bench_aurora_cuda_graph.py --rounds 7 --repeats 10 --matrices 8 --rows
+512 --steps 8`, alternating eager and graph replay across production FFN
+widths after capture. SUCCESS: graph/eager median throughput >=1.20x including
+static-input copy, exact bitwise output and full Aurora-update parity, total
+captured static tensors/workspaces <=2 GiB for the tested width ladder, capture
+time <=120s, focused tests, and lint. Otherwise revert. Offline optimizer math
+only; no live activation, target/config/data change, or salvage.
+**VERDICT: WORKED.** The exact seven-round polar yardstick measured 254.141
+eager vs 2,969.265 graph matrices/s, an **11.683548x** replay speedup including
+the static-input copy. Eight unique production widths captured in 2.812s and
+allocated 330,530,816 bytes (315 MiB), well below the 2 GiB gate. Polar outputs
+and full three-pass Aurora updates were bitwise exact. A supplemental complete
+optimizer benchmark across the same eight widths measured 0.872756s eager vs
+0.224910s graphed for five steps, a **3.880460x** throughput gain with exact
+parameter/momentum hash
+`250b75c4182bff4c550f97f1bbe8bd7051f9579a55e31fda796747ca800866de`.
+Validation passed 52/52 Aurora/SODA/trainer tests including local CUDA graph
+cache reuse and explicit eager fallback; lint is clean. Keep the per-optimizer,
+per-shape graph cache. First use pays capture once; checkpoint state is
+unchanged and the live run activates only after restart.
+
+**Coalesced Aurora finite-check experiment -- UNREAD (2026-07-12).** CUDA
+graph replay removes most polar launch overhead, leaving `_aurora_update`'s
+Python truth test on `torch.isfinite(out).all()` as one host synchronization
+per optimized matrix. Hypothesis: retain each computed update, enqueue all
+finite reductions, synchronize once per Aurora parameter group, and apply
+parameters only after the combined check passes. This removes N-1 syncs and
+also prevents applying earlier valid updates before a later matrix fails. ONE
+deciding yardstick: `PYTHONPATH=. python3
+scripts/bench_aurora_finite_checks.py --rounds 7 --steps 5 --matrices 8 --rows
+512`, alternating per-matrix and coalesced checks on graphed production-config
+optimizer steps. SUCCESS: coalesced/reference median throughput >=1.10x,
+exact parameter/momentum hashes, injected nonfinite update raises before any
+parameter add, focused Aurora/SODA/trainer tests, and lint pass. Otherwise
+revert. Optimizer validation scheduling only; no target/config/data change or
+salvage.
+**VERDICT: WORKED.** The exact seven-round complete-optimizer yardstick
+measured 0.152192s with per-matrix checks and 0.134966s with one group check,
+a **1.127629x** throughput gain on top of CUDA graph replay. Every round
+retained exact parameter/momentum hash
+`250b75c4182bff4c550f97f1bbe8bd7051f9579a55e31fda796747ca800866de`.
+Failure injection confirms a nonfinite later matrix raises before any pending
+parameter update is applied; valid CPU and CUDA paths remain exact. Focused
+Aurora tests and lint pass. Keep coalesced checks; retained update tensors add
+temporary memory roughly equal to the Aurora parameter group, acceptable on
+the 32 GiB production GPU.
+
+**Whole-update Aurora CUDA graph experiment -- UNREAD (2026-07-12).** Polar
+graph replay is exact and fast, but each production update still crosses Python
+between three polar passes for row scaling and reductions. Hypothesis: capture
+the complete `_aurora_update(check_finite=False)` per fixed parameter shape,
+then perform the already-coalesced group finite check outside the graph. ONE
+deciding yardstick: `PYTHONPATH=. python3
+scripts/bench_aurora_update_graph.py --rounds 7 --repeats 10 --matrices 8
+--rows 512`, alternating current polar-only graph updates and whole-update
+graphs across production FFN widths. SUCCESS: whole/polar-only median
+throughput >=1.50x, bitwise exact outputs, capture <=120s and <=2 GiB for eight
+widths, complete optimizer exact-state confirmation, focused tests, and lint.
+Otherwise revert. Optimizer execution only; no target/config/data change or
+salvage.
+**VERDICT: WORKED.** The reproducible seven-round comparison measured 595.744
+polar-only vs 948.292 whole-update updates/s, a **1.591778x** gain with bitwise
+exact outputs. Eight captures took 1.346s and allocated 297,308,160 bytes
+(283.5 MiB), below both gates. After integration, the complete five-step
+optimizer benchmark measured 0.770955s eager vs 0.065889s whole-update graph,
+an **11.700884x** throughput gain with exact parameter/momentum hash
+`250b75c4182bff4c550f97f1bbe8bd7051f9579a55e31fda796747ca800866de`.
+Captures are keyed per parameter plus algorithm settings, so repeated 512x512
+weights cannot alias one static output while group updates are retained.
+Validation passed 55/55 Aurora/SODA/trainer tests including repeated-shape CUDA
+state parity and the config-driven eager fallback; lint is clean. Keep
+whole-update capture and the explicit eager fallback. The direct eight-width
+capture allocated 283.5 MiB; production uses parameter-specific outputs, so its
+total scales with the selected parameter count. A supplemental 48-parameter
+production-count run completed without OOM at 1.233610s eager vs 0.101139s
+graphed (**12.197198x**) and exact state hash
+`95370418d6dfd4d6382b3474db465398a1ccbd861444715a0209f18edde6e9bd`;
+this corrects the earlier 32-matrix estimate (`mlp_out` selects both FFN
+matrices plus attention output in each of 16 blocks).
+
+**Aurora AdamW foreach fallback experiment -- UNREAD (2026-07-12).** Whole-
+update graphs make Aurora matrices cheap, but the same optimizer still updates
+all auxiliary, QKV, embedding, norm, bias, and head parameters through a Python
+loop with separate AdamW kernels. Hypothesis: gather each fallback group while
+retaining the existing integer `step` and moment state entries, then use
+`torch._foreach_*` for decay, moments, denominator, and parameter updates.
+ONE deciding yardstick: `PYTHONPATH=. python3
+scripts/bench_aurora_adam_foreach.py --rounds 7 --steps 10 --matrices 16
+--width 512`, alternating loop and foreach fallback updates on production-
+shaped QKV matrices plus vectors. SUCCESS: foreach/loop median throughput
+>=1.10x, bitwise exact parameters/moments/steps each round, checkpoint
+round-trip compatibility, focused Aurora/trainer/SODA tests, and lint pass.
+Otherwise revert. Optimizer execution only; no target/config/data change or
+salvage.
+**VERDICT: FAILED and reverted.** The first exact-state comparison diverged:
+loop hash `b36f0f32d5bf228580fb6062af9683aec71ad8235277a97fe9ebc0a80a2aeed6`
+versus foreach hash
+`a598a53f25538d6d6dbe37608d9893e9d3b061e51be9507ec670e1ca59107dcd`.
+Maximum parameter difference was one float32 ULP (`1.1920928955078125e-07`),
+but the pre-committed requirement was bitwise checkpoint/state continuity.
+Do not replace the fallback arithmetic with foreach kernels; retain the loop.
+
+**Threaded-dispatcher singleton legal-pack experiment -- UNREAD
+(2026-07-12).** `ThreadedDispatcher._submit_batch` always runs two
+`np.concatenate` calls for compact legal indices/counts, even when the drain
+contains one request. That copies arrays for UCI/single-request match searches
+and low-concurrency worker drains while input rows already require pinned-slot
+copying. Hypothesis: alias already-int32 singleton legal arrays and retain
+concatenation for true multi-request batches. ONE deciding yardstick:
+`taskset -c 15 python3 scripts/bench_threaded_singleton_legal_pack.py --batch
+512 --legal-per 32 --rounds 9 --iterations 500000`. SUCCESS: candidate/reference
+median packaging throughput >=5x, exact arrays, singleton outputs share memory,
+focused threaded-dispatcher/UCI/Gumbel tests, and lint pass. Otherwise revert.
+Inference packaging only; no target/config/data change or salvage.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+160,898 copy packs/s and 1,707,451 alias packs/s, a **10.611997x** mechanism
+speedup while avoiding 67,584 bytes per 512-position request. Every array
+matched exactly and singleton outputs shared memory with their sources.
+Validation passed all 108 focused threaded-dispatcher, coalescer, GPU
+dispatcher, Gumbel, root-parallel, UCI engine, and searchmoves tests after a
+clean GCC15 native+LTO extension build; lint is clean. Keep the singleton alias
+path; multi-request drains retain concatenation and bucket padding still owns
+its required counts array.
+**Threaded-dispatcher compact legal-length reuse experiment -- UNREAD
+(2026-07-12).** Compact dispatch currently reduces every `legal_counts` array
+once to size the submitted policy output and again per request while scattering,
+although the corresponding one-dimensional `legal_flat.size` is already the
+exact policy length. The inner evaluator still validates
+`sum(legal_counts) == legal_flat.size` before launching inference. Hypothesis:
+reuse the validated flat lengths for output sizing and slice offsets, removing
+NumPy reductions from every compact submit/scatter without changing validation
+or layout. ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_threaded_legal_length.py --batch 512 --legal-per 32 --requests 16
+--rounds 9 --iterations 500000`. SUCCESS: candidate/reference median mechanism
+throughput >=3x, exact totals and randomized per-request policy slice boundaries,
+focused threaded-dispatcher/UCI/Gumbel tests, and lint pass. Otherwise revert.
+Inference bookkeeping only; no target/config/data change or salvage.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+33.111050s for repeated count reductions versus 1.404287s for flat-length
+reuse, a **23.578549x** mechanism speedup. The checksum was exactly
+16,329,000,000 and all 16 randomized per-request cumulative policy boundaries
+matched. A clean GCC 15 native+LTO build and all 109 focused threaded-
+dispatcher, coalescer, GPU-dispatcher, Gumbel, root-parallel, UCI engine, and
+searchmoves tests pass, including the new concurrent compact-request slice
+regression; ruff, basedpyright, and vulture are clean. Keep the length reuse.
+
+**Batch-coalescer compact scatter-length reuse experiment -- UNREAD
+(2026-07-12).** The compiled UCI/match-play `BatchCoalescingDispatcher`
+validates `sum(legal_counts) == legal_flat.size` before enqueue, but its
+submitter thread reduces each request's counts again to advance compact-policy
+slice offsets. Hypothesis: reuse each request's validated flat length during
+scatter, removing a NumPy reduction from every compact match request with
+identical slices. ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_threaded_legal_length.py --batch 512 --legal-per 32 --requests 16
+--rounds 9 --iterations 100000`; its per-request scatter arm is the same
+bookkeeping operation. SUCCESS: candidate/reference median mechanism throughput
+>=3x, exact randomized slice boundaries/checksum, focused coalescer/UCI tests,
+and lint pass. Otherwise revert. Match-inference bookkeeping only; no
+target/config/data change or salvage.
+**VERDICT: WORKED.** Nine alternating rounds measured 5.465108s for repeated
+count reductions versus 0.243004s for flat-length reuse, a **22.489759x**
+mechanism speedup, with exact randomized slice boundaries and checksum
+3,265,800,000. All 40 focused coalescer/UCI engine/searchmoves tests pass;
+ruff, basedpyright, and vulture are clean. Keep the flat-length scatter path.
+
+**SlotBroker compact legal-length reuse experiment -- UNREAD (2026-07-12).**
+The production shared-GPU broker must reduce counts once while validating
+untrusted slot metadata, but then reduces them again while building compact
+offsets and a third time in the dense-policy fallback gather. Live worker
+telemetry shows about 79% compact legal requests. Hypothesis: retain the
+trust-boundary reduction and use each copied flat array's exact length for the
+two post-validation bookkeeping passes. ONE deciding yardstick: `taskset -c 15
+python3 scripts/bench_threaded_legal_length.py --batch 512 --legal-per 32
+--requests 16 --rounds 9 --iterations 100000`; the request-partition arm is the
+same repeated offset operation. SUCCESS: candidate/reference median mechanism
+throughput >=3x, exact randomized boundaries/checksum, focused SlotBroker and
+shared-broker tests, and lint pass. Otherwise revert. Inference bookkeeping
+only; validation, model outputs, targets, and data remain unchanged; no salvage.
+**VERDICT: WORKED.** Nine alternating rounds measured 5.615790s for redundant
+count reductions versus 0.243942s for validated flat-length reuse, a
+**23.021000x** mechanism speedup, with exact randomized boundaries and checksum
+3,265,800,000. All 31 focused SlotBroker, GPU-dispatcher, and multi-GPU
+dispatcher tests pass; ruff, basedpyright, and vulture are clean. Keep both
+post-validation flat-length reuse sites.
+
+**SlotBroker compact metadata view experiment -- UNREAD (2026-07-12).** The
+broker owns every REQUEST slot until it publishes RESPONSE, but currently copies
+its compact counts/indices out of shared memory, then concatenates and converts
+those snapshots again before GPU transfer. Live batches average roughly 1.5-2.3
+slots and about 79% of requests are compact. Hypothesis: retain read-only shared-
+memory views for the broker-owned request lifetime and only allocate the required
+combined int64 GPU metadata, aliasing that conversion for singleton batches.
+ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_slot_broker_legal_metadata.py --rows-per-slot 32 --legal-per 32
+--slots 1 2 4 --rounds 9 --iterations 20000`. SUCCESS: candidate/reference
+median throughput >=1.15x for the deciding two-slot arm, no 1/4-slot arm slower
+than 1.05x, exact counts/indices/rows/offsets, focused SlotBroker/shared-memory
+tests, and lint pass. Otherwise revert. Metadata ownership/copy scheduling only;
+validation and inference outputs remain unchanged, with no live activation or
+salvage.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+reference/candidate medians of 0.467347/0.259311s for one slot (**1.802265x**),
+0.651944/0.553719s for the deciding two-slot arm (**1.177392x**), and
+1.032357/0.882983s for four slots (**1.169169x**). Counts, indices, expanded
+rows, and offsets matched exactly. A clean GCC 15 native+LTO build and all 31
+focused SlotBroker, GPU-dispatcher, and multi-GPU tests pass; ruff,
+basedpyright, and vulture are clean. Keep the request-lifetime metadata views.
+
+**SlotBroker pinned legal-metadata transfer experiment -- UNREAD
+(2026-07-12).** The compact broker sends int64 legal indices and expanded row
+IDs to CUDA from ordinary NumPy allocations; `torch.as_tensor(...,
+device=cuda)` therefore performs synchronous pageable transfers before every
+legal forward. Hypothesis: reusable pinned host tensors, filled from the
+prepared arrays and transferred nonblocking, reduce complete CPU-copy plus H2D
+latency at live compact request sizes. ONE deciding yardstick: `PYTHONPATH=.
+python3 scripts/bench_slot_broker_pinned_metadata.py --legal 2048 8192 --rounds
+9 --iterations 2000`, alternating current pageable transfers and pinned staging
+with a synchronization per broker-shaped pair. SUCCESS: pinned/reference median
+time <=0.90x at both sizes, exact GPU values, and full-capacity static pinned
+buffers <=128 MiB; focused broker tests/lint must also pass. KILL: either size
+>1.00x or any parity failure; otherwise MIXED and do not ship without a second
+gate. Offline transfer scheduling only; no live activation, target/data change,
+or salvage.
+**VERDICT: WORKED.** Nine alternating rounds measured pageable/pinned medians
+of 0.653344/0.339819s at 2,048 legal entries (ratio **0.520122**) and
+0.830034/0.343559s at 8,192 entries (ratio **0.413909**), including the CPU
+staging copy and a synchronization after every broker-shaped transfer pair.
+GPU values matched exactly. At the production 19,040-position capacity, the
+two `int64` staging tensors consume 77,987,840 bytes (74.4 MiB), below the
+128 MiB gate. A clean GCC 15 native+LTO build and all 32 focused SlotBroker,
+GPU-dispatcher, and multi-GPU tests pass, including exact CPU/CUDA padded-row
+integration; ruff, basedpyright, and vulture are clean. Keep CUDA-only pinned
+staging; the CPU path retains its direct NumPy-backed tensors.
+
+**SlotBroker dense-fallback metadata reuse experiment -- UNREAD
+(2026-07-12).** With compiled legal-row forward still gate-off, production
+computes the dense policy and gathers legal logits afterward. The broker already
+builds combined legal row/index arrays before choosing that path, but the fallback
+then repeats every row expansion and concatenation and transfers the duplicate
+pageable arrays to CUDA. Hypothesis: reuse the validated combined arrays and the
+new pinned staging buffers, removing duplicate CPU construction on the currently
+active compact path. ONE deciding yardstick: `PYTHONPATH=. python3
+scripts/bench_slot_broker_fallback_metadata.py --slots 2 --rows-per-slot 32
+--legal-per 32 --rounds 9 --iterations 1000`. SUCCESS: candidate/reference
+median complete rebuild+transfer time <=0.50x, exact GPU rows/columns, focused
+broker CPU/CUDA fallback tests and lint pass. Otherwise revert this extension;
+the independently successful legal-row staging result remains valid. Inference
+bookkeeping only; dense model arithmetic and outputs remain unchanged, with no
+live activation or salvage.
+**VERDICT: WORKED.** Nine alternating rounds measured 0.427115s for duplicate
+row expansion/concatenation plus pageable transfer versus 0.179773s for reuse
+plus pinned transfer, ratio **0.420900**, on 2,032 compact entries across two
+live-shaped slots. GPU rows and columns matched exactly. All 33 focused
+SlotBroker, GPU-dispatcher, and multi-GPU tests pass, including exact CPU/CUDA
+dense-fallback and padded-row cases; ruff, basedpyright, and vulture are clean.
+Keep reuse of the already-built combined metadata on the active dense fallback.
+
+**SlotBroker direct compact-policy gather experiment -- FAILED and reverted
+(2026-07-12).** Production compiled legal forward remains gate-off, so the
+broker expands each 1,858-wide policy to 4,672 columns before gathering legal
+logits. ONE deciding yardstick was nine alternating rounds of a 64-real/128-
+padded-row, 32-legal-move BF16 CUDA benchmark; pre-committed SUCCESS required
+candidate/reference <=0.50 with bitwise parity. A raw full-to-compact GPU remap
+was exact for real legal indices but measured only 0.651867 and did not preserve
+the existing `-1e9` result for in-range legacy padding indices. A separately
+pre-registered modest-gain replication (<=0.80) measured 0.689158 for that
+incomplete shortcut; the semantics-preserving mask/clamp/gather version was
+**2.002723x** as slow as reference and a sentinel-column version was
+**1.206282x**. A final pre-registered CPU-remap+pinned-gather arm preserved the
+old fallback for invalid metadata and was bitwise exact, but measured 0.841692,
+short of its <=0.80 gate while adding another metadata list and branch. Keep the
+current expansion/gather. The remaining high-upside route is the registered
+compiled legal-forward benchmark after live Ray GPU trees stop; one-off harnesses
+were removed.
+
+**Native classifier result-boundary profile -- UNREAD (2026-07-12).** Live
+workers attribute roughly 10-30% cumulative thread time to classification. The
+C fast path allocates three NumPy index arrays, then Python immediately calls
+`.tolist()` on each. Hypothesis: list conversion is a material lower bound on
+the removable C/Python result-boundary cost and justifies a direct-list native
+ABI. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_classify_result_boundary.py --games 384 --rounds 9 --iterations
+20000`, alternating raw native arrays and the production three-list conversion
+on identical nonterminal boards. SUCCESS screen: list path >=1.15x raw-array
+time and conversion delta >=10us per 384-game call, exact group-count checksum;
+then implement and separately benchmark a direct-list candidate. Otherwise
+FAILED and retain the current ABI. Offline CPU boundary profile only; no live,
+target, config, or data change.
+**VERDICT: FAILED; no ABI change.** Nine alternating rounds measured 6.327216s
+for raw native index arrays and 6.353953s with the production three `.tolist()`
+conversions, only **1.004226x** total and 1.337us conversion delta per 384-game
+call. Both are far below the 1.15x and 10us gates, with exact checksum
+7,680,000. Result containers are not the live classification bottleneck; retain
+the NumPy ABI and look inside terminal detection instead. The one-off harness
+was removed.
+
+**Native classifier redundant terminal-check experiment -- UNREAD
+(2026-07-12).** All three selfplay `CBoard.push_index` paths immediately set
+`done_arr` after forced-network, searched-network, and curriculum-Stockfish
+moves, while opening resolution rejects terminal starts. Nevertheless the C
+classifier reruns full `cboard_is_game_over` on every live slot every scheduling
+pass. Hypothesis: treat `done_arr` as the authoritative terminal invariant in
+classification and retain only relative `max_plies` timeout detection. ONE
+deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_classify_terminal_check.py --games 384 --rounds 9 --iterations
+20000`, alternating the same native function with terminal recheck on/off over
+identical nonterminal boards. SUCCESS: unchecked/reference throughput >=1.50x,
+exact partitions/timeouts, and focused tests prove terminal done propagation for
+all three push paths plus broad selfplay/native tests and lint. KILL: throughput
+<1.20x or any invariant gap; otherwise MIXED and do not ship. Offline scheduling
+implementation only; no target/data/config/live change or salvage.
+**MECHANISM VERDICT: WORKED.** Nine alternating rounds measured 6.165308s with
+redundant terminal rechecks and 0.095058s with authoritative `done_arr`, a
+**64.858054x** classifier speedup with exact partition checksum 7,680,000.
+Forced-network and curriculum-terminal push tests now pin their immediate
+`done_arr` updates; native searched-network terminal propagation is covered by
+`batch_process_ply` checkmate parity, and the Python searched-network path keeps
+its direct post-push check. The C ABI test pins checked-default versus explicit
+authoritative-done behavior. All 95 focused state/FEN/network/native tests plus
+the 18-test CPU selfplay-to-training end-to-end smoke pass after a clean GCC 15
+native+LTO build; ruff, basedpyright, and vulture are clean.
+**FINAL VERDICT: WORKED.** Selfplay uses authoritative done mode; the public C
+ABI retains its checked default for conservative external callers. This is a
+mechanism result, not a 64x whole-selfplay claim; live phase telemetry after the
+next natural restart will quantify the end-to-end reduction.
+**PRE-ACTIVATION LIVE BASELINE:** the latest 20 steady phase windows from each
+of four workers (80 total, 2026-07-12 23:50) have pooled median cumulative
+`classify=21.6%` of wall time (IQR 19.625-26.65%); per-worker medians are
+21.1/21.85/21.6/22.65%. The post-restart mechanism read is the same pooled
+statistic after warmup; games/hour remains the outcome metric and SF wait is a
+large confound, so do not infer a 21.6% throughput gain directly.
+
+**Stockfish pool head-of-line scheduling experiment -- UNREAD (2026-07-12).**
+The pool binds each request round-robin to an engine before submitting it to one
+shared thread executor. With mixed-duration move and label searches, an executor
+thread can therefore block on a busy engine's UCI lock while another engine is
+idle, delaying unrelated work; live steady-state telemetry attributes roughly
+2300% cumulative thread time to `sf_block_starved`. Hypothesis: one single-thread
+executor per engine preserves round-robin engine ownership while queueing each
+request behind only that engine, eliminating cross-engine head-of-line blocking.
+ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_stockfish_pool_scheduling.py --workers 8 --requests 256 --rounds
+9`. SUCCESS: candidate/reference median completion time <=0.80, exact result
+checksum, deterministic concurrency coverage proves an available engine can run
+while a different engine has queued work, focused Stockfish/selfplay tests and
+lint pass. KILL: ratio >0.95 or any ordering/lifecycle regression; otherwise
+MIXED and do not ship. Offline scheduler mechanism only; no live/config/data or
+training-target change, and activation waits for a natural restart.
+**MECHANISM VERDICT: WORKED.** Nine alternating rounds measured 0.011361731s
+shared-executor median latency versus 0.000702322s with per-engine queues, a
+**0.061815 ratio (16.18x faster)** for an available engine's probe under one
+unrelated busy-engine queue, with identical checksum 2,429. The deterministic
+pool regression test pins that engine 1 completes its request while engine 0's
+second request remains queued and also verifies orderly shutdown. This removes
+cross-engine head-of-line blocking; the post-natural-restart read must use
+`sf_block_starved` and games/hour because the synthetic mechanism ratio is not a
+whole-selfplay throughput claim.
+**PRE-ACTIVATION LIVE BASELINE:** the latest 20 steady phase windows from each
+of the four active workers (80 total, 2026-07-13 00:44) have pooled median
+`sf_block_starved=1853.1%` cumulative thread time. Repeat the same active-trial
+four-worker/latest-20 calculation after restart; games/hour is the outcome.
+
+**Label-blocked finalization overlap experiment -- UNREAD (2026-07-13).** Live
+steady-state workers report roughly 300-1000% cumulative thread time in
+`finalize` while 32 selfplay threads share four Stockfish processes. A completed
+selfplay game currently calls the blocking label flush immediately, stalling its
+whole 24-slot state even when other slots are runnable. Hypothesis: defer only
+done games that still own incomplete async label futures, keep scheduling the
+other slots, and wait on the first label future with the existing 50ms control
+deadline only when no runnable work remains. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_finalize_label_overlap.py
+--label-delay-ms 20 --work-items 20 --work-ms 1 --rounds 9`. SUCCESS: candidate
+median elapsed time <=0.65x blocking reference, identical completed-work
+checksum, deterministic tests prove runnable work proceeds before the label and
+idle states block rather than spin, focused selfplay/finalization tests and lint
+pass. KILL: ratio >0.90, any dropped/unlabeled game, changed sample contents, or
+pause/stop responsiveness beyond the existing 50ms bound; otherwise MIXED and
+do not ship. Scheduling only; no target/config/data semantic change or salvage,
+and activation waits for a natural restart.
+**MECHANISM VERDICT: WORKED.** Nine alternating rounds measured 0.045351887s
+for blocking label-then-work scheduling versus 0.023162679s when useful work
+overlapped the same label, a **0.510732 ratio (1.96x mechanism speedup)** with
+identical checksum 227. Continuous sessions now skip only a done game whose own
+records still have pending label entries; a later poll finalizes and recycles it.
+When nothing can advance, the scheduler waits for first SF completion with the
+existing 50ms bound instead of spinning. Finite batches deliberately retain
+blocking finalization so idle waits cannot consume their safety-step budget. A
+true continuous-session stop force-drains already-done games before exit, so
+deferral cannot turn completed games into teardown abandonment. A
+clean GCC 15 native+LTO build, all 53 focused label/escalation/continuous-
+selfplay tests, the 18-test CPU selfplay-to-replay-to-training end-to-end smoke,
+and ruff/basedpyright/vulture pass. Keep the overlap; the next natural restart
+must judge whole throughput from finalize share and games/hour.
+**PRE-ACTIVATION LIVE BASELINE:** the same 80 active-worker windows have pooled
+median `finalize=484.0%` cumulative thread time. Repeat the same windowed
+calculation after restart; games/hour remains the outcome metric.
+
+**Stockfish pool node-weighted queue-balance experiment -- UNREAD
+(2026-07-13).** Per-engine FIFO queues remove cross-engine blocking, but request
+ownership remains round-robin while production fast-ply searches use roughly
+one quarter of the full-label/current-opponent node budget. With four engines,
+clustering full searches on one queue extends the whole completion wave.
+Hypothesis: assign each request to the engine with the least outstanding node
+budget, using rotating ties, and decrement the estimate on future completion.
+ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_stockfish_pool_balance.py --workers 4 --requests 96 --sequences
+10000 --seed 20260713`. SUCCESS: weighted/round-robin aggregate makespan <=0.95,
+no sequence regresses by >5%, exact request/result checksum, concurrent-submit
+tests preserve accounting, focused Stockfish/selfplay tests and lint pass.
+KILL: ratio >0.99, submit overhead >25us/request, or any leaked/negative pending
+budget; otherwise MIXED and retain only for a net-simple implementation. Offline
+scheduler only; engine count, node budgets, results, data, and live config stay
+unchanged, with activation at a natural restart.
+**VERDICT: MIXED and reverted.** Across 10,000 deterministic 96-request
+production-ratio sequences, weighted assignment reduced aggregate modeled
+makespan from 486,843 to 434,429 (**0.892339 ratio, 10.8% better**) and cost only
+2.028us/request versus 0.269us round-robin. However, the worst individual
+sequence regressed **1.060606x**, exceeding the pre-committed 1.05 tail guard.
+The exact cost checksum was 1,683,141. Pending-node locks and future callbacks
+are not a net simplification, so the MIXED retain clause does not apply: keep
+the simple per-engine FIFO round-robin scheduler from the preceding experiment.
 
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
@@ -582,6 +1334,12 @@ matched the exact F32/BF16 hashes, no component fell below 0.98x, and 138
 focused native tests passed (1 skipped). Keep GCC 15.3 native+LTO for local
 production extension builds. Median forced-build time increased 24.9s ->
 40.4s, an acceptable ~15.6s edit/rebuild cost for the measured runtime gain.
+**DEPLOYMENT HARDENING (2026-07-12):** `scripts/build_production_extensions.py`
+now makes that winning recipe the explicit local-production rebuild path:
+validated `~/.local/gcc-15.3/bin/gcc` (or `CAE_GCC15_CC`) + native + LTO.
+The stale-extension startup check points to this wrapper, preventing a routine
+post-edit rebuild from silently replacing the winning binaries with the
+portable GCC11 recipe. Portable package/wheel builds remain unchanged.
 
 **Native BF16 fallback/match-input experiment -- UNREAD (2026-07-11).** The
 live distributed RL path was re-verified after this entry was drafted: it uses
@@ -617,6 +1375,33 @@ round's exact output hash matches between paths, and the focused transformer,
 dispatcher, broker, and native MCTS tests pass. Otherwise FAILED and leave the
 compiled legal gate off. This is an offline inference-only experiment; no data
 or training change and no salvage snapshot.
+
+**Stockfish MultiPV final-line parsing experiment -- UNREAD (2026-07-12).**
+Production uses MultiPV 40. `StockfishUCI.search` currently scans every token
+list several times, allocates a normalized NumPy WDL vector, and constructs a
+`StockfishPV` for every intermediate-depth info line, even though the next
+depth overwrites that PV entry. Hypothesis: one token scan per line plus raw
+latest-PV retention, normalizing/materializing only the final line for each PV,
+reduces worker GIL/CPU cost without changing UCI results. ONE deciding
+yardstick: `PYTHONPATH=. python3 scripts/bench_stockfish_info_parser.py
+--multipv 40 --depths 30 --rounds 9 --iterations 250`. The benchmark
+alternates the exact old parse/update loop with the candidate on identical
+production-shaped streams. Pre-committed SUCCESS: candidate/reference median
+streams/s >=1.50x, exact result hashes match in every round, and focused UCI,
+Stockfish-label, sparse-MultiPV, and end-to-end smoke tests plus repo lint pass.
+Otherwise revert. This changes parsing/materialization only: engine commands,
+node budgets, final PVs, WDL/CP/mate values, search decisions, and targets stay
+identical. No live/training change and no salvage snapshot.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+56.893 reference streams/s and 104.282 candidate streams/s, a **1.83295x**
+parser speedup. All rounds retained exact result hash
+`f457ed0c5c4d1c71dc368830c9899e68ec65ad649dfd2d5eb5a23ff31f2485e1`.
+On the representative 1,200-line stream this removes about 7.99 ms of Python
+parsing/materialization per query. This is deliberately a parser/GIL result,
+not a whole-game throughput claim; Stockfish node search remains dominant.
+The non-primary MultiPV-1 guard also improved 1.58656x (2,188.56 -> 3,472.28
+30-line streams/s, exact hash), so the accumulator does not trade away the
+single-PV path used by smokes and some analysis tools.
 
 **UCI compact-BF16 transport experiment -- UNREAD (2026-07-11).** Match play's
 compiled evaluator is wrapped by `ThreadSafeGPUDispatcher` and
@@ -1699,3 +2484,347 @@ canary's panel-v2 drift (55->63/113) happened in a NO-SEED window — re-read
 after seeds resume before treating drift as a swap property; (b) the dole
 LIVE-UNREAD readout clock restarts at fix activation; (c) retirement reads
 between 07-11 and activation scored a net trained WITHOUT seed exposure.
+
+**INCIDENT (found 2026-07-12): C classifier shortened FEN-seed game budgets.**
+The Python timeout path correctly compares plies played since the opening, but
+the active native `classify_games` fast path compared absolute `CBoard.ply`
+directly with `max_plies`. The current 141-seed production list starts at
+absolute plies 4-179 versus `max_plies: 450`, so seeds were not instantly
+dropped, but each could lose 4-179 plies of its intended continuation budget.
+Fix: maintain a per-slot int32 starting-ply array across create/recycle and pass
+it into the C classifier, which now tests `board.ply - starting_ply >=
+max_plies`. Regression runs the same fullmove-69 seed through Python and C,
+proving it remains live at zero played plies and times out after exactly the
+configured two. Restart-gated; do not interrupt the live run solely for this,
+but include it in the next graceful restart.
+
+**Pause-hold invariant audit (2026-07-12, post-#154; report:
+scratchpad/pausehold_audit_report.md).** Static end-to-end audit for more
+#154-class bugs (session-start-only state vs hours-long #149 sessions): every
+_RECO_LIVE_KEY verified to reach a RUNNING session; restart-key coverage
+complete; threaded path sound. One structural finding ACCEPTED BY DESIGN:
+held games span model publishes — early plies searched by the previous
+weights are tagged with the NEW model sha at completion (~games_per_batch x
+oversubscribe games per pause). Standard continuous-selfplay behavior
+(LC0/KataGo train on such games); alternatives re-create the #149 waste.
+Consequence for readers: "fresh-sha games" slightly overstate on-policy
+freshness right after each publish. Hardening landed with this entry: TB
+adjudication gate follows live state.game; dole-queue docstring forbids
+rebinding (the #154 footgun); mid-session poll failures now log a warning
+instead of a bare pass.
+
+**Completion/upload overlap experiment -- WORKED OFFLINE; production read pending
+(2026-07-12).** Post-#151
+telemetry shows completion waves accumulating roughly 2400-5000% of wall time
+in `finalize`, while broker waits and the GIL probe are small. Threaded workers
+currently hold the shared upload-buffer/model-tag lock across pending-shard tar
+packing and HTTP upload, serializing all 32 completion callbacks behind network
+I/O. Hypothesis: restrict that lock to upload-buffer mutation and atomic
+pending-shard creation, then use the existing independent pending-upload lock
+for tar/HTTP work; this increases completion throughput without changing game,
+sample, shard, model-tag, or retry semantics. ONE deciding offline yardstick:
+`TMPDIR=/tmp python3 -m pytest -q tests/test_worker_model_update.py
+tests/test_worker_upload_response.py tests/test_worker_small_uploads.py`, plus
+the concurrency regression
+`test_completed_game_does_not_wait_for_active_shard_upload`. SUCCESS: all
+focused tests pass and a second callback completes while the first is held in a
+synthetic upload; KILL: any lost/duplicated positions, model metadata mismatch,
+upload outside the existing pending-upload serialization, or callback remains
+blocked. Runtime mechanism read after the next natural restart: broker logs must
+show `upload_busy > 0` without the same upload time appearing as serialized
+completion lock-wait; overall games/hour is the production outcome but is not a
+merge gate because training phase mix is nonstationary. No salvage/revert is
+needed: this is scheduling-only, and revert is the code commit. **OFFLINE
+VERDICT: WORKED.** The deciding focused gate passed 65/65; the concurrency test
+held the first callback inside the pending uploader while a second callback
+both flushed its completed game durably and returned without waiting. The broad
+worker sweep passed 94/94, and ruff + basedpyright + vulture were clean. The
+production outcome remains explicitly unread until a natural restart supplies
+the broker completion telemetry above.
+
+**Worker shard-materialization profile -- UNREAD (2026-07-12).** PR #159 moves
+tar packing and HTTP outside the completion lock, but
+`samples_to_arrays` plus compressed zarr creation still run inside it. The
+post-oversubscription worker showed 2400-5000% cumulative `finalize` time during
+completion waves, so disk materialization may remain a lock convoy even after
+network overlap. Hypothesis: production-shaped 500-position shard conversion
+and zarr creation cost >=50ms and >=50% of the local conversion+zarr+tar
+pipeline, justifying a follow-up ownership-transfer queue that writes detached
+buffers outside selfplay threads. ONE deciding yardstick:
+`PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3 scripts/bench_worker_shard_pipeline.py
+--positions 500 --rounds 7`. SUCCESS: both thresholds hold with stable array
+hash/tar size and round-trip validation; otherwise FAILED and do not add an
+asynchronous buffer queue. This is offline profiling only; no live/data change
+or salvage snapshot.
+**PROVENANCE CORRECTION BEFORE VERDICT:** the first harness reused one identical
+board tensor for all 500 rows, making compression unrealistically easy. It was
+corrected before judging the implementation to generate a distinct binary
+175-plane tensor per position; thresholds and command are unchanged.
+**VERDICT: WORKED.** Seven corrected measured rounds at 500 positions produced
+median `samples_to_arrays` 155.198ms, compressed-zarr write 401.695ms, and tar
+packing 29.043ms. The 556.893ms materialization section is 95.04% of the local
+pipeline, with stable array hash `4f4eb31bc2e62c50` and stable 2,263,040-byte
+tar. This clears both gates by a wider margin; proceed with detached-buffer
+ownership transfer, keeping a global queued-position cap and failure retry at
+the queue head.
+
+**Detached shard-materialization experiment -- UNREAD (2026-07-12).**
+Hypothesis: swapping a full `_BufferedUpload` for a fresh buffer under the
+model-tag lock, then letting the single existing pending uploader materialize
+the detached owner, removes the ~557ms completion lock convoy without losing or
+duplicating samples. ONE deciding yardstick: focused worker/upload tests plus a
+deterministic two-callback test that blocks the first materializer while the
+second callback detaches another full buffer and returns. SUCCESS: second
+callback completes before release, exact game/position totals are retained
+across active+queued+pending state, same-second shards have unique paths,
+materialization failure retains the original queue head, queued positions count
+toward the OOM cap, and all worker tests/lint pass. KILL: any invariant fails;
+otherwise WORKED. Runtime outcome after a natural restart is lower steady
+`finalize` thread-time and higher completed games/hour, but is not the merge
+gate because the offline lock hold falls from measured disk time to O(1) owner
+transfer. No data semantics/config/salvage change.
+**VERDICT: WORKED OFFLINE; production read pending.** The deterministic
+two-callback test held the first callback in materialization/upload while the
+second detached another complete buffer and returned before release; exact
+positions remained split between the first durable materialization and the
+second queued owner. Failure injection retained the original queue head and
+position count; sidecar failure removed the partial zarr while preserving the
+source buffer; same-second identical metadata produced distinct durable paths;
+and detached positions triggered the existing global OOM cap. Validation:
+70/70 focused worker/upload tests, 155/155 broad worker/shard/distributed tests,
+15/15 continuous-selfplay tests, and ruff + basedpyright + vulture clean. Keep
+the queue; after the next natural restart, use broker completion telemetry and
+games/hour to quantify the production gain rather than extrapolating the
+557ms lock-hold removal into a headline throughput percentage.
+
+**Worker zarr codec experiment -- UNREAD (2026-07-12).** Corrected
+production-shaped profiling attributes 401.7ms of each 500-position flush to
+Blosc zstd level 3, the largest remaining shard-pipeline cost after detached
+materialization. Hypothesis: a lower-cost lossless Blosc codec/level materially
+reduces worker CPU and uploader occupancy without making local/network shards
+unreasonably larger. ONE deciding yardstick: `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_worker_shard_codecs.py --positions 500 --rounds 7`, alternating
+zstd3 baseline with zstd1 and lz4 level 1/3 on identical pruned production-width
+arrays. SUCCESS: one candidate median write time <=0.85x baseline, stored bytes
+<=1.50x, eager read time <=1.10x, and exact decoded core-array hashes in every
+round; choose the fastest qualifying candidate. Otherwise FAILED and retain
+zstd3. Focused shard/server/worker tests and lint must pass before shipping.
+This changes lossless storage representation only, not samples or training
+semantics; no salvage/live readout.
+**VERDICT: FAILED for the registered candidates.** zstd1 write ratio 0.534 and
+size ratio 1.256 passed, but eager-read ratio 1.142 exceeded the 1.10 guardrail.
+LZ4 levels 1/3 wrote at 0.424/0.396x and read faster, but inflated storage and
+network bytes 3.805/3.811x, far beyond 1.50. All decoded hashes were the exact
+stable `656869c08d2bcc3e`. Retain zstd3 unless the separately registered middle
+zstd2 dose below passes every original constraint.
+
+**Worker zarr codec zstd2 middle-dose experiment -- UNREAD (2026-07-12).**
+The first dose ladder brackets the tradeoff: zstd3 is compact/slow, zstd1 is
+fast but narrowly misses the read guardrail, and LZ4 is size-dead. Hypothesis:
+zstd2 preserves enough decode/compression behavior to satisfy all three
+original constraints while materially reducing writes. ONE deciding yardstick
+is the same seven-round codec command, now including zstd2. SUCCESS: zstd2
+write <=0.85x zstd3, bytes <=1.50x, eager read <=1.10x, exact stable decoded
+hash. Otherwise FAILED and retain zstd3. No semantic/live change.
+**VERDICT: WORKED.** Two seven-round alternating runs measured zstd2 write
+ratios 0.486 and 0.537, eager-read ratios 0.811 and 1.081, and identical byte
+ratio 1.070 (2,213,225 vs 2,068,037). Every decoded core array retained exact
+stable hash `656869c08d2bcc3e`. Both independent runs clear every gate; use the
+conservative second ratios as the headline. zstd2 is the selected local shard
+codec; validate the production writer end to end before merge.
+**PRODUCTION-WRITER VALIDATION:** the first pipeline invocation omitted the
+repo-required `PYTHONPATH=.` and therefore imported the live checkout's zstd3
+writer; it is invalid. Import provenance was then printed and verified as this
+worktree's `replay/shard.py`. The corrected real-writer run measured
+`samples_to_arrays` 157.488ms, zarr2 write 235.862ms, and tar 32.379ms: zarr
+write is 41.3% below the corrected zstd3 pipeline anchor (401.695ms), while tar
+bytes rise only 6.3% (2,406,400 vs 2,263,040) and the exact array hash remains
+`4f4eb31bc2e62c50`. This confirms the selected codec through the actual writer.
+Validation: 58/58 replay-shard, server-upload, and worker-buffer tests pass;
+ruff + basedpyright + vulture are clean. Production activation requires only
+the next worker/server restart onto the merged writer; old zstd3 and new zstd2
+shards remain mutually readable through zarr codec metadata.
+
+**Replay-finalization policy projection cache -- UNREAD (2026-07-12).** A
+production-shaped 100-record profile measures 19.35ms/game in replay-sample
+construction; policy-vector projection/renormalization costs 3.09ms and legal
+mask projection 2.95ms. Each row is projected once for its own sample and again
+as the two-ply-earlier sample's future target. Hypothesis: game-local lazy
+caches keyed by record index preserve the immutable encoded arrays and remove
+the duplicate gathers/normalizations, improving finalization without changing
+any target values. ONE deciding yardstick:
+`taskset -c 15 python3 scripts/profile_python_native_candidates.py
+--only-finalize --finalize-records 100 --repeats 50`, paired baseline/candidate
+in alternating rounds with output hashes. SUCCESS: candidate median <=0.92x
+baseline and exact stable output hash; KILL: >0.98x, any parity/test failure, or
+any target alias is mutated downstream. Otherwise MIXED. This is sample-build
+scheduling only; no live activation, salvage, or data readout is needed.
+**VERDICT: FAILED and reverted.** Three alternating 50-repeat pairs produced
+baseline/candidate medians 20.512/19.099ms, 19.011/19.103ms, and
+18.934/20.587ms. The candidate ratios were 0.931, 1.005, and 1.087 (geometric
+mean ~1.006, slightly slower), while every run retained the exact stable hash
+`a8f5fc45063e6f40`. Saved gathers did not repay per-row dictionary/helper
+overhead under the contended production host, and the cache added complexity;
+do not ship it. The result also rejects the tiny list-copy cleanup as a speed
+PR: that copy is below the measured conversion noise and removing it alone is
+not a meaningful simplification.
+
+**Redundant policy-temperature normalization experiment -- UNREAD
+(2026-07-12).** `apply_policy_temperature` currently computes `p/sum(p)`,
+raises that vector to `1/T`, then normalizes again. The first scalar division
+cancels exactly in real arithmetic because the final normalization removes the
+common `sum(p)^(-1/T)` factor. Hypothesis: power the nonnegative input directly
+and normalize once, reducing both code and one full-vector sum/division per
+policy row with equivalent float32 targets. ONE deciding yardstick: three
+alternating baseline/candidate runs of `taskset -c 15 python3
+scripts/profile_python_native_candidates.py --only-finalize --finalize-records
+100 --repeats 50`. SUCCESS: candidate geometric-mean ratio <=0.98, randomized
+positive/zero/negative-input parity has max absolute error <=1e-7 and matching
+degenerate behavior, and temperature/finalization tests pass. KILL: ratio
+>1.00, parity exceeds the tolerance, or tests fail; otherwise MIXED. This is a
+mathematically equivalent CPU simplification, not a training/config experiment;
+no salvage or live readout is required.
+**VERDICT: FAILED and reverted.** The production-shaped finalization hash stayed
+exact (`a8f5fc45063e6f40`), but the two completed baseline/candidate pairs were
+19.615/20.549ms and 18.934/19.859ms: ratios 1.048 and 1.049, decisively over
+the >1.00 kill rule. Removing a mathematically redundant division did not
+remove measurable wall work in this NumPy-sized regime and made the measured
+path slower, so the original implementation remains.
+
+**zstd2 bit-shuffle experiment -- UNREAD (2026-07-12).** The selected zstd2
+codec uses Blosc byte-shuffle. Hypothesis: bit-shuffle better exposes the
+binary-plane/float16 structure and either reduces write time or stored bytes
+without harming the other dimension. ONE deciding yardstick: the same
+`PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_worker_shard_codecs.py --positions 500 --rounds 7`, adding a
+zstd2+bitshuffle arm. SUCCESS: versus zstd2+shuffle, either (a) write <=0.95x
+and bytes <=1.00x, or (b) bytes <=0.90x and write <=1.05x; eager read <=1.10x
+and exact stable hash in both cases. Otherwise FAILED and retain byte-shuffle.
+No semantic/live change.
+**VERDICT: WORKED.** Seven alternating rounds measured bit-shuffle vs selected
+zstd2 byte-shuffle at 128.207 vs 154.605ms write (0.829x), 25.396 vs 27.572ms
+eager read (0.921x), and 1,479,580 vs 2,213,225 bytes (0.669x), with exact
+stable decoded hash `656869c08d2bcc3e`. It clears both success routes and is
+also smaller than the original zstd3+shuffle shard. Promote zstd2+bitshuffle
+and validate through the production writer.
+**PRODUCTION-WRITER VALIDATION:** the real writer measured conversion 158.222ms,
+zstd2+bitshuffle write 201.100ms, and tar 25.306ms. Against the corrected
+original zstd3+shuffle pipeline, total materialization falls 556.893→359.322ms
+(35.5%) and tar bytes fall 2,263,040→1,679,360 (25.8%), with unchanged exact
+array hash `4f4eb31bc2e62c50`. All 58 replay-shard/server-upload/worker-buffer
+tests pass; ruff + basedpyright + vulture are clean. This supersedes zstd2 byte-
+shuffle as the codec change to publish.
+
+**Shard stack+cast fusion experiment -- UNREAD (2026-07-12).** The corrected
+500-position pipeline spends ~155ms in `samples_to_arrays`; required `x` and
+`policy_target` currently allocate full float32 stacks and then allocate/copy
+again to float16. Hypothesis: constructing those stacks directly at storage
+dtype removes the float32 temporaries and one memory pass, reducing conversion
+time and peak transient bytes with exact float16 arrays. ONE deciding yardstick:
+`PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_shard_stack_cast.py --positions 500 --rounds 9`. SUCCESS: direct
+typed construction median <=0.85x stack-then-cast, exact stable hashes/shapes,
+and the full pipeline plus shard tests pass. KILL: ratio >0.98 or parity failure;
+otherwise MIXED. No storage/data semantic or live change.
+**VERDICT: FAILED; no code change.** Nine alternating rounds measured
+stack-then-cast at 52.572ms and direct typed construction at 53.141ms, ratio
+1.011 over the kill threshold. Both paths retained exact stable hash
+`ab8a3ddae7131ca8`. NumPy's stack path offsets the avoided temporary with more
+efficient bulk copying; retain the original implementation. The one-off
+candidate harness was removed rather than adding dead tooling.
+
+**NumPy stack-dtype fusion experiment -- UNREAD (2026-07-12).** NumPy 2 exposes
+a distinct `np.stack(..., dtype=np.float16)` kernel, unlike the failed generic
+`np.asarray(list, dtype=...)` path. Hypothesis: dtype-aware stack fuses the
+bulk stack/cast without sacrificing the optimized stack implementation. ONE
+deciding yardstick: `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_shard_stack_dtype.py --positions 500 --rounds 9`. SUCCESS:
+candidate <=0.85x reference with exact stable hash and shard tests; KILL >0.98x
+or parity failure; otherwise MIXED. Requires NumPy 2, already the production
+environment; packaging compatibility must be checked before shipping.
+**VERDICT: MIXED.** Nine alternating rounds measured 66.817ms reference vs
+56.855ms dtype-aware stack, ratio 0.850898, missing the 0.850000 success cutoff
+by 0.09 percentage point while retaining exact hash `572af13523110668`. Do not
+call this first gate WORKED. The candidate is retained only for the separately
+registered modest-gain replication below because it also removes the explicit
+post-stack cast and the user-approved policy accepts small simplifying wins.
+
+**NumPy stack-dtype modest-gain replication -- UNREAD (2026-07-12).**
+Hypothesis: the exact alternating rerun reproduces a useful >=5% gain from the
+simpler dtype-aware stack despite missing the intentionally aggressive first
+gate. ONE deciding yardstick is the same nine-round command. SUCCESS: candidate
+<=0.95x, exact stable hash, NumPy 1.24 API compatibility confirmed, full
+pipeline >=2% faster, and shard tests/lint pass. Otherwise FAILED and revert.
+No semantic/live change.
+**VERDICT: WORKED.** The exact replication measured 56.682ms reference vs
+52.918ms dtype-aware stack, ratio 0.934 (6.6% faster), with exact stable hash
+`572af13523110668`. NumPy documents the `dtype` stack parameter as added in
+1.24, exactly the project's minimum dependency. Through the real zstd2 writer,
+conversion improved 149.559→138.506ms and total materialization
+378.597→362.847ms (4.2%), with unchanged full array hash `4f4eb31bc2e62c50`
+and 2,406,400-byte tar. All 58 shard/server/worker-buffer tests pass and lint is
+clean. Keep the simpler dtype-aware stack.
+
+**Concurrent Blosc thread-count experiment -- UNREAD (2026-07-12).**
+`numcodecs.blosc.get_nthreads()` defaults to 8 in every worker process; four
+simultaneous shard writes can therefore launch 32 compression threads on the
+8-physical-core production host, alongside Stockfish/selfplay. Hypothesis:
+limiting each worker's zstd2 write to 1/2/4 threads improves aggregate four-
+worker completion time by reducing oversubscription. ONE deciding yardstick:
+`PYTHONPATH=. TMPDIR=/tmp taskset -c 0,2,4,6,8,10,12,14 python3
+scripts/bench_concurrent_shard_writers.py --positions 500 --workers 4 --rounds
+7`, alternating Blosc thread counts 1/2/4/8 on identical arrays and eight
+physical cores. SUCCESS: a lower count median aggregate wall <=0.85x 8-thread
+baseline, exact stable decoded hashes and sizes; choose fastest qualifier. KILL:
+all lower counts >0.95x; otherwise MIXED. A production change must scope/restore
+the process-global Blosc setting around the single serialized writer and pass
+shard/worker tests. No data semantics/live activation.
+**VERDICT: MIXED; no production change.** Four-worker medians relative to the
+8-thread default were: 1 thread 0.935x, 2 threads 1.021x, and 4 threads 0.913x.
+All outputs had identical 2,213,225-byte size and exact stable hash
+`bd974f1197c70c97`. Lower thread counts reduce oversubscription slightly, but
+none clears the 0.85 success gate; a scoped process-global Blosc mutation is
+not justified for an 8.7% noisy scheduling point gain. Retain the library
+default and the independently successful zstd2 change. The one-off benchmark
+was removed rather than shipped as maintenance surface.
+
+**Dense x_lc0_root shard-stack experiment -- UNREAD (2026-07-12).** Production
+rows carry the alternate LC0-root planes densely, but `samples_to_arrays`
+currently zero-allocates the optional array and casts/copies 500 rows through
+the generic Python loop. Hypothesis: when every row carries `x_lc0_root`, one
+dtype-aware stack plus filled presence flags is faster and exact, while the
+existing generic path remains for mixed/missing shards. ONE deciding yardstick:
+paired real-pipeline runs of `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_worker_shard_pipeline.py --positions 500 --rounds 7`. SUCCESS:
+conversion <=0.90x and total materialization <=0.97x baseline, exact stable
+full hash/tar size, dense and mixed optional-field tests pass. KILL: conversion
+>0.98x or parity failure; otherwise MIXED. No semantic/live change.
+**VERDICT: FAILED and reverted.** Paired production-pipeline reads measured
+baseline/candidate conversion 132.000/148.444ms (1.125x) and total
+materialization 336.195/360.219ms (1.071x), over the kill threshold, while the
+exact hash `4f4eb31bc2e62c50` and 1,679,360-byte tar stayed unchanged. The
+preallocated row-assignment path is faster than another dense stack for this
+optional field; retain it.
+
+**Worker duplicate-value-validation experiment -- UNREAD (2026-07-12).** The
+worker's trusted `ReplaySample` conversion scans every dense array for finite,
+range, and distribution validity before local zarr write; the server then
+eagerly reloads the upload and executes the same `validate_arrays` before
+acceptance. Hypothesis: retain structural/declaration validation locally but
+defer full value scans to the authoritative server for worker-generated shards,
+removing duplicate CPU without weakening the training trust boundary. All
+other `save_local_shard_arrays` callers retain full validation by default. ONE
+deciding yardstick: paired `PYTHONPATH=. TMPDIR=/tmp taskset -c 15 python3
+scripts/bench_worker_shard_pipeline.py --positions 500 --rounds 7`. SUCCESS:
+total materialization <=0.90x baseline, exact hash/tar size, a deliberately
+NaN worker shard is writable locally only through the explicit option and is
+rejected/quarantined by the server, default writer still rejects it, and
+worker/server/shard tests pass. KILL: >0.98x or any validation-boundary failure;
+otherwise MIXED. No accepted data semantics/live change.
+**VERDICT: MIXED; reverted.** The paired pipeline measured baseline/candidate
+total materialization 370.326/339.809ms (0.918x), short of the 0.90 success
+gate, while the directly affected zarr stage moved only 209.067/203.215ms
+(0.972x). Conversion noise supplied most of the apparent total gain. Exact
+hash `4f4eb31bc2e62c50` and 1,679,360-byte tar matched, but a 2.8% stage gain
+does not justify weakening early local fault detection or adding a validation
+mode. Keep full worker and server validation.

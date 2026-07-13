@@ -350,10 +350,11 @@ class BatchCoalescingDispatcher:
                 pol_offset = 0
                 for request in batch:
                     n = request.x.shape[0]
-                    n_pol = (
-                        int(request.legal_counts.sum())
-                        if request.legal_counts is not None else n
-                    )
+                    if request.legal_counts is not None:
+                        assert request.legal_flat is not None
+                        n_pol = int(request.legal_flat.size)
+                    else:
+                        n_pol = n
                     request.result[0] = (
                         pol[pol_offset:pol_offset + n_pol],
                         wdl[row_offset:row_offset + n],

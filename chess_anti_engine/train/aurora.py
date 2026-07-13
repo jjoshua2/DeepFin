@@ -123,12 +123,14 @@ def _polar_factor(
     eps: float,
     safety: float,
     work_dtype: torch.dtype | None,
+    polar_express_fn: Callable[..., Tensor] | None = None,
 ) -> Tensor:
     method = str(method).lower()
     if method in ("simple", "simple_quintic", "quintic"):
         return _polar_quintic(mat, steps=steps, eps=eps, work_dtype=work_dtype)
     if method in ("polar_express", "pe", "pe8"):
-        return _polar_express(mat, steps=steps, eps=eps, safety=safety, work_dtype=work_dtype)
+        function = _polar_express if polar_express_fn is None else polar_express_fn
+        return function(mat, steps=steps, eps=eps, safety=safety, work_dtype=work_dtype)
     raise ValueError(f"Unknown Aurora polar method {method!r}. Supported: simple, polar_express")
 
 
@@ -142,6 +144,8 @@ def _aurora_update(
     polar_dtype: str | torch.dtype | None = None,
     polar_safety: float = 1.01,
     eps: float = 1e-7,
+    polar_express_fn: Callable[..., Tensor] | None = None,
+    check_finite: bool = True,
 ) -> Tensor:
     """Leverage-uniform polar update for a 2D matrix."""
     if update.ndim != 2:
@@ -161,6 +165,7 @@ def _aurora_update(
             eps=eps,
             safety=polar_safety,
             work_dtype=work_dtype,
+            polar_express_fn=polar_express_fn,
         )
     else:
         transposed = orig_rows < orig_cols
@@ -181,6 +186,7 @@ def _aurora_update(
                 eps=eps,
                 safety=polar_safety,
                 work_dtype=work_dtype,
+                polar_express_fn=polar_express_fn,
             ).to(torch.float32)
             if k < int(pp_iterations) - 1:
                 row_sq = out_f.pow(2).sum(dim=-1, keepdim=True).clamp_min(eps * eps)
@@ -189,11 +195,60 @@ def _aurora_update(
         out = out_f.transpose(0, 1) if transposed else out_f
 
     out = out * math.sqrt(max(1.0, float(orig_rows) / max(1.0, float(orig_cols))))
-    if not torch.isfinite(out).all():
+    if check_finite and not torch.isfinite(out).all():
         raise RuntimeError(
             f"Aurora produced non-finite update for matrix shape {(orig_rows, orig_cols)}"
         )
     return out.to(update.dtype)
+
+
+class _CapturedAuroraUpdate:
+    """Exact eager Aurora-update replay for one fixed CUDA parameter."""
+
+    def __init__(
+        self,
+        sample: Tensor,
+        *,
+        pp_iterations: int,
+        pp_beta: float,
+        polar_steps: int,
+        polar_method: str,
+        polar_dtype: str | torch.dtype | None,
+        polar_safety: float,
+        eps: float,
+    ) -> None:
+        self.static_input = torch.empty_like(sample)
+        self.static_input.copy_(sample)
+
+        def run() -> Tensor:
+            return _aurora_update(
+                self.static_input,
+                pp_iterations=pp_iterations,
+                pp_beta=pp_beta,
+                polar_steps=polar_steps,
+                polar_method=polar_method,
+                polar_dtype=polar_dtype,
+                polar_safety=polar_safety,
+                eps=eps,
+                check_finite=False,
+            )
+
+        warmup_stream = torch.cuda.Stream(device=sample.device)
+        warmup_stream.wait_stream(torch.cuda.current_stream(sample.device))
+        with torch.cuda.stream(warmup_stream):
+            for _ in range(3):
+                run()
+        torch.cuda.current_stream(sample.device).wait_stream(warmup_stream)
+        torch.cuda.synchronize(sample.device)
+
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph):
+            self.static_output = run()
+
+    def __call__(self, update: Tensor) -> Tensor:
+        self.static_input.copy_(update)
+        self.graph.replay()
+        return self.static_output
 
 
 def _uw_stats(ratios: list[Tensor], scales: list[Tensor], *, lr: float, floor: float) -> dict[str, float]:
@@ -237,6 +292,8 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         aurora_polar_method: str = "simple",
         aurora_polar_dtype: str | torch.dtype | None = None,
         aurora_polar_safety: float = 1.01,
+        aurora_cuda_graphs: bool = True,
+        aurora_coalesce_finite_checks: bool = True,
         adam_betas: tuple[float, float] = (0.9, 0.95),
         adam_eps: float = 1e-8,
     ) -> None:
@@ -258,6 +315,70 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         }
         super().__init__(params, defaults)
         self.last_uw_stats: dict[str, float] = {}
+        self._collect_uw_stats = True
+        self._use_update_graphs = bool(aurora_cuda_graphs)
+        self._coalesce_finite_checks = bool(aurora_coalesce_finite_checks)
+        self._update_graphs: dict[tuple[object, ...], _CapturedAuroraUpdate] = {}
+
+    def set_collect_uw_stats(self, collect: bool) -> None:
+        """Collect zero-floor diagnostics on this step when requested."""
+        self._collect_uw_stats = bool(collect)
+
+    def _aurora_update_for_param(
+        self,
+        param: Tensor,
+        update: Tensor,
+        *,
+        pp_iterations: int,
+        pp_beta: float,
+        polar_steps: int,
+        polar_method: str,
+        polar_dtype: str | torch.dtype | None,
+        polar_safety: float,
+        eps: float,
+    ) -> Tensor:
+        use_graph = (
+            update.device.type == "cuda"
+            and self._use_update_graphs
+            and self._coalesce_finite_checks
+            and str(polar_method).lower() in ("polar_express", "pe", "pe8")
+        )
+        if not use_graph:
+            return _aurora_update(
+                update,
+                pp_iterations=pp_iterations,
+                pp_beta=pp_beta,
+                polar_steps=polar_steps,
+                polar_method=polar_method,
+                polar_dtype=polar_dtype,
+                polar_safety=polar_safety,
+                eps=eps,
+                check_finite=not self._coalesce_finite_checks,
+            )
+        key = (
+            param,
+            int(pp_iterations),
+            float(pp_beta),
+            int(polar_steps),
+            str(polar_method),
+            polar_dtype,
+            float(polar_safety),
+            float(eps),
+        )
+        captured = self._update_graphs.get(key)
+        if captured is None:
+            captured = _CapturedAuroraUpdate(
+                update,
+                pp_iterations=pp_iterations,
+                pp_beta=pp_beta,
+                polar_steps=polar_steps,
+                polar_method=polar_method,
+                polar_dtype=polar_dtype,
+                polar_safety=polar_safety,
+                eps=eps,
+            )
+            self._update_graphs[key] = captured
+        return captured(update)
 
     @torch.no_grad()
     def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -274,6 +395,8 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
             if use_aurora:
                 uw_ratios: list[Tensor] = []
                 uw_scales: list[Tensor] = []
+                pending_updates: list[tuple[Tensor, Tensor]] = []
+                finite_checks: list[Tensor] = []
                 momentum = float(group.get("aurora_momentum", 0.95))
                 nesterov = bool(group.get("aurora_nesterov", True))
                 pp_iterations = int(group.get("aurora_pp_iterations", 2))
@@ -283,6 +406,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                 polar_dtype = group.get("aurora_polar_dtype", None)
                 polar_safety = float(group.get("aurora_polar_safety", 1.01))
                 uw_floor = float(group.get("aurora_uw_floor", 0.0))
+                collect_uw_stats = self._collect_uw_stats or uw_floor > 0.0
                 eps = float(group.get("eps", 1e-8))
                 for param in group["params"]:
                     if param.grad is None:
@@ -302,7 +426,8 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                         state["momentum_buffer"] = buf
                     buf.mul_(momentum).add_(grad, alpha=1.0 - momentum)
                     update = torch.lerp(grad, buf, momentum) if nesterov else buf
-                    update = _aurora_update(
+                    update = self._aurora_update_for_param(
+                        param,
                         update,
                         pp_iterations=pp_iterations,
                         pp_beta=pp_beta,
@@ -312,24 +437,41 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                         polar_safety=polar_safety,
                         eps=eps,
                     )
-                    weight_fro = param.float().norm().clamp_min(eps)
-                    update_fro = update.float().norm().clamp_min(eps)
-                    uw_ratio = update_fro / weight_fro
-                    scale = torch.ones((), dtype=torch.float32, device=update.device)
-                    if uw_floor > 0.0:
-                        ratio_ok = torch.isfinite(uw_ratio) & (uw_ratio > 0.0)
-                        floor = torch.as_tensor(float(uw_floor), dtype=torch.float32, device=update.device)
-                        safe_ratio = torch.where(ratio_ok, uw_ratio, torch.ones_like(uw_ratio))
-                        scale = torch.where(
-                            ratio_ok,
-                            torch.clamp_min(floor / safe_ratio, 1.0),
-                            scale,
-                        )
-                        update = update * scale.to(update.dtype)
-                    uw_ratios.append(uw_ratio.detach())
-                    uw_scales.append(scale.detach())
-                    param.add_(update, alpha=-lr)
-                self.last_uw_stats = _uw_stats(uw_ratios, uw_scales, lr=lr, floor=uw_floor)
+                    if collect_uw_stats:
+                        weight_fro = param.float().norm().clamp_min(eps)
+                        update_fro = update.float().norm().clamp_min(eps)
+                        uw_ratio = update_fro / weight_fro
+                        scale = torch.ones((), dtype=torch.float32, device=update.device)
+                        if uw_floor > 0.0:
+                            ratio_ok = torch.isfinite(uw_ratio) & (uw_ratio > 0.0)
+                            floor = torch.as_tensor(
+                                float(uw_floor), dtype=torch.float32, device=update.device,
+                            )
+                            safe_ratio = torch.where(
+                                ratio_ok, uw_ratio, torch.ones_like(uw_ratio),
+                            )
+                            scale = torch.where(
+                                ratio_ok,
+                                torch.clamp_min(floor / safe_ratio, 1.0),
+                                scale,
+                            )
+                            update = update * scale.to(update.dtype)
+                        uw_ratios.append(uw_ratio.detach())
+                        uw_scales.append(scale.detach())
+                    if self._coalesce_finite_checks:
+                        finite_checks.append(torch.isfinite(update).all())
+                        pending_updates.append((param, update))
+                    else:
+                        param.add_(update, alpha=-lr)
+                if self._coalesce_finite_checks and finite_checks:
+                    if not torch.stack(finite_checks).all():
+                        raise RuntimeError("Aurora produced a non-finite matrix update")
+                    for param, update in pending_updates:
+                        param.add_(update, alpha=-lr)
+                if collect_uw_stats:
+                    self.last_uw_stats = _uw_stats(
+                        uw_ratios, uw_scales, lr=lr, floor=uw_floor,
+                    )
                 continue
 
             beta1, beta2 = tuple(group.get("betas", (0.9, 0.95)))

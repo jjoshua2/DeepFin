@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from chess_anti_engine.replay import ReplaySample
 from chess_anti_engine.replay.shard import arrays_to_samples, load_shard_arrays
@@ -340,6 +342,77 @@ def test_worker_buffer_preserves_original_model_metadata_across_retries(tmp_path
     assert meta["model_sha256"] == "oldmodel"
     assert meta["model_step"] == 21
 
+
+def test_worker_pending_shard_names_are_unique_with_same_metadata_and_time(tmp_path) -> None:
+    paths = []
+    for _ in range(2):
+        buf = _BufferedUpload()
+        _buffer_add_completed_game(
+            buf=buf,
+            game_batch=_game_batch(2),
+            now_s=500.0,
+            model_sha="same-model",
+            model_step=21,
+        )
+        shard_path, _ = _flush_upload_buffer_to_pending(
+            pending_dir=tmp_path,
+            username="worker",
+            buf=buf,
+            now_s=501.0,
+        )
+        assert shard_path is not None
+        paths.append(shard_path)
+
+    assert paths[0] != paths[1]
+    assert all(path.exists() for path in paths)
+
+
+def test_worker_pending_sidecar_failure_keeps_buffer_and_removes_shard(
+    monkeypatch, tmp_path,
+) -> None:
+    buf = _BufferedUpload()
+    _buffer_add_completed_game(
+        buf=buf,
+        game_batch=_game_batch(2),
+        now_s=500.0,
+        model_sha="model",
+        model_step=1,
+    )
+    original_write_text = Path.write_text
+
+    def _fail_elapsed_write(path, *args, **kwargs):
+        if path.name.endswith(".elapsed_s"):
+            raise OSError("sidecar write failed")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", _fail_elapsed_write)
+
+    with pytest.raises(OSError, match="sidecar write failed"):
+        _flush_upload_buffer_to_pending(
+            pending_dir=tmp_path,
+            username="worker",
+            buf=buf,
+            now_s=501.0,
+        )
+
+    assert buf.positions == 2
+    assert len(buf.samples) == 2
+    assert not list(tmp_path.glob("*.zarr"))
+    assert not list(tmp_path.glob("*.elapsed_s"))
+
+
+def test_worker_buffer_cap_counts_detached_positions() -> None:
+    buf = _BufferedUpload()
+    _buffer_add_completed_game(
+        buf=buf,
+        game_batch=_game_batch(2),
+        now_s=500.0,
+        model_sha="model",
+        model_step=1,
+        max_positions=5,
+        buffered_positions_offset=4,
+    )
+    assert buf.positions == 0
 
 def test_worker_buffer_tags_pending_shards_with_trial_id(tmp_path) -> None:
     buf = _BufferedUpload()

@@ -179,6 +179,52 @@ def test_dispatcher_legal_bf16_matches_dense_legal_logits():
         dispatcher.shutdown()
 
 
+def test_dispatcher_coalesced_legal_bf16_preserves_request_slices():
+    model = _make_model()
+    direct = DirectGPUEvaluator(model, device="cpu", max_batch=128, use_amp=False)
+    dispatcher = ThreadedDispatcher(model, device="cpu", max_batch=128, batch_wait_ms=20.0)
+    try:
+        rng = np.random.default_rng(20260712)
+        row_counts = (2, 3, 5, 7)
+        inputs = [_rand_batch(rng, rows) for rows in row_counts]
+        legal_counts = [
+            rng.integers(1, 9, size=rows, dtype=np.int32) for rows in row_counts
+        ]
+        legal_flat = [
+            rng.integers(0, 4672, size=int(counts.sum()), dtype=np.int32)
+            for counts in legal_counts
+        ]
+        expected: list[tuple[np.ndarray, np.ndarray]] = []
+        for x, flat, counts in zip(inputs, legal_flat, legal_counts, strict=True):
+            dense_pol, dense_wdl = direct.evaluate_encoded(x)
+            rows = np.repeat(np.arange(x.shape[0]), counts)
+            compact_pol = (
+                torch.from_numpy(dense_pol[rows, flat])
+                .to(torch.bfloat16)
+                .view(torch.uint16)
+                .numpy()
+            )
+            expected.append((compact_pol, dense_wdl))
+
+        barrier = threading.Barrier(len(inputs))
+
+        def producer(index: int) -> tuple[np.ndarray, np.ndarray]:
+            barrier.wait()
+            return dispatcher.evaluate_legal_bf16(
+                inputs[index], legal_flat[index], legal_counts[index],
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(inputs)) as pool:
+            actual = list(pool.map(producer, range(len(inputs))))
+
+        for result, baseline in zip(actual, expected, strict=True):
+            np.testing.assert_array_equal(result[0], baseline[0])
+            np.testing.assert_allclose(result[1], baseline[1], rtol=1e-5, atol=1e-5)
+        assert dispatcher.stats["avg_requests_per_batch"] > 1
+    finally:
+        dispatcher.shutdown()
+
+
 def test_dispatcher_decodes_bf16_input_when_full_input_bf16_disabled():
     model = _make_model()
     direct = DirectGPUEvaluator(model, device="cpu", max_batch=128, use_amp=False)

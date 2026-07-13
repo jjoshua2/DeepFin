@@ -7,7 +7,7 @@ import subprocess
 import termios
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -50,52 +50,131 @@ class StockfishResult:
     depth: int | None = None  # depth reached (last info line)
 
 
-def _int_after(parts: list[str], token: str) -> int | None:
-    try:
-        return int(parts[parts.index(token) + 1])
-    except (ValueError, IndexError):
+def _normalize_wdl_counts(counts: tuple[int, int, int] | None) -> np.ndarray | None:
+    if counts is None:
         return None
-
-
-def _parse_score(parts: list[str]) -> tuple[int | None, int | None]:
-    try:
-        score_idx = parts.index("score")
-        score_kind = parts[score_idx + 1]
-        score_arg = int(parts[score_idx + 2])
-    except (ValueError, IndexError):
-        return None, None
-    if score_kind == "cp":
-        return score_arg, None
-    if score_kind == "mate":
-        return None, score_arg
-    return None, None
-
-
-def _parse_wdl(parts: list[str]) -> np.ndarray | None:
-    try:
-        wdl_idx = parts.index("wdl")
-        vec = np.array(
-            [
-                int(parts[wdl_idx + 1]),
-                int(parts[wdl_idx + 2]),
-                int(parts[wdl_idx + 3]),
-            ],
-            dtype=np.float32,
-        )
-    except (ValueError, IndexError):
-        return None
+    vec = np.asarray(counts, dtype=np.float32)
     total = float(vec.sum())
     return vec / total if total > 0.0 else None
 
 
-def _parse_pv_move(parts: list[str]) -> str | None:
-    try:
-        pv_idx = parts.index("pv")
-    except ValueError:
-        return None
-    if pv_idx + 1 >= len(parts):
-        return None
-    return parts[pv_idx + 1]
+def _parse_info_fields(
+    parts: list[str],
+) -> tuple[
+    int | None,
+    int | None,
+    int | None,
+    int | None,
+    int | None,
+    tuple[int, int, int] | None,
+    str | None,
+]:
+    """Parse the UCI fields selfplay retains with one token scan.
+
+    WDL stays as integer permille counts. Search normalizes only the final
+    retained line for each MultiPV rank instead of allocating a NumPy vector
+    at every intermediate depth.
+    """
+    mpv = nodes = depth = cp = mate = None
+    wdl_counts: tuple[int, int, int] | None = None
+    pv_move = None
+    idx = 0
+    n_parts = len(parts)
+    while idx < n_parts:
+        token = parts[idx]
+        try:
+            if token == "multipv" and idx + 1 < n_parts:
+                mpv = int(parts[idx + 1])
+                idx += 2
+                continue
+            if token == "nodes" and idx + 1 < n_parts:
+                nodes = int(parts[idx + 1])
+                idx += 2
+                continue
+            if token == "depth" and idx + 1 < n_parts:
+                depth = int(parts[idx + 1])
+                idx += 2
+                continue
+            if token == "score" and idx + 2 < n_parts:
+                score_kind = parts[idx + 1]
+                score_arg = int(parts[idx + 2])
+                if score_kind == "cp":
+                    cp = score_arg
+                elif score_kind == "mate":
+                    mate = score_arg
+                idx += 3
+                continue
+            if token == "wdl" and idx + 3 < n_parts:
+                wdl_counts = (
+                    int(parts[idx + 1]),
+                    int(parts[idx + 2]),
+                    int(parts[idx + 3]),
+                )
+                idx += 4
+                continue
+            if token == "pv" and idx + 1 < n_parts:
+                pv_move = parts[idx + 1]
+                break
+        except ValueError:
+            # Preserve the tolerant legacy parser: one malformed optional
+            # field does not discard other usable fields on the info line.
+            pass
+        idx += 1
+    return mpv, nodes, depth, cp, mate, wdl_counts, pv_move
+
+
+@dataclass
+class _SearchInfoAccumulator:
+    """Latest UCI search fields, retaining raw WDL until final materialization."""
+
+    wdl_pv1_counts: tuple[int, int, int] | None = None
+    cp_pv1: int | None = None
+    mate_pv1: int | None = None
+    nodes_seen: int | None = None
+    depth_seen: int | None = None
+    pvs: dict[
+        int,
+        tuple[str, tuple[int, int, int] | None, int | None, int | None],
+    ] = field(default_factory=dict)
+
+    def consume(self, parts: list[str]) -> None:
+        mpv_val, nodes, depth, cp, mate, wdl_counts, pv_move = _parse_info_fields(parts)
+        mpv = mpv_val or 1
+        if nodes is not None:
+            self.nodes_seen = nodes
+        if depth is not None:
+            self.depth_seen = max(self.depth_seen or 0, depth)
+        if mpv == 1:
+            if wdl_counts is not None:
+                self.wdl_pv1_counts = wdl_counts
+            if cp is not None:
+                self.cp_pv1 = cp
+                self.mate_pv1 = None
+            if mate is not None:
+                self.mate_pv1 = mate
+                self.cp_pv1 = None
+        if pv_move is not None:
+            self.pvs[mpv] = (pv_move, wdl_counts, cp, mate)
+
+    def result(self, bestmove: str | None) -> StockfishResult:
+        pv_list = [
+            StockfishPV(
+                move_uci=self.pvs[k][0],
+                wdl=_normalize_wdl_counts(self.pvs[k][1]),
+                cp=self.pvs[k][2],
+                mate=self.pvs[k][3],
+            )
+            for k in sorted(self.pvs)
+        ]
+        return StockfishResult(
+            bestmove_uci=bestmove or "0000",
+            wdl=_normalize_wdl_counts(self.wdl_pv1_counts),
+            pvs=pv_list,
+            cp=self.cp_pv1,
+            mate=self.mate_pv1,
+            nodes=self.nodes_seen,
+            depth=self.depth_seen,
+        )
 
 
 class StockfishUCI:
@@ -280,66 +359,18 @@ class StockfishUCI:
             self._send(f"go nodes {n}")
 
             bestmove = None
-            wdl_pv1 = None
-            cp_pv1: int | None = None
-            mate_pv1: int | None = None
-            nodes_seen: int | None = None
-            depth_seen: int | None = None
-            pvs: dict[int, StockfishPV] = {}
+            info = _SearchInfoAccumulator()
             deadline = time.monotonic() + self.read_timeout_s
 
             while True:
                 line = self._readline_with_deadline(deadline).strip()
 
                 if line.startswith("info"):
-                    parts = line.split()
-
-  # multipv index (default 1 if absent)
-                    mpv = _int_after(parts, "multipv") or 1
-
-                    nodes_val = _int_after(parts, "nodes")
-                    if nodes_val is not None:
-                        nodes_seen = nodes_val
-                    depth_val = _int_after(parts, "depth")
-                    if depth_val is not None:
-                        depth_seen = max(depth_seen or 0, depth_val)
-
-  # parse score (cp / mate) if present
-                    cp_val, mate_val = _parse_score(parts)
-
-  # parse WDL if present
-                    wdl_vec = _parse_wdl(parts)
-
-  # parse PV first move if present
-                    pv_move = _parse_pv_move(parts)
-
-                    if mpv == 1:
-                        if wdl_vec is not None:
-                            wdl_pv1 = wdl_vec
-                        if cp_val is not None:
-                            cp_pv1 = cp_val
-                            mate_pv1 = None
-                        if mate_val is not None:
-                            mate_pv1 = mate_val
-                            cp_pv1 = None
-
-                    if pv_move is not None:
-                        pvs[mpv] = StockfishPV(
-                            move_uci=pv_move, wdl=wdl_vec, cp=cp_val, mate=mate_val
-                        )
+                    info.consume(line.split())
 
                 if line.startswith("bestmove"):
                     toks = line.split()
                     bestmove = toks[1] if len(toks) > 1 else None
                     break
 
-            pv_list = [pvs[k] for k in sorted(pvs.keys())]
-            return StockfishResult(
-                bestmove_uci=bestmove or "0000",
-                wdl=wdl_pv1,
-                pvs=pv_list,
-                cp=cp_pv1,
-                mate=mate_pv1,
-                nodes=nodes_seen,
-                depth=depth_seen,
-            )
+            return info.result(bestmove)

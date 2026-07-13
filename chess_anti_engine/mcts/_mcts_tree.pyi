@@ -182,7 +182,9 @@ def classify_games(
     done: NDArray[np.int8],
     finalized: NDArray[np.int8],
     selfplay_game: NDArray[np.int8],
+    starting_ply: NDArray[np.int32],
     max_plies: int,
+    check_terminal: bool = True,
 ) -> tuple[NDArray[np.int32], NDArray[np.int32], NDArray[np.int32]]: ...
 
 def temperature_resample(

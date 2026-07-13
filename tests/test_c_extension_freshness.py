@@ -26,6 +26,7 @@ def _write_all_sources(root: Path, *, mtime_ns: int = 10) -> None:
         "chess_anti_engine/encoding/_lc0_ext.c",
         "chess_anti_engine/encoding/_cboard_impl.h",
         "chess_anti_engine/encoding/_features_impl.h",
+        "chess_anti_engine/encoding/_bitboard_planes_impl.h",
         "chess_anti_engine/mcts/_mcts_tree.c",
     ):
         _write(root / rel, mtime_ns=mtime_ns)
@@ -89,6 +90,22 @@ def test_check_extensions_treats_feature_header_as_dependency(tmp_path: Path):
     ) in issues
 
 
+def test_check_extensions_treats_bitboard_header_as_dependency(tmp_path: Path):
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    header = "chess_anti_engine/encoding/_bitboard_planes_impl.h"
+    _write(tmp_path / header, mtime_ns=30)
+
+    issues = check_extensions(tmp_path)
+
+    for module in (
+        "chess_anti_engine.encoding._features_ext",
+        "chess_anti_engine.encoding._lc0_ext",
+        "chess_anti_engine.mcts._mcts_tree",
+    ):
+        assert f"{module} is older than {header}" in issues
+
+
 def test_check_extensions_uses_python_import_suffix_order(tmp_path: Path):
     suffixes = importlib.machinery.EXTENSION_SUFFIXES
     if len(suffixes) < 2:
@@ -103,3 +120,59 @@ def test_check_extensions_uses_python_import_suffix_order(tmp_path: Path):
     issues = check_extensions(tmp_path)
 
     assert f"{module} is older than {source}" in issues
+
+
+def test_check_extensions_can_require_production_gcc_major(tmp_path: Path) -> None:
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    for module in (
+        "chess_anti_engine.encoding._features_ext",
+        "chess_anti_engine.encoding._lc0_ext",
+        "chess_anti_engine.mcts._mcts_tree",
+    ):
+        output = _extension_output(tmp_path, module)
+        output.write_bytes(b"binary\x00GCC: (Ubuntu 11.4.0) 11.4.0\x00")
+        os.utime(output, ns=(20, 20))
+
+    issues = check_extensions(tmp_path, min_gcc_major=15)
+
+    assert len([issue for issue in issues if "production requires GCC >= 15" in issue]) == 3
+
+
+def test_check_extensions_accepts_production_gcc_major(tmp_path: Path) -> None:
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    for module in (
+        "chess_anti_engine.encoding._features_ext",
+        "chess_anti_engine.encoding._lc0_ext",
+        "chess_anti_engine.mcts._mcts_tree",
+    ):
+        output = _extension_output(tmp_path, module)
+        output.write_bytes(b"binary\x00GCC: (GNU) 15.3.0\x00")
+        os.utime(output, ns=(20, 20))
+
+    assert check_extensions(tmp_path, min_gcc_major=15) == []
+
+
+def test_check_extensions_rejects_unrecorded_production_recipe(tmp_path: Path) -> None:
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+
+    issues = check_extensions(tmp_path, require_production_recipe=True)
+
+    assert len([issue for issue in issues if "native+LTO production recipe" in issue]) == 3
+
+
+def test_check_extensions_accepts_recorded_production_recipe(tmp_path: Path) -> None:
+    _write_all_sources(tmp_path, mtime_ns=10)
+    _write_all_extensions(tmp_path, mtime_ns=20)
+    for module in (
+        "chess_anti_engine.encoding._features_ext",
+        "chess_anti_engine.encoding._lc0_ext",
+        "chess_anti_engine.mcts._mcts_tree",
+    ):
+        output = _extension_output(tmp_path, module)
+        output.write_bytes(b"ELF\x00-march=znver3\x00-fltrans\x00")
+        os.utime(output, ns=(20, 20))
+
+    assert check_extensions(tmp_path, require_production_recipe=True) == []

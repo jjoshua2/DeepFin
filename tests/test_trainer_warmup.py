@@ -9,6 +9,7 @@ import torch
 
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import INPUT_HISTORY_ENCODING_ARRAY_KEY, samples_to_arrays
+from chess_anti_engine.train.aurora import AuroraWithAuxAdam
 from chess_anti_engine.train.soda import SODAWeightDecayWrapper
 from chess_anti_engine.train.trainer import (
     Trainer,
@@ -523,6 +524,7 @@ def test_sqrt_release_zero_cycle_uses_train_window(
     )
     base_lrs = trainer._base_lrs()
     seen_lrs: list[list[float]] = []
+    seen_collect: list[bool] = []
 
     def fake_run_optimizer_step(
         *,
@@ -531,9 +533,11 @@ def test_sqrt_release_zero_cycle_uses_train_window(
         buf: Any,
         batch_size: int,
         update_lr: bool = True,
+        collect_optimizer_stats: bool = True,
     ) -> tuple[int, float]:
         del step_acc_sums, buf, batch_size
         assert update_lr is False
+        seen_collect.append(bool(collect_optimizer_stats))
         seen_lrs.append([float(pg["lr"]) for pg in trainer.opt.param_groups])
         for key in (
             "loss",
@@ -557,6 +561,7 @@ def test_sqrt_release_zero_cycle_uses_train_window(
 
     assert seen_lrs[0] == base_lrs
     assert seen_lrs[85] == base_lrs
+    assert seen_collect == [False] * 99 + [True]
     for got, base_lr in zip(seen_lrs[-1], base_lrs, strict=True):
         assert abs(got - (base_lr * 0.1)) < 1e-12
     assert [float(pg["lr"]) for pg in trainer.opt.param_groups] == seen_lrs[-1]
@@ -606,8 +611,9 @@ def test_sqrt_release_zero_cycle_switches_after_warmup(
         buf: Any,
         batch_size: int,
         update_lr: bool = True,
+        collect_optimizer_stats: bool = True,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size
+        del step_acc_sums, buf, batch_size, collect_optimizer_stats
         seen.append((int(trainer.step), bool(update_lr), [float(pg["lr"]) for pg in trainer.opt.param_groups]))
         for key in (
             "loss",
@@ -641,6 +647,8 @@ def test_sqrt_release_zero_cycle_switches_after_warmup(
 
 def test_aurora_uses_matrix_lr_and_adam_fallback_lr(tmp_path: Path) -> None:
     trainer = _make_aurora_trainer(tmp_path)
+    assert isinstance(trainer.opt, AuroraWithAuxAdam)
+    assert trainer.opt._use_update_graphs is True
     aurora_groups = [pg for pg in trainer.opt.param_groups if pg.get("use_aurora", False)]
     fallback_groups = [pg for pg in trainer.opt.param_groups if not pg.get("use_aurora", False)]
     named_params = dict(trainer.model.named_parameters())
@@ -652,6 +660,27 @@ def test_aurora_uses_matrix_lr_and_adam_fallback_lr(tmp_path: Path) -> None:
     assert float(aurora_groups[0]["lr"]) == float(fallback_groups[0]["lr"]) * 20.0
     assert id(named_params["blocks.0.weight"]) in aurora_param_ids
     assert id(named_params["embed.weight"]) in fallback_param_ids
+
+
+def test_aurora_cuda_graphs_can_be_disabled(tmp_path: Path) -> None:
+    kwargs = trainer_kwargs_from_config(
+        {"optimizer": "aurora", "aurora_cuda_graphs": False},
+        log_dir=tmp_path,
+    )
+    assert kwargs["aurora_cuda_graphs"] is False
+    trainer = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="aurora",
+        aurora_cuda_graphs=kwargs["aurora_cuda_graphs"],
+        use_amp=False,
+        log_dir=tmp_path,
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    assert isinstance(trainer.opt, AuroraWithAuxAdam)
+    assert trainer.opt._use_update_graphs is False
 
 
 def test_aurora_accepts_matrix_lr_multiplier_and_weight_decay(tmp_path: Path) -> None:

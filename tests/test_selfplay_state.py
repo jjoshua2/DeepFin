@@ -13,6 +13,8 @@ end-to-end integration tests:
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock
 
 import chess
@@ -27,7 +29,9 @@ from chess_anti_engine.selfplay.config import (
     TemperatureConfig,
 )
 from chess_anti_engine.selfplay.opening import OpeningConfig
+from chess_anti_engine.selfplay.network_turn import _apply_forced_moves
 from chess_anti_engine.selfplay.state import SelfplayState, _StatsAcc
+from chess_anti_engine.selfplay.stockfish_turn import _push_curriculum_opponent_move
 
 
 def test_stats_acc_to_batch_stats_copies_counters():
@@ -171,6 +175,84 @@ def test_classify_active_slots_marks_timed_out():
     assert net_idxs == []
     assert sp_idxs == []
     assert cur_idxs == []
+
+
+@pytest.mark.parametrize("use_c_classifier", [False, True])
+def test_classify_timeout_counts_plies_from_fen_seed(use_c_classifier: bool):
+    """A high-fullmove FEN gets its full max_plies budget on both paths."""
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+
+    state = _make_state(batch_size=1, max_plies=2)
+    if use_c_classifier:
+        assert state.has_classify_c
+    else:
+        state.has_classify_c = False
+
+    seed = chess.Board(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 69"
+    )
+    state.boards[0] = seed
+    state.cboards[0] = CBoard.from_board(seed)
+    assert state.starting_boards is not None
+    state.starting_boards[0] = seed.copy()
+    state.starting_ply_arr[0] = seed.ply()
+
+    net_idxs, sp_idxs, cur_idxs, _ = state.classify_active_slots()
+    assert state.done_arr[0] == 0
+    assert len(net_idxs) + len(sp_idxs) + len(cur_idxs) == 1
+
+    for _ in range(2):
+        legal = state.cboards[0].legal_move_indices()
+        state.cboards[0].push_index(int(legal[0]))
+    net_idxs, sp_idxs, cur_idxs, _ = state.classify_active_slots()
+    assert state.done_arr[0] == 1
+    assert net_idxs == []
+    assert sp_idxs == []
+    assert cur_idxs == []
+
+
+def _forced_terminal_state() -> Any:
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+
+    # Black has exactly one move, Kxg4, which leaves K+B vs K and therefore
+    # terminates by insufficient material.
+    board = chess.Board("8/8/8/8/6Qk/1b6/8/1K6 b - - 7 134")
+    assert not board.is_game_over(claim_draw=False)
+    assert len(list(board.legal_moves)) == 1
+    return cast(Any, SimpleNamespace(
+        cboards=[CBoard.from_board(board)],
+        boards=[board],
+        has_c_ply=True,
+        move_idx_history=[[]],
+        last_net_full=[False],
+        done_arr=np.zeros(1, dtype=np.int8),
+        mcts_tree=None,
+        root_ids=[-1],
+        samples_per_game=[[]],
+        rng=np.random.default_rng(0),
+    ))
+
+
+def test_forced_network_push_sets_authoritative_done_flag():
+    state = _forced_terminal_state()
+    assert _apply_forced_moves(state, [0]) == []
+    assert state.cboards[0].is_game_over()
+    assert state.done_arr[0] == 1
+
+
+def test_curriculum_push_sets_authoritative_done_flag():
+    state = _forced_terminal_state()
+    legal = state.cboards[0].legal_move_indices()
+    _push_curriculum_opponent_move(
+        state,
+        0,
+        legal_indices=legal,
+        cand_idxs=[int(legal[0])],
+        cand_scores=[0.0],
+        regret_limit=0.0,
+    )
+    assert state.cboards[0].is_game_over()
+    assert state.done_arr[0] == 1
 
 
 def test_selfplay_state_net_color_accessor():

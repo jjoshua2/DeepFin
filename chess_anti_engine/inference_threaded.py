@@ -546,13 +546,20 @@ class ThreadedDispatcher:
         self._lifetime_pack_s += time.perf_counter() - t_pack0
         t0 = time.perf_counter()
         if compact:
-            legal_flat = np.concatenate([
-                np.asarray(item.legal_flat, dtype=np.int32) for item in items
-            ])
-            legal_counts = np.concatenate([
-                np.asarray(item.legal_counts, dtype=np.int32) for item in items
-            ])
-            real_pol_n = int(legal_counts.sum())
+            if len(items) == 1:
+                legal_flat = np.asarray(items[0].legal_flat, dtype=np.int32)
+                legal_counts = np.asarray(items[0].legal_counts, dtype=np.int32)
+            else:
+                legal_flat = np.concatenate([
+                    np.asarray(item.legal_flat, dtype=np.int32) for item in items
+                ])
+                legal_counts = np.concatenate([
+                    np.asarray(item.legal_counts, dtype=np.int32) for item in items
+                ])
+            # The evaluator validates sum(legal_counts) == legal_flat.size;
+            # reuse the already-known flat length instead of reducing counts
+            # again on every compact submission.
+            real_pol_n = int(legal_flat.size)
             if bucket > real_n:
                 legal_counts = np.pad(legal_counts, (0, bucket - real_n))
             pol_t, wdl_t, evt = ev.evaluate_inplace_legal_bf16_async(
@@ -594,7 +601,8 @@ class ThreadedDispatcher:
         for item in pending.items:
             n = item.encoded.shape[0]
             if item.legal_counts is not None:
-                n_pol = int(np.asarray(item.legal_counts, dtype=np.int32).sum())
+                assert item.legal_flat is not None
+                n_pol = int(item.legal_flat.size)
                 item.future.set_result((
                     pol_copy[pol_offset : pol_offset + n_pol],
                     wdl_copy[row_offset : row_offset + n],
