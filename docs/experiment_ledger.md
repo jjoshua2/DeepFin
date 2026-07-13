@@ -821,6 +821,63 @@ current expansion/gather. The remaining high-upside route is the registered
 compiled legal-forward benchmark after live Ray GPU trees stop; one-off harnesses
 were removed.
 
+**Native classifier result-boundary profile -- UNREAD (2026-07-12).** Live
+workers attribute roughly 10-30% cumulative thread time to classification. The
+C fast path allocates three NumPy index arrays, then Python immediately calls
+`.tolist()` on each. Hypothesis: list conversion is a material lower bound on
+the removable C/Python result-boundary cost and justifies a direct-list native
+ABI. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_classify_result_boundary.py --games 384 --rounds 9 --iterations
+20000`, alternating raw native arrays and the production three-list conversion
+on identical nonterminal boards. SUCCESS screen: list path >=1.15x raw-array
+time and conversion delta >=10us per 384-game call, exact group-count checksum;
+then implement and separately benchmark a direct-list candidate. Otherwise
+FAILED and retain the current ABI. Offline CPU boundary profile only; no live,
+target, config, or data change.
+**VERDICT: FAILED; no ABI change.** Nine alternating rounds measured 6.327216s
+for raw native index arrays and 6.353953s with the production three `.tolist()`
+conversions, only **1.004226x** total and 1.337us conversion delta per 384-game
+call. Both are far below the 1.15x and 10us gates, with exact checksum
+7,680,000. Result containers are not the live classification bottleneck; retain
+the NumPy ABI and look inside terminal detection instead. The one-off harness
+was removed.
+
+**Native classifier redundant terminal-check experiment -- UNREAD
+(2026-07-12).** All three selfplay `CBoard.push_index` paths immediately set
+`done_arr` after forced-network, searched-network, and curriculum-Stockfish
+moves, while opening resolution rejects terminal starts. Nevertheless the C
+classifier reruns full `cboard_is_game_over` on every live slot every scheduling
+pass. Hypothesis: treat `done_arr` as the authoritative terminal invariant in
+classification and retain only relative `max_plies` timeout detection. ONE
+deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_classify_terminal_check.py --games 384 --rounds 9 --iterations
+20000`, alternating the same native function with terminal recheck on/off over
+identical nonterminal boards. SUCCESS: unchecked/reference throughput >=1.50x,
+exact partitions/timeouts, and focused tests prove terminal done propagation for
+all three push paths plus broad selfplay/native tests and lint. KILL: throughput
+<1.20x or any invariant gap; otherwise MIXED and do not ship. Offline scheduling
+implementation only; no target/data/config/live change or salvage.
+**MECHANISM VERDICT: WORKED.** Nine alternating rounds measured 6.165308s with
+redundant terminal rechecks and 0.095058s with authoritative `done_arr`, a
+**64.858054x** classifier speedup with exact partition checksum 7,680,000.
+Forced-network and curriculum-terminal push tests now pin their immediate
+`done_arr` updates; native searched-network terminal propagation is covered by
+`batch_process_ply` checkmate parity, and the Python searched-network path keeps
+its direct post-push check. The C ABI test pins checked-default versus explicit
+authoritative-done behavior. All 95 focused state/FEN/network/native tests plus
+the 18-test CPU selfplay-to-training end-to-end smoke pass after a clean GCC 15
+native+LTO build; ruff, basedpyright, and vulture are clean.
+**FINAL VERDICT: WORKED.** Selfplay uses authoritative done mode; the public C
+ABI retains its checked default for conservative external callers. This is a
+mechanism result, not a 64x whole-selfplay claim; live phase telemetry after the
+next natural restart will quantify the end-to-end reduction.
+**PRE-ACTIVATION LIVE BASELINE:** the latest 20 steady phase windows from each
+of four workers (80 total, 2026-07-12 23:50) have pooled median cumulative
+`classify=21.6%` of wall time (IQR 19.625-26.65%); per-worker medians are
+21.1/21.85/21.6/22.65%. The post-restart mechanism read is the same pooled
+statistic after warmup; games/hour remains the outcome metric and SF wait is a
+large confound, so do not infer a 21.6% throughput gain directly.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes

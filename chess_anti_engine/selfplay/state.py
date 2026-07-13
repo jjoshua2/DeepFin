@@ -809,6 +809,7 @@ class SelfplayState:
             self.selfplay_arr,
             self.starting_ply_arr,
             int(self.game.max_plies),
+            False,  # every board-push path updates done_arr immediately
         )
         net_idxs = _c_net.tolist()
         sp_idxs = _c_sp.tolist()
