@@ -1309,12 +1309,21 @@ class SlotBroker:
         self._pinned_legal_pol_bf16_bits = torch.empty(
             (_total_cap * 256,), dtype=torch.uint16, pin_memory=_pin,
         )
+        _legal_metadata_cap = _total_cap * 256 if _pin else 0
+        self._pinned_legal_flat = torch.empty(
+            (_legal_metadata_cap,), dtype=torch.long, pin_memory=_pin,
+        )
+        self._pinned_legal_rows = torch.empty(
+            (_legal_metadata_cap,), dtype=torch.long, pin_memory=_pin,
+        )
   # Pinned tensors need force=True for numpy conversion.
         self._pinned_input_np = self._pinned_input.numpy(force=True)
         self._pinned_input_bf16_bits_np = self._pinned_input_bf16.view(torch.uint16).numpy(force=True)
         self._pinned_pol_np = self._pinned_pol.numpy(force=True)
         self._pinned_wdl_np = self._pinned_wdl.numpy(force=True)
         self._pinned_legal_pol_bf16_bits_np = self._pinned_legal_pol_bf16_bits.numpy(force=True)
+        self._pinned_legal_flat_np = self._pinned_legal_flat.numpy(force=True)
+        self._pinned_legal_rows_np = self._pinned_legal_rows.numpy(force=True)
 
         for i in range(num_slots):
             name = f"{slot_prefix}-{i}"
@@ -1398,6 +1407,25 @@ class SlotBroker:
             by_mode.setdefault(int(slot.request_mode), []).append(slot)
         for mode, slots in by_mode.items():
             self._process_batch_mode(slots, mode=mode)
+
+    def _stage_legal_metadata_cuda(
+        self,
+        legal_flat: np.ndarray,
+        legal_rows: np.ndarray,
+        *,
+        transfer_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Stage compact gather metadata in reusable pinned host buffers."""
+        legal_real = int(legal_flat.size)
+        self._pinned_legal_flat_np[:legal_real] = legal_flat
+        self._pinned_legal_rows_np[:legal_real] = legal_rows
+        if transfer_size > legal_real:
+            self._pinned_legal_flat_np[legal_real:transfer_size].fill(0)
+            self._pinned_legal_rows_np[legal_real:transfer_size].fill(0)
+        return (
+            self._pinned_legal_flat[:transfer_size].to(self.device, non_blocking=True),
+            self._pinned_legal_rows[:transfer_size].to(self.device, non_blocking=True),
+        )
 
     def _process_batch_mode(self, ready: list[_InferenceSlot], *, mode: int) -> None:
         _timing = getattr(self, "_timing_metrics", None)
@@ -1528,16 +1556,25 @@ class SlotBroker:
                 _compiled_padded_legal_policy_size(legal_real, capacity=legal_capacity)
                 if self.compile_inference else legal_real
             )
-            if legal_forward_total > legal_real:
-                legal_flat_padded = np.zeros((legal_forward_total,), dtype=np.int64)
-                legal_rows_padded = np.zeros((legal_forward_total,), dtype=np.int64)
-                legal_flat_padded[:legal_real] = legal_flat_all
-                legal_rows_padded[:legal_real] = legal_rows_all
+            if self.device.startswith("cuda"):
+                legal_flat_gpu, legal_rows_gpu = self._stage_legal_metadata_cuda(
+                    legal_flat_all, legal_rows_all, transfer_size=legal_forward_total,
+                )
             else:
-                legal_flat_padded = legal_flat_all
-                legal_rows_padded = legal_rows_all
-            legal_flat_gpu = torch.as_tensor(legal_flat_padded, dtype=torch.long, device=self.device)
-            legal_rows_gpu = torch.as_tensor(legal_rows_padded, dtype=torch.long, device=self.device)
+                if legal_forward_total > legal_real:
+                    legal_flat_padded = np.zeros((legal_forward_total,), dtype=np.int64)
+                    legal_rows_padded = np.zeros((legal_forward_total,), dtype=np.int64)
+                    legal_flat_padded[:legal_real] = legal_flat_all
+                    legal_rows_padded[:legal_real] = legal_rows_all
+                else:
+                    legal_flat_padded = legal_flat_all
+                    legal_rows_padded = legal_rows_all
+                legal_flat_gpu = torch.as_tensor(
+                    legal_flat_padded, dtype=torch.long, device=self.device,
+                )
+                legal_rows_gpu = torch.as_tensor(
+                    legal_rows_padded, dtype=torch.long, device=self.device,
+                )
             out = _forward_legal_rows_no_grad(
                 self._model, xt, legal_flat_gpu, legal_rows_gpu, device=self.device,
             )
@@ -1577,23 +1614,22 @@ class SlotBroker:
                 self._pinned_legal_pol_bf16_bits[:n_compact].copy_(compact_bits, non_blocking=True)
                 compact_bits_np = self._pinned_legal_pol_bf16_bits_np[:n_compact]
             elif legal_counts_by_slot:
-                rows_parts: list[np.ndarray] = []
-                cols_parts: list[np.ndarray] = []
-                row_base = 0
-                for bsz, counts, flat in zip(batch_sizes, legal_counts_by_slot, legal_flat_by_slot, strict=True):
-                    n_legal = int(flat.size)
-                    if n_legal > 0:
-                        rows_parts.append(
-                            np.repeat(
-                                np.arange(row_base, row_base + bsz, dtype=np.int64),
-                                counts.astype(np.int64, copy=False),
-                            )
+                assert legal_flat_all is not None
+                assert legal_rows_all is not None
+                if legal_flat_all.size > 0:
+                    if self.device.startswith("cuda"):
+                        cols, rows = self._stage_legal_metadata_cuda(
+                            legal_flat_all,
+                            legal_rows_all,
+                            transfer_size=int(legal_flat_all.size),
                         )
-                        cols_parts.append(flat.astype(np.int64, copy=False))
-                    row_base += bsz
-                if rows_parts:
-                    rows = torch.as_tensor(np.concatenate(rows_parts), dtype=torch.long, device=self.device)
-                    cols = torch.as_tensor(np.concatenate(cols_parts), dtype=torch.long, device=self.device)
+                    else:
+                        rows = torch.as_tensor(
+                            legal_rows_all, dtype=torch.long, device=self.device,
+                        )
+                        cols = torch.as_tensor(
+                            legal_flat_all, dtype=torch.long, device=self.device,
+                        )
                     compact_bits = policy_gpu[:total][rows, cols].to(torch.bfloat16).view(torch.uint16)
                     n_compact = int(compact_bits.numel())
                     self._pinned_legal_pol_bf16_bits[:n_compact].copy_(compact_bits, non_blocking=True)

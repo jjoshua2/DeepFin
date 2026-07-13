@@ -754,6 +754,73 @@ rows, and offsets matched exactly. A clean GCC 15 native+LTO build and all 31
 focused SlotBroker, GPU-dispatcher, and multi-GPU tests pass; ruff,
 basedpyright, and vulture are clean. Keep the request-lifetime metadata views.
 
+**SlotBroker pinned legal-metadata transfer experiment -- UNREAD
+(2026-07-12).** The compact broker sends int64 legal indices and expanded row
+IDs to CUDA from ordinary NumPy allocations; `torch.as_tensor(...,
+device=cuda)` therefore performs synchronous pageable transfers before every
+legal forward. Hypothesis: reusable pinned host tensors, filled from the
+prepared arrays and transferred nonblocking, reduce complete CPU-copy plus H2D
+latency at live compact request sizes. ONE deciding yardstick: `PYTHONPATH=.
+python3 scripts/bench_slot_broker_pinned_metadata.py --legal 2048 8192 --rounds
+9 --iterations 2000`, alternating current pageable transfers and pinned staging
+with a synchronization per broker-shaped pair. SUCCESS: pinned/reference median
+time <=0.90x at both sizes, exact GPU values, and full-capacity static pinned
+buffers <=128 MiB; focused broker tests/lint must also pass. KILL: either size
+>1.00x or any parity failure; otherwise MIXED and do not ship without a second
+gate. Offline transfer scheduling only; no live activation, target/data change,
+or salvage.
+**VERDICT: WORKED.** Nine alternating rounds measured pageable/pinned medians
+of 0.653344/0.339819s at 2,048 legal entries (ratio **0.520122**) and
+0.830034/0.343559s at 8,192 entries (ratio **0.413909**), including the CPU
+staging copy and a synchronization after every broker-shaped transfer pair.
+GPU values matched exactly. At the production 19,040-position capacity, the
+two `int64` staging tensors consume 77,987,840 bytes (74.4 MiB), below the
+128 MiB gate. A clean GCC 15 native+LTO build and all 32 focused SlotBroker,
+GPU-dispatcher, and multi-GPU tests pass, including exact CPU/CUDA padded-row
+integration; ruff, basedpyright, and vulture are clean. Keep CUDA-only pinned
+staging; the CPU path retains its direct NumPy-backed tensors.
+
+**SlotBroker dense-fallback metadata reuse experiment -- UNREAD
+(2026-07-12).** With compiled legal-row forward still gate-off, production
+computes the dense policy and gathers legal logits afterward. The broker already
+builds combined legal row/index arrays before choosing that path, but the fallback
+then repeats every row expansion and concatenation and transfers the duplicate
+pageable arrays to CUDA. Hypothesis: reuse the validated combined arrays and the
+new pinned staging buffers, removing duplicate CPU construction on the currently
+active compact path. ONE deciding yardstick: `PYTHONPATH=. python3
+scripts/bench_slot_broker_fallback_metadata.py --slots 2 --rows-per-slot 32
+--legal-per 32 --rounds 9 --iterations 1000`. SUCCESS: candidate/reference
+median complete rebuild+transfer time <=0.50x, exact GPU rows/columns, focused
+broker CPU/CUDA fallback tests and lint pass. Otherwise revert this extension;
+the independently successful legal-row staging result remains valid. Inference
+bookkeeping only; dense model arithmetic and outputs remain unchanged, with no
+live activation or salvage.
+**VERDICT: WORKED.** Nine alternating rounds measured 0.427115s for duplicate
+row expansion/concatenation plus pageable transfer versus 0.179773s for reuse
+plus pinned transfer, ratio **0.420900**, on 2,032 compact entries across two
+live-shaped slots. GPU rows and columns matched exactly. All 33 focused
+SlotBroker, GPU-dispatcher, and multi-GPU tests pass, including exact CPU/CUDA
+dense-fallback and padded-row cases; ruff, basedpyright, and vulture are clean.
+Keep reuse of the already-built combined metadata on the active dense fallback.
+
+**SlotBroker direct compact-policy gather experiment -- FAILED and reverted
+(2026-07-12).** Production compiled legal forward remains gate-off, so the
+broker expands each 1,858-wide policy to 4,672 columns before gathering legal
+logits. ONE deciding yardstick was nine alternating rounds of a 64-real/128-
+padded-row, 32-legal-move BF16 CUDA benchmark; pre-committed SUCCESS required
+candidate/reference <=0.50 with bitwise parity. A raw full-to-compact GPU remap
+was exact for real legal indices but measured only 0.651867 and did not preserve
+the existing `-1e9` result for in-range legacy padding indices. A separately
+pre-registered modest-gain replication (<=0.80) measured 0.689158 for that
+incomplete shortcut; the semantics-preserving mask/clamp/gather version was
+**2.002723x** as slow as reference and a sentinel-column version was
+**1.206282x**. A final pre-registered CPU-remap+pinned-gather arm preserved the
+old fallback for invalid metadata and was bitwise exact, but measured 0.841692,
+short of its <=0.80 gate while adding another metadata list and branch. Keep the
+current expansion/gather. The remaining high-upside route is the registered
+compiled legal-forward benchmark after live Ray GPU trees stop; one-off harnesses
+were removed.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes
