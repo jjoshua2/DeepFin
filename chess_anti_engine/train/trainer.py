@@ -779,6 +779,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "aurora_polar_method": str(config.get("aurora_polar_method", "simple")),
         "aurora_polar_dtype": str(config.get("aurora_polar_dtype", "auto")),
         "aurora_polar_safety": _f("aurora_polar_safety", 1.01),
+        "aurora_cuda_graphs": bool(config.get("aurora_cuda_graphs", True)),
         "cosmos_rank": _f("cosmos_rank", 64, int),
         "cosmos_gamma": _f("cosmos_gamma", 0.2),
         "swa_start": _f("swa_start", 0, int),
@@ -869,6 +870,7 @@ class Trainer:
         aurora_polar_method: str = "simple",
         aurora_polar_dtype: str = "auto",
         aurora_polar_safety: float = 1.01,
+        aurora_cuda_graphs: bool = True,
         cosmos_rank: int = 64,
         cosmos_gamma: float = 0.2,
         swa_start: int = 0,
@@ -1042,6 +1044,7 @@ class Trainer:
                     aurora_polar_method=str(aurora_polar_method),
                     aurora_polar_dtype=str(aurora_polar_dtype),
                     aurora_polar_safety=float(aurora_polar_safety),
+                    aurora_cuda_graphs=bool(aurora_cuda_graphs),
                 )
         elif optimizer == "cosmos_fast":
             hd, hnd, ad, and_ = _split_decay_groups(
