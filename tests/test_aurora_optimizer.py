@@ -55,6 +55,36 @@ def test_aurora_update_accepts_polar_express_fp16_request():
     assert torch.isfinite(update).all()
 
 
+def test_aurora_skipped_uw_telemetry_preserves_state_and_final_stats():
+    torch.manual_seed(29)
+    reference_param = torch.nn.Parameter(torch.randn(16, 8))
+    sampled_param = torch.nn.Parameter(reference_param.detach().clone())
+    reference = AuroraWithAuxAdam(
+        [{"params": [reference_param], "lr": 0.01, "use_aurora": True}],
+        aurora_polar_steps=3,
+    )
+    sampled = AuroraWithAuxAdam(
+        [{"params": [sampled_param], "lr": 0.01, "use_aurora": True}],
+        aurora_polar_steps=3,
+    )
+    for step in range(3):
+        grad = torch.randn_like(reference_param)
+        reference_param.grad = grad.clone()
+        sampled_param.grad = grad.clone()
+        sampled.set_collect_uw_stats(step == 2)
+        reference.step()
+        sampled.step()
+
+    torch.testing.assert_close(sampled_param, reference_param, rtol=0.0, atol=0.0)
+    torch.testing.assert_close(
+        sampled.state[sampled_param]["momentum_buffer"],
+        reference.state[reference_param]["momentum_buffer"],
+        rtol=0.0,
+        atol=0.0,
+    )
+    assert sampled.last_uw_stats == reference.last_uw_stats
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="fp16 matmul path is CUDA-only")
 def test_polar_express_uses_fp16_inner_matmuls_on_cuda():
     mat = torch.randn(8, 3, device="cuda", dtype=torch.float32)
@@ -81,6 +111,7 @@ def test_aurora_uw_floor_scales_relative_update():
 
     before = mat.detach().clone()
     mat.grad = torch.randn_like(mat) * 1e-3
+    opt.set_collect_uw_stats(False)
     opt.step()
 
     rel_step = (mat.detach() - before).float().norm() / before.float().norm()

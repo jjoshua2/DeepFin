@@ -258,6 +258,11 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         }
         super().__init__(params, defaults)
         self.last_uw_stats: dict[str, float] = {}
+        self._collect_uw_stats = True
+
+    def set_collect_uw_stats(self, collect: bool) -> None:
+        """Collect zero-floor diagnostics on this step when requested."""
+        self._collect_uw_stats = bool(collect)
 
     @torch.no_grad()
     def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -283,6 +288,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                 polar_dtype = group.get("aurora_polar_dtype", None)
                 polar_safety = float(group.get("aurora_polar_safety", 1.01))
                 uw_floor = float(group.get("aurora_uw_floor", 0.0))
+                collect_uw_stats = self._collect_uw_stats or uw_floor > 0.0
                 eps = float(group.get("eps", 1e-8))
                 for param in group["params"]:
                     if param.grad is None:
@@ -312,24 +318,32 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                         polar_safety=polar_safety,
                         eps=eps,
                     )
-                    weight_fro = param.float().norm().clamp_min(eps)
-                    update_fro = update.float().norm().clamp_min(eps)
-                    uw_ratio = update_fro / weight_fro
-                    scale = torch.ones((), dtype=torch.float32, device=update.device)
-                    if uw_floor > 0.0:
-                        ratio_ok = torch.isfinite(uw_ratio) & (uw_ratio > 0.0)
-                        floor = torch.as_tensor(float(uw_floor), dtype=torch.float32, device=update.device)
-                        safe_ratio = torch.where(ratio_ok, uw_ratio, torch.ones_like(uw_ratio))
-                        scale = torch.where(
-                            ratio_ok,
-                            torch.clamp_min(floor / safe_ratio, 1.0),
-                            scale,
-                        )
-                        update = update * scale.to(update.dtype)
-                    uw_ratios.append(uw_ratio.detach())
-                    uw_scales.append(scale.detach())
+                    if collect_uw_stats:
+                        weight_fro = param.float().norm().clamp_min(eps)
+                        update_fro = update.float().norm().clamp_min(eps)
+                        uw_ratio = update_fro / weight_fro
+                        scale = torch.ones((), dtype=torch.float32, device=update.device)
+                        if uw_floor > 0.0:
+                            ratio_ok = torch.isfinite(uw_ratio) & (uw_ratio > 0.0)
+                            floor = torch.as_tensor(
+                                float(uw_floor), dtype=torch.float32, device=update.device,
+                            )
+                            safe_ratio = torch.where(
+                                ratio_ok, uw_ratio, torch.ones_like(uw_ratio),
+                            )
+                            scale = torch.where(
+                                ratio_ok,
+                                torch.clamp_min(floor / safe_ratio, 1.0),
+                                scale,
+                            )
+                            update = update * scale.to(update.dtype)
+                        uw_ratios.append(uw_ratio.detach())
+                        uw_scales.append(scale.detach())
                     param.add_(update, alpha=-lr)
-                self.last_uw_stats = _uw_stats(uw_ratios, uw_scales, lr=lr, floor=uw_floor)
+                if collect_uw_stats:
+                    self.last_uw_stats = _uw_stats(
+                        uw_ratios, uw_scales, lr=lr, floor=uw_floor,
+                    )
                 continue
 
             beta1, beta2 = tuple(group.get("betas", (0.9, 0.95)))

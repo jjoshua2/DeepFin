@@ -446,6 +446,75 @@ backpressure tests after a clean GCC15 native+LTO extension build; ruff,
 basedpyright, and vulture are clean. Keep the ready-only collection; this
 improves the polling slice rather than whole-worker throughput by 25.1%.
 
+**Zero-ready async-label poll fast path -- UNREAD (2026-07-12).** Async SF
+label polling rebuilds `pending_sf_labels` into a fresh list on every scheduler
+pass even when no future is ready; live timing shows this poll runs continuously
+while label work is outstanding. Hypothesis: a readiness precheck returns the
+unchanged list immediately in the common zero-ready case, avoiding the list
+allocation and appends; when any result is ready, the existing resolution path
+runs unchanged. ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_pending_label_poll.py --pending 128 --rounds 9 --iterations
+100000`, alternating rebuild-all and zero-ready-fast-path polls. SUCCESS:
+candidate/reference median throughput >=1.25x for zero-ready polls, exact
+pending/completed outcomes across 1,000 randomized readiness patterns, focused
+SF-label/continuous/threaded tests, and lint pass. Otherwise revert. Scheduling
+only; no live activation, target/config meaning, or salvage.
+**VERDICT: FAILED and reverted.** The exact nine-round alternating yardstick
+measured 52,153 rebuild-all polls/s and 58,394 zero-ready fast-path polls/s,
+only **1.119667x** versus the 1.25 gate. One thousand randomized readiness
+patterns retained exact pending/completed outcomes, but the modest zero-ready
+gain does not justify an additional scan on polls that do contain ready work.
+Keep the single-pass rebuild logic.
+
+**Starved Stockfish wait pre-scan experiment -- UNREAD (2026-07-12).** The
+manager first performs a nonblocking ready-only poll, then, when every runnable
+slot is still awaiting Stockfish, `finish_pending_curriculum_moves(block=True)`
+scans every future with `done()` before constructing the same tuple for
+`wait(FIRST_COMPLETED)`. Calling `wait` directly is race-safe: it returns
+immediately if a future completed after the preceding poll. Hypothesis:
+removing the redundant condition-lock scan reduces starved scheduling overhead
+without changing timeout or completion behavior. ONE deciding yardstick:
+`taskset -c 15 python3 scripts/bench_stockfish_wait_prescan.py --pending 24
+--rounds 9 --iterations 10000`, alternating pre-scan+wait and direct wait with
+zero-ready futures, plus a ready-future arm. SUCCESS: direct/reference median
+throughput >=1.10x for zero-ready, >=0.90x for one-ready, identical done/not-
+done sets, focused curriculum/continuous tests, and lint pass. Otherwise
+revert. Scheduling-only; no live/config/data change or salvage.
+**VERDICT: FAILED and reverted.** The exact alternating yardstick measured
+direct wait at **1.330696x** pre-scan throughput with zero ready futures, but
+only **0.600713x** when one future was ready, far below the 0.90 race-case
+guardrail. Ready-index outcomes matched exactly. Keep the pre-scan: avoiding a
+`wait` call after completion is materially valuable when a future resolves
+between the preceding nonblocking poll and the starved blocking path.
+
+**CUDA final-step Aurora telemetry experiment -- UNREAD (2026-07-12).** The
+earlier CPU telemetry-sampling arm was noisy/slower, but production runs Aurora
+on CUDA and attributes roughly one third of trainer wall time to optimizer
+steps. With `aurora_uw_floor: 0`, per-matrix FP32 weight/update norms and UW
+quantiles cannot affect parameters; only `train_steps()`'s final metrics consume
+`last_uw_stats`. Hypothesis: collect UW telemetry on the final optimizer step
+of each train window (and always when the floor is positive), preserving fresh
+reported statistics while removing unnecessary CUDA reductions and host
+synchronization from preceding steps. ONE deciding yardstick: `PYTHONPATH=.
+python3 scripts/bench_aurora_stats_cuda.py --rounds 7 --steps 5 --matrices 8
+--rows 512 --cols 896`, alternating always-on and final-only telemetry across
+complete production-config Aurora steps. SUCCESS: final-only/reference median
+throughput >=1.03x, exact parameter and momentum hashes after every round,
+identical final UW statistics, positive-floor behavior unchanged, focused
+Aurora/trainer/SODA tests, and lint pass. Otherwise revert. This changes
+telemetry scheduling only, not updates, targets, config, or replay; no salvage.
+**VERDICT: WORKED.** The exact seven-round CUDA yardstick measured 0.886610s
+for five always-on steps and 0.829691s for final-only telemetry, a
+**1.068602x** complete-optimizer throughput gain. Every round retained exact
+parameter/momentum hash
+`b20bd8e4aaabab15427b3c72a09b5e626d77946ded65030d69e7ac0210aa79e0`,
+and final UW statistics were identical. Positive-floor tests confirm telemetry
+and scaling remain mandatory even when collection is disabled; SODA forwards
+the control, and trainer coverage confirms only the final train-window step
+collects. Validation: 51/51 Aurora/SODA/trainer tests plus clean ruff,
+basedpyright, and vulture. Keep final-step collection; the live run activates
+it only after restart onto this code.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes
