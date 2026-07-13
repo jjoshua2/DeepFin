@@ -582,25 +582,6 @@ exact parameter/momentum hashes, injected nonfinite update raises before any
 parameter add, focused Aurora/SODA/trainer tests, and lint pass. Otherwise
 revert. Optimizer validation scheduling only; no target/config/data change or
 salvage.
-**VERDICT: WORKED.** The reproducible seven-round comparison measured 595.744
-polar-only vs 948.292 whole-update updates/s, a **1.591778x** gain with bitwise
-exact outputs. Eight captures took 1.346s and allocated 297,308,160 bytes
-(283.5 MiB), below both gates. After integration, the complete five-step
-optimizer benchmark measured 0.770955s eager vs 0.065889s whole-update graph,
-an **11.700884x** throughput gain with exact parameter/momentum hash
-`250b75c4182bff4c550f97f1bbe8bd7051f9579a55e31fda796747ca800866de`.
-Captures are keyed per parameter plus algorithm settings, so repeated 512x512
-weights cannot alias one static output while group updates are retained.
-Validation passed 55/55 Aurora/SODA/trainer tests including repeated-shape CUDA
-state parity and the config-driven eager fallback; lint is clean. Keep whole-update capture and the explicit eager
-fallback. The direct eight-width capture allocated 283.5 MiB; production uses
-parameter-specific outputs, so its total scales with the selected parameter
-count. A supplemental 48-parameter
-production-count run completed without OOM at 1.233610s eager vs 0.101139s
-graphed (**12.197198x**) and exact state hash
-`95370418d6dfd4d6382b3474db465398a1ccbd861444715a0209f18edde6e9bd`;
-this corrects the earlier 32-matrix estimate (`mlp_out` selects both FFN
-matrices plus attention output in each of 16 blocks).
 **VERDICT: WORKED.** The exact seven-round complete-optimizer yardstick
 measured 0.152192s with per-matrix checks and 0.134966s with one group check,
 a **1.127629x** throughput gain on top of CUDA graph replay. Every round
@@ -625,7 +606,69 @@ throughput >=1.50x, bitwise exact outputs, capture <=120s and <=2 GiB for eight
 widths, complete optimizer exact-state confirmation, focused tests, and lint.
 Otherwise revert. Optimizer execution only; no target/config/data change or
 salvage.
+**VERDICT: WORKED.** The reproducible seven-round comparison measured 595.744
+polar-only vs 948.292 whole-update updates/s, a **1.591778x** gain with bitwise
+exact outputs. Eight captures took 1.346s and allocated 297,308,160 bytes
+(283.5 MiB), below both gates. After integration, the complete five-step
+optimizer benchmark measured 0.770955s eager vs 0.065889s whole-update graph,
+an **11.700884x** throughput gain with exact parameter/momentum hash
+`250b75c4182bff4c550f97f1bbe8bd7051f9579a55e31fda796747ca800866de`.
+Captures are keyed per parameter plus algorithm settings, so repeated 512x512
+weights cannot alias one static output while group updates are retained.
+Validation passed 55/55 Aurora/SODA/trainer tests including repeated-shape CUDA
+state parity and the config-driven eager fallback; lint is clean. Keep
+whole-update capture and the explicit eager fallback. The direct eight-width
+capture allocated 283.5 MiB; production uses parameter-specific outputs, so its
+total scales with the selected parameter count. A supplemental 48-parameter
+production-count run completed without OOM at 1.233610s eager vs 0.101139s
+graphed (**12.197198x**) and exact state hash
+`95370418d6dfd4d6382b3474db465398a1ccbd861444715a0209f18edde6e9bd`;
+this corrects the earlier 32-matrix estimate (`mlp_out` selects both FFN
+matrices plus attention output in each of 16 blocks).
 
+**Aurora AdamW foreach fallback experiment -- UNREAD (2026-07-12).** Whole-
+update graphs make Aurora matrices cheap, but the same optimizer still updates
+all auxiliary, QKV, embedding, norm, bias, and head parameters through a Python
+loop with separate AdamW kernels. Hypothesis: gather each fallback group while
+retaining the existing integer `step` and moment state entries, then use
+`torch._foreach_*` for decay, moments, denominator, and parameter updates.
+ONE deciding yardstick: `PYTHONPATH=. python3
+scripts/bench_aurora_adam_foreach.py --rounds 7 --steps 10 --matrices 16
+--width 512`, alternating loop and foreach fallback updates on production-
+shaped QKV matrices plus vectors. SUCCESS: foreach/loop median throughput
+>=1.10x, bitwise exact parameters/moments/steps each round, checkpoint
+round-trip compatibility, focused Aurora/trainer/SODA tests, and lint pass.
+Otherwise revert. Optimizer execution only; no target/config/data change or
+salvage.
+**VERDICT: FAILED and reverted.** The first exact-state comparison diverged:
+loop hash `b36f0f32d5bf228580fb6062af9683aec71ad8235277a97fe9ebc0a80a2aeed6`
+versus foreach hash
+`a598a53f25538d6d6dbe37608d9893e9d3b061e51be9507ec670e1ca59107dcd`.
+Maximum parameter difference was one float32 ULP (`1.1920928955078125e-07`),
+but the pre-committed requirement was bitwise checkpoint/state continuity.
+Do not replace the fallback arithmetic with foreach kernels; retain the loop.
+
+**Threaded-dispatcher singleton legal-pack experiment -- UNREAD
+(2026-07-12).** `ThreadedDispatcher._submit_batch` always runs two
+`np.concatenate` calls for compact legal indices/counts, even when the drain
+contains one request. That copies arrays for UCI/single-request match searches
+and low-concurrency worker drains while input rows already require pinned-slot
+copying. Hypothesis: alias already-int32 singleton legal arrays and retain
+concatenation for true multi-request batches. ONE deciding yardstick:
+`taskset -c 15 python3 scripts/bench_threaded_singleton_legal_pack.py --batch
+512 --legal-per 32 --rounds 9 --iterations 500000`. SUCCESS: candidate/reference
+median packaging throughput >=5x, exact arrays, singleton outputs share memory,
+focused threaded-dispatcher/UCI/Gumbel tests, and lint pass. Otherwise revert.
+Inference packaging only; no target/config/data change or salvage.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+160,898 copy packs/s and 1,707,451 alias packs/s, a **10.611997x** mechanism
+speedup while avoiding 67,584 bytes per 512-position request. Every array
+matched exactly and singleton outputs shared memory with their sources.
+Validation passed all 108 focused threaded-dispatcher, coalescer, GPU
+dispatcher, Gumbel, root-parallel, UCI engine, and searchmoves tests after a
+clean GCC15 native+LTO extension build; lint is clean. Keep the singleton alias
+path; multi-request drains retain concatenation and bucket padding still owns
+its required counts array.
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes
