@@ -546,12 +546,16 @@ class ThreadedDispatcher:
         self._lifetime_pack_s += time.perf_counter() - t_pack0
         t0 = time.perf_counter()
         if compact:
-            legal_flat = np.concatenate([
-                np.asarray(item.legal_flat, dtype=np.int32) for item in items
-            ])
-            legal_counts = np.concatenate([
-                np.asarray(item.legal_counts, dtype=np.int32) for item in items
-            ])
+            if len(items) == 1:
+                legal_flat = np.asarray(items[0].legal_flat, dtype=np.int32)
+                legal_counts = np.asarray(items[0].legal_counts, dtype=np.int32)
+            else:
+                legal_flat = np.concatenate([
+                    np.asarray(item.legal_flat, dtype=np.int32) for item in items
+                ])
+                legal_counts = np.concatenate([
+                    np.asarray(item.legal_counts, dtype=np.int32) for item in items
+                ])
             real_pol_n = int(legal_counts.sum())
             if bucket > real_n:
                 legal_counts = np.pad(legal_counts, (0, bucket - real_n))
