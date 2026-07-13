@@ -373,6 +373,56 @@ GCC15 native+LTO extension build; ruff, basedpyright, and vulture are clean.
 Keep the allocation-free direct membership checks. This improves only the
 classification/filter slice, not whole-worker throughput by 15.9%.
 
+**C classifier direct-list return experiment -- UNREAD (2026-07-12).** The C
+selfplay classifier releases the GIL for board scans but then allocates three
+NumPy arrays, copies temporary index buffers into them, returns to Python, and
+Python immediately allocates three lists and boxes every index through
+`.tolist()`. Hypothesis: an optional direct-list result mode preserves the same
+GIL-free scan while removing the transient arrays, copies, and Python
+conversions. ONE deciding yardstick: after a clean production extension build,
+run `PYTHONPATH=. taskset -c 15 python3 scripts/bench_classify_return.py
+--batch-size 32 --rounds 9 --iterations 200000`, alternating the current array
+return plus `.tolist()` against direct lists on identical CBoards and companion
+arrays. SUCCESS: direct/reference median throughput >=1.10x, exact partitions
+and `done` mutations across randomized board/flag states, C-classifier/state/
+continuous/threaded tests pass, and C warnings plus repo lint are clean.
+Otherwise revert. The existing array return remains the default public API;
+only internal `SelfplayState` opts into lists. No live activation, data/config
+meaning, or salvage snapshot.
+**VERDICT: FAILED and reverted.** The exact nine-round alternating yardstick
+measured 33,447 classifications/s for the existing NumPy-plus-`.tolist()` path
+and 35,807 classifications/s for direct C lists, only **1.070557x** versus the
+1.10 gate. One thousand randomized flag states retained exact partitions and
+identical `done` mutation, and the GCC15 native+LTO build was warning-clean.
+The board scan and GIL transition dominate enough that a 7.1% mechanism gain
+does not justify another native API mode; retain the existing return contract.
+
+**Curriculum-only pending-slot filtering experiment -- UNREAD (2026-07-12).**
+Pending move futures are created only from `cur_opp_idxs`, and the board does
+not advance until that future is removed and applied; therefore every pending
+slot remains in the curriculum-opponent partition. The scheduler nevertheless
+rebuilds all three net/selfplay/curriculum lists to exclude pending keys on
+every pass. Hypothesis: filtering only `cur_opp_idxs` removes two unnecessary
+list allocations and scans while preserving the lifecycle invariant. ONE
+deciding yardstick: `taskset -c 15 python3
+scripts/bench_pending_group_filter.py --batch-size 32 --pending 24 --rounds 9
+--iterations 1000000`, alternating three-group and curriculum-only filtering
+with randomized partitions whose pending keys are a subset of curriculum.
+SUCCESS: candidate/reference median throughput >=1.10x, exact outputs for
+1,000 randomized invariant-respecting cases, focused curriculum/continuous/
+threaded selfplay tests, and lint pass. Otherwise revert. This is a scheduling
+simplification only; no live activation, data/config meaning, or salvage.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+463,425 three-group filters/s and 812,741 curriculum-only filters/s, a
+**1.753772x** speedup for the affected scheduler slice. One thousand randomized
+partitions with pending keys constrained to the curriculum group retained exact
+outputs. The lifecycle invariant is structural: only curriculum indices are
+submitted, and their board cannot advance into another partition until the
+future is removed and applied. Validation passed 86/86 curriculum-label,
+continuous, threaded, state, timeout, and backpressure tests after a clean
+GCC15 native+LTO rebuild; lint is clean. Keep the two-list allocation removal;
+this is not a claim of 75.4% whole-worker throughput.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes
