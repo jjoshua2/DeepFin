@@ -17,6 +17,12 @@ from typing import Any, Protocol, cast
 import numpy as np
 import torch
 
+from chess_anti_engine.broker_hang import (
+    DEFAULT_HANG_ABORT_S as _DEFAULT_HANG_ABORT_S,
+    HANG_ABORT_ENV as _HANG_ABORT_ENV,
+    BrokerHangWatchdog,
+    resolve_hang_abort_seconds,
+)
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.model import (
     ModelConfig,
@@ -1270,6 +1276,7 @@ class SlotBroker:
         compile_mode: str = "reduce-overhead",
         input_planes: int = _CHANNELS,
         adaptive_idle_ms: float = 0.0,
+        hang_abort_seconds: float = _DEFAULT_HANG_ABORT_S,
     ) -> None:
         self.publish_dir = Path(publish_dir)
         self.device = str(device)
@@ -1278,6 +1285,7 @@ class SlotBroker:
         self._first_inference_pending = False
         self.batch_wait_ms = float(batch_wait_ms)
         self.adaptive_idle_ms = float(adaptive_idle_ms)
+        self._hang_watchdog = BrokerHangWatchdog(threshold_s=float(hang_abort_seconds))
         self._model: torch.nn.Module | None = None
         self._model_sha: str | None = None
         self._stop = False
@@ -1536,134 +1544,142 @@ class SlotBroker:
         if _timing is not None:
             _timing["pack_s"] += time.perf_counter() - _t_pack0
         _t_forward0 = time.perf_counter()
-        xt = pin_input[:forward_total].to(self.device, non_blocking=True)
+        # Hang window covers H2D + forward + device sync — any of these can
+        # block forever on a dead CUDA/WSL2 context without raising.
+        self._hang_watchdog.mark_forward_start(total)
+        forward_ok = False
+        try:
+            xt = pin_input[:forward_total].to(self.device, non_blocking=True)
 
-        first_inf = self._first_inference_pending
-        inf_t0 = time.time() if first_inf else 0.0
+            first_inf = self._first_inference_pending
+            inf_t0 = time.time() if first_inf else 0.0
 
-        use_legal_rows_forward = compact_legal and _supports_legal_policy_rows_forward(self._model)
-        use_legal_forward = (
-            compact_legal
-            and not use_legal_rows_forward
-            and _supports_legal_policy_forward(self._model)
-        )
-        if use_legal_rows_forward:
-            assert legal_flat_all is not None
-            assert legal_rows_all is not None
-            legal_real = int(legal_flat_all.shape[0])
-            legal_capacity = int(self._pinned_legal_pol_bf16_bits.shape[0])
-            legal_forward_total = (
-                _compiled_padded_legal_policy_size(legal_real, capacity=legal_capacity)
-                if self.compile_inference else legal_real
+            use_legal_rows_forward = compact_legal and _supports_legal_policy_rows_forward(self._model)
+            use_legal_forward = (
+                compact_legal
+                and not use_legal_rows_forward
+                and _supports_legal_policy_forward(self._model)
             )
-            if self.device.startswith("cuda"):
-                legal_flat_gpu, legal_rows_gpu = self._stage_legal_metadata_cuda(
-                    legal_flat_all, legal_rows_all, transfer_size=legal_forward_total,
-                )
-            else:
-                if legal_forward_total > legal_real:
-                    legal_flat_padded = np.zeros((legal_forward_total,), dtype=np.int64)
-                    legal_rows_padded = np.zeros((legal_forward_total,), dtype=np.int64)
-                    legal_flat_padded[:legal_real] = legal_flat_all
-                    legal_rows_padded[:legal_real] = legal_rows_all
-                else:
-                    legal_flat_padded = legal_flat_all
-                    legal_rows_padded = legal_rows_all
-                legal_flat_gpu = torch.as_tensor(
-                    legal_flat_padded, dtype=torch.long, device=self.device,
-                )
-                legal_rows_gpu = torch.as_tensor(
-                    legal_rows_padded, dtype=torch.long, device=self.device,
-                )
-            out = _forward_legal_rows_no_grad(
-                self._model, xt, legal_flat_gpu, legal_rows_gpu, device=self.device,
-            )
-        elif use_legal_forward:
-            assert legal_counts_all is not None
-            assert legal_flat_all is not None
-            legal_counts_gpu = torch.as_tensor(legal_counts_all, dtype=torch.long, device=self.device)
-            legal_flat_gpu = torch.as_tensor(legal_flat_all, dtype=torch.long, device=self.device)
-            out = _forward_legal_no_grad(
-                self._model, xt, legal_flat_gpu, legal_counts_gpu, device=self.device,
-            )
-        else:
-            out = _forward_no_grad(self._model, xt, device=self.device)
-
-        if first_inf:
-            log.info("first inference (includes kernel compile) elapsed_s=%.2f batch=%d",
-                     time.time() - inf_t0, xt.shape[0])
-            self._first_inference_pending = False
-
-        if _timing is not None:
-            _timing["forward_s"] += time.perf_counter() - _t_forward0
-        _t_output0 = time.perf_counter()
-        policy_gpu = (
-            _policy_output(out).detach()
-            if compact_legal and (use_legal_rows_forward or use_legal_forward)
-            else _policy_output_full(out).detach()
-        )
-        wdl_gpu = out["wdl"].detach().float()
-        self._pinned_wdl[:total].copy_(wdl_gpu[:total], non_blocking=True)
-        compact_bits_np: np.ndarray | None = None
-        if compact_legal:
-            if use_legal_rows_forward or use_legal_forward:
-                assert legal_flat_all is not None
-                n_real_compact = int(legal_flat_all.shape[0])
-                compact_bits = policy_gpu[:n_real_compact].to(torch.bfloat16).view(torch.uint16)
-                n_compact = int(compact_bits.numel())
-                self._pinned_legal_pol_bf16_bits[:n_compact].copy_(compact_bits, non_blocking=True)
-                compact_bits_np = self._pinned_legal_pol_bf16_bits_np[:n_compact]
-            elif legal_counts_by_slot:
+            if use_legal_rows_forward:
                 assert legal_flat_all is not None
                 assert legal_rows_all is not None
-                if legal_flat_all.size > 0:
-                    if self.device.startswith("cuda"):
-                        cols, rows = self._stage_legal_metadata_cuda(
-                            legal_flat_all,
-                            legal_rows_all,
-                            transfer_size=int(legal_flat_all.size),
-                        )
+                legal_real = int(legal_flat_all.shape[0])
+                legal_capacity = int(self._pinned_legal_pol_bf16_bits.shape[0])
+                legal_forward_total = (
+                    _compiled_padded_legal_policy_size(legal_real, capacity=legal_capacity)
+                    if self.compile_inference else legal_real
+                )
+                if self.device.startswith("cuda"):
+                    legal_flat_gpu, legal_rows_gpu = self._stage_legal_metadata_cuda(
+                        legal_flat_all, legal_rows_all, transfer_size=legal_forward_total,
+                    )
+                else:
+                    if legal_forward_total > legal_real:
+                        legal_flat_padded = np.zeros((legal_forward_total,), dtype=np.int64)
+                        legal_rows_padded = np.zeros((legal_forward_total,), dtype=np.int64)
+                        legal_flat_padded[:legal_real] = legal_flat_all
+                        legal_rows_padded[:legal_real] = legal_rows_all
                     else:
-                        rows = torch.as_tensor(
-                            legal_rows_all, dtype=torch.long, device=self.device,
-                        )
-                        cols = torch.as_tensor(
-                            legal_flat_all, dtype=torch.long, device=self.device,
-                        )
-                    compact_bits = policy_gpu[:total][rows, cols].to(torch.bfloat16).view(torch.uint16)
+                        legal_flat_padded = legal_flat_all
+                        legal_rows_padded = legal_rows_all
+                    legal_flat_gpu = torch.as_tensor(
+                        legal_flat_padded, dtype=torch.long, device=self.device,
+                    )
+                    legal_rows_gpu = torch.as_tensor(
+                        legal_rows_padded, dtype=torch.long, device=self.device,
+                    )
+                out = _forward_legal_rows_no_grad(
+                    self._model, xt, legal_flat_gpu, legal_rows_gpu, device=self.device,
+                )
+            elif use_legal_forward:
+                assert legal_counts_all is not None
+                assert legal_flat_all is not None
+                legal_counts_gpu = torch.as_tensor(legal_counts_all, dtype=torch.long, device=self.device)
+                legal_flat_gpu = torch.as_tensor(legal_flat_all, dtype=torch.long, device=self.device)
+                out = _forward_legal_no_grad(
+                    self._model, xt, legal_flat_gpu, legal_counts_gpu, device=self.device,
+                )
+            else:
+                out = _forward_no_grad(self._model, xt, device=self.device)
+
+            if first_inf:
+                log.info("first inference (includes kernel compile) elapsed_s=%.2f batch=%d",
+                         time.time() - inf_t0, xt.shape[0])
+                self._first_inference_pending = False
+
+            if _timing is not None:
+                _timing["forward_s"] += time.perf_counter() - _t_forward0
+            _t_output0 = time.perf_counter()
+            policy_gpu = (
+                _policy_output(out).detach()
+                if compact_legal and (use_legal_rows_forward or use_legal_forward)
+                else _policy_output_full(out).detach()
+            )
+            wdl_gpu = out["wdl"].detach().float()
+            self._pinned_wdl[:total].copy_(wdl_gpu[:total], non_blocking=True)
+            compact_bits_np: np.ndarray | None = None
+            if compact_legal:
+                if use_legal_rows_forward or use_legal_forward:
+                    assert legal_flat_all is not None
+                    n_real_compact = int(legal_flat_all.shape[0])
+                    compact_bits = policy_gpu[:n_real_compact].to(torch.bfloat16).view(torch.uint16)
                     n_compact = int(compact_bits.numel())
                     self._pinned_legal_pol_bf16_bits[:n_compact].copy_(compact_bits, non_blocking=True)
                     compact_bits_np = self._pinned_legal_pol_bf16_bits_np[:n_compact]
+                elif legal_counts_by_slot:
+                    assert legal_flat_all is not None
+                    assert legal_rows_all is not None
+                    if legal_flat_all.size > 0:
+                        if self.device.startswith("cuda"):
+                            cols, rows = self._stage_legal_metadata_cuda(
+                                legal_flat_all,
+                                legal_rows_all,
+                                transfer_size=int(legal_flat_all.size),
+                            )
+                        else:
+                            rows = torch.as_tensor(
+                                legal_rows_all, dtype=torch.long, device=self.device,
+                            )
+                            cols = torch.as_tensor(
+                                legal_flat_all, dtype=torch.long, device=self.device,
+                            )
+                        compact_bits = policy_gpu[:total][rows, cols].to(torch.bfloat16).view(torch.uint16)
+                        n_compact = int(compact_bits.numel())
+                        self._pinned_legal_pol_bf16_bits[:n_compact].copy_(compact_bits, non_blocking=True)
+                        compact_bits_np = self._pinned_legal_pol_bf16_bits_np[:n_compact]
+                    else:
+                        compact_bits_np = np.empty((0,), dtype=np.uint16)
                 else:
                     compact_bits_np = np.empty((0,), dtype=np.uint16)
             else:
-                compact_bits_np = np.empty((0,), dtype=np.uint16)
-        else:
-            self._pinned_pol[:total].copy_(policy_gpu[:total].float(), non_blocking=True)
-        if _timing is not None:
-            _timing["output_s"] += time.perf_counter() - _t_output0
-        _t_scatter0 = time.perf_counter()
-        if self.device.startswith("cuda"):
-            torch.cuda.current_stream(torch.device(self.device)).synchronize()
+                self._pinned_pol[:total].copy_(policy_gpu[:total].float(), non_blocking=True)
+            if _timing is not None:
+                _timing["output_s"] += time.perf_counter() - _t_output0
+            _t_scatter0 = time.perf_counter()
+            if self.device.startswith("cuda"):
+                torch.cuda.current_stream(torch.device(self.device)).synchronize()
 
-  # Scatter from pinned buffer to worker slots
-        start = 0
-        compact_idx = 0
-        for slot, bsz in zip(active, batch_sizes, strict=True):
-            end = start + bsz
-            if compact_legal:
-                assert compact_bits_np is not None
-                pol_start, pol_end = compact_offsets[compact_idx]
-                slot.policy_u16[:pol_end - pol_start] = compact_bits_np[pol_start:pol_end]
-                compact_idx += 1
-            else:
-                slot.policy[:bsz] = self._pinned_pol_np[start:end]
-            slot.wdl[:bsz] = self._pinned_wdl_np[start:end]
-            slot.request_mode = _MODE_DENSE_F32
-            slot.state = _STATE_RESPONSE
-            start = end
-        if _timing is not None:
-            _timing["scatter_s"] += time.perf_counter() - _t_scatter0
+            # Scatter from pinned buffer to worker slots
+            start = 0
+            compact_idx = 0
+            for slot, bsz in zip(active, batch_sizes, strict=True):
+                end = start + bsz
+                if compact_legal:
+                    assert compact_bits_np is not None
+                    pol_start, pol_end = compact_offsets[compact_idx]
+                    slot.policy_u16[:pol_end - pol_start] = compact_bits_np[pol_start:pol_end]
+                    compact_idx += 1
+                else:
+                    slot.policy[:bsz] = self._pinned_pol_np[start:end]
+                slot.wdl[:bsz] = self._pinned_wdl_np[start:end]
+                slot.request_mode = _MODE_DENSE_F32
+                slot.state = _STATE_RESPONSE
+                start = end
+            if _timing is not None:
+                _timing["scatter_s"] += time.perf_counter() - _t_scatter0
+            forward_ok = True
+        finally:
+            self._hang_watchdog.mark_forward_done(success=forward_ok)
 
   # -- main loop --
 
@@ -1751,6 +1767,7 @@ class SlotBroker:
             "last_report": time.monotonic(),
         }
         report_interval = 10.0  # seconds
+        self._hang_watchdog.start()
 
         while not self._stop:
             if any(s.state == _STATE_SHUTDOWN for s in self._slots):
@@ -1778,6 +1795,7 @@ class SlotBroker:
 
     def shutdown(self) -> None:
         self._stop = True
+        self._hang_watchdog.stop()
         for slot in self._slots:
             slot.close()
 
@@ -2165,6 +2183,7 @@ class SharedSlotBroker:
         batch_wait_ms: float,
         compile_mode: str = "reduce-overhead",
         input_planes: int = _CHANNELS,
+        hang_abort_seconds: float = _DEFAULT_HANG_ABORT_S,
     ) -> None:
         self.server_root = Path(server_root)
         self.slots_per_trial = int(slots_per_trial)
@@ -2172,6 +2191,7 @@ class SharedSlotBroker:
         self.compile_inference = bool(compile_inference)
         self.compile_mode = str(compile_mode or "reduce-overhead")
         self.batch_wait_ms = float(batch_wait_ms)
+        self._hang_watchdog = BrokerHangWatchdog(threshold_s=float(hang_abort_seconds))
         self._stop = False
 
         self._layout = _SlotLayout.compute(max_batch_per_slot, int(input_planes))
@@ -2386,8 +2406,8 @@ class SharedSlotBroker:
         """Process all trials' batches in parallel using per-trial CUDA streams."""
         use_cuda = self.device.startswith("cuda")
 
-  # Prepare inputs for each trial
-        trial_data: list[tuple[str, list[_InferenceSlot], list[int], torch.Tensor]] = []
+        # Host-side pack first; H2D + forward sit under the hang watchdog.
+        packed: list[tuple[str, list[_InferenceSlot], list[int], np.ndarray]] = []
         for trial_id, ready in ready_by_trial.items():
             model = self._trial_models.get(trial_id)
             if model is None:
@@ -2400,52 +2420,62 @@ class SharedSlotBroker:
             batch_sizes = [slot.batch_size for slot in ready]
             xs = [np.array(slot.input[:bsz], copy=True, order="C") for slot, bsz in zip(ready, batch_sizes)]
             xb = np.concatenate(xs, axis=0)
-            xt = torch.from_numpy(xb).to(self.device, non_blocking=True)
-            trial_data.append((trial_id, ready, batch_sizes, xt))
+            packed.append((trial_id, ready, batch_sizes, xb))
 
-        if not trial_data:
+        if not packed:
             return
 
-  # Launch forward passes in parallel on separate streams
-        results: list[tuple[str, list[_InferenceSlot], list[int], torch.Tensor, torch.Tensor]] = []
-        for trial_id, ready, batch_sizes, xt in trial_data:
-            model = self._trial_models[trial_id]
-            stream = self._trial_streams.get(trial_id)
-
-            if use_cuda and stream is not None:
-                with torch.cuda.stream(stream):
-                    out = _forward_no_grad(model, xt, device=self.device)
-                    pol = _policy_output_full(out).detach().float().to("cpu", non_blocking=True)
-                    wdl = out["wdl"].detach().float().to("cpu", non_blocking=True)
-            else:
-                out = _forward_no_grad(model, xt, device=self.device)
-                pol = _policy_output_full(out).detach().float().cpu()
-                wdl = out["wdl"].detach().float().cpu()
-
-            results.append((trial_id, ready, batch_sizes, pol, wdl))
-
-  # Synchronize all streams
-        if use_cuda:
-            for trial_id in ready_by_trial:
+        hang_batch = sum(int(xb.shape[0]) for _, _, _, xb in packed)
+        self._hang_watchdog.mark_forward_start(hang_batch)
+        forward_ok = False
+        try:
+            trial_data: list[tuple[str, list[_InferenceSlot], list[int], torch.Tensor]] = [
+                (trial_id, ready, batch_sizes, torch.from_numpy(xb).to(self.device, non_blocking=True))
+                for trial_id, ready, batch_sizes, xb in packed
+            ]
+            # Launch forward passes in parallel on separate streams
+            results: list[tuple[str, list[_InferenceSlot], list[int], torch.Tensor, torch.Tensor]] = []
+            for trial_id, ready, batch_sizes, xt in trial_data:
+                model = self._trial_models[trial_id]
                 stream = self._trial_streams.get(trial_id)
-                if stream is not None:
-                    stream.synchronize()
 
-        if not self._first_inference_done and results:
-            self._first_inference_done = True
-            log.info("shared broker: first parallel inference complete (%d trials)", len(results))
+                if use_cuda and stream is not None:
+                    with torch.cuda.stream(stream):
+                        out = _forward_no_grad(model, xt, device=self.device)
+                        pol = _policy_output_full(out).detach().float().to("cpu", non_blocking=True)
+                        wdl = out["wdl"].detach().float().to("cpu", non_blocking=True)
+                else:
+                    out = _forward_no_grad(model, xt, device=self.device)
+                    pol = _policy_output_full(out).detach().float().cpu()
+                    wdl = out["wdl"].detach().float().cpu()
 
-  # Scatter results back to slots
-        for _trial_id, ready, batch_sizes, pol, wdl in results:
-            pol_np = pol.numpy()
-            wdl_np = wdl.numpy()
-            start = 0
-            for slot, bsz in zip(ready, batch_sizes):
-                end = start + bsz
-                slot.policy[:bsz] = pol_np[start:end]
-                slot.wdl[:bsz] = wdl_np[start:end]
-                slot.state = _STATE_RESPONSE
-                start = end
+                results.append((trial_id, ready, batch_sizes, pol, wdl))
+
+            # Synchronize all streams
+            if use_cuda:
+                for trial_id in ready_by_trial:
+                    stream = self._trial_streams.get(trial_id)
+                    if stream is not None:
+                        stream.synchronize()
+
+            if not self._first_inference_done and results:
+                self._first_inference_done = True
+                log.info("shared broker: first parallel inference complete (%d trials)", len(results))
+
+            # Scatter results back to slots
+            for _trial_id, ready, batch_sizes, pol, wdl in results:
+                pol_np = pol.numpy()
+                wdl_np = wdl.numpy()
+                start = 0
+                for slot, bsz in zip(ready, batch_sizes):
+                    end = start + bsz
+                    slot.policy[:bsz] = pol_np[start:end]
+                    slot.wdl[:bsz] = wdl_np[start:end]
+                    slot.state = _STATE_RESPONSE
+                    start = end
+            forward_ok = True
+        finally:
+            self._hang_watchdog.mark_forward_done(success=forward_ok)
 
     def serve_forever(self) -> None:
         _batch_count = 0
@@ -2454,6 +2484,7 @@ class SharedSlotBroker:
         _last_scan = 0.0
         _report_interval = 10.0
         _scan_interval = 5.0
+        self._hang_watchdog.start()
 
         while not self._stop:
             now = time.monotonic()
@@ -2514,6 +2545,7 @@ class SharedSlotBroker:
 
     def shutdown(self) -> None:
         self._stop = True
+        self._hang_watchdog.stop()
         for _, slot in self._all_slots:
             slot.close()
 
@@ -2521,6 +2553,19 @@ class SharedSlotBroker:
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
+
+def _add_hang_abort_arg(ap: argparse.ArgumentParser) -> None:
+    ap.add_argument(
+        "--hang-abort-seconds",
+        type=float,
+        default=_DEFAULT_HANG_ABORT_S,
+        help=(
+            "Hard-exit (code 42) if a GPU forward stays in flight longer than this "
+            "after the first successful batch. 0 disables. Env "
+            f"{_HANG_ABORT_ENV} overrides when set. Default: {_DEFAULT_HANG_ABORT_S:g}."
+        ),
+    )
 
 
 def main() -> int:
@@ -2538,6 +2583,7 @@ def main() -> int:
         ap.add_argument("--max-batch-per-slot", type=int, default=256)
         ap.add_argument("--input-planes", type=int, default=_CHANNELS)
         ap.add_argument("--shared-cache-dir", type=str, default=None)
+        _add_hang_abort_arg(ap)
         args = ap.parse_args()
     else:
         ap = argparse.ArgumentParser(description="Per-trial shared-memory inference broker")
@@ -2555,8 +2601,11 @@ def main() -> int:
         ap.add_argument("--slot-prefix", type=str, required=True)
         ap.add_argument("--input-planes", type=int, default=_CHANNELS)
         ap.add_argument("--shared-cache-dir", type=str, default=None)
+        _add_hang_abort_arg(ap)
         args = ap.parse_args()
         args.mode = "per-trial"
+
+    hang_abort_seconds = resolve_hang_abort_seconds(float(args.hang_abort_seconds))
 
     shared_cache_raw = str(getattr(args, "shared_cache_dir", "") or "").strip()
     if shared_cache_raw:
@@ -2572,6 +2621,7 @@ def main() -> int:
             batch_wait_ms=float(args.batch_wait_ms),
             compile_mode=str(args.compile_mode),
             input_planes=int(args.input_planes),
+            hang_abort_seconds=hang_abort_seconds,
         )
         try:
             broker.serve_forever()
@@ -2593,6 +2643,7 @@ def main() -> int:
         compile_mode=str(args.compile_mode),
         input_planes=int(args.input_planes),
         adaptive_idle_ms=float(args.adaptive_idle_ms),
+        hang_abort_seconds=hang_abort_seconds,
     )
 
     manifest_path = Path(args.publish_dir).expanduser() / "broker_slots.json"
