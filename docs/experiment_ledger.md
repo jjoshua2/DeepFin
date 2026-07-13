@@ -239,6 +239,140 @@ state hash `0f95b11ec58a0604`, and focused tests plus lint passed. The discarded
 policy/mask packaging is measurable, but this isolated gain missed the gate by
 0.017 percentage points; do not carry the extra API/runtime branch alone.
 
+**Zero-floor Aurora telemetry sampling experiment -- UNREAD (2026-07-12).**
+Production uses `aurora_uw_floor: 0`, but every optimizer step still computes
+FP32 weight/update Frobenius norms for every Aurora matrix, builds ratio/scale
+lists, runs quantiles, and synchronizes the resulting telemetry to the host.
+Those values do not influence an update when the floor is zero; only the final
+iteration report and periodic TensorBoard samples consume them. Live iters
+32--36 attribute 33--35% of trainer wall time to `optimizer_step_time_s`.
+Hypothesis: collecting update/weight telemetry only on TensorBoard-reporting
+steps and the final requested step removes this semantically dead work while
+preserving exact optimizer/model state and fresh final metrics. ONE deciding
+yardstick: `PYTHONPATH=. taskset -c 15 python3 scripts/bench_aurora_stats.py
+--rounds 7 --steps 10 --matrices 8 --size 256`. The harness alternates
+always-on reference and sampled telemetry on identical deterministic CPU
+matrices/gradients, timing complete Aurora steps. Pre-committed SUCCESS:
+sampled/reference median optimizer throughput >=1.03x, every parameter and
+momentum-buffer hash is exact after every round, sampled final UW statistics
+equal the reference, and Aurora/trainer/SODA focused tests plus repo lint pass.
+Otherwise revert and retain per-step telemetry. When `aurora_uw_floor > 0`,
+per-matrix ratios remain mandatory for update scaling; the optimization may
+skip only summary collection between reporting steps. No target/data/config
+meaning changes and no salvage snapshot.
+**VERDICT: FAILED and reverted.** The exact alternating yardstick measured
+1.465272s for always-on telemetry and 1.519525s for sampled telemetry, only
+**0.964296x** reference throughput versus the 1.03x gate. Every round retained
+exact parameter/momentum hash
+`b6745aa3faab08b70a476de8b7fe730a6b0253d6f64dd3d92bc877c0ec0515b3`,
+and final UW statistics matched exactly. On this pinned CPU mechanism test the
+norm/quantile work was hidden under Aurora's matrix iteration and external
+variance; do not keep the extra telemetry control flow without a GPU result
+that clears a separately registered gate.
+
+**Aurora polar addmm fusion experiment -- UNREAD (2026-07-12).** Production
+Aurora (`polar_express`, 8 steps, FP16 on CUDA) currently evaluates each
+quintic step as `a*x + (b*XXt + c*(XXt@XXt))@x`, launching separate
+pointwise scale/add kernels around both GEMMs for every selected matrix.
+`torch.addmm` expresses the same polynomial while allowing each scale/add to
+fuse into its GEMM epilogue. Hypothesis: two `addmm` calls per polar step
+materially reduce full polar-factor time without a meaningful numerical
+change. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_aurora_addmm.py --rounds 7 --repeats 5 --matrices 8 --rows 256
+--cols 512 --steps 8`. The harness alternates the existing expression and
+candidate on identical deterministic FP32 CPU matrices (the implementation's
+CPU fallback), timing the full 8-step polar transform. Pre-committed SUCCESS:
+candidate/reference median throughput >=1.05x, every result is finite, maximum
+absolute error <=2e-5 and maximum relative error <=2e-4, a full Aurora-step
+parity test passes at `rtol=2e-4, atol=2e-5`, and Aurora/trainer tests plus repo
+lint pass. Otherwise revert. This is an algebraically equivalent optimizer
+implementation change; no target/data/config meaning and no salvage snapshot.
+**VERDICT: FAILED and reverted.** The exact seven-round alternating yardstick
+measured 33.641 reference matrices/s and 41.251 candidate matrices/s, a
+**1.226199x** throughput ratio that cleared the speed gate. Maximum absolute
+error was only `6.85453415e-07`, and the full Aurora optimizer-step parity test
+passed at the registered combined tolerance, but raw maximum relative error
+was `0.738535106` around near-zero outputs versus the pre-committed `2e-4`
+limit. The candidate therefore failed the complete acceptance rule. Do not
+promote this algebraic fusion without a newly registered evaluation whose
+numerical criterion explicitly handles near-zero values and CUDA FP16 behavior.
+
+**Aurora polar addmm CUDA replication -- UNREAD (2026-07-12).** The first
+fusion gate found a real 1.226x CPU gain and sub-micro absolute differences,
+but correctly failed its pre-committed raw relative-error limit because values
+arbitrarily close to zero make that metric unbounded. Hypothesis: the same
+algebraic `addmm` fusion also improves production CUDA FP16 Polar Express, with
+differences bounded at the scale of FP16 rounding and no meaningful optimizer
+update drift. ONE deciding yardstick has two required arms: rerun the registered
+CPU command, then run `PYTHONPATH=. python3 scripts/bench_aurora_addmm.py
+--device cuda --rounds 9 --repeats 10 --matrices 16 --rows 512 --cols 896
+--steps 8`. Both arms alternate order and synchronize their device. SUCCESS:
+candidate/reference median throughput >=1.05x in both arms; CPU maximum
+absolute error <=2e-5 and `torch.testing.assert_close` passes at `rtol=2e-4,
+atol=2e-5`; CUDA maximum absolute error <=2e-3, normalized L2 error <=5e-4,
+and cosine similarity >=0.999999; full production-shaped Aurora update parity
+passes at `rtol=5e-3, atol=2e-3`; focused tests and lint pass. Otherwise revert.
+The CUDA arm allocates only small eager tensors and does not compile or change
+the live trainer. This remains algebraically equivalent implementation work;
+no target/data/config meaning and no salvage snapshot.
+**VERDICT: FAILED and reverted.** The corrected CPU arm measured 36.162
+reference and 41.279 candidate matrices/s (**1.141526x**), maximum absolute
+error `6.85453415e-07`, normalized L2 `1.92288167e-06`, cosine 1.0, and passed
+full-update parity. The production-shaped CUDA FP16 arm measured 299.546 vs
+398.649 matrices/s (**1.330842x**) and passed maximum absolute error
+(`0.000793457031`) plus full-update parity, but normalized L2 error was
+`0.0029939115` versus the `5e-4` gate and minimum cosine was `0.99999547`
+versus `0.999999`. The full two-epilogue fusion is fast but fails the complete
+numerical rule; test its two independent fusion sites separately rather than
+accepting larger accumulated FP16 rounding drift.
+
+**Aurora partial addmm fusion dose ladder -- UNREAD (2026-07-12).** Full
+two-epilogue fusion is 1.33x faster on CUDA but accumulates too much FP16 polar
+drift. Hypothesis: fusing only the inner polynomial (`b*XXt+c*XXt@XXt`) or only
+the outer update (`a*x+polynomial@x`) retains a useful kernel-launch reduction
+and one candidate stays inside the prior strict numerical limits. ONE deciding
+yardstick: extend the same alternating CPU and production-shaped CUDA commands
+to compare `inner`, `outer`, and `full` against `reference`. SUCCESS: choose
+the fastest partial candidate with >=1.05x median throughput on both CPU and
+CUDA, CPU max absolute <=2e-5 and assert-close at `rtol=2e-4, atol=2e-5`, CUDA
+max absolute <=2e-3, normalized L2 <=5e-4, cosine >=0.999999, full Aurora
+update parity at `rtol=5e-3, atol=2e-3`, focused tests, and lint. Otherwise
+FAILED and keep the original expression. This is offline eager math only; no
+live trainer mutation, target/data/config change, or salvage snapshot.
+**VERDICT: FAILED; no runtime change.** On CPU, inner-only fusion measured
+1.064536x and passed every numerical limit, while outer-only measured only
+1.043054x and missed the speed gate. On production-shaped CUDA FP16, inner
+measured **1.207337x** and outer **1.129477x**, but their normalized L2 errors
+were `0.00294561288` and `0.00297925738`, and cosine minima were
+`0.999995589` and `0.99999547`; both miss the same `5e-4` and `0.999999`
+limits that rejected full fusion. Maximum absolute errors stayed below 0.001
+and full-update parity passed, but neither partial candidate satisfies the
+complete rule. Remove the dose-ladder harness and retain the original
+operation ordering.
+
+**Pending-slot direct-membership simplification -- UNREAD (2026-07-12).** Live
+worker telemetry attributes roughly 20--30% of active selfplay orchestration
+thread-time to classification. Every scheduler pass with outstanding SF work
+copies `pending_sf_moves` into a temporary set, then filters three short index
+lists; the dictionary already provides O(1) key membership. Hypothesis: test
+membership directly against the dictionary, removing one allocation/copy per
+pass with identical results. ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_pending_slot_filter.py --batch-size 32 --pending 24 --rounds 9
+--iterations 1000000`, alternating set-copy and direct-dict filtering with
+production-sized deterministic groups. SUCCESS: direct/reference median
+throughput >=1.10x, exact outputs for randomized pending subsets, focused
+selfplay/manager/continuous tests, and lint pass. Otherwise revert. This is a
+small Python scheduling simplification; no live activation, data/config
+meaning, or salvage snapshot.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+397,463 set-copy filters/s and 460,872 direct-dictionary filters/s, a
+**1.159535x** mechanism speedup. One thousand randomized pending subsets
+retained exact group outputs. Validation passed 65/65 focused continuous,
+threaded, state, timeout, and distributed-backpressure tests after a clean
+GCC15 native+LTO extension build; ruff, basedpyright, and vulture are clean.
+Keep the allocation-free direct membership checks. This improves only the
+classification/filter slice, not whole-worker throughput by 15.9%.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes
