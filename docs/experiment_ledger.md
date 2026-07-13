@@ -213,6 +213,29 @@ p95 / RSS kill criteria. Multiply-all is deliberate: oversubscribing only
 selfplay-classified slots would shift the effective selfplay/curriculum data
 mix and turn this scheduling-only change into a data-mix change.
 
+**UCI abort root-snapshot reuse experiment -- UNREAD (2026-07-13).** The
+match time-manager calls `_filtered_root_visits` in `_root_visit_lead` and then
+again in `_move_is_decided` on every ordinary abort check (and a third time on
+the non-leading-survivor branch), crossing the native boundary and allocating
+duplicate NumPy arrays despite the helper's once-per-chunk contract. Hypothesis:
+fetch one filtered root snapshot in `_abort_ready` and pass it through lead,
+forced-move, visit-gap, and stability decisions. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_uci_abort_snapshot.py
+--children 32 --iterations 200000 --rounds 9`. SUCCESS: candidate/reference
+median time <=0.80, exact abort decisions and stability state over forced,
+leading, trailing, filtered, and provable-bank cases, exactly one root snapshot
+per check, focused UCI time/search tests and lint pass. KILL: ratio >0.95 or any
+decision/state mismatch; otherwise MIXED and retain only if the final code is a
+net simplification. Match scheduling only; no training/data/config change or
+salvage.
+**VERDICT: FAILED and reverted.** The exact nine-round alternating yardstick
+measured 8.366475194s with repeated snapshots and 8.284874931s with one shared
+snapshot, ratio **0.990247**: only 0.98% faster, beyond the pre-committed 0.95
+kill threshold. Native snapshot calls did fall exactly 399,998 -> 200,000 and
+abort decisions matched, confirming the duplicate read but showing it is not a
+material cost. The optional snapshot plumbing was not a net simplification, so
+remove the runtime and harness changes; retain existing match behavior.
+
 **UCI discarded chunk-result elision experiment -- UNREAD (2026-07-11).**
 Match search calls `run_gumbel_root_many_c` once per search chunk, but
 `SearchWorker._run_gumbel_chunk` consumes only the selected action, value,
