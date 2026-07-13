@@ -669,6 +669,68 @@ dispatcher, Gumbel, root-parallel, UCI engine, and searchmoves tests after a
 clean GCC15 native+LTO extension build; lint is clean. Keep the singleton alias
 path; multi-request drains retain concatenation and bucket padding still owns
 its required counts array.
+**Threaded-dispatcher compact legal-length reuse experiment -- UNREAD
+(2026-07-12).** Compact dispatch currently reduces every `legal_counts` array
+once to size the submitted policy output and again per request while scattering,
+although the corresponding one-dimensional `legal_flat.size` is already the
+exact policy length. The inner evaluator still validates
+`sum(legal_counts) == legal_flat.size` before launching inference. Hypothesis:
+reuse the validated flat lengths for output sizing and slice offsets, removing
+NumPy reductions from every compact submit/scatter without changing validation
+or layout. ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_threaded_legal_length.py --batch 512 --legal-per 32 --requests 16
+--rounds 9 --iterations 500000`. SUCCESS: candidate/reference median mechanism
+throughput >=3x, exact totals and randomized per-request policy slice boundaries,
+focused threaded-dispatcher/UCI/Gumbel tests, and lint pass. Otherwise revert.
+Inference bookkeeping only; no target/config/data change or salvage.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+33.111050s for repeated count reductions versus 1.404287s for flat-length
+reuse, a **23.578549x** mechanism speedup. The checksum was exactly
+16,329,000,000 and all 16 randomized per-request cumulative policy boundaries
+matched. A clean GCC 15 native+LTO build and all 109 focused threaded-
+dispatcher, coalescer, GPU-dispatcher, Gumbel, root-parallel, UCI engine, and
+searchmoves tests pass, including the new concurrent compact-request slice
+regression; ruff, basedpyright, and vulture are clean. Keep the length reuse.
+
+**Batch-coalescer compact scatter-length reuse experiment -- UNREAD
+(2026-07-12).** The compiled UCI/match-play `BatchCoalescingDispatcher`
+validates `sum(legal_counts) == legal_flat.size` before enqueue, but its
+submitter thread reduces each request's counts again to advance compact-policy
+slice offsets. Hypothesis: reuse each request's validated flat length during
+scatter, removing a NumPy reduction from every compact match request with
+identical slices. ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_threaded_legal_length.py --batch 512 --legal-per 32 --requests 16
+--rounds 9 --iterations 100000`; its per-request scatter arm is the same
+bookkeeping operation. SUCCESS: candidate/reference median mechanism throughput
+>=3x, exact randomized slice boundaries/checksum, focused coalescer/UCI tests,
+and lint pass. Otherwise revert. Match-inference bookkeeping only; no
+target/config/data change or salvage.
+**VERDICT: WORKED.** Nine alternating rounds measured 5.465108s for repeated
+count reductions versus 0.243004s for flat-length reuse, a **22.489759x**
+mechanism speedup, with exact randomized slice boundaries and checksum
+3,265,800,000. All 40 focused coalescer/UCI engine/searchmoves tests pass;
+ruff, basedpyright, and vulture are clean. Keep the flat-length scatter path.
+
+**SlotBroker compact legal-length reuse experiment -- UNREAD (2026-07-12).**
+The production shared-GPU broker must reduce counts once while validating
+untrusted slot metadata, but then reduces them again while building compact
+offsets and a third time in the dense-policy fallback gather. Live worker
+telemetry shows about 79% compact legal requests. Hypothesis: retain the
+trust-boundary reduction and use each copied flat array's exact length for the
+two post-validation bookkeeping passes. ONE deciding yardstick: `taskset -c 15
+python3 scripts/bench_threaded_legal_length.py --batch 512 --legal-per 32
+--requests 16 --rounds 9 --iterations 100000`; the request-partition arm is the
+same repeated offset operation. SUCCESS: candidate/reference median mechanism
+throughput >=3x, exact randomized boundaries/checksum, focused SlotBroker and
+shared-broker tests, and lint pass. Otherwise revert. Inference bookkeeping
+only; validation, model outputs, targets, and data remain unchanged; no salvage.
+**VERDICT: WORKED.** Nine alternating rounds measured 5.615790s for redundant
+count reductions versus 0.243942s for validated flat-length reuse, a
+**23.021000x** mechanism speedup, with exact randomized boundaries and checksum
+3,265,800,000. All 31 focused SlotBroker, GPU-dispatcher, and multi-GPU
+dispatcher tests pass; ruff, basedpyright, and vulture are clean. Keep both
+post-validation flat-length reuse sites.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes

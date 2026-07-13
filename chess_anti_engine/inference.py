@@ -1467,8 +1467,12 @@ class SlotBroker:
             compact_row_parts: list[np.ndarray] = []
             row_base = 0
             pol_base = 0
-            for bsz, counts in zip(batch_sizes, legal_counts_by_slot, strict=True):
-                n_legal = int(counts.sum())
+            for bsz, counts, flat in zip(
+                batch_sizes, legal_counts_by_slot, legal_flat_by_slot, strict=True,
+            ):
+                # Slot metadata validation above already established that the
+                # counts sum equals this copied flat array's length.
+                n_legal = int(flat.size)
                 compact_offsets.append((pol_base, pol_base + n_legal))
                 if n_legal > 0:
                     compact_row_parts.append(
@@ -1567,7 +1571,7 @@ class SlotBroker:
                 cols_parts: list[np.ndarray] = []
                 row_base = 0
                 for bsz, counts, flat in zip(batch_sizes, legal_counts_by_slot, legal_flat_by_slot, strict=True):
-                    n_legal = int(counts.sum())
+                    n_legal = int(flat.size)
                     if n_legal > 0:
                         rows_parts.append(
                             np.repeat(
