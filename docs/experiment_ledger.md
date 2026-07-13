@@ -926,6 +926,10 @@ second request remains queued and also verifies orderly shutdown. This removes
 cross-engine head-of-line blocking; the post-natural-restart read must use
 `sf_block_starved` and games/hour because the synthetic mechanism ratio is not a
 whole-selfplay throughput claim.
+**PRE-ACTIVATION LIVE BASELINE:** the latest 20 steady phase windows from each
+of the four active workers (80 total, 2026-07-13 00:44) have pooled median
+`sf_block_starved=1853.1%` cumulative thread time. Repeat the same active-trial
+four-worker/latest-20 calculation after restart; games/hour is the outcome.
 
 **Label-blocked finalization overlap experiment -- UNREAD (2026-07-13).** Live
 steady-state workers report roughly 300-1000% cumulative thread time in
@@ -958,6 +962,9 @@ clean GCC 15 native+LTO build, all 53 focused label/escalation/continuous-
 selfplay tests, the 18-test CPU selfplay-to-replay-to-training end-to-end smoke,
 and ruff/basedpyright/vulture pass. Keep the overlap; the next natural restart
 must judge whole throughput from finalize share and games/hour.
+**PRE-ACTIVATION LIVE BASELINE:** the same 80 active-worker windows have pooled
+median `finalize=484.0%` cumulative thread time. Repeat the same windowed
+calculation after restart; games/hour remains the outcome metric.
 
 **Stockfish pool node-weighted queue-balance experiment -- UNREAD
 (2026-07-13).** Per-engine FIFO queues remove cross-engine blocking, but request
