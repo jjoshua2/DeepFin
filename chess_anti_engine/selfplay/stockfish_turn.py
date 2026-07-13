@@ -353,10 +353,9 @@ def finish_pending_curriculum_moves(
             return_when=FIRST_COMPLETED,
         )
 
+    ready = [(idx, fut) for idx, fut in state.pending_sf_moves.items() if fut.done()]
     completed: list[tuple[int, Any]] = []
-    for idx, fut in list(state.pending_sf_moves.items()):
-        if not fut.done():
-            continue
+    for idx, fut in ready:
         completed.append((idx, fut.result()))
         del state.pending_sf_moves[idx]
 
