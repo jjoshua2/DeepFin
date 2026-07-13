@@ -115,50 +115,6 @@ def _polar_express(
     return x.to(mat.dtype)
 
 
-class _CapturedPolarExpress:
-    """Exact eager Polar Express replay for one fixed CUDA tensor shape."""
-
-    def __init__(
-        self,
-        sample: Tensor,
-        *,
-        steps: int,
-        eps: float,
-        safety: float,
-        work_dtype: torch.dtype | None,
-    ) -> None:
-        self.static_input = torch.empty_like(sample)
-        self.static_input.copy_(sample)
-        warmup_stream = torch.cuda.Stream(device=sample.device)
-        warmup_stream.wait_stream(torch.cuda.current_stream(sample.device))
-        with torch.cuda.stream(warmup_stream):
-            for _ in range(3):
-                _polar_express(
-                    self.static_input,
-                    steps=steps,
-                    eps=eps,
-                    safety=safety,
-                    work_dtype=work_dtype,
-                )
-        torch.cuda.current_stream(sample.device).wait_stream(warmup_stream)
-        torch.cuda.synchronize(sample.device)
-
-        self.graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(self.graph):
-            self.static_output = _polar_express(
-                self.static_input,
-                steps=steps,
-                eps=eps,
-                safety=safety,
-                work_dtype=work_dtype,
-            )
-
-    def __call__(self, mat: Tensor) -> Tensor:
-        self.static_input.copy_(mat)
-        self.graph.replay()
-        return self.static_output
-
-
 def _polar_factor(
     mat: Tensor,
     *,
@@ -246,6 +202,55 @@ def _aurora_update(
     return out.to(update.dtype)
 
 
+class _CapturedAuroraUpdate:
+    """Exact eager Aurora-update replay for one fixed CUDA parameter."""
+
+    def __init__(
+        self,
+        sample: Tensor,
+        *,
+        pp_iterations: int,
+        pp_beta: float,
+        polar_steps: int,
+        polar_method: str,
+        polar_dtype: str | torch.dtype | None,
+        polar_safety: float,
+        eps: float,
+    ) -> None:
+        self.static_input = torch.empty_like(sample)
+        self.static_input.copy_(sample)
+
+        def run() -> Tensor:
+            return _aurora_update(
+                self.static_input,
+                pp_iterations=pp_iterations,
+                pp_beta=pp_beta,
+                polar_steps=polar_steps,
+                polar_method=polar_method,
+                polar_dtype=polar_dtype,
+                polar_safety=polar_safety,
+                eps=eps,
+                check_finite=False,
+            )
+
+        warmup_stream = torch.cuda.Stream(device=sample.device)
+        warmup_stream.wait_stream(torch.cuda.current_stream(sample.device))
+        with torch.cuda.stream(warmup_stream):
+            for _ in range(3):
+                run()
+        torch.cuda.current_stream(sample.device).wait_stream(warmup_stream)
+        torch.cuda.synchronize(sample.device)
+
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph):
+            self.static_output = run()
+
+    def __call__(self, update: Tensor) -> Tensor:
+        self.static_input.copy_(update)
+        self.graph.replay()
+        return self.static_output
+
+
 def _uw_stats(ratios: list[Tensor], scales: list[Tensor], *, lr: float, floor: float) -> dict[str, float]:
     """Summarize Aurora update/weight ratios from one optimizer step."""
     if not ratios:
@@ -311,47 +316,69 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         super().__init__(params, defaults)
         self.last_uw_stats: dict[str, float] = {}
         self._collect_uw_stats = True
-        self._use_polar_graphs = bool(aurora_cuda_graphs)
+        self._use_update_graphs = bool(aurora_cuda_graphs)
         self._coalesce_finite_checks = bool(aurora_coalesce_finite_checks)
-        self._polar_graphs: dict[tuple[object, ...], _CapturedPolarExpress] = {}
+        self._update_graphs: dict[tuple[object, ...], _CapturedAuroraUpdate] = {}
 
     def set_collect_uw_stats(self, collect: bool) -> None:
         """Collect zero-floor diagnostics on this step when requested."""
         self._collect_uw_stats = bool(collect)
 
-    def _polar_express_for_update(
+    def _aurora_update_for_param(
         self,
-        mat: Tensor,
+        param: Tensor,
+        update: Tensor,
         *,
-        steps: int,
+        pp_iterations: int,
+        pp_beta: float,
+        polar_steps: int,
+        polar_method: str,
+        polar_dtype: str | torch.dtype | None,
+        polar_safety: float,
         eps: float,
-        safety: float,
-        work_dtype: torch.dtype | None,
     ) -> Tensor:
-        if mat.device.type != "cuda" or not self._use_polar_graphs:
-            return _polar_express(
-                mat, steps=steps, eps=eps, safety=safety, work_dtype=work_dtype,
+        use_graph = (
+            update.device.type == "cuda"
+            and self._use_update_graphs
+            and self._coalesce_finite_checks
+            and str(polar_method).lower() in ("polar_express", "pe", "pe8")
+        )
+        if not use_graph:
+            return _aurora_update(
+                update,
+                pp_iterations=pp_iterations,
+                pp_beta=pp_beta,
+                polar_steps=polar_steps,
+                polar_method=polar_method,
+                polar_dtype=polar_dtype,
+                polar_safety=polar_safety,
+                eps=eps,
+                check_finite=not self._coalesce_finite_checks,
             )
         key = (
-            mat.device,
-            mat.dtype,
-            tuple(mat.shape),
-            int(steps),
+            param,
+            int(pp_iterations),
+            float(pp_beta),
+            int(polar_steps),
+            str(polar_method),
+            polar_dtype,
+            float(polar_safety),
             float(eps),
-            float(safety),
-            work_dtype,
         )
-        captured = self._polar_graphs.get(key)
+        captured = self._update_graphs.get(key)
         if captured is None:
-            captured = _CapturedPolarExpress(
-                mat,
-                steps=steps,
+            captured = _CapturedAuroraUpdate(
+                update,
+                pp_iterations=pp_iterations,
+                pp_beta=pp_beta,
+                polar_steps=polar_steps,
+                polar_method=polar_method,
+                polar_dtype=polar_dtype,
+                polar_safety=polar_safety,
                 eps=eps,
-                safety=safety,
-                work_dtype=work_dtype,
             )
-            self._polar_graphs[key] = captured
-        return captured(mat)
+            self._update_graphs[key] = captured
+        return captured(update)
 
     @torch.no_grad()
     def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -399,7 +426,8 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                         state["momentum_buffer"] = buf
                     buf.mul_(momentum).add_(grad, alpha=1.0 - momentum)
                     update = torch.lerp(grad, buf, momentum) if nesterov else buf
-                    update = _aurora_update(
+                    update = self._aurora_update_for_param(
+                        param,
                         update,
                         pp_iterations=pp_iterations,
                         pp_beta=pp_beta,
@@ -408,8 +436,6 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                         polar_dtype=polar_dtype,
                         polar_safety=polar_safety,
                         eps=eps,
-                        polar_express_fn=self._polar_express_for_update,
-                        check_finite=not self._coalesce_finite_checks,
                     )
                     if collect_uw_stats:
                         weight_fro = param.float().norm().clamp_min(eps)

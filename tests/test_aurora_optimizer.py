@@ -164,10 +164,10 @@ def test_polar_express_uses_fp16_inner_matmuls_on_cuda():
 def test_aurora_cuda_graph_matches_eager_optimizer_state():
     torch.manual_seed(37)
     initial = torch.randn(32, 16, device="cuda")
-    eager_param = torch.nn.Parameter(initial.clone())
-    graph_param = torch.nn.Parameter(initial.clone())
+    eager_params = [torch.nn.Parameter(initial.clone()), torch.nn.Parameter(initial.clone() * 2)]
+    graph_params = [torch.nn.Parameter(param.detach().clone()) for param in eager_params]
     eager = AuroraWithAuxAdam(
-        [{"params": [eager_param], "lr": 0.01, "use_aurora": True}],
+        [{"params": eager_params, "lr": 0.01, "use_aurora": True}],
         aurora_pp_iterations=3,
         aurora_polar_steps=3,
         aurora_polar_method="polar_express",
@@ -175,7 +175,7 @@ def test_aurora_cuda_graph_matches_eager_optimizer_state():
         aurora_cuda_graphs=False,
     )
     graphed = AuroraWithAuxAdam(
-        [{"params": [graph_param], "lr": 0.01, "use_aurora": True}],
+        [{"params": graph_params, "lr": 0.01, "use_aurora": True}],
         aurora_pp_iterations=3,
         aurora_polar_steps=3,
         aurora_polar_method="polar_express",
@@ -185,21 +185,25 @@ def test_aurora_cuda_graph_matches_eager_optimizer_state():
     eager.set_collect_uw_stats(False)
     graphed.set_collect_uw_stats(False)
     for _ in range(2):
-        grad = torch.randn_like(initial)
-        eager_param.grad = grad.clone()
-        graph_param.grad = grad.clone()
+        gradients = [torch.randn_like(initial), torch.randn_like(initial)]
+        for eager_param, graph_param, grad in zip(
+            eager_params, graph_params, gradients, strict=True,
+        ):
+            eager_param.grad = grad.clone()
+            graph_param.grad = grad.clone()
         eager.step()
         graphed.step()
 
-    torch.testing.assert_close(graph_param, eager_param, rtol=0.0, atol=0.0)
-    torch.testing.assert_close(
-        graphed.state[graph_param]["momentum_buffer"],
-        eager.state[eager_param]["momentum_buffer"],
-        rtol=0.0,
-        atol=0.0,
-    )
-    assert len(eager._polar_graphs) == 0
-    assert len(graphed._polar_graphs) == 1
+    for eager_param, graph_param in zip(eager_params, graph_params, strict=True):
+        torch.testing.assert_close(graph_param, eager_param, rtol=0.0, atol=0.0)
+        torch.testing.assert_close(
+            graphed.state[graph_param]["momentum_buffer"],
+            eager.state[eager_param]["momentum_buffer"],
+            rtol=0.0,
+            atol=0.0,
+        )
+    assert len(eager._update_graphs) == 0
+    assert len(graphed._update_graphs) == 2
 
 
 def test_aurora_uw_floor_scales_relative_update():
