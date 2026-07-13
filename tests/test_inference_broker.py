@@ -118,14 +118,30 @@ def test_slot_inference_client_sends_compact_legal_bf16_request() -> None:
     assert np.allclose(wdl, 7.0)
 
 
-def test_slot_broker_returns_compact_legal_bf16_logits(tmp_path: Path) -> None:
+@pytest.mark.parametrize("device", [
+    "cpu",
+    pytest.param(
+        "cuda",
+        marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required"),
+    ),
+])
+def test_slot_broker_returns_compact_legal_bf16_logits(
+    tmp_path: Path, device: str,
+) -> None:
     class _TinyPolicy(torch.nn.Module):
         def forward(self, x: torch.Tensor):
             bsz = x.shape[0]
-            row = torch.arange(bsz, dtype=torch.float32).unsqueeze(1) * 10000.0
+            row = (
+                torch.arange(bsz, dtype=torch.float32, device=x.device).unsqueeze(1)
+                * 10000.0
+            )
             return {
-                "policy": row + torch.arange(4672, dtype=torch.float32).unsqueeze(0),
-                "wdl": torch.arange(bsz * 3, dtype=torch.float32).reshape(bsz, 3),
+                "policy": row + torch.arange(
+                    4672, dtype=torch.float32, device=x.device,
+                ).unsqueeze(0),
+                "wdl": torch.arange(
+                    bsz * 3, dtype=torch.float32, device=x.device,
+                ).reshape(bsz, 3),
             }
 
     publish_dir = tmp_path / "publish"
@@ -134,13 +150,13 @@ def test_slot_broker_returns_compact_legal_bf16_logits(tmp_path: Path) -> None:
         publish_dir=publish_dir,
         num_slots=1,
         max_batch_per_slot=8,
-        device="cpu",
+        device=device,
         compile_inference=False,
         batch_wait_ms=0.0,
         slot_prefix=f"cae-legal-broker-{uuid.uuid4().hex}",
     )
     try:
-        broker._model = _TinyPolicy().eval()
+        broker._model = _TinyPolicy().to(device).eval()
         broker._model_sha = "test"
         slot = broker._slots[0]
         x = np.zeros((2, 146, 8, 8), dtype=np.uint16)
@@ -225,7 +241,16 @@ def test_slot_broker_uses_model_legal_policy_forward(tmp_path: Path) -> None:
         broker.shutdown()
 
 
-def test_slot_broker_uses_padded_legal_rows_forward(tmp_path: Path) -> None:
+@pytest.mark.parametrize("device", [
+    "cpu",
+    pytest.param(
+        "cuda",
+        marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required"),
+    ),
+])
+def test_slot_broker_uses_padded_legal_rows_forward(
+    tmp_path: Path, device: str,
+) -> None:
     class _TinyLegalRowsPolicy(torch.nn.Module):
         def __init__(self) -> None:
             super().__init__()
@@ -244,7 +269,9 @@ def test_slot_broker_uses_padded_legal_rows_forward(tmp_path: Path) -> None:
             bsz = x.shape[0]
             return {
                 "policy_own": legal_flat.to(torch.float32) + legal_rows.to(torch.float32) * 10000.0,
-                "wdl": torch.arange(bsz * 3, dtype=torch.float32).reshape(bsz, 3),
+                "wdl": torch.arange(
+                    bsz * 3, dtype=torch.float32, device=x.device,
+                ).reshape(bsz, 3),
             }
 
     publish_dir = tmp_path / "publish"
@@ -253,13 +280,13 @@ def test_slot_broker_uses_padded_legal_rows_forward(tmp_path: Path) -> None:
         publish_dir=publish_dir,
         num_slots=1,
         max_batch_per_slot=256,
-        device="cpu",
+        device=device,
         compile_inference=True,
         batch_wait_ms=0.0,
         slot_prefix=f"cae-legal-rows-{uuid.uuid4().hex}",
     )
     try:
-        model = _TinyLegalRowsPolicy().eval()
+        model = _TinyLegalRowsPolicy().to(device).eval()
         broker._model = model
         broker._model_sha = "test"
         slot = broker._slots[0]
