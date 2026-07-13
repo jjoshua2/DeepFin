@@ -213,6 +213,29 @@ p95 / RSS kill criteria. Multiply-all is deliberate: oversubscribing only
 selfplay-classified slots would shift the effective selfplay/curriculum data
 mix and turn this scheduling-only change into a data-mix change.
 
+**UCI abort root-snapshot reuse experiment -- UNREAD (2026-07-13).** The
+match time-manager calls `_filtered_root_visits` in `_root_visit_lead` and then
+again in `_move_is_decided` on every ordinary abort check (and a third time on
+the non-leading-survivor branch), crossing the native boundary and allocating
+duplicate NumPy arrays despite the helper's once-per-chunk contract. Hypothesis:
+fetch one filtered root snapshot in `_abort_ready` and pass it through lead,
+forced-move, visit-gap, and stability decisions. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_uci_abort_snapshot.py
+--children 32 --iterations 200000 --rounds 9`. SUCCESS: candidate/reference
+median time <=0.80, exact abort decisions and stability state over forced,
+leading, trailing, filtered, and provable-bank cases, exactly one root snapshot
+per check, focused UCI time/search tests and lint pass. KILL: ratio >0.95 or any
+decision/state mismatch; otherwise MIXED and retain only if the final code is a
+net simplification. Match scheduling only; no training/data/config change or
+salvage.
+**VERDICT: FAILED and reverted.** The exact nine-round alternating yardstick
+measured 8.366475194s with repeated snapshots and 8.284874931s with one shared
+snapshot, ratio **0.990247**: only 0.98% faster, beyond the pre-committed 0.95
+kill threshold. Native snapshot calls did fall exactly 399,998 -> 200,000 and
+abort decisions matched, confirming the duplicate read but showing it is not a
+material cost. The optional snapshot plumbing was not a net simplification, so
+remove the runtime and harness changes; retain existing match behavior.
+
 **UCI discarded chunk-result elision experiment -- UNREAD (2026-07-11).**
 Match search calls `run_gumbel_root_many_c` once per search chunk, but
 `SearchWorker._run_gumbel_chunk` consumes only the selected action, value,
@@ -903,6 +926,10 @@ second request remains queued and also verifies orderly shutdown. This removes
 cross-engine head-of-line blocking; the post-natural-restart read must use
 `sf_block_starved` and games/hour because the synthetic mechanism ratio is not a
 whole-selfplay throughput claim.
+**PRE-ACTIVATION LIVE BASELINE:** the latest 20 steady phase windows from each
+of the four active workers (80 total, 2026-07-13 00:44) have pooled median
+`sf_block_starved=1853.1%` cumulative thread time. Repeat the same active-trial
+four-worker/latest-20 calculation after restart; games/hour is the outcome.
 
 **Label-blocked finalization overlap experiment -- UNREAD (2026-07-13).** Live
 steady-state workers report roughly 300-1000% cumulative thread time in
@@ -935,6 +962,34 @@ clean GCC 15 native+LTO build, all 53 focused label/escalation/continuous-
 selfplay tests, the 18-test CPU selfplay-to-replay-to-training end-to-end smoke,
 and ruff/basedpyright/vulture pass. Keep the overlap; the next natural restart
 must judge whole throughput from finalize share and games/hour.
+**PRE-ACTIVATION LIVE BASELINE:** the same 80 active-worker windows have pooled
+median `finalize=484.0%` cumulative thread time. Repeat the same windowed
+calculation after restart; games/hour remains the outcome metric.
+
+**Stockfish pool node-weighted queue-balance experiment -- UNREAD
+(2026-07-13).** Per-engine FIFO queues remove cross-engine blocking, but request
+ownership remains round-robin while production fast-ply searches use roughly
+one quarter of the full-label/current-opponent node budget. With four engines,
+clustering full searches on one queue extends the whole completion wave.
+Hypothesis: assign each request to the engine with the least outstanding node
+budget, using rotating ties, and decrement the estimate on future completion.
+ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_stockfish_pool_balance.py --workers 4 --requests 96 --sequences
+10000 --seed 20260713`. SUCCESS: weighted/round-robin aggregate makespan <=0.95,
+no sequence regresses by >5%, exact request/result checksum, concurrent-submit
+tests preserve accounting, focused Stockfish/selfplay tests and lint pass.
+KILL: ratio >0.99, submit overhead >25us/request, or any leaked/negative pending
+budget; otherwise MIXED and retain only for a net-simple implementation. Offline
+scheduler only; engine count, node budgets, results, data, and live config stay
+unchanged, with activation at a natural restart.
+**VERDICT: MIXED and reverted.** Across 10,000 deterministic 96-request
+production-ratio sequences, weighted assignment reduced aggregate modeled
+makespan from 486,843 to 434,429 (**0.892339 ratio, 10.8% better**) and cost only
+2.028us/request versus 0.269us round-robin. However, the worst individual
+sequence regressed **1.060606x**, exceeding the pre-committed 1.05 tail guard.
+The exact cost checksum was 1,683,141. Pending-node locks and future callbacks
+are not a net simplification, so the MIXED retain clause does not apply: keep
+the simple per-engine FIFO round-robin scheduler from the preceding experiment.
 
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
