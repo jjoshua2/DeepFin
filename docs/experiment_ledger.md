@@ -904,6 +904,38 @@ cross-engine head-of-line blocking; the post-natural-restart read must use
 `sf_block_starved` and games/hour because the synthetic mechanism ratio is not a
 whole-selfplay throughput claim.
 
+**Label-blocked finalization overlap experiment -- UNREAD (2026-07-13).** Live
+steady-state workers report roughly 300-1000% cumulative thread time in
+`finalize` while 32 selfplay threads share four Stockfish processes. A completed
+selfplay game currently calls the blocking label flush immediately, stalling its
+whole 24-slot state even when other slots are runnable. Hypothesis: defer only
+done games that still own incomplete async label futures, keep scheduling the
+other slots, and wait on the first label future with the existing 50ms control
+deadline only when no runnable work remains. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_finalize_label_overlap.py
+--label-delay-ms 20 --work-items 20 --work-ms 1 --rounds 9`. SUCCESS: candidate
+median elapsed time <=0.65x blocking reference, identical completed-work
+checksum, deterministic tests prove runnable work proceeds before the label and
+idle states block rather than spin, focused selfplay/finalization tests and lint
+pass. KILL: ratio >0.90, any dropped/unlabeled game, changed sample contents, or
+pause/stop responsiveness beyond the existing 50ms bound; otherwise MIXED and
+do not ship. Scheduling only; no target/config/data semantic change or salvage,
+and activation waits for a natural restart.
+**MECHANISM VERDICT: WORKED.** Nine alternating rounds measured 0.045351887s
+for blocking label-then-work scheduling versus 0.023162679s when useful work
+overlapped the same label, a **0.510732 ratio (1.96x mechanism speedup)** with
+identical checksum 227. Continuous sessions now skip only a done game whose own
+records still have pending label entries; a later poll finalizes and recycles it.
+When nothing can advance, the scheduler waits for first SF completion with the
+existing 50ms bound instead of spinning. Finite batches deliberately retain
+blocking finalization so idle waits cannot consume their safety-step budget. A
+true continuous-session stop force-drains already-done games before exit, so
+deferral cannot turn completed games into teardown abandonment. A
+clean GCC 15 native+LTO build, all 53 focused label/escalation/continuous-
+selfplay tests, the 18-test CPU selfplay-to-replay-to-training end-to-end smoke,
+and ruff/basedpyright/vulture pass. Keep the overlap; the next natural restart
+must judge whole throughput from finalize share and games/hour.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes

@@ -901,6 +901,21 @@ def flush_async_sf_labels_for_records(
     return attached, failed
 
 
+def has_pending_sf_labels_for_records(
+    state: SelfplayState, records: list[_NetRecord],
+) -> bool:
+    """Whether unfinished async labels still belong to ``records``.
+
+    The manager polls completed futures before finalization, so any matching
+    entry left in ``pending_sf_labels`` would make finalize block. This cheap
+    preflight lets other slots continue until that result is ready.
+    """
+    if not state.pending_sf_labels or not records:
+        return False
+    target_records = set(records)
+    return any(pending.record in target_records for pending in state.pending_sf_labels)
+
+
 def _push_curriculum_opponent_move(
     state: SelfplayState, idx: int,
     *, legal_indices: np.ndarray,
@@ -1011,6 +1026,7 @@ __all__ = [
     "finish_pending_curriculum_moves",
     "finish_sf_annotation_and_moves",
     "flush_async_sf_labels_for_records",
+    "has_pending_sf_labels_for_records",
     "poll_async_sf_labels",
     "submit_async_curriculum_move_queries",
     "submit_async_sf_label_queries",
