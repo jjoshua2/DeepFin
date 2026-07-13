@@ -5046,17 +5046,18 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta_bf16(PyObject *self, P
  *                  done: ndarray[int8],            # mutable
  *                  finalized: ndarray[int8],       # read-only
  *                  selfplay_game: ndarray[int8],   # read-only
+ *                  starting_ply: ndarray[int32],   # absolute opening ply
  *                  max_plies: int)
  *   -> (net_idxs, selfplay_opp_idxs, curriculum_opp_idxs)  int32 arrays
  * ================================================================ */
 static PyObject *py_classify_games(PyObject *self, PyObject *args) {
     PyObject *cboards_list;
-    PyObject *net_color_obj, *done_obj, *final_obj, *sp_obj;
+    PyObject *net_color_obj, *done_obj, *final_obj, *sp_obj, *start_ply_obj;
     int max_plies;
 
-    if (!PyArg_ParseTuple(args, "OOOOOi",
+    if (!PyArg_ParseTuple(args, "OOOOOOi",
             &cboards_list, &net_color_obj, &done_obj, &final_obj,
-            &sp_obj, &max_plies))
+            &sp_obj, &start_ply_obj, &max_plies))
         return NULL;
 
     if (!PyList_Check(cboards_list)) {
@@ -5075,18 +5076,20 @@ static PyObject *py_classify_games(PyObject *self, PyObject *args) {
     PyArrayObject *done_arr = FROMANY_1D_RW(done_obj, NPY_INT8);
     PyArrayObject *final_arr = FROMANY_1D(final_obj, NPY_INT8);
     PyArrayObject *sp_arr = FROMANY_1D(sp_obj, NPY_INT8);
+    PyArrayObject *start_ply_arr = FROMANY_1D(start_ply_obj, NPY_INT32);
 
-    if (!net_color_arr || !done_arr || !final_arr || !sp_arr) {
+    if (!net_color_arr || !done_arr || !final_arr || !sp_arr || !start_ply_arr) {
         Py_XDECREF(net_color_arr); Py_XDECREF(done_arr);
-        Py_XDECREF(final_arr); Py_XDECREF(sp_arr);
+        Py_XDECREF(final_arr); Py_XDECREF(sp_arr); Py_XDECREF(start_ply_arr);
         return NULL;
     }
 
     /* Validate companion array lengths match n */
     if (PyArray_DIM(net_color_arr, 0) < n || PyArray_DIM(done_arr, 0) < n ||
-        PyArray_DIM(final_arr, 0) < n || PyArray_DIM(sp_arr, 0) < n) {
+        PyArray_DIM(final_arr, 0) < n || PyArray_DIM(sp_arr, 0) < n ||
+        PyArray_DIM(start_ply_arr, 0) < n) {
         Py_DECREF(net_color_arr); Py_DECREF(done_arr);
-        Py_DECREF(final_arr); Py_DECREF(sp_arr);
+        Py_DECREF(final_arr); Py_DECREF(sp_arr); Py_DECREF(start_ply_arr);
         PyErr_SetString(PyExc_ValueError, "arrays must be at least as long as cboards list");
         return NULL;
     }
@@ -5103,7 +5106,7 @@ static PyObject *py_classify_games(PyObject *self, PyObject *args) {
     if (extract_cboards(cboards_list, n, NULL, boards) < 0) {
         free(boards);
         Py_DECREF(net_color_arr); Py_DECREF(done_arr);
-        Py_DECREF(final_arr); Py_DECREF(sp_arr);
+        Py_DECREF(final_arr); Py_DECREF(sp_arr); Py_DECREF(start_ply_arr);
         return NULL;
     }
 
@@ -5111,6 +5114,7 @@ static PyObject *py_classify_games(PyObject *self, PyObject *args) {
     int8_t *done_data = (int8_t *)PyArray_DATA(done_arr);
     int8_t *final_data = (int8_t *)PyArray_DATA(final_arr);
     int8_t *sp_data = (int8_t *)PyArray_DATA(sp_arr);
+    int32_t *start_ply_data = (int32_t *)PyArray_DATA(start_ply_arr);
 
     /* Output buffers (worst case: all games in one group) */
     int32_t *net_buf = (int32_t *)malloc(n * sizeof(int32_t));
@@ -5119,7 +5123,7 @@ static PyObject *py_classify_games(PyObject *self, PyObject *args) {
     if (!net_buf || !sp_opp_buf || !cur_opp_buf) {
         free(boards); free(net_buf); free(sp_opp_buf); free(cur_opp_buf);
         Py_DECREF(net_color_arr); Py_DECREF(done_arr);
-        Py_DECREF(final_arr); Py_DECREF(sp_arr);
+        Py_DECREF(final_arr); Py_DECREF(sp_arr); Py_DECREF(start_ply_arr);
         return PyErr_NoMemory();
     }
 
@@ -5131,7 +5135,8 @@ static PyObject *py_classify_games(PyObject *self, PyObject *args) {
     for (int32_t i = 0; i < n; i++) {
         if (final_data[i]) continue;
         if (!done_data[i]) {
-            if (cboard_is_game_over(boards[i]) || boards[i]->ply >= (uint16_t)max_plies)
+            const int played = (int)boards[i]->ply - (int)start_ply_data[i];
+            if (cboard_is_game_over(boards[i]) || played >= max_plies)
                 done_data[i] = 1;
         }
     }
@@ -5157,6 +5162,7 @@ static PyObject *py_classify_games(PyObject *self, PyObject *args) {
     Py_DECREF(done_arr);
     Py_DECREF(final_arr);
     Py_DECREF(sp_arr);
+    Py_DECREF(start_ply_arr);
 
     /* Build output arrays by copying from temp buffers */
     npy_intp dims_net[1] = {n_net};
@@ -5338,7 +5344,7 @@ static PyMethodDef module_methods[] = {
      "batch_encode_146_lc0_root_legacy_meta_bf16(cboards_list, out_array) -> None. "
      "Encode CBoards with LC0 root-history and legacy EP/rule50 metadata into bf16-bit array."},
     {"classify_games", py_classify_games, METH_VARARGS,
-     "classify_games(cboards, net_color, done, finalized, selfplay, max_plies) "
+     "classify_games(cboards, net_color, done, finalized, selfplay, starting_ply, max_plies) "
      "-> (net_idxs, selfplay_opp_idxs, curriculum_opp_idxs). GIL released."},
     {"temperature_resample", py_temperature_resample, METH_VARARGS,
      "temperature_resample(probs, temps, actions, rand_vals) -> None. "

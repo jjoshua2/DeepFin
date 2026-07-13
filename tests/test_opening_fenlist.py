@@ -149,6 +149,7 @@ def test_tb_adjudication_defers_virgin_fenlist_slot(monkeypatch) -> None:
     ]
     st.opening_source_arr = ["fenlist", "book1", "fenlist"]
     st.starting_boards = [board.copy(), board.copy(), board.copy()]
+    st.starting_ply_arr = np.full(3, board.ply(), dtype=np.int32)
     st.tb_probe = SimpleNamespace(max_pieces=6)
     st.game = SimpleNamespace(syzygy_path="/nonexistent-tb-path")
     monkeypatch.setattr(mgr, "tb_adjudicate_result", lambda _b, _p: "1/2-1/2")
