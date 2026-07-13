@@ -599,11 +599,12 @@ class SelfplayState:
     base_nodes: int
     terminal_eval_nodes: int
 
-    # ── Per-slot parallel arrays (C fast paths require np.int8) ──────────────
+    # ── Per-slot parallel arrays consumed by C fast paths ────────────────────
     done_arr: np.ndarray
     finalized_arr: np.ndarray
     net_color_arr: np.ndarray
     selfplay_arr: np.ndarray
+    starting_ply_arr: np.ndarray
 
     # ── Tablebase adjudication state (per-slot + shared probe) ───────────────
     tb_probe: SyzygyProbe | None
@@ -717,6 +718,7 @@ class SelfplayState:
         # Use from_board (not from_raw) to preserve ply count + history from openings.
         cboards = [_CBoard.from_board(b) for b in boards]
         starting_boards = [b.copy() for b in boards]
+        starting_ply_arr = np.asarray([b.ply() for b in boards], dtype=np.int32)
         for i, start in enumerate(starts):
             col = _fenlist_net_color(start.source, boards[i], opening)
             if col is not None:
@@ -757,6 +759,7 @@ class SelfplayState:
             finalized_arr=np.zeros(batch_size, dtype=np.int8),
             net_color_arr=net_color_arr,
             selfplay_arr=selfplay_arr,
+            starting_ply_arr=starting_ply_arr,
             tb_probe=tb_probe,
             tb_result_arr=tb_result_arr,
             tb_adj_roll_arr=tb_adj_roll_arr,
@@ -804,6 +807,7 @@ class SelfplayState:
             self.done_arr,
             self.finalized_arr,
             self.selfplay_arr,
+            self.starting_ply_arr,
             int(self.game.max_plies),
         )
         net_idxs = _c_net.tolist()
@@ -827,9 +831,9 @@ class SelfplayState:
         """
         if self.starting_boards is None or not str(self.opening_source_arr[i]).startswith("fenlist"):
             return False
-        # cboards[i].ply is the absolute ply (C attr, ~137 for a fullmove-69
-        # seed); starting_boards[i] is a chess.Board so .ply() is a method.
-        return (self.cboards[i].ply - self.starting_boards[i].ply()) < 2
+        # cboards[i].ply is absolute (~137 for a fullmove-69 seed); the
+        # parallel starting-ply snapshot makes this check allocation-free.
+        return (self.cboards[i].ply - int(self.starting_ply_arr[i])) < 2
 
     def _mark_timed_out_slots(self, active_idxs: list[int]) -> None:
         """Mark active slots as done if game-over or past ``max_plies``."""
@@ -842,10 +846,7 @@ class SelfplayState:
             # time a seed out before the net ever moves if max_plies < seed ply
             # (Codex review). Books/random/startpos begin near ply 0, so this is
             # equivalent for them.
-            start_ply = (
-                self.starting_boards[i].ply() if self.starting_boards is not None else 0
-            )
-            played = self.cboards[i].ply - start_ply
+            played = self.cboards[i].ply - int(self.starting_ply_arr[i])
             if self.cboards[i].is_game_over() or played >= max_plies:
                 self.done_arr[i] = 1
 
@@ -958,6 +959,7 @@ class SelfplayState:
         self.cboards[i] = _CBoard.from_board(self.boards[i])
         if self.starting_boards is not None:
             self.starting_boards[i] = self.boards[i].copy()
+        self.starting_ply_arr[i] = self.boards[i].ply()
         self.move_idx_history[i] = []
         self.done_arr[i] = 0
         self.finalized_arr[i] = 0

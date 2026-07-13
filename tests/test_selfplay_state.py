@@ -173,6 +173,40 @@ def test_classify_active_slots_marks_timed_out():
     assert cur_idxs == []
 
 
+@pytest.mark.parametrize("use_c_classifier", [False, True])
+def test_classify_timeout_counts_plies_from_fen_seed(use_c_classifier: bool):
+    """A high-fullmove FEN gets its full max_plies budget on both paths."""
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+
+    state = _make_state(batch_size=1, max_plies=2)
+    if use_c_classifier:
+        assert state.has_classify_c
+    else:
+        state.has_classify_c = False
+
+    seed = chess.Board(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 69"
+    )
+    state.boards[0] = seed
+    state.cboards[0] = CBoard.from_board(seed)
+    assert state.starting_boards is not None
+    state.starting_boards[0] = seed.copy()
+    state.starting_ply_arr[0] = seed.ply()
+
+    net_idxs, sp_idxs, cur_idxs, _ = state.classify_active_slots()
+    assert state.done_arr[0] == 0
+    assert len(net_idxs) + len(sp_idxs) + len(cur_idxs) == 1
+
+    for _ in range(2):
+        legal = state.cboards[0].legal_move_indices()
+        state.cboards[0].push_index(int(legal[0]))
+    net_idxs, sp_idxs, cur_idxs, _ = state.classify_active_slots()
+    assert state.done_arr[0] == 1
+    assert net_idxs == []
+    assert sp_idxs == []
+    assert cur_idxs == []
+
+
 def test_selfplay_state_net_color_accessor():
     state = _make_state(batch_size=2)
     state.net_color_arr[:] = np.array([1, 0], dtype=np.int8)

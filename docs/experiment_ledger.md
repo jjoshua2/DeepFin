@@ -2246,6 +2246,19 @@ after seeds resume before treating drift as a swap property; (b) the dole
 LIVE-UNREAD readout clock restarts at fix activation; (c) retirement reads
 between 07-11 and activation scored a net trained WITHOUT seed exposure.
 
+**INCIDENT (found 2026-07-12): C classifier shortened FEN-seed game budgets.**
+The Python timeout path correctly compares plies played since the opening, but
+the active native `classify_games` fast path compared absolute `CBoard.ply`
+directly with `max_plies`. The current 141-seed production list starts at
+absolute plies 4-179 versus `max_plies: 450`, so seeds were not instantly
+dropped, but each could lose 4-179 plies of its intended continuation budget.
+Fix: maintain a per-slot int32 starting-ply array across create/recycle and pass
+it into the C classifier, which now tests `board.ply - starting_ply >=
+max_plies`. Regression runs the same fullmove-69 seed through Python and C,
+proving it remains live at zero played plies and times out after exactly the
+configured two. Restart-gated; do not interrupt the live run solely for this,
+but include it in the next graceful restart.
+
 **Pause-hold invariant audit (2026-07-12, post-#154; report:
 scratchpad/pausehold_audit_report.md).** Static end-to-end audit for more
 #154-class bugs (session-start-only state vs hours-long #149 sessions): every
