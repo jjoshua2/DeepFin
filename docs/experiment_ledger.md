@@ -878,6 +878,32 @@ of four workers (80 total, 2026-07-12 23:50) have pooled median cumulative
 statistic after warmup; games/hour remains the outcome metric and SF wait is a
 large confound, so do not infer a 21.6% throughput gain directly.
 
+**Stockfish pool head-of-line scheduling experiment -- UNREAD (2026-07-12).**
+The pool binds each request round-robin to an engine before submitting it to one
+shared thread executor. With mixed-duration move and label searches, an executor
+thread can therefore block on a busy engine's UCI lock while another engine is
+idle, delaying unrelated work; live steady-state telemetry attributes roughly
+2300% cumulative thread time to `sf_block_starved`. Hypothesis: one single-thread
+executor per engine preserves round-robin engine ownership while queueing each
+request behind only that engine, eliminating cross-engine head-of-line blocking.
+ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_stockfish_pool_scheduling.py --workers 8 --requests 256 --rounds
+9`. SUCCESS: candidate/reference median completion time <=0.80, exact result
+checksum, deterministic concurrency coverage proves an available engine can run
+while a different engine has queued work, focused Stockfish/selfplay tests and
+lint pass. KILL: ratio >0.95 or any ordering/lifecycle regression; otherwise
+MIXED and do not ship. Offline scheduler mechanism only; no live/config/data or
+training-target change, and activation waits for a natural restart.
+**MECHANISM VERDICT: WORKED.** Nine alternating rounds measured 0.011361731s
+shared-executor median latency versus 0.000702322s with per-engine queues, a
+**0.061815 ratio (16.18x faster)** for an available engine's probe under one
+unrelated busy-engine queue, with identical checksum 2,429. The deterministic
+pool regression test pins that engine 1 completes its request while engine 0's
+second request remains queued and also verifies orderly shutdown. This removes
+cross-engine head-of-line blocking; the post-natural-restart read must use
+`sf_block_starved` and games/hour because the synthetic mechanism ratio is not a
+whole-selfplay throughput claim.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes
