@@ -959,6 +959,31 @@ selfplay tests, the 18-test CPU selfplay-to-replay-to-training end-to-end smoke,
 and ruff/basedpyright/vulture pass. Keep the overlap; the next natural restart
 must judge whole throughput from finalize share and games/hour.
 
+**Stockfish pool node-weighted queue-balance experiment -- UNREAD
+(2026-07-13).** Per-engine FIFO queues remove cross-engine blocking, but request
+ownership remains round-robin while production fast-ply searches use roughly
+one quarter of the full-label/current-opponent node budget. With four engines,
+clustering full searches on one queue extends the whole completion wave.
+Hypothesis: assign each request to the engine with the least outstanding node
+budget, using rotating ties, and decrement the estimate on future completion.
+ONE deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_stockfish_pool_balance.py --workers 4 --requests 96 --sequences
+10000 --seed 20260713`. SUCCESS: weighted/round-robin aggregate makespan <=0.95,
+no sequence regresses by >5%, exact request/result checksum, concurrent-submit
+tests preserve accounting, focused Stockfish/selfplay tests and lint pass.
+KILL: ratio >0.99, submit overhead >25us/request, or any leaked/negative pending
+budget; otherwise MIXED and retain only for a net-simple implementation. Offline
+scheduler only; engine count, node budgets, results, data, and live config stay
+unchanged, with activation at a natural restart.
+**VERDICT: MIXED and reverted.** Across 10,000 deterministic 96-request
+production-ratio sequences, weighted assignment reduced aggregate modeled
+makespan from 486,843 to 434,429 (**0.892339 ratio, 10.8% better**) and cost only
+2.028us/request versus 0.269us round-robin. However, the worst individual
+sequence regressed **1.060606x**, exceeding the pre-committed 1.05 tail guard.
+The exact cost checksum was 1,683,141. Pending-node locks and future callbacks
+are not a net simplification, so the MIXED retain clause does not apply: keep
+the simple per-engine FIFO round-robin scheduler from the preceding experiment.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes
