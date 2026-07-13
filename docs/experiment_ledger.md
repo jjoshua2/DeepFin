@@ -2828,3 +2828,18 @@ gate, while the directly affected zarr stage moved only 209.067/203.215ms
 hash `4f4eb31bc2e62c50` and 1,679,360-byte tar matched, but a 2.8% stage gain
 does not justify weakening early local fault detection or adding a validation
 mode. Keep full worker and server validation.
+
+**RESTART 2026-07-13 ~11:00 (batch activation + stall recovery).** Trainer was
+STALLED since 03:19 (inference broker wedged, GPU 0%, 111 worker timeouts,
+iter 49 never finished — 7.5h lost; the #156 watchdog would have caught it,
+NOT YET ON CRON — action item). Restarted onto origin/main, activating the
+~15 speedup PRs merged by the other agent (#165-#179: Aurora CUDA-graph
+replay + finite-check coalescing, SF pool head-of-line fix, ready-only future
+collection, pending-label/selfplay overlap, compact broker metadata reuse,
+threaded legal-array aliasing, native FEN-seed timeout fix, etc.) plus the
+#157 hardening bundle. CONFOUND: many-changes-at-once restart — treat games/h
+and iter-time shifts as a BUNDLE readout vs the iters 42-47 baseline
+(~1300 g/h fresh @ regret 0.098-0.108, 2360-2420s/iter); no single-PR
+attribution. Seeds verified flowing pre-restart (66 fenlist games/15 shards,
+stm_l dominant). PID state: regret was RE-TIGHTENING (0.175 peak -> 0.098)
+with EMA 0.60-0.64 — the post-airbag recovery watch item resolved HEALTHY.
