@@ -1857,6 +1857,7 @@ class Trainer:
         buf: ReplayBuffer,
         batch_size: int,
         update_lr: bool = True,
+        collect_optimizer_stats: bool = True,
     ) -> tuple[int, float]:
         """Run accum_steps microbatches, do zclip + opt.step + lr update.
 
@@ -1904,6 +1905,9 @@ class Trainer:
                 self.writer.add_scalar("zclip/hard_clipped", zclip_stats["hard_clip"], self.step)
                 self.writer.add_scalar("zclip/clipped", zclip_stats["clipped"], self.step)
         opt_step_start = time.perf_counter()
+        set_collect_uw_stats = getattr(self.opt, "set_collect_uw_stats", None)
+        if callable(set_collect_uw_stats):
+            set_collect_uw_stats(bool(collect_optimizer_stats))
         self.opt.step()
         opt_step_time_s = time.perf_counter() - opt_step_start
         if update_lr:
@@ -1940,6 +1944,7 @@ class Trainer:
                     step_sums=step_sums, step_acc_sums=step_acc_sums,
                     buf=buf, batch_size=batch_size,
                     update_lr=not local_release_cycle,
+                    collect_optimizer_stats=train_steps_done + 1 >= requested_steps,
                 )
                 opt_step_time_s += this_opt_time
             except RuntimeError as exc:

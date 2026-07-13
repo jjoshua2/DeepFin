@@ -523,6 +523,7 @@ def test_sqrt_release_zero_cycle_uses_train_window(
     )
     base_lrs = trainer._base_lrs()
     seen_lrs: list[list[float]] = []
+    seen_collect: list[bool] = []
 
     def fake_run_optimizer_step(
         *,
@@ -531,9 +532,11 @@ def test_sqrt_release_zero_cycle_uses_train_window(
         buf: Any,
         batch_size: int,
         update_lr: bool = True,
+        collect_optimizer_stats: bool = True,
     ) -> tuple[int, float]:
         del step_acc_sums, buf, batch_size
         assert update_lr is False
+        seen_collect.append(bool(collect_optimizer_stats))
         seen_lrs.append([float(pg["lr"]) for pg in trainer.opt.param_groups])
         for key in (
             "loss",
@@ -557,6 +560,7 @@ def test_sqrt_release_zero_cycle_uses_train_window(
 
     assert seen_lrs[0] == base_lrs
     assert seen_lrs[85] == base_lrs
+    assert seen_collect == [False] * 99 + [True]
     for got, base_lr in zip(seen_lrs[-1], base_lrs, strict=True):
         assert abs(got - (base_lr * 0.1)) < 1e-12
     assert [float(pg["lr"]) for pg in trainer.opt.param_groups] == seen_lrs[-1]
@@ -606,8 +610,9 @@ def test_sqrt_release_zero_cycle_switches_after_warmup(
         buf: Any,
         batch_size: int,
         update_lr: bool = True,
+        collect_optimizer_stats: bool = True,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size
+        del step_acc_sums, buf, batch_size, collect_optimizer_stats
         seen.append((int(trainer.step), bool(update_lr), [float(pg["lr"]) for pg in trainer.opt.param_groups]))
         for key in (
             "loss",

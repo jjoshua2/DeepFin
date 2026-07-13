@@ -107,6 +107,11 @@ class SODAWeightDecayWrapper(torch.optim.Optimizer):
     def last_uw_stats(self) -> dict[str, float]:
         return getattr(self.base, "last_uw_stats", {})
 
+    def set_collect_uw_stats(self, collect: bool) -> None:
+        setter = getattr(self.base, "set_collect_uw_stats", None)
+        if callable(setter):
+            setter(bool(collect))
+
     def add_param_group(self, param_group: dict[str, Any]) -> None:
         if getattr(self, "_initializing", False):
             torch.optim.Optimizer.add_param_group(self, param_group)
