@@ -189,6 +189,7 @@ def _aurora_update(
     polar_safety: float = 1.01,
     eps: float = 1e-7,
     polar_express_fn: Callable[..., Tensor] | None = None,
+    check_finite: bool = True,
 ) -> Tensor:
     """Leverage-uniform polar update for a 2D matrix."""
     if update.ndim != 2:
@@ -238,7 +239,7 @@ def _aurora_update(
         out = out_f.transpose(0, 1) if transposed else out_f
 
     out = out * math.sqrt(max(1.0, float(orig_rows) / max(1.0, float(orig_cols))))
-    if not torch.isfinite(out).all():
+    if check_finite and not torch.isfinite(out).all():
         raise RuntimeError(
             f"Aurora produced non-finite update for matrix shape {(orig_rows, orig_cols)}"
         )
@@ -287,6 +288,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         aurora_polar_dtype: str | torch.dtype | None = None,
         aurora_polar_safety: float = 1.01,
         aurora_cuda_graphs: bool = True,
+        aurora_coalesce_finite_checks: bool = True,
         adam_betas: tuple[float, float] = (0.9, 0.95),
         adam_eps: float = 1e-8,
     ) -> None:
@@ -310,6 +312,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         self.last_uw_stats: dict[str, float] = {}
         self._collect_uw_stats = True
         self._use_polar_graphs = bool(aurora_cuda_graphs)
+        self._coalesce_finite_checks = bool(aurora_coalesce_finite_checks)
         self._polar_graphs: dict[tuple[object, ...], _CapturedPolarExpress] = {}
 
     def set_collect_uw_stats(self, collect: bool) -> None:
@@ -365,6 +368,8 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
             if use_aurora:
                 uw_ratios: list[Tensor] = []
                 uw_scales: list[Tensor] = []
+                pending_updates: list[tuple[Tensor, Tensor]] = []
+                finite_checks: list[Tensor] = []
                 momentum = float(group.get("aurora_momentum", 0.95))
                 nesterov = bool(group.get("aurora_nesterov", True))
                 pp_iterations = int(group.get("aurora_pp_iterations", 2))
@@ -404,6 +409,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                         polar_safety=polar_safety,
                         eps=eps,
                         polar_express_fn=self._polar_express_for_update,
+                        check_finite=not self._coalesce_finite_checks,
                     )
                     if collect_uw_stats:
                         weight_fro = param.float().norm().clamp_min(eps)
@@ -426,7 +432,16 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
                             update = update * scale.to(update.dtype)
                         uw_ratios.append(uw_ratio.detach())
                         uw_scales.append(scale.detach())
-                    param.add_(update, alpha=-lr)
+                    if self._coalesce_finite_checks:
+                        finite_checks.append(torch.isfinite(update).all())
+                        pending_updates.append((param, update))
+                    else:
+                        param.add_(update, alpha=-lr)
+                if self._coalesce_finite_checks and finite_checks:
+                    if not torch.stack(finite_checks).all():
+                        raise RuntimeError("Aurora produced a non-finite matrix update")
+                    for param, update in pending_updates:
+                        param.add_(update, alpha=-lr)
                 if collect_uw_stats:
                     self.last_uw_stats = _uw_stats(
                         uw_ratios, uw_scales, lr=lr, floor=uw_floor,
