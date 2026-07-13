@@ -357,10 +357,9 @@ def play_batch(
         net_idxs, sp_opp_idxs, cur_opp_idxs, all_done = state.classify_active_slots()
         classified_count = len(net_idxs) + len(sp_opp_idxs) + len(cur_opp_idxs)
         if state.pending_sf_moves:
-            pending = set(state.pending_sf_moves)
-            net_idxs = [idx for idx in net_idxs if idx not in pending]
-            sp_opp_idxs = [idx for idx in sp_opp_idxs if idx not in pending]
-            cur_opp_idxs = [idx for idx in cur_opp_idxs if idx not in pending]
+            net_idxs = [idx for idx in net_idxs if idx not in state.pending_sf_moves]
+            sp_opp_idxs = [idx for idx in sp_opp_idxs if idx not in state.pending_sf_moves]
+            cur_opp_idxs = [idx for idx in cur_opp_idxs if idx not in state.pending_sf_moves]
         if on_timing is not None:
             pending_excluded = (
                 classified_count - len(net_idxs) - len(sp_opp_idxs) - len(cur_opp_idxs)
