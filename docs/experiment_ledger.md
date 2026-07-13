@@ -423,6 +423,29 @@ continuous, threaded, state, timeout, and backpressure tests after a clean
 GCC15 native+LTO rebuild; lint is clean. Keep the two-list allocation removal;
 this is not a claim of 75.4% whole-worker throughput.
 
+**Ready-only Stockfish future scan experiment -- UNREAD (2026-07-12).** Each
+nonblocking curriculum poll currently materializes `list(pending.items())`
+before checking readiness, then allocates a second list for completed results.
+Live workers usually hold roughly 24 pending futures and complete zero or one
+per scheduler pass. Hypothesis: collect only ready `(index, future)` pairs while
+the dictionary remains unchanged, then remove those pairs in a second phase;
+this retains mutation safety while avoiding allocation proportional to all
+pending work. ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_pending_future_scan.py --pending 24 --ready 1 --rounds 9
+--iterations 1000000`, alternating snapshot-all and ready-only collection.
+SUCCESS: candidate/reference median throughput >=1.15x, exact ready/result/
+remaining state across 1,000 randomized cases, focused curriculum/continuous
+selfplay tests, and lint pass. Otherwise revert. Scheduling-only; no live
+activation, data/config meaning, or salvage.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+250,980 snapshot-all scans/s and 313,877 ready-only scans/s, a **1.250606x**
+speedup for pending-future collection. One thousand randomized readiness maps
+retained exact completed results and remaining dictionary order/state.
+Validation passed 74/74 curriculum-label, continuous, threaded, timeout, and
+backpressure tests after a clean GCC15 native+LTO extension build; ruff,
+basedpyright, and vulture are clean. Keep the ready-only collection; this
+improves the polling slice rather than whole-worker throughput by 25.1%.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes
