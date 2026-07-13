@@ -731,6 +731,29 @@ count reductions versus 0.243942s for validated flat-length reuse, a
 dispatcher tests pass; ruff, basedpyright, and vulture are clean. Keep both
 post-validation flat-length reuse sites.
 
+**SlotBroker compact metadata view experiment -- UNREAD (2026-07-12).** The
+broker owns every REQUEST slot until it publishes RESPONSE, but currently copies
+its compact counts/indices out of shared memory, then concatenates and converts
+those snapshots again before GPU transfer. Live batches average roughly 1.5-2.3
+slots and about 79% of requests are compact. Hypothesis: retain read-only shared-
+memory views for the broker-owned request lifetime and only allocate the required
+combined int64 GPU metadata, aliasing that conversion for singleton batches.
+ONE deciding yardstick: `taskset -c 15 python3
+scripts/bench_slot_broker_legal_metadata.py --rows-per-slot 32 --legal-per 32
+--slots 1 2 4 --rounds 9 --iterations 20000`. SUCCESS: candidate/reference
+median throughput >=1.15x for the deciding two-slot arm, no 1/4-slot arm slower
+than 1.05x, exact counts/indices/rows/offsets, focused SlotBroker/shared-memory
+tests, and lint pass. Otherwise revert. Metadata ownership/copy scheduling only;
+validation and inference outputs remain unchanged, with no live activation or
+salvage.
+**VERDICT: WORKED.** The exact nine-round alternating yardstick measured
+reference/candidate medians of 0.467347/0.259311s for one slot (**1.802265x**),
+0.651944/0.553719s for the deciding two-slot arm (**1.177392x**), and
+1.032357/0.882983s for four slots (**1.169169x**). Counts, indices, expanded
+rows, and offsets matched exactly. A clean GCC 15 native+LTO build and all 31
+focused SlotBroker, GPU-dispatcher, and multi-GPU tests pass; ruff,
+basedpyright, and vulture are clean. Keep the request-lifetime metadata views.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes

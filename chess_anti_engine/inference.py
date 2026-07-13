@@ -1426,8 +1426,11 @@ class SlotBroker:
             if compact_legal:
                 meta = slot.policy_i32
                 n_legal = max(0, int(meta[0]))
-                counts = np.asarray(meta[1:1 + bsz], dtype=np.int32).copy()
-                flat = np.asarray(meta[1 + bsz:1 + bsz + n_legal], dtype=np.int32).copy()
+                # The client cannot reuse this shared-memory slot while it is
+                # in REQUEST state, so these views remain stable until we
+                # publish RESPONSE after scattering below.
+                counts = np.asarray(meta[1:1 + bsz], dtype=np.int32)
+                flat = np.asarray(meta[1 + bsz:1 + bsz + n_legal], dtype=np.int32)
                 if (
                     counts.shape[0] != bsz
                     or int(counts.sum()) != n_legal
@@ -1483,18 +1486,25 @@ class SlotBroker:
                     )
                 row_base += bsz
                 pol_base += n_legal
-            legal_counts_all = (
-                np.concatenate(legal_counts_by_slot).astype(np.int64, copy=False)
-                if legal_counts_by_slot else np.empty((0,), dtype=np.int64)
-            )
-            legal_flat_all = (
-                np.concatenate(legal_flat_by_slot).astype(np.int64, copy=False)
-                if legal_flat_by_slot else np.empty((0,), dtype=np.int64)
-            )
-            legal_rows_all = (
-                np.concatenate(compact_row_parts).astype(np.int64, copy=False)
-                if compact_row_parts else np.empty((0,), dtype=np.int64)
-            )
+            if len(legal_counts_by_slot) == 1:
+                legal_counts_all = legal_counts_by_slot[0].astype(np.int64, copy=False)
+                legal_flat_all = legal_flat_by_slot[0].astype(np.int64, copy=False)
+            else:
+                legal_counts_all = (
+                    np.concatenate(legal_counts_by_slot).astype(np.int64, copy=False)
+                    if legal_counts_by_slot else np.empty((0,), dtype=np.int64)
+                )
+                legal_flat_all = (
+                    np.concatenate(legal_flat_by_slot).astype(np.int64, copy=False)
+                    if legal_flat_by_slot else np.empty((0,), dtype=np.int64)
+                )
+            if len(compact_row_parts) == 1:
+                legal_rows_all = compact_row_parts[0]
+            else:
+                legal_rows_all = (
+                    np.concatenate(compact_row_parts).astype(np.int64, copy=False)
+                    if compact_row_parts else np.empty((0,), dtype=np.int64)
+                )
         if _timing is not None:
             _timing["pack_s"] += time.perf_counter() - _t_pack0
         _t_forward0 = time.perf_counter()
