@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+from chess_anti_engine.train import aurora as aurora_module
 from chess_anti_engine.train.aurora import AuroraWithAuxAdam, _aurora_update, _polar_express
 
 
@@ -83,6 +84,71 @@ def test_aurora_skipped_uw_telemetry_preserves_state_and_final_stats():
         atol=0.0,
     )
     assert sampled.last_uw_stats == reference.last_uw_stats
+
+
+def test_aurora_coalesced_finite_checks_preserve_exact_state():
+    torch.manual_seed(31)
+    initial = [torch.randn(16, 8), torch.randn(12, 6)]
+    reference_params = [torch.nn.Parameter(tensor.clone()) for tensor in initial]
+    coalesced_params = [torch.nn.Parameter(tensor.clone()) for tensor in initial]
+    reference = AuroraWithAuxAdam(
+        [{"params": reference_params, "lr": 0.01, "use_aurora": True}],
+        aurora_polar_steps=3,
+        aurora_coalesce_finite_checks=False,
+    )
+    coalesced = AuroraWithAuxAdam(
+        [{"params": coalesced_params, "lr": 0.01, "use_aurora": True}],
+        aurora_polar_steps=3,
+        aurora_coalesce_finite_checks=True,
+    )
+    reference.set_collect_uw_stats(False)
+    coalesced.set_collect_uw_stats(False)
+    for _ in range(2):
+        gradients = [torch.randn_like(tensor) for tensor in initial]
+        for reference_param, coalesced_param, gradient in zip(
+            reference_params, coalesced_params, gradients, strict=True,
+        ):
+            reference_param.grad = gradient.clone()
+            coalesced_param.grad = gradient.clone()
+        reference.step()
+        coalesced.step()
+
+    for reference_param, coalesced_param in zip(
+        reference_params, coalesced_params, strict=True,
+    ):
+        torch.testing.assert_close(coalesced_param, reference_param, rtol=0.0, atol=0.0)
+        torch.testing.assert_close(
+            coalesced.state[coalesced_param]["momentum_buffer"],
+            reference.state[reference_param]["momentum_buffer"],
+            rtol=0.0,
+            atol=0.0,
+        )
+
+
+def test_aurora_coalesced_nonfinite_check_precedes_parameter_updates(monkeypatch):
+    params = [
+        torch.nn.Parameter(torch.full((4, 3), 1.0)),
+        torch.nn.Parameter(torch.full((4, 3), 2.0)),
+    ]
+    before = [param.detach().clone() for param in params]
+    optimizer = AuroraWithAuxAdam(
+        [{"params": params, "lr": 0.1, "use_aurora": True}],
+        aurora_coalesce_finite_checks=True,
+    )
+    calls = 0
+
+    def fake_update(update: torch.Tensor, **_kwargs) -> torch.Tensor:
+        nonlocal calls
+        calls += 1
+        return torch.ones_like(update) if calls == 1 else torch.full_like(update, float("nan"))
+
+    monkeypatch.setattr(aurora_module, "_aurora_update", fake_update)
+    for param in params:
+        param.grad = torch.ones_like(param)
+    with pytest.raises(RuntimeError, match="non-finite matrix update"):
+        optimizer.step()
+    for param, original in zip(params, before, strict=True):
+        torch.testing.assert_close(param, original, rtol=0.0, atol=0.0)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="fp16 matmul path is CUDA-only")

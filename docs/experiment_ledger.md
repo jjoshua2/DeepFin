@@ -567,6 +567,32 @@ cache reuse and explicit eager fallback; lint is clean. Keep the per-optimizer,
 per-shape graph cache. First use pays capture once; checkpoint state is
 unchanged and the live run activates only after restart.
 
+**Coalesced Aurora finite-check experiment -- UNREAD (2026-07-12).** CUDA
+graph replay removes most polar launch overhead, leaving `_aurora_update`'s
+Python truth test on `torch.isfinite(out).all()` as one host synchronization
+per optimized matrix. Hypothesis: retain each computed update, enqueue all
+finite reductions, synchronize once per Aurora parameter group, and apply
+parameters only after the combined check passes. This removes N-1 syncs and
+also prevents applying earlier valid updates before a later matrix fails. ONE
+deciding yardstick: `PYTHONPATH=. python3
+scripts/bench_aurora_finite_checks.py --rounds 7 --steps 5 --matrices 8 --rows
+512`, alternating per-matrix and coalesced checks on graphed production-config
+optimizer steps. SUCCESS: coalesced/reference median throughput >=1.10x,
+exact parameter/momentum hashes, injected nonfinite update raises before any
+parameter add, focused Aurora/SODA/trainer tests, and lint pass. Otherwise
+revert. Optimizer validation scheduling only; no target/config/data change or
+salvage.
+**VERDICT: WORKED.** The exact seven-round complete-optimizer yardstick
+measured 0.152192s with per-matrix checks and 0.134966s with one group check,
+a **1.127629x** throughput gain on top of CUDA graph replay. Every round
+retained exact parameter/momentum hash
+`250b75c4182bff4c550f97f1bbe8bd7051f9579a55e31fda796747ca800866de`.
+Failure injection confirms a nonfinite later matrix raises before any pending
+parameter update is applied; valid CPU and CUDA paths remain exact. Focused
+Aurora tests and lint pass. Keep coalesced checks; retained update tensors add
+temporary memory roughly equal to the Aurora parameter group, acceptable on
+the 32 GiB production GPU.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes
