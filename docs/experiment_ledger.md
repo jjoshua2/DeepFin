@@ -515,6 +515,58 @@ collects. Validation: 51/51 Aurora/SODA/trainer tests plus clean ruff,
 basedpyright, and vulture. Keep final-step collection; the live run activates
 it only after restart onto this code.
 
+**Compiled Aurora Polar Express experiment -- UNREAD (2026-07-12).** Eager
+`addmm` fusion was fast but rejected for accumulated FP16 drift. The original
+Polar Express expression still launches several pointwise kernels around each
+GEMM. Hypothesis: `torch.compile` with dynamic matrix width fuses graph-level
+pointwise work while retaining the source arithmetic closely enough to satisfy
+the strict numerical gate. ONE deciding yardstick: `PYTHONPATH=.
+TORCHINDUCTOR_CACHE_DIR=/tmp/cae-aurora-inductor python3
+scripts/bench_aurora_compile.py --rounds 7 --repeats 10 --matrices 8 --rows
+512 --steps 8`, alternating eager and compiled transforms across production
+FFN widths after warmup. SUCCESS: compiled/eager median throughput >=1.10x,
+initial compile <=120s, no more than two unique graph compilations across the
+width ladder, max absolute error <=2e-3, normalized L2 <=5e-4, cosine
+>=0.999999, full Aurora update parity at `rtol=5e-3, atol=2e-3`, focused tests,
+and lint. Otherwise revert. This is offline eager/compiled optimizer math only;
+no live activation, target/config/data change, or salvage.
+**VERDICT: FAILED and reverted.** With a fresh Inductor cache, compile warmup
+took 38.903s and steady compiled throughput was **4.431306x** eager (1178.146
+vs 265.869 matrices/s). However maximum normalized L2 error was
+`0.00341379573` and minimum cosine `0.999994278`, failing the `5e-4` and
+`0.999999` numerical gates despite maximum absolute error below 0.001. The
+first measured compiled round also fell to 29.298 matrices/s as additional
+production widths compiled, so the two-graph dynamic-width condition was not
+met. Do not use Inductor-rewritten Polar Express; pursue exact eager-kernel
+CUDA graph replay instead.
+
+**CUDA-graph Aurora Polar Express experiment -- UNREAD (2026-07-12).** The
+Inductor arm proved launch overhead is large but altered FP16 arithmetic.
+Hypothesis: capture the unchanged eager Polar Express kernels in one CUDA graph
+per fixed production matrix shape, copy each update into a static input, and
+replay them with bitwise-identical output while eliminating repeated Python and
+launch overhead. ONE deciding yardstick: `PYTHONPATH=. python3
+scripts/bench_aurora_cuda_graph.py --rounds 7 --repeats 10 --matrices 8 --rows
+512 --steps 8`, alternating eager and graph replay across production FFN
+widths after capture. SUCCESS: graph/eager median throughput >=1.20x including
+static-input copy, exact bitwise output and full Aurora-update parity, total
+captured static tensors/workspaces <=2 GiB for the tested width ladder, capture
+time <=120s, focused tests, and lint. Otherwise revert. Offline optimizer math
+only; no live activation, target/config/data change, or salvage.
+**VERDICT: WORKED.** The exact seven-round polar yardstick measured 254.141
+eager vs 2,969.265 graph matrices/s, an **11.683548x** replay speedup including
+the static-input copy. Eight unique production widths captured in 2.812s and
+allocated 330,530,816 bytes (315 MiB), well below the 2 GiB gate. Polar outputs
+and full three-pass Aurora updates were bitwise exact. A supplemental complete
+optimizer benchmark across the same eight widths measured 0.872756s eager vs
+0.224910s graphed for five steps, a **3.880460x** throughput gain with exact
+parameter/momentum hash
+`250b75c4182bff4c550f97f1bbe8bd7051f9579a55e31fda796747ca800866de`.
+Validation passed 52/52 Aurora/SODA/trainer tests including local CUDA graph
+cache reuse and explicit eager fallback; lint is clean. Keep the per-optimizer,
+per-shape graph cache. First use pays capture once; checkpoint state is
+unchanged and the live run activates only after restart.
+
 **Singleton coalescer zero-copy experiment -- UNREAD (2026-07-11).** Compiled
 single-game UCI uses `BatchCoalescingDispatcher` to keep torch.compile/CUDA
 graph work on one submitter thread, but each drain unconditionally executes

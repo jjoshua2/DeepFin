@@ -94,6 +94,48 @@ def test_polar_express_uses_fp16_inner_matmuls_on_cuda():
     assert torch.isfinite(out).all()
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA graphs require CUDA")
+def test_aurora_cuda_graph_matches_eager_optimizer_state():
+    torch.manual_seed(37)
+    initial = torch.randn(32, 16, device="cuda")
+    eager_param = torch.nn.Parameter(initial.clone())
+    graph_param = torch.nn.Parameter(initial.clone())
+    eager = AuroraWithAuxAdam(
+        [{"params": [eager_param], "lr": 0.01, "use_aurora": True}],
+        aurora_pp_iterations=3,
+        aurora_polar_steps=3,
+        aurora_polar_method="polar_express",
+        aurora_polar_dtype="fp16",
+        aurora_cuda_graphs=False,
+    )
+    graphed = AuroraWithAuxAdam(
+        [{"params": [graph_param], "lr": 0.01, "use_aurora": True}],
+        aurora_pp_iterations=3,
+        aurora_polar_steps=3,
+        aurora_polar_method="polar_express",
+        aurora_polar_dtype="fp16",
+        aurora_cuda_graphs=True,
+    )
+    eager.set_collect_uw_stats(False)
+    graphed.set_collect_uw_stats(False)
+    for _ in range(2):
+        grad = torch.randn_like(initial)
+        eager_param.grad = grad.clone()
+        graph_param.grad = grad.clone()
+        eager.step()
+        graphed.step()
+
+    torch.testing.assert_close(graph_param, eager_param, rtol=0.0, atol=0.0)
+    torch.testing.assert_close(
+        graphed.state[graph_param]["momentum_buffer"],
+        eager.state[eager_param]["momentum_buffer"],
+        rtol=0.0,
+        atol=0.0,
+    )
+    assert len(eager._polar_graphs) == 0
+    assert len(graphed._polar_graphs) == 1
+
+
 def test_aurora_uw_floor_scales_relative_update():
     mat = torch.nn.Parameter(torch.full((12, 3), 100.0, dtype=torch.float32))
     opt = AuroraWithAuxAdam(
