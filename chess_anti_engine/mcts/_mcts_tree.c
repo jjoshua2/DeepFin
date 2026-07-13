@@ -5047,17 +5047,19 @@ static PyObject *py_batch_encode_146_lc0_root_legacy_meta_bf16(PyObject *self, P
  *                  finalized: ndarray[int8],       # read-only
  *                  selfplay_game: ndarray[int8],   # read-only
  *                  starting_ply: ndarray[int32],   # absolute opening ply
- *                  max_plies: int)
+ *                  max_plies: int,
+ *                  check_terminal: bool = true)
  *   -> (net_idxs, selfplay_opp_idxs, curriculum_opp_idxs)  int32 arrays
  * ================================================================ */
 static PyObject *py_classify_games(PyObject *self, PyObject *args) {
     PyObject *cboards_list;
     PyObject *net_color_obj, *done_obj, *final_obj, *sp_obj, *start_ply_obj;
     int max_plies;
+    int check_terminal = 1;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOi",
+    if (!PyArg_ParseTuple(args, "OOOOOOi|p",
             &cboards_list, &net_color_obj, &done_obj, &final_obj,
-            &sp_obj, &start_ply_obj, &max_plies))
+            &sp_obj, &start_ply_obj, &max_plies, &check_terminal))
         return NULL;
 
     if (!PyList_Check(cboards_list)) {
@@ -5136,7 +5138,7 @@ static PyObject *py_classify_games(PyObject *self, PyObject *args) {
         if (final_data[i]) continue;
         if (!done_data[i]) {
             const int played = (int)boards[i]->ply - (int)start_ply_data[i];
-            if (cboard_is_game_over(boards[i]) || played >= max_plies)
+            if ((check_terminal && cboard_is_game_over(boards[i])) || played >= max_plies)
                 done_data[i] = 1;
         }
     }
@@ -5344,7 +5346,8 @@ static PyMethodDef module_methods[] = {
      "batch_encode_146_lc0_root_legacy_meta_bf16(cboards_list, out_array) -> None. "
      "Encode CBoards with LC0 root-history and legacy EP/rule50 metadata into bf16-bit array."},
     {"classify_games", py_classify_games, METH_VARARGS,
-     "classify_games(cboards, net_color, done, finalized, selfplay, starting_ply, max_plies) "
+     "classify_games(cboards, net_color, done, finalized, selfplay, starting_ply, "
+     "max_plies, check_terminal=True) "
      "-> (net_idxs, selfplay_opp_idxs, curriculum_opp_idxs). GIL released."},
     {"temperature_resample", py_temperature_resample, METH_VARARGS,
      "temperature_resample(probs, temps, actions, rand_vals) -> None. "
