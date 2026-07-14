@@ -25,6 +25,10 @@ READ_EVERY="${MONITOR_READ_EVERY:-10}"
 # Banked 512-swap baselines (canary_512_iter20). Trend anchors only; the
 # pre-committed readout rules live in docs/experiment_ledger.md.
 BASE=scratchpad/canary_512_iter20
+# Harvest-gate vetting (PR #182): CPU Stockfish + syzygy for deep-SF vetting of
+# harvested severe seeds. Same binary/TB the miner uses; skipped if absent.
+SF_BIN="${HARVEST_SF_BIN:-/home/josh/projects/chess/e2e_server/publish/stockfish}"
+SYZYGY_PATH="${HARVEST_SYZYGY_PATH:-/home/josh/projects/chess/data/syzygy_3-4-5}"
 mkdir -p "$MON"
 
 trainer_running() {
@@ -68,11 +72,23 @@ while true; do
         --checkpoint "$MON/ck_$N.pt" --tag "$N" --gpu-mem-fraction 0.15 \
         2>>"$MON/retire_$N.log" | grep '^retire:' | tail -1)
 
+    # Auto-mine gate (PR #182): vet a bounded batch of NEW harvester severe seeds
+    # (collect flywheel's middle) → STAGE survivors to data/harvest/staged_candidates.txt.
+    # Staging only — promotion into the live pool stays a human/ledger-gated feed.
+    # CPU Stockfish (nice, capped), safe concurrent with training; fail-soft.
+    GATE=""
+    if [ -x "$SF_BIN" ]; then
+        GATE=$(PYTHONPATH=. nice -n 15 python3 scripts/harvest_gate_step.py \
+            --sf-path "$SF_BIN" --syzygy-path "$SYZYGY_PATH" \
+            --max-vet-per-run "${HARVEST_VET_PER_RUN:-30}" --stamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            2>>"$MON/harvest_gate_$N.log" | grep '^harvest_gate:' | tail -1)
+    fi
+
     B1=$(grep -oE "BLIND \(net > -0.2\): [0-9]+/35" "$MON/panel_v1_$N.log" | tail -1)
     B2=$(grep -oE "BLIND \(net > -0.2\): [0-9]+/113" "$MON/panel_v2_$N.log" | tail -1)
     VAL=$(grep OVERALL "$MON/vregret_$N.log" | tail -1 | xargs)
     DELTA=$(grep "paired delta" "$MON/paired_${N}_vs_boot.log" | xargs)
-    echo "[monitor $(date +%m-%d\ %H:%M)] trial=$(basename "$TRIAL") ckpt=$N | v1 $B1 | v2 $B2 | $VAL | vs_boot: $DELTA | $RET" >> "$MON/monitor.log"
+    echo "[monitor $(date +%m-%d\ %H:%M)] trial=$(basename "$TRIAL") ckpt=$N | v1 $B1 | v2 $B2 | $VAL | vs_boot: $DELTA | $RET | $GATE" >> "$MON/monitor.log"
     rm -f "$MON/ck_$N.pt"
     echo "$(basename "$TRIAL") $N" > "$STATE"
 done
