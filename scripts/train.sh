@@ -26,6 +26,7 @@ set -e
 CONFIG="${TRAIN_CONFIG:-configs/pbt2_small.yaml}"
 LOG="/tmp/chess_training.log"
 PIDFILE="/tmp/chess_training.pid"
+STOP_MARKER="/tmp/chess_training.intentional_stop"
 WORK_DIR="${TRAIN_WORK_DIR:-runs/pbt2_small}"
 BEST_POOLS_DIR="${TRAIN_BEST_POOLS_DIR:-data/best_pools}"
 # Rolling top-N auto-save written by _update_best_regret_checkpoints. Matches
@@ -135,6 +136,26 @@ start() {
         > "$LOG" 2>&1 &
     echo $! > "$PIDFILE"
     echo "Started PID $! — log: $LOG"
+    rm -f "$STOP_MARKER"
+    start_observers
+}
+
+# Observers resume WITH training so nothing is forgotten (2026-07-13, user):
+# watchdog_loop (detect-and-report only — never starts/stops anything; alerts
+# suppressed while $STOP_MARKER exists) and monitor_fen (panels + value trend
+# + seed retire/probation; internally idles while the trainer is down so seed
+# logic never burns compute against a stopped run).
+start_observers() {
+    if ! pgrep -f "scripts/watchdog_loop.sh" >/dev/null; then
+        setsid nohup bash scripts/watchdog_loop.sh < /dev/null \
+            > /dev/null 2>&1 &
+        echo "Started watchdog_loop (PID $!) — log: scratchpad/watchdog.log"
+    fi
+    if ! pgrep -f "scripts/monitor_fen.sh" >/dev/null; then
+        setsid nohup bash scripts/monitor_fen.sh < /dev/null \
+            > scratchpad/live_read/monitor_fen.out 2>&1 &
+        echo "Started monitor_fen (PID $!) — log: scratchpad/live_read/monitor/monitor.log"
+    fi
 }
 
 stop() {
@@ -143,6 +164,10 @@ stop() {
         return 0
     fi
     local pid=$(cat "$PIDFILE")
+    # Mark the stop as intentional BEFORE killing so the watchdog never alerts
+    # on a stop the operator asked for (it keeps watching; a later crash or a
+    # forgotten restart still shows in its log, just not as an alert).
+    touch "$STOP_MARKER"
     echo "Stopping PID $pid ..."
     kill "$pid" 2>/dev/null || true
     sleep 2
