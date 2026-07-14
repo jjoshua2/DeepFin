@@ -199,7 +199,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_fed_v4v5_ck58.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_68.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -382,7 +382,7 @@ tune:
   distributed_worker_username: josh
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true   # Worker compile (max-autotune) has been stable for many iters of training. Was briefly disabled 2026-04-27 to test whether compile was producing wrong outputs after a bad salvage; it wasn't — actual root cause was a corrupted pid_state.json in the iter 403 pool I'd manually built (had iter 408-era values rather than iter 403's).
-  distributed_worker_compile_mode: max-autotune
+  distributed_worker_compile_mode: reduce-overhead  # 2026-07-14: max-autotune's GPU benchmarking hung the compile twice on the flaky WSL bridge (never reached first inference in 20+ min). reduce-overhead compiles in ~1-2min from cache (no autotune benchmark), uses cudagraphs (good for small-batch selfplay), and makes wedge-restarts fast. Revert to max-autotune once the bridge is stable if a throughput readout justifies it.
   distributed_worker_inference_fp8: false  # FP8 quantized inference (RTX 5090 native)
   distributed_worker_threaded: true   # 2026-04-29: enable threaded selfplay so the new dispatcher actually engages. Bench at N=16 producers showed 36k leaves/s vs ~7k for the prior path (5x). Old comment "AOT threading slower in prod" referred to the AOT-compiled threading path; this is the compiled+dispatcher path which is structurally different.
   distributed_worker_selfplay_threads: 32
@@ -398,7 +398,7 @@ tune:
   distributed_inference_max_batch_per_slot: 1190
   distributed_inference_slots_per_worker: 4
   distributed_inference_use_compile: true
-  distributed_inference_compile_mode: max-autotune
+  distributed_inference_compile_mode: reduce-overhead  # 2026-07-14: see distributed_worker_compile_mode — the BROKER's max-autotune first-inference compile is what hung. reduce-overhead avoids the autotune GPU benchmarking that deadlocked on the flaky bridge.
   distributed_pause_selfplay_during_training: false  # Compile done; overlap for speed
   # 2026-04-29: enable shard prefetch + 1-iter-lagged async test eval. Both
   # overlap iter-boundary work onto the prior iter's selfplay phase. Saves
