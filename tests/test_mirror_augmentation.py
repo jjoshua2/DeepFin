@@ -94,6 +94,8 @@ def test_mirror_batch_preserves_policy_storage_dtype_and_values():
             )
 
             assert mirrored["policy_target"].dtype == dtype
+            assert mirrored["x"].flags.c_contiguous
+            assert all(stride > 0 for stride in mirrored["x"].strides)
             np.testing.assert_array_equal(
                 mirrored["policy_target"], policy[:, mirror_map],
             )

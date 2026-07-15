@@ -96,7 +96,7 @@ def mirror_x(x: np.ndarray, *, input_history_encoding: str | None = None) -> np.
 
 def _mirror_x_batch(x: np.ndarray, mask: np.ndarray, *, input_history_encoding: str | None = None) -> np.ndarray:
     out = np.array(x, copy=True, order="C")
-    out[mask] = out[mask, :, :, ::-1].copy()
+    out[mask] = out[mask, :, :, ::-1]
     rows = np.flatnonzero(mask)
     for a, b in _castling_swap_pairs(input_history_encoding):
         if out.shape[1] <= max(a, b):
