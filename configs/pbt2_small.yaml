@@ -244,7 +244,7 @@ selfplay:
   sf_wdl_cp_draw_width: 120.0    # Half-width of draw zone in cp; moved toward current-regret replay fit (~130-145).
   soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
 
-  syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz
+  syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6
   # Ordinary high-volume Stockfish curriculum searches stay on local SSD TBs.
   # Non-adjudicated <=6-piece play-through roots temporarily switch to
   # syzygy_path above so Stockfish can use E-drive DTZ for conversion play.
@@ -399,6 +399,7 @@ tune:
   distributed_inference_slots_per_worker: 4
   distributed_inference_use_compile: true
   distributed_inference_compile_mode: reduce-overhead  # 2026-07-14: see distributed_worker_compile_mode — the BROKER's max-autotune first-inference compile is what hung. reduce-overhead avoids the autotune GPU benchmarking that deadlocked on the flaky bridge.
+  distributed_inference_aot_dir: data/aot_models_512  # 2026-07-14: TRY AOTInductor packages in the broker forward (buckets <=1190 cover 99.04% of forwards per bucket_hist; tail falls back to the reduce-overhead eager path). Packages numerically ==eager (pol-prob Δ 0.002, wdl-prob Δ 0.03). KILL if VRAM OOM or games/h regresses vs ~641 baseline. Revert = blank this key + restart. See docs/experiment_ledger.md.
   distributed_pause_selfplay_during_training: false  # Compile done; overlap for speed
   # 2026-04-29: enable shard prefetch + 1-iter-lagged async test eval. Both
   # overlap iter-boundary work onto the prior iter's selfplay phase. Saves

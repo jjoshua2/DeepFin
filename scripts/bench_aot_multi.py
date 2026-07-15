@@ -13,7 +13,7 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
     import numpy as np
     import torch
 
-    from chess_anti_engine.inference import AOTEvaluator
+    from chess_anti_engine.inference import AOTEvaluator, model_constant_source
     from chess_anti_engine.model import (
         ModelConfig,
         build_model,
@@ -37,7 +37,7 @@ def _worker_fn(worker_id, n_threads, batch_per_thread, sf_workers,
         load_state_dict_tolerant(model, ckpt.get("model", ckpt))
 
     evaluator = AOTEvaluator(aot_dir, device="cuda", max_batch=4096)
-    evaluator.load_weights(model.state_dict())
+    evaluator.load_weights(model_constant_source(model))
     del model
 
     sf = StockfishPool(path=stockfish_path, num_workers=sf_workers, nodes=sf_nodes, multipv=1)

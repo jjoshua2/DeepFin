@@ -10,6 +10,7 @@ from chess_anti_engine.inference import (
     AOTEvaluator,
     DirectGPUEvaluator,
     ThreadedBatchEvaluator,
+    model_constant_source,
 )
 from chess_anti_engine.inference_threaded import ThreadedDispatcher
 
@@ -81,6 +82,6 @@ def sync_evaluator_to_model(
     if isinstance(evaluator, (ThreadedBatchEvaluator, ThreadedDispatcher)):
         evaluator.update_model(model)
     elif isinstance(evaluator, AOTEvaluator):
-        evaluator.load_weights(model.state_dict())
+        evaluator.load_weights(model_constant_source(model))
     else:
         evaluator.model = model

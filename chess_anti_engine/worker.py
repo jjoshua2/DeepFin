@@ -33,6 +33,7 @@ from chess_anti_engine.inference import (
     MultiSlotInferenceClient,
     SlotInferenceClient,
     ThreadedBatchEvaluator,
+    model_constant_source,
 )
 from chess_anti_engine.inference_threaded import ThreadedDispatcher
 from chess_anti_engine.moves import (
@@ -923,7 +924,7 @@ class WorkerSession:
                     getattr(model, "input_extra_features", None),
                 ),
             )
-            aot.load_weights(model.state_dict())
+            aot.load_weights(model_constant_source(model))
             return aot
         return DirectGPUEvaluator(model, device=device, max_batch=4096, n_slots=2)
 

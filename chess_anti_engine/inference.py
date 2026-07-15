@@ -8,6 +8,7 @@ import queue
 import struct
 import threading
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace as dataclass_replace
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
@@ -744,9 +745,72 @@ _COMPILED_LEGAL_POLICY_BUCKETS = (
 )
 
 
+# --- Optional forward size histogram (bucket-design diagnostic) ------------
+# Set CAE_BUCKET_HIST=/path/to/hist.json to record the RAW pre-pad forward
+# sizes across whichever inference path is live (broker / dispatcher / threaded
+# all pad through these two functions). Records two axes:
+#   "batch"        — the forward batch total (sizes the _COMPILED_BATCH_BUCKETS
+#                    / AOT _BATCH_BUCKETS ladder must cover)
+#   "legal_policy" — the flat legal-move policy size (the second axis the
+#                    compact-legal path buckets on, _COMPILED_LEGAL_POLICY_BUCKETS)
+# Zero-cost when unset. Read the dumped {size: count} per axis to place buckets
+# on the actual mass instead of the hand-picked ladders. See build_aot_packages.py.
+_BUCKET_HIST_PATH = os.environ.get("CAE_BUCKET_HIST", "").strip()
+_BUCKET_HIST_ENABLED = bool(_BUCKET_HIST_PATH)
+_bucket_hist: dict[str, dict[int, int]] = {"batch": {}, "legal_policy": {}}
+_bucket_hist_lock = threading.Lock()
+_bucket_hist_records = 0
+_BUCKET_HIST_DUMP_EVERY = int(os.environ.get("CAE_BUCKET_HIST_EVERY", "2000") or "2000")
+
+
+def _dump_bucket_hist() -> None:
+    """Atomically write both histograms to CAE_BUCKET_HIST (caller holds lock)."""
+    payload = {
+        "records": _bucket_hist_records,
+        "compiled_batch_buckets": list(_COMPILED_BATCH_BUCKETS),
+        "compiled_legal_policy_buckets": list(_COMPILED_LEGAL_POLICY_BUCKETS),
+        "batch_counts": {str(k): v for k, v in sorted(_bucket_hist["batch"].items())},
+        "legal_policy_counts": {
+            str(k): v for k, v in sorted(_bucket_hist["legal_policy"].items())
+        },
+    }
+    tmp = f"{_BUCKET_HIST_PATH}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh)
+        os.replace(tmp, _BUCKET_HIST_PATH)
+    except OSError:
+        pass  # diagnostic only — never disturb the forward path
+
+
+def _record_bucket_hist(axis: str, size: int) -> None:
+    global _bucket_hist_records
+    with _bucket_hist_lock:
+        counts = _bucket_hist[axis]
+        counts[size] = counts.get(size, 0) + 1
+        _bucket_hist_records += 1
+        if _bucket_hist_records % _BUCKET_HIST_DUMP_EVERY == 0:
+            _dump_bucket_hist()
+
+
+def _flush_bucket_hist_atexit() -> None:
+    """Flush the tail (< dump cadence) on process exit so short windows count."""
+    with _bucket_hist_lock:
+        if _bucket_hist_records:
+            _dump_bucket_hist()
+
+
+if _BUCKET_HIST_ENABLED:
+    import atexit
+
+    atexit.register(_flush_bucket_hist_atexit)
+
+
 def _compiled_padded_batch_size(total: int, *, capacity: int | None = None) -> int:
     if total <= 0:
         return 0
+    if _BUCKET_HIST_ENABLED:
+        _record_bucket_hist("batch", int(total))
     for bucket in _COMPILED_BATCH_BUCKETS:
         if bucket >= total:
             if capacity is not None and bucket > capacity:
@@ -758,6 +822,8 @@ def _compiled_padded_batch_size(total: int, *, capacity: int | None = None) -> i
 def _compiled_padded_legal_policy_size(total: int, *, capacity: int | None = None) -> int:
     if total <= 0:
         return 0
+    if _BUCKET_HIST_ENABLED:
+        _record_bucket_hist("legal_policy", int(total))
     for bucket in _COMPILED_LEGAL_POLICY_BUCKETS:
         if bucket >= total:
             if capacity is not None and bucket > capacity:
@@ -959,6 +1025,137 @@ _BATCH_BUCKETS = (
 )
 
 
+def aot_package_filename(bucket: int) -> str:
+    """Filename for a single batch-bucket AOT package."""
+    return f"chess_b{int(bucket)}.pt2"
+
+
+def select_aot_buckets(
+    *,
+    max_batch: int,
+    buckets: Sequence[int],
+) -> tuple[int, ...]:
+    """Return bucket sizes ``<= max_batch`` from *buckets* (preserving order)."""
+    mb = int(max_batch)
+    if mb <= 0:
+        raise ValueError(f"max_batch must be positive, got {max_batch}")
+    return tuple(int(b) for b in buckets if int(b) <= mb)
+
+
+def select_compiled_aot_buckets(*, max_batch: int) -> tuple[int, ...]:
+    """Broker AOT ladder: ``_COMPILED_BATCH_BUCKETS`` filtered by *max_batch*."""
+    return select_aot_buckets(max_batch=max_batch, buckets=_COMPILED_BATCH_BUCKETS)
+
+
+def should_use_aot_forward(
+    aot_models: Mapping[int, Any] | None,
+    forward_total: int,
+) -> bool:
+    """True when AOT packages are loaded and *forward_total* has an exact package.
+
+    Exact-key match only — the broker pads to ``_COMPILED_BATCH_BUCKETS`` values,
+    so we must not re-pick from the finer ``_BATCH_BUCKETS`` ladder.
+    """
+    return bool(aot_models) and int(forward_total) in aot_models
+
+
+def model_constant_source(model: torch.nn.Module) -> dict[str, torch.Tensor]:
+    """Complete constant source for AOT ``load_constants``.
+
+    The AOT packages are built with ``package_constants_in_so=False`` +
+    ``use_runtime_constant_folding=False``, which externalizes **every**
+    constant — including non-persistent buffers (``persistent=False``) such as
+    ``arc_pos_encoding``, the per-layer smolgen ``relation_basis_flat`` bases,
+    and the policy-head lookup tables (``compact_to_full`` etc.). Those are
+    absent from ``state_dict()``, so sourcing constants from a checkpoint
+    state_dict alone leaves them unfilled and the first forward reads a null
+    device pointer -> CUDA illegal memory access. Params + *all* buffers (this
+    helper) covers the full ``get_constant_fqns()`` set.
+    """
+    # state_dict() = params + persistent buffers (+ any custom state_dict-hook
+    # entries, e.g. smolgen gen_weight.weight, which are NOT plain named
+    # parameters). named_buffers() adds the non-persistent buffers state_dict
+    # omits. Their union covers the full get_constant_fqns() set.
+    src: dict[str, torch.Tensor] = dict(model.state_dict())
+    for name, buf in model.named_buffers():  # includes persistent=False buffers
+        src.setdefault(name, buf)
+    return src
+
+
+def build_aot_constants(
+    state_dict: Mapping[str, torch.Tensor],
+    constant_fqns: Sequence[str],
+    *,
+    device: str,
+) -> dict[str, torch.Tensor]:
+    """Build ``load_constants`` payload from a checkpoint state_dict.
+
+    Tensor prep: move to *device*, make contiguous, and cast **floating-point**
+    constants to bf16 (the package's compiled dtype). Non-float constants —
+    e.g. the integer policy lookup buffers ``to_sq``/``promo_from``/
+    ``compact_to_full``/``to_valid`` — keep their source dtype; casting an int
+    index buffer to bf16 corrupts it and mismatches the package's expected
+    constant dtype (``load_constants`` -> CUDA "invalid argument"). Fails loud if
+    any expected FQN is missing — a partial rebind must not silently leave
+    packages on stale/random constants.
+    """
+    missing = [fqn for fqn in constant_fqns if fqn not in state_dict]
+    if missing:
+        preview = ", ".join(missing[:5])
+        more = f" (+{len(missing) - 5} more)" if len(missing) > 5 else ""
+        raise KeyError(
+            f"checkpoint missing {len(missing)} AOT constant fqn(s): {preview}{more}"
+        )
+
+    def _prep(t: torch.Tensor) -> torch.Tensor:
+        t = t.to(device=device)
+        if t.is_floating_point():
+            t = t.to(torch.bfloat16)
+        return t.contiguous()
+
+    return {fqn: _prep(state_dict[fqn]) for fqn in constant_fqns}
+
+
+def _aoti_load_package(path: str) -> Any:
+    """Load one AOTInductor package; isolated for tests to monkeypatch."""
+    return torch._inductor.aoti_load_package(path)
+
+
+def load_aot_packages(
+    aot_dir: Path | str,
+    *,
+    buckets: Sequence[int],
+) -> dict[int, Any]:
+    """Load ``chess_b{N}.pt2`` packages for exact bucket sizes; skip missing files.
+
+    Raises ``FileNotFoundError`` if *aot_dir* is set but no package loads.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    root = Path(aot_dir)
+    pkgs: dict[int, Path] = {}
+    for b in buckets:
+        pkg = root / aot_package_filename(int(b))
+        if pkg.exists():
+            pkgs[int(b)] = pkg
+    if not pkgs:
+        raise FileNotFoundError(
+            f"No .pt2 packages found in {root} for buckets {list(buckets)!r}"
+        )
+
+    def _load(item: tuple[int, Path]) -> tuple[int, Any]:
+        return item[0], _aoti_load_package(str(item[1]))
+
+    with ThreadPoolExecutor(max_workers=min(4, len(pkgs))) as pool:
+        models = dict(pool.map(_load, list(pkgs.items())))
+    log.info(
+        "AOT packages loaded from %s: buckets=%s",
+        root,
+        sorted(models.keys()),
+    )
+    return models
+
+
 class AOTEvaluator:
     """Evaluator using pre-compiled AOTInductor models for fixed bucket sizes.
 
@@ -979,29 +1176,13 @@ class AOTEvaluator:
         self.device = str(device)
         self._max_batch = int(max_batch)
         self._input_planes = int(input_planes)
-        aot_dir = Path(aot_dir)
-
-  # Load compiled models in parallel (CUDA driver is thread-safe for loading).
-        from concurrent.futures import ThreadPoolExecutor
-        pkgs: dict[int, Path] = {}
-        for b in _BATCH_BUCKETS:
-            if b > self._max_batch:
-                break
-            pkg = aot_dir / f"chess_b{b}.pt2"
-            if pkg.exists():
-                pkgs[b] = pkg
-        if not pkgs:
-            raise FileNotFoundError(f"No .pt2 packages found in {aot_dir}")
-
-        def _load(item: tuple[int, Path]) -> tuple[int, Any]:
-            return item[0], torch._inductor.aoti_load_package(str(item[1]))
-
-        with ThreadPoolExecutor(max_workers=min(4, len(pkgs))) as pool:
-            self._models = dict(pool.map(_load, pkgs.items()))
+        # Load compiled models in parallel (CUDA driver is thread-safe for loading).
+        buckets = select_aot_buckets(max_batch=self._max_batch, buckets=_BATCH_BUCKETS)
+        self._models = load_aot_packages(aot_dir, buckets=buckets)
         self._sorted_buckets = sorted(self._models.keys())
         self._constant_fqns = list(next(iter(self._models.values())).get_constant_fqns())
 
-  # Pre-allocate pinned buffers
+        # Pre-allocate pinned buffers
         _pin = self.device.startswith("cuda")
         self._pinned_input = torch.empty(
             (self._max_batch, self._input_planes, _BOARD_H, _BOARD_W),
@@ -1012,13 +1193,19 @@ class AOTEvaluator:
             dtype=np.float32,
         )
 
-    def load_weights(self, state_dict: dict[str, torch.Tensor]) -> None:
-        """Update all bucket models with new weights from a state_dict."""
-        constants = {
-            fqn: state_dict[fqn].to(device=self.device, dtype=torch.bfloat16).contiguous()
-            for fqn in self._constant_fqns
-            if fqn in state_dict
-        }
+    def load_weights(self, source: Mapping[str, torch.Tensor]) -> None:
+        """Update all bucket models with new weights.
+
+        *source* must supply every ``get_constant_fqns()`` entry — pass
+        :func:`model_constant_source` (params + all buffers), NOT a bare
+        ``state_dict()``, which omits the non-persistent buffers the packages
+        externalize (see that helper). Fails loud on a missing fqn: a silent
+        drop would leave a package constant unfilled -> CUDA illegal memory
+        access on the next forward.
+        """
+        constants = build_aot_constants(
+            source, self._constant_fqns, device=self.device,
+        )
         for model in self._models.values():
             model.load_constants(constants, check_full_update=False)
 
@@ -1277,6 +1464,7 @@ class SlotBroker:
         input_planes: int = _CHANNELS,
         adaptive_idle_ms: float = 0.0,
         hang_abort_seconds: float = _DEFAULT_HANG_ABORT_S,
+        aot_dir: str | None = None,
     ) -> None:
         self.publish_dir = Path(publish_dir)
         self.device = str(device)
@@ -1292,12 +1480,35 @@ class SlotBroker:
         self._manifest_cache: dict | None = None
         self._manifest_cache_sig: tuple[int, int] | None = None
         self._timing_metrics: dict[str, float] | None = None
+        # Optional AOTInductor packages keyed by exact compiled batch bucket.
+        # None when aot_dir is unset/empty (zero behaviour change); non-empty
+        # dict when packages loaded. Per-batch uncovered buckets fall back to
+        # eager self._model — setup/rebind errors fail loud instead.
+        self._aot_models: dict[int, Any] | None = None
+        self._aot_constant_fqns: list[str] = []
 
         self._layout = _SlotLayout.compute(max_batch_per_slot, int(input_planes))
         self._slots: list[_InferenceSlot] = []
         self._slot_names: list[str] = []
 
-  # Pre-allocated pinned buffers for zero-copy GPU transfer.
+        # Load AOT packages before allocating SHM so a missing/misconfigured
+        # aot_dir fails without leaving orphan shared-memory segments.
+        aot_raw = str(aot_dir or "").strip()
+        if aot_raw:
+            # Pad capacity matches pin-buffer total: num_slots * max_batch_per_slot.
+            aot_max_batch = int(num_slots) * int(max_batch_per_slot)
+            aot_buckets = select_compiled_aot_buckets(max_batch=aot_max_batch)
+            if not aot_buckets:
+                raise FileNotFoundError(
+                    f"aot_dir set ({aot_raw!r}) but no _COMPILED_BATCH_BUCKETS "
+                    f"<= max_batch={aot_max_batch}"
+                )
+            self._aot_models = load_aot_packages(aot_raw, buckets=aot_buckets)
+            self._aot_constant_fqns = list(
+                next(iter(self._aot_models.values())).get_constant_fqns()
+            )
+
+        # Pre-allocated pinned buffers for zero-copy GPU transfer.
         _total_cap = num_slots * max_batch_per_slot
         _pin = "cuda" in self.device and torch.cuda.is_available()
         self._pinned_input = torch.empty(
@@ -1406,6 +1617,27 @@ class SlotBroker:
         self._model = model
         self._model_sha = model_sha
         self._first_inference_pending = bool(self.compile_inference)
+
+        # Rebind AOT package constants to the freshly loaded checkpoint. Fail
+        # loud on missing fqns — never leave packages on stale weights while
+        # the eager model has been swapped.
+        if self._aot_models:
+            if not isinstance(sd, dict):
+                raise TypeError(
+                    f"broker model checkpoint is not a state_dict mapping "
+                    f"(got {type(sd).__name__}); cannot rebind AOT packages"
+                )
+            # Source from the materialized model (params + ALL buffers) — the
+            # checkpoint sd omits the non-persistent buffers the packages
+            # externalize (arc_pos_encoding, smolgen relation bases, policy
+            # lookup tables); using it alone -> IMA (see model_constant_source).
+            constants = build_aot_constants(
+                model_constant_source(model),
+                self._aot_constant_fqns,
+                device=self.device,
+            )
+            for aot_model in self._aot_models.values():
+                aot_model.load_constants(constants, check_full_update=False)
 
   # -- batch processing --
 
@@ -1554,13 +1786,30 @@ class SlotBroker:
             first_inf = self._first_inference_pending
             inf_t0 = time.time() if first_inf else 0.0
 
-            use_legal_rows_forward = compact_legal and _supports_legal_policy_rows_forward(self._model)
+            # AOT packages are dense-only (input -> full policy dict + wdl).
+            # When the exact forward_total bucket is covered, force dense and
+            # let the existing Python compact-gather path produce legal-mode
+            # outputs. Uncovered buckets fall through to eager/legal paths.
+            use_aot = should_use_aot_forward(self._aot_models, forward_total)
+            use_legal_rows_forward = (
+                (not use_aot)
+                and compact_legal
+                and _supports_legal_policy_rows_forward(self._model)
+            )
             use_legal_forward = (
-                compact_legal
+                (not use_aot)
+                and compact_legal
                 and not use_legal_rows_forward
                 and _supports_legal_policy_forward(self._model)
             )
-            if use_legal_rows_forward:
+            if use_aot:
+                assert self._aot_models is not None
+                # AOT packages are statically bf16 (no autocast wrapper like the
+                # eager _forward_no_grad path). F32-mode requests stage into the
+                # f32 pinned buffer, so coerce here (no-op when already bf16).
+                with torch.no_grad():
+                    out = self._aot_models[forward_total](xt.to(torch.bfloat16))
+            elif use_legal_rows_forward:
                 assert legal_flat_all is not None
                 assert legal_rows_all is not None
                 legal_real = int(legal_flat_all.shape[0])
@@ -2601,6 +2850,17 @@ def main() -> int:
         ap.add_argument("--slot-prefix", type=str, required=True)
         ap.add_argument("--input-planes", type=int, default=_CHANNELS)
         ap.add_argument("--shared-cache-dir", type=str, default=None)
+        # Optional pre-built AOTInductor package directory (chess_b{N}.pt2 at
+        # _COMPILED_BATCH_BUCKETS). Empty/absent => eager/compile path only.
+        ap.add_argument(
+            "--aot-dir",
+            type=str,
+            default=None,
+            help=(
+                "Directory of pre-built AOTInductor packages (chess_b{N}.pt2) "
+                "for dense SlotBroker forwards. Default: off."
+            ),
+        )
         _add_hang_abort_arg(ap)
         args = ap.parse_args()
         args.mode = "per-trial"
@@ -2631,7 +2891,8 @@ def main() -> int:
             broker.shutdown()
         return 0
 
-  # Per-trial mode
+    # Per-trial mode
+    aot_dir_arg = str(getattr(args, "aot_dir", None) or "").strip() or None
     broker = SlotBroker(
         publish_dir=Path(args.publish_dir).expanduser(),
         num_slots=int(args.num_slots),
@@ -2644,6 +2905,7 @@ def main() -> int:
         input_planes=int(args.input_planes),
         adaptive_idle_ms=float(args.adaptive_idle_ms),
         hang_abort_seconds=hang_abort_seconds,
+        aot_dir=aot_dir_arg,
     )
 
     manifest_path = Path(args.publish_dir).expanduser() / "broker_slots.json"
