@@ -4,7 +4,7 @@ import dataclasses
 import logging
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
@@ -78,6 +78,53 @@ from .muon import MuonWithAuxAdam
 from .soda import SODAWeightDecayWrapper, mark_soda_weight_decay_groups
 
 SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
+
+
+class _TrainBatchIterator:
+    """Keep replay prefetch alive across optimizer steps and CUDA retries."""
+
+    def __init__(
+        self,
+        factory: Callable[[int], Iterator[dict[str, torch.Tensor]]],
+        count: int,
+    ) -> None:
+        self._factory = factory
+        self._current = factory(max(0, int(count)))
+        self._extra_count = 0
+        self._closed = False
+        self.consumed = 0
+
+    def __iter__(self) -> _TrainBatchIterator:
+        return self
+
+    def __next__(self) -> dict[str, torch.Tensor]:
+        if self._closed:
+            raise StopIteration
+        while True:
+            try:
+                batch = next(self._current)
+            except StopIteration:
+                if self._extra_count <= 0:
+                    raise
+                count = self._extra_count
+                self._extra_count = 0
+                self._current = self._factory(count)
+                continue
+            self.consumed += 1
+            return batch
+
+    def add_retry_batches(self, count: int) -> None:
+        if self._closed:
+            raise RuntimeError("cannot extend a closed training batch iterator")
+        self._extra_count += max(0, int(count))
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        close = getattr(self._current, "close", None)
+        if callable(close):
+            close()
 
 _LC0_HISTORY_STEPS = LC0_FULL.history_len
 _LC0_PIECE_PLANES = LC0_FULL.piece_planes_per_history
@@ -1531,7 +1578,7 @@ class Trainer:
         batch_size: int,
         mirror_prob: float,
         count: int,
-    ):
+    ) -> Iterator[dict[str, torch.Tensor]]:
         n = int(count)
         if n <= 0:
             return
@@ -1871,6 +1918,7 @@ class Trainer:
         batch_size: int,
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
+        batch_iter: Iterator[dict[str, torch.Tensor]] | None = None,
     ) -> tuple[int, float]:
         """Run accum_steps microbatches, do zclip + opt.step + lr update.
 
@@ -1878,10 +1926,16 @@ class Trainer:
         """
         self.opt.zero_grad(set_to_none=True)
         step_n_micro = 0
-        for batch in self._iter_prefetched_batches(
-            buf, batch_size=batch_size,
-            mirror_prob=self.mirror_prob, count=self.accum_steps,
-        ):
+        batches = batch_iter
+        if batches is None:
+            batches = self._iter_prefetched_batches(
+                buf,
+                batch_size=batch_size,
+                mirror_prob=self.mirror_prob,
+                count=self.accum_steps,
+            )
+        for _ in range(self.accum_steps):
+            batch = next(batches)
             self._apply_feature_group_dropout(batch["x"])
             with self._amp_context():
                 _rel = batch.get("relations")
@@ -1944,56 +1998,71 @@ class Trainer:
 
         requested_steps = int(steps)
         effective_cycle_steps = max(1, requested_steps)
+        batch_iter = _TrainBatchIterator(
+            lambda count: self._iter_prefetched_batches(
+                buf,
+                batch_size=batch_size,
+                mirror_prob=self.mirror_prob,
+                count=count,
+            ),
+            requested_steps * self.accum_steps,
+        )
 
-        for _ in range(requested_steps):
-          for _attempt in range(3):
-            step_sums: dict[str, float] = {}
-            step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
-            try:
-                local_release_cycle = self._uses_train_window_release_cycle()
-                if local_release_cycle:
-                    self._set_train_window_release_lr(
-                        local_step=train_steps_done,
-                        cycle_steps=effective_cycle_steps,
+        try:
+            for _ in range(requested_steps):
+              for _attempt in range(3):
+                step_sums: dict[str, float] = {}
+                step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+                consumed_before_attempt = batch_iter.consumed
+                try:
+                    local_release_cycle = self._uses_train_window_release_cycle()
+                    if local_release_cycle:
+                        self._set_train_window_release_lr(
+                            local_step=train_steps_done,
+                            cycle_steps=effective_cycle_steps,
+                        )
+                    step_n_micro, this_opt_time = self._run_optimizer_step(
+                        step_sums=step_sums, step_acc_sums=step_acc_sums,
+                        buf=buf, batch_size=batch_size,
+                        update_lr=not local_release_cycle,
+                        collect_optimizer_stats=train_steps_done + 1 >= requested_steps,
+                        batch_iter=batch_iter,
                     )
-                step_n_micro, this_opt_time = self._run_optimizer_step(
-                    step_sums=step_sums, step_acc_sums=step_acc_sums,
-                    buf=buf, batch_size=batch_size,
-                    update_lr=not local_release_cycle,
-                    collect_optimizer_stats=train_steps_done + 1 >= requested_steps,
-                )
-                opt_step_time_s += this_opt_time
-            except RuntimeError as exc:
-                if "CUDA" not in str(exc) or _attempt >= 2:
-                    raise
-                _log.warning("Transient CUDA error (attempt %d/3), retrying: %s", _attempt + 1, exc)
-                torch.cuda.synchronize()
-                torch.cuda.empty_cache()
-                time.sleep(0.5 * (_attempt + 1))
-                self.opt.zero_grad(set_to_none=True)
-                continue
+                    opt_step_time_s += this_opt_time
+                except RuntimeError as exc:
+                    if "CUDA" not in str(exc) or _attempt >= 2:
+                        raise
+                    batch_iter.add_retry_batches(batch_iter.consumed - consumed_before_attempt)
+                    _log.warning("Transient CUDA error (attempt %d/3), retrying: %s", _attempt + 1, exc)
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+                    time.sleep(0.5 * (_attempt + 1))
+                    self.opt.zero_grad(set_to_none=True)
+                    continue
 
   # Success — commit metrics from this step.
-            for k, v in step_sums.items():
-                sums[k] = sums.get(k, 0.0) + v
-            for name, (n_, d_) in step_acc_sums.items():
-                prev = acc_sums.get(name)
-                acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
-            n_micro += step_n_micro
+                for k, v in step_sums.items():
+                    sums[k] = sums.get(k, 0.0) + v
+                for name, (n_, d_) in step_acc_sums.items():
+                    prev = acc_sums.get(name)
+                    acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
+                n_micro += step_n_micro
 
-            if (
-                self._swa_model is not None
-                and self.step >= self._swa_start
-                and self.step % self._swa_freq == 0
-            ):
-                self._swa_model.update_parameters(self.model)
+                if (
+                    self._swa_model is not None
+                    and self.step >= self._swa_start
+                    and self.step % self._swa_freq == 0
+                ):
+                    self._swa_model.update_parameters(self.model)
 
-            if self._should_log_step_scalars():
-                self.writer.add_scalar("train/loss", float(step_sums.get("loss", 0.0) / max(1, step_n_micro)), self.step)
-                self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
-            self.step += 1
-            train_steps_done += 1
-            break
+                if self._should_log_step_scalars():
+                    self.writer.add_scalar("train/loss", float(step_sums.get("loss", 0.0) / max(1, step_n_micro)), self.step)
+                    self.writer.add_scalar("train/lr", self.opt.param_groups[0]["lr"], self.step)
+                self.step += 1
+                train_steps_done += 1
+                break
+        finally:
+            batch_iter.close()
 
         train_time_s = time.perf_counter() - train_wall_start
         train_samples_seen = int(n_micro * batch_size)

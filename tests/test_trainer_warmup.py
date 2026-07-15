@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,6 +17,7 @@ from chess_anti_engine.train.trainer import (
     Trainer,
     _ChainedOptimizer,
     _SqrtReleaseLRScheduler,
+    _TrainBatchIterator,
     select_input_history_arrays,
     select_input_history_samples,
     trainer_kwargs_from_config,
@@ -74,6 +76,173 @@ def test_extract_loss_scalars_materializes_once(monkeypatch) -> None:
 
     assert scalars == {"policy": 1.25, "loss": 4.0}
     assert calls == {"stack": 1, "tolist": 1}
+
+
+def test_train_batch_iterator_prefetches_across_optimizer_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path, prefetch_batches=True)
+    sample_index = 0
+    worker_threads: list[threading.Thread] = []
+    second_started = threading.Event()
+
+    def fake_sample_batch_host(
+        _buf: Any,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+    ) -> dict[str, np.ndarray]:
+        nonlocal sample_index
+        del batch_size, mirror_prob
+        index = sample_index
+        sample_index += 1
+        worker_threads.append(threading.current_thread())
+        if index == 1:
+            second_started.set()
+        return {"x": np.asarray([index], dtype=np.float32)}
+
+    def fake_host_batch_to_tensors(batch: dict[str, np.ndarray]) -> dict[str, torch.Tensor]:
+        return {key: torch.from_numpy(value) for key, value in batch.items()}
+
+    monkeypatch.setattr(trainer, "_sample_batch_host", fake_sample_batch_host)
+    monkeypatch.setattr(trainer, "_host_batch_to_tensors", fake_host_batch_to_tensors)
+    batch_iter = _TrainBatchIterator(
+        lambda count: trainer._iter_prefetched_batches(
+            cast(Any, None),
+            batch_size=1,
+            mirror_prob=0.0,
+            count=count,
+        ),
+        2,
+    )
+
+    assert float(next(batch_iter)["x"].item()) == 0.0
+    assert second_started.wait(timeout=1.0)
+    assert float(next(batch_iter)["x"].item()) == 1.0
+    batch_iter.close()
+
+    assert sample_index == 2
+    assert worker_threads
+    assert all(thread is not threading.current_thread() for thread in worker_threads)
+    assert all(not thread.is_alive() for thread in worker_threads)
+
+
+def test_train_steps_extends_prefetch_exactly_for_cuda_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    next_index = 0
+    factory_counts: list[int] = []
+    closed_counts: list[int] = []
+    seen: list[int] = []
+
+    def fake_iter_prefetched_batches(
+        _buf: Any,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+        count: int,
+    ):
+        nonlocal next_index
+        del batch_size, mirror_prob
+        factory_counts.append(count)
+        try:
+            for _ in range(count):
+                index = next_index
+                next_index += 1
+                yield {"x": torch.asarray(index)}
+        finally:
+            closed_counts.append(count)
+
+    def fake_run_optimizer_step(
+        *,
+        step_sums: dict[str, float],
+        step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        buf: Any,
+        batch_size: int,
+        update_lr: bool = True,
+        collect_optimizer_stats: bool = True,
+        batch_iter: Any = None,
+    ) -> tuple[int, float]:
+        del step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
+        seen.append(int(next(batch_iter)["x"].item()))
+        if len(seen) == 1:
+            raise RuntimeError("CUDA transient test failure")
+        for key in (
+            "loss",
+            "policy_loss",
+            "soft_policy_loss",
+            "future_policy_loss",
+            "wdl_loss",
+            "sf_move_loss",
+            "sf_eval_loss",
+            "categorical_loss",
+            "volatility_loss",
+            "sf_volatility_loss",
+            "moves_left_loss",
+        ):
+            step_sums[key] = 0.0
+        return 1, 0.0
+
+    monkeypatch.setattr(trainer, "_iter_prefetched_batches", fake_iter_prefetched_batches)
+    monkeypatch.setattr(trainer, "_run_optimizer_step", fake_run_optimizer_step)
+    monkeypatch.setattr(trainer_mod.torch.cuda, "synchronize", lambda: None)
+    monkeypatch.setattr(trainer_mod.torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(trainer_mod.time, "sleep", lambda _seconds: None)
+
+    metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+
+    assert metrics.train_steps_done == 2
+    assert seen == [0, 1, 2]
+    assert factory_counts == [2, 1]
+    assert closed_counts == [2, 1]
+
+
+def test_train_steps_closes_prefetch_after_terminal_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path)
+    closed = False
+
+    def fake_iter_prefetched_batches(
+        _buf: Any,
+        *,
+        batch_size: int,
+        mirror_prob: float,
+        count: int,
+    ):
+        nonlocal closed
+        del batch_size, mirror_prob
+        try:
+            for index in range(count):
+                yield {"x": torch.asarray(index)}
+        finally:
+            closed = True
+
+    def fake_run_optimizer_step(
+        *,
+        step_sums: dict[str, float],
+        step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        buf: Any,
+        batch_size: int,
+        update_lr: bool = True,
+        collect_optimizer_stats: bool = True,
+        batch_iter: Any = None,
+    ) -> tuple[int, float]:
+        del step_sums, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
+        next(batch_iter)
+        raise RuntimeError("terminal host failure")
+
+    monkeypatch.setattr(trainer, "_iter_prefetched_batches", fake_iter_prefetched_batches)
+    monkeypatch.setattr(trainer, "_run_optimizer_step", fake_run_optimizer_step)
+
+    with pytest.raises(RuntimeError, match="terminal host failure"):
+        trainer.train_steps(cast(Any, None), batch_size=1, steps=2)
+
+    assert closed is True
 
 
 def test_select_input_history_arrays_uses_recorded_lc0_root_and_legacy_meta() -> None:
@@ -574,8 +743,9 @@ def test_sqrt_release_zero_cycle_uses_train_window(
         batch_size: int,
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
+        batch_iter: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size
+        del step_acc_sums, buf, batch_size, batch_iter
         assert update_lr is False
         seen_collect.append(bool(collect_optimizer_stats))
         seen_lrs.append([float(pg["lr"]) for pg in trainer.opt.param_groups])
@@ -652,8 +822,9 @@ def test_sqrt_release_zero_cycle_switches_after_warmup(
         batch_size: int,
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
+        batch_iter: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size, collect_optimizer_stats
+        del step_acc_sums, buf, batch_size, collect_optimizer_stats, batch_iter
         seen.append((int(trainer.step), bool(update_lr), [float(pg["lr"]) for pg in trainer.opt.param_groups]))
         for key in (
             "loss",
