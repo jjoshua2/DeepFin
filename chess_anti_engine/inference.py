@@ -1606,38 +1606,47 @@ class SlotBroker:
         model_path = self.publish_dir / "latest_model.pt"
         ckpt = torch.load(str(model_path), map_location="cpu")
         sd = ckpt.get("model", ckpt)
-        model = build_model(model_cfg)
-        load_state_dict_tolerant(model, sd, label="broker-model")
-        model.to(self.device)
-        model.eval()
-        if hasattr(model, "_inference_only"):
-            setattr(model, "_inference_only", True)
-        if self.compile_inference and self.device.startswith("cuda"):
-            model = cast("torch.nn.Module", torch.compile(model, mode=self.compile_mode))
-        self._model = model
-        self._model_sha = model_sha
-        self._first_inference_pending = bool(self.compile_inference)
+        raw_model = build_model(model_cfg)
+        load_state_dict_tolerant(raw_model, sd, label="broker-model")
+        raw_model.to(self.device)
+        raw_model.eval()
+        if hasattr(raw_model, "_inference_only"):
+            setattr(raw_model, "_inference_only", True)
 
-        # Rebind AOT package constants to the freshly loaded checkpoint. Fail
-        # loud on missing fqns — never leave packages on stale weights while
-        # the eager model has been swapped.
+        # Rebind AOT package constants BEFORE compiling — model_constant_source
+        # must read the raw module. torch.compile wraps it in an OptimizedModule
+        # whose named_parameters/buffers are all "_orig_mod."-prefixed, which
+        # matches none of the package fqns -> "missing 455 constants". Fail loud
+        # on any real miss — never leave packages on stale weights while the
+        # eager model has been swapped.
         if self._aot_models:
             if not isinstance(sd, dict):
                 raise TypeError(
                     f"broker model checkpoint is not a state_dict mapping "
                     f"(got {type(sd).__name__}); cannot rebind AOT packages"
                 )
-            # Source from the materialized model (params + ALL buffers) — the
+            # Source from the materialized raw model (params + ALL buffers) — the
             # checkpoint sd omits the non-persistent buffers the packages
             # externalize (arc_pos_encoding, smolgen relation bases, policy
             # lookup tables); using it alone -> IMA (see model_constant_source).
             constants = build_aot_constants(
-                model_constant_source(model),
+                model_constant_source(raw_model),
                 self._aot_constant_fqns,
                 device=self.device,
             )
             for aot_model in self._aot_models.values():
                 aot_model.load_constants(constants, check_full_update=False)
+
+        if self.compile_inference and self.device.startswith("cuda"):
+            model = cast(
+                "torch.nn.Module",
+                torch.compile(raw_model, mode=self.compile_mode),
+            )
+        else:
+            model = raw_model
+        self._model = model
+        self._model_sha = model_sha
+        self._first_inference_pending = bool(self.compile_inference)
 
   # -- batch processing --
 
