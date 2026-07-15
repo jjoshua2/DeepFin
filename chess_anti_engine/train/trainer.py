@@ -1410,19 +1410,30 @@ class Trainer:
         return inference_autocast(device=self.device, enabled=self.use_amp, dtype="bf16")
 
     @staticmethod
-    def _extract_loss_scalars(losses: dict[str, torch.Tensor]) -> dict[str, float]:
-        """Extract all non-total loss component scalars from compute_loss output.
+    def _extract_loss_scalars(
+        losses: dict[str, torch.Tensor], *,
+        total_override: torch.Tensor | None = None,
+        total_scale: float = 1.0,
+    ) -> dict[str, float]:
+        """Extract loss scalars from compute_loss output in one host transfer.
 
-        Single GPU sync via stack-then-tolist instead of one ``.item()`` per
-        component (~13 syncs per microbatch otherwise — meaningful at high
-        accum_steps).
+        ``total_override`` preserves gradient-accumulation reporting semantics:
+        materialize the divided loss, then apply ``total_scale`` on the host.
         """
-        keys = [k for k in losses if k != "total"]
+        keys = list(losses)
         if not keys:
             return {}
-        stacked = torch.stack([losses[k].detach() for k in keys])
+        stacked = torch.stack([
+            (total_override if k == "total" and total_override is not None else losses[k]).detach()
+            for k in keys
+        ])
         values = stacked.tolist()
-        return dict(zip(keys, values, strict=True))
+        return {
+            ("loss" if key == "total" else key): (
+                float(value) * total_scale if key == "total" else float(value)
+            )
+            for key, value in zip(keys, values, strict=True)
+        }
 
     def _log_metrics(self, metrics: TrainMetrics, tag: str) -> None:
         """Log all TrainMetrics fields to TensorBoard under the given tag."""
@@ -1820,7 +1831,6 @@ class Trainer:
                 losses = compute_loss(out, batch, **self._loss_kwargs)
 
             scalars = self._extract_loss_scalars(losses)
-            scalars["loss"] = float(losses["total"].item())
             for k, v in scalars.items():
                 sums[k] = sums.get(k, 0.0) + v
 
@@ -1885,8 +1895,11 @@ class Trainer:
                 loss = losses["total"] / self.accum_steps
             loss.backward()
 
-            scalars = self._extract_loss_scalars(losses)
-            scalars["loss"] = float(loss.item() * self.accum_steps)
+            scalars = self._extract_loss_scalars(
+                losses,
+                total_override=loss,
+                total_scale=float(self.accum_steps),
+            )
             for k, v in scalars.items():
                 step_sums[k] = step_sums.get(k, 0.0) + v
 
