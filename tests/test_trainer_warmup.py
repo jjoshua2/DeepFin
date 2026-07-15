@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import torch
 
+from chess_anti_engine.train import trainer as trainer_mod
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import INPUT_HISTORY_ENCODING_ARRAY_KEY, samples_to_arrays
 from chess_anti_engine.train.aurora import AuroraWithAuxAdam
@@ -34,6 +35,45 @@ class _TinyMuonModel(torch.nn.Module):
             "policy": self.head.weight[:1],
             "wdl": torch.zeros((1, 3), dtype=torch.float32, device=self.head.weight.device),
         }
+
+
+def test_extract_loss_scalars_materializes_once(monkeypatch) -> None:
+    class _FakeScalar:
+        def __init__(self, value: float) -> None:
+            self.value = value
+
+        def detach(self):
+            return self
+
+        def item(self):
+            raise AssertionError("per-scalar materialization is forbidden")
+
+    class _FakeStack:
+        def __init__(self, values: list[_FakeScalar]) -> None:
+            self.values = values
+
+        def tolist(self) -> list[float]:
+            calls["tolist"] += 1
+            return [value.value for value in self.values]
+
+    calls = {"stack": 0, "tolist": 0}
+
+    def _stack(values: list[_FakeScalar]) -> _FakeStack:
+        calls["stack"] += 1
+        return _FakeStack(values)
+
+    monkeypatch.setattr(trainer_mod.torch, "stack", _stack)
+    scalars = Trainer._extract_loss_scalars(
+        cast(
+            dict[str, torch.Tensor],
+            {"policy": _FakeScalar(1.25), "total": _FakeScalar(4.0)},
+        ),
+        total_override=cast(torch.Tensor, cast(object, _FakeScalar(2.0))),
+        total_scale=2.0,
+    )
+
+    assert scalars == {"policy": 1.25, "loss": 4.0}
+    assert calls == {"stack": 1, "tolist": 1}
 
 
 def test_select_input_history_arrays_uses_recorded_lc0_root_and_legacy_meta() -> None:

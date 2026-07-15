@@ -2874,6 +2874,34 @@ passed under a native+LTO build, and ruff/basedpyright/vulture were clean.
 Activate only on a natural restart and judge whole throughput from
 `sf_block_starved` plus games/h.
 
+**Training loss-scalar synchronization coalescing -- UNREAD (2026-07-15).**
+`_extract_loss_scalars` already stacks component losses so they cross the
+CUDA/host boundary once, but both train and eval immediately call
+`losses["total"].item()` as a second synchronization. Production performs
+roughly 800 train steps per iteration. Hypothesis: include `total` in the same
+stack/`tolist`, returning it as `loss`, so scalar reporting uses one host
+materialization rather than two with identical values. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_loss_scalar_collection.py
+--components 14 --iterations 100000 --rounds 9`. SUCCESS: coalesced/reference
+CPU median <=1.02x, exact scalar/checksum parity, an instrumented unit test
+proves one rather than two tensor materializations per batch, focused trainer
+tests and lint pass. Otherwise FAILED and revert. The CPU timing is a
+no-regression guard; the mechanism gain is removal of one mandatory CUDA host
+synchronization per train/eval batch. Metrics only; no optimizer, gradient,
+target, model, replay, config, or live-state change.
+**VERDICT: WORKED.** Nine alternating pinned-CPU rounds measured 2.472764s
+reference versus 2.473011s coalesced, ratio 1.000100, inside the 1.02 CPU
+no-regression guard with exact checksum 860294.131562114. The runtime now
+includes `total` in the existing stack/`tolist`, so every train/eval batch has
+one tensor materialization rather than the prior component transfer plus
+`total.item()`. The gradient-accumulation path preserves its exact divide-on-
+device then rescale-on-host reporting order. The instrumented one-transfer
+test and 31 focused loss/compute-loss tests pass; a wider trainer run passed
+44 tests before the known WSL `dxg` kernel wait, and lint is clean. Keep the
+coalescing. End-to-end GPU wall impact is restart-gated and should be read from
+`train_time_s`; the deterministic mechanism removes about 800 host syncs per
+production iteration.
+
 **Background SF-starvation polling experiment -- WORKED (2026-07-15).** Live
 post-restart telemetry shows states with zero runnable games spending roughly
 850-970% cumulative thread time in `sf_block_starved`; the 16 Stockfish
