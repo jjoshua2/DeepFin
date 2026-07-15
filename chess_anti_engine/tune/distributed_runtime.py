@@ -358,6 +358,7 @@ def _publish_distributed_trial_state(
             config.get("sf_label_escalate_max_per_game", 2)
         ),
         "sf_multipv": int(config.get("sf_multipv", 1)),
+        "sf_hash_mb": int(config.get("sf_hash_mb", 16)),
         "sf_policy_temp": float(config.get("sf_policy_temp", 0.25)),
         "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
         "policy_encoding": str(model_cfg.policy_encoding),

@@ -790,9 +790,10 @@ class WorkerSession:
                 )
 
   # Engine: initialize with placeholder settings; we will align nodes from manifest each loop.
-  # MultiPV and SyzygyPath are set at init time; reinitialize when they change.
+  # MultiPV, hash size, and SyzygyPath are process-level; rebuild when they change.
         self.sf: StockfishPool | StockfishUCI | None = None
         self.sf_multipv_active: int | None = None
+        self.sf_hash_mb_active: int | None = None
         self.sf_syzygy_path_active: str | None = None
   # Resolved binary path the live engine was built with; re-init on change so a
   # hot-swapped Stockfish (new SHA -> new cached path) is actually loaded.
@@ -1452,7 +1453,7 @@ class WorkerSession:
         if not states:
             return False
         try:
-            cfgs, (sf_nodes, _sf_multipv, _sz) = self._build_selfplay_configs(reco)
+            cfgs, (sf_nodes, _sf_multipv, _sf_hash_mb, _sz) = self._build_selfplay_configs(reco)
         except _MissingRequiredReco:
   # Incomplete reco (e.g. sf_nodes dropped) — restart will re-poll cleanly.
             return False
@@ -2395,9 +2396,10 @@ class WorkerSession:
         manifest: dict,
         sf_nodes: int,
         sf_multipv: int,
+        sf_hash_mb: int,
         syzygy_path: str | None = None,
     ) -> str:
-        """Download SF binary + (re)init engine if multipv or syzygy path changed.
+        """Download SF and reinitialize when its process-level options change.
 
         Returns the resolved stockfish_path.
         """
@@ -2422,15 +2424,16 @@ class WorkerSession:
             self.last_sf_sha = sf_sha
             stockfish_path = str(sf_cached)
 
-  # (Re)initialize engine if the binary path/SHA, multipv, or syzygy path
+  # (Re)initialize engine if the binary path/SHA, multipv, hash, or syzygy path
   # changed (all must be set at init time). The binary check is what makes the
   # asset-fingerprint restart actually swap a hot-swapped Stockfish: without it
   # a new SHA downloads to a new path but the running engine keeps the old one.
         sz_path = syzygy_path or None
         multipv_changed = self.sf_multipv_active is None or int(self.sf_multipv_active) != int(sf_multipv)
+        hash_changed = self.sf_hash_mb_active is None or int(self.sf_hash_mb_active) != int(sf_hash_mb)
         syzygy_changed = self.sf_syzygy_path_active != sz_path
         binary_changed = self.sf_path_active != stockfish_path
-        if self.sf is None or multipv_changed or syzygy_changed or binary_changed:
+        if self.sf is None or multipv_changed or hash_changed or syzygy_changed or binary_changed:
             if self.sf is not None:
                 with suppress(Exception):
                     self.sf.close()
@@ -2441,6 +2444,7 @@ class WorkerSession:
                     nodes=int(sf_nodes),
                     num_workers=int(self.args.sf_workers),
                     multipv=int(sf_multipv),
+                    hash_mb=int(sf_hash_mb),
                     syzygy_path=sz_path,
                     nice=int(self.args.sf_nice),
                 )
@@ -2449,10 +2453,12 @@ class WorkerSession:
                     str(stockfish_path),
                     nodes=int(sf_nodes),
                     multipv=int(sf_multipv),
+                    hash_mb=int(sf_hash_mb),
                     syzygy_path=sz_path,
                     nice=int(self.args.sf_nice),
                 )
             self.sf_multipv_active = int(sf_multipv)
+            self.sf_hash_mb_active = int(sf_hash_mb)
             self.sf_syzygy_path_active = sz_path
             self.sf_path_active = stockfish_path
         else:
@@ -2599,6 +2605,7 @@ class WorkerSession:
   # be set live like sf_nodes), so a change must restart — otherwise the worker
   # keeps producing labels at the old PV count until an unrelated restart.
         "sf_multipv",
+        "sf_hash_mb",
   # games_per_batch is consumed at session start in _run_selfplay (play_batch
   # slot count) and cannot be resized on a running SelfplayState, so a change
   # must restart.
@@ -2658,7 +2665,8 @@ class WorkerSession:
         Returns ``(cfgs, sf_args)`` where ``cfgs`` is a dict keyed by
         ``play_batch`` kwarg names (``opponent``/``temp``/``search``/``opening``/
         ``game``), ready for ``play_batch(..., **cfgs)``; ``sf_args`` is
-        ``(sf_nodes, sf_multipv, syzygy_path)`` for the Stockfish bring-up.
+        ``(sf_nodes, sf_multipv, sf_hash_mb, syzygy_path)`` for the Stockfish
+        bring-up.
         """
         regret_raw = reco.get("opponent_wdl_regret_limit")
   # None must propagate (means "no regret limit"); only cast real values.
@@ -2805,6 +2813,7 @@ class WorkerSession:
         sf_args = (
             sf_nodes,
             self._resolve_reco(reco, "sf_multipv", 5, int),
+            self._resolve_reco(reco, "sf_hash_mb", 16, int),
             stockfish_syzygy_path or syzygy_path,
         )
         return cfgs, sf_args
@@ -3039,9 +3048,11 @@ class WorkerSession:
             else int(reco.get("games_per_batch", 8))
         )
 
-        cfgs, (sf_nodes, sf_multipv, syzygy_path) = self._build_selfplay_configs(reco)
+        cfgs, (sf_nodes, sf_multipv, sf_hash_mb, syzygy_path) = self._build_selfplay_configs(reco)
         warm_opening_book_cache(cfgs["opening"])
-        self._sync_stockfish(manifest, sf_nodes, sf_multipv, syzygy_path=syzygy_path)
+        self._sync_stockfish(
+            manifest, sf_nodes, sf_multipv, sf_hash_mb, syzygy_path=syzygy_path,
+        )
         assert self.sf is not None  # _sync_stockfish always assigns
 
   # Promote the stashed session-start dole into the shared live queue the session
