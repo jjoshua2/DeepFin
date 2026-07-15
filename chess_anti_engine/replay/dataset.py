@@ -12,11 +12,29 @@ from .shard import (
 )
 
 
-def _to_tensor(arr: np.ndarray, *, device: str) -> torch.Tensor:
+def _to_tensor(
+    arr: np.ndarray,
+    *,
+    device: str,
+    dtype: torch.dtype | None = None,
+) -> torch.Tensor:
     t = torch.from_numpy(arr)
     if str(device).startswith("cuda"):
-        return t.pin_memory().to(device, non_blocking=True)
-    return t.to(device)
+        pinned = t.pin_memory()
+        if dtype is not None:
+            return pinned.to(device=device, dtype=dtype, non_blocking=True)
+        return pinned.to(device=device, non_blocking=True)
+    if dtype is not None:
+        return t.to(device=device, dtype=dtype)
+    return t.to(device=device)
+
+
+def _float32_transfer_array(value: np.ndarray) -> np.ndarray:
+    """Keep stored f16 compact until the device transfer performs the cast."""
+    arr = np.asarray(value)
+    if arr.dtype == np.float16:
+        return arr
+    return np.asarray(arr, dtype=np.float32)
 
 
 def _zeros_tensor(
@@ -40,7 +58,10 @@ def _to_optional_tensor(
     arr = arrs.get(key)
     if arr is None:
         return _zeros_tensor(shape, dtype=dtype_torch, device=device)
-    return _to_tensor(np.asarray(arr, dtype=dtype_np), device=device)
+    source = np.asarray(arr)
+    if source.dtype != np.float16 or np.dtype(dtype_np) != np.dtype(np.float32):
+        source = np.asarray(source, dtype=dtype_np)
+    return _to_tensor(source, device=device, dtype=dtype_torch)
 
 
   # Optional float-vector fields. Each entry: (sample_attr, target_key, has_key, shape_per_sample).
@@ -167,15 +188,15 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
 
 
 def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, torch.Tensor]:
-    x = np.asarray(arrs["x"], dtype=np.float32)
+    x = _float32_transfer_array(arrs["x"])
     n = int(x.shape[0])
 
-    policy_t = np.asarray(arrs["policy_target"], dtype=np.float32)
+    policy_t = _float32_transfer_array(arrs["policy_target"])
     wdl_t = np.asarray(arrs["wdl_target"], dtype=np.int64)
 
     out = {
-        "x": _to_tensor(x, device=device),
-        "policy_t": _to_tensor(policy_t, device=device),
+        "x": _to_tensor(x, device=device, dtype=torch.float32),
+        "policy_t": _to_tensor(policy_t, device=device, dtype=torch.float32),
         "wdl_t": _to_tensor(wdl_t, device=device),
     }
     if "has_policy" in arrs:

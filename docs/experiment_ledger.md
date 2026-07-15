@@ -2957,6 +2957,46 @@ kernel wait, and ruff/basedpyright/vulture are clean. Keep the localized
 `train_steps` lifecycle. Production activation is natural-restart-only; read
 whole-step `train_time_s` after restart because the synthetic 20.9% is the
 host-preparation overlap ceiling, not an end-to-end GPU throughput claim.
+
+**Replay-to-device deferred float16 cast experiment -- UNREAD (2026-07-15).**
+Production replay stores the 175-plane input and four dense 1858-wide policy
+fields as float16, but `collate_arrays` widens each one to float32 in NumPy
+before pinning and copying it to the GPU. At batch 512 this materializes and
+transfers roughly 34 MiB rather than 17 MiB for those five fields. Hypothesis:
+preserve the stored float16 arrays through `torch.from_numpy`/pinning and ask
+the device transfer to produce the same float32 tensors, eliminating the host
+widening allocation and halving their H2D source bytes without changing any
+consumer dtype or value. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15
+python3 scripts/bench_collate_deferred_cast.py --batch-size 512 --planes 175
+--policy-size 1858 --policy-fields 4 --iterations 100 --rounds 9`. SUCCESS:
+candidate/reference CPU preparation median <=0.80x, exact float32 tensor
+equality/checksum, source-byte count <=0.51x, focused collation/loss/trainer
+tests and lint pass. KILL: timing ratio >0.95, any value/dtype/contiguity
+mismatch, or CUDA transfer requires a synchronous intermediate host widening;
+otherwise MIXED and retain only if the helper/API change is a simplification.
+Data movement only; no target, loss, gradient, model, replay storage, RNG,
+config, or live-state meaning change. GPU end-to-end activation waits for a
+natural restart and is judged from `train_time_s`; the CPU yardstick measures
+the deterministic host-allocation mechanism, not GPU throughput.
+**VERDICT: WORKED.** Nine alternating production-shaped rounds measured
+5.143457092s for NumPy float32 widening plus the simulated pin copy versus
+0.349399213s for copying the compact source, ratio **0.067931**, with exact
+float32 checksum
+`4bff3837d7ee0ba8998fe598b82c8e07b531c03a3b596f6a554d74da6ad79462`.
+The five source arrays fell from 38,158,336 to 19,079,168 bytes, exact **0.50x**.
+The runtime now preserves float16 only through `torch.from_numpy` and
+`pin_memory`, while `_to_tensor(..., dtype=torch.float32)` keeps every model
+and loss consumer unchanged. The installed PyTorch 2.10 CUDA `Copy.cu`
+explicitly selects CUDA as the conversion device for nonblocking mixed-dtype
+CPU/GPU copies, so this does not hide a synchronous host float32 intermediate;
+it uses a temporary compact GPU source (about 18 MiB at the production batch),
+which is negligible against training memory but should still be watched at the
+first restart. Instrumented tests prove float16 reaches the transfer helper and
+the resulting x/main-policy/SF-policy tensors are exact, contiguous float32;
+all 12 collation tests pass and ruff/basedpyright/vulture are clean. Keep it.
+End-to-end benefit remains restart-gated and should be judged from
+`train_time_s`, with GPU memory as the guardrail.
+
 **Training loss-scalar synchronization coalescing -- UNREAD (2026-07-15).**
 `_extract_loss_scalars` already stacks component losses so they cross the
 CUDA/host boundary once, but both train and eval immediately call
