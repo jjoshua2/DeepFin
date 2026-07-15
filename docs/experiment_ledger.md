@@ -2846,3 +2846,373 @@ and iter-time shifts as a BUNDLE readout vs the iters 42-47 baseline
 attribution. Seeds verified flowing pre-restart (66 fenlist games/15 shards,
 stm_l dominant). PID state: regret was RE-TIGHTENING (0.175 peak -> 0.098)
 with EMA 0.60-0.64 — the post-airbag recovery watch item resolved HEALTHY.
+
+**Stockfish pool engine-owning work-stealing experiment -- WORKED
+(2026-07-15).** The per-engine executors from PR #177 prevent head-of-line lock
+contention but permanently bind round-robin requests to queues. Production
+mixes roughly quarter-budget fast-ply searches with full-budget labels, so an
+engine can idle while another owns queued long work. Hypothesis: a shared FIFO
+whose executor threads each permanently own one engine dynamically balances
+actual completion times without engine locks, node estimates, callbacks, or
+per-engine executors. ONE deciding yardstick: `PYTHONPATH=. taskset -c 14
+python3 scripts/bench_stockfish_pool_work_stealing.py --workers 4 --requests 96
+--rounds 9 --seed 20260715`. SUCCESS: work-stealing median makespan <=0.95x
+fixed queues, no round regresses >1.05x, exact checksum, deterministic tests
+prove a freed engine drains globally queued work while another remains blocked,
+and focused Stockfish/selfplay tests plus lint pass. KILL: median >0.99x, tail
+guard failure, engine contention, lifecycle regression, or materially more
+complex code; otherwise MIXED. Offline scheduler mechanism only; no live/config
+activation until a natural restart and no model/replay/training change.
+**MECHANISM VERDICT: WORKED.** Nine alternating mixed-duration rounds measured
+0.058687067s fixed-queue median versus 0.051551582s work-stealing median, a
+**0.878415 ratio (12.2% faster)**. The worst individual round was 1.027657x,
+inside the 1.05 tail guard, with exact checksum 77,823. The runtime replaces
+four fixed executors plus round-robin binding with one shared FIFO/executor;
+each executor thread claims exactly one engine at initialization, so no UCI
+lock contention or node-cost accounting is introduced. A real four-engine
+Stockfish smoke completed 24 mixed-node MultiPV requests without a zero move;
+74 focused pool/timeout/nice/continuous-label/threaded/sparse-label/e2e tests
+passed under a native+LTO build, and ruff/basedpyright/vulture were clean.
+Activate only on a natural restart and judge whole throughput from
+`sf_block_starved` plus games/h.
+
+**Dtype-preserving replay policy mirror experiment -- UNREAD (2026-07-15).**
+Array-backed replay augmentation copies each selected float16 policy field,
+calls the general `mirror_policy_batch` API (which widens to float32 by
+contract), then immediately casts it back to the source dtype for assignment.
+Mirroring is only a column permutation. Hypothesis: use the width-specific
+mirror index directly in this storage-preserving caller, removing both casts
+and the float32 temporary with identical arrays. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_replay_policy_mirror.py
+--rows 512 --width 1858 --fields 6 --iterations 100 --rounds 9`. SUCCESS:
+candidate/reference median <=0.85x, exact hashes for float16/float32 and compact/
+full widths, focused replay augmentation/trainer tests and lint pass. KILL:
+ratio >1.00 or any dtype/value mismatch; otherwise MIXED and retain only if the
+runtime is a net simplification. Replay augmentation only; no RNG mask, target,
+model, optimizer, storage, config, or live-state change.
+**VERDICT: WORKED.** Nine alternating production-shaped rounds measured
+4.191702544s for the float32-widening reference versus 1.282233935s for the
+dtype-preserving permutation, ratio **0.305898 (69.4% faster policy-field
+mirroring)**, with exact checksum
+`591ce45a2b0a501db1bc17595764cdf7c411b91ec50b8d3a662f0860258546e7`.
+The hot loop is also simpler: one width-specific column gather replaces a
+general float32 conversion followed by a source-dtype cast. Exact float16 and
+float32 parity/dtype tests cover both compact 1858 and full 4672 policy spaces;
+18 focused mirror, sparse-MultiPV, and relation tests pass after a clean
+native+LTO build, and lint is clean. Keep the dtype-preserving permutation.
+Activation is code-only on the next natural restart; whole training impact is
+bounded by host prefetch overlap and should be read from `train_time_s`.
+
+**Replay input-mirror redundant-copy experiment -- UNREAD (2026-07-15).**
+`_mirror_x_batch` selects mirrored rows with boolean advanced indexing, which
+already returns an independent array, then calls `.copy()` on that temporary
+before assigning it back. Hypothesis: remove the second full selected-row copy
+with identical positive-stride output and castling-plane swaps. ONE deciding
+yardstick: `PYTHONPATH=. taskset -c 15 python3 scripts/bench_replay_x_mirror.py
+--rows 512 --planes 175 --iterations 500 --rounds 9`. SUCCESS: candidate/
+reference median <=0.90x, exact float16/float32 hashes, C-contiguous positive-
+stride output, focused mirror/trainer tests and lint pass. KILL: ratio >1.00 or
+any value/layout mismatch; otherwise MIXED and retain because the runtime is a
+strict simplification. Replay augmentation only; no RNG, target, model,
+optimizer, storage, config, or live-state change.
+**VERDICT: MIXED; retained as a strict simplification.** Nine alternating
+production-shaped rounds measured 3.810201700s reference versus 3.536325139s
+without the second selected-row copy, ratio **0.928120 (7.2% faster)**, with
+exact checksum
+`91643cb1d5f60e7cfb638f18a3d7cb359dea804bbbf1270132d8219c75f0af62`.
+This misses the aggressive 0.90 success bar but is well below the kill bar and
+the shipped change deletes one redundant `.copy()` with no replacement branch.
+Float16 benchmark output and float32 focused tests are exact, C-contiguous, and
+positive-stride. Retain the simplification alongside the policy-field mirror
+win above; no separate activation or configuration is required.
+
+**Cross-optimizer-step training prefetch experiment -- UNREAD (2026-07-15).**
+Production enables batch prefetch but uses `accum_steps: 1`; `_run_optimizer_step`
+therefore invokes `_iter_prefetched_batches(count=1)`, whose explicit fast path
+is synchronous, and destroys the iterator at every step. Hypothesis: keep one
+phase-scoped iterator across all optimizer steps so replay sampling, target
+rebuild, and mirroring overlap the previous GPU step while preserving the
+three-attempt CUDA retry budget. ONE deciding yardstick: `PYTHONPATH=. taskset
+-c 15 python3 scripts/bench_cross_step_prefetch.py --steps 100 --sample-ms 2
+--compute-ms 8 --rounds 7`. SUCCESS: phase-scoped/reference median <=0.90x,
+exact batch order/checksum, tests prove prefetch crosses an `accum_steps=1`
+optimizer boundary and closes its thread on success/error, focused trainer/
+retry tests and lint pass. KILL: ratio >1.00, batch loss/duplication, retry
+exhaustion regression, or thread leak; otherwise MIXED and retain only if the
+lifecycle stays localized to `train_steps`. Scheduling only; no RNG sequence,
+batch contents, gradient, optimizer, target, replay, config, or live-state
+meaning change.
+**VERDICT: WORKED.** Seven alternating pinned-CPU rounds measured
+1.134129402s with per-step synchronous sampling versus 0.897334813s with one
+phase-scoped prefetch iterator, ratio **0.791210 (20.9% faster)**, with exact
+batch-order checksum
+`51f2696d83d68db933cbe2ba69586bfc8d17321ab3bac398a3c536fb4699ae29`.
+The runtime allocates exactly `steps * accum_steps` batches for the normal
+phase and extends that budget only by the number consumed by a failed CUDA
+attempt, so retries neither duplicate nor lose successful microbatches and no
+unused final batch advances replay RNG state. Tests prove the second batch is
+already sampling across an `accum_steps=1` optimizer boundary, the executor
+thread closes after success, retry order/budget is exact, and terminal errors
+close the iterator. Five focused iterator/retry/scheduler tests passed; a wider
+trainer/e2e/SWA/warmup/dropout run passed 44 tests before the known WSL `dxg`
+kernel wait, and ruff/basedpyright/vulture are clean. Keep the localized
+`train_steps` lifecycle. Production activation is natural-restart-only; read
+whole-step `train_time_s` after restart because the synthetic 20.9% is the
+host-preparation overlap ceiling, not an end-to-end GPU throughput claim.
+**Replay-to-device deferred float16 cast experiment -- UNREAD (2026-07-15).**
+Production replay stores the 175-plane input and four dense 1858-wide policy
+fields as float16, but `collate_arrays` widens each one to float32 in NumPy
+before pinning and copying it to the GPU. At batch 512 this materializes and
+transfers roughly 34 MiB rather than 17 MiB for those five fields. Hypothesis:
+preserve the stored float16 arrays through `torch.from_numpy`/pinning and ask
+the device transfer to produce the same float32 tensors, eliminating the host
+widening allocation and halving their H2D source bytes without changing any
+consumer dtype or value. ONE deciding yardstick: `PYTHONPATH=. taskset -c 15
+python3 scripts/bench_collate_deferred_cast.py --batch-size 512 --planes 175
+--policy-size 1858 --policy-fields 4 --iterations 100 --rounds 9`. SUCCESS:
+candidate/reference CPU preparation median <=0.80x, exact float32 tensor
+equality/checksum, source-byte count <=0.51x, focused collation/loss/trainer
+tests and lint pass. KILL: timing ratio >0.95, any value/dtype/contiguity
+mismatch, or CUDA transfer requires a synchronous intermediate host widening;
+otherwise MIXED and retain only if the helper/API change is a simplification.
+Data movement only; no target, loss, gradient, model, replay storage, RNG,
+config, or live-state meaning change. GPU end-to-end activation waits for a
+natural restart and is judged from `train_time_s`; the CPU yardstick measures
+the deterministic host-allocation mechanism, not GPU throughput.
+**VERDICT: WORKED.** Nine alternating production-shaped rounds measured
+5.143457092s for NumPy float32 widening plus the simulated pin copy versus
+0.349399213s for copying the compact source, ratio **0.067931**, with exact
+float32 checksum
+`4bff3837d7ee0ba8998fe598b82c8e07b531c03a3b596f6a554d74da6ad79462`.
+The five source arrays fell from 38,158,336 to 19,079,168 bytes, exact **0.50x**.
+The runtime now preserves float16 only through `torch.from_numpy` and
+`pin_memory`, while `_to_tensor(..., dtype=torch.float32)` keeps every model
+and loss consumer unchanged. The installed PyTorch 2.10 CUDA `Copy.cu`
+explicitly selects CUDA as the conversion device for nonblocking mixed-dtype
+CPU/GPU copies, so this does not hide a synchronous host float32 intermediate;
+it uses a temporary compact GPU source (about 18 MiB at the production batch),
+which is negligible against training memory but should still be watched at the
+first restart. Instrumented tests prove float16 reaches the transfer helper and
+the resulting x/main-policy/SF-policy tensors are exact, contiguous float32;
+all 12 collation tests pass and ruff/basedpyright/vulture are clean. Keep it.
+End-to-end benefit remains restart-gated and should be judged from
+`train_time_s`, with GPU memory as the guardrail.
+
+**Replay-to-device compact integer/mask cast experiment -- UNREAD
+(2026-07-15).** The same collation boundary widens three production
+1858-wide legal masks from uint8 to float32 on the host, plus int8/int16 label
+indices and many uint8 presence flags. The masks alone expand from about 2.7
+MiB to 10.9 MiB per batch before pinning. Hypothesis: preserve any safely
+widenable compact NumPy dtype through pinning and request the established
+consumer dtype from the nonblocking device copy, extending the proven float16
+mechanism without per-field branches. ONE deciding yardstick: `PYTHONPATH=.
+taskset -c 15 python3 scripts/bench_collate_compact_masks.py --batch-size 512
+--policy-size 1858 --mask-fields 3 --scalar-fields 20 --iterations 200
+--rounds 9`. SUCCESS: candidate/reference host-preparation median <=0.80x,
+exact float32 equality/checksum, source-byte ratio <=0.26x, focused tests cover
+uint8->float32 and int8->int64 while float64/narrowing inputs still cast on the
+host, and collation/loss tests plus lint pass. KILL: ratio >0.95, any dtype/
+value/contiguity mismatch, or unsafe casts are deferred; otherwise MIXED and
+retain only if one safe-cast helper replaces special cases. Data movement only;
+no target, mask, loss, gradient, model, replay storage, RNG, config, or live
+state change. It shares the float16 experiment's restart and GPU-memory guards.
+**VERDICT: WORKED.** Nine alternating production-shaped rounds measured
+3.170205812s for host float32 widening plus the simulated pin copy versus
+0.062939495s for copying the compact sources, ratio **0.019853**, with exact
+float32 checksum
+`9b3255dae392e2c02a1f0dd52f80e4193a456c18faf4e92066360de446704c82`.
+Pinned/H2D source bytes fell from 11,456,512 to 2,864,128, exact **0.25x**.
+One `_transfer_array` helper now keeps a source compact only when NumPy marks
+the conversion safe and its item size does not exceed the target; float64 to
+float32 and int64 to int32 still convert on the host. This subsumes the earlier
+float16 special case and also covers int8 WDL labels, int16 MultiPV rows, uint8
+legal masks, and uint8 flags while preserving every consumer dtype. Thirteen
+collation tests prove exact dtype/value/contiguity and safe/narrowing behavior;
+ruff/basedpyright/vulture are clean. Keep it under the same natural-restart
+activation and temporary-GPU-memory guard as the float16 transfer change.
+
+**Inference-mode forward-context experiment -- UNREAD (2026-07-15).**
+All eager, legal-policy, and AOT evaluator forwards run under `torch.no_grad`,
+which disables gradient recording but retains view tracking and version-counter
+updates. These outputs are inference-only and are detached/copied before they
+leave evaluator ownership. Hypothesis: `torch.inference_mode` removes that
+remaining autograd bookkeeping with exact outputs and no extra plumbing. ONE
+deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_inference_context.py --batch-size 64 --width 64 --layers 12
+--iterations 100 --rounds 9`. SUCCESS: inference-mode/no-grad median <=0.98x,
+exact output checksum, focused direct/legal/AOT evaluator tests and lint pass.
+KILL: ratio >1.00, any output/alias/lifetime failure, or compiled/evaluator
+compatibility regression; otherwise MIXED and revert because a stricter tensor
+mode is not a simplification by itself. Inference scheduling only; no model,
+search, target, training, replay, config, RNG, or live-state change. Activation
+would wait for a natural restart and whole match/selfplay throughput remains
+the production outcome rather than the CPU context benchmark.
+**VERDICT: MIXED; runtime unchanged.** Nine alternating pinned-CPU rounds
+measured 0.468115401s under `no_grad` versus 0.460188073s under
+`inference_mode`, ratio **0.983065 (1.7% faster)**, with exact checksum
+`15741f00c9e3f948f4b514205a1b63377ed7023d210a3f3c157041880dd7c5fe`.
+That narrowly misses the pre-committed 0.98 success gate. Inference mode is
+stricter about tensor mutation/version behavior and does not simplify the
+existing helper contract, while production compiled GPU forwards would likely
+amortize even more of this CPU framework overhead. Keep `no_grad`; retain only
+the reproducible benchmark and ledger result.
+
+**Training loss-scalar synchronization coalescing -- UNREAD (2026-07-15).**
+`_extract_loss_scalars` already stacks component losses so they cross the
+CUDA/host boundary once, but both train and eval immediately call
+`losses["total"].item()` as a second synchronization. Production performs
+roughly 800 train steps per iteration. Hypothesis: include `total` in the same
+stack/`tolist`, returning it as `loss`, so scalar reporting uses one host
+materialization rather than two with identical values. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_loss_scalar_collection.py
+--components 14 --iterations 100000 --rounds 9`. SUCCESS: coalesced/reference
+CPU median <=1.02x, exact scalar/checksum parity, an instrumented unit test
+proves one rather than two tensor materializations per batch, focused trainer
+tests and lint pass. Otherwise FAILED and revert. The CPU timing is a
+no-regression guard; the mechanism gain is removal of one mandatory CUDA host
+synchronization per train/eval batch. Metrics only; no optimizer, gradient,
+target, model, replay, config, or live-state change.
+**VERDICT: WORKED.** Nine alternating pinned-CPU rounds measured 2.472764s
+reference versus 2.473011s coalesced, ratio 1.000100, inside the 1.02 CPU
+no-regression guard with exact checksum 860294.131562114. The runtime now
+includes `total` in the existing stack/`tolist`, so every train/eval batch has
+one tensor materialization rather than the prior component transfer plus
+`total.item()`. The gradient-accumulation path preserves its exact divide-on-
+device then rescale-on-host reporting order. The instrumented one-transfer
+test and 31 focused loss/compute-loss tests pass; a wider trainer run passed
+44 tests before the known WSL `dxg` kernel wait, and lint is clean. Keep the
+coalescing. End-to-end GPU wall impact is restart-gated and should be read from
+`train_time_s`; the deterministic mechanism removes about 800 host syncs per
+production iteration.
+**Compact native Gumbel root-state experiment -- UNREAD (2026-07-15).**
+`start_gumbel_sims` currently allocates, zeros, and copies dense float64 prior
+and Gumbel arrays of shape `(boards, 4672)` into C, but sequential halving reads
+only the selected 2--32 candidates per board. At 384 roots the two C arrays are
+27.4 MiB per search, excluding the Python inputs. Hypothesis: gather priors and
+Gumbels into arrays parallel to `cands_flat`, keep them aligned during halving,
+and eliminate the dense C state without changing the Python API or scores. ONE
+deciding yardstick, run on the baseline and candidate native+LTO builds:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_gumbel_root_state.py --boards
+384 --topk 16 --iterations 200 --rounds 9`. SUCCESS: candidate initialization
+median <=0.50x baseline, native root-state bytes for priors+Gumbels fall >=99%,
+exact remaining-candidate/checksum parity, randomized sequential-halving parity
+and focused Gumbel/native/thread-safety tests plus lint pass. KILL: ratio >0.90,
+any score/action/search-result mismatch, or more than one additional allocation;
+otherwise MIXED and retain only if the state representation is simpler. Native
+search bookkeeping only; no model, target, replay, config, or live-state change.
+**VERDICT: WORKED.** On native+LTO builds, the exact registered baseline took
+5.933741663s per 200 starts and the compact candidate took 0.031876409s, ratio
+**0.005372 (186.1x faster initialization)**, with exact remaining-candidate
+checksum `46a40aad285c222672b6d507c184985c3d26d8269d92537869d64c77f6c4be1b`.
+At 384 roots/topk 16, prior+Gumbel C state falls from 28,704,768 to 98,304
+bytes, a 99.6575% reduction; allocation count is unchanged. The representation
+now gathers the dense API inputs once into arrays parallel to `cands_flat`, and
+the halving sort moves actions, priors, and Gumbels together. A randomized
+eight-seed alignment test with distinct scores selects the exact analytical
+winner after all halving rounds. A clean native+LTO build, 142 focused Gumbel,
+thread-safety, native-API, CBoard/history tests, and lint all pass. Keep the
+compact state. Whole selfplay impact starts after a natural rebuild/restart and
+is best read from MCTS init diagnostics and games/h.
+
+**Candidate-aligned Python-to-native Gumbel input experiment -- UNREAD
+(2026-07-15).** After compacting native root state, `gumbel_c.py` still creates
+and zero-fills a 4672-wide float64 Gumbel vector per active board solely for
+the legacy native input shape; the C entry then gathers the selected candidates
+again. Hypothesis: allow each Gumbel input to be either the legacy dense vector
+or a candidate-aligned vector, and have production pass `g[top_idx]`. ONE
+deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_gumbel_input_packing.py --boards 384 --legal 30 --topk 16
+--iterations 2000 --rounds 9`. SUCCESS: aligned/reference median <=0.20x,
+exact candidate-value/checksum parity, dense and compact native inputs select
+identical actions/probabilities across randomized halving tests, focused
+Gumbel/native tests and lint pass. KILL: ratio >0.80, compatibility failure, or
+more than one shape branch in native ingest; otherwise MIXED and retain only
+if code is net simpler. Search-noise representation only; no RNG draw, score,
+model, target, replay, config, or live-state change.
+**VERDICT: MIXED; no runtime change.** Nine alternating rounds measured
+7.648399s dense versus 2.545394s candidate-aligned packing, ratio 0.332801,
+with exact checksum
+`77396b7e9eb7cdf152e235031d72a77cc0ad3a781f9a3fca8490d33cb895f279`.
+That is a real 3.0x packing reduction but misses the pre-committed 0.20 success
+gate and saves under 1ms per 384-board pack in this mechanism. Accepting both
+legacy dense and new aligned arrays would add a native shape branch, so it is
+not the required net simplification. Keep the dense Python input API; the
+successful compact C state above already removes the dominant 27.4 MiB native
+copy. The one-off benchmark was removed.
+
+**Background SF-starvation polling experiment -- WORKED (2026-07-15).** Live
+post-restart telemetry shows states with zero runnable games spending roughly
+850-970% cumulative thread time in `sf_block_starved`; the 16 Stockfish
+processes plus Python keep the host 96-99% busy. Every one of 32 selfplay states
+per worker currently wakes every 50ms to rescan futures/boards, although only
+thread 0 performs the model/pause control poll. Hypothesis: retain the 50ms wait
+for the control state and use 250ms for the other 31 states; FIRST_COMPLETED
+still wakes immediately on useful SF work, while idle Python wakeups stop
+stealing CPU from nice-19 Stockfish. ONE deciding yardstick: `PYTHONPATH=.
+taskset -c 14 python3 scripts/bench_sf_starvation_polling.py --threads 32
+--delay 0.5 --rounds 7`. SUCCESS: candidate/reference median idle wakeups
+<=0.35, median completion-notification latency is no more than 10ms worse,
+deterministic tests prove control/background timeout selection, and focused
+continuous/label/threaded/e2e tests plus lint pass. KILL: wakeup ratio >0.60,
+latency guard failure, or stop/pause teardown latency >300ms; otherwise MIXED.
+Scheduler-only offline mechanism; no live/config/data/model/replay change and
+activation waits for a natural restart.
+**MECHANISM VERDICT: WORKED.** Seven alternating 32-state rounds measured 320
+median idle wakeups with 50ms polling everywhere versus 72 when 31 background
+states use 250ms, a **0.225 ratio (77.5% fewer wakeups)**. Median completion
+notification moved from 1.369ms to 2.653ms, only +1.283ms and well inside the
+10ms guard because FIRST_COMPLETED wakes immediately. The background timeout
+test measured the no-completion bound below 300ms; 66 focused label/continuous/
+distributed/CPU-e2e tests passed under a native+LTO build (three CUDA-only
+threaded tests skipped as expected), and ruff/basedpyright/vulture were clean.
+Production activation remains natural-restart-only, with host CPU share,
+`sf_block_starved`, and games/h as the outcome read.
+**Distributed Stockfish hash-size throughput experiment -- MIXED
+(2026-07-15).** Production labels use about 700k nodes, MultiPV 40, and a 16 MB
+transposition table per single-thread engine. The configured hash size was not
+previously delivered to distributed workers; that plumbing is fixed separately
+without changing the current value. Hypothesis: 32/64/128 MB reduces TT
+collisions enough to improve fixed-node label wall time despite the larger CPU
+cache footprint. ONE deciding yardstick: `PYTHONPATH=. nice -n 19 taskset -c 15
+python3 scripts/bench_stockfish_hash.py --stockfish
+/home/josh/projects/chess/e2e_server/publish/stockfish --nodes 700000 --multipv
+40 --positions 16 --rounds 7`. Arms rotate order and each starts a fresh engine;
+all searches within an arm retain the TT like production. SUCCESS: one larger
+hash has median wall <=0.97x the 16 MB baseline and first-round best-move
+agreement >=0.90; choose the fastest qualifier. KILL: every larger hash is
+>0.99x or best-move agreement is <0.90; otherwise MIXED and do not change the
+production value without a quiet-host replication. CPU-only offline mechanism;
+no live YAML, worker, model, replay, or training state changes.
+**VERDICT: MIXED; retain 16 MB pending a quiet-host replication.** Seven rotated
+production-shaped rounds measured median ratios versus 16 MB of 1.0272 (8 MB),
+0.9766 (32 MB), 1.0746 (64 MB), and 1.1148 (128 MB). The 32 MB arm had 93.75%
+first-round best-move agreement and was the only larger qualifier on agreement,
+but its 2.34% wall gain missed the pre-committed >=3% success bar; 64/128 MB
+were clearly slower. Live training saturated 96-99% of the host during this
+low-priority single-CPU sweep, so do not promote the near-threshold 32 MB point
+without the exact quiet-host rerun. No config or runtime value changed.
+**Persistent match CBoard experiment -- UNREAD (2026-07-15).** Match play
+currently reconstructs every Gumbel root `CBoard` from its `python-chess`
+board on every ply even though the C search accepts caller-owned root CBoards.
+Hypothesis: create one CBoard per game, advance it alongside the authoritative
+Python board, and pass the matching subsets into Gumbel/PUCT, eliminating the
+repeated history replay with little added code. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_match_cboard_reuse.py
+--boards 64 --plies 160 --rounds 9`. SUCCESS: persistent-board glue median
+wall <=0.50x reconstruction, saves >=0.20 ms per 64-board ply, every per-ply
+FEN/checksum matches, match dispatch tests prove the matching CBoard subset is
+passed, and focused arena/history tests plus lint pass. KILL: ratio >0.90,
+absolute saving <0.10 ms/ply, any state mismatch, or materially complicated
+fallback synchronization; otherwise MIXED and retain only if the final change
+is a clear simplification. This is match/evaluation only; no training data,
+search semantics, live config, or restart.
+**VERDICT: MIXED; reverted.** The implementation-faithful registered run
+measured 1.311999s reconstruction versus 0.996754s persistent, ratio 0.759722,
+with 1.970ms saved per 64-board ply and exact checksum
+`a5b29041c65eb77483d7b624c34b6cf061cb45d84f167972b9c94fac584bd8cf`.
+That is a real glue reduction but misses the 0.50 success gate. Safely keeping
+the two representations synchronized also requires remapping the selected move
+back to its actual policy index because `index_to_move` can silently return a
+legal fallback. The dual-state plumbing is not a simplification, so retain the
+single authoritative Python board and rebuild roots. The one-off benchmark and
+runtime/test changes were removed.

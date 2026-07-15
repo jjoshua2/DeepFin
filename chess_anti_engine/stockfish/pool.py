@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import itertools
+import queue
+import threading
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
@@ -36,7 +37,7 @@ class StockfishPool:
         self.syzygy_path = syzygy_path or None
         self.nice = min(19, max(0, int(nice)))
 
-        self._execs: list[ThreadPoolExecutor] = []
+        self._exec: ThreadPoolExecutor | None = None
         self._engines: list[StockfishUCI] = []
         try:
             for _ in range(self.num_workers):
@@ -48,24 +49,41 @@ class StockfishPool:
                     syzygy_path=self.syzygy_path,
                     nice=self.nice,
                 ))
-            # Keep each engine's queue on its own thread. Binding requests to
-            # an engine before putting them in one shared executor lets a
-            # worker thread block on that engine's UCI lock while a different
-            # engine is idle (head-of-line blocking under mixed searches).
-            self._execs = [
-                ThreadPoolExecutor(max_workers=1) for _ in range(self.num_workers)
-            ]
+            self._available_engines: queue.SimpleQueue[StockfishUCI] = queue.SimpleQueue()
+            for engine in self._engines:
+                self._available_engines.put(engine)
+            self._worker_state = threading.local()
+            # Each executor thread owns one engine for its lifetime. Requests
+            # stay in the shared FIFO until any engine is free, avoiding both
+            # UCI-lock contention and imbalance between fixed engine queues.
+            self._exec = ThreadPoolExecutor(
+                max_workers=self.num_workers,
+                initializer=self._initialize_worker,
+            )
         except BaseException:
-            for executor in self._execs:
-                executor.shutdown(wait=True, cancel_futures=True)
+            if self._exec is not None:
+                self._exec.shutdown(wait=True, cancel_futures=True)
             for engine in self._engines:
                 with suppress(Exception):
                     engine.close()
             raise
-  # itertools.count: next() is atomic in CPython, so concurrent submit()
-  # callers can't both observe the same engine index (a bare int
-  # read-modify-write could, skewing the round-robin distribution).
-        self._next = itertools.count()
+
+    def _initialize_worker(self) -> None:
+        self._worker_state.engine = self._available_engines.get()
+
+    def _search(
+        self,
+        fen: str,
+        nodes: int | None,
+        syzygy_path: str | None,
+        fresh: bool,
+    ) -> StockfishResult:
+        engine: StockfishUCI = self._worker_state.engine
+        if fresh:
+            return engine.search(
+                fen, nodes=nodes, syzygy_path=syzygy_path, fresh=True,
+            )
+        return engine.search(fen, nodes=nodes, syzygy_path=syzygy_path)
 
     def close(self) -> None:
         # Stop accepting work and discard requests that have not started. A
@@ -73,12 +91,11 @@ class StockfishPool:
         # Running searches keep their engine lock; close() below waits for
         # those calls before terminating the UCI process, then the final join
         # reaps each executor thread.
-        for executor in self._execs:
-            executor.shutdown(wait=False, cancel_futures=True)
+        assert self._exec is not None
+        self._exec.shutdown(wait=False, cancel_futures=True)
         for e in self._engines:
             e.close()
-        for executor in self._execs:
-            executor.shutdown(wait=True, cancel_futures=True)
+        self._exec.shutdown(wait=True, cancel_futures=True)
 
     def set_nodes(self, nodes: int) -> None:
         self.nodes = int(nodes)
@@ -90,14 +107,10 @@ class StockfishPool:
         syzygy_path: str | None = None,
         fresh: bool = False,
     ) -> Future[StockfishResult]:
-  # Round-robin assignment. `fresh` requests a cold-TT (ucinewgame) search —
-  # see StockfishUCI.search; used by the label-escalation re-query. Only
-  # forwarded when set, so the default path's engine call stays identical.
-        engine_idx = next(self._next) % self.num_workers
-        engine = self._engines[engine_idx]
-        executor = self._execs[engine_idx]
-        if fresh:
-            return executor.submit(
-                engine.search, fen, nodes=nodes, syzygy_path=syzygy_path, fresh=True,
-            )
-        return executor.submit(engine.search, fen, nodes=nodes, syzygy_path=syzygy_path)
+  # The shared executor gives this request to the first free engine-owning
+  # thread. `fresh` requests a cold-TT (ucinewgame) search; it is forwarded
+  # only when set so the default engine call stays identical.
+        assert self._exec is not None
+        return self._exec.submit(
+            self._search, fen, nodes, syzygy_path, fresh,
+        )

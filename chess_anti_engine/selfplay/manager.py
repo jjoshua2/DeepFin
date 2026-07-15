@@ -205,16 +205,19 @@ def _finalize_completed_slots(
                 state.recycle_slot(i)
 
 
-def _wait_for_starved_sf(state: SelfplayState) -> None:
-    """Wait at most one control interval when no board can advance."""
+def _wait_for_starved_sf(
+    state: SelfplayState, *, control_poll: bool,
+) -> None:
+    """Wait on SF with a bounded control or background interval."""
+    timeout_s = 0.05 if control_poll else 0.25
     if state.pending_sf_moves:
         finish_pending_curriculum_moves(
-            state, block=True, block_timeout_s=0.05,
+            state, block=True, block_timeout_s=timeout_s,
         )
     elif state.pending_sf_labels:
         wait(
             tuple(pending.future for pending in state.pending_sf_labels),
-            timeout=0.05,
+            timeout=timeout_s,
             return_when=FIRST_COMPLETED,
         )
 
@@ -428,7 +431,7 @@ def play_batch(
             and (state.pending_sf_moves or state.pending_sf_labels)
         ):
             t0 = time.perf_counter()
-            _wait_for_starved_sf(state)
+            _wait_for_starved_sf(state, control_poll=on_step is not None)
             if on_timing is not None:
                 on_timing("sf_block_starved", time.perf_counter() - t0)
             t0 = time.perf_counter()

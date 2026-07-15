@@ -101,6 +101,7 @@ def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path)
             "mcts": "gumbel",
             "fast_simulations": 8,
             "sf_move_nodes": 10000,
+            "sf_hash_mb": 64,
         },
         model_cfg=model_cfg,
         server_root=tmp_path,
@@ -117,6 +118,7 @@ def test_publish_distributed_trial_state_includes_pause_selfplay(tmp_path: Path)
     manifest_path = tmp_path / "trials" / "trial_00000" / "publish" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["recommended_worker"]["sf_move_nodes"] == 10000
+    assert manifest["recommended_worker"]["sf_hash_mb"] == 64
     assert manifest["recommended_worker"]["slot_oversubscribe"] == 1.0
     assert manifest["encoding"]["policy_encoding"] == "lc0_1858"
     assert manifest["recommended_worker"]["pause_selfplay"] is True

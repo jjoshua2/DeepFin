@@ -616,6 +616,7 @@ def test_build_selfplay_configs_requires_sf_nodes() -> None:
     # Present (and positive) -> resolves normally.
     _cfgs, sf_args = WorkerSession._build_selfplay_configs(session, {"sf_nodes": 5000})
     assert sf_args[0] == 5000
+    assert sf_args[2] == 16
 
 
 def test_sf_node_knobs_are_live_applied_not_restart() -> None:
@@ -832,24 +833,23 @@ def test_session_asset_change_triggers_restart() -> None:
     assert session._stop_selfplay is True
 
 
-def test_sync_stockfish_reinits_on_binary_change(monkeypatch: Any) -> None:
-    """Codex review: a hot-swapped SF binary (new resolved path) must re-init the
-    engine — otherwise the asset-fingerprint restart downloads the new binary but
-    keeps running the old one."""
+def test_sync_stockfish_reinits_on_binary_or_hash_change(monkeypatch: Any) -> None:
+    """Distributed workers must rebuild for binary and TT-size changes."""
     session = _bare_worker_session()
     session.args = SimpleNamespace(
         stockfish_path="sf_v1", stockfish_from_server=False, sf_workers=1, sf_nice=0,
     )
     cast(Any, session).sf = None
     session.sf_multipv_active = None
+    session.sf_hash_mb_active = None
     session.sf_syzygy_path_active = None
     session.sf_path_active = None
 
-    built: list[str] = []
+    built: list[tuple[str, int]] = []
 
     class _FakeSF:
-        def __init__(self, path: str, **_kw: Any) -> None:
-            built.append(path)
+        def __init__(self, path: str, **kw: Any) -> None:
+            built.append((path, int(kw["hash_mb"])))
 
         def close(self) -> None:
             pass
@@ -859,12 +859,14 @@ def test_sync_stockfish_reinits_on_binary_change(monkeypatch: Any) -> None:
 
     monkeypatch.setattr(worker_mod, "StockfishUCI", _FakeSF)
 
-    WorkerSession._sync_stockfish(session, {}, 5000, 5)
-    WorkerSession._sync_stockfish(session, {}, 5000, 5)  # same path -> no rebuild
-    assert built == ["sf_v1"]
+    WorkerSession._sync_stockfish(session, {}, 5000, 5, 16)
+    WorkerSession._sync_stockfish(session, {}, 5000, 5, 16)  # unchanged -> no rebuild
+    assert built == [("sf_v1", 16)]
+    WorkerSession._sync_stockfish(session, {}, 5000, 5, 32)
+    assert built == [("sf_v1", 16), ("sf_v1", 32)]
     session.args.stockfish_path = "sf_v2"  # binary hot-swap
-    WorkerSession._sync_stockfish(session, {}, 5000, 5)
-    assert built == ["sf_v1", "sf_v2"]
+    WorkerSession._sync_stockfish(session, {}, 5000, 5, 32)
+    assert built == [("sf_v1", 16), ("sf_v1", 32), ("sf_v2", 32)]
 
 
 def test_sync_model_resyncs_evaluator(monkeypatch: Any) -> None:
