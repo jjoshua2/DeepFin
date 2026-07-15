@@ -2874,6 +2874,33 @@ passed under a native+LTO build, and ruff/basedpyright/vulture were clean.
 Activate only on a natural restart and judge whole throughput from
 `sf_block_starved` plus games/h.
 
+**Dtype-preserving replay policy mirror experiment -- UNREAD (2026-07-15).**
+Array-backed replay augmentation copies each selected float16 policy field,
+calls the general `mirror_policy_batch` API (which widens to float32 by
+contract), then immediately casts it back to the source dtype for assignment.
+Mirroring is only a column permutation. Hypothesis: use the width-specific
+mirror index directly in this storage-preserving caller, removing both casts
+and the float32 temporary with identical arrays. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_replay_policy_mirror.py
+--rows 512 --width 1858 --fields 6 --iterations 100 --rounds 9`. SUCCESS:
+candidate/reference median <=0.85x, exact hashes for float16/float32 and compact/
+full widths, focused replay augmentation/trainer tests and lint pass. KILL:
+ratio >1.00 or any dtype/value mismatch; otherwise MIXED and retain only if the
+runtime is a net simplification. Replay augmentation only; no RNG mask, target,
+model, optimizer, storage, config, or live-state change.
+**VERDICT: WORKED.** Nine alternating production-shaped rounds measured
+4.191702544s for the float32-widening reference versus 1.282233935s for the
+dtype-preserving permutation, ratio **0.305898 (69.4% faster policy-field
+mirroring)**, with exact checksum
+`591ce45a2b0a501db1bc17595764cdf7c411b91ec50b8d3a662f0860258546e7`.
+The hot loop is also simpler: one width-specific column gather replaces a
+general float32 conversion followed by a source-dtype cast. Exact float16 and
+float32 parity/dtype tests cover both compact 1858 and full 4672 policy spaces;
+18 focused mirror, sparse-MultiPV, and relation tests pass after a clean
+native+LTO build, and lint is clean. Keep the dtype-preserving permutation.
+Activation is code-only on the next natural restart; whole training impact is
+bounded by host prefetch overlap and should be read from `train_time_s`.
+
 **Training loss-scalar synchronization coalescing -- UNREAD (2026-07-15).**
 `_extract_loss_scalars` already stacks component losses so they cross the
 CUDA/host boundary once, but both train and eval immediately call
