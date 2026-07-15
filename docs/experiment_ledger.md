@@ -2953,3 +2953,28 @@ but its 2.34% wall gain missed the pre-committed >=3% success bar; 64/128 MB
 were clearly slower. Live training saturated 96-99% of the host during this
 low-priority single-CPU sweep, so do not promote the near-threshold 32 MB point
 without the exact quiet-host rerun. No config or runtime value changed.
+**Persistent match CBoard experiment -- UNREAD (2026-07-15).** Match play
+currently reconstructs every Gumbel root `CBoard` from its `python-chess`
+board on every ply even though the C search accepts caller-owned root CBoards.
+Hypothesis: create one CBoard per game, advance it alongside the authoritative
+Python board, and pass the matching subsets into Gumbel/PUCT, eliminating the
+repeated history replay with little added code. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_match_cboard_reuse.py
+--boards 64 --plies 160 --rounds 9`. SUCCESS: persistent-board glue median
+wall <=0.50x reconstruction, saves >=0.20 ms per 64-board ply, every per-ply
+FEN/checksum matches, match dispatch tests prove the matching CBoard subset is
+passed, and focused arena/history tests plus lint pass. KILL: ratio >0.90,
+absolute saving <0.10 ms/ply, any state mismatch, or materially complicated
+fallback synchronization; otherwise MIXED and retain only if the final change
+is a clear simplification. This is match/evaluation only; no training data,
+search semantics, live config, or restart.
+**VERDICT: MIXED; reverted.** The implementation-faithful registered run
+measured 1.311999s reconstruction versus 0.996754s persistent, ratio 0.759722,
+with 1.970ms saved per 64-board ply and exact checksum
+`a5b29041c65eb77483d7b624c34b6cf061cb45d84f167972b9c94fac584bd8cf`.
+That is a real glue reduction but misses the 0.50 success gate. Safely keeping
+the two representations synchronized also requires remapping the selected move
+back to its actual policy index because `index_to_move` can silently return a
+legal fallback. The dual-state plumbing is not a simplification, so retain the
+single authoritative Python board and rebuild roots. The one-off benchmark and
+runtime/test changes were removed.
