@@ -2997,6 +2997,39 @@ all 12 collation tests pass and ruff/basedpyright/vulture are clean. Keep it.
 End-to-end benefit remains restart-gated and should be judged from
 `train_time_s`, with GPU memory as the guardrail.
 
+**Replay-to-device compact integer/mask cast experiment -- UNREAD
+(2026-07-15).** The same collation boundary widens three production
+1858-wide legal masks from uint8 to float32 on the host, plus int8/int16 label
+indices and many uint8 presence flags. The masks alone expand from about 2.7
+MiB to 10.9 MiB per batch before pinning. Hypothesis: preserve any safely
+widenable compact NumPy dtype through pinning and request the established
+consumer dtype from the nonblocking device copy, extending the proven float16
+mechanism without per-field branches. ONE deciding yardstick: `PYTHONPATH=.
+taskset -c 15 python3 scripts/bench_collate_compact_masks.py --batch-size 512
+--policy-size 1858 --mask-fields 3 --scalar-fields 20 --iterations 200
+--rounds 9`. SUCCESS: candidate/reference host-preparation median <=0.80x,
+exact float32 equality/checksum, source-byte ratio <=0.26x, focused tests cover
+uint8->float32 and int8->int64 while float64/narrowing inputs still cast on the
+host, and collation/loss tests plus lint pass. KILL: ratio >0.95, any dtype/
+value/contiguity mismatch, or unsafe casts are deferred; otherwise MIXED and
+retain only if one safe-cast helper replaces special cases. Data movement only;
+no target, mask, loss, gradient, model, replay storage, RNG, config, or live
+state change. It shares the float16 experiment's restart and GPU-memory guards.
+**VERDICT: WORKED.** Nine alternating production-shaped rounds measured
+3.170205812s for host float32 widening plus the simulated pin copy versus
+0.062939495s for copying the compact sources, ratio **0.019853**, with exact
+float32 checksum
+`9b3255dae392e2c02a1f0dd52f80e4193a456c18faf4e92066360de446704c82`.
+Pinned/H2D source bytes fell from 11,456,512 to 2,864,128, exact **0.25x**.
+One `_transfer_array` helper now keeps a source compact only when NumPy marks
+the conversion safe and its item size does not exceed the target; float64 to
+float32 and int64 to int32 still convert on the host. This subsumes the earlier
+float16 special case and also covers int8 WDL labels, int16 MultiPV rows, uint8
+legal masks, and uint8 flags while preserving every consumer dtype. Thirteen
+collation tests prove exact dtype/value/contiguity and safe/narrowing behavior;
+ruff/basedpyright/vulture are clean. Keep it under the same natural-restart
+activation and temporary-GPU-memory guard as the float16 transfer change.
+
 **Training loss-scalar synchronization coalescing -- UNREAD (2026-07-15).**
 `_extract_loss_scalars` already stacks component losses so they cross the
 CUDA/host boundary once, but both train and eval immediately call

@@ -29,12 +29,13 @@ def _to_tensor(
     return t.to(device=device)
 
 
-def _float32_transfer_array(value: np.ndarray) -> np.ndarray:
-    """Keep stored f16 compact until the device transfer performs the cast."""
+def _transfer_array(value: np.ndarray, *, dtype: np.dtype | type) -> np.ndarray:
+    """Keep safely widenable replay values compact until device transfer."""
     arr = np.asarray(value)
-    if arr.dtype == np.float16:
+    target = np.dtype(dtype)
+    if arr.dtype.itemsize <= target.itemsize and np.can_cast(arr.dtype, target, casting="safe"):
         return arr
-    return np.asarray(arr, dtype=np.float32)
+    return np.asarray(arr, dtype=target)
 
 
 def _zeros_tensor(
@@ -58,9 +59,7 @@ def _to_optional_tensor(
     arr = arrs.get(key)
     if arr is None:
         return _zeros_tensor(shape, dtype=dtype_torch, device=device)
-    source = np.asarray(arr)
-    if source.dtype != np.float16 or np.dtype(dtype_np) != np.dtype(np.float32):
-        source = np.asarray(source, dtype=dtype_np)
+    source = _transfer_array(arr, dtype=dtype_np)
     return _to_tensor(source, device=device, dtype=dtype_torch)
 
 
@@ -188,19 +187,20 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
 
 
 def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, torch.Tensor]:
-    x = _float32_transfer_array(arrs["x"])
+    x = _transfer_array(arrs["x"], dtype=np.float32)
     n = int(x.shape[0])
 
-    policy_t = _float32_transfer_array(arrs["policy_target"])
-    wdl_t = np.asarray(arrs["wdl_target"], dtype=np.int64)
+    policy_t = _transfer_array(arrs["policy_target"], dtype=np.float32)
+    wdl_t = _transfer_array(arrs["wdl_target"], dtype=np.int64)
 
     out = {
         "x": _to_tensor(x, device=device, dtype=torch.float32),
         "policy_t": _to_tensor(policy_t, device=device, dtype=torch.float32),
-        "wdl_t": _to_tensor(wdl_t, device=device),
+        "wdl_t": _to_tensor(wdl_t, device=device, dtype=torch.int64),
     }
     if "has_policy" in arrs:
-        out["has_policy"] = _to_tensor(np.asarray(arrs["has_policy"], dtype=np.float32), device=device)
+        has_policy = _transfer_array(arrs["has_policy"], dtype=np.float32)
+        out["has_policy"] = _to_tensor(has_policy, device=device, dtype=torch.float32)
   # Dynamic relation matrices ride along as uint8; the model casts on device.
   # Rows without relations are zero matrices == zero bias, so a mixed batch
   # (old shards + new) degrades exactly like the absent-tensor case.

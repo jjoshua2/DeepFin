@@ -143,13 +143,14 @@ def test_collate_arrays_minimal():
     assert batch["wdl_t"].dtype == torch.int64
 
 
-def test_collate_arrays_defers_float16_cast_until_transfer(monkeypatch) -> None:
+def test_collate_arrays_defers_safe_widening_until_transfer(monkeypatch) -> None:
     n = 3
     x = np.arange(n * 175 * 8 * 8, dtype=np.float16).reshape(n, 175, 8, 8)
     policy = np.linspace(0.0, 1.0, n * COMPACT_POLICY_SIZE, dtype=np.float16).reshape(
         n, COMPACT_POLICY_SIZE,
     )
     sf_policy = np.flip(policy, axis=1).copy()
+    legal_mask = np.ones((n, COMPACT_POLICY_SIZE), dtype=np.uint8)
     seen: list[tuple[tuple[int, ...], np.dtype, torch.dtype | None]] = []
     original_to_tensor = dataset_mod._to_tensor
 
@@ -169,6 +170,8 @@ def test_collate_arrays_defers_float16_cast_until_transfer(monkeypatch) -> None:
             "policy_target": policy,
             "wdl_target": np.array([0, 1, 2], dtype=np.int8),
             "sf_policy_target": sf_policy,
+            "legal_mask": legal_mask,
+            "has_legal_mask": np.ones((n,), dtype=np.uint8),
         },
         device="cpu",
     )
@@ -176,12 +179,18 @@ def test_collate_arrays_defers_float16_cast_until_transfer(monkeypatch) -> None:
     assert (x.shape, np.dtype(np.float16), torch.float32) in seen
     assert (policy.shape, np.dtype(np.float16), torch.float32) in seen
     assert (sf_policy.shape, np.dtype(np.float16), torch.float32) in seen
+    assert ((n,), np.dtype(np.int8), torch.int64) in seen
+    assert (legal_mask.shape, np.dtype(np.uint8), torch.float32) in seen
     assert batch["x"].dtype == torch.float32
     assert batch["policy_t"].dtype == torch.float32
     assert batch["sf_policy_t"].dtype == torch.float32
+    assert batch["wdl_t"].dtype == torch.int64
+    assert batch["legal_mask"].dtype == torch.float32
     assert batch["x"].is_contiguous()
     assert batch["policy_t"].is_contiguous()
     assert batch["sf_policy_t"].is_contiguous()
+    assert batch["wdl_t"].is_contiguous()
+    assert batch["legal_mask"].is_contiguous()
     torch.testing.assert_close(batch["x"], torch.from_numpy(x.astype(np.float32)), rtol=0.0, atol=0.0)
     torch.testing.assert_close(batch["policy_t"], torch.from_numpy(policy.astype(np.float32)), rtol=0.0, atol=0.0)
     torch.testing.assert_close(
@@ -190,6 +199,22 @@ def test_collate_arrays_defers_float16_cast_until_transfer(monkeypatch) -> None:
         rtol=0.0,
         atol=0.0,
     )
+    torch.testing.assert_close(
+        batch["legal_mask"],
+        torch.from_numpy(legal_mask.astype(np.float32)),
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
+def test_transfer_array_casts_narrowing_and_unsafe_inputs_on_host() -> None:
+    compact = np.ones((3,), dtype=np.uint8)
+    wide_float = np.ones((3,), dtype=np.float64)
+    wide_int = np.ones((3,), dtype=np.int64)
+
+    assert dataset_mod._transfer_array(compact, dtype=np.float32) is compact
+    assert dataset_mod._transfer_array(wide_float, dtype=np.float32).dtype == np.float32
+    assert dataset_mod._transfer_array(wide_int, dtype=np.int32).dtype == np.int32
 
 
 def test_collate_arrays_with_optionals():
