@@ -608,3 +608,41 @@ def test_continue_gumbel_sims_rejects_mis_shaped_arrays() -> None:
     assert len(rem) == 1
     assert len(rem[0]) >= 1
     assert all(int(a) in set(remaining) for a in rem[0])
+
+
+def test_compact_gumbel_state_keeps_scores_aligned_during_halving() -> None:
+    """Distinct candidate scores must follow actions through every in-place sort."""
+    cboard_cls = _require_cboard()
+    cb = cboard_cls.from_board(chess.Board())
+    legal = cb.legal_move_indices().astype(np.int32, copy=False)
+
+    for seed in range(8):
+        rng = np.random.default_rng(seed)
+        candidates = rng.choice(legal, size=8, replace=False).astype(np.int32)
+        pri = rng.uniform(0.01, 1.0, size=4672).astype(np.float64)
+        gum = rng.normal(size=4672).astype(np.float64)
+        expected = int(candidates[np.argmax(gum[candidates] + np.log(pri[candidates]))])
+
+        tree = MCTSTree()
+        rid = tree.add_root(1, 0.0)
+        tree.expand(
+            rid,
+            legal,
+            np.full(legal.size, 1.0 / legal.size, dtype=np.float64),
+        )
+        result = tree.start_gumbel_sims(
+            [cb], np.array([rid], dtype=np.int32),
+            [[int(action) for action in candidates]], [gum], [pri],
+            np.array([64], dtype=np.int32), np.array([0.0], dtype=np.float64),
+            0.1, 50.0, 2.5, 1.2, True,
+            np.empty((512, 146, 8, 8), dtype=np.float32), 0, 0, 0,
+        )
+        while result is not None:
+            n = int(result)
+            result = tree.continue_gumbel_sims(
+                np.zeros((n, 4672), dtype=np.float32),
+                np.zeros((n, 3), dtype=np.float32),
+            )
+
+        remaining = tree.get_gumbel_remaining()[0]
+        assert remaining == [expected]

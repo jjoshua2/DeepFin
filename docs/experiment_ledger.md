@@ -2901,6 +2901,35 @@ test and 31 focused loss/compute-loss tests pass; a wider trainer run passed
 coalescing. End-to-end GPU wall impact is restart-gated and should be read from
 `train_time_s`; the deterministic mechanism removes about 800 host syncs per
 production iteration.
+**Compact native Gumbel root-state experiment -- UNREAD (2026-07-15).**
+`start_gumbel_sims` currently allocates, zeros, and copies dense float64 prior
+and Gumbel arrays of shape `(boards, 4672)` into C, but sequential halving reads
+only the selected 2--32 candidates per board. At 384 roots the two C arrays are
+27.4 MiB per search, excluding the Python inputs. Hypothesis: gather priors and
+Gumbels into arrays parallel to `cands_flat`, keep them aligned during halving,
+and eliminate the dense C state without changing the Python API or scores. ONE
+deciding yardstick, run on the baseline and candidate native+LTO builds:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_gumbel_root_state.py --boards
+384 --topk 16 --iterations 200 --rounds 9`. SUCCESS: candidate initialization
+median <=0.50x baseline, native root-state bytes for priors+Gumbels fall >=99%,
+exact remaining-candidate/checksum parity, randomized sequential-halving parity
+and focused Gumbel/native/thread-safety tests plus lint pass. KILL: ratio >0.90,
+any score/action/search-result mismatch, or more than one additional allocation;
+otherwise MIXED and retain only if the state representation is simpler. Native
+search bookkeeping only; no model, target, replay, config, or live-state change.
+**VERDICT: WORKED.** On native+LTO builds, the exact registered baseline took
+5.933741663s per 200 starts and the compact candidate took 0.031876409s, ratio
+**0.005372 (186.1x faster initialization)**, with exact remaining-candidate
+checksum `46a40aad285c222672b6d507c184985c3d26d8269d92537869d64c77f6c4be1b`.
+At 384 roots/topk 16, prior+Gumbel C state falls from 28,704,768 to 98,304
+bytes, a 99.6575% reduction; allocation count is unchanged. The representation
+now gathers the dense API inputs once into arrays parallel to `cands_flat`, and
+the halving sort moves actions, priors, and Gumbels together. A randomized
+eight-seed alignment test with distinct scores selects the exact analytical
+winner after all halving rounds. A clean native+LTO build, 142 focused Gumbel,
+thread-safety, native-API, CBoard/history tests, and lint all pass. Keep the
+compact state. Whole selfplay impact starts after a natural rebuild/restart and
+is best read from MCTS init diagnostics and games/h.
 
 **Background SF-starvation polling experiment -- WORKED (2026-07-15).** Live
 post-restart telemetry shows states with zero runnable games spending roughly
