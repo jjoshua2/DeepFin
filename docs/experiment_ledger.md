@@ -2901,6 +2901,61 @@ test and 31 focused loss/compute-loss tests pass; a wider trainer run passed
 coalescing. End-to-end GPU wall impact is restart-gated and should be read from
 `train_time_s`; the deterministic mechanism removes about 800 host syncs per
 production iteration.
+**Compact native Gumbel root-state experiment -- UNREAD (2026-07-15).**
+`start_gumbel_sims` currently allocates, zeros, and copies dense float64 prior
+and Gumbel arrays of shape `(boards, 4672)` into C, but sequential halving reads
+only the selected 2--32 candidates per board. At 384 roots the two C arrays are
+27.4 MiB per search, excluding the Python inputs. Hypothesis: gather priors and
+Gumbels into arrays parallel to `cands_flat`, keep them aligned during halving,
+and eliminate the dense C state without changing the Python API or scores. ONE
+deciding yardstick, run on the baseline and candidate native+LTO builds:
+`PYTHONPATH=. taskset -c 15 python3 scripts/bench_gumbel_root_state.py --boards
+384 --topk 16 --iterations 200 --rounds 9`. SUCCESS: candidate initialization
+median <=0.50x baseline, native root-state bytes for priors+Gumbels fall >=99%,
+exact remaining-candidate/checksum parity, randomized sequential-halving parity
+and focused Gumbel/native/thread-safety tests plus lint pass. KILL: ratio >0.90,
+any score/action/search-result mismatch, or more than one additional allocation;
+otherwise MIXED and retain only if the state representation is simpler. Native
+search bookkeeping only; no model, target, replay, config, or live-state change.
+**VERDICT: WORKED.** On native+LTO builds, the exact registered baseline took
+5.933741663s per 200 starts and the compact candidate took 0.031876409s, ratio
+**0.005372 (186.1x faster initialization)**, with exact remaining-candidate
+checksum `46a40aad285c222672b6d507c184985c3d26d8269d92537869d64c77f6c4be1b`.
+At 384 roots/topk 16, prior+Gumbel C state falls from 28,704,768 to 98,304
+bytes, a 99.6575% reduction; allocation count is unchanged. The representation
+now gathers the dense API inputs once into arrays parallel to `cands_flat`, and
+the halving sort moves actions, priors, and Gumbels together. A randomized
+eight-seed alignment test with distinct scores selects the exact analytical
+winner after all halving rounds. A clean native+LTO build, 142 focused Gumbel,
+thread-safety, native-API, CBoard/history tests, and lint all pass. Keep the
+compact state. Whole selfplay impact starts after a natural rebuild/restart and
+is best read from MCTS init diagnostics and games/h.
+
+**Candidate-aligned Python-to-native Gumbel input experiment -- UNREAD
+(2026-07-15).** After compacting native root state, `gumbel_c.py` still creates
+and zero-fills a 4672-wide float64 Gumbel vector per active board solely for
+the legacy native input shape; the C entry then gathers the selected candidates
+again. Hypothesis: allow each Gumbel input to be either the legacy dense vector
+or a candidate-aligned vector, and have production pass `g[top_idx]`. ONE
+deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_gumbel_input_packing.py --boards 384 --legal 30 --topk 16
+--iterations 2000 --rounds 9`. SUCCESS: aligned/reference median <=0.20x,
+exact candidate-value/checksum parity, dense and compact native inputs select
+identical actions/probabilities across randomized halving tests, focused
+Gumbel/native tests and lint pass. KILL: ratio >0.80, compatibility failure, or
+more than one shape branch in native ingest; otherwise MIXED and retain only
+if code is net simpler. Search-noise representation only; no RNG draw, score,
+model, target, replay, config, or live-state change.
+**VERDICT: MIXED; no runtime change.** Nine alternating rounds measured
+7.648399s dense versus 2.545394s candidate-aligned packing, ratio 0.332801,
+with exact checksum
+`77396b7e9eb7cdf152e235031d72a77cc0ad3a781f9a3fca8490d33cb895f279`.
+That is a real 3.0x packing reduction but misses the pre-committed 0.20 success
+gate and saves under 1ms per 384-board pack in this mechanism. Accepting both
+legacy dense and new aligned arrays would add a native shape branch, so it is
+not the required net simplification. Keep the dense Python input API; the
+successful compact C state above already removes the dominant 27.4 MiB native
+copy. The one-off benchmark was removed.
 
 **Background SF-starvation polling experiment -- WORKED (2026-07-15).** Live
 post-restart telemetry shows states with zero runnable games spending roughly

@@ -1235,8 +1235,8 @@ typedef struct {
     int32_t *visits_per_action;  /* [n_boards] */
     CBoard  *root_cboards;       /* [n_boards] */
     double  *root_qs;            /* [n_boards] */
-    double  *root_priors;        /* [n_boards * POLICY_SIZE] */
-    double  *gumbels;            /* [n_boards * POLICY_SIZE] */
+    double  *root_priors;        /* [cands_flat_cap], parallel to cands_flat */
+    double  *gumbels;            /* [cands_flat_cap], parallel to cands_flat */
 
     /* Per-board candidate lists: flat array + offset/count */
     int32_t *cands_flat;
@@ -1414,8 +1414,8 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
         double *scores = scores_buf;
         for (int32_t ci = 0; ci < n_cands; ci++) {
             int32_t action = g->cands_flat[coff + ci];
-            double log_prior = log(g->root_priors[bi * GSS_POLICY_SIZE + action] > 1e-12
-                                   ? g->root_priors[bi * GSS_POLICY_SIZE + action] : 1e-12);
+            double log_prior = log(g->root_priors[coff + ci] > 1e-12
+                                   ? g->root_priors[coff + ci] : 1e-12);
             double q_hat = root_Q;
             int16_t slot = action_to_slot[action];
             if (slot >= 0) {
@@ -1425,7 +1425,7 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
                 else q_hat = mixed_value;
             }
             double q_transformed = q_scale * ((q_hat - min_q) / q_denom);
-            scores[ci] = g->gumbels[bi * GSS_POLICY_SIZE + action] + log_prior + q_transformed;
+            scores[ci] = g->gumbels[coff + ci] + log_prior + q_transformed;
         }
 
         /* Selection sort for the top 1/halving_div (n_cands is small, <=12).
@@ -1444,6 +1444,12 @@ static void gss_score_and_halve(GumbelSimState *g, TreeData *t) {
                 int32_t tmp_c = g->cands_flat[coff + k];
                 g->cands_flat[coff + k] = g->cands_flat[coff + best];
                 g->cands_flat[coff + best] = tmp_c;
+                double tmp_p = g->root_priors[coff + k];
+                g->root_priors[coff + k] = g->root_priors[coff + best];
+                g->root_priors[coff + best] = tmp_p;
+                double tmp_g = g->gumbels[coff + k];
+                g->gumbels[coff + k] = g->gumbels[coff + best];
+                g->gumbels[coff + best] = tmp_g;
             }
         }
         g->cands_count[bi] = keep;
@@ -3723,8 +3729,8 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->budget_remaining = (int32_t *)malloc(n_boards * sizeof(int32_t));
     g->root_qs = (double *)malloc(n_boards * sizeof(double));
     g->root_cboards = (CBoard *)malloc(n_boards * sizeof(CBoard));
-    g->root_priors = (double *)calloc((size_t)n_boards * GSS_POLICY_SIZE, sizeof(double));
-    g->gumbels = (double *)calloc((size_t)n_boards * GSS_POLICY_SIZE, sizeof(double));
+    g->root_priors = NULL;
+    g->gumbels = NULL;
     g->cands_offset = (int32_t *)malloc(n_boards * sizeof(int32_t));
     g->cands_count = (int32_t *)malloc(n_boards * sizeof(int32_t));
     g->visits_per_action = (int32_t *)calloc(n_boards, sizeof(int32_t));
@@ -3735,8 +3741,7 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->q_cap = 0;
 
     if (!g->root_ids || !g->budget_remaining || !g->root_qs || !g->root_cboards ||
-        !g->root_priors || !g->gumbels || !g->cands_offset || !g->cands_count ||
-        !g->visits_per_action || !g->active) {
+        !g->cands_offset || !g->cands_count || !g->visits_per_action || !g->active) {
         gss_free(g);
         Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
         Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
@@ -3772,50 +3777,6 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
         return NULL;
     }
 
-    for (int32_t i = 0; i < n_boards; i++) {
-        PyArrayObject *pri = FROMANY_1D(PyList_GET_ITEM(priors_list, i), NPY_FLOAT64);
-        if (!pri) {
-            gss_free(g);
-            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
-            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
-            return NULL;
-        }
-        if (PyArray_DIM(pri, 0) < GSS_POLICY_SIZE) {
-            Py_DECREF(pri);
-            gss_free(g);
-            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
-            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
-            PyErr_SetString(PyExc_ValueError, "priors array must have at least GSS_POLICY_SIZE elements");
-            return NULL;
-        }
-        memcpy(g->root_priors + i * GSS_POLICY_SIZE, PyArray_DATA(pri),
-               GSS_POLICY_SIZE * sizeof(double));
-        Py_DECREF(pri);
-    }
-
-    for (int32_t i = 0; i < n_boards; i++) {
-        PyObject *item = PyList_GET_ITEM(gumbels_list, i);
-        if (item == Py_None) continue;
-        PyArrayObject *garr = FROMANY_1D(item, NPY_FLOAT64);
-        if (!garr) {
-            gss_free(g);
-            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
-            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
-            return NULL;
-        }
-        if (PyArray_DIM(garr, 0) < GSS_POLICY_SIZE) {
-            Py_DECREF(garr);
-            gss_free(g);
-            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
-            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
-            PyErr_SetString(PyExc_ValueError, "gumbels array must have at least GSS_POLICY_SIZE elements");
-            return NULL;
-        }
-        memcpy(g->gumbels + i * GSS_POLICY_SIZE, PyArray_DATA(garr),
-               GSS_POLICY_SIZE * sizeof(double));
-        Py_DECREF(garr);
-    }
-
     int32_t total_cands = 0;
     for (int32_t i = 0; i < n_boards; i++) {
         PyObject *item = PyList_GET_ITEM(remaining_list, i);
@@ -3831,15 +3792,16 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     }
     g->cands_flat_cap = total_cands > 0 ? total_cands : 1;
     g->cands_flat = (int32_t *)malloc(g->cands_flat_cap * sizeof(int32_t));
-    if (!g->cands_flat) {
+    g->root_priors = (double *)malloc(g->cands_flat_cap * sizeof(double));
+    g->gumbels = (double *)malloc(g->cands_flat_cap * sizeof(double));
+    if (!g->cands_flat || !g->root_priors || !g->gumbels) {
         gss_free(g);
         Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
         Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
         return PyErr_NoMemory();
     }
-    /* Validate candidate actions at ingest so the hot path (gss_score_and_halve)
-     * can index root_priors[bi * 4672 + action] / gumbels[...] / action_to_slot
-     * without per-use range checks. Cost is paid once here, not per halving. */
+    /* Validate candidate actions at ingest so the hot path can index
+     * action_to_slot without per-use range checks. Cost is paid once here. */
     for (int32_t i = 0; i < n_boards; i++) {
         PyObject *item = PyList_GET_ITEM(remaining_list, i);
         if (item == Py_None) continue;
@@ -3863,6 +3825,61 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
             }
             g->cands_flat[off + j] = (int32_t)v;
         }
+    }
+
+    /* Gather only sequential-halving candidates. The prior API remains dense,
+     * but retaining all n_boards*4672 doubles doubled root-state memory and
+     * copied values that the search never reads. */
+    for (int32_t i = 0; i < n_boards; i++) {
+        PyArrayObject *pri = FROMANY_1D(PyList_GET_ITEM(priors_list, i), NPY_FLOAT64);
+        if (!pri) {
+            gss_free(g);
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            return NULL;
+        }
+        if (PyArray_DIM(pri, 0) < GSS_POLICY_SIZE) {
+            Py_DECREF(pri);
+            gss_free(g);
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            PyErr_SetString(PyExc_ValueError, "priors array must have at least GSS_POLICY_SIZE elements");
+            return NULL;
+        }
+        const double *src = (const double *)PyArray_DATA(pri);
+        int32_t off = g->cands_offset[i];
+        for (int32_t j = 0; j < g->cands_count[i]; j++)
+            g->root_priors[off + j] = src[g->cands_flat[off + j]];
+        Py_DECREF(pri);
+    }
+
+    for (int32_t i = 0; i < n_boards; i++) {
+        int32_t off = g->cands_offset[i];
+        int32_t count = g->cands_count[i];
+        PyObject *item = PyList_GET_ITEM(gumbels_list, i);
+        if (item == Py_None) {
+            memset(g->gumbels + off, 0, (size_t)count * sizeof(double));
+            continue;
+        }
+        PyArrayObject *garr = FROMANY_1D(item, NPY_FLOAT64);
+        if (!garr) {
+            gss_free(g);
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            return NULL;
+        }
+        if (PyArray_DIM(garr, 0) < GSS_POLICY_SIZE) {
+            Py_DECREF(garr);
+            gss_free(g);
+            Py_DECREF(root_ids_arr); Py_DECREF(budget_arr);
+            Py_DECREF(root_qs_arr); Py_DECREF(enc_arr);
+            PyErr_SetString(PyExc_ValueError, "gumbels array must have at least GSS_POLICY_SIZE elements");
+            return NULL;
+        }
+        const double *src = (const double *)PyArray_DATA(garr);
+        for (int32_t j = 0; j < count; j++)
+            g->gumbels[off + j] = src[g->cands_flat[off + j]];
+        Py_DECREF(garr);
     }
 
     /* Encoding buffer (strong ref to keep alive) */
