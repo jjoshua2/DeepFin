@@ -2924,6 +2924,39 @@ Float16 benchmark output and float32 focused tests are exact, C-contiguous, and
 positive-stride. Retain the simplification alongside the policy-field mirror
 win above; no separate activation or configuration is required.
 
+**Cross-optimizer-step training prefetch experiment -- UNREAD (2026-07-15).**
+Production enables batch prefetch but uses `accum_steps: 1`; `_run_optimizer_step`
+therefore invokes `_iter_prefetched_batches(count=1)`, whose explicit fast path
+is synchronous, and destroys the iterator at every step. Hypothesis: keep one
+phase-scoped iterator across all optimizer steps so replay sampling, target
+rebuild, and mirroring overlap the previous GPU step while preserving the
+three-attempt CUDA retry budget. ONE deciding yardstick: `PYTHONPATH=. taskset
+-c 15 python3 scripts/bench_cross_step_prefetch.py --steps 100 --sample-ms 2
+--compute-ms 8 --rounds 7`. SUCCESS: phase-scoped/reference median <=0.90x,
+exact batch order/checksum, tests prove prefetch crosses an `accum_steps=1`
+optimizer boundary and closes its thread on success/error, focused trainer/
+retry tests and lint pass. KILL: ratio >1.00, batch loss/duplication, retry
+exhaustion regression, or thread leak; otherwise MIXED and retain only if the
+lifecycle stays localized to `train_steps`. Scheduling only; no RNG sequence,
+batch contents, gradient, optimizer, target, replay, config, or live-state
+meaning change.
+**VERDICT: WORKED.** Seven alternating pinned-CPU rounds measured
+1.134129402s with per-step synchronous sampling versus 0.897334813s with one
+phase-scoped prefetch iterator, ratio **0.791210 (20.9% faster)**, with exact
+batch-order checksum
+`51f2696d83d68db933cbe2ba69586bfc8d17321ab3bac398a3c536fb4699ae29`.
+The runtime allocates exactly `steps * accum_steps` batches for the normal
+phase and extends that budget only by the number consumed by a failed CUDA
+attempt, so retries neither duplicate nor lose successful microbatches and no
+unused final batch advances replay RNG state. Tests prove the second batch is
+already sampling across an `accum_steps=1` optimizer boundary, the executor
+thread closes after success, retry order/budget is exact, and terminal errors
+close the iterator. Five focused iterator/retry/scheduler tests passed; a wider
+trainer/e2e/SWA/warmup/dropout run passed 44 tests before the known WSL `dxg`
+kernel wait, and ruff/basedpyright/vulture are clean. Keep the localized
+`train_steps` lifecycle. Production activation is natural-restart-only; read
+whole-step `train_time_s` after restart because the synthetic 20.9% is the
+host-preparation overlap ceiling, not an end-to-end GPU throughput claim.
 **Training loss-scalar synchronization coalescing -- UNREAD (2026-07-15).**
 `_extract_loss_scalars` already stacks component losses so they cross the
 CUDA/host boundary once, but both train and eval immediately call
