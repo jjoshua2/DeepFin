@@ -2873,3 +2873,31 @@ Stockfish smoke completed 24 mixed-node MultiPV requests without a zero move;
 passed under a native+LTO build, and ruff/basedpyright/vulture were clean.
 Activate only on a natural restart and judge whole throughput from
 `sf_block_starved` plus games/h.
+
+**Background SF-starvation polling experiment -- WORKED (2026-07-15).** Live
+post-restart telemetry shows states with zero runnable games spending roughly
+850-970% cumulative thread time in `sf_block_starved`; the 16 Stockfish
+processes plus Python keep the host 96-99% busy. Every one of 32 selfplay states
+per worker currently wakes every 50ms to rescan futures/boards, although only
+thread 0 performs the model/pause control poll. Hypothesis: retain the 50ms wait
+for the control state and use 250ms for the other 31 states; FIRST_COMPLETED
+still wakes immediately on useful SF work, while idle Python wakeups stop
+stealing CPU from nice-19 Stockfish. ONE deciding yardstick: `PYTHONPATH=.
+taskset -c 14 python3 scripts/bench_sf_starvation_polling.py --threads 32
+--delay 0.5 --rounds 7`. SUCCESS: candidate/reference median idle wakeups
+<=0.35, median completion-notification latency is no more than 10ms worse,
+deterministic tests prove control/background timeout selection, and focused
+continuous/label/threaded/e2e tests plus lint pass. KILL: wakeup ratio >0.60,
+latency guard failure, or stop/pause teardown latency >300ms; otherwise MIXED.
+Scheduler-only offline mechanism; no live/config/data/model/replay change and
+activation waits for a natural restart.
+**MECHANISM VERDICT: WORKED.** Seven alternating 32-state rounds measured 320
+median idle wakeups with 50ms polling everywhere versus 72 when 31 background
+states use 250ms, a **0.225 ratio (77.5% fewer wakeups)**. Median completion
+notification moved from 1.369ms to 2.653ms, only +1.283ms and well inside the
+10ms guard because FIRST_COMPLETED wakes immediately. The background timeout
+test measured the no-completion bound below 300ms; 66 focused label/continuous/
+distributed/CPU-e2e tests passed under a native+LTO build (three CUDA-only
+threaded tests skipped as expected), and ruff/basedpyright/vulture were clean.
+Production activation remains natural-restart-only, with host CPU share,
+`sf_block_starved`, and games/h as the outcome read.

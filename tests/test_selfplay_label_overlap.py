@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+
+from concurrent.futures import Future
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
@@ -59,18 +62,43 @@ def test_finalize_defers_only_the_game_with_an_outstanding_label(monkeypatch) ->
     state.recycle_slot.assert_called_once_with(0)
 
 
-def test_label_only_starvation_uses_bounded_future_wait(monkeypatch) -> None:
+def test_label_only_starvation_uses_control_future_wait(monkeypatch) -> None:
     state = _state_with_pending_label()
     wait = Mock()
     monkeypatch.setattr(manager, "wait", wait)
 
-    manager._wait_for_starved_sf(state)
+    manager._wait_for_starved_sf(state, control_poll=True)
 
     wait.assert_called_once_with(
         (state.pending_sf_labels[0].future,),
         timeout=0.05,
         return_when=manager.FIRST_COMPLETED,
     )
+
+
+def test_background_label_starvation_uses_longer_future_wait(monkeypatch) -> None:
+    state = _state_with_pending_label()
+    wait = Mock()
+    monkeypatch.setattr(manager, "wait", wait)
+
+    manager._wait_for_starved_sf(state, control_poll=False)
+
+    wait.assert_called_once_with(
+        (state.pending_sf_labels[0].future,),
+        timeout=0.25,
+        return_when=manager.FIRST_COMPLETED,
+    )
+
+
+def test_background_starvation_wait_keeps_teardown_bound() -> None:
+    state = _state_with_pending_label()
+    state.pending_sf_labels[0].future = Future()
+
+    started = time.perf_counter()
+    manager._wait_for_starved_sf(state, control_poll=False)
+    elapsed = time.perf_counter() - started
+
+    assert 0.20 <= elapsed < 0.30
 
 
 def test_finite_batch_keeps_blocking_finalization_semantics(monkeypatch) -> None:
