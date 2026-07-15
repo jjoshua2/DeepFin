@@ -2901,3 +2901,27 @@ distributed/CPU-e2e tests passed under a native+LTO build (three CUDA-only
 threaded tests skipped as expected), and ruff/basedpyright/vulture were clean.
 Production activation remains natural-restart-only, with host CPU share,
 `sf_block_starved`, and games/h as the outcome read.
+**Distributed Stockfish hash-size throughput experiment -- MIXED
+(2026-07-15).** Production labels use about 700k nodes, MultiPV 40, and a 16 MB
+transposition table per single-thread engine. The configured hash size was not
+previously delivered to distributed workers; that plumbing is fixed separately
+without changing the current value. Hypothesis: 32/64/128 MB reduces TT
+collisions enough to improve fixed-node label wall time despite the larger CPU
+cache footprint. ONE deciding yardstick: `PYTHONPATH=. nice -n 19 taskset -c 15
+python3 scripts/bench_stockfish_hash.py --stockfish
+/home/josh/projects/chess/e2e_server/publish/stockfish --nodes 700000 --multipv
+40 --positions 16 --rounds 7`. Arms rotate order and each starts a fresh engine;
+all searches within an arm retain the TT like production. SUCCESS: one larger
+hash has median wall <=0.97x the 16 MB baseline and first-round best-move
+agreement >=0.90; choose the fastest qualifier. KILL: every larger hash is
+>0.99x or best-move agreement is <0.90; otherwise MIXED and do not change the
+production value without a quiet-host replication. CPU-only offline mechanism;
+no live YAML, worker, model, replay, or training state changes.
+**VERDICT: MIXED; retain 16 MB pending a quiet-host replication.** Seven rotated
+production-shaped rounds measured median ratios versus 16 MB of 1.0272 (8 MB),
+0.9766 (32 MB), 1.0746 (64 MB), and 1.1148 (128 MB). The 32 MB arm had 93.75%
+first-round best-move agreement and was the only larger qualifier on agreement,
+but its 2.34% wall gain missed the pre-committed >=3% success bar; 64/128 MB
+were clearly slower. Live training saturated 96-99% of the host during this
+low-priority single-CPU sweep, so do not promote the near-threshold 32 MB point
+without the exact quiet-host rerun. No config or runtime value changed.
