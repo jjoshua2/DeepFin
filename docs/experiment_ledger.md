@@ -2931,6 +2931,32 @@ thread-safety, native-API, CBoard/history tests, and lint all pass. Keep the
 compact state. Whole selfplay impact starts after a natural rebuild/restart and
 is best read from MCTS init diagnostics and games/h.
 
+**Candidate-aligned Python-to-native Gumbel input experiment -- UNREAD
+(2026-07-15).** After compacting native root state, `gumbel_c.py` still creates
+and zero-fills a 4672-wide float64 Gumbel vector per active board solely for
+the legacy native input shape; the C entry then gathers the selected candidates
+again. Hypothesis: allow each Gumbel input to be either the legacy dense vector
+or a candidate-aligned vector, and have production pass `g[top_idx]`. ONE
+deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_gumbel_input_packing.py --boards 384 --legal 30 --topk 16
+--iterations 2000 --rounds 9`. SUCCESS: aligned/reference median <=0.20x,
+exact candidate-value/checksum parity, dense and compact native inputs select
+identical actions/probabilities across randomized halving tests, focused
+Gumbel/native tests and lint pass. KILL: ratio >0.80, compatibility failure, or
+more than one shape branch in native ingest; otherwise MIXED and retain only
+if code is net simpler. Search-noise representation only; no RNG draw, score,
+model, target, replay, config, or live-state change.
+**VERDICT: MIXED; no runtime change.** Nine alternating rounds measured
+7.648399s dense versus 2.545394s candidate-aligned packing, ratio 0.332801,
+with exact checksum
+`77396b7e9eb7cdf152e235031d72a77cc0ad3a781f9a3fca8490d33cb895f279`.
+That is a real 3.0x packing reduction but misses the pre-committed 0.20 success
+gate and saves under 1ms per 384-board pack in this mechanism. Accepting both
+legacy dense and new aligned arrays would add a native shape branch, so it is
+not the required net simplification. Keep the dense Python input API; the
+successful compact C state above already removes the dominant 27.4 MiB native
+copy. The one-off benchmark was removed.
+
 **Background SF-starvation polling experiment -- WORKED (2026-07-15).** Live
 post-restart telemetry shows states with zero runnable games spending roughly
 850-970% cumulative thread time in `sf_block_starved`; the 16 Stockfish
