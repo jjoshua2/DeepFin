@@ -2844,3 +2844,32 @@ and iter-time shifts as a BUNDLE readout vs the iters 42-47 baseline
 attribution. Seeds verified flowing pre-restart (66 fenlist games/15 shards,
 stm_l dominant). PID state: regret was RE-TIGHTENING (0.175 peak -> 0.098)
 with EMA 0.60-0.64 — the post-airbag recovery watch item resolved HEALTHY.
+
+**Stockfish pool engine-owning work-stealing experiment -- WORKED
+(2026-07-15).** The per-engine executors from PR #177 prevent head-of-line lock
+contention but permanently bind round-robin requests to queues. Production
+mixes roughly quarter-budget fast-ply searches with full-budget labels, so an
+engine can idle while another owns queued long work. Hypothesis: a shared FIFO
+whose executor threads each permanently own one engine dynamically balances
+actual completion times without engine locks, node estimates, callbacks, or
+per-engine executors. ONE deciding yardstick: `PYTHONPATH=. taskset -c 14
+python3 scripts/bench_stockfish_pool_work_stealing.py --workers 4 --requests 96
+--rounds 9 --seed 20260715`. SUCCESS: work-stealing median makespan <=0.95x
+fixed queues, no round regresses >1.05x, exact checksum, deterministic tests
+prove a freed engine drains globally queued work while another remains blocked,
+and focused Stockfish/selfplay tests plus lint pass. KILL: median >0.99x, tail
+guard failure, engine contention, lifecycle regression, or materially more
+complex code; otherwise MIXED. Offline scheduler mechanism only; no live/config
+activation until a natural restart and no model/replay/training change.
+**MECHANISM VERDICT: WORKED.** Nine alternating mixed-duration rounds measured
+0.058687067s fixed-queue median versus 0.051551582s work-stealing median, a
+**0.878415 ratio (12.2% faster)**. The worst individual round was 1.027657x,
+inside the 1.05 tail guard, with exact checksum 77,823. The runtime replaces
+four fixed executors plus round-robin binding with one shared FIFO/executor;
+each executor thread claims exactly one engine at initialization, so no UCI
+lock contention or node-cost accounting is introduced. A real four-engine
+Stockfish smoke completed 24 mixed-node MultiPV requests without a zero move;
+74 focused pool/timeout/nice/continuous-label/threaded/sparse-label/e2e tests
+passed under a native+LTO build, and ruff/basedpyright/vulture were clean.
+Activate only on a natural restart and judge whole throughput from
+`sf_block_starved` plus games/h.

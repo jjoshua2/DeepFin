@@ -56,7 +56,7 @@ def test_pool_closes_engines_after_partial_initialization(monkeypatch) -> None:
     assert _FailsOnSecondEngine.instances[0].closed
 
 
-def test_pool_does_not_head_of_line_block_an_available_engine(monkeypatch) -> None:
+def test_pool_freed_engine_drains_global_queue(monkeypatch) -> None:
     _BlockingEngine.instances = []
     _BlockingEngine.releases = [threading.Event(), threading.Event()]
     monkeypatch.setattr(pool_module, "StockfishUCI", _BlockingEngine)
@@ -69,19 +69,18 @@ def test_pool_does_not_head_of_line_block_an_available_engine(monkeypatch) -> No
             for engine in _BlockingEngine.instances
         )
 
-        queued_busy = pool.submit("queued-busy")  # engine 0
-        available = pool.submit("available")  # engine 1
+        queued_busy = pool.submit("queued-busy")
+        available = pool.submit("available")
         _BlockingEngine.releases[1].set()
 
-        # Engine 1 must run its own queued request even while engine 0 and its
-        # second request remain blocked. A shared executor consumes the freed
-        # thread with queued_busy and cannot reach available.
+        # The freed engine drains both globally queued requests even though
+        # engine 0 remains blocked; neither request is pinned behind it.
+        assert queued_busy.result(timeout=0.25) == "1:queued-busy"
         assert available.result(timeout=0.25) == "1:available"
-        assert not queued_busy.done()
         _BlockingEngine.releases[0].set()
-        assert first.result(timeout=1.0) == "0:block"
-        assert second.result(timeout=1.0) == "1:block"
-        assert queued_busy.result(timeout=1.0) == "0:queued-busy"
+        assert {
+            str(first.result(timeout=1.0)), str(second.result(timeout=1.0)),
+        } == {"0:block", "1:block"}
     finally:
         for release in _BlockingEngine.releases:
             release.set()
