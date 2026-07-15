@@ -77,6 +77,30 @@ def test_mirror_batch_swaps_castling_planes_for_x_and_lc0_root():
     assert np.all(mirrored["x_lc0_root"][:, 105] == 3.0)
 
 
+def test_mirror_batch_preserves_policy_storage_dtype_and_values():
+    for width, mirror_map in (
+        (COMPACT_POLICY_SIZE, COMPACT_MIRROR_POLICY_MAP),
+        (POLICY_SIZE, MIRROR_POLICY_MAP),
+    ):
+        for dtype in (np.float16, np.float32):
+            policy = np.arange(2 * width, dtype=np.float32).reshape(2, width).astype(dtype)
+            batch = {
+                "x": np.zeros((2, 146, 8, 8), dtype=np.float16),
+                "policy_target": policy,
+            }
+
+            mirrored = maybe_mirror_batch_arrays(
+                batch, rng=np.random.default_rng(1), prob=1.0,
+            )
+
+            assert mirrored["policy_target"].dtype == dtype
+            assert mirrored["x"].flags.c_contiguous
+            assert all(stride > 0 for stride in mirrored["x"].strides)
+            np.testing.assert_array_equal(
+                mirrored["policy_target"], policy[:, mirror_map],
+            )
+
+
 def test_mirror_batch_uses_configured_history_for_primary_x():
     batch = {
         "x": np.zeros((1, 146, 8, 8), dtype=np.float32),

@@ -9,7 +9,6 @@ from chess_anti_engine.moves.encode import (
     MIRROR_POLICY_MAP,
     POLICY_SIZE,
     mirror_policy,
-    mirror_policy_batch,
     mirror_policy_index,
 )
 
@@ -97,7 +96,7 @@ def mirror_x(x: np.ndarray, *, input_history_encoding: str | None = None) -> np.
 
 def _mirror_x_batch(x: np.ndarray, mask: np.ndarray, *, input_history_encoding: str | None = None) -> np.ndarray:
     out = np.array(x, copy=True, order="C")
-    out[mask] = out[mask, :, :, ::-1].copy()
+    out[mask] = out[mask, :, :, ::-1]
     rows = np.flatnonzero(mask)
     for a, b in _castling_swap_pairs(input_history_encoding):
         if out.shape[1] <= max(a, b):
@@ -261,10 +260,9 @@ def maybe_mirror_batch_arrays(
 
     for key in _MIRROR_POLICY_FIELDS:
         if key in arrs:
-            src_dtype = np.asarray(arrs[key]).dtype
             out[key] = np.array(arrs[key], copy=True, order="C")
-            mirrored = mirror_policy_batch(out[key][mask])
-            out[key][mask] = mirrored.astype(src_dtype, copy=False)
+            mirror_columns = _mirror_map_for_policy_width(int(out[key].shape[1]))
+            out[key][mask] = out[key][mask][:, mirror_columns]
 
     if "relations" in arrs:
         out["relations"] = np.array(arrs["relations"], copy=True, order="C")
