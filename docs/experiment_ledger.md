@@ -2957,7 +2957,6 @@ kernel wait, and ruff/basedpyright/vulture are clean. Keep the localized
 `train_steps` lifecycle. Production activation is natural-restart-only; read
 whole-step `train_time_s` after restart because the synthetic 20.9% is the
 host-preparation overlap ceiling, not an end-to-end GPU throughput claim.
-
 **Replay-to-device deferred float16 cast experiment -- UNREAD (2026-07-15).**
 Production replay stores the 175-plane input and four dense 1858-wide policy
 fields as float16, but `collate_arrays` widens each one to float32 in NumPy
@@ -3029,6 +3028,32 @@ legal masks, and uint8 flags while preserving every consumer dtype. Thirteen
 collation tests prove exact dtype/value/contiguity and safe/narrowing behavior;
 ruff/basedpyright/vulture are clean. Keep it under the same natural-restart
 activation and temporary-GPU-memory guard as the float16 transfer change.
+
+**Inference-mode forward-context experiment -- UNREAD (2026-07-15).**
+All eager, legal-policy, and AOT evaluator forwards run under `torch.no_grad`,
+which disables gradient recording but retains view tracking and version-counter
+updates. These outputs are inference-only and are detached/copied before they
+leave evaluator ownership. Hypothesis: `torch.inference_mode` removes that
+remaining autograd bookkeeping with exact outputs and no extra plumbing. ONE
+deciding yardstick: `PYTHONPATH=. taskset -c 15 python3
+scripts/bench_inference_context.py --batch-size 64 --width 64 --layers 12
+--iterations 100 --rounds 9`. SUCCESS: inference-mode/no-grad median <=0.98x,
+exact output checksum, focused direct/legal/AOT evaluator tests and lint pass.
+KILL: ratio >1.00, any output/alias/lifetime failure, or compiled/evaluator
+compatibility regression; otherwise MIXED and revert because a stricter tensor
+mode is not a simplification by itself. Inference scheduling only; no model,
+search, target, training, replay, config, RNG, or live-state change. Activation
+would wait for a natural restart and whole match/selfplay throughput remains
+the production outcome rather than the CPU context benchmark.
+**VERDICT: MIXED; runtime unchanged.** Nine alternating pinned-CPU rounds
+measured 0.468115401s under `no_grad` versus 0.460188073s under
+`inference_mode`, ratio **0.983065 (1.7% faster)**, with exact checksum
+`15741f00c9e3f948f4b514205a1b63377ed7023d210a3f3c157041880dd7c5fe`.
+That narrowly misses the pre-committed 0.98 success gate. Inference mode is
+stricter about tensor mutation/version behavior and does not simplify the
+existing helper contract, while production compiled GPU forwards would likely
+amortize even more of this CPU framework overhead. Keep `no_grad`; retain only
+the reproducible benchmark and ledger result.
 
 **Training loss-scalar synchronization coalescing -- UNREAD (2026-07-15).**
 `_extract_loss_scalars` already stacks component losses so they cross the
