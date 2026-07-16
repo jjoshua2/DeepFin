@@ -3216,3 +3216,19 @@ back to its actual policy index because `index_to_move` can silently return a
 legal fallback. The dual-state plumbing is not a simplification, so retain the
 single authoritative Python board and rebuild roots. The one-off benchmark and
 runtime/test changes were removed.
+
+**AOT broker RETRY + speedup-merge restart (2026-07-15, post driver 610.74 +
+reboot).** The 07-15 AOT KILL was a bridge-wedge side effect, not a
+quality/perf failure (packages ==eager, forward ~5-6% faster). User updated
+the NVIDIA driver 595.97 -> 610.74 and rebooted; bridge believed stable.
+This restart lands as ONE bundle: (a) origin/main sync (Codex speedups #142-
+#192, all correctness-reviewed CORRECT by parallel agents 07-15), (b) AOT
+re-enabled (`distributed_inference_aot_dir: data/aot_models_512`), (c) Aurora
+trainer CUDA graphs active by default (#170, first trainer-side cudagraphs;
+user explicitly opted in). Yardstick: watchdog/recover_stall cadence + games/h
+vs ~641 baseline + train_time_s. KILL (pre-committed): clockwork ~100-min
+wedge/recover loop returns -> blank the aot key + set
+`aurora_cuda_graphs: false` + restart (weights/optimizer/replay untouched);
+if wedges persist even then, the driver didn't fix the bridge — revert the
+whole merge is NOT needed (speedups are wedge-neutral eager code). Confounds:
+bundle readout by design (speed-only changes); model/data-affecting changes: none.
