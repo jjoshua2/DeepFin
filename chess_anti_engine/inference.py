@@ -807,6 +807,59 @@ if _BUCKET_HIST_ENABLED:
     atexit.register(_flush_bucket_hist_atexit)
 
 
+# --- Optional arrival-trace JSONL (gather-policy diagnostic) ----------------
+# Set CAE_ARRIVAL_TRACE=/path/to/trace.jsonl to record per-dispatched-batch
+# arrival timestamps (perf_counter) as seen by SlotBroker.serve_forever.
+# Offline replay: scripts/sim_gather_policy.py. Zero-cost when unset.
+_ARRIVAL_TRACE_PATH = os.environ.get("CAE_ARRIVAL_TRACE", "").strip()
+_ARRIVAL_TRACE_ENABLED = bool(_ARRIVAL_TRACE_PATH)
+_arrival_trace_buf: list[str] = []
+_arrival_trace_lock = threading.Lock()
+_arrival_trace_last_flush = 0.0
+_ARRIVAL_TRACE_FLUSH_EVERY_S = 5.0
+_ARRIVAL_TRACE_FLUSH_EVERY_N = 200
+
+
+def _flush_arrival_trace() -> None:
+    """Append buffered JSONL lines to CAE_ARRIVAL_TRACE (caller holds lock)."""
+    global _arrival_trace_last_flush
+    if not _arrival_trace_buf:
+        return
+    try:
+        with open(_ARRIVAL_TRACE_PATH, "a", encoding="utf-8") as fh:
+            fh.writelines(_arrival_trace_buf)
+    except OSError:
+        pass  # diagnostic only — never disturb the forward path
+    _arrival_trace_buf.clear()
+    _arrival_trace_last_flush = time.perf_counter()
+
+
+def _record_arrival_trace(record: dict[str, Any]) -> None:
+    """Buffer one JSONL record; flush every ~5s or 200 batches."""
+    line = json.dumps(record, separators=(",", ":")) + "\n"
+    with _arrival_trace_lock:
+        _arrival_trace_buf.append(line)
+        now = time.perf_counter()
+        if (
+            len(_arrival_trace_buf) >= _ARRIVAL_TRACE_FLUSH_EVERY_N
+            or (now - _arrival_trace_last_flush) >= _ARRIVAL_TRACE_FLUSH_EVERY_S
+        ):
+            _flush_arrival_trace()
+
+
+def _flush_arrival_trace_atexit() -> None:
+    """Flush the tail (< flush cadence) on process exit so short windows count."""
+    with _arrival_trace_lock:
+        _flush_arrival_trace()
+
+
+if _ARRIVAL_TRACE_ENABLED:
+    import atexit
+
+    _arrival_trace_last_flush = time.perf_counter()
+    atexit.register(_flush_arrival_trace_atexit)
+
+
 def _compiled_padded_batch_size(total: int, *, capacity: int | None = None) -> int:
     if total <= 0:
         return 0
@@ -1487,6 +1540,9 @@ class SlotBroker:
         # eager self._model — setup/rebind errors fail loud instead.
         self._aot_models: dict[int, Any] | None = None
         self._aot_constant_fqns: list[str] = []
+        # Per-slot first-seen REQUEST times for CAE_ARRIVAL_TRACE (id(slot) ->
+        # perf_counter). Only written when the env diagnostic is enabled.
+        self._arrival_trace_seen: dict[int, float] = {}
 
         self._layout = _SlotLayout.compute(max_batch_per_slot, int(input_planes))
         self._slots: list[_InferenceSlot] = []
@@ -1977,12 +2033,46 @@ class SlotBroker:
             more = [s for s in self._slots if s.state == _STATE_REQUEST and s not in ready]
             if more:
                 ready.extend(more)
+                if _ARRIVAL_TRACE_ENABLED:
+                    self._note_arrival_trace(more)
                 idle_deadline = time.monotonic() + (self.adaptive_idle_ms / 1000.0)
             if len(ready) >= len(self._slots):
                 return
             if adaptive and time.monotonic() >= idle_deadline:
                 return
             time.sleep(0.0001)
+
+    def _note_arrival_trace(self, slots: list[_InferenceSlot]) -> None:
+        """Record first-seen REQUEST time for each slot (perf_counter)."""
+        seen = self._arrival_trace_seen
+        t = time.perf_counter()
+        for slot in slots:
+            key = id(slot)
+            if key not in seen:
+                seen[key] = t
+
+    def _emit_arrival_trace(self, ready: list[_InferenceSlot]) -> None:
+        """Buffer one JSONL dispatch record; pop used arrival times for reuse."""
+        t_dispatch = time.perf_counter()
+        seen = self._arrival_trace_seen
+        arrivals: list[list[float | int]] = []
+        for slot in ready:
+            key = id(slot)
+            t_arrival = seen.pop(key, t_dispatch)
+            arrivals.append([t_arrival, int(slot.batch_size)])
+        batch_rows = int(sum(int(a[1]) for a in arrivals))
+        if arrivals:
+            wait_ms = (t_dispatch - min(float(a[0]) for a in arrivals)) * 1000.0
+        else:
+            wait_ms = 0.0
+        _record_arrival_trace(
+            {
+                "t_dispatch": t_dispatch,
+                "arrivals": arrivals,
+                "batch_rows": batch_rows,
+                "wait_ms": wait_ms,
+            }
+        )
 
     def _maybe_print_broker_metrics(self, m: dict, now: float, report_interval: float) -> None:
         """Print broker throughput once per ``report_interval`` and reset counters."""
@@ -2039,15 +2129,24 @@ class SlotBroker:
                     continue
                 continue
 
+            if _ARRIVAL_TRACE_ENABLED:
+                self._note_arrival_trace(ready)
+
             self._gather_more_within_window(ready)
 
   # Re-collect in case some slots changed during the wait window.
             ready = [s for s in self._slots if s.state == _STATE_REQUEST]
             if ready:
+                if _ARRIVAL_TRACE_ENABLED:
+                    self._note_arrival_trace(ready)
                 metrics["batches"] += 1
                 metrics["positions"] += sum(s.batch_size for s in ready)
                 metrics["slots"] += len(ready)
                 self._timing_metrics = metrics
+                # Emit before _process_batch so wait_ms is gather wait only
+                # (forward duration would otherwise skew the diagnostic).
+                if _ARRIVAL_TRACE_ENABLED:
+                    self._emit_arrival_trace(ready)
                 self._process_batch(ready)
 
             self._maybe_print_broker_metrics(metrics, time.monotonic(), report_interval)
