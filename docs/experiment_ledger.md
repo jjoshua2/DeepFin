@@ -3238,6 +3238,18 @@ wedge/recover loop returns -> blank the aot key + set
 if wedges persist even then, the driver didn't fix the bridge — revert the
 whole merge is NOT needed (speedups are wedge-neutral eager code). Confounds:
 bundle readout by design (speed-only changes); model/data-affecting changes: none.
+**VERDICT: WORKED (2026-07-16, read at iter 82 — 5-iteration stability window,
+spans >3 of the wedge's ~100-min cadence periods).** Zero watchdog
+recover_stall fires since the restart (last recovery 07-15 17:39, pre-restart;
+pre-fix cadence was 9 recoveries in ~15h). Broker pos/s +~24% at matched
+high-load windows (13.0-13.4k -> 16.2-16.6k); games/h ~884 vs ~641 baseline
+(+38%, stale-games restart artifact inflates the first reads — treat the +24%
+pos/s as the clean number); train_time_s normal (Aurora cudagraphs stable).
+AOT stays LIVE in the broker; `wsl2-gpu-vmbus-wedge-signature` root cause was
+the 595.97 driver's bridge, not AOT. Bucket-ladder v2 (next entry) is now
+unblocked at the next natural pause. Note: this entry's KILL watch used
+watchdog cadence, not broker.out "AOT packages loaded" — that line goes to
+log.info only; verify engagement via /proc/<broker-pid>/maps (.chess_bNNN).
 
 **PLANNED — AOT bucket-ladder v2 (draft 2026-07-16, execute at next natural pause AFTER the AOT-retry readout closes).**
 Interim 07-16 read of the retry: AOT live broker +~24% pos/s at high-load
