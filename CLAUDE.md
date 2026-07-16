@@ -55,7 +55,9 @@ Use `scripts/train.sh` to drive training; it manages the PID file, log, and Ray 
 #   Toggles: --no-pid, --no-optimizer, --reinit-volatility, --donor-config.
 ```
 
-Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-restore-*`), so you don't need to edit `configs/pbt2_small.yaml` to activate or disable it. When to salvage: after a bad exploit, a training run that regressed, or to rebase onto a better-regret checkpoint. A pool is a one-shot seed — once trials are past startup it plays no further role.
+Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-restore-*`), so you don't need to edit `configs/pbt2_small.yaml` to activate or disable it. When to salvage: after a bad exploit, a training run that regressed, or to rebase onto a better-regret checkpoint. A pool is a one-shot seed — once trials are past startup it plays no further role. `./scripts/train.sh best-save | best-list` manages named good-checkpoint pools under `data/best_pools/`.
+
+**Observers** (auto-started by `train.sh start`, one instance each): `scripts/watchdog_loop.sh` — stall detection with auto-recovery (confirmed stall → `scripts/recover_stall.sh`; log `scratchpad/watchdog.log`), and `scripts/monitor_fen.sh` — cadenced FEN-panel reads + the seed retire/probation step (log `scratchpad/live_read/monitor/`).
 
 **Blind-spot FEN seeding** (the active data lever — seeds selfplay openings
 from positions the net misplays):
@@ -63,9 +65,8 @@ from positions the net misplays):
 - The active list is `selfplay.opening_fen_list_path` in the live yaml,
   delivered via the server dole (`opening_fen_dole_per_iter`), selfplay-only,
   PID-safe. The path is live-reloaded — no restart to change lists.
-- **Removal is automatic**: the watchdog-cadenced
-  `scripts/blindspot_retire_step.py` retires seeds after 2 consecutive AWARE
-  reads, runs probation re-feed on retirees that regress, writes a new
+- **Removal is automatic**: `scripts/blindspot_retire_step.py` (run on cadence
+  by the monitor_fen loop) retires seeds after 2 consecutive AWARE reads, runs probation re-feed on retirees that regress, writes a new
   versioned list, and repoints the yaml itself. Don't hand-edit the active
   list for removals.
 - **Feeding new seeds is manual and ledger-gated** (it's a data-affecting
@@ -169,7 +170,7 @@ Transformer encoder-only backbone (`ChessNet` in `transformer.py`). BT4-aligned 
 Gumbel MCTS with sequential halving (primary) and PUCT (legacy). C-accelerated tree operations in `_mcts_tree.c` — fused tree traversal + CBoard replay + encoding. `gumbel_c.py` orchestrates the simulation loop with GPU inference pipelining.
 
 ### Selfplay (`selfplay/`)
-`play_batch()` orchestrates games (mostly net-vs-net "selfplay" slots plus a curriculum fraction vs the PID-handicapped SF opponent). Network turns use MCTS + temperature sampling; ~75% of plies are playout-capped "fast" plies (`playout_cap_fraction`/`fast_simulations`), the rest full-sim. `has_policy` ⇔ full ply; `selfplay.record_fast_ply_value` can keep fast plies as **value-only rows** (KataGo playout-cap harvest, ~4× rows/game) — tried in production 2026-07-01→02 and REVERTED (trunk dilution + value regression; see docs/experiment_ledger.md). Off in production. SF labels (`sf_wdl`/`sf_policy`) attach only to full plies, are queried at P1 (after the net's move) and POV-flipped to the sample; `stockfish.sf_label_nodes_cap` caps label-query nodes independently of the PID opponent budget.
+`play_batch()` orchestrates games (mostly net-vs-net "selfplay" slots plus a curriculum fraction vs the PID-handicapped SF opponent). Network turns use MCTS + temperature sampling; ~75% of plies are playout-capped "fast" plies (`playout_cap_fraction`/`fast_simulations`), the rest full-sim. `has_policy` ⇔ full ply; `selfplay.record_fast_ply_value` can keep fast plies as **value-only rows** — OFF in production (tried and REVERTED, trunk dilution; see the ledger before re-enabling). SF labels (`sf_wdl`/`sf_policy`) attach only to full plies, are queried at P1 (after the net's move) and POV-flipped to the sample; `stockfish.sf_label_nodes_cap` caps label-query nodes independently of the PID opponent budget.
 
 ### Distributed Selfplay (`tune/distributed_runtime.py`, `server/`)
 Workers run as separate processes, each playing game batches via shared inference broker. Broker (`inference.py: SlotBroker/SharedSlotBroker`) uses pre-allocated shared memory slots with pinned CPU buffers for zero-copy GPU transfer. Workers upload shard files to server inbox; trainable ingests them into the replay buffer each iteration.
@@ -218,7 +219,7 @@ Run `./scripts/lint.sh <paths>` after editing. The default GATE is **ruff + base
                                      #   run before a cleanup pass, not per edit)
 ```
 
-The `--deep` ruff report sweeps the not-yet-gated groups (B, NPY) as a cleanup shopping list — after the 2026-07-02 burn-down only the needs-judgment tail remains there (B905 `zip strict=`, B008 call-in-default, NPY002 legacy-RNG — never autofix; NPY002 changes RNG streams). Promote a rule into the pyproject gate once it reaches zero findings.
+The `--deep` ruff report sweeps the not-yet-gated groups (B, NPY) as a cleanup shopping list — only the needs-judgment tail remains there (B905 `zip strict=`, B008 call-in-default, NPY002 legacy-RNG — never autofix; NPY002 changes RNG streams). Promote a rule into the pyproject gate once it reaches zero findings.
 
 Configs:
 - `pyproject.toml`: `[tool.ruff.lint]` (gate rule set + rationale), `[tool.vulture]`

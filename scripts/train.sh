@@ -147,7 +147,8 @@ start() {
 }
 
 # Observers resume WITH training so nothing is forgotten (2026-07-13, user):
-# watchdog_loop (detect-and-report only — never starts/stops anything; alerts
+# watchdog_loop (stall detection + AUTO-RECOVERY via recover_stall.sh on a
+# confirmed stall; disable with WATCHDOG_AUTO_RECOVER=0; alerts and recovery
 # suppressed while $STOP_MARKER exists) and monitor_fen (panels + value trend
 # + seed retire/probation; internally idles while the trainer is down so seed
 # logic never burns compute against a stopped run).
