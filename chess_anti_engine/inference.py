@@ -737,7 +737,7 @@ class DirectGPUEvaluator(LocalModelEvaluator):
 # than the per-batch AOT bucket list (_BATCH_BUCKETS) because torch.compile
 # graphs are cheaper to recapture across mid-range sizes.
 _COMPILED_BATCH_BUCKETS = (
-    32, 64, 96, 128, 170, 256, 340, 384, 512, 680, 768, 1020, 1024, 1190,
+    16, 32, 64, 96, 128, 170, 256, 340, 384, 512, 680, 768, 1020, 1024, 1190,
     1536, 1792, 2048, 2336, 2720, 4096,
 )
 

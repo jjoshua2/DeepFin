@@ -3277,7 +3277,26 @@ reduce-overhead). Zero watchdog fires across both restarts. Fresh hist
 15.1% b64 / 15.3% b96; >=512 padded/actual measured 1.105 (== design target);
 1 call in 196k uncovered. b16 stays out (floor-dominated). Ladder v2 arc
 CLOSED; merged to main in PR #194 (review-verified, 2 side findings fixed:
-watchdog cooldown-stamp deletion, feed-step state race). YARDSTICK: pos/s at
+watchdog cooldown-stamp deletion, feed-step state race).
+
+**LIVE — broker batch coalescing + b16 (2026-07-16, restart bundle; perf-only).**
+Hypothesis: 55.8% of forward calls are <=32 rows at 133-243 us/row vs 67 at
+128 — the win left in bucketing is exhausted (optimal placement within ~1% of
+current), so merge small calls into fuller forwards instead: raise
+`distributed_inference_adaptive_idle_ms` 2.0 -> 4.0 (cap stays 20 ms). Also
+deploys b16 (package already built+verified; ~0.4 ms/call on the <=16 mass
+that remains after coalescing) -> 21-bucket ladder. Wedge no longer treated as
+a package-count constraint (driver 610.74 verdict). Baseline: iters 85-87
+healthy post-v2.1 (peak 18.0-18.3k pos/s); fresh distribution snapshot =
+scratchpad/bucket_hist_v2.json (196k calls, 55.8% b32). YARDSTICK (deciding):
+games/h over ~5 iters post-restart vs the post-v2.1 iters, plus the new hist
+(`CAE_BUCKET_HIST=scratchpad/bucket_hist_v3.json`) showing the small-call mass
+actually shifting up-bucket. KILL: games/h regresses (coalescing trades walker
+latency for batch size — the sweep history says overshoot is real: 8 ms fixed
+LOST to 5 ms in the 07-02 dispatcher sweep). REVERT: idle_ms -> 2.0 + drop 16
+from `_COMPILED_BATCH_BUCKETS`, restart. Confound: b16 bundled (near-riskless,
+verified ==eager; if games/h regresses the suspect is the idle change, not
+b16). YARDSTICK: pos/s at
 matched avg-batch windows + games/h vs the post-retry baseline (16.2-16.6k
 pos/s / ~884 games/h); read at ~5 iters. KILL: wedge recurrence attributable
 to the larger set -> revert the constant to the 14-bucket ladder + restart.

@@ -394,7 +394,7 @@ tune:
   distributed_inference_broker_enabled: true
   distributed_inference_shared_broker: false
   distributed_inference_batch_wait_ms: 20.0  # 2026-07-02 POC B: hard CAP for adaptive mode (was fixed 5.0 = sweep winner; if adaptive_idle_ms reverts to 0, set this back to 5.0)
-  distributed_inference_adaptive_idle_ms: 2.0  # 2026-07-02 POC B: arrival-adaptive gather — dispatch when no new slot for 2ms (batch_wait_ms above = hard cap). 0 = fixed-window mode.
+  distributed_inference_adaptive_idle_ms: 4.0  # 2026-07-16: 2.0 -> 4.0 coalescing arm (55.8% of forwards were <=32 rows; merge into fuller batches). Ledger "broker batch coalescing + b16". Restart-gated. KILL -> 2.0.
   distributed_inference_max_batch_per_slot: 1190
   distributed_inference_slots_per_worker: 4
   distributed_inference_use_compile: true
