@@ -3232,3 +3232,29 @@ wedge/recover loop returns -> blank the aot key + set
 if wedges persist even then, the driver didn't fix the bridge — revert the
 whole merge is NOT needed (speedups are wedge-neutral eager code). Confounds:
 bundle readout by design (speed-only changes); model/data-affecting changes: none.
+
+**PLANNED — AOT bucket-ladder v2 (draft 2026-07-16, execute at next natural pause AFTER the AOT-retry readout closes).**
+Interim 07-16 read of the retry: AOT live broker +~24% pos/s at high-load
+windows vs the 07-15 reduce-overhead sessions (13.0-13.4k -> 16.2-16.6k);
+zero watchdog fires since restart. Per-phase broker timers (fwd/out/scatter)
+are NOT comparable across the AOT (dense+gather) and legal-rows paths — judge
+on pos/s + games/h only. Also: "AOT packages loaded" goes to log.info, not
+broker.out — verify engagement via /proc/<broker-pid>/maps (.chess_bNNN).
+Plan (one restart bundle, perf-only): (1) build ~3 gap buckets in the
+1190-4096 range — placed by the CURRENT hist these are b2720/b1792/b2336
+(padded/actual on >=512 totals 1.234 -> 1.105; a full ladder doubling only
+reaches 1.099, not worth 15 packages); (2) also build b64 and A/B it on the
+quiet GPU (`scratchpad/aot_ab.py`) — deploy ONLY if it beats b128 for the
+sub-64 call mass (90.9% of calls pad to 128 but are latency-bound; a busy-GPU
+probe 07-16 was too contaminated to decide); (3) restart with
+`CAE_BUCKET_HIST=scratchpad/bucket_hist_v2.json` to re-verify the batch-total
+distribution post-speedup-merge — if the fresh hist moves the gap-bucket
+placement materially, rebuild before deploying. Build with
+`scripts/build_aot_packages.py` on the PAUSED GPU only (max-autotune compile
+was the original bridge-hang trigger). Yardstick: pos/s at matched avg-batch
+windows + games/h vs the post-retry baseline. KILL: any wedge recurrence
+attributable to the larger package set -> drop back to the 14-bucket ladder.
+Expected effect small (~2-4% games/h); this is opportunistic, not a bet.
+Related knob NOT bundled (separate entry if pursued): batch coalescing toward
+fuller forwards (broker --batch-wait-ms / adaptive-idle) — trades walker
+latency for batch size; needs its own readout.
