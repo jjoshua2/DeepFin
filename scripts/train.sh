@@ -116,6 +116,14 @@ start() {
     fi
     check_c_extensions
     clear_pause_markers
+    # Re-arm the watchdog flat-clock: a stale state file (rows + wall_time from a
+    # prior stall) makes the first post-start poll read >90min-flat and false-fire
+    # auto-recovery on the freshly-started trainer. Clearing it forces a fresh
+    # first-observation baseline. The recovery cooldown stamp is NOT cleared:
+    # recover_stall.sh calls this start path, so clearing it here would erase the
+    # anti-flap cooldown after every auto-recovery and the "re-stall within
+    # cooldown -> NEEDS HUMAN" escalation could never trigger.
+    rm -f /tmp/chess_watchdog_state.json
     migrate_stale_progress_csv
     echo "Starting training with $CONFIG ${extra_args[*]:+(extra: ${extra_args[*]})}..."
     # Inductor compile parallelism — without these, autotune is single-threaded
@@ -141,7 +149,8 @@ start() {
 }
 
 # Observers resume WITH training so nothing is forgotten (2026-07-13, user):
-# watchdog_loop (detect-and-report only — never starts/stops anything; alerts
+# watchdog_loop (stall detection + AUTO-RECOVERY via recover_stall.sh on a
+# confirmed stall; disable with WATCHDOG_AUTO_RECOVER=0; alerts and recovery
 # suppressed while $STOP_MARKER exists) and monitor_fen (panels + value trend
 # + seed retire/probation; internally idles while the trainer is down so seed
 # logic never burns compute against a stopped run).

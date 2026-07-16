@@ -82,6 +82,7 @@ and 2026-07-02):
 
 | snapshot | state captured | restore |
 |---|---|---|
+| `data/salvage/pre_aot_deploy_20260714` | 2026-07-14, pre-AOT-broker deploy (trial 4c17c ~iter 74, wedge-recovered). NOTE: AOT is an inference-path perf change — weights/optimizer/replay are UNCHANGED, so the real revert is just blanking `distributed_inference_aot_dir` + restart; this pool is belt-and-suspenders. | `./scripts/train.sh salvage-restart data/salvage/pre_aot_deploy_20260714` |
 | `data/salvage/prechange_20260702_ckpt479` | iter 479, 2026-07-02 evening: post-uncap, rung-1 live ~2 iters, PRE fast-ply-revert / PRE LR-decision / PRE #104. 686 shards | `./scripts/train.sh salvage-restart data/salvage/prechange_20260702_ckpt479` |
 | `data/best_pools/` (various) | older best-regret pools, pre-June-17 run | pick a pool from `./scripts/train.sh best-list`, then `./scripts/train.sh salvage-restart data/best_pools/<pool>` |
 
@@ -113,6 +114,12 @@ near-tie argmaxes): never compare point numbers from different sessions' runs;
 always re-dump and pair.
 
 **Protocol gotchas** (each cost us a bad reading once):
+- **Readout-window sizing (2026-07-16): ~5 iterations (~3h at ~38min/iter) is
+  a valid window ONLY for stability/throughput readouts** — crash/wedge
+  cadence, games/h, VRAM, train_time_s — where the failure signature is fast
+  and mechanical (size the window to span >=2 of the failure's known cadence
+  periods). Learning-quality readouts (value regret, panels, arena) still
+  need day-plus windows and paired CIs; live signals are flat by design.
 - `audit_targets` MUST pass `--max-positions 2000` — the audit set grew to 4000
   positions including an easy opening bucket; uncapped runs are not comparable to
   the ledger numbers (caught 2026-07-02).
@@ -169,6 +176,7 @@ always re-dump and pair.
 
 | change | live since | readout & rule |
 |---|---|---|
+| **AOTInductor packages in the broker forward** (`distributed_inference_aot_dir: data/aot_models_512`, live yaml; code = feat/aot-broker-integ AOT runtime files landed on the live branch, off-by-default flag) | 2026-07-14, trial 4c17c restart (~iter 74) | **Hypothesis:** pre-compiled max-autotune AOT packages replace the reduce-overhead compiled forward for the 99.04%-of-forwards buckets ≤1190 (per `scratchpad/bucket_hist.json`: 90.9% pad to 128), giving a faster forward at zero quality change. **Full compiled ladder built (14 packages, 128–4096)** so batches >1190 (which by POSITIONS carry most forward compute — large summed-slot totals — even though 90.9% of forward CALLS pad to 128) also use AOT instead of eager; only totals >4096 (~0% per bucket_hist) fall back to the reduce-overhead eager path. **This is a PERF change, not a training-target change** — packages verified numerically ==eager (pol-prob Δ ~0.002, wdl-prob Δ ~0.03 across all 11 buckets, top-move vs fp32 0.977 == eager's 0.984; `scripts/build_aot_packages.py --verify-only`). Measured forward A/B on the quiet GPU (`scratchpad/aot_ab.py`, both inference-only + cudagraph): AOT ~5–6% faster than reduce-overhead median (128:+3.6% 512:+6.2% 1024:+6.7%; one bucket 170 −2.3%). **Expectation is ~0 end-to-end** — the forward is a small slice of the broker loop (sync+scatter ~88ms dominates a batch) and training is ingest-bound; this is a "try it, confirm no regression" deploy, not a throughput bet. **YARDSTICK (deciding):** games/h vs the ~641 games/h baseline (`scratchpad/live_read/monitor/monitor.log` + broker.out pos/s), read after ~1 day. **KILL (any):** (1) VRAM OOM or broker/worker crash on startup (11 AOT cudagraphs + the reduce-overhead fallback + trainer coexist — the main risk; watch `nvidia-smi` + broker.out right after restart); (2) games/h regresses vs baseline; (3) `value_regret --max-positions 2000` paired CI vs the pre-deploy ckpt worse (would be surprising given ==eager, but the guardrail against a silent AOT-path bug). **REVERT (instant):** blank `distributed_inference_aot_dir` (empty) + restart → back to pure reduce-overhead; weights/optimizer/replay untouched (no salvage-restart needed). Revert pool `data/salvage/pre_aot_deploy_20260714` banked as belt-and-suspenders. **VERIFY AOT ENGAGED after restart:** broker.out logs `AOT packages loaded from data/aot_models_512: buckets=[...]`; if absent → flag not read (fell back to eager, benign but not the experiment). Confound: none — single change, packages ==eager. Note for future: AOT's real payoff is the match/UCI path (forward-bound, instant-start), not training; the worker-direct AOTEvaluator path is wired but off. **VERDICT: KILLED for training 2026-07-15 (reverted, `distributed_inference_aot_dir: ""`) — NOT on the yardstick (never got a clean readout) but on a fatal side effect: AOT flipped the sporadic WSL dxg host-bridge wedge into a CLOCKWORK ~100-min wedge/recover loop. Evidence: pre-AOT wedges were sporadic (07-14: 11:08, 12:24, then a 6.5h HEALTHY stretch to 19:00); post-AOT (07-15) every single ~100-min window wedged — 9 watchdog recoveries, zero healthy stretches, iter advanced only 74→75 in ~15h (~90% downtime). Mechanism: loading + capturing/replaying 14 AOT cudagraph packages at broker startup is heavy dxg-bridge traffic that reliably trips the flaky bridge (same class as the max-autotune compile-hang variant, memory `wsl2-gpu-vmbus-wedge-signature`). Packages kept in `data/aot_models_512` (numerically ==eager, all verified) for the match/UCI path and a RETRY. RETRY CONDITION: a freshly-rebooted / confirmed-stable bridge (the wedge is host-level; AOT only aggravates it) — re-set the key + restart, watch the recover_stall cadence for the first ~2h. CONFIRM THE REVERT: reduce-overhead should restore multi-hour healthy stretches; if it STILL wedges every ~100 min, the host bridge itself has degraded → reboot needed (not AOT).** |
 | **Server-doled FEN seeding ACTIVATED — switch prob→dole** (`opening_fen_dole_per_iter: 1`, `opening_fen_prob` 0.05→0, live yaml; code = **PR #128** merged, restarted onto `54f4037` @iter 690 resuming ckpt686) | 2026-07-08, ~iter 690 | **Mechanism switch, not a new seed set** (same 115-seed v3 list). Replaces the probabilistic `opening_fen_prob` draw with the deterministic server dole: each iteration the server hands the WHOLE list to one worker poll (durable per-iter gate), played as **selfplay slots only** (`resolve_slot_opening` dole branch → PID-safe by construction; the prob path's curriculum seeding is what forced the 0.22→0.05 dial-down). Dose 1 = each of the 115 seeds played once/iter ≈ **115 selfplay seeded games/iter** (vs the prob path's ~35 mixed games/iter, ~3–27 of them selfplay). **Two coupled effects of the single switch (the confound):** (a) ~3–10× MORE selfplay seed volume = more direct value-label injection; (b) curriculum refutation games (net on the blundering seat, 698k-SF punishes on-board) → **0** — dole is selfplay-only, so the on-board-refutation signal that co-drove the WORKED verdict is dropped. Threaded-path delivery wired + verified (production is `distributed_worker_threaded`; #128 round-3 P1). Baseline @ckpt686 (== the FEN-seeding-WORKED trunk; ledger baseline ckpt683 value 74.3, v1 16/35); banked revert trunk `data/salvage/pre_dole_ckpt686_20260708`. PRIMARY: held-out panel v1 BLIND severity holds/improves vs 16/35 (monitor `scratchpad/live_read/monitor/monitor.log`). SECONDARY: 68 vetted seeds resolve (become AWARE) via `scripts/blindspot_resolution.py`. GUARDRAIL/KILL: `value_regret` (`--max-positions 2000`) paired CI vs the ckpt686 baseline dump worse by >2cp (CI excludes 0 worse side) → REVERT. WATCH: PID sample — dole is selfplay-only so `sf_pid` games should STAY healthy (the whole point vs prob); if it still drops <30 or the airbag trips, that's an unexpected finding. **KILL ACTION (live, instant): `opening_fen_dole_per_iter: 0` + `opening_fen_prob: 0.05` → restores the known-good prob mechanism.** Readout ~1 day (~iter 725). Supersedes the prob-based row below (that mechanism is now off). **LIVE PATH UPDATE (2026-07-09):** `opening_fen_list_path` now points at auto-retired `data/blindspot_fens_retire_720.txt` (85 FENs; 16 AWARE seeds dropped from retire_700 by `blindspot_retire_step.py`). Mechanism unchanged (dole still dose 1 over the live list); activation baselines remain ckpt686 / 115-seed v3. |
 | **Harvested blind-spot FEN seeding — v1→v2 SCALE-UP, dose 0.02→0.22** (`opening_fen_list_path`→`data/blindspot_fens_v2.txt`, `opening_fen_prob` 0.22, live yaml) | 2026-07-08, ~iter 683 | Scales the WORKED FEN lever (v1 verdict in the WORKED table): v2 = v1's 76 seeds + **68 deep-SF-VETTED** live-harvested blind spots. Gate: `scripts/blindspot_deepsf_gate.py` on 157 banked severe seeds → 4M nodes + 6-man syzygy TB (`data/syzygy_3-4-5-6`), keep deep-LOST → **68 pass (44%), 87 deep-FINE FPs dropped (56%)**. The gate is LOAD-BEARING: calibration (`scratchpad/harvest_fp/`, deep SF converged 4M=8M=16M, TB-invariant) showed the raw severe band is **~70% false positives** (deep SF agrees with the NET, not the ~700k in-loop label) — feeding the raw `.severe` file would re-label correct positions "lost" via the shallow in-loop SF and UN-TRAIN the net. 0 overlap with held-out panel v1 (generalization metric stays clean); 0 dup with v1. Dose 0.22 targets ~1 game/seed/iter (665 g/iter ÷ 144 seeds) — **11× the validated 2%**, poison-safe ONLY because deep-vetted. Baseline @ckpt~683 (value 74.3, v1 16/35, from the monitor). REVERT TRUNK banked: `data/salvage/pre_v2feed_ckpt678_20260708` (ckpt678 trainer+pid+rng — NOTE: `salvage-export --metric training_iteration` misfired to iter 449 with ~40 stale experiment_state files present, so this is a direct checkpoint copy; nuclear revert = dose→0.02 + hand-built pool from this trunk via the offline-recovery playbook). PRIMARY: held-out panel v1 BLIND severity holds/improves (monitor `scratchpad/live_read/monitor/monitor.log`). SECONDARY: the 68 vetted resolve (become AWARE) via `scripts/blindspot_resolution.py`. GUARDRAIL/KILL: `value_regret` paired CI vs the ckpt683 baseline worse by >2cp → revert dose to 0.02. WATCH: seeded curriculum games are excluded from the PID sample → a 0.22 dose could starve it and trip the airbag (known failure mode `curriculum_starvation`) — if `sf_pid` games <30 or the airbag fires, dial the dose down (`scratchpad/harvest_fp/feed_watch.log`). Dose is live-reloadable — revert instantly. Harvester code (full-game save, one-per-game cap, `ply=` stamp) = **PR #125**. Confound: overlaps the v1 seeds' continued exposure (v1 largely learned already, panel healed 23→16) — v1's isolated verdict is banked, so this reads as the incremental harvested-seed effect. |
 | **Return-to-known-good bundle restart** (fast-ply revert + LR revert + #104 code, knobs off) | 2026-07-02 evening | **THE active readout**: over the next window refill (~1-1.5 days), policy net+search / raw top-1 vs **49.6 / 51.5** and value vs **76.6→toward 72.4** (protocol: `--max-positions 2000`). Recovery ⇒ throughput-era damage was config, not permanent; no recovery ⇒ window legacy or trunk state → consider salvage-restart from a clean pool. LR revert applied via the PBT-pinned mechanic (above) and VERIFIED: peak_lr=0.0003 on iter 482. Confound: rung-1 fracs (below) remain live by design. **Contamination (07-02 ~21:17–23:5x, iters 484–486): the branch-switch incident (see gotchas) reverted the yaml — fast-ply rows back ON (~150k value-only rows in those shards), labels re-capped 400k, blend back to 0.35/0.35 — restored 23:09; fast-ply-off re-propagation VERIFIED (shards 23:57–00:02 back to 100% has_policy). Recovery-read clock effectively restarts at iter ~487; interpret ckpt510-era reads with this in the window.** **Pre-committed recovery rule (added before the readout):** each read dumps per-position and pairs vs the banked ckpt457 dumps (`scratchpad/policy_ci/`). RECOVERED = raw top-1 paired CI vs ckpt457 includes 0 AND endgame-value paired CI includes 0 → bank fresh baseline dumps, proceed to #104 activation. NOT RECOVERED = raw top-1 CI still excludes 0 on the worse side after TWO window refills → stop and rebase: hand-build a salvage pool from the banked ckpt457 trainer + the then-clean replay window (offline-recovery playbook, memory `v2_threats_12layer_live_offline_recovery`) and salvage-restart. Do NOT rebase onto `prechange_20260702_ckpt479` — that pool carries the damaged trunk. **REFILL CLOCK RECALIBRATED (07-03 AM, live telemetry): window = 1.41M rows (not the 3M cap — still growing), turnover ~16.1k rows/iter at ~39 min/iter → ONE refill ≈ 87 iters ≈ 2.4 days (the "~1-1.5 days" assumed fast-ply-era 4× ingest). The fast-ply era ingested ~1.3-1.45M rows ⇒ the window was ~fully contaminated at the iter-487 restart, and ~75% of those rows are value-only — policy training stays diluted until they flush. INTERIM READ @ckpt500 (iter ~501, ~16% refilled; dumps `scratchpad/policy_ci/{dump,vdump}_ckpt500.jsonl`): raw top-1 vs ckpt457 −11.2 [−21.8, −1.7] (endgame −20.9 [−36.4, −7.7]; middlegame +8.0 [−0.6, +19.6] — borderline BETTER); value vs ckpt457 −9.5 [−17.9, −1.4] (endgame −11.5); search E[regret] vs ckpt457 −0.7 NS (search still masks the raw damage); vs ckpt478 everything NS (raw top-1 −0.3, value −2.4) — no movement yet, consistent with 16%. Blind-spot panel 19/35 vs 21/35 baseline. NOT RECOVERED, expected at this refill depth — next read ~50% refill (07-04 AM), full-refill verdict read ~07-05, two-refill rebase deadline ~07-07. **TIMELINE SUPERSEDED by the window cut (row below): contamination flush ≈ 36 iters ≈ 24h → verdict read ~07-04, rebase deadline ~07-05.** TAIL ADDENDUM (same dumps, `scripts/tail_stats.py`): the mean is tail-dominated (median value regret 9–11cp vs mean ~70–80); >300cp blowups 4.2%→5.1% (457→500); paired flips 457→500 = 48 new vs 29 fixed (net +19) — the loop mints new tail blowups faster than it fixes old ones. Add the tail line + flip counts to every future read (secondary, descriptive).** |
@@ -3214,3 +3222,77 @@ back to its actual policy index because `index_to_move` can silently return a
 legal fallback. The dual-state plumbing is not a simplification, so retain the
 single authoritative Python board and rebuild roots. The one-off benchmark and
 runtime/test changes were removed.
+
+**AOT broker RETRY + speedup-merge restart (2026-07-15, post driver 610.74 +
+reboot).** The 07-15 AOT KILL was a bridge-wedge side effect, not a
+quality/perf failure (packages ==eager, forward ~5-6% faster). User updated
+the NVIDIA driver 595.97 -> 610.74 and rebooted; bridge believed stable.
+This restart lands as ONE bundle: (a) origin/main sync (Codex speedups #142-
+#192, all correctness-reviewed CORRECT by parallel agents 07-15), (b) AOT
+re-enabled (`distributed_inference_aot_dir: data/aot_models_512`), (c) Aurora
+trainer CUDA graphs active by default (#170, first trainer-side cudagraphs;
+user explicitly opted in). Yardstick: watchdog/recover_stall cadence + games/h
+vs ~641 baseline + train_time_s. KILL (pre-committed): clockwork ~100-min
+wedge/recover loop returns -> blank the aot key + set
+`aurora_cuda_graphs: false` + restart (weights/optimizer/replay untouched);
+if wedges persist even then, the driver didn't fix the bridge — revert the
+whole merge is NOT needed (speedups are wedge-neutral eager code). Confounds:
+bundle readout by design (speed-only changes); model/data-affecting changes: none.
+**VERDICT: WORKED (2026-07-16, read at iter 82 — 5-iteration stability window,
+spans >3 of the wedge's ~100-min cadence periods).** Zero watchdog
+recover_stall fires since the restart (last recovery 07-15 17:39, pre-restart;
+pre-fix cadence was 9 recoveries in ~15h). Broker pos/s +~24% at matched
+high-load windows (13.0-13.4k -> 16.2-16.6k); games/h ~884 vs ~641 baseline
+(+38%, stale-games restart artifact inflates the first reads — treat the +24%
+pos/s as the clean number); train_time_s normal (Aurora cudagraphs stable).
+AOT stays LIVE in the broker; `wsl2-gpu-vmbus-wedge-signature` root cause was
+the 595.97 driver's bridge, not AOT. Bucket-ladder v2 (next entry) is now
+unblocked at the next natural pause. Note: this entry's KILL watch used
+watchdog cadence, not broker.out "AOT packages loaded" — that line goes to
+log.info only; verify engagement via /proc/<broker-pid>/maps (.chess_bNNN).
+
+**LIVE — AOT bucket-ladder v2 (drafted + EXECUTED 2026-07-16, deployed at the post-verdict pause; readout window 5 iters, stability/throughput class).**
+Executed: paused via pause.txt (ack at iter boundary), stopped, built b64 +
+b1792/b2336/b2720 on the quiet GPU (all 4 verify PASS, ==eager within
+thresholds), b64 A/B on quiet GPU: 4.79 ms/fwd vs b128 8.59 ms (~44% faster
+for the 90.9% small-call mass) -> DEPLOYED; `_COMPILED_BATCH_BUCKETS` now
+64..4096 (18 buckets), `_next_bucket` test updated. Restarted (auto-resume)
+with `CAE_BUCKET_HIST=scratchpad/bucket_hist_v2.json`.
+**v2.1 same-day extension (2026-07-16, second pause before the v2 window
+closed — combined readout):** the b64 win refuted the "sub-128 calls are
+latency-bound" assumption, and the 07-14 hist shows 58.7% of calls are <=32
+(avg ~20) and 14.0% are 65-96 (avg ~80). Built b16/b32/b96 (all verify PASS);
+quiet-GPU latency curve: b16 3.89 / b32 4.26 / b64 4.90 / b96 7.10 /
+b128 10.77 ms. DEPLOYED b32 + b96 (0.64 ms/call on 58.7% of calls; 3.67
+ms/call on 14%); b16 SKIPPED — floor-dominated (0.37 ms marginal, not worth
+another cudagraph package given the startup-traffic wedge history). Ladder is
+now 20 buckets (32..4096). Readout: single combined v2+v2.1 window vs the
+post-retry baseline (16.2-16.6k pos/s / ~884 games/h); same KILL rule. YARDSTICK: pos/s at
+matched avg-batch windows + games/h vs the post-retry baseline (16.2-16.6k
+pos/s / ~884 games/h); read at ~5 iters. KILL: wedge recurrence attributable
+to the larger set -> revert the constant to the 14-bucket ladder + restart.
+Original plan below for reference:
+Interim 07-16 read of the retry: AOT live broker +~24% pos/s at high-load
+windows vs the 07-15 reduce-overhead sessions (13.0-13.4k -> 16.2-16.6k);
+zero watchdog fires since restart. Per-phase broker timers (fwd/out/scatter)
+are NOT comparable across the AOT (dense+gather) and legal-rows paths — judge
+on pos/s + games/h only. Also: "AOT packages loaded" goes to log.info, not
+broker.out — verify engagement via /proc/<broker-pid>/maps (.chess_bNNN).
+Plan (one restart bundle, perf-only): (1) build ~3 gap buckets in the
+1190-4096 range — placed by the CURRENT hist these are b2720/b1792/b2336
+(padded/actual on >=512 totals 1.234 -> 1.105; a full ladder doubling only
+reaches 1.099, not worth 15 packages); (2) also build b64 and A/B it on the
+quiet GPU (`scratchpad/aot_ab.py`) — deploy ONLY if it beats b128 for the
+sub-64 call mass (90.9% of calls pad to 128 but are latency-bound; a busy-GPU
+probe 07-16 was too contaminated to decide); (3) restart with
+`CAE_BUCKET_HIST=scratchpad/bucket_hist_v2.json` to re-verify the batch-total
+distribution post-speedup-merge — if the fresh hist moves the gap-bucket
+placement materially, rebuild before deploying. Build with
+`scripts/build_aot_packages.py` on the PAUSED GPU only (max-autotune compile
+was the original bridge-hang trigger). Yardstick: pos/s at matched avg-batch
+windows + games/h vs the post-retry baseline. KILL: any wedge recurrence
+attributable to the larger package set -> drop back to the 14-bucket ladder.
+Expected effect small (~2-4% games/h); this is opportunistic, not a bet.
+Related knob NOT bundled (separate entry if pursued): batch coalescing toward
+fuller forwards (broker --batch-wait-ms / adaptive-idle) — trades walker
+latency for batch size; needs its own readout.

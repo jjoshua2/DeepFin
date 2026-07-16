@@ -53,9 +53,9 @@ def _run_config(
 
     if n_threads > 1:
         # Multi-threaded: use AOT with per-thread CUDA streams
-        from chess_anti_engine.inference import AOTEvaluator
+        from chess_anti_engine.inference import AOTEvaluator, model_constant_source
         evaluator = AOTEvaluator(aot_dir, device="cuda", max_batch=4096)
-        evaluator.load_weights(model.state_dict())
+        evaluator.load_weights(model_constant_source(model))
     else:
         # Single thread baseline: use compiled DirectGPU (same as production)
         model = cast(torch.nn.Module, torch.compile(model, mode="reduce-overhead"))

@@ -868,6 +868,7 @@ def _launch_inference_broker(
     broker_artifact_root.mkdir(parents=True, exist_ok=True)
     slot_prefix = _trial_slot_prefix(trial_id=trial_id)
     server_root = Path(str(config["distributed_server_root"]))
+    aot_dir = str(config.get("distributed_inference_aot_dir", "") or "").strip()
     cmd = [
         sys.executable, "-m", "chess_anti_engine.inference",
         "--publish-dir", str(publish_dir),
@@ -884,6 +885,7 @@ def _launch_inference_broker(
         "--compile-mode", _resolve_inference_compile_mode(config),
         "--shared-cache-dir", str(_resolve_shared_cache_root(config, server_root)),
         *(["--compile-inference"] if _resolve_compile_inference(config) else []),
+        *(["--aot-dir", aot_dir] if aot_dir else []),
     ]
     return _spawn_with_reap(
         cmd=cmd,

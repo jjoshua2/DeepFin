@@ -226,6 +226,7 @@ _TUNE_KEYS = (
     "distributed_inference_batch_wait_ms",
     "distributed_inference_adaptive_idle_ms",
     "distributed_inference_use_compile", "distributed_inference_compile_mode",
+    "distributed_inference_aot_dir",
     "distributed_inference_max_batch_per_slot",
     "distributed_inference_slots_per_worker",
     "distributed_pause_selfplay_during_training", "distributed_wait_timeout_seconds",

@@ -2,22 +2,41 @@
 # Training-health watchdog loop (managed by scripts/train.sh; runs forever).
 #
 # Every $WATCHDOG_EVERY seconds runs scripts/train_watchdog.py (detect-and-
-# report ONLY — it never starts, stops, or signals anything, and neither does
-# this loop; recovery is always a human/agent decision). All checks append to
-# $LOGF; non-OK states also append to $ALERTF *unless* the intentional-stop
-# marker exists (touched by `train.sh stop`, removed by `train.sh start`), so
-# deliberately stopping training doesn't page anyone.
+# report). All checks append to $LOGF; non-OK states also append to $ALERTF
+# *unless* the intentional-stop marker exists (touched by `train.sh stop`,
+# removed by `train.sh start`), so deliberately stopping training doesn't page.
 #
-# Optional: set WATCHDOG_NOTIFY_CMD to a command; it is invoked with the
-# status line as one argument on every unsuppressed non-OK check (fail-soft,
-# handled inside train_watchdog.py --notify-cmd).
+# AUTO-RECOVERY (WATCHDOG_AUTO_RECOVER=1, default on): on a confirmed STALLED
+# verdict (exit 3 = 90 min flat, PID ALIVE, no pause.txt, no intentional-stop
+# marker) the loop runs scripts/recover_stall.sh — a GPU-independent force
+# teardown + GPU-bridge wait + train.sh start. This is the recurring WSL2 dxg
+# vmbus wedge (memory: wsl2-gpu-vmbus-wedge-signature): the trainer wedges alive
+# and `train.sh stop` can't help because ray stop needs the dead GPU.
+#
+# Guards that keep this from fighting the operator or flapping:
+#   * ONLY STALLED (exit 3) triggers recovery — STOPPED (exit 1, PID gone) never
+#     does, so a manual `kill` / deliberate stop is left alone (could be intended).
+#   * The intentional-stop marker suppresses recovery entirely.
+#   * Anti-flap: after a recovery, refuse to auto-recover again for
+#     $RECOVER_COOLDOWN_S (default 2h) — a re-stall that soon means restart isn't
+#     fixing it, so escalate to $ALERTF for a human instead of loop-restarting.
+#   * WATCHDOG_AUTO_RECOVER=0 disables recovery (revert to detect-only).
+#
+# Optional: WATCHDOG_NOTIFY_CMD is invoked with the status line on every
+# unsuppressed non-OK check (fail-soft, inside train_watchdog.py --notify-cmd).
 set -u
 cd /home/josh/projects/chess
 MARKER=/tmp/chess_training.intentional_stop
 LOGF=scratchpad/watchdog.log
 ALERTF=scratchpad/watchdog_alerts.log
 STATEF=/tmp/chess_watchdog_state.json
+RECOVER_STAMP=/tmp/chess_watchdog_last_recover
 WATCHDOG_EVERY="${WATCHDOG_EVERY:-600}"
+AUTO_RECOVER="${WATCHDOG_AUTO_RECOVER:-1}"
+RECOVER_COOLDOWN_S="${RECOVER_COOLDOWN_S:-7200}"
+EXIT_STALLED=3
+
+stamp(){ date '+%m-%d %H:%M:%S'; }
 
 while true; do
     ARGS=()
@@ -25,9 +44,24 @@ while true; do
         ARGS=(--notify-cmd "$WATCHDOG_NOTIFY_CMD")
     LINE=$(PYTHONPATH=. python3 scripts/train_watchdog.py --state "$STATEF" "${ARGS[@]}" 2>&1)
     RC=$?
-    echo "$(date '+%m-%d %H:%M:%S') $LINE" >> "$LOGF"
+    echo "$(stamp) $LINE" >> "$LOGF"
     if [ "$RC" -ne 0 ] && [ ! -f "$MARKER" ]; then
-        echo "$(date '+%m-%d %H:%M:%S') $LINE" >> "$ALERTF"
+        echo "$(stamp) $LINE" >> "$ALERTF"
     fi
+
+    # ── auto-recovery on confirmed STALLED (wedged-but-alive) ────────────
+    if [ "$AUTO_RECOVER" = 1 ] && [ "$RC" = "$EXIT_STALLED" ] && [ ! -f "$MARKER" ]; then
+        now=$(date +%s)
+        last=0; [ -f "$RECOVER_STAMP" ] && last=$(cat "$RECOVER_STAMP" 2>/dev/null || echo 0)
+        if [ $((now - last)) -lt "$RECOVER_COOLDOWN_S" ]; then
+            echo "$(stamp) AUTO-RECOVER SUPPRESSED (re-stall within cooldown ${RECOVER_COOLDOWN_S}s of last recovery) — NEEDS HUMAN: $LINE" >> "$ALERTF"
+        else
+            echo "$(stamp) AUTO-RECOVER FIRING (STALLED, no marker): $LINE" | tee -a "$LOGF" >> "$ALERTF"
+            echo "$now" > "$RECOVER_STAMP"
+            # Run recovery to completion before the next poll (it restarts the stack).
+            bash scripts/recover_stall.sh >> "$LOGF" 2>&1
+        fi
+    fi
+
     sleep "$WATCHDOG_EVERY"
 done
