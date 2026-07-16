@@ -106,6 +106,12 @@ def main() -> None:
     if not _repoint_yaml(args.yaml, os.path.abspath(new_path)):
         sys.exit(1)
     if unretired:
+        # Re-load just before writing: the retire step runs on cadence against
+        # the same file, and a stale read-modify-write here would silently drop
+        # any streaks/retirements it recorded since our load at startup.
+        if os.path.exists(args.state):
+            with open(args.state, encoding="utf-8") as fh:
+                streaks, retired, deep_seen = load_retire_state(json.load(fh))
         for k in unretired:
             retired.pop(k, None)
             streaks[k] = 0
