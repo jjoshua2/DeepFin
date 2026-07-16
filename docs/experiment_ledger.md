@@ -3296,7 +3296,26 @@ latency for batch size — the sweep history says overshoot is real: 8 ms fixed
 LOST to 5 ms in the 07-02 dispatcher sweep). REVERT: idle_ms -> 2.0 + drop 16
 from `_COMPILED_BATCH_BUCKETS`, restart. Confound: b16 bundled (near-riskless,
 verified ==eager; if games/h regresses the suspect is the idle change, not
-b16). YARDSTICK: pos/s at
+b16).
+**VERDICT: idle-4 arm KILLED same-day by the OFFLINE trace sim — before the
+live readout (new capability: PR #195 arrival tracer + sim).** 391s live
+trace (2954 batches) under idle-4 replayed through all policies with an
+EMPIRICAL latency curve (min inter-dispatch gap per bucket — the quiet-GPU
+(96,128) slope over-extrapolated large buckets ~2x and initially drove the
+sim into a spurious saturation equilibrium; fixed in the sim's table):
+rows/s IDENTICAL across all policies (12.4k = offered load, GPU ~60% busy);
+idle-4 adds +14ms mean latency vs idle-1/2 for zero throughput — in the real
+closed loop walkers wait on results, so latency converts to games/h.
+Economic rule 58.3ms ≈ idle-1 59.8 ≈ ORACLE 59.7 → gather timing is SOLVED:
+simple adaptive idle at 1-2ms is within ~2% of clairvoyant; do NOT build
+fancier gather policies. Reverted idle -> 2.0 (b16 stays — harmless). KEY
+REGIME FINDING: under production load the broker gathers ALL 16 slots nearly
+every dispatch (trace mean batch 1642 rows, NO forwards <340 in-window) —
+the 55.8%-of-CALLS <=32 mass in the hist comes from idle/trickle phases that
+carry ~zero rows and don't bind throughput. Remaining headroom is
+STRUCTURAL (pipeline overlap H2D/compute/D2H, capacity), not gather timing.
+Validation pass: collect a short trace under idle-2 and confirm the sim
+ranking holds (closed-loop second-order check). YARDSTICK: pos/s at
 matched avg-batch windows + games/h vs the post-retry baseline (16.2-16.6k
 pos/s / ~884 games/h); read at ~5 iters. KILL: wedge recurrence attributable
 to the larger set -> revert the constant to the 14-bucket ladder + restart.

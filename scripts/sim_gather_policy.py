@@ -59,11 +59,27 @@ _LATENCY_TABLE_MS: dict[int, float] = {
     64: 4.90,
     96: 7.10,
     128: 10.77,
+    # >=512: empirical in-situ estimates (min inter-dispatch gap per bucket,
+    # 2026-07-16 live trace) — the serial serving loop makes the min gap a
+    # tight upper bound on forward + fixed loop overhead. The quiet-GPU
+    # (96,128) slope over-extrapolated large buckets ~2x and drove the sim
+    # into a spurious saturation equilibrium.
+    512: 25.8,
+    680: 37.9,
+    768: 41.4,
+    1020: 45.4,
+    1190: 55.8,
+    1536: 62.8,
+    1792: 79.3,
+    2048: 89.4,
+    2336: 100.0,
+    2720: 110.5,
+    4096: 129.2,
 }
 
-# Linear fit through (96, 7.10) and (128, 10.77) for buckets not in the table.
-_LAT_SLOPE = (10.77 - 7.10) / (128 - 96)
-_LAT_FLOOR = 7.10 - _LAT_SLOPE * 96
+# Linear interpolation for the 170-384 gap (between measured 128 and 512).
+_LAT_SLOPE = (25.8 - 10.77) / (512 - 128)
+_LAT_FLOOR = 10.77 - _LAT_SLOPE * 128
 
 _MAX_BUCKET = _COMPILED_BATCH_BUCKETS[-1]
 _BUCKET_INDEX: dict[int, int] = {b: i for i, b in enumerate(_COMPILED_BATCH_BUCKETS)}
