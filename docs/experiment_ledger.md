@@ -3267,7 +3267,17 @@ b128 10.77 ms. DEPLOYED b32 + b96 (0.64 ms/call on 58.7% of calls; 3.67
 ms/call on 14%); b16 SKIPPED — floor-dominated (0.37 ms marginal, not worth
 another cudagraph package given the startup-traffic wedge history). Ladder is
 now 20 buckets (32..4096). Readout: single combined v2+v2.1 window vs the
-post-retry baseline (16.2-16.6k pos/s / ~884 games/h); same KILL rule. YARDSTICK: pos/s at
+post-retry baseline (16.2-16.6k pos/s / ~884 games/h); same KILL rule.
+**VERDICT: WORKED (2026-07-16, same-day read — distribution-stability argument:
+the fresh hist matches 07-14, so peak-window pos/s is iteration-invariant).**
+Peak broker pos/s by session: 14-bucket 16.2-16.6k -> v2 (18) 17.7-17.9k ->
+v2.1 (20) 18.0-18.3k = ~+11% total over the post-retry baseline (~+38% over
+reduce-overhead). Zero watchdog fires across both restarts. Fresh hist
+(scratchpad/bucket_hist_v2.json, 196k calls) confirms placement: 55.8% b32 /
+15.1% b64 / 15.3% b96; >=512 padded/actual measured 1.105 (== design target);
+1 call in 196k uncovered. b16 stays out (floor-dominated). Ladder v2 arc
+CLOSED; merged to main in PR #194 (review-verified, 2 side findings fixed:
+watchdog cooldown-stamp deletion, feed-step state race). YARDSTICK: pos/s at
 matched avg-batch windows + games/h vs the post-retry baseline (16.2-16.6k
 pos/s / ~884 games/h); read at ~5 iters. KILL: wedge recurrence attributable
 to the larger set -> revert the constant to the 14-bucket ladder + restart.
