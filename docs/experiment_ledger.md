@@ -3251,7 +3251,17 @@ unblocked at the next natural pause. Note: this entry's KILL watch used
 watchdog cadence, not broker.out "AOT packages loaded" — that line goes to
 log.info only; verify engagement via /proc/<broker-pid>/maps (.chess_bNNN).
 
-**PLANNED — AOT bucket-ladder v2 (draft 2026-07-16, execute at next natural pause AFTER the AOT-retry readout closes).**
+**LIVE — AOT bucket-ladder v2 (drafted + EXECUTED 2026-07-16, deployed at the post-verdict pause; readout window 5 iters, stability/throughput class).**
+Executed: paused via pause.txt (ack at iter boundary), stopped, built b64 +
+b1792/b2336/b2720 on the quiet GPU (all 4 verify PASS, ==eager within
+thresholds), b64 A/B on quiet GPU: 4.79 ms/fwd vs b128 8.59 ms (~44% faster
+for the 90.9% small-call mass) -> DEPLOYED; `_COMPILED_BATCH_BUCKETS` now
+64..4096 (18 buckets), `_next_bucket` test updated. Restarted (auto-resume)
+with `CAE_BUCKET_HIST=scratchpad/bucket_hist_v2.json`. YARDSTICK: pos/s at
+matched avg-batch windows + games/h vs the post-retry baseline (16.2-16.6k
+pos/s / ~884 games/h); read at ~5 iters. KILL: wedge recurrence attributable
+to the larger set -> revert the constant to the 14-bucket ladder + restart.
+Original plan below for reference:
 Interim 07-16 read of the retry: AOT live broker +~24% pos/s at high-load
 windows vs the 07-15 reduce-overhead sessions (13.0-13.4k -> 16.2-16.6k);
 zero watchdog fires since restart. Per-phase broker timers (fwd/out/scatter)
