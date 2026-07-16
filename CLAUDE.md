@@ -112,7 +112,10 @@ optional and apply to every assistant/model working in this repo:
    keeps ~a day of data made under the old settings.
 3. **After a readout**: record the verdict in the ledger the same session,
    judged by the pre-committed rule (not post-hoc reading). "Deferred" is not
-   a verdict.
+   a verdict. Readout-window sizing: stability/throughput changes (crashes,
+   wedge cadence, games/h) can be judged in ~5 iterations (~3h; span >=2 of
+   the failure's cadence periods); learning-quality changes need day-plus
+   windows and paired CIs.
 4. **One data-affecting change per readout window.** Unavoidable overlaps go
    in each entry's Confounds line.
 5. **Before running any yardstick**: read the ledger's "Protocol gotchas"

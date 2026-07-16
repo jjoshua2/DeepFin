@@ -114,6 +114,12 @@ near-tie argmaxes): never compare point numbers from different sessions' runs;
 always re-dump and pair.
 
 **Protocol gotchas** (each cost us a bad reading once):
+- **Readout-window sizing (2026-07-16): ~5 iterations (~3h at ~38min/iter) is
+  a valid window ONLY for stability/throughput readouts** — crash/wedge
+  cadence, games/h, VRAM, train_time_s — where the failure signature is fast
+  and mechanical (size the window to span >=2 of the failure's known cadence
+  periods). Learning-quality readouts (value regret, panels, arena) still
+  need day-plus windows and paired CIs; live signals are flat by design.
 - `audit_targets` MUST pass `--max-positions 2000` — the audit set grew to 4000
   positions including an easy opening bucket; uncapped runs are not comparable to
   the ledger numbers (caught 2026-07-02).
