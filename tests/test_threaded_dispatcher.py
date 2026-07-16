@@ -33,9 +33,13 @@ def _rand_batch(rng: np.random.Generator, n: int) -> np.ndarray:
 
 
 def test_next_bucket_picks_smallest_fit():
-    assert _next_bucket(1) == 64
+    assert _next_bucket(1) == 32
+    assert _next_bucket(32) == 32
+    assert _next_bucket(33) == 64
     assert _next_bucket(64) == 64
-    assert _next_bucket(65) == 128
+    assert _next_bucket(65) == 96
+    assert _next_bucket(96) == 96
+    assert _next_bucket(97) == 128
     assert _next_bucket(128) == 128
     assert _next_bucket(129) == 170
     assert _next_bucket(170) == 170

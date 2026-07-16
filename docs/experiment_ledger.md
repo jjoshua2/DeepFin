@@ -3257,7 +3257,17 @@ b1792/b2336/b2720 on the quiet GPU (all 4 verify PASS, ==eager within
 thresholds), b64 A/B on quiet GPU: 4.79 ms/fwd vs b128 8.59 ms (~44% faster
 for the 90.9% small-call mass) -> DEPLOYED; `_COMPILED_BATCH_BUCKETS` now
 64..4096 (18 buckets), `_next_bucket` test updated. Restarted (auto-resume)
-with `CAE_BUCKET_HIST=scratchpad/bucket_hist_v2.json`. YARDSTICK: pos/s at
+with `CAE_BUCKET_HIST=scratchpad/bucket_hist_v2.json`.
+**v2.1 same-day extension (2026-07-16, second pause before the v2 window
+closed — combined readout):** the b64 win refuted the "sub-128 calls are
+latency-bound" assumption, and the 07-14 hist shows 58.7% of calls are <=32
+(avg ~20) and 14.0% are 65-96 (avg ~80). Built b16/b32/b96 (all verify PASS);
+quiet-GPU latency curve: b16 3.89 / b32 4.26 / b64 4.90 / b96 7.10 /
+b128 10.77 ms. DEPLOYED b32 + b96 (0.64 ms/call on 58.7% of calls; 3.67
+ms/call on 14%); b16 SKIPPED — floor-dominated (0.37 ms marginal, not worth
+another cudagraph package given the startup-traffic wedge history). Ladder is
+now 20 buckets (32..4096). Readout: single combined v2+v2.1 window vs the
+post-retry baseline (16.2-16.6k pos/s / ~884 games/h); same KILL rule. YARDSTICK: pos/s at
 matched avg-batch windows + games/h vs the post-retry baseline (16.2-16.6k
 pos/s / ~884 games/h); read at ~5 iters. KILL: wedge recurrence attributable
 to the larger set -> revert the constant to the 14-bucket ladder + restart.
