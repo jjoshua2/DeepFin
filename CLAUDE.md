@@ -57,6 +57,27 @@ Use `scripts/train.sh` to drive training; it manages the PID file, log, and Ray 
 
 Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-restore-*`), so you don't need to edit `configs/pbt2_small.yaml` to activate or disable it. When to salvage: after a bad exploit, a training run that regressed, or to rebase onto a better-regret checkpoint. A pool is a one-shot seed — once trials are past startup it plays no further role.
 
+**Blind-spot FEN seeding** (the active data lever — seeds selfplay openings
+from positions the net misplays):
+
+- The active list is `selfplay.opening_fen_list_path` in the live yaml,
+  delivered via the server dole (`opening_fen_dole_per_iter`), selfplay-only,
+  PID-safe. The path is live-reloaded — no restart to change lists.
+- **Removal is automatic**: the watchdog-cadenced
+  `scripts/blindspot_retire_step.py` retires seeds after 2 consecutive AWARE
+  reads, runs probation re-feed on retirees that regress, writes a new
+  versioned list, and repoints the yaml itself. Don't hand-edit the active
+  list for removals.
+- **Feeding new seeds is manual and ledger-gated** (it's a data-affecting
+  change — one per readout window, needs a ledger entry). Mechanics:
+  `PYTHONPATH=. python3 scripts/blindspot_feed_step.py --batch <vetted-file> --tag <label>`
+  — dedupes against the active pool and the retired store, writes a fresh
+  versioned file (loader caches are path-keyed; never edit a list in place),
+  validates, and repoints the yaml. `--dry-run` first. Per-seed dose control:
+  `# weight=N` line markers.
+- New seed material comes from mining external-match losses
+  (`scripts/mine_blindspot_seeds.py --pgn`), then vetting/gating before feed.
+
 **Operational gotchas:**
 
 - After pulling changes to `.c`/`.h` files in the local production checkout, rebuild with `python3 scripts/build_production_extensions.py` (validated GCC15 + native + LTO, always a forced rebuild; NOT `pip install -e .` — the .venv setuptools lacks PEP 660). Keep distributed wheels portable unless every target CPU matches.
@@ -68,7 +89,7 @@ Salvage is driven entirely by CLI flags (`--salvage-seed-pool-dir`, `--salvage-r
 
 ## Configs
 
-- `configs/pbt2_small.yaml` — **Production config.** 384-dim, 12-layer model (~46M params — per-layer Smolgen + 4 policy heads dominate the count). Distributed selfplay with shared inference broker, PID difficulty controller, PBT/GPBT hyperparameter search. All active training uses this.
+- `configs/pbt2_small.yaml` — **Production config.** 512-dim, 16-layer model (~63M params — per-layer Smolgen dominates the count; swapped in 2026-07-11 from the previous 384×12/46M net via offline bootstrap distillation). Distributed selfplay with shared inference broker, PID difficulty controller, PBT/GPBT hyperparameter search. All active training uses this.
 - `configs/default.yaml` — Reference config with BT3-scale model (768-dim, 15-layer, ~105M params). For future larger-model training.
 
 ## Experiment protocol — MANDATORY steps
@@ -125,15 +146,9 @@ killed without training. Tooling:
   `train.replay_upgrade_v1_planes`.
 - Flag-gated research bets live in `configs/exp_*.yaml` (each header has
   the sweep plan + kill threshold); ALL flags default off and only enter
-  `configs/pbt2_small.yaml` once promoted. Promoted to production:
-  v2_threats planes (2026-06-17), `train_views_per_position` (2026-07-01 — the
-  one surviving leg of the throughput triple; `sf_label_nodes_cap` and
-  `record_fast_ply_value` were promoted with it and KILLED 2026-07-02, see
-  docs/experiment_ledger.md; `configs/exp_throughput_views.yaml` holds the
-  isolated variant + kill thresholds). Open bets: sparse SF-policy CE (`train.sf_policy_sparse_ce`),
-  soft-policy ablation (`train.soft_policy_min_tv`), volatility-aware Gumbel
-  search (`selfplay.volatility_*`, Python search path only). Shelved:
-  dynamic board-relation bias (offline ≡ threat planes).
+  `configs/pbt2_small.yaml` once promoted. Which bets are promoted, open,
+  killed, or shelved is tracked in `docs/experiment_ledger.md` — do not rely
+  on this file for experiment status.
 
 ## Architecture
 
@@ -143,27 +158,7 @@ killed without training. Tooling:
 Production input is **175 planes** (`input_extra_features: v2_threats`): 112 LC0 history planes + 34 classical feature planes (king safety, pins/xrays, pawn structure, mobility, outposts) + 29 threat planes. Legacy `v1` = 146 planes (no threat planes). `encode_position()` is the main entry point. C extension `_lc0_ext` provides `CBoard` for fast board operations (push, encode, legal moves).
 
 ### Model (`model/`)
-Transformer encoder-only backbone (`ChessNet` in `transformer.py`). BT4-aligned architecture with Smolgen attention bias, gating, configurable embed dim/layers/heads. Multi-task output heads — each head and its training target (see `train/losses.py`):
-
-Policy heads emit policy-size logits — **lc0_1858 compact in production**, legacy az_4672 (see Move Encoding).
-
-| Head output | Shape | Training target | Target source | Loss | Weight knob |
-|---|---|---|---|---|---|
-| `policy` / `policy_own` | policy logits | `policy_t` (soft) | Gumbel completed-Q **improved policy** over all legal moves (`rec.policy_probs` = softmax(log prior + σ(completed Q)) at the searched root — the paper's recommended target, NOT raw visit counts). Move-selection temperature affects only the played move, not this target. | CE, legal-masked | `w_policy` |
-| `policy_soft` | policy logits | `policy_soft_t` (soft) | Same improved policy as `policy_t`, retempered via `apply_policy_temperature(soft_policy_temp)` (typically softer) | CE, legal-masked | `w_soft` |
-| `policy_future` | policy logits | `future_policy_t` (soft) | The t+2 record's `policy_probs` — improved policy at position t+2 (predict-own-reply) | CE, **no** mask | `w_future` |
-| `policy_sf` | policy logits | `sf_policy_t` (soft) | Softmax over SF's MultiPV candidate WDL scores + label smoothing. SF labels are queried at **P1** (after the net's move), so this is the **opponent's reply distribution**, NOT a move-teacher for the sample's own position — the `sf_p0_*` fields (one-ply shift, selfplay rows) provide that. `sf_move_index` is the stored bestmove pointer, used only by the `sf_move_acc` metric. | CE (soft), no mask | `w_sf_move` |
-| `wdl` | 3 logits | three-way soft blend | `game_frac`·game outcome (one-hot) + `sf_wdl_frac`·SF eval + `search_wdl_frac`·own MCTS root WDL (fracs live-tunable; ≈0.30/0.35/0.35 at low regret). `sf_wdl` is a **cp-logistic** label (`sf_wdl_use_cp_logistic`, slope/draw-width in config), soft by construction, not SF's native near-one-hot WDL. See the blend note below | soft CE on the blend | `w_wdl` + the three `*_frac` knobs |
-| `sf_eval` | 3 logits | `sf_wdl` (soft) | SF's WDL eval only (auxiliary, **not** used in MCTS) | Soft CE | `w_sf_eval` |
-| `categorical` | 32 logits | `categorical_t` (HL-Gauss) | Game outcome as 32-bin Gaussian distribution (distributional value) | CE | `w_categorical` |
-| `volatility` | N scalars | `volatility_t` | Net-derived position volatility signal | Huber (δ=0.1) | `w_volatility` |
-| `sf_volatility` | N scalars | `sf_volatility_t` | SF-derived position volatility signal | Huber (δ=0.1) | `w_sf_volatility` |
-| `moves_left` | 1 scalar | `moves_left` | Plies remaining in the game | smooth L1 | `w_moves_left` |
-
-Implementation details:
-- Each of the 4 policy heads is a separate `AttentionPolicyHead` (Q/K/underpromo projections) that shares the trunk. Uses `Q@K^T` with `1/√d` scaling plus a learnable `log_temp` scalar per head (added Apr 2026 — the `1/√d` scale alone squashed output sharpness below what MCTS targets required).
-- `wdl` is the ONLY value head used in MCTS search. `sf_eval` and `categorical` are auxiliary supervision signals that share the trunk but don't feed the search.
-- Rows are recorded per net turn with `has_policy` ⇔ full-sim ply. Only the MAIN policy CE masks by `has_policy`; the aux policy heads mask by their own presence flags, so value-only rows must have those targets cleared at finalize (they are — see `_build_replay_samples`).
+Transformer encoder-only backbone (`ChessNet` in `transformer.py`). BT4-aligned architecture with Smolgen attention bias, gating, configurable embed dim/layers/heads. Multi-task output heads: 4 policy heads (`policy`, `policy_soft`, `policy_future`, `policy_sf` — separate `AttentionPolicyHead`s sharing the trunk, lc0_1858 compact logits in production), value heads (`wdl` — the ONLY head used in MCTS; `sf_eval` and `categorical` are auxiliary), plus `volatility`/`sf_volatility`/`moves_left`. **The full head/target/loss table and its gotchas live in `docs/model_heads.md`** — read it before touching `train/losses.py`, loss weights, or replay-sample target building. Two non-negotiables from that doc: the WDL blend's SF component is load-bearing (zeroing it crashed winrate 0.64→0.40; the cp-logistic label is deliberately soft — don't chase value sharpness vs a deep-SF ruler), and `policy_sf` trains on the OPPONENT's reply distribution (labels queried at P1), not a move-teacher.
 
 `TinyNet` in `tiny.py` is a small reference model for testing.
 
@@ -187,7 +182,7 @@ Adaptive opponent strength via WDL regret-based difficulty. PID controller targe
 ### Training (`train/`)
 `Trainer` class runs training steps with `torch.amp` (BF16 on CUDA). Multi-component loss computed in `losses.py`. Optimizer is configurable (`aurora` / `nadamw` / `adamw` / `cosmos` / ...); production uses **`aurora`** with `matrix_optimizer_scope: mlp_out`. Gradient clipping via z-clip (`zclip_max_norm` hard cap + z-score outlier clip). Per-iteration step budget: production uses **views-targeting** (`train_views_per_position`: trained-samples per ingested position held fixed, so steps scale with ingest volume); `train_window_fraction` is the legacy mode and the ingest-drought floor.
 
-**The WDL blend's SF component is load-bearing — do not zero it.** The main `value_wdl` head trains on one soft-CE against a three-way blend built in `losses.py`: `game_frac`·outcome + `sf_wdl_frac`·SF cp-logistic label + `search_wdl_frac`·own search-root WDL (no separate `w_sf_wdl` knob exists — the blend replaced the old dual loss). Removing SF value supervision crashed winrate 0.64 → 0.40 in 4 iters (2026-04-17, reverted in 52ab9c0). The cp-logistic label is deliberately soft and ~calibrated to actual selfplay outcomes (verified 2026-07-01), so the head's "hedged" predictions are an accurate fit to its target, not under-fitting — the head sharpens only as the net's real conversion ability improves. Don't chase value-head sharpness against a deep-SF ruler; that comparison is a category error. `value_sf_eval` is a weak auxiliary channel, not a substitute.
+**The WDL blend's SF component is load-bearing — do not zero it** (crashed winrate 0.64→0.40 when removed; full rationale and the blend spec in `docs/model_heads.md`).
 
 ### Replay Buffer (`replay/`)
 Disk-backed replay buffer (`DiskReplayBuffer`) with zarr shard storage. Growing sliding window: starts small, expands as training progresses. KataGo-style surprise weighting for sampling.
@@ -214,7 +209,7 @@ Ray Tune with GPBT (Gaussian Process Bandit PBT) scheduler. Pairwise velocity-ba
 
 ### Static analysis
 
-Run `./scripts/lint.sh <paths>` after editing. The default GATE is **ruff + basedpyright + vulture** (wall time ≈ basedpyright, a few seconds) and is kept at **zero findings repo-wide — no baseline** (the old `.basedpyright/baseline.json` was burned down to zero and deleted 2026-07-02; CI gates basedpyright on the whole repo). pylint was removed 2026-07-02: its checks migrated to ruff rules (`ARG`/`B006`/`G004`/`SIM115`, see `[tool.ruff.lint]`) and basedpyright's flow checks.
+Run `./scripts/lint.sh <paths>` after editing. The default GATE is **ruff + basedpyright + vulture** (wall time ≈ basedpyright, a few seconds) and is kept at **zero findings repo-wide — no baseline**; CI gates basedpyright on the whole repo.
 
 ```bash
 ./scripts/lint.sh chess_anti_engine/train/trainer.py   # specific files
@@ -253,9 +248,8 @@ Optimize for end-state quality, not for the cheapest diff. When a review surface
 
 ## Pull requests
 
-Open PRs as **ready for review, not draft.** The Codex review bot only reviews
-non-draft PRs, so a draft silently skips the automated review we want on every
-change. Create the PR non-draft from the start (this overrides any default
-"create as draft" behavior); only use draft when explicitly asked. After
-opening, the Codex bot leaves a review/comment or an approval reaction on the
-PR — check for it before considering the PR done.
+Open PRs as **ready for review, not draft** (only use draft when explicitly
+asked). The Codex review bot was DISABLED 2026-07-11 — do not wait for or
+expect a bot review. Every PR gets a manual correctness review instead (the
+assistant or a review subagent) before it is considered done; record the
+verdict in the PR conversation or the session summary.
