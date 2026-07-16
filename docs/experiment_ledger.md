@@ -3315,7 +3315,13 @@ the 55.8%-of-CALLS <=32 mass in the hist comes from idle/trickle phases that
 carry ~zero rows and don't bind throughput. Remaining headroom is
 STRUCTURAL (pipeline overlap H2D/compute/D2H, capacity), not gather timing.
 Validation pass: collect a short trace under idle-2 and confirm the sim
-ranking holds (closed-loop second-order check). YARDSTICK: pos/s at
+ranking holds (closed-loop second-order check). **VALIDATED same evening:
+idle-2 trace (2253 batches) reproduces the ranking** (rows/s flat 12.4k for
+ALL policies; latency monotonic in idle; economic 72.4ms ≈ oracle 73.9 ≈
+idle-1 74.1 vs idle-2 77.7); real offered load unchanged across the policy
+switch (12,403 vs 12,377 rows/s) — the sim's throughput-flat prediction held
+closed-loop. idle-1 would shave ~3.6ms mean latency vs idle-2; NOT taken
+(within noise of the oracle bound, not worth another restart). ARC CLOSED. YARDSTICK: pos/s at
 matched avg-batch windows + games/h vs the post-retry baseline (16.2-16.6k
 pos/s / ~884 games/h); read at ~5 iters. KILL: wedge recurrence attributable
 to the larger set -> revert the constant to the 14-bucket ladder + restart.
