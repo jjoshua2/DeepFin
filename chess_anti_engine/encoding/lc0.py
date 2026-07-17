@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import struct
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -117,6 +118,7 @@ LC0_HISTORY_MODE_ROOT = 1
 LC0_HISTORY_MODE_ROOT_LEGACY_META = 2
 
 
+@functools.lru_cache(maxsize=32)
 def normalize_lc0_history_encoding(input_history_encoding: str | None) -> str:
     enc = str(input_history_encoding or LC0_HISTORY_LEGACY).lower().strip()
     aliases = {
@@ -143,6 +145,7 @@ def normalize_lc0_history_encoding(input_history_encoding: str | None) -> str:
         ) from exc
 
 
+@functools.lru_cache(maxsize=32)
 def uses_lc0_root_history(input_history_encoding: str | None) -> bool:
     """Return True for encodings that use LC0 root-side history slots."""
     return normalize_lc0_history_encoding(input_history_encoding) in {
@@ -151,6 +154,7 @@ def uses_lc0_root_history(input_history_encoding: str | None) -> bool:
     }
 
 
+@functools.lru_cache(maxsize=32)
 def uses_lc0_root_legacy_meta(input_history_encoding: str | None) -> bool:
     """Return True for LC0 root history with legacy EP/rule50 metadata."""
     return normalize_lc0_history_encoding(input_history_encoding) == LC0_HISTORY_ROOT_LEGACY_META
