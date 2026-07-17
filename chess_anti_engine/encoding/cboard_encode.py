@@ -1,11 +1,13 @@
 """Encoding helpers for CBoard objects (C-accelerated chess boards)."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import chess
 import numpy as np
 
+import chess_anti_engine.encoding._lc0_ext as _lc0_ext
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.features import extra_feature_plane_count
 from chess_anti_engine.encoding.lc0 import (
@@ -131,3 +133,41 @@ def encode_cboard(
                       king_sq_us, king_sq_them, is_white, ep_square, n_extra)
 
     return np.concatenate([lc0, feat], axis=0)
+
+
+def encode_cboard_batch(
+    boards: Sequence[CBoard],
+    *,
+    input_history_encoding: str | None = None,
+    input_extra_features: str | None = None,
+) -> np.ndarray:
+    """Encode N CBoards into (N, C, 8, 8) float32 (C = 146 v1 / 175 v2_threats).
+
+    Prefer the module-level C ``encode_full_batch`` path (one Python->C call
+    into a contiguous buffer). On stale extension builds that lack the symbol,
+    fall back to stacking per-board ``encode_cboard`` results.
+    """
+    n_extra = extra_feature_plane_count(input_extra_features)
+    n_planes = 112 + n_extra
+    n = len(boards)
+    if n == 0:
+        return np.empty((0, n_planes, 8, 8), dtype=np.float32)
+
+    hist_mode = lc0_root_history_mode(input_history_encoding)
+    encode_full_batch = getattr(_lc0_ext, "encode_full_batch", None)
+    if encode_full_batch is not None:
+        out = np.empty((n, n_planes, 8, 8), dtype=np.float32)
+        encode_full_batch(boards, out, hist_mode, n_extra)
+        return out
+
+    return np.stack(
+        [
+            encode_cboard(
+                b,
+                input_history_encoding=input_history_encoding,
+                input_extra_features=input_extra_features,
+            )
+            for b in boards
+        ],
+        axis=0,
+    )
