@@ -3321,7 +3321,34 @@ ALL policies; latency monotonic in idle; economic 72.4ms ≈ oracle 73.9 ≈
 idle-1 74.1 vs idle-2 77.7); real offered load unchanged across the policy
 switch (12,403 vs 12,377 rows/s) — the sim's throughput-flat prediction held
 closed-loop. idle-1 would shave ~3.6ms mean latency vs idle-2; NOT taken
-(within noise of the oracle bound, not worth another restart). ARC CLOSED. YARDSTICK: pos/s at
+(within noise of the oracle bound, not worth another restart). ARC CLOSED.
+
+**LIVE — wedge-day replay surgery (2026-07-17; data-affecting, user-approved).**
+MECHANISM VERIFIED (shard forensics, 12-shard samples per day): the band is
+NOT corrupt rows — it is a selfplay MIX BIAS. Wedge restarts killed the long
+PID-SF curriculum games mid-flight, so the surviving recorded games are 76%
+net-vs-net selfplay (vs 36% on 07-14 / 51% on 07-16), draws collapsed to
+0.17 (vs 0.32/0.23), and search-vs-SF value disagreement on the band's rows
+is 2.4x higher (0.237 vs 0.097) — i.e. the wedge day accidentally ran the
+KNOWN value-poison condition from the flywheel-stall investigation (excess
+selfplay fraction; see memory flywheel_stall_selfplay_value_poison). Row-
+level surgery (keep the band's SF-curriculum minority, ~50k rows) rejected:
+games are interleaved across shards and the saving doesn't justify a shard
+rewrite. Hypothesis: this band (91 shards, ~180-200k positions, ~11% of the
+~1.6M window) is why value regret is only PARTIALLY recovering (86.3 baseline -> 99.5 @ck78 -> 99.1 @ck88 -> 95.0
+@ck98 while the band keeps being sampled; the iter-80 probe's 86.1 was
+run-to-run noise). Mid-window band -> cap-shrink (the 07-03 playbook) would
+evict ~500k good older rows first; instead: pause-held stop, MOVE the 07-15
+shards to scratchpad/quarantine_wedge_shards/ (reversible - this quarantine
+IS the data snapshot; weights/optimizer untouched), restart (DiskReplayBuffer
+re-globs the shard dir on restart; no persistent index). YARDSTICK: monitor
+value_regret returns to <=~86cp within 2 monitor reads (~12h) and holds;
+panels v2 back toward 70/113. KILL/ROLLBACK: regret NOT improved after 2
+reads -> the band wasn't the cause; restore the quarantined shards (mv back +
+restart) and investigate training-side causes instead. Confound: none
+concurrent (gather arc closed; no other data change in window). Seed feed v6
+(harvest_gate staged) INTENTIONALLY HELD until this readout closes — one data
+change per window. YARDSTICK: pos/s at
 matched avg-batch windows + games/h vs the post-retry baseline (16.2-16.6k
 pos/s / ~884 games/h); read at ~5 iters. KILL: wedge recurrence attributable
 to the larger set -> revert the constant to the 14-bucket ladder + restart.
