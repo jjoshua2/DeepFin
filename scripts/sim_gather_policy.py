@@ -54,32 +54,36 @@ _COMPILED_BATCH_BUCKETS: tuple[int, ...] = (
 # Sizes 16/32/64/96/128 use table values; >=96 missing keys use the linear fit
 # through (96, 7.10) and (128, 10.77). Keep in sync with measured tables manually.
 _LATENCY_TABLE_MS: dict[int, float] = {
-    16: 3.89,
-    32: 4.26,
-    64: 4.90,
-    96: 7.10,
-    128: 10.77,
-    # >=512: empirical in-situ estimates (min inter-dispatch gap per bucket,
-    # 2026-07-16 live trace) — the serial serving loop makes the min gap a
-    # tight upper bound on forward + fixed loop overhead. The quiet-GPU
-    # (96,128) slope over-extrapolated large buckets ~2x and drove the sim
-    # into a spurious saturation equilibrium.
-    512: 25.8,
-    680: 37.9,
-    768: 41.4,
-    1020: 45.4,
-    1190: 55.8,
-    1536: 62.8,
-    1792: 79.3,
-    2048: 89.4,
-    2336: 100.0,
-    2720: 110.5,
-    4096: 129.2,
+    # Full-ladder quiet-GPU AOT measurement 2026-07-17 (scratchpad/aot_ab.py,
+    # ckpt100). Flat ~5-6ms floor through 128 (earlier small-bucket spread —
+    # e.g. b128=10.77 — was run-to-run noise), then ~38us/row; peak GPU
+    # throughput ~27.5k rows/s at buckets 340-512.
+    16: 5.63,
+    32: 5.76,
+    64: 5.60,
+    96: 4.95,
+    128: 5.77,
+    170: 6.72,
+    256: 9.63,
+    340: 12.36,
+    384: 14.20,
+    512: 18.56,
+    680: 25.04,
+    768: 28.88,
+    1020: 38.41,
+    1024: 39.16,
+    1190: 45.70,
+    1536: 59.01,
+    1792: 68.87,
+    2048: 78.41,
+    2336: 89.82,
+    2720: 103.83,
+    4096: 156.61,
 }
 
-# Linear interpolation for the 170-384 gap (between measured 128 and 512).
-_LAT_SLOPE = (25.8 - 10.77) / (512 - 128)
-_LAT_FLOOR = 10.77 - _LAT_SLOPE * 128
+# Linear fallback for any ladder value missing from the table.
+_LAT_SLOPE = (156.61 - 45.70) / (4096 - 1190)
+_LAT_FLOOR = 45.70 - _LAT_SLOPE * 1190
 
 _MAX_BUCKET = _COMPILED_BATCH_BUCKETS[-1]
 _BUCKET_INDEX: dict[int, int] = {b: i for i, b in enumerate(_COMPILED_BATCH_BUCKETS)}
