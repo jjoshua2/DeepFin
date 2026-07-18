@@ -1167,9 +1167,12 @@ static PyObject* py_prepare_sf_multipv(PyObject *Py_UNUSED(self), PyObject *args
 }
 
 /* encode_full_batch(boards_seq, out_ndarray, hist_mode=0, n_extra=34) -> None
- * Encode N CBoards into a pre-allocated (N, 112+n_extra, 8, 8) float32 array.
- * hist_mode matches CBoard.encode_full: 0=full history, 1=lc0_root,
- * 2=lc0_root_legacy_meta. Writes in-place; does not allocate per board. */
+ * Encode N CBoards into the first N rows of a pre-allocated, aligned,
+ * C-contiguous (>=N, 112+n_extra, 8, 8) float32 array (rows past N are left
+ * untouched, so a larger reusable buffer is fine). hist_mode matches
+ * CBoard.encode_full: 0=full history, 1=lc0_root, 2=lc0_root_legacy_meta.
+ * Writes in-place; does not allocate per board; releases the GIL for the
+ * encode loop. */
 static PyObject* py_encode_full_batch(PyObject *self, PyObject *args) {
     PyObject *boards_seq;
     PyObject *out_obj;
@@ -1212,10 +1215,17 @@ static PyObject* py_encode_full_batch(PyObject *self, PyObject *args) {
         PyErr_SetString(PyExc_ValueError, "out_ndarray must be C-contiguous");
         return NULL;
     }
-    if (PyArray_DIM(out_arr, 0) != n) {
+    if (!PyArray_ISALIGNED(out_arr)) {
+        Py_DECREF(seq);
+        PyErr_SetString(PyExc_ValueError, "out_ndarray must be aligned");
+        return NULL;
+    }
+    /* >= n (not ==): allows encoding into the head of a larger reusable
+     * buffer, matching the _mcts_tree.c batch-encode output contract. */
+    if (PyArray_DIM(out_arr, 0) < n) {
         Py_DECREF(seq);
         PyErr_Format(PyExc_ValueError,
-                     "out_ndarray shape[0] must equal len(boards_seq) (%zd), got %zd",
+                     "out_ndarray shape[0] must be >= len(boards_seq) (%zd), got %zd",
                      n, (Py_ssize_t)PyArray_DIM(out_arr, 0));
         return NULL;
     }
@@ -1235,25 +1245,39 @@ static PyObject* py_encode_full_batch(PyObject *self, PyObject *args) {
         return NULL;
     }
 
+    /* Collect the CBoard pointers under the GIL, then release it for the
+     * encode loop (pure C reads/writes, no Python API) so encode work can
+     * overlap other Python threads — same pattern as _mcts_tree.c's batch
+     * encode. `seq` keeps every board alive across the nogil region. */
+    const CBoard **board_ptrs = (const CBoard**)PyMem_Malloc(
+        (size_t)(n > 0 ? n : 1) * sizeof(CBoard*));
+    if (!board_ptrs) {
+        Py_DECREF(seq);
+        return PyErr_NoMemory();
+    }
     for (Py_ssize_t i = 0; i < n; i++) {
         PyObject *item = PySequence_Fast_GET_ITEM(seq, i);  /* borrowed */
         if (!PyObject_TypeCheck(item, &PyCBoardType)) {
             PyErr_Format(PyExc_TypeError,
                          "boards_seq[%zd] must be a CBoard, got %s",
                          i, Py_TYPE(item)->tp_name);
+            PyMem_Free(board_ptrs);
             Py_DECREF(seq);
             return NULL;
         }
+        board_ptrs[i] = &((PyCBoard*)item)->board;
     }
 
     float *out_data = (float*)PyArray_DATA(out_arr);
     size_t row_floats = (size_t)(112 + n_extra) * 64;
+    Py_BEGIN_ALLOW_THREADS
     for (Py_ssize_t i = 0; i < n; i++) {
-        PyCBoard *cb = (PyCBoard*)PySequence_Fast_GET_ITEM(seq, i);
-        cboard_encode_full_into(&cb->board, out_data + (size_t)i * row_floats,
+        cboard_encode_full_into(board_ptrs[i], out_data + (size_t)i * row_floats,
                                 hist_mode, n_extra);
     }
+    Py_END_ALLOW_THREADS
 
+    PyMem_Free(board_ptrs);
     Py_DECREF(seq);
     Py_RETURN_NONE;
 }

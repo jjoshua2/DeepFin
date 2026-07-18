@@ -116,6 +116,35 @@ def test_encode_full_batch_accepts_tuple() -> None:
     assert np.array_equal(out[0], cb.encode_full(0, 34))
 
 
+def test_encode_full_batch_oversized_buffer() -> None:
+    """shape[0] > n encodes the first n rows and leaves the tail untouched."""
+    boards = _boards_with_history()
+    n = len(boards)
+    out = np.full((n + 3, 146, 8, 8), 0.5, dtype=np.float32)
+    encode_full_batch(boards, out, 0, 34)
+    for i, cb in enumerate(boards):
+        assert np.array_equal(out[i], cb.encode_full(0, 34))
+    assert np.all(out[n:] == 0.5)
+
+
+def test_encode_cboard_batch_fallback_matches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stale-extension fallback (no C symbol) must match the C batch path."""
+    import chess_anti_engine.encoding._lc0_ext as _ext
+    import chess_anti_engine.encoding.cboard_encode as ce
+
+    boards = _boards_with_history()
+    with_c = encode_cboard_batch(
+        boards, input_history_encoding=LC0_HISTORY_ROOT, input_extra_features="v2_threats"
+    )
+    monkeypatch.delattr(_ext, "encode_full_batch")
+    assert getattr(ce._lc0_ext, "encode_full_batch", None) is None
+    fallback = encode_cboard_batch(
+        boards, input_history_encoding=LC0_HISTORY_ROOT, input_extra_features="v2_threats"
+    )
+    assert fallback.dtype == np.float32
+    assert np.array_equal(fallback, with_c)
+
+
 def test_encode_full_batch_error_paths() -> None:
     cb = CBoard.from_board(chess.Board())
     good = np.empty((1, 146, 8, 8), dtype=np.float32)
@@ -128,10 +157,16 @@ def test_encode_full_batch_error_paths() -> None:
         encode_full_batch([cb], cast(Any, np.empty((1, 146, 8), dtype=np.float32)), 0, 34)
 
     with pytest.raises(ValueError, match="shape\\[0\\]"):
-        encode_full_batch([cb], np.empty((2, 146, 8, 8), dtype=np.float32), 0, 34)
+        encode_full_batch([cb], np.empty((0, 146, 8, 8), dtype=np.float32), 0, 34)
 
     with pytest.raises(ValueError, match="shape\\[1\\]"):
         encode_full_batch([cb], np.empty((1, 175, 8, 8), dtype=np.float32), 0, 34)
+
+    with pytest.raises(ValueError, match="spatial dims"):
+        encode_full_batch([cb], np.empty((1, 146, 4, 4), dtype=np.float32), 0, 34)
+
+    with pytest.raises(TypeError, match="NumPy array"):
+        encode_full_batch([cb], cast(Any, [[0.0]]), 0, 34)
 
     strided = np.zeros((1, 146, 8, 16), dtype=np.float32)[:, :, :, ::2]
     assert not strided.flags.c_contiguous
