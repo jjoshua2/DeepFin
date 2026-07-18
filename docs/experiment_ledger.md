@@ -3363,3 +3363,33 @@ or GPU instability occurred. Set only
 `tune.distributed_worker_sf_workers: 8`; keep non-distributed
 `stockfish.sf_workers: 4`, because this result is specific to four distributed
 workers sharing the 32-thread host.
+
+**OFFLINE — starvation-safe Stockfish move-priority scheduling (2026-07-18;
+perf-only, no live activation).** The shared engine-owning FIFO correctly work
+steals, but it treats curriculum move searches and deferred selfplay label
+searches identically. A completed move exposes another network turn; a label
+can attach asynchronously, so labels queued by one state can delay useful GPU
+work in another. Hypothesis: a two-class engine queue that serves a small burst
+of move requests, then one label when both are waiting, reduces SF phase waves
+without starving training labels. Tune FIFO, 1:1, and 3:1 move:label service;
+prefer 1:1 if within 3% of 3:1.
+
+YARDSTICK (deciding): current published model/live recommendation, real
+16-slot AOT broker, 4 worker processes x 8 active selfplay threads, 8 SF
+engines/worker, callback-driven continuous completion, and two rotated rounds
+`fifo,1:1,3:1:3:1,1:1,fifo` using the same RNG seeds. SUCCESS: best fair queue
+has median completed games/s >=1.05x FIFO and median broker inference
+positions/s is not lower; every run completes its label-gated games and the
+pool ordering/cancellation/lifecycle tests pass. KILL: throughput <1.02x,
+label starvation, process error, or materially more complex lifecycle without
+the 5% win. This is scheduling only: node counts, searches, results, replay,
+and training targets remain unchanged.
+**VERDICT: KILLED AND FULLY REVERTED.** Rotated median games/s was 1.026 for
+FIFO, 1.052 for 1:1 (+2.6%), and 1.017 for 3:1 (-0.9%). Median inference
+positions/s was 1,095 / 1,243 / 1,079 respectively. The 1:1 mechanism was
+consistent but missed the precommitted 5% end-to-end bar, while 3:1 was highly
+order-sensitive (1.147 then 0.886 games/s). Moreover, even 1:1 remained below
+the existing standard-executor 8-engine reference median of 1.106 games/s.
+Do not trade the proven `ThreadPoolExecutor` lifecycle for a custom fair queue
+on this evidence. Runtime, call-site, test, and benchmark-mode changes were
+removed; only this negative result remains.
