@@ -46,6 +46,11 @@ def build_environment(*, compiler: str, base: Mapping[str, str]) -> dict[str, st
         env.pop(name, None)
     env.update({
         "CC": str(compiler),
+        # CPython's sysconfig can hard-code the distro compiler in LDSHARED
+        # even when distutils honors CC for compilation. LTO object formats
+        # are compiler-version-specific, so force the same validated driver
+        # for the shared-library link as well.
+        "LDSHARED": f"{compiler} -shared",
         "CAE_EXT_NATIVE": "1",
         "CAE_EXT_LTO": "1",
     })
