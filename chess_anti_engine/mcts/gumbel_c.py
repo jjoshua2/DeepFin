@@ -21,6 +21,7 @@ from typing import Literal, cast, overload
 import chess
 import numpy as np
 import torch
+from numpy.typing import NDArray
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding import input_plane_count
@@ -100,6 +101,7 @@ def _batch_encoders(input_history_encoding: str | None):
 
 
 _log = _logging.getLogger(__name__)
+_EncodeBuffer = NDArray[np.float32] | NDArray[np.uint16]
 
 
 def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]:
@@ -545,8 +547,12 @@ def run_gumbel_root_many_c(
                 for g in range(2)
             ]
         else:
+            _enc_dtype = np.uint16 if _has_input_bf16 else np.float32
             _enc_bufs = [
-                np.empty((_leaf_cap, input_plane_count(cfg.input_extra_features), 8, 8), dtype=np.float32)
+                np.empty(
+                    (_leaf_cap, input_plane_count(cfg.input_extra_features), 8, 8),
+                    dtype=_enc_dtype,
+                )
                 for _ in range(2)
             ]
 
@@ -584,7 +590,8 @@ def run_gumbel_root_many_c(
             _n_leaves[g] = _trees[g].start_gumbel_sims(
                 _cb_g, _rid_g, _rem_g, _gum_g, _pri_g, _bud_g, _rqs_g,
                 _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-                _enc_bufs[g], 0, int(target_batch),
+                cast(_EncodeBuffer, _enc_bufs[g]),
+                0, int(target_batch),
                 c_input_history_mode(cfg.input_history_encoding),
                 None, float(cfg.q_visit_exp),
                 1 if cfg.q_global_scale else 0,

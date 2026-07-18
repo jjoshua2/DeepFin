@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import logging
 import os
@@ -1172,6 +1173,10 @@ def build_aot_constants(
 
 def _aoti_load_package(path: str) -> Any:
     """Load one AOTInductor package; isolated for tests to monkeypatch."""
+    # PyTorch 2.10's package loader accesses ``torch._inductor.codecache`` as
+    # a parent-module attribute without importing that submodule first. A
+    # fresh process can therefore fail before loading its first package.
+    importlib.import_module("torch._inductor.codecache")
     return torch._inductor.aoti_load_package(path)
 
 
@@ -1238,14 +1243,34 @@ class AOTEvaluator:
 
         # Pre-allocate pinned buffers
         _pin = self.device.startswith("cuda")
-        self._pinned_input = torch.empty(
-            (self._max_batch, self._input_planes, _BOARD_H, _BOARD_W),
-            dtype=torch.bfloat16, pin_memory=_pin,
-        )
-        self._pinned_input_np = np.empty(
-            (self._max_batch, self._input_planes, _BOARD_H, _BOARD_W),
-            dtype=np.float32,
-        )
+        self._n_slots = 2
+        self._pinned_inputs = [
+            torch.empty(
+                (self._max_batch, self._input_planes, _BOARD_H, _BOARD_W),
+                dtype=torch.float32, pin_memory=_pin,
+            )
+            for _ in range(self._n_slots)
+        ]
+        self._pinned_input = self._pinned_inputs[0]
+        # NumPy writes directly into the tensor-owned pinned allocation. The
+        # prior separate np.empty made non_blocking=True fall back to a
+        # synchronous pageable transfer and left _pinned_input unused.
+        self._pinned_inputs_np = [tensor.numpy() for tensor in self._pinned_inputs]
+        self._pinned_input_np = self._pinned_inputs_np[0]
+        self._pinned_inputs_bf16 = [
+            torch.empty(
+                (self._max_batch, self._input_planes, _BOARD_H, _BOARD_W),
+                dtype=torch.bfloat16, pin_memory=_pin,
+            )
+            for _ in range(self._n_slots)
+        ]
+        self._pinned_input_bf16 = self._pinned_inputs_bf16[0]
+        self._pinned_inputs_bf16_bits_np = [
+            tensor.view(torch.uint16).numpy(force=True)
+            for tensor in self._pinned_inputs_bf16
+        ]
+        self._pinned_input_bf16_bits_np = self._pinned_inputs_bf16_bits_np[0]
+        self._slot_input_bf16 = [False] * self._n_slots
 
     def load_weights(self, source: Mapping[str, torch.Tensor]) -> None:
         """Update all bucket models with new weights.
@@ -1269,6 +1294,53 @@ class AOTEvaluator:
                 return b
         return self._sorted_buckets[-1]
 
+    @property
+    def supports_input_bf16_bits(self) -> bool:
+        return True
+
+    @property
+    def n_slots(self) -> int:
+        return self._n_slots
+
+    def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+        self._validate_input_slot(bsz, slot)
+        self._slot_input_bf16[slot] = False
+        return self._pinned_inputs_np[slot][:bsz]
+
+    def get_input_buffer_bf16_bits(self, bsz: int, slot: int = 0) -> np.ndarray:
+        self._validate_input_slot(bsz, slot)
+        self._slot_input_bf16[slot] = True
+        return self._pinned_inputs_bf16_bits_np[slot][:bsz]
+
+    def _validate_input_slot(self, bsz: int, slot: int) -> None:
+        if bsz > self._max_batch:
+            raise ValueError(f"batch {bsz} > max {self._max_batch}")
+        if not 0 <= slot < self._n_slots:
+            raise ValueError(f"slot {slot} out of range [0, {self._n_slots})")
+
+    def _device_input(self, x: np.ndarray, *, bucket: int, slot: int = 0) -> torch.Tensor:
+        bsz = int(x.shape[0])
+        if x.dtype == np.uint16:
+            self._pinned_inputs_bf16_bits_np[slot][:bsz] = x
+            self._slot_input_bf16[slot] = True
+            return self._pinned_inputs_bf16[slot][:bucket].to(
+                device=self.device, non_blocking=True,
+            )
+        self._pinned_inputs_np[slot][:bsz] = x
+        self._slot_input_bf16[slot] = False
+        return self._pinned_inputs[slot][:bucket].to(
+            device=self.device, dtype=torch.bfloat16, non_blocking=True,
+        )
+
+    def _device_input_inplace(self, *, bucket: int, slot: int) -> torch.Tensor:
+        if self._slot_input_bf16[slot]:
+            return self._pinned_inputs_bf16[slot][:bucket].to(
+                device=self.device, non_blocking=True,
+            )
+        return self._pinned_inputs[slot][:bucket].to(
+            device=self.device, dtype=torch.bfloat16, non_blocking=True,
+        )
+
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -1286,11 +1358,9 @@ class AOTEvaluator:
         bucket = self._pick_bucket(bsz)
         model = self._models[bucket]
 
-  # Copy into pinned buffer and convert to BF16 on GPU
-        self._pinned_input_np[:bsz] = x
-        xt = torch.from_numpy(self._pinned_input_np[:bucket]).to(
-            device=self.device, dtype=torch.bfloat16, non_blocking=True,
-        )
+  # Native search can supply bit-packed BF16 directly; float32 callers retain
+  # the compatibility path and convert during H2D.
+        xt = self._device_input(x, bucket=bucket)
 
         with torch.no_grad():
             out = model(xt)
@@ -1310,14 +1380,38 @@ class AOTEvaluator:
         bucket = self._pick_bucket(bsz)
         model = self._models[bucket]
 
-        self._pinned_input_np[:bsz] = x
-        xt = torch.from_numpy(self._pinned_input_np[:bucket]).to(
-            device=self.device, dtype=torch.bfloat16, non_blocking=True,
-        )
+        xt = self._device_input(x, bucket=bucket)
 
         with torch.no_grad():
             out = model(xt)
 
+        pol = _policy_output_full(out)[:bsz].detach().to(
+            dtype=torch.float32, device="cpu", non_blocking=True,
+        )
+        wdl = out["wdl"][:bsz].detach().to(
+            dtype=torch.float32, device="cpu", non_blocking=True,
+        )
+        done = torch.cuda.Event()
+        done.record(torch.cuda.current_stream(torch.device(self.device)))
+        return pol, wdl, done
+
+    def evaluate_inplace_async(
+        self,
+        bsz: int,
+        *,
+        slot: int = 0,
+        relations: np.ndarray | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+        if relations is not None:
+            raise NotImplementedError(
+                "dynamic relations are not transported on the AOTEvaluator path",
+            )
+        self._validate_input_slot(bsz, slot)
+        bucket = self._pick_bucket(bsz)
+        model = self._models[bucket]
+        xt = self._device_input_inplace(bucket=bucket, slot=slot)
+        with torch.no_grad():
+            out = model(xt)
         pol = _policy_output_full(out)[:bsz].detach().to(
             dtype=torch.float32, device="cpu", non_blocking=True,
         )

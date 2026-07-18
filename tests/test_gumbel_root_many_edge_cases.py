@@ -847,3 +847,38 @@ def test_gumbel_c_pipeline_path():
     # Masks must agree (legal moves don't depend on path)
     for i in range(32):
         assert np.array_equal(masks_seq[i], masks_pipe[i]), f"game {i}: mask mismatch"
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="gumbel_c extension not available")
+def test_gumbel_c_pipeline_routes_bf16_bit_inputs() -> None:
+    class RecordingAsyncEvaluator:
+        supports_input_bf16_bits = True
+
+        def __init__(self) -> None:
+            self.dtypes: list[np.dtype] = []
+
+        def evaluate_encoded(self, x, relations=None):
+            del relations
+            self.dtypes.append(x.dtype)
+            n = int(x.shape[0])
+            return np.zeros((n, POLICY_SIZE), dtype=np.float32), np.zeros((n, 3), dtype=np.float32)
+
+        def evaluate_encoded_async(self, x, relations=None):
+            policy, wdl = self.evaluate_encoded(x, relations)
+            return torch.from_numpy(policy), torch.from_numpy(wdl), None
+
+    evaluator = RecordingAsyncEvaluator()
+    run_gumbel_root_many_c = _require_run_gumbel_root_many_c()
+    run_gumbel_root_many_c(
+        None,
+        [chess.Board() for _ in range(64)],
+        device="cpu",
+        rng=np.random.default_rng(42),
+        cfg=GumbelConfig(
+            input_extra_features="v1", simulations=4, topk=2, add_noise=False,
+        ),
+        evaluator=evaluator,
+    )
+
+    assert len(evaluator.dtypes) > 1  # root plus at least one pipelined leaf batch
+    assert set(evaluator.dtypes) == {np.dtype(np.uint16)}
