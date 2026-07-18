@@ -27,12 +27,14 @@ from chess_anti_engine.moves.encode import index_to_move_fast, legal_move_indice
 
 try:
     from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
-    from chess_anti_engine.encoding.cboard_encode import encode_cboard as _encode_cboard
+    from chess_anti_engine.encoding.cboard_encode import (
+        encode_cboard_batch as _encode_cboard_batch,
+    )
 except ImportError:
     _CBoard = None
-    _encode_cboard = None
+    _encode_cboard_batch = None
 
-_HAS_CBOARD = _CBoard is not None and _encode_cboard is not None
+_HAS_CBOARD = _CBoard is not None and _encode_cboard_batch is not None
 
 
 def make_boards(n: int, rng: np.random.Generator) -> list[chess.Board]:
@@ -72,8 +74,7 @@ def profile_mcts(
     tree = MCTSTree()
     root_ids = np.empty(n_boards, dtype=np.int32)
     cboard_cls = _CBoard
-    encode_cboard_fn = _encode_cboard
-    use_cboard = cboard_cls is not None and encode_cboard_fn is not None
+    use_cboard = cboard_cls is not None and _encode_cboard_batch is not None
 
     cb_cache: dict[int, Any] = {}
     board_cache: dict[int, chess.Board] = {}
@@ -185,11 +186,11 @@ def profile_mcts(
         # Encoding
         t0 = time.perf_counter()
         if use_cboard:
-            assert encode_cboard_fn is not None
-            leaf_xs = [encode_cboard_fn(ld[2]) for ld in leaf_data]
+            assert _encode_cboard_batch is not None
+            xb = _encode_cboard_batch([ld[2] for ld in leaf_data])
         else:
             leaf_xs = [encode_position(ld[2], add_features=True) for ld in leaf_data]
-        xb = np.stack(leaf_xs, axis=0)
+            xb = np.stack(leaf_xs, axis=0)
         timers["encode"] += time.perf_counter() - t0
 
         # GPU eval
