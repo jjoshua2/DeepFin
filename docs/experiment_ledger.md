@@ -3635,3 +3635,93 @@ Expected effect small (~2-4% games/h); this is opportunistic, not a bet.
 Related knob NOT bundled (separate entry if pursued): batch coalescing toward
 fuller forwards (broker --batch-wait-ms / adaptive-idle) — trades walker
 latency for batch size; needs its own readout.
+
+**OFFLINE — hierarchical broker batching (2026-07-18; perf-only, no live activation).**
+Hypothesis: each production worker has 32 search threads but only 4 broker
+slots.  The current client wakes one queued producer per newly available slot,
+so each shared-memory request contains one search call and the broker must
+reconstruct larger batches from up to 16 small submissions.  A worker-local
+continuous scheduler can instead drain and concatenate requests that are
+already queued whenever a broker lane becomes available, without a timed
+coalescing sleep.  Four independent submission lanes preserve concurrency;
+CUDA and cudagraph ownership remain exclusively in the broker process.
+YARDSTICK (deciding, exact command):
+`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir /home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir /home/josh/projects/chess/data/aot_models_512 --modes direct,hierarchical --threads 32 --slots 4 --repeats 5`.
+SUCCESS: hierarchical median Gumbel positions/s is at least 5% above direct
+and p95 request latency regresses by no more than 10%.  KILL: throughput gain
+below 5%, latency guard fails, any output mismatch, deadlock, CUDA graph
+ownership failure, or broker recovery.  No training/data behavior changes;
+do not activate or merge without this offline verdict and focused tests.
+**VERDICT: KILLED (2026-07-18, production-shaped offline Gumbel A/B).** A
+small 1-worker/4-thread/2-slot smoke showed +41% positions/s and -28% p95,
+confirming that hierarchical batching helps an artificially underfilled
+broker.  At the deciding 4-worker x 32-thread x 4-slot shape, however, direct
+already formed ~2,000-row global batches.  The extra layer raised them to
+~3,900 rows, reduced positions/s 17,851 -> 11,731 (-34%), and increased p95
+request latency 1,503 -> 2,602 ms (+73%).  The architecture is rejected; the
+normal 16-slot broker already has enough concurrent work.
+
+**OFFLINE — parallel pinned-input gather (2026-07-18; perf-only).**
+Hypothesis: production batches copy roughly 12-16 independent multi-megabyte
+slot inputs serially from shared memory into one pinned tensor before H2D.
+NumPy copies release the GIL, so a persistent 2-4 thread copy pool may reduce
+the measured ~6 ms steady pack phase without changing batch formation,
+latency policy, model calls, or outputs.  YARDSTICK (deciding): a pinned-memory
+microbenchmark using 16 production-shaped BF16 slot arrays followed by the
+same broker-backed Gumbel A/B if the microbenchmark wins.  SUCCESS: >=25%
+median gather-time reduction in the microbenchmark and >=3% end-to-end
+positions/s with identical outputs and no p95 regression.  KILL: memory-copy
+gain below 25%, end-to-end gain below 3%, or any correctness/liveness issue.
+**VERDICT: KILLED (2026-07-18).** Eight persistent copy workers reduced the
+steady broker pack phase from 6.2-6.6 ms to 4.9-5.0 ms (~23%), but the
+production-shaped closed-loop result was only 17,887 -> 18,314 positions/s
+(+2.39%) with p95 1,535 -> 1,472 ms (-4.1%).  Both pre-committed speed
+thresholds missed; the added thread-pool complexity is not justified.
+
+**OFFLINE — fair global broker batch target (2026-07-18; perf-only).**
+Hypothesis: `distributed_worker_dispatcher_target_batch: 680` is inactive when
+workers use the broker, and SlotBroker currently dispatches every ready slot
+without a global row target.  Production-shaped tests therefore form
+~1,900-row forwards despite the measured AOT throughput knee near 512-680,
+holding all search lanes for ~70-100 ms.  A round-robin fair 680-row global
+target should dispatch immediately once capacity is reached, return early
+lanes sooner, and overlap their CPU tree work with subsequent GPU forwards.
+YARDSTICK (deciding): broker-backed 4-worker x 32-thread Gumbel A/B, five
+repeats, unlimited baseline versus targets 512/680/1020, judged on actual
+positions/s and p95 request latency.  SUCCESS: >=5% positions/s with no p95
+regression, or >=3% positions/s with >=15% p95 improvement.  KILL: throughput
+regression, starvation/unfairness, illegal output, deadlock, or no target
+meeting the success rule.  Numerical model parity uses existing tolerances;
+different stochastic Gumbel actions are not a failure by themselves.
+
+**OFFLINE — compact legal-policy transport for Gumbel roots (2026-07-18;
+perf-only, no live activation).** Hypothesis: the C Gumbel leaf path already
+returns only legal BF16 policy logits through the shared inference broker, but
+every root evaluation still returns all 4,672 float32 policy logits. Root
+legal indices are known before inference, so using the existing compact broker
+protocol should remove most root policy D2H and shared-memory output traffic
+without changing model inputs, logits, WDL, batching, or search semantics.
+YARDSTICK (deciding): production-shaped broker-backed Gumbel A/B at 4 workers x
+32 threads x 4 slots, five repeats per mode, using
+`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir /home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir /home/josh/projects/chess/data/aot_models_512 --modes direct,direct-compact-root --threads 32 --slots 4 --repeats 5`.
+SUCCESS: compact-root median positions/s is at least 3% above dense-root with
+no more than 5% p95 request-latency regression. KILL: throughput gain below
+3%, numerical policy/WDL mismatch outside existing BF16 tolerances, illegal
+move or mask difference, deadlock, or broker recovery. Gumbel action identity
+is not required because equivalent small numerical changes may alter sampled
+moves; deterministic root-prior parity and protocol correctness are required.
+**VERDICT: WORKED (2026-07-18, paired quiet-GPU offline A/B).** Dense then
+compact measured 16,636 -> 17,655 positions/s (+6.12%) with p95 request
+latency 1,585 -> 1,512 ms (-4.65%). Reversing mode order confirmed the result:
+compact 18,004 versus dense 16,740 positions/s (+7.55% compact over dense),
+with p95 1,556 versus 1,634 ms (-4.73%). Steady broker forward/output
+completion fell from roughly 22-23 ms to 11-12 ms because roots no longer copy
+all 4,672 policy logits to host/shared memory. The final implementation also
+keeps compact per-board logits through root softmax instead of reconstructing a
+dense CPU matrix. All 36 focused C-search edge/parity tests pass; a dedicated
+restricted-root regression proves exact dense/compact mapping when inputs are
+BF16-representable. Real-model Gumbel action digests differ because compact
+transport rounds root logits to BF16, which is expected and permitted; masks,
+legal actions, WDL transport, and protocol remain unchanged. Promote for broker
+clients only; local/direct GPU evaluators retain their existing dense zero-copy
+root path.

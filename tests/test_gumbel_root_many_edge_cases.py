@@ -113,8 +113,90 @@ class _CompactZeroEvaluator:
         return compact, np.zeros((n, 3), dtype=np.float32)
 
 
+class _CompactRootParityEvaluator:
+    """Return identical BF16-representable logits through dense/compact APIs."""
+
+    supports_input_bf16_bits = True
+    supports_legal_bf16 = True
+
+    def __init__(self, *, compact_root: bool) -> None:
+        self.supports_compact_root_policy = compact_root
+        logits = (torch.arange(POLICY_SIZE, dtype=torch.float32) % 31 - 15) / 8
+        self._policy = logits.to(torch.bfloat16).float().numpy()
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations
+        n = int(x.shape[0])
+        return np.broadcast_to(self._policy, (n, POLICY_SIZE)).copy(), np.zeros(
+            (n, 3), dtype=np.float32,
+        )
+
+    def evaluate_legal_bf16(
+        self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del legal_counts
+        compact = self._policy[np.asarray(legal_flat, dtype=np.intp)]
+        bits = torch.from_numpy(compact).to(torch.bfloat16).view(torch.uint16).numpy()
+        return bits, np.zeros((int(x.shape[0]), 3), dtype=np.float32)
+
+
 _MATE_VS_STALEMATE_FEN = "5k2/1R6/P4BB1/P7/2P5/8/3K3P/8 w - - 5 70"
 _STALEMATE_ONLY_FEN = "7k/8/6KP/8/8/8/8/8 w - - 0 1"
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="C tree extension not available")
+def test_gumbel_c_compact_root_policy_matches_dense_root_mapping() -> None:
+    run_c = _require_run_gumbel_root_many_c()
+    boards = [
+        chess.Board(),
+        chess.Board(),
+        chess.Board("8/8/8/8/8/8/4k3/4K3 w - - 0 1"),
+    ]
+    boards[1].push_san("e4")
+    allowed = [
+        None,
+        {
+            move_to_index(chess.Move.from_uci("c7c5"), boards[1]),
+            move_to_index(chess.Move.from_uci("e7e5"), boards[1]),
+        },
+        None,
+    ]
+    cfg = GumbelConfig(
+        input_extra_features="v1",
+        simulations=8,
+        topk=4,
+        temperature=0.0,
+        add_noise=False,
+    )
+
+    dense = run_c(
+        None,
+        boards,
+        device="cpu",
+        rng=np.random.default_rng(7),
+        cfg=cfg,
+        evaluator=_CompactRootParityEvaluator(compact_root=False),
+        allowed_root_indices_batch=allowed,
+    )
+    compact = run_c(
+        None,
+        boards,
+        device="cpu",
+        rng=np.random.default_rng(7),
+        cfg=cfg,
+        evaluator=_CompactRootParityEvaluator(compact_root=True),
+        allowed_root_indices_batch=allowed,
+    )
+
+    for dense_arrs, compact_arrs in zip(
+        (dense[0], dense[3]), (compact[0], compact[3]), strict=True,
+    ):
+        for dense_arr, compact_arr in zip(dense_arrs, compact_arrs, strict=True):
+            assert np.array_equal(dense_arr, compact_arr)
+    assert dense[1] == compact[1]
+    assert dense[2] == compact[2]
 
 
 def _mate_vs_stalemate_logits(board: chess.Board) -> tuple[np.ndarray, np.ndarray, int, int]:
