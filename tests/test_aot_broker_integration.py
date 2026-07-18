@@ -7,12 +7,15 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 
 from chess_anti_engine.inference import (
+    AOTEvaluator,
     SlotBroker,
     _COMPILED_BATCH_BUCKETS,
+    _aoti_load_package,
     aot_package_filename,
     build_aot_constants,
     load_aot_packages,
@@ -144,9 +147,105 @@ def test_load_aot_packages_skips_missing_and_loads_present(
     assert len(loaded_paths) == 2
 
 
+def test_aoti_load_package_primes_pytorch_codecache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+
+    def _fake_import(name: str) -> object:
+        calls.append(("import", name))
+        return object()
+
+    def _fake_load(path: str) -> object:
+        calls.append(("load", path))
+        return object()
+
+    # Resolve torch's lazy submodule before replacing the process-global
+    # importlib function used by the helper under test.
+    inductor = torch._inductor
+    monkeypatch.setattr("chess_anti_engine.inference.importlib.import_module", _fake_import)
+    monkeypatch.setattr(inductor, "aoti_load_package", _fake_load)
+
+    _aoti_load_package("model.pt2")
+
+    assert calls == [
+        ("import", "torch._inductor.codecache"),
+        ("load", "model.pt2"),
+    ]
+
+
 def test_load_aot_packages_fails_when_none_present(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match=r"No \.pt2 packages"):
         load_aot_packages(tmp_path, buckets=(128, 256))
+
+
+def test_aot_evaluator_numpy_input_view_aliases_staging_tensor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "chess_b16.pt2").write_bytes(b"pkg")
+    package = MagicMock()
+    package.get_constant_fqns.return_value = ["w"]
+    monkeypatch.setattr(
+        "chess_anti_engine.inference._aoti_load_package", lambda _path: package,
+    )
+
+    evaluator = AOTEvaluator(tmp_path, device="cpu", max_batch=16, input_planes=3)
+
+    assert evaluator._pinned_input.dtype == torch.float32
+    assert np.shares_memory(evaluator._pinned_input_np, evaluator._pinned_input.numpy())
+    evaluator._pinned_input_np.fill(2.5)
+    assert torch.all(evaluator._pinned_input == 2.5)
+
+
+def test_aot_evaluator_accepts_bit_packed_bf16_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "chess_b16.pt2").write_bytes(b"pkg")
+    package = MagicMock()
+    package.get_constant_fqns.return_value = ["w"]
+    monkeypatch.setattr(
+        "chess_anti_engine.inference._aoti_load_package", lambda _path: package,
+    )
+    evaluator = AOTEvaluator(tmp_path, device="cpu", max_batch=16, input_planes=3)
+    source = torch.linspace(-2.0, 2.0, 16 * 3 * 8 * 8).reshape(16, 3, 8, 8)
+    expected = source.to(torch.bfloat16)
+    bits = expected.view(torch.uint16).numpy().copy()
+
+    staged = evaluator._device_input(bits, bucket=16)
+
+    assert evaluator.supports_input_bf16_bits
+    assert staged.dtype == torch.bfloat16
+    assert torch.equal(staged, expected)
+    assert np.array_equal(evaluator._pinned_input_bf16_bits_np, bits)
+
+
+def test_aot_evaluator_input_slots_are_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "chess_b16.pt2").write_bytes(b"pkg")
+    package = MagicMock()
+    package.get_constant_fqns.return_value = ["w"]
+    monkeypatch.setattr(
+        "chess_anti_engine.inference._aoti_load_package", lambda _path: package,
+    )
+    evaluator = AOTEvaluator(tmp_path, device="cpu", max_batch=16, input_planes=3)
+
+    bits0 = evaluator.get_input_buffer_bf16_bits(4, slot=0)
+    bits1 = evaluator.get_input_buffer_bf16_bits(4, slot=1)
+    bits0.fill(0x3F80)
+    bits1.fill(0x4000)
+    f32_0 = evaluator.get_input_buffer(4, slot=0)
+    f32_1 = evaluator.get_input_buffer(4, slot=1)
+    f32_0.fill(1.0)
+    f32_1.fill(2.0)
+
+    assert evaluator.n_slots == 2
+    assert not np.shares_memory(bits0, bits1)
+    assert not np.shares_memory(f32_0, f32_1)
+    assert np.all(bits0 == 0x3F80)
+    assert np.all(bits1 == 0x4000)
+    assert np.all(f32_0 == 1.0)
+    assert np.all(f32_1 == 2.0)
 
 
 # ---------------------------------------------------------------------------

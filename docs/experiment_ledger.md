@@ -1743,6 +1743,316 @@ Scripts: resolution readout is checked in (`scripts/gap_resolution.py`); the ful
 
 ## Open bets, validated but not built
 
+**Fresh paused-GPU inference attribution (2026-07-18).** Training is paused and
+the RTX 5090 is available after the driver reset, so close the queued GPU
+re-profile before changing kernels, streams, or batching. Hypothesis: the
+production 512x16 v2 checkpoint still exposes actionable batch-size or launch
+headroom in the compiled forward path. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/profile_worker_inference.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--batches 16,32,64,96,128,256,384,512,768,1024 --warmup 6 --iters 40
+--mode reduce-overhead --amp-dtype bf16 --out
+/tmp/cae_gpu_inference_20260718.json`. REOPEN the GPU/batching surface if median
+wall overhead is at least 10% at a production-relevant bucket or boards/s rises
+at least 10% from batch 384 to 768; otherwise close speculative forward/launch
+work and limit follow-ups to independently measured staging/copy mechanisms.
+The run is diagnostic only: no model, search, target, replay, config, RNG, or
+live-state change.
+**PARTIAL READ:** batch 16 completed at 3.60ms wall / 3.47ms GPU (3.6% host
+overhead, 4,449 boards/s), already below the 10% launch-headroom gate. The
+multi-shape `torch.compile` run was stopped during the batch-32 autotune after
+over four minutes because production uses the already-built fixed-bucket AOT
+packages and recompiling every dynamic shape is not a faithful or efficient
+yardstick. Do not infer the larger-batch curve from this partial run; use the
+existing quiet-GPU AOT bucket measurements recorded below. This closes Python
+launch fusion at the measured small bucket and redirects work to explicit
+staging/copy mechanisms.
+
+**Pinned AOT match-input staging experiment (2026-07-18).** `AOTEvaluator`
+allocates `_pinned_input`, but `evaluate_encoded` and
+`evaluate_encoded_async` actually copy into a separate pageable NumPy array
+before requesting a nominally non-blocking H2D transfer. Hypothesis: make the
+NumPy staging view alias a persistent pinned float32 tensor, removing the dead
+bf16 allocation and enabling real asynchronous DMA without changing the GPU
+conversion or model inputs. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_aot_input_staging.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+--iterations 40 --rounds 7`. SUCCESS: pinned/pageable median end-to-end wall
+<=0.99x, identical policy/WDL checksum, focused AOT tests and lint pass. KILL:
+ratio >1.01 or any output/lifetime failure; otherwise MIXED and retain only if
+the result is non-regressing because it also removes the unused buffer and
+makes the documented pinned-transfer contract true. Match/local AOT input
+transport only; no model, search, targets, replay, config, RNG, or live state.
+**VERDICT: WORKED.** Seven alternating quiet-GPU rounds at the production 384
+bucket measured 0.837182s pageable versus 0.758897s pinned per 40 complete
+`evaluate_encoded` calls, ratio **0.906491 (10.3% faster)**, with exact output
+checksum `32952ca54948cc6e11446bb702f7a5bc00cf94f551e251e3115dc288c4cefaee`.
+The result includes input staging, H2D+bf16 conversion, AOT forward, and full
+policy/WDL D2H rather than reporting a copy-only microbenchmark. Keep the
+persistent float32 pinned tensor and its NumPy alias; it replaces one unused
+bf16 pinned allocation plus the separate pageable allocation.
+
+**Background training-batch transfer experiment (2026-07-18).** Cross-step
+prefetch currently overlaps replay sampling only; after each future resolves,
+the trainer pins every compact replay array and enqueues its H2D/cast on the
+main thread before yielding the batch. Hypothesis: have the existing single
+prefetch worker complete collation/H2D as well, so CPU pinning and transfer
+setup for batch N+1 overlap GPU compute for batch N without adding another
+queue or thread. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_training_batch_staging.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-package /home/josh/projects/chess/data/aot_models_512/chess_b512.pt2
+--shard
+/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+--batch 512 --steps 30 --rounds 7`. SUCCESS: prefetched/reference median wall
+<=0.95x with exact final-output checksum, deterministic tests cover ordering,
+retry extension, CUDA-error cleanup, focused trainer/collation tests and lint
+pass. KILL: ratio >1.00, any stream/lifetime/parity failure, or a CUDA graph
+compatibility failure; otherwise MIXED and keep only at <=0.98x because moving
+CUDA work across threads is not a simplification. Training transport/schedule
+only; no optimizer, model, loss, target, replay contents, RNG, config, or live
+state.
+**VERDICT: FAILED; runtime unchanged.** Seven alternating production-shaped
+rounds measured 0.779724s reference versus 0.782028s with collation/H2D moved
+onto the existing prefetch thread, ratio **1.002956 (0.3% slower)**, with exact
+final-output checksum
+`907ebb53ec1e5c68d4399863ea7838f4133f81de36112ff395b684a5339569d3`.
+The GPU forward already covers transfer setup through stream ordering, so the
+cross-thread move adds scheduling overhead without overlap. Keep replay-only
+prefetch and do not move CUDA work across trainer threads. The one-off
+benchmark was removed.
+
+**Pinned AOT async-output staging experiment (2026-07-18).** Unlike the direct
+GPU evaluator, `AOTEvaluator.evaluate_encoded_async` calls `.to("cpu",
+non_blocking=True)` without a caller-owned pinned destination. On a fresh AOT
+match path this can synchronize on pageable allocation/copy before returning,
+defeating the C-walk/GPU overlap that consumes its event. Hypothesis: add
+persistent pinned float32 policy/WDL output buffers and enqueue `copy_` into
+them before recording the event, matching `DirectGPUEvaluator` semantics. ONE
+deciding yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_aot_output_staging.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+--iterations 40 --rounds 7`. SUCCESS: pinned/pageable median end-to-end wall
+<=0.98x, pinned median submission latency <=0.50x pageable, identical output
+checksum, async lifetime tests and lint pass. KILL: end-to-end ratio >1.01,
+any output/alias corruption, or overlap/event regression; otherwise MIXED and
+keep only if submission latency clears 0.50x because restoring the advertised
+async contract is valuable to pipelined Gumbel match search. Match/local AOT
+output transport only; no model, search, targets, replay, config, RNG, or live
+state.
+**VERDICT: FAILED; runtime unchanged.** Seven alternating rounds measured
+0.742120s pageable versus 0.735355s pinned end-to-end (ratio 0.990884, only
+0.9% faster) while median submission latency regressed from 8.954ms to 9.247ms
+(ratio 1.032688). Outputs matched exactly at checksum
+`32952ca54948cc6e11446bb702f7a5bc00cf94f551e251e3115dc288c4cefaee`.
+The AOT call itself occupies submission until the forward boundary, so pinned
+destinations do not restore useful caller overlap and miss both gates. Keep the
+current output path; the one-off benchmark was removed.
+
+**BF16 AOT match-input transport experiment (2026-07-18).** The native Gumbel
+tree already emits exact bf16 input bits and all other production evaluators
+advertise `supports_input_bf16_bits`, but `AOTEvaluator` does not. Consequently
+local AOT match/search encodes float32, writes and transfers twice the bytes,
+then converts to bf16 on GPU even though its packages are statically bf16.
+Hypothesis: give AOT a persistent pinned bf16 buffer, accept the existing
+uint16 bit representation, and transfer it directly while retaining the
+float32 compatibility path. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_aot_bf16_input.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+--iterations 40 --rounds 7`. SUCCESS: bf16/f32 median end-to-end wall <=0.97x,
+exact policy/WDL checksum, tests prove uint16 bits take the bf16 buffer while
+float32 callers retain their path, focused Gumbel/AOT tests and lint pass.
+KILL: ratio >1.00 or any output/input-bit mismatch; otherwise MIXED and keep
+only at <=0.98x because a second buffer/API branch is not a simplification.
+Match/local AOT input encoding and H2D only; no model, search, targets, replay,
+config, RNG, or live state.
+**VERDICT: WORKED.** The implementation-faithful rerun measured 0.749208s
+float32 versus 0.701687s bit-packed bf16 per 40 complete calls, ratio
+**0.936571 (6.8% faster)**, with exact policy/WDL checksum
+`32952ca54948cc6e11446bb702f7a5bc00cf94f551e251e3115dc288c4cefaee`.
+The first isolated prototype read was 9.7%; report the 6.8% runtime result.
+Keep the persistent pinned bf16 buffer and capability flag. Native Gumbel and
+network-turn C encoders now write half-size inputs and AOT transfers them
+without a GPU dtype conversion; float32 callers remain compatible.
+
+**Compact legal-policy AOT match experiment (2026-07-18).** Production AOT
+packages output the compact 1,858 policy head, but `AOTEvaluator` expands it to
+4,672 logits on GPU and copies every float32 logit to CPU. Gumbel immediately
+masks that dense result to roughly 20--40 legal moves, while the broker/direct
+evaluators already expose a tested legal-BF16 contract consumed natively by
+`continue_gumbel_sims_legal_bf16`. Hypothesis: map full legal ids to compact
+head ids, gather only those logits on GPU, and return pinned bf16 bits plus WDL
+without materializing/transferring the dense 4,672 policy. ONE deciding
+yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_aot_legal_policy.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --shard
+/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+--batch 384 --iterations 40 --rounds 7`. SUCCESS: compact/dense median
+end-to-end wall <=0.75x, exact gathered-policy-bit and WDL checksum parity,
+randomized full-to-compact/legal-count tests, focused Gumbel/AOT tests and lint
+pass. KILL: ratio >0.95 or any mapping/order/output mismatch; otherwise MIXED
+and keep only at <=0.85x because it adds AOT-specific staging buffers. Primary
+Gumbel match/local-worker leaf evaluation only; root outputs and PUCT retain
+the dense compatibility path. No model, search semantics, targets, replay,
+config, RNG, or live state.
+**VERDICT: MIXED; rejected.** The registered run measured 0.732502s dense
+versus 0.664763s legal-only per 40 complete AOT calls at batch 384, ratio
+**0.907524 (10.2% faster)**, with 11,453 real legal logits (29.83/position)
+and exact gathered-policy-bit/WDL checksum
+`074474bb80760f7197fc6a1d77074cbba10637c1d4bb8de84735a24ed8eb7a18`.
+That misses the precommitted <=0.85 MIXED retention bar and would require a
+second legal-index transport plus integration into the two-group async Gumbel
+pipeline. Keep the existing dense evaluator contract; no runtime code retained.
+
+**Native-compact AOT policy transport experiment (2026-07-18).** The AOT
+package already emits 1,858 logits, but `AOTEvaluator` expands them to 4,672
+on GPU before D2H; Gumbel's shared `_policy_logits_to_full` accepts either
+width and already performs the compatibility expansion. Hypothesis: return
+the native compact tensor from AOT, transfer 60% fewer policy bytes, and let
+the existing CPU mapper expand once, deleting the redundant GPU allocation
+and scatter without changing an API or search semantics. ONE deciding
+yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_aot_compact_policy.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 384
+--iterations 40 --rounds 7`. SUCCESS: native/dense median end-to-end wall
+<=0.98x after including the CPU compact-to-full expansion, exact full-policy
+and WDL checksum, focused AOT/Gumbel tests and lint pass. KILL: ratio >1.00 or
+any output mismatch; otherwise MIXED and retain only if the runtime diff is a
+clear simplification. Match/local AOT output transport only; no model, search,
+targets, replay, config, RNG, or live state.
+**VERDICT: KILLED; reverted.** The registered run measured 0.714777s for the
+dense GPU-expand path versus 0.780937s for native transport plus the existing
+CPU expansion per 40 calls, ratio **1.0926 (8.5% slower)**. WDL and all real
+compact logits matched, but the full-array checksum also correctly tripped:
+the 1,080,576 impossible padded cells differ only because GPU BF16 expansion
+rounds `-1e9` to `-998244352`, while the NumPy compatibility mapper retains
+float32 `-1e9`. Neither value is observable through a legal move, but the
+candidate already fails decisively on speed. Retain GPU expansion; no runtime
+code retained.
+
+**AOT broker native-head legal gather experiment (2026-07-18).** Unlike the
+rejected local-evaluator legal protocol, the production shared broker already
+receives full legal ids and already owns pinned compact-BF16 output buffers.
+Its AOT branch nevertheless expands the package's native 1,858 head to 4,672
+on GPU and immediately gathers legal logits back out. Hypothesis: remap the
+already-present legal columns to compact ids and gather directly from the AOT
+head, deleting the dense allocation/scatter with no transport or MCTS change.
+ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_aot_broker_compact_gather.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --shard
+/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+--batches 32,96,384 --iterations 80 --rounds 7`. SUCCESS: compact/dense
+geometric-mean ratio <=0.98 and no individual bucket regresses, with exact
+legal-policy-bit/WDL checksums, randomized remap tests, focused broker tests,
+and lint passing. KILL: geometric ratio >1.00, any individual ratio >1.02, or
+any mismatch; otherwise MIXED and retain only if the final broker branch is a
+clear simplification. Shared-broker output gather only; no model, search,
+targets, replay, config, RNG, SHM layout, or live state.
+**VERDICT: KILLED; reverted.** Seven alternating rounds produced compact/dense
+ratios 0.922709 at batch 32, 1.021823 at batch 96, and 0.991615 at batch 384;
+geometric ratio 0.977825 (2.27% aggregate win), with exact legal-BF16/WDL
+checksums at every bucket. The 96-row result exceeds the precommitted 1.02
+individual-bucket KILL boundary, and the large round-to-round order variance
+shows the small aggregate is not robust enough to ship. Keep the current AOT
+dense-expand gather; no runtime code retained.
+
+**Cross-step replay pin-memory prefetch experiment (2026-07-18).** Replay
+sampling/mirroring already overlaps the preceding optimizer step, but
+`collate_arrays` still calls `pin_memory()` for every NumPy field on the
+training thread immediately before its H2D copies. Hypothesis: pin the next
+numeric array dict in the existing one-item host prefetch thread, let
+`_to_tensor` reuse already-pinned storage, and keep all CUDA submission/dtype
+conversion on the training thread. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_training_pin_prefetch.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --shard
+/home/josh/projects/chess/runs/pbt2_small/replay/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/replay_shards/shard_031581.zarr
+--batch 512 --iterations 40 --rounds 7`. SUCCESS: prefetched/reference median
+wall <=0.97x, exact collated-tensor and AOT output checksums, tests prove
+already-pinned arrays are not copied/re-pinned, focused trainer/replay tests,
+and lint pass. KILL: ratio >1.00, any thread/CUDA error, or any mismatch;
+otherwise MIXED and retain only at <=0.98x because it adds a host staging
+phase. Training input preparation only; no model, optimizer, target, replay
+sampling, augmentation, RNG, config, or live state.
+**VERDICT: KILLED; reverted.** The registered implementation-faithful run
+measured 1.010244s reference versus 1.025616s prefetched per 40 production
+batch-512 collate+H2D+AOT-forward cycles, ratio **1.015216 (1.5% slower)**,
+with exact parity for every collated tensor and output checksum
+`2c3a0d3ecbc48cec0e10d9ddd67d78032344e1d9a61313791d428479b42a036c`.
+The background page-lock copies contend for memory bandwidth rather than hide
+under this workload. Retain synchronous pinning; no runtime code retained.
+
+**Pipelined Gumbel BF16 AOT leaf-input experiment (2026-07-18).** The accepted
+AOT BF16 capability is used for roots and the non-pipelined leaf loop, but the
+two-group Gumbel pipeline allocates float32 encode buffers whenever the
+evaluator lacks in-place slots. `AOTEvaluator` is exactly that case, so its
+primary >=64-board leaf path still widens every C encode and doubles the host
+copy/H2D payload. Hypothesis: allocate the pipeline's existing NumPy buffers
+as uint16 whenever `supports_input_bf16_bits` is true; the C tree already
+supports this representation and AOT already consumes it. ONE deciding
+yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_aot_gumbel_bf16.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --games 96
+--simulations 32 --iterations 5 --rounds 7`. SUCCESS: bf16/f32 median complete
+search wall <=0.97x, exact actions/policies/values/root-Q checksum, tests prove
+pipeline buffer dtype routing, focused Gumbel/AOT tests, and lint pass. KILL:
+ratio >1.00 or any search-output mismatch; otherwise MIXED and retain only at
+<=0.98x because the diff is a one-line simplification of dtype routing.
+Match/selfplay search input representation only; no model, search semantics,
+targets, replay, config, RNG, or live state.
+**VERDICT: WORKED.** The registered complete-search run measured 1.328529s
+float32 versus 1.166117s BF16 per five 96-board/32-simulation Gumbel searches,
+ratio **0.877750 (13.9% faster)**, with exact actions, policies, values,
+root-prior arrays, and root-id checksum
+`6e12e0040d1dd0cc2d897389add7e915367d363bb2a1d45ecf4e011ed4a4501f`.
+Keep uint16 pipeline buffers whenever the evaluator advertises native BF16
+bits. This extends the already-accepted AOT staging path to the primary
+two-group leaf loop; float32 evaluators remain unchanged.
+
+**Two-slot in-place AOT Gumbel input experiment (2026-07-18).** After the BF16
+pipeline win, C still writes each group into a temporary pageable NumPy array
+and `AOTEvaluator` copies it into pinned staging before H2D. The direct GPU
+evaluator already exposes two pinned in-place slots that C can encode into
+directly. Hypothesis: give AOT the same two-slot input interface, retaining
+its existing output allocations, to remove one full host copy per root/leaf
+batch while preserving group lifetime isolation. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_aot_gumbel_inplace.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --games 96
+--simulations 32 --iterations 5 --rounds 7`. SUCCESS: inplace/staged median
+complete-search wall <=0.97x, exact actions/policies/values/root-Q checksum,
+slot-isolation tests, focused Gumbel/AOT tests, and lint pass. KILL: ratio
+>1.00, pinned allocation failure, or any mismatch; otherwise MIXED and retain
+only at <=0.98x because the extra slot reserves about 275 MiB at max_batch
+4096 (float32+BF16). Match/selfplay input staging only; no model, search,
+targets, replay, config, RNG, or live state.
+**VERDICT: WORKED.** The registered complete-search run measured 1.168738s
+staged versus 1.015870s in-place per five 96-board/32-simulation searches,
+ratio **0.869202 (15.0% faster)**, with the same exact search checksum
+`6e12e0040d1dd0cc2d897389add7e915367d363bb2a1d45ecf4e011ed4a4501f`.
+Keep two independent pinned float32/BF16 input slots and the AOT in-place async
+interface. Combined with the preceding BF16 pipeline routing result, controlled
+full-search wall falls 1.328529s -> 1.015870s, **30.8% faster**. The additional
+~275 MiB pinned-host reservation at max_batch 4096 is accepted for this gain.
+
 - **SF-label escalation on net-vs-label disagreement — BUILT (PR #135), flags
   default-off, NOT LAUNCHED** (2026-07-09). HYPOTHESIS: the ~700k-node sf_wdl
   label is wrong in 70-81% of high net-vs-label-gap cases (deep-SF audits of
@@ -3378,3 +3688,190 @@ Expected effect small (~2-4% games/h); this is opportunistic, not a bet.
 Related knob NOT bundled (separate entry if pursued): batch coalescing toward
 fuller forwards (broker --batch-wait-ms / adaptive-idle) — trades walker
 latency for batch size; needs its own readout.
+
+**OFFLINE — Stockfish pool retune for 32-thread SMT topology (2026-07-18;
+perf-only, activates on next restart).** Production ran 4 SF engines per each
+of 4 distributed workers (16 total), a count chosen before WSL exposed all 32
+logical CPUs. The slot-oversubscribe readout identified residual SF capacity,
+not broker slots, as the remaining wall. Hypothesis: more nice-19 single-thread
+engines use SMT to drain the deep 698k-node SF queue faster while yielding to
+normal-priority Python and broker work.
+
+First yardstick: three rotated rounds of 64 fixed FENs at 700k nodes, MultiPV
+40, hash 16 MB, production Syzygy and fresh TT, comparing 16/24/32 global
+engines with `scripts/bench_stockfish_pool_size.py` in the experiment worktree.
+SUCCESS: best larger pool >=1.10x pool16 and >=95% best-move agreement; choose
+24 if within 3% of 32. Result: 3.708 / 4.018 / 4.515 positions/s, so 24 was
++8.4% and 32 was +21.8%; all move digests matched with 100% agreement.
+
+End-to-end deciding yardstick: current published model and live
+`recommended_worker` settings (698,289 SF nodes, MultiPV 40, Gumbel 256/32,
+30% selfplay), real 16-slot AOT broker, 4 worker processes x 8 active selfplay
+threads, 2 requested continuous games/thread, 10-ply benchmark boundary, and
+rotated pool order `4,6,8:8,6,4`. Run with `PYTHONPATH=. python3
+scripts/bench_production_sf_workers.py`. SUCCESS: selected larger pool >=5%
+above 4 engines/worker in median completed games/s with no lower median broker
+inference positions/s; prefer 6 if within 3% of 8. KILL: miss the throughput
+rule, process errors, or host/GPU instability. Continuous callback-driven
+completion is intentional: finite `play_batch`'s safety step bound can expire
+while shared-pool futures are pending and therefore is not a valid contention
+benchmark. Pool setup and Syzygy mapping are excluded from timed windows.
+
+**VERDICT: WORKED; PROMOTE 8 SF ENGINES/WORKER.** Rotated games/s were 4:
+0.800/0.802 (median 0.801), 6: 0.965/0.975 (median 0.970), and 8: 1.048/1.165
+(median 1.106). Eight is +38.2% versus 4 and +14.1% versus 6, clearing both
+rules. Median broker inference positions/s also rose 914 -> 1,145 -> 1,175;
+extra SF did not steal enough CPU to regress inference. No crashes, SF errors,
+or GPU instability occurred. Set only
+`tune.distributed_worker_sf_workers: 8`; keep non-distributed
+`stockfish.sf_workers: 4`, because this result is specific to four distributed
+workers sharing the 32-thread host.
+
+**OFFLINE — starvation-safe Stockfish move-priority scheduling (2026-07-18;
+perf-only, no live activation).** The shared engine-owning FIFO correctly work
+steals, but it treats curriculum move searches and deferred selfplay label
+searches identically. A completed move exposes another network turn; a label
+can attach asynchronously, so labels queued by one state can delay useful GPU
+work in another. Hypothesis: a two-class engine queue that serves a small burst
+of move requests, then one label when both are waiting, reduces SF phase waves
+without starving training labels. Tune FIFO, 1:1, and 3:1 move:label service;
+prefer 1:1 if within 3% of 3:1.
+
+YARDSTICK (deciding): current published model/live recommendation, real
+16-slot AOT broker, 4 worker processes x 8 active selfplay threads, 8 SF
+engines/worker, callback-driven continuous completion, and two rotated rounds
+`fifo,1:1,3:1:3:1,1:1,fifo` using the same RNG seeds. SUCCESS: best fair queue
+has median completed games/s >=1.05x FIFO and median broker inference
+positions/s is not lower; every run completes its label-gated games and the
+pool ordering/cancellation/lifecycle tests pass. KILL: throughput <1.02x,
+label starvation, process error, or materially more complex lifecycle without
+the 5% win. This is scheduling only: node counts, searches, results, replay,
+and training targets remain unchanged.
+**VERDICT: KILLED AND FULLY REVERTED.** Rotated median games/s was 1.026 for
+FIFO, 1.052 for 1:1 (+2.6%), and 1.017 for 3:1 (-0.9%). Median inference
+positions/s was 1,095 / 1,243 / 1,079 respectively. The 1:1 mechanism was
+consistent but missed the precommitted 5% end-to-end bar, while 3:1 was highly
+order-sensitive (1.147 then 0.886 games/s). Moreover, even 1:1 remained below
+the existing standard-executor 8-engine reference median of 1.106 games/s.
+Do not trade the proven `ThreadPoolExecutor` lifecycle for a custom fair queue
+on this evidence. Runtime, call-site, test, and benchmark-mode changes were
+removed; only this negative result remains.
+
+**OFFLINE — distributed selfplay thread-count retune after SF SMT expansion
+(2026-07-18; perf-only, no live activation).** Production launches 32 Python
+selfplay threads per each of four workers, but steady telemetry usually shows
+only 5-11 runnable per worker while the remainder wait on SF. With the selected
+SF pool now doubled to 8 engines/worker, the old thread optimum must be checked
+rather than assumed. Hypothesis: 8 or 16 selfplay threads retain enough
+independent GPU work while reducing GIL, scheduler, and duplicated state
+overhead relative to 32.
+
+YARDSTICK (deciding): current model/live recommendation, real 16-slot AOT
+broker, 4 worker processes, 8 SF engines/worker, two completed games requested
+per selfplay thread with `slot_oversubscribe=2`, and rotated thread order
+`8,16,32:32,16,8` using persistent pools and identical per-thread seeds.
+SUCCESS: best count has median completed games/s >=1.05x threads32 and median
+broker inference positions/s is not lower; prefer the lower count when within
+3% of the fastest. KILL: every alternative <1.02x, process/GPU instability,
+or a lower count merely reduces fixed work without improving normalized game
+throughput. Runnable yardstick: `PYTHONPATH=. python3
+scripts/bench_production_sf_workers.py --thread-orders 8,16,32:32,16,8
+--sf-workers 8`.
+**VERDICT: KILLED; KEEP 32 THREADS/WORKER.** Rotated median games/s was 1.102
+for 8 threads, 1.179 for 16, and 1.178 for 32. Sixteen and 32 were effectively
+tied (+0.06% for 16), far short of the required 5% gain, while median broker
+inference positions/s was 1,173 / 1,270 / 1,343 respectively: 16 lowered the
+secondary mechanism metric by 5.4%. Eight was 6.5% slower in games/s. Although
+16 drains a fixed benchmark arm in half the wall time, normalized production
+throughput does not improve and the configured 32 leaves more inference
+headroom during network-heavy phases. Do not change
+`distributed_worker_selfplay_threads`; benchmark-mode changes were removed.
+**OFFLINE — hierarchical broker batching (2026-07-18; perf-only, no live activation).**
+Hypothesis: each production worker has 32 search threads but only 4 broker
+slots.  The current client wakes one queued producer per newly available slot,
+so each shared-memory request contains one search call and the broker must
+reconstruct larger batches from up to 16 small submissions.  A worker-local
+continuous scheduler can instead drain and concatenate requests that are
+already queued whenever a broker lane becomes available, without a timed
+coalescing sleep.  Four independent submission lanes preserve concurrency;
+CUDA and cudagraph ownership remain exclusively in the broker process.
+YARDSTICK (deciding, exact command):
+`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir /home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir /home/josh/projects/chess/data/aot_models_512 --modes direct,hierarchical --threads 32 --slots 4 --repeats 5`.
+SUCCESS: hierarchical median Gumbel positions/s is at least 5% above direct
+and p95 request latency regresses by no more than 10%.  KILL: throughput gain
+below 5%, latency guard fails, any output mismatch, deadlock, CUDA graph
+ownership failure, or broker recovery.  No training/data behavior changes;
+do not activate or merge without this offline verdict and focused tests.
+**VERDICT: KILLED (2026-07-18, production-shaped offline Gumbel A/B).** A
+small 1-worker/4-thread/2-slot smoke showed +41% positions/s and -28% p95,
+confirming that hierarchical batching helps an artificially underfilled
+broker.  At the deciding 4-worker x 32-thread x 4-slot shape, however, direct
+already formed ~2,000-row global batches.  The extra layer raised them to
+~3,900 rows, reduced positions/s 17,851 -> 11,731 (-34%), and increased p95
+request latency 1,503 -> 2,602 ms (+73%).  The architecture is rejected; the
+normal 16-slot broker already has enough concurrent work.
+
+**OFFLINE — parallel pinned-input gather (2026-07-18; perf-only).**
+Hypothesis: production batches copy roughly 12-16 independent multi-megabyte
+slot inputs serially from shared memory into one pinned tensor before H2D.
+NumPy copies release the GIL, so a persistent 2-4 thread copy pool may reduce
+the measured ~6 ms steady pack phase without changing batch formation,
+latency policy, model calls, or outputs.  YARDSTICK (deciding): a pinned-memory
+microbenchmark using 16 production-shaped BF16 slot arrays followed by the
+same broker-backed Gumbel A/B if the microbenchmark wins.  SUCCESS: >=25%
+median gather-time reduction in the microbenchmark and >=3% end-to-end
+positions/s with identical outputs and no p95 regression.  KILL: memory-copy
+gain below 25%, end-to-end gain below 3%, or any correctness/liveness issue.
+**VERDICT: KILLED (2026-07-18).** Eight persistent copy workers reduced the
+steady broker pack phase from 6.2-6.6 ms to 4.9-5.0 ms (~23%), but the
+production-shaped closed-loop result was only 17,887 -> 18,314 positions/s
+(+2.39%) with p95 1,535 -> 1,472 ms (-4.1%).  Both pre-committed speed
+thresholds missed; the added thread-pool complexity is not justified.
+
+**OFFLINE — fair global broker batch target (2026-07-18; perf-only).**
+Hypothesis: `distributed_worker_dispatcher_target_batch: 680` is inactive when
+workers use the broker, and SlotBroker currently dispatches every ready slot
+without a global row target.  Production-shaped tests therefore form
+~1,900-row forwards despite the measured AOT throughput knee near 512-680,
+holding all search lanes for ~70-100 ms.  A round-robin fair 680-row global
+target should dispatch immediately once capacity is reached, return early
+lanes sooner, and overlap their CPU tree work with subsequent GPU forwards.
+YARDSTICK (deciding): broker-backed 4-worker x 32-thread Gumbel A/B, five
+repeats, unlimited baseline versus targets 512/680/1020, judged on actual
+positions/s and p95 request latency.  SUCCESS: >=5% positions/s with no p95
+regression, or >=3% positions/s with >=15% p95 improvement.  KILL: throughput
+regression, starvation/unfairness, illegal output, deadlock, or no target
+meeting the success rule.  Numerical model parity uses existing tolerances;
+different stochastic Gumbel actions are not a failure by themselves.
+
+**OFFLINE — compact legal-policy transport for Gumbel roots (2026-07-18;
+perf-only, no live activation).** Hypothesis: the C Gumbel leaf path already
+returns only legal BF16 policy logits through the shared inference broker, but
+every root evaluation still returns all 4,672 float32 policy logits. Root
+legal indices are known before inference, so using the existing compact broker
+protocol should remove most root policy D2H and shared-memory output traffic
+without changing model inputs, logits, WDL, batching, or search semantics.
+YARDSTICK (deciding): production-shaped broker-backed Gumbel A/B at 4 workers x
+32 threads x 4 slots, five repeats per mode, using
+`PYTHONPATH=. python3 scripts/bench_broker_batching.py --publish-dir /home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish --aot-dir /home/josh/projects/chess/data/aot_models_512 --modes direct,direct-compact-root --threads 32 --slots 4 --repeats 5`.
+SUCCESS: compact-root median positions/s is at least 3% above dense-root with
+no more than 5% p95 request-latency regression. KILL: throughput gain below
+3%, numerical policy/WDL mismatch outside existing BF16 tolerances, illegal
+move or mask difference, deadlock, or broker recovery. Gumbel action identity
+is not required because equivalent small numerical changes may alter sampled
+moves; deterministic root-prior parity and protocol correctness are required.
+**VERDICT: WORKED (2026-07-18, paired quiet-GPU offline A/B).** Dense then
+compact measured 16,636 -> 17,655 positions/s (+6.12%) with p95 request
+latency 1,585 -> 1,512 ms (-4.65%). Reversing mode order confirmed the result:
+compact 18,004 versus dense 16,740 positions/s (+7.55% compact over dense),
+with p95 1,556 versus 1,634 ms (-4.73%). Steady broker forward/output
+completion fell from roughly 22-23 ms to 11-12 ms because roots no longer copy
+all 4,672 policy logits to host/shared memory. The final implementation also
+keeps compact per-board logits through root softmax instead of reconstructing a
+dense CPU matrix. All 36 focused C-search edge/parity tests pass; a dedicated
+restricted-root regression proves exact dense/compact mapping when inputs are
+BF16-representable. Real-model Gumbel action digests differ because compact
+transport rounds root logits to BF16, which is expected and permitted; masks,
+legal actions, WDL transport, and protocol remain unchanged. Promote for broker
+clients only; local/direct GPU evaluators retain their existing dense zero-copy
+root path.

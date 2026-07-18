@@ -55,9 +55,9 @@ def test_build_environment_forces_native_lto() -> None:
         },
     )
     assert env["CC"] == "/opt/gcc15/bin/gcc"
+    assert env["LDSHARED"] == "/opt/gcc15/bin/gcc -shared"
     assert env["CAE_EXT_NATIVE"] == "1"
     assert env["CAE_EXT_LTO"] == "1"
     assert "CAE_EXT_SANITIZE" not in env
     assert "CFLAGS" not in env
     assert "LDFLAGS" not in env
-    assert "LDSHARED" not in env
