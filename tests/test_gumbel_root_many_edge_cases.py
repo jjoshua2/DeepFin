@@ -153,14 +153,19 @@ def test_gumbel_c_compact_root_policy_matches_dense_root_mapping() -> None:
         chess.Board(),
         chess.Board(),
         chess.Board("8/8/8/8/8/8/4k3/4K3 w - - 0 1"),
+        # Checkmated root (fool's mate): game-over board with ZERO legal moves
+        # in a mixed batch — exercises the count-0 compact-transport row.
+        chess.Board("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"),
     ]
     boards[1].push_san("e4")
+    assert boards[3].is_checkmate()
     allowed = [
         None,
         {
             move_to_index(chess.Move.from_uci("c7c5"), boards[1]),
             move_to_index(chess.Move.from_uci("e7e5"), boards[1]),
         },
+        None,
         None,
     ]
     cfg = GumbelConfig(
