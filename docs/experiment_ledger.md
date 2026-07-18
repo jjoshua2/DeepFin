@@ -3636,6 +3636,103 @@ Related knob NOT bundled (separate entry if pursued): batch coalescing toward
 fuller forwards (broker --batch-wait-ms / adaptive-idle) — trades walker
 latency for batch size; needs its own readout.
 
+**OFFLINE — Stockfish pool retune for 32-thread SMT topology (2026-07-18;
+perf-only, activates on next restart).** Production ran 4 SF engines per each
+of 4 distributed workers (16 total), a count chosen before WSL exposed all 32
+logical CPUs. The slot-oversubscribe readout identified residual SF capacity,
+not broker slots, as the remaining wall. Hypothesis: more nice-19 single-thread
+engines use SMT to drain the deep 698k-node SF queue faster while yielding to
+normal-priority Python and broker work.
+
+First yardstick: three rotated rounds of 64 fixed FENs at 700k nodes, MultiPV
+40, hash 16 MB, production Syzygy and fresh TT, comparing 16/24/32 global
+engines with `scripts/bench_stockfish_pool_size.py` in the experiment worktree.
+SUCCESS: best larger pool >=1.10x pool16 and >=95% best-move agreement; choose
+24 if within 3% of 32. Result: 3.708 / 4.018 / 4.515 positions/s, so 24 was
++8.4% and 32 was +21.8%; all move digests matched with 100% agreement.
+
+End-to-end deciding yardstick: current published model and live
+`recommended_worker` settings (698,289 SF nodes, MultiPV 40, Gumbel 256/32,
+30% selfplay), real 16-slot AOT broker, 4 worker processes x 8 active selfplay
+threads, 2 requested continuous games/thread, 10-ply benchmark boundary, and
+rotated pool order `4,6,8:8,6,4`. Run with `PYTHONPATH=. python3
+scripts/bench_production_sf_workers.py`. SUCCESS: selected larger pool >=5%
+above 4 engines/worker in median completed games/s with no lower median broker
+inference positions/s; prefer 6 if within 3% of 8. KILL: miss the throughput
+rule, process errors, or host/GPU instability. Continuous callback-driven
+completion is intentional: finite `play_batch`'s safety step bound can expire
+while shared-pool futures are pending and therefore is not a valid contention
+benchmark. Pool setup and Syzygy mapping are excluded from timed windows.
+
+**VERDICT: WORKED; PROMOTE 8 SF ENGINES/WORKER.** Rotated games/s were 4:
+0.800/0.802 (median 0.801), 6: 0.965/0.975 (median 0.970), and 8: 1.048/1.165
+(median 1.106). Eight is +38.2% versus 4 and +14.1% versus 6, clearing both
+rules. Median broker inference positions/s also rose 914 -> 1,145 -> 1,175;
+extra SF did not steal enough CPU to regress inference. No crashes, SF errors,
+or GPU instability occurred. Set only
+`tune.distributed_worker_sf_workers: 8`; keep non-distributed
+`stockfish.sf_workers: 4`, because this result is specific to four distributed
+workers sharing the 32-thread host.
+
+**OFFLINE — starvation-safe Stockfish move-priority scheduling (2026-07-18;
+perf-only, no live activation).** The shared engine-owning FIFO correctly work
+steals, but it treats curriculum move searches and deferred selfplay label
+searches identically. A completed move exposes another network turn; a label
+can attach asynchronously, so labels queued by one state can delay useful GPU
+work in another. Hypothesis: a two-class engine queue that serves a small burst
+of move requests, then one label when both are waiting, reduces SF phase waves
+without starving training labels. Tune FIFO, 1:1, and 3:1 move:label service;
+prefer 1:1 if within 3% of 3:1.
+
+YARDSTICK (deciding): current published model/live recommendation, real
+16-slot AOT broker, 4 worker processes x 8 active selfplay threads, 8 SF
+engines/worker, callback-driven continuous completion, and two rotated rounds
+`fifo,1:1,3:1:3:1,1:1,fifo` using the same RNG seeds. SUCCESS: best fair queue
+has median completed games/s >=1.05x FIFO and median broker inference
+positions/s is not lower; every run completes its label-gated games and the
+pool ordering/cancellation/lifecycle tests pass. KILL: throughput <1.02x,
+label starvation, process error, or materially more complex lifecycle without
+the 5% win. This is scheduling only: node counts, searches, results, replay,
+and training targets remain unchanged.
+**VERDICT: KILLED AND FULLY REVERTED.** Rotated median games/s was 1.026 for
+FIFO, 1.052 for 1:1 (+2.6%), and 1.017 for 3:1 (-0.9%). Median inference
+positions/s was 1,095 / 1,243 / 1,079 respectively. The 1:1 mechanism was
+consistent but missed the precommitted 5% end-to-end bar, while 3:1 was highly
+order-sensitive (1.147 then 0.886 games/s). Moreover, even 1:1 remained below
+the existing standard-executor 8-engine reference median of 1.106 games/s.
+Do not trade the proven `ThreadPoolExecutor` lifecycle for a custom fair queue
+on this evidence. Runtime, call-site, test, and benchmark-mode changes were
+removed; only this negative result remains.
+
+**OFFLINE — distributed selfplay thread-count retune after SF SMT expansion
+(2026-07-18; perf-only, no live activation).** Production launches 32 Python
+selfplay threads per each of four workers, but steady telemetry usually shows
+only 5-11 runnable per worker while the remainder wait on SF. With the selected
+SF pool now doubled to 8 engines/worker, the old thread optimum must be checked
+rather than assumed. Hypothesis: 8 or 16 selfplay threads retain enough
+independent GPU work while reducing GIL, scheduler, and duplicated state
+overhead relative to 32.
+
+YARDSTICK (deciding): current model/live recommendation, real 16-slot AOT
+broker, 4 worker processes, 8 SF engines/worker, two completed games requested
+per selfplay thread with `slot_oversubscribe=2`, and rotated thread order
+`8,16,32:32,16,8` using persistent pools and identical per-thread seeds.
+SUCCESS: best count has median completed games/s >=1.05x threads32 and median
+broker inference positions/s is not lower; prefer the lower count when within
+3% of the fastest. KILL: every alternative <1.02x, process/GPU instability,
+or a lower count merely reduces fixed work without improving normalized game
+throughput. Runnable yardstick: `PYTHONPATH=. python3
+scripts/bench_production_sf_workers.py --thread-orders 8,16,32:32,16,8
+--sf-workers 8`.
+**VERDICT: KILLED; KEEP 32 THREADS/WORKER.** Rotated median games/s was 1.102
+for 8 threads, 1.179 for 16, and 1.178 for 32. Sixteen and 32 were effectively
+tied (+0.06% for 16), far short of the required 5% gain, while median broker
+inference positions/s was 1,173 / 1,270 / 1,343 respectively: 16 lowered the
+secondary mechanism metric by 5.4%. Eight was 6.5% slower in games/s. Although
+16 drains a fixed benchmark arm in half the wall time, normalized production
+throughput does not improve and the configured 32 leaves more inference
+headroom during network-heavy phases. Do not change
+`distributed_worker_selfplay_threads`; benchmark-mode changes were removed.
 **OFFLINE — hierarchical broker batching (2026-07-18; perf-only, no live activation).**
 Hypothesis: each production worker has 32 search threads but only 4 broker
 slots.  The current client wakes one queued producer per newly available slot,
