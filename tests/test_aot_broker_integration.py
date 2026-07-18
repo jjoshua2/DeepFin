@@ -234,11 +234,18 @@ def test_aot_evaluator_input_slots_are_isolated(
     bits1 = evaluator.get_input_buffer_bf16_bits(4, slot=1)
     bits0.fill(0x3F80)
     bits1.fill(0x4000)
+    f32_0 = evaluator.get_input_buffer(4, slot=0)
+    f32_1 = evaluator.get_input_buffer(4, slot=1)
+    f32_0.fill(1.0)
+    f32_1.fill(2.0)
 
     assert evaluator.n_slots == 2
     assert not np.shares_memory(bits0, bits1)
+    assert not np.shares_memory(f32_0, f32_1)
     assert np.all(bits0 == 0x3F80)
     assert np.all(bits1 == 0x4000)
+    assert np.all(f32_0 == 1.0)
+    assert np.all(f32_1 == 2.0)
 
 
 # ---------------------------------------------------------------------------
