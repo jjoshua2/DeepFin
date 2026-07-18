@@ -3393,3 +3393,33 @@ the existing standard-executor 8-engine reference median of 1.106 games/s.
 Do not trade the proven `ThreadPoolExecutor` lifecycle for a custom fair queue
 on this evidence. Runtime, call-site, test, and benchmark-mode changes were
 removed; only this negative result remains.
+
+**OFFLINE — distributed selfplay thread-count retune after SF SMT expansion
+(2026-07-18; perf-only, no live activation).** Production launches 32 Python
+selfplay threads per each of four workers, but steady telemetry usually shows
+only 5-11 runnable per worker while the remainder wait on SF. With the selected
+SF pool now doubled to 8 engines/worker, the old thread optimum must be checked
+rather than assumed. Hypothesis: 8 or 16 selfplay threads retain enough
+independent GPU work while reducing GIL, scheduler, and duplicated state
+overhead relative to 32.
+
+YARDSTICK (deciding): current model/live recommendation, real 16-slot AOT
+broker, 4 worker processes, 8 SF engines/worker, two completed games requested
+per selfplay thread with `slot_oversubscribe=2`, and rotated thread order
+`8,16,32:32,16,8` using persistent pools and identical per-thread seeds.
+SUCCESS: best count has median completed games/s >=1.05x threads32 and median
+broker inference positions/s is not lower; prefer the lower count when within
+3% of the fastest. KILL: every alternative <1.02x, process/GPU instability,
+or a lower count merely reduces fixed work without improving normalized game
+throughput. Runnable yardstick: `PYTHONPATH=. python3
+scripts/bench_production_sf_workers.py --thread-orders 8,16,32:32,16,8
+--sf-workers 8`.
+**VERDICT: KILLED; KEEP 32 THREADS/WORKER.** Rotated median games/s was 1.102
+for 8 threads, 1.179 for 16, and 1.178 for 32. Sixteen and 32 were effectively
+tied (+0.06% for 16), far short of the required 5% gain, while median broker
+inference positions/s was 1,173 / 1,270 / 1,343 respectively: 16 lowered the
+secondary mechanism metric by 5.4%. Eight was 6.5% slower in games/s. Although
+16 drains a fixed benchmark arm in half the wall time, normalized production
+throughput does not improve and the configured 32 leaves more inference
+headroom during network-heavy phases. Do not change
+`distributed_worker_selfplay_threads`; benchmark-mode changes were removed.
