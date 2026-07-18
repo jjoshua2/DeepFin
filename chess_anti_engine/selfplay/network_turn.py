@@ -472,7 +472,9 @@ def _append_records_via_c(
                 c_ply_list[j], has_policy,
                 c_priority_list[j], sample_weights[j], c_keep_list[j],
                 c_mask[j],
-                x_lc0_root=(None if alt_lc0_root_xs is None else alt_lc0_root_xs[j]),
+                # .copy(): a bare row view would pin the whole (N, C, 8, 8)
+                # batch in memory until this record's game finalizes.
+                x_lc0_root=(None if alt_lc0_root_xs is None else alt_lc0_root_xs[j].copy()),
                 relations=(None if c_rel is None else c_rel[j]),
                 priority_policy_kl=c_priority_policy_kl_list[j],
                 priority_q_delta=c_priority_q_delta_list[j],
