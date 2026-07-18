@@ -3325,3 +3325,41 @@ Expected effect small (~2-4% games/h); this is opportunistic, not a bet.
 Related knob NOT bundled (separate entry if pursued): batch coalescing toward
 fuller forwards (broker --batch-wait-ms / adaptive-idle) — trades walker
 latency for batch size; needs its own readout.
+
+**OFFLINE — Stockfish pool retune for 32-thread SMT topology (2026-07-18;
+perf-only, activates on next restart).** Production ran 4 SF engines per each
+of 4 distributed workers (16 total), a count chosen before WSL exposed all 32
+logical CPUs. The slot-oversubscribe readout identified residual SF capacity,
+not broker slots, as the remaining wall. Hypothesis: more nice-19 single-thread
+engines use SMT to drain the deep 698k-node SF queue faster while yielding to
+normal-priority Python and broker work.
+
+First yardstick: three rotated rounds of 64 fixed FENs at 700k nodes, MultiPV
+40, hash 16 MB, production Syzygy and fresh TT, comparing 16/24/32 global
+engines with `scripts/bench_stockfish_pool_size.py` in the experiment worktree.
+SUCCESS: best larger pool >=1.10x pool16 and >=95% best-move agreement; choose
+24 if within 3% of 32. Result: 3.708 / 4.018 / 4.515 positions/s, so 24 was
++8.4% and 32 was +21.8%; all move digests matched with 100% agreement.
+
+End-to-end deciding yardstick: current published model and live
+`recommended_worker` settings (698,289 SF nodes, MultiPV 40, Gumbel 256/32,
+30% selfplay), real 16-slot AOT broker, 4 worker processes x 8 active selfplay
+threads, 2 requested continuous games/thread, 10-ply benchmark boundary, and
+rotated pool order `4,6,8:8,6,4`. Run with `PYTHONPATH=. python3
+scripts/bench_production_sf_workers.py`. SUCCESS: selected larger pool >=5%
+above 4 engines/worker in median completed games/s with no lower median broker
+inference positions/s; prefer 6 if within 3% of 8. KILL: miss the throughput
+rule, process errors, or host/GPU instability. Continuous callback-driven
+completion is intentional: finite `play_batch`'s safety step bound can expire
+while shared-pool futures are pending and therefore is not a valid contention
+benchmark. Pool setup and Syzygy mapping are excluded from timed windows.
+
+**VERDICT: WORKED; PROMOTE 8 SF ENGINES/WORKER.** Rotated games/s were 4:
+0.800/0.802 (median 0.801), 6: 0.965/0.975 (median 0.970), and 8: 1.048/1.165
+(median 1.106). Eight is +38.2% versus 4 and +14.1% versus 6, clearing both
+rules. Median broker inference positions/s also rose 914 -> 1,145 -> 1,175;
+extra SF did not steal enough CPU to regress inference. No crashes, SF errors,
+or GPU instability occurred. Set only
+`tune.distributed_worker_sf_workers: 8`; keep non-distributed
+`stockfish.sf_workers: 4`, because this result is specific to four distributed
+workers sharing the 32-thread host.
