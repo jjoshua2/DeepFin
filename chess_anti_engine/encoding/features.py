@@ -85,6 +85,7 @@ in sync (tests/test_threat_planes.py enforces value parity).
 """
 from __future__ import annotations
 
+import functools
 from typing import TYPE_CHECKING
 
 import chess
@@ -125,6 +126,7 @@ assert len(set(_EXTRA_FEATURE_PLANES.values())) == len(_EXTRA_FEATURE_PLANES), (
 )
 
 
+@functools.lru_cache(maxsize=32)
 def normalize_extra_features_encoding(value: str | None) -> str:
     """Map a config value to a canonical extra-features version (default v1)."""
     if value is None:
@@ -147,6 +149,7 @@ def normalize_extra_features_encoding(value: str | None) -> str:
     )
 
 
+@functools.lru_cache(maxsize=32)
 def extra_feature_plane_count(version: str | None = None) -> int:
     """Number of extra feature planes for a (possibly unnormalized) version."""
     return _EXTRA_FEATURE_PLANES[normalize_extra_features_encoding(version)]

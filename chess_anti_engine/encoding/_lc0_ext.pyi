@@ -10,6 +10,13 @@ def encode_piece_planes(
     n_steps: int,
 ) -> NDArray[np.float32]: ...
 
+def encode_full_batch(
+    boards_seq: object,
+    out_ndarray: NDArray[np.float32],
+    hist_mode: int = 0,
+    n_extra: int = 34,
+) -> None: ...
+
 def legal_move_policy_indices(
     us_p: int, us_n: int, us_b: int, us_r: int, us_q: int, us_k: int,
     th_p: int, th_n: int, th_b: int, th_r: int, th_q: int, th_k: int,

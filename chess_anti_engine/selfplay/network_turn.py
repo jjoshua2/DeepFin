@@ -24,7 +24,7 @@ from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.mcts._mcts_tree import batch_compute_relations
 from chess_anti_engine.encoding.features import extra_feature_plane_count
 from chess_anti_engine.encoding import encode_position
-from chess_anti_engine.encoding.cboard_encode import encode_cboard
+from chess_anti_engine.encoding.cboard_encode import encode_cboard, encode_cboard_batch
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT,
     LC0_HISTORY_ROOT_LEGACY_META,
@@ -416,8 +416,12 @@ def _append_records_via_c(
         bool(state.game.record_lc0_root_input)
         and not uses_lc0_root_history(state.game.input_history_encoding)
     ):
-        _n_extra = extra_feature_plane_count(state.game.input_extra_features)
-        alt_lc0_root_xs = [cb.encode_full(1, _n_extra) for cb in cb_encode_list]
+        # One Python->C call; indexable as alt_lc0_root_xs[j] like the old list.
+        alt_lc0_root_xs = encode_cboard_batch(
+            cb_encode_list,
+            input_history_encoding=LC0_HISTORY_ROOT,
+            input_extra_features=state.game.input_extra_features,
+        )
     _want_rel = bool(state.game.record_relations)
     c_result = state.c_process_ply(
         cb_encode_list, pol_logits_full[:n], wdl_logits_raw[:n],
@@ -468,7 +472,9 @@ def _append_records_via_c(
                 c_ply_list[j], has_policy,
                 c_priority_list[j], sample_weights[j], c_keep_list[j],
                 c_mask[j],
-                x_lc0_root=(None if alt_lc0_root_xs is None else alt_lc0_root_xs[j]),
+                # .copy(): a bare row view would pin the whole (N, C, 8, 8)
+                # batch in memory until this record's game finalizes.
+                x_lc0_root=(None if alt_lc0_root_xs is None else alt_lc0_root_xs[j].copy()),
                 relations=(None if c_rel is None else c_rel[j]),
                 priority_policy_kl=c_priority_policy_kl_list[j],
                 priority_q_delta=c_priority_q_delta_list[j],

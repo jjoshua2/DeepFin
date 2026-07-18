@@ -226,13 +226,13 @@ static PyObject* py_legal_move_policy_indices(PyObject *self, PyObject *args) {
 
 /* hist_mode: 0 = full history, 1 = lc0_root, 2 = lc0_root_legacy_meta
  * (same convention as input_history_lc0_root in _mcts_tree.c).
- * n_extra: 34 (v1) or 63 (v2_threats) extra feature planes. */
-static PyObject* cboard_encode_full(const CBoard *b, int hist_mode, int n_extra) {
-    npy_intp dims[3] = {112 + n_extra, 8, 8};
-    PyArrayObject *arr = (PyArrayObject*)PyArray_ZEROS(3, dims, NPY_FLOAT32, 0);
-    if (!arr) return NULL;
-    float *out = (float*)PyArray_DATA(arr);
-
+ * n_extra: 34 (v1) or 63 (v2_threats) extra feature planes.
+ *
+ * Write into a caller-owned buffer of (112+n_extra)*64 floats. The buffer is
+ * zeroed first: fill helpers only set 1.0 on active planes, matching
+ * PyArray_ZEROS + fill used by the single-board encode_full path. */
+static void cboard_encode_full_into(const CBoard *b, float *out, int hist_mode, int n_extra) {
+    memset(out, 0, (size_t)(112 + n_extra) * 64 * sizeof(float));
     if (hist_mode == 2)
         cboard_fill_lc0_112_root_legacy_meta(b, out);
     else if (hist_mode == 1)
@@ -240,7 +240,13 @@ static PyObject* cboard_encode_full(const CBoard *b, int hist_mode, int n_extra)
     else
         cboard_fill_lc0_112(b, out);
     cboard_compute_features_ext(b, out + 112 * 64, n_extra);
+}
 
+static PyObject* cboard_encode_full(const CBoard *b, int hist_mode, int n_extra) {
+    npy_intp dims[3] = {112 + n_extra, 8, 8};
+    PyArrayObject *arr = (PyArrayObject*)PyArray_SimpleNew(3, dims, NPY_FLOAT32);
+    if (!arr) return NULL;
+    cboard_encode_full_into(b, (float*)PyArray_DATA(arr), hist_mode, n_extra);
     return (PyObject*)arr;
 }
 
@@ -763,23 +769,27 @@ static PyObject* PyCBoard_encode_146_lc0_root_legacy_meta(PyCBoard *self, PyObje
 }
 
 /* Shared validation for the parameterized encode entry points. */
+static int validate_encode_full_params(int hist_mode, int n_extra) {
+    if (hist_mode < 0 || hist_mode > 2) {
+        PyErr_Format(PyExc_ValueError, "hist_mode must be 0..2, got %d", hist_mode);
+        return 0;
+    }
+    if (n_extra != FEAT_EXTRA_V1 && n_extra != FEAT_EXTRA_V2
+            && n_extra != FEAT_EXTRA_V3_CHECKS) {
+        PyErr_Format(PyExc_ValueError,
+                     "n_extra must be %d (v1), %d (v2_threats), or %d (v3_checks), got %d",
+                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, FEAT_EXTRA_V3_CHECKS, n_extra);
+        return 0;
+    }
+    return 1;
+}
+
 static int parse_encode_full_args(PyObject *args, int *hist_mode, int *n_extra) {
     *hist_mode = 0;
     *n_extra = FEAT_EXTRA_V1;
     if (!PyArg_ParseTuple(args, "|ii", hist_mode, n_extra))
         return 0;
-    if (*hist_mode < 0 || *hist_mode > 2) {
-        PyErr_Format(PyExc_ValueError, "hist_mode must be 0..2, got %d", *hist_mode);
-        return 0;
-    }
-    if (*n_extra != FEAT_EXTRA_V1 && *n_extra != FEAT_EXTRA_V2
-            && *n_extra != FEAT_EXTRA_V3_CHECKS) {
-        PyErr_Format(PyExc_ValueError,
-                     "n_extra must be %d (v1), %d (v2_threats), or %d (v3_checks), got %d",
-                     FEAT_EXTRA_V1, FEAT_EXTRA_V2, FEAT_EXTRA_V3_CHECKS, *n_extra);
-        return 0;
-    }
-    return 1;
+    return validate_encode_full_params(*hist_mode, *n_extra);
 }
 
 /* compute_relations() -> numpy (5, 64, 64) uint8 dynamic relation matrices */
@@ -1156,6 +1166,122 @@ static PyObject* py_prepare_sf_multipv(PyObject *Py_UNUSED(self), PyObject *args
     return result;
 }
 
+/* encode_full_batch(boards_seq, out_ndarray, hist_mode=0, n_extra=34) -> None
+ * Encode N CBoards into the first N rows of a pre-allocated, aligned,
+ * C-contiguous (>=N, 112+n_extra, 8, 8) float32 array (rows past N are left
+ * untouched, so a larger reusable buffer is fine). hist_mode matches
+ * CBoard.encode_full: 0=full history, 1=lc0_root, 2=lc0_root_legacy_meta.
+ * Writes in-place; does not allocate per board; releases the GIL for the
+ * encode loop. */
+static PyObject* py_encode_full_batch(PyObject *self, PyObject *args) {
+    PyObject *boards_seq;
+    PyObject *out_obj;
+    int hist_mode = 0;
+    int n_extra = FEAT_EXTRA_V1;
+
+    if (!PyArg_ParseTuple(args, "OO|ii", &boards_seq, &out_obj, &hist_mode, &n_extra))
+        return NULL;
+    if (!validate_encode_full_params(hist_mode, n_extra))
+        return NULL;
+
+    PyObject *seq = PySequence_Fast(boards_seq, "boards_seq must be a sequence of CBoard");
+    if (!seq) return NULL;
+    Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+
+    if (!PyArray_Check(out_obj)) {
+        Py_DECREF(seq);
+        PyErr_SetString(PyExc_TypeError, "out_ndarray must be a NumPy array");
+        return NULL;
+    }
+    PyArrayObject *out_arr = (PyArrayObject*)out_obj;
+    if (PyArray_TYPE(out_arr) != NPY_FLOAT32) {
+        Py_DECREF(seq);
+        PyErr_SetString(PyExc_ValueError, "out_ndarray must have dtype float32");
+        return NULL;
+    }
+    if (PyArray_NDIM(out_arr) != 4) {
+        Py_DECREF(seq);
+        PyErr_Format(PyExc_ValueError,
+                     "out_ndarray must have ndim 4, got %d", PyArray_NDIM(out_arr));
+        return NULL;
+    }
+    if (!PyArray_ISWRITEABLE(out_arr)) {
+        Py_DECREF(seq);
+        PyErr_SetString(PyExc_ValueError, "out_ndarray must be writable");
+        return NULL;
+    }
+    if (!PyArray_IS_C_CONTIGUOUS(out_arr)) {
+        Py_DECREF(seq);
+        PyErr_SetString(PyExc_ValueError, "out_ndarray must be C-contiguous");
+        return NULL;
+    }
+    if (!PyArray_ISALIGNED(out_arr)) {
+        Py_DECREF(seq);
+        PyErr_SetString(PyExc_ValueError, "out_ndarray must be aligned");
+        return NULL;
+    }
+    /* >= n (not ==): allows encoding into the head of a larger reusable
+     * buffer, matching the _mcts_tree.c batch-encode output contract. */
+    if (PyArray_DIM(out_arr, 0) < n) {
+        Py_DECREF(seq);
+        PyErr_Format(PyExc_ValueError,
+                     "out_ndarray shape[0] must be >= len(boards_seq) (%zd), got %zd",
+                     n, (Py_ssize_t)PyArray_DIM(out_arr, 0));
+        return NULL;
+    }
+    if (PyArray_DIM(out_arr, 1) != 112 + n_extra) {
+        Py_DECREF(seq);
+        PyErr_Format(PyExc_ValueError,
+                     "out_ndarray shape[1] must be 112+n_extra (%d), got %zd",
+                     112 + n_extra, (Py_ssize_t)PyArray_DIM(out_arr, 1));
+        return NULL;
+    }
+    if (PyArray_DIM(out_arr, 2) != 8 || PyArray_DIM(out_arr, 3) != 8) {
+        Py_DECREF(seq);
+        PyErr_Format(PyExc_ValueError,
+                     "out_ndarray spatial dims must be (8, 8), got (%zd, %zd)",
+                     (Py_ssize_t)PyArray_DIM(out_arr, 2),
+                     (Py_ssize_t)PyArray_DIM(out_arr, 3));
+        return NULL;
+    }
+
+    /* Collect the CBoard pointers under the GIL, then release it for the
+     * encode loop (pure C reads/writes, no Python API) so encode work can
+     * overlap other Python threads — same pattern as _mcts_tree.c's batch
+     * encode. `seq` keeps every board alive across the nogil region. */
+    const CBoard **board_ptrs = (const CBoard**)PyMem_Malloc(
+        (size_t)(n > 0 ? n : 1) * sizeof(CBoard*));
+    if (!board_ptrs) {
+        Py_DECREF(seq);
+        return PyErr_NoMemory();
+    }
+    for (Py_ssize_t i = 0; i < n; i++) {
+        PyObject *item = PySequence_Fast_GET_ITEM(seq, i);  /* borrowed */
+        if (!PyObject_TypeCheck(item, &PyCBoardType)) {
+            PyErr_Format(PyExc_TypeError,
+                         "boards_seq[%zd] must be a CBoard, got %s",
+                         i, Py_TYPE(item)->tp_name);
+            PyMem_Free(board_ptrs);
+            Py_DECREF(seq);
+            return NULL;
+        }
+        board_ptrs[i] = &((PyCBoard*)item)->board;
+    }
+
+    float *out_data = (float*)PyArray_DATA(out_arr);
+    size_t row_floats = (size_t)(112 + n_extra) * 64;
+    Py_BEGIN_ALLOW_THREADS
+    for (Py_ssize_t i = 0; i < n; i++) {
+        cboard_encode_full_into(board_ptrs[i], out_data + (size_t)i * row_floats,
+                                hist_mode, n_extra);
+    }
+    Py_END_ALLOW_THREADS
+
+    PyMem_Free(board_ptrs);
+    Py_DECREF(seq);
+    Py_RETURN_NONE;
+}
+
 static PyMethodDef methods[] = {
     {"set_history_rep_fix", py_set_history_rep_fix, METH_O,
      "set_history_rep_fix(enabled) -> None. Toggle the lc0-root per-slot "
@@ -1171,6 +1297,10 @@ static PyMethodDef methods[] = {
      "prepare_sf_multipv(rows, full_to_compact, encoded_size, raw_max, "
      "cp_sentinel, regret_cap, want_regret) -> (padded_rows, regret_or_none). "
      "Fused replay-finalization helper; compute loops release the GIL."},
+    {"encode_full_batch", py_encode_full_batch, METH_VARARGS,
+     "encode_full_batch(boards_seq, out_ndarray, hist_mode=0, n_extra=34) -> None. "
+     "Encode N CBoards into a pre-allocated (N, 112+n_extra, 8, 8) float32 array. "
+     "hist_mode: 0=full history, 1=lc0_root, 2=lc0_root_legacy_meta."},
     {NULL, NULL, 0, NULL}
 };
 
