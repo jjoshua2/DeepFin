@@ -199,7 +199,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_78.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_98.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -394,7 +394,7 @@ tune:
   distributed_inference_broker_enabled: true
   distributed_inference_shared_broker: false
   distributed_inference_batch_wait_ms: 20.0  # 2026-07-02 POC B: hard CAP for adaptive mode (was fixed 5.0 = sweep winner; if adaptive_idle_ms reverts to 0, set this back to 5.0)
-  distributed_inference_adaptive_idle_ms: 4.0  # 2026-07-16: 2.0 -> 4.0 coalescing arm (55.8% of forwards were <=32 rows; merge into fuller batches). Ledger "broker batch coalescing + b16". Restart-gated. KILL -> 2.0.
+  distributed_inference_adaptive_idle_ms: 2.0  # 2026-07-16: 4.0 arm KILLED by offline trace sim (scripts/sim_gather_policy.py): +14ms mean latency, zero rows/s gain — batches already gather all 16 slots; over-waiting just delays them. Sim says idle 1-2ms is within ~2% of the clairvoyant oracle. Restart-gated.
   distributed_inference_max_batch_per_slot: 1190
   distributed_inference_slots_per_worker: 4
   distributed_inference_use_compile: true
