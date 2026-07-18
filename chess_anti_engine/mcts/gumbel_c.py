@@ -296,6 +296,39 @@ def run_gumbel_root_many_c(
         and getattr(eval_impl, "n_slots", 1) >= _slots_needed
     )
 
+    def _root_legal_indices_for_eval(i: int) -> np.ndarray:
+        legal_idx = root_cboards[i].legal_move_indices()
+        if allowed_root_indices_batch is not None:
+            allowed_root_indices = allowed_root_indices_batch[i]
+            if allowed_root_indices is not None:
+                if allowed_root_indices:
+                    allowed_arr = np.fromiter(allowed_root_indices, dtype=np.int32)
+                    legal_idx = legal_idx[np.isin(legal_idx, allowed_arr)]
+                else:
+                    legal_idx = legal_idx[:0]
+        return legal_idx
+
+    # Broker clients already support compact BF16 legal-policy transport for
+    # leaves. Roots know their legal indices before the model call too, so an
+    # evaluator can explicitly opt in and avoid returning all POLICY_SIZE
+    # float32 logits. Direct/local evaluators keep their zero-copy dense path.
+    _use_compact_root = (
+        bool(getattr(eval_impl, "supports_compact_root_policy", False))
+        and pre_pol_logits is None
+        and pre_wdl_logits is None
+        and _has_legal_bf16
+        and _has_input_bf16
+        and not _inplace
+        and not cfg.compute_relations
+        and float(getattr(cfg, "policy_temp", 1.0)) == 1.0
+    )
+    _root_eval_legal = (
+        [_root_legal_indices_for_eval(i) for i in range(n_boards)]
+        if _use_compact_root else None
+    )
+    _root_compact_logits: list[np.ndarray] | None = None
+    pol_logits_batch: np.ndarray | None = None
+
     if pre_pol_logits is not None and pre_wdl_logits is not None:
         # Raw assignment only — the unconditional _policy_logits_to_full below
         # converts to full + applies policy_temp once for every path. Applying it
@@ -335,7 +368,26 @@ def run_gumbel_root_many_c(
         if cfg.compute_relations:
             root_rel = np.empty((n_boards, 5, 64, 64), dtype=np.uint8)
             batch_compute_relations(root_cboards, root_rel)
-        if _has_async:
+        if _use_compact_root:
+            assert _root_eval_legal is not None
+            legal_counts = np.fromiter(
+                (len(legal) for legal in _root_eval_legal),
+                dtype=np.int32,
+                count=n_boards,
+            )
+            legal_flat = np.concatenate(_root_eval_legal).astype(np.int32, copy=False)
+            compact_bits, wdl_logits_batch = eval_impl.evaluate_legal_bf16(  # pyright: ignore[reportAttributeAccessIssue]
+                xs, legal_flat, legal_counts,
+            )
+            compact_logits = (
+                torch.from_numpy(np.asarray(compact_bits, dtype=np.uint16))
+                .view(torch.bfloat16)
+                .float()
+                .numpy()
+            )
+            split_at = np.cumsum(legal_counts, dtype=np.int64)[:-1]
+            _root_compact_logits = list(np.split(compact_logits, split_at))
+        elif _has_async:
             pol_t, wdl_t, event = (
                 _async_eval.evaluate_encoded_async(xs, relations=root_rel)
                 if root_rel is not None else _async_eval.evaluate_encoded_async(xs)
@@ -349,7 +401,9 @@ def run_gumbel_root_many_c(
                 eval_impl.evaluate_encoded(xs, relations=root_rel)
                 if root_rel is not None else eval_impl.evaluate_encoded(xs)
             )
-    pol_logits_batch = _policy_logits_to_full(pol_logits_batch, cfg=cfg)
+    if _root_compact_logits is None:
+        assert pol_logits_batch is not None
+        pol_logits_batch = _policy_logits_to_full(pol_logits_batch, cfg=cfg)
 
   # Override root wdl_logits before root_qs is derived (root_qs seeds FPU
   # and the values_out initial pass). UCI may pass cached logits that already
@@ -390,15 +444,14 @@ def run_gumbel_root_many_c(
     _t0 = _time.perf_counter()
     for i in range(n_boards):
         root_cb = root_cboards[i]
-        legal_idx = root_cb.legal_move_indices()
-        if allowed_root_indices_batch is not None:
-            allowed_root_indices = allowed_root_indices_batch[i]
-            if allowed_root_indices is not None:
-                if allowed_root_indices:
-                    allowed_arr = np.fromiter(allowed_root_indices, dtype=np.int32)
-                    legal_idx = legal_idx[np.isin(legal_idx, allowed_arr)]
-                else:
-                    legal_idx = legal_idx[:0]
+        legal_idx = (
+            _root_eval_legal[i]
+            if _root_eval_legal is not None else _root_legal_indices_for_eval(i)
+        )
+        compact_ll = (
+            _root_compact_logits[i]
+            if _root_compact_logits is not None else None
+        )
 
         if root_cb.is_game_over():
             probs_out[i], actions_out[i], values_out[i], root_pri[i] = (
@@ -432,10 +485,16 @@ def run_gumbel_root_many_c(
             keep = ~np.isin(legal_idx, draw_arr)
             if keep.any():
                 legal_idx = legal_idx[keep]
+                if compact_ll is not None:
+                    compact_ll = compact_ll[keep]
         root_search_legal[i] = legal_idx
 
   # Softmax priors
-        ll = pol_logits_batch[i][legal_idx].astype(np.float64)
+        ll = (
+            compact_ll.astype(np.float64)
+            if compact_ll is not None
+            else cast(np.ndarray, pol_logits_batch)[i][legal_idx].astype(np.float64)
+        )
         ll -= ll.max()
         e = np.exp(ll)
         s = float(e.sum())

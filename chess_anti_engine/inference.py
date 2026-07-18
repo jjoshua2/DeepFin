@@ -2311,6 +2311,11 @@ class SlotInferenceClient:
     def supports_input_bf16_bits(self) -> bool:
         return True
 
+    @property
+    def supports_compact_root_policy(self) -> bool:
+        """Roots may reuse the compact legal-policy broker protocol."""
+        return True
+
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -2524,6 +2529,10 @@ class MultiSlotInferenceClient:
 
     @property
     def supports_input_bf16_bits(self) -> bool:
+        return True
+
+    @property
+    def supports_compact_root_policy(self) -> bool:
         return True
 
     def evaluate_legal_bf16(
