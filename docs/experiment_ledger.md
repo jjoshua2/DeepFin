@@ -4038,3 +4038,46 @@ precommitted gates. Median dispatcher batch size rose just 1.013x (569.87 to
 closed-loop workload. Remove the runtime prototype. Retain only the benchmark's
 production-checkpoint option so future dispatcher experiments use the deployed
 model rather than a synthetic smaller network.
+
+**OFFLINE — finer compiled ThreadedDispatcher buckets (2026-07-19; selfplay
+performance).** The clean production-checkpoint dispatcher runs above measured
+1.10 forwarded rows per useful leaf because the compiled ladder jumps directly
+from 512 to 680. Hypothesis: inserting only 576 and 640 will reduce wasted model
+rows without changing queue draining, wait policy, request ordering, search, or
+outputs. ONE deciding yardstick: two counterbalanced clean process pairs using
+`CAE_DISPATCH_FINE_BUCKETS=0/1 PYTHONPATH=. python3
+scripts/bench_dispatcher_gumbel.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
+50 --topk 16 --iters 5 --warmup-iters 10 --compile-mode reduce-overhead
+--dispatcher-batch-wait-ms 5 --dispatcher-target-batch 680`, alternating
+control/fine order. An arm is admissible only with `frames_ok=0` and
+`cudagraph_skips=0` during timing. SUCCESS: fine/control median timed leaves/s
+and games/s are both at least 1.03x, padding ratio falls, exact completed work
+is preserved, and focused dispatcher/Gumbel tests plus lint pass. KILL: either
+speed gate misses, any timed graph capture/skip, output/liveness failure, or
+the two extra compiled graphs add complexity/resource cost without the gain.
+Inference shape selection only; no model, targets, replay, config, RNG, or live
+state changes.
+**PRE-VERDICT SIMPLIFICATION ARM (2026-07-19).** The two-shape candidate's
+first clean pair improved leaves/s 1.021x while reducing padding 1.104x to
+1.011x; the reversed pair improved 1.076x with padding 1.100x to 1.015x. Its
+clean two-pair medians therefore pass at 1.048x leaves/s and games/s, but
+PyTorch warns when the second inserted shape raises this workload to nine CUDA
+graphs. Before promotion, repeat two clean runs with only bucket 576 selected
+by `CAE_DISPATCH_FINE_BUCKETS=576`. KEEP the simpler one-shape form only if its
+median remains >=1.03x the already-recorded control median and >=0.99x the
+two-shape candidate median, with no nine-shape warning; otherwise retain both
+only if the second bucket is needed for the original speed gate. The original
+correctness and timed-capture gates remain unchanged.
+**VERDICT: WORKED; KEEP ONLY BUCKET 576 (2026-07-19).** All six deciding and
+simplification arms were clean (`frames_ok=0`, `cudagraph_skips=0`) and
+completed identical work. Control runs measured 9,903.69 and 9,502.11 timed
+leaves/s (194.19 and 186.32 games/s). The two-shape candidate measured
+10,108.97 and 10,224.42 leaves/s (198.22 and 200.48 games/s), a clean median
+**1.048x** win, but emitted PyTorch's nine-distinct-CUDA-graphs warning. The
+576-only simplification measured 10,118.00 and 10,441.03 leaves/s (198.39 and
+204.73 games/s): median **1.059x control** and **1.011x the two-shape form**.
+Median padding fell from 1.102x to 1.017x, while the one-shape form emitted no
+graph-count warning. Promote one dispatcher-local 576 bucket; do not add 640
+or alter the shared broker/AOT ladder.
