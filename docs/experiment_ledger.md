@@ -3837,12 +3837,56 @@ holding all search lanes for ~70-100 ms.  A round-robin fair 680-row global
 target should dispatch immediately once capacity is reached, return early
 lanes sooner, and overlap their CPU tree work with subsequent GPU forwards.
 YARDSTICK (deciding): broker-backed 4-worker x 32-thread Gumbel A/B, five
-repeats, unlimited baseline versus targets 512/680/1020, judged on actual
-positions/s and p95 request latency.  SUCCESS: >=5% positions/s with no p95
+repeats, unlimited baseline versus targets 512/680/1020, using
+`for target in 0 512 680 1020; do PYTHONPATH=. python3
+scripts/bench_production_sf_workers.py --publish-dir
+/home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --orders 8,8,8,8,8
+--workers 4 --threads 32 --games-per-thread 1 --slots 4 --max-plies 10
+--target-batch "$target"; done`, judged on actual positions/s and p95 request
+latency.  SUCCESS: >=5% positions/s with no p95
 regression, or >=3% positions/s with >=15% p95 improvement.  KILL: throughput
 regression, starvation/unfairness, illegal output, deadlock, or no target
 meeting the success rule.  Numerical model parity uses existing tolerances;
 different stochastic Gumbel actions are not a failure by themselves.
+**VERDICT: KILLED BEFORE COMPARISON (2026-07-18).** The replacement full-selfplay
+yardstick was not sensitive to broker batching: 32 Stockfish processes stayed
+near one CPU core each while GPU utilization fell to 0%, steady broker batches
+had already shrunk to roughly 304-429 rows after the compact-root merge, and
+the long tail was SF-bound at only one ready slot. Continuing four five-repeat
+arms would measure Stockfish/opponent duty cycle, not a 3-5% broker effect.
+The run was stopped and all broker/worker/SF processes were cleaned up. No
+target verdict is inferred from this invalid workload.
+
+**OFFLINE — fair global broker batch target, Gumbel-only retry (2026-07-18;
+perf-only).** Hypothesis and thresholds are unchanged, but the deciding
+yardstick removes Stockfish/replay/finalization so the closed loop stays
+broker/GPU-sensitive while retaining 4 worker processes x 32 concurrent
+Gumbel producers x 4 shared slots. ONE deciding yardstick:
+`for target in 0 512 680 1020; do PYTHONPATH=. python3
+scripts/bench_broker_gumbel_target.py --publish-dir
+/home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --target-batch
+"$target" --workers 4 --threads 32 --slots 4 --boards-per-thread 4
+--simulations 50 --iterations 3 --repeats 5; done`. SUCCESS: any target gives
+at least 5% median inference positions/s with no p95 request-latency regression,
+or at least 3% positions/s with at least 15% lower median p95. KILL: no arm
+meets that rule, any worker contributes zero work, illegal/output failure,
+deadlock, broker recovery, or fairness spread beyond the baseline's normal
+worker range. Different stochastic actions are permitted.
+**VERDICT: KILLED (2026-07-18, five-repeat quiet-GPU closed loop).** Unlimited
+baseline measured 13,635.79 median inference positions/s and 665.67 ms median
+p95 request latency. Target 512 measured 13,871.70 positions/s (+1.73%) and
+639.97 ms p95 (-3.86%); target 680 measured 14,038.51 (+2.95%) and 642.30 ms
+(-3.51%); target 1020 measured 13,815.06 (+1.31%) and 644.80 ms (-3.13%). No
+arm met either success rule. Every arm had the same tight worker-work range
+(19,434-19,578 positions), so fairness was sound, but the small gain does not
+justify round-robin cursor state, whole-slot packing rules, a new broker CLI,
+and a new live config key. Remove the target implementation and retain the
+legacy all-ready drain. The dedicated harness correctly exposed the post-
+compact-root steady shape (~470 rows at target 512, ~605 at 680, ~623-637
+unlimited) and remains useful only if a substantially different batching
+architecture is proposed.
 
 **OFFLINE — compact legal-policy transport for Gumbel roots (2026-07-18;
 perf-only, no live activation).** Hypothesis: the C Gumbel leaf path already
