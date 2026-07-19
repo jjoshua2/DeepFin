@@ -542,8 +542,8 @@ def main() -> None:
     ap.add_argument(
         "--dispatcher-batch-wait-ms",
         type=float,
-        default=1.0,
-        help="ThreadedDispatcher batching window in ms (latency vs batch fill).",
+        default=0.0,
+        help="ThreadedDispatcher batching window in ms (default: 0; no fixed wait).",
     )
     ap.add_argument(
         "--dispatcher-max-batch",

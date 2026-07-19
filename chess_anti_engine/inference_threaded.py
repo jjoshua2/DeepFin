@@ -128,7 +128,7 @@ class ThreadedDispatcher:
         device: str = "cuda",
         max_batch: int = 4096,
         target_batch: int | None = None,
-        batch_wait_ms: float = 1.0,
+        batch_wait_ms: float = 0.0,
         compile_mode: str | None = None,
         input_bf16: bool = False,
         legal_bf16: bool = True,
