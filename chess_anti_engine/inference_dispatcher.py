@@ -97,6 +97,13 @@ class ThreadSafeGPUDispatcher:
     def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
         return self._eval.get_input_buffer(bsz, slot=slot)  # pyright: ignore[reportAttributeAccessIssue]
 
+    def get_input_buffer_bf16_bits(self, bsz: int, slot: int = 0) -> np.ndarray:
+  # gumbel_c gates on supports_input_bf16_bits (forwarded above) AND
+  # hasattr of this getter; without the forwarder the wrapped
+  # AOTEvaluator/DirectGPUEvaluator bf16 zero-copy path silently fell
+  # back to float32 staging.
+        return self._eval.get_input_buffer_bf16_bits(bsz, slot=slot)  # pyright: ignore[reportAttributeAccessIssue]
+
     def evaluate_inplace(
         self, bsz: int, *, copy_out: bool = True, slot: int = 0,
         relations: np.ndarray | None = None,
