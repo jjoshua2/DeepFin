@@ -183,11 +183,18 @@ def _make_evaluator_factory(
     use_relations = bool(getattr(models[0], "use_dynamic_relations", False))
     compact_bf16 = os.environ.get("CAE_UCI_COMPACT_BF16", "0") == "1"
 
+  # Live-updatable walker count: the runtime `Threads` setoption crosses
+  # the dispatcher tier (CUDAOwner at 1 walker vs BatchCoalescing at >1),
+  # so rebuilds must see the NEW count, and later rebuilds (MaxBatch /
+  # EvalCacheEntries) must keep it — hence remembered, not re-frozen.
+    walker_state = {"n_walkers": int(n_walkers)}
+
     def build(
         max_batch: int,
         eval_cache_entries: int = 0,
         *,
         primary_only: bool = False,
+        n_walkers: int | None = None,
     ):
         """Build a primary (root / walker) evaluator stack.
 
@@ -198,6 +205,9 @@ def _make_evaluator_factory(
         evaluator/buffer/cudagraph memory after auto-enable made the pool
         the multi-device default.
         """
+        if n_walkers is not None:
+            walker_state["n_walkers"] = max(1, int(n_walkers))
+        nw = walker_state["n_walkers"]
         active_models = models
         active_devices = devices
         if primary_only and len(devices) > 1:
@@ -238,8 +248,8 @@ def _make_evaluator_factory(
   # the heavier coalescer so their requests can still become one GPU batch.
   # For eager evaluation coalescing is only a batching optimization, so
   # --no-coalesce can bypass it.
-        if compile_mode is not None or (coalesce and n_walkers > 1):
-            if compile_mode is not None and n_walkers == 1:
+        if compile_mode is not None or (coalesce and nw > 1):
+            if compile_mode is not None and nw == 1:
                 evaluator = CUDAOwnerDispatcher(evaluator)
             else:
                 evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
@@ -255,7 +265,7 @@ def _make_evaluator_factory(
                 evaluator, max_entries=int(eval_cache_entries),
             )
         _warmup_evaluator(
-            warm_target, n_walkers=n_walkers, walker_gather=walker_gather,
+            warm_target, n_walkers=nw, walker_gather=walker_gather,
             n_devices=len(active_devices),
             input_history_encoding=input_history_encoding,
             input_extra_features=input_extra_features,
@@ -779,10 +789,12 @@ def main() -> int:
   # MaxBatch / UseMultiGpuPUCV toggles keep the sizing correct.
             def rebuild_evaluator(
                 max_batch: int, eval_cache_entries: int = 0,
+                *, n_walkers: int | None = None,
             ):
                 return build_eval(
                     max_batch,
                     eval_cache_entries,
+                    n_walkers=n_walkers,
                     primary_only=bool(
                         startup_options.use_multi_gpu_pucv
                         and startup_options.search_parallel == "pucv"

@@ -6,7 +6,12 @@ import numpy as np
 import pytest
 import torch
 
-from chess_anti_engine.inference_dispatcher import CUDAOwnerDispatcher
+from chess_anti_engine.inference_cache import EncodedEvalCache
+from chess_anti_engine.inference_dispatcher import (
+    CUDAOwnerDispatcher,
+    ThreadSafeGPUDispatcher,
+    supports_inplace_api,
+)
 
 
 class _OwnerInner:
@@ -25,7 +30,10 @@ class _OwnerInner:
     def get_input_buffer_bf16_bits(self, bsz: int, slot: int = 0) -> np.ndarray:
         return self.inputs[slot][:bsz].view(np.uint16)
 
-    def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations
         self.calls.append(("sync", threading.get_ident()))
         return np.zeros((x.shape[0], 8), dtype=np.float32), np.zeros((x.shape[0], 3))
 
@@ -60,3 +68,50 @@ def test_cuda_owner_close_is_idempotent_and_rejects_work() -> None:
     dispatcher.close()
     with pytest.raises(RuntimeError, match="closed"):
         dispatcher.evaluate_encoded(np.zeros((1, 4, 8, 8), dtype=np.float32))
+
+
+class _SlotlessInner:
+    """Evaluator without the pinned slot-pool API (e.g. MultiGPUDispatcher)."""
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations
+        return np.zeros((x.shape[0], 8), dtype=np.float32), np.zeros((x.shape[0], 3))
+
+
+def test_supports_inplace_api_plain_evaluators() -> None:
+    assert supports_inplace_api(_OwnerInner()) is True
+    assert supports_inplace_api(_SlotlessInner()) is False
+
+
+def test_supports_inplace_api_wrappers_query_inner() -> None:
+    # hasattr on the wrappers lies (forwarders are defined unconditionally);
+    # the explicit probe must not.
+    assert hasattr(ThreadSafeGPUDispatcher(_SlotlessInner()), "get_input_buffer")
+    assert ThreadSafeGPUDispatcher(_SlotlessInner()).supports_inplace_api is False
+    assert ThreadSafeGPUDispatcher(_OwnerInner()).supports_inplace_api is True
+
+    dispatcher = CUDAOwnerDispatcher(_SlotlessInner())
+    try:
+        assert supports_inplace_api(dispatcher) is False
+    finally:
+        dispatcher.close()
+    dispatcher = CUDAOwnerDispatcher(_OwnerInner())
+    try:
+        assert supports_inplace_api(dispatcher) is True
+    finally:
+        dispatcher.close()
+
+
+def test_supports_inplace_api_composes_through_cache_and_nesting() -> None:
+    dispatcher = CUDAOwnerDispatcher(ThreadSafeGPUDispatcher(_OwnerInner()))
+    try:
+        cached = EncodedEvalCache(dispatcher, max_entries=16)
+        assert supports_inplace_api(cached) is True
+    finally:
+        dispatcher.close()
+    cached_slotless = EncodedEvalCache(
+        ThreadSafeGPUDispatcher(_SlotlessInner()), max_entries=16,
+    )
+    assert supports_inplace_api(cached_slotless) is False

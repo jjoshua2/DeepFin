@@ -154,6 +154,20 @@ class ThreadedDispatcher:
         self._batch_wait_s = float(batch_wait_ms) / 1000.0
         self._compile_mode = compile_mode
         self._device = device
+  # Effective bucket ladder, clamped to max_batch (an off-ladder
+  # max_batch like 1000 must never round a batch UP past it — the
+  # evaluator's get_input_buffer hard-errors above max_batch).
+        ladder = tuple(b for b in _DISPATCH_BATCH_BUCKETS if b <= self._max_batch)
+        if not ladder or ladder[-1] != self._max_batch:
+            ladder = (*ladder, self._max_batch)
+        self._buckets = ladder
+  # Set once by the dispatcher thread on a fatal error (compile failure,
+  # loop crash); poisons all queued/future submits so producers fail
+  # loud instead of hanging on a dead thread.
+        self._fatal_exc: BaseException | None = None
+  # Requests submitted to the GPU but not yet scattered; _poison fails
+  # these too if the loop dies between submit and scatter.
+        self._inflight_items: list[QueueItem] = []
 
         self._queue: collections.deque[QueueItem] = collections.deque()
         self._lock = threading.Lock()
@@ -200,9 +214,30 @@ class ThreadedDispatcher:
             )
         future: concurrent.futures.Future = concurrent.futures.Future()
         with self._cond:
+            self._raise_if_poisoned()
             self._queue.append(_EvalRequest(x, future))
             self._cond.notify()
         return future
+
+    def _raise_if_poisoned(self) -> None:
+        """Caller must hold ``self._cond``/``self._lock``."""
+        if self._fatal_exc is not None:
+            raise RuntimeError(
+                "ThreadedDispatcher thread died"
+            ) from self._fatal_exc
+
+    def _wait_result(self, future: concurrent.futures.Future):
+  # No-timeout result() hangs forever if the dispatcher thread died
+  # between enqueue and dispatch. Poll with a generous timeout: legit
+  # recompiles can take minutes, so only a dead thread aborts the wait.
+        while True:
+            try:
+                return future.result(timeout=30.0)
+            except concurrent.futures.TimeoutError:
+                if not self._thread.is_alive():
+                    raise RuntimeError(
+                        "ThreadedDispatcher thread died while awaiting result"
+                    ) from self._fatal_exc
 
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,
@@ -213,7 +248,7 @@ class ThreadedDispatcher:
                 "use worker-local direct inference (see "
                 "check_dynamic_relations_transport)"
             )
-        return self.evaluate(x).result()
+        return self._wait_result(self.evaluate(x))
 
     @property
     def supports_legal_bf16(self) -> bool:
@@ -233,13 +268,14 @@ class ThreadedDispatcher:
             )
         future: concurrent.futures.Future = concurrent.futures.Future()
         with self._cond:
+            self._raise_if_poisoned()
             self._queue.append(_EvalRequest(
                 x, future,
                 np.asarray(legal_flat, dtype=np.int32),
                 np.asarray(legal_counts, dtype=np.int32),
             ))
             self._cond.notify()
-        return future.result()
+        return self._wait_result(future)
 
     def shutdown(self, timeout: float = 5.0) -> None:
         with self._cond:
@@ -310,15 +346,18 @@ class ThreadedDispatcher:
 
     def update_model(self, model: torch.nn.Module) -> None:
         if not self._thread.is_alive():
-            raise RuntimeError("dispatcher thread died")
+            raise RuntimeError("dispatcher thread died") from self._fatal_exc
         done = threading.Event()
         result: dict[str, BaseException] = {}
         with self._cond:
+            self._raise_if_poisoned()
             self._queue.append(_ModelUpdateRequest(model, done, result))
             self._cond.notify()
         while not done.wait(timeout=5.0):
             if not self._thread.is_alive():
-                raise RuntimeError("dispatcher thread died during model update")
+                raise RuntimeError(
+                    "dispatcher thread died during model update"
+                ) from self._fatal_exc
         if "error" in result:
             raise RuntimeError("dispatcher model update failed") from result["error"]
 
@@ -422,16 +461,51 @@ class ThreadedDispatcher:
             else:
                 self._evaluator.model = item.model
             self._evaluator.model.eval()
-        except BaseException:
+        except BaseException as primary_exc:
+            logger.warning(
+                "dispatcher strict-load model update failed (%r); "
+                "falling back to a from-scratch recompile", primary_exc,
+            )
             try:
                 self._evaluator.model = self._compile_model_on_dispatcher(item.model)
                 self._evaluator.model.eval()
             except BaseException as fallback_exc:
                 item.result["error"] = fallback_exc
+                item.done.set()
+  # A failed strict load may have partially overwritten weights;
+  # poison the dispatcher rather than keep serving them.
+                raise
         finally:
             item.done.set()
 
     def _dispatch_loop(self) -> None:
+  # Any exception escaping the loop (incl. the initial on-thread
+  # compile) would otherwise kill this daemon thread silently and leave
+  # every producer blocked in future.result() forever.
+        try:
+            self._dispatch_loop_inner()
+        except BaseException as exc:
+            logger.exception("dispatcher thread died: %s", exc)
+            self._poison(exc)
+
+    def _poison(self, exc: BaseException) -> None:
+        """Record the fatal error and fail all queued + in-flight requests."""
+        with self._cond:
+            self._fatal_exc = exc
+            stranded = list(self._queue)
+            self._queue.clear()
+            inflight = self._inflight_items
+            self._inflight_items = []
+            self._cond.notify_all()
+        for item in stranded + inflight:
+            if isinstance(item, _EvalRequest):
+                if not item.future.done():
+                    item.future.set_exception(exc)
+            else:
+                item.result["error"] = exc
+                item.done.set()
+
+    def _dispatch_loop_inner(self) -> None:
         self._evaluator.model = self._compile_model_on_dispatcher(self._evaluator.model)
 
   # Two-slot async pipeline. While the GPU runs forward K (slot s),
@@ -504,6 +578,9 @@ class ThreadedDispatcher:
                 self._apply_model_update(model_update)
 
             pending = next_handle
+            self._inflight_items = (
+                list(pending.items) if pending is not None else []
+            )
 
             if self._stop and not self._queue and pending is None:
                 return
@@ -522,7 +599,7 @@ class ThreadedDispatcher:
         scattering to futures.
         """
         real_n = sum(item.encoded.shape[0] for item in items)
-        bucket = _next_bucket(real_n)
+        bucket = _next_bucket(real_n, self._buckets)
         compact = items[0].legal_flat is not None and items[0].legal_counts is not None
         input_bf16 = items[0].encoded.dtype == np.uint16 and ev.supports_input_bf16_bits
         real_pol_n = real_n
