@@ -3998,3 +3998,43 @@ showing that launch/runtime variance dominates this small mechanism read.
 Do not add target-based batch splitting, alternate broker staging buffers, or
 prepare/submit/scatter state machines for this result. The one-off benchmark
 was removed.
+
+**OFFLINE — target/deadline ThreadedDispatcher gathering (2026-07-19;
+selfplay performance).** The local threaded-selfplay dispatcher advertises a
+batch wait and target, but each producer notification currently ends the wait
+after only one additional request; therefore neither the configured 5 ms
+deadline nor 680-row target controls the gathered batch deterministically.
+Hypothesis: while the current GPU submit is still in flight, continue condition
+waiting across notifications until compatible queued rows reach the target, the
+GPU result becomes ready, or the deadline expires. This should form fuller next
+batches without inserting idle GPU time. ONE deciding yardstick: three
+counterbalanced legacy/target process pairs on the production checkpoint using
+`PYTHONPATH=. python3 scripts/bench_dispatcher_gumbel.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
+50 --topk 16 --iters 3 --warmup-iters 2 --compile-mode reduce-overhead
+--dispatcher-batch-wait-ms 5 --dispatcher-target-batch 680`, alternating
+`CAE_DISPATCH_TARGET_WAIT=0/1`. SUCCESS: target/legacy median timed dispatcher
+leaf throughput >=1.05x, games/s >=1.03x, no worker error/deadlock, exact total
+completed actions and simulations, focused threaded-dispatcher/Gumbel tests and
+lint pass. KILL: either speed gate misses, batch padding grows enough to reduce
+leaf throughput, or any correctness/liveness failure. Selfplay inference
+scheduling only; no model, targets, replay, config, RNG, or live state changes.
+**PROTOCOL AMENDMENT BEFORE A VALID READ (2026-07-19).** Two warmup iterations
+did not cover the stochastic compiled bucket set: one target arm and two legacy
+arms each reported `frames_ok=1` during timing and are invalid. The only clean
+pair (`frames_ok=0`) measured 9,057 legacy versus 8,651 target leaves/s, already
+directionally negative. Repeat the deciding comparison with 10 warmup
+iterations and five timed iterations; an arm is admissible only when
+`frames_ok=0` and `cudagraph_skips=0`. Two clean counterbalanced pairs replace
+the invalid three-pair read; success/kill thresholds are unchanged.
+**VERDICT: REJECTED (2026-07-19).** Both amended pairs were clean
+(`frames_ok=0`, `cudagraph_skips=0`). Legacy runs measured 9,735.36 and
+9,653.96 timed leaves/s and 190.89 and 189.29 games/s; target/deadline runs
+measured 9,693.03 and 9,811.76 leaves/s and 190.06 and 192.39 games/s. Median
+target/legacy was only **1.006x leaves/s and 1.006x games/s**, missing both
+precommitted gates. Median dispatcher batch size rose just 1.013x (569.87 to
+577.13 rows), so repeated condition waiting did not materially change the
+closed-loop workload. Remove the runtime prototype. Retain only the benchmark's
+production-checkpoint option so future dispatcher experiments use the deployed
+model rather than a synthetic smaller network.
