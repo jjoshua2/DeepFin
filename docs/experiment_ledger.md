@@ -4122,3 +4122,45 @@ occurred. Same-device rates of 4,253-5,140 sims/s are intentionally not a
 multi-GPU performance claim. Both the shared-tree PUCV and root-partitioned
 Gumbel designs therefore pass eager functional validation; compiled behavior
 and scaling still require distinct GPUs.
+
+**OFFLINE — compiled-without-CUDA-graphs duplicate-device multi-GPU smoke
+(2026-07-19; correctness only, no scaling claim).** Eager validation excludes
+all Inductor kernels, while ordinary `max-autotune` cannot put two independent
+CUDA-graph pools on the same physical RTX 5090. PyTorch's supported
+`max-autotune-no-cudagraphs` mode separates those layers: compiled/autotuned
+kernels remain, but graph capture is disabled. Hypothesis: both multi-GPU
+orchestrators can complete under this mode with two logical `cuda:0` groups,
+covering compiled model construction and execution while leaving only
+distinct-device CUDA graphs/scaling untested. ONE deciding yardstick: run the
+two established 8,192-node commands from the immediately preceding eager RPG
+and PUCV entries, replacing `--no-compile` with `--compile-mode
+max-autotune-no-cudagraphs`. SUCCESS: every one of five positions in each mode
+reports at least 8,192 actual nodes, a legal nonempty bestmove, 2/2 active
+workers/groups, no CUDA/search/deadlock/shutdown failure. KILL: any short
+search, inactive worker/group, compile/CUDA failure, or hang. Same-device NPS
+is diagnostic only and cannot promote or retire either architecture; real
+multi-GPU CUDA-graph scaling remains separately gated.
+**MAX-AUTOTUNE ARM VERDICT: FAILED STARTUP GATE (2026-07-19).** The RPG
+process did not reproduce the CUDA mempool-recording exception and progressed
+through compiled sequential-halving phases, but two cold evaluator stacks were
+still autotuning when the harness timed out waiting for `readyok` after 600
+seconds. This mode is therefore operationally unsuitable for a cold match
+launch even before throughput is considered. PyTorch 2.10 reports `default:
+{}` while the process-wide `triton.cudagraphs` default is false, so run one
+supplemental practical arm with `--compile-mode default` under the identical
+RPG and PUCV commands. SUCCESS/KILL correctness criteria are unchanged, and
+startup must fit the existing 600-second bound; this tests ordinary Inductor
+compilation without either autotuning or CUDA graphs.
+**DEFAULT NO-GRAPH VERDICT: WORKED (2026-07-19; correctness scope).** The RPG
+arm reached `readyok` in roughly five minutes, then completed all five
+positions at 8,192 actual nodes with legal bestmoves, 2/2 active groups, group
+work ranging 714-1,334 sims, and clean shutdown. The immediately following
+PUCV arm reused the Inductor cache, reached ready in under 30 seconds, and
+completed all five positions at 8,192 nodes with 2/2 active workers and
+exactly 2,048 leaves per worker per reported search chunk. Same-device rates
+were RPG 107-1,079 sims/s on the four non-endgame positions (4,850 endgame)
+versus PUCV 4,698-5,108 sims/s, diagnostic only; contention and different
+algorithms forbid a scaling claim. Ordinary compiled kernels therefore work
+without CUDA graphs on the duplicate-device harness. Max-autotune-no-graphs is
+too slow cold; default compile is the useful functional fallback. Distinct-GPU
+CUDA-graph scaling remains the final hardware-only gap.
