@@ -582,7 +582,8 @@ def test_engine_max_batch_reinstalls_gumbel() -> None:
         builds.append((mb, g))
         return [_make_evaluator, _make_evaluator]
 
-    def rebuild_eval(mb: int, _cache: int) -> Any:
+    def rebuild_eval(mb: int, _cache: int = 0, *, n_walkers: int | None = None) -> Any:
+        del n_walkers
         return _make_evaluator(max_batch=mb)
 
     engine = Engine(
@@ -691,7 +692,8 @@ def test_use_multi_gpu_pucv_forces_search_parallel_pucv() -> None:
     def factories(_mb: int, _g: int) -> list[Any]:
         return [_make_evaluator, _make_evaluator]
 
-    def rebuild_eval(mb: int, _cache: int) -> Any:
+    def rebuild_eval(mb: int, _cache: int = 0, *, n_walkers: int | None = None) -> Any:
+        del n_walkers
         return _make_evaluator(max_batch=mb)
 
     engine = Engine(
@@ -776,7 +778,8 @@ def test_option_matrix_multi_gpu_transitions() -> None:
     def factories(_mb: int, _g: int) -> list[Any]:
         return [_make_evaluator, _make_evaluator]
 
-    def rebuild_eval(mb: int, _cache: int) -> Any:
+    def rebuild_eval(mb: int, _cache: int = 0, *, n_walkers: int | None = None) -> Any:
+        del n_walkers
         return _make_evaluator(max_batch=mb)
 
     def live_path(worker: SearchWorker) -> str:

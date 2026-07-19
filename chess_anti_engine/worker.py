@@ -900,6 +900,13 @@ class WorkerSession:
     ) -> DirectGPUEvaluator | ThreadedDispatcher | AOTEvaluator:
         device = str(self.device)
         if self.args.threaded_selfplay:
+            if self.args.aot_dir:
+                raise ValueError(
+                    "--aot-dir is incompatible with --threaded-selfplay: the "
+                    "ThreadedDispatcher compiles on its own thread and ignores "
+                    "AOT artifacts, so it would silently run eager. Use "
+                    "--compile-inference instead (or drop --threaded-selfplay)."
+                )
             disp_compile = (
                 str(self.args.compile_mode) if self.args.compile_inference else None
             )
