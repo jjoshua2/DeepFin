@@ -21,16 +21,21 @@ import time
 from typing import Any
 
 
-def _build_model(compile_mode: str | None):
+def _build_model(compile_mode: str | None, checkpoint: str | None):
     import torch
 
-    from chess_anti_engine.model import ModelConfig, build_model
+    if checkpoint:
+        from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
-    cfg = ModelConfig(
-        kind="transformer", embed_dim=384, num_layers=9, num_heads=12,
-        ffn_mult=1.5, use_smolgen=True, use_nla=False,
-    )
-    model = build_model(cfg).cuda().eval()
+        model = load_model_from_checkpoint(checkpoint, device="cuda")
+    else:
+        from chess_anti_engine.model import ModelConfig, build_model
+
+        cfg = ModelConfig(
+            kind="transformer", embed_dim=384, num_layers=9, num_heads=12,
+            ffn_mult=1.5, use_smolgen=True, use_nla=False,
+        )
+        model = build_model(cfg).cuda().eval()
     if compile_mode:
         model = torch.compile(model, mode=compile_mode)
     return model
@@ -74,6 +79,7 @@ def _run_in_subprocess(
     simulations: int,
     topk: int,
     compile_mode: str | None,
+    checkpoint: str | None,
     dispatcher_batch_wait_ms: float,
     dispatcher_target_batch: int,
     iters: int,
@@ -89,7 +95,7 @@ def _run_in_subprocess(
         # ThreadedDispatcher compiles on its own thread so cudagraph TLS lives
         # on the thread that does the forward. DirectGPU compiles here.
         compile_on_main = compile_mode if path != "ThreadedDispatcher" else None
-        model: Any = _build_model(compile_on_main)
+        model: Any = _build_model(compile_on_main, checkpoint)
 
         if path == "DirectGPU":
             evaluator: Any = DirectGPUEvaluator(model, device="cuda", max_batch=4096)
@@ -201,6 +207,7 @@ def _run_in_subprocess(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--checkpoint", type=str, default=None)
     ap.add_argument("--compile-mode", type=str, default="reduce-overhead")
     ap.add_argument("--total-games", type=int, default=400)
     ap.add_argument("--threads", type=int, default=16)
@@ -294,7 +301,8 @@ def main() -> None:
         q: mp.Queue = mp.Queue()
         p = mp.Process(target=_run_in_subprocess, args=(
             name, n_threads, games_per_thread, args.simulations, args.topk,
-            compile_mode, float(wait_ms), int(target_batch), args.iters, args.warmup_iters, q,
+            compile_mode, args.checkpoint, float(wait_ms), int(target_batch),
+            args.iters, args.warmup_iters, q,
         ))
         p.start()
         p.join(timeout=900)
