@@ -10,8 +10,10 @@ from scripts.mine_blindspot_seeds import (
     build_seed_record,
     deepfin_color,
     find_first_collapse,
+    load_existing_keys,
     mine_game,
     position_key,
+    seed_blindspot_key,
 )
 
 _LINE = ["e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "f3g5", "d7d5"]
@@ -85,7 +87,6 @@ def test_build_seed_record_appends_blunder_and_refute() -> None:
     """With refute_uci, terminal is after historical blunder + SF reply (net STM)."""
     fens = [_fen_after(_LINE, i) for i in range(len(_LINE) + 1)]
     # ply 6 = white's f3g5 blunder seat; black's historical reply is d7d5 (_LINE[7]).
-    # Use a different legal refute (e.g. d8f6 is not legal here — use d7d5 as SF "best").
     refute = _LINE[7]  # d7d5 — legal after f3g5
     rec = build_seed_record(
         fens, list(_LINE), 6, history_plies=3, provenance="x", refute_uci=refute,
@@ -94,9 +95,23 @@ def test_build_seed_record_appends_blunder_and_refute() -> None:
     board = seed_board_from_line(body)
     # Terminal = after blunder (f3g5) + refute (d7d5) = fens[8]
     assert board.fen() == fens[8]
-    # history 3 preceding + blunder + refute = 5 plies on the stack
-    assert len(board.move_stack) == 5
+    # history_plies=3 reserves 2 for blunder+refute → 1 preceding + 2 = 3 on stack
+    assert len(board.move_stack) == 3
     assert board.turn == chess.WHITE  # net (white) STM after one punish
+
+
+def test_build_seed_record_refute_clamps_total_to_history_plies() -> None:
+    """Default history_plies=8 + refute still yields ≤8 UCIs (LC0 window)."""
+    fens = [_fen_after(_LINE, i) for i in range(len(_LINE) + 1)]
+    rec = build_seed_record(
+        fens, list(_LINE), 6, history_plies=8, provenance="x", refute_uci=_LINE[7],
+    )
+    body = rec.split("#", 1)[0].strip()
+    board = seed_board_from_line(body)
+    assert board.fen() == fens[8]
+    # 6 approach available, but clamped to 8-2=6 preceding + blunder + refute would be 8;
+    # j=6 so preceding = min(6, 6) = 6, total 8.
+    assert len(board.move_stack) == 8
 
 
 def test_resolve_refute_uci_returns_legal_best() -> None:
@@ -201,8 +216,10 @@ def test_mine_game_appends_refute_ply_when_enabled() -> None:
     board = seed_board_from_line(body)
     assert board.fen() == post_refute             # terminal post-punish
     assert board.turn == chess.WHITE
+    assert len(board.move_stack) <= 8             # history_plies budget (clamped)
     assert "refute=d7d5" in record
     assert "ply=6" in record
+    assert seed_blindspot_key(record) == position_key(seed_fen)
 
 
 def test_mine_game_refute_falls_back_when_bestmove_missing() -> None:
@@ -221,3 +238,91 @@ def test_mine_game_refute_falls_back_when_bestmove_missing() -> None:
     board = seed_board_from_line(record.split("#", 1)[0].strip())
     assert board.fen() == seed_fen
     assert "refute=" not in record
+
+
+def test_mine_game_refute_falls_back_when_post_refute_loader_rejects() -> None:
+    """Legal SF reply that leaves a terminal/forced position → bare blind-spot."""
+    # Scholar's mate line: after white Qh5 (ply 4), black Qf6? No — need a
+    # position where post-blunder SF bestmates. Use K+Q vs K endgame craft:
+    # White to move at blind-spot blunders into a mate-in-1 for black.
+    # Simpler: monkeypatch _fen_reject_reason via a refute that is legal but
+    # we force reject by choosing a real mate reply.
+    #
+    # Position: white king e1, black king e8, white queen d1, black queen a5 —
+    # too heavy. Instead: use _LINE collapse path and a bestmove that is legal
+    # after f3g5 but produce a seed we mark by patching reject for that body only.
+    from unittest.mock import patch
+
+    game = _game(_LINE)
+    blunder_after = _fen_after(_LINE, 7)
+    seed_fen = _fen_after(_LINE, 6)
+    refute = "d7d5"
+
+    def best(fen: str, _n: int) -> str | None:
+        return refute if fen == blunder_after else None
+
+    def reject_post_refute_only(line: str) -> str | None:
+        # Reject only when the body already includes blunder+refute (longer stack).
+        body = line.split("#", 1)[0].strip()
+        board = seed_board_from_line(body)
+        if board.fen() == _fen_after(_LINE, 8):
+            return "terminal position"
+        return None
+
+    with patch("scripts.mine_blindspot_seeds._fen_reject_reason", side_effect=reject_post_refute_only):
+        out = mine_game(
+            game, name_needle="deepfin", sf_eval=_fake_sf(blunder_after),
+            src="t.pgn", sf_nodes=1, collapse_cp=-150, history_plies=8,
+            append_refute_ply=True, sf_bestmove=best,
+        )
+    assert len(out) == 1
+    record, key = out[0]
+    assert key == position_key(seed_fen)
+    board = seed_board_from_line(record.split("#", 1)[0].strip())
+    assert board.fen() == seed_fen
+    assert "refute=" not in record
+
+
+def test_seed_blindspot_key_walks_back_refute() -> None:
+    fens = [_fen_after(_LINE, i) for i in range(len(_LINE) + 1)]
+    rec = build_seed_record(
+        fens, list(_LINE), 6, history_plies=8, provenance="ply=6 refute=d7d5",
+        refute_uci="d7d5",
+    )
+    assert seed_blindspot_key(rec) == position_key(fens[6])
+    # Bare seed keys terminal (= blind-spot).
+    bare = build_seed_record(fens, list(_LINE), 6, history_plies=8, provenance="ply=6")
+    assert seed_blindspot_key(bare) == position_key(fens[6])
+
+
+def test_load_existing_keys_dedups_post_refute_against_blindspot(tmp_path) -> None:
+    """Re-mine with --existing post-refute list must not re-emit the same hole."""
+    fens = [_fen_after(_LINE, i) for i in range(len(_LINE) + 1)]
+    seed_fen = fens[6]
+    rec = build_seed_record(
+        fens, list(_LINE), 6, history_plies=8,
+        provenance="src=t.pgn ply=6 refute=d7d5", refute_uci="d7d5",
+    )
+    existing = tmp_path / "seeds.txt"
+    existing.write_text(rec + "\n", encoding="utf-8")
+    keys = load_existing_keys([str(existing)])
+    assert position_key(seed_fen) in keys
+    # Terminal post-refute alone is NOT the dedup key for mine_game emission.
+    post = position_key(fens[8])
+    assert post not in keys or post == position_key(seed_fen)
+
+    # Incremental: mine same game with existing keys → excluded by caller pattern.
+    game = _game(_LINE)
+    blunder_after = _fen_after(_LINE, 7)
+
+    def best(fen: str, _n: int) -> str | None:
+        return "d7d5" if fen == blunder_after else None
+
+    mined = mine_game(
+        game, name_needle="deepfin", sf_eval=_fake_sf(blunder_after),
+        src="t.pgn", sf_nodes=1, collapse_cp=-150, history_plies=8,
+        append_refute_ply=True, sf_bestmove=best,
+    )
+    assert len(mined) == 1
+    _record, key = mined[0]
+    assert key in keys  # would be filtered by main()'s exclude set
