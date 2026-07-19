@@ -83,21 +83,17 @@ def _run_in_subprocess(
     try:
         import torch
 
-        from chess_anti_engine.inference import DirectGPUEvaluator, ThreadedBatchEvaluator
+        from chess_anti_engine.inference import DirectGPUEvaluator
         from chess_anti_engine.inference_threaded import ThreadedDispatcher
 
-        # ThreadedDispatcher compiles on its own thread (cudagraph TLS lives
-        # on the thread that does the forward). All other paths compile on
-        # the main thread of this subprocess.
+        # ThreadedDispatcher compiles on its own thread so cudagraph TLS lives
+        # on the thread that does the forward. DirectGPU compiles here.
         compile_on_main = compile_mode if path != "ThreadedDispatcher" else None
         model: Any = _build_model(compile_on_main)
 
         if path == "DirectGPU":
             evaluator: Any = DirectGPUEvaluator(model, device="cuda", max_batch=4096)
             shutdown = lambda: None  # noqa: E731
-        elif path == "ThreadedBatchEvaluator":
-            ev = ThreadedBatchEvaluator(model, device="cuda", max_batch=4096, min_batch=64)
-            evaluator, shutdown = ev, ev.shutdown
         elif path == "ThreadedDispatcher":
             ev = ThreadedDispatcher(
                 model, device="cuda", max_batch=4096, batch_wait_ms=dispatcher_batch_wait_ms,
@@ -245,7 +241,7 @@ def main() -> None:
     ap.add_argument(
         "--paths",
         type=str,
-        default="DirectGPU,ThreadedBatchEvaluator,ThreadedDispatcher",
+        default="DirectGPU,ThreadedDispatcher",
         help="Comma-separated paths to run.",
     )
     ap.add_argument("--out", type=str, default="docs/threaded_dispatcher_gumbel_results.json")
@@ -255,7 +251,7 @@ def main() -> None:
     compile_mode = args.compile_mode or None
 
     requested_paths = [p.strip() for p in str(args.paths).split(",") if p.strip()]
-    valid_paths = {"DirectGPU", "ThreadedBatchEvaluator", "ThreadedDispatcher"}
+    valid_paths = {"DirectGPU", "ThreadedDispatcher"}
     unknown = sorted(set(requested_paths) - valid_paths)
     if unknown:
         raise SystemExit(f"unknown --paths entries: {', '.join(unknown)}")
@@ -283,8 +279,6 @@ def main() -> None:
         paths.append(("DirectGPU", 1, int(args.total_games), 0.0, 0))
     for threads in thread_counts:
         games_per_thread = max(1, int(args.total_games) // int(threads))
-        if "ThreadedBatchEvaluator" in requested_paths:
-            paths.append(("ThreadedBatchEvaluator", int(threads), games_per_thread, 0.0, 0))
         if "ThreadedDispatcher" in requested_paths:
             paths.extend(
                 ("ThreadedDispatcher", int(threads), games_per_thread,

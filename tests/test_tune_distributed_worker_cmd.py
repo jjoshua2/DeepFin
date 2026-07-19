@@ -130,7 +130,6 @@ def test_build_distributed_worker_cmd_adds_threaded_dispatcher_max_batch() -> No
             "distributed_worker_use_compile": True,
             "distributed_worker_threaded": True,
             "distributed_worker_selfplay_threads": 32,
-            "distributed_worker_threaded_dispatcher": True,
             "distributed_worker_dispatcher_batch_wait_ms": 2.0,
             "distributed_worker_dispatcher_max_batch": 1024,
             "distributed_worker_dispatcher_target_batch": 170,
@@ -144,7 +143,7 @@ def test_build_distributed_worker_cmd_adds_threaded_dispatcher_max_batch() -> No
         worker_log=Path("/tmp/trial/worker_00/worker.log"),
     )
 
-    assert "--threaded-dispatcher" in cmd
+    assert "--threaded-dispatcher" not in cmd
     assert cmd[cmd.index("--selfplay-threads") + 1] == "32"
     assert cmd[cmd.index("--dispatcher-batch-wait-ms") + 1] == "2.0"
     assert cmd[cmd.index("--dispatcher-max-batch") + 1] == "1024"
@@ -541,7 +540,7 @@ def test_launch_inference_broker_does_not_inherit_worker_compile(monkeypatch, tm
         calls.append(list(cmd))
         return DummyProc()
 
-    monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime.terminate_matching_processes", lambda **kwargs: [])
+    monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime.terminate_matching_processes", lambda **_: [])
     monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime.subprocess.Popen", _fake_popen)
 
     publish_dir = tmp_path / "publish"
@@ -576,7 +575,7 @@ def test_launch_inference_broker_respects_dedicated_compile_flag(monkeypatch, tm
         calls.append(list(cmd))
         return DummyProc()
 
-    monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime.terminate_matching_processes", lambda **kwargs: [])
+    monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime.terminate_matching_processes", lambda **_: [])
     monkeypatch.setattr("chess_anti_engine.tune.distributed_runtime.subprocess.Popen", _fake_popen)
 
     publish_dir = tmp_path / "publish"

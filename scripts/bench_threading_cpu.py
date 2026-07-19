@@ -19,8 +19,8 @@ import torch
 from chess_anti_engine.inference import (
     BatchEvaluator,
     LocalModelEvaluator,
-    ThreadedBatchEvaluator,
 )
+from chess_anti_engine.inference_threaded import ThreadedDispatcher
 from chess_anti_engine.model.tiny import TinyNet
 from chess_anti_engine.selfplay.config import (
     DiffFocusConfig,
@@ -84,9 +84,9 @@ def bench_threads(n_threads: int, total_games: int, sims: int, sf_path: str, ins
         model = TinyNet(in_planes=146).eval()
         if device == "cuda":
             model = model.cuda()
-        evaluator = ThreadedBatchEvaluator(
-            model, device=device, max_batch=4096, min_batch=32,
-            accumulation_timeout_s=0.001,
+        evaluator = ThreadedDispatcher(
+            model, device=device, max_batch=4096, target_batch=32,
+            batch_wait_ms=1.0,
         )
 
     if n_threads <= 1:

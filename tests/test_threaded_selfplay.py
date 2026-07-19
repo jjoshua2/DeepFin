@@ -1,4 +1,4 @@
-"""Test ThreadedBatchEvaluator with concurrent selfplay threads."""
+"""Test ThreadedDispatcher with concurrent selfplay threads."""
 from __future__ import annotations
 
 import threading
@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import torch
 
-from chess_anti_engine.inference import ThreadedBatchEvaluator
+from chess_anti_engine.inference_threaded import ThreadedDispatcher
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.model import ModelConfig, build_model
 
@@ -27,7 +27,7 @@ def evaluator():
     else:
         model = model.eval()
         device = "cpu"
-    ev = ThreadedBatchEvaluator(model, device=device, max_batch=2048, min_batch=32)
+    ev = ThreadedDispatcher(model, device=device, max_batch=2048, batch_wait_ms=1.0)
     yield ev
     ev.shutdown()
 

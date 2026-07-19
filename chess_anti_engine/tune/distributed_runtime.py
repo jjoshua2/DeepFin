@@ -529,7 +529,6 @@ _WORKER_LAUNCH_CONFIG_KEYS: tuple[str, ...] = (
     "distributed_worker_inference_fp8",
     "distributed_worker_threaded",
     "distributed_worker_selfplay_threads",
-    "distributed_worker_threaded_dispatcher",
     "distributed_worker_dispatcher_batch_wait_ms",
     "distributed_worker_dispatcher_max_batch",
     "distributed_worker_dispatcher_target_batch",
@@ -672,16 +671,17 @@ def _build_distributed_worker_cmd(
         ),
         *(["--inference-fp8"] if bool(config.get("distributed_worker_inference_fp8", False)) else []),
         *(
-            ["--threaded-selfplay", "--selfplay-threads",
-             str(int(config.get("distributed_worker_selfplay_threads", 16)))]
-            + (["--threaded-dispatcher",
+            [
+                "--threaded-selfplay",
+                "--selfplay-threads",
+                str(int(config.get("distributed_worker_selfplay_threads", 16))),
                 "--dispatcher-batch-wait-ms",
                 str(float(config.get("distributed_worker_dispatcher_batch_wait_ms", 1.0))),
                 "--dispatcher-max-batch",
                 str(int(config.get("distributed_worker_dispatcher_max_batch", 4096))),
                 "--dispatcher-target-batch",
-                str(int(config.get("distributed_worker_dispatcher_target_batch", 0)))]
-               if bool(config.get("distributed_worker_threaded_dispatcher", False)) else [])
+                str(int(config.get("distributed_worker_dispatcher_target_batch", 0))),
+            ]
             if bool(config.get("distributed_worker_threaded", False))
             else []
         ),
