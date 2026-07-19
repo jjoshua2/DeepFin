@@ -925,6 +925,104 @@ def test_seed_dole_gate_persists_across_restart(tmp_path: Path) -> None:
     assert asyncio.run(gate2.claim("t", 8)) is True  # a newer iteration still wins
 
 
+def test_seed_dole_gate_rearm_allows_one_reclaim_same_iter() -> None:
+    """Trial restart on an incomplete iter must be able to re-hand once.
+
+    Bare re-poll (allow_rearm=False) stays closed — only an explicit rearm
+    (from the trainable's one-shot flag) opens a single new winner.
+    """
+    from chess_anti_engine.server.app import _SeedDoleGate
+
+    gate = _SeedDoleGate()
+    assert asyncio.run(gate.claim("t", 12)) is True
+    assert asyncio.run(gate.claim("t", 12)) is False
+    assert asyncio.run(gate.claim("t", 12, allow_rearm=True)) is True
+    # Second rearm-less claim stays closed; a second rearm would open again
+    # (trainable only writes the flag once per selfplay window).
+    assert asyncio.run(gate.claim("t", 12)) is False
+    assert asyncio.run(gate.claim("t", 12, allow_rearm=True)) is True
+    # Other iters / trials unaffected.
+    assert asyncio.run(gate.claim("t", 11, allow_rearm=True)) is False
+    assert asyncio.run(gate.claim("other", 12)) is True
+
+
+def test_consume_seed_dole_rearm_is_one_shot(tmp_path: Path) -> None:
+    from chess_anti_engine.server.app import (
+        SEED_DOLE_REARM_FILENAME,
+        consume_seed_dole_rearm,
+    )
+
+    pub = tmp_path / "publish"
+    pub.mkdir()
+    (pub / SEED_DOLE_REARM_FILENAME).write_text(
+        json.dumps({"training_iteration": 5}), encoding="utf-8",
+    )
+    assert consume_seed_dole_rearm(pub, 5) is True
+    assert consume_seed_dole_rearm(pub, 5) is False  # already consumed
+    # Wrong-iter request is consumed but returns False (no rearm).
+    (pub / SEED_DOLE_REARM_FILENAME).write_text(
+        json.dumps({"training_iteration": 9}), encoding="utf-8",
+    )
+    assert consume_seed_dole_rearm(pub, 5) is False
+    assert not (pub / SEED_DOLE_REARM_FILENAME).exists()
+
+
+def test_manifest_rearms_dole_after_same_iter_republish(tmp_path: Path) -> None:
+    """Selfplay-window republish re-opens the gate only when already claimed."""
+    fen_path = tmp_path / "blindspot.txt"
+    fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+    _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
+
+    app = create_app(server_root=tmp_path)
+    headers = _manifest_poll_headers(worker_id="test-worker")
+    first = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=2)
+    assert [p["dole_fen_seeds"] for p in first] == [True, False]
+
+    # Same iteration republished after claim → gate last==20 → rearm armed;
+    # exactly one new poll must win.
+    _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
+    second = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=3)
+    assert [p["dole_fen_seeds"] for p in second] == [True, False, False]
+
+
+def test_manifest_no_rearm_on_fresh_iter_republish(tmp_path: Path) -> None:
+    """Republishing a not-yet-claimed iteration must NOT write rearm (no double)."""
+    from chess_anti_engine.server.app import SEED_DOLE_REARM_FILENAME
+
+    fen_path = tmp_path / "blindspot.txt"
+    fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+    _publish_dole_trial(tmp_path, training_iteration=30, dole=1, fen_path=fen_path)
+    rearm = (
+        tmp_path / "trials" / "trial_00000" / "publish" / SEED_DOLE_REARM_FILENAME
+    )
+    assert not rearm.exists(), "fresh iter must not arm rearm before any claim"
+
+
+def test_seed_dole_gate_rearm_concurrent_single_winner(tmp_path: Path) -> None:
+    """Concurrent claim+rearm must yield exactly one True (PR #209 race fix)."""
+    from chess_anti_engine.server.app import SEED_DOLE_REARM_FILENAME, _SeedDoleGate
+
+    gate = _SeedDoleGate()
+    assert asyncio.run(gate.claim("t", 40)) is True
+    pub = tmp_path / "publish"
+    pub.mkdir()
+    (pub / SEED_DOLE_REARM_FILENAME).write_text(
+        json.dumps({"training_iteration": 40}), encoding="utf-8",
+    )
+
+    async def _burst() -> list[bool]:
+        return list(
+            await asyncio.gather(
+                *[gate.claim("t", 40, publish_dir=pub) for _ in range(32)]
+            )
+        )
+
+    wins = sum(asyncio.run(_burst()))
+    assert wins == 1
+    # File consumed; further claims stay closed.
+    assert sum(asyncio.run(_burst())) == 0
+
+
 # ── opening_fen_list_path live reload (no restart needed) ────────────────────
 
 

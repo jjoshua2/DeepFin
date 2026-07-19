@@ -33,7 +33,11 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
-from chess_anti_engine.selfplay.opening import OpeningConfig, resolve_slot_opening
+from chess_anti_engine.selfplay.opening import (
+    OpeningConfig,
+    resolve_slot_opening,
+    try_take_sf_refute_opening,
+)
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.tablebase import SyzygyProbe
@@ -655,6 +659,12 @@ class SelfplayState:
     # recycle_slot() pop from it for selfplay slots (see resolve_slot_opening);
     # the worker replaces the whole list each doled iteration.
     fen_dole_queue: list[str] | None = None
+    # SF-refutation channel: round-robin slice of the same list, drained only by
+    # selfplay rolls (selfplay_arr=1). SF is the opponent while
+    # sf_refute_opp_plies_left > 0, then net-net (stockfish_turn push countdown).
+    fen_sf_refute_queue: list[str] | None = None
+    # Per-slot remaining SF opponent plies in an SF-refute game (0 = not active).
+    sf_refute_opp_plies_left: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int32))
 
     # ── Control counters (mutated by recycle_slot / main loop) ───────────────
     games_started: int = 0
@@ -682,6 +692,7 @@ class SelfplayState:
         diff_focus: DiffFocusConfig,
         game: GameConfig,
         fen_dole_queue: list[str] | None = None,
+        fen_sf_refute_queue: list[str] | None = None,
     ) -> SelfplayState:
         """Build a ``SelfplayState`` from ``play_batch``'s arguments.
 
@@ -705,14 +716,29 @@ class SelfplayState:
         net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
             batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,
         )
-        starts = [
-            resolve_slot_opening(
-                rng=rng, cfg=opening,
-                is_selfplay=bool(selfplay_arr[i]),
-                fen_dole_queue=fen_dole_queue,
+        # SF-refute only on SELFPLAY rolls (selfplay_arr=1): keeps book curriculum
+        # / PID capacity intact. Opponent is still SF for M plies via classify
+        # (sf_refute_opp_plies_left > 0 → curriculum_opp path).
+        sf_refute_opp_plies_left = np.zeros(batch_size, dtype=np.int32)
+        refute_plies = max(0, int(opening.opening_fen_sf_refute_plies))
+        starts = []
+        for i in range(batch_size):
+            is_sp = bool(selfplay_arr[i])
+            if is_sp:
+                refute = try_take_sf_refute_opening(
+                    cfg=opening, fen_sf_refute_queue=fen_sf_refute_queue,
+                )
+                if refute is not None:
+                    starts.append(refute)
+                    sf_refute_opp_plies_left[i] = refute_plies
+                    continue
+            starts.append(
+                resolve_slot_opening(
+                    rng=rng, cfg=opening,
+                    is_selfplay=is_sp,
+                    fen_dole_queue=fen_dole_queue,
+                )
             )
-            for i in range(batch_size)
-        ]
         boards = [start.board for start in starts]
         opening_source_arr = [start.source for start in starts]
         # Use from_board (not from_raw) to preserve ply count + history from openings.
@@ -789,6 +815,8 @@ class SelfplayState:
             c_classify=c_caps.c_classify,
             c_temp_resample=c_caps.c_temp_resample,
             fen_dole_queue=fen_dole_queue,
+            fen_sf_refute_queue=fen_sf_refute_queue,
+            sf_refute_opp_plies_left=sf_refute_opp_plies_left,
             games_started=batch_size,
         )
 
@@ -851,6 +879,17 @@ class SelfplayState:
             if self.cboards[i].is_game_over() or played >= max_plies:
                 self.done_arr[i] = 1
 
+    def _slot_uses_sf_opponent(self, i: int) -> bool:
+        """True when the non-net seat should be Stockfish this step.
+
+        Normal curriculum: ``selfplay_arr==0``. SF-refute (selfplay-tagged for
+        finalize/PID): ``sf_refute_opp_plies_left > 0`` forces SF even when
+        ``selfplay_arr==1``.
+        """
+        if i < len(self.sf_refute_opp_plies_left) and int(self.sf_refute_opp_plies_left[i]) > 0:
+            return True
+        return not bool(self.selfplay_arr[i])
+
     def _classify_live_slots_python(
         self,
     ) -> tuple[list[int], list[int], list[int]]:
@@ -864,12 +903,14 @@ class SelfplayState:
         sp_idxs = [
             i
             for i in live
-            if self.cboards[i].turn != self.net_color(i) and self.selfplay_arr[i]
+            if self.cboards[i].turn != self.net_color(i)
+            and not self._slot_uses_sf_opponent(i)
         ]
         cur_idxs = [
             i
             for i in live
-            if self.cboards[i].turn != self.net_color(i) and not self.selfplay_arr[i]
+            if self.cboards[i].turn != self.net_color(i)
+            and self._slot_uses_sf_opponent(i)
         ]
         return net_idxs, sp_idxs, cur_idxs
 
@@ -887,15 +928,21 @@ class SelfplayState:
           to move is still the network (these also run through MCTS,
           merged into the network turn).
         * ``curriculum_opp_idxs`` — non-selfplay slots where the side to
-          move is the curriculum opponent (handled by Stockfish).
+          move is the curriculum opponent (handled by Stockfish), plus
+          SF-refute selfplay slots still in their SF-opponent phase.
         * ``all_finalized`` — ``True`` when every slot has finalized and
           the main loop can break early.
 
-        Dispatches to the C ``classify_games`` fast path when available;
-        otherwise falls back to the Python per-slot loop (which also
-        marks timed-out slots as done, matching the original semantics).
+        Dispatches to the C ``classify_games`` fast path when available and
+        no SF-refute phase is active (C only reads ``selfplay_arr``); otherwise
+        falls back to the Python per-slot loop (which also marks timed-out
+        slots as done, matching the original semantics).
         """
-        if self.has_classify_c:
+        refute_active = (
+            len(self.sf_refute_opp_plies_left) > 0
+            and bool(np.any(self.sf_refute_opp_plies_left > 0))
+        )
+        if self.has_classify_c and not refute_active:
             return self._classify_active_slots_c()
 
         active_idxs = [
@@ -948,13 +995,25 @@ class SelfplayState:
         # opening_fen_selfplay_only never seeds a curriculum slot (starvation ticket).
         # resolve_slot_opening also drains fen_dole_queue for selfplay slots so doled
         # seeds recycle into fresh games across the iteration (interleaved coverage).
+        # SF-refute only on selfplay rolls (selfplay_arr stays 1 for finalize/PID).
         sp_frac = max(0.0, min(1.0, float(self.game.selfplay_fraction)))
         self.selfplay_arr[i] = 1 if self.rng.random() < sp_frac else 0
-        opening_start = resolve_slot_opening(
-            rng=self.rng, cfg=self.opening,
-            is_selfplay=bool(self.selfplay_arr[i]),
-            fen_dole_queue=self.fen_dole_queue,
-        )
+        self.sf_refute_opp_plies_left[i] = 0
+        opening_start = None
+        if self.selfplay_arr[i]:
+            opening_start = try_take_sf_refute_opening(
+                cfg=self.opening, fen_sf_refute_queue=self.fen_sf_refute_queue,
+            )
+            if opening_start is not None:
+                self.sf_refute_opp_plies_left[i] = max(
+                    0, int(self.opening.opening_fen_sf_refute_plies),
+                )
+        if opening_start is None:
+            opening_start = resolve_slot_opening(
+                rng=self.rng, cfg=self.opening,
+                is_selfplay=bool(self.selfplay_arr[i]),
+                fen_dole_queue=self.fen_dole_queue,
+            )
         self.boards[i] = opening_start.board
         self.opening_source_arr[i] = opening_start.source
         self.cboards[i] = _CBoard.from_board(self.boards[i])

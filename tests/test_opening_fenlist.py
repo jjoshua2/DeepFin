@@ -503,6 +503,20 @@ def test_backed_fenlist_curriculum_excluded_from_pid_winrate() -> None:
     assert (st.stats.w, st.stats.d, st.stats.l) == (0, 0, 0)
 
 
+def test_sf_refute_fenlist_excluded_from_pid_and_stats_named() -> None:
+    """fenlist_sf_refute* must stay greppable and out of PID (PR #209 fix)."""
+    st = _agg_state("fenlist_sf_refute", selfplay=True, seed_fen=chess.Board().fen())
+    _update_aggregate_stats(st, 0, result="0-1", was_adjudicated=False, game_plies=30)
+    assert (st.stats.w, st.stats.d, st.stats.l) == (0, 0, 0)
+    assert st.stats.outcome_stats.get("opening_fenlist_sf_refute_games") == 1
+    st2 = _agg_state(
+        "fenlist_sf_refute_backed", selfplay=False, seed_fen=chess.Board().fen(),
+    )
+    _update_aggregate_stats(st2, 0, result="1-0", was_adjudicated=False, game_plies=20)
+    assert (st2.stats.w, st2.stats.d, st2.stats.l) == (0, 0, 0)
+    assert st2.stats.outcome_stats.get("opening_fenlist_sf_refute_backed_games") == 1
+
+
 def test_dole_seed_weights(tmp_path: Path) -> None:
     """weight=N comment markers multiply a seed's dole exposure; weight=0
     soft-retires it; absurd weights cap at _MAX_SEED_WEIGHT; unmarked seeds

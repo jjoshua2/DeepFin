@@ -942,6 +942,16 @@ def _push_curriculum_opponent_move(
         state.root_ids[idx] = state.mcts_tree.find_child(
             state.root_ids[idx], opp_move_idx,
         )
+    # SF-refute phase countdown: after M opponent SF plies, opponent becomes
+    # the net (selfplay_arr is already 1 for these games — no type flip).
+    # getattr: unit-test SimpleNamespace fixtures may omit the array (≡ zeros).
+    refute_left = getattr(state, "sf_refute_opp_plies_left", None)
+    if (
+        refute_left is not None
+        and idx < len(refute_left)
+        and int(refute_left[idx]) > 0
+    ):
+        refute_left[idx] = int(refute_left[idx]) - 1
     if state.cboards[idx].is_game_over():
         state.done_arr[idx] = 1
 
@@ -964,7 +974,7 @@ def _process_sf_results(
     sf_wdl_use_cp_logistic = bool(state.game.sf_wdl_use_cp_logistic)
     sf_wdl_cp_slope = float(state.game.sf_wdl_cp_slope)
     sf_wdl_cp_draw_width = float(state.game.sf_wdl_cp_draw_width)
-    regret_limit = (
+    pid_regret_limit = (
         float(state.opponent.wdl_regret_limit)
         if state.opponent.wdl_regret_limit is not None else float("inf")
     )
@@ -1014,11 +1024,23 @@ def _process_sf_results(
                 sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
             )
 
-        if play_curriculum_moves and not state.selfplay_arr[idx]:
+        # SF opponent when curriculum OR mid SF-refute phase (selfplay-tagged).
+        # getattr: unit-test SimpleNamespace fixtures may omit the array (≡ zeros).
+        refute_left = getattr(state, "sf_refute_opp_plies_left", None)
+        in_refute = (
+            refute_left is not None
+            and idx < len(refute_left)
+            and int(refute_left[idx]) > 0
+        )
+        uses_sf_opp = in_refute or (not bool(state.selfplay_arr[idx]))
+        if play_curriculum_moves and uses_sf_opp:
+            # SF-refute plies force full-strength best move (inf regret), not
+            # PID-handicapped airbag play — that's the whole point of the channel.
+            move_regret = float("inf") if in_refute else pid_regret_limit
             _push_curriculum_opponent_move(
                 state, idx, legal_indices=legal_indices,
                 cand_idxs=cand_idxs, cand_scores=cand_scores,
-                regret_limit=regret_limit,
+                regret_limit=move_regret,
             )
 
 

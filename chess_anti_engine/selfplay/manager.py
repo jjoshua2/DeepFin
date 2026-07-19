@@ -246,6 +246,7 @@ def play_batch(
     diff_focus: DiffFocusConfig = DiffFocusConfig(),
     game: GameConfig = GameConfig(),
     fen_dole_queue: list[str] | None = None,
+    fen_sf_refute_queue: list[str] | None = None,
 ) -> tuple[list[ReplaySample], BatchStats]:
     """Play a batch of games.
 
@@ -267,6 +268,12 @@ def play_batch(
     the SelfplayState, deterministic even coverage). Mid-session refill must
     mutate the SHARED list in place; never rebind ``state.fen_dole_queue``
     (that orphans the worker's live queue — PR #154). None = no doled seeds.
+
+    ``fen_sf_refute_queue`` (opt-in SF-refute channel): selfplay slots drain
+    this FIFO for short SF-as-opponent openings (``opening_fen_sf_refute_*``;
+    selfplay-tagged for finalize/PID, SF opponent for N plies via
+    ``sf_refute_opp_plies_left``). Same in-place-refill rule as the selfplay
+    dole queue.
 
     ``pause_fn`` (continuous mode): while it returns True the loop HOLDS —
     no new work is scheduled but every in-flight game keeps its state — and
@@ -317,6 +324,7 @@ def play_batch(
         diff_focus=diff_focus,
         game=game,
         fen_dole_queue=fen_dole_queue,
+        fen_sf_refute_queue=fen_sf_refute_queue,
     )
 
     # Hand the live state to the caller so it can apply live-safe reco changes

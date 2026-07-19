@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -346,6 +347,8 @@ def _publish_distributed_trial_state(
         ),
         "opening_fen_selfplay_only": bool(config.get("opening_fen_selfplay_only", False)),
         "opening_fen_dole_per_iter": int(config.get("opening_fen_dole_per_iter", 0)),
+        "opening_fen_sf_refute_frac": float(config.get("opening_fen_sf_refute_frac", 0.0)),
+        "opening_fen_sf_refute_plies": int(config.get("opening_fen_sf_refute_plies", 5)),
         "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
         "slot_oversubscribe": float(config.get("slot_oversubscribe", 1.0)),
         "sf_nodes": int(sf_nodes),
@@ -510,6 +513,39 @@ def _publish_distributed_trial_state(
         json.dumps(manifest, sort_keys=True, indent=2),
         encoding="utf-8",
     )
+    # One-shot dole rearm ONLY for true mid-iter resume: durable gate already
+    # shows this training_iteration claimed (workers died; claim would otherwise
+    # stay burned). Do NOT arm on every normal selfplay open — that races with
+    # multi-worker first-claim and double-doles (PR #209 review). Consumed under
+    # the gate lock in server claim().
+    rearm_path = publish_dir / "seed_dole_rearm.json"
+    dole_n = int(config.get("opening_fen_dole_per_iter", 0) or 0)
+    arm_rearm = False
+    if (not pause_selfplay) and dole_n > 0 and manifest.get("opening_fen_list"):
+        gate_path = Path(server_root) / "seed_dole_gate.json"
+        try:
+            if gate_path.exists():
+                gate = json.loads(gate_path.read_text(encoding="utf-8"))
+                tid = str(trial_id or "").strip()
+                last = gate.get(tid)
+                if last is None and tid:
+                    for k, v in gate.items():
+                        ks = str(k)
+                        if ks == tid or ks.endswith(tid) or tid.endswith(ks):
+                            last = v
+                            break
+                arm_rearm = int(last if last is not None else -1) == int(training_iteration)
+        except Exception:
+            arm_rearm = False
+    if arm_rearm:
+        atomic_write_text(
+            rearm_path,
+            json.dumps({"training_iteration": int(training_iteration)}, sort_keys=True),
+            encoding="utf-8",
+        )
+    else:
+        with contextlib.suppress(OSError):
+            rearm_path.unlink(missing_ok=True)
     return model_sha
 
 

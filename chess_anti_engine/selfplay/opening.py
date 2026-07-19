@@ -87,6 +87,17 @@ class OpeningConfig:
   # draining the dole queue (resolve_slot_opening). 0 = off (legacy prob path).
     opening_fen_dole_per_iter: int = 0
 
+  # SF-refutation channel on top of the selfplay dole (value-blind-spot lever).
+  # Each doled iteration the worker also schedules a round-robin slice of the
+  # seed list as short curriculum games: SF plays the first
+  # ``opening_fen_sf_refute_plies`` opponent plies (punishing the fantasy eval),
+  # then the slot hands off to selfplay for the rest. 0 frac = off. Typical
+  # start: frac=0.5, plies=5 (~half the list × 5 SF replies — iso-cheap vs a
+  # full-length SF seed game). Fenlist outcomes stay out of the PID sample
+  # (finalize: source startswith "fenlist").
+    opening_fen_sf_refute_frac: float = 0.0
+    opening_fen_sf_refute_plies: int = 5
+
 
 @dataclass(frozen=True)
 class OpeningStart:
@@ -380,6 +391,41 @@ def _load_fen_weights(path_str: str) -> dict[str, int]:
     return weights
 
 
+def sample_sf_refute_batch(
+    seeds: list[str],
+    *,
+    frac: float,
+    training_iteration: int,
+    path: str | None = None,
+) -> list[str]:
+    """Deterministic round-robin slice of ``seeds`` for the SF-refute channel.
+
+    ``frac`` in (0, 1] selects ``round(len*frac)`` seeds (at least 1 when the
+    list is non-empty and frac>0). The window start advances by K each
+    ``training_iteration`` so every seed rotates through SF-refutation over
+    ~1/frac iterations without requiring server-side state.
+
+    When ``path`` is set, ``weight=0`` soft-retire markers are honored (same
+    map as ``expand_dole_seeds``) so retired seeds never burn SF-refute budget.
+    """
+    if not seeds:
+        return []
+    f = float(frac)
+    if f <= 0.0:
+        return []
+    eligible = list(seeds)
+    if path:
+        weights = _load_fen_weights(str(path))
+        if weights:
+            eligible = [s for s in seeds if int(weights.get(s, 1)) > 0]
+    if not eligible:
+        return []
+    n = len(eligible)
+    k = n if f >= 1.0 else max(1, min(n, round(n * f)))
+    start = (int(training_iteration) * k) % n
+    return [eligible[(start + i) % n] for i in range(k)]
+
+
 def expand_dole_seeds(seeds: list[str], path: str | None) -> list[str]:
     """Expand a dole seed batch by per-seed ``weight=`` markers (default 1)."""
     if not path:
@@ -393,10 +439,12 @@ def expand_dole_seeds(seeds: list[str], path: str | None) -> list[str]:
     return out
 
 
-def _fenlist_source(line: str, path: str | None) -> str:
+def _fenlist_source(line: str, path: str | None, *, sf_refute: bool = False) -> str:
+    # fenlist* prefix is load-bearing: finalize excludes fenlist sources from the
+    # PID winrate sample so short seed games cannot bias difficulty control.
     if path and line in _load_fen_backed_bodies(str(path)):
-        return "fenlist_backed"
-    return "fenlist"
+        return "fenlist_sf_refute_backed" if sf_refute else "fenlist_backed"
+    return "fenlist_sf_refute" if sf_refute else "fenlist"
 
 
 def _sample_book(*, rng, path: str, max_plies: int, max_games: int) -> chess.Board:
@@ -542,6 +590,36 @@ def resolve_slot_opening(
 
     allow_fenlist = (not bool(cfg.opening_fen_selfplay_only)) or bool(is_selfplay)
     return sample_starting_board(rng=rng, cfg=cfg, allow_fenlist=allow_fenlist)
+
+
+def try_take_sf_refute_opening(
+    *,
+    cfg: OpeningConfig,
+    fen_sf_refute_queue: list[str] | None,
+) -> OpeningStart | None:
+    """Pop one SF-refutation seed if the channel is armed and the queue has work.
+
+    Caller must open a **selfplay-tagged** slot (``selfplay_arr=1``) and set
+    ``sf_refute_opp_plies_left = opening_fen_sf_refute_plies`` so SF plays the
+    opponent for M plies, then net-net. Returns None when the channel is off or
+    the queue is empty (thread-safe pop under the GIL).
+    """
+    if fen_sf_refute_queue is None:
+        return None
+    if float(cfg.opening_fen_sf_refute_frac) <= 0.0:
+        return None
+    if int(cfg.opening_fen_sf_refute_plies) <= 0:
+        return None
+    if not cfg.opening_fen_list_path:
+        return None
+    try:
+        line = fen_sf_refute_queue.pop(0)
+    except IndexError:
+        return None
+    return OpeningStart(
+        board=seed_board_from_line(line),
+        source=_fenlist_source(line, cfg.opening_fen_list_path, sf_refute=True),
+    )
 
 
 def make_starting_board(*, rng, cfg: OpeningConfig) -> chess.Board:

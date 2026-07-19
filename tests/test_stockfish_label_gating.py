@@ -112,6 +112,8 @@ def _state(
         done_arr=np.zeros((1,), dtype=np.int8),
         finalized_arr=np.zeros((1,), dtype=np.int8),
         selfplay_arr=np.zeros((1,), dtype=np.int8),
+        # Production SelfplayState always has this; zeros = not in SF-refute phase.
+        sf_refute_opp_plies_left=np.zeros((1,), dtype=np.int32),
     )
 
 
