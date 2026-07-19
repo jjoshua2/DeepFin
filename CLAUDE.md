@@ -77,7 +77,10 @@ from positions the net misplays):
   validates, and repoints the yaml. `--dry-run` first. Per-seed dose control:
   `# weight=N` line markers.
 - New seed material comes from mining external-match losses
-  (`scripts/mine_blindspot_seeds.py --pgn`), then vetting/gating before feed.
+  (`scripts/mine_blindspot_seeds.py --pgn`; default bakes blunder+deep-SF
+  first-refute ply into the seed — `--no-append-refute-ply` for bare
+  blind-spot terminals; re-mine from PGN to upgrade old lists), then
+  vetting/gating before feed.
 
 **Operational gotchas:**
 

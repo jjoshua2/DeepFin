@@ -6,6 +6,7 @@ import chess.pgn
 
 from chess_anti_engine.selfplay.opening import seed_board_from_line
 from scripts.mine_blindspot_seeds import (
+    _resolve_refute_uci,
     build_seed_record,
     deepfin_color,
     find_first_collapse,
@@ -80,6 +81,47 @@ def test_build_seed_record_limits_to_history_plies() -> None:
     assert len(board.move_stack) == 3       # only the last 3 preceding moves
 
 
+def test_build_seed_record_appends_blunder_and_refute() -> None:
+    """With refute_uci, terminal is after historical blunder + SF reply (net STM)."""
+    fens = [_fen_after(_LINE, i) for i in range(len(_LINE) + 1)]
+    # ply 6 = white's f3g5 blunder seat; black's historical reply is d7d5 (_LINE[7]).
+    # Use a different legal refute (e.g. d8f6 is not legal here — use d7d5 as SF "best").
+    refute = _LINE[7]  # d7d5 — legal after f3g5
+    rec = build_seed_record(
+        fens, list(_LINE), 6, history_plies=3, provenance="x", refute_uci=refute,
+    )
+    body = rec.split("#", 1)[0].strip()
+    board = seed_board_from_line(body)
+    # Terminal = after blunder (f3g5) + refute (d7d5) = fens[8]
+    assert board.fen() == fens[8]
+    # history 3 preceding + blunder + refute = 5 plies on the stack
+    assert len(board.move_stack) == 5
+    assert board.turn == chess.WHITE  # net (white) STM after one punish
+
+
+def test_resolve_refute_uci_returns_legal_best() -> None:
+    fens = [_fen_after(_LINE, i) for i in range(len(_LINE) + 1)]
+    # After white f3g5 (ply 6), black to move — fake SF says d7d5.
+    def best(fen: str, _n: int) -> str | None:
+        assert fen == fens[7]
+        return "d7d5"
+
+    assert _resolve_refute_uci(fens, list(_LINE), 6, sf_bestmove=best, sf_nodes=1) == "d7d5"
+
+
+def test_resolve_refute_uci_none_when_illegal_or_missing() -> None:
+    fens = [_fen_after(_LINE, i) for i in range(len(_LINE) + 1)]
+    assert _resolve_refute_uci(
+        fens, list(_LINE), 6, sf_bestmove=lambda _f, _n: "a2a3", sf_nodes=1,
+    ) is None  # a2a3 not legal for black
+    assert _resolve_refute_uci(
+        fens, list(_LINE), 6, sf_bestmove=lambda _f, _n: None, sf_nodes=1,
+    ) is None
+    assert _resolve_refute_uci(
+        fens, list(_LINE), 6, sf_bestmove=lambda _f, _n: "0000", sf_nodes=1,
+    ) is None
+
+
 def test_position_key_ignores_move_counters() -> None:
     a = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
     b = a.replace(" 3 3", " 40 41")
@@ -133,3 +175,49 @@ def test_mine_game_skips_non_loss_forfeit_ambiguous() -> None:
 def test_mine_game_none_when_no_collapse() -> None:
     # A fake that never returns a losing eval -> no collapse.
     assert _mine(_game(_LINE), lambda _fen, _nodes: 30) == []
+
+
+def test_mine_game_appends_refute_ply_when_enabled() -> None:
+    """append_refute_ply bakes blunder+SF-best; dedup key stays pre-blunder FEN."""
+    game = _game(_LINE)
+    blunder_after = _fen_after(_LINE, 7)  # after white f3g5
+    seed_fen = _fen_after(_LINE, 6)
+    post_refute = _fen_after(_LINE, 8)    # after black d7d5
+
+    def best(fen: str, _n: int) -> str | None:
+        if fen == blunder_after:
+            return "d7d5"
+        return None
+
+    out = mine_game(
+        game, name_needle="deepfin", sf_eval=_fake_sf(blunder_after),
+        src="t.pgn", sf_nodes=1, collapse_cp=-150, history_plies=8,
+        append_refute_ply=True, sf_bestmove=best,
+    )
+    assert len(out) == 1
+    record, key = out[0]
+    assert key == position_key(seed_fen)          # dedup = original blind-spot
+    body = record.split("#", 1)[0].strip()
+    board = seed_board_from_line(body)
+    assert board.fen() == post_refute             # terminal post-punish
+    assert board.turn == chess.WHITE
+    assert "refute=d7d5" in record
+    assert "ply=6" in record
+
+
+def test_mine_game_refute_falls_back_when_bestmove_missing() -> None:
+    """If SF bestmove is unavailable, keep the bare blind-spot seed."""
+    game = _game(_LINE)
+    blunder_after = _fen_after(_LINE, 7)
+    seed_fen = _fen_after(_LINE, 6)
+    out = mine_game(
+        game, name_needle="deepfin", sf_eval=_fake_sf(blunder_after),
+        src="t.pgn", sf_nodes=1, collapse_cp=-150, history_plies=8,
+        append_refute_ply=True, sf_bestmove=lambda _f, _n: None,
+    )
+    assert len(out) == 1
+    record, key = out[0]
+    assert key == position_key(seed_fen)
+    board = seed_board_from_line(record.split("#", 1)[0].strip())
+    assert board.fen() == seed_fen
+    assert "refute=" not in record

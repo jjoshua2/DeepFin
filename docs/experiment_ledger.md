@@ -196,6 +196,20 @@ always re-dump and pair.
 
 ## Analysis findings (offline, no live change)
 
+**Mine-time free first SF-refute ply — TOOLING READY (2026-07-19).**
+`scripts/mine_blindspot_seeds.py --append-refute-ply` (default ON; disable with
+`--no-append-refute-ply`) bakes the historical blunder + deep-SF's best reply
+into each seed line so the terminal is already one punish ply in (net STM
+again). Dedup still keys the pre-blunder blind-spot. Same SF node budget as the
+collapse eval; production reuses the post-blunder search's bestmove via a
+one-slot cache. Falls back to the bare blind-spot seed if bestmove is missing
+or the post-refute terminal is rejected by the loader. **Does not change the
+live pool by itself** — re-mine from PGN then feed a new versioned list
+(`blindspot_feed_step`); old bare-blindspot lines cannot be upgraded in place
+(they lack the blunder UCI). Pairs with the live SF-refute channel (remaining
+opponent plies at selfplay time) when that lands. Tests:
+`tests/test_mine_blindspot_seeds.py` (append / resolve / fall-back).
+
 **Selfplay Stockfish-wait overlap experiment -- UNREAD / DEFAULT-OFF
 (2026-07-11).** Live 512x16 worker telemetry attributed roughly 2700-3200%
 cumulative thread time to the combined curriculum-SF finish phase versus only

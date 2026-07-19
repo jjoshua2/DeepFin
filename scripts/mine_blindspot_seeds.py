@@ -43,6 +43,14 @@ but it's symmetric in either direction. Mine_game emits both the first
 collapse AND the worst mismatch when they're more than ``--min-ply-gap``
 plies apart (distinct teaching moments); when they're close, only the
 collapse is kept (redundant).
+
+Free first SF-refute ply (default ON via ``--append-refute-ply``): after the
+historical blunder, deep-SF's best reply is baked into the seed line so the
+terminal is already one punish ply in (net STM). Dedup still keys the
+pre-blunder blind-spot. Pairs with the live SF-refute channel (remaining
+opponent plies at selfplay time). Re-mine from PGN to upgrade old lists —
+existing bare-blindspot lines do not carry the blunder UCI, so they cannot
+be upgraded in place.
 """
 from __future__ import annotations
 
@@ -95,6 +103,14 @@ def _own_expected_score(own_cp: int) -> float:
 # A deep-SF eval function: (fen, nodes) -> centipawns from the side-to-move POV
 # (None if unavailable). Injected so the collapse logic is testable without SF.
 SfEval = Callable[[str, int], "int | None"]
+
+# Optional best-move lookup: (fen, nodes) -> UCI of SF's best move for the
+# side-to-move, or None if unavailable. Used only when --append-refute-ply is
+# on: after the historical blunder, SF's first refute is baked into the seed
+# so the terminal position is already one punish ply in (net STM again).
+# Production wires this to the same Stockfish search as SfEval (last-result
+# cache) so the post-blunder eval already paid for the bestmove.
+SfBestMove = Callable[[str, int], "str | None"]
 
 
 @dataclass(frozen=True)
@@ -199,7 +215,13 @@ def load_own_evals(csv_paths: list[str]) -> dict[tuple[int, int], int]:
 
 
 def build_seed_record(
-    fens: list[str], ucis: list[str], j: int, *, history_plies: int, provenance: str,
+    fens: list[str],
+    ucis: list[str],
+    j: int,
+    *,
+    history_plies: int,
+    provenance: str,
+    refute_uci: str | None = None,
 ) -> str:
     """Seed line for a blunder at half-move ``j``.
 
@@ -207,10 +229,20 @@ def build_seed_record(
     faces); ``ucis[i]`` is move i. The record replays ``history_plies`` moves
     (fewer near the game start) from ``fens[j-h]`` up to the blind-spot, so its
     terminal is fens[j] carrying real history.
+
+    When ``refute_uci`` is set, the historical blunder (``ucis[j]``) and deep-SF's
+    best reply are also appended, so the terminal is the position AFTER one
+    punish ply (net side-to-move again). Dedup still keys on fens[j] (the
+    original blind-spot) — see ``mine_game``. Free offline substitute for the
+    first live SF-refute opponent ply (live channel then covers the rest).
     """
     h = min(history_plies, j)
     start_fen = fens[j - h]
-    moves = ucis[j - h:j]
+    moves = list(ucis[j - h:j])
+    if refute_uci is not None:
+        if j >= len(ucis):
+            raise ValueError(f"blunder ply j={j} out of range for ucis (len={len(ucis)})")
+        moves.extend([ucis[j], refute_uci])
     body = start_fen if not moves else f"{start_fen} | {' '.join(moves)}"
     return f"{body}  # {provenance}"
 
@@ -242,11 +274,51 @@ def _deepfin_lost(game: chess.pgn.Game, color: chess.Color) -> bool:
     return result == ("0-1" if color == chess.WHITE else "1-0")
 
 
+def _resolve_refute_uci(
+    fens: list[str],
+    ucis: list[str],
+    ply: int,
+    *,
+    sf_bestmove: SfBestMove,
+    sf_nodes: int,
+) -> str | None:
+    """Deep-SF best reply after the historical blunder at ``ply``, or None.
+
+    Post-blunder FEN = position after ``ucis[ply]`` from ``fens[ply]``. Returns
+    None when the blunder ends the game, SF has no bestmove, or the move is
+    illegal in that position (mate / stalemate / bad UCI).
+    """
+    if ply < 0 or ply >= len(ucis) or ply >= len(fens):
+        return None
+    try:
+        board = chess.Board(fens[ply])
+        blunder = chess.Move.from_uci(ucis[ply])
+    except ValueError:
+        return None
+    if blunder not in board.legal_moves:
+        return None
+    board.push(blunder)
+    if board.is_game_over(claim_draw=True):
+        return None
+    best = sf_bestmove(board.fen(), sf_nodes)
+    if not best or best == "0000":
+        return None
+    try:
+        refute = chess.Move.from_uci(best)
+    except ValueError:
+        return None
+    if refute not in board.legal_moves:
+        return None
+    return best
+
+
 def mine_game(
     game: chess.pgn.Game, *, src: str = "?", name_needle: str, sf_eval: SfEval,
     sf_nodes: int, collapse_cp: int, history_plies: int, min_drop: int = 150,
     own_evals: dict[tuple[int, int], int] | None = None,
     mismatch_score_gap: float = 0.5, min_ply_gap: int = 8,
+    append_refute_ply: bool = False,
+    sf_bestmove: SfBestMove | None = None,
 ) -> list[tuple[str, str]]:
     """Mine one game -> up to 2 (seed_record, position_key) pairs: the first
     decisive collapse (move-quality) and, when ``own_evals`` is given, the
@@ -255,6 +327,13 @@ def mine_game(
     same teaching moment, keep just the collapse). Empty list when the game
     is unusable (not a DeepFin loss / ambiguous side / time forfeit) or
     neither criterion finds anything worth keeping.
+
+    When ``append_refute_ply`` is True and ``sf_bestmove`` is provided, each
+    kept seed appends the historical blunder + deep-SF's first best reply so
+    the terminal is net STM after one punish ply. Dedup ``position_key`` is
+    still the pre-blunder blind-spot (fens[ply]). If the refute cannot be
+    resolved or the post-refute terminal is rejected by the loader, falls
+    back to the pre-blunder seed (still useful for the live SF-refute channel).
     """
     color = deepfin_color(game, name_needle)
     if color is None or _is_time_forfeit(game) or not _deepfin_lost(game, color):
@@ -306,15 +385,32 @@ def mine_game(
                             f"own_score={mismatch.own_score:.2f} gap={mismatch.gap:.2f} "
                             f"(raw sf={mismatch.sf_before} own={mismatch.own_before})"))
 
+    want_refute = bool(append_refute_ply and sf_bestmove is not None)
     out: list[tuple[str, str]] = []
     for ply, provenance in candidates:
-        record = build_seed_record(
-            fens, ucis, ply, history_plies=history_plies, provenance=provenance,
-        )
-        # The seed must survive the loader's own curation (forced / terminal).
-        body = record.split("#", 1)[0].strip()
-        if _fen_reject_reason(body) is not None:
-            continue
+        record: str | None = None
+        if want_refute:
+            assert sf_bestmove is not None
+            refute_uci = _resolve_refute_uci(
+                fens, ucis, ply, sf_bestmove=sf_bestmove, sf_nodes=sf_nodes,
+            )
+            if refute_uci is not None:
+                candidate = build_seed_record(
+                    fens, ucis, ply, history_plies=history_plies,
+                    provenance=f"{provenance} refute={refute_uci}",
+                    refute_uci=refute_uci,
+                )
+                # Post-refute terminal unusable (mate/forced) → fall back below.
+                if _fen_reject_reason(candidate.split("#", 1)[0].strip()) is None:
+                    record = candidate
+        if record is None:
+            record = build_seed_record(
+                fens, ucis, ply, history_plies=history_plies, provenance=provenance,
+            )
+            if _fen_reject_reason(record.split("#", 1)[0].strip()) is not None:
+                continue
+        # Dedup key is always the pre-blunder blind-spot, even when the seed
+        # terminal is post-refute (same teaching hole, not a new position).
         out.append((record, position_key(fens[ply])))
     return out
 
@@ -351,21 +447,48 @@ def load_existing_keys(paths: list[str]) -> set[str]:
     return keys
 
 
-def _make_sf_eval(sf_path: str, syzygy_path: str | None) -> tuple[SfEval, Callable[[], None]]:
-    from chess_anti_engine.stockfish.uci import StockfishUCI
+def _make_sf_eval(
+    sf_path: str, syzygy_path: str | None,
+) -> tuple[SfEval, SfBestMove, Callable[[], None]]:
+    """Wire SfEval + SfBestMove to one Stockfish process with a last-result cache.
+
+    The post-blunder ``sf_eval`` search already paid for ``bestmove``; when
+    ``append_refute_ply`` later asks for the same FEN's bestmove, the cache
+    returns it with no second search.
+    """
+    from chess_anti_engine.stockfish.uci import StockfishResult, StockfishUCI
     from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
 
     sf = StockfishUCI(path=sf_path)
+    # (fen, nodes) of the most recent search — one-slot cache is enough because
+    # mine_game's post-blunder eval immediately precedes the bestmove lookup for
+    # that same fen when a candidate is kept.
+    last: list[tuple[str, int, StockfishResult] | None] = [None]
+
+    def _search(fen: str, nodes: int) -> StockfishResult:
+        hit = last[0]
+        if hit is not None and hit[0] == fen and hit[1] == nodes:
+            return hit[2]
+        res = sf.search(fen, nodes=nodes, syzygy_path=syzygy_path)
+        last[0] = (fen, nodes, res)
+        return res
 
     def sf_eval(fen: str, nodes: int) -> int | None:
-        res = sf.search(fen, nodes=nodes, syzygy_path=syzygy_path)
+        res = _search(fen, nodes)
         if res.cp is not None:
             return res.cp
         # A forced mate is a high-value collapse, not a drop-out: map it to a
         # large signed cp so the mate side is scored, not skipped (Codex review).
         return round(mate_to_effective_cp(res.mate)) if res.mate is not None else None
 
-    return sf_eval, sf.close
+    def sf_bestmove(fen: str, nodes: int) -> str | None:
+        res = _search(fen, nodes)
+        bm = res.bestmove_uci
+        if not bm or bm == "0000":
+            return None
+        return bm
+
+    return sf_eval, sf_bestmove, sf.close
 
 
 def _iter_games(pgn_path: Path) -> Iterable[chess.pgn.Game]:
@@ -412,6 +535,15 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True, help="seed file to write/append")
     ap.add_argument("--append", action="store_true", help="append to --out instead of overwrite")
     ap.add_argument("--max-games", type=int, default=0, help="0 = all")
+    ap.add_argument(
+        "--append-refute-ply",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Bake historical blunder + deep-SF best reply into each seed so "
+             "the terminal is net STM after one punish ply (default: on). "
+             "Disable with --no-append-refute-ply for bare blind-spot terminals. "
+             "Re-mine from PGN to upgrade old lists (cannot expand in place).",
+    )
     args = ap.parse_args()
 
     pgns = sorted({Path(p) for pat in args.pgn for p in glob.glob(pat)})
@@ -427,8 +559,11 @@ def main() -> None:
               f"move-log CSV(s); mismatch_score_gap={args.mismatch_score_gap} "
               f"min_ply_gap={args.min_ply_gap}",
               flush=True)
+    if args.append_refute_ply:
+        print("[mine] append-refute-ply ON — terminal = after blunder + deep-SF best reply",
+              flush=True)
 
-    sf_eval, sf_close = _make_sf_eval(args.sf_path, args.syzygy_path)
+    sf_eval, sf_bestmove, sf_close = _make_sf_eval(args.sf_path, args.syzygy_path)
     records: list[str] = []
     seen: set[str] = set()
     n_games = 0
@@ -444,6 +579,8 @@ def main() -> None:
                     collapse_cp=args.collapse_cp, history_plies=args.history_plies,
                     min_drop=args.min_drop, own_evals=own_evals,
                     mismatch_score_gap=args.mismatch_score_gap, min_ply_gap=args.min_ply_gap,
+                    append_refute_ply=bool(args.append_refute_ply),
+                    sf_bestmove=sf_bestmove if args.append_refute_ply else None,
                 )
                 for record, key in mined:
                     if key in exclude or key in seen:
@@ -457,9 +594,14 @@ def main() -> None:
     mode = "a" if args.append else "w"
     with open(args.out, mode, encoding="utf-8") as fh:
         if mode == "w":
-            fh.write("# Mined blind-spot seeds (start_fen | moves; real LC0 history).\n"
-                     "# scripts/mine_blindspot_seeds.py — first decisive collapse per loss"
-                     + (" + worst value-head mismatch per loss.\n" if own_evals is not None else ".\n"))
+            header = (
+                "# Mined blind-spot seeds (start_fen | moves; real LC0 history).\n"
+                "# scripts/mine_blindspot_seeds.py — first decisive collapse per loss"
+                + (" + worst value-head mismatch per loss" if own_evals is not None else "")
+                + ("; blunder+deep-SF refute ply baked in (terminal post-punish).\n"
+                   if args.append_refute_ply else ".\n")
+            )
+            fh.write(header)
         for r in records:
             fh.write(r + "\n")
     print(f"[mine] wrote {len(records)} new seeds ({n_games} games scanned) -> {args.out}",
