@@ -436,7 +436,9 @@ def _pick_device(arg: str) -> str:
         return "cpu"
 
 
-def _resolve_use_multi_gpu_pucv(flag: bool | None, n_devices: int) -> bool:
+def _resolve_use_multi_gpu_pucv(
+    flag: bool | None, n_devices: int, *, announce: bool = True,
+) -> bool:
     """Decide whether the multi-GPU PUCV pool is active at startup.
 
     With one device the pool cannot install (needs >= 2 factories) — always
@@ -454,24 +456,42 @@ def _resolve_use_multi_gpu_pucv(flag: bool | None, n_devices: int) -> bool:
     if n_devices <= 1:
         return False
     if flag is None:
-        print(
-            f"info: {n_devices} devices and UseMultiGpuPUCV not set — "
-            "auto-enabling the multi-GPU PUCV pool (without it the routing "
-            "dispatcher serializes GPU work; pass --no-multi-gpu-pucv to "
-            "force that debug path)",
-            file=sys.stderr, flush=True,
-        )
+        if announce:
+            print(
+                f"info: {n_devices} devices and UseMultiGpuPUCV not set — "
+                "auto-enabling the multi-GPU PUCV pool (without it the routing "
+                "dispatcher serializes GPU work; pass --no-multi-gpu-pucv to "
+                "force that debug path)",
+                file=sys.stderr, flush=True,
+            )
         return True
     if not flag:
-        print(
-            "WARNING: --no-multi-gpu-pucv with multiple devices — the "
-            "routing dispatcher's single submitter runs the GPUs ONE CALL "
-            "AT A TIME (serialized, at or below single-GPU throughput). "
-            "This configuration is for debugging only.",
-            file=sys.stderr, flush=True,
-        )
+        if announce:
+            print(
+                "WARNING: --no-multi-gpu-pucv with multiple devices — the "
+                "routing dispatcher's single submitter runs the GPUs ONE CALL "
+                "AT A TIME (serialized, at or below single-GPU throughput). "
+                "This configuration is for debugging only.",
+                file=sys.stderr, flush=True,
+            )
         return False
     return True
+
+
+def _resolve_multi_gpu_startup(
+    search_parallel: str, pucv_flag: bool | None, n_devices: int,
+) -> tuple[bool, bool, bool]:
+    """Return ``(root_gumbel, pucv_fallback, active_pucv)``.
+
+    The two pools are mutually exclusive, but retaining the PUCV intent while
+    root Gumbel is active lets a later UCI ``SearchParallel=pucv`` switch
+    restore concurrent multi-GPU search instead of the serialized dispatcher.
+    """
+    root_gumbel = search_parallel == "gumbel" and n_devices > 1
+    pucv_fallback = _resolve_use_multi_gpu_pucv(
+        pucv_flag, n_devices, announce=not root_gumbel,
+    )
+    return root_gumbel, pucv_fallback, pucv_fallback and not root_gumbel
 
 
 def main() -> int:
@@ -667,21 +687,17 @@ def main() -> int:
         devices = [_pick_device(args.device)]
   # gumbel mode requires >= 2 devices; with one device the new module is
   # never constructed and dispatch falls through to the classic paths.
-    use_root_parallel_gumbel = bool(
-        args.search_parallel == "gumbel" and len(devices) > 1,
+    (
+        use_root_parallel_gumbel,
+        restore_multi_gpu_pucv,
+        use_multi_gpu_pucv,
+    ) = _resolve_multi_gpu_startup(
+        str(args.search_parallel), args.multi_gpu_pucv, len(devices),
     )
-  # The two multi-GPU modes are mutually exclusive; gumbel wins when selected.
-  # Otherwise keep #138's tri-state auto-enable for multi-GPU PUCV.
-    if use_root_parallel_gumbel:
-        use_multi_gpu_pucv = False
-    else:
-        use_multi_gpu_pucv = _resolve_use_multi_gpu_pucv(
-            args.multi_gpu_pucv, len(devices),
-        )
     startup_options = EngineOptions(
         threads=max(1, int(args.walkers)),
         leaf_gather=max(1, int(args.walker_gather)),
-        use_multi_gpu_pucv=use_multi_gpu_pucv,
+        use_multi_gpu_pucv=restore_multi_gpu_pucv,
         pucv_pending_mode=str(args.pucv_pending_mode),
         search_parallel="gumbel" if use_root_parallel_gumbel else "pucv",
         vl_gather=max(32, int(args.vl_gather)),
@@ -767,7 +783,10 @@ def main() -> int:
                 return build_eval(
                     max_batch,
                     eval_cache_entries,
-                    primary_only=bool(startup_options.use_multi_gpu_pucv),
+                    primary_only=bool(
+                        startup_options.use_multi_gpu_pucv
+                        and startup_options.search_parallel == "pucv"
+                    ),
                 )
 
   # Initial build: warms the evaluator too (see factory body).
