@@ -12,7 +12,15 @@ feat/seed-history).
 
 Output line format (one per mined loss, up to two when --moves-csv is given —
 see the mismatch criterion below), consumed by selfplay/opening.py:
-    <start_fen> | <uci ...>   # src=<pgn> round=<r> ply=<j> [refute=<uci>]
+    <start_fen> | <uci ...>   # src=<pgn> round=<r> ply=<j> \
+        [sfcp_before=<cp> sfcp_after=<cp>] [refute=<uci>]
+Collapse seeds carry the already-paid deep-SF evals in the comment:
+``sfcp_before`` = eval at the blind-spot (fens[ply], side-to-move POV as
+SfEval returns it), ``sfcp_after`` = eval after the blunder (fens[ply+1],
+same POV convention: DeepFin POV after negation in mine_game) — free reuse
+for seed-level value supervision / severity-weighted dosing. Mismatch seeds
+already embed their raw numbers (``raw sf=... own=...``). Everything after
+``#`` is comment to the loader.
 Bare seeds (``--no-append-refute-ply``): terminal = the blind-spot the net
 faces; start_fen is up to ``--history-plies`` plies earlier. Default seeds
 (``--append-refute-ply``): the body also replays the historical blunder +
@@ -431,7 +439,8 @@ def mine_game(
     candidates: list[tuple[int, str]] = []
     if collapse is not None:
         candidates.append((collapse.ply, f"src={Path(src).name} round={round_num} "
-                            f"ply={collapse.ply} sf={collapse.sf_before}->{collapse.sf_after}"))
+                            f"ply={collapse.ply} sfcp_before={collapse.sf_before} "
+                            f"sfcp_after={collapse.sf_after}"))
     if mismatch is not None:
         candidates.append((mismatch.ply, f"src={Path(src).name} round={round_num} "
                             f"ply={mismatch.ply} mismatch sf_score={mismatch.sf_score:.2f} "
@@ -669,7 +678,8 @@ def main() -> None:
     with open(args.out, mode, encoding="utf-8") as fh:
         if mode == "w":
             header = (
-                "# Mined blind-spot seeds (start_fen | moves; real LC0 history).\n"
+                "# Mined blind-spot seeds (start_fen | moves; real LC0 history;\n"
+                "#   collapse rows carry deep-SF sfcp_before/sfcp_after in the comment).\n"
                 "# scripts/mine_blindspot_seeds.py — first decisive collapse per loss"
                 + (" + worst value-head mismatch per loss" if own_evals is not None else "")
                 + ("; blunder+deep-SF refute ply baked in (terminal post-punish).\n"
