@@ -4039,6 +4039,39 @@ closed-loop workload. Remove the runtime prototype. Retain only the benchmark's
 production-checkpoint option so future dispatcher experiments use the deployed
 model rather than a synthetic smaller network.
 
+**OFFLINE — remove ThreadedDispatcher fixed gather wait (2026-07-19;
+selfplay performance/simplification).** The local dispatcher still waits up to
+5 ms when idle and while an in-flight forward is incomplete, although any
+producer notification ends the condition wait early. The new 576-row bucket
+may make prompt smaller submits efficient enough that the explicit timeout is
+unnecessary. Hypothesis: `batch_wait_ms=0` preserves useful throughput while
+removing the last fixed gather delay from the local threaded path. ONE deciding
+yardstick: two counterbalanced 5/0 ms process pairs using `PYTHONPATH=. python3
+scripts/bench_dispatcher_gumbel.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
+50 --topk 16 --iters 5 --warmup-iters 10 --compile-mode reduce-overhead
+--dispatcher-target-batch 680 --dispatcher-batch-wait-ms {5|0}`, alternating
+order. Arms are admissible only with `frames_ok=0` and `cudagraph_skips=0`
+during timing. SUCCESS: zero/control median timed leaves/s and games/s are both
+at least 0.99x, padding does not exceed control by more than 2%, completed work
+is exact, and focused tests/lint pass; then change the production default to
+zero and remove stale fixed-wait commentary. KILL: throughput below 0.99x,
+padding/resource regression, capture/skip, or correctness/liveness failure.
+Scheduling only; no model, targets, replay, RNG, or live state changes.
+**VERDICT: WORKED; REMOVE THE LOCAL FIXED WAIT (2026-07-19).** All four arms
+were clean (`frames_ok=0`, `cudagraph_skips=0`) with exact completed work. The
+first arm in each process order ran 5-6% faster regardless of wait setting, so
+the counterbalance was load-bearing: 5 ms measured 10,596.03 then 10,035.89
+timed leaves/s (207.77 then 196.78 games/s), while zero measured 10,079.54 then
+10,707.93 leaves/s (197.64 then 209.96 games/s). Median zero/control was
+**1.0075x** for both leaves/s and games/s. Median padding also improved
+slightly, 1.0194x to 1.0177x. Set the `ThreadedDispatcher`, worker CLI,
+distributed fallback, and production worker-local default to zero. This does
+not remove the separate broker's 2 ms adaptive-idle rule and 20 ms hard cap;
+that global 16-slot gather policy was previously measured within roughly 2%
+of its offline oracle and remains in the broker-only path.
+
 **OFFLINE — finer compiled ThreadedDispatcher buckets (2026-07-19; selfplay
 performance).** The clean production-checkpoint dispatcher runs above measured
 1.10 forwarded rows per useful leaf because the compiled ladder jumps directly

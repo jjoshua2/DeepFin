@@ -387,7 +387,7 @@ tune:
   distributed_worker_threaded: true   # 2026-04-29: enable threaded selfplay so the new dispatcher actually engages. Bench at N=16 producers showed 36k leaves/s vs ~7k for the prior path (5x). Old comment "AOT threading slower in prod" referred to the AOT-compiled threading path; this is the compiled+dispatcher path which is structurally different.
   distributed_worker_selfplay_threads: 32
   distributed_worker_threaded_dispatcher: true   # 2-slot async pipeline (2026-04-29 refactor): +5.9x over ThreadedBatchEvaluator at N=16 producers, parity tests at 1e-5 vs DirectGPUEvaluator. Was false based on 2026-04-28 A/B which used a pre-refactor sync dispatcher AND a bench with main-thread compile that broke cudagraph TLS — both fixed.
-  distributed_worker_dispatcher_batch_wait_ms: 5.0  # 2026-07-02 sweep WINNER: 2ms 59 pos/batch & 3.5k pos/s, 5ms 129 & 5.0k (+43%), 8ms 83 & 3.8k (overshoot — latency-bound pipeline). Restart-gated.
+  distributed_worker_dispatcher_batch_wait_ms: 0.0  # 2026-07-19: no fixed local-dispatch wait; 1.008x median throughput after the 576-row bucket. Restart-gated.
   distributed_worker_dispatcher_max_batch: 1190
   distributed_worker_dispatcher_target_batch: 680  # Live producers underfill 340; 680 has been the best current steady compromise.
   # distributed_worker_aot_dir: data/aot_models  # Auto-detected by _worker_inference_args when threaded=true

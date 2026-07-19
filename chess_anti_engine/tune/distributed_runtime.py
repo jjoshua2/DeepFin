@@ -676,7 +676,7 @@ def _build_distributed_worker_cmd(
                 "--selfplay-threads",
                 str(int(config.get("distributed_worker_selfplay_threads", 16))),
                 "--dispatcher-batch-wait-ms",
-                str(float(config.get("distributed_worker_dispatcher_batch_wait_ms", 1.0))),
+                str(float(config.get("distributed_worker_dispatcher_batch_wait_ms", 0.0))),
                 "--dispatcher-max-batch",
                 str(int(config.get("distributed_worker_dispatcher_max_batch", 4096))),
                 "--dispatcher-target-batch",
