@@ -417,3 +417,22 @@ def test_resolve_use_multi_gpu_pucv_single_device_silent(capsys) -> None:
     for flag in (None, False, True):
         assert uci_main._resolve_use_multi_gpu_pucv(flag, 1) is False
     assert capsys.readouterr().err == ""
+
+
+def test_root_parallel_startup_retains_pucv_fallback_without_activating_it(
+    capsys,
+) -> None:
+    root, fallback, active_pucv = uci_main._resolve_multi_gpu_startup(
+        "gumbel", None, 2,
+    )
+    assert (root, fallback, active_pucv) == (True, True, False)
+    # Do not claim PUCV was auto-enabled while RPG is the live path.
+    assert capsys.readouterr().err == ""
+
+
+def test_pucv_startup_remains_active_multi_gpu_default(capsys) -> None:
+    root, fallback, active_pucv = uci_main._resolve_multi_gpu_startup(
+        "pucv", None, 2,
+    )
+    assert (root, fallback, active_pucv) == (False, True, True)
+    assert "auto-enabling" in capsys.readouterr().err
