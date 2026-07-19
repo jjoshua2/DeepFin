@@ -396,6 +396,7 @@ def sample_sf_refute_batch(
     *,
     frac: float,
     training_iteration: int,
+    path: str | None = None,
 ) -> list[str]:
     """Deterministic round-robin slice of ``seeds`` for the SF-refute channel.
 
@@ -403,16 +404,26 @@ def sample_sf_refute_batch(
     list is non-empty and frac>0). The window start advances by K each
     ``training_iteration`` so every seed rotates through SF-refutation over
     ~1/frac iterations without requiring server-side state.
+
+    When ``path`` is set, ``weight=0`` soft-retire markers are honored (same
+    map as ``expand_dole_seeds``) so retired seeds never burn SF-refute budget.
     """
     if not seeds:
         return []
     f = float(frac)
     if f <= 0.0:
         return []
-    n = len(seeds)
+    eligible = list(seeds)
+    if path:
+        weights = _load_fen_weights(str(path))
+        if weights:
+            eligible = [s for s in seeds if int(weights.get(s, 1)) > 0]
+    if not eligible:
+        return []
+    n = len(eligible)
     k = n if f >= 1.0 else max(1, min(n, round(n * f)))
     start = (int(training_iteration) * k) % n
-    return [seeds[(start + i) % n] for i in range(k)]
+    return [eligible[(start + i) % n] for i in range(k)]
 
 
 def expand_dole_seeds(seeds: list[str], path: str | None) -> list[str]:

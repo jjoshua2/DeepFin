@@ -513,15 +513,31 @@ def _publish_distributed_trial_state(
         json.dumps(manifest, sort_keys=True, indent=2),
         encoding="utf-8",
     )
-    # One-shot dole rearm for this selfplay window. Lets a trial restart on
-    # an incomplete training_iteration re-hand seeds once (gate claim would
-    # otherwise stay burned from the pre-restart life). Consumed by the
-    # server on the first eligible worker poll — see SEED_DOLE_REARM_FILENAME.
-    # Only when selfplay is active and dole mode is on; pause publishes must
-    # not arm a claim that workers would drop.
+    # One-shot dole rearm ONLY for true mid-iter resume: durable gate already
+    # shows this training_iteration claimed (workers died; claim would otherwise
+    # stay burned). Do NOT arm on every normal selfplay open — that races with
+    # multi-worker first-claim and double-doles (PR #209 review). Consumed under
+    # the gate lock in server claim().
     rearm_path = publish_dir / "seed_dole_rearm.json"
     dole_n = int(config.get("opening_fen_dole_per_iter", 0) or 0)
+    arm_rearm = False
     if (not pause_selfplay) and dole_n > 0 and manifest.get("opening_fen_list"):
+        gate_path = Path(server_root) / "seed_dole_gate.json"
+        try:
+            if gate_path.exists():
+                gate = json.loads(gate_path.read_text(encoding="utf-8"))
+                tid = str(trial_id or "").strip()
+                last = gate.get(tid)
+                if last is None and tid:
+                    for k, v in gate.items():
+                        ks = str(k)
+                        if ks == tid or ks.endswith(tid) or tid.endswith(ks):
+                            last = v
+                            break
+                arm_rearm = int(last if last is not None else -1) == int(training_iteration)
+        except Exception:
+            arm_rearm = False
+    if arm_rearm:
         atomic_write_text(
             rearm_path,
             json.dumps({"training_iteration": int(training_iteration)}, sort_keys=True),

@@ -1446,7 +1446,10 @@ class WorkerSession:
         sf_queue: list[str] = []
         if sf_frac > 0.0 and sf_plies > 0:
             sf_queue = sample_sf_refute_batch(
-                seeds, frac=sf_frac, training_iteration=train_iter,
+                seeds,
+                frac=sf_frac,
+                training_iteration=train_iter,
+                path=str(self.opening_fen_list_path),
             )
         with self._dole_lock:
             live = self._live_dole_queue

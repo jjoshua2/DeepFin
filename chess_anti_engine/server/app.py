@@ -53,11 +53,10 @@ def _compacted_token_suffix(flush_token: str) -> str:
     return f"_{flush_token}{LOCAL_SHARD_SUFFIX}"
 
 
-# One-shot rearm request written by the trainable when it opens a selfplay
-# window (``pause_selfplay=False``). Consumed on the first *eligible* dole
-# resolve so a mid-iteration trial restart can re-hand seeds for the still-
-# open iteration without re-handing on every subsequent poll (or on a bare
-# server restart — see ``test_seed_dole_gate_persists_across_restart``).
+# One-shot rearm request written by the trainable only when opening a selfplay
+# window for an iteration that the durable gate has ALREADY claimed (true
+# mid-iter resume after workers died). Consumed inside the gate lock with claim
+# so concurrent multi-worker polls cannot double-dole (see PR #209 review).
 SEED_DOLE_REARM_FILENAME = "seed_dole_rearm.json"
 
 
@@ -79,12 +78,10 @@ class _SeedDoleGate:
     effort: a load/save failure degrades to in-memory only.
 
     Mid-iteration *trial* restarts (cheese pause, crash, ``train.sh stop``)
-    are different: the incomplete iteration stays claimed on disk while
-    workers are gone, so the whole first selfplay window after resume would
-    get zero seeds. The trainable writes a one-shot ``seed_dole_rearm.json``
-    when opening each selfplay window; ``claim(..., allow_rearm=True)`` rolls
-    that iteration back once so a single poll can win again. Concurrent polls
-    still serialize — only one winner after rearm.
+    leave the incomplete iteration claimed on disk while workers are gone. The
+    trainable writes ``seed_dole_rearm.json`` only when the gate already shows
+    that iteration claimed; ``claim`` consumes that file **under the same lock**
+    as the claim decision so concurrent polls still yield exactly one winner.
     """
 
     def __init__(self, state_path: Path | None = None) -> None:
@@ -109,22 +106,54 @@ class _SeedDoleGate:
         except Exception:
             pass  # in-memory state still holds; durability is best-effort
 
+    def _consume_rearm_unlocked(
+        self, publish_dir: Path | None, training_iteration: int,
+    ) -> bool:
+        """Consume rearm file; caller MUST hold ``self._lock``."""
+        if publish_dir is None:
+            return False
+        path = Path(publish_dir) / SEED_DOLE_REARM_FILENAME
+        tmp = path.with_suffix(path.suffix + ".consuming")
+        try:
+            path.rename(tmp)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+        try:
+            raw = tmp.read_text(encoding="utf-8")
+            data = json.loads(raw) if raw.strip() else {}
+            return int(data.get("training_iteration", -1)) == int(training_iteration)
+        except Exception:
+            return False
+        finally:
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
+
     async def claim(
         self,
         trial_key: str,
         training_iteration: int,
         *,
+        publish_dir: Path | None = None,
         allow_rearm: bool = False,
     ) -> bool:
         """Claim the dole for ``(trial_key, training_iteration)``.
 
-        When ``allow_rearm`` is True and this exact iteration was already
-        claimed, roll the gate back one step first so a single new winner can
-        take the batch (used after a trial restart on an incomplete iter).
+        When a matching rearm file is present in ``publish_dir`` (or
+        ``allow_rearm=True`` for tests) AND this exact iteration is already
+        claimed, roll the gate back one step so a single new winner can take
+        the batch. Rearm consumption and the claim decision share one lock so
+        concurrent multi-worker polls cannot double-dole.
         """
         async with self._lock:
+            rearm = bool(allow_rearm)
+            if publish_dir is not None:
+                # File wins over the kwarg when both are set; under the lock so
+                # rename + claim decision is one critical section.
+                rearm = self._consume_rearm_unlocked(publish_dir, training_iteration)
             last = int(self._last_iter.get(trial_key, -1))
-            if allow_rearm and last == int(training_iteration):
+            if rearm and last == int(training_iteration):
                 last = int(training_iteration) - 1
                 self._last_iter[trial_key] = last
             if int(training_iteration) > last:
@@ -135,11 +164,7 @@ class _SeedDoleGate:
 
 
 def consume_seed_dole_rearm(publish_dir: Path, training_iteration: int) -> bool:
-    """Atomically consume a one-shot rearm request for ``training_iteration``.
-
-    Returns True only when a rearm file was present, targeted this iteration,
-    and this caller won the rename race (so concurrent polls only rearm once).
-    """
+    """Test helper: consume a rearm file outside the gate (prefer claim+publish_dir)."""
     path = Path(publish_dir) / SEED_DOLE_REARM_FILENAME
     tmp = path.with_suffix(path.suffix + ".consuming")
     try:
@@ -151,8 +176,7 @@ def consume_seed_dole_rearm(publish_dir: Path, training_iteration: int) -> bool:
     try:
         raw = tmp.read_text(encoding="utf-8")
         data = json.loads(raw) if raw.strip() else {}
-        req_iter = int(data.get("training_iteration", -1))
-        return req_iter == int(training_iteration)
+        return int(data.get("training_iteration", -1)) == int(training_iteration)
     except Exception:
         return False
     finally:
@@ -1178,15 +1202,13 @@ def create_app(
             return False
         trial_key = str(_normalize_trial_id(trial_id) or "")
         training_iteration = int(manifest.get("training_iteration", 0) or 0)
-        # One-shot rearm from the trainable's selfplay-window open: only
-        # consumed on an eligible (selfplay, unpaused, dole-on) poll so a
-        # paused/arena poll cannot burn it. Claim+rearm share the gate lock
-        # so concurrent eligible polls still yield exactly one winner.
-        allow_rearm = consume_seed_dole_rearm(
-            _publish_root(trial_id), training_iteration,
-        )
+        # Rearm file (if any) is consumed inside claim under the gate lock so
+        # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
+        # polls return above and never reach claim — they cannot burn rearm.
         return await seed_dole_gate.claim(
-            trial_key, training_iteration, allow_rearm=allow_rearm,
+            trial_key,
+            training_iteration,
+            publish_dir=_publish_root(trial_id),
         )
 
     async def _serve_manifest(

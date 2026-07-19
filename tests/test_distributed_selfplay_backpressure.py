@@ -968,8 +968,7 @@ def test_consume_seed_dole_rearm_is_one_shot(tmp_path: Path) -> None:
 
 
 def test_manifest_rearms_dole_after_same_iter_republish(tmp_path: Path) -> None:
-    """Selfplay-window republish of the same training_iteration must re-open
-    the gate once (trial restart / cheese-pause resume path)."""
+    """Selfplay-window republish re-opens the gate only when already claimed."""
     fen_path = tmp_path / "blindspot.txt"
     fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
     _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
@@ -979,11 +978,49 @@ def test_manifest_rearms_dole_after_same_iter_republish(tmp_path: Path) -> None:
     first = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=2)
     assert [p["dole_fen_seeds"] for p in first] == [True, False]
 
-    # Same iteration republished (simulates trial process resume mid-iter):
-    # rearm flag is rewritten; exactly one new poll must win.
+    # Same iteration republished after claim → gate last==20 → rearm armed;
+    # exactly one new poll must win.
     _publish_dole_trial(tmp_path, training_iteration=20, dole=1, fen_path=fen_path)
     second = _poll_app_n(app, "/v1/trials/trial_00000/manifest", headers=headers, n=3)
     assert [p["dole_fen_seeds"] for p in second] == [True, False, False]
+
+
+def test_manifest_no_rearm_on_fresh_iter_republish(tmp_path: Path) -> None:
+    """Republishing a not-yet-claimed iteration must NOT write rearm (no double)."""
+    from chess_anti_engine.server.app import SEED_DOLE_REARM_FILENAME
+
+    fen_path = tmp_path / "blindspot.txt"
+    fen_path.write_text(_DOLE_SEED_FEN + "\n", encoding="utf-8")
+    _publish_dole_trial(tmp_path, training_iteration=30, dole=1, fen_path=fen_path)
+    rearm = (
+        tmp_path / "trials" / "trial_00000" / "publish" / SEED_DOLE_REARM_FILENAME
+    )
+    assert not rearm.exists(), "fresh iter must not arm rearm before any claim"
+
+
+def test_seed_dole_gate_rearm_concurrent_single_winner(tmp_path: Path) -> None:
+    """Concurrent claim+rearm must yield exactly one True (PR #209 race fix)."""
+    from chess_anti_engine.server.app import SEED_DOLE_REARM_FILENAME, _SeedDoleGate
+
+    gate = _SeedDoleGate()
+    assert asyncio.run(gate.claim("t", 40)) is True
+    pub = tmp_path / "publish"
+    pub.mkdir()
+    (pub / SEED_DOLE_REARM_FILENAME).write_text(
+        json.dumps({"training_iteration": 40}), encoding="utf-8",
+    )
+
+    async def _burst() -> list[bool]:
+        return list(
+            await asyncio.gather(
+                *[gate.claim("t", 40, publish_dir=pub) for _ in range(32)]
+            )
+        )
+
+    wins = sum(asyncio.run(_burst()))
+    assert wins == 1
+    # File consumed; further claims stay closed.
+    assert sum(asyncio.run(_burst())) == 0
 
 
 # ── opening_fen_list_path live reload (no restart needed) ────────────────────

@@ -942,17 +942,13 @@ def _push_curriculum_opponent_move(
         state.root_ids[idx] = state.mcts_tree.find_child(
             state.root_ids[idx], opp_move_idx,
         )
-    # SF-refute handoff: after M opponent SF plies, the rest of the game is
-    # net-vs-net (value-hole seed already forced onto the true PV for a few
-    # moves; no need to burn full-length curriculum SF).
+    # SF-refute phase countdown: after M opponent SF plies, opponent becomes
+    # the net (selfplay_arr is already 1 for these games — no type flip).
     if (
         idx < len(state.sf_refute_opp_plies_left)
         and int(state.sf_refute_opp_plies_left[idx]) > 0
     ):
-        left = int(state.sf_refute_opp_plies_left[idx]) - 1
-        state.sf_refute_opp_plies_left[idx] = left
-        if left <= 0:
-            state.selfplay_arr[idx] = 1
+        state.sf_refute_opp_plies_left[idx] = int(state.sf_refute_opp_plies_left[idx]) - 1
     if state.cboards[idx].is_game_over():
         state.done_arr[idx] = 1
 
@@ -975,7 +971,7 @@ def _process_sf_results(
     sf_wdl_use_cp_logistic = bool(state.game.sf_wdl_use_cp_logistic)
     sf_wdl_cp_slope = float(state.game.sf_wdl_cp_slope)
     sf_wdl_cp_draw_width = float(state.game.sf_wdl_cp_draw_width)
-    regret_limit = (
+    pid_regret_limit = (
         float(state.opponent.wdl_regret_limit)
         if state.opponent.wdl_regret_limit is not None else float("inf")
     )
@@ -1025,11 +1021,23 @@ def _process_sf_results(
                 sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
             )
 
-        if play_curriculum_moves and not state.selfplay_arr[idx]:
+        # SF opponent when curriculum OR mid SF-refute phase (selfplay-tagged).
+        uses_sf_opp = (
+            idx < len(state.sf_refute_opp_plies_left)
+            and int(state.sf_refute_opp_plies_left[idx]) > 0
+        ) or (not bool(state.selfplay_arr[idx]))
+        if play_curriculum_moves and uses_sf_opp:
+            # SF-refute plies force full-strength best move (inf regret), not
+            # PID-handicapped airbag play — that's the whole point of the channel.
+            in_refute = (
+                idx < len(state.sf_refute_opp_plies_left)
+                and int(state.sf_refute_opp_plies_left[idx]) > 0
+            )
+            move_regret = float("inf") if in_refute else pid_regret_limit
             _push_curriculum_opponent_move(
                 state, idx, legal_indices=legal_indices,
                 cand_idxs=cand_idxs, cand_scores=cand_scores,
-                regret_limit=regret_limit,
+                regret_limit=move_regret,
             )
 
 

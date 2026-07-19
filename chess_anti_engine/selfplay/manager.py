@@ -269,10 +269,11 @@ def play_batch(
     mutate the SHARED list in place; never rebind ``state.fen_dole_queue``
     (that orphans the worker's live queue — PR #154). None = no doled seeds.
 
-    ``fen_sf_refute_queue`` (opt-in SF-refute channel): curriculum slots drain
-    this FIFO for short SF-as-opponent openings (``opening_fen_sf_refute_*``),
-    then hand off to selfplay after N SF plies. Same in-place-refill rule as
-    the selfplay dole queue.
+    ``fen_sf_refute_queue`` (opt-in SF-refute channel): selfplay slots drain
+    this FIFO for short SF-as-opponent openings (``opening_fen_sf_refute_*``;
+    selfplay-tagged for finalize/PID, SF opponent for N plies via
+    ``sf_refute_opp_plies_left``). Same in-place-refill rule as the selfplay
+    dole queue.
 
     ``pause_fn`` (continuous mode): while it returns True the loop HOLDS —
     no new work is scheduled but every in-flight game keeps its state — and

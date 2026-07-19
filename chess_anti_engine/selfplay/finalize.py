@@ -262,7 +262,12 @@ class _GumbelPolicyGameStats:
     candidate_count_sum: int = 0
 
 
-_OPENING_SOURCES = {"book1", "book2", "random", "start", "fenlist", "fenlist_backed"}
+_OPENING_SOURCES = {
+    "book1", "book2", "random", "start",
+    "fenlist", "fenlist_backed",
+    # SF-refute channel (PR #209): keep fenlist* prefix for PID exclusion.
+    "fenlist_sf_refute", "fenlist_sf_refute_backed",
+}
 
 
 def _opening_source_for_stats(state: SelfplayState, i: int) -> str:
@@ -270,7 +275,12 @@ def _opening_source_for_stats(state: SelfplayState, i: int) -> str:
         source = str(state.opening_source_arr[i])
     except (AttributeError, IndexError):
         return "unknown"
-    return source if source in _OPENING_SOURCES else "unknown"
+    if source in _OPENING_SOURCES:
+        return source
+    # Forward-compat: any fenlist* source stays greppable / PID-excluded.
+    if source.startswith("fenlist"):
+        return source
+    return "unknown"
 
 
 def _inc_outcome(stats: dict[str, int], key: str, amount: int = 1) -> None:
