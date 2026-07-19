@@ -47,6 +47,9 @@ def test_next_bucket_picks_smallest_fit():
     assert _next_bucket(170) == 170
     assert _next_bucket(171) == 256
     assert _next_bucket(340) == 340
+    assert _next_bucket(513) == 576
+    assert _next_bucket(576) == 576
+    assert _next_bucket(577) == 680
     assert _next_bucket(681) == 768
     assert _next_bucket(700) == 768
     assert _next_bucket(1190) == 1190

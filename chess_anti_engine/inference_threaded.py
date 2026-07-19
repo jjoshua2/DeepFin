@@ -26,6 +26,9 @@ from chess_anti_engine.inference import (
 logger = logging.getLogger(__name__)
 
 
+_DISPATCH_BATCH_BUCKETS = tuple(sorted((*_COMPILED_BATCH_BUCKETS, 576)))
+
+
 @dataclass(slots=True)
 class _EvalRequest:
     encoded: np.ndarray
@@ -55,7 +58,7 @@ class _DispatchHandle:
 QueueItem = _EvalRequest | _ModelUpdateRequest
 
 
-def _next_bucket(n: int, buckets: tuple[int, ...] = _COMPILED_BATCH_BUCKETS) -> int:
+def _next_bucket(n: int, buckets: tuple[int, ...] = _DISPATCH_BATCH_BUCKETS) -> int:
     for b in buckets:
         if b >= n:
             return b
