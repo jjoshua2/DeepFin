@@ -875,6 +875,38 @@ call. Both are far below the 1.15x and 10us gates, with exact checksum
 the NumPy ABI and look inside terminal detection instead. The one-off harness
 was removed.
 
+**OFFLINE -- single-walker CUDA-owner dispatcher (2026-07-18; UCI
+perf/simplification).** Compiled UCI currently wraps even `Threads=1` Gumbel
+in `BatchCoalescingDispatcher` solely to keep cudagraph launches on one
+persistent thread. A single producer can never coalesce with another request,
+and that wrapper hides the direct evaluator's pinned in-place API. Hypothesis:
+a minimal FIFO CUDA-owner dispatcher, used only for compiled single-walker
+UCI, preserves thread affinity while forwarding pinned buffers and async
+launches, removing an input copy and the irrelevant batch merge/slice path.
+ONE deciding yardstick: three alternating legacy/owner process rounds, each
+running `PYTHONPATH=. python3 scripts/bench_uci_engine.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--device cuda --nodes 8192 --repeats 3 --chunk-sims 512 --topk 32
+--max-batch 1024 --compile-mode max-autotune --compile-cache-dir
+/tmp/cae-uci-bf16-cache --timeout-s 300`, with
+`CAE_UCI_OWNER_DISPATCH=0/1`. SUCCESS: owner/control geometric-mean
+per-position median sims/s >=1.05x, every bestmove sequence agrees, all
+searches report at least 8,192 actual nodes, focused dispatcher/Gumbel/UCI
+tests and lint pass, and shutdown is clean. KILL: gain below 5%, any output,
+node, lifetime, CUDA, or shutdown failure. Match inference only; no model,
+search budget, targets, replay, config, RNG, or live training state.
+**VERDICT: WORKED (2026-07-18); promoted for compiled single-walker UCI.**
+Three counterbalanced legacy/owner process pairs each ran all five positions
+three times at 8,192 actual nodes. Median-of-arm-median sims/s were legacy
+8,054/8,767/8,642/8,621/18,749 versus owner
+8,440/9,733/9,397/9,405/21,183. Per-position owner/legacy ratios were
+1.048/1.110/1.087/1.091/1.130, geometric mean **1.0929 (9.29% faster)**.
+Every best-move sequence agreed, all 90 searches completed their node budget,
+focused dispatcher/Gumbel/UCI tests and lint passed, and every process shut
+down cleanly. Remove the experiment switch and use the owner dispatcher by
+default for compiled `Threads=1`; retain `BatchCoalescingDispatcher` for
+concurrent walkers, where actual request merging remains useful.
+
 **Native classifier redundant terminal-check experiment -- UNREAD
 (2026-07-12).** All three selfplay `CBoard.push_index` paths immediately set
 `done_arr` after forced-network, searched-network, and curriculum-Stockfish
@@ -1430,6 +1462,23 @@ times out, compile counters show no new graph breaks/recompiles, and focused
 dispatcher/Gumbel/UCI tests pass. Otherwise FAILED and keep the env default
 off. Match-inference implementation only; no training/data change or salvage
 snapshot.
+**VERDICT: FAILED (2026-07-18); keep `CAE_UCI_COMPACT_BF16` default-off.**
+After building a shared mode-complete max-autotune cache, three alternating
+control/candidate process rounds each ran all five positions three times at
+8,192 actual nodes. Per-position medians across the three rounds were control
+8,009/8,861/8,829/8,714/20,190 sims/s versus compact
+7,458/8,350/8,473/8,229/20,136. Candidate/control ratios were
+0.931/0.942/0.960/0.944/0.997, geometric mean **0.9547 (4.5% slower)**;
+aggregate-median ratio was 0.9457. The local GPU gather/conversion cost exceeds
+the saved policy transport on the four non-endgame positions and is merely flat
+in the endgame. Three measurement bugs were fixed before the deciding run:
+setup failures now kill the spawned engine,
+and UCI emits a final info line when its periodic node count is stale (the first
+attempt searched 8,192 but exposed only the prior 7,680-node info line), and
+each repeat now sends `ucinewgame` so it measures a fresh tree rather than a
+continuation of the previous 8,192-node search. The
+explicit experimental flag remains available for diagnostics, but must not
+become the default or be combined into a claimed UCI speedup.
 
 **Broker recycled-response coalescing experiment -- UNREAD (2026-07-11).**
 Live post-recovery telemetry shows only ~34-55 positions and 1.3-2.1 of 16
@@ -3919,3 +3968,33 @@ transport rounds root logits to BF16, which is expected and permitted; masks,
 legal actions, WDL transport, and protocol remain unchanged. Promote for broker
 clients only; local/direct GPU evaluators retain their existing dense zero-copy
 root path.
+
+**OFFLINE -- AOT next-pack overlap feasibility (2026-07-18; perf-only).**
+The broker synchronizes each submitted AOT forward before it can gather the
+next shared-memory request, even though model execution and output copies are
+asynchronous after submission. Hypothesis: while one production-sized compact
+forward completes on CUDA, copying the next BF16 input group into the second
+pinned slot can hide a meaningful part of host packing and justify a two-stage
+broker pipeline. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_aot_pack_overlap.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 340
+--iterations 40 --rounds 7`. SUCCESS: overlap/reference median wall <=0.95,
+at least 25% of the separately measured second-pack time is hidden, exact
+compact-policy/WDL checksums, and no CUDA/event/lifetime error. KILL: either
+speed gate misses or any correctness failure. Passing authorizes only a full
+broker-backed prototype with its own end-to-end yardstick; failing leaves the
+runtime unchanged. No search, target, replay, config, RNG, or live-state
+change.
+**VERDICT: KILLED (2026-07-18); runtime unchanged.** Seven alternating
+quiet-GPU rounds measured 1.174368s reference versus 1.137226s overlapped for
+40 two-forward iterations, ratio **0.968372 (3.16% faster)**, with exact
+compact-policy/WDL checksum
+`371bb54d728537d650995a1f06b24fa73fc7470db5300a125b048ea1f2815cd3`.
+The candidate missed the required <=0.95 wall-time gate. The apparent saved
+time also exceeded the separately measured 13.924ms total second-pack cost,
+showing that launch/runtime variance dominates this small mechanism read.
+Do not add target-based batch splitting, alternate broker staging buffers, or
+prepare/submit/scatter state machines for this result. The one-off benchmark
+was removed.

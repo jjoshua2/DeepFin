@@ -82,6 +82,43 @@ def test_run_one_phase_does_not_duplicate_worker_info(capsys) -> None:
     assert "wdl 500 0 500" in lines[0]
 
 
+def test_run_one_phase_refreshes_stale_periodic_node_count(capsys) -> None:
+    worker = MagicMock()
+
+    def _run(*_args: Any, **kwargs: Any) -> SearchResult:
+        kwargs["info_cb"](
+            nodes=7680,
+            elapsed_ms=100,
+            score_cp=12,
+            pv=("e2e4",),
+            tbhits=0,
+            score_mate=None,
+            multipv=None,
+            wdl=None,
+        )
+        return SearchResult(
+            bestmove_uci="e2e4",
+            ponder_uci=None,
+            nodes=8192,
+            pv=("e2e4",),
+            score_cp=12,
+            tbhits=0,
+        )
+
+    worker.run = _run
+    engine = Engine(worker=worker)
+    engine._run_one_phase(
+        SearchLimits(deadline_ms=None, max_nodes=8192, searchmoves=()),
+        is_ponder=False,
+        board=chess.Board(),
+    )
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("info ")]
+    assert len(lines) == 2
+    assert "nodes 7680" in lines[0]
+    assert "nodes 8192" in lines[1]
+
+
 def test_gil_profile_emits_uci_safe_search_metadata(capsys) -> None:
     worker = MagicMock()
     worker.concurrency_profile.return_value = ("walker_puct", 4)

@@ -25,6 +25,7 @@ from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_cache import EncodedEvalCache
 from chess_anti_engine.inference_dispatcher import (
     BatchCoalescingDispatcher,
+    CUDAOwnerDispatcher,
     MultiGPUDispatcher,
     ThreadSafeGPUDispatcher,
 )
@@ -95,6 +96,20 @@ def _warmup_evaluator(
   # real search will replay (relations change the traced forward).
                     rels = np.broadcast_to(rel_row, (batch, *rel_row.shape)).copy()
                     evaluator.evaluate_encoded(xs, relations=rels)
+            # Compact UCI search uses a distinct compiled forward/gather graph.
+            # Warm it before readyok as well; otherwise the first timed move
+            # pays max-autotune compilation on the clock even though the dense
+            # endpoint above was already warm.
+            if (
+                rel_row is None
+                and bool(getattr(evaluator, "supports_legal_bf16", False))
+                and hasattr(evaluator, "evaluate_legal_bf16")
+            ):
+                legal_one = cb.legal_move_indices().astype(np.int32, copy=False)
+                legal_counts = np.full((batch,), legal_one.size, dtype=np.int32)
+                legal_flat = np.tile(legal_one, batch)
+                for _ in range(max(1, int(n_devices))):
+                    evaluator.evaluate_legal_bf16(xs, legal_flat, legal_counts)
         except Exception:
             break
 
@@ -217,17 +232,22 @@ def _make_evaluator_factory(
   # option can bump walker count at runtime without a race. Lock
   # is uncontended at 1 thread — overhead is ~10ns.
             evaluator = ThreadSafeGPUDispatcher(evaluator)
-  # The submitter-thread dispatcher is mandatory for compiled evaluators:
-  # CUDA graph capture and replay need to stay on the same thread. For eager
-  # evaluation it is only a batching optimization, so --no-coalesce can still
-  # bypass it when there is no compile mode.
+  # A persistent owner thread is mandatory for compiled evaluators: CUDA graph
+  # capture and replay need to stay on the same thread. Single-walker search
+  # forwards the direct evaluator's pinned in-place API; concurrent walkers use
+  # the heavier coalescer so their requests can still become one GPU batch.
+  # For eager evaluation coalescing is only a batching optimization, so
+  # --no-coalesce can bypass it.
         if compile_mode is not None or (coalesce and n_walkers > 1):
-            evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
+            if compile_mode is not None and n_walkers == 1:
+                evaluator = CUDAOwnerDispatcher(evaluator)
+            else:
+                evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
   # Warm BELOW the eval cache: EncodedEvalCache dedupes identical rows and
   # serves full-hit batches without touching the inner evaluator, so warming
   # through it would compile/capture only the first call's shape on one
   # device and leave every other shape/device cold. Warming the pre-cache
-  # chain still runs on the coalescer's submitter thread (the thread that
+  # chain still runs on the persistent owner/submitter thread (the thread that
   # replays cudagraphs in real searches).
         warm_target = evaluator
         if eval_cache_entries > 0:
