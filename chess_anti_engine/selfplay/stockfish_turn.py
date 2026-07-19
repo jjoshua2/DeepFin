@@ -944,11 +944,14 @@ def _push_curriculum_opponent_move(
         )
     # SF-refute phase countdown: after M opponent SF plies, opponent becomes
     # the net (selfplay_arr is already 1 for these games — no type flip).
+    # getattr: unit-test SimpleNamespace fixtures may omit the array (≡ zeros).
+    refute_left = getattr(state, "sf_refute_opp_plies_left", None)
     if (
-        idx < len(state.sf_refute_opp_plies_left)
-        and int(state.sf_refute_opp_plies_left[idx]) > 0
+        refute_left is not None
+        and idx < len(refute_left)
+        and int(refute_left[idx]) > 0
     ):
-        state.sf_refute_opp_plies_left[idx] = int(state.sf_refute_opp_plies_left[idx]) - 1
+        refute_left[idx] = int(refute_left[idx]) - 1
     if state.cboards[idx].is_game_over():
         state.done_arr[idx] = 1
 
@@ -1022,17 +1025,17 @@ def _process_sf_results(
             )
 
         # SF opponent when curriculum OR mid SF-refute phase (selfplay-tagged).
-        uses_sf_opp = (
-            idx < len(state.sf_refute_opp_plies_left)
-            and int(state.sf_refute_opp_plies_left[idx]) > 0
-        ) or (not bool(state.selfplay_arr[idx]))
+        # getattr: unit-test SimpleNamespace fixtures may omit the array (≡ zeros).
+        refute_left = getattr(state, "sf_refute_opp_plies_left", None)
+        in_refute = (
+            refute_left is not None
+            and idx < len(refute_left)
+            and int(refute_left[idx]) > 0
+        )
+        uses_sf_opp = in_refute or (not bool(state.selfplay_arr[idx]))
         if play_curriculum_moves and uses_sf_opp:
             # SF-refute plies force full-strength best move (inf regret), not
             # PID-handicapped airbag play — that's the whole point of the channel.
-            in_refute = (
-                idx < len(state.sf_refute_opp_plies_left)
-                and int(state.sf_refute_opp_plies_left[idx]) > 0
-            )
             move_regret = float("inf") if in_refute else pid_regret_limit
             _push_curriculum_opponent_move(
                 state, idx, legal_indices=legal_indices,

@@ -230,6 +230,8 @@ def _forced_terminal_state() -> Any:
         root_ids=[-1],
         samples_per_game=[[]],
         rng=np.random.default_rng(0),
+        # Production SelfplayState always has this; zeros = not in SF-refute phase.
+        sf_refute_opp_plies_left=np.zeros(1, dtype=np.int32),
     ))
 
 
