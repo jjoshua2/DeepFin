@@ -660,8 +660,8 @@ class SelfplayState:
     # the worker replaces the whole list each doled iteration.
     fen_dole_queue: list[str] | None = None
     # SF-refutation channel: round-robin slice of the same list, drained only by
-    # curriculum slots. Each game runs SF for sf_refute_opp_plies_left opponent
-    # plies then hands off to selfplay (see stockfish_turn._push_curriculum…).
+    # selfplay rolls (selfplay_arr=1). SF is the opponent while
+    # sf_refute_opp_plies_left > 0, then net-net (stockfish_turn push countdown).
     fen_sf_refute_queue: list[str] | None = None
     # Per-slot remaining SF opponent plies in an SF-refute game (0 = not active).
     sf_refute_opp_plies_left: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int32))
@@ -713,7 +713,6 @@ class SelfplayState:
         # the dose can't starve the PID curriculum sample (see the starvation ticket).
         # resolve_slot_opening also drains fen_dole_queue for selfplay slots when the
         # server doled seeds this session (deterministic even coverage).
-        # SF-refute seeds take curriculum slots only (try_take_sf_refute_opening).
         net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
             batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,
         )

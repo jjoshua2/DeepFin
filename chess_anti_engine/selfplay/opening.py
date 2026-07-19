@@ -599,9 +599,10 @@ def try_take_sf_refute_opening(
 ) -> OpeningStart | None:
     """Pop one SF-refutation seed if the channel is armed and the queue has work.
 
-    Caller must place the game on a curriculum slot and set
-    ``sf_refute_opp_plies_left = opening_fen_sf_refute_plies``. Returns None when
-    the channel is off or the queue is empty (thread-safe pop under the GIL).
+    Caller must open a **selfplay-tagged** slot (``selfplay_arr=1``) and set
+    ``sf_refute_opp_plies_left = opening_fen_sf_refute_plies`` so SF plays the
+    opponent for M plies, then net-net. Returns None when the channel is off or
+    the queue is empty (thread-safe pop under the GIL).
     """
     if fen_sf_refute_queue is None:
         return None
