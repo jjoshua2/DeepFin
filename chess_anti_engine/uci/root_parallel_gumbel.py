@@ -296,6 +296,21 @@ class RootParallelGumbelPool:
         self._cfg = cfg
         self._gcfg = gumbel_cfg
         self._devices = list(devices) if devices is not None else None
+        # Real multi-GPU groups each get an independent lock and remain fully
+        # concurrent. Duplicate device identifiers (the required one-GPU
+        # cudagraph preflight) share a lock: PyTorch cannot record two graph
+        # memory pools concurrently on one CUDA device, even from distinct
+        # threads/evaluator objects.
+        device_locks: dict[str, threading.Lock] = {}
+        device_keys = (
+            self._devices
+            if self._devices is not None
+            else [f"group:{index}" for index in range(cfg.n_groups)]
+        )
+        self._device_locks = [
+            device_locks.setdefault(device, threading.Lock())
+            for device in device_keys
+        ]
         self._rng = rng if rng is not None else np.random.default_rng()
         self._info_cb = info_string_cb
 
@@ -555,9 +570,12 @@ class RootParallelGumbelPool:
                 survivor_actions=tuple(remaining),
             ))
             if self._info_cb is not None:
+                with self._stats_lock:
+                    group_sims = ",".join(str(n) for n in self._group_sims)
                 self._info_cb(
                     f"rpg phase={phase_index} cands={n_cands} vpa={vpa} "
-                    f"sims={sims_done} survivors={len(remaining)} "
+                    f"sims={sims_done} group_sims={group_sims} "
+                    f"survivors={len(remaining)} "
                     f"budget_left={budget}{' STOPPED' if stopped else ''}"
                 )
             phase_index += 1
@@ -684,28 +702,30 @@ class RootParallelGumbelPool:
     # --- group worker ---------------------------------------------------------------
 
     def _worker_loop(self, idx: int) -> None:
+        device_lock = self._device_locks[idx]
         try:
-            if self._factories is not None:
-                if self._devices is not None:
-                    device = self._devices[idx]
-                    if device.startswith("cuda"):
-                        # cudagraph-TLS trap: bind the device on THIS thread
-                        # before the factory compiles/captures anything.
-                        import torch
-                        torch.cuda.set_device(device)
-                evaluator = self._factories[idx]()
-                if not hasattr(evaluator, "evaluate_inplace_async"):
-                    raise TypeError(
-                        f"factory[{idx}] returned an evaluator missing "
-                        "evaluate_inplace_async",
-                    )
-                if getattr(evaluator, "n_slots", 1) < 2:
-                    raise ValueError(
-                        f"factory[{idx}] returned an evaluator with n_slots < 2",
-                    )
-                self._evals[idx] = evaluator
-            else:
-                evaluator = self._evals[idx]
+            with device_lock:
+                if self._factories is not None:
+                    if self._devices is not None:
+                        device = self._devices[idx]
+                        if device.startswith("cuda"):
+                            # cudagraph-TLS trap: bind the device on THIS thread
+                            # before the factory compiles/captures anything.
+                            import torch
+                            torch.cuda.set_device(device)
+                    evaluator = self._factories[idx]()
+                    if not hasattr(evaluator, "evaluate_inplace_async"):
+                        raise TypeError(
+                            f"factory[{idx}] returned an evaluator missing "
+                            "evaluate_inplace_async",
+                        )
+                    if getattr(evaluator, "n_slots", 1) < 2:
+                        raise ValueError(
+                            f"factory[{idx}] returned an evaluator with n_slots < 2",
+                        )
+                    self._evals[idx] = evaluator
+                else:
+                    evaluator = self._evals[idx]
             cfg = self._cfg
             self._chunkers[idx] = PucvChunker(
                 evaluator,
@@ -733,7 +753,8 @@ class RootParallelGumbelPool:
                 return
             stop_event = self._job_stop
             try:
-                sims = self._run_item(idx, evaluator, chunker, item, stop_event)
+                with device_lock:
+                    sims = self._run_item(idx, evaluator, chunker, item, stop_event)
                 with self._stats_lock:
                     self._group_sims[idx] += sims
                     self._phase_sims += sims

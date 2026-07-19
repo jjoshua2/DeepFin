@@ -48,6 +48,10 @@ _PUCV_INFO_RE = re.compile(
     r"(?: cache=(?P<cache_hits>\d+)/(?P<cache_requests>\d+)"
     r"\((?P<cache_rate>[\d.]+)%\))?"
 )
+_RPG_PROFILE_RE = re.compile(
+    r"rpg phase=(?P<phase>\d+) cands=(?P<cands>\d+) vpa=(?P<vpa>\d+) "
+    r"sims=(?P<sims>\d+) group_sims=(?P<group_sims>[\d,]+)"
+)
 _GIL_PROFILE_RE = re.compile(
     r"gil_profile .*?threads=(?P<threads>\d+) devices=(?P<devices>\d+) .*?"
     r"samples=(?P<samples>\d+) rate=(?P<rate>[\d.]+)/s "
@@ -87,6 +91,7 @@ def _spawn(checkpoint: str, device: str, *,
            walkers: int = 1, coalesce: bool = True,
            multi_gpu_pucv: bool = False, vl_gather: int = 512,
            pucv_pending_mode: str = "legacy",
+           search_parallel: str = "pucv",
            compile_model: bool = True,
            compile_mode: str = "max-autotune",
            compile_cache_dir: str | None = None,
@@ -101,6 +106,7 @@ def _spawn(checkpoint: str, device: str, *,
            "--walkers", str(walkers),
            "--vl-gather", str(vl_gather),
            "--pucv-pending-mode", pucv_pending_mode,
+           "--search-parallel", search_parallel,
            "--log-level", log_level]
     if devices:
         cmd.extend(["--devices", devices])
@@ -190,6 +196,16 @@ def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
             prof_agg["pucv_leaves"] = prof_agg.get("pucv_leaves", 0.0) + info_leaves
         if info_batches > 0:
             prof_agg["pucv_batches"] = prof_agg.get("pucv_batches", 0.0) + info_batches
+    rpg_profiles = [_RPG_PROFILE_RE.search(line) for line in lines]
+    rpg_profiles = [profile for profile in rpg_profiles if profile is not None]
+    if rpg_profiles:
+        group_sims = [
+            int(value) for value in rpg_profiles[-1]["group_sims"].split(",")
+        ]
+        prof_agg["rpg_groups"] = float(len(group_sims))
+        prof_agg["rpg_groups_active"] = float(sum(value > 0 for value in group_sims))
+        prof_agg["rpg_group_min_sims"] = float(min(group_sims))
+        prof_agg["rpg_group_max_sims"] = float(max(group_sims))
     gil_profiles = [_GIL_PROFILE_RE.search(line) for line in lines]
     gil_profiles = [profile for profile in gil_profiles if profile is not None]
     if gil_profiles:
@@ -243,6 +259,7 @@ def _run_config(
     walkers: int = 1, coalesce: bool = True,
     multi_gpu_pucv: bool = False, vl_gather: int = 512,
     pucv_pending_mode: str = "legacy",
+    search_parallel: str = "pucv",
     use_vl: bool = False,
     compile_model: bool = True,
     compile_mode: str = "max-autotune",
@@ -256,6 +273,7 @@ def _run_config(
                   walkers=walkers, coalesce=coalesce,
                   multi_gpu_pucv=multi_gpu_pucv, vl_gather=vl_gather,
                   pucv_pending_mode=pucv_pending_mode,
+                  search_parallel=search_parallel,
                   compile_model=compile_model, compile_mode=compile_mode,
                   compile_cache_dir=compile_cache_dir,
                   gil_profile=gil_profile,
@@ -283,7 +301,7 @@ def _run_config(
     if devices:
         pucv_str = (
             f"  multi_gpu_pucv={multi_gpu_pucv}  vl_gather={vl_gather} "
-            f"pending={pucv_pending_mode}"
+            f"pending={pucv_pending_mode}  search_parallel={search_parallel}"
         )
     elif use_vl:
         pucv_str = f"  use_vl=True  vl_gather={vl_gather} pending={pucv_pending_mode}"
@@ -345,6 +363,16 @@ def _run_config(
             print(
                 f"  pucv profile: leaves={int(leaves)}  batches={int(batches)}  "
                 f"avg_batch={leaves / max(1.0, batches):.1f}  wall={wall:.3f}s{cache}"
+            )
+        rpg_runs = [profile for profile in profile_runs if "rpg_groups" in profile]
+        if rpg_runs:
+            print(
+                "  rpg profile: "
+                f"active_groups={int(min(p['rpg_groups_active'] for p in rpg_runs))}/"
+                f"{int(max(p['rpg_groups'] for p in rpg_runs))} "
+                "group_sims_range="
+                f"{int(min(p['rpg_group_min_sims'] for p in rpg_runs))}-"
+                f"{int(max(p['rpg_group_max_sims'] for p in rpg_runs))}"
             )
         gil_runs = [profile for profile in profile_runs if "gil_samples" in profile]
         if gil_runs:
@@ -410,6 +438,9 @@ def main() -> int:
     p.add_argument("--pucv-pending-mode", choices=["legacy", "virtual-mean"],
                    default="legacy",
                    help="pending accounting for batched PUCV paths")
+    p.add_argument("--search-parallel", choices=["pucv", "gumbel"],
+                   default="pucv",
+                   help="multi-GPU UCI search mode")
     p.add_argument("--no-coalesce", dest="coalesce", action="store_false",
                    help="disable walker-call coalescing (only meaningful with --walkers > 1)")
     p.set_defaults(coalesce=True)
@@ -546,6 +577,7 @@ def main() -> int:
             walkers=args.walkers, coalesce=args.coalesce,
             multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
             pucv_pending_mode=args.pucv_pending_mode,
+            search_parallel=args.search_parallel,
             use_vl=args.use_vl,
             compile_model=args.compile,
             compile_mode=args.compile_mode,

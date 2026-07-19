@@ -978,3 +978,27 @@ def test_pool_rejects_bad_construction() -> None:
             pool.run(target_sims=8, stop_event=threading.Event())
     finally:
         pool.close()
+
+
+def test_duplicate_device_groups_share_cuda_ownership_lock() -> None:
+    cfg = RootParallelGumbelConfig(n_groups=2, gather=8)
+    gcfg = GumbelConfig(input_extra_features="v1")
+    evaluators = [_make_evaluator(), _make_evaluator()]
+    duplicate = RootParallelGumbelPool(
+        cfg, gcfg, evaluators=evaluators, devices=["cuda:0", "cuda:0"],
+    )
+    try:
+        assert duplicate._device_locks[0] is duplicate._device_locks[1]
+    finally:
+        duplicate.close()
+
+    distinct = RootParallelGumbelPool(
+        cfg,
+        gcfg,
+        evaluators=[_make_evaluator(), _make_evaluator()],
+        devices=["cuda:0", "cuda:1"],
+    )
+    try:
+        assert distinct._device_locks[0] is not distinct._device_locks[1]
+    finally:
+        distinct.close()

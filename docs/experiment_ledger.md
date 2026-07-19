@@ -3998,3 +3998,95 @@ showing that launch/runtime variance dominates this small mechanism read.
 Do not add target-based batch splitting, alternate broker staging buffers, or
 prepare/submit/scatter state machines for this result. The one-off benchmark
 was removed.
+**OFFLINE — root-parallel Gumbel duplicate-device preflight (2026-07-18;
+correctness/liveness only, no performance claim).** Hypothesis: the
+root-parallel Gumbel evaluator factories, persistent group threads, CUDA
+device binding, per-candidate ownership, phase barriers, and shutdown path can
+complete the full UCI position suite when two logical groups share the one
+available physical RTX 5090. ONE deciding yardstick:
+`PYTHONPATH=. python3 scripts/bench_uci_engine.py --checkpoint
+/home/josh/projects/chess/data/match_ckpts/ckpt101_20260718/trainer.pt
+--devices cuda:0,cuda:0 --nodes 2048 --repeats 1 --chunk-sims 2048 --topk
+32 --max-batch 256 --vl-gather 256 --walkers 1 --compile-mode
+reduce-overhead --search-parallel gumbel`. SUCCESS: all five positions return
+legal bestmoves at the requested node budget, every phase terminates, both
+logical groups report completed work on at least one nonterminal position,
+and shutdown is clean. KILL: exception, CUDA/cudagraph error, deadlock,
+illegal/empty bestmove, incorrect node termination, one group never doing
+work, or process shutdown failure. Duplicate-device NPS is explicitly not a
+speed yardstick because both groups contend for one GPU; real scaling and
+strength remain gated on the documented 2/4/8-GPU protocol before merge or
+retirement of the existing PUCV mode.
+**VERDICT: FAILED (2026-07-18).** The original benchmark harness incorrectly
+reported requested nodes divided by wall time even when UCI returned its
+zero-node legal fallback. A direct protocol capture showed the actual failure:
+`RuntimeError('beginAllocateToPool: already recording to mempool_id')`, then
+`bestmove g1h3` with zero searched nodes. Two logical groups can concurrently
+enter CUDA graph capture/replay on the same physical device, so the mandatory
+duplicate-device CUDA/cudagraph smoke failed. Do not treat the apparent
+147k-217k requested-nodes/s output as performance data; it was a harness bug,
+which is now fail-loud on short node counts and explicit UCI search errors.
+
+**OFFLINE — serialize duplicate-device RPG CUDA ownership (2026-07-18;
+correctness/liveness only).** Hypothesis: assigning one shared lock per device
+identifier to root-parallel groups will serialize factory/cudagraph/search
+work only when multiple logical groups name the same physical GPU, preventing
+concurrent CUDA mempool recording while preserving full concurrency for real
+distinct-device lists. ONE deciding yardstick: the same duplicate-device
+command above, with the corrected harness requiring every result to report at
+least 2048 actual UCI nodes and a nonempty bestmove. SUCCESS: all five positions
+complete, both logical groups report nonzero work on every nonterminal search,
+no search error occurs, and shutdown is clean. KILL: any short-node fallback,
+CUDA/cudagraph error, inactive group, deadlock, or shutdown failure. This is
+not a throughput claim; real multi-GPU scaling remains separately gated.
+**VERDICT: FAILED (2026-07-18).** Sharing a lock across duplicate-device group
+workers preserved distinct-device concurrency and passed CPU ownership tests,
+but the corrected UCI yardstick still failed at zero nodes with the identical
+`beginAllocateToPool: already recording to mempool_id` error. The remaining
+collision is outside group-vs-group execution: RPG startup also creates a
+separate compiled primary evaluator on GPU 0 for the one-row root evaluation,
+then compiles group 0 over the same raw model/device. Keep the per-device lock
+as a valid guard, but it does not by itself make the CUDA preflight pass.
+
+**OFFLINE — eager primary evaluator for root-parallel Gumbel (2026-07-18;
+correctness plus resource simplification).** Hypothesis: the RPG primary path
+performs only one root evaluation per position and does not need its own
+compiled CUDA graph; keeping it eager while the per-device search groups stay
+compiled will remove the duplicate GPU-0 compile/graph stack, avoid CUDA
+mempool recording collisions, shorten startup, and reduce graph memory with
+negligible steady search cost. ONE deciding yardstick: the same corrected
+duplicate-device 2048-node command above. SUCCESS: all five positions report
+at least 2048 actual nodes, legal nonempty bestmoves, both groups active, no
+search error, and clean shutdown. KILL: any correctness/liveness failure or an
+actual-node NPS regression above 3% once real distinct-GPU A/B is available.
+The local duplicate-device run is not a throughput read.
+**VERDICT: FAILED (2026-07-18).** Making the primary evaluator eager removed
+one compiled GPU-0 wrapper, but two separately compiled RPG group evaluators
+on the same physical GPU still failed at zero nodes with
+`beginAllocateToPool: already recording to mempool_id`, even though their
+factory and item execution shared a per-device lock. This is a PyTorch
+duplicate-device CUDA graph-pool limitation, not evidence about distinct-GPU
+scaling. Keep the corrected fail-loud harness and the simpler eager primary on
+the review branch, but do not merge the multi-GPU resource change until the
+real 2/4/8-GPU compiled protocol passes.
+
+**OFFLINE — eager duplicate-device RPG orchestration smoke (2026-07-18;
+correctness only, explicitly excludes CUDA graphs).** Hypothesis: with
+`--no-compile`, two locked logical groups on one RTX 5090 can validate the RPG
+CUDA evaluation, work queue, ownership, phase barrier, actual-node accounting,
+and shutdown paths; the only excluded layer is compiled cudagraph capture,
+which must be tested on distinct GPUs. ONE deciding yardstick: the prior
+duplicate-device command with `--no-compile` replacing `--compile-mode
+reduce-overhead`. SUCCESS: all five positions reach at least 2048 actual nodes,
+return legal nonempty bestmoves, report 2/2 active groups, and shut down cleanly.
+KILL: any short-node fallback, inactive group, error, deadlock, or shutdown
+failure. No NPS conclusion is allowed from this same-device eager result.
+**VERDICT: WORKED (2026-07-18, orchestration scope only).** All five positions
+completed at the requested actual 2048 nodes with legal bestmoves and clean
+shutdown. The benchmark reported `active_groups=2/2` with cumulative group
+work ranging from 510 to 1,538 sims across the representative searches.
+Same-device eager rates (349-538 sims/s on the four nontrivial positions;
+2,518 sims/s in the small endgame) are diagnostic only and must not be used for
+a performance decision. Root-parallel queueing, ownership, CUDA evaluation,
+barriers, accounting, and shutdown pass; compiled cudagraph scaling remains
+blocked on distinct-GPU hardware.
