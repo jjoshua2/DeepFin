@@ -14,7 +14,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Protocol
 from collections.abc import Callable
 
 import chess
@@ -240,12 +240,23 @@ class EngineOptions:
     moves_horizon: int = _DEFAULT_MOVES_REMAINING
 
 
+class RebuildEvaluator(Protocol):
+    """Evaluator factory: ``n_walkers`` (when given) re-tiers the dispatcher
+    stack (CUDAOwner at 1 walker vs BatchCoalescing at >1) and is remembered
+    by the factory for later rebuilds; ``None`` keeps the current count."""
+
+    def __call__(
+        self, max_batch: int, eval_cache_entries: int = 0, /,
+        *, n_walkers: int | None = None,
+    ) -> BatchEvaluator: ...
+
+
 class Engine:
     def __init__(
         self,
         worker: SearchWorker,
         *,
-        rebuild_evaluator: Callable[[int, int], BatchEvaluator] | None = None,
+        rebuild_evaluator: RebuildEvaluator | None = None,
         rebuild_multi_gpu_pucv_factories: (
             Callable[[int, int], list[Callable[[], BatchEvaluator]]] | None
         ) = None,
@@ -558,6 +569,7 @@ class Engine:
         n = self._parse_clamped_int(value, lo=1)
         if n is None:
             return
+        old_threads = self._options.threads
         self._options.threads = n
         self._worker.set_num_threads(n)
         if self._multi_gpu_path_active():
@@ -574,6 +586,25 @@ class Engine:
             )
             return
         self._warmup_dirty = True
+        # Crossing 1 <-> >1 changes which dispatcher tier the factory builds
+        # (compiled: CUDAOwner at 1 walker vs BatchCoalescing at >1). The
+        # walker-pool rebuild alone leaves the old wrapper in place — walkers
+        # would then serialize through the owner queue (1->N) or lose the
+        # pinned in-place path (N->1). Same-tier changes skip the rebuild.
+        if (
+            (n == 1) != (old_threads == 1)
+            and self._rebuild_evaluator is not None
+        ):
+            _println(
+                f"info string Threads {old_threads}->{n} crosses dispatcher "
+                "tier; rebuilding evaluator…"
+            )
+            new_eval = self._rebuild_evaluator(
+                self._options.max_batch, self._options.eval_cache_entries,
+                n_walkers=n,
+            )
+            self._worker.set_evaluator(new_eval)
+            self._reinstall_configured_search_path()
         _println(
             f"info string Threads set to {n} "
             f"({'walker pool' if n > 1 else 'classic Gumbel path'})"

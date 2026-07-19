@@ -436,3 +436,34 @@ def test_pucv_startup_remains_active_multi_gpu_default(capsys) -> None:
     )
     assert (root, fallback, active_pucv) == (False, True, True)
     assert "auto-enabling" in capsys.readouterr().err
+
+
+def test_threads_retier_rebuild_switches_dispatcher_class(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rebuild with a new n_walkers crosses the dispatcher tier, and the
+    factory remembers the last count for later rebuilds (MaxBatch etc.)."""
+    monkeypatch.setattr(uci_main, "DirectGPUEvaluator", _FakeDirectEvaluator)
+    monkeypatch.setattr(uci_main, "_warmup_evaluator", _skip_warmup)
+    monkeypatch.setattr(torch, "compile", _compile_identity)
+
+    factory = uci_main._make_evaluator_factory(
+        [_TinyModule()], ["cuda"], coalesce=True, n_walkers=1,
+        walker_gather=1, compile_mode="max-autotune",
+    )
+    evaluator = factory(max_batch=64, eval_cache_entries=0)
+    assert isinstance(evaluator, CUDAOwnerDispatcher)
+    evaluator.close()
+
+    evaluator = factory(max_batch=64, eval_cache_entries=0, n_walkers=4)
+    assert isinstance(evaluator, BatchCoalescingDispatcher)
+    evaluator.close()
+
+    # n_walkers omitted: the factory keeps the last-set count (4).
+    evaluator = factory(max_batch=64, eval_cache_entries=0)
+    assert isinstance(evaluator, BatchCoalescingDispatcher)
+    evaluator.close()
+
+    evaluator = factory(max_batch=64, eval_cache_entries=0, n_walkers=1)
+    assert isinstance(evaluator, CUDAOwnerDispatcher)
+    evaluator.close()

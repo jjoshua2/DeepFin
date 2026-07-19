@@ -25,6 +25,7 @@ from numpy.typing import NDArray
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.inference_dispatcher import supports_inplace_api
 from chess_anti_engine.mcts._mcts_tree import batch_compute_relations
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT_LEGACY_META,
@@ -290,9 +291,11 @@ def run_gumbel_root_many_c(
   # (otherwise the next async submit overwrites pol/wdl before C reads them, forcing
   # a defensive .numpy().copy()).
     _slots_needed = 2 if _use_pipeline else 1
+  # supports_inplace_api (not hasattr): dispatcher wrappers forward the
+  # slot methods unconditionally, so hasattr lies when the wrapped inner
+  # (e.g. MultiGPUDispatcher) has no slot API.
     _inplace = (
-        hasattr(eval_impl, "get_input_buffer")
-        and hasattr(eval_impl, "evaluate_inplace_async")
+        supports_inplace_api(eval_impl)
         and getattr(eval_impl, "n_slots", 1) >= _slots_needed
     )
 

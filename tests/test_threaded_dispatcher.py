@@ -313,3 +313,76 @@ def test_dispatcher_evaluate_returns_future():
         assert wdl.shape == (4, 3)
     finally:
         dispatcher.shutdown()
+
+
+def test_bucket_ladder_clamped_to_off_ladder_max_batch():
+    dispatcher = ThreadedDispatcher(_make_model(), device="cpu", max_batch=1000)
+    try:
+        assert dispatcher._buckets[-1] == 1000
+        assert all(b <= 1000 for b in dispatcher._buckets)
+        # (768, 1000] must round to 1000, not the unclamped 1020 bucket.
+        assert _next_bucket(800, dispatcher._buckets) == 1000
+        assert _next_bucket(1000, dispatcher._buckets) == 1000
+        assert _next_bucket(768, dispatcher._buckets) == 768
+    finally:
+        dispatcher.shutdown()
+
+
+def test_bucket_ladder_on_ladder_max_batch_unchanged():
+    dispatcher = ThreadedDispatcher(_make_model(), device="cpu", max_batch=576)
+    try:
+        assert dispatcher._buckets[-1] == 576
+        assert _next_bucket(513, dispatcher._buckets) == 576
+        assert _next_bucket(576, dispatcher._buckets) == 576
+        assert _next_bucket(1, dispatcher._buckets) == 16
+    finally:
+        dispatcher.shutdown()
+
+
+def test_dispatcher_forward_padded_to_clamped_bucket():
+    # max_batch=20 is off-ladder: an 18-row submit must pad to 20 (the
+    # appended max_batch bucket), never round up past max_batch.
+    dispatcher = ThreadedDispatcher(_make_model(), device="cpu", max_batch=20)
+    try:
+        rng = np.random.default_rng(0)
+        pol, wdl = dispatcher.evaluate_encoded(_rand_batch(rng, 18))
+        assert pol.shape == (18, 4672)
+        assert wdl.shape == (18, 3)
+        assert dispatcher.stats["lifetime_forward_rows"] == 20
+    finally:
+        dispatcher.shutdown()
+
+
+def test_dispatcher_fatal_startup_error_fails_producers_fast():
+    class _BoomDispatcher(ThreadedDispatcher):
+        def _compile_model_on_dispatcher(
+            self, model: torch.nn.Module,
+        ) -> torch.nn.Module:
+            del model
+            raise RuntimeError("compile boom")
+
+    dispatcher = _BoomDispatcher(_make_model(), device="cpu", max_batch=64)
+    dispatcher._thread.join(timeout=10.0)
+    assert not dispatcher._thread.is_alive()
+    rng = np.random.default_rng(0)
+    with pytest.raises(RuntimeError, match="thread died"):
+        dispatcher.evaluate_encoded(_rand_batch(rng, 2))
+    with pytest.raises(RuntimeError, match="thread died"):
+        dispatcher.update_model(_make_model())
+    assert isinstance(dispatcher._fatal_exc, RuntimeError)
+    assert "compile boom" in str(dispatcher._fatal_exc)
+
+
+def test_dispatcher_poison_rejects_new_submits():
+    dispatcher = ThreadedDispatcher(_make_model(), device="cpu", max_batch=64)
+    try:
+        rng = np.random.default_rng(0)
+        fut = dispatcher.evaluate(_rand_batch(rng, 2))
+        fut.result(timeout=10.0)
+        dispatcher._poison(RuntimeError("late fatal"))
+        # After poison, new submits raise immediately instead of queueing
+        # onto a dispatcher that will never serve them.
+        with pytest.raises(RuntimeError, match="ThreadedDispatcher thread died"):
+            dispatcher.evaluate(_rand_batch(rng, 2))
+    finally:
+        dispatcher.shutdown()

@@ -640,6 +640,22 @@ def _build_distributed_worker_cmd(
         shared_cache_root = server_root / "worker_cache"
     shared_cache_root.mkdir(parents=True, exist_ok=True)
 
+    aot_dir = str(config.get("distributed_worker_aot_dir", "")).strip()
+    threaded = bool(config.get("distributed_worker_threaded", False))
+    if aot_dir and threaded:
+  # The ThreadedDispatcher branch of worker._build_evaluator compiles
+  # on its own thread and ignores --aot-dir entirely; passing it
+  # INSTEAD of --compile-inference silently ran the dispatcher eager
+  # (multi-x throughput regression). Fail towards compile.
+        log.warning(
+            "distributed_worker_aot_dir=%r is incompatible with "
+            "distributed_worker_threaded=true (the threaded dispatcher "
+            "compiles on its own thread); ignoring aot_dir and emitting "
+            "--compile-inference as configured",
+            aot_dir,
+        )
+        aot_dir = ""
+
     cmd = [
         sys.executable,
         "-m",
@@ -661,8 +677,8 @@ def _build_distributed_worker_cmd(
         "--device",
         device,
         *(
-            ["--aot-dir", str(config.get("distributed_worker_aot_dir", ""))]
-            if str(config.get("distributed_worker_aot_dir", "")).strip()
+            ["--aot-dir", aot_dir]
+            if aot_dir
             else (
                 ["--compile-inference", "--compile-mode", str(config.get("distributed_worker_compile_mode", "reduce-overhead"))]
                 if bool(config.get("distributed_worker_use_compile", False))

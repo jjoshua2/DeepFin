@@ -39,6 +39,26 @@ import torch
 from chess_anti_engine.inference import BatchEvaluator
 
 
+def supports_inplace_api(evaluator: object) -> bool:
+    """True when ``evaluator`` really implements the pinned slot-pool API.
+
+    Wrappers (``ThreadSafeGPUDispatcher`` / ``CUDAOwnerDispatcher``) define
+    the forwarder methods unconditionally, so a bare ``hasattr`` triple on a
+    wrapper succeeds even when the wrapped inner (e.g. ``MultiGPUDispatcher``)
+    lacks the slot API — the call then dies with AttributeError mid-search.
+    Wrappers expose an explicit ``supports_inplace_api`` that recurses into
+    their inner; plain evaluators fall back to the hasattr triple.
+    """
+    explicit = getattr(evaluator, "supports_inplace_api", None)
+    if explicit is not None:
+        return bool(explicit)
+    return (
+        hasattr(evaluator, "get_input_buffer")
+        and hasattr(evaluator, "get_input_buffer_bf16_bits")
+        and hasattr(evaluator, "evaluate_inplace_async")
+    )
+
+
 @dataclass(slots=True)
 class _CoalesceRequest:
     x: np.ndarray
@@ -94,9 +114,13 @@ class ThreadSafeGPUDispatcher:
     def max_batch(self) -> int:
         return int(getattr(self._eval, "_max_batch", getattr(self._eval, "max_batch", 0)))
 
-  # Inplace API forwarders. Defined unconditionally so hasattr() probes
-  # see them; calls fall through to AttributeError on the inner if it
-  # doesn't implement them — the caller's hasattr() will fail then.
+  # Inplace API forwarders. Defined unconditionally, so hasattr() on the
+  # wrapper always succeeds even when the inner lacks the slot API —
+  # callers must probe via supports_inplace_api() (below), never hasattr.
+    @property
+    def supports_inplace_api(self) -> bool:
+        return supports_inplace_api(self._eval)
+
     @property
     def n_slots(self) -> int:
         return int(getattr(self._eval, "n_slots", 1))
@@ -256,6 +280,10 @@ class CUDAOwnerDispatcher:
                 )
             ),
         )
+
+    @property
+    def supports_inplace_api(self) -> bool:
+        return supports_inplace_api(self._inner)
 
     @property
     def n_slots(self) -> int:

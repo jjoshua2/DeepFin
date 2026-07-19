@@ -597,3 +597,56 @@ def test_launch_inference_broker_respects_dedicated_compile_flag(monkeypatch, tm
 
     assert calls
     assert "--compile-inference" in calls[0]
+
+
+def _worker_cmd_base_config() -> dict[str, Any]:
+    return {
+        "distributed_server_url": "http://127.0.0.1:45453",
+        "distributed_worker_username": "worker",
+        "distributed_worker_password_file": "/tmp/pw",
+        "stockfish_path": "/tmp/stockfish",
+        "distributed_server_root": "/tmp/server",
+        "distributed_worker_device": "cuda",
+        "distributed_worker_sf_workers": 1,
+        "distributed_worker_poll_seconds": 1.0,
+        "seed": 123,
+    }
+
+
+def test_build_distributed_worker_cmd_threaded_ignores_aot_dir(caplog) -> None:
+    """aot_dir + threaded would silently run the dispatcher eager (worker's
+    threaded branch ignores --aot-dir): the launcher must drop aot_dir with a
+    loud warning and emit --compile-inference as configured."""
+    cmd = _build_distributed_worker_cmd(
+        config={
+            **_worker_cmd_base_config(),
+            "distributed_worker_threaded": True,
+            "distributed_worker_aot_dir": "data/aot_models",
+            "distributed_worker_use_compile": True,
+        },
+        trial_root=Path("/tmp/trial/worker_00"),
+        trial_id="trial_00000",
+        worker_index=0,
+        worker_log=Path("/tmp/trial/worker_00/worker.log"),
+    )
+    assert "--aot-dir" not in cmd
+    assert "--compile-inference" in cmd
+    assert "--threaded-selfplay" in cmd
+    assert any("incompatible" in r.getMessage() for r in caplog.records)
+
+
+def test_build_distributed_worker_cmd_aot_dir_without_threaded_kept() -> None:
+    cmd = _build_distributed_worker_cmd(
+        config={
+            **_worker_cmd_base_config(),
+            "distributed_worker_aot_dir": "data/aot_models",
+            "distributed_worker_use_compile": True,
+        },
+        trial_root=Path("/tmp/trial/worker_00"),
+        trial_id="trial_00000",
+        worker_index=0,
+        worker_log=Path("/tmp/trial/worker_00/worker.log"),
+    )
+    assert "--aot-dir" in cmd
+    assert cmd[cmd.index("--aot-dir") + 1] == "data/aot_models"
+    assert "--compile-inference" not in cmd
