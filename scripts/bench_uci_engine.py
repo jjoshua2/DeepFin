@@ -196,6 +196,22 @@ def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
             prof_agg["pucv_leaves"] = prof_agg.get("pucv_leaves", 0.0) + info_leaves
         if info_batches > 0:
             prof_agg["pucv_batches"] = prof_agg.get("pucv_batches", 0.0) + info_batches
+        worker_vectors = [
+            [int(value) for value in profile["workers"].split(",")]
+            for profile in pucv_infos
+            if profile["workers"]
+        ]
+        if worker_vectors:
+            prof_agg["pucv_workers"] = float(max(len(values) for values in worker_vectors))
+            prof_agg["pucv_workers_active"] = float(
+                min(sum(value > 0 for value in values) for values in worker_vectors)
+            )
+            prof_agg["pucv_worker_min_leaves"] = float(
+                min(min(values) for values in worker_vectors)
+            )
+            prof_agg["pucv_worker_max_leaves"] = float(
+                max(max(values) for values in worker_vectors)
+            )
     rpg_profiles = [_RPG_PROFILE_RE.search(line) for line in lines]
     rpg_profiles = [profile for profile in rpg_profiles if profile is not None]
     if rpg_profiles:
@@ -319,9 +335,21 @@ def _run_config(
                 # measured tree-continuation state rather than evaluator NPS.
                 _send(proc, "ucinewgame")
                 result = _run_one(proc, reader, fen=fen, nodes=nodes, timeout_s=timeout_s)
+                profile = result.get("profile") or {}
+                if (
+                    multi_gpu_pucv
+                    and isinstance(profile, dict)
+                    and profile.get("pucv_workers", 0) > 0
+                    and profile.get("pucv_workers_active", 0) < profile["pucv_workers"]
+                ):
+                    raise RuntimeError(
+                        "multi-GPU PUCV left an evaluator worker idle: "
+                        f"active={int(profile['pucv_workers_active'])}/"
+                        f"{int(profile['pucv_workers'])}"
+                    )
                 position_stats.setdefault(pos_label, []).append(_float_from_result(result, "sims_per_s"))
                 position_moves.setdefault(pos_label, []).append(str(result["bestmove"]))
-                prof = result.get("profile") or {}
+                prof = profile
                 if isinstance(prof, dict) and prof:
                     profile_runs.append(prof)
         for pos_label, vals in position_stats.items():
@@ -364,6 +392,16 @@ def _run_config(
                 f"  pucv profile: leaves={int(leaves)}  batches={int(batches)}  "
                 f"avg_batch={leaves / max(1.0, batches):.1f}  wall={wall:.3f}s{cache}"
             )
+            worker_runs = [profile for profile in pucv_runs if "pucv_workers" in profile]
+            if worker_runs:
+                print(
+                    "  pucv workers: "
+                    f"active={int(min(p['pucv_workers_active'] for p in worker_runs))}/"
+                    f"{int(max(p['pucv_workers'] for p in worker_runs))} "
+                    "leaves_range="
+                    f"{int(min(p['pucv_worker_min_leaves'] for p in worker_runs))}-"
+                    f"{int(max(p['pucv_worker_max_leaves'] for p in worker_runs))}"
+                )
         rpg_runs = [profile for profile in profile_runs if "rpg_groups" in profile]
         if rpg_runs:
             print(

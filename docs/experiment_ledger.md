@@ -4090,3 +4090,35 @@ Same-device eager rates (349-538 sims/s on the four nontrivial positions;
 a performance decision. Root-parallel queueing, ownership, CUDA evaluation,
 barriers, accounting, and shutdown pass; compiled cudagraph scaling remains
 blocked on distinct-GPU hardware.
+**SUPPLEMENTAL VALIDATION (2026-07-19).** After combining the branch with the
+final-info refresh from the single-walker owner PR, the stronger 8,192-node
+version also completed all five positions with legal bestmoves, 2/2 active
+groups, group work ranging from 462 to 1,586 sims per reported phase, and clean
+shutdown. The first attempt on the uncombined branch exposed only the stale
+6,144-node periodic info line even though the fourth 2,048-node chunk ran; this
+was telemetry branch skew, not an RPG short search. Same-device eager rates
+remain diagnostic only.
+
+**OFFLINE — eager duplicate-device multi-GPU PUCV orchestration smoke
+(2026-07-19; correctness only, explicitly excludes CUDA graphs).** Hypothesis:
+the established shared-tree PUCV architecture can run two evaluator workers on
+one RTX 5090 in eager mode, complete the full UCI position suite at a larger
+node budget, give both workers work, and shut down cleanly. ONE deciding
+yardstick: `PYTHONPATH=. python3 scripts/bench_uci_engine.py --checkpoint
+/home/josh/projects/chess/data/match_ckpts/ckpt101_20260718/trainer.pt --devices
+cuda:0,cuda:0 --nodes 8192 --repeats 1 --chunk-sims 2048 --topk 32 --max-batch
+256 --vl-gather 256 --walkers 1 --no-compile --multi-gpu-pucv
+--search-parallel pucv --timeout-s 600`. SUCCESS: all five searches report
+8,192 actual nodes and legal nonempty bestmoves, every per-device worker has
+nonzero leaves in every reported search, no error/deadlock occurs, and shutdown
+is clean. KILL: any short-node fallback, inactive worker, CUDA failure, or
+shutdown failure. No performance or strength conclusion is allowed from the
+same-device eager result.
+**VERDICT: WORKED (2026-07-19, orchestration scope only).** All five positions
+completed at 8,192 actual nodes with legal bestmoves. Every search reported
+both evaluator workers active and exactly 2,048 leaves per worker across the
+four 2,048-node chunks; no CUDA error, deadlock, fallback, or shutdown failure
+occurred. Same-device rates of 4,253-5,140 sims/s are intentionally not a
+multi-GPU performance claim. Both the shared-tree PUCV and root-partitioned
+Gumbel designs therefore pass eager functional validation; compiled behavior
+and scaling still require distinct GPUs.
