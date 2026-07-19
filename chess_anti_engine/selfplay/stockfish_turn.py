@@ -942,6 +942,17 @@ def _push_curriculum_opponent_move(
         state.root_ids[idx] = state.mcts_tree.find_child(
             state.root_ids[idx], opp_move_idx,
         )
+    # SF-refute handoff: after M opponent SF plies, the rest of the game is
+    # net-vs-net (value-hole seed already forced onto the true PV for a few
+    # moves; no need to burn full-length curriculum SF).
+    if (
+        idx < len(state.sf_refute_opp_plies_left)
+        and int(state.sf_refute_opp_plies_left[idx]) > 0
+    ):
+        left = int(state.sf_refute_opp_plies_left[idx]) - 1
+        state.sf_refute_opp_plies_left[idx] = left
+        if left <= 0:
+            state.selfplay_arr[idx] = 1
     if state.cboards[idx].is_game_over():
         state.done_arr[idx] = 1
 

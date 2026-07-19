@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
@@ -346,6 +347,8 @@ def _publish_distributed_trial_state(
         ),
         "opening_fen_selfplay_only": bool(config.get("opening_fen_selfplay_only", False)),
         "opening_fen_dole_per_iter": int(config.get("opening_fen_dole_per_iter", 0)),
+        "opening_fen_sf_refute_frac": float(config.get("opening_fen_sf_refute_frac", 0.0)),
+        "opening_fen_sf_refute_plies": int(config.get("opening_fen_sf_refute_plies", 5)),
         "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
         "slot_oversubscribe": float(config.get("slot_oversubscribe", 1.0)),
         "sf_nodes": int(sf_nodes),
@@ -510,6 +513,23 @@ def _publish_distributed_trial_state(
         json.dumps(manifest, sort_keys=True, indent=2),
         encoding="utf-8",
     )
+    # One-shot dole rearm for this selfplay window. Lets a trial restart on
+    # an incomplete training_iteration re-hand seeds once (gate claim would
+    # otherwise stay burned from the pre-restart life). Consumed by the
+    # server on the first eligible worker poll — see SEED_DOLE_REARM_FILENAME.
+    # Only when selfplay is active and dole mode is on; pause publishes must
+    # not arm a claim that workers would drop.
+    rearm_path = publish_dir / "seed_dole_rearm.json"
+    dole_n = int(config.get("opening_fen_dole_per_iter", 0) or 0)
+    if (not pause_selfplay) and dole_n > 0 and manifest.get("opening_fen_list"):
+        atomic_write_text(
+            rearm_path,
+            json.dumps({"training_iteration": int(training_iteration)}, sort_keys=True),
+            encoding="utf-8",
+        )
+    else:
+        with contextlib.suppress(OSError):
+            rearm_path.unlink(missing_ok=True)
     return model_sha
 
 

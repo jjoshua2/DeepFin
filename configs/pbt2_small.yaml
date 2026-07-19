@@ -199,7 +199,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_98.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_fed_cheese72_staged_ck101.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -211,6 +211,14 @@ selfplay:
   # KILL: set 0 + opening_fen_prob 0.05. Ledger LIVE-UNREAD row (readout ~iter 725); baseline
   # ckpt686 (v1 16/35, value 74.3), revert trunk data/salvage/pre_dole_ckpt686_20260708.
   opening_fen_dole_per_iter: 1
+  # 2026-07-19: SF-refutation channel on top of selfplay dole — value-blind-spot
+  # lever. Round-robin 50% of the live seed list each iter as short curriculum
+  # games: SF plays the first 5 opponent plies (breaks net-net collusion on
+  # fantasy evals), then the slot hands off to selfplay. Fenlist stays out of
+  # the PID sample. KILL: set both to 0. Ledger entry: "SF-refute channel 50%×5".
+  # Restart-gated (new reco keys + worker code).
+  opening_fen_sf_refute_frac: 0.5
+  opening_fen_sf_refute_plies: 5
 
   # 2026-07-08: inline blind-spot harvester COLLECT-ONLY (#124). Finished games
   # append value-blind positions (net's search says fine, in-loop SF says lost)

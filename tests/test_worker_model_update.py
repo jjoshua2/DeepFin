@@ -45,6 +45,8 @@ def _bare_worker_session() -> WorkerSession:
     session.opening_fen_list_path = None
     session._pending_fen_dole = []
     session._live_dole_queue = None
+    session._pending_sf_refute = []
+    session._live_sf_refute_queue = None
     session._dole_lock = threading.Lock()
     session._live_states = []
     session._live_states_lock = threading.Lock()
@@ -1048,6 +1050,7 @@ def _dole_session_with_list(tmp_path: Path) -> WorkerSession:
     session.opening_fen_list_path = str(fen_path)
     session._live_states = []
     session._pending_fen_dole = []
+    session._pending_sf_refute = []
     return session
 
 
@@ -1122,9 +1125,11 @@ def test_promote_pending_dole_returns_live_object_when_empty(tmp_path: Path) -> 
     # OBJECT — `or None` here orphaned it, and every mid-session dole refilled a
     # list nobody drained (seed injection silently off since the 07-11 swap).
     session = _dole_session_with_list(tmp_path)
-    queue = session._promote_pending_dole()
+    queue, sf_queue = session._promote_pending_dole()
     assert queue == []
+    assert sf_queue == []
     assert queue is session._live_dole_queue  # same object, refillable in place
+    assert sf_queue is session._live_sf_refute_queue
     session._maybe_ingest_dole_flag(
         {"dole_fen_seeds": True, "recommended_worker": {"opening_fen_dole_per_iter": 1}},
     )
@@ -1134,9 +1139,10 @@ def test_promote_pending_dole_returns_live_object_when_empty(tmp_path: Path) -> 
 def test_promote_pending_dole_moves_stash_into_live_queue(tmp_path: Path) -> None:
     session = _dole_session_with_list(tmp_path)
     session._pending_fen_dole = [_DOLE_FEN_A]
-    queue = session._promote_pending_dole()
+    queue, sf_queue = session._promote_pending_dole()
     assert queue == [_DOLE_FEN_A]
     assert queue is session._live_dole_queue
+    assert sf_queue is session._live_sf_refute_queue
     assert session._pending_fen_dole == []
 
 
@@ -1144,3 +1150,5 @@ def test_dole_per_iter_is_watched_and_restart_keyed() -> None:
     # Completeness: the OpeningConfig reco.get in _build_selfplay_configs must be
     # watched (test_every_reco_field_is_watched); it's a restart key (mode switch).
     assert "opening_fen_dole_per_iter" in WorkerSession._RECO_RESTART_KEYS
+    assert "opening_fen_sf_refute_frac" in WorkerSession._RECO_RESTART_KEYS
+    assert "opening_fen_sf_refute_plies" in WorkerSession._RECO_RESTART_KEYS

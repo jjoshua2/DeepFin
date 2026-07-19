@@ -33,7 +33,11 @@ from chess_anti_engine.selfplay.config import (
     SearchConfig,
     TemperatureConfig,
 )
-from chess_anti_engine.selfplay.opening import OpeningConfig, resolve_slot_opening
+from chess_anti_engine.selfplay.opening import (
+    OpeningConfig,
+    resolve_slot_opening,
+    try_take_sf_refute_opening,
+)
 from chess_anti_engine.stockfish.pool import StockfishPool
 from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.tablebase import SyzygyProbe
@@ -655,6 +659,12 @@ class SelfplayState:
     # recycle_slot() pop from it for selfplay slots (see resolve_slot_opening);
     # the worker replaces the whole list each doled iteration.
     fen_dole_queue: list[str] | None = None
+    # SF-refutation channel: round-robin slice of the same list, drained only by
+    # curriculum slots. Each game runs SF for sf_refute_opp_plies_left opponent
+    # plies then hands off to selfplay (see stockfish_turn._push_curriculum…).
+    fen_sf_refute_queue: list[str] | None = None
+    # Per-slot remaining SF opponent plies in an SF-refute game (0 = not active).
+    sf_refute_opp_plies_left: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int32))
 
     # ── Control counters (mutated by recycle_slot / main loop) ───────────────
     games_started: int = 0
@@ -682,6 +692,7 @@ class SelfplayState:
         diff_focus: DiffFocusConfig,
         game: GameConfig,
         fen_dole_queue: list[str] | None = None,
+        fen_sf_refute_queue: list[str] | None = None,
     ) -> SelfplayState:
         """Build a ``SelfplayState`` from ``play_batch``'s arguments.
 
@@ -702,17 +713,30 @@ class SelfplayState:
         # the dose can't starve the PID curriculum sample (see the starvation ticket).
         # resolve_slot_opening also drains fen_dole_queue for selfplay slots when the
         # server doled seeds this session (deterministic even coverage).
+        # SF-refute seeds take curriculum slots only (try_take_sf_refute_opening).
         net_color_arr, selfplay_arr = _init_color_and_selfplay_arrays(
             batch_size, rng=rng, selfplay_fraction=game.selfplay_fraction,
         )
-        starts = [
-            resolve_slot_opening(
-                rng=rng, cfg=opening,
-                is_selfplay=bool(selfplay_arr[i]),
-                fen_dole_queue=fen_dole_queue,
+        sf_refute_opp_plies_left = np.zeros(batch_size, dtype=np.int32)
+        refute_plies = max(0, int(opening.opening_fen_sf_refute_plies))
+        starts = []
+        for i in range(batch_size):
+            is_sp = bool(selfplay_arr[i])
+            if not is_sp:
+                refute = try_take_sf_refute_opening(
+                    cfg=opening, fen_sf_refute_queue=fen_sf_refute_queue,
+                )
+                if refute is not None:
+                    starts.append(refute)
+                    sf_refute_opp_plies_left[i] = refute_plies
+                    continue
+            starts.append(
+                resolve_slot_opening(
+                    rng=rng, cfg=opening,
+                    is_selfplay=is_sp,
+                    fen_dole_queue=fen_dole_queue,
+                )
             )
-            for i in range(batch_size)
-        ]
         boards = [start.board for start in starts]
         opening_source_arr = [start.source for start in starts]
         # Use from_board (not from_raw) to preserve ply count + history from openings.
@@ -789,6 +813,8 @@ class SelfplayState:
             c_classify=c_caps.c_classify,
             c_temp_resample=c_caps.c_temp_resample,
             fen_dole_queue=fen_dole_queue,
+            fen_sf_refute_queue=fen_sf_refute_queue,
+            sf_refute_opp_plies_left=sf_refute_opp_plies_left,
             games_started=batch_size,
         )
 
@@ -948,13 +974,25 @@ class SelfplayState:
         # opening_fen_selfplay_only never seeds a curriculum slot (starvation ticket).
         # resolve_slot_opening also drains fen_dole_queue for selfplay slots so doled
         # seeds recycle into fresh games across the iteration (interleaved coverage).
+        # SF-refute seeds only take curriculum rolls (try_take_sf_refute_opening).
         sp_frac = max(0.0, min(1.0, float(self.game.selfplay_fraction)))
         self.selfplay_arr[i] = 1 if self.rng.random() < sp_frac else 0
-        opening_start = resolve_slot_opening(
-            rng=self.rng, cfg=self.opening,
-            is_selfplay=bool(self.selfplay_arr[i]),
-            fen_dole_queue=self.fen_dole_queue,
-        )
+        self.sf_refute_opp_plies_left[i] = 0
+        opening_start = None
+        if not self.selfplay_arr[i]:
+            opening_start = try_take_sf_refute_opening(
+                cfg=self.opening, fen_sf_refute_queue=self.fen_sf_refute_queue,
+            )
+            if opening_start is not None:
+                self.sf_refute_opp_plies_left[i] = max(
+                    0, int(self.opening.opening_fen_sf_refute_plies),
+                )
+        if opening_start is None:
+            opening_start = resolve_slot_opening(
+                rng=self.rng, cfg=self.opening,
+                is_selfplay=bool(self.selfplay_arr[i]),
+                fen_dole_queue=self.fen_dole_queue,
+            )
         self.boards[i] = opening_start.board
         self.opening_source_arr[i] = opening_start.source
         self.cboards[i] = _CBoard.from_board(self.boards[i])

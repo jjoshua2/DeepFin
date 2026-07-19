@@ -186,6 +186,8 @@ class TrialConfig:
     opening_fen_net_side_to_move: bool = True
     opening_fen_selfplay_only: bool = False
     opening_fen_dole_per_iter: int = 0
+    opening_fen_sf_refute_frac: float = 0.0
+    opening_fen_sf_refute_plies: int = 5
 
   # --- SF policy / game ---
     sf_policy_temp: float = 0.25
@@ -538,6 +540,8 @@ class TrialConfig:
             ),
             opening_fen_selfplay_only=bool(config.get("opening_fen_selfplay_only", False)),
             opening_fen_dole_per_iter=int(config.get("opening_fen_dole_per_iter", 0)),
+            opening_fen_sf_refute_frac=float(config.get("opening_fen_sf_refute_frac", 0.0)),
+            opening_fen_sf_refute_plies=int(config.get("opening_fen_sf_refute_plies", 5)),
 
   # --- SF policy / game ---
             sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),

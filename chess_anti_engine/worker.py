@@ -66,6 +66,7 @@ from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     _load_fen_list,
     expand_dole_seeds,
+    sample_sf_refute_batch,
     warm_opening_book_cache,
 )
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
@@ -829,10 +830,14 @@ class WorkerSession:
   #    (the same object handed to every play_batch, incl. all threads of the
   #    threaded path). None between sessions. A mid-session dole refills it in
   #    place so the running selfplay picks up the batch without a restart.
+  # Parallel SF-refute channel (_pending/_live_sf_refute_queue) holds a
+  # round-robin slice for short SF-as-opponent openings (then handoff to selfplay).
   # _dole_lock guards refill vs the session-boundary hand-off (drain itself is
   # lock-free — resolve_slot_opening pops exception-safely, atomic under the GIL).
         self._pending_fen_dole: list[str] = []
         self._live_dole_queue: list[str] | None = None
+        self._pending_sf_refute: list[str] = []
+        self._live_sf_refute_queue: list[str] | None = None
         self._dole_lock = threading.Lock()
 
   # Per-iteration state (set during each loop iteration).
@@ -1433,6 +1438,16 @@ class WorkerSession:
         # weight=0 soft-retires a seed from the dole); the global n scales
         # the whole batch.
         queue = expand_dole_seeds(seeds, str(self.opening_fen_list_path)) * n
+        # SF-refute channel: round-robin slice of the UNEXPANDED list (one
+        # pass per seed in the window; weights already shape the selfplay dole).
+        sf_frac = float(reco.get("opening_fen_sf_refute_frac", 0.0) or 0.0)
+        sf_plies = int(reco.get("opening_fen_sf_refute_plies", 5) or 0)
+        train_iter = int(manifest.get("training_iteration", 0) or 0)
+        sf_queue: list[str] = []
+        if sf_frac > 0.0 and sf_plies > 0:
+            sf_queue = sample_sf_refute_batch(
+                seeds, frac=sf_frac, training_iteration=train_iter,
+            )
         with self._dole_lock:
             live = self._live_dole_queue
             if live is not None:
@@ -1443,8 +1458,15 @@ class WorkerSession:
             else:
                 self._pending_fen_dole = queue
                 dest = "next session"
+            live_sf = self._live_sf_refute_queue
+            if live_sf is not None:
+                live_sf.clear()
+                live_sf.extend(sf_queue)
+            else:
+                self._pending_sf_refute = list(sf_queue)
         self.log.info(
-            "dole: received %d seed(s) x%d -> %s", len(seeds), n, dest,
+            "dole: received %d seed(s) x%d -> %s; sf_refute=%d (frac=%.2f plies=%d iter=%d)",
+            len(seeds), n, dest, len(sf_queue), sf_frac, sf_plies, train_iter,
         )
 
     def _apply_live_reco(self, reco: dict) -> bool:
@@ -2655,6 +2677,7 @@ class WorkerSession:
         "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
         "opening_fen_prob", "opening_fen_net_side_to_move", "opening_fen_selfplay_only",
         "opening_fen_dole_per_iter",
+        "opening_fen_sf_refute_frac", "opening_fen_sf_refute_plies",
         "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     )
 
@@ -2756,6 +2779,13 @@ class WorkerSession:
                 opening_fen_dole_per_iter=(
                     int(reco.get("opening_fen_dole_per_iter", 0))
                     if self.opening_fen_list_path else 0
+                ),
+                opening_fen_sf_refute_frac=(
+                    float(reco.get("opening_fen_sf_refute_frac", 0.0) or 0.0)
+                    if self.opening_fen_list_path else 0.0
+                ),
+                opening_fen_sf_refute_plies=int(
+                    reco.get("opening_fen_sf_refute_plies", 5) or 0
                 ),
             ),
             "game": GameConfig(
@@ -2877,6 +2907,7 @@ class WorkerSession:
     def _run_selfplay_threaded(
         self, *, games_per_batch: int, sf, eval_, cfgs: dict,
         fen_dole_queue: list[str] | None = None,
+        fen_sf_refute_queue: list[str] | None = None,
     ) -> BatchStats:
         """Multi-threaded selfplay: N threads share one GPU evaluator.
 
@@ -2917,6 +2948,7 @@ class WorkerSession:
                 stop_fn=self._stop_fn,
                 pause_fn=self._pause_fn,
                 fen_dole_queue=fen_dole_queue,  # shared across threads (drained once total)
+                fen_sf_refute_queue=fen_sf_refute_queue,
                 **cfgs,
             )
 
@@ -2931,6 +2963,7 @@ class WorkerSession:
     def _dispatch_selfplay_one_shard(
         self, *, games_per_batch: int, cfgs: dict, need_local_model: bool,
         fen_dole_queue: list[str] | None = None,
+        fen_sf_refute_queue: list[str] | None = None,
     ) -> BatchStats | None:
         """Run one continuous-selfplay session. Returns None on broker errors that
         we recover from via reset (caller exits the iteration); otherwise BatchStats.
@@ -2948,6 +2981,7 @@ class WorkerSession:
                     games_per_batch=int(games_per_batch),
                     sf=self.sf, eval_=_eval, cfgs=cfgs,
                     fen_dole_queue=fen_dole_queue,
+                    fen_sf_refute_queue=fen_sf_refute_queue,
                 )
   # Continuous selfplay: 256 slots always full, games recycled on completion.
   # Runs until _stop_selfplay is set (task change, pause, or shutdown).
@@ -2965,6 +2999,7 @@ class WorkerSession:
                     stop_fn=self._stop_fn,
                     pause_fn=self._pause_fn,
                     fen_dole_queue=fen_dole_queue,
+                    fen_sf_refute_queue=fen_sf_refute_queue,
                     **cfgs,
                 )
             finally:
@@ -3005,13 +3040,13 @@ class WorkerSession:
             _prune_cached_models(cache_dir=self.cache_dir, keep_shas={model_sha, best_sha})
         self._upload_pending_shards(default_elapsed_s=0.0)
 
-    def _promote_pending_dole(self) -> list[str]:
-        """Promote the stashed session-start dole into the shared live queue.
+    def _promote_pending_dole(self) -> tuple[list[str], list[str]]:
+        """Promote stashed session-start dole (+ SF-refute) into shared live queues.
 
-        Returns the live queue OBJECT (possibly empty) that the session must
+        Returns the live queue OBJECTS (possibly empty) that the session must
         hold for its whole lifetime: with pause-hold sessions running for hours,
         the first dole usually arrives MID-session, and _maybe_ingest_dole_flag
-        refills this same list in place. Returning None on empty (the old
+        refills these same lists in place. Returning None on empty (the old
         ``or None``) orphaned the queue — the session had nothing to drain and
         every subsequent dole refilled a list nobody held (seed injection
         silently off for the whole session; found 2026-07-12, seeds dead since
@@ -3020,7 +3055,9 @@ class WorkerSession:
         with self._dole_lock:
             self._live_dole_queue = list(self._pending_fen_dole)
             self._pending_fen_dole = []
-            return self._live_dole_queue
+            self._live_sf_refute_queue = list(self._pending_sf_refute)
+            self._pending_sf_refute = []
+            return self._live_dole_queue, self._live_sf_refute_queue
 
     def _run_selfplay(self, manifest: dict) -> None:
         """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
@@ -3061,13 +3098,14 @@ class WorkerSession:
   # drains (the outer loop / a prior poll stashed it — survives model-not-ready).
   # The SAME object is handed to play_batch (single path) or every thread (threaded
   # path), and mid-session doles refill it in place via _periodic_manifest_poll.
-        fen_dole_queue = self._promote_pending_dole()
+        fen_dole_queue, fen_sf_refute_queue = self._promote_pending_dole()
 
         t0 = time.time()
         self._saw_completed_game = False
         stats = self._dispatch_selfplay_one_shard(
             games_per_batch=games_per_batch, cfgs=cfgs, need_local_model=need_local_model,
             fen_dole_queue=fen_dole_queue,
+            fen_sf_refute_queue=fen_sf_refute_queue,
         )
   # Session over: whatever the session did NOT drain is preserved for the next
   # session start — a normally-stopped-but-empty session (games=0) keeps its full
@@ -3077,6 +3115,9 @@ class WorkerSession:
             leftover = list(self._live_dole_queue or [])
             self._live_dole_queue = None
             self._pending_fen_dole = leftover
+            leftover_sf = list(self._live_sf_refute_queue or [])
+            self._live_sf_refute_queue = None
+            self._pending_sf_refute = leftover_sf
         if stats is None:
             return
         t1 = time.time()
