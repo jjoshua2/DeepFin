@@ -12,23 +12,38 @@ feat/seed-history).
 
 Output line format (one per mined loss, up to two when --moves-csv is given —
 see the mismatch criterion below), consumed by selfplay/opening.py:
-    <start_fen> | <uci ...>   # src=<pgn> round=<r> ply=<j>
-where the terminal position (after replaying the moves) is the blind-spot the
-net faces, and start_fen is ``--history-plies`` plies earlier.
+    <start_fen> | <uci ...>   # src=<pgn> round=<r> ply=<j> [refute=<uci>]
+Bare seeds (``--no-append-refute-ply``): terminal = the blind-spot the net
+faces; start_fen is up to ``--history-plies`` plies earlier. Default seeds
+(``--append-refute-ply``): the body also replays the historical blunder +
+deep-SF's best reply, so the terminal is two plies later (net STM after one
+punish); approach history is clamped to ``history_plies - 2`` so the total
+replay stays ≤ ``history_plies`` (LC0's 8-step window). Dedup always keys the
+pre-blunder blind-spot (see ``seed_blindspot_key``), not the terminal.
 
 Curation matches the existing asset: forced / claim-draw-terminal seeds are
 dropped (via _fen_reject_reason), time-forfeit games are skipped, positions in a
 ``--holdout`` panel are excluded (keeps panel v1 a pure generalization yardstick),
 and positions already in ``--existing`` seed files or mined earlier this run are
-deduplicated by position identity (EPD).
+deduplicated by blind-spot EPD (bare or post-refute lines).
 
-Deep-SF annotation is mandatory (match PGNs carry no eval). Example:
+Deep-SF annotation is mandatory (match PGNs carry no eval). Incremental
+new-hole mine (skip positions already seeded — bare or post-refute):
     PYTHONPATH=. python3 scripts/mine_blindspot_seeds.py \
         --pgn 'runs/matches/*.pgn' --deepfin-name-contains deepfin \
         --sf-path /usr/local/bin/stockfish --sf-nodes 300000 \
         --holdout data/blindspot_panel_v1.jsonl \
         --existing data/blindspot_fens_v1.txt \
         --out data/blindspot_fens_v2_mined.txt
+``--existing`` / seed-file ``--holdout`` are for *new-hole growth only*. They
+key the pre-blunder blind-spot for both bare and ``refute=`` lines, so a bare
+list in ``--existing`` will **not** re-emit upgraded blunder+refute seeds for
+those same holes.
+
+To **upgrade** known bare holes to post-refute terminals: re-mine from PGN
+*without* those positions in ``--existing`` (omit the bare list, or write a
+full replacement ``--out`` and feed that versioned file). Bare lines cannot be
+rewritten in place (they lack the blunder UCI).
 
 Optional SECOND criterion — value-head miscalibration, not just move quality:
 ``--moves-csv`` points at the match harness's own per-move log (game, ply,
@@ -43,6 +58,10 @@ but it's symmetric in either direction. Mine_game emits both the first
 collapse AND the worst mismatch when they're more than ``--min-ply-gap``
 plies apart (distinct teaching moments); when they're close, only the
 collapse is kept (redundant).
+
+Free first SF-refute ply (default ON via ``--append-refute-ply``): see the
+format block above. Pairs with the live SF-refute channel (remaining opponent
+plies at selfplay time).
 """
 from __future__ import annotations
 
@@ -51,6 +70,7 @@ import csv
 import glob
 import json
 import math
+import re
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -61,6 +81,11 @@ import chess.pgn
 
 from chess_anti_engine.selfplay.opening import _fen_reject_reason, seed_board_from_line
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
+
+# Provenance marker when blunder+refute are baked into the body (two plies past
+# the blind-spot). Used by seed_blindspot_key to recover the pre-blunder EPD for
+# --existing / --holdout dedup against post-refute seed lists.
+_REFUTE_IN_COMMENT_RE = re.compile(r"\brefute=([a-h][1-8][a-h][1-8][qrbn]?)\b", re.I)
 
 # Deep-SF's cp and DeepFin's own reported cp are on INCOMPATIBLE scales: SF's
 # is roughly-linear classical cp; DeepFin's own UCI "score cp" comes from
@@ -95,6 +120,14 @@ def _own_expected_score(own_cp: int) -> float:
 # A deep-SF eval function: (fen, nodes) -> centipawns from the side-to-move POV
 # (None if unavailable). Injected so the collapse logic is testable without SF.
 SfEval = Callable[[str, int], "int | None"]
+
+# Optional best-move lookup: (fen, nodes) -> UCI of SF's best move for the
+# side-to-move, or None if unavailable. Used only when --append-refute-ply is
+# on: after the historical blunder, SF's first refute is baked into the seed
+# so the terminal position is already one punish ply in (net STM again).
+# Production wires this to the same Stockfish search as SfEval (last-result
+# cache) so the post-blunder eval already paid for the bestmove.
+SfBestMove = Callable[[str, int], "str | None"]
 
 
 @dataclass(frozen=True)
@@ -199,18 +232,42 @@ def load_own_evals(csv_paths: list[str]) -> dict[tuple[int, int], int]:
 
 
 def build_seed_record(
-    fens: list[str], ucis: list[str], j: int, *, history_plies: int, provenance: str,
+    fens: list[str],
+    ucis: list[str],
+    j: int,
+    *,
+    history_plies: int,
+    provenance: str,
+    refute_uci: str | None = None,
 ) -> str:
     """Seed line for a blunder at half-move ``j``.
 
     ``fens[i]`` is the FEN before move ``i`` (fens[j] = the blind-spot the net
-    faces); ``ucis[i]`` is move i. The record replays ``history_plies`` moves
-    (fewer near the game start) from ``fens[j-h]`` up to the blind-spot, so its
-    terminal is fens[j] carrying real history.
+    faces); ``ucis[i]`` is move i. Bare records replay up to ``history_plies``
+    moves from ``fens[j-h]`` up to the blind-spot (terminal = fens[j]).
+
+    When ``refute_uci`` is set, the historical blunder (``ucis[j]``) and deep-SF's
+    best reply are also appended, so the terminal is AFTER one punish ply (net
+    STM again). Preceding history is clamped to ``history_plies - 2`` so the
+    total replay length stays ≤ ``history_plies`` (LC0 keeps 8 history steps;
+    without the clamp, default 8 + blunder + refute would drop two approach
+    plies from the planes). Dedup still keys on fens[j] — see ``mine_game`` /
+    ``seed_blindspot_key``. Free offline substitute for the first live
+    SF-refute opponent ply (live channel then covers the rest).
     """
-    h = min(history_plies, j)
-    start_fen = fens[j - h]
-    moves = ucis[j - h:j]
+    if refute_uci is not None:
+        if j >= len(ucis):
+            raise ValueError(f"blunder ply j={j} out of range for ucis (len={len(ucis)})")
+        # Reserve 2 of history_plies for blunder+refute so LC0's window still
+        # covers the intended depth into the approach.
+        h = min(max(0, history_plies - 2), j)
+        start_fen = fens[j - h]
+        moves = list(ucis[j - h:j])
+        moves.extend([ucis[j], refute_uci])
+    else:
+        h = min(history_plies, j)
+        start_fen = fens[j - h]
+        moves = list(ucis[j - h:j])
     body = start_fen if not moves else f"{start_fen} | {' '.join(moves)}"
     return f"{body}  # {provenance}"
 
@@ -219,6 +276,34 @@ def position_key(fen: str) -> str:
     """Position identity (placement/turn/castling/ep), ignoring move counters —
     for holdout and dedup by 'same blind-spot'."""
     return chess.Board(fen).epd()
+
+
+def seed_blindspot_key(raw_line: str) -> str | None:
+    """Dedup key for one seed line: the pre-blunder blind-spot EPD.
+
+    Mine ``position_key`` is always the blind-spot (fens[ply]), even when the
+    seed terminal is post-refute. ``load_existing_keys`` / seed-file holdouts
+    must use the same key or incremental re-mines against post-refute lists
+    re-emit the same holes.
+
+    Recovery order:
+    1. Comment carries ``refute=<uci>`` → terminal is two plies past the
+       blind-spot; pop those two moves and key the resulting board.
+    2. Otherwise terminal is the blind-spot (legacy bare seeds / panel lines).
+    Returns None if the line is unparseable.
+    """
+    body, _, comment = raw_line.partition("#")
+    body = body.strip()
+    if not body or body.startswith("{"):
+        return None
+    try:
+        board = seed_board_from_line(body)
+    except ValueError:
+        return None
+    if _REFUTE_IN_COMMENT_RE.search(comment) and len(board.move_stack) >= 2:
+        board.pop()
+        board.pop()
+    return position_key(board.fen())
 
 
 def deepfin_color(game: chess.pgn.Game, name_needle: str) -> chess.Color | None:
@@ -242,11 +327,51 @@ def _deepfin_lost(game: chess.pgn.Game, color: chess.Color) -> bool:
     return result == ("0-1" if color == chess.WHITE else "1-0")
 
 
+def _resolve_refute_uci(
+    fens: list[str],
+    ucis: list[str],
+    ply: int,
+    *,
+    sf_bestmove: SfBestMove,
+    sf_nodes: int,
+) -> str | None:
+    """Deep-SF best reply after the historical blunder at ``ply``, or None.
+
+    Post-blunder FEN = position after ``ucis[ply]`` from ``fens[ply]``. Returns
+    None when the blunder ends the game, SF has no bestmove, or the move is
+    illegal in that position (mate / stalemate / bad UCI).
+    """
+    if ply < 0 or ply >= len(ucis) or ply >= len(fens):
+        return None
+    try:
+        board = chess.Board(fens[ply])
+        blunder = chess.Move.from_uci(ucis[ply])
+    except ValueError:
+        return None
+    if blunder not in board.legal_moves:
+        return None
+    board.push(blunder)
+    if board.is_game_over(claim_draw=True):
+        return None
+    best = sf_bestmove(board.fen(), sf_nodes)
+    if not best or best == "0000":
+        return None
+    try:
+        refute = chess.Move.from_uci(best)
+    except ValueError:
+        return None
+    if refute not in board.legal_moves:
+        return None
+    return best
+
+
 def mine_game(
     game: chess.pgn.Game, *, src: str = "?", name_needle: str, sf_eval: SfEval,
     sf_nodes: int, collapse_cp: int, history_plies: int, min_drop: int = 150,
     own_evals: dict[tuple[int, int], int] | None = None,
     mismatch_score_gap: float = 0.5, min_ply_gap: int = 8,
+    append_refute_ply: bool = False,
+    sf_bestmove: SfBestMove | None = None,
 ) -> list[tuple[str, str]]:
     """Mine one game -> up to 2 (seed_record, position_key) pairs: the first
     decisive collapse (move-quality) and, when ``own_evals`` is given, the
@@ -255,6 +380,13 @@ def mine_game(
     same teaching moment, keep just the collapse). Empty list when the game
     is unusable (not a DeepFin loss / ambiguous side / time forfeit) or
     neither criterion finds anything worth keeping.
+
+    When ``append_refute_ply`` is True and ``sf_bestmove`` is provided, each
+    kept seed appends the historical blunder + deep-SF's first best reply so
+    the terminal is net STM after one punish ply. Dedup ``position_key`` is
+    still the pre-blunder blind-spot (fens[ply]). If the refute cannot be
+    resolved or the post-refute terminal is rejected by the loader, falls
+    back to the pre-blunder seed (still useful for the live SF-refute channel).
     """
     color = deepfin_color(game, name_needle)
     if color is None or _is_time_forfeit(game) or not _deepfin_lost(game, color):
@@ -306,66 +438,127 @@ def mine_game(
                             f"own_score={mismatch.own_score:.2f} gap={mismatch.gap:.2f} "
                             f"(raw sf={mismatch.sf_before} own={mismatch.own_before})"))
 
+    want_refute = bool(append_refute_ply and sf_bestmove is not None)
     out: list[tuple[str, str]] = []
     for ply, provenance in candidates:
-        record = build_seed_record(
-            fens, ucis, ply, history_plies=history_plies, provenance=provenance,
-        )
-        # The seed must survive the loader's own curation (forced / terminal).
-        body = record.split("#", 1)[0].strip()
-        if _fen_reject_reason(body) is not None:
-            continue
+        record: str | None = None
+        if want_refute:
+            assert sf_bestmove is not None
+            refute_uci = _resolve_refute_uci(
+                fens, ucis, ply, sf_bestmove=sf_bestmove, sf_nodes=sf_nodes,
+            )
+            if refute_uci is not None:
+                candidate = build_seed_record(
+                    fens, ucis, ply, history_plies=history_plies,
+                    provenance=f"{provenance} refute={refute_uci}",
+                    refute_uci=refute_uci,
+                )
+                # Post-refute terminal unusable (mate/forced) → fall back below.
+                if _fen_reject_reason(candidate.split("#", 1)[0].strip()) is None:
+                    record = candidate
+        if record is None:
+            record = build_seed_record(
+                fens, ucis, ply, history_plies=history_plies, provenance=provenance,
+            )
+            if _fen_reject_reason(record.split("#", 1)[0].strip()) is not None:
+                continue
+        # Dedup key is always the pre-blunder blind-spot, even when the seed
+        # terminal is post-refute (same teaching hole, not a new position).
         out.append((record, position_key(fens[ply])))
     return out
 
 
 def load_holdout_keys(paths: list[str]) -> set[str]:
-    """Panel position keys to EXCLUDE (keep panel v1 a generalization yardstick).
-    Reads jsonl rows with a fen_before (panel) or a plain FEN/seed line."""
+    """Panel / seed position keys to EXCLUDE (keep panel v1 a generalization yardstick).
+
+    Jsonl panel rows key on ``fen_before`` (the blind-spot). Seed-file lines key
+    via ``seed_blindspot_key`` so post-refute terminals still exclude the
+    pre-blunder hole (not the post-punish position).
+    """
     keys: set[str] = set()
     for p in paths:
-        for line in Path(p).read_text(encoding="utf-8-sig").splitlines():
-            line = line.split("#", 1)[0].strip() if not line.lstrip().startswith("{") else line
-            if not line:
+        for raw in Path(p).read_text(encoding="utf-8-sig").splitlines():
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
                 continue
-            if line.startswith("{"):
-                fen = json.loads(line).get("fen_before")
+            if stripped.startswith("{"):
+                fen = json.loads(stripped).get("fen_before")
                 if fen:
                     keys.add(position_key(fen))
-            else:
-                keys.add(position_key(seed_board_from_line(line).fen()))
+                continue
+            key = seed_blindspot_key(raw)
+            if key is not None:
+                keys.add(key)
     return keys
 
 
 def load_existing_keys(paths: list[str]) -> set[str]:
-    """Terminal position keys already seeded (dedup) — reuses the seed loader."""
-    from chess_anti_engine.selfplay.opening import _load_fen_list
+    """Blind-spot keys already seeded (dedup for incremental re-mine).
 
+    Reads raw seed lines (comments preserved) so ``refute=`` post-refute seeds
+    contribute their pre-blunder EPD — matching ``mine_game``'s ``position_key``.
+    Does not use ``_load_fen_list`` (which strips comments and would leave only
+    the post-refute terminal).
+    """
     keys: set[str] = set()
     for p in paths:
         try:
-            for line in _load_fen_list(p):
-                keys.add(position_key(seed_board_from_line(line).fen()))
-        except (ValueError, FileNotFoundError):
+            text = Path(p).read_text(encoding="utf-8-sig")
+        except FileNotFoundError:
             continue
+        for raw in text.splitlines():
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            key = seed_blindspot_key(raw)
+            if key is not None:
+                keys.add(key)
     return keys
 
 
-def _make_sf_eval(sf_path: str, syzygy_path: str | None) -> tuple[SfEval, Callable[[], None]]:
-    from chess_anti_engine.stockfish.uci import StockfishUCI
+def _make_sf_eval(
+    sf_path: str, syzygy_path: str | None,
+) -> tuple[SfEval, SfBestMove, Callable[[], None]]:
+    """Wire SfEval + SfBestMove to one Stockfish process with a last-result cache.
+
+    One-slot cache: a bestmove lookup for the same (fen, nodes) as the most
+    recent search is free. In ``mine_game`` the full mainline is scanned
+    (every DeepFin before/after eval) *before* candidates resolve refute
+    bestmoves, so the cache only hits when the kept ply's post-blunder FEN
+    was the last search of the scan (e.g. late-game collapse). Otherwise
+    expect a miss and one extra search per kept seed — fine at mine scale.
+    """
+    from chess_anti_engine.stockfish.uci import StockfishResult, StockfishUCI
     from chess_anti_engine.stockfish.wdl import mate_to_effective_cp
 
     sf = StockfishUCI(path=sf_path)
+    # (fen, nodes, result) of the most recent search — opportunistic reuse only.
+    last: list[tuple[str, int, StockfishResult] | None] = [None]
+
+    def _search(fen: str, nodes: int) -> StockfishResult:
+        hit = last[0]
+        if hit is not None and hit[0] == fen and hit[1] == nodes:
+            return hit[2]
+        res = sf.search(fen, nodes=nodes, syzygy_path=syzygy_path)
+        last[0] = (fen, nodes, res)
+        return res
 
     def sf_eval(fen: str, nodes: int) -> int | None:
-        res = sf.search(fen, nodes=nodes, syzygy_path=syzygy_path)
+        res = _search(fen, nodes)
         if res.cp is not None:
             return res.cp
         # A forced mate is a high-value collapse, not a drop-out: map it to a
         # large signed cp so the mate side is scored, not skipped (Codex review).
         return round(mate_to_effective_cp(res.mate)) if res.mate is not None else None
 
-    return sf_eval, sf.close
+    def sf_bestmove(fen: str, nodes: int) -> str | None:
+        res = _search(fen, nodes)
+        bm = res.bestmove_uci
+        if not bm or bm == "0000":
+            return None
+        return bm
+
+    return sf_eval, sf_bestmove, sf.close
 
 
 def _iter_games(pgn_path: Path) -> Iterable[chess.pgn.Game]:
@@ -393,7 +586,9 @@ def main() -> None:
                     help="Stockfish SyzygyPath for <=6-man endgame rows (production uses "
                          "stockfish_syzygy_path); without it, endgames get a heuristic score")
     ap.add_argument("--history-plies", type=int, default=8,
-                    help="preceding moves stored per seed (LC0 uses 8 history steps)")
+                    help="max UCI moves replayed per seed (LC0 keeps 8 history steps). "
+                         "With --append-refute-ply, 2 slots are reserved for blunder+"
+                         "refute so approach history is history_plies-2.")
     ap.add_argument("--moves-csv", nargs="*", default=[],
                     help="match_vs_uci.py --move-log-out CSV(s) — enables the value-"
                          "mismatch second criterion (one match's PGN+CSV per run; "
@@ -408,10 +603,21 @@ def main() -> None:
     ap.add_argument("--holdout", nargs="*", default=[],
                     help="panel jsonl / seed files whose positions to EXCLUDE")
     ap.add_argument("--existing", nargs="*", default=[],
-                    help="seed files to dedup against (won't re-mine known positions)")
+                    help="seed files to dedup against by pre-blunder blind-spot "
+                         "(new-hole growth only — bare lists here block upgrading "
+                         "those holes to post-refute; omit them for a full upgrade)")
     ap.add_argument("--out", type=Path, required=True, help="seed file to write/append")
     ap.add_argument("--append", action="store_true", help="append to --out instead of overwrite")
     ap.add_argument("--max-games", type=int, default=0, help="0 = all")
+    ap.add_argument(
+        "--append-refute-ply",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Bake historical blunder + deep-SF best reply into each seed so "
+             "the terminal is net STM after one punish ply (default: on). "
+             "Disable with --no-append-refute-ply for bare blind-spot terminals. "
+             "Re-mine from PGN to upgrade old lists (cannot expand in place).",
+    )
     args = ap.parse_args()
 
     pgns = sorted({Path(p) for pat in args.pgn for p in glob.glob(pat)})
@@ -427,8 +633,11 @@ def main() -> None:
               f"move-log CSV(s); mismatch_score_gap={args.mismatch_score_gap} "
               f"min_ply_gap={args.min_ply_gap}",
               flush=True)
+    if args.append_refute_ply:
+        print("[mine] append-refute-ply ON — terminal = after blunder + deep-SF best reply",
+              flush=True)
 
-    sf_eval, sf_close = _make_sf_eval(args.sf_path, args.syzygy_path)
+    sf_eval, sf_bestmove, sf_close = _make_sf_eval(args.sf_path, args.syzygy_path)
     records: list[str] = []
     seen: set[str] = set()
     n_games = 0
@@ -444,6 +653,8 @@ def main() -> None:
                     collapse_cp=args.collapse_cp, history_plies=args.history_plies,
                     min_drop=args.min_drop, own_evals=own_evals,
                     mismatch_score_gap=args.mismatch_score_gap, min_ply_gap=args.min_ply_gap,
+                    append_refute_ply=bool(args.append_refute_ply),
+                    sf_bestmove=sf_bestmove if args.append_refute_ply else None,
                 )
                 for record, key in mined:
                     if key in exclude or key in seen:
@@ -457,9 +668,14 @@ def main() -> None:
     mode = "a" if args.append else "w"
     with open(args.out, mode, encoding="utf-8") as fh:
         if mode == "w":
-            fh.write("# Mined blind-spot seeds (start_fen | moves; real LC0 history).\n"
-                     "# scripts/mine_blindspot_seeds.py — first decisive collapse per loss"
-                     + (" + worst value-head mismatch per loss.\n" if own_evals is not None else ".\n"))
+            header = (
+                "# Mined blind-spot seeds (start_fen | moves; real LC0 history).\n"
+                "# scripts/mine_blindspot_seeds.py — first decisive collapse per loss"
+                + (" + worst value-head mismatch per loss" if own_evals is not None else "")
+                + ("; blunder+deep-SF refute ply baked in (terminal post-punish).\n"
+                   if args.append_refute_ply else ".\n")
+            )
+            fh.write(header)
         for r in records:
             fh.write(r + "\n")
     print(f"[mine] wrote {len(records)} new seeds ({n_games} games scanned) -> {args.out}",
