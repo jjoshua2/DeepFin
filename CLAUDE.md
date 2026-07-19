@@ -79,7 +79,11 @@ from positions the net misplays):
 - New seed material comes from mining external-match losses
   (`scripts/mine_blindspot_seeds.py --pgn`; default bakes blunder+deep-SF
   first-refute ply into the seed — `--no-append-refute-ply` for bare
-  blind-spot terminals; re-mine from PGN to upgrade old lists), then
+  blind-spot terminals). `--existing` is for incremental *new-hole* growth
+  only (dedup keys the pre-blunder blind-spot for bare and post-refute
+  lines, so a bare list there will not re-emit upgraded seeds for those
+  holes). To upgrade known bare holes: re-mine from PGN without them in
+  `--existing`, write a new versioned list, feed as replacement — then
   vetting/gating before feed.
 
 **Operational gotchas:**

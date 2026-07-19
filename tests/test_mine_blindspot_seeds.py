@@ -101,16 +101,30 @@ def test_build_seed_record_appends_blunder_and_refute() -> None:
 
 
 def test_build_seed_record_refute_clamps_total_to_history_plies() -> None:
-    """Default history_plies=8 + refute still yields ≤8 UCIs (LC0 window)."""
-    fens = [_fen_after(_LINE, i) for i in range(len(_LINE) + 1)]
+    """history_plies=8 + refute at j>=8 yields exactly 8 UCIs (clamp is load-bearing).
+
+    At j=6, min(8, j) == min(6, j) so the clamp is a no-op; use a longer line
+    where unclamped would emit 10 UCIs (8 approach + blunder + refute).
+    """
+    # Italian quiet: j=10 is white b1d2; legal black reply d7d6 is long_line[11].
+    long_line = [
+        "e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6",
+        "d2d3", "h7h6", "c2c3", "a7a6", "b1d2", "d7d6",
+    ]
+    j = 10
+    refute = long_line[11]
+    fens = [_fen_after(long_line, i) for i in range(len(long_line) + 1)]
     rec = build_seed_record(
-        fens, list(_LINE), 6, history_plies=8, provenance="x", refute_uci=_LINE[7],
+        fens, list(long_line), j, history_plies=8, provenance="x", refute_uci=refute,
     )
     body = rec.split("#", 1)[0].strip()
     board = seed_board_from_line(body)
-    assert board.fen() == fens[8]
-    # 6 approach available, but clamped to 8-2=6 preceding + blunder + refute would be 8;
-    # j=6 so preceding = min(6, 6) = 6, total 8.
+    assert board.fen() == fens[j + 2]  # after blunder + refute
+    moves = body.split("|", 1)[1].split()
+    assert len(moves) == 8
+    assert moves[-2:] == [long_line[j], refute]
+    # Clamp starts at j-(8-2)=4, not j-8=2 (which unclamped would use).
+    assert moves[0] == long_line[j - 6]
     assert len(board.move_stack) == 8
 
 

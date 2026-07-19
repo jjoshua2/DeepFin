@@ -12,23 +12,38 @@ feat/seed-history).
 
 Output line format (one per mined loss, up to two when --moves-csv is given —
 see the mismatch criterion below), consumed by selfplay/opening.py:
-    <start_fen> | <uci ...>   # src=<pgn> round=<r> ply=<j>
-where the terminal position (after replaying the moves) is the blind-spot the
-net faces, and start_fen is ``--history-plies`` plies earlier.
+    <start_fen> | <uci ...>   # src=<pgn> round=<r> ply=<j> [refute=<uci>]
+Bare seeds (``--no-append-refute-ply``): terminal = the blind-spot the net
+faces; start_fen is up to ``--history-plies`` plies earlier. Default seeds
+(``--append-refute-ply``): the body also replays the historical blunder +
+deep-SF's best reply, so the terminal is two plies later (net STM after one
+punish); approach history is clamped to ``history_plies - 2`` so the total
+replay stays ≤ ``history_plies`` (LC0's 8-step window). Dedup always keys the
+pre-blunder blind-spot (see ``seed_blindspot_key``), not the terminal.
 
 Curation matches the existing asset: forced / claim-draw-terminal seeds are
 dropped (via _fen_reject_reason), time-forfeit games are skipped, positions in a
 ``--holdout`` panel are excluded (keeps panel v1 a pure generalization yardstick),
 and positions already in ``--existing`` seed files or mined earlier this run are
-deduplicated by position identity (EPD).
+deduplicated by blind-spot EPD (bare or post-refute lines).
 
-Deep-SF annotation is mandatory (match PGNs carry no eval). Example:
+Deep-SF annotation is mandatory (match PGNs carry no eval). Incremental
+new-hole mine (skip positions already seeded — bare or post-refute):
     PYTHONPATH=. python3 scripts/mine_blindspot_seeds.py \
         --pgn 'runs/matches/*.pgn' --deepfin-name-contains deepfin \
         --sf-path /usr/local/bin/stockfish --sf-nodes 300000 \
         --holdout data/blindspot_panel_v1.jsonl \
         --existing data/blindspot_fens_v1.txt \
         --out data/blindspot_fens_v2_mined.txt
+``--existing`` / seed-file ``--holdout`` are for *new-hole growth only*. They
+key the pre-blunder blind-spot for both bare and ``refute=`` lines, so a bare
+list in ``--existing`` will **not** re-emit upgraded blunder+refute seeds for
+those same holes.
+
+To **upgrade** known bare holes to post-refute terminals: re-mine from PGN
+*without* those positions in ``--existing`` (omit the bare list, or write a
+full replacement ``--out`` and feed that versioned file). Bare lines cannot be
+rewritten in place (they lack the blunder UCI).
 
 Optional SECOND criterion — value-head miscalibration, not just move quality:
 ``--moves-csv`` points at the match harness's own per-move log (game, ply,
@@ -44,13 +59,9 @@ collapse AND the worst mismatch when they're more than ``--min-ply-gap``
 plies apart (distinct teaching moments); when they're close, only the
 collapse is kept (redundant).
 
-Free first SF-refute ply (default ON via ``--append-refute-ply``): after the
-historical blunder, deep-SF's best reply is baked into the seed line so the
-terminal is already one punish ply in (net STM). Dedup still keys the
-pre-blunder blind-spot. Pairs with the live SF-refute channel (remaining
-opponent plies at selfplay time). Re-mine from PGN to upgrade old lists —
-existing bare-blindspot lines do not carry the blunder UCI, so they cannot
-be upgraded in place.
+Free first SF-refute ply (default ON via ``--append-refute-ply``): see the
+format block above. Pairs with the live SF-refute channel (remaining opponent
+plies at selfplay time).
 """
 from __future__ import annotations
 
@@ -592,7 +603,9 @@ def main() -> None:
     ap.add_argument("--holdout", nargs="*", default=[],
                     help="panel jsonl / seed files whose positions to EXCLUDE")
     ap.add_argument("--existing", nargs="*", default=[],
-                    help="seed files to dedup against (won't re-mine known positions)")
+                    help="seed files to dedup against by pre-blunder blind-spot "
+                         "(new-hole growth only — bare lists here block upgrading "
+                         "those holes to post-refute; omit them for a full upgrade)")
     ap.add_argument("--out", type=Path, required=True, help="seed file to write/append")
     ap.add_argument("--append", action="store_true", help="append to --out instead of overwrite")
     ap.add_argument("--max-games", type=int, default=0, help="0 = all")
