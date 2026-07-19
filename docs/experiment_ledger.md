@@ -4164,3 +4164,33 @@ algorithms forbid a scaling claim. Ordinary compiled kernels therefore work
 without CUDA graphs on the duplicate-device harness. Max-autotune-no-graphs is
 too slow cold; default compile is the useful functional fallback. Distinct-GPU
 CUDA-graph scaling remains the final hardware-only gap.
+
+**OFFLINE — default/no-CUDA-graphs forward cost (2026-07-19).** The preceding
+duplicate-device smoke proves that ordinary Inductor compilation without CUDA
+graphs is functional, but not whether it is a sensible throughput fallback.
+Hypothesis: at worker-relevant batches, `default` compilation retains at least
+90% of `reduce-overhead` CUDA-graph throughput, making it useful when graph
+ownership or duplicate-device constraints rule graphs out. ONE deciding
+yardstick: on the paused RTX 5090 and the production 175-plane checkpoint
+`/home/josh/projects/chess/data/match_ckpts/ckpt101_20260718/trainer.pt`, run
+`PYTHONPATH=. python3 scripts/profile_worker_inference.py --checkpoint <ckpt>
+--batches 256,576,1024 --warmup 10 --iters 30 --amp-dtype bf16 --mode <mode>`
+in counterbalanced `reduce-overhead/default/default/reduce-overhead` process
+order. Compare the median of each mode's two reported boards/s values per
+batch, then their geometric-mean ratio. SUCCESS: default/reduce-overhead >=
+0.90 with zero graph breaks and no failure. KILL: ratio <0.90 or any compile,
+CUDA, or correctness failure. This benchmark only decides fallback cost; it
+does not propose replacing the faster production mode.
+**VERDICT: KILLED AS A GENERAL THROUGHPUT FALLBACK (2026-07-19).** All four
+counterbalanced arms completed with zero graph breaks. Median boards/s for
+`reduce-overhead` versus `default` were 16,938 versus 6,504 at batch 256
+(0.384x), 18,723 versus 13,531 at batch 576 (0.723x), and 18,791 versus
+17,894 at batch 1,024 (0.952x). The geometric-mean no-graph ratio was only
+**0.642x**, far below the 0.90 gate. No-graph compilation is therefore a useful
+correctness/debugging escape hatch and becomes nearly free only around batch
+1,024; do not replace CUDA-graph production inference at the smaller match and
+selfplay batch shapes. Cold first-arm warmups also took roughly 57-76 seconds
+for default's first two shapes versus 98-107 seconds for the graph control;
+cached repeats fell to 13-18 seconds. Preserve `default` only as the practical
+same-device multi-GPU validation mode until distinct-GPU graph execution can
+be measured.
