@@ -211,14 +211,24 @@ def _run_one(proc: subprocess.Popen[str], reader: _LineReader, *,
         prof_agg["gil_p99_max_ms"] = max(float(profile["p99"]) for profile in gil_profiles)
         prof_agg["gil_max_ms"] = max(float(profile["max"]) for profile in gil_profiles)
 
+    bestmove = next((line.split()[1] for line in lines if line.startswith("bestmove ")), "")
+    info_nodes = int(info.get("nodes", 0) or 0)
+    search_errors = [line for line in lines if "search error:" in line]
+    if search_errors or info_nodes < nodes or not bestmove:
+        detail = search_errors[-1] if search_errors else "no explicit UCI search error"
+        raise RuntimeError(
+            f"UCI search failed or stopped early: nodes={info_nodes}/{nodes} "
+            f"bestmove={bestmove!r}; {detail}"
+        )
+
     return {
         "wall_s": round(elapsed, 3),
-        "sims_per_s": round(nodes / elapsed, 1) if elapsed > 0 else 0,
-        "info_nodes": int(info.get("nodes", 0) or 0),
+        "sims_per_s": round(info_nodes / elapsed, 1) if elapsed > 0 else 0,
+        "info_nodes": info_nodes,
         "info_nps": int(info.get("nps", 0) or 0),
         "info_time_ms": int(info.get("time", 0) or 0),
         "info_depth": int(info.get("depth", 0) or 0),
-        "bestmove": next((l.split()[1] for l in lines if l.startswith("bestmove ")), ""),
+        "bestmove": bestmove,
         "profile": prof_agg,
     }
 
@@ -251,15 +261,21 @@ def _run_config(
                   gil_profile=gil_profile,
                   log_level=log_level)
     reader = _LineReader(proc)
-    _send(proc, "uci")
-    startup_timeout = max(60.0, float(timeout_s))
-    reader.read_until("uciok", timeout_s=startup_timeout)
-    if use_vl:
-        _send(proc, "setoption name UseVL value true")
-        _send(proc, f"setoption name VLGather value {vl_gather}")
-        _send(proc, f"setoption name PUCVPendingMode value {pucv_pending_mode}")
-    _send(proc, "isready")
-    reader.read_until("readyok", timeout_s=startup_timeout)
+    try:
+        _send(proc, "uci")
+        startup_timeout = max(60.0, float(timeout_s))
+        reader.read_until("uciok", timeout_s=startup_timeout)
+        if use_vl:
+            _send(proc, "setoption name UseVL value true")
+            _send(proc, f"setoption name VLGather value {vl_gather}")
+            _send(proc, f"setoption name PUCVPendingMode value {pucv_pending_mode}")
+        _send(proc, "isready")
+        reader.read_until("readyok", timeout_s=startup_timeout)
+    except BaseException:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+        raise
 
     coal_str = "" if walkers == 1 else f"  walkers={walkers}  coalesce={coalesce}"
     device_str = f"devices={devices}" if devices else f"device={device}"
@@ -276,18 +292,26 @@ def _run_config(
         print(f"  eval_cache_entries={eval_cache_entries}")
     try:
         position_stats: dict[str, list[float]] = {}
+        position_moves: dict[str, list[str]] = {}
         profile_runs: list[dict[str, float]] = []
         for pos_label, fen in _POSITIONS:
-            _send(proc, "ucinewgame")
             for _ in range(repeats):
+                # Repetitions must be independent. Reusing the prior search
+                # tree made the second run of a position 20-50x slower and
+                # measured tree-continuation state rather than evaluator NPS.
+                _send(proc, "ucinewgame")
                 result = _run_one(proc, reader, fen=fen, nodes=nodes, timeout_s=timeout_s)
                 position_stats.setdefault(pos_label, []).append(_float_from_result(result, "sims_per_s"))
+                position_moves.setdefault(pos_label, []).append(str(result["bestmove"]))
                 prof = result.get("profile") or {}
                 if isinstance(prof, dict) and prof:
                     profile_runs.append(prof)
         for pos_label, vals in position_stats.items():
             mean = sum(vals) / len(vals)
-            print(f"  {pos_label:<20} sims/s avg={mean:>7.1f}  runs={vals}")
+            print(
+                f"  {pos_label:<20} sims/s avg={mean:>7.1f}  runs={vals} "
+                f"bestmoves={position_moves[pos_label]}"
+            )
         gumbel_runs = [profile for profile in profile_runs if "gpu_calls" in profile]
         if gumbel_runs:
             agg_calls = sum(p.get("gpu_calls", 0.0) for p in gumbel_runs)

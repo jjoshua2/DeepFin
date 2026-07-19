@@ -29,7 +29,8 @@ def _worker_fn(
     import numpy as np
     import torch
 
-    from chess_anti_engine.inference import DirectGPUEvaluator, ThreadedBatchEvaluator
+    from chess_anti_engine.inference import DirectGPUEvaluator
+    from chess_anti_engine.inference_threaded import ThreadedDispatcher
     from chess_anti_engine.model import (
         ModelConfig,
         build_model,
@@ -53,11 +54,14 @@ def _worker_fn(
     if bootstrap_path:
         ckpt = torch.load(bootstrap_path, map_location="cuda", weights_only=True)
         load_state_dict_tolerant(model, ckpt.get("model", ckpt))
-    if compile_model:
+    if compile_model and n_threads == 1:
         model = cast(torch.nn.Module, torch.compile(model, mode="reduce-overhead"))
 
     if n_threads > 1:
-        evaluator = ThreadedBatchEvaluator(model, device="cuda", max_batch=4096)
+        evaluator = ThreadedDispatcher(
+            model, device="cuda", max_batch=4096,
+            compile_mode="reduce-overhead" if compile_model else None,
+        )
     else:
         evaluator = DirectGPUEvaluator(model, device="cuda", max_batch=512)
 

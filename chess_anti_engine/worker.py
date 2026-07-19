@@ -32,7 +32,6 @@ from chess_anti_engine.inference import (
     DirectGPUEvaluator,
     MultiSlotInferenceClient,
     SlotInferenceClient,
-    ThreadedBatchEvaluator,
     model_constant_source,
 )
 from chess_anti_engine.inference_threaded import ThreadedDispatcher
@@ -537,17 +536,14 @@ def main() -> None:
         default=16,
         help="Number of selfplay threads (with --threaded-selfplay).",
     )
-    ap.add_argument(
-        "--threaded-dispatcher",
-        action="store_true",
-        help="With --threaded-selfplay: use single-consumer ThreadedDispatcher "
-             "(cudagraph-safe) instead of ThreadedBatchEvaluator.",
-    )
+    # Compatibility for workers spawned by an already-running pre-upgrade Tune
+    # controller. The fast dispatcher is unconditional; this flag is a no-op.
+    ap.add_argument("--threaded-dispatcher", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument(
         "--dispatcher-batch-wait-ms",
         type=float,
-        default=1.0,
-        help="ThreadedDispatcher batching window in ms (latency vs batch fill).",
+        default=0.0,
+        help="ThreadedDispatcher batching window in ms (default: 0; no fixed wait).",
     )
     ap.add_argument(
         "--dispatcher-max-batch",
@@ -808,7 +804,7 @@ class WorkerSession:
         self.model_cfg_active: ModelConfig | None = None
         self.model = None
         self._direct_evaluator: (
-            DirectGPUEvaluator | ThreadedBatchEvaluator | ThreadedDispatcher | AOTEvaluator | None
+            DirectGPUEvaluator | ThreadedDispatcher | AOTEvaluator | None
         ) = None
         self.inference_client = self._make_inference_client()
         self.pause_selfplay_active = False
@@ -901,9 +897,9 @@ class WorkerSession:
 
     def _build_evaluator(
         self, model: torch.nn.Module,
-    ) -> DirectGPUEvaluator | ThreadedBatchEvaluator | ThreadedDispatcher | AOTEvaluator:
+    ) -> DirectGPUEvaluator | ThreadedDispatcher | AOTEvaluator:
         device = str(self.device)
-        if self.args.threaded_selfplay and self.args.threaded_dispatcher:
+        if self.args.threaded_selfplay:
             disp_compile = (
                 str(self.args.compile_mode) if self.args.compile_inference else None
             )
@@ -913,8 +909,6 @@ class WorkerSession:
                 batch_wait_ms=float(self.args.dispatcher_batch_wait_ms),
                 compile_mode=disp_compile,
             )
-        if self.args.threaded_selfplay:
-            return ThreadedBatchEvaluator(model, device=device, max_batch=4096, min_batch=256)
         if self.args.aot_dir:
   # AOT .pt2 artifacts are compiled for a fixed input width; size the
   # pinned buffers from the model so a v2_threats net fails loud at
@@ -1245,7 +1239,7 @@ class WorkerSession:
         # ThreadedDispatcher compiles on its own thread so cudagraph TLS lives
         # where the forwards happen. Pre-compiling here would cause the
         # dispatcher's first forward to fall back to eager.
-        if self.args.compile_inference and not getattr(self.args, "threaded_dispatcher", False):
+        if self.args.compile_inference and not self.args.threaded_selfplay:
             compile_t0 = time.time()
             self.log.info("compile starting %s sha=%s", label, sha_short)
             _compile_mode = str(self.args.compile_mode)

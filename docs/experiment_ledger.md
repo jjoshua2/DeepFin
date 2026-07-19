@@ -875,6 +875,38 @@ call. Both are far below the 1.15x and 10us gates, with exact checksum
 the NumPy ABI and look inside terminal detection instead. The one-off harness
 was removed.
 
+**OFFLINE -- single-walker CUDA-owner dispatcher (2026-07-18; UCI
+perf/simplification).** Compiled UCI currently wraps even `Threads=1` Gumbel
+in `BatchCoalescingDispatcher` solely to keep cudagraph launches on one
+persistent thread. A single producer can never coalesce with another request,
+and that wrapper hides the direct evaluator's pinned in-place API. Hypothesis:
+a minimal FIFO CUDA-owner dispatcher, used only for compiled single-walker
+UCI, preserves thread affinity while forwarding pinned buffers and async
+launches, removing an input copy and the irrelevant batch merge/slice path.
+ONE deciding yardstick: three alternating legacy/owner process rounds, each
+running `PYTHONPATH=. python3 scripts/bench_uci_engine.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--device cuda --nodes 8192 --repeats 3 --chunk-sims 512 --topk 32
+--max-batch 1024 --compile-mode max-autotune --compile-cache-dir
+/tmp/cae-uci-bf16-cache --timeout-s 300`, with
+`CAE_UCI_OWNER_DISPATCH=0/1`. SUCCESS: owner/control geometric-mean
+per-position median sims/s >=1.05x, every bestmove sequence agrees, all
+searches report at least 8,192 actual nodes, focused dispatcher/Gumbel/UCI
+tests and lint pass, and shutdown is clean. KILL: gain below 5%, any output,
+node, lifetime, CUDA, or shutdown failure. Match inference only; no model,
+search budget, targets, replay, config, RNG, or live training state.
+**VERDICT: WORKED (2026-07-18); promoted for compiled single-walker UCI.**
+Three counterbalanced legacy/owner process pairs each ran all five positions
+three times at 8,192 actual nodes. Median-of-arm-median sims/s were legacy
+8,054/8,767/8,642/8,621/18,749 versus owner
+8,440/9,733/9,397/9,405/21,183. Per-position owner/legacy ratios were
+1.048/1.110/1.087/1.091/1.130, geometric mean **1.0929 (9.29% faster)**.
+Every best-move sequence agreed, all 90 searches completed their node budget,
+focused dispatcher/Gumbel/UCI tests and lint passed, and every process shut
+down cleanly. Remove the experiment switch and use the owner dispatcher by
+default for compiled `Threads=1`; retain `BatchCoalescingDispatcher` for
+concurrent walkers, where actual request merging remains useful.
+
 **Native classifier redundant terminal-check experiment -- UNREAD
 (2026-07-12).** All three selfplay `CBoard.push_index` paths immediately set
 `done_arr` after forced-network, searched-network, and curriculum-Stockfish
@@ -1430,6 +1462,23 @@ times out, compile counters show no new graph breaks/recompiles, and focused
 dispatcher/Gumbel/UCI tests pass. Otherwise FAILED and keep the env default
 off. Match-inference implementation only; no training/data change or salvage
 snapshot.
+**VERDICT: FAILED (2026-07-18); keep `CAE_UCI_COMPACT_BF16` default-off.**
+After building a shared mode-complete max-autotune cache, three alternating
+control/candidate process rounds each ran all five positions three times at
+8,192 actual nodes. Per-position medians across the three rounds were control
+8,009/8,861/8,829/8,714/20,190 sims/s versus compact
+7,458/8,350/8,473/8,229/20,136. Candidate/control ratios were
+0.931/0.942/0.960/0.944/0.997, geometric mean **0.9547 (4.5% slower)**;
+aggregate-median ratio was 0.9457. The local GPU gather/conversion cost exceeds
+the saved policy transport on the four non-endgame positions and is merely flat
+in the endgame. Three measurement bugs were fixed before the deciding run:
+setup failures now kill the spawned engine,
+and UCI emits a final info line when its periodic node count is stale (the first
+attempt searched 8,192 but exposed only the prior 7,680-node info line), and
+each repeat now sends `ucinewgame` so it measures a fresh tree rather than a
+continuation of the previous 8,192-node search. The
+explicit experimental flag remains available for diagnostics, but must not
+become the default or be combined into a claimed UCI speedup.
 
 **Broker recycled-response coalescing experiment -- UNREAD (2026-07-11).**
 Live post-recovery telemetry shows only ~34-55 positions and 1.3-2.1 of 16
@@ -3837,12 +3886,56 @@ holding all search lanes for ~70-100 ms.  A round-robin fair 680-row global
 target should dispatch immediately once capacity is reached, return early
 lanes sooner, and overlap their CPU tree work with subsequent GPU forwards.
 YARDSTICK (deciding): broker-backed 4-worker x 32-thread Gumbel A/B, five
-repeats, unlimited baseline versus targets 512/680/1020, judged on actual
-positions/s and p95 request latency.  SUCCESS: >=5% positions/s with no p95
+repeats, unlimited baseline versus targets 512/680/1020, using
+`for target in 0 512 680 1020; do PYTHONPATH=. python3
+scripts/bench_production_sf_workers.py --publish-dir
+/home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --orders 8,8,8,8,8
+--workers 4 --threads 32 --games-per-thread 1 --slots 4 --max-plies 10
+--target-batch "$target"; done`, judged on actual positions/s and p95 request
+latency.  SUCCESS: >=5% positions/s with no p95
 regression, or >=3% positions/s with >=15% p95 improvement.  KILL: throughput
 regression, starvation/unfairness, illegal output, deadlock, or no target
 meeting the success rule.  Numerical model parity uses existing tolerances;
 different stochastic Gumbel actions are not a failure by themselves.
+**VERDICT: KILLED BEFORE COMPARISON (2026-07-18).** The replacement full-selfplay
+yardstick was not sensitive to broker batching: 32 Stockfish processes stayed
+near one CPU core each while GPU utilization fell to 0%, steady broker batches
+had already shrunk to roughly 304-429 rows after the compact-root merge, and
+the long tail was SF-bound at only one ready slot. Continuing four five-repeat
+arms would measure Stockfish/opponent duty cycle, not a 3-5% broker effect.
+The run was stopped and all broker/worker/SF processes were cleaned up. No
+target verdict is inferred from this invalid workload.
+
+**OFFLINE — fair global broker batch target, Gumbel-only retry (2026-07-18;
+perf-only).** Hypothesis and thresholds are unchanged, but the deciding
+yardstick removes Stockfish/replay/finalization so the closed loop stays
+broker/GPU-sensitive while retaining 4 worker processes x 32 concurrent
+Gumbel producers x 4 shared slots. ONE deciding yardstick:
+`for target in 0 512 680 1020; do PYTHONPATH=. python3
+scripts/bench_broker_gumbel_target.py --publish-dir
+/home/josh/projects/chess/runs/pbt2_small/server/trials/4c17c_00000/publish
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --target-batch
+"$target" --workers 4 --threads 32 --slots 4 --boards-per-thread 4
+--simulations 50 --iterations 3 --repeats 5; done`. SUCCESS: any target gives
+at least 5% median inference positions/s with no p95 request-latency regression,
+or at least 3% positions/s with at least 15% lower median p95. KILL: no arm
+meets that rule, any worker contributes zero work, illegal/output failure,
+deadlock, broker recovery, or fairness spread beyond the baseline's normal
+worker range. Different stochastic actions are permitted.
+**VERDICT: KILLED (2026-07-18, five-repeat quiet-GPU closed loop).** Unlimited
+baseline measured 13,635.79 median inference positions/s and 665.67 ms median
+p95 request latency. Target 512 measured 13,871.70 positions/s (+1.73%) and
+639.97 ms p95 (-3.86%); target 680 measured 14,038.51 (+2.95%) and 642.30 ms
+(-3.51%); target 1020 measured 13,815.06 (+1.31%) and 644.80 ms (-3.13%). No
+arm met either success rule. Every arm had the same tight worker-work range
+(19,434-19,578 positions), so fairness was sound, but the small gain does not
+justify round-robin cursor state, whole-slot packing rules, a new broker CLI,
+and a new live config key. Remove the target implementation and retain the
+legacy all-ready drain. The dedicated harness correctly exposed the post-
+compact-root steady shape (~470 rows at target 512, ~605 at 680, ~623-637
+unlimited) and remains useful only if a substantially different batching
+architecture is proposed.
 
 **OFFLINE — compact legal-policy transport for Gumbel roots (2026-07-18;
 perf-only, no live activation).** Hypothesis: the C Gumbel leaf path already
@@ -3875,3 +3968,149 @@ transport rounds root logits to BF16, which is expected and permitted; masks,
 legal actions, WDL transport, and protocol remain unchanged. Promote for broker
 clients only; local/direct GPU evaluators retain their existing dense zero-copy
 root path.
+
+**OFFLINE -- AOT next-pack overlap feasibility (2026-07-18; perf-only).**
+The broker synchronizes each submitted AOT forward before it can gather the
+next shared-memory request, even though model execution and output copies are
+asynchronous after submission. Hypothesis: while one production-sized compact
+forward completes on CUDA, copying the next BF16 input group into the second
+pinned slot can hide a meaningful part of host packing and justify a two-stage
+broker pipeline. ONE deciding yardstick:
+`PYTHONPATH=. taskset -c 15 /home/josh/projects/chess/.venv/bin/python
+scripts/bench_aot_pack_overlap.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--aot-dir /home/josh/projects/chess/data/aot_models_512 --batch 340
+--iterations 40 --rounds 7`. SUCCESS: overlap/reference median wall <=0.95,
+at least 25% of the separately measured second-pack time is hidden, exact
+compact-policy/WDL checksums, and no CUDA/event/lifetime error. KILL: either
+speed gate misses or any correctness failure. Passing authorizes only a full
+broker-backed prototype with its own end-to-end yardstick; failing leaves the
+runtime unchanged. No search, target, replay, config, RNG, or live-state
+change.
+**VERDICT: KILLED (2026-07-18); runtime unchanged.** Seven alternating
+quiet-GPU rounds measured 1.174368s reference versus 1.137226s overlapped for
+40 two-forward iterations, ratio **0.968372 (3.16% faster)**, with exact
+compact-policy/WDL checksum
+`371bb54d728537d650995a1f06b24fa73fc7470db5300a125b048ea1f2815cd3`.
+The candidate missed the required <=0.95 wall-time gate. The apparent saved
+time also exceeded the separately measured 13.924ms total second-pack cost,
+showing that launch/runtime variance dominates this small mechanism read.
+Do not add target-based batch splitting, alternate broker staging buffers, or
+prepare/submit/scatter state machines for this result. The one-off benchmark
+was removed.
+
+**OFFLINE — target/deadline ThreadedDispatcher gathering (2026-07-19;
+selfplay performance).** The local threaded-selfplay dispatcher advertises a
+batch wait and target, but each producer notification currently ends the wait
+after only one additional request; therefore neither the configured 5 ms
+deadline nor 680-row target controls the gathered batch deterministically.
+Hypothesis: while the current GPU submit is still in flight, continue condition
+waiting across notifications until compatible queued rows reach the target, the
+GPU result becomes ready, or the deadline expires. This should form fuller next
+batches without inserting idle GPU time. ONE deciding yardstick: three
+counterbalanced legacy/target process pairs on the production checkpoint using
+`PYTHONPATH=. python3 scripts/bench_dispatcher_gumbel.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
+50 --topk 16 --iters 3 --warmup-iters 2 --compile-mode reduce-overhead
+--dispatcher-batch-wait-ms 5 --dispatcher-target-batch 680`, alternating
+`CAE_DISPATCH_TARGET_WAIT=0/1`. SUCCESS: target/legacy median timed dispatcher
+leaf throughput >=1.05x, games/s >=1.03x, no worker error/deadlock, exact total
+completed actions and simulations, focused threaded-dispatcher/Gumbel tests and
+lint pass. KILL: either speed gate misses, batch padding grows enough to reduce
+leaf throughput, or any correctness/liveness failure. Selfplay inference
+scheduling only; no model, targets, replay, config, RNG, or live state changes.
+**PROTOCOL AMENDMENT BEFORE A VALID READ (2026-07-19).** Two warmup iterations
+did not cover the stochastic compiled bucket set: one target arm and two legacy
+arms each reported `frames_ok=1` during timing and are invalid. The only clean
+pair (`frames_ok=0`) measured 9,057 legacy versus 8,651 target leaves/s, already
+directionally negative. Repeat the deciding comparison with 10 warmup
+iterations and five timed iterations; an arm is admissible only when
+`frames_ok=0` and `cudagraph_skips=0`. Two clean counterbalanced pairs replace
+the invalid three-pair read; success/kill thresholds are unchanged.
+**VERDICT: REJECTED (2026-07-19).** Both amended pairs were clean
+(`frames_ok=0`, `cudagraph_skips=0`). Legacy runs measured 9,735.36 and
+9,653.96 timed leaves/s and 190.89 and 189.29 games/s; target/deadline runs
+measured 9,693.03 and 9,811.76 leaves/s and 190.06 and 192.39 games/s. Median
+target/legacy was only **1.006x leaves/s and 1.006x games/s**, missing both
+precommitted gates. Median dispatcher batch size rose just 1.013x (569.87 to
+577.13 rows), so repeated condition waiting did not materially change the
+closed-loop workload. Remove the runtime prototype. Retain only the benchmark's
+production-checkpoint option so future dispatcher experiments use the deployed
+model rather than a synthetic smaller network.
+
+**OFFLINE — remove ThreadedDispatcher fixed gather wait (2026-07-19;
+selfplay performance/simplification).** The local dispatcher still waits up to
+5 ms when idle and while an in-flight forward is incomplete, although any
+producer notification ends the condition wait early. The new 576-row bucket
+may make prompt smaller submits efficient enough that the explicit timeout is
+unnecessary. Hypothesis: `batch_wait_ms=0` preserves useful throughput while
+removing the last fixed gather delay from the local threaded path. ONE deciding
+yardstick: two counterbalanced 5/0 ms process pairs using `PYTHONPATH=. python3
+scripts/bench_dispatcher_gumbel.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
+50 --topk 16 --iters 5 --warmup-iters 10 --compile-mode reduce-overhead
+--dispatcher-target-batch 680 --dispatcher-batch-wait-ms {5|0}`, alternating
+order. Arms are admissible only with `frames_ok=0` and `cudagraph_skips=0`
+during timing. SUCCESS: zero/control median timed leaves/s and games/s are both
+at least 0.99x, padding does not exceed control by more than 2%, completed work
+is exact, and focused tests/lint pass; then change the production default to
+zero and remove stale fixed-wait commentary. KILL: throughput below 0.99x,
+padding/resource regression, capture/skip, or correctness/liveness failure.
+Scheduling only; no model, targets, replay, RNG, or live state changes.
+**VERDICT: WORKED; REMOVE THE LOCAL FIXED WAIT (2026-07-19).** All four arms
+were clean (`frames_ok=0`, `cudagraph_skips=0`) with exact completed work. The
+first arm in each process order ran 5-6% faster regardless of wait setting, so
+the counterbalance was load-bearing: 5 ms measured 10,596.03 then 10,035.89
+timed leaves/s (207.77 then 196.78 games/s), while zero measured 10,079.54 then
+10,707.93 leaves/s (197.64 then 209.96 games/s). Median zero/control was
+**1.0075x** for both leaves/s and games/s. Median padding also improved
+slightly, 1.0194x to 1.0177x. Set the `ThreadedDispatcher`, worker CLI,
+distributed fallback, and production worker-local default to zero. This does
+not remove the separate broker's 2 ms adaptive-idle rule and 20 ms hard cap;
+that global 16-slot gather policy was previously measured within roughly 2%
+of its offline oracle and remains in the broker-only path.
+
+**OFFLINE — finer compiled ThreadedDispatcher buckets (2026-07-19; selfplay
+performance).** The clean production-checkpoint dispatcher runs above measured
+1.10 forwarded rows per useful leaf because the compiled ladder jumps directly
+from 512 to 680. Hypothesis: inserting only 576 and 640 will reduce wasted model
+rows without changing queue draining, wait policy, request ordering, search, or
+outputs. ONE deciding yardstick: two counterbalanced clean process pairs using
+`CAE_DISPATCH_FINE_BUCKETS=0/1 PYTHONPATH=. python3
+scripts/bench_dispatcher_gumbel.py --checkpoint
+/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/best/best_model.pt
+--paths ThreadedDispatcher --thread-counts 32 --total-games 384 --simulations
+50 --topk 16 --iters 5 --warmup-iters 10 --compile-mode reduce-overhead
+--dispatcher-batch-wait-ms 5 --dispatcher-target-batch 680`, alternating
+control/fine order. An arm is admissible only with `frames_ok=0` and
+`cudagraph_skips=0` during timing. SUCCESS: fine/control median timed leaves/s
+and games/s are both at least 1.03x, padding ratio falls, exact completed work
+is preserved, and focused dispatcher/Gumbel tests plus lint pass. KILL: either
+speed gate misses, any timed graph capture/skip, output/liveness failure, or
+the two extra compiled graphs add complexity/resource cost without the gain.
+Inference shape selection only; no model, targets, replay, config, RNG, or live
+state changes.
+**PRE-VERDICT SIMPLIFICATION ARM (2026-07-19).** The two-shape candidate's
+first clean pair improved leaves/s 1.021x while reducing padding 1.104x to
+1.011x; the reversed pair improved 1.076x with padding 1.100x to 1.015x. Its
+clean two-pair medians therefore pass at 1.048x leaves/s and games/s, but
+PyTorch warns when the second inserted shape raises this workload to nine CUDA
+graphs. Before promotion, repeat two clean runs with only bucket 576 selected
+by `CAE_DISPATCH_FINE_BUCKETS=576`. KEEP the simpler one-shape form only if its
+median remains >=1.03x the already-recorded control median and >=0.99x the
+two-shape candidate median, with no nine-shape warning; otherwise retain both
+only if the second bucket is needed for the original speed gate. The original
+correctness and timed-capture gates remain unchanged.
+**VERDICT: WORKED; KEEP ONLY BUCKET 576 (2026-07-19).** All six deciding and
+simplification arms were clean (`frames_ok=0`, `cudagraph_skips=0`) and
+completed identical work. Control runs measured 9,903.69 and 9,502.11 timed
+leaves/s (194.19 and 186.32 games/s). The two-shape candidate measured
+10,108.97 and 10,224.42 leaves/s (198.22 and 200.48 games/s), a clean median
+**1.048x** win, but emitted PyTorch's nine-distinct-CUDA-graphs warning. The
+576-only simplification measured 10,118.00 and 10,441.03 leaves/s (198.39 and
+204.73 games/s): median **1.059x control** and **1.011x the two-shape form**.
+Median padding fell from 1.102x to 1.017x, while the one-shape form emitted no
+graph-count warning. Promote one dispatcher-local 576 bucket; do not add 640
+or alter the shared broker/AOT ladder.

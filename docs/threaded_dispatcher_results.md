@@ -1,5 +1,14 @@
 # ThreadedDispatcher A/B results — Stage 3 (2026-04-28)
 
+> **Superseded (2026-07-18).** This file preserves the original bad reading:
+> the compiled model was created on the main thread, so cudagraph TLS was wrong
+> for the consumer thread. The corrected dispatcher-owned compile measured
+> 5.9x the old `ThreadedBatchEvaluator` at 16 producers and became the
+> production path. `ThreadedBatchEvaluator`, its selection flag, and the old
+> three-way benchmark were removed after months of production use; threaded
+> selfplay now always uses `ThreadedDispatcher`. The hidden CLI flag and YAML
+> key remain temporary no-op deployment compatibility only.
+
 ## TL;DR
 
 **ThreadedDispatcher does not win.** DirectGPU 1-thread is the fastest path

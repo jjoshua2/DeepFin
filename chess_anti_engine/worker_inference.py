@@ -9,7 +9,6 @@ import torch
 from chess_anti_engine.inference import (
     AOTEvaluator,
     DirectGPUEvaluator,
-    ThreadedBatchEvaluator,
     model_constant_source,
 )
 from chess_anti_engine.inference_threaded import ThreadedDispatcher
@@ -76,10 +75,10 @@ def maybe_compile_inference_model(
 
 
 def sync_evaluator_to_model(
-    evaluator: DirectGPUEvaluator | ThreadedBatchEvaluator | ThreadedDispatcher | AOTEvaluator,
+    evaluator: DirectGPUEvaluator | ThreadedDispatcher | AOTEvaluator,
     model: torch.nn.Module,
 ) -> None:
-    if isinstance(evaluator, (ThreadedBatchEvaluator, ThreadedDispatcher)):
+    if isinstance(evaluator, ThreadedDispatcher):
         evaluator.update_model(model)
     elif isinstance(evaluator, AOTEvaluator):
         evaluator.load_weights(model_constant_source(model))

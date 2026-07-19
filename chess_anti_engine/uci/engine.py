@@ -1101,7 +1101,7 @@ class Engine:
         max_depth = None if is_ponder else limits.max_depth
         optimum_ms = None if is_ponder else limits.optimum_ms
         deadline = Deadline(deadline_ms=deadline_ms)
-        emitted_info = False
+        last_emitted_nodes = [-1]
         profile_start = time.perf_counter()
         if self._gil_probe is not None:
             self._gil_probe.reset()
@@ -1120,8 +1120,7 @@ class Engine:
             hashfull: int | None = None,
             seldepth: int | None = None,
         ) -> None:
-            nonlocal emitted_info
-            emitted_info = True
+            last_emitted_nodes[0] = int(nodes)
             self._emit_info(
                 nodes=nodes,
                 elapsed_ms=elapsed_ms,
@@ -1150,7 +1149,7 @@ class Engine:
                 include_ponder=self._options.ponder,
                 allow_terminal_shortcuts=not is_ponder and not limits.is_open_ended(),
             )
-            if not is_ponder and not emitted_info:
+            if not is_ponder and last_emitted_nodes[0] != result.nodes:
                 self._emit_info(
                     nodes=result.nodes,
                     elapsed_ms=deadline.elapsed_ms(),

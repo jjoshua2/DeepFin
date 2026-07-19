@@ -25,6 +25,7 @@ from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_cache import EncodedEvalCache
 from chess_anti_engine.inference_dispatcher import (
     BatchCoalescingDispatcher,
+    CUDAOwnerDispatcher,
     MultiGPUDispatcher,
     ThreadSafeGPUDispatcher,
 )
@@ -95,6 +96,20 @@ def _warmup_evaluator(
   # real search will replay (relations change the traced forward).
                     rels = np.broadcast_to(rel_row, (batch, *rel_row.shape)).copy()
                     evaluator.evaluate_encoded(xs, relations=rels)
+            # Compact UCI search uses a distinct compiled forward/gather graph.
+            # Warm it before readyok as well; otherwise the first timed move
+            # pays max-autotune compilation on the clock even though the dense
+            # endpoint above was already warm.
+            if (
+                rel_row is None
+                and bool(getattr(evaluator, "supports_legal_bf16", False))
+                and hasattr(evaluator, "evaluate_legal_bf16")
+            ):
+                legal_one = cb.legal_move_indices().astype(np.int32, copy=False)
+                legal_counts = np.full((batch,), legal_one.size, dtype=np.int32)
+                legal_flat = np.tile(legal_one, batch)
+                for _ in range(max(1, int(n_devices))):
+                    evaluator.evaluate_legal_bf16(xs, legal_flat, legal_counts)
         except Exception:
             break
 
@@ -217,17 +232,22 @@ def _make_evaluator_factory(
   # option can bump walker count at runtime without a race. Lock
   # is uncontended at 1 thread — overhead is ~10ns.
             evaluator = ThreadSafeGPUDispatcher(evaluator)
-  # The submitter-thread dispatcher is mandatory for compiled evaluators:
-  # CUDA graph capture and replay need to stay on the same thread. For eager
-  # evaluation it is only a batching optimization, so --no-coalesce can still
-  # bypass it when there is no compile mode.
+  # A persistent owner thread is mandatory for compiled evaluators: CUDA graph
+  # capture and replay need to stay on the same thread. Single-walker search
+  # forwards the direct evaluator's pinned in-place API; concurrent walkers use
+  # the heavier coalescer so their requests can still become one GPU batch.
+  # For eager evaluation coalescing is only a batching optimization, so
+  # --no-coalesce can bypass it.
         if compile_mode is not None or (coalesce and n_walkers > 1):
-            evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
+            if compile_mode is not None and n_walkers == 1:
+                evaluator = CUDAOwnerDispatcher(evaluator)
+            else:
+                evaluator = BatchCoalescingDispatcher(evaluator, max_batch=max_batch)
   # Warm BELOW the eval cache: EncodedEvalCache dedupes identical rows and
   # serves full-hit batches without touching the inner evaluator, so warming
   # through it would compile/capture only the first call's shape on one
   # device and leave every other shape/device cold. Warming the pre-cache
-  # chain still runs on the coalescer's submitter thread (the thread that
+  # chain still runs on the persistent owner/submitter thread (the thread that
   # replays cudagraphs in real searches).
         warm_target = evaluator
         if eval_cache_entries > 0:
@@ -416,7 +436,9 @@ def _pick_device(arg: str) -> str:
         return "cpu"
 
 
-def _resolve_use_multi_gpu_pucv(flag: bool | None, n_devices: int) -> bool:
+def _resolve_use_multi_gpu_pucv(
+    flag: bool | None, n_devices: int, *, announce: bool = True,
+) -> bool:
     """Decide whether the multi-GPU PUCV pool is active at startup.
 
     With one device the pool cannot install (needs >= 2 factories) — always
@@ -434,24 +456,42 @@ def _resolve_use_multi_gpu_pucv(flag: bool | None, n_devices: int) -> bool:
     if n_devices <= 1:
         return False
     if flag is None:
-        print(
-            f"info: {n_devices} devices and UseMultiGpuPUCV not set — "
-            "auto-enabling the multi-GPU PUCV pool (without it the routing "
-            "dispatcher serializes GPU work; pass --no-multi-gpu-pucv to "
-            "force that debug path)",
-            file=sys.stderr, flush=True,
-        )
+        if announce:
+            print(
+                f"info: {n_devices} devices and UseMultiGpuPUCV not set — "
+                "auto-enabling the multi-GPU PUCV pool (without it the routing "
+                "dispatcher serializes GPU work; pass --no-multi-gpu-pucv to "
+                "force that debug path)",
+                file=sys.stderr, flush=True,
+            )
         return True
     if not flag:
-        print(
-            "WARNING: --no-multi-gpu-pucv with multiple devices — the "
-            "routing dispatcher's single submitter runs the GPUs ONE CALL "
-            "AT A TIME (serialized, at or below single-GPU throughput). "
-            "This configuration is for debugging only.",
-            file=sys.stderr, flush=True,
-        )
+        if announce:
+            print(
+                "WARNING: --no-multi-gpu-pucv with multiple devices — the "
+                "routing dispatcher's single submitter runs the GPUs ONE CALL "
+                "AT A TIME (serialized, at or below single-GPU throughput). "
+                "This configuration is for debugging only.",
+                file=sys.stderr, flush=True,
+            )
         return False
     return True
+
+
+def _resolve_multi_gpu_startup(
+    search_parallel: str, pucv_flag: bool | None, n_devices: int,
+) -> tuple[bool, bool, bool]:
+    """Return ``(root_gumbel, pucv_fallback, active_pucv)``.
+
+    The two pools are mutually exclusive, but retaining the PUCV intent while
+    root Gumbel is active lets a later UCI ``SearchParallel=pucv`` switch
+    restore concurrent multi-GPU search instead of the serialized dispatcher.
+    """
+    root_gumbel = search_parallel == "gumbel" and n_devices > 1
+    pucv_fallback = _resolve_use_multi_gpu_pucv(
+        pucv_flag, n_devices, announce=not root_gumbel,
+    )
+    return root_gumbel, pucv_fallback, pucv_fallback and not root_gumbel
 
 
 def main() -> int:
@@ -647,21 +687,17 @@ def main() -> int:
         devices = [_pick_device(args.device)]
   # gumbel mode requires >= 2 devices; with one device the new module is
   # never constructed and dispatch falls through to the classic paths.
-    use_root_parallel_gumbel = bool(
-        args.search_parallel == "gumbel" and len(devices) > 1,
+    (
+        use_root_parallel_gumbel,
+        restore_multi_gpu_pucv,
+        use_multi_gpu_pucv,
+    ) = _resolve_multi_gpu_startup(
+        str(args.search_parallel), args.multi_gpu_pucv, len(devices),
     )
-  # The two multi-GPU modes are mutually exclusive; gumbel wins when selected.
-  # Otherwise keep #138's tri-state auto-enable for multi-GPU PUCV.
-    if use_root_parallel_gumbel:
-        use_multi_gpu_pucv = False
-    else:
-        use_multi_gpu_pucv = _resolve_use_multi_gpu_pucv(
-            args.multi_gpu_pucv, len(devices),
-        )
     startup_options = EngineOptions(
         threads=max(1, int(args.walkers)),
         leaf_gather=max(1, int(args.walker_gather)),
-        use_multi_gpu_pucv=use_multi_gpu_pucv,
+        use_multi_gpu_pucv=restore_multi_gpu_pucv,
         pucv_pending_mode=str(args.pucv_pending_mode),
         search_parallel="gumbel" if use_root_parallel_gumbel else "pucv",
         vl_gather=max(32, int(args.vl_gather)),
@@ -747,7 +783,10 @@ def main() -> int:
                 return build_eval(
                     max_batch,
                     eval_cache_entries,
-                    primary_only=bool(startup_options.use_multi_gpu_pucv),
+                    primary_only=bool(
+                        startup_options.use_multi_gpu_pucv
+                        and startup_options.search_parallel == "pucv"
+                    ),
                 )
 
   # Initial build: warms the evaluator too (see factory body).

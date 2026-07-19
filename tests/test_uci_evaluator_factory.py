@@ -9,6 +9,7 @@ import torch
 from chess_anti_engine.inference_cache import EncodedEvalCache
 from chess_anti_engine.inference_dispatcher import (
     BatchCoalescingDispatcher,
+    CUDAOwnerDispatcher,
     ThreadSafeGPUDispatcher,
 )
 from chess_anti_engine.uci import __main__ as uci_main
@@ -44,6 +45,15 @@ class _FakeDirectEvaluator:
             np.zeros((rows, 3), dtype=np.float32),
         )
 
+    def evaluate_legal_bf16(
+        self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del legal_counts
+        return (
+            np.zeros((legal_flat.size,), dtype=np.uint16),
+            np.zeros((x.shape[0], 3), dtype=np.float32),
+        )
+
 
 def _skip_warmup(*args: object, **kwargs: object) -> None:
     del args, kwargs
@@ -58,7 +68,38 @@ def _compile_identity(
     return model
 
 
-def test_compiled_single_walker_uses_submitter_dispatcher(
+def test_warmup_covers_compact_legal_graph() -> None:
+    class _WarmRecorder:
+        supports_legal_bf16 = True
+
+        def __init__(self) -> None:
+            self.dense: list[int] = []
+            self.legal: list[int] = []
+
+        def evaluate_encoded(self, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            self.dense.append(int(x.shape[0]))
+            return (
+                np.zeros((x.shape[0], 4672), dtype=np.float32),
+                np.zeros((x.shape[0], 3), dtype=np.float32),
+            )
+
+        def evaluate_legal_bf16(
+            self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            assert int(legal_counts.sum()) == int(legal_flat.size)
+            self.legal.append(int(x.shape[0]))
+            return (
+                np.zeros((legal_flat.size,), dtype=np.uint16),
+                np.zeros((x.shape[0], 3), dtype=np.float32),
+            )
+
+    evaluator = _WarmRecorder()
+    uci_main._warmup_evaluator(evaluator, n_walkers=1)
+    assert evaluator.dense == [1, 128]
+    assert evaluator.legal == [1, 128]
+
+
+def test_compiled_single_walker_uses_cuda_owner_dispatcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(uci_main, "DirectGPUEvaluator", _FakeDirectEvaluator)
@@ -74,7 +115,8 @@ def test_compiled_single_walker_uses_submitter_dispatcher(
         compile_mode="max-autotune",
     )
     evaluator = factory(max_batch=64, eval_cache_entries=0)
-    assert isinstance(evaluator, BatchCoalescingDispatcher)
+    assert isinstance(evaluator, CUDAOwnerDispatcher)
+    evaluator.close()
 
 
 def test_compact_bf16_env_reaches_direct_evaluator(
@@ -90,7 +132,7 @@ def test_compact_bf16_env_reaches_direct_evaluator(
         walker_gather=1, compile_mode="max-autotune",
     )
     evaluator = factory(max_batch=64, eval_cache_entries=0)
-    assert isinstance(evaluator, BatchCoalescingDispatcher)
+    assert isinstance(evaluator, CUDAOwnerDispatcher)
     thread_safe = evaluator._inner
     assert isinstance(thread_safe, ThreadSafeGPUDispatcher)
     assert getattr(thread_safe._eval, "input_bf16", False) is True
@@ -113,7 +155,7 @@ def test_compact_bf16_env_off_disables_legal_path(
         walker_gather=1, compile_mode="max-autotune",
     )
     evaluator = factory(max_batch=64, eval_cache_entries=0)
-    assert isinstance(evaluator, BatchCoalescingDispatcher)
+    assert isinstance(evaluator, CUDAOwnerDispatcher)
     thread_safe = evaluator._inner
     assert isinstance(thread_safe, ThreadSafeGPUDispatcher)
     assert getattr(thread_safe._eval, "input_bf16", True) is False
@@ -140,7 +182,7 @@ def test_compiled_single_walker_ignores_no_coalesce_for_thread_affinity(
         compile_mode="max-autotune",
     )
     evaluator = factory(max_batch=64, eval_cache_entries=0)
-    assert isinstance(evaluator, BatchCoalescingDispatcher)
+    assert isinstance(evaluator, CUDAOwnerDispatcher)
     evaluator.close()
 
 
@@ -375,3 +417,22 @@ def test_resolve_use_multi_gpu_pucv_single_device_silent(capsys) -> None:
     for flag in (None, False, True):
         assert uci_main._resolve_use_multi_gpu_pucv(flag, 1) is False
     assert capsys.readouterr().err == ""
+
+
+def test_root_parallel_startup_retains_pucv_fallback_without_activating_it(
+    capsys,
+) -> None:
+    root, fallback, active_pucv = uci_main._resolve_multi_gpu_startup(
+        "gumbel", None, 2,
+    )
+    assert (root, fallback, active_pucv) == (True, True, False)
+    # Do not claim PUCV was auto-enabled while RPG is the live path.
+    assert capsys.readouterr().err == ""
+
+
+def test_pucv_startup_remains_active_multi_gpu_default(capsys) -> None:
+    root, fallback, active_pucv = uci_main._resolve_multi_gpu_startup(
+        "pucv", None, 2,
+    )
+    assert (root, fallback, active_pucv) == (False, True, True)
+    assert "auto-enabling" in capsys.readouterr().err

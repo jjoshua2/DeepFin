@@ -2,6 +2,8 @@
 
 - ``ThreadSafeGPUDispatcher``: single evaluator + lock (minimum safety for
   multi-threaded callers sharing pinned buffers).
+- ``CUDAOwnerDispatcher``: single producer + persistent CUDA owner thread,
+  preserving the direct evaluator's pinned in-place API.
 - ``MultiGPUDispatcher``: N evaluators, route each call to the device with
   the smallest in-flight call count (ties broken round-robin).
 - ``BatchCoalescingDispatcher``: merge concurrent batch=1 calls into one
@@ -18,21 +20,23 @@ not prevent two threads picking the same slot — that's the caller's job.
 gumbel_c uses one Python thread (with two slots for its own pipeline), so
 the constraint is satisfied; walker-pool paths don't go through gumbel_c.
 
-``BatchCoalescingDispatcher`` and ``MultiGPUDispatcher`` deliberately do
-NOT forward the inplace API: their value is in the dispatch / coalesce
-logic, which slot-aliasing would route around.
+``BatchCoalescingDispatcher`` and ``MultiGPUDispatcher`` deliberately do not
+forward the inplace API: their value is in the dispatch / coalesce logic,
+which slot-aliasing would route around.
 """
 from __future__ import annotations
 
+import contextlib
+import queue
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any, cast
 
 import numpy as np
 import torch
 
 from chess_anti_engine.inference import BatchEvaluator
-import contextlib
 
 
 @dataclass(slots=True)
@@ -43,6 +47,13 @@ class _CoalesceRequest:
     legal_counts: np.ndarray | None
     done: threading.Event
     result: list
+
+
+@dataclass(slots=True)
+class _OwnerCall:
+    callback: Callable[[], object]
+    done: threading.Event
+    result: list[object | BaseException | None]
 
 
 class ThreadSafeGPUDispatcher:
@@ -97,6 +108,13 @@ class ThreadSafeGPUDispatcher:
     def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
         return self._eval.get_input_buffer(bsz, slot=slot)  # pyright: ignore[reportAttributeAccessIssue]
 
+    def get_input_buffer_bf16_bits(self, bsz: int, slot: int = 0) -> np.ndarray:
+  # gumbel_c gates on supports_input_bf16_bits (forwarded above) AND
+  # hasattr of this getter; without the forwarder the wrapped
+  # AOTEvaluator/DirectGPUEvaluator bf16 zero-copy path silently fell
+  # back to float32 staging.
+        return self._eval.get_input_buffer_bf16_bits(bsz, slot=slot)  # pyright: ignore[reportAttributeAccessIssue]
+
     def evaluate_inplace(
         self, bsz: int, *, copy_out: bool = True, slot: int = 0,
         relations: np.ndarray | None = None,
@@ -125,6 +143,139 @@ class ThreadSafeGPUDispatcher:
             if relations is not None:
                 return self._eval.evaluate_encoded_async(x, relations=relations)  # pyright: ignore[reportAttributeAccessIssue]
             return self._eval.evaluate_encoded_async(x)  # pyright: ignore[reportAttributeAccessIssue]
+
+
+class CUDAOwnerDispatcher:
+    """Run every CUDA evaluator call on one persistent owner thread.
+
+    Unlike :class:`BatchCoalescingDispatcher`, this wrapper is for a single
+    producer. It preserves torch.compile/cudagraph thread affinity while
+    forwarding the evaluator's pinned in-place API directly, with no batch
+    concatenate/slice machinery.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self._queue: queue.Queue[_OwnerCall | None] = queue.Queue()
+        self._state_lock = threading.Lock()
+        self._closed = False
+        self._owner = threading.Thread(
+            target=self._owner_loop,
+            name="cuda-owner-dispatcher",
+            daemon=True,
+        )
+        self._owner.start()
+
+    def _owner_loop(self) -> None:
+        while True:
+            call = self._queue.get()
+            if call is None:
+                return
+            try:
+                call.result[0] = call.callback()
+            except BaseException as exc:
+                call.result[0] = exc
+            finally:
+                call.done.set()
+
+    def _call(self, callback: Callable[[], object]) -> object:
+        done = threading.Event()
+        result: list[object | BaseException | None] = [None]
+        call = _OwnerCall(callback=callback, done=done, result=result)
+        with self._state_lock:
+            if self._closed:
+                raise RuntimeError("CUDAOwnerDispatcher is closed")
+            self._queue.put(call)
+        done.wait()
+        got = result[0]
+        if isinstance(got, BaseException):
+            raise got
+        return got
+
+    def close(self) -> None:
+        with self._state_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._queue.put(None)
+        if self._owner.is_alive():
+            self._owner.join(timeout=30.0)
+
+    def __del__(self) -> None:
+        with contextlib.suppress(Exception):
+            self.close()
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return cast(
+            "tuple[np.ndarray, np.ndarray]",
+            self._call(
+                lambda: self._inner.evaluate_encoded(x, relations=relations)
+                if relations is not None else self._inner.evaluate_encoded(x)
+            ),
+        )
+
+    def evaluate_legal_bf16(
+        self, x: np.ndarray, legal_flat: np.ndarray, legal_counts: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        return cast(
+            "tuple[np.ndarray, np.ndarray]",
+            self._call(
+                lambda: self._inner.evaluate_legal_bf16(x, legal_flat, legal_counts)
+            ),
+        )
+
+    def evaluate_encoded_async(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+        return cast(
+            "tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]",
+            self._call(
+                lambda: self._inner.evaluate_encoded_async(x, relations=relations)
+                if relations is not None else self._inner.evaluate_encoded_async(x)
+            ),
+        )
+
+    def get_input_buffer(self, bsz: int, slot: int = 0) -> np.ndarray:
+        return self._inner.get_input_buffer(bsz, slot=slot)
+
+    def get_input_buffer_bf16_bits(self, bsz: int, slot: int = 0) -> np.ndarray:
+        return self._inner.get_input_buffer_bf16_bits(bsz, slot=slot)
+
+    def evaluate_inplace_async(
+        self, bsz: int, *, slot: int = 0, relations: np.ndarray | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]:
+        return cast(
+            "tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None]",
+            self._call(
+                lambda: self._inner.evaluate_inplace_async(
+                    bsz, slot=slot, relations=relations,
+                ) if relations is not None else self._inner.evaluate_inplace_async(
+                    bsz, slot=slot,
+                )
+            ),
+        )
+
+    @property
+    def n_slots(self) -> int:
+        return int(getattr(self._inner, "n_slots", 1))
+
+    @property
+    def _max_batch(self) -> int:
+        return self.max_batch
+
+    @property
+    def max_batch(self) -> int:
+        return int(getattr(self._inner, "_max_batch", getattr(self._inner, "max_batch", 0)))
+
+    @property
+    def supports_input_bf16_bits(self) -> bool:
+        return bool(getattr(self._inner, "supports_input_bf16_bits", False))
+
+    @property
+    def supports_legal_bf16(self) -> bool:
+        return bool(getattr(self._inner, "supports_legal_bf16", False))
 
 
 class BatchCoalescingDispatcher:

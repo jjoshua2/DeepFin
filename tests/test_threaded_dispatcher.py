@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 import torch
 
-from chess_anti_engine.inference import DirectGPUEvaluator, ThreadedBatchEvaluator
+from chess_anti_engine.inference import DirectGPUEvaluator
 from chess_anti_engine.inference_threaded import ThreadedDispatcher, _next_bucket
 from chess_anti_engine.model import ModelConfig, build_model
 
@@ -47,6 +47,9 @@ def test_next_bucket_picks_smallest_fit():
     assert _next_bucket(170) == 170
     assert _next_bucket(171) == 256
     assert _next_bucket(340) == 340
+    assert _next_bucket(513) == 576
+    assert _next_bucket(576) == 576
+    assert _next_bucket(577) == 680
     assert _next_bucket(681) == 768
     assert _next_bucket(700) == 768
     assert _next_bucket(1190) == 1190
@@ -67,23 +70,6 @@ def test_dispatcher_matches_direct_evaluator():
             np.testing.assert_allclose(pol_d, pol_t, rtol=1e-5, atol=1e-5)
             np.testing.assert_allclose(wdl_d, wdl_t, rtol=1e-5, atol=1e-5)
     finally:
-        dispatcher.shutdown()
-
-
-def test_dispatcher_matches_threaded_batch_evaluator():
-    model = _make_model()
-    tbe = ThreadedBatchEvaluator(model, device="cpu", max_batch=512, min_batch=1)
-    dispatcher = ThreadedDispatcher(model, device="cpu", max_batch=512, batch_wait_ms=0.0)
-    try:
-        rng = np.random.default_rng(7)
-        for n in (1, 32, 100):
-            x = _rand_batch(rng, n)
-            pol_a, wdl_a = tbe.evaluate_encoded(x)
-            pol_b, wdl_b = dispatcher.evaluate_encoded(x)
-            np.testing.assert_allclose(pol_a, pol_b, rtol=1e-4, atol=1e-4)
-            np.testing.assert_allclose(wdl_a, wdl_b, rtol=1e-4, atol=1e-4)
-    finally:
-        tbe.shutdown()
         dispatcher.shutdown()
 
 
