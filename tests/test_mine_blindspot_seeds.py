@@ -340,3 +340,21 @@ def test_load_existing_keys_dedups_post_refute_against_blindspot(tmp_path) -> No
     assert len(mined) == 1
     _record, key = mined[0]
     assert key in keys  # would be filtered by main()'s exclude set
+
+
+def test_mine_game_bakes_deep_sf_evals_into_comment() -> None:
+    """Collapse seeds carry the already-computed deep-SF evals (free reuse)."""
+    game = _game(_LINE)                       # DeepFin=white, loses
+    blunder_after = _fen_after(_LINE, 7)      # black to move -> fake +400 -> DeepFin -400
+    out = mine_game(game, name_needle="deepfin", sf_eval=_fake_sf(blunder_after),
+                    src="t.pgn", sf_nodes=1, collapse_cp=-150, history_plies=8,
+                    append_refute_ply=False)
+    assert len(out) == 1
+    record, _key = out[0]
+    assert "sfcp_before=30" in record         # DeepFin-POV eval at the blind-spot
+    assert "sfcp_after=-400" in record        # DeepFin-POV eval after the blunder
+    # Comment is inert to the loader; body still round-trips.
+    board = seed_board_from_line(record.split("#", 1)[0].strip())
+    assert board.fen() == _fen_after(_LINE, 6)
+    # sfcp_* keys must not confuse the refute-marker parser.
+    assert seed_blindspot_key(record) == position_key(_fen_after(_LINE, 6))
