@@ -3180,8 +3180,8 @@ class WorkerSession:
         self._note_selfplay_progress()
         self._selfplay_session_active = True
         self._start_selfplay_stall_watchdog()
-        n_dole = len(fen_dole_queue) if fen_dole_queue is not None else 0
-        n_refute = len(fen_sf_refute_queue) if fen_sf_refute_queue is not None else 0
+        n_dole = len(fen_dole_queue)
+        n_refute = len(fen_sf_refute_queue)
         self.log.info(
             "selfplay session starting: games_per_batch=%d threaded=%s "
             "broker=%s dole=%d sf_refute=%d",
