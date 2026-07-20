@@ -876,6 +876,13 @@ class WorkerSession:
         self._phase_timing_lock = threading.Lock()
         self._phase_timing_s: dict[str, float] = {}
         self._last_phase_timing_snapshot: dict[str, float] = {}
+        # Selfplay session liveness: bumped on phase stats / completed games.
+        # Watchdog exits the process if we stall after session start so the
+        # launcher restarts a hung worker (e.g. slot-acquire deadlock) instead
+        # of waiting forever. Override with CAE_WORKER_STALL_TIMEOUT_S (0=off).
+        self._last_selfplay_progress_s: float = time.time()
+        self._selfplay_session_active = False
+        self._stall_watchdog_started = False
         self._gil_probe = GilContentionProbe(interval_s=0.010)
   # Manifest-watch state (lazy-init in _check_model_update via getattr fallback).
         self._manifest_path: Path | None = None
@@ -1900,6 +1907,62 @@ class WorkerSession:
         with self._phase_timing_lock:
             self._phase_timing_s[phase] = float(self._phase_timing_s.get(phase, 0.0)) + float(seconds)
 
+    def _note_selfplay_progress(self) -> None:
+        self._last_selfplay_progress_s = time.time()
+
+    def _selfplay_stalled(self, now: float, timeout_s: float) -> bool:
+        """True iff the active selfplay session has hung past ``timeout_s``.
+
+        A pause-hold (``distributed_pause_selfplay_during_training`` or a
+        graceful-restart hold) is intentionally idle and may last hours, so it
+        refreshes the progress timer rather than counting as a stall — the
+        watchdog must never hard-exit a healthy paused worker.
+        """
+        if not self._selfplay_session_active:
+            return False
+        if self._hold_selfplay:
+            self._last_selfplay_progress_s = now
+            return False
+        return (now - float(self._last_selfplay_progress_s)) >= timeout_s
+
+    def _start_selfplay_stall_watchdog(self) -> None:
+        """Exit the process if a selfplay session produces no progress for too long.
+
+        Covers hangs that per-request timeouts miss (e.g. all slots held and
+        threads parked in an unbounded wait). Prefer fixing the hang; this is
+        the automatic recovery the launcher already expects when a worker dies.
+        """
+        if self._stall_watchdog_started:
+            return
+        raw = os.environ.get("CAE_WORKER_STALL_TIMEOUT_S", "300").strip()
+        try:
+            timeout_s = float(raw)
+        except ValueError:
+            timeout_s = 300.0
+        if timeout_s <= 0.0:
+            return
+        self._stall_watchdog_started = True
+        poll_s = min(30.0, max(5.0, timeout_s / 10.0))
+
+        def _loop() -> None:
+            while True:
+                time.sleep(poll_s)
+                if not self._selfplay_stalled(time.time(), timeout_s):
+                    continue
+                idle_s = time.time() - float(self._last_selfplay_progress_s)
+                self.log.error(
+                    "selfplay stalled for %.0fs (limit=%.0fs) with no phase-stats/"
+                    "completions; exiting so the launcher restarts this worker "
+                    "(set CAE_WORKER_STALL_TIMEOUT_S=0 to disable)",
+                    idle_s, timeout_s,
+                )
+                # Hard exit: daemon threads / stuck GIL holders will not join.
+                os._exit(2)
+
+        threading.Thread(
+            target=_loop, name="selfplay-stall-watchdog", daemon=True,
+        ).start()
+
     def _maybe_log_selfplay_phase_stats(self, elapsed_s: float) -> None:
         phases = (
             "check_model", "tb_adjudicate", "classify", "network",
@@ -1919,6 +1982,7 @@ class WorkerSession:
         total = sum(deltas.values())
         if total <= 0.0:
             return
+        self._note_selfplay_progress()
 
         def pct(phase: str) -> float:
             return 100.0 * float(deltas[phase]) / max(1e-6, float(elapsed_s))
@@ -1982,6 +2046,7 @@ class WorkerSession:
         upload_s = 0.0
         now_s = time.time()
         self._saw_completed_game = True
+        self._note_selfplay_progress()
         queued_for_flush = False
         buf_lock = getattr(self, "_upload_buf_lock", None)
         with buf_lock if buf_lock is not None else nullcontext():
@@ -3081,7 +3146,14 @@ class WorkerSession:
         if need_local_model:
             assert self.model is not None
             if self._direct_evaluator is None:
+                self.log.info(
+                    "building local evaluator (threaded=%s compile=%s aot=%s)",
+                    bool(self.args.threaded_selfplay),
+                    bool(self.args.compile_inference),
+                    bool(self.args.aot_dir),
+                )
                 self._direct_evaluator = self._build_evaluator(self.model)
+                self.log.info("local evaluator ready type=%s", type(self._direct_evaluator).__name__)
             self._resync_evaluator_to_model()
 
         games_per_batch = (
@@ -3105,11 +3177,27 @@ class WorkerSession:
 
         t0 = time.time()
         self._saw_completed_game = False
-        stats = self._dispatch_selfplay_one_shard(
-            games_per_batch=games_per_batch, cfgs=cfgs, need_local_model=need_local_model,
-            fen_dole_queue=fen_dole_queue,
-            fen_sf_refute_queue=fen_sf_refute_queue,
+        self._note_selfplay_progress()
+        self._selfplay_session_active = True
+        self._start_selfplay_stall_watchdog()
+        n_dole = len(fen_dole_queue)
+        n_refute = len(fen_sf_refute_queue)
+        self.log.info(
+            "selfplay session starting: games_per_batch=%d threaded=%s "
+            "broker=%s dole=%d sf_refute=%d",
+            int(games_per_batch),
+            bool(self.args.threaded_selfplay),
+            self.inference_client is not None,
+            n_dole, n_refute,
         )
+        try:
+            stats = self._dispatch_selfplay_one_shard(
+                games_per_batch=games_per_batch, cfgs=cfgs, need_local_model=need_local_model,
+                fen_dole_queue=fen_dole_queue,
+                fen_sf_refute_queue=fen_sf_refute_queue,
+            )
+        finally:
+            self._selfplay_session_active = False
   # Session over: whatever the session did NOT drain is preserved for the next
   # session start — a normally-stopped-but-empty session (games=0) keeps its full
   # batch, a recoverable dispatch failure (stats is None) keeps the remainder,

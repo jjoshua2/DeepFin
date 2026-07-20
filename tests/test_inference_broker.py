@@ -470,6 +470,43 @@ def test_slot_inference_client_serializes_threaded_requests() -> None:
     assert max_active == 1
 
 
+def test_multi_slot_acquire_times_out_when_all_slots_held() -> None:
+    """Unbounded acquire would hang a worker forever if slots leak / stall."""
+    from chess_anti_engine.inference import MultiSlotInferenceClient
+
+    client = MultiSlotInferenceClient(
+        slot_names=[f"cae-acq-{uuid.uuid4().hex}-{i}" for i in range(2)],
+        max_batch=8,
+        request_timeout_s=0.05,
+    )
+    # Drain both free slots so the next acquire blocks on the empty queue.
+    held = [client._available_clients.get(timeout=0.1) for _ in range(2)]
+    assert len(held) == 2
+    t0 = time.perf_counter()
+    with pytest.raises(TimeoutError, match="slot acquire timed out"):
+        client._acquire_client()
+    elapsed = time.perf_counter() - t0
+    # 2x request_timeout_s budget (~0.1s); leave headroom for CI load.
+    assert 0.05 <= elapsed < 0.5
+    # A timed-out acquire must not leak a slot: inflight stays 0 and the pool
+    # is intact, so a transient all-held stall does not become permanent
+    # capacity loss.
+    assert client._inflight == 0
+    # Return one slot and confirm acquisition recovers cleanly.
+    client._available_clients.put(held.pop())
+    idx, slot_client, wait_s = client._acquire_client()
+    assert slot_client is not None
+    assert client._inflight == 1
+    client._release_client(
+        idx, slot_client, positions=0, legal=False, wait_s=wait_s, roundtrip_s=0.0,
+    )
+    assert client._inflight == 0
+    # Restore so close() is clean.
+    for item in held:
+        client._available_clients.put(item)
+    client.close()
+
+
 def test_multi_slot_inference_client_fans_out_requests() -> None:
     from chess_anti_engine.inference import MultiSlotInferenceClient
 

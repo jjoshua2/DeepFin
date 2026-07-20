@@ -1152,3 +1152,42 @@ def test_dole_per_iter_is_watched_and_restart_keyed() -> None:
     assert "opening_fen_dole_per_iter" in WorkerSession._RECO_RESTART_KEYS
     assert "opening_fen_sf_refute_frac" in WorkerSession._RECO_RESTART_KEYS
     assert "opening_fen_sf_refute_plies" in WorkerSession._RECO_RESTART_KEYS
+
+
+def _stall_session() -> WorkerSession:
+    session = object.__new__(WorkerSession)
+    session.log = logging.getLogger("test.worker_stall_watchdog")
+    session._selfplay_session_active = False
+    session._hold_selfplay = False
+    session._last_selfplay_progress_s = 0.0
+    return session
+
+
+def test_stall_watchdog_ignores_inactive_session() -> None:
+    session = _stall_session()
+    session._selfplay_session_active = False
+    session._last_selfplay_progress_s = 0.0
+    # No active session → never a stall, regardless of elapsed time.
+    assert session._selfplay_stalled(now=10_000.0, timeout_s=300.0) is False
+
+
+def test_stall_watchdog_fires_on_active_idle_session() -> None:
+    session = _stall_session()
+    session._selfplay_session_active = True
+    session._hold_selfplay = False
+    session._last_selfplay_progress_s = 1_000.0
+    assert session._selfplay_stalled(now=1_000.0 + 301.0, timeout_s=300.0) is True
+    assert session._selfplay_stalled(now=1_000.0 + 299.0, timeout_s=300.0) is False
+
+
+def test_stall_watchdog_exempts_pause_hold_and_refreshes_timer() -> None:
+    # A pause-hold (distributed_pause_selfplay_during_training / graceful-restart)
+    # is intentionally idle for arbitrarily long; the watchdog must NOT hard-exit
+    # a healthy paused worker, and must leave the timer fresh for the resume.
+    session = _stall_session()
+    session._selfplay_session_active = True
+    session._hold_selfplay = True
+    session._last_selfplay_progress_s = 1_000.0
+    # Far past the timeout while held: not a stall, and the timer was refreshed.
+    assert session._selfplay_stalled(now=1_000.0 + 10_000.0, timeout_s=300.0) is False
+    assert session._last_selfplay_progress_s == 1_000.0 + 10_000.0

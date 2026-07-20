@@ -2296,11 +2296,12 @@ class MultiSlotInferenceClient:
         names = [str(n).strip() for n in slot_names if str(n).strip()]
         if not names:
             raise ValueError("MultiSlotInferenceClient requires at least one slot")
+        self._request_timeout_s = max(0.001, float(request_timeout_s))
         self._clients = [
             SlotInferenceClient(
                 slot_name=name,
                 max_batch=max_batch,
-                request_timeout_s=request_timeout_s,
+                request_timeout_s=self._request_timeout_s,
                 input_planes=input_planes,
             )
             for name in names
@@ -2369,8 +2370,28 @@ class MultiSlotInferenceClient:
             )
 
     def _acquire_client(self) -> tuple[int, SlotInferenceClient, float]:
+        """Take a free slot, or fail if none free within the request timeout.
+
+        Unbounded ``queue.get()`` is a process-level hang risk: if every slot
+        is held by a stuck request (or a leak), all selfplay threads park here
+        forever and the per-request broker timeout never runs. Cap wait at the
+        same budget as a single request so the worker can raise, reset, or
+        exit via the session liveness watchdog.
+        """
         t0 = time.perf_counter()
-        idx, client = self._available_clients.get()
+        # Allow a little more than one request so a just-busy slot can free.
+        acquire_timeout_s = max(0.05, float(self._request_timeout_s) * 2.0)
+        try:
+            idx, client = self._available_clients.get(timeout=acquire_timeout_s)
+        except queue.Empty as exc:
+            with self._stats_lock:
+                inflight = int(self._inflight)
+                available = int(self._available_clients.qsize())
+            raise TimeoutError(
+                f"inference slot acquire timed out after {acquire_timeout_s:.1f}s "
+                f"(slots={len(self._clients)} inflight={inflight} available={available}); "
+                "all slots held — broker stall or slot leak"
+            ) from exc
         wait_s = time.perf_counter() - t0
         with self._stats_lock:
             self._inflight += 1
