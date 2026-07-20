@@ -2717,7 +2717,7 @@ class SharedSlotBroker:
                     slot.state = _STATE_RESPONSE
                 continue
             batch_sizes = [slot.batch_size for slot in ready]
-            xs = [np.array(slot.input[:bsz], copy=True, order="C") for slot, bsz in zip(ready, batch_sizes)]
+            xs = [np.array(slot.input[:bsz], copy=True, order="C") for slot, bsz in zip(ready, batch_sizes, strict=True)]
             xb = np.concatenate(xs, axis=0)
             packed.append((trial_id, ready, batch_sizes, xb))
 
@@ -2766,7 +2766,7 @@ class SharedSlotBroker:
                 pol_np = pol.numpy()
                 wdl_np = wdl.numpy()
                 start = 0
-                for slot, bsz in zip(ready, batch_sizes):
+                for slot, bsz in zip(ready, batch_sizes, strict=True):
                     end = start + bsz
                     slot.policy[:bsz] = pol_np[start:end]
                     slot.wdl[:bsz] = wdl_np[start:end]

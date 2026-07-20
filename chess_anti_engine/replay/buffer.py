@@ -187,7 +187,7 @@ class ArrayReplayBuffer:
         selected_policy_sizes: set[int] = set()
         all_keys: set[str] = set()
         start = 0
-        for chunk, chunk_n in zip(self._chunks, self._chunk_sizes):
+        for chunk, chunk_n in zip(self._chunks, self._chunk_sizes, strict=True):
             end = start + chunk_n
             mask = (idx >= start) & (idx < end)
             if np.any(mask):
