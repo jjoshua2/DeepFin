@@ -188,6 +188,7 @@ class _NetRecord:
     __slots__ = (
         "gumbel_policy_diag",
         "has_policy",
+        "is_sf_refute_opp",
         "keep_prob",
         "legal_mask",
         "net_wdl_est",
@@ -244,6 +245,11 @@ class _NetRecord:
     sf_played_regret: float | None
     sf_legal_mask: np.ndarray | None
     gumbel_policy_diag: dict[str, float] | None
+    # SF-refute opp row: this record is the SF-to-move position of a refute ply
+    # (not a net turn). finalize builds it via a dedicated minimal-target path
+    # (main policy + wdl/sf_wdl only); every other head is masked. Default False
+    # keeps ordinary net-turn records untouched.
+    is_sf_refute_opp: bool
 
     def __init__(
         self, x, policy_probs, net_wdl_est, search_wdl_est,
@@ -280,6 +286,7 @@ class _NetRecord:
         self.sf_played_regret = None
         self.sf_legal_mask = None
         self.gumbel_policy_diag = gumbel_policy_diag
+        self.is_sf_refute_opp = False
 
 
 @dataclass

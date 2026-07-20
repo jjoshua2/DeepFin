@@ -742,6 +742,62 @@ def _stable_game_id(
     )
 
 
+def _build_sf_refute_opp_sample(
+    state: SelfplayState,
+    rec: _NetRecord,
+    *,
+    result: str,
+    game_id: int,
+    is_selfplay_slot: bool,
+) -> ReplaySample:
+    """Build the ``ReplaySample`` for an SF-refute opp row (SF-to-move position).
+
+    Minimal-target row: MAIN policy = the stored soft SF distribution, wdl =
+    game outcome from the SF-seat POV (``rec.pov_color``), sf_wdl = the STM
+    cp-logistic label, plus the outcome-derived categorical. Every aux head
+    (policy_soft/future/sf, volatility, moves_left, sf_p0*) is left absent so its
+    presence flag masks it. ``is_network_turn=True`` so the MAIN policy CE and
+    the wdl loss (both gated by ``net_mask`` in losses.py) actually train the
+    row; ``is_selfplay`` + the ``fenlist_sf_refute*`` source keep it out of the
+    PID sample. See docs/model_heads.md for the POV conventions.
+    """
+    enc = state.game.policy_encoding
+    wdl = _result_to_wdl(result, pov_white=rec.pov_color == chess.WHITE)
+    scalar_v = 1.0 if wdl == 0 else (0.0 if wdl == 1 else -1.0)
+    cat = _finalization_hlgauss_target(
+        categorical_target_value(
+            scalar_v, rec.sf_wdl,
+            blend_frac=getattr(state.game, "categorical_blend_frac", 0.0),
+        ),
+        num_bins=state.game.categorical_bins,
+        sigma=state.game.hlgauss_sigma,
+    )
+    legal_mask = (
+        None if rec.legal_mask is None else
+        policy_mask_to_encoding(
+            rec.legal_mask, policy_encoding=enc,
+        ).astype(np.uint8, copy=False)
+    )
+    return ReplaySample(
+        x=rec.x,
+        policy_target=policy_vector_to_encoding(rec.policy_probs, policy_encoding=enc),
+        wdl_target=int(wdl),
+        x_lc0_root=rec.x_lc0_root,
+        relations=getattr(rec, "relations", None),
+        input_history_encoding=state.game.input_history_encoding,
+        history_rep_fix=bool(state.game.history_rep_fix),
+        priority=1.0,
+        game_id=game_id,
+        ply_index=int(rec.ply_index),
+        has_policy=True,
+        sf_wdl=rec.sf_wdl,
+        categorical_target=cat,
+        legal_mask=legal_mask,
+        is_network_turn=True,
+        is_selfplay=is_selfplay_slot,
+    )
+
+
 def _build_replay_samples(
     state: SelfplayState,
     i: int,
@@ -800,6 +856,14 @@ def _build_replay_samples(
 
     keep_fast_plies = bool(getattr(state.game, "record_fast_ply_value", False))
     for t, rec in enumerate(records):
+        # SF-refute opp rows (SF-to-move position) take a dedicated minimal-target
+        # build: MAIN policy + wdl/sf_wdl/categorical, every other head masked.
+        if bool(getattr(rec, "is_sf_refute_opp", False)):
+            out.append(_build_sf_refute_opp_sample(
+                state, rec, result=result, game_id=game_id,
+                is_selfplay_slot=is_selfplay_slot,
+            ))
+            continue
         row_has_policy = bool(rec.has_policy)
         if row_has_policy:
             # sample_weight / diff-focus keep_prob are POLICY-difficulty
