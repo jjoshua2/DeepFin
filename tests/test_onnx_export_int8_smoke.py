@@ -44,7 +44,7 @@ def test_onnx_export_int8_smoke_cpu(tmp_path: Path):
 
     assert len(out_fp32) == len(out_int8) == 3
 
-    for a, b in zip(out_fp32, out_int8):
+    for a, b in zip(out_fp32, out_int8, strict=True):
         assert a.shape == b.shape
         assert np.isfinite(b).all()
 

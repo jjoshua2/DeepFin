@@ -42,7 +42,7 @@ def pearson_corr(xs: list[float], ys: list[float]) -> float | None:
     vy = sum((y - my) ** 2 for y in ys)
     if vx <= 1e-12 or vy <= 1e-12:
         return None
-    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    cov = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True))
     return cov / math.sqrt(vx * vy)
 
 

@@ -266,7 +266,7 @@ def game_record_json(
     the per-ply (net_q, sf_q, has_policy) trajectory, and which plies were
     harvested. ``ply_indices`` is the already-validated int ply per record."""
     plies = []
-    for rec, ply in zip(records, ply_indices):
+    for rec, ply in zip(records, ply_indices, strict=True):
         sw = getattr(rec, "search_wdl_est", None)
         sf = _harvest_sf_wdl(rec)  # pre-escalation label, like the harvest gate
         plies.append({

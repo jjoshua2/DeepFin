@@ -83,7 +83,7 @@ def update_streaks(
     that flag across the current streak (mutated; reset with the streak).
     """
     resolved = 0
-    for k, qi in zip(keys, net_q):
+    for k, qi in zip(keys, net_q, strict=True):
         if qi <= resolved_below:
             state[k] = int(state.get(k, 0)) + 1
             resolved += 1
@@ -115,7 +115,7 @@ def refeed_retired(
     (-0.4, -0.2] stay retired — the stability study saw 4/9 retirees re-cross
     -0.4 within 3 iters (thrash) but 0/9 cross -0.2 (quiet unless true regression).
     """
-    return {k for k, qi in zip(keys, net_q) if qi > refeed_above}
+    return {k for k, qi in zip(keys, net_q, strict=True) if qi > refeed_above}
 
 
 def build_active_list(
@@ -134,7 +134,7 @@ def build_active_list(
     Re-feed always applies when requested — it only grows the pool. Re-fed lines
     are the original strings stored at retirement (verbatim, incl. weight markers).
     """
-    keep = [ln for ln, k in zip(active_lines, active_keys) if k not in retire_keys]
+    keep = [ln for ln, k in zip(active_lines, active_keys, strict=True) if k not in retire_keys]
     applied_retire = set(retire_keys)
     if not retire_keys or len(keep) < min_pool or len(keep) >= len(active_lines):
         keep = list(active_lines)
@@ -286,7 +286,7 @@ def main() -> None:
                 os.path.dirname(args.state) or ".",
                 f"retire_netq_{args.tag or 'untagged'}.jsonl")
             with open(dump_path, "w", encoding="utf-8") as fh:
-                for k, qi, ln in zip(score_keys, q_list, score_lines):
+                for k, qi, ln in zip(score_keys, q_list, score_lines, strict=True):
                     fh.write(json.dumps({"key": k, "net_q": round(float(qi), 4),
                                          "line": ln.partition("#")[0].strip(),
                                          "retired": k not in active_key_set}) + chr(10))
@@ -333,7 +333,7 @@ def main() -> None:
                 load_ok = n_loaded >= args.min_pool or (
                     not applied_retire and n_loaded >= len(keep) and n_loaded > 0)
                 if load_ok and _repoint_yaml(args.yaml, os.path.abspath(new_path)):
-                    line_by_key = dict(zip(keys, lines))
+                    line_by_key = dict(zip(keys, lines, strict=True))
                     for k in applied_retire:
                         # Move active line into the retired store (verbatim).
                         if k in line_by_key:

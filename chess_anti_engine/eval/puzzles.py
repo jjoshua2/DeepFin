@@ -410,7 +410,7 @@ def run_puzzle_eval(
 
         actions = _search(boards)
 
-        for offset, (puzzle, action_idx) in enumerate(zip(batch_puzzles, actions)):
+        for offset, (puzzle, action_idx) in enumerate(zip(batch_puzzles, actions, strict=True)):
             # Search action ids are always full 4672 space.
             chosen = index_to_move(int(action_idx), puzzle.board)
             if chosen in puzzle.best_moves:
@@ -446,7 +446,7 @@ def _by_rating_table(
     for low, high in rating_buckets:
         b_total = 0
         b_correct = 0
-        for puzzle, ok in zip(suite.puzzles, correct_flags):
+        for puzzle, ok in zip(suite.puzzles, correct_flags, strict=True):
             r = puzzle.rating
             if r is None or r < low or r >= high:
                 continue
@@ -509,7 +509,7 @@ def run_policy_sequence_eval(
                 picks.append(legal[int(np.argmax(pol_logits[j, legal_idxs]))])
 
         next_active: list[tuple[int, chess.Board, int]] = []
-        for (puzzle_i, board, cur_step), picked in zip(active, picks):
+        for (puzzle_i, board, cur_step), picked in zip(active, picks, strict=True):
             puzzle = suite.puzzles[puzzle_i]
             seq = puzzle.solution_sequence
             if not seq:

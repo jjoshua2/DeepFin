@@ -140,7 +140,7 @@ def main() -> None:
                     "regret_cp": float(_r[li]) if li >= 0 else float(_r.max()),
                     "visit_gap": ngap, "visit_entropy": _entropy(shares),
                     "q_gap": qg, "root_q": rq,
-                    "shares": {int(a): float(s) for a, s in zip(actions, shares)},
+                    "shares": {int(a): float(s) for a, s in zip(actions, shares, strict=True)},
                 })
 
             worker.run(

@@ -190,7 +190,7 @@ def main() -> None:
             print(f"  Avg P({name}) when true {name}: {mean_prob:.3f}  (n={count})")
 
     unique, counts = np.unique(wdl_target[valid], return_counts=True)
-    target_counts = {int(k): int(v) for k, v in zip(unique, counts)}
+    target_counts = {int(k): int(v) for k, v in zip(unique, counts, strict=True)}
     total = valid.sum()
     print(
         f"  Target distribution: W={target_counts.get(0, 0)} "

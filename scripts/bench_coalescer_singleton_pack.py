@@ -78,7 +78,7 @@ def main() -> int:
             np.testing.assert_array_equal(packed[1], legal)
             np.testing.assert_array_equal(packed[2], counts)
             if name == "alias":
-                assert all(np.shares_memory(got, source) for got, source in zip(packed, (x, legal, counts)))
+                assert all(np.shares_memory(got, source) for got, source in zip(packed, (x, legal, counts), strict=True))
             samples[name].append(throughput)
             row.append(f"{name}={throughput:,.0f} packs/s")
         print(f"round {round_idx + 1}: " + "  ".join(row))

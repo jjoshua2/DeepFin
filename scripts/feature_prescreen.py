@@ -166,7 +166,7 @@ def _concat_chunks_union(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.nd
     # Union of per-row keys across all chunks (drops scalar/metadata fields).
     keys: list[str] = []
     seen: set[str] = set()
-    for c, r in zip(chunks, rows):
+    for c, r in zip(chunks, rows, strict=True):
         for k, v in c.items():
             if k not in seen and _is_per_row(v, r):
                 seen.add(k)
@@ -174,7 +174,7 @@ def _concat_chunks_union(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.nd
 
     cat: dict[str, np.ndarray] = {}
     for k in keys:
-        present = [(c, r) for c, r in zip(chunks, rows) if k in c and _is_per_row(c[k], r)]
+        present = [(c, r) for c, r in zip(chunks, rows, strict=True) if k in c and _is_per_row(c[k], r)]
         trailing = {c[k].shape[1:] for c, _ in present}
         if len(trailing) > 1:
             if not _WARNED_RAGGED_KEY["done"]:
@@ -195,7 +195,7 @@ def _concat_chunks_union(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.nd
         # target and bias relevance. So zero a flag wherever its value is absent.
         value_key = _PAIRED_VALUE_FOR_FLAG.get(k)
         parts: list[np.ndarray] = []
-        for c, r in zip(chunks, rows):
+        for c, r in zip(chunks, rows, strict=True):
             has_flag = k in c and _is_per_row(c[k], r)
             has_value = value_key is None or (value_key in c and _is_per_row(c[value_key], r))
             parts.append(c[k] if (has_flag and has_value) else np.zeros((r, *shape), dtype=dtype))
@@ -429,7 +429,7 @@ def run_relevance(model, x, batch, arrs, history_encoding, candidate_version):
     feat, names = candidate_feature_block(arrs, history_encoding, candidate_version)
     feat = feat[mask]  # (N_labeled, n_families)
     print(f"\n=== RELEVANCE — corr({candidate_version} family activation, net regret[{regret_key}]) ===")
-    for name, col in zip(names, feat.T):
+    for name, col in zip(names, feat.T, strict=True):
         r = float("nan") if col.std() < 1e-09 else float(np.corrcoef(col, regret)[0, 1])
         print(f"  {name.ljust(20)} r={r:+.3f}")
     r2_all = _ridge_r2(feat, regret.reshape(-1, 1))

@@ -270,7 +270,7 @@ def _analyze_checkpoint(
                 float(t): [] for t in temperatures
             }
             value_sum = 0.0
-            for pos, action, prob, value in zip(scored, actions, probs, values):
+            for pos, action, prob, value in zip(scored, actions, probs, values, strict=True):
                 move = index_to_move(int(action), pos.board)
                 move_uci = move.uci()
                 selected = pos.scores.get(move_uci)

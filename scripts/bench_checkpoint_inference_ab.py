@@ -230,7 +230,7 @@ def print_comparison(a: CheckpointTiming, b: CheckpointTiming) -> None:
         f"{a.label + '_bps':>14} "
         f"{b.label + '_bps':>14}"
     )
-    for row_a, row_b in zip(a.batches, b.batches):
+    for row_a, row_b in zip(a.batches, b.batches, strict=True):
         if row_a.batch != row_b.batch:
             raise ValueError(f"batch mismatch: {row_a.batch} != {row_b.batch}")
         gain = speedup_pct(row_a.wall_median_ms, row_b.wall_median_ms)

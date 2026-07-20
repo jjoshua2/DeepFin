@@ -127,8 +127,8 @@ def summarize_pentanomial(
     if n <= 0:
         raise ValueError("no pairs")
     xs = tuple(s / 2.0 for s in PAIR_SCORES)
-    mu = sum(c * x for c, x in zip(counts, xs)) / n
-    var = sum(c * (x - mu) ** 2 for c, x in zip(counts, xs)) / (n - 1) if n > 1 else 0.0
+    mu = sum(c * x for c, x in zip(counts, xs, strict=True)) / n
+    var = sum(c * (x - mu) ** 2 for c, x in zip(counts, xs, strict=True)) / (n - 1) if n > 1 else 0.0
     se = math.sqrt(var / n)
     lo = mu - z * se
     hi = mu + z * se
@@ -729,7 +729,7 @@ def build_result_record(
         "max_plies": max_plies,
         "seed": seed,
         "device": device,
-        "pentanomial": dict(zip(PAIR_LABELS, summary.counts)),
+        "pentanomial": dict(zip(PAIR_LABELS, summary.counts, strict=True)),
         "score": round(summary.score, 5),
         "score_se": round(summary.score_se, 5),
         "elo": None if summary.elo is None else round(summary.elo, 2),
@@ -749,7 +749,7 @@ def append_result(record: dict, out_path: Path) -> None:
 
 
 def print_summary(summary: PentanomialSummary) -> None:
-    counts = dict(zip(PAIR_LABELS, summary.counts))
+    counts = dict(zip(PAIR_LABELS, summary.counts, strict=True))
     elo_lo, elo_hi = summary.elo_ci95
 
     def fmt(v: float | None) -> str:

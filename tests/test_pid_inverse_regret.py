@@ -282,7 +282,7 @@ def test_regret_history_round_trips_via_state_dict():
     assert len(pid2.regret_lever.history) == 1  # construction seed
     pid2.load_state_dict(state)
     assert len(pid2.regret_lever.history) == saved_len
-    for (r1, w1, s1), (r2, w2, s2) in zip(pid1.regret_lever.history, pid2.regret_lever.history):
+    for (r1, w1, s1), (r2, w2, s2) in zip(pid1.regret_lever.history, pid2.regret_lever.history, strict=True):
         assert abs(r1 - r2) < 1e-12
         assert abs(w1 - w2) < 1e-12
         assert abs(s1 - s2) < 1e-12

@@ -270,7 +270,7 @@ def _build_root_outputs(
     child_visits = np.array(
         [float(root.children[int(a)].N) for a in child_actions], dtype=np.float64,
     )
-    for a, v in zip(child_actions, child_visits):
+    for a, v in zip(child_actions, child_visits, strict=True):
         visits_full[a] = v
     s = float(child_visits.sum())
     probs = (visits_full / s) if s > 0 else visits_full

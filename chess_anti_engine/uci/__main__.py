@@ -230,7 +230,7 @@ def _make_evaluator_factory(
                     m, device=d, max_batch=max_batch, n_slots=2,
                     input_bf16=compact_bf16, legal_bf16=compact_bf16,
                 )
-                for m, d in zip(compiled_models, active_devices)
+                for m, d in zip(compiled_models, active_devices, strict=True)
             ]
             evaluator = MultiGPUDispatcher(evaluators)
         else:
@@ -294,7 +294,7 @@ def _make_multi_gpu_pucv_factory_builder(
     def build(max_batch: int, gather: int):
         effective_gather = min(max(1, int(gather)), int(max_batch))
         factories = []
-        for model, device in zip(models, devices):
+        for model, device in zip(models, devices, strict=True):
             def make_one(m=model, d=device):
   # Bind this pool worker thread to its device BEFORE compile /
   # construction / warmup: threads inherit current-device cuda:0, and

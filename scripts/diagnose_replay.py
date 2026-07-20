@@ -42,7 +42,7 @@ def sample_replay_arrays(
 
     sizes = np.asarray([shard_positions(path) for path in paths], dtype=np.int64)
     keep = sizes > 0
-    paths = [path for path, ok in zip(paths, keep) if bool(ok)]
+    paths = [path for path, ok in zip(paths, keep, strict=True) if bool(ok)]
     sizes = sizes[keep]
     total = int(sizes.sum())
     if total <= 0:

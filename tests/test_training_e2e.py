@@ -106,6 +106,7 @@ def test_e2e_training_loop_smoke(tmp_path):
     for (n1, p1), (n2, p2) in zip(
         trainer.model.named_parameters(),
         trainer2.model.named_parameters(),
+        strict=True,
     ):
         assert n1 == n2
         assert torch.equal(p1.data.cpu(), p2.data.cpu()), f"Param {n1} mismatch after load"
