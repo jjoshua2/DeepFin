@@ -67,10 +67,10 @@ def _fit_inverse_lever_diagnostics(
             age = (n - 1) - i
             weights[i] *= 0.5 ** (age / recency_half_life)
     sw = sum(weights)
-    swx = sum(w * x for w, x in zip(weights, x_vals))
-    swr = sum(w * v for w, v in zip(weights, w_vals))
-    swxx = sum(w * x * x for w, x in zip(weights, x_vals))
-    swxr = sum(w * x * v for w, x, v in zip(weights, x_vals, w_vals))
+    swx = sum(w * x for w, x in zip(weights, x_vals, strict=True))
+    swr = sum(w * v for w, v in zip(weights, w_vals, strict=True))
+    swxx = sum(w * x * x for w, x in zip(weights, x_vals, strict=True))
+    swxr = sum(w * x * v for w, x, v in zip(weights, x_vals, w_vals, strict=True))
     det = sw * swxx - swx * swx
     if abs(det) < 1e-12:
         return None
@@ -190,7 +190,7 @@ class LeverStepDiagnostics:
 
 def _tighten_streak(history: list[tuple[float, float, float]], *, ease_sign: int) -> int:
     streak = 0
-    for older, newer in zip(reversed(history[:-1]), reversed(history[1:])):
+    for older, newer in zip(reversed(history[:-1]), reversed(history[1:]), strict=True):
         delta = float(newer[0]) - float(older[0])
         if delta * ease_sign < -1e-12:
             streak += 1

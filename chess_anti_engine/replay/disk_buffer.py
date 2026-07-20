@@ -992,7 +992,7 @@ class DiskReplayBuffer:
         selected_x_planes: set[int] = set()
         all_keys: set[str] = set()
         start = 0
-        for chunk, chunk_n, chunk_off in zip(self._shuffle_buf, self._shuffle_sizes, self._shuffle_offsets):
+        for chunk, chunk_n, chunk_off in zip(self._shuffle_buf, self._shuffle_sizes, self._shuffle_offsets, strict=True):
             end = start + chunk_n
             mask = (idx >= start) & (idx < end)
             if np.any(mask):

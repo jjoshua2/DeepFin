@@ -2159,7 +2159,7 @@ class Trainer:
         state_remap: dict[int, int] = {}
         out_groups: list[dict] = []
         new_idx = 0
-        for g_new, g_ckpt in zip(groups_new, groups_ckpt):
+        for g_new, g_ckpt in zip(groups_new, groups_ckpt, strict=True):
             ckpt_params = list(g_ckpt.get("params", []))
             n_fresh = sum(1 for param in g_new["params"] if id(param) in fresh_ids)
             if len(g_new["params"]) != len(ckpt_params) + n_fresh:
