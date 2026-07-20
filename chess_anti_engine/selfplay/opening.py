@@ -98,6 +98,31 @@ class OpeningConfig:
     opening_fen_sf_refute_frac: float = 0.0
     opening_fen_sf_refute_plies: int = 5
 
+  # SF-refute opp-row recording (STAGED — all default OFF; no-op until flipped).
+  # Today the SF-played refute plies generate NO training rows, so the net never
+  # trains its MAIN policy head on the punishing move. These three flags add
+  # that, gated so the live 50%×N channel is byte-identical at defaults.
+  #
+  # sf_refute_full_node_moves: refute-phase SF MOVE queries skip the fast-ply
+  #   0.25× node scale (sf_fast_ply_node_scale) and run at full base nodes, so
+  #   the punishment is not weakened on fast plies. Move queries only; labels
+  #   and ordinary curriculum behaviour untouched.
+    sf_refute_full_node_moves: bool = False
+  # sf_refute_record_opp_rows: each SF-played refute ply also emits a training
+  #   row at the SF-to-move position — MAIN policy target = soft distribution
+  #   over SF's MultiPV candidates, sf_wdl = same search's cp-logistic eval,
+  #   outcome WDL filled at finalize with the SF-seat POV. All aux heads
+  #   (policy_soft/future/sf, volatility, moves_left, sf_p0*) masked. Rows ride
+  #   the fenlist_sf_refute* source so they stay out of the PID sample.
+    sf_refute_record_opp_rows: bool = False
+  # sf_refute_opp_policy_net_blend: when >0, blend the net's own MCTS visit
+  #   distribution at the SF position into the policy target
+  #   (target = (1-b)*SF_soft + b*net_visits). Wiring a net search at an
+  #   opponent turn is architecturally invasive, so the net-visit provider is a
+  #   marked seam and blend>0 is REJECTED at config validation (fail loud). The
+  #   blend math + interface are implemented; only the provider is deferred.
+    sf_refute_opp_policy_net_blend: float = 0.0
+
 
 @dataclass(frozen=True)
 class OpeningStart:

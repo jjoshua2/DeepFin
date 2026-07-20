@@ -137,6 +137,8 @@ _SELFPLAY_KEYS = (
     "opening_fen_list_path", "opening_fen_prob", "opening_fen_net_side_to_move",
     "opening_fen_selfplay_only", "opening_fen_dole_per_iter",
     "opening_fen_sf_refute_frac", "opening_fen_sf_refute_plies",
+    "sf_refute_full_node_moves", "sf_refute_record_opp_rows",
+    "sf_refute_opp_policy_net_blend",
     "sf_policy_temp", "sf_policy_label_smooth", "soft_policy_temp",
     "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
     "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy", "syzygy_adjudicate",

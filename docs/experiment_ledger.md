@@ -196,6 +196,33 @@ always re-dump and pair.
 
 ## Analysis findings (offline, no live change)
 
+**SF-refute opp-row recording — STAGED / TOOLING-READY (2026-07-19).**
+Hypothesis: the SF-refute channel is selfplay-tagged and the SF-played refute
+plies generate NO training rows today, so the net never trains its MAIN policy
+head on the punishing move — only the value side (via later selfplay + labels)
+sees the refutation. Emitting a training row at each SF-to-move refute position
+(MAIN policy = soft SF MultiPV distribution, sf_wdl = that search's cp-logistic
+eval, outcome WDL at the SF-seat POV; all aux heads masked) trains the policy
+head directly on refutations. Three flags, all default OFF (byte-identical to
+the live 50%×N channel until flipped):
+- `sf_refute_full_node_moves` — refute SF MOVE queries skip the 0.25× fast-ply
+  node scale (full base nodes), so the punishment is not weakened on fast plies.
+- `sf_refute_record_opp_rows` — emit the opp rows described above.
+- `sf_refute_opp_policy_net_blend` — blend net MCTS visits into the policy
+  target; >0 REJECTED at config validation (net-visit provider is an unwired
+  seam — a net search at an opponent turn is architecturally invasive).
+Expected volume: ~535 rows/iter at frac=0.5 × plies=5 over the ~85-seed dole
+(0.5·85·5·~2.5 refute games; order-of-magnitude), a tiny fraction of the
+~200k-row window — will need per-row upweighting to matter, and upweighting SF
+teacher rows into the trunk is exactly the failure mode of `record_fast_ply_value`
+(REVERTED — trunk dilution; see the Selfplay section). So the RISK is the same:
+diluting the main policy head with off-distribution (SF-seat) positions.
+Pre-committed yardstick sketch (when promoted live behind a paired readout):
+panel v1/v2 BLIND holds or improves AND `scripts/value_regret.py` paired vs the
+then-current vdump is NOT worse by >2cp — either failing = KILL (revert flags to
+false, no trunk rollback needed since it is additive rows only). One
+data-affecting change per window: do not flip alongside a seed feed.
+
 **Mine-time free first SF-refute ply — TOOLING READY (2026-07-19).**
 `scripts/mine_blindspot_seeds.py --append-refute-ply` (default ON; disable with
 `--no-append-refute-ply`) bakes the historical blunder + deep-SF's best reply

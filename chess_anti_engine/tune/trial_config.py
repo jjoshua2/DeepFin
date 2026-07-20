@@ -48,6 +48,29 @@ def _at_least_one_float(value: Any, *, name: str) -> float:
     return val
 
 
+def _validate_sf_refute_net_blend(value: Any) -> float:
+    """Fail loud on sf_refute_opp_policy_net_blend > 0.
+
+    The blend math + interface are implemented, but the net-visit provider at an
+    opponent turn is a deliberately-unwired seam (running a net MCTS search on a
+    non-net-color slot is architecturally invasive). Rather than silently no-op a
+    requested blend, reject any positive value so the config is honest about what
+    is wired. See selfplay/stockfish_turn.py::_sf_refute_net_visit_provider.
+    """
+    blend = float(value)
+    if not math.isfinite(blend) or blend < 0.0 or blend > 1.0:
+        raise ValueError(
+            f"sf_refute_opp_policy_net_blend must be in [0, 1], got {value!r}",
+        )
+    if blend > 0.0:
+        raise ValueError(
+            "sf_refute_opp_policy_net_blend > 0 is not yet wired: the net-visit "
+            "provider at an opponent turn is an unimplemented seam "
+            "(_sf_refute_net_visit_provider). Keep it at 0.0 until that lands.",
+        )
+    return blend
+
+
 @dataclass
 class TrialConfig:
     """Typed, validated view of the flat Ray Tune config dict.
@@ -188,6 +211,10 @@ class TrialConfig:
     opening_fen_dole_per_iter: int = 0
     opening_fen_sf_refute_frac: float = 0.0
     opening_fen_sf_refute_plies: int = 5
+  # SF-refute opp-row recording (STAGED, all default off — see OpeningConfig).
+    sf_refute_full_node_moves: bool = False
+    sf_refute_record_opp_rows: bool = False
+    sf_refute_opp_policy_net_blend: float = 0.0
 
   # --- SF policy / game ---
     sf_policy_temp: float = 0.25
@@ -542,6 +569,11 @@ class TrialConfig:
             opening_fen_dole_per_iter=int(config.get("opening_fen_dole_per_iter", 0)),
             opening_fen_sf_refute_frac=float(config.get("opening_fen_sf_refute_frac", 0.0)),
             opening_fen_sf_refute_plies=int(config.get("opening_fen_sf_refute_plies", 5)),
+            sf_refute_full_node_moves=bool(config.get("sf_refute_full_node_moves", False)),
+            sf_refute_record_opp_rows=bool(config.get("sf_refute_record_opp_rows", False)),
+            sf_refute_opp_policy_net_blend=_validate_sf_refute_net_blend(
+                config.get("sf_refute_opp_policy_net_blend", 0.0),
+            ),
 
   # --- SF policy / game ---
             sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),

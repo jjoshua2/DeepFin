@@ -219,6 +219,16 @@ selfplay:
   # Restart-gated (new reco keys + worker code).
   opening_fen_sf_refute_frac: 0.5
   opening_fen_sf_refute_plies: 5
+  # SF-refute opp-row recording — STAGED — do not flip before the SF-refute
+  # 50%×5 ledger readout (docs/experiment_ledger.md). full_node_moves: refute SF
+  # MOVE queries skip the 0.25× fast-ply node scale. record_opp_rows: emit a
+  # MAIN-policy training row at each SF-to-move refute position (aux heads
+  # masked). opp_policy_net_blend: blend net visits into that policy target —
+  # >0 is REJECTED at config validation (provider seam unwired). Restart-gated
+  # (OpeningConfig session-fixed + new reco keys).
+  sf_refute_full_node_moves: false
+  sf_refute_record_opp_rows: false
+  sf_refute_opp_policy_net_blend: 0.0
 
   # 2026-07-08: inline blind-spot harvester COLLECT-ONLY (#124). Finished games
   # append value-blind positions (net's search says fine, in-loop SF says lost)
