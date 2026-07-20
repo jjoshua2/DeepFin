@@ -25,6 +25,9 @@ from typing import Any
 
 import numpy as np
 
+import chess
+
+from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves.encode import uci_to_policy_index
 from chess_anti_engine.selfplay.state import SelfplayState, _NetRecord
@@ -170,6 +173,21 @@ def _sf_played_move_diagnostics(
     return int(rank), max(0.0, best_score - played_score)
 
 
+def _slot_in_sf_refute(state: SelfplayState, idx: int) -> bool:
+    """True while slot ``idx`` is still in its SF-refute opponent phase.
+
+    ``sf_refute_opp_plies_left[idx] > 0`` marks the plies where SF (not the net)
+    plays the opponent seat of a selfplay-tagged refute game. getattr: unit-test
+    SimpleNamespace fixtures may omit the array (≡ zeros).
+    """
+    refute_left = getattr(state, "sf_refute_opp_plies_left", None)
+    return (
+        refute_left is not None
+        and idx < len(refute_left)
+        and int(refute_left[idx]) > 0
+    )
+
+
 def _eff_sf_nodes(
     state: SelfplayState, idx: int, *, for_move: bool = False, for_label: bool = False,
 ) -> int | None:
@@ -203,7 +221,18 @@ def _eff_sf_nodes(
             base_nodes = min(base_nodes, label_cap)
     if base_nodes <= 0:
         return None
-    if bool(state.last_net_full[idx]):
+    # SF-refute MOVE queries can opt out of the fast-ply scale so the punishing
+    # move is searched at full strength even on fast plies (sf_refute_full_node_
+    # moves). Only for_move queries in an active refute phase; labels and
+    # ordinary curriculum/selfplay behaviour are untouched (flag default off).
+    refute_full_move = (
+        for_move
+        and _slot_in_sf_refute(state, idx)
+        and bool(getattr(
+            getattr(state, "opening", None), "sf_refute_full_node_moves", False,
+        ))
+    )
+    if bool(state.last_net_full[idx]) or refute_full_move:
         fast_scale = 1.0
     else:
         fast_scale = float(getattr(state.game, "sf_fast_ply_node_scale", 0.25))
@@ -252,6 +281,11 @@ def _slot_latest_record_needs_sf_label(state: SelfplayState, idx: int) -> bool:
         return False
     rec = state.samples_per_game[idx][-1]
     if not bool(rec.has_policy):
+        return False
+    # SF-refute opp rows carry has_policy=True (a MAIN policy target) but are the
+    # SF-to-move position, not a net turn — they must never receive a P1 reply
+    # label. Skip them so a stray label query can't mis-attach.
+    if bool(getattr(rec, "is_sf_refute_opp", False)):
         return False
     return rec.sf_policy_target is None and rec.sf_move_index is None
 
@@ -916,6 +950,121 @@ def has_pending_sf_labels_for_records(
     return any(pending.record in target_records for pending in state.pending_sf_labels)
 
 
+def _sf_refute_net_visit_provider(
+    _state: SelfplayState, _idx: int,
+) -> np.ndarray | None:
+    """SEAM: the net's own MCTS visit distribution at the SF-to-move position.
+
+    Running a net search at an opponent turn is architecturally invasive — the
+    network-turn pipeline is built around net-color slots — so this provider is
+    intentionally unimplemented and returns None. ``sf_refute_opp_policy_net_
+    blend`` > 0 is REJECTED at config validation (utils/config_yaml.py), so the
+    blend branch that consumes this is never reached in practice; the blend math
+    is present so only the provider remains to be filled in.
+    """
+    return None
+
+
+def _sf_refute_opp_policy_target(
+    state: SelfplayState, idx: int,
+    *, cand_idxs: list[int], cand_scores: list[float], legal_indices: np.ndarray,
+) -> np.ndarray:
+    """MAIN-policy target for an SF-refute opp row.
+
+    Reuses the existing ``_build_sf_policy_target`` soft-label helper (WDL
+    softmax over MultiPV by ``sf_policy_temp`` + label smoothing) — the same
+    transform the ``policy_sf`` label path uses — then optionally blends the
+    net's own visit distribution (``sf_refute_opp_policy_net_blend``).
+    """
+    p_sf = _build_sf_policy_target(
+        cand_idxs, cand_scores,
+        legal_indices=legal_indices,
+        sf_policy_temp=float(state.game.sf_policy_temp),
+        sf_policy_label_smooth=float(state.game.sf_policy_label_smooth),
+    )
+    blend = float(getattr(state.opening, "sf_refute_opp_policy_net_blend", 0.0) or 0.0)
+    if blend > 0.0:
+        net_visits = _sf_refute_net_visit_provider(state, idx)
+        if net_visits is not None:
+            nv = np.asarray(net_visits, dtype=np.float32)
+            if nv.shape == p_sf.shape:
+                blended = (1.0 - blend) * p_sf + blend * nv
+                s = float(blended.sum())
+                if s > 0:
+                    blended /= s
+                return blended.astype(np.float32, copy=False)
+    return p_sf
+
+
+def _emit_sf_refute_opp_record(
+    state: SelfplayState, idx: int,
+    *, res, legal_indices: np.ndarray, turn: bool,
+) -> None:
+    """Append a training row at the SF-to-move refute position (opt-in).
+
+    Mirrors the net-turn ``_NetRecord`` shape but marks ``is_sf_refute_opp`` so
+    finalize builds it with MAIN policy + wdl/sf_wdl targets only (all aux heads
+    masked). The record POV is the SF seat (side to move here), so finalize fills
+    the game-outcome WDL for that seat and the sf_wdl label needs NO POV flip
+    (contrast a P1 reply label attached to the prior net record).
+    """
+    if legal_indices.size == 0:
+        return
+    legal_set = {int(x) for x in legal_indices}
+    a_idx = uci_to_policy_index(res.bestmove_uci, bool(turn))
+    if a_idx < 0 or a_idx not in legal_set:
+        a_idx = int(legal_indices[0])
+    cand_idxs, cand_scores = _collect_sf_pv_candidates(
+        res, _turn=bool(turn), legal_set=legal_set,
+        sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
+        sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
+        sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
+    )
+    if not cand_idxs:
+        cand_idxs = [a_idx]
+        cand_scores = [0.0]
+    p_target = _sf_refute_opp_policy_target(
+        state, idx,
+        cand_idxs=cand_idxs, cand_scores=cand_scores, legal_indices=legal_indices,
+    )
+    cb = state.cboards[idx]
+    x = encode_cboard(
+        cb,
+        input_history_encoding=state.game.input_history_encoding,
+        input_extra_features=state.game.input_extra_features,
+    )
+    # STM (SF-seat) cp-logistic eval; record POV IS this position's STM, so NO
+    # flip (contrast _sf_result_wdl_for_record, which flips a P1 reply label).
+    sf_wdl_stm: np.ndarray | None = None
+    if bool(state.game.sf_wdl_use_cp_logistic) and (res.cp is not None or res.mate is not None):
+        sf_wdl_stm = _cp_to_wdl(
+            res.cp, res.mate,
+            slope=float(state.game.sf_wdl_cp_slope),
+            draw_width_cp=float(state.game.sf_wdl_cp_draw_width),
+        )
+    elif res.wdl is not None:
+        sf_wdl_stm = np.asarray(res.wdl, dtype=np.float32)
+    neutral = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    legal_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
+    legal_mask[legal_indices] = 1
+    rec = _NetRecord(
+        x=x,
+        policy_probs=p_target,
+        net_wdl_est=neutral.copy(),
+        search_wdl_est=neutral.copy(),
+        pov_color=chess.WHITE if turn else chess.BLACK,
+        ply_index=int(cb.ply),
+        has_policy=True,
+        priority=1.0,
+        sample_weight=1.0,
+        keep_prob=1.0,
+        legal_mask=legal_mask,
+        sf_wdl=sf_wdl_stm,
+    )
+    rec.is_sf_refute_opp = True
+    state.samples_per_game[idx].append(rec)
+
+
 def _push_curriculum_opponent_move(
     state: SelfplayState, idx: int,
     *, legal_indices: np.ndarray,
@@ -1025,15 +1174,18 @@ def _process_sf_results(
             )
 
         # SF opponent when curriculum OR mid SF-refute phase (selfplay-tagged).
-        # getattr: unit-test SimpleNamespace fixtures may omit the array (≡ zeros).
-        refute_left = getattr(state, "sf_refute_opp_plies_left", None)
-        in_refute = (
-            refute_left is not None
-            and idx < len(refute_left)
-            and int(refute_left[idx]) > 0
-        )
+        in_refute = _slot_in_sf_refute(state, idx)
         uses_sf_opp = in_refute or (not bool(state.selfplay_arr[idx]))
         if play_curriculum_moves and uses_sf_opp:
+            # Opt-in: emit a training row at THIS (SF-to-move) refute position
+            # BEFORE the move is pushed, so the net trains its MAIN policy head
+            # on the punishing move. Default off → byte-identical to today.
+            if in_refute and bool(getattr(
+                getattr(state, "opening", None), "sf_refute_record_opp_rows", False,
+            )):
+                _emit_sf_refute_opp_record(
+                    state, idx, res=res, legal_indices=legal_indices, turn=_turn,
+                )
             # SF-refute plies force full-strength best move (inf regret), not
             # PID-handicapped airbag play — that's the whole point of the channel.
             move_regret = float("inf") if in_refute else pid_regret_limit

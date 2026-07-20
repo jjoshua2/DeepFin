@@ -2746,6 +2746,9 @@ class WorkerSession:
         "opening_fen_prob", "opening_fen_net_side_to_move", "opening_fen_selfplay_only",
         "opening_fen_dole_per_iter",
         "opening_fen_sf_refute_frac", "opening_fen_sf_refute_plies",
+        # SF-refute opp-row recording (OpeningConfig, session-fixed → restart).
+        "sf_refute_full_node_moves", "sf_refute_record_opp_rows",
+        "sf_refute_opp_policy_net_blend",
         "volatility_q_scale", "volatility_fpu", "volatility_anchor",
     )
 
@@ -2854,6 +2857,15 @@ class WorkerSession:
                 ),
                 opening_fen_sf_refute_plies=int(
                     reco.get("opening_fen_sf_refute_plies", 5) or 0
+                ),
+                sf_refute_full_node_moves=bool(
+                    reco.get("sf_refute_full_node_moves", False)
+                ),
+                sf_refute_record_opp_rows=bool(
+                    reco.get("sf_refute_record_opp_rows", False)
+                ),
+                sf_refute_opp_policy_net_blend=float(
+                    reco.get("sf_refute_opp_policy_net_blend", 0.0) or 0.0
                 ),
             ),
             "game": GameConfig(

@@ -349,6 +349,11 @@ def _publish_distributed_trial_state(
         "opening_fen_dole_per_iter": int(config.get("opening_fen_dole_per_iter", 0)),
         "opening_fen_sf_refute_frac": float(config.get("opening_fen_sf_refute_frac", 0.0)),
         "opening_fen_sf_refute_plies": int(config.get("opening_fen_sf_refute_plies", 5)),
+        "sf_refute_full_node_moves": bool(config.get("sf_refute_full_node_moves", False)),
+        "sf_refute_record_opp_rows": bool(config.get("sf_refute_record_opp_rows", False)),
+        "sf_refute_opp_policy_net_blend": float(
+            config.get("sf_refute_opp_policy_net_blend", 0.0)
+        ),
         "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
         "slot_oversubscribe": float(config.get("slot_oversubscribe", 1.0)),
         "sf_nodes": int(sf_nodes),
