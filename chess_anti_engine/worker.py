@@ -1910,6 +1910,21 @@ class WorkerSession:
     def _note_selfplay_progress(self) -> None:
         self._last_selfplay_progress_s = time.time()
 
+    def _selfplay_stalled(self, now: float, timeout_s: float) -> bool:
+        """True iff the active selfplay session has hung past ``timeout_s``.
+
+        A pause-hold (``distributed_pause_selfplay_during_training`` or a
+        graceful-restart hold) is intentionally idle and may last hours, so it
+        refreshes the progress timer rather than counting as a stall — the
+        watchdog must never hard-exit a healthy paused worker.
+        """
+        if not self._selfplay_session_active:
+            return False
+        if self._hold_selfplay:
+            self._last_selfplay_progress_s = now
+            return False
+        return (now - float(self._last_selfplay_progress_s)) >= timeout_s
+
     def _start_selfplay_stall_watchdog(self) -> None:
         """Exit the process if a selfplay session produces no progress for too long.
 
@@ -1932,11 +1947,9 @@ class WorkerSession:
         def _loop() -> None:
             while True:
                 time.sleep(poll_s)
-                if not self._selfplay_session_active:
+                if not self._selfplay_stalled(time.time(), timeout_s):
                     continue
                 idle_s = time.time() - float(self._last_selfplay_progress_s)
-                if idle_s < timeout_s:
-                    continue
                 self.log.error(
                     "selfplay stalled for %.0fs (limit=%.0fs) with no phase-stats/"
                     "completions; exiting so the launcher restarts this worker "

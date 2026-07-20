@@ -488,6 +488,19 @@ def test_multi_slot_acquire_times_out_when_all_slots_held() -> None:
     elapsed = time.perf_counter() - t0
     # 2x request_timeout_s budget (~0.1s); leave headroom for CI load.
     assert 0.05 <= elapsed < 0.5
+    # A timed-out acquire must not leak a slot: inflight stays 0 and the pool
+    # is intact, so a transient all-held stall does not become permanent
+    # capacity loss.
+    assert client._inflight == 0
+    # Return one slot and confirm acquisition recovers cleanly.
+    client._available_clients.put(held.pop())
+    idx, slot_client, wait_s = client._acquire_client()
+    assert slot_client is not None
+    assert client._inflight == 1
+    client._release_client(
+        idx, slot_client, positions=0, legal=False, wait_s=wait_s, roundtrip_s=0.0,
+    )
+    assert client._inflight == 0
     # Restore so close() is clean.
     for item in held:
         client._available_clients.put(item)
