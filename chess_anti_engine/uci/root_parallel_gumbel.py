@@ -353,6 +353,11 @@ class RootParallelGumbelPool:
     def n_groups(self) -> int:
         return self._cfg.n_groups
 
+    @property
+    def gather(self) -> int:
+        """Per-candidate leaf gather used by each group's PucvChunker."""
+        return max(1, int(self._cfg.gather))
+
     def close(self) -> None:
         if self._shutdown.is_set():
             return

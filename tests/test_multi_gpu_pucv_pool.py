@@ -414,6 +414,32 @@ def test_chunk_budget_scales_by_gather_and_devices() -> None:
     worker.close()
 
 
+def test_chunk_budget_rpg_uses_large_schedule() -> None:
+    """Root-parallel Gumbel must not chunk into tiny sequential-halving
+    schedules (first-phase vpa≈5 at 512-sim chunks starves multi-GPU)."""
+    from chess_anti_engine.uci.root_parallel_gumbel import (
+        RootParallelGumbelConfig,
+        RootParallelGumbelPool,
+    )
+
+    primary = _make_evaluator(max_batch=64)
+    worker = SearchWorker(
+        primary, device="cpu",
+        gumbel_cfg=GumbelConfig(input_extra_features="v1", simulations=64, add_noise=False),
+        chunk_sims=512, n_walkers=1,
+    )
+    factories = [lambda: _make_evaluator(max_batch=64) for _ in range(2)]
+    # install via public API
+    worker.install_root_parallel_gumbel(
+        factories, gather=256, as_factories=True, devices=["cpu", "cpu"],
+    )
+    budget = worker._chunk_budget(None)
+    # Must be far above a single classic chunk so one schedule can fill GPUs.
+    assert budget >= 512 * 8
+    assert budget >= 20 * 5 * (256 // 2)
+    worker.close()
+
+
 def test_current_best_root_action_tracks_emitted_move() -> None:
     """Soft-stop stability must judge the move final selection will emit: the
     Gumbel survivor when set+legal, else the visit leader (walker/pucv paths)."""

@@ -1314,6 +1314,25 @@ class SearchWorker:
         if allowed_root_indices is None and self._pucv_pool is not None:
             per_device = max(self._chunk_sims, self._pucv_pool.gather)
             return per_device * max(1, self._pucv_pool.n_devices)
+        if allowed_root_indices is None and self._rpg_pool is not None:
+            # Root-parallel Gumbel re-runs a FULL sequential-halving schedule
+            # per chunk. Tiny chunks (e.g. 512) force first-phase
+            # visits_per_action ≈ 5 on 20 candidates — GPU batches of size 5
+            # and near-zero multi-GPU speedup. Prefer one large schedule so
+            # early-phase vpa fills gather-sized batches (at 8k sims, vpa≈80
+            # on 20 cands). The run loop still min()s with remaining max_nodes
+            # / time-capped chunk; workers poll stop_event between gather
+            # batches so clock latency stays ~one batch, not ~one schedule.
+            n_groups = max(1, int(self._rpg_pool.n_groups))
+            gather = max(1, int(getattr(self._rpg_pool, "gather", 256) or 256))
+            # Aim for first-phase vpa ≳ gather/2: budget ≳ n_cands * rounds * vpa
+            # ≈ 20 * 5 * (gather/2). Use a generous floor; remaining-node cap
+            # trims this for short go nodes searches.
+            target = max(
+                self._chunk_sims * max(8, n_groups * 4),
+                20 * 5 * max(gather // 2, 64),
+            )
+            return int(target)
         return self._chunk_sims
 
     def _time_capped_chunk(
