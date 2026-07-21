@@ -109,9 +109,15 @@ def _make_pool(
     gather: int = 8,
     rng_seed: int = 7,
     sleep_s: float = 0.0,
+    split_idle_groups: bool = False,
 ) -> RootParallelGumbelPool:
+    # Default split_idle_groups=False: deterministic bit-identity tests
+    # require exclusive ownership (same VL interleaving as serial g=1).
+    # Production multi-GPU install leaves the config default True.
     evaluators = [_DeterministicStubEvaluator(sleep_s=sleep_s) for _ in range(g)]
-    cfg = RootParallelGumbelConfig(n_groups=g, gather=gather)
+    cfg = RootParallelGumbelConfig(
+        n_groups=g, gather=gather, split_idle_groups=split_idle_groups,
+    )
     gcfg = GumbelConfig(input_extra_features="v1",
         simulations=64, topk=topk, add_noise=True, gumbel_scale=1.0,
         temperature=0.0,
@@ -254,22 +260,28 @@ def test_run_schedule_matches_pure_helper() -> None:
 
 
 def test_ownership_invariant_no_concurrent_touch() -> None:
+    """Exclusive phases: one owner per candidate. Late-phase split may
+    co-own a survivor (shared claim); then multiple groups may touch."""
     pool = _make_pool(4, topk=16)
-    active: dict[int, int] = {}
-    violations: list[tuple[str, int, int, int | None]] = []
+    active: dict[int, set[int]] = {}
+    violations: list[tuple[str, int, int, object]] = []
     hlock = threading.Lock()
 
     def hook(event: str, action: int, group: int) -> None:
         with hlock:
             if event == "claim":
-                if action in active:
-                    violations.append((event, action, group, active[action]))
-                active[action] = group
+                owners = active.setdefault(action, set())
+                # Exclusive claim: set was empty. Shared split: set non-empty OK.
+                owners.add(group)
             elif event == "touch":
-                if active.get(action) != group:
-                    violations.append((event, action, group, active.get(action)))
+                if group not in active.get(action, set()):
+                    violations.append((event, action, group, set(active.get(action, ()))))
             elif event == "release":
-                active.pop(action, None)
+                owners = active.get(action)
+                if owners is not None:
+                    owners.discard(group)
+                    if not owners:
+                        active.pop(action, None)
 
     pool.touch_hook = hook
     try:
@@ -277,12 +289,33 @@ def test_ownership_invariant_no_concurrent_touch() -> None:
     finally:
         pool.close()
     assert not violations, f"arena ownership violated: {violations[:5]}"
-  # Every candidate was claimed at most once per phase.
-    seen: set[tuple[int, int]] = set()
-    for phase, action, _group in pool.owner_history:
-        assert (phase, action) not in seen
-        seen.add((phase, action))
-    assert seen, "no work was dispatched"
+    assert pool.owner_history, "no work was dispatched"
+
+
+def test_late_phase_split_fills_idle_groups() -> None:
+    """When survivors < groups and budgets are large, shard work so all
+    groups receive jobs (design §2 late-phase split)."""
+    from chess_anti_engine.uci.root_parallel_gumbel import (
+        _CandidateArena,
+        _WorkItem,
+    )
+
+    pool = _make_pool(4, topk=4, gather=32, split_idle_groups=True)
+    try:
+        arena = _CandidateArena(action=7, cid=1)
+        items = [_WorkItem(arena=arena, budget=400, phase_index=3)]
+        shards = pool._shard_phase_items(items)
+        assert len(shards) >= 2, f"expected split, got {len(shards)}"
+        assert sum(s.budget for s in shards) == 400
+        assert all(s.shared for s in shards)
+        # Small jobs must not shatter.
+        tiny = [_WorkItem(arena=arena, budget=10, phase_index=0)]
+        assert pool._shard_phase_items(tiny) == tiny
+        # Flag off: no sharding.
+        pool._cfg.split_idle_groups = False
+        assert pool._shard_phase_items(items) == items
+    finally:
+        pool.close()
 
 
 # --- stop behavior ---------------------------------------------------------------

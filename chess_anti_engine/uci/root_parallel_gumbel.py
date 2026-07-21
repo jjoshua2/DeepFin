@@ -63,10 +63,11 @@ Deliberate v1 deviations (all pre-recorded in the design):
   the single-GPU-validated parallel gather regime; per-candidate outcomes
   therefore differ from classic per-sim, while every root decision is exact
   for the outcomes produced. Pending accounting defaults to virtual-mean.
-- ``s = 1`` evaluator groups only; no late-phase budget splitting (when
-  survivors < groups the extra groups idle); no cross-move tree reuse
-  (fresh per-candidate arenas each move); no TB probing inside candidate
-  subtrees.
+- ``s = 1`` evaluator groups only; late-phase budget splitting when
+  survivors < groups is ON by default (``split_idle_groups``; co-owned
+  survivor arenas under VL — not bit-identical to exclusive serial
+  interleaving); no cross-move tree reuse (fresh per-candidate arenas
+  each move); no TB probing inside candidate subtrees.
 
 All candidate subtrees live in ONE caller-provided ``MCTSTree`` (each rooted
 at the corresponding root-child node) so the ``SearchWorker`` PV / visit-lead
@@ -180,6 +181,12 @@ class RootParallelGumbelConfig:
     # this independently of the UCI PUCVPendingMode default (which is legacy
     # for the pucv pool).
     vloss_mode: int = 1
+    # When True (default), late phases with fewer candidates than groups
+    # shard survivor budgets so idle GPUs keep working (design §2). Root
+    # decisions stay sequential-halving; only the concurrent VL interleaving
+    # inside a shared candidate changes. Disable for bit-identity tests
+    # against serial g=1 under a deterministic evaluator.
+    split_idle_groups: bool = True
     # Per-group PucvChunker eval-cache capacity (0 = off). Same knob as the
     # multi-GPU PUCV pool / single-thread UseVL path; each group owns its own
     # cache (subtrees are disjoint so a shared cache would rarely hit).
@@ -214,6 +221,9 @@ class _CandidateArena:
     cboard: Any = None  # CBoard after the candidate move; set on first touch
     terminal_value: float | None = None  # candidate move ends the game
     expanded: bool = False
+    # Serializes first expand when late-phase split lets multiple groups
+    # co-own this arena (VL descents themselves are tree-mutexed).
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
 
 @dataclass
@@ -221,6 +231,11 @@ class _WorkItem:
     arena: _CandidateArena
     budget: int
     phase_index: int
+    # True when this shard co-owns the arena with other groups in the same
+    # phase (design §2 late-phase split). Exclusive ownership is relaxed;
+    # the C tree's virtual-loss path is the concurrency contract (same as
+    # MultiGpuPucvPool on a shared tree).
+    shared: bool = False
 
 
 @dataclass
@@ -309,11 +324,13 @@ class RootParallelGumbelPool:
         self._phase_done = threading.Event()
         self._job_stop: threading.Event | None = None
 
-        # Ownership invariant (design §2 "the heart"): one group per candidate
-        # at a time. `_claim` asserts it; `touch_hook` (tests) sees
-        # claim/touch/release events.
+        # Ownership: exclusive one-group-per-candidate by default (design §2).
+        # Late-phase split uses a refcount so multiple groups may co-own one
+        # survivor arena under virtual-loss. `_claim` / `_claim_shared` assert
+        # the right contract; `touch_hook` (tests) sees claim/touch/release.
         self._owner_lock = threading.Lock()
-        self._owned: dict[int, int] = {}
+        self._owned: dict[int, int] = {}  # action -> exclusive owner group
+        self._owned_shared: dict[int, set[int]] = {}  # action -> co-owners
         self.owner_history: list[tuple[int, int, int]] = []  # (phase, action, group)
         self.touch_hook: Callable[[str, int, int], None] | None = None
 
@@ -591,13 +608,79 @@ class RootParallelGumbelPool:
             st.arenas[action] = arena
         return arena
 
+    def _shard_phase_items(self, items: list[_WorkItem]) -> list[_WorkItem]:
+        """When candidates < groups, split large survivor budgets so idle
+        GPUs stay busy (design §2 late-phase split).
+
+        Total phase sims are preserved (shards sum to original budgets).
+        Tiny budgets stay unsharded — splitting a 20-sim job into 2×10 just
+        adds queue overhead without filling gather.
+        """
+        n_groups = max(1, int(self._cfg.n_groups))
+        if (
+            not bool(self._cfg.split_idle_groups)
+            or len(items) >= n_groups
+            or not items
+        ):
+            return items
+        min_shard = max(1, int(self._cfg.gather) // 2)
+        total = sum(max(0, int(it.budget)) for it in items)
+        if total < n_groups * min_shard:
+            return items
+
+        # How many shards per original item: spread work so we produce at
+        # least n_groups tasks, preferring more shards on larger budgets.
+        shards_out: list[_WorkItem] = []
+        # First pass: proportional shard counts that sum to >= n_groups.
+        budgets = [max(0, int(it.budget)) for it in items]
+        n_items = len(items)
+        # At least 1 shard each, then distribute extra among largest.
+        counts = [1] * n_items
+        extra = n_groups - n_items
+        order = sorted(range(n_items), key=lambda i: -budgets[i])
+        i_ord = 0
+        while extra > 0 and order:
+            idx = order[i_ord % len(order)]
+            # Don't create shards smaller than min_shard when avoidable.
+            if budgets[idx] // (counts[idx] + 1) < min_shard and counts[idx] >= 1:
+                # Skip this item if every remaining item is also too small.
+                if all(
+                    budgets[j] // (counts[j] + 1) < min_shard
+                    for j in order
+                ):
+                    break
+                i_ord += 1
+                continue
+            counts[idx] += 1
+            extra -= 1
+            i_ord += 1
+
+        for it, n_shards, b in zip(items, counts, budgets):
+            if n_shards <= 1 or b <= 0:
+                shards_out.append(it)
+                continue
+            base = b // n_shards
+            rem = b - base * n_shards
+            for s in range(n_shards):
+                piece = base + (1 if s < rem else 0)
+                if piece <= 0:
+                    continue
+                shards_out.append(_WorkItem(
+                    arena=it.arena,
+                    budget=piece,
+                    phase_index=it.phase_index,
+                    shared=True,
+                ))
+        return shards_out if shards_out else items
+
     def _dispatch_phase(self, items: list[_WorkItem]) -> int:
+        work = self._shard_phase_items(items)
         with self._stats_lock:
             self._phase_sims = 0
         with self._pending_lock:
-            self._pending = len(items)
+            self._pending = len(work)
         self._phase_done.clear()
-        for it in items:
+        for it in work:
             self._work_q.put(it)
         self._phase_done.wait()
         with self._stats_lock:
@@ -665,14 +748,28 @@ class RootParallelGumbelPool:
 
     # --- ownership ---------------------------------------------------------------
 
-    def _claim(self, action: int, group: int, phase: int) -> None:
+    def _claim(self, action: int, group: int, phase: int, *, shared: bool) -> None:
         with self._owner_lock:
-            owner = self._owned.get(action)
-            assert owner is None, (
-                f"ownership violation: candidate {action} already owned by "
-                f"group {owner}, claimed by group {group}"
-            )
-            self._owned[action] = group
+            if shared:
+                assert action not in self._owned, (
+                    f"shared claim on exclusively-owned candidate {action} "
+                    f"(owner={self._owned[action]})"
+                )
+                owners = self._owned_shared.setdefault(action, set())
+                assert group not in owners, (
+                    f"group {group} double-claimed shared candidate {action}"
+                )
+                owners.add(group)
+            else:
+                assert action not in self._owned_shared, (
+                    f"exclusive claim on shared candidate {action}"
+                )
+                owner = self._owned.get(action)
+                assert owner is None, (
+                    f"ownership violation: candidate {action} already owned by "
+                    f"group {owner}, claimed by group {group}"
+                )
+                self._owned[action] = group
             if self.touch_hook is not None:
   # History is test instrumentation only — unbounded across a long
   # game, so record it only when a hook shows a test is watching.
@@ -680,9 +777,16 @@ class RootParallelGumbelPool:
         if self.touch_hook is not None:
             self.touch_hook("claim", action, group)
 
-    def _release(self, action: int, group: int) -> None:
+    def _release(self, action: int, group: int, *, shared: bool) -> None:
         with self._owner_lock:
-            self._owned.pop(action, None)
+            if shared:
+                owners = self._owned_shared.get(action)
+                if owners is not None:
+                    owners.discard(group)
+                    if not owners:
+                        self._owned_shared.pop(action, None)
+            else:
+                self._owned.pop(action, None)
         if self.touch_hook is not None:
             self.touch_hook("release", action, group)
 
@@ -764,11 +868,14 @@ class RootParallelGumbelPool:
         st = self._state
         assert st is not None
         arena = item.arena
-        self._claim(arena.action, group_idx, item.phase_index)
+        shared = bool(item.shared)
+        self._claim(arena.action, group_idx, item.phase_index, shared=shared)
         try:
             done = 0
-            if not arena.expanded:
-                done += self._expand_candidate(evaluator, arena, st)
+            # Expand exactly once even when split shards race the first touch.
+            with arena.lock:
+                if not arena.expanded:
+                    done += self._expand_candidate(evaluator, arena, st)
             if arena.terminal_value is not None:
                 # Classic semantics: every forced sim into a terminal child
                 # backprops the terminal value (visit counts keep accruing so
@@ -805,7 +912,7 @@ class RootParallelGumbelPool:
                 done += ran
             return done
         finally:
-            self._release(arena.action, group_idx)
+            self._release(arena.action, group_idx, shared=shared)
 
     def _expand_candidate(
         self,
