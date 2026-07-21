@@ -124,6 +124,9 @@ def mirror_sample(s: ReplaySample, *, input_history_encoding: str | None = None)
         priority_sf_search_gap=getattr(s, "priority_sf_search_gap", None),
         game_id=getattr(s, "game_id", None),
         ply_index=getattr(s, "ply_index", None),
+        seed_id=getattr(s, "seed_id", None),
+        seed_family_id=getattr(s, "seed_family_id", None),
+        opening_source_code=getattr(s, "opening_source_code", None),
         has_policy=bool(getattr(s, "has_policy", True)),
         x_lc0_root=None if x_lc0_root is None else mirror_x(x_lc0_root, input_history_encoding="lc0_root"),
         relations=(

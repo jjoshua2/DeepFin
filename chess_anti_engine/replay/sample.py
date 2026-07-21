@@ -23,6 +23,9 @@ class ReplaySample:
     priority_sf_search_gap: float | None = None
     game_id: int | None = None
     ply_index: int | None = None
+    seed_id: int | None = None
+    seed_family_id: int | None = None
+    opening_source_code: int | None = None
     has_policy: bool = True
     x_lc0_root: np.ndarray | None = None  # Optional alternate LC0-root input planes.
     relations: np.ndarray | None = None  # Optional (5,64,64) uint8 dynamic relation matrices.

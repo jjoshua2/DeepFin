@@ -133,6 +133,9 @@ _OPTIONAL_FIELD_SPECS: tuple[_OptFieldSpec, ...] = (
     _OptFieldSpec("priority_sf_search_gap","has_priority_sf_search_gap", (),       _F16),
     _OptFieldSpec("game_id",              "has_game_id",           (),            _I64_DT),
     _OptFieldSpec("ply_index",            "has_ply_index",         (),            _I32_DT),
+    _OptFieldSpec("seed_id",             "has_seed_id",            (), _I32_DT),
+    _OptFieldSpec("seed_family_id",      "has_seed_family_id",     (), _I32_DT),
+    _OptFieldSpec("opening_source_code", "has_opening_source_code",(), _U8_DT),
     _OptFieldSpec("sf_wdl",               "has_sf_wdl",            (3,),          _F16),
     _OptFieldSpec("sf_move_index",        "has_sf_move",           (),            _I32_DT),
     _OptFieldSpec("sf_played_move_index", "has_sf_played_move",    (),            _I32_DT),
@@ -781,6 +784,9 @@ _SCALAR_FIELDS: tuple[tuple[str, str, str, object], ...] = (
     ),
     ("game_id",           "game_id",            "has_game_id",           int),
     ("ply_index",         "ply_index",          "has_ply_index",         int),
+    ("seed_id",            "seed_id",             "has_seed_id",            int),
+    ("seed_family_id",     "seed_family_id",      "has_seed_family_id",     int),
+    ("opening_source_code","opening_source_code", "has_opening_source_code",int),
     ("sf_move_index",     "sf_move_index",  "has_sf_move",          int),
     ("sf_played_move_index", "sf_played_move_index", "has_sf_played_move", int),
     ("sf_played_rank",    "sf_played_rank",     "has_sf_played_rank",    int),
@@ -1182,6 +1188,12 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
             s.game_id = int(opt["game_id"][i])
         if opt["has_ply_index"][i]:
             s.ply_index = int(opt["ply_index"][i])
+        if opt["has_seed_id"][i]:
+            s.seed_id = int(opt["seed_id"][i])
+        if opt["has_seed_family_id"][i]:
+            s.seed_family_id = int(opt["seed_family_id"][i])
+        if opt["has_opening_source_code"][i]:
+            s.opening_source_code = int(opt["opening_source_code"][i])
         if opt["has_sf_wdl"][i]:
             s.sf_wdl = _copy_row(opt["sf_wdl"], i)
         if opt["has_sf_multipv_raw"][i]:
