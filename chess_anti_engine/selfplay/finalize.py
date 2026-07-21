@@ -840,8 +840,10 @@ def _build_replay_samples(
         total_plies_played=total_plies_played,
     )
     _seed_list_path = getattr(getattr(state, "opening", None), "opening_fen_list_path", None)
-    seed_id, seed_family_id = resolve_seed_ids(start_fen, _seed_list_path)
     opening_source_code_val = opening_source_code(opening_source)
+    seed_id, seed_family_id = resolve_seed_ids(
+        start_fen, _seed_list_path, source_code=opening_source_code_val,
+    )
     suffix_sf_regret = _suffix_sf_regret_features(records, is_selfplay=is_selfplay_slot)
     want_sf_p0_regret = bool(
         is_selfplay_slot and getattr(state.game, "record_sf_p0_regret", False)

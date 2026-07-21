@@ -11,6 +11,7 @@ from chess_anti_engine.replay import ReplaySample
 from chess_anti_engine.replay.shard import load_npz, save_npz
 from chess_anti_engine.selfplay.seed_manifest import (
     _load_by_key,
+    content_seed_id,
     opening_source_code,
     position_key,
     resolve_seed_ids,
@@ -67,7 +68,7 @@ def test_position_key_ignores_clocks():
     assert position_key(a) == position_key(b)
 
 
-def test_resolve_seed_ids(tmp_path):
+def test_resolve_seed_ids_manifest_wins_for_seed_rows(tmp_path):
     fen_match = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
     fen_miss = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
     key = position_key(fen_match)
@@ -85,12 +86,28 @@ def test_resolve_seed_ids(tmp_path):
     # lru_cache is keyed on (path, mtime); clear so a prior test's entry can't leak.
     _load_by_key.cache_clear()
 
-    assert resolve_seed_ids(fen_match, str(list_path)) == (4, 2)
-    # A FEN differing only in clocks still resolves (same position key).
-    fen_match_diff_clock = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 40 99"
-    assert resolve_seed_ids(fen_match_diff_clock, str(list_path)) == (4, 2)
-    assert resolve_seed_ids(fen_miss, str(list_path)) == (-1, -1)
+    # Seed-origin rows (source_code 2/3) get curated ids when the manifest hits.
+    assert resolve_seed_ids(fen_match, str(list_path), source_code=2) == (4, 2)
+    # Differing only in clocks still resolves (same position key).
+    fen_clock = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 40 99"
+    assert resolve_seed_ids(fen_clock, str(list_path), source_code=2) == (4, 2)
+    # Seed row NOT in the manifest -> content-hash fallback (never -1 for a seed).
+    hm = content_seed_id(fen_miss)
+    assert resolve_seed_ids(fen_miss, str(list_path), source_code=3) == (hm, hm)
+    # Non-seed rows never get an id, even when the manifest would hit.
+    assert resolve_seed_ids(fen_match, str(list_path), source_code=1) == (-1, -1)
+    assert resolve_seed_ids(fen_match, str(list_path), source_code=255) == (-1, -1)
 
-    # Missing manifest -> (-1, -1).
-    assert resolve_seed_ids(fen_match, str(tmp_path / "no_such_list.txt")) == (-1, -1)
-    assert resolve_seed_ids(fen_match, None) == (-1, -1)
+
+def test_content_hash_fallback_distributed(tmp_path):
+    # Distributed case: worker's list path is an ephemeral sha-named copy with
+    # no manifest beside it, so seed rows resolve via the content hash.
+    fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    h = content_seed_id(fen)
+    assert 0 <= h <= 0x7FFFFFFF  # fits non-negative int32 (shard dtype)
+    assert resolve_seed_ids(fen, str(tmp_path / "nope.txt"), source_code=2) == (h, h)
+    assert resolve_seed_ids(fen, None, source_code=2) == (h, h)
+    # Clock-invariant, and still guarded on seed source.
+    fen_clock = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 40 99"
+    assert content_seed_id(fen_clock) == h
+    assert resolve_seed_ids(fen, None, source_code=0) == (-1, -1)
