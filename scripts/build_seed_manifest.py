@@ -19,7 +19,7 @@ import os
 import sys
 
 from chess_anti_engine.selfplay.opening import _load_fen_list
-from chess_anti_engine.selfplay.seed_manifest import position_key
+from chess_anti_engine.selfplay.seed_manifest import content_seed_id, position_key
 
 
 def _default_list_path() -> str | None:
@@ -38,18 +38,25 @@ def build_manifest(list_path: str) -> dict[str, object]:
     fens = _load_fen_list(list_path)
     seeds: list[dict[str, object]] = []
     by_key: dict[str, list[int]] = {}
+    by_content_id: dict[str, str] = {}  # production seed_id (hash) -> FEN, for offline joins
     dup_count = 0
     for seed_id, fen in enumerate(fens):
         # seed_family_id is a v1 PLACEHOLDER (== seed_id); real near-transposition
         # grouping comes later.
         seed_family_id = seed_id
         key = position_key(fen)
+        # content_id is what finalize actually stamps in distributed mode (the
+        # worker's list path is ephemeral, so the path-keyed manifest never
+        # resolves there). Enrichment analysis joins shard seed_id -> this.
+        content_id = content_seed_id(fen)
         seeds.append({
             "seed_id": seed_id,
             "seed_family_id": seed_family_id,
+            "content_id": content_id,
             "fen": fen,
             "position_key": key,
         })
+        by_content_id[str(content_id)] = fen
         if key in by_key:
             # Two list entries share a position identity: keep the FIRST.
             dup_count += 1
@@ -63,6 +70,7 @@ def build_manifest(list_path: str) -> dict[str, object]:
         "n_seeds": len(fens),
         "seeds": seeds,
         "by_key": by_key,
+        "by_content_id": by_content_id,
     }
 
 
