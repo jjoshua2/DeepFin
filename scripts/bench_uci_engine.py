@@ -263,7 +263,11 @@ def _run_config(
     reader = _LineReader(proc)
     try:
         _send(proc, "uci")
-        startup_timeout = max(60.0, float(timeout_s))
+        # Multi-GPU + torch.compile cold autotune can take several minutes on
+        # the first process (disk cache warms subsequent launches). Keep a
+        # floor high enough for tournament prewarm; per-search timeout stays
+        # separate.
+        startup_timeout = max(600.0 if devices else 120.0, float(timeout_s))
         reader.read_until("uciok", timeout_s=startup_timeout)
         if use_vl:
             _send(proc, "setoption name UseVL value true")

@@ -791,6 +791,8 @@ class RootParallelGumbelPool:
                     self.touch_hook("touch", arena.action, group_idx)
                 # 2x gather per call keeps the chunker's 2-slot CPU/GPU
                 # overlap alive while bounding stop latency to ~two batches.
+                # When remaining < gather the chunker already densifies to
+                # remaining (min(gather, target)); no extra adaptive path.
                 n = min(item.budget - done, 2 * gather)
                 ran = int(chunker.run(st.tree, arena.cid, arena.cboard, n))
                 if ran <= 0:

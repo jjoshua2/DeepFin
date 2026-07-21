@@ -1089,8 +1089,16 @@ class Engine:
                 optimum_ms=None,
                 abort_factor=self._options.abort_factor,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+  # Multi-GPU tournament path: a silent warmup failure leaves cold
+  # workers that then crash on the first clocked go. Surface it so
+  # isready fails loud before the GUI starts the clock. Single-GPU
+  # keeps best-effort (a real go still reports the error).
+            if self._multi_gpu_path_active():
+                raise
+            logging.getLogger(__name__).debug(
+                "warmup_search best-effort failure: %r", exc,
+            )
         finally:
             self._worker.reset_tree()
 
