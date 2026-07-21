@@ -571,9 +571,11 @@ class SearchWorker:
             self._walker_pool.close()
             self._walker_pool = None
         self._pucv = None
+        n_groups = len(evaluators_or_factories)
+        gath = max(1, int(gather))
         cfg = RootParallelGumbelConfig(
-            n_groups=len(evaluators_or_factories),
-            gather=int(gather),
+            n_groups=n_groups,
+            gather=gath,
             c_puct=float(self._cfg.c_puct),
             fpu_at_root=0.0,
             fpu_reduction=float(self._cfg.fpu_reduction),
@@ -581,6 +583,9 @@ class SearchWorker:
   # vloss_mode stays at the config default (virtual-mean): the design pins
   # the intra-candidate regime; the pucv pool's PUCVPendingMode default
   # (legacy) deliberately does not leak in here.
+            split_idle_groups=n_groups > 1,
+            # Multi-GPU: floor early-phase vpa toward gather-sized batches.
+            min_vpa=(max(32, gath // 4) if n_groups > 1 else 0),
             eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),
@@ -1357,8 +1362,15 @@ class SearchWorker:
   # matched_time, where one full _chunk_sims=2048 chunk would itself overrun)
   # shrinks the first chunk. A normal/long budget leaves it at _chunk_sims; the
   # measured nps then caps every later chunk.
+  #
+  # Exception: root-parallel Gumbel *requires* a large first schedule or
+  # early-phase vpa collapses (vpa≈5 at 512 sims → GPU batch starvation).
+  # Cap only by bootstrap time, not by base _chunk_sims.
             boot_cap = int(_BOOTSTRAP_NPS_PER_MS * remaining_ms)
-            return min(chunk, self._chunk_sims, max(_MIN_FIRST_CHUNK, boot_cap))
+            time_bound = max(_MIN_FIRST_CHUNK, boot_cap)
+            if self._rpg_pool is not None:
+                return min(chunk, time_bound)
+            return min(chunk, self._chunk_sims, time_bound)
         elapsed = deadline.elapsed_ms()
         if elapsed <= 0:
             return chunk

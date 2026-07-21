@@ -292,6 +292,22 @@ def test_ownership_invariant_no_concurrent_touch() -> None:
     assert pool.owner_history, "no work was dispatched"
 
 
+def test_phase_vpa_min_floor_for_multi_gpu() -> None:
+    """min_vpa floors early-phase visits without exceeding remaining budget."""
+    pool = _make_pool(2, gather=256, split_idle_groups=False)
+    try:
+        pool._cfg.min_vpa = 64
+        # classic at 20 cands / 512 budget is 5; floor lifts toward min(64, 512//20).
+        assert pool._phase_vpa(20, 512) == 25
+        # classic already large: unchanged.
+        assert pool._phase_vpa(20, 8000) == halving_visits_per_action(20, 8000)
+        # min_vpa off.
+        pool._cfg.min_vpa = 0
+        assert pool._phase_vpa(20, 512) == 5
+    finally:
+        pool.close()
+
+
 def test_late_phase_split_fills_idle_groups() -> None:
     """When survivors < groups and budgets are large, shard work so all
     groups receive jobs (design §2 late-phase split)."""

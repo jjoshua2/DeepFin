@@ -187,7 +187,13 @@ class RootParallelGumbelConfig:
     # inside a shared candidate changes. Disable for bit-identity tests
     # against serial g=1 under a deterministic evaluator.
     split_idle_groups: bool = True
-    # Per-group PucvChunker eval-cache capacity (0 = off). Same knob as the
+    # Floor on visits_per_action when n_groups > 1 (0 = off). Lifts tiny
+    # early-phase vpa (e.g. 5 at short budgets) toward gather-sized GPU
+    # batches. Still sequential-halving; only spends more of the budget
+    # earlier. Bit-identity / pure-schedule tests leave this 0; multi-GPU
+    # install sets ~max(32, gather//4).
+    min_vpa: int = 0
+    # Per-group PucvChunker eval-cache capacity (0 = off). Same knobs as the
     # multi-GPU PUCV pool / single-thread UseVL path; each group owns its own
     # cache (subtrees are disjoint so a shared cache would rarely hit).
     eval_cache_entries: int = 0
@@ -558,7 +564,7 @@ class RootParallelGumbelPool:
         phase_index = 0
         while budget > 0 and remaining:
             n_cands = len(remaining)
-            vpa = halving_visits_per_action(n_cands, budget, self._gcfg.halving_div)
+            vpa = self._phase_vpa(n_cands, budget)
             items = [
                 _WorkItem(self._arena_for(st, a), vpa, phase_index)
                 for a in remaining
@@ -576,6 +582,8 @@ class RootParallelGumbelPool:
                 sims_completed=sims_done,
                 survivor_actions=tuple(remaining),
             ))
+            # Info every phase is fine for short schedules (≤~6 phases); keep
+            # the string compact for GUI/logs under high nps.
             if self._info_cb is not None:
                 self._info_cb(
                     f"rpg phase={phase_index} cands={n_cands} vpa={vpa} "
@@ -598,6 +606,18 @@ class RootParallelGumbelPool:
         return value, int(best)
 
     # --- orchestrator internals -------------------------------------------------
+
+    def _phase_vpa(self, n_cands: int, budget: int) -> int:
+        """Classic sequential-halving vpa, optionally floored for multi-GPU."""
+        classic = int(
+            halving_visits_per_action(n_cands, budget, self._gcfg.halving_div)
+        )
+        floor = int(self._cfg.min_vpa)
+        if floor <= 0 or int(self._cfg.n_groups) <= 1 or n_cands <= 0:
+            return classic
+        # Never overspend the remaining budget on this phase alone.
+        max_vpa = max(1, int(budget) // max(1, int(n_cands)))
+        return max(classic, min(floor, max_vpa))
 
     def _arena_for(self, st: _SearchState, action: int) -> _CandidateArena:
         arena = st.arenas.get(action)
@@ -794,6 +814,14 @@ class RootParallelGumbelPool:
 
     def _worker_loop(self, idx: int) -> None:
         try:
+            # Ordinary threads do not inherit Inductor cudagraph TLS.
+            try:
+                from chess_anti_engine.inference_dispatcher import (
+                    bootstrap_cudagraph_tls,
+                )
+                bootstrap_cudagraph_tls()
+            except Exception:
+                pass
             if self._factories is not None:
                 if self._devices is not None:
                     device = self._devices[idx]
