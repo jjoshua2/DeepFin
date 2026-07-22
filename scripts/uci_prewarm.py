@@ -77,10 +77,11 @@ def _run_once(
     )
     assert proc.stdin is not None
     assert proc.stdout is not None
+    stdin = proc.stdin  # local binding keeps the narrowed type inside closures
 
     def send(line: str) -> None:
-        proc.stdin.write(line + "\n")
-        proc.stdin.flush()
+        stdin.write(line + "\n")
+        stdin.flush()
 
     stderr_tail: list[str] = []
 
