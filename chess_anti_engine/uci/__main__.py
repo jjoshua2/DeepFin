@@ -564,12 +564,15 @@ def _build_engine(
         pucv_vloss_mode=pucv_vloss_mode,
         eval_cache_entries=eval_cache_entries,
     )
+    # Same default Engine applies when options is None; resolved here too so
+    # the RPG install below reads concrete knobs.
+    opts = options if options is not None else EngineOptions()
     engine = Engine(
         worker,
         rebuild_evaluator=rebuild_evaluator,
         rebuild_multi_gpu_pucv_factories=rebuild_multi_gpu_pucv_factories,
         search_devices=devices,
-        options=options,
+        options=opts,
         gil_profile=gil_profile,
     )
   # The two multi-GPU modes are mutually exclusive; the gumbel branch reuses
@@ -583,10 +586,10 @@ def _build_engine(
                 factories, gather=effective_gather, as_factories=True,
                 devices=list(devices) if devices else None,
                 info_string_cb=_emit_info_string,
-                open_vpa=int(options.rpg_open_vpa),
-                min_vpa=int(options.rpg_min_vpa),
-                min_keep=int(options.rpg_min_keep),
-                open_budget_frac=float(options.rpg_open_budget_frac),
+                open_vpa=int(opts.rpg_open_vpa),
+                min_vpa=int(opts.rpg_min_vpa),
+                min_keep=int(opts.rpg_min_keep),
+                open_budget_frac=float(opts.rpg_open_budget_frac),
             )
     elif use_multi_gpu_pucv and rebuild_multi_gpu_pucv_factories is not None:
         effective_gather = min(vl_gather, max_batch)

@@ -303,7 +303,7 @@ def test_rpg_schedule_setoption_reinstalls_when_gumbel_active(capsys) -> None:
     engine = Engine(
         worker=worker,
         rebuild_multi_gpu_pucv_factories=lambda max_batch, gather: factories,
-        search_devices=["cuda:0", "cuda:1"],
+        search_devices=("cuda:0", "cuda:1"),
         options=EngineOptions(search_parallel="gumbel"),
     )
     # Seed as if SearchParallel=gumbel already installed.

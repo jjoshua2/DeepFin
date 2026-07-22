@@ -311,7 +311,9 @@ def test_time_capped_chunk_bounds_unbounded_first_chunk() -> None:
     assert w._time_capped_chunk(8192, d_open, 0) == 8192
     # Root-parallel Gumbel needs a large first schedule: do not clamp to
     # base _chunk_sims when an RPG pool is installed (time_bound only).
-    w._rpg_pool = object()  # truthy stand-in; method only checks is not None
+    from typing import Any, cast
+    # Truthy stand-in; the method only checks `is not None`.
+    w._rpg_pool = cast("Any", object())
     assert w._time_capped_chunk(8192, d, 0) == 8192
     w._rpg_pool = None
 
