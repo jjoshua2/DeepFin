@@ -573,6 +573,13 @@ class SearchWorker:
         self._pucv = None
         n_groups = len(evaluators_or_factories)
         gath = max(1, int(gather))
+        multi = n_groups > 1
+        # Multi-GPU schedule: open all root trees at full gather (no-halve
+        # scout), then SH with min_vpa=gather so *later* phases stay fat too
+        # (NPS gap vs PUCV is structural underfill, not only first-phase
+        # startup). min_keep≈n_groups delays collapse below device count.
+        # Single-group leaves all off for classic bit-identity.
+        # See root_parallel_gumbel.RootParallelGumbelConfig.
         cfg = RootParallelGumbelConfig(
             n_groups=n_groups,
             gather=gath,
@@ -580,12 +587,14 @@ class SearchWorker:
             fpu_at_root=0.0,
             fpu_reduction=float(self._cfg.fpu_reduction),
             vloss_weight=self._vloss_weight,
-  # vloss_mode stays at the config default (virtual-mean): the design pins
-  # the intra-candidate regime; the pucv pool's PUCVPendingMode default
-  # (legacy) deliberately does not leak in here.
-            split_idle_groups=n_groups > 1,
-            # Multi-GPU: floor early-phase vpa toward gather-sized batches.
-            min_vpa=(max(32, gath // 4) if n_groups > 1 else 0),
+            # vloss_mode stays at the config default (virtual-mean): the design pins
+            # the intra-candidate regime; the pucv pool's PUCVPendingMode default
+            # (legacy) deliberately does not leak in here.
+            split_idle_groups=multi,
+            min_vpa=(gath if multi else 0),
+            open_vpa=(gath if multi else 0),
+            open_budget_frac=0.50,
+            min_keep=(n_groups if multi else 0),
             eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),

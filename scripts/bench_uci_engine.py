@@ -87,6 +87,7 @@ def _spawn(checkpoint: str, device: str, *,
            walkers: int = 1, coalesce: bool = True,
            multi_gpu_pucv: bool = False, vl_gather: int = 512,
            pucv_pending_mode: str = "legacy",
+           search_parallel: str | None = None,
            compile_model: bool = True,
            compile_mode: str = "max-autotune",
            compile_cache_dir: str | None = None,
@@ -110,6 +111,8 @@ def _spawn(checkpoint: str, device: str, *,
         cmd.append("--no-coalesce")
     if multi_gpu_pucv:
         cmd.append("--multi-gpu-pucv")
+    if search_parallel:
+        cmd.extend(["--search-parallel", str(search_parallel)])
     if compile_model:
         cmd.extend(["--compile-mode", compile_mode])
     else:
@@ -243,6 +246,7 @@ def _run_config(
     walkers: int = 1, coalesce: bool = True,
     multi_gpu_pucv: bool = False, vl_gather: int = 512,
     pucv_pending_mode: str = "legacy",
+    search_parallel: str | None = None,
     use_vl: bool = False,
     compile_model: bool = True,
     compile_mode: str = "max-autotune",
@@ -256,6 +260,7 @@ def _run_config(
                   walkers=walkers, coalesce=coalesce,
                   multi_gpu_pucv=multi_gpu_pucv, vl_gather=vl_gather,
                   pucv_pending_mode=pucv_pending_mode,
+                  search_parallel=search_parallel,
                   compile_model=compile_model, compile_mode=compile_mode,
                   compile_cache_dir=compile_cache_dir,
                   gil_profile=gil_profile,
@@ -411,6 +416,10 @@ def main() -> int:
                    help="VLGather / multi-GPU PUCV gather size")
     p.add_argument("--multi-gpu-pucv", action="store_true",
                    help="launch UCI with --multi-gpu-pucv when --devices is set")
+    p.add_argument(
+        "--search-parallel", choices=["pucv", "gumbel"], default=None,
+        help="pass --search-parallel to UCI (gumbel = root-parallel Gumbel)",
+    )
     p.add_argument("--pucv-pending-mode", choices=["legacy", "virtual-mean"],
                    default="legacy",
                    help="pending accounting for batched PUCV paths")
@@ -509,6 +518,7 @@ def main() -> int:
                 eval_cache_entries=args.eval_cache_entries,
                 multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
                 pucv_pending_mode=args.pucv_pending_mode,
+                search_parallel=args.search_parallel,
                 compile_model=args.compile,
                 compile_mode=args.compile_mode,
                 compile_cache_dir=args.compile_cache_dir,
@@ -535,6 +545,7 @@ def main() -> int:
                 walkers=w, coalesce=coal, label=label,
                 multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
                 pucv_pending_mode=args.pucv_pending_mode,
+                search_parallel=args.search_parallel,
                 compile_model=args.compile,
                 compile_mode=args.compile_mode,
                 compile_cache_dir=args.compile_cache_dir,
@@ -550,6 +561,7 @@ def main() -> int:
             walkers=args.walkers, coalesce=args.coalesce,
             multi_gpu_pucv=args.multi_gpu_pucv, vl_gather=args.vl_gather,
             pucv_pending_mode=args.pucv_pending_mode,
+            search_parallel=args.search_parallel,
             use_vl=args.use_vl,
             compile_model=args.compile,
             compile_mode=args.compile_mode,

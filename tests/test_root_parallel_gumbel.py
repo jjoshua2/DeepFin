@@ -308,6 +308,75 @@ def test_phase_vpa_min_floor_for_multi_gpu() -> None:
         pool.close()
 
 
+def test_open_phase_vpa_caps_and_skips_single_group() -> None:
+    """open_vpa is multi-GPU only and respects budget + open_budget_frac."""
+    pool = _make_pool(2, gather=64, split_idle_groups=False)
+    try:
+        pool._cfg.open_vpa = 128
+        pool._cfg.open_budget_frac = 0.40
+        # 20 cands, budget 1000 → frac cap = 400//20 = 20, budget cap = 50.
+        assert pool._open_phase_vpa(20, 1000) == 20
+        # Large budget: target wins.
+        assert pool._open_phase_vpa(8, 50_000) == 128
+        # Single group: always off even if configured.
+        pool._cfg.n_groups = 1
+        assert pool._open_phase_vpa(8, 50_000) == 0
+        pool._cfg.n_groups = 2
+        pool._cfg.open_vpa = 0
+        assert pool._open_phase_vpa(8, 50_000) == 0
+    finally:
+        pool.close()
+
+
+def test_open_phase_keeps_all_candidates_then_halves() -> None:
+    """Open scout does not eliminate candidates; SH phases follow."""
+    pool = _make_pool(2, topk=8, gather=8, split_idle_groups=False)
+    try:
+        pool._cfg.open_vpa = 16
+        pool._cfg.open_budget_frac = 0.50
+        pool._cfg.min_vpa = 0
+        pool._cfg.min_keep = 0
+        _value, _action, stats, _actions, _visits = _run_search(
+            pool, target_sims=256,
+        )
+        assert stats.phases, "expected at least one phase"
+        open_phases = [p for p in stats.phases if p.kind == "open"]
+        assert len(open_phases) == 1, stats.phases
+        op = open_phases[0]
+        assert op.index == 0
+        assert op.visits_per_action > 0
+        # No-halve: survivors after open equal the open candidate count.
+        assert len(op.survivor_actions) == op.candidates
+        # Remaining budget runs classic SH (kind=halve).
+        halve_phases = [p for p in stats.phases if p.kind == "halve"]
+        assert halve_phases, "expected sequential-halving after open"
+        # Candidate count must eventually drop below the open set.
+        assert any(
+            p.candidates < op.candidates for p in halve_phases
+        ) or any(
+            len(p.survivor_actions) < p.candidates for p in halve_phases
+        )
+    finally:
+        pool.close()
+
+
+def test_halving_keep_min_floor() -> None:
+    """min_keep floors survivors without keeping everyone."""
+    pool = _make_pool(4, gather=32, split_idle_groups=False)
+    try:
+        pool._cfg.min_keep = 4
+        # classic keep for 8 is 4; floor at 4 → still 4.
+        assert pool._halving_keep(8) == 4
+        # classic keep for 6 is 3; floor lifts to min(4, 5) = 4.
+        assert pool._halving_keep(6) == 4
+        # Must still eliminate at least one: n=4 → keep <= 3.
+        assert pool._halving_keep(4) == 3
+        pool._cfg.min_keep = 0
+        assert pool._halving_keep(6) == halving_keep_count(6)
+    finally:
+        pool.close()
+
+
 def test_late_phase_split_fills_idle_groups() -> None:
     """When survivors < groups and budgets are large, shard work so all
     groups receive jobs (design §2 late-phase split)."""
