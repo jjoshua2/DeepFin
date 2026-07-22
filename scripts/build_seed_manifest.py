@@ -18,8 +18,42 @@ import json
 import os
 import sys
 
+import chess
+
 from chess_anti_engine.selfplay.opening import _load_fen_list
 from chess_anti_engine.selfplay.seed_manifest import content_seed_id, position_key
+
+
+def _derived_content_ids(list_path: str) -> dict[str, str]:
+    """content_id -> parent seed FEN for every position along each seed's
+    baked refute line (``FEN | uci uci ...`` suffix in the raw list).
+
+    sf_refute games (opening_source_code=3) start from a position PARTWAY down
+    the refute line, so their shard ``seed_id`` hashes a derived position, not
+    the listed seed. This map lets offline analysis collapse those ids back to
+    the parent seed.
+    """
+    out: dict[str, str] = {}
+    with open(list_path, encoding="utf-8") as fh:
+        for raw in fh:
+            raw = raw.strip()
+            if not raw or raw.startswith("#"):
+                continue
+            fen_part, _, moves_part = raw.partition("|")
+            fen = fen_part.split("#")[0].strip()
+            if not fen or not moves_part.strip():
+                continue
+            try:
+                board = chess.Board(fen)
+            except ValueError:
+                continue
+            for mv in moves_part.split():
+                try:
+                    board.push_uci(mv)
+                except ValueError:
+                    break
+                out[str(content_seed_id(board.fen()))] = fen
+    return out
 
 
 def _default_list_path() -> str | None:
@@ -64,6 +98,9 @@ def build_manifest(list_path: str) -> dict[str, object]:
         by_key[key] = [seed_id, seed_family_id]
     if dup_count:
         print(f"warning: {dup_count} duplicate position_key(s); kept the first each")
+    # Refute-line positions hash to their own content_ids in shards; map each
+    # back to the parent seed FEN so analysis can collapse them.
+    derived = _derived_content_ids(list_path)
     return {
         "version": 1,
         "list_path": os.path.abspath(list_path),
@@ -71,6 +108,7 @@ def build_manifest(list_path: str) -> dict[str, object]:
         "seeds": seeds,
         "by_key": by_key,
         "by_content_id": by_content_id,
+        "by_derived_content_id": derived,
     }
 
 
