@@ -33,6 +33,7 @@ def _engine_cmd(
     device: str | None,
     multi_mode: str | None,
     compile_mode: str,
+    no_compile: bool,
     vl_gather: int,
     max_batch: int,
     chunk_sims: int,
@@ -43,9 +44,12 @@ def _engine_cmd(
         "--chunk-sims", str(chunk_sims),
         "--max-batch", str(max_batch),
         "--vl-gather", str(vl_gather),
-        "--compile-mode", compile_mode,
         "--log-level", "WARNING",
     ]
+    if no_compile:
+        cmd.append("--no-compile")
+    else:
+        cmd.extend(["--compile-mode", compile_mode])
     if devices:
         cmd.extend(["--devices", devices])
         if multi_mode == "gumbel":
@@ -179,6 +183,11 @@ def main() -> int:
     p.add_argument("--movetime", type=int, default=1000, help="ms per move")
     p.add_argument("--max-plies", type=int, default=200)
     p.add_argument("--compile-mode", default="reduce-overhead")
+    p.add_argument(
+        "--no-compile", action="store_true",
+        help="eager path (recommended for short match ladders; avoids "
+             "per-game cold compile when engines respawn)",
+    )
     p.add_argument("--vl-gather", type=int, default=256)
     p.add_argument("--max-batch", type=int, default=1024)
     p.add_argument("--chunk-sims", type=int, default=512)
@@ -192,6 +201,7 @@ def main() -> int:
         device=args.device_a,
         multi_mode=None,
         compile_mode=args.compile_mode,
+        no_compile=bool(args.no_compile),
         vl_gather=args.vl_gather,
         max_batch=args.max_batch,
         chunk_sims=args.chunk_sims,
@@ -202,6 +212,7 @@ def main() -> int:
         device=None,
         multi_mode=args.multi_mode,
         compile_mode=args.compile_mode,
+        no_compile=bool(args.no_compile),
         vl_gather=args.vl_gather,
         max_batch=args.max_batch,
         chunk_sims=args.chunk_sims,
