@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
-"""Paired match: 1-GPU classic Gumbel vs multi-GPU search (PUCV or RPG).
+"""Paired fixed-clock match between two UCI search configurations.
 
-Purpose: after multi-GPU throughput work, check that higher nps still
-*plays* (no crashes, no time forfeits) and estimate Elo at fixed clock.
+Typical uses:
+  # 1-GPU classic Gumbel vs 2-GPU PUCV (throughput → strength?)
+  PYTHONPATH=. python3 scripts/match_multi_gpu.py \\
+      --checkpoint best_model.pt --devices cuda:0,cuda:1 \\
+      --mode-a gumbel1 --mode-b pucv --games 20 --movetime 1000
+
+  # Head-to-head of the two multi-GPU paths (the interesting one)
+  PYTHONPATH=. python3 scripts/match_multi_gpu.py \\
+      --checkpoint best_model.pt --devices cuda:0,cuda:1 \\
+      --mode-a gumbel --mode-b pucv --games 20 --movetime 1000 --no-compile
+
+Modes:
+  gumbel1  single-GPU classic Gumbel (uses --device-a)
+  gumbel   multi-GPU root-parallel Gumbel (SearchParallel=gumbel)
+  pucv     multi-GPU shared-tree PUCV
+
 This is NOT a substitute for the frozen deep-SF audit — it answers
-"does the parallel path cash the NPS into games?"
-
-Examples:
-  PYTHONPATH=. python3 scripts/match_multi_gpu.py \\
-      --checkpoint best_model.pt --devices cuda:0,cuda:1 \\
-      --games 20 --movetime 1000
-
-  # root-parallel Gumbel on 2 GPUs vs 1-GPU Gumbel
-  PYTHONPATH=. python3 scripts/match_multi_gpu.py \\
-      --checkpoint best_model.pt --devices cuda:0,cuda:1 \\
-      --multi-mode gumbel --games 20 --movetime 2000
+"which parallel path cashes NPS into games at fixed clock?"
 """
 from __future__ import annotations
 
@@ -25,13 +29,15 @@ import sys
 import time
 from pathlib import Path
 
+_MODES = ("gumbel1", "gumbel", "pucv")
+
 
 def _engine_cmd(
     *,
     checkpoint: str,
-    devices: str | None,
-    device: str | None,
-    multi_mode: str | None,
+    mode: str,
+    devices: str,
+    device_a: str,
     compile_mode: str,
     no_compile: bool,
     vl_gather: int,
@@ -50,14 +56,23 @@ def _engine_cmd(
         cmd.append("--no-compile")
     else:
         cmd.extend(["--compile-mode", compile_mode])
-    if devices:
-        cmd.extend(["--devices", devices])
-        if multi_mode == "gumbel":
-            cmd.extend(["--search-parallel", "gumbel", "--walkers", "1"])
-        else:
-            cmd.extend(["--multi-gpu-pucv", "--walkers", "1"])
+    if mode == "gumbel1":
+        cmd.extend(["--device", device_a, "--walkers", "1"])
+    elif mode == "gumbel":
+        cmd.extend([
+            "--devices", devices,
+            "--search-parallel", "gumbel",
+            "--walkers", "1",
+        ])
+    elif mode == "pucv":
+        cmd.extend([
+            "--devices", devices,
+            "--multi-gpu-pucv",
+            "--search-parallel", "pucv",
+            "--walkers", "1",
+        ])
     else:
-        cmd.extend(["--device", device or "cuda:0", "--walkers", "1"])
+        raise ValueError(f"unknown mode {mode!r}")
     return cmd
 
 
@@ -172,11 +187,22 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--devices", default="cuda:0,cuda:1",
-                   help="multi-GPU device list for engine B")
+                   help="device list for multi-GPU modes (gumbel/pucv)")
     p.add_argument("--device-a", default="cuda:0",
-                   help="single-GPU device for engine A (classic Gumbel)")
-    p.add_argument("--multi-mode", choices=["pucv", "gumbel"], default="pucv",
-                   help="multi-GPU search mode for engine B")
+                   help="device for gumbel1 mode")
+    p.add_argument(
+        "--mode-a", choices=_MODES, default="gumbel1",
+        help="engine A search mode (default: single-GPU Gumbel)",
+    )
+    p.add_argument(
+        "--mode-b", choices=_MODES, default="pucv",
+        help="engine B search mode (default: multi-GPU PUCV)",
+    )
+    # Back-compat alias for older CLI: --multi-mode X ≡ --mode-b X with A=gumbel1
+    p.add_argument(
+        "--multi-mode", choices=["pucv", "gumbel"], default=None,
+        help=argparse.SUPPRESS,
+    )
     p.add_argument("--games", type=int, default=20)
     p.add_argument("--movetime", type=int, default=1000, help="ms per move")
     p.add_argument("--max-plies", type=int, default=200)
@@ -193,11 +219,17 @@ def main() -> int:
     p.add_argument("--out", default=None, help="optional JSONL results path")
     args = p.parse_args()
 
+    mode_a = str(args.mode_a)
+    mode_b = str(args.mode_b)
+    if args.multi_mode is not None:
+        mode_a = "gumbel1"
+        mode_b = str(args.multi_mode)
+
     cmd_a = _engine_cmd(
         checkpoint=args.checkpoint,
-        devices=None,
-        device=args.device_a,
-        multi_mode=None,
+        mode=mode_a,
+        devices=args.devices,
+        device_a=args.device_a,
         compile_mode=args.compile_mode,
         no_compile=bool(args.no_compile),
         vl_gather=args.vl_gather,
@@ -206,9 +238,9 @@ def main() -> int:
     )
     cmd_b = _engine_cmd(
         checkpoint=args.checkpoint,
+        mode=mode_b,
         devices=args.devices,
-        device=None,
-        multi_mode=args.multi_mode,
+        device_a=args.device_a,
         compile_mode=args.compile_mode,
         no_compile=bool(args.no_compile),
         vl_gather=args.vl_gather,
@@ -216,10 +248,17 @@ def main() -> int:
         chunk_sims=args.chunk_sims,
     )
     print(
-        f"# A=1gpu-gumbel({args.device_a})  B=multi-{args.multi_mode}({args.devices})  "
-        f"games={args.games} movetime={args.movetime}ms",
+        f"# A={mode_a}  B={mode_b}  devices={args.devices}  "
+        f"games={args.games} movetime={args.movetime}ms  "
+        f"compile={'off' if args.no_compile else args.compile_mode}",
         flush=True,
     )
+    if mode_a in ("gumbel", "pucv") and mode_b in ("gumbel", "pucv"):
+        print(
+            "# note: both sides multi-GPU — two processes share the same "
+            "device list (VRAM + PCIe contention; still the right head-to-head)",
+            flush=True,
+        )
 
     out_path = Path(args.out) if args.out else None
     out_fh = out_path.open("w") if out_path else None
@@ -265,7 +304,8 @@ def main() -> int:
             row = {
                 "game": g,
                 "b_is_white": b_is_white,
-                "multi_mode": args.multi_mode,
+                "mode_a": mode_a,
+                "mode_b": mode_b,
                 **res,
             }
             if out_fh is not None:
@@ -278,7 +318,7 @@ def main() -> int:
     played = args.games - crashes
     print(
         f"\n# done  B_score={score_b:.1f}/{played}  crashes={crashes}  "
-        f"mode={args.multi_mode}",
+        f"A={mode_a} B={mode_b}",
         flush=True,
     )
     if crashes:

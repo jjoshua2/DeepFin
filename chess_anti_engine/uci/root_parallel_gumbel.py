@@ -165,6 +165,47 @@ def halving_schedule(
     return phases
 
 
+def resolve_rpg_schedule_knobs(
+    *,
+    n_groups: int,
+    gather: int,
+    open_vpa: int = -1,
+    min_vpa: int = -1,
+    min_keep: int = -1,
+    open_budget_frac: float = 0.50,
+) -> tuple[int, int, int, float]:
+    """Map UCI schedule knobs to concrete ``RootParallelGumbelConfig`` values.
+
+    Convention (UCI spins, multi-GPU only):
+      -1 = auto (open/min_vpa → gather, min_keep → n_groups)
+       0 = off
+      >0 = fixed value
+
+    Single-group installs always resolve to all-off so g=1 bit-identity
+    tests stay independent of UCI defaults.
+    """
+    gath = max(1, int(gather))
+    groups = max(1, int(n_groups))
+    frac = float(open_budget_frac)
+    if not (0.0 < frac <= 1.0):
+        frac = 0.50
+    if groups <= 1:
+        return 0, 0, 0, frac
+
+    def _resolve(raw: int, auto: int) -> int:
+        v = int(raw)
+        if v < 0:
+            return int(auto)
+        return max(0, v)
+
+    return (
+        _resolve(open_vpa, gath),
+        _resolve(min_vpa, gath),
+        _resolve(min_keep, groups),
+        frac,
+    )
+
+
 # --- config / stats -----------------------------------------------------------
 
 

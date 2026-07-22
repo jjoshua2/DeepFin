@@ -308,6 +308,29 @@ def test_phase_vpa_min_floor_for_multi_gpu() -> None:
         pool.close()
 
 
+def test_resolve_rpg_schedule_knobs_auto_off_fixed() -> None:
+    from chess_anti_engine.uci.root_parallel_gumbel import resolve_rpg_schedule_knobs
+
+    # Single group: always off regardless of auto.
+    assert resolve_rpg_schedule_knobs(
+        n_groups=1, gather=256, open_vpa=-1, min_vpa=-1, min_keep=-1,
+    ) == (0, 0, 0, 0.50)
+    # Multi auto: open/min_vpa → gather, min_keep → n_groups.
+    assert resolve_rpg_schedule_knobs(
+        n_groups=2, gather=256, open_vpa=-1, min_vpa=-1, min_keep=-1,
+    ) == (256, 256, 2, 0.50)
+    # Explicit off.
+    assert resolve_rpg_schedule_knobs(
+        n_groups=2, gather=256, open_vpa=0, min_vpa=0, min_keep=0,
+    ) == (0, 0, 0, 0.50)
+    # Fixed values.
+    open_v, min_v, keep, frac = resolve_rpg_schedule_knobs(
+        n_groups=4, gather=512, open_vpa=128, min_vpa=64, min_keep=3,
+        open_budget_frac=0.35,
+    )
+    assert (open_v, min_v, keep, frac) == (128, 64, 3, 0.35)
+
+
 def test_open_phase_vpa_caps_and_skips_single_group() -> None:
     """open_vpa is multi-GPU only and respects budget + open_budget_frac."""
     pool = _make_pool(2, gather=64, split_idle_groups=False)

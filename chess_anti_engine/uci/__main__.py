@@ -583,6 +583,10 @@ def _build_engine(
                 factories, gather=effective_gather, as_factories=True,
                 devices=list(devices) if devices else None,
                 info_string_cb=_emit_info_string,
+                open_vpa=int(options.rpg_open_vpa),
+                min_vpa=int(options.rpg_min_vpa),
+                min_keep=int(options.rpg_min_keep),
+                open_budget_frac=float(options.rpg_open_budget_frac),
             )
     elif use_multi_gpu_pucv and rebuild_multi_gpu_pucv_factories is not None:
         effective_gather = min(vl_gather, max_batch)

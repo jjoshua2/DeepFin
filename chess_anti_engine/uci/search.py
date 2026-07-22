@@ -39,6 +39,7 @@ from .root_parallel_gumbel import (
     RootParallelGumbelConfig,
     RootParallelGumbelPool,
     RootParallelGumbelStats,
+    resolve_rpg_schedule_knobs,
 )
 from chess_anti_engine.moves import index_to_move, move_to_index
 from chess_anti_engine.tablebase import SyzygyProbe, try_tb_root_move
@@ -551,6 +552,12 @@ class SearchWorker:
         as_factories: bool = False,
         devices: list[str] | None = None,
         info_string_cb: Callable[[str], None] | None = None,
+        # UCI schedule knobs (-1 = auto when multi-GPU; 0 = off; >0 = fixed).
+        # See ``resolve_rpg_schedule_knobs``.
+        open_vpa: int = -1,
+        min_vpa: int = -1,
+        min_keep: int = -1,
+        open_budget_frac: float = 0.50,
     ) -> None:
         """Install N per-device evaluator groups driven by
         ``RootParallelGumbelPool`` (root-parallel Gumbel, design §2).
@@ -574,12 +581,18 @@ class SearchWorker:
         n_groups = len(evaluators_or_factories)
         gath = max(1, int(gather))
         multi = n_groups > 1
-        # Multi-GPU schedule: open all root trees at full gather (no-halve
-        # scout), then SH with min_vpa=gather so *later* phases stay fat too
-        # (NPS gap vs PUCV is structural underfill, not only first-phase
-        # startup). min_keep≈n_groups delays collapse below device count.
-        # Single-group leaves all off for classic bit-identity.
-        # See root_parallel_gumbel.RootParallelGumbelConfig.
+        # Multi-GPU defaults (open/min_vpa = gather, min_keep = n_groups) keep
+        # devices fed; UCI can force off (0) or a fixed value. Single-group
+        # leaves schedule off for classic bit-identity.
+        # See root_parallel_gumbel.RootParallelGumbelConfig / resolve_rpg_*.
+        open_r, min_vpa_r, min_keep_r, frac_r = resolve_rpg_schedule_knobs(
+            n_groups=n_groups,
+            gather=gath,
+            open_vpa=int(open_vpa),
+            min_vpa=int(min_vpa),
+            min_keep=int(min_keep),
+            open_budget_frac=float(open_budget_frac),
+        )
         cfg = RootParallelGumbelConfig(
             n_groups=n_groups,
             gather=gath,
@@ -591,10 +604,10 @@ class SearchWorker:
             # the intra-candidate regime; the pucv pool's PUCVPendingMode default
             # (legacy) deliberately does not leak in here.
             split_idle_groups=multi,
-            min_vpa=(gath if multi else 0),
-            open_vpa=(gath if multi else 0),
-            open_budget_frac=0.50,
-            min_keep=(n_groups if multi else 0),
+            min_vpa=min_vpa_r,
+            open_vpa=open_r,
+            open_budget_frac=frac_r,
+            min_keep=min_keep_r,
             eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),
