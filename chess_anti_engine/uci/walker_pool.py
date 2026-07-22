@@ -54,6 +54,9 @@ class WalkerPoolConfig:
     c_puct: float
     fpu_at_root: float
     fpu_reduction: float
+    # Lc0-style visit-dependent Cpuct (factor<=0 = fixed c_puct).
+    cpuct_factor: float = 0.0
+    cpuct_base: float = 38739.0
     vloss_weight: int = 3
   # Each walker does up to `gather` descents before submitting one NN
   # batch — virtual loss diversifies within a gather the same way it
@@ -224,6 +227,9 @@ class WalkerPool:
         budget = job.budget
         stop_event = job.stop_event
         evaluator = self._evaluator
+        tree.set_cpuct_scaling(
+            float(self._cfg.cpuct_factor), float(self._cfg.cpuct_base),
+        )
         while not stop_event.is_set():
   # Budget is acquired per-leaf (not per-gather) so a partially-drained
   # budget doesn't leave sims on the table. Terminal leaves backprop

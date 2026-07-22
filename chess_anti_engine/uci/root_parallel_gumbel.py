@@ -217,6 +217,9 @@ class RootParallelGumbelConfig:
     gather: int = 512
     # In-tree descent selection below the candidate root (PUCT+VL regime).
     c_puct: float = 2.5
+    # Lc0-style visit-dependent Cpuct on intra-candidate PUCT (factor<=0 fixed).
+    cpuct_factor: float = 0.0
+    cpuct_base: float = 38739.0
     fpu_at_root: float = 0.0
     fpu_reduction: float = 1.2
     vloss_weight: int = 3
@@ -990,6 +993,8 @@ class RootParallelGumbelPool:
                 c_puct=cfg.c_puct,
                 fpu_at_root=cfg.fpu_at_root,
                 fpu_reduction=cfg.fpu_reduction,
+                cpuct_factor=float(cfg.cpuct_factor),
+                cpuct_base=float(cfg.cpuct_base),
                 vloss_weight=cfg.vloss_weight,
                 vloss_mode=cfg.vloss_mode,
                 eval_cache_entries=int(cfg.eval_cache_entries),

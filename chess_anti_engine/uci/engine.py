@@ -129,6 +129,10 @@ def emit_handshake(options: EngineOptions) -> None:
         "option name RPGOpenBudgetFrac type string default "
         f"{options.rpg_open_budget_frac}"
     )
+    # Lc0-style: c(N)=CPuct+CPuctFactor*log((N+CPuctBase)/CPuctBase); Factor=0 fixed.
+    _println(f"option name CPuct type string default {options.cpuct}")
+    _println(f"option name CPuctFactor type string default {options.cpuct_factor}")
+    _println(f"option name CPuctBase type string default {options.cpuct_base}")
     _println(f"option name VLGather type spin default {options.vl_gather} min 32 max 4096")
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
     _println(f"option name EvalCacheEntries type spin default {options.eval_cache_entries} min 0 max 1048576")
@@ -198,6 +202,12 @@ class EngineOptions:
     rpg_min_vpa: int = -1
     rpg_min_keep: int = -1
     rpg_open_budget_frac: float = 0.50
+  # Lc0-style Cpuct scaling (PUCT descent). factor<=0 → fixed cpuct.
+  # Live via UCI CPuct / CPuctFactor / CPuctBase; also set on SearchWorker._cfg.
+    # Lc0 classic defaults (play).
+    cpuct: float = 1.75
+    cpuct_factor: float = 3.89
+    cpuct_base: float = 38739.0
   # Sims per pipeline submit when `UseVL=true`. Sweet spot 384-768 for
   # the 384-dim 10-layer model on RTX 5090. Set via UCI `VLGather`.
     vl_gather: int = 512
@@ -893,6 +903,54 @@ class Engine:
         _println(f"info string RPGOpenBudgetFrac set to {frac}")
         self._reinstall_rpg_if_active(reason="RPGOpenBudgetFrac")
 
+    def _sync_cpuct_to_worker(self) -> None:
+        """Push CPuct* options into SearchWorker GumbelConfig + live tree."""
+        cfg = self._worker._cfg
+        cfg.c_puct = float(self._options.cpuct)
+        cfg.cpuct_factor = float(self._options.cpuct_factor)
+        cfg.cpuct_base = float(self._options.cpuct_base)
+        tree = getattr(self._worker, "_tree", None)
+        if tree is not None:
+            tree.set_cpuct_scaling(cfg.cpuct_factor, cfg.cpuct_base)
+        # Rebuild multi-GPU / VL helpers that cache c_puct at install time.
+        if self._options.search_parallel == "gumbel":
+            self._reinstall_rpg_if_active(reason="CPuct")
+        elif self._options.use_multi_gpu_pucv:
+            self._install_multi_gpu_pucv_pool()
+        elif bool(getattr(self._worker, "_use_pucv", False)):
+            self._worker.set_use_pucv(True, gather=self._options.vl_gather)
+
+    def _set_cpuct(self, value: str) -> None:
+        try:
+            v = float(value.strip())
+        except ValueError:
+            return
+        if v <= 0.0:
+            return
+        self._options.cpuct = v
+        self._sync_cpuct_to_worker()
+        _println(f"info string CPuct set to {v}")
+
+    def _set_cpuct_factor(self, value: str) -> None:
+        try:
+            v = float(value.strip())
+        except ValueError:
+            return
+        self._options.cpuct_factor = v
+        self._sync_cpuct_to_worker()
+        _println(f"info string CPuctFactor set to {v}")
+
+    def _set_cpuct_base(self, value: str) -> None:
+        try:
+            v = float(value.strip())
+        except ValueError:
+            return
+        if v < 1.0:
+            return
+        self._options.cpuct_base = v
+        self._sync_cpuct_to_worker()
+        _println(f"info string CPuctBase set to {v}")
+
     def _reinstall_configured_search_path(
         self, *, after_leaving_gumbel: bool = False,
     ) -> None:
@@ -1066,6 +1124,9 @@ class Engine:
         "rpgminvpa": _set_rpg_min_vpa,
         "rpgminkeep": _set_rpg_min_keep,
         "rpgopenbudgetfrac": _set_rpg_open_budget_frac,
+        "cpuct": _set_cpuct,
+        "cpuctfactor": _set_cpuct_factor,
+        "cpuctbase": _set_cpuct_base,
         "vlgather": _set_vl_gather,
         "multipv": _set_multi_pv,
         "uci_showwdl": _set_show_wdl,

@@ -378,6 +378,8 @@ class SearchWorker:
             WalkerPoolConfig(
                 n_walkers=n,
                 c_puct=float(self._cfg.c_puct),
+                cpuct_factor=float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+                cpuct_base=float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
                 fpu_at_root=0.0,
                 fpu_reduction=float(self._cfg.fpu_reduction),
                 vloss_weight=self._vloss_weight,
@@ -474,6 +476,8 @@ class SearchWorker:
             n_gpus=len(evaluators_or_factories),
             gather=int(gather),
             c_puct=float(self._cfg.c_puct),
+            cpuct_factor=float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+            cpuct_base=float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
             fpu_at_root=0.0,
             fpu_reduction=float(self._cfg.fpu_reduction),
             vloss_weight=self._vloss_weight,
@@ -597,6 +601,8 @@ class SearchWorker:
             n_groups=n_groups,
             gather=gath,
             c_puct=float(self._cfg.c_puct),
+            cpuct_factor=float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+            cpuct_base=float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
             fpu_at_root=0.0,
             fpu_reduction=float(self._cfg.fpu_reduction),
             vloss_weight=self._vloss_weight,
@@ -735,6 +741,8 @@ class SearchWorker:
             fpu_reduction=float(self._cfg.fpu_reduction),
             vloss_weight=self._vloss_weight,
             vloss_mode=self._pucv_vloss_mode,
+            cpuct_factor=float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+            cpuct_base=float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
             eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),
@@ -1680,6 +1688,12 @@ class SearchWorker:
             allowed_root_indices,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
         )
+        # Lc0-style visit-dependent Cpuct (no-op when factor<=0).
+        if self._tree is not None:
+            self._tree.set_cpuct_scaling(
+                float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+                float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
+            )
 
         total_nodes = 0
         last_info_ms = -1
