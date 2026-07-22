@@ -46,6 +46,7 @@ from chess_anti_engine.selfplay.stockfish_turn import (
     flip_wdl_pov,
     flush_async_sf_labels_for_records,
 )
+from chess_anti_engine.selfplay.seed_manifest import opening_source_code, resolve_seed_ids
 from chess_anti_engine.selfplay.temperature import apply_policy_temperature
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL, SF_MULTIPV_PAD_ROW, SF_MULTIPV_RAW_MAX
 from chess_anti_engine.stockfish.pool import StockfishPool
@@ -749,6 +750,9 @@ def _build_sf_refute_opp_sample(
     result: str,
     game_id: int,
     is_selfplay_slot: bool,
+    seed_id: int = -1,
+    seed_family_id: int = -1,
+    opening_source_code_val: int = 255,
 ) -> ReplaySample:
     """Build the ``ReplaySample`` for an SF-refute opp row (SF-to-move position).
 
@@ -789,6 +793,9 @@ def _build_sf_refute_opp_sample(
         priority=1.0,
         game_id=game_id,
         ply_index=int(rec.ply_index),
+        seed_id=seed_id,
+        seed_family_id=seed_family_id,
+        opening_source_code=opening_source_code_val,
         has_policy=True,
         sf_wdl=rec.sf_wdl,
         categorical_target=cat,
@@ -832,6 +839,11 @@ def _build_replay_samples(
         result=result,
         total_plies_played=total_plies_played,
     )
+    _seed_list_path = getattr(getattr(state, "opening", None), "opening_fen_list_path", None)
+    opening_source_code_val = opening_source_code(opening_source)
+    seed_id, seed_family_id = resolve_seed_ids(
+        start_fen, _seed_list_path, source_code=opening_source_code_val,
+    )
     suffix_sf_regret = _suffix_sf_regret_features(records, is_selfplay=is_selfplay_slot)
     want_sf_p0_regret = bool(
         is_selfplay_slot and getattr(state.game, "record_sf_p0_regret", False)
@@ -862,6 +874,8 @@ def _build_replay_samples(
             out.append(_build_sf_refute_opp_sample(
                 state, rec, result=result, game_id=game_id,
                 is_selfplay_slot=is_selfplay_slot,
+                seed_id=seed_id, seed_family_id=seed_family_id,
+                opening_source_code_val=opening_source_code_val,
             ))
             continue
         row_has_policy = bool(rec.has_policy)
@@ -1029,6 +1043,9 @@ def _build_replay_samples(
                 priority_sf_search_gap=sf_search_gap,
                 game_id=game_id,
                 ply_index=int(rec.ply_index),
+                seed_id=seed_id,
+                seed_family_id=seed_family_id,
+                opening_source_code=opening_source_code_val,
                 has_policy=row_has_policy,
                 sf_wdl=rec.sf_wdl,
                 sf_multipv_raw=sf_multipv_padded,
