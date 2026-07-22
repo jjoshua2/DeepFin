@@ -23,10 +23,12 @@ def opening_source_code(source: str) -> int:
         return 2
     if s.startswith(("book", "pgn")):
         return 1
-    if s == "start" or s.startswith("start"):
+    if s.startswith("start"):
         return 0
     if s.startswith("salvage"):
         return 4
+    if s.startswith("random"):
+        return 5
     return 255
 
 
@@ -59,7 +61,13 @@ def _load_by_key(manifest_path: str, mtime: float) -> dict[str, tuple[int, int]]
         data = json.load(fh)
     out: dict[str, tuple[int, int]] = {}
     for k, v in data.get("by_key", {}).items():
-        out[k] = (int(v[0]), int(v[1]))
+        sid, fid = int(v[0]), int(v[1])
+        # Range-check curated ids against the shard's int32 dtype here, at
+        # load time — an out-of-range id from a hand-built manifest would
+        # otherwise crash shard SERIALIZATION on the worker, far from the
+        # cause. Bad entries are dropped (the row falls back to content hash).
+        if 0 <= sid <= 0x7FFFFFFF and 0 <= fid <= 0x7FFFFFFF:
+            out[k] = (sid, fid)
     return out
 
 

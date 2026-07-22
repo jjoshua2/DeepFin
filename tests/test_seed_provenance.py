@@ -58,6 +58,7 @@ def test_opening_source_code():
     assert opening_source_code("fenlist_sf_refute") == 3
     assert opening_source_code("start") == 0
     assert opening_source_code("book_xyz") == 1
+    assert opening_source_code("random") == 5
     assert opening_source_code("weird") == 255
 
 
@@ -97,6 +98,48 @@ def test_resolve_seed_ids_manifest_wins_for_seed_rows(tmp_path):
     # Non-seed rows never get an id, even when the manifest would hit.
     assert resolve_seed_ids(fen_match, str(list_path), source_code=1) == (-1, -1)
     assert resolve_seed_ids(fen_match, str(list_path), source_code=255) == (-1, -1)
+
+
+def test_manifest_out_of_range_ids_dropped(tmp_path):
+    # A hand-built manifest with an id outside int32 must not reach the shard
+    # writer (uint/int32 arrays) — the entry is dropped and the row falls back
+    # to the content hash.
+    fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    key = position_key(fen)
+    list_path = tmp_path / "seeds.txt"
+    (tmp_path / "seeds.txt.manifest.json").write_text(
+        json.dumps({"by_key": {key: [2**31, -1]}}), encoding="utf-8"
+    )
+    _load_by_key.cache_clear()
+    h = content_seed_id(fen)
+    assert resolve_seed_ids(fen, str(list_path), source_code=2) == (h, h)
+
+
+def test_manifest_keys_terminal_position(tmp_path):
+    # Manifest identity = TERMINAL position of a `fen | moves` line, rendered
+    # by Board.fen() — what finalize sees as start_fen (review finding #1/#2).
+    import chess
+
+    from scripts.build_seed_manifest import build_manifest
+
+    base = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    line = base + " | e2e4 e7e5"
+    lp = tmp_path / "seeds.txt"
+    lp.write_text(line + "\n", encoding="utf-8")
+
+    m = build_manifest(str(lp))
+    board = chess.Board(base)
+    board.push_uci("e2e4")
+    board.push_uci("e7e5")
+    terminal = board.fen()
+
+    assert m["by_key"] == {position_key(terminal): [0, 0]}
+    assert m["by_content_id"] == {str(content_seed_id(terminal)): terminal}
+    # Base and intermediate positions land in the derived map -> terminal.
+    derived = m["by_derived_content_id"]
+    assert isinstance(derived, dict)
+    assert derived[str(content_seed_id(base))] == terminal
+    assert str(content_seed_id(terminal)) in derived
 
 
 def test_content_hash_fallback_distributed(tmp_path):
