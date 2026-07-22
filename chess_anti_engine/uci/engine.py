@@ -129,7 +129,7 @@ def emit_handshake(options: EngineOptions) -> None:
         "option name RPGOpenBudgetFrac type string default "
         f"{options.rpg_open_budget_frac}"
     )
-    # Lc0-style: c(N)=CPuct+CPuctFactor*log((1+N+CPuctBase)/CPuctBase); Factor=0 fixed.
+    # Lc0-style: c(N)=CPuct+CPuctFactor*log((N+CPuctBase)/CPuctBase); Factor=0 fixed.
     _println(f"option name CPuct type string default {options.cpuct}")
     _println(f"option name CPuctFactor type string default {options.cpuct_factor}")
     _println(f"option name CPuctBase type string default {options.cpuct_base}")

@@ -57,3 +57,14 @@ def test_tree_set_cpuct_scaling_roundtrip() -> None:
     assert base == 38739.0
     tree.set_cpuct_scaling(0.0)
     assert tree.get_cpuct_scaling()[0] == 0.0
+
+
+def test_tree_cpuct_scaling_survives_resets() -> None:
+    # Scaling is config, not tree state: both reset paths must keep it
+    # (reset_compact swaps in a tree_init'd tree, which would zero it).
+    tree = MCTSTree()
+    tree.set_cpuct_scaling(3.89, 20000.0)
+    tree.reset()
+    assert tree.get_cpuct_scaling() == (3.89, 20000.0)
+    tree.reset_compact()
+    assert tree.get_cpuct_scaling() == (3.89, 20000.0)

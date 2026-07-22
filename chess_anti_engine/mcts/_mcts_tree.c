@@ -3300,6 +3300,11 @@ static PyObject *MCTSTree_reset_compact(MCTSTreeObject *self, PyObject *Py_UNUSE
         return NULL;
     }
 
+    /* Cpuct scaling is CONFIG, not tree state — carry it into the fresh
+     * tree so compaction cannot silently disable a UCI-set schedule (the
+     * struct comment promises it survives both reset paths). */
+    fresh.puct_cpuct_factor = self->tree.puct_cpuct_factor;
+    fresh.puct_cpuct_base = self->tree.puct_cpuct_base;
     gss_free(&self->gsim);
     stored_free(&self->stored);
     tree_free(&self->tree);
@@ -3308,15 +3313,6 @@ static PyObject *MCTSTree_reset_compact(MCTSTreeObject *self, PyObject *Py_UNUSE
 }
 
 
-/* reserve(node_cap, child_cap=0) -> None.
- *
- * Pre-grows the tree's per-node arrays (and child arrays if child_cap>0)
- * so that no tree_grow_nodes / tree_grow_children realloc fires during
- * subsequent concurrent descent. Required before running multiple walkers
- * against one tree — otherwise a reader can dereference a stale pointer
- * after a mid-descent realloc. Safe to call at any time.
- *
- * Idempotent: shrinking not supported (calls with smaller caps are no-ops). */
 static PyObject *MCTSTree_set_cpuct_scaling(MCTSTreeObject *self, PyObject *args) {
     double factor, base = 38739.0;
     if (!PyArg_ParseTuple(args, "d|d", &factor, &base)) {
@@ -3331,6 +3327,15 @@ static PyObject *MCTSTree_get_cpuct_scaling(MCTSTreeObject *self, PyObject *Py_U
     return Py_BuildValue("dd", self->tree.puct_cpuct_factor, self->tree.puct_cpuct_base);
 }
 
+/* reserve(node_cap, child_cap=0) -> None.
+ *
+ * Pre-grows the tree's per-node arrays (and child arrays if child_cap>0)
+ * so that no tree_grow_nodes / tree_grow_children realloc fires during
+ * subsequent concurrent descent. Required before running multiple walkers
+ * against one tree — otherwise a reader can dereference a stale pointer
+ * after a mid-descent realloc. Safe to call at any time.
+ *
+ * Idempotent: shrinking not supported (calls with smaller caps are no-ops). */
 static PyObject *MCTSTree_reserve(MCTSTreeObject *self, PyObject *args) {
     int node_cap, child_cap = 0;
     if (!PyArg_ParseTuple(args, "i|i", &node_cap, &child_cap)) return NULL;
