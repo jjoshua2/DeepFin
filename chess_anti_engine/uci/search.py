@@ -1377,7 +1377,9 @@ class SearchWorker:
   # Cap only by bootstrap time, not by base _chunk_sims.
             boot_cap = int(_BOOTSTRAP_NPS_PER_MS * remaining_ms)
             time_bound = max(_MIN_FIRST_CHUNK, boot_cap)
-            if self._rpg_pool is not None:
+            # getattr: unit tests may construct SearchWorker via
+            # object.__new__ without running __init__.
+            if getattr(self, "_rpg_pool", None) is not None:
                 return min(chunk, time_bound)
             return min(chunk, self._chunk_sims, time_bound)
         elapsed = deadline.elapsed_ms()

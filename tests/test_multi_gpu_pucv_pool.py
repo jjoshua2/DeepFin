@@ -417,11 +417,6 @@ def test_chunk_budget_scales_by_gather_and_devices() -> None:
 def test_chunk_budget_rpg_uses_large_schedule() -> None:
     """Root-parallel Gumbel must not chunk into tiny sequential-halving
     schedules (first-phase vpa≈5 at 512-sim chunks starves multi-GPU)."""
-    from chess_anti_engine.uci.root_parallel_gumbel import (
-        RootParallelGumbelConfig,
-        RootParallelGumbelPool,
-    )
-
     primary = _make_evaluator(max_batch=64)
     worker = SearchWorker(
         primary, device="cpu",

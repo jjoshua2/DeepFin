@@ -75,7 +75,8 @@ def _run_once(
         text=True,
         bufsize=1,
     )
-    assert proc.stdin is not None and proc.stdout is not None
+    assert proc.stdin is not None
+    assert proc.stdout is not None
 
     def send(line: str) -> None:
         proc.stdin.write(line + "\n")

@@ -292,6 +292,7 @@ def test_time_capped_chunk_bounds_unbounded_first_chunk() -> None:
 
     w = object.__new__(SearchWorker)
     w._chunk_sims = 512
+    w._rpg_pool = None  # non-RPG path: first chunk also clamps to base
 
     # Ample time left: scaled multi-GPU first chunk bounded to the base 512.
     d = Deadline(deadline_ms=10_000, now=_time.monotonic())
@@ -308,6 +309,11 @@ def test_time_capped_chunk_bounds_unbounded_first_chunk() -> None:
     # Open-ended search (no deadline) -> never capped, even on the first chunk.
     d_open = Deadline(deadline_ms=None, now=0.0)
     assert w._time_capped_chunk(8192, d_open, 0) == 8192
+    # Root-parallel Gumbel needs a large first schedule: do not clamp to
+    # base _chunk_sims when an RPG pool is installed (time_bound only).
+    w._rpg_pool = object()  # truthy stand-in; method only checks is not None
+    assert w._time_capped_chunk(8192, d, 0) == 8192
+    w._rpg_pool = None
 
 
 def test_visit_gap() -> None:

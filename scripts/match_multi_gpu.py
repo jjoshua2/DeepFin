@@ -147,9 +147,7 @@ def _play_game(
             plies += 1
 
         outcome = board.outcome(claim_draw=True)
-        if outcome is None:
-            result = "1/2-1/2"
-        elif outcome.winner is None:
+        if outcome is None or outcome.winner is None:
             result = "1/2-1/2"
         elif outcome.winner == chess.WHITE:
             result = "1-0"
