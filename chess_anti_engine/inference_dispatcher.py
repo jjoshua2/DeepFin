@@ -169,6 +169,35 @@ class ThreadSafeGPUDispatcher:
             return self._eval.evaluate_encoded_async(x)  # pyright: ignore[reportAttributeAccessIssue]
 
 
+def bootstrap_cudagraph_tls() -> None:
+    """Initialize Inductor cudagraph tree TLS on the *current* thread.
+
+    ``torch._inductor.cudagraph_trees`` stashes tree managers via
+    ``_stash_obj_in_tls`` so *autograd*-spawned threads inherit them, but
+    ordinary ``threading.Thread`` workers (CUDA owner, multi-GPU pool /
+    RPG groups) start with an empty ``threading.local()`` and hit
+    ``assert _is_key_in_tls("tree_manager_containers")`` on first capture.
+
+    Mirroring the module-level main-thread init — a per-thread empty
+    container dict + lock map — makes reduce-overhead / max-autotune safe
+    on those workers. Each thread owns its managers; multi-GPU factories
+    still serialize first capture across devices.
+    """
+    from collections import defaultdict
+
+    try:
+        import torch._inductor.cudagraph_trees as ct
+    except Exception:
+        return
+    local = getattr(ct, "local", None)
+    if local is None:
+        return
+    if not hasattr(local, "tree_manager_containers"):
+        local.tree_manager_containers = {}
+    if not hasattr(local, "tree_manager_locks"):
+        local.tree_manager_locks = defaultdict(threading.Lock)
+
+
 class CUDAOwnerDispatcher:
     """Run every CUDA evaluator call on one persistent owner thread.
 
@@ -191,6 +220,7 @@ class CUDAOwnerDispatcher:
         self._owner.start()
 
     def _owner_loop(self) -> None:
+        bootstrap_cudagraph_tls()
         while True:
             call = self._queue.get()
             if call is None:

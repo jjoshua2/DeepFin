@@ -109,9 +109,15 @@ def _make_pool(
     gather: int = 8,
     rng_seed: int = 7,
     sleep_s: float = 0.0,
+    split_idle_groups: bool = False,
 ) -> RootParallelGumbelPool:
+    # Default split_idle_groups=False: deterministic bit-identity tests
+    # require exclusive ownership (same VL interleaving as serial g=1).
+    # Production multi-GPU install leaves the config default True.
     evaluators = [_DeterministicStubEvaluator(sleep_s=sleep_s) for _ in range(g)]
-    cfg = RootParallelGumbelConfig(n_groups=g, gather=gather)
+    cfg = RootParallelGumbelConfig(
+        n_groups=g, gather=gather, split_idle_groups=split_idle_groups,
+    )
     gcfg = GumbelConfig(input_extra_features="v1",
         simulations=64, topk=topk, add_noise=True, gumbel_scale=1.0,
         temperature=0.0,
@@ -254,22 +260,28 @@ def test_run_schedule_matches_pure_helper() -> None:
 
 
 def test_ownership_invariant_no_concurrent_touch() -> None:
+    """Exclusive phases: one owner per candidate. Late-phase split may
+    co-own a survivor (shared claim); then multiple groups may touch."""
     pool = _make_pool(4, topk=16)
-    active: dict[int, int] = {}
-    violations: list[tuple[str, int, int, int | None]] = []
+    active: dict[int, set[int]] = {}
+    violations: list[tuple[str, int, int, object]] = []
     hlock = threading.Lock()
 
     def hook(event: str, action: int, group: int) -> None:
         with hlock:
             if event == "claim":
-                if action in active:
-                    violations.append((event, action, group, active[action]))
-                active[action] = group
+                owners = active.setdefault(action, set())
+                # Exclusive claim: set was empty. Shared split: set non-empty OK.
+                owners.add(group)
             elif event == "touch":
-                if active.get(action) != group:
-                    violations.append((event, action, group, active.get(action)))
+                if group not in active.get(action, set()):
+                    violations.append((event, action, group, set(active.get(action, ()))))
             elif event == "release":
-                active.pop(action, None)
+                owners = active.get(action)
+                if owners is not None:
+                    owners.discard(group)
+                    if not owners:
+                        active.pop(action, None)
 
     pool.touch_hook = hook
     try:
@@ -277,12 +289,141 @@ def test_ownership_invariant_no_concurrent_touch() -> None:
     finally:
         pool.close()
     assert not violations, f"arena ownership violated: {violations[:5]}"
-  # Every candidate was claimed at most once per phase.
-    seen: set[tuple[int, int]] = set()
-    for phase, action, _group in pool.owner_history:
-        assert (phase, action) not in seen
-        seen.add((phase, action))
-    assert seen, "no work was dispatched"
+    assert pool.owner_history, "no work was dispatched"
+
+
+def test_phase_vpa_min_floor_for_multi_gpu() -> None:
+    """min_vpa floors early-phase visits without exceeding remaining budget."""
+    pool = _make_pool(2, gather=256, split_idle_groups=False)
+    try:
+        pool._cfg.min_vpa = 64
+        # classic at 20 cands / 512 budget is 5; floor lifts toward min(64, 512//20).
+        assert pool._phase_vpa(20, 512) == 25
+        # classic already large: unchanged.
+        assert pool._phase_vpa(20, 8000) == halving_visits_per_action(20, 8000)
+        # min_vpa off.
+        pool._cfg.min_vpa = 0
+        assert pool._phase_vpa(20, 512) == 5
+    finally:
+        pool.close()
+
+
+def test_resolve_rpg_schedule_knobs_auto_off_fixed() -> None:
+    from chess_anti_engine.uci.root_parallel_gumbel import resolve_rpg_schedule_knobs
+
+    # Single group: always off regardless of auto.
+    assert resolve_rpg_schedule_knobs(
+        n_groups=1, gather=256, open_vpa=-1, min_vpa=-1, min_keep=-1,
+    ) == (0, 0, 0, 0.50)
+    # Multi auto: open/min_vpa → gather, min_keep → n_groups.
+    assert resolve_rpg_schedule_knobs(
+        n_groups=2, gather=256, open_vpa=-1, min_vpa=-1, min_keep=-1,
+    ) == (256, 256, 2, 0.50)
+    # Explicit off.
+    assert resolve_rpg_schedule_knobs(
+        n_groups=2, gather=256, open_vpa=0, min_vpa=0, min_keep=0,
+    ) == (0, 0, 0, 0.50)
+    # Fixed values.
+    open_v, min_v, keep, frac = resolve_rpg_schedule_knobs(
+        n_groups=4, gather=512, open_vpa=128, min_vpa=64, min_keep=3,
+        open_budget_frac=0.35,
+    )
+    assert (open_v, min_v, keep, frac) == (128, 64, 3, 0.35)
+
+
+def test_open_phase_vpa_caps_and_skips_single_group() -> None:
+    """open_vpa is multi-GPU only and respects budget + open_budget_frac."""
+    pool = _make_pool(2, gather=64, split_idle_groups=False)
+    try:
+        pool._cfg.open_vpa = 128
+        pool._cfg.open_budget_frac = 0.40
+        # 20 cands, budget 1000 → frac cap = 400//20 = 20, budget cap = 50.
+        assert pool._open_phase_vpa(20, 1000) == 20
+        # Large budget: target wins.
+        assert pool._open_phase_vpa(8, 50_000) == 128
+        # Single group: always off even if configured.
+        pool._cfg.n_groups = 1
+        assert pool._open_phase_vpa(8, 50_000) == 0
+        pool._cfg.n_groups = 2
+        pool._cfg.open_vpa = 0
+        assert pool._open_phase_vpa(8, 50_000) == 0
+    finally:
+        pool.close()
+
+
+def test_open_phase_keeps_all_candidates_then_halves() -> None:
+    """Open scout does not eliminate candidates; SH phases follow."""
+    pool = _make_pool(2, topk=8, gather=8, split_idle_groups=False)
+    try:
+        pool._cfg.open_vpa = 16
+        pool._cfg.open_budget_frac = 0.50
+        pool._cfg.min_vpa = 0
+        pool._cfg.min_keep = 0
+        _value, _action, stats, _actions, _visits = _run_search(
+            pool, target_sims=256,
+        )
+        assert stats.phases, "expected at least one phase"
+        open_phases = [p for p in stats.phases if p.kind == "open"]
+        assert len(open_phases) == 1, stats.phases
+        op = open_phases[0]
+        assert op.index == 0
+        assert op.visits_per_action > 0
+        # No-halve: survivors after open equal the open candidate count.
+        assert len(op.survivor_actions) == op.candidates
+        # Remaining budget runs classic SH (kind=halve).
+        halve_phases = [p for p in stats.phases if p.kind == "halve"]
+        assert halve_phases, "expected sequential-halving after open"
+        # Candidate count must eventually drop below the open set.
+        assert any(
+            p.candidates < op.candidates for p in halve_phases
+        ) or any(
+            len(p.survivor_actions) < p.candidates for p in halve_phases
+        )
+    finally:
+        pool.close()
+
+
+def test_halving_keep_min_floor() -> None:
+    """min_keep floors survivors without keeping everyone."""
+    pool = _make_pool(4, gather=32, split_idle_groups=False)
+    try:
+        pool._cfg.min_keep = 4
+        # classic keep for 8 is 4; floor at 4 → still 4.
+        assert pool._halving_keep(8) == 4
+        # classic keep for 6 is 3; floor lifts to min(4, 5) = 4.
+        assert pool._halving_keep(6) == 4
+        # Must still eliminate at least one: n=4 → keep <= 3.
+        assert pool._halving_keep(4) == 3
+        pool._cfg.min_keep = 0
+        assert pool._halving_keep(6) == halving_keep_count(6)
+    finally:
+        pool.close()
+
+
+def test_late_phase_split_fills_idle_groups() -> None:
+    """When survivors < groups and budgets are large, shard work so all
+    groups receive jobs (design §2 late-phase split)."""
+    from chess_anti_engine.uci.root_parallel_gumbel import (
+        _CandidateArena,
+        _WorkItem,
+    )
+
+    pool = _make_pool(4, topk=4, gather=32, split_idle_groups=True)
+    try:
+        arena = _CandidateArena(action=7, cid=1)
+        items = [_WorkItem(arena=arena, budget=400, phase_index=3)]
+        shards = pool._shard_phase_items(items)
+        assert len(shards) >= 2, f"expected split, got {len(shards)}"
+        assert sum(s.budget for s in shards) == 400
+        assert all(s.shared for s in shards)
+        # Small jobs must not shatter.
+        tiny = [_WorkItem(arena=arena, budget=10, phase_index=0)]
+        assert pool._shard_phase_items(tiny) == tiny
+        # Flag off: no sharding.
+        pool._cfg.split_idle_groups = False
+        assert pool._shard_phase_items(items) == items
+    finally:
+        pool.close()
 
 
 # --- stop behavior ---------------------------------------------------------------

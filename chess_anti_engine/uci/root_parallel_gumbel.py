@@ -63,10 +63,14 @@ Deliberate v1 deviations (all pre-recorded in the design):
   the single-GPU-validated parallel gather regime; per-candidate outcomes
   therefore differ from classic per-sim, while every root decision is exact
   for the outcomes produced. Pending accounting defaults to virtual-mean.
-- ``s = 1`` evaluator groups only; no late-phase budget splitting (when
-  survivors < groups the extra groups idle); no cross-move tree reuse
-  (fresh per-candidate arenas each move); no TB probing inside candidate
-  subtrees.
+- ``s = 1`` evaluator groups only; late-phase budget splitting when
+  survivors < groups is ON by default (``split_idle_groups``; co-owned
+  survivor arenas under VL — not bit-identical to exclusive serial
+  interleaving); multi-GPU may run a no-halve **open** scout
+  (``open_vpa``) and floor survivors at ``min_keep`` during SH so device
+  count stays fed — quality-sensitive schedule, not classic bit-identity;
+  no cross-move tree reuse (fresh per-candidate arenas each move); no TB
+  probing inside candidate subtrees.
 
 All candidate subtrees live in ONE caller-provided ``MCTSTree`` (each rooted
 at the corresponding root-child node) so the ``SearchWorker`` PV / visit-lead
@@ -161,6 +165,47 @@ def halving_schedule(
     return phases
 
 
+def resolve_rpg_schedule_knobs(
+    *,
+    n_groups: int,
+    gather: int,
+    open_vpa: int = -1,
+    min_vpa: int = -1,
+    min_keep: int = -1,
+    open_budget_frac: float = 0.50,
+) -> tuple[int, int, int, float]:
+    """Map UCI schedule knobs to concrete ``RootParallelGumbelConfig`` values.
+
+    Convention (UCI spins, multi-GPU only):
+      -1 = auto (open/min_vpa → gather, min_keep → n_groups)
+       0 = off
+      >0 = fixed value
+
+    Single-group installs always resolve to all-off so g=1 bit-identity
+    tests stay independent of UCI defaults.
+    """
+    gath = max(1, int(gather))
+    groups = max(1, int(n_groups))
+    frac = float(open_budget_frac)
+    if not (0.0 < frac <= 1.0):
+        frac = 0.50
+    if groups <= 1:
+        return 0, 0, 0, frac
+
+    def _resolve(raw: int, auto: int) -> int:
+        v = int(raw)
+        if v < 0:
+            return int(auto)
+        return max(0, v)
+
+    return (
+        _resolve(open_vpa, gath),
+        _resolve(min_vpa, gath),
+        _resolve(min_keep, groups),
+        frac,
+    )
+
+
 # --- config / stats -----------------------------------------------------------
 
 
@@ -180,7 +225,34 @@ class RootParallelGumbelConfig:
     # this independently of the UCI PUCVPendingMode default (which is legacy
     # for the pucv pool).
     vloss_mode: int = 1
-    # Per-group PucvChunker eval-cache capacity (0 = off). Same knob as the
+    # When True (default), late phases with fewer candidates than groups
+    # shard survivor budgets so idle GPUs keep working (design §2). Root
+    # decisions stay sequential-halving; only the concurrent VL interleaving
+    # inside a shared candidate changes. Disable for bit-identity tests
+    # against serial g=1 under a deterministic evaluator.
+    split_idle_groups: bool = True
+    # Floor on visits_per_action when n_groups > 1 (0 = off). Lifts tiny
+    # early-phase vpa (e.g. 5 at short budgets) toward gather-sized GPU
+    # batches. Still sequential-halving; only spends more of the budget
+    # earlier. Bit-identity / pure-schedule tests leave this 0; multi-GPU
+    # install sets gather so util stays fat *after* open too (NPS gap vs
+    # PUCV is not only cold-start / first phase).
+    min_vpa: int = 0
+    # Multi-GPU "phase A" open: before sequential-halving, give every root
+    # candidate this many sims (capped by open_budget_frac and remaining
+    # budget). No halving after open — all candidates stay for SH. Opens
+    # enough live trees with gather-scale batches to keep devices busy.
+    # 0 = off (bit-identity / single-group). Multi-GPU install sets gather.
+    open_vpa: int = 0
+    # Cap total open spend at this fraction of the chunk's target_sims.
+    # Prevents a short movetime chunk from becoming 100% scout.
+    open_budget_frac: float = 0.50
+    # Floor on survivors after each SH halving (0 = classic keep only).
+    # Multi-GPU install sets n_groups so the candidate set does not collapse
+    # below device count until forced (keep <= n-1). "Stay somewhat in
+    # phase A" for util without inventing illegal root moves.
+    min_keep: int = 0
+    # Per-group PucvChunker eval-cache capacity (0 = off). Same knobs as the
     # multi-GPU PUCV pool / single-thread UseVL path; each group owns its own
     # cache (subtrees are disjoint so a shared cache would rarely hit).
     eval_cache_entries: int = 0
@@ -196,6 +268,8 @@ class RootParallelPhase:
     visits_per_action: int
     sims_completed: int
     survivor_actions: tuple[int, ...]
+    # "open" = multi-GPU scout (no halving); "halve" = sequential-halving.
+    kind: str = "halve"
 
 
 @dataclass(frozen=True)
@@ -214,6 +288,9 @@ class _CandidateArena:
     cboard: Any = None  # CBoard after the candidate move; set on first touch
     terminal_value: float | None = None  # candidate move ends the game
     expanded: bool = False
+    # Serializes first expand when late-phase split lets multiple groups
+    # co-own this arena (VL descents themselves are tree-mutexed).
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
 
 @dataclass
@@ -221,6 +298,11 @@ class _WorkItem:
     arena: _CandidateArena
     budget: int
     phase_index: int
+    # True when this shard co-owns the arena with other groups in the same
+    # phase (design §2 late-phase split). Exclusive ownership is relaxed;
+    # the C tree's virtual-loss path is the concurrency contract (same as
+    # MultiGpuPucvPool on a shared tree).
+    shared: bool = False
 
 
 @dataclass
@@ -309,11 +391,13 @@ class RootParallelGumbelPool:
         self._phase_done = threading.Event()
         self._job_stop: threading.Event | None = None
 
-        # Ownership invariant (design §2 "the heart"): one group per candidate
-        # at a time. `_claim` asserts it; `touch_hook` (tests) sees
-        # claim/touch/release events.
+        # Ownership: exclusive one-group-per-candidate by default (design §2).
+        # Late-phase split uses a refcount so multiple groups may co-own one
+        # survivor arena under virtual-loss. `_claim` / `_claim_shared` assert
+        # the right contract; `touch_hook` (tests) sees claim/touch/release.
         self._owner_lock = threading.Lock()
-        self._owned: dict[int, int] = {}
+        self._owned: dict[int, int] = {}  # action -> exclusive owner group
+        self._owned_shared: dict[int, set[int]] = {}  # action -> co-owners
         self.owner_history: list[tuple[int, int, int]] = []  # (phase, action, group)
         self.touch_hook: Callable[[str, int, int], None] | None = None
 
@@ -352,6 +436,11 @@ class RootParallelGumbelPool:
     @property
     def n_groups(self) -> int:
         return self._cfg.n_groups
+
+    @property
+    def gather(self) -> int:
+        """Per-candidate leaf gather used by each group's PucvChunker."""
+        return max(1, int(self._cfg.gather))
 
     def close(self) -> None:
         if self._shutdown.is_set():
@@ -534,9 +623,56 @@ class RootParallelGumbelPool:
 
         phases: list[RootParallelPhase] = []
         phase_index = 0
+
+        # Phase A (multi-GPU open): fat first visits on ALL root candidates,
+        # no halving. Opens live trees at gather-scale so every group has
+        # real work before sequential-halving starts thinning the set.
+        open_vpa = self._open_phase_vpa(len(remaining), budget)
+        if open_vpa > 0 and remaining:
+            n_cands = len(remaining)
+            items = [
+                _WorkItem(self._arena_for(st, a), open_vpa, phase_index)
+                for a in remaining
+            ]
+            sims_done = self._dispatch_phase(items)
+            if self._errors:
+                raise self._errors[0]
+            stopped = stop_event.is_set()
+            budget = max(0, budget - open_vpa * n_cands)
+            # Keep every candidate — open is scout, not a SH round.
+            phases.append(RootParallelPhase(
+                index=phase_index,
+                candidates=n_cands,
+                visits_per_action=open_vpa,
+                sims_completed=sims_done,
+                survivor_actions=tuple(remaining),
+                kind="open",
+            ))
+            if self._info_cb is not None:
+                self._info_cb(
+                    f"rpg phase={phase_index} open cands={n_cands} "
+                    f"vpa={open_vpa} sims={sims_done} "
+                    f"survivors={len(remaining)} budget_left={budget}"
+                    f"{' STOPPED' if stopped else ''}"
+                )
+            phase_index += 1
+            if stopped:
+                best = remaining[0] if remaining else first_candidate
+                value = self._final_value(st, best)
+                with self._stats_lock:
+                    self._last_stats = RootParallelGumbelStats(
+                        target_sims=int(target_sims),
+                        elapsed_seconds=time.perf_counter() - started,
+                        phases=tuple(phases),
+                        group_sims=tuple(self._group_sims),
+                    )
+                return value, int(best)
+
+        # Phase B: sequential-halving on remaining budget. min_vpa keeps
+        # per-candidate jobs fat; min_keep delays collapse below n_groups.
         while budget > 0 and remaining:
             n_cands = len(remaining)
-            vpa = halving_visits_per_action(n_cands, budget, self._gcfg.halving_div)
+            vpa = self._phase_vpa(n_cands, budget)
             items = [
                 _WorkItem(self._arena_for(st, a), vpa, phase_index)
                 for a in remaining
@@ -553,7 +689,10 @@ class RootParallelGumbelPool:
                 visits_per_action=vpa,
                 sims_completed=sims_done,
                 survivor_actions=tuple(remaining),
+                kind="halve",
             ))
+            # Info every phase is fine for short schedules (≤~6 phases); keep
+            # the string compact for GUI/logs under high nps.
             if self._info_cb is not None:
                 self._info_cb(
                     f"rpg phase={phase_index} cands={n_cands} vpa={vpa} "
@@ -577,6 +716,49 @@ class RootParallelGumbelPool:
 
     # --- orchestrator internals -------------------------------------------------
 
+    def _open_phase_vpa(self, n_cands: int, budget: int) -> int:
+        """Per-candidate sims for the multi-GPU open scout (0 = skip).
+
+        Caps by remaining budget and ``open_budget_frac`` so a short chunk
+        cannot become entirely open.
+        """
+        target = int(self._cfg.open_vpa)
+        if (
+            target <= 0
+            or int(self._cfg.n_groups) <= 1
+            or n_cands <= 0
+            or int(budget) <= 0
+        ):
+            return 0
+        max_by_budget = max(0, int(budget) // int(n_cands))
+        frac = float(self._cfg.open_budget_frac)
+        if 0.0 < frac < 1.0:
+            max_by_frac = max(0, int(float(budget) * frac) // int(n_cands))
+        else:
+            max_by_frac = max_by_budget
+        return int(max(0, min(target, max_by_budget, max_by_frac)))
+
+    def _phase_vpa(self, n_cands: int, budget: int) -> int:
+        """Classic sequential-halving vpa, optionally floored for multi-GPU."""
+        classic = int(
+            halving_visits_per_action(n_cands, budget, self._gcfg.halving_div)
+        )
+        floor = int(self._cfg.min_vpa)
+        if floor <= 0 or int(self._cfg.n_groups) <= 1 or n_cands <= 0:
+            return classic
+        # Never overspend the remaining budget on this phase alone.
+        max_vpa = max(1, int(budget) // max(1, int(n_cands)))
+        return max(classic, min(floor, max_vpa))
+
+    def _halving_keep(self, n_cands: int) -> int:
+        """Classic keep count with optional multi-GPU survivor floor."""
+        classic = int(halving_keep_count(n_cands, self._gcfg.halving_div))
+        floor = int(self._cfg.min_keep)
+        if floor <= 0 or n_cands <= 1:
+            return classic
+        # Cannot keep everyone (must eliminate at least one) or more than n.
+        return max(classic, min(floor, int(n_cands) - 1))
+
     def _arena_for(self, st: _SearchState, action: int) -> _CandidateArena:
         arena = st.arenas.get(action)
         if arena is None:
@@ -586,13 +768,79 @@ class RootParallelGumbelPool:
             st.arenas[action] = arena
         return arena
 
+    def _shard_phase_items(self, items: list[_WorkItem]) -> list[_WorkItem]:
+        """When candidates < groups, split large survivor budgets so idle
+        GPUs stay busy (design §2 late-phase split).
+
+        Total phase sims are preserved (shards sum to original budgets).
+        Tiny budgets stay unsharded — splitting a 20-sim job into 2×10 just
+        adds queue overhead without filling gather.
+        """
+        n_groups = max(1, int(self._cfg.n_groups))
+        if (
+            not bool(self._cfg.split_idle_groups)
+            or len(items) >= n_groups
+            or not items
+        ):
+            return items
+        min_shard = max(1, int(self._cfg.gather) // 2)
+        total = sum(max(0, int(it.budget)) for it in items)
+        if total < n_groups * min_shard:
+            return items
+
+        # How many shards per original item: spread work so we produce at
+        # least n_groups tasks, preferring more shards on larger budgets.
+        shards_out: list[_WorkItem] = []
+        # First pass: proportional shard counts that sum to >= n_groups.
+        budgets = [max(0, int(it.budget)) for it in items]
+        n_items = len(items)
+        # At least 1 shard each, then distribute extra among largest.
+        counts = [1] * n_items
+        extra = n_groups - n_items
+        order = sorted(range(n_items), key=lambda i: -budgets[i])
+        i_ord = 0
+        while extra > 0 and order:
+            idx = order[i_ord % len(order)]
+            # Don't create shards smaller than min_shard when avoidable.
+            if budgets[idx] // (counts[idx] + 1) < min_shard and counts[idx] >= 1:
+                # Skip this item if every remaining item is also too small.
+                if all(
+                    budgets[j] // (counts[j] + 1) < min_shard
+                    for j in order
+                ):
+                    break
+                i_ord += 1
+                continue
+            counts[idx] += 1
+            extra -= 1
+            i_ord += 1
+
+        for it, n_shards, b in zip(items, counts, budgets):
+            if n_shards <= 1 or b <= 0:
+                shards_out.append(it)
+                continue
+            base = b // n_shards
+            rem = b - base * n_shards
+            for s in range(n_shards):
+                piece = base + (1 if s < rem else 0)
+                if piece <= 0:
+                    continue
+                shards_out.append(_WorkItem(
+                    arena=it.arena,
+                    budget=piece,
+                    phase_index=it.phase_index,
+                    shared=True,
+                ))
+        return shards_out if shards_out else items
+
     def _dispatch_phase(self, items: list[_WorkItem]) -> int:
+        work = self._shard_phase_items(items)
         with self._stats_lock:
             self._phase_sims = 0
         with self._pending_lock:
-            self._pending = len(items)
+            self._pending = len(work)
         self._phase_done.clear()
-        for it in items:
+        for it in work:
             self._work_q.put(it)
         self._phase_done.wait()
         with self._stats_lock:
@@ -646,7 +894,7 @@ class RootParallelGumbelPool:
         # Stable descending sort matches the C selection sort's strict-greater
         # tie behavior (earlier candidate wins ties).
         order = sorted(range(len(remaining)), key=lambda i: -scores[i])
-        keep = halving_keep_count(len(remaining), self._gcfg.halving_div)
+        keep = self._halving_keep(len(remaining))
         return [remaining[i] for i in order[:keep]]
 
     def _final_value(self, st: _SearchState, best: int) -> float:
@@ -660,14 +908,28 @@ class RootParallelGumbelPool:
 
     # --- ownership ---------------------------------------------------------------
 
-    def _claim(self, action: int, group: int, phase: int) -> None:
+    def _claim(self, action: int, group: int, phase: int, *, shared: bool) -> None:
         with self._owner_lock:
-            owner = self._owned.get(action)
-            assert owner is None, (
-                f"ownership violation: candidate {action} already owned by "
-                f"group {owner}, claimed by group {group}"
-            )
-            self._owned[action] = group
+            if shared:
+                assert action not in self._owned, (
+                    f"shared claim on exclusively-owned candidate {action} "
+                    f"(owner={self._owned[action]})"
+                )
+                owners = self._owned_shared.setdefault(action, set())
+                assert group not in owners, (
+                    f"group {group} double-claimed shared candidate {action}"
+                )
+                owners.add(group)
+            else:
+                assert action not in self._owned_shared, (
+                    f"exclusive claim on shared candidate {action}"
+                )
+                owner = self._owned.get(action)
+                assert owner is None, (
+                    f"ownership violation: candidate {action} already owned by "
+                    f"group {owner}, claimed by group {group}"
+                )
+                self._owned[action] = group
             if self.touch_hook is not None:
   # History is test instrumentation only — unbounded across a long
   # game, so record it only when a hook shows a test is watching.
@@ -675,9 +937,16 @@ class RootParallelGumbelPool:
         if self.touch_hook is not None:
             self.touch_hook("claim", action, group)
 
-    def _release(self, action: int, group: int) -> None:
+    def _release(self, action: int, group: int, *, shared: bool) -> None:
         with self._owner_lock:
-            self._owned.pop(action, None)
+            if shared:
+                owners = self._owned_shared.get(action)
+                if owners is not None:
+                    owners.discard(group)
+                    if not owners:
+                        self._owned_shared.pop(action, None)
+            else:
+                self._owned.pop(action, None)
         if self.touch_hook is not None:
             self.touch_hook("release", action, group)
 
@@ -685,6 +954,14 @@ class RootParallelGumbelPool:
 
     def _worker_loop(self, idx: int) -> None:
         try:
+            # Ordinary threads do not inherit Inductor cudagraph TLS.
+            try:
+                from chess_anti_engine.inference_dispatcher import (
+                    bootstrap_cudagraph_tls,
+                )
+                bootstrap_cudagraph_tls()
+            except Exception:
+                pass
             if self._factories is not None:
                 if self._devices is not None:
                     device = self._devices[idx]
@@ -759,11 +1036,14 @@ class RootParallelGumbelPool:
         st = self._state
         assert st is not None
         arena = item.arena
-        self._claim(arena.action, group_idx, item.phase_index)
+        shared = bool(item.shared)
+        self._claim(arena.action, group_idx, item.phase_index, shared=shared)
         try:
             done = 0
-            if not arena.expanded:
-                done += self._expand_candidate(evaluator, arena, st)
+            # Expand exactly once even when split shards race the first touch.
+            with arena.lock:
+                if not arena.expanded:
+                    done += self._expand_candidate(evaluator, arena, st)
             if arena.terminal_value is not None:
                 # Classic semantics: every forced sim into a terminal child
                 # backprops the terminal value (visit counts keep accruing so
@@ -791,6 +1071,8 @@ class RootParallelGumbelPool:
                     self.touch_hook("touch", arena.action, group_idx)
                 # 2x gather per call keeps the chunker's 2-slot CPU/GPU
                 # overlap alive while bounding stop latency to ~two batches.
+                # When remaining < gather the chunker already densifies to
+                # remaining (min(gather, target)); no extra adaptive path.
                 n = min(item.budget - done, 2 * gather)
                 ran = int(chunker.run(st.tree, arena.cid, arena.cboard, n))
                 if ran <= 0:
@@ -798,7 +1080,7 @@ class RootParallelGumbelPool:
                 done += ran
             return done
         finally:
-            self._release(arena.action, group_idx)
+            self._release(arena.action, group_idx, shared=shared)
 
     def _expand_candidate(
         self,

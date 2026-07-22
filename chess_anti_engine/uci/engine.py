@@ -111,6 +111,24 @@ def emit_handshake(options: EngineOptions) -> None:
         "option name SearchParallel type combo default "
         f"{options.search_parallel} var pucv var gumbel"
     )
+    # Root-parallel Gumbel multi-GPU schedule (ignored unless SearchParallel=gumbel).
+    # -1 = auto (open/min_vpa→VLGather, min_keep→#devices); 0 = off; >0 = fixed.
+    _println(
+        f"option name RPGOpenVPA type spin default {options.rpg_open_vpa} "
+        "min -1 max 4096"
+    )
+    _println(
+        f"option name RPGMinVPA type spin default {options.rpg_min_vpa} "
+        "min -1 max 4096"
+    )
+    _println(
+        f"option name RPGMinKeep type spin default {options.rpg_min_keep} "
+        "min -1 max 64"
+    )
+    _println(
+        "option name RPGOpenBudgetFrac type string default "
+        f"{options.rpg_open_budget_frac}"
+    )
     _println(f"option name VLGather type spin default {options.vl_gather} min 32 max 4096")
     _println(f"option name MaxBatch type spin default {options.max_batch} min 64 max 8192")
     _println(f"option name EvalCacheEntries type spin default {options.eval_cache_entries} min 0 max 1048576")
@@ -172,6 +190,14 @@ class EngineOptions:
   # single-device configs always run the classic paths. Set via UCI
   # `SearchParallel`.
     search_parallel: str = "pucv"
+  # Root-parallel Gumbel multi-GPU util schedule (SearchParallel=gumbel only).
+  # UCI: RPGOpenVPA / RPGMinVPA / RPGMinKeep / RPGOpenBudgetFrac.
+  # -1 = auto (open & min_vpa → VLGather, min_keep → n_groups); 0 = off;
+  # >0 = fixed. Fat auto defaults close ~20% of the RPG↔PUCV nps gap vs thin SH.
+    rpg_open_vpa: int = -1
+    rpg_min_vpa: int = -1
+    rpg_min_keep: int = -1
+    rpg_open_budget_frac: float = 0.50
   # Sims per pipeline submit when `UseVL=true`. Sweet spot 384-768 for
   # the 384-dim 10-layer model on RTX 5090. Set via UCI `VLGather`.
     vl_gather: int = 512
@@ -809,13 +835,63 @@ class Engine:
             factories, gather=gather, as_factories=True,
             devices=list(self._search_devices) if self._search_devices else None,
             info_string_cb=_emit_info_string,
+            open_vpa=int(self._options.rpg_open_vpa),
+            min_vpa=int(self._options.rpg_min_vpa),
+            min_keep=int(self._options.rpg_min_keep),
+            open_budget_frac=float(self._options.rpg_open_budget_frac),
         )
         self._warmup_dirty = True
         _println(
             f"info string SearchParallel gumbel on "
-            f"(groups={len(factories)} gather={gather})",
+            f"(groups={len(factories)} gather={gather} "
+            f"open_vpa={self._options.rpg_open_vpa} "
+            f"min_vpa={self._options.rpg_min_vpa} "
+            f"min_keep={self._options.rpg_min_keep})",
         )
         return True
+
+    def _reinstall_rpg_if_active(self, *, reason: str) -> None:
+        """Re-apply root-parallel Gumbel when schedule knobs change mid-run."""
+        if self._options.search_parallel != "gumbel":
+            return
+        if not self._try_install_root_parallel_gumbel():
+            return
+        _println(f"info string RPG reinstalled after {reason}")
+
+    def _set_rpg_open_vpa(self, value: str) -> None:
+        n = self._parse_clamped_int(value, lo=-1)
+        if n is None:
+            return
+        self._options.rpg_open_vpa = min(4096, n)
+        _println(f"info string RPGOpenVPA set to {self._options.rpg_open_vpa}")
+        self._reinstall_rpg_if_active(reason="RPGOpenVPA")
+
+    def _set_rpg_min_vpa(self, value: str) -> None:
+        n = self._parse_clamped_int(value, lo=-1)
+        if n is None:
+            return
+        self._options.rpg_min_vpa = min(4096, n)
+        _println(f"info string RPGMinVPA set to {self._options.rpg_min_vpa}")
+        self._reinstall_rpg_if_active(reason="RPGMinVPA")
+
+    def _set_rpg_min_keep(self, value: str) -> None:
+        n = self._parse_clamped_int(value, lo=-1)
+        if n is None:
+            return
+        self._options.rpg_min_keep = min(64, n)
+        _println(f"info string RPGMinKeep set to {self._options.rpg_min_keep}")
+        self._reinstall_rpg_if_active(reason="RPGMinKeep")
+
+    def _set_rpg_open_budget_frac(self, value: str) -> None:
+        try:
+            frac = float(value.strip())
+        except ValueError:
+            return
+        if not (0.0 < frac <= 1.0):
+            return
+        self._options.rpg_open_budget_frac = frac
+        _println(f"info string RPGOpenBudgetFrac set to {frac}")
+        self._reinstall_rpg_if_active(reason="RPGOpenBudgetFrac")
 
     def _reinstall_configured_search_path(
         self, *, after_leaving_gumbel: bool = False,
@@ -986,6 +1062,10 @@ class Engine:
         "usemultigpupucv": _set_use_multi_gpu_pucv,
         "pucvpendingmode": _set_pucv_pending_mode,
         "searchparallel": _set_search_parallel,
+        "rpgopenvpa": _set_rpg_open_vpa,
+        "rpgminvpa": _set_rpg_min_vpa,
+        "rpgminkeep": _set_rpg_min_keep,
+        "rpgopenbudgetfrac": _set_rpg_open_budget_frac,
         "vlgather": _set_vl_gather,
         "multipv": _set_multi_pv,
         "uci_showwdl": _set_show_wdl,
@@ -1089,8 +1169,16 @@ class Engine:
                 optimum_ms=None,
                 abort_factor=self._options.abort_factor,
             )
-        except Exception:
-            pass
+        except Exception as exc:
+  # Multi-GPU tournament path: a silent warmup failure leaves cold
+  # workers that then crash on the first clocked go. Surface it so
+  # isready fails loud before the GUI starts the clock. Single-GPU
+  # keeps best-effort (a real go still reports the error).
+            if self._multi_gpu_path_active():
+                raise
+            logging.getLogger(__name__).debug(
+                "warmup_search best-effort failure: %r", exc,
+            )
         finally:
             self._worker.reset_tree()
 

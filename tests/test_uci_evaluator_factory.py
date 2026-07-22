@@ -392,6 +392,75 @@ def test_pucv_factory_skips_set_device_on_cpu(
         make()
 
 
+def test_resolve_multi_gpu_compile_mode_single_device_passthrough() -> None:
+    assert uci_main.resolve_multi_gpu_compile_mode("reduce-overhead", 1) == "reduce-overhead"
+    assert uci_main.resolve_multi_gpu_compile_mode("max-autotune", 1) == "max-autotune"
+    assert uci_main.resolve_multi_gpu_compile_mode(None, 8) is None
+
+
+def test_resolve_multi_gpu_compile_mode_keeps_cudagraphs(capsys) -> None:
+    """Multi-GPU keeps cudagraph modes; factories bootstrap TLS + serialize capture."""
+    assert uci_main.resolve_multi_gpu_compile_mode("reduce-overhead", 2) == "reduce-overhead"
+    out = capsys.readouterr().out
+    assert "cudagraph TLS bootstrap" in out
+    assert uci_main.resolve_multi_gpu_compile_mode("max-autotune", 8) == "max-autotune"
+    assert uci_main.resolve_multi_gpu_compile_mode("default", 2) == "default"
+    assert (
+        uci_main.resolve_multi_gpu_compile_mode("max-autotune-no-cudagraphs", 2)
+        == "max-autotune-no-cudagraphs"
+    )
+
+
+def test_resolve_multi_gpu_compile_mode_env_override(
+    monkeypatch: pytest.MonkeyPatch, capsys,
+) -> None:
+    monkeypatch.setenv("CAE_UCI_MULTI_GPU_COMPILE_MODE", "default")
+    assert uci_main.resolve_multi_gpu_compile_mode("reduce-overhead", 2) == "default"
+    assert "override" in capsys.readouterr().out
+    monkeypatch.setenv("CAE_UCI_MULTI_GPU_COMPILE_MODE", "")
+    assert uci_main.resolve_multi_gpu_compile_mode("reduce-overhead", 2) is None
+
+
+def test_pucv_warmup_batch_sizes_cover_endpoints() -> None:
+    assert uci_main._pucv_warmup_batch_sizes(256) == [1, 256]
+    assert uci_main._pucv_warmup_batch_sizes(1) == [1]
+
+
+def test_bootstrap_cudagraph_tls_idempotent() -> None:
+    """Worker threads need per-thread containers; calling twice is a no-op."""
+    from chess_anti_engine.inference_dispatcher import bootstrap_cudagraph_tls
+    bootstrap_cudagraph_tls()
+    bootstrap_cudagraph_tls()
+    import torch._inductor.cudagraph_trees as ct
+    assert hasattr(ct.local, "tree_manager_containers")
+    assert hasattr(ct.local, "tree_manager_locks")
+
+
+def test_pucv_factory_serializes_compile_and_warmup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent factory install must hold the process lock around
+    compile+warmup so two devices never torch.compile in parallel."""
+    monkeypatch.setattr(uci_main, "DirectGPUEvaluator", _FakeDirectEvaluator)
+    held: list[str] = []
+
+    def _warm(evaluator: object, **kwargs: object) -> None:
+        del evaluator, kwargs
+        # Lock must already be held by make_one.
+        assert uci_main._MULTI_GPU_COMPILE_LOCK.locked()
+        held.append("warm")
+
+    monkeypatch.setattr(uci_main, "_warmup_pucv_evaluator", _warm)
+    build = uci_main._make_multi_gpu_pucv_factory_builder(
+        [_TinyModule(), _TinyModule()],
+        ["cpu", "cpu"],
+        compile_mode=None,
+    )
+    for make in build(64, 32):
+        make()
+    assert held == ["warm", "warm"]
+
+
 def test_resolve_use_multi_gpu_pucv_auto_enables(capsys) -> None:
     """Unset flag + >1 devices auto-enables the pool (with a stderr notice):
     the routing chain's single submitter serializes GPU work, so multi-device
