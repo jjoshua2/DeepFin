@@ -248,6 +248,13 @@ typedef struct {
     int32_t   ht_cap;       /* power of 2 */
     int32_t   ht_mask;      /* ht_cap - 1 */
 
+    /* Lc0-style visit-dependent Cpuct (tree_select_child only):
+     *   c(N) = c_puct + factor * log((N + base) / base)   // current Lc0 classic
+     * factor <= 0 → fixed c_puct (legacy bit-identical when factor=0).
+     * base is clamped to >= 1 at use time. Survives reset()/reset_compact(). */
+    double puct_cpuct_factor;
+    double puct_cpuct_base;
+
     /* Structure-mutation lock (phase 4): held during tree_expand (which can
      * trigger tree_grow_nodes/tree_grow_children realloc), tree_ht_insert,
      * and other writes that could race with concurrent walkers.
@@ -363,8 +370,27 @@ static int tree_init(TreeData *t) {
     memset(t->hash_table, -1, t->ht_cap * sizeof(int32_t));
     if (pthread_mutex_init(&t->tree_lock, NULL) != 0) return -1;
     t->tree_lock_initialized = 1;
+    t->puct_cpuct_factor = 0.0;
+    t->puct_cpuct_base = 38739.0;
     return 0;
 }
+
+/* Effective PUCT exploration constant at parent visit count N (Lc0 classic).
+ *   c(N) = init + factor * log((N + base) / base)
+ * factor <= 0 → return init unchanged (fixed-c_puct legacy). */
+static inline double puct_effective_c(const TreeData *t, double c_puct, double parent_N) {
+    double factor = t->puct_cpuct_factor;
+    if (factor <= 0.0) {
+        return c_puct;
+    }
+    double base = t->puct_cpuct_base;
+    if (base < 1.0) {
+        base = 38739.0;
+    }
+    double n = parent_N > 0.0 ? parent_N : 0.0;
+    return c_puct + factor * log((n + base) / base);
+}
+
 
 
 static void tree_free(TreeData *t) {
@@ -645,7 +671,8 @@ static int32_t tree_select_child(const TreeData *t, int32_t node_id,
         parent_W = atomic_load_double(&t->W[node_id]) + (double)(vloss_weight * parent_vl);
         parent_Q = (parent_N > 0) ? (parent_W / parent_N) : 0.0;
     }
-    double c_sqrt_n = c_puct * sqrt(parent_N > 1.0 ? parent_N : 1.0);
+    double c_eff = puct_effective_c(t, c_puct, parent_N);
+    double c_sqrt_n = c_eff * sqrt(parent_N > 1.0 ? parent_N : 1.0);
 
     /* Single pass: track best visited score, best unvisited prior, and
      * visited_policy for FPU. All unvisited children share fpu_value, so
@@ -3290,6 +3317,20 @@ static PyObject *MCTSTree_reset_compact(MCTSTreeObject *self, PyObject *Py_UNUSE
  * after a mid-descent realloc. Safe to call at any time.
  *
  * Idempotent: shrinking not supported (calls with smaller caps are no-ops). */
+static PyObject *MCTSTree_set_cpuct_scaling(MCTSTreeObject *self, PyObject *args) {
+    double factor, base = 38739.0;
+    if (!PyArg_ParseTuple(args, "d|d", &factor, &base)) {
+        return NULL;
+    }
+    self->tree.puct_cpuct_factor = factor;
+    self->tree.puct_cpuct_base = (base >= 1.0) ? base : 38739.0;
+    Py_RETURN_NONE;
+}
+
+static PyObject *MCTSTree_get_cpuct_scaling(MCTSTreeObject *self, PyObject *Py_UNUSED(args)) {
+    return Py_BuildValue("dd", self->tree.puct_cpuct_factor, self->tree.puct_cpuct_base);
+}
+
 static PyObject *MCTSTree_reserve(MCTSTreeObject *self, PyObject *args) {
     int node_cap, child_cap = 0;
     if (!PyArg_ParseTuple(args, "i|i", &node_cap, &child_cap)) return NULL;
@@ -4356,6 +4397,10 @@ static PyMethodDef MCTSTree_methods[] = {
      "reset_compact() -> None. Reset and release high-water tree buffers."},
     {"reserve", (PyCFunction)MCTSTree_reserve, METH_VARARGS,
      "reserve(node_cap, child_cap=0) -> None (pre-grow for concurrent use)"},
+    {"set_cpuct_scaling", (PyCFunction)MCTSTree_set_cpuct_scaling, METH_VARARGS,
+     "set_cpuct_scaling(factor, base=38739) -> None. Lc0 classic c(N)=c_puct+factor*log((N+base)/base); factor<=0 disables (fixed c_puct)."},
+    {"get_cpuct_scaling", (PyCFunction)MCTSTree_get_cpuct_scaling, METH_NOARGS,
+     "get_cpuct_scaling() -> (factor, base)"},
     {"get_virtual_loss", (PyCFunction)MCTSTree_get_virtual_loss, METH_VARARGS,
      "get_virtual_loss(node_id) -> int"},
     {"apply_vloss_path", (PyCFunction)MCTSTree_apply_vloss_path, METH_VARARGS,

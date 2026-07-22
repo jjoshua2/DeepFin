@@ -44,6 +44,9 @@ class MultiGpuPucvConfig:
     n_gpus: int
     gather: int = 384
     c_puct: float = 1.4
+    # Lc0-style visit-dependent Cpuct (factor<=0 = fixed c_puct).
+    cpuct_factor: float = 0.0
+    cpuct_base: float = 38739.0
     fpu_at_root: float = 0.0
     fpu_reduction: float = 0.2
     vloss_weight: int = 3
@@ -416,6 +419,7 @@ class MultiGpuPucvPool:
         root_cb = job.root_cboard
         budget = job.budget
         stop_event = job.stop_event
+        tree.set_cpuct_scaling(float(cfg.cpuct_factor), float(cfg.cpuct_base))
 
         pending: Any = None
         batches = 0

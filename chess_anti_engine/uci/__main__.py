@@ -501,6 +501,8 @@ def _build_engine(
     c_scale: float = 0.025,  # UCI/high-sim tuned default (was 0.1); see --c-scale help
     c_visit: float = 50.0,
     c_puct: float = 2.5,
+    cpuct_factor: float = 3.89,
+    cpuct_base: float = 38739.0,
     fpu_reduction: float = 1.2,
   # Gumbel root/descent split (legacy defaults; see main()'s --c-visit-root etc.)
     c_visit_root: float = -1.0,
@@ -544,6 +546,8 @@ def _build_engine(
             c_scale=c_scale,
             c_visit=c_visit,
             c_puct=c_puct,
+            cpuct_factor=float(cpuct_factor),
+            cpuct_base=float(cpuct_base),
             fpu_reduction=fpu_reduction,
             c_visit_root=c_visit_root,
             q_visit_floor=q_visit_floor,
@@ -691,7 +695,21 @@ def main() -> int:
                         "2026-06-16 (was 0.1; +270 Elo). q_scale=c_scale*(c_visit+max_visit) "
                         "explodes at high sims, so 0.1 over-trusted the overconfident value head.")
     p.add_argument("--c-visit", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit"], help="Gumbel c_visit constant (default: 50.0)")
-    p.add_argument("--c-puct", type=float, default=PLAY_SEARCH_DEFAULTS["c_puct"], help="PUCT exploration constant (default: 2.5)")
+    p.add_argument(
+        "--c-puct", type=float, default=PLAY_SEARCH_DEFAULTS["c_puct"],
+        help="PUCT init (Lc0 CPuct, default: 1.75). With --cpuct-factor>0 this is "
+             "the init term in c(N)=c_puct+factor*log((N+base)/base).",
+    )
+    p.add_argument(
+        "--cpuct-factor", type=float,
+        default=float(PLAY_SEARCH_DEFAULTS.get("cpuct_factor", 3.89) or 0.0),
+        help="Lc0 CPuctFactor (default: 3.89). 0 = fixed c_puct (no log ramp).",
+    )
+    p.add_argument(
+        "--cpuct-base", type=float,
+        default=float(PLAY_SEARCH_DEFAULTS.get("cpuct_base", 38739.0) or 38739.0),
+        help="Lc0 CPuctBase in log((N+base)/base) (default: 38739).",
+    )
     p.add_argument("--fpu-reduction", type=float, default=PLAY_SEARCH_DEFAULTS["fpu_reduction"],
                    help="first-play-urgency reduction for unvisited children (default: 1.2)")
   # Gumbel root/descent split params (merged dormant in #68; C path only —
@@ -872,6 +890,9 @@ def main() -> int:
         use_multi_gpu_pucv=restore_multi_gpu_pucv,
         pucv_pending_mode=str(args.pucv_pending_mode),
         search_parallel="gumbel" if use_root_parallel_gumbel else "pucv",
+        cpuct=float(args.c_puct),
+        cpuct_factor=float(args.cpuct_factor),
+        cpuct_base=float(args.cpuct_base),
         vl_gather=max(32, int(args.vl_gather)),
         max_batch=max(64, int(args.max_batch)),
         eval_cache_entries=max(0, int(args.eval_cache_entries)),
@@ -986,7 +1007,10 @@ def main() -> int:
                 evaluator=evaluator, primary_device=devices[0],
                 chunk_sims=args.chunk_sims, topk=args.topk,
                 c_scale=args.c_scale, c_visit=args.c_visit,
-                c_puct=args.c_puct, fpu_reduction=args.fpu_reduction,
+                c_puct=args.c_puct,
+                cpuct_factor=float(args.cpuct_factor),
+                cpuct_base=float(args.cpuct_base),
+                fpu_reduction=args.fpu_reduction,
                 c_visit_root=args.c_visit_root, q_visit_floor=args.q_visit_floor,
                 q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
                 c_scale_root=args.c_scale_root, q_visit_exp_root=args.q_visit_exp_root,
