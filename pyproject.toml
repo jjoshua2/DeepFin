@@ -180,9 +180,13 @@ ignore = [
 # a convenience suppression.
 #   AsyncBatchEvaluator     — used via stringified cast in gumbel_c.py
 #   pairwise_lr/_momentum   — accepted as legacy kwargs in gpbt.py
+#   n_walkers               — keyword-only param in the RebuildEvaluator
+#                             Protocol __call__ (uci/engine.py); vulture
+#                             can't see Protocol signatures being "used"
 ignore_names = [
   "AsyncBatchEvaluator",
   "pairwise_lr",
   "pairwise_momentum",
+  "n_walkers",
 ]
 
