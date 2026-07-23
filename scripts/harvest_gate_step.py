@@ -67,6 +67,7 @@ class GateCounts:
     after_dedup: int
     vetted_kept: int
     vetted_rejected: int
+    sf_failed: int  # SF returned no score (crash/timeout) — an ERROR, not a legit reject
     capped: int
     staged_total: int
 
@@ -273,6 +274,8 @@ def run_gate(
     staged_this: list[str] = []
     kept = 0
     rejected_n = 0
+    sf_failed_n = 0
+    requeue: list[tuple[str, str]] = []  # SF-failed candidates to retry next run
 
     if dry_run:
         # Count only — no SF, no writes, no state mutation.
@@ -283,6 +286,7 @@ def run_gate(
             after_dedup=after_dedup,
             vetted_kept=0,
             vetted_rejected=0,
+            sf_failed=0,
             capped=capped,
             staged_total=staged_total,
         )
@@ -297,17 +301,23 @@ def run_gate(
     for key, body in to_vet:
         fen = seed_board_from_line(body).fen()
         score = sf_score(fen) if sf_score is not None else None
-        if score is not None and score <= vet_lost_below:
+        if score is None:
+            # SF crashed/timed out — a real error, NOT evidence the position is
+            # fine. Do NOT mark rejected (that would permanently discard a
+            # genuine candidate on a transient outage); re-queue for next run.
+            requeue.append((key, f"{body}  # pending"))
+            sf_failed_n += 1
+        elif score <= vet_lost_below:
             staged_this.append(stage_line(body, stamp=stamp, score=score))
             work.emitted.add(key)
             kept += 1
         else:
-            # None (SF failed) or above threshold → reject; never re-vet.
+            # SF says above threshold → legit reject; never re-vet.
             work.rejected.add(key)
             rejected_n += 1
 
-    # Overflow becomes the new pending queue (preserve order).
-    work.pending = [(k, f"{body}  # pending") for k, body in overflow]
+    # Overflow + SF-failed re-queue become the new pending queue (preserve order).
+    work.pending = requeue + [(k, f"{body}  # pending") for k, body in overflow]
     if new_offsets is not None:
         work.offsets = dict(new_offsets)
 
@@ -325,6 +335,7 @@ def run_gate(
         after_dedup=after_dedup,
         vetted_kept=kept,
         vetted_rejected=rejected_n,
+        sf_failed=sf_failed_n,
         capped=capped,
         staged_total=staged_total,
     )
@@ -374,8 +385,8 @@ def format_summary(counts: GateCounts, *, dry_run: bool = False) -> str:
     return (
         f"harvest_gate: new_lines={counts.new_lines} unique_new={counts.unique_new} "
         f"after_dedup={counts.after_dedup} vetted_kept={dry}{counts.vetted_kept} "
-        f"vetted_rejected={dry}{counts.vetted_rejected} capped={counts.capped} "
-        f"staged_total={counts.staged_total}"
+        f"vetted_rejected={dry}{counts.vetted_rejected} sf_failed={dry}{counts.sf_failed} "
+        f"capped={counts.capped} staged_total={counts.staged_total}"
     )
 
 

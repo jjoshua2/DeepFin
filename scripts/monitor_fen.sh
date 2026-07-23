@@ -118,7 +118,7 @@ while true; do
     if [ -x "$SF_BIN" ]; then
         GATE=$(PYTHONPATH=. nice -n 15 python3 scripts/harvest_gate_step.py \
             --sf-path "$SF_BIN" --syzygy-path "$SYZYGY_PATH" \
-            --max-vet-per-run "${HARVEST_VET_PER_RUN:-15}" \
+            --max-vet-per-run "${HARVEST_VET_PER_RUN:-100}" \
             --sf-nodes "${HARVEST_SF_NODES:-2000000}" --multipv "${HARVEST_MULTIPV:-1}" \
             --stamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             2>>"$MON/harvest_gate_$N.log" | grep '^harvest_gate:' | tail -1)

@@ -465,19 +465,20 @@ def test_summary_format() -> None:
 
     c = GateCounts(
         new_lines=4, unique_new=3, after_dedup=2,
-        vetted_kept=1, vetted_rejected=1, capped=0, staged_total=5,
+        vetted_kept=1, vetted_rejected=1, sf_failed=0, capped=0, staged_total=5,
     )
     s = format_summary(c)
     assert s == (
         "harvest_gate: new_lines=4 unique_new=3 after_dedup=2 "
-        "vetted_kept=1 vetted_rejected=1 capped=0 staged_total=5"
+        "vetted_kept=1 vetted_rejected=1 sf_failed=0 capped=0 staged_total=5"
     )
 
 
-# ── sf failure → reject (no infinite re-vet) ─────────────────────────────────
+# ── sf failure → re-queue (NOT reject): a transient SF outage must not ────────
+# permanently discard a genuine candidate; it re-vets next run.
 
 
-def test_sf_none_rejects(tmp_path: Path) -> None:
+def test_sf_none_requeues_not_rejects(tmp_path: Path) -> None:
     out = tmp_path / "staged.txt"
 
     def sf_score(_fen: str) -> float | None:
@@ -495,9 +496,12 @@ def test_sf_none_rejects(tmp_path: Path) -> None:
         out_path=str(out),
     )
     assert counts.vetted_kept == 0
-    assert counts.vetted_rejected == 1
+    assert counts.vetted_rejected == 0
+    assert counts.sf_failed == 1
     assert staged == []
-    assert _key(_FEN_A) in st.rejected
+    # NOT permanently rejected — re-queued as pending for a later run.
+    assert _key(_FEN_A) not in st.rejected
+    assert any(k == _key(_FEN_A) for k, _ in st.pending)
     assert not out.exists() or out.read_text(encoding="utf-8").strip() == ""
 
 
