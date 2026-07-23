@@ -210,6 +210,7 @@ def run_gate(
     stamp: str,
     out_path: str,
     new_offsets: dict[str, int] | None = None,
+    pending_cap: int = 5000,
 ) -> tuple[GateCounts, list[str], GateState]:
     """Core gate: dedup → cap → (optional) SF vet → stage.
 
@@ -244,8 +245,14 @@ def run_gate(
         unique_new_keys.append(key)
         unique_new_body[key] = body
 
-    # Pending first (FIFO), then this run's unique new — still subject to
-    # exclude / already-processed filters.
+    # NEWEST-FIRST: vet this run's fresh captures before the pending backlog,
+    # each group most-recent-first. The harvester emits captures from the
+    # CURRENT net; a captured hole that still exists is re-emitted every time
+    # the net blunders it again, so freshness is a good proxy for relevance.
+    # Stale pending (from superseded, weaker nets) is mostly already-fixed
+    # false positives — the old backlog verified 0/387 genuine — so the former
+    # "pending first (FIFO)" order spent the whole SF budget re-litigating a
+    # dead net's mistakes and never reached the ~35%-real recent captures.
     candidates: list[tuple[str, str]] = []
     cand_seen: set[str] = set()
     blocked = exclude_keys | work.emitted | work.rejected
@@ -256,13 +263,13 @@ def run_gate(
         cand_seen.add(key)
         candidates.append((key, body))
 
-    for key, line in work.pending:
+    for key in reversed(unique_new_keys):
+        _consider(key, unique_new_body[key])
+    for key, line in reversed(work.pending):
         # pending stores raw lines; re-parse body (pending keys already known)
         parsed = parse_seed_line(line)
         body = parsed[1] if parsed is not None else line.split("#", 1)[0].strip()
         _consider(key, body)
-    for key in unique_new_keys:
-        _consider(key, unique_new_body[key])
 
     after_dedup = len(candidates)
     if max_vet_per_run < 0:
@@ -316,8 +323,15 @@ def run_gate(
             work.rejected.add(key)
             rejected_n += 1
 
-    # Overflow + SF-failed re-queue become the new pending queue (preserve order).
-    work.pending = requeue + [(k, f"{body}  # pending") for k, body in overflow]
+    # Rebuild pending oldest-first (newest last), so reversed() re-vets the
+    # freshest first next run. Overflow is this run's un-vetted tail; SF-failed
+    # re-queues are recent, so they sit at the newest end for prompt retry.
+    # Bound the queue to the newest `pending_cap`: the oldest tail is stale
+    # superseded-net material that would otherwise accumulate unboundedly (the
+    # 17k backlog that starved the gate). Dropping it is self-healing — a hole
+    # that still exists is re-emitted by the harvester on the next blunder.
+    older_first = [(k, f"{body}  # pending") for k, body in reversed(overflow)]
+    work.pending = (older_first + requeue)[-pending_cap:] if pending_cap > 0 else older_first + requeue
     if new_offsets is not None:
         work.offsets = dict(new_offsets)
 
@@ -426,6 +440,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="keep only if deep-SF expected score ≤ this (truly lost)")
     ap.add_argument("--max-vet-per-run", type=int, default=30,
                     help="hard cap on SF vets per run (overflow stays pending)")
+    ap.add_argument("--pending-cap", type=int, default=5000,
+                    help="max pending queue depth; newest kept, stale tail expired (0=unbounded)")
     ap.add_argument("--out", default="data/harvest/staged_candidates.txt",
                     help="staging queue (APPEND survivors; not the live pool)")
     ap.add_argument("--stamp", default="",
@@ -484,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
                 stamp=args.stamp,
                 out_path=args.out,
                 new_offsets=new_offsets,
+                pending_cap=args.pending_cap,
             )
         finally:
             if sf_close is not None:
