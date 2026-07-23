@@ -37,6 +37,17 @@ def _softmax_rows(a: np.ndarray) -> np.ndarray:
     return e / e.sum(axis=1, keepdims=True)
 
 
+def _piece_count(fen: str) -> int:
+    """Total pieces on the board (both kings included) from a FEN.
+
+    Used to exclude Syzygy-range positions from the ruler: with <=7 pieces the
+    engine plays via tablebase (selfplay TB-optimal moves, UCI root probe), so
+    the net's value there never decides a real move — scoring it measures value
+    quality we do not use. See chess_anti_engine/tablebase.py (<=7, no castling).
+    """
+    return sum(1 for c in fen.split(" ", 1)[0] if c.isalpha())
+
+
 def value_1ply_regret(
     *, checkpoint: str, positions, device: str, batch_size: int, pos_chunk: int,
 ) -> tuple[float, dict[int, float], np.ndarray]:
@@ -127,6 +138,15 @@ def main() -> None:
     ap.add_argument("--dump-per-position", default=None, metavar="PATH",
                     help="write per-position JSONL (fen, phase, top1 regret cp) for "
                          "paired checkpoint comparison via scripts/paired_compare.py")
+    ap.add_argument("--min-pieces", type=int, default=8,
+                    help="Minimum total pieces to score. DEFAULT 8 EXCLUDES "
+                         "Syzygy-range (<=7-man) positions: the engine plays those via "
+                         "tablebase (see tablebase.py), so the net's value there never "
+                         "decides a real move and scoring it measures value quality we "
+                         "never use — the default ruler now tracks PLAY-RELEVANT value. "
+                         "Pass --min-pieces 0 to score ALL positions (pre-2026-07-20 "
+                         "behavior), required to reproduce historical full-set numbers "
+                         "(e.g. the 70-76cp band / BT4=43cp ref were full-set).")
     args = ap.parse_args()
 
     if args.gpu_mem_fraction is not None and str(args.device).startswith("cuda"):
@@ -139,8 +159,16 @@ def main() -> None:
               f"on cuda:{dev_idx}")
 
     positions = load_audit_set(args.audit_set)
+    # Slice the canonical max_positions subset (e.g. v1-2k = first 2000) FIRST,
+    # then drop TB-range — so --min-pieces filters WITHIN the standard subset
+    # (2000 -> 1723) rather than pulling later strata forward from the full set.
     if args.max_positions > 0:
         positions = positions[: args.max_positions]
+    if args.min_pieces > 0:
+        n_before = len(positions)
+        positions = [p for p in positions if _piece_count(p.fen) >= args.min_pieces]
+        print(f"[value-regret] min-pieces>={args.min_pieces}: dropped "
+              f"{n_before - len(positions)} TB-range positions ({len(positions)} kept)")
     print(f"[value-regret] {len(positions)} positions from {args.audit_set}")
     overall, per_phase, per_position = value_1ply_regret(
         checkpoint=args.checkpoint, positions=positions, device=args.device,
@@ -156,8 +184,11 @@ def main() -> None:
                 }) + "\n")
         print(f"[value-regret] per-position dump -> {args.dump_per_position}")
 
+    ruler = "TB-excluded" if args.min_pieces > 0 else "FULL-SET (incl. TB)"
     print(f"\n=== value-head 1-ply deep-SF regret @ {args.checkpoint} ===")
-    print(f"  OVERALL {overall:.1f} cp (n={len(positions)})")
+    print(f"  ruler: {ruler}"
+          + (f" (>={args.min_pieces}-man)" if args.min_pieces > 0 else "")
+          + f"  |  OVERALL {overall:.1f} cp (n={len(positions)})")
     for ph in sorted(per_phase):
         print(f"  {PHASE_NAMES[ph]:11s} {per_phase[ph]:.1f} cp")
     # Tail view: the audit mean is tail-dominated (median ~10cp vs mean ~75) and

@@ -310,6 +310,166 @@ def _slice_arrays(arrs: dict[str, Any], idx: np.ndarray) -> dict[str, np.ndarray
     return out
 
 
+def _value_redundancy_keep_mask(
+    arrs: dict[str, Any],
+    *,
+    mode: str,
+    q_thresh: float,
+    sfe_thresh: float,
+    kl_veto: float,
+    soft_keep_prob: float,
+    mask_rng: np.random.RandomState,
+) -> np.ndarray:
+    """Per-row keep mask for the value-redundancy data-selection screen.
+
+    Selects "value-redundant" FULL-POLICY rows and either drops them (``hard``)
+    or keeps them with probability ``soft_keep_prob`` (``soft`` ≈ a loss-weight
+    of ``soft_keep_prob`` realized by stochastic dropping, so the effective
+    gradient mass matches an equal-fraction hard drop while coverage is
+    preserved). Selection rules:
+
+    * ``hard`` / ``soft``: ``q_surprise <= q_thresh`` AND
+      ``sf_value_err <= sfe_thresh`` AND ``policy_kl <= kl_veto`` (the value-
+      converged set; policy_kl is the VETO that protects policy-informative
+      rows).
+    * ``sf_only``: ``sf_value_err <= sfe_thresh`` AND ``policy_kl <= kl_veto``
+      (ignores q_surprise) — the pure #104-direction canary.
+    * ``control``: keep everything (all-True).
+
+    ``sf_value_err = |E[search_wdl] - E[sf_wdl]|`` (both mover-POV). A row is
+    eligible for dropping only when it has a policy target AND every signal the
+    rule needs is present; any row missing a needed signal, or vetoed by a high
+    policy_kl, is always KEPT (conservative). Returns a bool array (True=keep).
+    The soft draw uses a DEDICATED rng so the main training rng (shard order,
+    in-shard order) stays byte-identical across arms.
+    """
+    n = int(np.asarray(arrs["x"]).shape[0])
+    keep = np.ones(n, dtype=bool)
+    if mode == "control":
+        return keep
+
+    def _field(name: str, has_name: str) -> tuple[np.ndarray | None, np.ndarray]:
+        if name not in arrs:
+            return None, np.zeros(n, dtype=bool)
+        v = np.asarray(arrs[name], dtype=np.float64)
+        h = arrs.get(has_name)
+        hm = np.asarray(h).astype(bool) if h is not None else np.ones(n, dtype=bool)
+        return v, hm
+
+    hp = arrs.get("has_policy")
+    elig = np.asarray(hp).astype(bool) if hp is not None else np.ones(n, dtype=bool)
+
+    sf, hsf = _field("sf_wdl", "has_sf_wdl")
+    sw, hsw = _field("search_wdl", "has_search_wdl")
+    if sf is None or sw is None:
+        return keep  # cannot compute sf_value_err → keep all (no-op)
+    sfe = np.abs((sw[:, 0] - sw[:, 2]) - (sf[:, 0] - sf[:, 2]))
+    sel = elig & hsf & hsw & np.isfinite(sfe) & (sfe <= sfe_thresh)
+
+    kl, hkl = _field("priority_policy_kl", "has_priority_policy_kl")
+    if kl is None:
+        return keep  # no policy_kl → cannot apply the veto → drop nothing
+    sel &= hkl & (kl <= kl_veto)
+
+    if mode != "sf_only":
+        qd, hq = _field("priority_q_delta", "has_priority_q_delta")
+        if qd is None:
+            return keep  # no q_surprise for the value-converged rule → no-op
+        sel &= hq & (np.abs(qd) <= q_thresh)
+
+    if mode in ("hard", "sf_only"):
+        keep[sel] = False
+    elif mode == "soft":
+        draw = mask_rng.random_sample(n)
+        keep[sel & (draw >= soft_keep_prob)] = False
+    else:
+        raise ValueError(f"unknown vr-mode {mode!r}")
+    return keep
+
+
+# Reweighting signals for the cheap sidecar screen. All are stored per-row in
+# the replay shards (no forward pass needed): "priority" is the composite
+# KataGo surprise weight; "q_delta"/"policy_kl"/"sf_search_gap" are the stored
+# component priorities (q-error, policy-surprise, and the killed gap-priority
+# #104 signal respectively); "value_mismatch" is computed on the fly as
+# |E[search_wdl] - E[sf_wdl]| (the scale-mismatch bet). "outcome_mismatch"
+# weights by |E[sf_wdl] - realized_outcome| (SF confidently wrong vs the game).
+_WEIGHT_SIGNAL_FIELDS = {
+    "priority": "priority",
+    "q_delta": "priority_q_delta",
+    "policy_kl": "priority_policy_kl",
+    "sf_search_gap": "priority_sf_search_gap",
+}
+
+
+def _wdl_expected_value(wdl3: np.ndarray) -> np.ndarray:
+    """E[value] = P(win) - P(loss) for a (N,3) W/D/L distribution."""
+    w = np.asarray(wdl3, dtype=np.float64)
+    return w[:, 0] - w[:, 2]
+
+
+def _compute_sample_weights(
+    arrs: dict[str, Any], *, signal: str, power: float, cap: float, eps: float = 1e-6,
+) -> np.ndarray | None:
+    """Per-row sampling weights from a stored (or derived) reweighting signal.
+
+    Returns a normalized probability vector, or None for the uniform baseline.
+    Rows whose has_* flag is 0 (or missing source) fall back to the median of
+    the observed rows so an unlabeled row is neither starved nor over-emphasized.
+    """
+    if signal == "none":
+        return None
+    n = int(np.asarray(arrs["x"]).shape[0])
+    raw = np.full(n, np.nan, dtype=np.float64)
+
+    if signal in _WEIGHT_SIGNAL_FIELDS:
+        field = _WEIGHT_SIGNAL_FIELDS[signal]
+        if field not in arrs:
+            raise KeyError(f"reweight signal {signal!r} needs shard field {field!r} (absent)")
+        raw = np.asarray(arrs[field], dtype=np.float64).copy()
+        has = arrs.get("has_" + field)
+        if has is not None:
+            raw[np.asarray(has).astype(bool) == False] = np.nan  # noqa: E712
+    elif signal in ("value_mismatch", "outcome_mismatch"):
+        if "sf_wdl" not in arrs:
+            raise KeyError(f"reweight signal {signal!r} needs shard field 'sf_wdl' (absent)")
+        sf_val = _wdl_expected_value(arrs["sf_wdl"])
+        has_sf = arrs.get("has_sf_wdl")
+        if signal == "value_mismatch":
+            if "search_wdl" not in arrs:
+                raise KeyError("value_mismatch needs shard field 'search_wdl' (absent)")
+            other = _wdl_expected_value(arrs["search_wdl"])
+            has_other = arrs.get("has_search_wdl")
+        else:  # outcome_mismatch: realized game outcome W/D/L int -> value
+            wdl_t = np.asarray(arrs["wdl_target"]).astype(np.int64)
+            other = np.where(wdl_t == 0, 1.0, np.where(wdl_t == 2, -1.0, 0.0))
+            has_other = arrs.get("has_policy")  # every row has an outcome; keep all
+        raw = np.abs(sf_val - other)
+        mask = np.ones(n, dtype=bool)
+        if has_sf is not None:
+            mask &= np.asarray(has_sf).astype(bool)
+        if has_other is not None:
+            mask &= np.asarray(has_other).astype(bool)
+        raw[~mask] = np.nan
+    else:
+        raise ValueError(f"unknown reweight signal {signal!r}")
+
+    observed = raw[np.isfinite(raw)]
+    if observed.size == 0:
+        return None
+    med = float(np.median(observed))
+    raw = np.where(np.isfinite(raw), raw, med)
+    raw = np.clip(raw, 0.0, None) + eps
+    if cap > 0.0:
+        # Cap relative to the median so a few outliers don't monopolize draws.
+        raw = np.minimum(raw, cap * (med + eps))
+    w = np.power(raw, float(power))
+    total = float(w.sum())
+    if not np.isfinite(total) or total <= 0.0:
+        return None
+    return w / total
+
+
 def _renorm_rows(arr: np.ndarray) -> np.ndarray:
     out = np.asarray(arr, dtype=np.float32)
     sums = out.sum(axis=1, keepdims=True)
@@ -697,6 +857,7 @@ def _build_trainer_for_candidate(
         aurora_polar_dtype=str(args.aurora_polar_dtype),
         aurora_polar_safety=float(args.aurora_polar_safety),
         use_compile=bool(args.compile),
+        compile_mode=str(args.compile_mode),
         use_amp=not bool(args.no_amp),
         prefetch_batches=False,
         model_config=model_cfg,
@@ -953,7 +1114,26 @@ def _train_candidate(
     skipped_shards = 0
     last_metrics: TrainMetrics | None = None
     t0 = time.time()
-    for shard_i, shard in enumerate(shard_paths, start=1):
+    n_epochs = max(1, int(getattr(args, "epochs", 1)))
+    max_steps = int(getattr(args, "max_steps", 0) or 0)
+    vr_mode = str(getattr(args, "vr_mode", "control"))
+    # Dedicated rng for the soft-mode stochastic drop so the main training rng
+    # (shard order, in-shard order) is byte-identical across arms — only the
+    # value-redundancy treatment differs.
+    mask_rng = np.random.RandomState(int(args.seed) + 0x5EED)
+    vr_seen = 0
+    vr_dropped = 0
+    stop = False
+    shard_i = 0
+    for epoch in range(n_epochs):
+      if stop:
+          break
+      # Reshuffle shard order each epoch (rng advances) so the second pass is
+      # not a byte-identical replay of the first.
+      perm = rng.permutation(len(shard_paths))
+      epoch_shards = [shard_paths[int(i)] for i in perm]
+      for shard in epoch_shards:
+        shard_i += 1
         try:
             arrs, _meta = load_shard_arrays(shard, lazy=False)
         except Exception as exc:
@@ -962,6 +1142,7 @@ def _train_candidate(
                 "event": "train_shard_skip",
                 "candidate": candidate,
                 "shard": shard_i,
+                "epoch": epoch,
                 "path": str(shard),
                 "error": f"{type(exc).__name__}: {exc}",
             }), flush=True)
@@ -979,14 +1160,50 @@ def _train_candidate(
             upgrade_v1_planes=bool(args.replay_upgrade_v1_planes),
         )
         arrs = _convert_policy_targets(arrs, policy_encoding=model_cfg.policy_encoding)
+        if vr_mode != "control":
+            n_pre = int(np.asarray(arrs["x"]).shape[0])
+            keep = _value_redundancy_keep_mask(
+                arrs,
+                mode=vr_mode,
+                q_thresh=float(args.vr_q_thresh),
+                sfe_thresh=float(args.vr_sfe_thresh),
+                kl_veto=float(args.vr_kl_veto),
+                soft_keep_prob=float(args.vr_soft_keep_prob),
+                mask_rng=mask_rng,
+            )
+            vr_seen += n_pre
+            vr_dropped += int(n_pre - int(keep.sum()))
+            if not keep.all():
+                if not keep.any():
+                    continue  # whole shard dropped (degenerate) → skip
+                arrs = _slice_arrays(arrs, np.nonzero(keep)[0])
         n = int(np.asarray(arrs["x"]).shape[0])
-        order = rng.permutation(n)
+        weights = _compute_sample_weights(
+            arrs,
+            signal=str(args.sample_weight_signal),
+            power=float(args.sample_weight_power),
+            cap=float(args.sample_weight_cap),
+        )
+        if weights is None:
+            # Uniform baseline: one pass over a shuffled shard (byte-identical
+            # to the pre-reweighting behavior).
+            order = rng.permutation(n)
+        else:
+            # Weighted emphasis: draw n indices with replacement from the signal
+            # distribution. Same step/position budget per shard as the baseline,
+            # only the composition is biased toward high-signal rows.
+            order = rng.choice(n, size=n, replace=True, p=weights)
         for start in range(0, n, int(args.batch_size)):
             idx = order[start:start + int(args.batch_size)]
             batch = _slice_arrays(arrs, idx)
             last_metrics = trainer.train_steps(_as_replay_buffer(_FixedBatch(batch, rng)), batch_size=int(idx.shape[0]), steps=1)
             steps += 1
             positions += int(idx.shape[0])
+            if max_steps > 0 and steps >= max_steps:
+                stop = True
+                break
+        if max_steps > 0 and stop:
+            break
         if shard_i % int(args.report_every_shards) == 0:
             elapsed = time.time() - t0
             row: dict[str, Any] = {
@@ -1023,6 +1240,15 @@ def _train_candidate(
                 ):
                     row[f"last_{key}"] = metric_values[key]
             print(json.dumps(row), flush=True)
+      # Epoch-boundary checkpoint: lets a 1-epoch vs 2-epoch ranking be scored
+      # from ONE training run (does epoch count flip the screen's verdict?).
+      # The final epoch's weights are saved below as the canonical trainer.pt.
+      if epoch < n_epochs - 1:
+          trainer.save(run_dir / f"trainer_epoch{epoch + 1}.pt")
+          print(json.dumps({
+              "event": "epoch_done", "candidate": candidate,
+              "epoch": epoch + 1, "steps": steps, "positions": positions,
+          }), flush=True)
 
     eval_steps = max(1, int(args.eval_steps))
     eval_metrics = trainer.eval_steps(
@@ -1060,6 +1286,10 @@ def _train_candidate(
         "steps": steps,
         "skipped_shards": skipped_shards,
         "elapsed_s": time.time() - t0,
+        "vr_mode": vr_mode,
+        "vr_seen": int(vr_seen),
+        "vr_dropped": int(vr_dropped),
+        "vr_drop_frac": (float(vr_dropped) / float(vr_seen)) if vr_seen > 0 else 0.0,
         "model_config": dataclasses.asdict(model_cfg),
         **{f"eval_{k}": v for k, v in dataclasses.asdict(eval_metrics).items()},
     }
@@ -1451,10 +1681,108 @@ def main() -> None:
         help="Override the future-policy loss weight for this offline run.",
     )
     ap.add_argument(
+        "--w-wdl",
+        type=float,
+        default=None,
+        help="Override the WDL (value) loss weight for this offline run. "
+        "Direct trunk-gradient knob for value: w_wdl scales value's gradient "
+        "into the shared trunk linearly (see gradshare probe).",
+    )
+    ap.add_argument(
+        "--w-policy",
+        type=float,
+        default=None,
+        help="Override the main policy loss weight for this offline run.",
+    )
+    ap.add_argument(
+        "--w-soft",
+        type=float,
+        default=None,
+        help="Override the soft-policy loss weight for this offline run.",
+    )
+    ap.add_argument(
+        "--w-categorical",
+        type=float,
+        default=None,
+        help="Override the categorical (auxiliary value) loss weight for this offline run.",
+    )
+    ap.add_argument(
+        "--sf-wdl-frac",
+        type=float,
+        default=None,
+        help="Override sf_wdl_frac: fraction of the WDL target taken from the "
+        "exogenous deep-SF label. Raising it (game-z shrinks as the 1-sf-search "
+        "remainder) tests the 'trust the fixed SF eval over the noisy self-play "
+        "outcome z' value lever — exogenous value pressure, not self-amplifying.",
+    )
+    ap.add_argument(
+        "--search-wdl-frac",
+        type=float,
+        default=None,
+        help="Override search_wdl_frac: fraction of the WDL target from own MCTS "
+        "root WDL. game-z fraction is the 1-sf-search remainder.",
+    )
+    ap.add_argument(
+        "--use-adjusted-wdl-target",
+        type=_parse_bool_choice,
+        default=None,
+        help="Credit-assignment value rescoring: adjust the game-outcome (z) WDL "
+        "target by future-SF-regret (later-blunder evidence) on rows that carry it. "
+        "See losses.py:_future_regret_tensor and the value-rescore spec.",
+    )
+    ap.add_argument("--adjusted-wdl-regret-source", default=None,
+                    help="future-regret source: sum/max/d95/d98/h4../h50 (see constants.py).")
+    ap.add_argument("--adjusted-wdl-regret-scale", type=float, default=None,
+                    help="scale on the regret->Q correction (default 1.0).")
+    ap.add_argument("--adjusted-wdl-regret-cap", type=float, default=None,
+                    help="cap on the correction magnitude (0 = uncapped).")
+    ap.add_argument(
         "--newest-shards",
         action="store_true",
         help="When --max-shards is set, use the newest shards instead of the oldest.",
     )
+    ap.add_argument(
+        "--epochs",
+        type=int,
+        default=1,
+        help=(
+            "Number of passes over the selected training shards (fixed-epoch "
+            "mode only). >1 saves a trainer_epoch{N}.pt at each boundary so a "
+            "1-epoch vs 2-epoch ranking can be scored from one run."
+        ),
+    )
+    ap.add_argument(
+        "--max-steps",
+        type=int,
+        default=0,
+        help=(
+            "Fixed optimizer-step budget (0 = disabled, use --epochs). When set, "
+            "training stops after this many steps regardless of epoch/shard "
+            "boundaries, so arms with different row counts (e.g. a value-easy "
+            "drop) still get the SAME number of updates — the equal-compute "
+            "control for the value-redundancy screen. Pair with a large --epochs "
+            "so reduced-row arms can cycle to reach the budget."
+        ),
+    )
+    ap.add_argument(
+        "--vr-mode",
+        choices=["control", "soft", "hard", "sf_only"],
+        default="control",
+        help=(
+            "Value-redundancy data-selection treatment (default control=no-op). "
+            "hard: drop value-converged rows; soft: keep them w.p. --vr-soft-keep-"
+            "prob (≈ loss-weight); sf_only: drop lowest-sf_value_err rows (the "
+            "#104-direction canary). See _value_redundancy_keep_mask."
+        ),
+    )
+    ap.add_argument("--vr-q-thresh", type=float, default=0.0,
+                    help="q_surprise (|priority_q_delta|) upper bound for 'value-easy'.")
+    ap.add_argument("--vr-sfe-thresh", type=float, default=0.0,
+                    help="sf_value_err (|E[search_wdl]-E[sf_wdl]|) upper bound for 'value-easy'.")
+    ap.add_argument("--vr-kl-veto", type=float, default=0.0,
+                    help="policy_kl veto: rows with policy_kl above this are never dropped.")
+    ap.add_argument("--vr-soft-keep-prob", type=float, default=0.5,
+                    help="soft mode: keep probability for selected rows (effective loss weight).")
     ap.add_argument("--max-shards", type=int, default=0)
     ap.add_argument("--report-every-shards", type=int, default=50)
     ap.add_argument("--embed-dim", type=int, default=None)
@@ -1538,6 +1866,32 @@ def main() -> None:
             "For lc0_root replay inputs, copy legacy normalized rule50 plane 102 "
             "to root plane 109 and legacy EP plane 100 to root plane 110."
         ),
+    )
+    ap.add_argument(
+        "--sample-weight-signal",
+        choices=["none", "priority", "q_delta", "policy_kl", "sf_search_gap",
+                 "value_mismatch", "outcome_mismatch"],
+        default="none",
+        help=(
+            "Bias the within-shard batch draw toward high-signal rows. 'none' is "
+            "the uniform baseline (unchanged). Stored priorities: priority "
+            "(composite surprise), q_delta, policy_kl (policy-surprise), "
+            "sf_search_gap (killed gap-priority #104). Derived: value_mismatch "
+            "(|E[search_wdl]-E[sf_wdl]|, the scale-mismatch bet), outcome_mismatch "
+            "(|E[sf_wdl]-realized_outcome|)."
+        ),
+    )
+    ap.add_argument(
+        "--sample-weight-power",
+        type=float,
+        default=1.0,
+        help="Exponent applied to the signal (softens/sharpens emphasis; 0 -> uniform).",
+    )
+    ap.add_argument(
+        "--sample-weight-cap",
+        type=float,
+        default=8.0,
+        help="Cap a row's weight at cap*median(signal) before exponent; 0 disables the cap.",
     )
     ap.add_argument("--matrix-lr-multiplier", type=float, default=20.0)
     ap.add_argument("--matrix-weight-decay", type=float, default=1e-4)
@@ -1651,6 +2005,17 @@ def main() -> None:
         help="Maximum stored training credit in steps; <=0 disables the cap.",
     )
     ap.add_argument("--compile", action="store_true")
+    ap.add_argument(
+        "--compile-mode",
+        choices=["reduce-overhead", "default", "max-autotune"],
+        default="reduce-overhead",
+        help=(
+            "torch.compile mode when --compile is set. 'default' is the light "
+            "inductor-fusion mode that tolerates the ragged tail-batch shape "
+            "(one dynamic recompile); 'reduce-overhead' uses cudagraphs and "
+            "re-captures per shape (a storm under varying batch sizes)."
+        ),
+    )
     ap.add_argument("--no-amp", action="store_true")
     args = ap.parse_args()
     if float(args.global_board_adapter_init_rms_ratio) > 0.0:
@@ -1745,6 +2110,26 @@ def main() -> None:
         cfg["lr"] = float(args.lr)
     if args.w_future is not None:
         cfg["w_future"] = float(args.w_future)
+    if args.w_wdl is not None:
+        cfg["w_wdl"] = float(args.w_wdl)
+    if args.w_policy is not None:
+        cfg["w_policy"] = float(args.w_policy)
+    if args.w_soft is not None:
+        cfg["w_soft"] = float(args.w_soft)
+    if args.w_categorical is not None:
+        cfg["w_categorical"] = float(args.w_categorical)
+    if args.sf_wdl_frac is not None:
+        cfg["sf_wdl_frac"] = float(args.sf_wdl_frac)
+    if args.search_wdl_frac is not None:
+        cfg["search_wdl_frac"] = float(args.search_wdl_frac)
+    if args.use_adjusted_wdl_target is not None:
+        cfg["use_adjusted_wdl_target"] = bool(args.use_adjusted_wdl_target)
+    if args.adjusted_wdl_regret_source is not None:
+        cfg["adjusted_wdl_regret_source"] = str(args.adjusted_wdl_regret_source)
+    if args.adjusted_wdl_regret_scale is not None:
+        cfg["adjusted_wdl_regret_scale"] = float(args.adjusted_wdl_regret_scale)
+    if args.adjusted_wdl_regret_cap is not None:
+        cfg["adjusted_wdl_regret_cap"] = float(args.adjusted_wdl_regret_cap)
     if args.resid_channel_dropout is not None:
         cfg["resid_channel_dropout"] = float(args.resid_channel_dropout)
     if args.resid_channel_balance_weight is not None:
