@@ -1,10 +1,12 @@
 #!/bin/bash
 # Cadenced FEN/seed monitor for the LIVE trial (managed by scripts/train.sh).
 #
-# Every checkpoint >= $READ_EVERY iters past the last read: panel v1/v2 severity
-# + value_regret (each paired vs the banked 512-swap baselines), then the seed
-# retire/probation step (scripts/blindspot_retire_step.py — auto-retire 2x-AWARE
-# seeds, re-feed retirees reading > -0.2). One summary line per read.
+# Two cadences (see READ_EVERY / RETIRE_EVERY below): every RETIRE_EVERY
+# checkpoints the cheap flywheel runs (seed retire/probation via
+# scripts/blindspot_retire_step.py — auto-retire 2x-AWARE seeds, re-feed retirees
+# reading > -0.2 — then the harvest gate + auto-feed); every READ_EVERY the
+# expensive yardsticks also run (panel v1/v2 severity + value_regret, each paired
+# vs the banked 512-swap baselines). One summary line per cycle.
 #
 # Replaces the scratchpad-era scratchpad/live_read/monitor_fen.sh, which was
 # hardwired to the retired 46M trial dir (5fac4) and a 46M-era iteration
@@ -21,7 +23,17 @@ PIDFILE=/tmp/chess_training.pid
 WORK_DIR="${TRAIN_WORK_DIR:-runs/pbt2_small}"
 MON=scratchpad/live_read/monitor
 STATE="$MON/monitor_last_read"          # holds "<trial_basename> <iter>"
-READ_EVERY="${MONITOR_READ_EVERY:-10}"
+# Two decoupled cadences (in checkpoints). The cheap flywheel — retire (net_q,
+# no SF) + gate (2M-SF vet of NEW candidates) + feed — runs every RETIRE_EVERY so
+# learned seeds clear and new holes feed fast (tenure floor is 2x-consecutive
+# AWARE, so a faster cadence retires learned seeds in ~2 reads instead of waiting
+# on the slow one; probation re-feed is the safety net for the tighter
+# confirmation). The expensive yardsticks (panels + value_regret — frozen-set GPU
+# reads, no live SF) run every READ_EVERY to JUDGE experiments over day-plus
+# windows. Keep READ_EVERY a multiple of RETIRE_EVERY (deep reads piggyback a
+# flywheel cycle on the same checkpoint copy).
+READ_EVERY="${MONITOR_READ_EVERY:-20}"
+RETIRE_EVERY="${MONITOR_RETIRE_EVERY:-5}"
 # Banked 512-swap baselines (canary_512_iter20). Trend anchors only; the
 # pre-committed readout rules live in docs/experiment_ledger.md.
 BASE=scratchpad/canary_512_iter20
@@ -49,32 +61,51 @@ while true; do
     CK=$(ls -d "$TRIAL"/checkpoint_* 2>/dev/null | sort | tail -1)
     [ -n "$CK" ] && [ -f "$CK/trainer.pt" ] || { sleep 300; continue; }
     N=$((10#$(basename "$CK" | tr -dc '0-9')))
-    read -r LAST_TRIAL LAST_N < "$STATE" 2>/dev/null || { LAST_TRIAL=""; LAST_N=-999; }
-    # New trial dir (swap/salvage-restart) => reset the counter.
-    [ "$(basename "$TRIAL")" = "$LAST_TRIAL" ] || LAST_N=-999
-    if [ $((N - LAST_N)) -lt "$READ_EVERY" ]; then sleep 300; continue; fi
+    # STATE: "<trial> <last_retire_ck> <last_deep_ck>". Older 2-field files
+    # ("<trial> <ck>") load with an empty deep field -> backfilled below.
+    read -r LAST_TRIAL LAST_RETIRE_N LAST_DEEP_N < "$STATE" 2>/dev/null || { LAST_TRIAL=""; LAST_RETIRE_N=-999; LAST_DEEP_N=-999; }
+    [ -n "$LAST_DEEP_N" ] || LAST_DEEP_N="$LAST_RETIRE_N"
+    # New trial dir (swap/salvage-restart) => reset both counters.
+    [ "$(basename "$TRIAL")" = "$LAST_TRIAL" ] || { LAST_RETIRE_N=-999; LAST_DEEP_N=-999; }
+    # Nothing due until the (faster) retire/flywheel cadence elapses.
+    if [ $((N - LAST_RETIRE_N)) -lt "$RETIRE_EVERY" ]; then sleep 300; continue; fi
 
     sleep 120  # let the checkpoint write settle
     trainer_running || continue
     cp "$CK/trainer.pt" "$MON/ck_$N.pt" 2>/dev/null || { sleep 600; continue; }
 
-    for P in v1 v2; do
-        PYTHONPATH=. nice -n 15 python3 scripts/blindspot_panel.py --checkpoint "$MON/ck_$N.pt" \
-            --panel "data/blindspot_panel_$P.jsonl" \
-            --dump-per-position "$MON/paneldump_${P}_$N.jsonl" > "$MON/panel_${P}_$N.log" 2>&1
-        PYTHONPATH=. python3 scripts/paired_compare.py \
-            "$BASE/panel_${P}_live.jsonl" "$MON/paneldump_${P}_$N.jsonl" \
-            --label-a swap_iter20 --label-b "ck_$N" > "$MON/pairpanel_${P}_${N}.log" 2>&1
-    done
-    PYTHONPATH=. nice -n 15 python3 scripts/value_regret.py --checkpoint "$MON/ck_$N.pt" \
-        --max-positions 2000 --gpu-mem-fraction 0.15 \
-        --dump-per-position "$MON/vdump_$N.jsonl" > "$MON/vregret_$N.log" 2>&1
-    PYTHONPATH=. python3 scripts/paired_compare.py "$BASE/vdump_boot_swaptime.jsonl" \
-        "$MON/vdump_$N.jsonl" --label-a boot512 --label-b "ck_$N" \
-        > "$MON/paired_${N}_vs_boot.log" 2>&1
+    # Deep yardsticks (panels + value_regret) run only every READ_EVERY. They are
+    # frozen-reference GPU reads (no live SF — value_regret scores against the
+    # pre-labeled audit set) used to JUDGE experiments over day-plus windows, so
+    # they lag the flywheel. Piggyback the same checkpoint copy.
+    DO_DEEP=0
+    [ $((N - LAST_DEEP_N)) -ge "$READ_EVERY" ] && DO_DEEP=1
+    B1=""; B2=""; VAL=""; DELTA=""
+    if [ "$DO_DEEP" = 1 ]; then
+        for P in v1 v2; do
+            PYTHONPATH=. nice -n 15 python3 scripts/blindspot_panel.py --checkpoint "$MON/ck_$N.pt" \
+                --panel "data/blindspot_panel_$P.jsonl" \
+                --dump-per-position "$MON/paneldump_${P}_$N.jsonl" > "$MON/panel_${P}_$N.log" 2>&1
+            PYTHONPATH=. python3 scripts/paired_compare.py \
+                "$BASE/panel_${P}_live.jsonl" "$MON/paneldump_${P}_$N.jsonl" \
+                --label-a swap_iter20 --label-b "ck_$N" > "$MON/pairpanel_${P}_${N}.log" 2>&1
+        done
+        PYTHONPATH=. nice -n 15 python3 scripts/value_regret.py --checkpoint "$MON/ck_$N.pt" \
+            --max-positions 2000 --gpu-mem-fraction 0.15 \
+            --dump-per-position "$MON/vdump_$N.jsonl" > "$MON/vregret_$N.log" 2>&1
+        PYTHONPATH=. python3 scripts/paired_compare.py "$BASE/vdump_boot_swaptime.jsonl" \
+            "$MON/vdump_$N.jsonl" --label-a boot512 --label-b "ck_$N" \
+            > "$MON/paired_${N}_vs_boot.log" 2>&1
+        B1=$(grep -oE "BLIND \(net > -0.2\): [0-9]+/35" "$MON/panel_v1_$N.log" | tail -1)
+        B2=$(grep -oE "BLIND \(net > -0.2\): [0-9]+/113" "$MON/panel_v2_$N.log" | tail -1)
+        VAL=$(grep OVERALL "$MON/vregret_$N.log" | tail -1 | xargs)
+        DELTA=$(grep "paired delta" "$MON/paired_${N}_vs_boot.log" | xargs)
+        LAST_DEEP_N=$N
+    fi
 
     # Seed retire + probation re-feed (PR #155): rewrites the active list +
-    # repoints the live yaml, validated + reverted-on-error; fail-soft.
+    # repoints the live yaml, validated + reverted-on-error; fail-soft. Net-only
+    # (net_q, no SF) — cheap, so it rides the fast RETIRE_EVERY cadence.
     RET=$(PYTHONPATH=. nice -n 15 python3 scripts/blindspot_retire_step.py \
         --checkpoint "$MON/ck_$N.pt" --tag "$N" --gpu-mem-fraction 0.15 \
         2>>"$MON/retire_$N.log" | grep '^retire:' | tail -1)
@@ -106,11 +137,12 @@ while true; do
         FEED="[feed] disabled by $AUTO_FEED_DISABLED"
     fi
 
-    B1=$(grep -oE "BLIND \(net > -0.2\): [0-9]+/35" "$MON/panel_v1_$N.log" | tail -1)
-    B2=$(grep -oE "BLIND \(net > -0.2\): [0-9]+/113" "$MON/panel_v2_$N.log" | tail -1)
-    VAL=$(grep OVERALL "$MON/vregret_$N.log" | tail -1 | xargs)
-    DELTA=$(grep "paired delta" "$MON/paired_${N}_vs_boot.log" | xargs)
-    echo "[monitor $(date +%m-%d\ %H:%M)] trial=$(basename "$TRIAL") ckpt=$N | v1 $B1 | v2 $B2 | $VAL | vs_boot: $DELTA | $RET | $GATE | $FEED" >> "$MON/monitor.log"
+    # Full yardstick line on deep cycles; compact flywheel line otherwise.
+    if [ "$DO_DEEP" = 1 ]; then
+        echo "[monitor $(date +%m-%d\ %H:%M)] trial=$(basename "$TRIAL") ckpt=$N | v1 $B1 | v2 $B2 | $VAL | vs_boot: $DELTA | $RET | $GATE | $FEED" >> "$MON/monitor.log"
+    else
+        echo "[monitor $(date +%m-%d\ %H:%M)] trial=$(basename "$TRIAL") ckpt=$N | flywheel | $RET | $GATE | $FEED" >> "$MON/monitor.log"
+    fi
     rm -f "$MON/ck_$N.pt"
-    echo "$(basename "$TRIAL") $N" > "$STATE"
+    echo "$(basename "$TRIAL") $N $LAST_DEEP_N" > "$STATE"
 done

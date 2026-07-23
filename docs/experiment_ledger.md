@@ -526,6 +526,24 @@ The candidate supply supports it (pending reserve ≫ 60; the gate tracks byte-o
 default (`${HARVEST_VET_PER_RUN:-60}`); monitor restarted 2026-07-23 ~12:05 to load
 it (observer only, no trainer/worker restart; gate was idle between reads).
 
+**(C) monitor cadence DECOUPLED (2026-07-23 ~13:32).** The monitor bundled
+everything into one `READ_EVERY=10` (~0.9 days/read) cadence, so retirement — which
+only needs `net_q` on the active seeds (net-only, no SF) — was gated by the
+expensive panel+`value_regret` reads. Measured seed tenure (162 retirees, keyed on
+placement key across the ck48–163 `retire_netq_*` dumps): floor 2 reads (the
+2×-consecutive-AWARE rule), **median 3 reads (~2.7 days), p90 7**; the distribution
+spikes at 2–3 reads ⇒ most seeds are LEARNED within ~1 read of feeding and the
+tenure is CONFIRMATION-CADENCE-bound, not learning-bound. So the flywheel is
+decoupled: cheap retire+gate+feed every `RETIRE_EVERY=5` (~0.45 days, 2× faster
+clearing/feeding), expensive panels+`value_regret` (frozen-set GPU reads, NO live
+SF — value_regret scores vs the pre-labeled `audit_set_v1.jsonl`) every
+`READ_EVERY=20` (~1.8 days, halved — fine, learning-quality readouts want day-plus
+windows). Deep reads piggyback a flywheel cycle's checkpoint copy. Tighter
+2×-consecutive confirmation is covered by the deep-AWARE requirement (one read
+net_q≤−0.5) + probation re-feed. Env knobs `MONITOR_RETIRE_EVERY`/`MONITOR_READ_EVERY`.
+WATCH: pool grows ~4× faster feed (60-vet every 5 vs 30 every 10) — if `sf_pid`
+finished games <30 or airbag trips, raise `RETIRE_EVERY` or cut dose.
+
 **ONE deciding yardstick.** DELIVERY first (fast, ~2 monitor reads): `grep
 harvest_gate scratchpad/live_read/monitor/monitor.log` — **vetted_kept and the feed
 count per cycle should ≈2× the prior 30-cap run (~10→~20 kept)** with the gate run
