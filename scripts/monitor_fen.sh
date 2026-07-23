@@ -26,9 +26,16 @@ READ_EVERY="${MONITOR_READ_EVERY:-10}"
 # pre-committed readout rules live in docs/experiment_ledger.md.
 BASE=scratchpad/canary_512_iter20
 # Harvest-gate vetting (PR #182): CPU Stockfish + syzygy for deep-SF vetting of
-# harvested severe seeds. Same binary/TB the miner uses; skipped if absent.
+# harvested severe seeds. Same binary/TB the miner uses; skipped if absent. Vetted
+# survivors are promoted after each gate pass through the safe versioned feed step.
 SF_BIN="${HARVEST_SF_BIN:-/home/josh/projects/chess/e2e_server/publish/stockfish}"
-SYZYGY_PATH="${HARVEST_SYZYGY_PATH:-/home/josh/projects/chess/data/syzygy_3-4-5}"
+# Match the in-loop label's TB coverage (games search 3-4-5 + 6-man, see
+# pbt2_small.yaml syzygy_path) so the gate is never TB-blind where the ~700k
+# label has exact truth — the gate must dominate the label on every axis (depth
+# 2M>700k, MultiPV-1 concentrated, TB equal) to legitimately overrule it.
+SYZYGY_PATH="${HARVEST_SYZYGY_PATH:-/home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6}"
+STAGED_SEEDS="${HARVEST_STAGED_SEEDS:-data/harvest/staged_candidates.txt}"
+AUTO_FEED_DISABLED="$MON/auto_feed_disabled"
 mkdir -p "$MON"
 
 trainer_running() {
@@ -73,22 +80,37 @@ while true; do
         2>>"$MON/retire_$N.log" | grep '^retire:' | tail -1)
 
     # Auto-mine gate (PR #182): vet a bounded batch of NEW harvester severe seeds
-    # (collect flywheel's middle) → STAGE survivors to data/harvest/staged_candidates.txt.
-    # Staging only — promotion into the live pool stays a human/ledger-gated feed.
-    # CPU Stockfish (nice, capped), safe concurrent with training; fail-soft.
+    # (collect flywheel's middle) and stage survivors. CPU Stockfish (nice, capped),
+    # safe concurrent with training; fail-soft.
     GATE=""
     if [ -x "$SF_BIN" ]; then
         GATE=$(PYTHONPATH=. nice -n 15 python3 scripts/harvest_gate_step.py \
             --sf-path "$SF_BIN" --syzygy-path "$SYZYGY_PATH" \
-            --max-vet-per-run "${HARVEST_VET_PER_RUN:-30}" --stamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --max-vet-per-run "${HARVEST_VET_PER_RUN:-60}" \
+            --sf-nodes "${HARVEST_SF_NODES:-2000000}" --multipv "${HARVEST_MULTIPV:-1}" \
+            --stamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             2>>"$MON/harvest_gate_$N.log" | grep '^harvest_gate:' | tail -1)
+    fi
+
+    # Close the flywheel at the same checkpoint boundary: merge all staged,
+    # deep-SF-vetted candidates that are neither active nor retired, write a fresh
+    # path (the loader cache is path-keyed), and atomically repoint + validate the
+    # live yaml. The feed step is idempotent against the cumulative staging file.
+    FEED=""
+    if [ -s "$STAGED_SEEDS" ] && [ ! -f "$AUTO_FEED_DISABLED" ]; then
+        FEED_TAG="auto_ck${N}_$(date -u +%Y%m%dT%H%M%SZ)"
+        FEED=$(PYTHONPATH=. nice -n 15 python3 scripts/blindspot_feed_step.py \
+            --batch "$STAGED_SEEDS" --tag "$FEED_TAG" \
+            2>>"$MON/feed_$N.log" | tail -1)
+    elif [ -f "$AUTO_FEED_DISABLED" ]; then
+        FEED="[feed] disabled by $AUTO_FEED_DISABLED"
     fi
 
     B1=$(grep -oE "BLIND \(net > -0.2\): [0-9]+/35" "$MON/panel_v1_$N.log" | tail -1)
     B2=$(grep -oE "BLIND \(net > -0.2\): [0-9]+/113" "$MON/panel_v2_$N.log" | tail -1)
     VAL=$(grep OVERALL "$MON/vregret_$N.log" | tail -1 | xargs)
     DELTA=$(grep "paired delta" "$MON/paired_${N}_vs_boot.log" | xargs)
-    echo "[monitor $(date +%m-%d\ %H:%M)] trial=$(basename "$TRIAL") ckpt=$N | v1 $B1 | v2 $B2 | $VAL | vs_boot: $DELTA | $RET | $GATE" >> "$MON/monitor.log"
+    echo "[monitor $(date +%m-%d\ %H:%M)] trial=$(basename "$TRIAL") ckpt=$N | v1 $B1 | v2 $B2 | $VAL | vs_boot: $DELTA | $RET | $GATE | $FEED" >> "$MON/monitor.log"
     rm -f "$MON/ck_$N.pt"
     echo "$(basename "$TRIAL") $N" > "$STATE"
 done
