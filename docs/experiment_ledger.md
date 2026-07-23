@@ -171,6 +171,132 @@ always re-dump and pair.
 | **2026-07-01→02** | **throughput triple, leg 1: `sf_label_nodes_cap`** | **two-stage kill.** 150k: policy 49.6→55.3, raw top-1 51.5→60.7 at ~60% refill → raised to 400k. 400k: full-refill read @ckpt478 52.2 (>2cp over baseline) and raw top-1 61.7 never recovered → **uncapped (0)** 2026-07-02. The sf_p0/regret policy teacher needs full ~700k-node labels |
 | 2026-07-01→02 | throughput triple, leg 2: `record_fast_ply_value` (75% value-only rows) | **REVERTED 2026-07-02** (bundle restart, protected by ckpt479 pool). Evidence: raw policy top-1 stuck +10cp over baseline through the whole window (trunk dilution — value-only rows crowd the policy gradient) and value 72.4→76.6. Leg 3 (`train_views_per_position 2.5`) KEPT — proportional step budgeting, not implicated. Net throughput-triple verdict: quality-negative; only the views bookkeeping survives. **Statistical post-mortem (07-02 late, paired retro-CI 457→478):** raw top-1 +10.95 [+1.49, +21.18] CONFIRMED (endgame-driven, +17.9 [+6.8, +31.3]); search E[regret] +3.9 [−2.5, +10.6] and value +1.1 [−7.6, +9.9] NOT significant — raw top-1 was the only statistically load-bearing kill signal; the kill stands on it |
 | 2026-07-01→02 | flat lower LR (0.0003 sqrt_release → 0.0001 flat, PB2-pinned) | **UNREADABLE — reverted 2026-07-02.** Its watch criterion ("must not slow the policy downtrend") was made unjudgeable by the throughput triple landing the same day. Reverted to 0.0003/sqrt_release in the same bundle restart so the recovery read targets the exact known-good recipe. Lesson: simultaneous launches destroy both readouts. (Mechanic for changing PB2-pinned params: see memory `flat_lower_lr_experiment_live` — yaml alone silently no-ops) |
+| **2026-07-20→21** | **value head-weight rebalance family** (offline warm-start ck118==live iter-118: `w_wdl`↑, z→SF blend shift `sf_wdl_frac` 0.50→0.65, aux-`categorical`+policy-cut combo, `use_adjusted_wdl_target` credit-assign rescore + 2× dose, and all stacked) | **multi-seed NULL — single-seed s0 wins were noise.** `scratchpad/wwdl_overnight_20260720`, ruler = `value_regret` ≥8-man paired. w_wdl=2.5 vs ctrl over **4 paired seeds** = +12.5 SIG(s0) / +1.2 / +5.0 / −2.4 → pooled **~+4±3cp NS**. Blend z→SF +2.1/−3.0 dead; stacking (w2.5+ca, w2.5+blend) SIG vs ctrl but **NS vs pure w2.5** (no add); ca_infl +7.6/−5.0/+2.9 NS (2× dose +13.7 SIG but **only @s0**). **Seed-0 confound: at s0 EVERY value-pressure lever won; off-s0 none replicate** → s0 is a lucky data-shuffle, wins were not lever-specific. Policy stayed neutral throughout (s2/s3 NS). Head-weight / target-rescore / blend are marginal-to-dead value-ceiling movers at 63M. LESSON: single-seed offline `value_regret` has ~11cp/seed noise (identical config swung 78.9↔89.9) — never verdict on one seed. Corrects the premature "STARVED wins" memory. See [[value_head_trunk_gradient_share]]. |
+| **2026-07-21** | **offline continuation "beat live RL faster than RL"** (4-epoch warm-start fine-tune of live iter-118, `promo_ctrl_e4`, plain — no lever) | **RULER MIRAGE — arena-refuted.** On the frozen audit set `promo_ctrl_e4` scored `value_regret` **−12.4cp SIG** (89.7→77.3, ≥8-man) + policy +9 NS vs raw live iter-118 (anchor) — looked like a promotable step up. But the matched-sims gate (`scripts/arena_standard.py`, 64 sims, paired openings, pool 16 / compile-on-no-cudagraphs; the pool must stay ≤16 or the fixed eval batch OOMs 32GB) = **Elo −83.8, 95% CI [−134.0, −36.8] → significantly WEAKER in real play.** Textbook [[offline_distillation_value_trap]]: better 1-ply SF-regret RANKING, worse STRENGTH — the frozen ruler cannot see MCTS/selfplay behavior. RULE (durable): do NOT promote an offline-fine-tuned checkpoint on ruler wins; the arena vs the incumbent is the gate. Live **iter-118 remains the best state**; resumed RL from it UNCHANGED (blind-spot FEN seeds stay valid — same net, same holes, no retest). |
+
+### SHELVED — NULL — value-redundancy data-selection screen (2026-07-21)
+
+**VERDICT (2026-07-21, judged by the pre-committed table below): NULL — does not
+clear the offline gate → value-redundancy DROP family SHELVED.** 8/8 runs complete,
+drop fractions all 11.16–11.28% (mass-matched). On the pre-committed judge metric
+(paired `value_regret` ≥8-man, endgame slice, both seeds):
+- **HARD** (the physical-drop arm): seeds CONTRADICT — endgame s0 +8.87 [NS], s1
+  −22.57 [SIG A-better]; **overall** s0 **+11.25 [SIG B/control-better]** vs s1
+  −18.03 [SIG A-better]. Two *significant* results in *opposite* directions = the
+  seed-noise-dominated signature (the σ≈0.034 2-seed-agreement rule: here the seeds
+  actively disagree). Pooled ≈ −3.4cp overall / −6.9cp endgame — null.
+- **SOFT**: endgame s0 −4.63, s1 −6.84 (both NS); overall −7.86, −5.83 (both NS).
+  Consistent slight-favorable *sign* but never significant. The "least-bad" arm.
+- **SF-only (#104 canary)**: endgame s0 −9.55, s1 +1.82 (both NS). **No offline
+  endgame value damage** — expected, since #104's −13.8cp was a LIVE buffer-drift
+  effect a fixed-replay run cannot reproduce; so this validates nothing about
+  sensitivity, it just fails to fire (consistent with the "offline can only kill"
+  caveat).
+- **POLICY**: every arm, both seeds NS, all mildly negative (−2 to −5cp). No policy
+  damage, no policy benefit.
+
+**Why shelve, not "inconclusive→more seeds":** the burden was on the experiment to
+show a *significant, seed-consistent* offline win to justify spending a LIVE window
+(the deploy is a pure strength bet — zero speedup, since game-gen not training is the
+bottleneck — against a weak prior: #104 equivalence + value-easy rows are mildly
+policy-rich). It didn't. Worse, the #104-direction canary (`sf_only`) moved the SAME
+small pooled amount (~−5cp) as the "clever" joint-easy criterion — i.e. WHICH
+value-easy criterion you drop by is indistinguishable from generic "drop 11% + cycle
+1.12× harder on kept rows," so the selection *intelligence* adds nothing. That is a
+clean null for the whole drop family, not a near-miss. If ever revisited, SOFT
+low-dose weighting is the only arm with a consistent (if NS) favorable sign — but not
+now. **OWED loss-share re-run is now MOOT for this verdict** (it was the policy-
+starvation *failure-explainer*; policy showed no significant loss to explain).
+Revert reference `data/salvage/iter118_pre_value_easy_drop` retained; the built
+`value_easy_drop` selfplay mechanism stays off-by-default, unmerged, gated on a win
+that did not arrive. Artifacts → `scratchpad/vr_screen_20260721/`.
+
+---
+
+_Original pre-registration (kept for the record):_
+
+### PRE-REGISTERED / RUNNING — value-redundancy data-selection screen (2026-07-21)
+
+**Hypothesis.** lc0-style data selection — dropping *value-converged* selfplay rows
+(net already agrees with SF and its own value is stable) — raises value strength by
+concentrating training on informative positions, WITHOUT reproducing #104's
+capacity-theft (which upweighted the *hard* SF-disagreement tail at 36% mass and
+cost −13.8cp value, endgame-driven). This is the *inverse* knob (drop easy, don't
+upweight hard) at a *gentle* mass (~11%) with a policy-KL veto. Satisfies rule 6
+(offline outcome-gate before any live window). **Note:** we generate ~25% of plies
+as full-policy rows and game generation (not training) is the bottleneck, so a drop
+gives **zero speedup** — this is a *pure strength bet*, judged on strength only. And
+`diff_focus` on the live 512×16 net already drops only ~1.6% (params stale from the
+46M net), so this is *additive*, not a "recover wasted data" fix.
+
+**Design.** Fixed-replay paired continuation from ck118 (`data/salvage/iter118_pre_value_easy_drop`),
+`scripts/offline_replay_epoch.py --vr-mode {control,soft,hard,sf_only}` (new
+`_value_redundancy_keep_mask`), 4 arms × 2 paired seeds {0,1} (same seed = same
+control block), `--max-steps` equal across arms (equal optimizer updates despite
+row reduction), newest-780 shards. Redundancy = `max(q_rank, sf_rank) ≤ k` with a
+`policy_kl ≤ p75` veto (implemented as conjunction `q≤q_p ∧ sfe≤sfe_p`, which *is*
+max-rank). **All three joint/canary arms apply the SAME `kl_veto=3.330`** (the
+veto runs before the mode-specific branch in `_value_redundancy_keep_mask`, so
+soft is NOT missing it). All ~11.2% displaced mass, hard ⊂ soft (nesting, same
+veto): **HARD** q≤0.0378 ∧ sfe≤0.0841 ∧ kl≤3.330 (drop 11.2%); **SOFT** q≤0.0710 ∧
+sfe≤0.1403 ∧ kl≤3.330 (select 22.3% @ keep_prob 0.5 = 11.2% mass); **SF-only**
+sfe≤0.0359 ∧ kl≤3.330 (drop 11.3%) = the pure #104-direction canary.
+`sf_value_err=|E[search_wdl]−E[sf_wdl]|`. **Mechanism = physical drop-and-RE-CYCLE
+under fixed optimizer compute** (NOT zero-loss-weight, NOT drop-and-refill-with-fresh-
+rows): the window is FIXED (newest-780) and the loader re-passes ALL shards each epoch,
+so with the step budget held fixed HARD does ~2.2 epochs vs control's ~2.0 → it
+**repeats its kept rows ~1.12× more and sees FEWER unique rows** (only kept ones); it
+does NOT reach fresh "later" rows (there are none). So the arms share the replay
+SOURCE / ordering rule / seed / checkpoint but do NOT see identical batches. That is
+the intended operational question ("is capacity better spent re-passing the informative
+kept rows than training the extreme-easy ones?"), not a causal-isolation flaw — but the
+comparison is **operational, not perfectly causal**, and the "more unique-row exposure"
+benefit does NOT apply (fixed window ⇒ fewer unique rows, not more). Chosen over zero-weight because
+it is the faithful analog of the deployable live mechanism (which drops rows from
+the buffer) and avoids zero-weight's reduced-effective-N variance; zero-weight
+would instead test the *reweighting* family #104 already killed. So HARD-vs-SOFT is
+**narrow complete suppression (bottom 11.2%) vs broader partial suppression (22.3%
+@ 0.5) at ~equal displaced mass** — NOT a clean coverage-vs-no-coverage contrast
+(after mean-renorm neither cuts total gradient scale; they reallocate it). Carries its own
+failure-explainer (rule 7): a pre-launch **loss-share** measurement (`scripts/vr_loss_share.py`,
+`scratchpad/vr_loss_share.json`) + the SF-only canary + the control arm. **Loss-share
+RESULT (ck118, PROVISIONAL — newest-30 sample, ~17% selection; the real run selects
+~11% on newest-780, so magnitudes are provisional until re-run on the full window,
+OWED before interpreting):** normalized by row count the HARD set has **0.46× average
+value-loss density and 1.12× average policy-loss density** (mean wdl_ce 0.34 vs 0.83;
+mean policy_ce 1.82 selected vs 1.61 kept) — i.e. **strongly value-easy, only MILDLY
+policy-rich** (~12% above-average policy CE, not the "2.4×" cross-metric share ratio I
+first quoted — value-loss% and policy-loss% are shares of different denominators and
+must not be divided). Under drop-and-RE-CYCLE the net shift is small: avg policy-CE per
+processed row moves only ~1.4% (1.633→1.61, since dropped rows 1.82 are replaced by
+more passes over kept rows 1.61). So the earlier "policy-starvation / no viable dose"
+language was OVERSTATED — the data shows a tradeoff at THIS ONE operating point, not
+that every tighter threshold / softer floor / smaller dose must lose (the full
+dose-response curve is untested). **DOSE DECISION: do NOT bump for this experiment** —
+value_loss_share ~8% is in the "more aggressive than it looks, do not increase" band;
+a larger dose is a separately-registered follow-up, never an adjustment to force a
+clearer result. Low loss-share is diagnostic, not a bump trigger (easy rows may carry
+calibration/regularization/coverage). Whether the ~1.4% policy shift + value-refocus
+helps or hurts STRENGTH is exactly what the screen decides. **OWED: re-run loss-share
+on the actual newest-780 set with phase (open/mid/end) breakdown + unique-rows-traversed
+per arm, before reading the paired deltas.**
+
+**Pre-committed decision table** (judged on **direct treatment-vs-control paired
+`value_regret` ≥8-man, endgame-sliced** — the #104 failure signature — via
+`scripts/paired_compare.py`, both seeds; SIG = 95% CI excludes 0):
+| Result | Conclusion |
+|---|---|
+| SF-only loses (endgame value SIG worse) | confirms #104 prior + validates test sensitivity (NOT a family-kill) |
+| Hard loses, soft neutral/wins | coverage matters → abandon dropping, keep weighting |
+| Soft and hard both lose | close the value-redundancy family |
+| Hard neutral, soft wins | use soft weighting |
+| Hard wins, soft neutral | recheck — surprising, likely seed-sensitive |
+| Both win | repeat from a 2nd checkpoint, then a low-dose LIVE test with the #104 readout harness |
+A significant **hard** loss kills *dropping*, not *soft*. Offline can only KILL
+(not promote): #104's own offline dry-run looked safe and was −13.8cp live, because
+capacity-theft accrues over live buffer-composition drift a fixed-replay run cannot
+reproduce. So any *win* still requires a live low-dose confirmation; a *loss* shelves
+cheaply. Artifacts → `scratchpad/vr_screen_20260721/`.
 
 ## LIVE, UNREAD (as of 2026-07-02 evening — every open loop)
 
@@ -191,8 +317,232 @@ always re-dump and pair.
 | **Blind-spot FEN pool += 64 cheese-match-mined seeds** (`opening_fen_list_path`→`data/blindspot_fens_retire_732_cheese64.txt`, retire_732's 80 + 64 new = 144; live yaml, restart-gated at time of activation — see the live-reload mechanism entry directly below, which removes this gate going forward) | 2026-07-10, restart after iter 742/ckpt736 | Same lever as the WORKED v1 batch and the v1→v2 scale-up row above — adds a THIRD tranche, this one mined from the cheese_20260709_2357_checkpoint_000722 match (60 games, 48 losses) via the extended `scripts/mine_blindspot_seeds.py` (this session): 48 first-decisive-collapse seeds (existing method, one per loss) + 16 value-mismatch seeds (NEW criterion — deep-SF expected score vs DeepFin's own self-reported move-log eval, both converted to a common [-1,1] expected-score scale via `cp_to_wdl`/the algebraic inverse of `q_to_cp` so the comparison isn't a raw-cp scale artifact; gap ≥0.5, only emitted when ≥8 plies from that game's collapse ply so both signals get captured without near-duplicate seeds). All 64 deep-SF-vetted at mining time (300k nodes + 6-man TB, same standard as the v2 68-seed harvest). 0 overlap with panel v1/v2 (excluded via `--holdout`) and 0 overlap with v1/v2/v3/retire_722 (excluded via `--existing`); verified 0 placement-key dupes within the merged 144-seed file and all 144 lines parse via the live loader's own reject predicate. Baseline @ckpt732 (the last monitor read pre-merge, `scratchpad/live_read/monitor/monitor.log`): v1 BLIND 13/35 (severity paired +0.24 SIG vs ckpt609), v2 BLIND 43/113, value_regret 73.5cp (paired vs ckpt609 +2.41 [-5.76, +10.37] NS). PRIMARY: held-out panel v1 BLIND count/severity holds or improves vs 13/35 (these 64 seeds are not panel members — same generalization logic as v1/v2). GUARDRAIL/KILL: `value_regret` paired CI vs the ckpt732 baseline worse by >2cp (CI excludes 0 on the worse side) → revert. WATCH: pool nearly doubles (80→144) so doled selfplay-seeded games/iter roughly doubles too at `opening_fen_dole_per_iter: 1` — dole is selfplay-only by construction (PID-safe, established), but if `sf_pid` games <30 or the airbag trips, that's an unexpected finding, dial dose down. Readout via the existing monitor_fen.sh cadence (next scheduled read once checkpoint reaches 742, no new tooling). REVERT: `opening_fen_list_path` → `data/blindspot_fens_retire_732.txt` + restart — no salvage snapshot needed (pure opening-seed-pool change, doesn't touch weights/optimizer/replay). |
 | **`opening_fen_list_path` live-reload mechanism** (server code, no training-target change) | 2026-07-10 | Fixes the gap this session's cheese64 addition (row above) worked around by restarting: `opening_fen_list_path` was one of `_LAUNCH_FIXED_ASSET_PATH_KEYS` (`trainable_config_ops.py`) — captured once at server-process launch, silently inert to any later yaml edit (the strict live-reload validator only *warns*, never errors, so this was easy to miss). Extended the SAME manifest/publish-dir pattern already proven for `model.pt`/stockfish binaries: `_publish_distributed_trial_state` (`distributed_runtime.py`) now copies the current source file into the trial's publish dir under a fixed name every iteration and advertises a freshly-computed sha (unconditional copy + direct `sha256_file`, not the mtime-keyed `_sha256_cached` used for the launch-fixed book paths — this asset is expected to change often, and mtime-tie risk on a small frequently-edited file was judged not worth the coarseness); a new trial-scoped route `GET /v1/trials/{trial_id}/opening_fen_list` (`server/app.py`) serves it via `_artifact_from_publish`, mirroring the existing stockfish route; worker download path updated to the trial-scoped endpoint (`worker.py`) for consistency with the model-download fallback pattern. Removed `opening_fen_list_path` from `_LAUNCH_FIXED_ASSET_PATH_KEYS` and the now-dead `--opening-fen-list-path` CLI plumbing (`run_server.py`, `harness.py`). Net effect: from this deploy forward, a yaml `opening_fen_list_path` change (new tranche, auto-retirement, a full swap) takes effect on the NEXT manifest publish — no restart. Coverage: `tests/test_distributed_selfplay_backpressure.py::test_opening_fen_list_path_swap_takes_effect_without_restart` (path change, same running app instance) and `::test_opening_fen_list_path_inplace_edit_detected` (in-place content edit at the same path, exercises the freshness fix). Full suite green pre-merge. No kill threshold — this is infra, not a training-target hypothesis; the FIRST real-world proof is the next time the pool changes without a restart, watch for it in the monitor_fen.sh cadence. **PROVEN 2026-07-11: the reinstate512 list swap (138→141) republished to `opening_fen_list_live.txt` (141 seeds verified) on the first manifest publish after the yaml edit — the mechanism works.** |
 | **512-net seed feed += 54 mined seeds (v4 pruned + harvest_v5 cheese)** (`opening_fen_list_path`→`data/blindspot_fens_fed_v4v5_ck58.txt`, retire_58's 101 + 26 v4 + 28 harvest_v5 = 155, deduped by FEN; live yaml, live-reload — no restart needed for the seed part, but co-activated with the 07-13 broker-self-abort restart) | 2026-07-13, ~iter 64/ckpt63 (trial 4c17c) | Same lever as the WORKED v1/v2/cheese64 tranches — the FIRST substantial seed addition on the 512 net since the swap (retirement has only SHRUNK the pool 141→101 with `refed=0`; nothing has been added, and the 61 already-mined seeds sat unused in scratchpad). 26 = v4 pruned (KDEF×17 + gap-cluster CONV_UP×9, per `scratchpad/motifs/motif_report.md`, endgame cluster dropped as panel-resolved); 28 = harvest_v5 mined from the 20-game ckpt722 cheese block (`scratchpad/harvest_v5/mined_cheese512_20260712.txt`) incl. the value-mismatch band (sf vs own-eval gap ≥0.5) that directly targets the **flat value head** (this readout's motivation: policy panels improving 82→70/113 v2 BLIND ck48→58 but value regret flat 85.8→86.3cp). Merge validated: 0 parse failures, 0 FEN dupes, all 155 replay via `seed_board_from_line`. Carried forward automatically — `blindspot_retire_step` reads this file as its pool next read (ckpt 68). Baseline @ckpt58 (`scratchpad/live_read/monitor/monitor.log`): v1 BLIND 24/35, v2 BLIND 70/113, value_regret 86.3cp (vs_boot512 paired −9.36 [−20.25,+2.37] NS). PRIMARY: held-out panel v1/v2 BLIND holds or improves vs 24/35, 70/113 (these seeds are non-panel — generalization logic). VALUE YARDSTICK: `value_regret --max-positions 2000` paired CI vs the ckpt58 dump (`scratchpad/live_read/monitor/vdump_58.jsonl`) — success = improves (CI excludes 0 on the better side); the value-mismatch seeds are the bet that value moves. GUARDRAIL/KILL: value_regret paired worse by >2cp (CI excludes 0 on the worse side) → REVERT. WATCH: pool 101→155 so doled selfplay-seeded games/iter rises ~50% at dose 1 — dole is selfplay-only (PID-safe); if `sf_pid` games <30 or airbag trips, dial dose down. Readout via existing monitor_fen.sh cadence (ckpt 68+). REVERT (live, instant): `opening_fen_list_path` → `data/blindspot_fens_retire_58.txt` (pure seed-pool change, no weights/optimizer/replay touched, no salvage snapshot needed). Confound: co-activated with the broker-self-abort restart (code-only, no training-target effect) and the speedup-bundle readout window — value/panel movement is attributable to the seeds; throughput is the bundle. **VERDICT (value yardstick, 2026-07-16): FLAT — the value-mismatch-seed bet did NOT move the value head** (ck86 probe vs vdump_58 paired: −0.11cp [−10.32,+10.97] NS). The ckpt78 read (99.5cp, +13.21 [+4.87,+21.36] worse — nominally a KILL trip) was a TRANSIENT ARTIFACT of the 07-15 wedge-loop day (9 crash-recoveries, ~90% downtime in the ckpt68→78 window): ck86 recovered the full spike (−13.32 [−22.55,−2.99] vs ck78) under healthy training with Aurora cudagraphs live, which exonerates the seeds AND the trainer cudagraphs AND the AOT path. No revert. PANEL verdict: ckpt78 panel read (26/35, 86/113) is contaminated by the same artifact — judge PRIMARY at the next clean monitor read (ckpt≈88) vs the 24/35, 70/113 baseline. Consistent with [[value_head_calibrated_not_broken]]: seeds move policy panels, not value. |
-| **512-net seed feed += 88 (cheese72 match-mined + 16 staged harvest)** (`opening_fen_list_path`→`data/blindspot_fens_fed_cheese72_staged_ck101.txt`, retire_98's 126 + 88 new = 214; live yaml, live-reload — no restart) | 2026-07-19, post-cheese match on ckpt101 (trial 4c17c), training already resumed from ckpt101 | Same lever as WORKED v1/v2/cheese64 and the 07-13 v4+v5 feed. Source match: `runs/matches/cheese_20260719_1004_checkpoint_000101` — DeepFin **1W–4D–55L**, score 0.050, Elo ≈ −512 (worse than 46M cheese64 baseline 1–11–48 / 0.108 @ckpt722). Mine via `scripts/mine_blindspot_seeds.py` (300k SF + 3-4-5 TB, collapse + value-mismatch gap≥0.5 / min_ply_gap=8): **72 new seeds** (54 collapse + 18 mismatch) from 60 games; holdout panel v1+v2; existing = active retire_98 + prior cheese/v* lists + staged — 0 placement-key overlap. Plus **16** deep-SF-vetted harvest-gate survivors from `data/harvest/staged_candidates.txt` (staged-only backlog from ckpt78–98 monitor runs; promotion stays ledger-gated). Feed via `blindspot_feed_step.py --batch data/blindspot_fens_batch_cheese72_staged16_20260719.txt --tag fed_cheese72_staged_ck101`: 88 new / 0 active / 0 retired / 0 dups → pool 126→214. Baseline @ckpt98 (last clean monitor): v1 BLIND 23/35, v2 BLIND 76/113, value_regret 95.0cp (vs_boot512 −18.07 [−27.66, −8.40] SIG worse — open value damage from prior windows, not this feed). PRIMARY: held-out panel v1/v2 BLIND holds or improves vs 23/35, 76/113. GUARDRAIL/KILL: `value_regret --max-positions 2000` paired CI vs `scratchpad/live_read/monitor/vdump_98.jsonl` worse by >2cp (CI excludes 0 on the worse side) → REVERT. WATCH: pool 126→214 (~70% more doled selfplay seeds/iter at dose 1); dole is selfplay-only (PID-safe); if `sf_pid` games <30 or airbag trips, dial `opening_fen_dole_per_iter` down. Readout via existing monitor_fen cadence (next read ~ckpt 108+). REVERT (live, instant): `opening_fen_list_path` → `data/blindspot_fens_retire_98.txt` — pure seed-pool change, no salvage. Confound: feed lands mid-resume after the cheese pause (training already running; live-reload next iter); value baseline already SIG worse vs boot — kill rule is paired vs ckpt98 dump, not absolute level. |
-| **SF-refute channel 50%×5** (`opening_fen_sf_refute_frac: 0.5`, `opening_fen_sf_refute_plies: 5`, live yaml; worker+selfplay code) | 2026-07-19, restart-gated (new reco keys + worker code; co-ships with dole rearm) | **Hypothesis:** selfplay-only dole cannot break net-net collusion on value holes (net evals +200/80% WR when true is −200/20%; best play goes 99→1 without reciprocal blunders). A thin SF-as-opponent channel on a **round-robin 50% slice** of the live seed list, for the first **5 opponent plies** only then **handoff to selfplay**, forces the true PV side for a few moves at ~`K×M≈535` SF searches/iter (cheaper than ⅓×10 full-length). Selfplay dole (full list ×1) stays. Fenlist* sources remain **out of the PID sample**. Delivery: worker builds `sf_refute` queue on each won dole; **selfplay rolls** drain it (`selfplay_arr=1` from open); SF opponent for M plies via `sf_refute_opp_plies_left` + best-move (`regret=inf`); countdown only (no type flip). Telemetry: `fenlist_sf_refute*` in `outcome_stats`, worker log `sf_refute=N`. PRIMARY: held-out panel v1/v2 BLIND holds or improves vs ckpt98 baseline (23/35, 76/113) over ~1 day. GUARDRAIL/KILL: (1) PID curriculum finished sample (W+D+L) <30 for 3 consecutive healthy iters → set frac=0; (2) `value_regret` paired CI vs `vdump_98` worse by >2cp → set frac=0; (3) sustained `sf_block_starved` / ingest hard-timeout regression vs pre-activation → set frac=0 or cut to 0.25. SUCCESS (secondary): non-zero `selfplay_fenlist_sf_refute*` games (channel is selfplay-tagged; SF only for first M opp plies) and selfplay fenlist still ~full dole. REVERT (live, instant after restart onto code that knows the keys, or set 0 if already live): `opening_fen_sf_refute_frac: 0`. Confound: cheese72 seed feed + dole-rearm fix land in the same resume window — attribute panel/value movement carefully; throughput/PID moves are the SF-refute confounds. |
+| **512-net seed feed += 88 (cheese72 match-mined + 16 staged harvest)** (`opening_fen_list_path`→`data/blindspot_fens_fed_cheese72_staged_ck101.txt`, retire_98's 126 + 88 new = 214; live yaml, live-reload — no restart) | 2026-07-19, post-cheese match on ckpt101 (trial 4c17c), training already resumed from ckpt101 | Same lever as WORKED v1/v2/cheese64 and the 07-13 v4+v5 feed. Source match: `runs/matches/cheese_20260719_1004_checkpoint_000101` — DeepFin **1W–4D–55L**, score 0.050, Elo ≈ −512 (worse than 46M cheese64 baseline 1–11–48 / 0.108 @ckpt722). Mine via `scripts/mine_blindspot_seeds.py` (300k SF + 3-4-5 TB, collapse + value-mismatch gap≥0.5 / min_ply_gap=8): **72 new seeds** (54 collapse + 18 mismatch) from 60 games; holdout panel v1+v2; existing = active retire_98 + prior cheese/v* lists + staged — 0 placement-key overlap. Plus **16** deep-SF-vetted harvest-gate survivors from `data/harvest/staged_candidates.txt` (staged-only backlog from ckpt78–98 monitor runs; promotion stays ledger-gated). Feed via `blindspot_feed_step.py --batch data/blindspot_fens_batch_cheese72_staged16_20260719.txt --tag fed_cheese72_staged_ck101`: 88 new / 0 active / 0 retired / 0 dups → pool 126→214. Baseline @ckpt98 (last clean monitor): v1 BLIND 23/35, v2 BLIND 76/113, value_regret 95.0cp (vs_boot512 −18.07 [−27.66, −8.40] SIG worse — open value damage from prior windows, not this feed). PRIMARY: held-out panel v1/v2 BLIND holds or improves vs 23/35, 76/113. GUARDRAIL/KILL: `value_regret --max-positions 2000` paired CI vs `scratchpad/live_read/monitor/vdump_98.jsonl` worse by >2cp (CI excludes 0 on the worse side) → REVERT. WATCH: pool 126→214 (~70% more doled selfplay seeds/iter at dose 1); dole is selfplay-only (PID-safe); if `sf_pid` games <30 or airbag trips, dial `opening_fen_dole_per_iter` down. Readout via existing monitor_fen cadence (next read ~ckpt 108+). REVERT (live, instant): `opening_fen_list_path` → `data/blindspot_fens_retire_98.txt` — pure seed-pool change, no salvage. Confound: feed lands mid-resume after the cheese pause (training already running; live-reload next iter); value baseline already SIG worse vs boot — kill rule is paired vs ckpt98 dump, not absolute level. **SUPERSEDED SAME DAY (2026-07-19): the active `opening_fen_list_path` is now `data/blindspot_fens_fed_cheese72_refute_upgrade_ck101.txt` (229 lines), not the `_staged_ck101` file named above — the pool was re-fed with the refute-ply-baked ("mine-time free first SF-refute ply") upgrade (header: "upgraded 56 bare cheese holes to post-refute terminals; kept 158; appended 14 new"). Same lever/baseline/kill rule; the seed terminals are one deep-SF refute ply deeper. Revert target unchanged (`retire_98.txt`). This is the list the ckpt108+ readout judges.** **READOUT @ckpt108 (2026-07-20 02:21, CLEAN read — no wedge/stall in the ck98→108 window; the 548891→977791 PID change was a controlled reboot+resume, same trial 4c17c iter 1703): MIXED, leaning CONCERN. GUARDRAIL (value) INTACT — paired ck108 vs vdump_98 = +6.16cp [−3.30, +15.46] NS (value nominally BETTER; the >2cp-worse revert trigger did NOT fire; absolute 95.0→88.8, vs_boot −18.07→−11.91). PRIMARY (held-out panels) NOT MET — v1 BLIND 23→30/35 (+7, ~1.3σ), v2 BLIND 76→94/113 (+18, ~1.8σ, near the row-15 #104-kill point of 83). Divergence caveat: BLIND = "net > −0.2", so a globally-more-optimistic value shift inflates BLIND counts without a true understanding change while regret (ranking) stays flat/better — consistent with [[value_head_calibrated_not_broken]] (seeds/refute move calibration, not ranking). No numeric panel KILL was pre-committed (only the value guardrail), so no auto-revert fires; this is a 3-way-confounded first read (cheese72 feed + SF-refute channel + refute-upgrade list co-activated). DECISION: hold for the ck118 confirming read — if panels stay ≥ck108 or the value guardrail trips, revert (feed→retire_98.txt, `opening_fen_sf_refute_frac`→0); if panels retrace toward ≤baseline, continue. NOT auto-reverting on one confounded read.** |
+| **SF-refute channel 50%×4** (`opening_fen_sf_refute_frac: 0.5`, `opening_fen_sf_refute_plies: 4`, live yaml; worker+selfplay code) | 2026-07-19, restart-gated (new reco keys + worker code; co-ships with dole rearm) | **Hypothesis:** selfplay-only dole cannot break net-net collusion on value holes (net evals +200/80% WR when true is −200/20%; best play goes 99→1 without reciprocal blunders). A thin SF-as-opponent channel on a **round-robin 50% slice** of the live seed list, for the first **4 opponent plies** only then **handoff to selfplay**, forces the true PV side for a few moves at ~`K×M≈425` SF searches/iter (cheaper than ⅓×10 full-length). Selfplay dole (full list ×1) stays. Fenlist* sources remain **out of the PID sample**. Delivery: worker builds `sf_refute` queue on each won dole; **selfplay rolls** drain it (`selfplay_arr=1` from open); SF opponent for M plies via `sf_refute_opp_plies_left` + best-move (`regret=inf`); countdown only (no type flip). Telemetry: `fenlist_sf_refute*` in `outcome_stats`, worker log `sf_refute=N`. PRIMARY: held-out panel v1/v2 BLIND holds or improves vs ckpt98 baseline (23/35, 76/113) over ~1 day. GUARDRAIL/KILL: (1) PID curriculum finished sample (W+D+L) <30 for 3 consecutive healthy iters → set frac=0; (2) `value_regret` paired CI vs `vdump_98` worse by >2cp → set frac=0; (3) sustained `sf_block_starved` / ingest hard-timeout regression vs pre-activation → set frac=0 or cut to 0.25. SUCCESS (secondary): non-zero `selfplay_fenlist_sf_refute*` games (channel is selfplay-tagged; SF only for first M opp plies) and selfplay fenlist still ~full dole. REVERT (live, instant after restart onto code that knows the keys, or set 0 if already live): `opening_fen_sf_refute_frac: 0`. Confound: cheese72 seed feed + dole-rearm fix land in the same resume window — attribute panel/value movement carefully; throughput/PID moves are the SF-refute confounds. **READOUT @ckpt108: judged jointly with the cheese72 feed (row above) — same clean read, same 3-way confound. GUARDRAIL (value paired vs vdump_98) INTACT (+6.16cp NS); PRIMARY panels NOT met (v1 23→30, v2 76→94). No auto-revert (value guardrail is the only pre-committed KILL and it held); DECISION = hold for ck118 confirming read, then revert `opening_fen_sf_refute_frac`→0 if panels don't retrace. See the cheese72 row for the full read.** |
+
+### LIVE — automatic promotion of deep-SF-vetted harvested seeds (2026-07-22)
+
+**Hypothesis.** Closing the existing harvest flywheel at the monitor boundary —
+audit, retire/re-feed, deep-SF vet, then promote the vetted staging pool — keeps
+feeding genuinely unresolved positions without human lag, while the two-read
+retirement/probation loop bounds stale-seed volume. Activation tranche at ck138:
+`data/harvest/staged_candidates.txt` has 57 lines, of which the feed dry-run found
+**41 new**, 10 already active, and 6 retired (skipped), taking the live pool
+154→195. The monitor subsequently promotes only candidates not already active or
+retired; the versioned list and validated YAML repoint remain atomic/live-reloaded.
+
+**ONE deciding yardstick:** after the next 10-checkpoint exposure window run
+`PYTHONPATH=. python3 scripts/paired_compare.py scratchpad/live_read/monitor/vdump_138.jsonl scratchpad/live_read/monitor/vdump_148.jsonl --label-a pre_auto_ck138 --label-b auto_ck148`.
+Baseline ck138 is 84.74 cp on the TB-excluded 1,723-position ruler, with panels
+v1 27/35 and v2 73/113 BLIND. **SUCCESS:** paired value-regret CI excludes zero
+with ck148 better. **KILL:** ck148 is >2 cp worse and the paired CI excludes zero
+with ck138 better; `touch scratchpad/live_read/monitor/auto_feed_disabled` and
+remove the auto-fed tranche from the live list. Otherwise continue for one more
+monitor window. Panels and
+per-seed retirement are mechanism diagnostics, not alternate verdict metrics.
+**Confound:** wedge-day replay recovery only just reached its <=86 cp target at
+ck138 and has not yet demonstrated a holding read; judge this mechanism against
+the direct ck138 paired baseline, not the older boot level.
+
+### LIVE — targeted-SF budget reallocation: 65% full curriculum + 90%×4 seed refute (2026-07-22)
+
+**Hypothesis.** Reallocate five percentage points of general full-game SF
+curriculum to selfplay (`selfplay_fraction: 0.30→0.35`) while expanding the
+more targeted seed-refutation channel (`opening_fen_sf_refute_frac: 0.50→0.90`,
+plies held at 4). The full-game reduction should more than fund the extra short
+refutations in CPU searches, increase selfplay-roll opportunities for draining
+the doled seed queues, and expose nearly every seed to a truthful four-reply
+continuation each iteration. This is deliberately one operational allocation
+bundle, not a causal test of the two knobs separately. Activation baseline is
+checkpoint 148 / result iteration 173: 1,914 total finished games, 1,340 full
+curriculum games, and 90 finished SF-refute seed games; the prior five result
+iterations have median 1,914 total games and mean 81.8 SF-refute completions.
+
+**ONE deciding yardstick:** exclude the first transition result containing the
+one-time worker-session recycle; after ten subsequent completed result iterations run
+`PYTHONPATH=. python3 scripts/monitor_sf_refute_outcomes.py --last 10` and inspect
+the same ten rows in the trial `result.json`. **SUCCESS:** mean finished
+SF-refute games is >=130/iteration, median total `games_generated` is >=1,914,
+and the SF-refute seed-STM loss rate remains at least 5 percentage points above
+plain seeded selfplay. **KILL:** mean SF-refute finishes <100 (the larger request
+did not materialize), median total games falls below 1,700, PID curriculum
+finished sample is <30 for three consecutive healthy iterations, or the next
+monitor value-regret comparison is >2 cp worse with its paired CI excluding
+zero. Otherwise hold for one additional ten-iteration window. Revert both knobs
+together to `selfplay_fraction: 0.30` and `opening_fen_sf_refute_frac: 0.50`.
+**Confound:** this begins immediately after checkpoint 148 while the automatic
+seed-promotion tranche is still young; seed-panel/value movement cannot be
+attributed cleanly between the feed and this allocation, so the deciding metric
+is delivery/throughput with value as a guardrail.
+**ACTIVATED:** iteration 1749 manifest published `0.35 / 0.90 / 4`; the doled
+worker acknowledged 195 plain seeds plus 176 SF-refute seeds and started its
+fresh 384-game session. The recommendation-key change caused the expected
+one-time automatic worker-session recycle; the trainer was not restarted.
+**VERDICT: WORKED (2026-07-23, clean result iterations 176--185; transition
+iteration 175 excluded as precommitted).** All three deciding gates passed.
+Mean finished SF-refute games rose from the 81.8 baseline to **142.1/iteration**
+(gate >=130); median total games rose from 1,914 to **2,096** (gate >=1,914);
+and pooled seed-STM loss rates were **77.55% SF-refute versus 64.71% plain**, a
+**+12.84 pp** hardness gap (gate >=5 pp). Mean full curriculum completions were
+1,335.5/iteration, essentially preserving the 1,340 activation count despite
+lowering their share, because total delivery improved; the realized mix was
+65.38% full curriculum. The value guardrail is intact on a manual checkpoint-163
+refresh: 78.45 cp versus 84.74 at ck138, paired ck138-minus-ck163 +6.29 cp
+[-1.70,+14.26] overall (nominally better, NS), with endgame +10.94
+[+0.18,+22.33] significantly better. Held-out BLIND counts also improved
+27->24/35 and 73->68/113; paired severity changes were NS. Keep `0.35 / 0.90 / 4`.
+PID calibration remained centered: weighted curriculum score 50.57% over the
+same clean window and 49.22% over the latest ten, target 50%; regret stayed
+roughly 0.101--0.105 with no freeze/airbag and fixed 698,289 nodes.
+**Operational incident, not an experiment failure:** the automatic monitor did
+not advance beyond ck138 because `/tmp/chess_training.pid` is absent even though
+trainer PID 50339 is live; its `trainer_running` guard therefore sleeps. The
+ck163 value/panel read above was run manually. Repair the PID/monitor liveness
+contract before relying on the next automatic retire/feed read.
+**RESOLVED 2026-07-23:** restored `/tmp/chess_training.pid` to the verified live
+trainer PID 50339. The existing `chess-monitor-fen` process woke on its next
+five-minute check and entered the normal 120-second checkpoint-settle phase for
+ck163; no trainer or worker restart was performed.
+
+### REVERTED (unread, same-day) — randomized per-seed DOSE A/B (2026-07-23)
+
+**REVERTED ~1h after launch, unread, by design decision — not a failed readout.**
+Superseded by the gate-throughput-2× change (entry below) on a first-principles
+call: dosing spends the marginal seeded-game budget clearing holes we've *already*
+exposed, when the same budget feeds *new* unique holes once. Given capture runs
+10–20× ahead of feed (17,713 severe candidates banked), the pool is not
+capacity-limited (retirement drains ~16/read), and seeds already clear at 1×,
+breadth-once dominates depth-twice AND avoids the over-repetition value trap. The
+A/B would only have told us whether 2× *ever* helps — an answer dominated by
+breadth regardless. yaml reverted to the unweighted `blindspot_fens_auto_ck163`
+list; the built dose list + `dose_ab_assignment.json` remain on disk (harmless).
+Pre-registration kept below for the record.
+
+---
+
+**Hypothesis.** Per-seed exposure (dole dose) *accelerates* blind-spot learning:
+a seed played more times per iteration should flip AWARE (net_q crosses the
+retirement threshold) sooner and improve its net_q more than an equally-hard
+seed played less. The observational read cannot answer this — the dole delivers
+near-uniform exposure (median 81 games/seed over the tagged window, IQR 79–82),
+so there is no natural dose variation to correlate (`scratchpad/exposure_outcome.py`,
+2026-07-23: r(exposure,ΔnetQ)≈−0.37 but n=34, confounded, not decision-grade).
+This experiment *creates* the variation. **This tests DOSE (repetition), which is
+the deliberately-deferred second-stage of the seed-lever plan** (breadth screens
+first per `scratchpad/seed_experiment_drafts/2_ledger_breadth_vs_control.md`);
+run now at explicit user direction, ahead of breadth.
+
+**Design (randomized within-pool paired contrast).** The 202-seed active pool
+(`data/blindspot_fens_auto_ck163_*.txt`) split ~50/50 by a stable hash of the
+FEN body: **HI arm = 101 seeds at `# weight=2` (2× dole), CTRL arm = 101 seeds at
+weight=1**. Delivered via the existing `expand_dole_seeds` weight mechanism
+(`selfplay/opening.py`); FEN identity untouched (weight lives in the `#` comment;
+`_load_fen_list` strips it, `_load_fen_weights` reads it — bodies verified
+byte-identical to the source, 82 of the HI seeds are `FEN | refute` lines and
+weight-parse correctly). List `data/blindspot_fens_dose_ab_ck163_20260723T153624Z.txt`,
+arm assignment `scratchpad/dose_ab_assignment.json`. Weights SURVIVE the auto
+retire/feed loop (retire `build_active_list` keeps filtered original lines
+verbatim; feed composes `active + added` — both preserve `# weight=N` on retained
+seeds; confirmed by code read). Randomized assignment ⇒ the HI-vs-CTRL contrast is
+robust to background seed churn (both arms ride the same auto-promotion / SF-refute
+/ retirement processes).
+
+**ONE deciding yardstick.** After ~2 monitor windows (~ck183, ~2–3 days), by arm
+(`scratchpad/dose_ab_outcome.py`, to be written — joins `dose_ab_assignment.json`
+against the per-read `scratchpad/live_read/retire_netq_*.jsonl` dumps + retire
+state): **AWARE-flip (retirement) rate and mean net_q improvement (t0→tN), HI vs
+CTRL.** Manipulation check first: HI seeds must show ≈2× seeded games vs CTRL in
+the tagged shards (`scratchpad/exposure_analysis.py`) — if the dose did not land,
+the read is void. **SUCCESS:** HI flip-rate / net_q-improvement significantly
+exceeds CTRL (two-proportion / paired test) → dose is a real lever → promote to a
+graded dose-response (weight=3, per-seed `# weight=N`). **NULL:** no arm
+difference → 2× dose does not accelerate learning; the lever is breadth/new-data,
+not repetition (the expected prior — consistent with the weak observational hint
+and the offline dose-2 over-feed value trap). **KILL/guardrail:** `value_regret
+--max-positions 2000` paired CI vs the ck163 dump
+(`scratchpad/live_read/monitor/vdump_163.jsonl`) worse by >2cp (CI excludes 0 on
+the worse side) → revert (2× repetition risks the [[offline_distillation_value_trap]]
+value dilution); also PID `sf_pid` finished games <30 for 3 consecutive healthy
+iters or airbag trips → revert (dole rises 202→303 games/iter, +50%; dole is
+selfplay-only/PID-safe but watched).
+
+**Baseline @ck163:** value_regret 78.45cp (TB-excluded), panels v1 24/35 v2
+68/113. Primary read is baseline-free (within-window HI-vs-CTRL); baseline dump is
+only the value guardrail.
+
+**REVERT (live, instant):** `opening_fen_list_path` →
+`data/blindspot_fens_auto_ck163_20260723T140431Z.txt` (the unweighted source).
+Pure seed-list change — no weights/optimizer/replay touched, no salvage snapshot
+(same class as every seed-feed row above).
+
+**Confounds.** Window co-occupied by the LIVE auto-promotion readout (row above)
+and the just-concluded SF-budget WORKED verdict — but the randomized within-pool
+HI-vs-CTRL contrast is by construction robust to that shared background churn.
+One data-affecting change beyond the standing auto-loop (rule 4): the +50% dole
+volume is the only pool-level change and is dwarfed by prior 126→214 feeds. Breadth
+mining (#2) runs in parallel but is NOT data-affecting until its feed, which waits
+for this window to close.
+
+### LIVE — harvest gate: throughput 2× + vet-strength fix (2026-07-23)
+
+**Two changes to the live auto-gate (`monitor_fen.sh` → `harvest_gate_step.py`),
+same flywheel: (A) throughput `--max-vet-per-run` 30→60; (B) vet-strength fix
+`--sf-nodes` 300k→2M, `--multipv` 10→1, syzygy 3-4-5→3-4-5+6-man.**
+
+**(B) is a genuine bug fix, not just a tune.** The in-loop SF LABEL that flags
+capture candidates runs ~700k nodes WITH syzygy in search (`syzygy_in_search:
+true`, path 3-4-5+6-man). The live auto-gate was overruling that label at only
+300k nodes / 3-4-5 TB — i.e. FEWER nodes AND LESS tablebase coverage than the
+label it was "correcting." Since both have TB, tablebases are a wash on the
+disputed positions (fortress/horizon/closed 7+-piece middlegames where TB is
+silent) — the ONLY axis that lets a vet legitimately overrule the label is
+search DEPTH, which the 300k gate lacked. So the old gate's non-endgame rejections
+were a weaker search disagreeing with a stronger one, not principled corrections
+(it survived on the −0.80 threshold + TB catching the clean endgame FPs). Fix
+makes the gate DOMINATE the label on every axis: depth 2M > 700k (toward the
+calibration's 4M convergence point, `scratchpad/harvest_fp/` — pragmatic at 2M,
+cheap to push to 4M), MultiPV 1 (the gate only needs the best-line "is it lost"
+verdict, so all nodes go into line 1 instead of splitting across 10 unused
+lines), TB matched to the games' 3-4-5+6-man. Cost stays trivial: 60 positions ×
+2M, MultiPV 1, single SF worker ≈ 1–2 min/read, niced, once per ~12h. Monitor
+restarted 2026-07-23 ~12:14 to load both (observer only, no trainer/worker
+restart; gate idle between reads). Knobs: `HARVEST_VET_PER_RUN` / `HARVEST_SF_NODES`
+/ `HARVEST_MULTIPV` / `HARVEST_SYZYGY_PATH`.
+
+**(A) rationale — the bottleneck between mined and fed is the gate rate, not the
+capture stream.** The harvester banks ~2,300 severe candidates every 3 days
+(17,713 all-time) but the gate vetted only `--max-vet-per-run 30`/cycle, keeping
+~10 (33% pass) and feeding all stagers. So the pool grew by only ~10 new
+seeds/cycle against a >700/day capture rate — the ready-vetted backlog (~70) was
+tiny while the pending reserve was enormous. **Hypothesis:** doubling the vet cap
+to 60 roughly doubles vetted-kept (~20/cycle) and thus new seeds fed, spending the
+same marginal seeded-game budget on BREADTH (new unique holes once) instead of the
+reverted DOSE (old holes twice) — the strictly better use given abundant on-policy
+supply (the curriculum stream alone yields blind spots at 2.7× the per-game rate of
+selfplay; `scratchpad/exposure_outcome.py` + harvest stream analysis 2026-07-23).
+The candidate supply supports it (pending reserve ≫ 60; the gate tracks byte-offsets
++ a persisted pending queue, so nothing is consumed/trashed — headroom to push past
+60 later, bounded only by deep-SF vet CPU/cycle). Delivered via `monitor_fen.sh`
+default (`${HARVEST_VET_PER_RUN:-60}`); monitor restarted 2026-07-23 ~12:05 to load
+it (observer only, no trainer/worker restart; gate was idle between reads).
+
+**ONE deciding yardstick.** DELIVERY first (fast, ~2 monitor reads): `grep
+harvest_gate scratchpad/live_read/monitor/monitor.log` — **vetted_kept and the feed
+count per cycle should ≈2× the prior 30-cap run (~10→~20 kept)** with the gate run
+completing without starving selfplay. **SUCCESS (delivery):** kept/fed ~doubles, no
+starvation. **OUTCOME (secondary, slower ~2–3 windows):** held-out panel v1/v2 BLIND
+improvement rate holds or accelerates vs the 30-cap era, `value_regret
+--max-positions 2000` paired vs `vdump_163.jsonl` not worse by >2cp. **KILL/guards:**
+(1) PID `sf_pid` finished games <30 for 3 consecutive healthy iters or airbag trips
+(pool now grows faster → seeded-fraction/starvation risk) → drop cap back to 30 or
+`opening_fen_dole_per_iter` down; (2) value_regret paired CI worse by >2cp → cap→30;
+(3) gate run time blows out / `sf_block_starved` regression from the extra CPU-SF vet
+concurrent with training → cap→30 or 45. **REVERT (instant):** set
+`HARVEST_VET_PER_RUN=30` (env) or the monitor default back to 30 + restart the
+monitor. Pure gate-rate change — no weights/optimizer/replay touched, no salvage.
+**Confound:** replaces the dose A/B mid-window (dose reverted same-hour, ~1h of a
+handful of 2× seed games in the replay — negligible, self-flushing); rides the same
+window as the auto-promotion readout it amends and the concluded SF-budget WORKED.
 
 ## Analysis findings (offline, no live change)
 

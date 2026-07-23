@@ -8,10 +8,11 @@ consumes those append-only files:
   2. Dedup against the live pool, holdout panels, and already-emitted /
      already-rejected placement keys.
   3. Deep-SF-vet survivors (expected score ≤ ``--vet-lost-below``).
-  4. APPEND winners to a staging file — never the live pool / yaml.
+  4. APPEND winners to a staging file. The gate itself never edits the live pool;
+     monitor_fen.sh promotes the cumulative staging file through the safe feed step.
 
-Promotion of staged seeds into the LIVE pool is a SEPARATE, human/ledger-gated
-action (mirrors the retire-step split). Fail-soft on the CLI entrypoint: never
+Promotion remains a separate validated operation (mirrors the retire-step split),
+but is automatic at the monitor boundary. Fail-soft on the CLI entrypoint: never
 raises into a monitor.
 
 Summary line (one, stdout):

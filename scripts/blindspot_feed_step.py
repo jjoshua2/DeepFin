@@ -1,12 +1,12 @@
-"""Manual FEN-seed feed step: merge a vetted batch into the live active list.
+"""Safe FEN-seed feed step: merge a vetted batch into the live active list.
 
 Companion to blindspot_retire_step.py (which handles removal + probation
-automatically). Feeding stays a manual, ledger-gated decision — this script
-only makes the mechanics safe: dedupe against the active pool AND the retired
-store, write a NEW versioned list (cache keys are path-based, so in-place
-edits would be ignored), and repoint opening_fen_list_path in the live yaml
-via the same validated-or-reverted path the retire step uses. The path is
-live-reloaded, so no restart is needed.
+automatically). It is called by monitor_fen.sh after the deep-SF harvest gate
+and remains usable manually for ledgered one-off batches. It dedupes against
+the active pool AND the retired store, writes a NEW versioned list (cache keys
+are path-based, so in-place edits would be ignored), and repoints
+opening_fen_list_path in the live yaml via the same validated-or-reverted path
+the retire step uses. The path is live-reloaded, so no restart is needed.
 
 Usage:
   PYTHONPATH=. python3 scripts/blindspot_feed_step.py --batch data/v4_batch.txt --tag fedv4_ck68
