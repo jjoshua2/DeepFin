@@ -33,7 +33,8 @@ STATE="$MON/monitor_last_read"          # holds "<trial_basename> <iter>"
 # windows. Keep READ_EVERY a multiple of RETIRE_EVERY (deep reads piggyback a
 # flywheel cycle on the same checkpoint copy).
 READ_EVERY="${MONITOR_READ_EVERY:-20}"
-RETIRE_EVERY="${MONITOR_RETIRE_EVERY:-5}"
+RETIRE_EVERY="${MONITOR_RETIRE_EVERY:-1}"   # checkpoints ~= iterations (~44min each);
+                                            # 1 = run the flywheel every iteration.
 # Banked 512-swap baselines (canary_512_iter20). Trend anchors only; the
 # pre-committed readout rules live in docs/experiment_ledger.md.
 BASE=scratchpad/canary_512_iter20
@@ -117,7 +118,7 @@ while true; do
     if [ -x "$SF_BIN" ]; then
         GATE=$(PYTHONPATH=. nice -n 15 python3 scripts/harvest_gate_step.py \
             --sf-path "$SF_BIN" --syzygy-path "$SYZYGY_PATH" \
-            --max-vet-per-run "${HARVEST_VET_PER_RUN:-60}" \
+            --max-vet-per-run "${HARVEST_VET_PER_RUN:-15}" \
             --sf-nodes "${HARVEST_SF_NODES:-2000000}" --multipv "${HARVEST_MULTIPV:-1}" \
             --stamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             2>>"$MON/harvest_gate_$N.log" | grep '^harvest_gate:' | tail -1)

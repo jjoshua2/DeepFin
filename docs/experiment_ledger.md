@@ -534,15 +534,21 @@ placement key across the ck48–163 `retire_netq_*` dumps): floor 2 reads (the
 2×-consecutive-AWARE rule), **median 3 reads (~2.7 days), p90 7**; the distribution
 spikes at 2–3 reads ⇒ most seeds are LEARNED within ~1 read of feeding and the
 tenure is CONFIRMATION-CADENCE-bound, not learning-bound. So the flywheel is
-decoupled: cheap retire+gate+feed every `RETIRE_EVERY=5` (~0.45 days, 2× faster
-clearing/feeding), expensive panels+`value_regret` (frozen-set GPU reads, NO live
-SF — value_regret scores vs the pre-labeled `audit_set_v1.jsonl`) every
-`READ_EVERY=20` (~1.8 days, halved — fine, learning-quality readouts want day-plus
-windows). Deep reads piggyback a flywheel cycle's checkpoint copy. Tighter
-2×-consecutive confirmation is covered by the deep-AWARE requirement (one read
-net_q≤−0.5) + probation re-feed. Env knobs `MONITOR_RETIRE_EVERY`/`MONITOR_READ_EVERY`.
-WATCH: pool grows ~4× faster feed (60-vet every 5 vs 30 every 10) — if `sf_pid`
-finished games <30 or airbag trips, raise `RETIRE_EVERY` or cut dose.
+decoupled: cheap retire+gate+feed every `RETIRE_EVERY=1` (every checkpoint ≈ every
+iteration, ~44min — learned seeds retire in ~2 iterations instead of ~2 daily
+reads), `--max-vet-per-run 15` (~15 vetted/iter ≈ the prior 60-every-5 total rate,
+just smoothed); expensive panels+`value_regret` (frozen-set GPU reads, NO live SF —
+value_regret scores vs the pre-labeled `audit_set_v1.jsonl`) every `READ_EVERY=20`
+(~1.8 days — fine, learning-quality readouts want day-plus windows). Deep reads
+piggyback a flywheel cycle's checkpoint copy. Tighter 2×-consecutive confirmation is
+covered by the deep-AWARE requirement (one read net_q≤−0.5) + probation re-feed. Env
+knobs `MONITOR_RETIRE_EVERY`/`MONITOR_READ_EVERY`/`HARVEST_VET_PER_RUN`. **WATCH (the
+real throttle):** feed rate (~140 kept/day) far exceeds the net's learn/retire rate
+(~tens/day), so the pool CLIMBS toward the seeded-fraction ceiling (~pool 500-600)
+regardless of delivery smoothness — the `sf_pid` starvation guard is what caps it
+(finished curriculum <30 or airbag → raise `RETIRE_EVERY` / cut `HARVEST_VET_PER_RUN`
+/ trim dose). Every-iteration checking keeps the pool FRESHER (learned seeds leave
+sooner) but does not change the total feed-vs-learn imbalance.
 
 **ONE deciding yardstick.** DELIVERY first (fast, ~2 monitor reads): `grep
 harvest_gate scratchpad/live_read/monitor/monitor.log` — **vetted_kept and the feed
