@@ -138,7 +138,7 @@ class TrialConfig:
     accum_steps: int = 1
     train_steps: int = 25
     train_window_fraction: float = 0.0
-    train_views_per_position: float = 0.0
+    train_views_per_ingested_position: float = 0.0
     test_steps: int = 10
     search_optimizer: bool = False
     feature_dropout_p: float = 0.0
@@ -462,7 +462,7 @@ class TrialConfig:
             accum_steps=int(config.get("accum_steps", 1)),
             train_steps=int(config.get("train_steps", 25)),
             train_window_fraction=float(config.get("train_window_fraction", 0.0)),
-            train_views_per_position=float(config.get("train_views_per_position", 0.0)),
+            train_views_per_ingested_position=float(config.get("train_views_per_ingested_position", 0.0)),
             test_steps=int(config.get("test_steps", 10)),
             search_optimizer=bool(config.get("search_optimizer", False)),
             feature_dropout_p=float(config.get("feature_dropout_p", 0.0)),

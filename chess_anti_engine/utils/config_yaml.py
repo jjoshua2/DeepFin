@@ -184,7 +184,7 @@ _TRAIN_KEYS = (
     "aurora_polar_method", "aurora_polar_dtype", "aurora_polar_safety",
     "cosmos_rank", "cosmos_gamma",
     "lr", "batch_size", "train_steps", "train_window_fraction",
-    "train_views_per_position",
+    "train_views_per_ingested_position",
     "no_amp", "feature_dropout_p", "rebuild_sf_targets", "sf_policy_sparse_ce",
     "rebuild_categorical_target",
     "replay_upgrade_v1_planes",
@@ -303,6 +303,24 @@ def _check_unknown(section: str, section_cfg: dict, allowed: set[str]) -> None:
     Fail-loud beats silently dropping keys; stale configs from before a
     simplification would otherwise run with surprising defaults.
     """
+    if "train_views_per_position" in section_cfg:
+        # Deliberately a HARD error, not a silent alias. The old key's budget
+        # was computed from matching_positions (current-model games only) while
+        # 4.5-6.5x more positions were actually ingested, so its value meant
+        # ~1/5.6 of what its name claimed (measured 0.46 true views while the
+        # config read 2.5). Aliasing it to the fixed denominator would multiply
+        # real reuse by ~5.6x on the first restart after this change -- exactly
+        # the silent behavior change this rename exists to prevent.
+        raise ValueError(
+            "train_views_per_position was RENAMED to "
+            "train_views_per_ingested_position and its meaning CHANGED: the "
+            "budget now divides by positions actually ingested into the replay "
+            "buffer (positions_replay_added) instead of matching_positions, "
+            "which is 4.5-6.5x smaller. Your old value was ~5.6x larger than "
+            "the true reuse it produced -- DIVIDE IT BY ~5.6 when renaming "
+            "(e.g. 14.0 -> 2.5), or you will get ~5.6x more training steps "
+            "than intended. Verify with the new train_views_actual metric."
+        )
     unknown = sorted(k for k in section_cfg if k not in allowed)
     if unknown:
         raise ValueError(

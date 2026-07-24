@@ -718,6 +718,17 @@ def _build_report_dict(
         "test_replay": int(holdout_buf_size),
         "positions_added": sp.total_positions,
         "replay_positions_ingested": int(sp.replay_positions_ingested),
+        # TRUE replay reuse: trained samples per position that actually entered
+        # the buffer. In steady state this IS the mean number of times a
+        # position is trained before it leaves the window, so < 1.0 means most
+        # data is never trained on at all. Emitted so this can never drift
+        # unobserved again (it sat at 0.46 while the config read 2.5).
+        "train_views_actual": (
+            float(train_metrics_dict.get("train_samples_seen", 0))
+            / float(sp.replay_positions_ingested)
+            if int(sp.replay_positions_ingested) > 0
+            else 0.0
+        ),
         "replay_window_before": int(sp.replay_window_before),
         "replay_window_after": int(sp.replay_window_after),
         "replay_window_growth_positions": int(sp.replay_window_growth_positions),
