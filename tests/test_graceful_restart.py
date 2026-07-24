@@ -243,6 +243,7 @@ def test_run_resume_retries_once_then_exits_nonzero(monkeypatch, capsys) -> None
 
     monkeypatch.setattr(gr.subprocess, "run", fake_run)
     monkeypatch.setattr(gr.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(gr, "_tuner_is_running", lambda: False)
     with pytest.raises(SystemExit) as exc:
         gr._run_resume("./scripts/train.sh restart", pause_targets=[Path("/tmp/pause.txt")])
     assert exc.value.code == 1
@@ -264,5 +265,107 @@ def test_run_resume_returns_on_success_without_retrying(monkeypatch) -> None:
         return _sp.CompletedProcess(args=cmd, returncode=0)
 
     monkeypatch.setattr(gr.subprocess, "run", fake_run)
+    monkeypatch.setattr(gr.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(gr, "_tuner_is_running", lambda: True)
     gr._run_resume("./scripts/train.sh restart", pause_targets=[])
     assert len(calls) == 1
+
+
+def test_preflight_argv_matches_train_sh() -> None:
+    """The preflight must invoke the checker exactly as train.sh does.
+
+    This is the test that would have caught the branch being cut from a stale
+    main, where the preflight passed flags the checked-out checker did not yet
+    accept — argparse exited 2 and every restart aborted.
+    """
+    from scripts.graceful_restart import _C_EXT_CHECK_ARGV, _REPO_ROOT
+
+    train_sh = (_REPO_ROOT / "scripts" / "train.sh").read_text()
+    invocation = next(
+        (ln for ln in train_sh.splitlines() if "check_c_extensions_fresh.py" in ln), None
+    )
+    assert invocation is not None, "train.sh must still invoke the freshness checker"
+    # train.sh line-continues the flags; join the block for comparison.
+    idx = train_sh.splitlines().index(invocation)
+    block = " ".join(
+        ln.strip().rstrip("\\").strip() for ln in train_sh.splitlines()[idx:idx + 2]
+    )
+    for token in _C_EXT_CHECK_ARGV:
+        assert token in block, f"{token!r} is in the preflight but not in train.sh"
+    for flag in ("--min-gcc-major", "--require-production-recipe", "--quiet"):
+        if flag in block:
+            assert flag in _C_EXT_CHECK_ARGV, f"{flag!r} is in train.sh but not the preflight"
+
+
+def test_preflight_runs_for_real_without_argparse_errors() -> None:
+    """A real subprocess run: catches flag drift even if argv strings match."""
+    from scripts.graceful_restart import _resume_preflight
+
+    blockers = _resume_preflight()
+    joined = " ".join(blockers).lower()
+    assert "unrecognized arguments" not in joined, blockers
+    assert "usage:" not in joined, blockers
+
+
+def test_preflight_failure_leaves_the_live_run_untouched(tmp_path: Path, monkeypatch) -> None:
+    """The whole point of the PR: abort BEFORE any pause marker is written."""
+    from scripts import graceful_restart as gr
+
+    trial = tmp_path / "train_trial_x_00000_0"
+    _write_progress(trial / "progress.csv")
+
+    monkeypatch.setattr(gr, "_resume_preflight", lambda: ["stale extension"])
+    monkeypatch.setattr(gr.sys, "argv", ["graceful_restart.py", "--tune-dir", str(tmp_path)])
+    killed: list[int] = []
+    monkeypatch.setattr(gr.os, "kill", lambda pid, _sig: killed.append(pid))
+
+    with pytest.raises(SystemExit) as exc:
+        gr.main()
+
+    assert exc.value.code == 1
+    assert not (tmp_path / "pause.txt").exists(), "must not pause the live trial"
+    assert not (trial / "pause.txt").exists(), "must not pause the live trial"
+    assert killed == [], "must not signal the tuner"
+
+
+def test_resume_that_exits_zero_but_dies_is_treated_as_failure(monkeypatch, capsys) -> None:
+    """train.sh start returns 0 once the PID file is written; if the trainer
+    then dies, exiting 0 here would leave training silently down."""
+    import subprocess as _sp
+
+    from scripts import graceful_restart as gr
+
+    calls: list[str] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _sp.CompletedProcess(args=cmd, returncode=0)
+
+    monkeypatch.setattr(gr.subprocess, "run", fake_run)
+    monkeypatch.setattr(gr.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(gr, "_tuner_is_running", lambda: False)  # died after start
+    with pytest.raises(SystemExit) as exc:
+        gr._run_resume("./scripts/train.sh restart", pause_targets=[])
+    assert exc.value.code == 1
+    assert "TRAINING IS DOWN" in capsys.readouterr().out
+
+
+def test_retry_is_skipped_when_a_trainer_is_already_running(monkeypatch) -> None:
+    """Never race a second trainer onto the same tune dir and GPU."""
+    import subprocess as _sp
+
+    from scripts import graceful_restart as gr
+
+    calls: list[str] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _sp.CompletedProcess(args=cmd, returncode=1)
+
+    # Attempt 1 exits nonzero but left a trainer alive (start spawned it, then
+    # failed before writing the PID file) — the retry gate must see that.
+    monkeypatch.setattr(gr.subprocess, "run", fake_run)
+    monkeypatch.setattr(gr.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(gr, "_tuner_is_running", lambda: True)
+    gr._run_resume("./scripts/train.sh restart", pause_targets=[])
+    assert len(calls) == 1, "must not spawn a second trainer"
