@@ -1921,6 +1921,22 @@ def create_app(
             else:
                 delete_shard_path(token_dir)
 
+    def _quarantine_unloadable_pending(*, entry: Path, trial_key: str | None) -> None:
+        """Move a permanently-unloadable pending shard to ``quarantine/unloadable``.
+
+        Best-effort: if the move itself fails we leave the shard in place and
+        accept the retry, which is no worse than the old behavior.
+        """
+        qdir = _quarantine_root(trial_key) / "unloadable"
+        try:
+            qdir.mkdir(parents=True, exist_ok=True)
+            dest = qdir / entry.name
+            if dest.exists():
+                dest = qdir / f"{entry.stem}_{secrets.token_hex(4)}{LOCAL_SHARD_SUFFIX}"
+            entry.replace(dest)
+        except Exception:
+            log.exception("failed to quarantine unloadable pending shard %s", entry)
+
     def _scan_pending_dir(*, pending_dir: Path, trial_key: str | None) -> int:
         if not pending_dir.is_dir():
             return 0
@@ -1946,7 +1962,14 @@ def create_app(
             try:
                 arrs, meta_dict = load_shard_arrays(entry)
             except Exception:
-                log.exception("failed to load pending shard %s; skipping", entry)
+                # A shard that fails to load will fail identically on every
+                # future startup — "skipping" left corrupt shards (truncated
+                # zarr metadata from an interrupted write) retried forever,
+                # 7 of them for up to 5 days as of 2026-07-24. Move them out
+                # of the recovery path so the failure is bounded, but keep
+                # the bytes for post-mortem rather than deleting them.
+                log.exception("failed to load pending shard %s; quarantining", entry)
+                _quarantine_unloadable_pending(entry=entry, trial_key=trial_key)
                 continue
             try:
                 samples = arrays_to_samples(arrs)

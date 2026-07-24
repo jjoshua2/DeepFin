@@ -667,3 +667,68 @@ def test_failed_compaction_with_failed_restore_preserves_in_flight(tmp_path, mon
             for p in d.glob(f"*{LOCAL_SHARD_SUFFIX}")
         ]
     assert surviving, "staged shard was deleted on failed flush + failed restore"
+
+
+def _quarantine_unloadable_dir(server_root: Path) -> Path:
+    return server_root / "quarantine" / "unloadable"
+
+
+def test_corrupt_pending_shard_is_quarantined_not_retried_forever(tmp_path) -> None:
+    """A pending shard whose zarr metadata is truncated can never be loaded, so
+    recovery must move it aside. Skipping in place left 7 corrupt shards being
+    retried on every startup for up to 5 days (2026-07-24)."""
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    client = _build_client(server_root, upload_compact_shard_size=2000)
+    tar_bytes = _build_zarr_tar(
+        tmp_path / "u1", samples=[_sample(i) for i in range(3)], model_sha256="cccc3333",
+    )
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", tar_bytes, "application/x-tar")},
+        headers=_default_headers(),
+    )
+    assert r.status_code == 200, r.text
+    pending = list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
+    assert len(pending) == 1
+    del client
+
+    # Corrupt it exactly the way the live shards were: truncate the zarr
+    # metadata so json parsing fails inside load_shard_arrays.
+    shard = pending[0]
+    for meta in list(shard.rglob(".zarray")) + list(shard.rglob(".zgroup")):
+        meta.write_text("")
+
+    _build_app(server_root, upload_compact_shard_size=2000)  # startup recovery runs
+
+    assert not list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}")), (
+        "corrupt shard must not remain in _pending to be retried again"
+    )
+    quarantined = list(_quarantine_unloadable_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))
+    assert len(quarantined) == 1, "corrupt shard must be preserved for post-mortem"
+    assert quarantined[0].name == shard.name
+
+
+def test_quarantine_collision_does_not_lose_a_shard(tmp_path) -> None:
+    """Two corrupt shards with the same filename must both survive quarantine."""
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    pending = _pending_dir(server_root)
+    pending.mkdir(parents=True, exist_ok=True)
+    qdir = _quarantine_unloadable_dir(server_root)
+    qdir.mkdir(parents=True, exist_ok=True)
+
+    name = f"1784488027_{'a' * 64}_deadbeefdeadbeef{LOCAL_SHARD_SUFFIX}"
+    (qdir / name).mkdir()  # an earlier quarantine already claimed this name
+    corrupt = pending / name
+    corrupt.mkdir()
+    (corrupt / ".zgroup").write_text("")
+
+    _build_app(server_root, upload_compact_shard_size=2000)
+
+    assert not list(pending.glob(f"*{LOCAL_SHARD_SUFFIX}"))
+    assert len(list(qdir.glob(f"*{LOCAL_SHARD_SUFFIX}"))) == 2, "must not overwrite"
