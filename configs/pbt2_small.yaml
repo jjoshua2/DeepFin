@@ -148,7 +148,18 @@ selfplay:
   games_per_iter: 440
   games_per_iter_start: 440   # match games_per_iter; ramp disabled. Live-reloadable.
   games_per_iter_ramp_iters: 0
-  selfplay_fraction: 0.35  # 2026-07-23 targeted-SF retry: 65% full SF + 90%x3 refutes; two consecutive 10-iter blocks must pass ledger throughput gates.
+  # 2026-07-24: 0.35 -> 0.50, PAIRED with the in-flight-abandonment fix (PR #224).
+  # This is a SLOT roll, not a completed-game share. Until #224 those two numbers
+  # were wildly different: 65% of slots rolled curriculum but only 16.5% of
+  # COMPLETED games were curriculum, because every FEN-list rewrite restarted the
+  # session and abandoned ~89% of them mid-game (57.9% of ALL started games were
+  # thrown away). With #224 the roll and the realized share converge, so leaving
+  # this at 0.35 would swing the realized curriculum mix 16.5% -> 65% in one step.
+  # 0.50 is the deliberate intermediate. Note it also LOWERS SF load vs today
+  # (curriculum slots 65% -> 50%) while actually finishing those games: the SF
+  # compute was already being spent on them and then discarded.
+  # Prior: 0.35 from 2026-07-23 targeted-SF retry (65% full SF + 90%x3 refutes).
+  selfplay_fraction: 0.50
   record_fast_ply_value: false  # 2026-07-02: REVERTED true->false (throughput-triple leg 2 killed). Evidence: raw policy top-1 51.5->61.7 never recovered (trunk dilution from 75% value-only rows) + value 72.4->76.6 across the leg's window; ledger entry + revert pool data/salvage/prechange_20260702_ckpt479. LIVE-propagated (~30 min): it is a _RECO_RESTART_KEY, so a change triggers an AUTOMATIC worker-session restart — NOT an operator `train.sh restart` (a live YAML flip DOES take effect; the 07-02 branch-switch incident re-propagated it live). 2026-07-01 (PR #91) history: value-only fast rows, ~4x rows/game.
   selfplay_batch: 384   # 2026-07-02 arrival-stream POC: 256->384 (fatten ready-pool so broker batches grow; RAM headroom 71G). Revert to 256 if pos/s flat or RAM/latency degrades.
   slot_oversubscribe: 2.0  # 2026-07-12 activation (PR #151, ledger entry): 2x continuous slots so selfplay work stays runnable while curriculum SF moves fly. _RECO_RESTART_KEY (worker-session restart on change). KILL: games/h < 641/h (iter-7 fresh baseline) 2 iters sustained, worker RSS +4G, or broker p95 +20% -> revert to 1.0.
@@ -209,7 +220,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_197.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_198.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
