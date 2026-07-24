@@ -135,10 +135,20 @@ stockfish:
   # surprise. Airbag step is bounded by emergency_ease_step alone.
 
 selfplay:
-  games_per_iter: 3520   # 2026-05-28: +10% for steadier per-iter signal while replay grows slowly.
-  games_per_iter_start: 3520   # match games_per_iter; ramp disabled. Live-reloadable.
+  # 2026-07-24: 3520 -> 440. The 3520 target was 7.7x real throughput (measured
+  # 459 games / 2250s = 0.204 games/s = 734 games/h), so min_games (0.90*3520 =
+  # 3168) was UNREACHABLE: the soft deadline could never fire and EVERY
+  # iteration ran to the hard ceiling (720*3 = 2160s) and bailed with
+  # "ingest hard timeout ... all workers likely stale" (19x in the current log).
+  # That warning was pure noise and masked real staleness. 440 is just above
+  # measured per-iteration yield, so the loop now exits because it MET its
+  # target; the deadline goes back to being a safety net. Behavior-neutral by
+  # design (same ~40min period, same games) — deliberately NOT a throughput
+  # change, so it does not confound the live views=5 readout.
+  games_per_iter: 440
+  games_per_iter_start: 440   # match games_per_iter; ramp disabled. Live-reloadable.
   games_per_iter_ramp_iters: 0
-  selfplay_fraction: 0.30  # 2026-04-24: 0.50→0.25; 2026-05-04: 0.25→0.30 (30% selfplay / 70% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
+  selfplay_fraction: 0.35  # 2026-07-23 targeted-SF retry: 65% full SF + 90%x3 refutes; two consecutive 10-iter blocks must pass ledger throughput gates.
   record_fast_ply_value: false  # 2026-07-02: REVERTED true->false (throughput-triple leg 2 killed). Evidence: raw policy top-1 51.5->61.7 never recovered (trunk dilution from 75% value-only rows) + value 72.4->76.6 across the leg's window; ledger entry + revert pool data/salvage/prechange_20260702_ckpt479. LIVE-propagated (~30 min): it is a _RECO_RESTART_KEY, so a change triggers an AUTOMATIC worker-session restart — NOT an operator `train.sh restart` (a live YAML flip DOES take effect; the 07-02 branch-switch incident re-propagated it live). 2026-07-01 (PR #91) history: value-only fast rows, ~4x rows/game.
   selfplay_batch: 384   # 2026-07-02 arrival-stream POC: 256->384 (fatten ready-pool so broker batches grow; RAM headroom 71G). Revert to 256 if pos/s flat or RAM/latency degrades.
   slot_oversubscribe: 2.0  # 2026-07-12 activation (PR #151, ledger entry): 2x continuous slots so selfplay work stays runnable while curriculum SF moves fly. _RECO_RESTART_KEY (worker-session restart on change). KILL: games/h < 641/h (iter-7 fresh baseline) 2 iters sustained, worker RSS +4G, or broker p95 +20% -> revert to 1.0.
@@ -199,7 +209,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_fed_cheese72_staged_ck101.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_197.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -213,14 +223,14 @@ selfplay:
   opening_fen_dole_per_iter: 1
   # 2026-07-19: SF-refutation channel on top of selfplay dole — value-blind-spot
   # lever. Round-robin 50% of the live seed list each iter as short curriculum
-  # games: SF plays the first 5 opponent plies (breaks net-net collusion on
+  # games: SF plays the first 3 opponent plies (breaks net-net collusion on
   # fantasy evals), then the slot hands off to selfplay. Fenlist stays out of
-  # the PID sample. KILL: set both to 0. Ledger entry: "SF-refute channel 50%×5".
+  # the PID sample. KILL: set both to 0. Ledger entry: "targeted-SF budget reallocation".
   # Restart-gated (new reco keys + worker code).
-  opening_fen_sf_refute_frac: 0.5
-  opening_fen_sf_refute_plies: 5
+  opening_fen_sf_refute_frac: 0.9
+  opening_fen_sf_refute_plies: 3
   # SF-refute opp-row recording — STAGED — do not flip before the SF-refute
-  # 50%×5 ledger readout (docs/experiment_ledger.md). full_node_moves: refute SF
+  # 90%×3 retry ledger readout (docs/experiment_ledger.md). full_node_moves: refute SF
   # MOVE queries skip the 0.25× fast-ply node scale. record_opp_rows: emit a
   # MAIN-policy training row at each SF-to-move refute position (aux heads
   # masked). opp_policy_net_blend: blend net visits into that policy target —
@@ -233,9 +243,9 @@ selfplay:
   # 2026-07-08: inline blind-spot harvester COLLECT-ONLY (#124). Finished games
   # append value-blind positions (net's search says fine, in-loop SF says lost)
   # as seed lines with real history to <path>.pPID (collect) + .severe.pPID
-  # (auto-feed band). PURE SIDE OUTPUT — does NOT change training; the seeds
-  # feed back only once this is wired into opening_fen_list_path (a later,
-  # ledger-gated step). Off = "".
+  # (auto-feed band). At each monitor cadence, new lines are deep-SF-vetted,
+  # staged, then merged into a versioned live list by blindspot_feed_step.py;
+  # the YAML pointer is validated and repointed automatically. Off = "".
   blindspot_harvest_out_path: /home/josh/projects/chess/data/harvest/blindspot_live.txt
 
   mcts: gumbel
@@ -320,7 +330,32 @@ train:
   batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
   train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
   train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
-  train_views_per_position: 2.5  # 2026-07-01 (PR #91): hold trained-samples/ingested-position at 2.5 (AZ ~1, KataGo ~4); steps scale with ingest so the two knobs above can't drift the reuse ratio. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable; verify train_steps_used tracks ingest. Kill: drop to 2.0 or 0 (window mode) if test/train gap widens.
+  # ############ READ THIS BEFORE CHANGING THE NUMBER ############
+  # 2026-07-24 (same day, superseding the 2.5->5.0 row below): this key does NOT
+  # mean what its name says. The budget in trainable_metrics.py is computed from
+  # `positions_added`, which trainable_phases.py:765 sets to
+  # ingest_summary["matching_positions"] (current-model games only) -- but stale-
+  # model shards are ALSO ingested into the replay buffer (_process_shard calls
+  # _ingest_train_arrays UNCONDITIONALLY, before the model_sha check), and there
+  # are 4.5-6.5x more of those. So:
+  #     TRUE views per ingested position ~= this value / 5.6
+  # Measured: positions_added 4,577 vs replay_positions_ingested 25,693 (5.61x);
+  # train_samples_seen 11,776 -> TRUE reuse was 11776/25693 = 0.46 views, i.e.
+  # over half of all ingested positions were NEVER trained on even once. The
+  # config believed it was at 2.57.
+  #
+  # 14.0 targets the ~2.5 TRUE views everyone thought was already running (125
+  # steps/iter, ~336s = 15% of a 2250s iteration). Deliberately NOT chasing
+  # KataGo's ~4 in one move. Affordable because
+  # distributed_pause_selfplay_during_training: false -- training OVERLAPS
+  # generation, so extra steps cost GPU contention, not paused selfplay.
+  # Headroom check: policy_loss_selfplay 1.548 vs test 1.713 (~10% gap), so
+  # overfitting is not yet the binding constraint.
+  #
+  # !!! COUPLING FOOT-GUN !!! When the denominator fix lands (PR: use
+  # positions_replay_added + emit train_views_actual), this value MUST drop to
+  # ~2.5 IN THE SAME DEPLOY, or true views jump 5.6x to ~14 instantly.
+  train_views_per_position: 14.0  # 2026-07-24: 2.5->5.0->14.0 (ledger LIVE/UNREAD top row). Measured: train was 61.9s of a 2249.7s iter = 2.8% of wall clock (23 steps on 4577 fresh positions = 2.57 views), so DOUBLING views costs only ~+3% iteration time for 2x gradient per SF label. The AZ~1/KataGo~4 ceiling exists because THEIR value targets are bootstrapped and go stale; our sf_wdl/sf_policy are fixed-engine ground truth that never goes stale, so reuse is bounded by overfitting, not staleness. Thesis: loop is STEP-starved (raw policy E[regret] 98.9 vs the 51.3 search target it distills). Kill: train/holdout gap widens, or value_regret paired worse >2cp, or games/h -10%. REVERT: set back to 2.5 (live-reloadable, no restart). Weight revert point: data/salvage/pre_views5_20260724. Prior: 2.5 from 2026-07-01 (PR #91).
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
@@ -429,10 +464,26 @@ tune:
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
-  distributed_wait_timeout_seconds: 720  # 2026-05-19: 600->720 to give current-model selfplay more time after lowering stale backlog target.
+  # 2026-07-24: 720 -> 2700 (45min SOFT deadline; hard ceiling = 3x = 8100s).
+  # Paired with games_per_iter 3520->440. Previously the soft deadline was
+  # unreachable-by-construction and 2160s (hard) was the real operating point;
+  # now the normal exit is "target met" at ~2160s and 2700s only bites in a slow
+  # patch. The hard ceiling is finally reserved for a genuine stall.
+  distributed_wait_timeout_seconds: 2700
   distributed_prev_model_max_fraction: 0.60  # 2026-05-19: raise 50%->60% to reduce alternating stale-discard timeout rows while keeping most data current-model.
-  distributed_stale_pause_target_games: 1870  # 2026-05-28: scale with 3520 games/iter target.
-  distributed_min_games_fraction: 0.90  # 2026-05-28: wait for 90% of target games before timing out.
+  # 2026-05-28: scaled to the old 3520 target. DELIBERATELY LEFT AT 1870 during
+  # the 2026-07-24 games_per_iter 3520->440 fix: the natural value is
+  # games_per_iter * prev_model_max_fraction = 440*0.60 = 264, but that would
+  # ACTIVATE backpressure (at 1870 it effectively never fires), which is a real
+  # behavior change and would confound the live views=5 readout. Left inert on
+  # purpose. See the ledger entry on stale-game waste (1271 stale vs 459
+  # matching games per iteration) — that is its own experiment, not a drive-by.
+  distributed_stale_pause_target_games: 1870
+  # 2026-07-24: 0.90 -> 0.80. With a REACHABLE target this is now what it was
+  # always meant to be: how short an iteration we accept in a slow patch.
+  # 0.80*440 = 352 games, i.e. at 2700s we take what we have if >=352 rather
+  # than stalling toward the 8100s ceiling.
+  distributed_min_games_fraction: 0.80
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453

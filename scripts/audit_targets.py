@@ -5,7 +5,8 @@ For every deep-labeled audit position (scripts/build_audit_set.py) this
 computes candidate POLICY distributions:
 
   a) net raw policy — single batched forward of --checkpoint
-  b) net + Gumbel search at production sims (--sims, default 256)
+  b) net + selected search at production sims (--mcts, --sims; defaults
+     Gumbel and 256)
   c) the SF MultiPV soft target (--sf-soft-nodes / --sf-soft-multipv,
      low=500k / high=2M via --sf-effort, matching the 500k production
      teacher; default 500k), built with the production sf_policy_temp /
@@ -72,12 +73,19 @@ from chess_anti_engine.stockfish.uci import StockfishUCI
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
-_CANDIDATE_NAMES = {
-    "raw": "a) net raw policy",
-    "search": "b) net + Gumbel search",
-    "sf_soft": "c) SF MultiPV soft target",
-    "train": "d) production training target",
-}
+def _candidate_names(mcts_type: str) -> dict[str, str]:
+    search_name = "Gumbel" if mcts_type == "gumbel" else "PUCT"
+    train_name = (
+        "d) production training target"
+        if mcts_type == "gumbel"
+        else "d) diagnostic PUCT search target"
+    )
+    return {
+        "raw": "a) net raw policy",
+        "search": f"b) net + {search_name} search",
+        "sf_soft": "c) SF MultiPV soft target",
+        "train": train_name,
+    }
 _VALUE_NAMES = {
     "cp_logistic": "i) cp-logistic of shallow SF eval",
     "sf_native": "ii) shallow SF native WDL",
@@ -108,8 +116,12 @@ def _net_candidates(
     batch_size: int,
     sims: int,
     seed: int,
+    mcts_type: str = "gumbel",
     policy_temp: float = 1.0,
     topk: int = 16,
+    c_puct: float = 2.5,
+    fpu_reduction: float = 1.2,
+    fpu_at_root: float = 1.0,
 ) -> tuple[list[np.ndarray], list[np.ndarray], list[float]]:
     """(raw-policy probs over legal, search visit probs over legal, root Q)
     per position. Probs are aligned with _legal_full_indices order."""
@@ -119,6 +131,8 @@ def _net_candidates(
     from chess_anti_engine.inference import LocalModelEvaluator
     from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+    from chess_anti_engine.mcts.puct import MCTSConfig
+    from chess_anti_engine.mcts.puct_c import run_mcts_many_c
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
     model = load_model_from_checkpoint(checkpoint, device=device)
@@ -132,7 +146,7 @@ def _net_candidates(
     # Deliberately score candidates with the production PLAY search shape (root-log
     # c_scale_root/q_visit_exp_root split) so the pre-training audit gate matches how
     # the net actually plays — not the GumbelConfig legacy linear-root sentinels.
-    cfg = GumbelConfig(
+    gumbel_cfg = GumbelConfig(
         simulations=int(sims), add_noise=False, temperature=0.0,
         input_history_encoding=hist, input_extra_features=extra,
         policy_encoding=pol_enc, compute_relations=use_rel,
@@ -141,6 +155,13 @@ def _net_candidates(
         c_visit_root=PLAY_SEARCH_DEFAULTS["c_visit_root"],
         c_scale_root=PLAY_SEARCH_DEFAULTS["c_scale_root"],
         q_visit_exp_root=PLAY_SEARCH_DEFAULTS["q_visit_exp_root"],
+    )
+    puct_cfg = MCTSConfig(
+        simulations=int(sims), c_puct=float(c_puct), dirichlet_eps=0.0,
+        temperature=1.0, fpu_reduction=float(fpu_reduction),
+        fpu_at_root=float(fpu_at_root), input_history_encoding=hist,
+        input_extra_features=extra, policy_encoding=pol_enc,
+        compute_relations=use_rel,
     )
 
     raw_out: list[np.ndarray] = []
@@ -165,10 +186,16 @@ def _net_candidates(
         if pol_logits.shape[1] != POLICY_SIZE:
             pol_logits = policy_batch_to_full_if_needed(pol_logits, policy_encoding=pol_enc, fill_value=-1e9)
 
-        probs_b, _actions, values, _masks, _tree, _ids = run_gumbel_root_many_c(
-            model=None, boards=list(chunk), device=device, rng=rng, cfg=cfg,
-            evaluator=evaluator,
-        )
+        if mcts_type == "gumbel":
+            probs_b, _actions, values, _masks, _tree, _ids = run_gumbel_root_many_c(
+                model=None, boards=list(chunk), device=device, rng=rng, cfg=gumbel_cfg,
+                evaluator=evaluator,
+            )
+        else:
+            probs_b, _actions, values, _masks = run_mcts_many_c(
+                model=None, boards=list(chunk), device=device, rng=rng, cfg=puct_cfg,
+                evaluator=evaluator, cboards=cbs,
+            )
         for j, board in enumerate(chunk):
             _, idxs = legal_full_indices(board)
             logits = pol_logits[j, idxs].astype(np.float64)
@@ -359,10 +386,10 @@ def _aggregate(
     }
 
 
-def _policy_table(agg: dict, group_names: list[str]) -> str:
+def _policy_table(agg: dict, group_names: list[str], *, mcts_type: str) -> str:
     lines = ["| candidate | " + " | ".join(f"{g} E[regret] / top-1 (n)" for g in group_names) + " |"]
     lines.append("|" + "---|" * (len(group_names) + 1))
-    for cand, label in _CANDIDATE_NAMES.items():
+    for cand, label in _candidate_names(mcts_type).items():
         cells = []
         for g in group_names:
             v = agg.get((g, cand))
@@ -382,6 +409,9 @@ def main() -> None:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--sims", type=int, default=256)
+    ap.add_argument("--mcts", choices=("gumbel", "puct"), default="gumbel",
+                    help="search algorithm used for candidate b; PUCT is a diagnostic "
+                         "visit-count target and does not change production training")
     ap.add_argument("--policy-temp", type=float, default=1.0,
                     help="prior temperature on policy logits before gumbel search "
                          "(>1 softens prior, <1 sharpens, 1.0=no-op). Measures search-prior "
@@ -456,7 +486,10 @@ def main() -> None:
     raw_probs, search_probs, root_q = _net_candidates(
         boards, checkpoint=args.checkpoint, device=args.device,
         batch_size=int(args.batch_size), sims=int(args.sims), seed=int(args.seed),
-        policy_temp=float(args.policy_temp), topk=int(args.gumbel_topk),
+        mcts_type=str(args.mcts), policy_temp=float(args.policy_temp),
+        topk=int(args.gumbel_topk), c_puct=float(flat.get("c_puct", 2.5)),
+        fpu_reduction=float(flat.get("fpu_reduction", 1.2)),
+        fpu_at_root=float(flat.get("fpu_at_root", 1.0)),
     )
 
     policy_rows: list[dict] = []
@@ -597,7 +630,7 @@ def main() -> None:
         f"# Target audit @ {sha}\n\n"
         f"- audit set: {args.audit_set} ({len(deep_wdls)} scored positions)\n"
         f"- checkpoint: {args.checkpoint}\n"
-        f"- search: {args.sims} sims; shallow SF: {args.sf_soft_nodes} nodes "
+        f"- search: {args.mcts}, {args.sims} sims; shallow SF: {args.sf_soft_nodes} nodes "
         f"MultiPV {args.sf_soft_multipv}; config: {args.config}\n\n"
         f"## Headline\n\n"
         f"- search-policy expected regret (overall): "
@@ -610,7 +643,7 @@ def main() -> None:
         f"## Policy: expected / top-1 deep-SF regret (cp)\n\n"
         f"Unlisted legal moves carry the worst-listed-line regret as a "
         f"floor (lower bound; MultiPV >= 10 at >=1M nodes).\n\n"
-        f"{_policy_table(agg, group_names)}\n\n"
+        f"{_policy_table(agg, group_names, mcts_type=str(args.mcts))}\n\n"
         f"## Value: calibration against deep-SF WDL\n\n"
         + "\n".join(value_lines)
         + "\n\nOutcome column counts only positions whose game continued at "

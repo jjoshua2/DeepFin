@@ -273,7 +273,8 @@ def test_build_labels_resume_skips_done(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_audit_targets_smoke(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mcts_type", ["gumbel", "puct"])
+def test_audit_targets_smoke(tmp_path, monkeypatch, mcts_type):
     import torch
 
     from chess_anti_engine.model import ModelConfig, build_model
@@ -332,6 +333,7 @@ def test_audit_targets_smoke(tmp_path, monkeypatch):
         "sys.argv",
         ["audit_targets.py", "--audit-set", str(audit), "--checkpoint", str(ckpt),
          "--device", "cpu", "--sims", "4", "--batch-size", "2",
+         "--mcts", mcts_type,
          "--sf-soft-nodes", "500", "--sf-soft-multipv", "4",
          "--out-dir", str(out_dir)],
     )
@@ -339,8 +341,14 @@ def test_audit_targets_smoke(tmp_path, monkeypatch):
     reports = list(out_dir.glob("target_audit_*.md"))
     assert len(reports) == 1
     text = reports[0].read_text(encoding="utf-8")
-    for label in ("net raw policy", "Gumbel search", "SF MultiPV soft target",
-                  "production training target", "Brier vs deep WDL"):
+    search_label = "Gumbel search" if mcts_type == "gumbel" else "PUCT search"
+    target_label = (
+        "production training target"
+        if mcts_type == "gumbel"
+        else "diagnostic PUCT search target"
+    )
+    for label in ("net raw policy", search_label, "SF MultiPV soft target",
+                  target_label, "Brier vs deep WDL"):
         assert label in text
     # Every regret cell is finite and non-negative by construction; spot-check
     # the table parsed numbers exist.
