@@ -1921,11 +1921,16 @@ def create_app(
             else:
                 delete_shard_path(token_dir)
 
-    def _quarantine_unloadable_pending(*, entry: Path, trial_key: str | None) -> None:
+    def _quarantine_unloadable_pending(
+        *, entry: Path, trial_key: str | None, exc: BaseException
+    ) -> None:
         """Move a permanently-unloadable pending shard to ``quarantine/unloadable``.
 
         Best-effort: if the move itself fails we leave the shard in place and
-        accept the retry, which is no worse than the old behavior.
+        accept the retry, which is no worse than the old behavior. Writes the
+        same ``.reason.txt`` sidecar as the upload-time quarantine path — these
+        shards surface days later, so the reason must not depend on log
+        retention.
         """
         qdir = _quarantine_root(trial_key) / "unloadable"
         try:
@@ -1936,6 +1941,22 @@ def create_app(
             entry.replace(dest)
         except Exception:
             log.exception("failed to quarantine unloadable pending shard %s", entry)
+            return
+        with contextlib.suppress(Exception):
+            (dest.parent / f"{dest.name}.reason.txt").write_text(
+                f"{type(exc).__name__}: {exc}\n", encoding="utf-8"
+            )
+
+    def _is_transient_load_error(exc: BaseException) -> bool:
+        """True when a pending-shard load failure may succeed on a later startup.
+
+        Quarantining is only correct for failures that are a deterministic
+        property of the shard's bytes. System-level errors (fd exhaustion at
+        startup, EIO, a full disk, MemoryError while the trainer holds the box)
+        say nothing about the shard, so retry-forever stays the right answer
+        there — it costs one failed load per startup and loses no data.
+        """
+        return isinstance(exc, (OSError, MemoryError))
 
     def _scan_pending_dir(*, pending_dir: Path, trial_key: str | None) -> int:
         if not pending_dir.is_dir():
@@ -1961,20 +1982,31 @@ def create_app(
                 continue
             try:
                 arrs, meta_dict = load_shard_arrays(entry)
-            except Exception:
-                # A shard that fails to load will fail identically on every
-                # future startup — "skipping" left corrupt shards (truncated
-                # zarr metadata from an interrupted write) retried forever,
-                # 7 of them for up to 5 days as of 2026-07-24. Move them out
-                # of the recovery path so the failure is bounded, but keep
-                # the bytes for post-mortem rather than deleting them.
+            except Exception as exc:
+                # A shard that fails to load for a reason intrinsic to its bytes
+                # will fail identically on every future startup — "skipping"
+                # left corrupt shards (truncated zarr metadata from an
+                # interrupted write) retried forever, 7 of them for up to 5 days
+                # as of 2026-07-24. Move those out of the recovery path so the
+                # failure is bounded, keeping the bytes for post-mortem rather
+                # than deleting them. Transient system errors still just retry.
+                if _is_transient_load_error(exc):
+                    log.exception("failed to load pending shard %s; skipping", entry)
+                    continue
                 log.exception("failed to load pending shard %s; quarantining", entry)
-                _quarantine_unloadable_pending(entry=entry, trial_key=trial_key)
+                _quarantine_unloadable_pending(entry=entry, trial_key=trial_key, exc=exc)
                 continue
             try:
                 samples = arrays_to_samples(arrs)
-            except Exception:
-                log.exception("failed to materialize pending shard %s; skipping", entry)
+            except Exception as exc:
+                # Same argument as the load branch, and strictly more
+                # deterministic: this runs on arrays that already loaded and
+                # passed validate_arrays, so the environment is not in play.
+                if _is_transient_load_error(exc):
+                    log.exception("failed to materialize pending shard %s; skipping", entry)
+                    continue
+                log.exception("failed to materialize pending shard %s; quarantining", entry)
+                _quarantine_unloadable_pending(entry=entry, trial_key=trial_key, exc=exc)
                 continue
             model_sha = str(meta_dict.get("model_sha256") or "")
             if not model_sha:

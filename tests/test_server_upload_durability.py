@@ -732,3 +732,83 @@ def test_quarantine_collision_does_not_lose_a_shard(tmp_path) -> None:
 
     assert not list(pending.glob(f"*{LOCAL_SHARD_SUFFIX}"))
     assert len(list(qdir.glob(f"*{LOCAL_SHARD_SUFFIX}"))) == 2, "must not overwrite"
+
+
+def test_transient_oserror_is_skipped_not_quarantined(tmp_path, monkeypatch) -> None:
+    """OSError says nothing about the shard's bytes — quarantining on fd
+    exhaustion or EIO would move aside a perfectly good shard. Retry instead."""
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    client = _build_client(server_root, upload_compact_shard_size=2000)
+    tar_bytes = _build_zarr_tar(
+        tmp_path / "u1", samples=[_sample(i) for i in range(3)], model_sha256="dddd4444",
+    )
+    r = client.post(
+        "/v1/upload_shard",
+        auth=("u", "p"),
+        files={"file": ("shard.zarr.tar", tar_bytes, "application/x-tar")},
+        headers=_default_headers(),
+    )
+    assert r.status_code == 200, r.text
+    assert len(list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))) == 1
+    del client
+
+    # create_app imports load_shard_arrays from the replay module at call
+    # time, so the source module is what must be patched.
+    from chess_anti_engine.replay import shard as shard_module
+
+    def _boom(*_a, **_k):
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(shard_module, "load_shard_arrays", _boom)
+    _build_app(server_root, upload_compact_shard_size=2000)
+
+    assert len(list(_pending_dir(server_root).glob(f"*{LOCAL_SHARD_SUFFIX}"))) == 1, (
+        "a transient load error must leave the shard in _pending for a later retry"
+    )
+    assert not _quarantine_unloadable_dir(server_root).exists()
+
+
+def test_corrupt_pending_shard_under_a_trial_lands_in_that_trials_quarantine(tmp_path) -> None:
+    """Guards the trial-key plumbing: a mis-keyed quarantine root would write
+    one trial's corrupt shards into another trial's directory."""
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+
+    tid = "abcde_00000"
+    pending = server_root / "trials" / tid / "inbox" / "_pending"
+    pending.mkdir(parents=True)
+    name = f"1784488027_{'b' * 64}_feedfacefeedface{LOCAL_SHARD_SUFFIX}"
+    corrupt = pending / name
+    corrupt.mkdir()
+    (corrupt / ".zgroup").write_text("")
+
+    _build_app(server_root, upload_compact_shard_size=2000)
+
+    assert not list(pending.glob(f"*{LOCAL_SHARD_SUFFIX}"))
+    trial_q = server_root / "trials" / tid / "quarantine" / "unloadable"
+    assert [p.name for p in trial_q.glob(f"*{LOCAL_SHARD_SUFFIX}")] == [name]
+    assert not (server_root / "quarantine" / "unloadable").exists(), (
+        "must not land in the default (no-trial) quarantine root"
+    )
+
+
+def test_quarantined_shard_records_why(tmp_path) -> None:
+    """These shards are found days later — the reason must survive log rotation."""
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    pending = _pending_dir(server_root)
+    pending.mkdir(parents=True)
+    corrupt = pending / f"1784488027_{'c' * 64}_0badc0de0badc0de{LOCAL_SHARD_SUFFIX}"
+    corrupt.mkdir()
+    (corrupt / ".zgroup").write_text("")
+
+    _build_app(server_root, upload_compact_shard_size=2000)
+
+    reasons = list(_quarantine_unloadable_dir(server_root).glob("*.reason.txt"))
+    assert len(reasons) == 1
+    assert reasons[0].read_text().strip(), "reason sidecar must not be empty"
