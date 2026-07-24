@@ -331,7 +331,16 @@ def run_gate(
     # 17k backlog that starved the gate). Dropping it is self-healing — a hole
     # that still exists is re-emitted by the harvester on the next blunder.
     older_first = [(k, f"{body}  # pending") for k, body in reversed(overflow)]
-    work.pending = (older_first + requeue)[-pending_cap:] if pending_cap > 0 else older_first + requeue
+    combined = older_first + requeue
+    if pending_cap > 0 and len(combined) > pending_cap:
+        # Trim to the newest `pending_cap` — but floor the kept count at
+        # len(requeue) so the SF-failed re-queues (newest end) always survive.
+        # Requeue is the transient-outage retry set; the "never permanently
+        # discard on a transient SF failure" guarantee must hold even if the
+        # re-queue alone exceeds the cap (else offsets have advanced and the
+        # candidate is lost for good).
+        combined = combined[-max(pending_cap, len(requeue)):]
+    work.pending = combined
     if new_offsets is not None:
         work.offsets = dict(new_offsets)
 
