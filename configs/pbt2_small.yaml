@@ -232,6 +232,19 @@ selfplay:
   # KILL: set 0 + opening_fen_prob 0.05. Ledger LIVE-UNREAD row (readout ~iter 725); baseline
   # ckpt686 (v1 16/35, value 74.3), revert trunk data/salvage/pre_dole_ckpt686_20260708.
   opening_fen_dole_per_iter: 1
+  # 2026-07-24 (PR #223, NEW KEY — requires the restart onto that code; adding it
+  # to a running older build makes the strict validator reject the WHOLE reload).
+  # Upper bound on seeded games/iter as a fraction of games_per_iter. The dole
+  # hands the WHOLE list out every iteration, so without this the seeded share is
+  # just pool_size/capacity: the pool grew 141->341 in ~11h and the seeded share
+  # went 81.8% -> 93.4% -> 98.9% -> 100.0%, i.e. ZERO normal-opening selfplay
+  # games. NOTE it bounds a fraction of TOTAL games, while the thing we actually
+  # want to cap is the seeded share of SELFPLAY. With selfplay_fraction 0.50,
+  # selfplay is ~220 of 440 games, so "seeded <= half of selfplay" = 110 games =
+  # 0.25 here. (0.5 would allow 220 seeded = ~100% of selfplay, i.e. exactly the
+  # runaway this cap exists to stop -- the two fractions are NOT the same number.)
+  # Both channels rotate, so nothing in the tail is starved. 0 = uncapped.
+  opening_fen_dole_max_fraction: 0.25
   # 2026-07-19: SF-refutation channel on top of selfplay dole — value-blind-spot
   # lever. Round-robin 50% of the live seed list each iter as short curriculum
   # games: SF plays the first 3 opponent plies (breaks net-net collusion on
