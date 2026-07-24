@@ -14,8 +14,10 @@ hardware, including a multi-GPU test.
 - Python **3.10+**, `gcc` (two small C extensions build during install).
 - ~12 GB disk: PyTorch (~5 GB), the network file (~700 MB), torch compile
   cache (~2–4 GB grows on first runs).
-- One GPU is the validated configuration; 2+ GPUs are optionally used by an
-  experimental parallel-search mode the autotune will evaluate (section 6).
+- One GPU is the quality-validated configuration (classic Gumbel). 2+ GPUs
+  use multi-GPU PUCV search (throughput path; quality vs Gumbel is measured
+  separately). Multi-GPU automatically disables CUDA-graph compile modes
+  (see section 4 / multi-GPU notes) — inductor still fuses without graphs.
 
 ## 2. Install
 
@@ -51,26 +53,57 @@ workflow.
 
 ## 4. IMPORTANT: one-time compile warm-up (before any clocked game)
 
-The first search after install triggers a one-time `torch.compile`
-(~2–3 minutes under the default `max-autotune`). **Caching is automatic and
-persistent — no Triton/Inductor cache paths to configure**: the engine sets
-up a shared TorchInductor + Triton cache at `~/.cache/deepfin/worker_cache`
-by itself (override with the `DEEPFIN_COMPILE_CACHE` env var or
-`--compile-cache-dir` if home is small — it grows to a few GB). Because it
-lives under `$HOME`, it survives reboots. After the one cold compile, a fresh
-engine process pays only ~15 s on its very first search (kernel loading +
-CUDA graph capture), never mid-game. Two rules:
+The first process after install triggers a one-time `torch.compile`
+(budget **≤5–10 minutes** cold under `max-autotune` / multi-GPU
+`max-autotune-no-cudagraphs`). **Caching is automatic and persistent — no
+Triton/Inductor cache paths to configure**: the engine sets up a shared
+TorchInductor + Triton cache at `~/.cache/deepfin/worker_cache` by itself
+(override with the `DEEPFIN_COMPILE_CACHE` env var or `--compile-cache-dir`
+if home is small — it grows to a few GB). Because it lives under `$HOME`, it
+survives reboots.
 
-1. **After install, run the warm-up once** (populates the disk cache):
+**Tournament timing targets after the disk cache is warm:**
+
+| Phase | Budget | What happens |
+|---|---|---|
+| Offline prewarm (once) | ≤ 5–10 min | Cold compile + search-path warmup |
+| Per-game process `isready` | ≤ ~30 s single-GPU; ≤ ~90 s dual-GPU on mid-range cards | Load weights + re-capture process-local CUDA graphs (graphs are not on disk) |
+| Mid-game moves | no compile stalls | Search only |
+
+Two rules:
+
+1. **After install, run the prewarm once** (populates the disk cache):
+   ```bash
+   # single GPU
+   PYTHONPATH=. python3 scripts/uci_prewarm.py --checkpoint /path/to/trainer.pt
+   # multi-GPU (recommended before any multi-device tournament registration)
+   PYTHONPATH=. python3 scripts/uci_prewarm.py --checkpoint /path/to/trainer.pt \
+       --devices cuda:0,cuda:1 --multi-gpu-pucv --vl-gather 256 --repeat 2
+   ```
+   Equivalent manual one-liner (single GPU):
    ```bash
    printf 'uci\nisready\nposition startpos\ngo nodes 3000\nquit\n' | \
      PYTHONPATH=. python3 -m chess_anti_engine.uci --checkpoint /path/to/trainer.pt --device cuda:0
    ```
-2. **Give the engine a generous start/`isready` allowance** in the GUI, or
+2. **Give the engine a generous start/`isready` allowance** in the GUI
+   (≥60 s recommended even warm; cold first launch can be minutes), or
    play one unrated warm-up game per session. The engine's own clock
    management then keeps it safe (it self-calibrates a per-move safety margin
    from observed GPU batch times — `ClockBatchMarginSigmas`, default 2 — and
    has never flagged in our TC testing at 30′+10″ and 60″+1″ after warm-up).
+
+### Multi-GPU compile note (cudagraphs enabled)
+
+Multi-GPU workers are ordinary Python threads, but PyTorch only auto-stashes
+Inductor cudagraph tree TLS onto *autograd*-spawned threads. The engine
+bootstraps that TLS on each pool worker and **serializes first-graph
+capture** across devices, then runs concurrent replay for the NPS win.
+`reduce-overhead` / `max-autotune` therefore work on multi-GPU.
+
+If a device's cudagraph warmup fails, that worker retries once with
+`max-autotune-no-cudagraphs` so a single bad capture cannot kill the
+process. Force a mode with `CAE_UCI_MULTI_GPU_COMPILE_MODE`
+(`default`, `max-autotune-no-cudagraphs`, or empty for eager).
 
 ## 5. UCI options
 
@@ -99,11 +132,23 @@ bash scripts/tcec_autotune.sh --checkpoint /path/to/trainer.pt --devices cuda:0,
 
 Phases: (A) a batching grid over (chunk-sims × candidates × GPU batch), (B) a
 search-parallelism sweep (`--walkers 1/2/4/8`), (C) if 2+ devices are given,
-the experimental multi-GPU parallel-search mode, swept at 2, 4, and all N
-GPUs so we see the scaling curve. The first configuration includes the
-one-time compile, which is inside the time budget. From the log we will
-reply with the exact command line to register — typically within the same
-day.
+multi-GPU PUCV, swept at 2, 4, and all N GPUs so we see the scaling curve.
+The first configuration includes the one-time compile, which is inside the
+time budget. Prefer `scripts/uci_prewarm.py` first on multi-GPU hosts so
+phase C measures steady-state nps rather than cold compile. From the log we
+will reply with the exact command line to register — typically within the
+same day.
+
+Example multi-GPU registration shape (after prewarm + autotune; numbers from
+your log):
+
+```text
+python3 -m chess_anti_engine.uci --checkpoint /path/to/trainer.pt \
+  --devices cuda:0,cuda:1 --multi-gpu-pucv --vl-gather 256 \
+  --chunk-sims 512 --max-batch 1024 --compile-mode max-autotune
+```
+
+(Multi-GPU uses cudagraph TLS bootstrap; see section 4.)
 
 A note on what we will and won't register from the results: the section-3
 command line (`--walkers 1` = classic **Gumbel** search) is our
@@ -121,8 +166,13 @@ phase C tells us what the additional seven GPUs are worth.
 
 ## 7. Known behaviors / troubleshooting
 
-- **Long first move of a fresh process** (~15 s even warm-cached): expected;
-  see section 4. Never happens mid-game.
+- **Long first move of a fresh process** (~15–30 s even warm-cached for
+  `isready` / first search): expected; see section 4. Never happens mid-game
+  after a successful `isready`.
+- **Multi-GPU first `go` returns nodes=0 / search error**: usually means
+  prewarm failed or an old build without the no-cudagraph multi-GPU path.
+  Re-run `scripts/uci_prewarm.py` and check stderr for `engine load failed`
+  / `CUDA graphs` info strings.
 - **GPU contention**: the engine assumes exclusive GPU use during play;
   sharing the device with another GPU process degrades nps ~15–20× and risks
   time trouble.

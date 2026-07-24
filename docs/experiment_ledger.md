@@ -612,6 +612,18 @@ regardless of delivery smoothness — the `sf_pid` starvation guard is what caps
 / trim dose). Every-iteration checking keeps the pool FRESHER (learned seeds leave
 sooner) but does not change the total feed-vs-learn imbalance.
 
+**(D) NEWEST-first screen + bounded pending; vet 100/iter (2026-07-24).** The gate
+drained pending OLDEST-first through a 17k backlog front-loaded with stale
+early-512-era captures (0/387 genuine per a 2M re-screen), spending the whole SF
+budget on a superseded net's mistakes while real recent holes sat at the back
+(keeping ~0/15). Fix: consume newest captures first, and bound the pending queue to
+the newest `pending_cap=5000` (the stale tail is self-healing — a still-real hole is
+re-emitted by the harvester on the next blunder). SF-failed (`score is None`) vets
+now re-queue with a separate `sf_failed` counter instead of poisoning `rejected`.
+**Live vet cap is now `${HARVEST_VET_PER_RUN:-100}`** (supersedes the 15/60/30 in the
+timeline above) — this is the current figure to reason about for throughput and the
+`sf_pid` starvation guard. Post-fix keep rate recovered to ~9–40/iter (avg ~19).
+
 **ONE deciding yardstick.** DELIVERY first (fast, ~2 monitor reads): `grep
 harvest_gate scratchpad/live_read/monitor/monitor.log` — **vetted_kept and the feed
 count per cycle should ≈2× the prior 30-cap run (~10→~20 kept)** with the gate run

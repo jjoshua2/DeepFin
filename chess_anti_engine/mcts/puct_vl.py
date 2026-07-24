@@ -77,6 +77,8 @@ class PucvChunker:
         fpu_reduction: float = 0.2,
         vloss_weight: int = 3,
         vloss_mode: int = 0,
+        cpuct_factor: float = 0.0,
+        cpuct_base: float = 38739.0,
         eval_cache_entries: int = 0,
         input_planes: int = _PLANES,
         compute_relations: bool = False,
@@ -96,6 +98,8 @@ class PucvChunker:
         self._fpu_red = float(fpu_reduction)
         self._vloss = int(vloss_weight)
         self._vloss_mode = int(vloss_mode)
+        self._cpuct_factor = float(cpuct_factor)
+        self._cpuct_base = float(cpuct_base) if float(cpuct_base) >= 1.0 else 38739.0
         self._cache = (
             PucvEvalCache(max_entries=int(eval_cache_entries))
             if eval_cache_entries > 0
@@ -127,6 +131,9 @@ class PucvChunker:
         """
         if target_sims <= 0:
             return 0
+
+        # Apply visit-dependent Cpuct scaling to this tree (no-op when factor=0).
+        tree.set_cpuct_scaling(self._cpuct_factor, self._cpuct_base)
 
         ev = self._ev
         gather = self._gather

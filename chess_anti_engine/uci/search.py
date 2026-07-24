@@ -39,6 +39,7 @@ from .root_parallel_gumbel import (
     RootParallelGumbelConfig,
     RootParallelGumbelPool,
     RootParallelGumbelStats,
+    resolve_rpg_schedule_knobs,
 )
 from chess_anti_engine.moves import index_to_move, move_to_index
 from chess_anti_engine.tablebase import SyzygyProbe, try_tb_root_move
@@ -377,6 +378,8 @@ class SearchWorker:
             WalkerPoolConfig(
                 n_walkers=n,
                 c_puct=float(self._cfg.c_puct),
+                cpuct_factor=float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+                cpuct_base=float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
                 fpu_at_root=0.0,
                 fpu_reduction=float(self._cfg.fpu_reduction),
                 vloss_weight=self._vloss_weight,
@@ -473,6 +476,8 @@ class SearchWorker:
             n_gpus=len(evaluators_or_factories),
             gather=int(gather),
             c_puct=float(self._cfg.c_puct),
+            cpuct_factor=float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+            cpuct_base=float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
             fpu_at_root=0.0,
             fpu_reduction=float(self._cfg.fpu_reduction),
             vloss_weight=self._vloss_weight,
@@ -551,6 +556,12 @@ class SearchWorker:
         as_factories: bool = False,
         devices: list[str] | None = None,
         info_string_cb: Callable[[str], None] | None = None,
+        # UCI schedule knobs (-1 = auto when multi-GPU; 0 = off; >0 = fixed).
+        # See ``resolve_rpg_schedule_knobs``.
+        open_vpa: int = -1,
+        min_vpa: int = -1,
+        min_keep: int = -1,
+        open_budget_frac: float = 0.50,
     ) -> None:
         """Install N per-device evaluator groups driven by
         ``RootParallelGumbelPool`` (root-parallel Gumbel, design §2).
@@ -571,16 +582,38 @@ class SearchWorker:
             self._walker_pool.close()
             self._walker_pool = None
         self._pucv = None
+        n_groups = len(evaluators_or_factories)
+        gath = max(1, int(gather))
+        multi = n_groups > 1
+        # Multi-GPU defaults (open/min_vpa = gather, min_keep = n_groups) keep
+        # devices fed; UCI can force off (0) or a fixed value. Single-group
+        # leaves schedule off for classic bit-identity.
+        # See root_parallel_gumbel.RootParallelGumbelConfig / resolve_rpg_*.
+        open_r, min_vpa_r, min_keep_r, frac_r = resolve_rpg_schedule_knobs(
+            n_groups=n_groups,
+            gather=gath,
+            open_vpa=int(open_vpa),
+            min_vpa=int(min_vpa),
+            min_keep=int(min_keep),
+            open_budget_frac=float(open_budget_frac),
+        )
         cfg = RootParallelGumbelConfig(
-            n_groups=len(evaluators_or_factories),
-            gather=int(gather),
+            n_groups=n_groups,
+            gather=gath,
             c_puct=float(self._cfg.c_puct),
+            cpuct_factor=float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+            cpuct_base=float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
             fpu_at_root=0.0,
             fpu_reduction=float(self._cfg.fpu_reduction),
             vloss_weight=self._vloss_weight,
-  # vloss_mode stays at the config default (virtual-mean): the design pins
-  # the intra-candidate regime; the pucv pool's PUCVPendingMode default
-  # (legacy) deliberately does not leak in here.
+            # vloss_mode stays at the config default (virtual-mean): the design pins
+            # the intra-candidate regime; the pucv pool's PUCVPendingMode default
+            # (legacy) deliberately does not leak in here.
+            split_idle_groups=multi,
+            min_vpa=min_vpa_r,
+            open_vpa=open_r,
+            open_budget_frac=frac_r,
+            min_keep=min_keep_r,
             eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),
@@ -708,6 +741,8 @@ class SearchWorker:
             fpu_reduction=float(self._cfg.fpu_reduction),
             vloss_weight=self._vloss_weight,
             vloss_mode=self._pucv_vloss_mode,
+            cpuct_factor=float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+            cpuct_base=float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
             eval_cache_entries=self._eval_cache_entries,
             input_planes=input_plane_count(self._cfg.input_extra_features),
             compute_relations=bool(self._cfg.compute_relations),
@@ -1314,6 +1349,25 @@ class SearchWorker:
         if allowed_root_indices is None and self._pucv_pool is not None:
             per_device = max(self._chunk_sims, self._pucv_pool.gather)
             return per_device * max(1, self._pucv_pool.n_devices)
+        if allowed_root_indices is None and self._rpg_pool is not None:
+            # Root-parallel Gumbel re-runs a FULL sequential-halving schedule
+            # per chunk. Tiny chunks (e.g. 512) force first-phase
+            # visits_per_action ≈ 5 on 20 candidates — GPU batches of size 5
+            # and near-zero multi-GPU speedup. Prefer one large schedule so
+            # early-phase vpa fills gather-sized batches (at 8k sims, vpa≈80
+            # on 20 cands). The run loop still min()s with remaining max_nodes
+            # / time-capped chunk; workers poll stop_event between gather
+            # batches so clock latency stays ~one batch, not ~one schedule.
+            n_groups = max(1, int(self._rpg_pool.n_groups))
+            gather = max(1, int(getattr(self._rpg_pool, "gather", 256) or 256))
+            # Aim for first-phase vpa ≳ gather/2: budget ≳ n_cands * rounds * vpa
+            # ≈ 20 * 5 * (gather/2). Use a generous floor; remaining-node cap
+            # trims this for short go nodes searches.
+            target = max(
+                self._chunk_sims * max(8, n_groups * 4),
+                20 * 5 * max(gather // 2, 64),
+            )
+            return int(target)
         return self._chunk_sims
 
     def _time_capped_chunk(
@@ -1338,8 +1392,17 @@ class SearchWorker:
   # matched_time, where one full _chunk_sims=2048 chunk would itself overrun)
   # shrinks the first chunk. A normal/long budget leaves it at _chunk_sims; the
   # measured nps then caps every later chunk.
+  #
+  # Exception: root-parallel Gumbel *requires* a large first schedule or
+  # early-phase vpa collapses (vpa≈5 at 512 sims → GPU batch starvation).
+  # Cap only by bootstrap time, not by base _chunk_sims.
             boot_cap = int(_BOOTSTRAP_NPS_PER_MS * remaining_ms)
-            return min(chunk, self._chunk_sims, max(_MIN_FIRST_CHUNK, boot_cap))
+            time_bound = max(_MIN_FIRST_CHUNK, boot_cap)
+            # getattr: unit tests may construct SearchWorker via
+            # object.__new__ without running __init__.
+            if getattr(self, "_rpg_pool", None) is not None:
+                return min(chunk, time_bound)
+            return min(chunk, self._chunk_sims, time_bound)
         elapsed = deadline.elapsed_ms()
         if elapsed <= 0:
             return chunk
@@ -1625,6 +1688,12 @@ class SearchWorker:
             allowed_root_indices,
             allow_terminal_shortcuts=allow_terminal_shortcuts,
         )
+        # Lc0-style visit-dependent Cpuct (no-op when factor<=0).
+        if self._tree is not None:
+            self._tree.set_cpuct_scaling(
+                float(getattr(self._cfg, "cpuct_factor", 0.0) or 0.0),
+                float(getattr(self._cfg, "cpuct_base", 38739.0) or 38739.0),
+            )
 
         total_nodes = 0
         last_info_ms = -1

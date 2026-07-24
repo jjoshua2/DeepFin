@@ -28,6 +28,7 @@ from chess_anti_engine.inference_dispatcher import (
     CUDAOwnerDispatcher,
     MultiGPUDispatcher,
     ThreadSafeGPUDispatcher,
+    bootstrap_cudagraph_tls,
 )
 from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
 
@@ -36,6 +37,57 @@ from .model_loader import load_model_from_checkpoint
 from .protocol import CmdQuit, CmdUci, parse_command
 from .search import SearchWorker
 import contextlib
+
+# torch.compile modes that enable Inductor CUDA graphs (cudagraph_trees).
+_CUDAGRAPH_COMPILE_MODES = frozenset({"reduce-overhead", "max-autotune"})
+# Fallback when a cudagraph multi-GPU factory fails strict warmup: inductor
+# fusion without graph capture. Prefer ``default`` over
+# ``max-autotune-no-cudagraphs`` so a fallback path stays inside the
+# tournament prewarm budget (max-autotune cold can exceed 10 min on
+# mid-range GPUs). Disk cache still applies.
+_MULTI_GPU_NO_CUDAGRAPH_MODE = "default"
+# Serialize compile + first-forward capture across multi-GPU factory
+# workers. Concurrent torch.compile/cudagraph capture on two threads
+# races dynamo + the CUDA caching allocator even with per-thread TLS
+# bootstrapped; serial capture is a few minutes cold and seconds warm.
+# Concurrent REPLAY after capture is the multi-GPU NPS win.
+_MULTI_GPU_COMPILE_LOCK = threading.Lock()
+
+
+def resolve_multi_gpu_compile_mode(
+    compile_mode: str | None,
+    n_devices: int,
+    *,
+    announce: bool = True,
+) -> str | None:
+    """Return the compile mode used for multi-GPU worker factories.
+
+    Default: keep the caller's mode (including CUDA-graph modes). Multi-GPU
+    factories bootstrap cudagraph TLS and serialize first capture so
+    reduce-overhead / max-autotune work on pool threads.
+
+    Override with ``CAE_UCI_MULTI_GPU_COMPILE_MODE`` (empty → eager). Use
+    ``max-autotune-no-cudagraphs`` or ``default`` to force a no-graph path.
+    """
+    if compile_mode is None or n_devices <= 1:
+        return compile_mode
+    override = os.environ.get("CAE_UCI_MULTI_GPU_COMPILE_MODE")
+    if override is not None:
+        chosen = override.strip() or None
+        if announce:
+            _println(
+                "info string multi-GPU compile mode override via "
+                f"CAE_UCI_MULTI_GPU_COMPILE_MODE={override!r} → {chosen!r}"
+            )
+        return chosen
+    if announce and compile_mode in _CUDAGRAPH_COMPILE_MODES:
+        _println(
+            f"info string multi-GPU: using compile mode {compile_mode!r} with "
+            "per-worker cudagraph TLS bootstrap + serialized capture "
+            f"(fallback {_MULTI_GPU_NO_CUDAGRAPH_MODE!r} on warmup failure; "
+            "override with CAE_UCI_MULTI_GPU_COMPILE_MODE)"
+        )
+    return compile_mode
 
 
 def _warmup_evaluator(
@@ -114,6 +166,20 @@ def _warmup_evaluator(
             break
 
 
+def _pucv_warmup_batch_sizes(gather: int) -> list[int]:
+    """Batch sizes MultiGpuPucvPool / RPG submit in the steady state.
+
+    Full-gather is the common case; batch=1 covers root / short-budget
+    edges. CUDA graphs are process-local (not disk-cached), so every
+    isready re-captures — keep this set minimal for the tournament
+    ~30s warm-launch budget. Mid-size remainders recompile once mid-
+    search under the factory lock's warm shapes only if they appear;
+    production gather-aligned budgets rarely need them.
+    """
+    g = max(1, int(gather))
+    return sorted({1, g})
+
+
 def _warmup_pucv_evaluator(
     evaluator,
     *,
@@ -121,8 +187,15 @@ def _warmup_pucv_evaluator(
     input_history_encoding: str = "legacy",
     input_extra_features: str | None = None,
     compute_relations: bool = False,
+    strict: bool = False,
 ) -> None:
-    """Warm the exact inplace-async shapes used by MultiGpuPucvPool."""
+    """Warm the exact inplace-async shapes used by MultiGpuPucvPool.
+
+    ``strict=True`` re-raises the first failure so multi-GPU factory install
+    cannot silently return a cold evaluator that then crashes on the first
+    real ``go`` (tournament clock). Non-strict keeps the historical best-
+    effort path used by opportunistic warmups.
+    """
     cb = CBoard.from_board(chess.Board())
     encoded = encode_cboard(
         cb,
@@ -130,9 +203,10 @@ def _warmup_pucv_evaluator(
         input_extra_features=input_extra_features,
     )
     rel_row = cb.compute_relations() if compute_relations else None
-    batches = sorted({1, max(1, int(gather))})
+    batches = _pucv_warmup_batch_sizes(gather)
+    n_slots = min(2, int(getattr(evaluator, "n_slots", 1)))
     for batch in batches:
-        for slot in range(min(2, int(getattr(evaluator, "n_slots", 1)))):
+        for slot in range(n_slots):
             try:
                 buf = evaluator.get_input_buffer(batch, slot=slot)
                 buf[:] = np.broadcast_to(encoded, (batch, *encoded.shape))
@@ -146,6 +220,8 @@ def _warmup_pucv_evaluator(
                 if event is not None:
                     event.synchronize()
             except Exception:
+                if strict:
+                    raise
                 return
 
 
@@ -284,12 +360,21 @@ def _make_multi_gpu_pucv_factory_builder(
     """Return ``build(max_batch) -> list[factory]`` for MultiGpuPucvPool.
 
     Each factory compiles, constructs, and warms its evaluator on the pool
-    worker thread that will replay cudagraphs during search.
+    worker thread that will later run search. Compile+warmup is serialized
+    across workers (see ``_MULTI_GPU_COMPILE_LOCK``) and uses a no-cudagraph
+    mode when the requested mode would enable CUDA graphs — concurrent
+    cudagraph capture/replay across GPU worker threads is not safe in
+    PyTorch 2.6 (TLS tree_manager + mempool races).
     """
     input_history_encoding = str(getattr(models[0], "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(models[0], "input_extra_features", "v1"))
     use_relations = bool(getattr(models[0], "use_dynamic_relations", False))
     compact_bf16 = os.environ.get("CAE_UCI_COMPACT_BF16", "0") == "1"
+    # Resolve once at builder construction so every factory agrees and we
+    # only emit the downgrade notice once (not once per device per rebuild).
+    effective_compile_mode = resolve_multi_gpu_compile_mode(
+        compile_mode, len(devices), announce=True,
+    )
 
     def build(max_batch: int, gather: int):
         effective_gather = min(max(1, int(gather)), int(max_batch))
@@ -297,41 +382,114 @@ def _make_multi_gpu_pucv_factory_builder(
         for model, device in zip(models, devices):
             def make_one(m=model, d=device):
   # Bind this pool worker thread to its device BEFORE compile /
-  # construction / warmup: threads inherit current-device cuda:0, and
-  # cudagraph capture on devices 1..N-1 must not rely on stream
-  # contexts alone (same pattern as inference_threaded /
-  # train.async_eval; project memory records a cudagraph-TLS crash
-  # from exactly this). cpu devices (tests) skip it.
+  # construction / warmup: threads inherit current-device cuda:0.
+  # cpu devices (tests) skip set_device.
                 import torch
+                bootstrap_cudagraph_tls()
+                # Multi-device compile reuses dynamo guards that key on
+                # device index; raise the recompile ceiling so GPU 1..N-1
+                # don't fall off the cache after GPU 0's shapes.
+                try:
+                    import torch._dynamo
+                    torch._dynamo.config.cache_size_limit = max(
+                        int(torch._dynamo.config.cache_size_limit),
+                        64,
+                    )
+                except Exception:
+                    pass
                 dev = torch.device(d)
                 if dev.type == "cuda":
   # bare "cuda" yields index None; `or 0` collapses None/0 to the default device.
                     torch.cuda.set_device(dev.index or 0)
-                if compile_mode:
-                    from typing import cast
-                    compiled = cast(
-                        "torch.nn.Module",
-                        torch.compile(m, mode=compile_mode),
+                mode = effective_compile_mode
+                with _MULTI_GPU_COMPILE_LOCK:
+                    evaluator = _compile_and_warm_pucv_evaluator(
+                        m, d,
+                        max_batch=max_batch,
+                        gather=effective_gather,
+                        compile_mode=mode,
+                        compact_bf16=compact_bf16,
+                        input_history_encoding=input_history_encoding,
+                        input_extra_features=input_extra_features,
+                        use_relations=use_relations,
                     )
-                else:
-                    compiled = m
-                evaluator = DirectGPUEvaluator(
-                    compiled, device=d, max_batch=max_batch, n_slots=2,
-                    input_bf16=compact_bf16, legal_bf16=compact_bf16,
-                )
-                _warmup_pucv_evaluator(
-                    evaluator,
-                    gather=effective_gather,
-                    input_history_encoding=input_history_encoding,
-                    input_extra_features=input_extra_features,
-                    compute_relations=use_relations,
-                )
                 return evaluator
 
             factories.append(make_one)
         return factories
 
     return build
+
+
+def _compile_and_warm_pucv_evaluator(
+    model,
+    device: str,
+    *,
+    max_batch: int,
+    gather: int,
+    compile_mode: str | None,
+    compact_bf16: bool,
+    input_history_encoding: str,
+    input_extra_features: str,
+    use_relations: bool,
+):
+    """Compile + strict-warmup one multi-GPU worker evaluator.
+
+    Caller holds ``_MULTI_GPU_COMPILE_LOCK`` and has already bound the
+    CUDA device + bootstrapped cudagraph TLS. On cudagraph-mode warmup
+    failure, retries once with ``_MULTI_GPU_NO_CUDAGRAPH_MODE`` so a
+    single bad graph capture cannot take the whole tournament offline.
+    """
+    from typing import cast
+
+    import torch
+
+    modes: list[str | None]
+    if compile_mode in _CUDAGRAPH_COMPILE_MODES:
+        modes = [compile_mode, _MULTI_GPU_NO_CUDAGRAPH_MODE]
+    else:
+        modes = [compile_mode]
+
+    last_exc: BaseException | None = None
+    for i, mode in enumerate(modes):
+        try:
+            if mode:
+                compiled = cast(
+                    "torch.nn.Module",
+                    torch.compile(model, mode=mode),
+                )
+            else:
+                compiled = model
+            evaluator = DirectGPUEvaluator(
+                compiled, device=device, max_batch=max_batch, n_slots=2,
+                input_bf16=compact_bf16, legal_bf16=compact_bf16,
+            )
+            _warmup_pucv_evaluator(
+                evaluator,
+                gather=gather,
+                input_history_encoding=input_history_encoding,
+                input_extra_features=input_extra_features,
+                compute_relations=use_relations,
+                strict=True,
+            )
+            if i > 0:
+                _println(
+                    f"info string multi-GPU: cudagraph warmup failed on "
+                    f"{device}; fell back to compile mode {mode!r}"
+                )
+            return evaluator
+        except BaseException as exc:
+            last_exc = exc
+            if i + 1 < len(modes):
+                _println(
+                    f"info string multi-GPU: compile/warmup failed on "
+                    f"{device} with mode {mode!r}: {exc!r}; retrying "
+                    f"{modes[i + 1]!r}"
+                )
+                continue
+            raise
+    assert last_exc is not None
+    raise last_exc
 
 
 def _build_engine(
@@ -343,6 +501,8 @@ def _build_engine(
     c_scale: float = 0.025,  # UCI/high-sim tuned default (was 0.1); see --c-scale help
     c_visit: float = 50.0,
     c_puct: float = 2.5,
+    cpuct_factor: float = 3.89,
+    cpuct_base: float = 38739.0,
     fpu_reduction: float = 1.2,
   # Gumbel root/descent split (legacy defaults; see main()'s --c-visit-root etc.)
     c_visit_root: float = -1.0,
@@ -386,6 +546,8 @@ def _build_engine(
             c_scale=c_scale,
             c_visit=c_visit,
             c_puct=c_puct,
+            cpuct_factor=float(cpuct_factor),
+            cpuct_base=float(cpuct_base),
             fpu_reduction=fpu_reduction,
             c_visit_root=c_visit_root,
             q_visit_floor=q_visit_floor,
@@ -406,12 +568,15 @@ def _build_engine(
         pucv_vloss_mode=pucv_vloss_mode,
         eval_cache_entries=eval_cache_entries,
     )
+    # Same default Engine applies when options is None; resolved here too so
+    # the RPG install below reads concrete knobs.
+    opts = options if options is not None else EngineOptions()
     engine = Engine(
         worker,
         rebuild_evaluator=rebuild_evaluator,
         rebuild_multi_gpu_pucv_factories=rebuild_multi_gpu_pucv_factories,
         search_devices=devices,
-        options=options,
+        options=opts,
         gil_profile=gil_profile,
     )
   # The two multi-GPU modes are mutually exclusive; the gumbel branch reuses
@@ -425,6 +590,10 @@ def _build_engine(
                 factories, gather=effective_gather, as_factories=True,
                 devices=list(devices) if devices else None,
                 info_string_cb=_emit_info_string,
+                open_vpa=int(opts.rpg_open_vpa),
+                min_vpa=int(opts.rpg_min_vpa),
+                min_keep=int(opts.rpg_min_keep),
+                open_budget_frac=float(opts.rpg_open_budget_frac),
             )
     elif use_multi_gpu_pucv and rebuild_multi_gpu_pucv_factories is not None:
         effective_gather = min(vl_gather, max_batch)
@@ -529,7 +698,21 @@ def main() -> int:
                         "2026-06-16 (was 0.1; +270 Elo). q_scale=c_scale*(c_visit+max_visit) "
                         "explodes at high sims, so 0.1 over-trusted the overconfident value head.")
     p.add_argument("--c-visit", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit"], help="Gumbel c_visit constant (default: 50.0)")
-    p.add_argument("--c-puct", type=float, default=PLAY_SEARCH_DEFAULTS["c_puct"], help="PUCT exploration constant (default: 2.5)")
+    p.add_argument(
+        "--c-puct", type=float, default=PLAY_SEARCH_DEFAULTS["c_puct"],
+        help="PUCT init (Lc0 CPuct, default: 1.75). With --cpuct-factor>0 this is "
+             "the init term in c(N)=c_puct+factor*log((N+base)/base).",
+    )
+    p.add_argument(
+        "--cpuct-factor", type=float,
+        default=float(PLAY_SEARCH_DEFAULTS.get("cpuct_factor", 3.89) or 0.0),
+        help="Lc0 CPuctFactor (default: 3.89). 0 = fixed c_puct (no log ramp).",
+    )
+    p.add_argument(
+        "--cpuct-base", type=float,
+        default=float(PLAY_SEARCH_DEFAULTS.get("cpuct_base", 38739.0) or 38739.0),
+        help="Lc0 CPuctBase in log((N+base)/base) (default: 38739).",
+    )
     p.add_argument("--fpu-reduction", type=float, default=PLAY_SEARCH_DEFAULTS["fpu_reduction"],
                    help="first-play-urgency reduction for unvisited children (default: 1.2)")
   # Gumbel root/descent split params (merged dormant in #68; C path only —
@@ -710,6 +893,9 @@ def main() -> int:
         use_multi_gpu_pucv=restore_multi_gpu_pucv,
         pucv_pending_mode=str(args.pucv_pending_mode),
         search_parallel="gumbel" if use_root_parallel_gumbel else "pucv",
+        cpuct=float(args.c_puct),
+        cpuct_factor=float(args.cpuct_factor),
+        cpuct_base=float(args.cpuct_base),
         vl_gather=max(32, int(args.vl_gather)),
         max_batch=max(64, int(args.max_batch)),
         eval_cache_entries=max(0, int(args.eval_cache_entries)),
@@ -768,10 +954,25 @@ def main() -> int:
                     "relation matrices through search"
                 )
             compile_mode = str(args.compile_mode) if args.compile else None
+  # When multi-GPU pool / RPG owns search, the primary stack is only for
+  # rare root-eval / option-fallback. Compiling it with CUDA graphs first
+  # (on the build / CUDA-owner thread) poisons subsequent pool-worker
+  # captures on the same process ("captures_underway" / capture failures).
+  # Keep primary eager (or explicitly no-graph) so pool workers own the
+  # only cudagraph capture sequence under _MULTI_GPU_COMPILE_LOCK.
+            multi_gpu_search = len(devices) > 1 and (
+                use_multi_gpu_pucv or use_root_parallel_gumbel
+            )
+            primary_compile_mode = None if multi_gpu_search else compile_mode
+            if multi_gpu_search and compile_mode is not None:
+                _println(
+                    "info string multi-GPU: primary evaluator left eager "
+                    "(pool workers own compiled/cudagraph capture)"
+                )
             build_eval = _make_evaluator_factory(
                 models, devices, coalesce=bool(args.coalesce),
                 n_walkers=n_walkers, walker_gather=walker_gather,
-                compile_mode=compile_mode,
+                compile_mode=primary_compile_mode,
             )
             build_pucv_factories = (
                 _make_multi_gpu_pucv_factory_builder(
@@ -809,7 +1010,10 @@ def main() -> int:
                 evaluator=evaluator, primary_device=devices[0],
                 chunk_sims=args.chunk_sims, topk=args.topk,
                 c_scale=args.c_scale, c_visit=args.c_visit,
-                c_puct=args.c_puct, fpu_reduction=args.fpu_reduction,
+                c_puct=args.c_puct,
+                cpuct_factor=float(args.cpuct_factor),
+                cpuct_base=float(args.cpuct_base),
+                fpu_reduction=args.fpu_reduction,
                 c_visit_root=args.c_visit_root, q_visit_floor=args.q_visit_floor,
                 q_visit_exp=args.q_visit_exp, q_global_scale=bool(args.q_global_scale),
                 c_scale_root=args.c_scale_root, q_visit_exp_root=args.q_visit_exp_root,

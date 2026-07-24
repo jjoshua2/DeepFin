@@ -524,7 +524,15 @@ def test_pending_cap_expires_stale_tail() -> None:
         out_path="/dev/null",
         pending_cap=2,
     )
-    assert len(st.pending) <= 2
+    # The cap must expire the OLDEST tail and keep the NEWEST — a regression that
+    # kept the oldest `pending_cap` (the stale-backlog starvation this fix cures)
+    # would also satisfy `len <= 2`, so pin the surviving keys explicitly.
+    # Newest-first vets E (→ rejected); un-vetted {B(oldest),C,D} trim to newest 2.
+    pending_keys = {k for k, _ in st.pending}
+    assert len(st.pending) == 2
+    assert pending_keys == {_key(_FEN_C), _key(_FEN_D)}
+    assert _key(_FEN_B) not in pending_keys      # oldest tail expired
+    assert _key(_FEN_E) in st.rejected           # newest was vetted
 
 
 # ── sf failure → re-queue (NOT reject): a transient SF outage must not ────────

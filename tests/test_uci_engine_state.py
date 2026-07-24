@@ -291,6 +291,32 @@ def test_handshake_exposes_multi_gpu_pucv_option(capsys) -> None:
     assert "option name UseMultiGpuPUCV type check default true" in out
     assert "option name PUCVPendingMode type combo default virtual-mean" in out
     assert "option name EvalCacheEntries type spin default 1234" in out
+    assert "option name RPGOpenVPA type spin default -1" in out
+    assert "option name RPGMinVPA type spin default -1" in out
+    assert "option name RPGMinKeep type spin default -1" in out
+    assert "option name RPGOpenBudgetFrac type string default 0.5" in out
+
+
+def test_rpg_schedule_setoption_reinstalls_when_gumbel_active(capsys) -> None:
+    worker = MagicMock()
+    factories: list[Callable[[], Any]] = [object, object]
+    engine = Engine(
+        worker=worker,
+        rebuild_multi_gpu_pucv_factories=lambda max_batch, gather: factories,
+        search_devices=("cuda:0", "cuda:1"),
+        options=EngineOptions(search_parallel="gumbel"),
+    )
+    # Seed as if SearchParallel=gumbel already installed.
+    engine._options.search_parallel = "gumbel"
+
+    engine._handle_setoption(CmdSetOption(name="RPGOpenVPA", value="128"))
+    assert engine._options.rpg_open_vpa == 128
+    worker.install_root_parallel_gumbel.assert_called()
+    kwargs = worker.install_root_parallel_gumbel.call_args.kwargs
+    assert kwargs.get("open_vpa") == 128
+    out = capsys.readouterr().out
+    assert "RPGOpenVPA set to 128" in out
+    assert "RPG reinstalled" in out
 
 
 def test_use_multi_gpu_pucv_setoption_installs_factories(capsys) -> None:

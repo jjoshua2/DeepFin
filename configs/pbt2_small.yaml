@@ -341,32 +341,7 @@ train:
   batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
   train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
   train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
-  # ############ READ THIS BEFORE CHANGING THE NUMBER ############
-  # 2026-07-24 (same day, superseding the 2.5->5.0 row below): this key does NOT
-  # mean what its name says. The budget in trainable_metrics.py is computed from
-  # `positions_added`, which trainable_phases.py:765 sets to
-  # ingest_summary["matching_positions"] (current-model games only) -- but stale-
-  # model shards are ALSO ingested into the replay buffer (_process_shard calls
-  # _ingest_train_arrays UNCONDITIONALLY, before the model_sha check), and there
-  # are 4.5-6.5x more of those. So:
-  #     TRUE views per ingested position ~= this value / 5.6
-  # Measured: positions_added 4,577 vs replay_positions_ingested 25,693 (5.61x);
-  # train_samples_seen 11,776 -> TRUE reuse was 11776/25693 = 0.46 views, i.e.
-  # over half of all ingested positions were NEVER trained on even once. The
-  # config believed it was at 2.57.
-  #
-  # 14.0 targets the ~2.5 TRUE views everyone thought was already running (125
-  # steps/iter, ~336s = 15% of a 2250s iteration). Deliberately NOT chasing
-  # KataGo's ~4 in one move. Affordable because
-  # distributed_pause_selfplay_during_training: false -- training OVERLAPS
-  # generation, so extra steps cost GPU contention, not paused selfplay.
-  # Headroom check: policy_loss_selfplay 1.548 vs test 1.713 (~10% gap), so
-  # overfitting is not yet the binding constraint.
-  #
-  # !!! COUPLING FOOT-GUN !!! When the denominator fix lands (PR: use
-  # positions_replay_added + emit train_views_actual), this value MUST drop to
-  # ~2.5 IN THE SAME DEPLOY, or true views jump 5.6x to ~14 instantly.
-  train_views_per_position: 14.0  # 2026-07-24: 2.5->5.0->14.0 (ledger LIVE/UNREAD top row). Measured: train was 61.9s of a 2249.7s iter = 2.8% of wall clock (23 steps on 4577 fresh positions = 2.57 views), so DOUBLING views costs only ~+3% iteration time for 2x gradient per SF label. The AZ~1/KataGo~4 ceiling exists because THEIR value targets are bootstrapped and go stale; our sf_wdl/sf_policy are fixed-engine ground truth that never goes stale, so reuse is bounded by overfitting, not staleness. Thesis: loop is STEP-starved (raw policy E[regret] 98.9 vs the 51.3 search target it distills). Kill: train/holdout gap widens, or value_regret paired worse >2cp, or games/h -10%. REVERT: set back to 2.5 (live-reloadable, no restart). Weight revert point: data/salvage/pre_views5_20260724. Prior: 2.5 from 2026-07-01 (PR #91).
+  train_views_per_ingested_position: 2.5  # 2026-07-24 (renamed + denominator FIXED): trained-samples per position ACTUALLY INGESTED into the replay buffer (AZ ~1, KataGo ~4). Was train_views_per_position, which divided by matching_positions (current-model games only) while 4.5-6.5x more positions were ingested -- so 2.5 there produced only ~0.46 TRUE views and over half of all data was never trained on. Verify with the train_views_actual metric. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable.
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false

@@ -43,6 +43,9 @@ def _value_scalar_from_wdl_logits(wdl_logits: np.ndarray) -> float:
 class MCTSConfig:
     simulations: int = 50
     c_puct: float = 2.5
+    # Lc0 classic c(N)=c_puct+factor*log((N+base)/base); factor<=0 = fixed c_puct.
+    cpuct_factor: float = 0.0
+    cpuct_base: float = 38739.0
     dirichlet_alpha: float = 0.3
     dirichlet_eps: float = 0.25
     temperature: float = 1.0
@@ -126,10 +129,39 @@ class Node:
         return self.W / self.N if self.N > 0 else 0.0
 
 
-def _select_child(node: Node, *, c_puct: float, fpu_reduction: float) -> tuple[int, Node]:
-  # PUCT: Q_eff + c_puct * P * sqrt(N_parent) / (1 + N_child)
+def effective_cpuct(
+    c_puct: float,
+    parent_n: int,
+    *,
+    cpuct_factor: float = 0.0,
+    cpuct_base: float = 38739.0,
+) -> float:
+    """Lc0 classic visit-dependent Cpuct; factor<=0 keeps fixed ``c_puct``.
+
+    ``c(N) = c_puct + factor * log((N + base) / base)``
+    """
+    if cpuct_factor <= 0.0:
+        return float(c_puct)
+    base = float(cpuct_base) if float(cpuct_base) >= 1.0 else 38739.0
+    n = max(0.0, float(parent_n))
+    return float(c_puct) + float(cpuct_factor) * math.log((n + base) / base)
+
+
+def _select_child(
+    node: Node,
+    *,
+    c_puct: float,
+    fpu_reduction: float,
+    cpuct_factor: float = 0.0,
+    cpuct_base: float = 38739.0,
+) -> tuple[int, Node]:
+  # PUCT: Q_eff + c(N) * P * sqrt(N_parent) / (1 + N_child)
+  # c(N) = c_puct when cpuct_factor<=0; else Lc0 classic log scaling.
   # FPU: unvisited children use parent.Q - fpu_reduction * sqrt(visited_policy)
-    c_sqrt_n = c_puct * math.sqrt(max(1, node.N))
+    c_eff = effective_cpuct(
+        c_puct, node.N, cpuct_factor=cpuct_factor, cpuct_base=cpuct_base,
+    )
+    c_sqrt_n = c_eff * math.sqrt(max(1, node.N))
 
   # LC0-style FPU: penalty scales with how much prior mass is already explored
     visited_policy = 0.0
@@ -221,8 +253,15 @@ def _terminal_value(board: chess.Board) -> float:
     return 1.0 if board.turn == chess.BLACK else -1.0
 
 
-def _select_one_leaf(root: Node, *, c_puct: float, fpu_at_root: float,
-                     fpu_reduction: float) -> tuple[Node, list[Node]]:
+def _select_one_leaf(
+    root: Node,
+    *,
+    c_puct: float,
+    fpu_at_root: float,
+    fpu_reduction: float,
+    cpuct_factor: float = 0.0,
+    cpuct_base: float = 38739.0,
+) -> tuple[Node, list[Node]]:
     """Descend the tree from ``root`` to one unexpanded leaf, returning (leaf, path).
 
     Root selection uses ``fpu_at_root``; deeper selections switch to
@@ -233,7 +272,13 @@ def _select_one_leaf(root: Node, *, c_puct: float, fpu_at_root: float,
     path = [node]
     fpu = fpu_at_root
     while node.expanded and node.children:
-        _, node = _select_child(node, c_puct=c_puct, fpu_reduction=fpu)
+        _, node = _select_child(
+            node,
+            c_puct=c_puct,
+            fpu_reduction=fpu,
+            cpuct_factor=cpuct_factor,
+            cpuct_base=cpuct_base,
+        )
         path.append(node)
         fpu = fpu_reduction
     return node, path
@@ -347,8 +392,12 @@ def run_mcts_many(
         leaf_paths: list[list[Node]] = []
         for root in roots:
             node, path = _select_one_leaf(
-                root, c_puct=cfg.c_puct,
-                fpu_at_root=cfg.fpu_at_root, fpu_reduction=cfg.fpu_reduction,
+                root,
+                c_puct=cfg.c_puct,
+                fpu_at_root=cfg.fpu_at_root,
+                fpu_reduction=cfg.fpu_reduction,
+                cpuct_factor=float(cfg.cpuct_factor),
+                cpuct_base=float(cfg.cpuct_base),
             )
             if node.board.is_game_over():
                 _backprop(path, _terminal_value(node.board))

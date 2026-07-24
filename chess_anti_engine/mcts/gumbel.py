@@ -73,8 +73,11 @@ PLAY_SEARCH_DEFAULTS: dict[str, float | int] = {
     "c_scale_root": 7.0,
     "q_visit_exp_root": -1.0,
     "topk": 32,
-    "c_puct": 2.5,
-    "fpu_reduction": 1.2,
+    # Lc0 classic-search defaults (Oct 2025 engine flags page).
+    "c_puct": 1.75,
+    "cpuct_factor": 3.89,
+    "cpuct_base": 38739.0,
+    "fpu_reduction": 0.33,
 }
 
 
@@ -89,6 +92,11 @@ class GumbelConfig:
     c_visit: float = 50.0
     c_scale: float = 0.1
     c_puct: float = 2.5
+    # Lc0 classic visit-dependent Cpuct (PUCT descent only). factor<=0 = fixed.
+    # Library default factor=0 preserves training bit-identity; UCI play uses
+    # PLAY_SEARCH_DEFAULTS (1.75 / 3.89 / 38739).
+    cpuct_factor: float = 0.0
+    cpuct_base: float = 38739.0
     fpu_reduction: float = 1.2
     # Exponent on max_visit in the value-transform scale q_scale =
     # c_scale*(c_visit + max_visit**q_visit_exp). 1.0 = standard linear Gumbel
@@ -487,7 +495,13 @@ def _collect_forced_leaf(
         if cfg.full_tree:
             _, node = _select_full_gumbel_child(node, cfg=cfg)
         else:
-            _, node = _select_child(node, c_puct=float(cfg.c_puct), fpu_reduction=float(cfg.fpu_reduction))
+            _, node = _select_child(
+                node,
+                c_puct=float(cfg.c_puct),
+                fpu_reduction=float(cfg.fpu_reduction),
+                cpuct_factor=float(getattr(cfg, "cpuct_factor", 0.0) or 0.0),
+                cpuct_base=float(getattr(cfg, "cpuct_base", 38739.0) or 38739.0),
+            )
         path.append(node)
   # Expanded nodes with children are never terminal — skip is_game_over()
   # here. Terminal detection happens after the loop exits.

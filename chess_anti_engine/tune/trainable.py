@@ -665,7 +665,7 @@ def train_trial(config: dict):
                 device=device, rng=rng, sf=sf,
                 ds=ds,
                 sims=sims,
-                total_positions=sp.total_positions,
+                positions_ingested=sp.replay_positions_ingested,
                 imported_samples_this_iter=sp.imported_samples_this_iter,
                 gate_match_idx=gate_match_idx,
                 gate_state_path=gate_state_path,

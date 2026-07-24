@@ -290,7 +290,7 @@ def _run_training_and_gating(
     sf,
     ds: DifficultyState,
     sims: int,
-    total_positions: int,
+    positions_ingested: int,
     imported_samples_this_iter: int,
     gate_match_idx: int,
     gate_state_path: Path,
@@ -314,14 +314,18 @@ def _run_training_and_gating(
 
     if not skip_train:
         train_budget = _compute_train_step_budget(
-            positions_added=int(total_positions),
+            # The replay-reuse denominator must be what actually entered the
+            # buffer, NOT matching_positions. Stale-model shards are ingested
+            # too (_process_shard calls _ingest_train_arrays before the
+            # model_sha check) and outnumber matching ones 4.5-6.5x.
+            positions_added=int(positions_ingested),
             imported_samples=int(imported_samples_this_iter),
             replay_size=len(buf),
             batch_size=int(batch_size),
             accum_steps=int(accum_steps),
             base_max_steps=int(tc.train_steps),
             train_window_fraction=float(max(0.0, tc.train_window_fraction)),
-            train_views_per_position=float(max(0.0, tc.train_views_per_position)),
+            train_views_per_ingested_position=float(max(0.0, tc.train_views_per_ingested_position)),
         )
         steps = int(train_budget["steps"])
         target_sample_budget = int(train_budget["target_sample_budget"])
