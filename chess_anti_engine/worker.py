@@ -65,6 +65,7 @@ from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     _load_fen_list,
+    cap_dole_batch,
     expand_dole_seeds,
     sample_sf_refute_batch,
     warm_opening_book_cache,
@@ -1458,6 +1459,21 @@ class WorkerSession:
                 training_iteration=train_iter,
                 path=str(self.opening_fen_list_path),
             )
+        # Bound total seeded games/iter. Without this the seeded share of
+        # selfplay is just pool_size/capacity: on 2026-07-24 a growing seed pool
+        # (141 -> 341) pushed it 81.8% -> 100%, leaving ZERO normal-opening
+        # selfplay games. Rotates both channels so no seed is starved.
+        max_games = int(reco.get("opening_fen_dole_max_games", 0) or 0)
+        if max_games > 0:
+            before = (len(queue), len(sf_queue))
+            queue, sf_queue = cap_dole_batch(
+                queue, sf_queue, max_games=max_games, training_iteration=train_iter,
+            )
+            if (len(queue), len(sf_queue)) != before:
+                self.log.info(
+                    "dole: capped seeded games %d+%d -> %d+%d (max %d)",
+                    before[0], before[1], len(queue), len(sf_queue), max_games,
+                )
         with self._dole_lock:
             live = self._live_dole_queue
             if live is not None:
