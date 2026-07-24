@@ -223,6 +223,55 @@ def _required_paused_count(active_count: int, wait_arg: int) -> int:
     return active
 
 
+def _resume_preflight() -> list[str]:
+    """Return reasons ``./scripts/train.sh restart`` would fail, empty if clean.
+
+    Mirrors train.sh's own gate (same flags) so preflight and the real start
+    cannot drift into disagreeing.
+    """
+    if os.environ.get("TRAIN_SKIP_C_EXT_CHECK") == "1":
+        return []
+    repo = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(
+        [sys.executable, "scripts/check_c_extensions_fresh.py", "--quiet",
+         "--min-gcc-major", "15", "--require-production-recipe"],
+        cwd=repo, env={**os.environ, "PYTHONPATH": "."},
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode == 0:
+        return []
+    detail = (proc.stdout + proc.stderr).strip()
+    return [line.strip() for line in detail.splitlines() if line.strip()] or [
+        f"check_c_extensions_fresh.py exited {proc.returncode}"
+    ]
+
+
+def _run_resume(resume_cmd: str, *, pause_targets: list[Path]) -> None:
+    """Run the resume command, retrying once, and never exit quietly on failure.
+
+    A failed resume means training is DOWN right now, so the operator needs
+    the recovery steps on screen rather than a traceback.
+    """
+    for attempt in (1, 2):
+        print(f"[graceful_restart] Running: {resume_cmd} (attempt {attempt}/2)")
+        proc = subprocess.run(resume_cmd, shell=True, check=False)
+        if proc.returncode == 0:
+            return
+        print(f"[graceful_restart] Resume FAILED with exit {proc.returncode}.")
+        if attempt == 1:
+            time.sleep(10)
+    print()
+    print("!" * 72)
+    print("[graceful_restart] TRAINING IS DOWN — resume failed twice.")
+    print("  Recover manually:")
+    for target in pause_targets:
+        print(f"    rm -f {target}")
+    print("    python3 scripts/build_production_extensions.py   # if C extensions are stale")
+    print("    setsid ./scripts/train.sh start")
+    print("!" * 72)
+    sys.exit(1)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tune-dir", default="runs/pbt2_small/tune",
@@ -267,6 +316,21 @@ def main() -> None:
 
     pause_file = tune_dir / "pause.txt"
     auto_kill = args.auto_kill
+
+    # Step 0: verify the resume can actually succeed BEFORE touching the live
+    # trial. train.sh refuses to start on stale in-place C extensions, and we
+    # used to discover that only after the tuner was already dead — leaving
+    # training DOWN (2026-07-24, ~18 min of lost selfplay after a merge that
+    # carried .c changes). Preflight is skipped for a custom --resume-cmd,
+    # whose prerequisites we cannot know.
+    if auto_kill and args.resume_cmd == ap.get_default("resume_cmd"):
+        blockers = _resume_preflight()
+        if blockers:
+            print("[graceful_restart] Resume preflight FAILED — not touching the live run:")
+            for blocker in blockers:
+                print(f"  - {blocker}")
+            sys.exit(1)
+        print("[graceful_restart] Resume preflight OK.")
 
     # Step 1: create the pause marker(s). Drop one in tune_dir AND one in
     # every active trial dir — the trial checks both. Without the per-trial
@@ -370,9 +434,8 @@ def main() -> None:
                         target.unlink(missing_ok=True)
 
                 if args.resume_cmd:
-                    print(f"[graceful_restart] Running: {args.resume_cmd}")
                     time.sleep(5)  # let Ray finish shutting down
-                    subprocess.run(args.resume_cmd, shell=True, check=True)
+                    _run_resume(args.resume_cmd, pause_targets=pause_targets)
             else:
                 print()
                 print("  Next steps:")

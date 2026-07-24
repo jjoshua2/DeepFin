@@ -5,6 +5,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from chess_anti_engine.tune.trainable_config_ops import (
     _clear_pause_acks,
     _pause_ack_name,
@@ -183,3 +185,84 @@ def test_wait_if_paused_writes_ack_while_held_and_clears_on_resume(tmp_path: Pat
     th.join(timeout=5)
     assert done.is_set(), "trial must resume once the marker is gone"
     assert not ack.exists(), "ack must be cleared on resume"
+
+
+def test_resume_preflight_reports_blockers_from_the_checker(monkeypatch) -> None:
+    """A failing freshness check must surface its lines, not just an exit code."""
+    import subprocess as _sp
+
+    from scripts import graceful_restart as gr
+
+    def fake_run(*args, **_kwargs):
+        return _sp.CompletedProcess(
+            args=args, returncode=1,
+            stdout="C extension freshness check failed:\n  - _mcts_tree is older than _mcts_tree.c\n",
+            stderr="",
+        )
+
+    monkeypatch.delenv("TRAIN_SKIP_C_EXT_CHECK", raising=False)
+    monkeypatch.setattr(gr.subprocess, "run", fake_run)
+    blockers = gr._resume_preflight()
+    assert blockers, "a failing check must produce blockers"
+    assert any("_mcts_tree" in b for b in blockers)
+
+
+def test_resume_preflight_clean_when_check_passes(monkeypatch) -> None:
+    import subprocess as _sp
+
+    from scripts import graceful_restart as gr
+
+    monkeypatch.delenv("TRAIN_SKIP_C_EXT_CHECK", raising=False)
+    monkeypatch.setattr(
+        gr.subprocess, "run",
+        lambda *a, **_k: _sp.CompletedProcess(args=a, returncode=0, stdout="", stderr=""),
+    )
+    assert gr._resume_preflight() == []
+
+
+def test_resume_preflight_honors_the_train_sh_skip_env(monkeypatch) -> None:
+    """train.sh has an escape hatch; preflight must not be stricter than it."""
+    from scripts import graceful_restart as gr
+
+    monkeypatch.setenv("TRAIN_SKIP_C_EXT_CHECK", "1")
+    monkeypatch.setattr(gr.subprocess, "run", lambda *_a, **_k: pytest.fail("must not run"))
+    assert gr._resume_preflight() == []
+
+
+def test_run_resume_retries_once_then_exits_nonzero(monkeypatch, capsys) -> None:
+    """A failed resume means training is DOWN — it must be loud, not a traceback."""
+    import subprocess as _sp
+
+    from scripts import graceful_restart as gr
+
+    calls: list[str] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _sp.CompletedProcess(args=cmd, returncode=1)
+
+    monkeypatch.setattr(gr.subprocess, "run", fake_run)
+    monkeypatch.setattr(gr.time, "sleep", lambda _s: None)
+    with pytest.raises(SystemExit) as exc:
+        gr._run_resume("./scripts/train.sh restart", pause_targets=[Path("/tmp/pause.txt")])
+    assert exc.value.code == 1
+    assert len(calls) == 2, "must retry exactly once"
+    out = capsys.readouterr().out
+    assert "TRAINING IS DOWN" in out
+    assert "/tmp/pause.txt" in out, "recovery steps must name the pause markers"
+
+
+def test_run_resume_returns_on_success_without_retrying(monkeypatch) -> None:
+    import subprocess as _sp
+
+    from scripts import graceful_restart as gr
+
+    calls: list[str] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return _sp.CompletedProcess(args=cmd, returncode=0)
+
+    monkeypatch.setattr(gr.subprocess, "run", fake_run)
+    gr._run_resume("./scripts/train.sh restart", pause_targets=[])
+    assert len(calls) == 1
