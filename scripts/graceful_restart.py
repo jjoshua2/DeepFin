@@ -223,6 +223,91 @@ def _required_paused_count(active_count: int, wait_arg: int) -> int:
     return active
 
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Must stay argv-identical to train.sh's own C-extension gate. A preflight
+# STRICTER than train.sh blocks restarts that would have succeeded, which is
+# worse than the bug this guards against; LOOSER, and it fails to catch it.
+# test_preflight_argv_matches_train_sh pins the two together.
+_C_EXT_CHECK_ARGV = (
+    "scripts/check_c_extensions_fresh.py", "--quiet",
+    "--min-gcc-major", "15", "--require-production-recipe",
+)
+
+_DEFAULT_RESUME_CMD = "./scripts/train.sh restart"
+
+
+def _resume_preflight() -> list[str]:
+    """Return reasons ``./scripts/train.sh restart`` would fail, empty if clean.
+
+    Mirrors train.sh's own gate (same flags) so preflight and the real start
+    cannot drift into disagreeing.
+    """
+    if os.environ.get("TRAIN_SKIP_C_EXT_CHECK") == "1":
+        return []
+    proc = subprocess.run(
+        # "python3" (not sys.executable) so the interpreter matches the one
+        # train.sh will use — a venv on a different minor version would look
+        # for differently-tagged .so files and block a restart that works.
+        ["python3", *_C_EXT_CHECK_ARGV],
+        cwd=_REPO_ROOT, env={**os.environ, "PYTHONPATH": "."},
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode == 0:
+        return []
+    detail = (proc.stdout + proc.stderr).strip()
+    return [line.strip() for line in detail.splitlines() if line.strip()] or [
+        f"check_c_extensions_fresh.py exited {proc.returncode}"
+    ]
+
+
+def _tuner_is_running() -> bool:
+    """True when a tune driver process is alive, independent of any PID file."""
+    return _find_tuner_pid() is not None
+
+
+def _run_resume(resume_cmd: str, *, pause_targets: list[Path]) -> None:
+    """Run the resume command, retrying once, and never exit quietly on failure.
+
+    A failed resume means training is DOWN right now, so the operator needs
+    the recovery steps on screen rather than a traceback.
+    """
+    for attempt in (1, 2):
+        if attempt == 2 and _tuner_is_running():
+            # train.sh's stop/start keys entirely off its PID file. If attempt 1
+            # spawned the trainer but died before writing that file, a second
+            # start would not find it to stop and would race a second trainer
+            # onto the same tune dir and GPU.
+            print("[graceful_restart] A trainer is already running — not retrying.")
+            return
+        print(f"[graceful_restart] Running: {resume_cmd} (attempt {attempt}/2)")
+        proc = subprocess.run(resume_cmd, shell=True, cwd=_REPO_ROOT, check=False)
+        if proc.returncode == 0:
+            # train.sh start returns as soon as it writes the PID file, so a 0
+            # exit does not mean the trainer survived startup (bad config, CUDA
+            # init, stale-worker wedge). Confirm it is still alive, since
+            # "exited 0 but training is down" is the failure this script exists
+            # to prevent.
+            time.sleep(30)
+            if _tuner_is_running():
+                return
+            print("[graceful_restart] Resume exited 0 but no trainer is running.")
+        else:
+            print(f"[graceful_restart] Resume FAILED with exit {proc.returncode}.")
+        if attempt == 1:
+            time.sleep(10)
+    print()
+    print("!" * 72)
+    print("[graceful_restart] TRAINING IS DOWN — resume failed twice.")
+    print("  Recover manually:")
+    for target in pause_targets:
+        print(f"    rm -f {target}")
+    print("    python3 scripts/build_production_extensions.py   # if C extensions are stale")
+    print("    setsid ./scripts/train.sh start")
+    print("!" * 72)
+    sys.exit(1)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tune-dir", default="runs/pbt2_small/tune",
@@ -241,7 +326,7 @@ def main() -> None:
                     help="Polling interval in seconds")
     ap.add_argument("--no-auto-kill", dest="auto_kill", action="store_false",
                     help="Print status and exit without killing or restarting")
-    ap.add_argument("--resume-cmd", default="./scripts/train.sh restart",
+    ap.add_argument("--resume-cmd", default=_DEFAULT_RESUME_CMD,
                     help="Shell command to run after killing (default: ./scripts/train.sh restart)")
     args = ap.parse_args()
 
@@ -267,6 +352,21 @@ def main() -> None:
 
     pause_file = tune_dir / "pause.txt"
     auto_kill = args.auto_kill
+
+    # Step 0: verify the resume can actually succeed BEFORE touching the live
+    # trial. train.sh refuses to start on stale in-place C extensions, and we
+    # used to discover that only after the tuner was already dead — leaving
+    # training DOWN (2026-07-24, ~18 min of lost selfplay after a merge that
+    # carried .c changes). Preflight is skipped for a custom --resume-cmd,
+    # whose prerequisites we cannot know.
+    if auto_kill and args.resume_cmd == _DEFAULT_RESUME_CMD:
+        blockers = _resume_preflight()
+        if blockers:
+            print("[graceful_restart] Resume preflight FAILED — not touching the live run:")
+            for blocker in blockers:
+                print(f"  - {blocker}")
+            sys.exit(1)
+        print("[graceful_restart] Resume preflight OK.")
 
     # Step 1: create the pause marker(s). Drop one in tune_dir AND one in
     # every active trial dir — the trial checks both. Without the per-trial
@@ -370,9 +470,8 @@ def main() -> None:
                         target.unlink(missing_ok=True)
 
                 if args.resume_cmd:
-                    print(f"[graceful_restart] Running: {args.resume_cmd}")
                     time.sleep(5)  # let Ray finish shutting down
-                    subprocess.run(args.resume_cmd, shell=True, check=True)
+                    _run_resume(args.resume_cmd, pause_targets=pause_targets)
             else:
                 print()
                 print("  Next steps:")
