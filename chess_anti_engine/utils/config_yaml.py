@@ -136,6 +136,7 @@ _SELFPLAY_KEYS = (
     "random_start_plies",
     "opening_fen_list_path", "opening_fen_prob", "opening_fen_net_side_to_move",
     "opening_fen_selfplay_only", "opening_fen_dole_per_iter",
+    "opening_fen_dole_max_fraction",
     "opening_fen_sf_refute_frac", "opening_fen_sf_refute_plies",
     "sf_refute_full_node_moves", "sf_refute_record_opp_rows",
     "sf_refute_opp_policy_net_blend",

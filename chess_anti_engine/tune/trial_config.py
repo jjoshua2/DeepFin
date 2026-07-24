@@ -209,6 +209,11 @@ class TrialConfig:
     opening_fen_net_side_to_move: bool = True
     opening_fen_selfplay_only: bool = False
     opening_fen_dole_per_iter: int = 0
+    # Upper bound on seeded games per iteration as a fraction of games_per_iter
+    # (0 = uncapped, the pre-2026-07-24 behavior). The dole hands the whole seed
+    # list out every iteration, so without this the seeded share of selfplay is
+    # just pool_size/capacity and silently reached 100%.
+    opening_fen_dole_max_fraction: float = 0.0
     opening_fen_sf_refute_frac: float = 0.0
     opening_fen_sf_refute_plies: int = 5
   # SF-refute opp-row recording (STAGED, all default off — see OpeningConfig).
@@ -567,6 +572,9 @@ class TrialConfig:
             ),
             opening_fen_selfplay_only=bool(config.get("opening_fen_selfplay_only", False)),
             opening_fen_dole_per_iter=int(config.get("opening_fen_dole_per_iter", 0)),
+            opening_fen_dole_max_fraction=float(
+                config.get("opening_fen_dole_max_fraction", 0.0)
+            ),
             opening_fen_sf_refute_frac=float(config.get("opening_fen_sf_refute_frac", 0.0)),
             opening_fen_sf_refute_plies=int(config.get("opening_fen_sf_refute_plies", 5)),
             sf_refute_full_node_moves=bool(config.get("sf_refute_full_node_moves", False)),
