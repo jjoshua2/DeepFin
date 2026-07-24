@@ -301,10 +301,11 @@ def test_max_vet_per_run_cap_reports_capped(tmp_path: Path) -> None:
     assert counts.capped == 3
     assert len(calls) == 2  # hard cap honored
     assert len(staged) == 2
-    # Overflow preserved as pending for the next run (not silently lost).
+    # Newest-first: the two NEWEST (E, D) are vetted; the older three stay
+    # pending (not silently lost).
     assert len(new_state.pending) == 3
     pending_keys = {k for k, _ in new_state.pending}
-    assert pending_keys == {_key(_FEN_C), _key(_FEN_D), _key(_FEN_E)}
+    assert pending_keys == {_key(_FEN_A), _key(_FEN_B), _key(_FEN_C)}
 
     # Second run with no new lines drains pending under the same cap.
     calls.clear()
@@ -465,19 +466,80 @@ def test_summary_format() -> None:
 
     c = GateCounts(
         new_lines=4, unique_new=3, after_dedup=2,
-        vetted_kept=1, vetted_rejected=1, capped=0, staged_total=5,
+        vetted_kept=1, vetted_rejected=1, sf_failed=0, capped=0, staged_total=5,
     )
     s = format_summary(c)
     assert s == (
         "harvest_gate: new_lines=4 unique_new=3 after_dedup=2 "
-        "vetted_kept=1 vetted_rejected=1 capped=0 staged_total=5"
+        "vetted_kept=1 vetted_rejected=1 sf_failed=0 capped=0 staged_total=5"
     )
 
 
-# ── sf failure → reject (no infinite re-vet) ─────────────────────────────────
+# ── newest-first ordering: fresh captures beat the stale pending backlog ──────
 
 
-def test_sf_none_rejects(tmp_path: Path) -> None:
+def test_newest_first_vets_new_before_pending() -> None:
+    # One old pending entry + one fresh new line, budget for exactly one vet.
+    # Newest-first must spend it on the NEW capture, leaving the old one pending.
+    out = "/dev/null"
+
+    def sf_score(_fen: str) -> float | None:
+        return -0.99  # everything "lost" — so the CHOICE of what to vet is what matters
+
+    counts, _staged, st = run_gate(
+        new_lines=[_line(_FEN_A)],
+        state=GateState(pending=[(_key(_FEN_B), _line(_FEN_B))]),
+        exclude_keys=set(),
+        sf_score=sf_score,
+        vet_lost_below=-0.80,
+        max_vet_per_run=1,
+        dry_run=False,
+        stamp=_STAMP,
+        out_path=out,
+    )
+    assert counts.vetted_kept == 1
+    assert _key(_FEN_A) in st.emitted          # the NEW capture was vetted
+    assert _key(_FEN_A) not in {k for k, _ in st.pending}
+    assert _key(_FEN_B) not in st.emitted      # the old pending was NOT reached
+    assert _key(_FEN_B) in {k for k, _ in st.pending}
+
+
+def test_pending_cap_expires_stale_tail() -> None:
+    # Four stale pending + a tiny vet budget: the queue must be bounded to the
+    # newest `pending_cap`, expiring the oldest tail rather than hoarding it.
+    stale = [(_key(f), _line(f)) for f in (_FEN_B, _FEN_C, _FEN_D, _FEN_E)]
+
+    def sf_score(_fen: str) -> float | None:
+        return 0.99  # not-lost → rejected, so nothing is emitted; all flow to pending logic
+
+    _counts, _staged, st = run_gate(
+        new_lines=[],
+        state=GateState(pending=stale),
+        exclude_keys=set(),
+        sf_score=sf_score,
+        vet_lost_below=-0.80,
+        max_vet_per_run=1,
+        dry_run=False,
+        stamp=_STAMP,
+        out_path="/dev/null",
+        pending_cap=2,
+    )
+    # The cap must expire the OLDEST tail and keep the NEWEST — a regression that
+    # kept the oldest `pending_cap` (the stale-backlog starvation this fix cures)
+    # would also satisfy `len <= 2`, so pin the surviving keys explicitly.
+    # Newest-first vets E (→ rejected); un-vetted {B(oldest),C,D} trim to newest 2.
+    pending_keys = {k for k, _ in st.pending}
+    assert len(st.pending) == 2
+    assert pending_keys == {_key(_FEN_C), _key(_FEN_D)}
+    assert _key(_FEN_B) not in pending_keys      # oldest tail expired
+    assert _key(_FEN_E) in st.rejected           # newest was vetted
+
+
+# ── sf failure → re-queue (NOT reject): a transient SF outage must not ────────
+# permanently discard a genuine candidate; it re-vets next run.
+
+
+def test_sf_none_requeues_not_rejects(tmp_path: Path) -> None:
     out = tmp_path / "staged.txt"
 
     def sf_score(_fen: str) -> float | None:
@@ -495,9 +557,12 @@ def test_sf_none_rejects(tmp_path: Path) -> None:
         out_path=str(out),
     )
     assert counts.vetted_kept == 0
-    assert counts.vetted_rejected == 1
+    assert counts.vetted_rejected == 0
+    assert counts.sf_failed == 1
     assert staged == []
-    assert _key(_FEN_A) in st.rejected
+    # NOT permanently rejected — re-queued as pending for a later run.
+    assert _key(_FEN_A) not in st.rejected
+    assert any(k == _key(_FEN_A) for k, _ in st.pending)
     assert not out.exists() or out.read_text(encoding="utf-8").strip() == ""
 
 

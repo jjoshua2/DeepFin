@@ -8,10 +8,11 @@ consumes those append-only files:
   2. Dedup against the live pool, holdout panels, and already-emitted /
      already-rejected placement keys.
   3. Deep-SF-vet survivors (expected score ≤ ``--vet-lost-below``).
-  4. APPEND winners to a staging file — never the live pool / yaml.
+  4. APPEND winners to a staging file. The gate itself never edits the live pool;
+     monitor_fen.sh promotes the cumulative staging file through the safe feed step.
 
-Promotion of staged seeds into the LIVE pool is a SEPARATE, human/ledger-gated
-action (mirrors the retire-step split). Fail-soft on the CLI entrypoint: never
+Promotion remains a separate validated operation (mirrors the retire-step split),
+but is automatic at the monitor boundary. Fail-soft on the CLI entrypoint: never
 raises into a monitor.
 
 Summary line (one, stdout):
@@ -66,6 +67,7 @@ class GateCounts:
     after_dedup: int
     vetted_kept: int
     vetted_rejected: int
+    sf_failed: int  # SF returned no score (crash/timeout) — an ERROR, not a legit reject
     capped: int
     staged_total: int
 
@@ -208,6 +210,7 @@ def run_gate(
     stamp: str,
     out_path: str,
     new_offsets: dict[str, int] | None = None,
+    pending_cap: int = 5000,
 ) -> tuple[GateCounts, list[str], GateState]:
     """Core gate: dedup → cap → (optional) SF vet → stage.
 
@@ -242,8 +245,14 @@ def run_gate(
         unique_new_keys.append(key)
         unique_new_body[key] = body
 
-    # Pending first (FIFO), then this run's unique new — still subject to
-    # exclude / already-processed filters.
+    # NEWEST-FIRST: vet this run's fresh captures before the pending backlog,
+    # each group most-recent-first. The harvester emits captures from the
+    # CURRENT net; a captured hole that still exists is re-emitted every time
+    # the net blunders it again, so freshness is a good proxy for relevance.
+    # Stale pending (from superseded, weaker nets) is mostly already-fixed
+    # false positives — the old backlog verified 0/387 genuine — so the former
+    # "pending first (FIFO)" order spent the whole SF budget re-litigating a
+    # dead net's mistakes and never reached the ~35%-real recent captures.
     candidates: list[tuple[str, str]] = []
     cand_seen: set[str] = set()
     blocked = exclude_keys | work.emitted | work.rejected
@@ -254,13 +263,13 @@ def run_gate(
         cand_seen.add(key)
         candidates.append((key, body))
 
-    for key, line in work.pending:
+    for key in reversed(unique_new_keys):
+        _consider(key, unique_new_body[key])
+    for key, line in reversed(work.pending):
         # pending stores raw lines; re-parse body (pending keys already known)
         parsed = parse_seed_line(line)
         body = parsed[1] if parsed is not None else line.split("#", 1)[0].strip()
         _consider(key, body)
-    for key in unique_new_keys:
-        _consider(key, unique_new_body[key])
 
     after_dedup = len(candidates)
     if max_vet_per_run < 0:
@@ -272,6 +281,8 @@ def run_gate(
     staged_this: list[str] = []
     kept = 0
     rejected_n = 0
+    sf_failed_n = 0
+    requeue: list[tuple[str, str]] = []  # SF-failed candidates to retry next run
 
     if dry_run:
         # Count only — no SF, no writes, no state mutation.
@@ -282,6 +293,7 @@ def run_gate(
             after_dedup=after_dedup,
             vetted_kept=0,
             vetted_rejected=0,
+            sf_failed=0,
             capped=capped,
             staged_total=staged_total,
         )
@@ -296,17 +308,39 @@ def run_gate(
     for key, body in to_vet:
         fen = seed_board_from_line(body).fen()
         score = sf_score(fen) if sf_score is not None else None
-        if score is not None and score <= vet_lost_below:
+        if score is None:
+            # SF crashed/timed out — a real error, NOT evidence the position is
+            # fine. Do NOT mark rejected (that would permanently discard a
+            # genuine candidate on a transient outage); re-queue for next run.
+            requeue.append((key, f"{body}  # pending"))
+            sf_failed_n += 1
+        elif score <= vet_lost_below:
             staged_this.append(stage_line(body, stamp=stamp, score=score))
             work.emitted.add(key)
             kept += 1
         else:
-            # None (SF failed) or above threshold → reject; never re-vet.
+            # SF says above threshold → legit reject; never re-vet.
             work.rejected.add(key)
             rejected_n += 1
 
-    # Overflow becomes the new pending queue (preserve order).
-    work.pending = [(k, f"{body}  # pending") for k, body in overflow]
+    # Rebuild pending oldest-first (newest last), so reversed() re-vets the
+    # freshest first next run. Overflow is this run's un-vetted tail; SF-failed
+    # re-queues are recent, so they sit at the newest end for prompt retry.
+    # Bound the queue to the newest `pending_cap`: the oldest tail is stale
+    # superseded-net material that would otherwise accumulate unboundedly (the
+    # 17k backlog that starved the gate). Dropping it is self-healing — a hole
+    # that still exists is re-emitted by the harvester on the next blunder.
+    older_first = [(k, f"{body}  # pending") for k, body in reversed(overflow)]
+    combined = older_first + requeue
+    if pending_cap > 0 and len(combined) > pending_cap:
+        # Trim to the newest `pending_cap` — but floor the kept count at
+        # len(requeue) so the SF-failed re-queues (newest end) always survive.
+        # Requeue is the transient-outage retry set; the "never permanently
+        # discard on a transient SF failure" guarantee must hold even if the
+        # re-queue alone exceeds the cap (else offsets have advanced and the
+        # candidate is lost for good).
+        combined = combined[-max(pending_cap, len(requeue)):]
+    work.pending = combined
     if new_offsets is not None:
         work.offsets = dict(new_offsets)
 
@@ -324,6 +358,7 @@ def run_gate(
         after_dedup=after_dedup,
         vetted_kept=kept,
         vetted_rejected=rejected_n,
+        sf_failed=sf_failed_n,
         capped=capped,
         staged_total=staged_total,
     )
@@ -373,8 +408,8 @@ def format_summary(counts: GateCounts, *, dry_run: bool = False) -> str:
     return (
         f"harvest_gate: new_lines={counts.new_lines} unique_new={counts.unique_new} "
         f"after_dedup={counts.after_dedup} vetted_kept={dry}{counts.vetted_kept} "
-        f"vetted_rejected={dry}{counts.vetted_rejected} capped={counts.capped} "
-        f"staged_total={counts.staged_total}"
+        f"vetted_rejected={dry}{counts.vetted_rejected} sf_failed={dry}{counts.sf_failed} "
+        f"capped={counts.capped} staged_total={counts.staged_total}"
     )
 
 
@@ -414,6 +449,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="keep only if deep-SF expected score ≤ this (truly lost)")
     ap.add_argument("--max-vet-per-run", type=int, default=30,
                     help="hard cap on SF vets per run (overflow stays pending)")
+    ap.add_argument("--pending-cap", type=int, default=5000,
+                    help="max pending queue depth; newest kept, stale tail expired (0=unbounded)")
     ap.add_argument("--out", default="data/harvest/staged_candidates.txt",
                     help="staging queue (APPEND survivors; not the live pool)")
     ap.add_argument("--stamp", default="",
@@ -472,6 +509,7 @@ def main(argv: list[str] | None = None) -> int:
                 stamp=args.stamp,
                 out_path=args.out,
                 new_offsets=new_offsets,
+                pending_cap=args.pending_cap,
             )
         finally:
             if sf_close is not None:
