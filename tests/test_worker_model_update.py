@@ -1191,3 +1191,89 @@ def test_stall_watchdog_exempts_pause_hold_and_refreshes_timer() -> None:
     # Far past the timeout while held: not a stall, and the timer was refreshed.
     assert session._selfplay_stalled(now=1_000.0 + 10_000.0, timeout_s=300.0) is False
     assert session._last_selfplay_progress_s == 1_000.0 + 10_000.0
+
+
+def test_fen_list_change_does_not_restart_in_dole_mode() -> None:
+    """A new blind-spot FEN list must NOT tear down the selfplay session when
+    seeds arrive via the dole (opening_fen_prob == 0).
+
+    Measured 2026-07-24: the retire step rewrites the list every iteration, and
+    fingerprinting it unconditionally routed every rewrite into the restart
+    branch. A restart abandons every in-flight game -- 58% of ALL started games
+    and ~89% of curriculum games, which are long enough to essentially never
+    survive a session boundary. The dole path already re-downloads the asset and
+    refills the live queue in place, so the restart bought nothing.
+    """
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None, stockfish_from_server=False)
+    session._active_reco = session._snapshot_reco({"opening_fen_prob": 0.0})
+    session._active_assets = (None, None, None, None)
+    session._live_states = [_live_state()]
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {
+            "opening_fen_list": {"sha256": "list_v198"},
+            "recommended_worker": {"opening_fen_prob": 0.0},
+        },
+        source_tag="test",
+    )
+
+    assert changed is False
+    assert session._stop_selfplay is False
+
+
+def test_fen_list_change_still_restarts_when_sampling_path_is_on() -> None:
+    """With opening_fen_prob > 0 the list is baked into OpeningConfig at session
+    start, so a new list genuinely needs a rebuild."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None, stockfish_from_server=False)
+    session._active_reco = session._snapshot_reco({"opening_fen_prob": 0.25})
+    session._active_assets = (None, None, None, None)
+    session._live_states = [_live_state()]
+
+    changed = WorkerSession._reco_changed(
+        session,
+        {
+            "opening_fen_list": {"sha256": "list_v198"},
+            "recommended_worker": {"opening_fen_prob": 0.25},
+        },
+        source_tag="test",
+    )
+
+    assert changed is True
+    assert session._stop_selfplay is True
+
+
+def test_asset_fingerprint_ignores_fen_list_only_in_dole_mode() -> None:
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(stockfish_from_server=False)
+    manifest = {"opening_fen_list": {"sha256": "abc"}}
+
+    dole = WorkerSession._asset_fingerprint(
+        session, {**manifest, "recommended_worker": {"opening_fen_prob": 0.0}},
+    )
+    sampled = WorkerSession._asset_fingerprint(
+        session, {**manifest, "recommended_worker": {"opening_fen_prob": 0.5}},
+    )
+
+    assert dole[3] is None
+    assert sampled[3] == "abc"
+
+
+def test_restart_log_names_the_trigger(caplog: Any) -> None:
+    """A recurring restart must be attributable from the log alone."""
+    session = _bare_worker_session()
+    session.args = SimpleNamespace(sf_nodes=None, stockfish_from_server=False)
+    session._active_reco = session._snapshot_reco({"max_plies": 300})
+    session._live_states = [_live_state()]
+
+    with caplog.at_level(logging.INFO):
+        changed = WorkerSession._reco_changed(
+            session,
+            {"recommended_worker": {"max_plies": 400}},
+            source_tag="test",
+        )
+
+    assert changed is True
+    assert "restart_keys=max_plies" in caplog.text

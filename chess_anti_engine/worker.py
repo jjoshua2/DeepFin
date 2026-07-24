@@ -1311,11 +1311,28 @@ class WorkerSession:
             return str(rec.get("sha256")) if isinstance(rec, dict) and rec.get("sha256") else None
         from_server = bool(getattr(self.args, "stockfish_from_server", False))
         sf_sha = _sha("stockfish") if from_server else None
+  # The FEN list is a session-start asset ONLY for the opening_fen_prob sampling
+  # path, which bakes it into OpeningConfig. In dole mode (prob 0) seeds arrive
+  # through the live queue instead: a mid-session poll re-downloads the asset via
+  # _sync_assets and _maybe_ingest_dole_flag refills _live_dole_queue in place, so
+  # a new list needs NO restart. Fingerprinting it unconditionally routed every
+  # list change into the restart branch and abandoned all in-flight games. With
+  # the retire step rewriting the list every iteration (monitor RETIRE_EVERY=1)
+  # that cost 58% of ALL started games and ~89% of curriculum games specifically
+  # -- they are long enough to essentially never survive to a session boundary,
+  # which is why the realized curriculum share was 16.5% against a configured
+  # 65%. opening_fen_prob is itself a restart key, so a 0 -> positive transition
+  # still rebuilds the session and rebakes the list.
+        fen_sha = (
+            _sha("opening_fen_list")
+            if float((manifest.get("recommended_worker") or {}).get("opening_fen_prob", 0.0) or 0.0) > 0.0
+            else None
+        )
         return (
             sf_sha,
             _sha("opening_book"),
             _sha("opening_book_2"),
-            _sha("opening_fen_list"),
+            fen_sha,
         )
 
     def _reco_changed(self, manifest: dict, *, source_tag: str) -> bool:
@@ -1337,9 +1354,10 @@ class WorkerSession:
         restart_keys = self._RECO_RESTART_KEYS
         if getattr(self, "games_per_batch_local", None) is not None:
             restart_keys = tuple(k for k in restart_keys if k != "games_per_batch")
-        restart_changed = any(
-            new_reco.get(k) != active.get(k) for k in restart_keys
-        )
+        changed_restart_keys = [
+            k for k in restart_keys if new_reco.get(k) != active.get(k)
+        ]
+        restart_changed = bool(changed_restart_keys)
         live_changed = any(
             new_reco.get(k) != active.get(k) for k in self._RECO_LIVE_KEYS
         )
@@ -1355,7 +1373,15 @@ class WorkerSession:
             self._active_reco = self._snapshot_reco(new_reco)
             self.log.info("recommended_worker live-applied (%s), no session restart", source_tag)
             return False
-        self.log.info("recommended_worker changed (%s), restarting selfplay session", source_tag)
+  # Name the trigger: a restart abandons every in-flight game, so a recurring
+  # one must be attributable without a code change to find it.
+        self.log.info(
+            "recommended_worker changed (%s), restarting selfplay session "
+            "[restart_keys=%s assets_changed=%s]",
+            source_tag,
+            ",".join(changed_restart_keys) or "-",
+            assets_changed,
+        )
         self._stop_selfplay = True
         return True
 
