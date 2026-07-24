@@ -1772,7 +1772,10 @@ def main() -> None:
             "Value-redundancy data-selection treatment (default control=no-op). "
             "hard: drop value-converged rows; soft: keep them w.p. --vr-soft-keep-"
             "prob (≈ loss-weight); sf_only: drop lowest-sf_value_err rows (the "
-            "#104-direction canary). See _value_redundancy_keep_mask."
+            "#104-direction canary). See _value_redundancy_keep_mask. NOTE: a "
+            "non-control mode with the default 0.0 thresholds selects ~nothing "
+            "(requires |qd|<=0 AND sfe<=0) — set --vr-q-thresh/--vr-sfe-thresh to "
+            "actually drop rows, else the run is a silent no-op."
         ),
     )
     ap.add_argument("--vr-q-thresh", type=float, default=0.0,
