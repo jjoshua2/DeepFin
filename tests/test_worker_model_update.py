@@ -38,6 +38,12 @@ def _bare_worker_session() -> WorkerSession:
     session._active_assets = (None, None, None, None)
     session._last_manifest_poll_s = time.time()
     session._manifest_mtime = None
+    session._manifest_path = None
+    session._model_watch_started = False
+    session._model_watch_lock = threading.Lock()
+    session._model_stale_since_s = None
+    session._model_stale_alarmed = False
+    session._selfplay_session_active = True
     session.model_sha = "old-sha"
     session.args = SimpleNamespace()
     session.opening_book_path = None
@@ -1277,3 +1283,214 @@ def test_restart_log_names_the_trigger(caplog: Any) -> None:
 
     assert changed is True
     assert "restart_keys=max_plies" in caplog.text
+
+
+def _manifest_at(tmp_path: Path, sha: str) -> Path:
+    """Write a minimal publish manifest and return its path."""
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps({"model": {"sha256": sha}}), encoding="utf-8")
+    return path
+
+
+def test_model_watch_thread_updates_the_tag_with_no_on_step_caller(tmp_path: Path) -> None:
+    """The regression: freshness must not depend on any selfplay thread.
+
+    The threaded path wires on_step to selfplay thread 0 only, and joins its
+    future only at session end — so when that thread died, the worker uploaded
+    under a frozen model_sha indefinitely and the trainer discarded the lot
+    (2026-07-24). Here NOTHING calls on_step: the swap must come from the watch
+    thread alone, driven end-to-end through _start_model_watch_thread.
+    """
+    session = _bare_worker_session()
+    cast(Any, session).inference_client = object()  # broker-backed: tag-only swap
+    session.upload_buf = _BufferedUpload()
+    session._upload_buf_lock = threading.Lock()
+    session._model_watch_started = False
+    session._selfplay_session_active = True
+
+    def _fake_swap(manifest: dict) -> None:
+        sha = str(manifest.get("model", {}).get("sha256", ""))
+        if sha and sha != session.model_sha:
+            session.model_sha = sha
+
+    cast(Any, session)._swap_model_from_manifest = _fake_swap
+    cast(Any, session)._reco_changed = lambda *_a, **_k: False
+    cast(Any, session)._periodic_manifest_poll = lambda: None
+    cast(Any, session)._maybe_log_dispatcher_stats = lambda _n: None
+    cast(Any, session)._maybe_log_broker_client_stats = lambda _n: None
+    session._manifest_path = _manifest_at(tmp_path, "new-sha")
+
+    import os as _os
+
+    _os.environ["CAE_WORKER_MODEL_WATCH_S"] = "0.05"
+    try:
+        session._start_model_watch_thread()
+        deadline = time.time() + 5.0
+        while session.model_sha != "new-sha" and time.time() < deadline:
+            time.sleep(0.02)
+    finally:
+        _os.environ.pop("CAE_WORKER_MODEL_WATCH_S", None)
+
+    assert session.model_sha == "new-sha", (
+        "watch thread did not pick up the published model with no on_step caller"
+    )
+
+
+def test_run_selfplay_starts_the_model_watch_thread() -> None:
+    """Pin the wiring: the watch thread is useless if nothing starts it.
+
+    _run_selfplay is too heavy to drive end-to-end here, and this line is the
+    single point where a session gains its freshness guarantee — assert it at
+    the source level rather than leaving it uncovered.
+    """
+    import inspect
+
+    src = inspect.getsource(WorkerSession._run_selfplay)
+    assert "self._start_model_watch_thread()" in src
+
+
+def test_check_model_update_skips_a_reentrant_call() -> None:
+    """A contended call returns immediately instead of blocking a selfplay thread.
+
+    on_step (per ply) and the watch thread both call this; whoever holds the
+    lock is already doing the identical work, and blocking would park a game
+    thread behind a model download.
+    """
+    session = _bare_worker_session()
+    session._model_watch_lock.acquire()
+    try:
+        called: list[int] = []
+        session._check_model_update_locked = lambda: called.append(1)  # type: ignore[method-assign]
+        session._check_model_update()
+    finally:
+        session._model_watch_lock.release()
+
+    assert called == [], "held lock must skip the body, not queue behind it"
+
+
+def test_check_model_update_releases_its_lock_on_failure() -> None:
+    """A raising body must not wedge every future freshness check."""
+    session = _bare_worker_session()
+
+    def _boom() -> None:
+        raise RuntimeError("poll exploded")
+
+    session._check_model_update_locked = _boom  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="poll exploded"):
+        session._check_model_update()
+
+    assert session._model_watch_lock.acquire(blocking=False), "lock leaked"
+    session._model_watch_lock.release()
+
+
+def test_stale_model_tag_alarms_once_past_the_threshold(caplog) -> None:
+    session = _bare_worker_session()
+    session.model_sha = "old-sha"
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        session._manifest_path = _manifest_at(Path(td), "published-sha")
+        # First observation only arms the timer — no alarm yet.
+        session._check_model_freshness()
+        assert session._model_stale_since_s is not None
+        assert "STALE" not in caplog.text
+
+        session._model_stale_since_s = time.time() - (worker_mod._MODEL_STALE_ALARM_S + 1.0)
+        with caplog.at_level(logging.ERROR):
+            session._check_model_freshness()
+        assert "model tag STALE" in caplog.text
+
+        # Latched: a second pass must not spam a line per poll.
+        caplog.clear()
+        with caplog.at_level(logging.ERROR):
+            session._check_model_freshness()
+        assert "model tag STALE" not in caplog.text
+
+
+def test_matching_model_tag_clears_the_stale_timer(caplog) -> None:
+    session = _bare_worker_session()
+    session.model_sha = "published-sha"
+    session._model_stale_since_s = time.time() - 10_000.0
+    session._model_stale_alarmed = True
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        session._manifest_path = _manifest_at(Path(td), "published-sha")
+        with caplog.at_level(logging.ERROR):
+            session._check_model_freshness()
+
+    assert session._model_stale_since_s is None
+    assert session._model_stale_alarmed is False
+    assert "STALE" not in caplog.text
+
+
+def test_model_watch_thread_survives_a_failing_iteration(caplog) -> None:
+    """One bad poll must not take down the watch thread.
+
+    A thread that dies on its first exception would recreate the single point
+    of failure this thread exists to remove.
+    """
+    session = _bare_worker_session()
+    session._model_watch_started = False
+    session._selfplay_session_active = True
+    calls: list[int] = []
+
+    def _flaky() -> None:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise RuntimeError("transient")
+
+    session._check_model_update = _flaky  # type: ignore[method-assign]
+    session._check_model_freshness = lambda: None  # type: ignore[method-assign]
+
+    import os as _os
+
+    _os.environ["CAE_WORKER_MODEL_WATCH_S"] = "0.05"
+    try:
+        with caplog.at_level(logging.WARNING):
+            session._start_model_watch_thread()
+            deadline = time.time() + 5.0
+            while len(calls) < 3 and time.time() < deadline:
+                time.sleep(0.02)
+    finally:
+        _os.environ.pop("CAE_WORKER_MODEL_WATCH_S", None)
+
+    assert len(calls) >= 3, "watch thread stopped after the failing iteration"
+    assert "model watch iteration failed" in caplog.text
+
+
+def test_model_watch_thread_idles_between_sessions() -> None:
+    """Between sessions the outer run() loop owns the manifest — stay out."""
+    session = _bare_worker_session()
+    session._model_watch_started = False
+    session._selfplay_session_active = False
+    calls: list[int] = []
+    session._check_model_update = lambda: calls.append(1)  # type: ignore[method-assign]
+    session._check_model_freshness = lambda: None  # type: ignore[method-assign]
+
+    import os as _os
+
+    _os.environ["CAE_WORKER_MODEL_WATCH_S"] = "0.05"
+    try:
+        session._start_model_watch_thread()
+        time.sleep(0.4)
+    finally:
+        _os.environ.pop("CAE_WORKER_MODEL_WATCH_S", None)
+
+    assert calls == []
+
+
+def test_model_watch_thread_starts_only_once() -> None:
+    session = _bare_worker_session()
+    session._model_watch_started = False
+    session._selfplay_session_active = False
+    session._check_model_update = lambda: None  # type: ignore[method-assign]
+    session._check_model_freshness = lambda: None  # type: ignore[method-assign]
+
+    before = threading.active_count()
+    session._start_model_watch_thread()
+    session._start_model_watch_thread()
+    session._start_model_watch_thread()
+    assert threading.active_count() - before == 1
