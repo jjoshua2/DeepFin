@@ -416,6 +416,57 @@ def _load_fen_weights(path_str: str) -> dict[str, int]:
     return weights
 
 
+def rotate_slice(items: list[str], k: int, training_iteration: int) -> list[str]:
+    """Deterministic round-robin window of ``k`` items, advancing each iteration.
+
+    The window start advances by ``k`` per ``training_iteration``, so over
+    ~len/k iterations every item is covered exactly once per cycle. Used for
+    both the SF-refute channel and the dole cap: a plain truncation would
+    permanently starve the tail of the seed list, which is precisely the
+    failure the cap exists to avoid.
+    """
+    n = len(items)
+    if n == 0 or k <= 0:
+        return []
+    if k >= n:
+        return list(items)
+    start = (int(training_iteration) * k) % n
+    return [items[(start + i) % n] for i in range(k)]
+
+
+def cap_dole_batch(
+    queue: list[str],
+    sf_queue: list[str],
+    *,
+    max_games: int,
+    training_iteration: int,
+) -> tuple[list[str], list[str]]:
+    """Bound total seeded games per iteration to ``max_games``.
+
+    The dole hands the WHOLE seed list to selfplay every iteration, so the
+    seeded share of selfplay is ``pool_size / selfplay_capacity`` — an
+    unmanaged consequence of pool size rather than a chosen number. On
+    2026-07-24 that reached 100% (zero normal-opening selfplay games; see the
+    ledger). This caps the total and splits the budget between the two seeded
+    channels in proportion to their natural sizes, rotating each so no seed is
+    permanently starved.
+
+    ``max_games <= 0`` disables the cap (previous behavior).
+    """
+    if max_games <= 0:
+        return queue, sf_queue
+    total = len(queue) + len(sf_queue)
+    if total <= max_games:
+        return queue, sf_queue
+    # Proportional split, then give any rounding remainder to the main channel.
+    sf_keep = min(len(sf_queue), round(max_games * len(sf_queue) / total))
+    main_keep = max(0, min(len(queue), max_games - sf_keep))
+    return (
+        rotate_slice(queue, main_keep, training_iteration),
+        rotate_slice(sf_queue, sf_keep, training_iteration),
+    )
+
+
 def sample_sf_refute_batch(
     seeds: list[str],
     *,
@@ -447,8 +498,7 @@ def sample_sf_refute_batch(
         return []
     n = len(eligible)
     k = n if f >= 1.0 else max(1, min(n, round(n * f)))
-    start = (int(training_iteration) * k) % n
-    return [eligible[(start + i) % n] for i in range(k)]
+    return rotate_slice(eligible, k, training_iteration)
 
 
 def expand_dole_seeds(seeds: list[str], path: str | None) -> list[str]:

@@ -347,6 +347,12 @@ def _publish_distributed_trial_state(
         ),
         "opening_fen_selfplay_only": bool(config.get("opening_fen_selfplay_only", False)),
         "opening_fen_dole_per_iter": int(config.get("opening_fen_dole_per_iter", 0)),
+        # Absolute per-iteration seeded-game budget, resolved here (the worker
+        # does not know games_per_iter). 0 = uncapped.
+        "opening_fen_dole_max_games": math.ceil(
+            max(0.0, float(config.get("opening_fen_dole_max_fraction", 0.0)))
+            * float(config.get("games_per_iter", 0) or 0)
+        ),
         "opening_fen_sf_refute_frac": float(config.get("opening_fen_sf_refute_frac", 0.0)),
         "opening_fen_sf_refute_plies": int(config.get("opening_fen_sf_refute_plies", 5)),
         "sf_refute_full_node_moves": bool(config.get("sf_refute_full_node_moves", False)),
