@@ -320,7 +320,7 @@ train:
   batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
   train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
   train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
-  train_views_per_position: 2.5  # 2026-07-01 (PR #91): hold trained-samples/ingested-position at 2.5 (AZ ~1, KataGo ~4); steps scale with ingest so the two knobs above can't drift the reuse ratio. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable; verify train_steps_used tracks ingest. Kill: drop to 2.0 or 0 (window mode) if test/train gap widens.
+  train_views_per_ingested_position: 2.5  # 2026-07-24 (renamed + denominator FIXED): trained-samples per position ACTUALLY INGESTED into the replay buffer (AZ ~1, KataGo ~4). Was train_views_per_position, which divided by matching_positions (current-model games only) while 4.5-6.5x more positions were ingested -- so 2.5 there produced only ~0.46 TRUE views and over half of all data was never trained on. Verify with the train_views_actual metric. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable.
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false

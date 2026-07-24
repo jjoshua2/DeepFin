@@ -474,7 +474,7 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
 
 
 def test_train_step_budget_views_targeting_overrides_window_fraction() -> None:
-    """train_views_per_position holds samples/ingest fixed instead of tracking
+    """train_views_per_ingested_position holds samples/ingest fixed instead of tracking
     the window: budget = views * fresh positions, NOT fraction * replay_size."""
     budget = _compute_train_step_budget(
         positions_added=12_000,
@@ -484,7 +484,7 @@ def test_train_step_budget_views_targeting_overrides_window_fraction() -> None:
         accum_steps=1,
         base_max_steps=800,
         train_window_fraction=0.04,   # would give 40_000 samples — must be ignored
-        train_views_per_position=2.5,
+        train_views_per_ingested_position=2.5,
     )
     assert budget["target_sample_budget"] == 30_000  # 2.5 * 12_000
     assert budget["steps"] == 59  # ceil(30_000 / 512)
@@ -500,7 +500,7 @@ def test_train_step_budget_views_targeting_scales_with_ingest() -> None:
             positions_added=positions_added,
             imported_samples=0, replay_size=1_000_000, batch_size=512,
             accum_steps=1, base_max_steps=10_000, train_window_fraction=0.04,
-            train_views_per_position=2.5,
+            train_views_per_ingested_position=2.5,
         )
 
     small = budget_for(12_000)
@@ -521,7 +521,7 @@ def test_train_step_budget_views_targeting_is_not_capped_by_base_max_steps() -> 
         accum_steps=1,
         base_max_steps=800,        # exp_throughput_views train_steps
         train_window_fraction=0.04,
-        train_views_per_position=2.5,
+        train_views_per_ingested_position=2.5,
     )
     assert budget["target_sample_budget"] == 500_000  # 2.5 * 200_000
     assert budget["steps"] == 977  # ceil(500_000 / 512), NOT min(977, 800)
@@ -536,7 +536,7 @@ def test_train_step_budget_views_zero_keeps_window_fraction_behavior() -> None:
         accum_steps=4,
         base_max_steps=100,
         train_window_fraction=0.10,
-        train_views_per_position=0.0,
+        train_views_per_ingested_position=0.0,
     )
     assert budget["target_sample_budget"] == 5_000
     assert budget["steps"] == 5
@@ -686,7 +686,7 @@ def test_train_step_budget_views_drought_falls_back_to_window_floor() -> None:
         accum_steps=1,
         base_max_steps=800,
         train_window_fraction=0.04,
-        train_views_per_position=2.5,
+        train_views_per_ingested_position=2.5,
     )
     assert budget["target_sample_budget"] == 40_000  # window floor, not 250
     assert budget["steps"] == 79
@@ -703,7 +703,7 @@ def test_train_step_budget_views_counts_imported_samples_at_one_view() -> None:
         accum_steps=1,
         base_max_steps=800,
         train_window_fraction=0.04,
-        train_views_per_position=2.5,
+        train_views_per_ingested_position=2.5,
     )
     # 2.5 * 12_000 fresh + 400_000 imported (1 view), NOT 2.5 * 412_000.
     assert budget["target_sample_budget"] == 430_000
@@ -722,7 +722,7 @@ def test_train_step_budget_views_drought_fallback_respects_step_cap() -> None:
         accum_steps=1,
         base_max_steps=50,   # cap below the 79 steps the window floor implies
         train_window_fraction=0.04,
-        train_views_per_position=2.5,
+        train_views_per_ingested_position=2.5,
     )
     assert budget["target_sample_budget"] == 40_000
     assert budget["steps"] == 50  # capped, not 79

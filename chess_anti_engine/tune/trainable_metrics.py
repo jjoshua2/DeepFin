@@ -55,12 +55,12 @@ def _compute_train_step_budget(
     accum_steps: int,
     base_max_steps: int,
     train_window_fraction: float,
-    train_views_per_position: float = 0.0,
+    train_views_per_ingested_position: float = 0.0,
 ) -> dict[str, int]:
     effective_batch_size = max(1, int(batch_size) * max(1, int(accum_steps)))
     window_target_samples = math.ceil(float(train_window_fraction) * max(0, int(replay_size)))
     fresh_samples = max(0, int(positions_added)) + max(0, int(imported_samples))
-    views_mode = float(train_views_per_position) > 0.0
+    views_mode = float(train_views_per_ingested_position) > 0.0
     drought_fallback = False
     if views_mode:
         # Views-targeting mode: hold trained-samples-per-ingested-position at a
@@ -70,13 +70,22 @@ def _compute_train_step_budget(
         # where a window fraction silently drifts the reuse ratio. AZ ~1 view,
         # KataGo ~4; 2-3 is the intended operating range.
         #
+        # `positions_added` MUST be positions actually ingested into the replay
+        # buffer (positions_replay_added), NOT matching_positions. Until
+        # 2026-07-24 it was the latter: stale-model shards are ingested too
+        # (_process_shard calls _ingest_train_arrays BEFORE the model_sha
+        # check) and outnumber matching ones 4.5-6.5x, so this mode delivered
+        # 0.46 true views while the config read 2.5 -- i.e. it did NOT deliver
+        # the reuse-invariance it exists for, since the stale ratio itself
+        # drifts. The reported `train_views_actual` metric is the check.
+        #
         # Imported (shared/donor-exchange) samples count at ONE view, not the
         # views multiplier: they are re-used history, and the pre-views budget
         # also processed an import exactly once. Multiplying an exploit-sized
         # import by views would produce a single uncapped multi-epoch burst
         # over stale donor data.
         views_target_samples = math.ceil(
-                float(train_views_per_position) * float(max(0, int(positions_added)))
+                float(train_views_per_ingested_position) * float(max(0, int(positions_added)))
             ) + max(0, int(imported_samples))
         target_sample_budget = max(fresh_samples, views_target_samples)
         if fresh_samples < effective_batch_size:
