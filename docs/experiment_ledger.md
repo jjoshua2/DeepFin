@@ -114,6 +114,24 @@ near-tie argmaxes): never compare point numbers from different sessions' runs;
 always re-dump and pair.
 
 **Protocol gotchas** (each cost us a bad reading once):
+- **The counter keys CHANGE NAME across a trainer restart (2026-07-25) — never
+  index a result.json row directly.** PR #230 renamed the reported counters
+  `games_generated → matching_games` and `positions_added → matching_positions`
+  (they only ever counted current-model games, and the old names invited the
+  views-denominator bug). But the rename ships in TRAINER code, so a live trial
+  keeps emitting the OLD names until it is restarted onto that code. On
+  2026-07-25 main emitted the new names while the live trial still wrote the
+  old ones, so a row-dict lookup was correct for exactly one of the two and
+  silently returned nothing for the other. **Always read counters via
+  `chess_anti_engine.tune.result_keys.row_counter` / `row_counter_opt`, or via
+  `scripts/loop_health.py`, which use it** — that helper takes the canonical
+  new name and falls back to the legacy one, so it spans the restart boundary
+  and the months of archived rows. This file's yardsticks use the canonical
+  (new) names. **How this entry got written:** the author saw `games_generated`
+  in a live result.json, concluded the rename was bogus, "fixed" six yardsticks
+  the wrong way, and had to undo it — the observation was real, the inference
+  was wrong. A key missing from a row means "which code wrote this row?", not
+  "this key is fake".
 - **Readout-window sizing (2026-07-16): ~5 iterations (~3h at ~38min/iter) is
   a valid window ONLY for stability/throughput readouts** — crash/wedge
   cadence, games/h, VRAM, train_time_s — where the failure signature is fast
@@ -302,6 +320,9 @@ cheaply. Artifacts → `scratchpad/vr_screen_20260721/`.
 
 | change | live since | readout & rule |
 |---|---|---|
+| **In-flight game abandonment: FEN-list rewrites no longer restart the selfplay session** (PR #224) — **NOT YET LIVE, deploys at the next restart** | pre-registered 2026-07-24 ~16:40, trial 4c17c | **NOT an experiment — a correction of unintended waste, found by chasing the `selfplay_fraction` configured-vs-realized gap.** A session restart abandons every in-flight game (`manager.py`: *"only genuinely in-flight boards remain abandoned"*). Measured across all 4 worker logs over 14h: **started 23,982 / completed 10,086 / abandoned 13,896 = 57.9%**, steady 60-65% every hour. Selfplay games complete at ~100%, so ~**89% of CURRICULUM games** are abandoned — they run long vs 698k-node SF and never survive a session boundary. That is the mechanism behind slots rolling 35/65 selfplay/curriculum while COMPLETED games ran **83.5% / 16.5%**, and behind the PID sample collapse (`pid_regret_reason 'degenerate'`). Root cause: `_asset_fingerprint` fingerprinted `opening_fen_list` unconditionally, so every retire-step rewrite routed the boundary poll into the restart branch — but in dole mode (`opening_fen_prob: 0.0`) the list is delivered through the live queue, which `_sync_assets` + `_maybe_ingest_dole_flag` already refresh in place. The restart bought nothing. **5× worse since `54536ad0` (monitor `RETIRE_EVERY` 5→1) turned a per-5-iteration cost into a per-iteration one.** — **YARDSTICK (throughput class, ~5 iters):** aggregate `play_batch exit:` lines across `distributed_workers/worker_*/worker.log`; **SUCCESS = `abandoned/started` < 15%** (from 57.9%) over ≥3 post-deploy iterations **AND** completed games/h up ≥25% from the 734 games/h baseline. **KILL/DIAGNOSE = abandonment still >40%** ⇒ the FEN list was not the only per-iteration restart trigger; read the new `restart_keys=… assets_changed=…` field in the restart log line, which names the culprit directly. **MANDATORY PAIRING (deployed 2026-07-24):** `selfplay_fraction: 0.35 → 0.50` in the SAME restart — the intermediate, not the 0.835 that would have held the mix exactly flat. Rationale for moving part-way rather than not at all: the fix LOWERS SF load (curriculum slots 65% → 50%) while actually finishing those games, so the SF compute was already being spent and discarded. Also deployed: `opening_fen_dole_max_fraction: 0.25` (= seeded ≤ half of SELFPLAY, not half of total games) and `train_views_per_ingested_position: 2.5` (PR #225 rename; the old key is now a hard error). The fix un-masks a knob that has never been in effect; alone it would swing realized curriculum share 16.5% → ~65% in one step, confounding the throughput read with a large data-mix change. Move the mix afterwards as its own entry. **Confounds:** same restart also carries `train_views_per_ingested_position` and `opening_fen_dole_max_fraction: 0.4` (see rows below) — all throughput/plumbing, none is a learning-quality change, but the games/h read is shared. **Revert:** revert PR #224 (`_asset_fingerprint` returns the fen sha unconditionally) and restore `selfplay_fraction: 0.35`. — **DEPLOYED 2026-07-24 17:28** (not by graceful restart: the merge carried `.c` changes, `train.sh`'s C-extension freshness gate refused to start, and `graceful_restart` had already SIGTERM'd the tuner — training was DOWN ~18 min, 17:10→17:28. Fixed for next time by PR #226, which preflights the resume BEFORE touching the live trial.) **FIRST-ITERATION READOUT (iter 228, n=1, POST-RESTART TRANSIENT — NOT the verdict):** `train_views_actual` **2.505** vs 2.5 configured (the views fix is confirmed end-to-end; true reuse was 0.46 before); `distributed_stale_games` **0** (prev 1,661); `matching_positions` **9,810** (prev 3,631, 2.7×); `selfplay_fraction` 0.50 landed; `matching_games` 445 vs 440 target. **Do NOT score the deploy on this row** — fresh workers with fresh sessions trivially produce zero stale games, so stale=0 is expected here regardless of whether the fix works; the 3-iteration rule stands. **STILL OPEN on this row:** realized selfplay share was **396/445 = 89%** against 0.50 configured — HIGHER than the 83.5% that started this investigation. Either the abandonment fix has not moved the completed-mix, or the first short post-restart iteration favors fast selfplay games over long curriculum ones. Needs iters 229-231 before any claim. **CORRECTION to this row's own baseline:** the "734 games/h" figure counts MATCHING games only; true upload throughput was ~2,600 games/h, so the "+25% games/h" success bar must be evaluated against a matching-games-only measurement or restated. |
+| **Seeded-share runaway: auto-feed PAUSED + `games_per_iter` 3520→440 + wait 720→2700s + min_games_fraction 0.90→0.80** (live yaml, all live-reloadable — verified none are in `_TOPOLOGY_KEYS`/`_RESUME_CONSTRUCTION_BOUND_KEYS`) | 2026-07-24 ~14:48, trial 4c17c (~ckpt 195) | **NOT an experiment — a correction of unintended drift, found by auditing the pipeline stage-by-stage.** (1) **Seeded share hit 100%.** `opening_fen_dole_per_iter: 1` hands the WHOLE seed list to selfplay each iteration and NOTHING caps it, so seeded share = `pool_size / selfplay_capacity`. The pool grew 141→341 in ~11h (feed ~15-40/iter vs retire ~10-25/iter) and share went **81.8% → 93.4% → 98.9% → 100.0%** — `selfplay_book*` vanished entirely; every net-vs-net game opened from a harvested blunder position. Collateral: `tb_adjudication_rate 0.42`, `avg_plies_win ~43`, PID sample collapsed to 55 curriculum games with `pid_regret_reason 'degenerate'`, `pid_raw_winrate 0.836`. **This reframes the −42.8 generic Elo of entry (E): displacement, not dilution.** Mitigation: `touch scratchpad/live_read/monitor/auto_feed_disabled` (monitor already honors it; retire continues, 470 staged candidates preserved). Permanent fix = **PR #223** `opening_fen_dole_max_fraction` (default 0 = uncapped; set 0.5 in the live yaml ONLY at the restart onto that code — a new key would otherwise make the strict validator reject the whole reload). (2) **`games_per_iter` was 7.7× real throughput** (measured 459 games / 2250s = 0.204 games/s = 734 games/h), so `min_games = 0.90×3520 = 3168` was unreachable-by-construction: the soft deadline could NEVER fire and every iteration ran to the hard ceiling (720×3 = 2160s) and bailed with `"ingest hard timeout … all workers likely stale"` — 19× in the current log, pure noise that **masked real staleness**. Now 440 target / 2700s soft / 8100s hard, so the normal exit is "target met" and the ceiling is a genuine stall detector. **Deliberately behavior-NEUTRAL** (same ~40min period, same games) so it does not confound the views=5 row above. **READOUT:** next 3 iterations — expect zero `all workers likely stale` warnings, `matching_games ≈ 440`, iteration period unchanged ~36-40min, and seeded share falling as the pool drains ~10-25/iter. **KILL:** iteration period grows >20% (would mean 440 is above true yield → lower it), or the hard-timeout warning persists (would mean the exit logic is not what this analysis claims). **REVERT (instant, live-reloadable):** restore 3520 / 720 / 0.90 and `rm` the auto_feed_disabled file. **Confounds:** shares a window with views=5, but is judged on throughput/warning counters, not on regret — disjoint metrics. **NOT changed on purpose:** `distributed_stale_pause_target_games` left inert at 1870 (natural value would be 440×0.60=264, which would ACTIVATE backpressure — a real behavior change; see the stale-game waste finding, 1271 stale vs 459 matching games per iteration, which is its own experiment). |
+| **`train_views_per_position` 2.5 → 5.0 → 14.0** (live yaml, live-reloadable; single key, no topology/restart) | 2026-07-24 ~14:2x (5.0), ~19:0x (14.0), trial 4c17c (~ckpt 195) | **SUPERSEDED SAME DAY, NEVER READ OUT — and the reason invalidates the original framing.** The 2.5→5.0 step was chosen believing the config meant views per *ingested* position. It does not. `trainable_phases.py:765` sets `matching_positions = ingest_summary["matching_positions"]` (current-model games only), but stale-model shards are **also ingested into the replay buffer** — `_process_shard` calls `_ingest_train_arrays` UNCONDITIONALLY, *before* the `model_sha in accepted_model_shas` check — and there are **4.5–6.5× more** of them. (This also RETRACTS the in-session claim that ~73% of selfplay work is discarded: nothing is discarded, the split is pure accounting for the wait-loop target and reporting.) Measured: `matching_positions` 4,577 vs `replay_positions_ingested` 25,693 (5.61×); `train_samples_seen` 11,776 → **TRUE reuse = 11,776/25,693 = 0.46 views**, i.e. **over half of all ingested positions were never trained on even once** (surprise weighting skews it further). The config believed 2.57. So `true ≈ configured / 5.6`, and the ratio drifts 4.5–6.5×, meaning views mode does NOT deliver the reuse-invariance it was explicitly built for. 5.0 would have been only ~0.90 true views — still below AlphaZero's ~1 — so it was not a meaningful test of the step-starvation thesis. **14.0 targets ~2.5 TRUE views** (125 steps/iter, ~336s = 15% of a 2250s iteration), i.e. the value everyone believed was already running, deliberately NOT jumping to KataGo's ~4. Affordable because `distributed_pause_selfplay_during_training: false` — training OVERLAPS generation, so extra steps cost GPU contention, not paused selfplay. Headroom evidence: `policy_loss_selfplay` 1.548 vs `test_policy_loss_selfplay` 1.713 (~10% gap), so overfitting is not yet binding. **EARLY GATE (2-3 iters, before the quality readout):** `train_steps_used` ≈ 125, `train_time_s` ≈ 336s, and games/h within 10% of 734 — if step time balloons instead, the binding constraint is the loader (`trainer_samples_per_s` ~190 = 2.7s/step at batch 512 on a 5090, mostly NOT optimizer time), not the GPU, and the answer is to profile the zarr loader rather than raise views further. **FOLLOW-UP PR (restart-gated):** use `positions_replay_added` as the denominator + emit a `train_views_actual` metric so this can never drift unobserved again — **COUPLING FOOT-GUN: that deploy MUST drop this value to ~2.5 in the same restart**, or true views jump 5.6× instantly. **Original hypothesis (unchanged): the loop is STEP-starved, not data-starved.** Measured live: 459 games/iter → 4,577 fresh positions/iter (10.0 rows/game, 734 games/h); step budget = 23 steps × 512 / 4,577 = **2.57 views ≈ the configured 2.5 (budget is CORRECT — not a bug)**; train 61.9s of a 2249.7s iteration = **2.8% of wall clock**, ingest 96%. Whole-project total ≈ 40k optimizer steps @batch512 ≈ 21M samples vs AlphaZero's ~400–800M by its near-SF saturation (~100–200k steps @batch4096) — a 20–40× TRAINING-VOLUME shortfall, not a data-quality one. Symptom that motivated this: BOTH heads underfit their OWN supervision — raw policy E[regret] 98.9 vs the search target it distills (51.3) and vs SF soft target (48.5/26.3 top-1); raw-policy puzzle argmax 12.5%; value 85.5cp TB-excl vs BT4 43.0. **Key asymmetry: because training is 2.8% of the cycle, views 5 costs only +3% wall clock (23→45 steps, 1.0→2.0 min) for 2× gradient per SF label.** Rationale for exceeding the AZ~1/KataGo~4 convention: that ceiling exists because THEIR value targets are bootstrapped from the current net and go stale; **our `sf_wdl`/`sf_policy` are ground truth from a fixed external engine and never go stale**, so the replay window is effectively a supervised corpus whose reuse ceiling is set by overfitting, not by target staleness. **ONE deciding yardstick:** `PYTHONPATH=. python3 scripts/value_regret.py --checkpoint <ck> --max-positions 2000 --gpu-mem-fraction 0.15 --dump-per-position <dump>` paired via `scripts/paired_compare.py` vs the banked ck189 dump (`scratchpad/policy_puzzle_anchor/`), PLUS raw-policy E[regret]/top-1 from `scripts/audit_targets.py --max-positions 2000` vs the ck189 anchor (98.9 / 68.0). Read after ~1 replay-window turnover (~1.5M/25.7k ≈ 58 iters ≈ **~1.5 days**). **SUCCESS:** raw-policy E[regret] improves with CI excluding 0 (the underfit thesis) AND value_regret not worse by >2cp. **KILL:** (1) train/holdout gap widens materially (the pre-committed rule already in the config comment — the trainer maintains `holdout_buf`/`holdout_frac`, so this is directly measurable, no proxy); (2) value_regret paired CI worse by >2cp; (3) games/h drops >10% (would mean training time is eating generation more than the +3% predicted). **REVERT (instant, live-reloadable):** `train_views_per_position: 2.5` in the live yaml — no restart, no salvage needed for the knob itself. Weight-damage revert point banked: `data/salvage/pre_views5_20260724` (salvage-export `--metric training_iteration`). **Confounds:** the harvest-gate vet cap 100→50 tone-down (entry (E)) is live in the same window but is a SEED-RATE change judged on panels/Cheese, not on raw-policy/value regret — disjoint metrics, noted in both entries. **Offline companion (no live effect):** `scripts/offline_replay_epoch.py --epochs {2,4,8}` from banked ck189 on a copy of the window, probed with the same frozen rulers, to locate the reuse knee and tell us whether 5 is leaving gain on the table or already flattening. |
 | **Batched C leaf encoding (PR #197) + 32-thread SMT passthrough** (`encode_full_batch` in `_lc0_ext` + `encode_cboard_batch` wrapper; call sites `network_turn.py` alt-root + profiler; production extensions rebuilt. Same restart picks up nproc 16→32: `.wslconfig` `processors=32` finally applied) | 2026-07-17 ~21:45, trial 4c17c restart (~iter 112) | **Hypothesis:** two stacked CPU-supply wins on the CPU-bound system (12.4k rows/s offered vs 27.5k GPU capacity): (a) one Python→C call per leaf batch (2.7–4× vs loop+stack microbench; encode = ~48% of worker CPU) and (b) SMT doubling logical cores (SF label fleet is the main beneficiary). **PERF-ONLY change — outputs bit-identical** (12-way parity suite; PR #196's lru_cache same property). **YARDSTICK (deciding):** broker offered rows/s + games/h vs the 12.4k rows/s / recent games/h baseline, read after ~5 iters. **KILL:** crash/wedge regression on the ~5-iter window, or games/h BELOW pre-change baseline (would imply an SMT contention pathology; revert = `processors=16` in .wslconfig; the code path has no revert lever and needs none — bit-identical). **Confounds:** (a)+(b) land together deliberately (both throughput-only, judged jointly); wedge-surgery readout (value_regret ≤~86cp) still open in the same window but judged on a different metric. NOTE: worker/sf_workers counts still tuned for 16 cores — retune is a follow-up AFTER this readout, not bundled. |
 | **AOTInductor packages in the broker forward** (`distributed_inference_aot_dir: data/aot_models_512`, live yaml; code = feat/aot-broker-integ AOT runtime files landed on the live branch, off-by-default flag) | 2026-07-14, trial 4c17c restart (~iter 74) | **Hypothesis:** pre-compiled max-autotune AOT packages replace the reduce-overhead compiled forward for the 99.04%-of-forwards buckets ≤1190 (per `scratchpad/bucket_hist.json`: 90.9% pad to 128), giving a faster forward at zero quality change. **Full compiled ladder built (14 packages, 128–4096)** so batches >1190 (which by POSITIONS carry most forward compute — large summed-slot totals — even though 90.9% of forward CALLS pad to 128) also use AOT instead of eager; only totals >4096 (~0% per bucket_hist) fall back to the reduce-overhead eager path. **This is a PERF change, not a training-target change** — packages verified numerically ==eager (pol-prob Δ ~0.002, wdl-prob Δ ~0.03 across all 11 buckets, top-move vs fp32 0.977 == eager's 0.984; `scripts/build_aot_packages.py --verify-only`). Measured forward A/B on the quiet GPU (`scratchpad/aot_ab.py`, both inference-only + cudagraph): AOT ~5–6% faster than reduce-overhead median (128:+3.6% 512:+6.2% 1024:+6.7%; one bucket 170 −2.3%). **Expectation is ~0 end-to-end** — the forward is a small slice of the broker loop (sync+scatter ~88ms dominates a batch) and training is ingest-bound; this is a "try it, confirm no regression" deploy, not a throughput bet. **YARDSTICK (deciding):** games/h vs the ~641 games/h baseline (`scratchpad/live_read/monitor/monitor.log` + broker.out pos/s), read after ~1 day. **KILL (any):** (1) VRAM OOM or broker/worker crash on startup (11 AOT cudagraphs + the reduce-overhead fallback + trainer coexist — the main risk; watch `nvidia-smi` + broker.out right after restart); (2) games/h regresses vs baseline; (3) `value_regret --max-positions 2000` paired CI vs the pre-deploy ckpt worse (would be surprising given ==eager, but the guardrail against a silent AOT-path bug). **REVERT (instant):** blank `distributed_inference_aot_dir` (empty) + restart → back to pure reduce-overhead; weights/optimizer/replay untouched (no salvage-restart needed). Revert pool `data/salvage/pre_aot_deploy_20260714` banked as belt-and-suspenders. **VERIFY AOT ENGAGED after restart:** broker.out logs `AOT packages loaded from data/aot_models_512: buckets=[...]`; if absent → flag not read (fell back to eager, benign but not the experiment). Confound: none — single change, packages ==eager. Note for future: AOT's real payoff is the match/UCI path (forward-bound, instant-start), not training; the worker-direct AOTEvaluator path is wired but off. **VERDICT: KILLED for training 2026-07-15 (reverted, `distributed_inference_aot_dir: ""`) — NOT on the yardstick (never got a clean readout) but on a fatal side effect: AOT flipped the sporadic WSL dxg host-bridge wedge into a CLOCKWORK ~100-min wedge/recover loop. Evidence: pre-AOT wedges were sporadic (07-14: 11:08, 12:24, then a 6.5h HEALTHY stretch to 19:00); post-AOT (07-15) every single ~100-min window wedged — 9 watchdog recoveries, zero healthy stretches, iter advanced only 74→75 in ~15h (~90% downtime). Mechanism: loading + capturing/replaying 14 AOT cudagraph packages at broker startup is heavy dxg-bridge traffic that reliably trips the flaky bridge (same class as the max-autotune compile-hang variant, memory `wsl2-gpu-vmbus-wedge-signature`). Packages kept in `data/aot_models_512` (numerically ==eager, all verified) for the match/UCI path and a RETRY. RETRY CONDITION: a freshly-rebooted / confirmed-stable bridge (the wedge is host-level; AOT only aggravates it) — re-set the key + restart, watch the recover_stall cadence for the first ~2h. CONFIRM THE REVERT: reduce-overhead should restore multi-hour healthy stretches; if it STILL wedges every ~100 min, the host bridge itself has degraded → reboot needed (not AOT).** |
 | **Server-doled FEN seeding ACTIVATED — switch prob→dole** (`opening_fen_dole_per_iter: 1`, `opening_fen_prob` 0.05→0, live yaml; code = **PR #128** merged, restarted onto `54f4037` @iter 690 resuming ckpt686) | 2026-07-08, ~iter 690 | **Mechanism switch, not a new seed set** (same 115-seed v3 list). Replaces the probabilistic `opening_fen_prob` draw with the deterministic server dole: each iteration the server hands the WHOLE list to one worker poll (durable per-iter gate), played as **selfplay slots only** (`resolve_slot_opening` dole branch → PID-safe by construction; the prob path's curriculum seeding is what forced the 0.22→0.05 dial-down). Dose 1 = each of the 115 seeds played once/iter ≈ **115 selfplay seeded games/iter** (vs the prob path's ~35 mixed games/iter, ~3–27 of them selfplay). **Two coupled effects of the single switch (the confound):** (a) ~3–10× MORE selfplay seed volume = more direct value-label injection; (b) curriculum refutation games (net on the blundering seat, 698k-SF punishes on-board) → **0** — dole is selfplay-only, so the on-board-refutation signal that co-drove the WORKED verdict is dropped. Threaded-path delivery wired + verified (production is `distributed_worker_threaded`; #128 round-3 P1). Baseline @ckpt686 (== the FEN-seeding-WORKED trunk; ledger baseline ckpt683 value 74.3, v1 16/35); banked revert trunk `data/salvage/pre_dole_ckpt686_20260708`. PRIMARY: held-out panel v1 BLIND severity holds/improves vs 16/35 (monitor `scratchpad/live_read/monitor/monitor.log`). SECONDARY: 68 vetted seeds resolve (become AWARE) via `scripts/blindspot_resolution.py`. GUARDRAIL/KILL: `value_regret` (`--max-positions 2000`) paired CI vs the ckpt686 baseline dump worse by >2cp (CI excludes 0 worse side) → REVERT. WATCH: PID sample — dole is selfplay-only so `sf_pid` games should STAY healthy (the whole point vs prob); if it still drops <30 or the airbag trips, that's an unexpected finding. **KILL ACTION (live, instant): `opening_fen_dole_per_iter: 0` + `opening_fen_prob: 0.05` → restores the known-good prob mechanism.** Readout ~1 day (~iter 725). Supersedes the prob-based row below (that mechanism is now off). **LIVE PATH UPDATE (2026-07-09):** `opening_fen_list_path` now points at auto-retired `data/blindspot_fens_retire_720.txt` (85 FENs; 16 AWARE seeds dropped from retire_700 by `blindspot_retire_step.py`). Mechanism unchanged (dole still dose 1 over the live list); activation baselines remain ckpt686 / 115-seed v3. |
@@ -319,6 +340,266 @@ cheaply. Artifacts → `scratchpad/vr_screen_20260721/`.
 | **512-net seed feed += 54 mined seeds (v4 pruned + harvest_v5 cheese)** (`opening_fen_list_path`→`data/blindspot_fens_fed_v4v5_ck58.txt`, retire_58's 101 + 26 v4 + 28 harvest_v5 = 155, deduped by FEN; live yaml, live-reload — no restart needed for the seed part, but co-activated with the 07-13 broker-self-abort restart) | 2026-07-13, ~iter 64/ckpt63 (trial 4c17c) | Same lever as the WORKED v1/v2/cheese64 tranches — the FIRST substantial seed addition on the 512 net since the swap (retirement has only SHRUNK the pool 141→101 with `refed=0`; nothing has been added, and the 61 already-mined seeds sat unused in scratchpad). 26 = v4 pruned (KDEF×17 + gap-cluster CONV_UP×9, per `scratchpad/motifs/motif_report.md`, endgame cluster dropped as panel-resolved); 28 = harvest_v5 mined from the 20-game ckpt722 cheese block (`scratchpad/harvest_v5/mined_cheese512_20260712.txt`) incl. the value-mismatch band (sf vs own-eval gap ≥0.5) that directly targets the **flat value head** (this readout's motivation: policy panels improving 82→70/113 v2 BLIND ck48→58 but value regret flat 85.8→86.3cp). Merge validated: 0 parse failures, 0 FEN dupes, all 155 replay via `seed_board_from_line`. Carried forward automatically — `blindspot_retire_step` reads this file as its pool next read (ckpt 68). Baseline @ckpt58 (`scratchpad/live_read/monitor/monitor.log`): v1 BLIND 24/35, v2 BLIND 70/113, value_regret 86.3cp (vs_boot512 paired −9.36 [−20.25,+2.37] NS). PRIMARY: held-out panel v1/v2 BLIND holds or improves vs 24/35, 70/113 (these seeds are non-panel — generalization logic). VALUE YARDSTICK: `value_regret --max-positions 2000` paired CI vs the ckpt58 dump (`scratchpad/live_read/monitor/vdump_58.jsonl`) — success = improves (CI excludes 0 on the better side); the value-mismatch seeds are the bet that value moves. GUARDRAIL/KILL: value_regret paired worse by >2cp (CI excludes 0 on the worse side) → REVERT. WATCH: pool 101→155 so doled selfplay-seeded games/iter rises ~50% at dose 1 — dole is selfplay-only (PID-safe); if `sf_pid` games <30 or airbag trips, dial dose down. Readout via existing monitor_fen.sh cadence (ckpt 68+). REVERT (live, instant): `opening_fen_list_path` → `data/blindspot_fens_retire_58.txt` (pure seed-pool change, no weights/optimizer/replay touched, no salvage snapshot needed). Confound: co-activated with the broker-self-abort restart (code-only, no training-target effect) and the speedup-bundle readout window — value/panel movement is attributable to the seeds; throughput is the bundle. **VERDICT (value yardstick, 2026-07-16): FLAT — the value-mismatch-seed bet did NOT move the value head** (ck86 probe vs vdump_58 paired: −0.11cp [−10.32,+10.97] NS). The ckpt78 read (99.5cp, +13.21 [+4.87,+21.36] worse — nominally a KILL trip) was a TRANSIENT ARTIFACT of the 07-15 wedge-loop day (9 crash-recoveries, ~90% downtime in the ckpt68→78 window): ck86 recovered the full spike (−13.32 [−22.55,−2.99] vs ck78) under healthy training with Aurora cudagraphs live, which exonerates the seeds AND the trainer cudagraphs AND the AOT path. No revert. PANEL verdict: ckpt78 panel read (26/35, 86/113) is contaminated by the same artifact — judge PRIMARY at the next clean monitor read (ckpt≈88) vs the 24/35, 70/113 baseline. Consistent with [[value_head_calibrated_not_broken]]: seeds move policy panels, not value. |
 | **512-net seed feed += 88 (cheese72 match-mined + 16 staged harvest)** (`opening_fen_list_path`→`data/blindspot_fens_fed_cheese72_staged_ck101.txt`, retire_98's 126 + 88 new = 214; live yaml, live-reload — no restart) | 2026-07-19, post-cheese match on ckpt101 (trial 4c17c), training already resumed from ckpt101 | Same lever as WORKED v1/v2/cheese64 and the 07-13 v4+v5 feed. Source match: `runs/matches/cheese_20260719_1004_checkpoint_000101` — DeepFin **1W–4D–55L**, score 0.050, Elo ≈ −512 (worse than 46M cheese64 baseline 1–11–48 / 0.108 @ckpt722). Mine via `scripts/mine_blindspot_seeds.py` (300k SF + 3-4-5 TB, collapse + value-mismatch gap≥0.5 / min_ply_gap=8): **72 new seeds** (54 collapse + 18 mismatch) from 60 games; holdout panel v1+v2; existing = active retire_98 + prior cheese/v* lists + staged — 0 placement-key overlap. Plus **16** deep-SF-vetted harvest-gate survivors from `data/harvest/staged_candidates.txt` (staged-only backlog from ckpt78–98 monitor runs; promotion stays ledger-gated). Feed via `blindspot_feed_step.py --batch data/blindspot_fens_batch_cheese72_staged16_20260719.txt --tag fed_cheese72_staged_ck101`: 88 new / 0 active / 0 retired / 0 dups → pool 126→214. Baseline @ckpt98 (last clean monitor): v1 BLIND 23/35, v2 BLIND 76/113, value_regret 95.0cp (vs_boot512 −18.07 [−27.66, −8.40] SIG worse — open value damage from prior windows, not this feed). PRIMARY: held-out panel v1/v2 BLIND holds or improves vs 23/35, 76/113. GUARDRAIL/KILL: `value_regret --max-positions 2000` paired CI vs `scratchpad/live_read/monitor/vdump_98.jsonl` worse by >2cp (CI excludes 0 on the worse side) → REVERT. WATCH: pool 126→214 (~70% more doled selfplay seeds/iter at dose 1); dole is selfplay-only (PID-safe); if `sf_pid` games <30 or airbag trips, dial `opening_fen_dole_per_iter` down. Readout via existing monitor_fen cadence (next read ~ckpt 108+). REVERT (live, instant): `opening_fen_list_path` → `data/blindspot_fens_retire_98.txt` — pure seed-pool change, no salvage. Confound: feed lands mid-resume after the cheese pause (training already running; live-reload next iter); value baseline already SIG worse vs boot — kill rule is paired vs ckpt98 dump, not absolute level. **SUPERSEDED SAME DAY (2026-07-19): the active `opening_fen_list_path` is now `data/blindspot_fens_fed_cheese72_refute_upgrade_ck101.txt` (229 lines), not the `_staged_ck101` file named above — the pool was re-fed with the refute-ply-baked ("mine-time free first SF-refute ply") upgrade (header: "upgraded 56 bare cheese holes to post-refute terminals; kept 158; appended 14 new"). Same lever/baseline/kill rule; the seed terminals are one deep-SF refute ply deeper. Revert target unchanged (`retire_98.txt`). This is the list the ckpt108+ readout judges.** **READOUT @ckpt108 (2026-07-20 02:21, CLEAN read — no wedge/stall in the ck98→108 window; the 548891→977791 PID change was a controlled reboot+resume, same trial 4c17c iter 1703): MIXED, leaning CONCERN. GUARDRAIL (value) INTACT — paired ck108 vs vdump_98 = +6.16cp [−3.30, +15.46] NS (value nominally BETTER; the >2cp-worse revert trigger did NOT fire; absolute 95.0→88.8, vs_boot −18.07→−11.91). PRIMARY (held-out panels) NOT MET — v1 BLIND 23→30/35 (+7, ~1.3σ), v2 BLIND 76→94/113 (+18, ~1.8σ, near the row-15 #104-kill point of 83). Divergence caveat: BLIND = "net > −0.2", so a globally-more-optimistic value shift inflates BLIND counts without a true understanding change while regret (ranking) stays flat/better — consistent with [[value_head_calibrated_not_broken]] (seeds/refute move calibration, not ranking). No numeric panel KILL was pre-committed (only the value guardrail), so no auto-revert fires; this is a 3-way-confounded first read (cheese72 feed + SF-refute channel + refute-upgrade list co-activated). DECISION: hold for the ck118 confirming read — if panels stay ≥ck108 or the value guardrail trips, revert (feed→retire_98.txt, `opening_fen_sf_refute_frac`→0); if panels retrace toward ≤baseline, continue. NOT auto-reverting on one confounded read.** |
 | **SF-refute channel 50%×4** (`opening_fen_sf_refute_frac: 0.5`, `opening_fen_sf_refute_plies: 4`, live yaml; worker+selfplay code) | 2026-07-19, restart-gated (new reco keys + worker code; co-ships with dole rearm) | **Hypothesis:** selfplay-only dole cannot break net-net collusion on value holes (net evals +200/80% WR when true is −200/20%; best play goes 99→1 without reciprocal blunders). A thin SF-as-opponent channel on a **round-robin 50% slice** of the live seed list, for the first **4 opponent plies** only then **handoff to selfplay**, forces the true PV side for a few moves at ~`K×M≈425` SF searches/iter (cheaper than ⅓×10 full-length). Selfplay dole (full list ×1) stays. Fenlist* sources remain **out of the PID sample**. Delivery: worker builds `sf_refute` queue on each won dole; **selfplay rolls** drain it (`selfplay_arr=1` from open); SF opponent for M plies via `sf_refute_opp_plies_left` + best-move (`regret=inf`); countdown only (no type flip). Telemetry: `fenlist_sf_refute*` in `outcome_stats`, worker log `sf_refute=N`. PRIMARY: held-out panel v1/v2 BLIND holds or improves vs ckpt98 baseline (23/35, 76/113) over ~1 day. GUARDRAIL/KILL: (1) PID curriculum finished sample (W+D+L) <30 for 3 consecutive healthy iters → set frac=0; (2) `value_regret` paired CI vs `vdump_98` worse by >2cp → set frac=0; (3) sustained `sf_block_starved` / ingest hard-timeout regression vs pre-activation → set frac=0 or cut to 0.25. SUCCESS (secondary): non-zero `selfplay_fenlist_sf_refute*` games (channel is selfplay-tagged; SF only for first M opp plies) and selfplay fenlist still ~full dole. REVERT (live, instant after restart onto code that knows the keys, or set 0 if already live): `opening_fen_sf_refute_frac: 0`. Confound: cheese72 seed feed + dole-rearm fix land in the same resume window — attribute panel/value movement carefully; throughput/PID moves are the SF-refute confounds. **READOUT @ckpt108: judged jointly with the cheese72 feed (row above) — same clean read, same 3-way confound. GUARDRAIL (value paired vs vdump_98) INTACT (+6.16cp NS); PRIMARY panels NOT met (v1 23→30, v2 76→94). No auto-revert (value guardrail is the only pre-committed KILL and it held); DECISION = hold for ck118 confirming read, then revert `opening_fen_sf_refute_frac`→0 if panels don't retrace. See the cheese72 row for the full read.** |
+
+### PRE-REGISTERED (not yet live) — revive dead broker/workers inside the ingest wait loop (PR TBD, 2026-07-25)
+
+**Class: availability plumbing. NOT an experiment — it changes no training
+target, loss, or data mix.** Pre-registered before deploy per protocol.
+
+**Hypothesis.** The 2026-07-24 outage cost ~50 minutes not because the broker
+crashed (PR #231 addresses that) but because **nothing looks for a corpse until
+the next selfplay phase begins.** `_ensure_inference_broker` and
+`_ensure_distributed_workers` are called once, at
+`trainable_phases.py` phase start. If the broker dies at minute 2 of an
+iteration, the wait loop keeps polling an inbox nobody is filling. With ZERO
+matching games the soft deadline's `min_games` guard can never fire, so the
+fleet idles for the **full hard ceiling of `wait_timeout_s * 3` = 8100s**, not
+the 2700s that the timeout appears to promise. This is the third instance of
+the same bug class — a fleet-global invariant checked at one point in time
+(the others: worker model-freshness bound to selfplay thread 0, and the
+per-phase ensure itself).
+
+**Change.** `_ingest_distributed_selfplay` gains an `on_poll` callback invoked
+at most once per `on_poll_interval_s` (default 60s) inside the wait loop;
+`revive_dead_selfplay_processes` relaunches the broker and any workers whose
+`poll()` is not None. Deliberate design constraints, each pinned by a test:
+- **Liveness only, never signature.** A wedged-but-alive broker is left alone —
+  two brokers on the same shm slots is worse than one slow one. Workers are
+  revived only when EXITED; the revive does NOT call
+  `_ensure_distributed_workers`, because that also restarts workers whose
+  launch signature drifted from the config, and the config is re-read from the
+  live yaml every iteration — an unrelated yaml edit would then tear down
+  workers with games in flight, re-introducing exactly the waste PR #224
+  removed.
+- **on_poll exceptions are logged and swallowed**, so a failed relaunch cannot
+  abort an ingest that is otherwise progressing.
+
+**YARDSTICK (availability class) — exact command:**
+```
+grep -cE "exited \(code=.*\) mid-iteration; relaunching" /tmp/chess_training.log
+```
+**SUCCESS = the line appears at least once with training continuing normally
+afterwards**, i.e. the next iteration's `matching_games` is within 10% of the
+442-530 band and no `ingest hard timeout` warning fires in that iteration.
+**This is an insurance policy: the expected count is ZERO in a healthy week,
+so absence of the line is NOT evidence the fix works** — the deciding evidence
+is the unit tests (three sabotages, each caught by a distinct test), plus the
+first real relaunch whenever it happens.
+**KILL/DIAGNOSE = a relaunch line followed by duplicate-broker symptoms**
+(workers timing out on slot acquire while TWO `chess_anti_engine.inference`
+processes exist under `pgrep -af`) ⇒ the liveness check is not sufficient and
+the revive needs a slot-ownership handshake, not just `poll()`.
+**Confounds:** none on learning metrics — this cannot change what is trained,
+only whether generation keeps running. Shares a deploy window with nothing.
+**Revert:** revert the PR; the `on_poll` parameter defaults to None, so the
+wait loop's behaviour with it unset is byte-identical to today.
+**Deploy note:** takes effect at the next trainer restart (it is trainer-side
+Python, not live-yaml). No config key is added, so the strict live-yaml
+validator is unaffected.
+
+### OUTAGE + BUG FIX (deployed) — inference broker died of a shared-memory race and nothing relaunched it (PR #231, 2026-07-24)
+
+**PROTOCOL NOTE — deployed BEFORE this entry existed.** Production was DOWN
+with zero games being produced; the recovery could not wait on paperwork. This
+entry is the same-session record, not a pre-registration. Nothing about the
+change is training-affecting: it touches only the inference broker process.
+
+**Incident.** The per-trial broker crashed at **22:12** and the fleet produced
+**zero games until ~23:02** (~50 min). All four workers looped: 24 selfplay
+sessions started and died, ~760 thread deaths each, every one a client-side
+`inference slot acquire timed out` / `inference broker slot ... was not
+available`. The crash:
+
+```
+inference.py: self._pinned_legal_rows_np[:legal_real] = legal_rows
+ValueError: could not broadcast input array from shape (265643,) into shape (45138,)
+```
+
+**Root cause.** The broker held numpy VIEWS into client-writable shared memory
+for the compact legal-move metadata, on the strength of a comment asserting
+*"the client cannot reuse this shared-memory slot while it is in REQUEST
+state"*. It can: `_submit_and_wait_locked` re-submits into the same named slot,
+and the worker resets its client outright after a request timeout. Timeouts
+happen exactly when the broker is slow — the cold post-restart state
+(`fwd=1401ms` at 2010 pos/batch). So validation checked one request while the
+`np.repeat` row-index build read another; `counts.sum()` stopped matching
+`flat.size` and the row index came out longer than the column index.
+
+**The crash was the lucky outcome.** With views and a SMALLER mismatch the
+broker returns policy logits for the wrong position without raising, and
+selfplay records that as training data. The new test demonstrates exactly this
+when sabotaged back to `np.asarray`.
+
+**Why it cost 50 minutes rather than seconds.** `_ensure_inference_broker`
+(`trainable_phases.py:719`) runs only at selfplay-phase START. A mid-iteration
+broker death is therefore invisible until the iteration's ingest wait expires
+(`distributed_wait_timeout_seconds: 2700`), at which point
+`_should_retry_iteration_without_games` returns `should_retry` and the phase
+re-runs — relaunching the broker. **This is the same bug class as PR #228**: a
+fleet-global invariant checked at one point in time. Not fixed in #231; owed as
+its own change.
+
+**Fix (PR #231, cherry-picked live as `116cb557a`).** (1) Snapshot the metadata
+(`np.array`, not `np.asarray`) before validating it — validating a view is
+meaningless. (2) A failing batch releases its slots to `_STATE_IDLE`, the state
+the client's own recovery path treats as "slot went away, re-submit", rather
+than killing the process or fabricating a zero-filled response that selfplay
+would record as data; after 50 consecutive failures the broker exits so a dead
+CUDA context cannot livelock the fleet.
+
+**YARDSTICK (plumbing class, ~3 iterations) — exact command:**
+```
+grep -cE "Traceback|releasing slots for retry" \
+  runs/pbt2_small/tune/train_trial_4c17c_*/distributed_inference/broker.out
+```
+**SUCCESS = zero `Traceback` across 3 consecutive iterations** with games
+flowing (`loop_health.py --last 4` showing non-zero matching games). A non-zero
+`releasing slots for retry` count with zero tracebacks is the fix WORKING —
+the race still occurs, it just no longer kills the process.
+**KILL/DIAGNOSE = another `Traceback` in broker.out** ⇒ the snapshot did not
+close the hole; look for a second client-writable field read across the batch
+window (`slot.batch_size` and `slot.request_mode` are the candidates).
+
+**VERDICT 2026-07-25: WORKED.** Over ~3.5h and 8 iterations (244-251) since the
+22:52 restart onto `116cb557a`:
+`grep -cE "Traceback" .../distributed_inference/broker.out` = **0**, and
+`grep -c "releasing slots for retry"` = **0** as well. Games flowed the whole
+window (442-530/iter, ~5-7k pos/s sustained). Note the second zero is a
+STRONGER result than the entry anticipated, and it means the readout does not
+by itself prove the snapshot is what saved us — the race simply did not fire in
+this window. The snapshot is still correct on the code reading (a view into
+client-writable shm cannot be validated), and the process guard remains the
+thing that converts any future occurrence from an outage into a retry. What
+this window DOES establish: the fix introduced no regression and the 50-minute
+failure mode is gone. **Still owed and NOT closed by this verdict:**
+`_ensure_inference_broker` still runs only at selfplay-phase start, so a broker
+death mid-iteration still costs a whole iteration — that is its own entry.
+
+**Confounds:** deployed in the same live tree as PR #228 (`826f4864b`) and
+PR #226 (`0702acbfb`). Disjoint metrics — #228 is judged on stale/matching
+ratio, this one on broker tracebacks — but the games/h read is shared, and the
+#228 readout window is polluted by this outage. **#228's stale-ratio gate must
+be read on a window that starts after the broker is back up.**
+
+**Retraction carried over:** the 22:08 watchdog restart was NOT "#228 landing
+cleanly". The broker died 4 minutes into that restart, so iters 231+ measure
+the outage, not the fix.
+
+### BUG FIX (deploying) — worker model freshness was bound to selfplay thread 0 (PR #228, 2026-07-24)
+
+**NOT an experiment — a correction of silent data loss. Found while checking why
+iteration 229 had made no progress in 68 minutes.**
+
+`_check_model_update` is the ONLY code path that polls the manifest, updates
+`self.model_sha` (the tag stamped on every uploaded shard) and swaps the model.
+The threaded selfplay path wires it to selfplay thread 0 alone
+(`worker.py:3190`, `on_step=self._check_model_update if tid == 0 else None`).
+Threads live in a `ThreadPoolExecutor` joined via `future.result()` only at
+session end — which in continuous mode (`continuous = stop_fn is not None and
+int(target_games) <= 0`, `manager.py:294`) never arrives. So when thread 0 died
+or parked it took the hook with it, **silently**: the other 31 threads kept
+playing and uploading, every shard tagged with a frozen `model_sha`, and the
+trainer counted the whole output stale.
+
+**Live evidence (2026-07-24, trial 4c17c):** all four workers frozen on sha
+`8acf207c` from 17:29 while the server published `10169155` at 17:46. Iter 229
+took **111 min of wall clock** (timestamp gap 6,687s) with ~3,000 games produced
+and discarded. `worker_00.log` held
+**4 lines total** since session start — no broker-client stats either, which the
+same dead hook drives. Server access log: **zero** manifest GETs against 199
+upload POSTs. Shard sha histogram for 15:00–17:20 (pre-restart): `2ee41b6a` 68 /
+`42f88cdb` 21 / `d9ebac5d` 19 / `8acf207c` 14 / `b7595df0` 4 — one frozen sha at
+54%. **This resolves the previously-unexplained "76% of games from one sha"
+observation and had been running for days**, masked because worker_00's
+per-iteration session restart (the PR #224 abandonment bug, seen from the other
+side) kept accidentally refreshing that one worker.
+
+**Fix:** dedicated `model-watch` daemon thread runs the same check every 5s
+(`CAE_WORKER_MODEL_WATCH_S`), so freshness cannot be taken down by a selfplay
+thread; non-blocking lock so `on_step` and the thread never collide; latched
+ERROR (`model tag STALE`) when our tag trails the published sha >180s; selfplay
+threads log their own death at the point of failure; `loop_health` no longer
+treats any stale games as proof of a restart.
+
+**YARDSTICK (throughput/plumbing class, ~4 iters) — exact command:**
+```
+PYTHONPATH=. python3 scripts/loop_health.py --last 6
+```
+**SUCCESS = `distributed_stale_games / matching_games` < 0.15 on iters 2-4
+after the deploy** (excluding the restart iteration itself, where stale=0 is
+trivial), i.e. no `stale_games=... > matching_games=...` alert fires.
+**KILL/DIAGNOSE = stale still exceeds matching by the 3rd post-deploy
+iteration** ⇒ the watch thread is not swapping; grep worker logs for
+`model tag STALE` (alarm fired, swap path broken) vs its absence (watch thread
+itself not running).
+
+**VERDICT 2026-07-25: WORKED.** Read on iters 244-251, a window that starts
+AFTER the 2026-07-24 22:52 broker restart (the earlier window was void — the
+broker outage meant zero games, so the ratio was undefined, not passing).
+`distributed_stale_games` is **0 on every one of the 8 iterations**, against
+`matching_games` 442-530 — ratio 0.0000 vs the <0.15 bar, from a pre-fix
+baseline of 1,661 stale games/iter. The "fresh workers trivially produce zero
+stale" caveat recorded on the iter-228 row is now DISCHARGED: the fleet has run
+**one continuous session per worker** (`sessions=[1,1,1,1]`, zero thread deaths)
+for 3.5h across these iterations, so this is steady state, not a restart
+artifact. Nothing further owed on this row.
+
+**MEASURED STEADY-STATE COST (the real damage, from the trainer's own metrics).**
+Stale iterations wait out essentially the ENTIRE `distributed_wait_timeout_seconds:
+2700` ceiling because matching games trickle in at ~20% of the upload rate:
+
+| iter | reported `time_this_iter_s` | actual wall gap | `ingest_ms` | stale/games |
+|---|---|---|---|---|
+| 227 | 3034s | 3031s | 2680s | 3.69 |
+| 228 (fresh workers) | 1124s | 3712s (restart) | 917s | 0.00 |
+| 229 | 1208s | **6687s = 111 min** | 996s | 0.00 |
+| 230 | 3312s | 3313s | 2704s | 5.00 |
+
+So the frozen fleet costs **~1,700s (28 min) of pure waiting per iteration**,
+~2.7× iteration wall time, on top of discarding ~80% of the games. Expected
+post-fix iteration time ≈ 1,200s, not 3,300s.
+
+**THE BUG HAS BEEN TRIGGERING AUTOMATIC FULL-STACK RESTARTS — a self-sustaining
+cycle, and the reason it stayed invisible.** Iter 229's reported 1,208s against a
+6,687s wall gap is NOT retry time (an earlier reading of this row claimed that;
+retracted — `_should_retry_iteration_without_games` was not involved). The gap is
+**downtime plus a discarded 91-minute attempt**: trainer PID changed 266036 →
+306811 at 19:18:03, and `scratchpad/watchdog_alerts.log` names the cause —
+
+```
+07-24 19:18:03 watchdog: STALLED pid=266036 rows=228 minutes_flat=90.0
+07-24 19:18:03 AUTO-RECOVER FIRING (STALLED, no marker)
+07-24 02:26:08 watchdog: STALLED pid=840  rows=205 minutes_flat=90.0
+07-24 02:26:08 AUTO-RECOVER FIRING (STALLED, no marker)
+```
+
+The cycle: (1) workers freeze on a model_sha; (2) matching games trickle in at
+~20%, so the iteration blows past 90 min of flat `progress.csv`; (3) the watchdog
+correctly classifies STALLED and auto-restarts the whole stack; (4) fresh workers
+get a fresh model and 1-2 good iterations land (stale=0, ~1,200s); (5) they
+freeze again — iter 230 back to stale/games = 5.0. Repeat. **This is why
+worker_00 looked "fresh every iteration" in the earlier analysis and why the
+frozen fleet never announced itself: the watchdog kept papering over it, at the
+cost of a full restart plus every in-flight game (PR #224's abandonment) roughly
+every 90 minutes.** PR #228 breaks the cycle at step 1.
+
+**Metrics caveat that DOES survive:** Ray's `time_this_iter_s` / `time_total_s` /
+`time_since_restore` are all measured since the last RESTORE, so they exclude
+downtime and any discarded attempt. Judge wall-clock throughput from consecutive
+`timestamp` deltas and cross-check `iterations_since_restore` (it reset to 1 on
+BOTH iters 228 and 229 — that reset is the tell for an unrequested restart).
+
+**Confounds:** deploys on the same restart that clears the current wedge, so the
+iter-229 stall is not attributable to the fix. **Revert:** revert PR #228 —
+worker-code only, no yaml, no weights, no replay touched, so no salvage snapshot
+needed.
+
+**INVALIDATES A BASELINE:** the PR #224 row's "734 games/h matching" baseline and
+its iters 229-231 gate were both measured under this frozen-model regime, where
+~75% of selfplay was excluded from the matching count. That gate is void — the
+#224 abandonment fix must be re-read on a window that starts after this deploy.
+The already-recorded correction on that row (matching-only vs ~2,600 games/h true
+upload) is the same defect seen from the trainer side.
 
 ### LIVE — automatic promotion of deep-SF-vetted harvested seeds (2026-07-22)
 
@@ -362,7 +643,7 @@ iterations have median 1,914 total games and mean 81.8 SF-refute completions.
 one-time worker-session recycle; after ten subsequent completed result iterations run
 `PYTHONPATH=. python3 scripts/monitor_sf_refute_outcomes.py --last 10` and inspect
 the same ten rows in the trial `result.json`. **SUCCESS:** mean finished
-SF-refute games is >=130/iteration, median total `games_generated` is >=1,914,
+SF-refute games is >=130/iteration, median total `matching_games` is >=1,914,
 and the SF-refute seed-STM loss rate remains at least 5 percentage points above
 plain seeded selfplay. **KILL:** mean SF-refute finishes <100 (the larger request
 did not materialize), median total games falls below 1,700, PID curriculum
@@ -394,6 +675,65 @@ refresh: 78.45 cp versus 84.74 at ck138, paired ck138-minus-ck163 +6.29 cp
 PID calibration remained centered: weighted curriculum score 50.57% over the
 same clean window and 49.22% over the latest ten, target 50%; regret stayed
 roughly 0.101--0.105 with no freeze/airbag and fixed 698,289 nodes.
+**DELAYED OPERATIONAL GUARDRAIL: FIRED AND REVERTED (2026-07-23, result
+iterations 191--201).** The initial 10-iteration success did not survive the
+pipeline backlog. Across 191--201 only 2,243 of 15,942 completed games were
+full curriculum (**14.1%, 204/iteration**) versus the 65% target and the
+precommitted >=1,200/iteration gate; iterations 193--200 were only 8.0% full
+curriculum. Worker phase telemetry simultaneously showed essentially all idle
+thread capacity in `sf_block_starved` with 24 requests in flight. The completed
+cohort became catastrophically duration-biased: PID W/D/L 1,721/279/243
+(82.95% score), after iterations 185--190 had 1,932/3,163/1,983 (49.64%). This
+is not a strength jump: quick net wins completed while long SF losses/draws
+remained queued, and the corrupted PID sample tightened regret about
+0.105->0.092. Per the registered bundle kill action, live YAML reverted
+`selfplay_fraction` to 0.30 and `opening_fen_sf_refute_frac` to 0.50; four
+refute plies remain unchanged. No restart and no state rollback. The next clean
+read must exclude the transition/backlog drain and confirm full-curriculum
+completion plus PID W/D/L normalization before trusting SF winrate again.
+**CAUSAL CORRECTION (same session, after workload accounting):** do NOT
+attribute this collapse to SF-refute compute. With ~137 active seeds, 90%x4 is
+only ~493 opponent-move searches/iteration and 90%x3 is ~370; full curriculum
+alone is thousands of games times roughly one SF move per two plies, before
+the much larger SF-label workload. Refutes are therefore well below 1% of the
+SF search count, and the 4->3 saving is only ~123 searches. The collapse proves
+that per-result completion mix and PID sampling became invalid, but its cause
+is unproven: asynchronous cohort phasing, assignment/accounting, or a queue
+priority pathology are the leading classes. `sf_block_starved` says slots were
+waiting for SF capacity; it does not identify which request class caused it.
+
+### LIVE — targeted-SF retry: 65% full curriculum + 90% x 3 seed refute (2026-07-23)
+
+**Evidence and hypothesis.** The refute mechanism itself remains load-bearing:
+over result iterations 176--201, seed-STM loss was 75.06% on 3,404 SF-refute
+games versus 63.60% on 4,005 plain seeded-selfplay games, a +11.46 pp gap
+(iteration-cluster bootstrap 95% CI +8.43 to +14.27 pp; pooled Fisher
+p=1.44e-26). Even the duration-distorted 191--201 tail retained +9.11 pp
+[+1.45,+14.75]. Hypothesis: three opponent replies preserve the hardness of the
+four-reply channel while retaining 90% seed coverage. The 4->3 reduction is a
+signal-length test, not a credible fix for general SF capacity: it saves only
+~123 move searches/iteration. The full-curriculum completion collapse is
+monitored in parallel as an independent scheduler/accounting problem.
+
+**ONE deciding yardstick.** Live-reload `selfplay_fraction: 0.35`,
+`opening_fen_sf_refute_frac: 0.90`, and
+`opening_fen_sf_refute_plies: 3`. Exclude the first five result rows after the
+manifest pickup for backlog drain, then judge TWO consecutive 10-iteration
+blocks from the active trial's `result.json`; reproduce seed hardness with
+`PYTHONPATH=. python3 scripts/monitor_sf_refute_outcomes.py --last 25` and
+compute full completions per row as `matching_games - selfplay_games`.
+SUCCESS: both 10-row blocks independently have mean refute completions
+>=90/iteration and pooled refute-minus-plain seed-STM loss gap >=8 pp, with the
+combined iteration-clustered CI excluding zero. KILL 3 plies as insufficient
+if either block's hardness gap is <=5 pp; otherwise unread until both blocks
+finish. Full-curriculum completions, total games, and `sf_block_starved` remain
+mandatory operational diagnostics, but a failure there does NOT by itself
+implicate or revert the sub-1% refute workload; it opens a separate scheduler /
+cohort-accounting investigation. PID winrate remains descriptive only until
+the full-game completion mix normalizes. Refute-signal revert target is
+`0.90 / 4`; broad allocation revert remains `0.30 / 0.50 / 4` only with causal
+evidence. This is a live YAML-only retry; no restart or state snapshot.
+
 **Operational incident, not an experiment failure:** the automatic monitor did
 not advance beyond ck138 because `/tmp/chess_training.pid` is absent even though
 trainer PID 50339 is live; its `trainer_running` guard therefore sleeps. The
@@ -579,6 +919,31 @@ monitor. Pure gate-rate change — no weights/optimizer/replay touched, no salva
 **Confound:** replaces the dose A/B mid-window (dose reverted same-hour, ~1h of a
 handful of 2× seed games in the replay — negligible, self-flushing); rides the same
 window as the auto-promotion readout it amends and the concluded SF-budget WORKED.
+
+**(E) vet cap 100→50 tone-down (2026-07-24 ~13:0x).** Cadence-era vet cap rose
+30→60→15→100 across (A)–(D). Toned to `${HARVEST_VET_PER_RUN:-50}` (monitor default
+edited + observer restart, PID 192398 setsid session leader; no trainer/worker
+touch). **Motivation — the OBJECTIVE-vs-COST gap surfaced by a same-arch arena.**
+ck189 (current, post-vet=100-surge @ckpt178) vs ck163 (07-23, pre-surge), 400 games
+matched 32 sims, standard opening book: **candidate Elo −42.8 [95% CI −76.9, −9.4]**
+(score 0.4387±0.0243; pentanomial WW32/WD15/DD84/LD10/LL59) — a SIGNIFICANT
+GENERIC-play regression over the heavy-feed day. Searched puzzles moved the opposite
+way but trivially (gumbel@32 61.6→62.6%, +1pp; raw-policy 12.5% and value-push 45.6%
+both flat). Reconciliation: the flywheel's OBJECTIVE is the Cheese catastrophic-value
+tail (memory `cheese_loss_blunder_profile`: ~80% of Cheese losses = one value
+collapse search can't rescue), NOT generic self-play Elo — so a generic-Elo cost can
+be an acceptable trade IF the Cheese tail closes. But we currently have the COST
+confirmed and the BENEFIT unverified (frozen v1 panel flat ~24/35 all week; no Cheese
+match since the surge). Retire data proves the net LEARNS each fed hole (40–77
+resolved/iter) — local mechanism works; Cheese translation is the open question.
+50 halves value-seed intake (less generic-play dilution) while keeping the strategy.
+**ONE deciding yardstick (the RIGHT one): a Cheese match on the current ckpt vs an
+earlier net — catastrophic-loss rate, run in a PAUSE window (needs full GPU at real
+time controls; NOT concurrent with training).** Generic arena is a COST watch only,
+not the judge. **REVERT:** `HARVEST_VET_PER_RUN` back to 100 (env or default) +
+monitor restart; pure gate-rate, no weights/replay touched. **Confound:** none on
+training state; the −42.8 arena is a single 32-sim run (wide CI) — treat as
+directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
@@ -4549,3 +4914,243 @@ leaves/s (194.19 and 186.32 games/s). The two-shape candidate measured
 Median padding fell from 1.102x to 1.017x, while the one-shape form emitted no
 graph-count warning. Promote one dispatcher-local 576 bucket; do not add 640
 or alter the shared broker/AOT ladder.
+
+**OFFLINE — ck176 low-sim Gumbel conversion screen (2026-07-23; no live
+activation).** The frozen 2,000-position audit shows a conversion mismatch:
+ck163 improved raw-policy expected regret versus ck148, while its 32-sim search
+did not improve significantly; at ck176 one-ply value regret is better than
+ck138 but raw/search policy are not. Hypothesis: the 32-sim consideration gate
+is mismatched to the current prior and a nearby `gumbel_topk` can recover at
+least 3 cp without more simulations. ONE deciding yardstick: on banked
+`scratchpad/live_read/monitor/ck_176_manual.pt`, run `PYTHONPATH=. nice -n 15
+python3 scripts/audit_targets.py --checkpoint
+scratchpad/live_read/monitor/ck_176_manual.pt --config
+configs/pbt2_small.yaml --sims 32 --gumbel-topk {8,16,32} --batch-size 64
+--gpu-mem-fraction 0.15 --max-positions 2000 --seed 0 --sf-effort low
+--dump-per-position <arm>.jsonl --out-dir <arm-dir>`, then compare
+`cand.search.exp` position-paired against topk16 with
+`scripts/paired_compare.py`. Stage 1 advances an arm only if mean improvement
+is at least 3 cp. Stage 2 repeats that arm and topk16 at seeds 1 and 2.
+SUCCESS: the median paired improvement across seeds 0/1/2 is at least 3 cp,
+no seed is worse by more than 2 cp, and top-1 regret is not materially worse.
+KILL: neither stage-1 arm improves by 3 cp, or the confirmation rule fails.
+This is an offline diagnostic only: no YAML, replay, targets, weights, or live
+search changes. A live selfplay-search change would require a separate
+ledgered A/B because `audit_targets` deliberately uses the tuned PLAY root-log
+shape whereas training uses the YAML-driven linear-root shape.
+**VERDICT: KILLED; candidate width is not the conversion bottleneck.** At the
+registered seed-0 read, topk16 scored 68.12 cp expected / 69.15 cp top-1.
+Topk8 was slightly worse at 69.15 / 70.57 (paired expected delta +1.04 cp,
+95% CI -5.61 to +7.70). Topk32 was also worse at 70.79 / 71.58 (paired
+expected delta +2.68 cp, 95% CI -1.21 to +6.77); its endgame expected regret
+was significantly worse by +5.31 cp [0.09, 11.06]. Neither arm reached the
+pre-committed 3 cp stage-1 advance threshold, so seeds 1/2 are not run and no
+live setting changes. This agrees with the earlier ck510 shape+sims sweep:
+nearby search allocation changes do not repair value-blind tail positions.
+
+**OFFLINE — ck176 search-simulation scaling diagnostic (2026-07-23; WORKED AT
+256, NULL AT 64).**
+The preceding candidate-width screen held search at 32 simulations and therefore
+does not establish whether the current net converts its improved value/policy at
+64 or 256 simulations. Hypothesis: additional simulations reduce search expected
+regret at fixed production `gumbel_topk=16`. ONE deciding yardstick: rerun the
+same frozen 2,000-position, seed-0 low-effort audit on
+`scratchpad/live_read/monitor/ck_176_manual.pt` at `--sims {32,64,256}` with
+`--gumbel-topk 16 --batch-size 64 --gpu-mem-fraction 0.15 --max-positions 2000
+--seed 0 --sf-effort low --dump-per-position`, then compare each larger arm to
+the freshly rerun 32-sim control using `scripts/paired_compare.py --join-key key
+--field cand.search.exp`. SUCCESS (search scales): either larger arm improves
+expected regret by at least 3 cp and its paired 95% CI excludes zero, without
+materially worsening search top-1. KILL (search does not scale usefully): neither
+larger arm clears that rule. This is diagnostic only; no live search change is
+authorized by this readout. Mechanism arm: 64 distinguishes a nearby compute
+increase from the 256-sim production-depth probe.
+**Operational note:** the first 64-sim launch was attempted concurrently with
+live training at the nominal 0.15 GPU-memory cap. The machine rebooted before
+the audit produced an artifact, so that attempt is invalid and proves this
+workload is not safe concurrent in practice. The registered 64/256 arms will be
+rerun sequentially only while training is stopped; the fresh 32-sim control
+completed before the reboot and remains valid.
+**VERDICT: SEARCH SCALES, BUT ONLY BY 256 SIMS IN THIS LADDER.** On the frozen
+2,000 positions, 32 sims scored 68.12 cp expected / 69.15 cp top-1. The 64-sim
+arm scored 71.12 / 70.49: expected delta +3.00 cp (95% CI -2.39 to +8.60) and
+top-1 +1.34 (-5.48 to +8.01), both null and point-worse. The 256-sim arm scored
+56.95 / 56.97: expected delta versus 32 = **-11.16 cp [-19.01, -3.66]** and
+top-1 = **-12.18 cp [-20.68, -4.20]**, both significant and clearing the
+pre-committed >=3 cp success rule. The improvement is significant in the
+middlegame (-14.45 expected [-25.98, -4.86]); the endgame point improvement
+(-9.52) narrowly misses significance [-19.89, +0.37]. This demonstrates that
+ck176's search can convert at 256 sims; it does not authorize changing live
+selfplay from 32 sims, whose compute/throughput tradeoff requires a separate
+ledgered live A/B. Artifacts: `scratchpad/live_read/search_sims_ck176/s{32,64,256}`.
+
+**OFFLINE — 256-sim progress-over-time check, ck176 vs ck163 (2026-07-24;
+KILLED/NO ESTABLISHED PROGRESS).** The preceding simulation ladder answered whether ck176 scales with
+compute, but not the intended question of whether the newer net is stronger
+than the older net when both receive 256 simulations. Hypothesis: ck176's
+newer policy/value improvements become visible at 256 sims even though the
+32-sim ck176-vs-ck163 comparison was null/worse. ONE deciding yardstick: run
+the identical frozen 2,000-position seed-0 low-effort `audit_targets` protocol
+at `--sims 256 --gumbel-topk 16` on banked
+`scratchpad/live_read/monitor/ck_163_manual.pt`, reuse the just-completed
+identical ck176 dump, and compare `cand.search.exp` position-paired with
+`scripts/paired_compare.py`. SUCCESS: ck176 improves expected regret by at
+least 3 cp with paired 95% CI excluding zero and does not materially worsen
+search top-1. KILL: that rule fails. Mechanism/control: contrast with the
+already-recorded 32-sim ck176-vs-ck163 comparison. Diagnostic only; no live
+search change is authorized. Run only while training is stopped because the
+concurrent 64-sim attempt rebooted the machine.
+**VERDICT: HIGH-SIM SEARCH REGRESSION IS MASKED, BUT IMPROVEMENT IS NOT
+ESTABLISHED.** At 256 sims ck176 scored 56.95 cp expected / 56.97 top-1 versus
+ck163 at 59.49 / 59.85. Paired ck176-minus-ck163 deltas were -2.54 cp expected
+(95% CI -9.84 to +4.78) and -2.88 cp top-1 (-10.71 to +4.87): favorable point
+estimates, but below the pre-committed 3 cp magnitude and statistically null.
+No phase clears significance. In contrast, raw policy at the same checkpoints
+is significantly worse at ck176: +4.88 cp expected [+1.31, +8.75], while raw
+top-1 is +6.43 [-1.67, +15.52] null. Combined with the prior 32-sim search
+delta (ck176 point-worse), 256 sims appear to compensate for the newer net's
+raw-policy regression, not demonstrate reliable training progress beyond
+ck163. Artifacts: `scratchpad/live_read/search_sims_ck{163,176}/s256`.
+
+**OFFLINE — ck176 16-vs-32 fast-search non-inferiority screen (2026-07-24;
+KILLED/INCONCLUSIVE).** Production fast search uses 32 sims, and the simulation ladder found
+64 statistically no better; it remains unknown whether 16 is also sufficient.
+Hypothesis: ck176 at 16 sims is non-inferior to 32 sims and could halve the fast
+search budget. ONE deciding yardstick: run the same frozen 2,000-position,
+seed-0 low-effort `audit_targets` protocol on ck176 with `--sims 16
+--gumbel-topk 16`, then compare `cand.search.exp` and `cand.search.top1`
+position-paired against the fresh 32-sim ck176 dump. SUCCESS/non-inferior: the
+upper endpoint of the paired 95% CI for 16-minus-32 expected regret is below
++3 cp and top-1 is not materially worse by the same rule. KILL: either upper
+endpoint is >=+3 cp. This offline PLAY-root diagnostic does not itself authorize
+changing live `fast_simulations`; any production change needs a separate
+throughput/quality readout. Run only while training is stopped.
+**VERDICT: POINT-TIED, BUT NON-INFERIORITY NOT ESTABLISHED.** 16 sims scored
+68.48 cp expected / 67.47 top-1 versus 32 sims at 68.12 / 69.15. Paired
+16-minus-32 deltas were +0.36 cp expected (95% CI -7.68 to +8.19) and -1.68 cp
+top-1 (-10.33 to +6.79). Both upper endpoints exceed the pre-committed +3 cp
+margin, so the production reduction is not authorized. The mechanism split is
+heterogeneous: 16 was significantly better in middlegame expected regret
+(-10.52 [-22.79, -0.34]) but point-worse in endgames (+5.82 [-4.77, +16.23]).
+This looks like noisy/phase-dependent allocation, not evidence that 16 is
+uniformly equivalent. Artifact: `scratchpad/live_read/search_sims_ck176/s16`.
+
+**OFFLINE — 256-sim Gumbel-vs-PUCT progress diagnostic (2026-07-24; KILLED).**
+Gumbel at 256 substantially improves each checkpoint over its own 32-sim
+search, yet ck176 remains statistically tied with ck163; its completed-Q target
+retains the raw prior and may fail to expose/distill newer value information as
+well as classic PUCT visit counts at depth. Hypothesis: fixed-256 PUCT reveals
+ck176-over-ck163 progress that fixed-256 Gumbel masks. Add a diagnostic-only
+`--mcts {gumbel,puct}` option to `scripts/audit_targets.py`; run PUCT with the
+same frozen 2,000 positions, seed 0, top-level checkpoint loader, batch 64,
+GPU-memory fraction 0.15, and production `c_puct`/FPU settings on banked ck163
+and ck176. ONE deciding yardstick: position-paired ck176-minus-ck163
+`cand.search.exp` under PUCT. SUCCESS/supports a Gumbel conversion/target
+bottleneck: PUCT improves by at least 3 cp with paired 95% CI excluding zero,
+while the already-recorded Gumbel comparison remains null. KILL/no such
+evidence: PUCT fails that rule. Mechanism secondary: paired PUCT-minus-Gumbel
+expected/top-1 regret at each checkpoint. This is offline diagnostic evidence
+only and does not authorize switching live selfplay or training targets. Run
+only while training is stopped; remove no unrelated worktree changes.
+**VERDICT: PUCT DOES NOT REVEAL HIDDEN TRAINING PROGRESS; NO TARGET SWITCH.**
+At fixed PUCT-256, ck176 scored 68.59 cp expected / 50.04 top-1 versus ck163
+at 64.75 / 45.99. Paired ck176-minus-ck163 deltas were point-worse +3.85 cp
+expected (95% CI -0.53 to +9.00) and +4.05 top-1 (-4.44 to +14.76), both
+statistically null and opposite the success direction. The Gumbel target is
+not broadly worse: at ck176, PUCT-minus-Gumbel expected regret was a significant
++11.64 cp [+5.27, +18.21]; at ck163 it was +5.26 [-3.99, +13.51] null. PUCT's
+top-visit move was better than Gumbel-target argmax at ck163 (-13.86 cp
+[-26.55, -3.07]) and point-better at ck176 (-6.93 [-14.25, +0.48]), but its
+visit target is dramatically more diffuse: entropy 1.22/1.25 nats at ck163/176
+versus Gumbel 0.20/0.22, paired gaps +1.01/+1.03 nats, both significant.
+Therefore PUCT sometimes picks a better modal move while assigning much more
+probability to deep-SF-regretful tail moves; it does not solve the cross-generation
+plateau and is not evidence for replacing the sharper Gumbel training target.
+PUCT root-WDL Brier is lower (ck163 0.236, ck176 0.255) than Gumbel's
+0.318/0.333 but still worsens pointwise across generations. Diagnostic support
+was added to `scripts/audit_targets.py --mcts puct`, covered by the dual-path
+CPU smoke in `tests/test_audit_set.py`. Artifacts:
+`scratchpad/live_read/search_puct_ck{163,176}/s256`.
+
+**OFFLINE — ck176 Gumbel 1024-vs-256 simulation scaling (2026-07-24;
+KILLED/SUGGESTIVE ONLY).**
+The 32/64/256 ladder found a significant improvement only at 256 simulations;
+it remains unknown whether ck176 continues converting value information beyond
+that budget or has saturated. Hypothesis: 1,024 Gumbel simulations further
+reduce deep-SF regret versus 256. ONE deciding yardstick: run the same frozen
+2,000-position, seed-0 low-effort audit on banked ck176 with `--mcts gumbel
+--sims 1024 --gumbel-topk 16 --batch-size 64 --gpu-mem-fraction 0.15`, then
+compare `cand.search.exp` position-paired against the existing identical
+256-sim ck176 dump. SUCCESS/continues scaling: 1,024 improves expected regret
+by at least 3 cp with paired 95% CI excluding zero and does not materially
+worsen top-1. KILL/saturated: that rule fails. Mechanism secondary: phase split,
+target entropy, and search-root WDL calibration. Offline diagnostic only; no
+live search-budget change is authorized. Training remains stopped.
+**VERDICT: POINT IMPROVEMENT, BUT CONTINUED SCALING NOT STATISTICALLY
+ESTABLISHED.** 1,024 sims scored 53.21 cp expected / 53.15 top-1 versus 256 at
+56.95 / 56.97. Paired 1,024-minus-256 deltas were -3.75 cp expected (95% CI
+-9.62 to +2.32) and -3.82 top-1 (-10.27 to +2.70): both clear the point-size
+bar but fail the pre-committed requirement that the CI exclude zero. Neither
+phase is individually significant; middlegame is the stronger point signal
+(-5.13 expected [-11.98, +0.65]). Search-target entropy rises slightly from
+0.22 to 0.28 nats, paired +0.06 [+0.04, +0.08]. Search-root WDL calibration
+improves pointwise (Brier 0.333 -> 0.301; ECE 0.058 -> 0.052) but remains poor.
+The 4x compute buys a suggestive ~3.8 cp after 256's significant ~11 cp gain
+over 32, so returns are diminishing and no live-budget increase is justified.
+Artifact: `scratchpad/live_read/search_sims_ck176/s1024`.
+
+**OFFLINE — ck176 complete power-of-two Gumbel scaling curve (2026-07-24;
+WORKED).** Existing reads at 32/64/256/1024 leave 128 and 512 unmeasured, so
+the apparent plateaus/jumps cannot answer whether regret improves at a useful
+rate per doubling. Hypothesis: fixed-topk16 Gumbel search has a positive depth
+response averaging at least 2 cp lower expected regret per doubling from 32 to
+1,024, although individual sequential-halving rungs may be non-monotone. Run
+the identical frozen 2,000-position seed-0 audit at 128 and 512 simulations,
+reusing the existing 32/64/256/1024 dumps. ONE deciding yardstick: position-
+bootstrap the ordinary least-squares slope of `cand.search.exp` against
+`log2(sims)` across all six paired rungs. SUCCESS/healthy average scaling:
+slope <= -2 cp per doubling with 95% CI excluding zero and no adjacent doubling
+has a statistically significant regression. KILL/weak scaling: the slope fails
+that rule. Mechanism secondary: adjacent paired deltas, phase slopes, top-1,
+and entropy. Offline diagnostic only; training remains stopped and no live
+budget change is authorized.
+**VERDICT: HEALTHY AVERAGE SCALING, BUT STAIR-STEPPED RATHER THAN EVERY RUNG.**
+Expected regret over 32/64/128/256/512/1024 sims was respectively
+68.12 / 71.12 / 59.47 / 56.95 / 56.67 / 53.21 cp. The position-bootstrap
+OLS slope against log2(sims) is **-3.44 cp per doubling**, 95% CI
+**[-5.09, -1.88]**, clearing the pre-committed -2 cp rule. Top-1 independently
+scales at -3.48 cp/doubling [-5.13, -1.90]. Endgame and middlegame expected
+slopes both clear zero: -3.27 [-5.51, -1.16] and -3.79 [-6.21, -1.80]. No
+adjacent doubling significantly regresses. Adjacent expected deltas are:
+64-32 +3.00 [-2.39,+8.60] null; 128-64 **-11.64 [-19.89,-3.57]** significant;
+256-128 -2.52 [-8.27,+3.18] null; 512-256 -0.29 [-6.30,+5.77] null; 1024-512
+-3.46 [-8.13,+1.05] null (middlegame alone -5.45 [-12.15,-0.17]). Therefore
+search is gaining a healthy ~3.4 cp per doubling on average, but Gumbel's
+discrete sequential-halving allocation plus search noise concentrates the
+measurable gain at some power-of-two boundaries. This weakens the hypothesis
+that search itself is globally broken; the cross-generation plateau remains a
+training/generalization issue. New artifacts:
+`scratchpad/live_read/search_sims_ck176/s{128,512}`. Training remains stopped.
+
+**OFFLINE ARENA — ck176 vs ck163 at matched 32 sims (2026-07-24; UNREAD).**
+Frozen target audits show no significant cross-generation search improvement,
+but per-position regret is not game strength. Hypothesis: ck176 is stronger
+than ck163 in actual paired play at the production fast-search budget. ONE
+deciding yardstick: `PYTHONPATH=. python3 scripts/arena_standard.py --candidate
+scratchpad/live_read/monitor/ck_176_manual.pt --reference
+scratchpad/live_read/monitor/ck_163_manual.pt --mode matched_sims --sims 32
+--games 512 --max-concurrent-games 16 --syzygy
+/home/josh/projects/chess/data/syzygy_3-4-5:/mnt/e/chess/syzygy_6_dtz
+--syzygy-max-pieces 6 --seed 0 --label ck176_vs_ck163_s32_20260724`. SUCCESS:
+candidate pentanomial Elo 95% CI is wholly above 0. FAIL: wholly below 0. NULL:
+CI includes 0. Mechanism secondary: pentanomial counts, score, decisive-game
+balance, and termination causes. This is a read-only matched-sims arena; no
+training/search setting changes. Training remains stopped; pool capped at 16
+per the 32 GB arena OOM guardrail.
+**Run status:** interrupted at user request during the initial compiled search,
+before the arena reported any completed games or wrote a result row. The first
+launch also exited before games because it omitted the required `PYTHONPATH=.`
+environment and could not import `scripts.match_vs_uci`; the corrected launch
+initialized both nets, Syzygy, and the rolling pool successfully. Scientific
+status remains UNREAD; rerun the registered command from the beginning when
+requested.

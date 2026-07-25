@@ -135,10 +135,31 @@ stockfish:
   # surprise. Airbag step is bounded by emergency_ease_step alone.
 
 selfplay:
-  games_per_iter: 3520   # 2026-05-28: +10% for steadier per-iter signal while replay grows slowly.
-  games_per_iter_start: 3520   # match games_per_iter; ramp disabled. Live-reloadable.
+  # 2026-07-24: 3520 -> 440. The 3520 target was 7.7x real throughput (measured
+  # 459 games / 2250s = 0.204 games/s = 734 games/h), so min_games (0.90*3520 =
+  # 3168) was UNREACHABLE: the soft deadline could never fire and EVERY
+  # iteration ran to the hard ceiling (720*3 = 2160s) and bailed with
+  # "ingest hard timeout ... all workers likely stale" (19x in the current log).
+  # That warning was pure noise and masked real staleness. 440 is just above
+  # measured per-iteration yield, so the loop now exits because it MET its
+  # target; the deadline goes back to being a safety net. Behavior-neutral by
+  # design (same ~40min period, same games) — deliberately NOT a throughput
+  # change, so it does not confound the live views=5 readout.
+  games_per_iter: 440
+  games_per_iter_start: 440   # match games_per_iter; ramp disabled. Live-reloadable.
   games_per_iter_ramp_iters: 0
-  selfplay_fraction: 0.30  # 2026-04-24: 0.50→0.25; 2026-05-04: 0.25→0.30 (30% selfplay / 70% SF curriculum). test_policy_loss drifted 2.25→2.55 at iter 272-285; past runs at 75% SF worked better. Revert if regret/winrate stop moving or policy_loss doesn't recover.
+  # 2026-07-24: 0.35 -> 0.50, PAIRED with the in-flight-abandonment fix (PR #224).
+  # This is a SLOT roll, not a completed-game share. Until #224 those two numbers
+  # were wildly different: 65% of slots rolled curriculum but only 16.5% of
+  # COMPLETED games were curriculum, because every FEN-list rewrite restarted the
+  # session and abandoned ~89% of them mid-game (57.9% of ALL started games were
+  # thrown away). With #224 the roll and the realized share converge, so leaving
+  # this at 0.35 would swing the realized curriculum mix 16.5% -> 65% in one step.
+  # 0.50 is the deliberate intermediate. Note it also LOWERS SF load vs today
+  # (curriculum slots 65% -> 50%) while actually finishing those games: the SF
+  # compute was already being spent on them and then discarded.
+  # Prior: 0.35 from 2026-07-23 targeted-SF retry (65% full SF + 90%x3 refutes).
+  selfplay_fraction: 0.50
   record_fast_ply_value: false  # 2026-07-02: REVERTED true->false (throughput-triple leg 2 killed). Evidence: raw policy top-1 51.5->61.7 never recovered (trunk dilution from 75% value-only rows) + value 72.4->76.6 across the leg's window; ledger entry + revert pool data/salvage/prechange_20260702_ckpt479. LIVE-propagated (~30 min): it is a _RECO_RESTART_KEY, so a change triggers an AUTOMATIC worker-session restart — NOT an operator `train.sh restart` (a live YAML flip DOES take effect; the 07-02 branch-switch incident re-propagated it live). 2026-07-01 (PR #91) history: value-only fast rows, ~4x rows/game.
   selfplay_batch: 384   # 2026-07-02 arrival-stream POC: 256->384 (fatten ready-pool so broker batches grow; RAM headroom 71G). Revert to 256 if pos/s flat or RAM/latency degrades.
   slot_oversubscribe: 2.0  # 2026-07-12 activation (PR #151, ledger entry): 2x continuous slots so selfplay work stays runnable while curriculum SF moves fly. _RECO_RESTART_KEY (worker-session restart on change). KILL: games/h < 641/h (iter-7 fresh baseline) 2 iters sustained, worker RSS +4G, or broker p95 +20% -> revert to 1.0.
@@ -199,7 +220,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_fed_cheese72_staged_ck101.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_198.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -211,16 +232,29 @@ selfplay:
   # KILL: set 0 + opening_fen_prob 0.05. Ledger LIVE-UNREAD row (readout ~iter 725); baseline
   # ckpt686 (v1 16/35, value 74.3), revert trunk data/salvage/pre_dole_ckpt686_20260708.
   opening_fen_dole_per_iter: 1
+  # 2026-07-24 (PR #223, NEW KEY — requires the restart onto that code; adding it
+  # to a running older build makes the strict validator reject the WHOLE reload).
+  # Upper bound on seeded games/iter as a fraction of games_per_iter. The dole
+  # hands the WHOLE list out every iteration, so without this the seeded share is
+  # just pool_size/capacity: the pool grew 141->341 in ~11h and the seeded share
+  # went 81.8% -> 93.4% -> 98.9% -> 100.0%, i.e. ZERO normal-opening selfplay
+  # games. NOTE it bounds a fraction of TOTAL games, while the thing we actually
+  # want to cap is the seeded share of SELFPLAY. With selfplay_fraction 0.50,
+  # selfplay is ~220 of 440 games, so "seeded <= half of selfplay" = 110 games =
+  # 0.25 here. (0.5 would allow 220 seeded = ~100% of selfplay, i.e. exactly the
+  # runaway this cap exists to stop -- the two fractions are NOT the same number.)
+  # Both channels rotate, so nothing in the tail is starved. 0 = uncapped.
+  opening_fen_dole_max_fraction: 0.25
   # 2026-07-19: SF-refutation channel on top of selfplay dole — value-blind-spot
   # lever. Round-robin 50% of the live seed list each iter as short curriculum
-  # games: SF plays the first 5 opponent plies (breaks net-net collusion on
+  # games: SF plays the first 3 opponent plies (breaks net-net collusion on
   # fantasy evals), then the slot hands off to selfplay. Fenlist stays out of
-  # the PID sample. KILL: set both to 0. Ledger entry: "SF-refute channel 50%×5".
+  # the PID sample. KILL: set both to 0. Ledger entry: "targeted-SF budget reallocation".
   # Restart-gated (new reco keys + worker code).
-  opening_fen_sf_refute_frac: 0.5
-  opening_fen_sf_refute_plies: 5
+  opening_fen_sf_refute_frac: 0.9
+  opening_fen_sf_refute_plies: 3
   # SF-refute opp-row recording — STAGED — do not flip before the SF-refute
-  # 50%×5 ledger readout (docs/experiment_ledger.md). full_node_moves: refute SF
+  # 90%×3 retry ledger readout (docs/experiment_ledger.md). full_node_moves: refute SF
   # MOVE queries skip the 0.25× fast-ply node scale. record_opp_rows: emit a
   # MAIN-policy training row at each SF-to-move refute position (aux heads
   # masked). opp_policy_net_blend: blend net visits into that policy target —
@@ -233,9 +267,9 @@ selfplay:
   # 2026-07-08: inline blind-spot harvester COLLECT-ONLY (#124). Finished games
   # append value-blind positions (net's search says fine, in-loop SF says lost)
   # as seed lines with real history to <path>.pPID (collect) + .severe.pPID
-  # (auto-feed band). PURE SIDE OUTPUT — does NOT change training; the seeds
-  # feed back only once this is wired into opening_fen_list_path (a later,
-  # ledger-gated step). Off = "".
+  # (auto-feed band). At each monitor cadence, new lines are deep-SF-vetted,
+  # staged, then merged into a versioned live list by blindspot_feed_step.py;
+  # the YAML pointer is validated and repointed automatically. Off = "".
   blindspot_harvest_out_path: /home/josh/projects/chess/data/harvest/blindspot_live.txt
 
   mcts: gumbel
@@ -429,10 +463,26 @@ tune:
   distributed_worker_shared_cache_dir: /home/josh/projects/chess/runs/pbt2_small/server/worker_cache
   distributed_min_workers_per_trial: 1
   distributed_max_worker_delta_per_rebalance: 1
-  distributed_wait_timeout_seconds: 720  # 2026-05-19: 600->720 to give current-model selfplay more time after lowering stale backlog target.
+  # 2026-07-24: 720 -> 2700 (45min SOFT deadline; hard ceiling = 3x = 8100s).
+  # Paired with games_per_iter 3520->440. Previously the soft deadline was
+  # unreachable-by-construction and 2160s (hard) was the real operating point;
+  # now the normal exit is "target met" at ~2160s and 2700s only bites in a slow
+  # patch. The hard ceiling is finally reserved for a genuine stall.
+  distributed_wait_timeout_seconds: 2700
   distributed_prev_model_max_fraction: 0.60  # 2026-05-19: raise 50%->60% to reduce alternating stale-discard timeout rows while keeping most data current-model.
-  distributed_stale_pause_target_games: 1870  # 2026-05-28: scale with 3520 games/iter target.
-  distributed_min_games_fraction: 0.90  # 2026-05-28: wait for 90% of target games before timing out.
+  # 2026-05-28: scaled to the old 3520 target. DELIBERATELY LEFT AT 1870 during
+  # the 2026-07-24 games_per_iter 3520->440 fix: the natural value is
+  # games_per_iter * prev_model_max_fraction = 440*0.60 = 264, but that would
+  # ACTIVATE backpressure (at 1870 it effectively never fires), which is a real
+  # behavior change and would confound the live views=5 readout. Left inert on
+  # purpose. See the ledger entry on stale-game waste (1271 stale vs 459
+  # matching games per iteration) — that is its own experiment, not a drive-by.
+  distributed_stale_pause_target_games: 1870
+  # 2026-07-24: 0.90 -> 0.80. With a REACHABLE target this is now what it was
+  # always meant to be: how short an iteration we accept in a slow patch.
+  # 0.80*440 = 352 games, i.e. at 2700s we take what we have if >=352 rather
+  # than stalling toward the 8100s ceiling.
+  distributed_min_games_fraction: 0.80
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453

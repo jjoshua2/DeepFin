@@ -1436,6 +1436,10 @@ class SlotBroker:
         hang_abort_seconds: float = _DEFAULT_HANG_ABORT_S,
         aot_dir: str | None = None,
     ) -> None:
+        # Boot-timeline anchors for measuring cold start (broker.out).
+        self._boot_t0 = time.perf_counter()
+        self._boot_wall0 = time.time()
+        self._first_batch_logged = False
         self.publish_dir = Path(publish_dir)
         self.device = str(device)
         self.compile_inference = bool(compile_inference)
@@ -1465,6 +1469,14 @@ class SlotBroker:
         self._slots: list[_InferenceSlot] = []
         self._slot_names: list[str] = []
 
+        print(
+            f"[broker] boot start wall={time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self._boot_wall0))} "
+            f"slots={num_slots} max_batch_per_slot={max_batch_per_slot} "
+            f"compile={self.compile_inference} mode={self.compile_mode} "
+            f"aot_dir={aot_dir or ''!r}",
+            flush=True,
+        )
+
         # Load AOT packages before allocating SHM so a missing/misconfigured
         # aot_dir fails without leaving orphan shared-memory segments.
         aot_raw = str(aot_dir or "").strip()
@@ -1477,9 +1489,16 @@ class SlotBroker:
                     f"aot_dir set ({aot_raw!r}) but no _COMPILED_BATCH_BUCKETS "
                     f"<= max_batch={aot_max_batch}"
                 )
+            t_aot = time.perf_counter()
             self._aot_models = load_aot_packages(aot_raw, buckets=aot_buckets)
             self._aot_constant_fqns = list(
                 next(iter(self._aot_models.values())).get_constant_fqns()
+            )
+            print(
+                f"[broker] AOT packages loaded n={len(self._aot_models)} "
+                f"elapsed_s={time.perf_counter() - t_aot:.2f} "
+                f"since_boot_s={time.perf_counter() - self._boot_t0:.2f}",
+                flush=True,
             )
 
         # Pre-allocated pinned buffers for zero-copy GPU transfer.
@@ -1535,9 +1554,18 @@ class SlotBroker:
             self._slots.append(slot)
             self._slot_names.append(name)
 
+        print(
+            f"[broker] slots ready n={len(self._slots)} "
+            f"since_boot_s={time.perf_counter() - self._boot_t0:.2f}",
+            flush=True,
+        )
+
     @property
     def slot_names(self) -> list[str]:
         return list(self._slot_names)
+
+    def _since_boot_s(self) -> float:
+        return float(time.perf_counter() - self._boot_t0)
 
   # -- model loading (same logic as before) --
 
@@ -1611,6 +1639,7 @@ class SlotBroker:
             for aot_model in self._aot_models.values():
                 aot_model.load_constants(constants, check_full_update=False)
 
+        t_model = time.perf_counter()
         if self.compile_inference and self.device.startswith("cuda"):
             model = cast(
                 "torch.nn.Module",
@@ -1621,6 +1650,13 @@ class SlotBroker:
         self._model = model
         self._model_sha = model_sha
         self._first_inference_pending = bool(self.compile_inference)
+        print(
+            f"[broker] model ready sha={model_sha[:8]} "
+            f"compile={self.compile_inference} aot={bool(self._aot_models)} "
+            f"model_step_s={time.perf_counter() - t_model:.2f} "
+            f"since_boot_s={self._since_boot_s():.2f}",
+            flush=True,
+        )
 
   # -- batch processing --
 
@@ -1892,6 +1928,12 @@ class SlotBroker:
             if first_inf:
                 log.info("first inference (includes kernel compile) elapsed_s=%.2f batch=%d",
                          time.time() - inf_t0, xt.shape[0])
+                print(
+                    f"[broker] first_forward_done batch={int(xt.shape[0])} "
+                    f"forward_s={time.time() - inf_t0:.2f} "
+                    f"since_boot_s={self._since_boot_s():.2f}",
+                    flush=True,
+                )
                 self._first_inference_pending = False
 
             if _timing is not None:
@@ -2089,6 +2131,13 @@ class SlotBroker:
         }
         report_interval = 10.0  # seconds
         self._hang_watchdog.start()
+        # Model may already be loaded (or loads on first request). "accepting"
+        # means SHM slots exist and the poll loop is live — workers can connect.
+        print(
+            f"[broker] ACCEPTING_REQUESTS since_boot_s={self._since_boot_s():.2f} "
+            f"model_loaded={self._model is not None}",
+            flush=True,
+        )
 
         while not self._stop:
             if any(s.state == _STATE_SHUTDOWN for s in self._slots):
@@ -2120,6 +2169,15 @@ class SlotBroker:
                 if _ARRIVAL_TRACE_ENABLED:
                     self._emit_arrival_trace(ready)
                 self._process_batch(ready)
+                if not self._first_batch_logged:
+                    self._first_batch_logged = True
+                    print(
+                        f"[broker] FIRST_BATCH_DONE positions="
+                        f"{sum(s.batch_size for s in ready)} "
+                        f"slots={len(ready)} "
+                        f"since_boot_s={self._since_boot_s():.2f}",
+                        flush=True,
+                    )
 
             self._maybe_print_broker_metrics(metrics, time.monotonic(), report_interval)
 
