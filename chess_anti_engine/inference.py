@@ -1269,6 +1269,11 @@ _MODE_DENSE_F32 = 0
 _MODE_DENSE_BF16 = 1
 _MODE_LEGAL_BF16 = 2
 
+# Consecutive failed batches before the broker gives up and exits. High enough
+# that a burst of client-timeout races rides through, low enough that a dead
+# CUDA context does not livelock the fleet for an entire iteration.
+_MAX_CONSECUTIVE_BATCH_FAILURES = 50
+
 
 _HEADER_BYTES = 8  # 1 byte state + 1 byte mode + 2 pad + 4 byte batch_size
 
@@ -1443,6 +1448,7 @@ class SlotBroker:
         self.batch_wait_ms = float(batch_wait_ms)
         self.adaptive_idle_ms = float(adaptive_idle_ms)
         self._hang_watchdog = BrokerHangWatchdog(threshold_s=float(hang_abort_seconds))
+        self._consecutive_batch_failures = 0
         self._model: torch.nn.Module | None = None
         self._model_sha: str | None = None
         self._stop = False
@@ -1659,7 +1665,49 @@ class SlotBroker:
         for slot in ready:
             by_mode.setdefault(int(slot.request_mode), []).append(slot)
         for mode, slots in by_mode.items():
-            self._process_batch_mode(slots, mode=mode)
+            try:
+                self._process_batch_mode(slots, mode=mode)
+            except Exception:
+                # One bad batch must not take down the broker. Every worker in
+                # the fleet depends on this process and nothing relaunches it
+                # until the next selfplay phase begins, so a crash here costs a
+                # whole iteration of selfplay -- on 2026-07-24 a single
+                # ValueError cost ~50 minutes of zero games.
+                log.exception(
+                    "broker batch failed mode=%d slots=%d; releasing slots for retry",
+                    mode, len(slots),
+                )
+                self._release_slots_for_retry(slots)
+                self._consecutive_batch_failures += 1
+                if self._consecutive_batch_failures >= _MAX_CONSECUTIVE_BATCH_FAILURES:
+                    # Persistent failure is a dead CUDA context or a real bug,
+                    # not a race. Keeping the process alive then would only
+                    # livelock the fleet, so die and let the next phase start a
+                    # broker with a clean context.
+                    log.error(
+                        "broker failed %d batches in a row; exiting so the next "
+                        "selfplay phase relaunches a clean broker",
+                        self._consecutive_batch_failures,
+                    )
+                    raise
+            else:
+                self._consecutive_batch_failures = 0
+
+    def _release_slots_for_retry(self, slots: list[_InferenceSlot]) -> None:
+        """Hand slots back to their clients unanswered so they re-submit.
+
+        Deliberately NOT a zero-filled response: the clients feed selfplay, and
+        a fabricated all-zero policy would be recorded as training data rather
+        than raising. _STATE_IDLE is the state the client's own recovery path
+        already treats as "slot went away, re-submit" (see
+        _submit_and_wait_locked), so a transient failure costs a retry and a
+        persistent one surfaces as a loud client-side TimeoutError.
+        """
+        for slot in slots:
+            try:
+                slot.state = _STATE_IDLE
+            except Exception:
+                log.exception("failed to release broker slot after a batch error")
 
     def _stage_legal_metadata_cuda(
         self,
@@ -1707,11 +1755,23 @@ class SlotBroker:
             if compact_legal:
                 meta = slot.policy_i32
                 n_legal = max(0, int(meta[0]))
-                # The client cannot reuse this shared-memory slot while it is
-                # in REQUEST state, so these views remain stable until we
-                # publish RESPONSE after scattering below.
-                counts = np.asarray(meta[1:1 + bsz], dtype=np.int32)
-                flat = np.asarray(meta[1 + bsz:1 + bsz + n_legal], dtype=np.int32)
+                # SNAPSHOT, never view. This is client-writable shared memory
+                # and the client does rewrite it under us: after a request
+                # timeout the worker resets its client and re-submits into the
+                # same named slot while we are still mid-batch on the previous
+                # request (worker.log: "inference broker timed out; resetting
+                # client"). With views, the validation below checked one
+                # request and the gather further down read another, so
+                # counts.sum() no longer matched flat.size and the row index
+                # came out longer than the column index -- an uncaught
+                # ValueError in _stage_legal_metadata_cuda that killed this
+                # process and left the whole fleet with no inference until the
+                # next iteration boundary (2026-07-24, ~50min of zero games).
+                # Validating a snapshot is the only way that check can mean
+                # anything; a torn snapshot fails it and takes the fallback
+                # path below. ~360KB per batch against a ~1.4s forward.
+                counts = np.array(meta[1:1 + bsz], dtype=np.int32)
+                flat = np.array(meta[1 + bsz:1 + bsz + n_legal], dtype=np.int32)
                 if (
                     counts.shape[0] != bsz
                     or int(counts.sum()) != n_legal
@@ -1754,8 +1814,9 @@ class SlotBroker:
             for bsz, counts, flat in zip(
                 batch_sizes, legal_counts_by_slot, legal_flat_by_slot, strict=True,
             ):
-                # Slot metadata validation above already established that the
-                # counts sum equals this copied flat array's length.
+                # Slot metadata validation above established that the counts
+                # sum equals this flat array's length, and both are private
+                # snapshots, so that guarantee still holds here.
                 n_legal = int(flat.size)
                 compact_offsets.append((pol_base, pol_base + n_legal))
                 if n_legal > 0:

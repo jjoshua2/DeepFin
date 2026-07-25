@@ -15,8 +15,10 @@ import pytest
 import torch
 
 from chess_anti_engine.inference import (
+    _MAX_CONSECUTIVE_BATCH_FAILURES,
     _MODE_DENSE_BF16,
     _MODE_LEGAL_BF16,
+    _STATE_IDLE,
     _STATE_REQUEST,
     _STATE_RESPONSE,
     _STATE_SHUTDOWN,
@@ -970,3 +972,166 @@ def test_gather_adaptive_returns_early_when_all_slots_ready() -> None:
     broker._gather_more_within_window(ready)
     elapsed_ms = (time.monotonic() - t0) * 1000.0
     assert elapsed_ms < 50.0
+
+
+def _compact_legal_broker(tmp_path: Path, label: str) -> SlotBroker:
+    """A 1-slot CPU broker with a trivial policy model, ready for a batch."""
+
+    class _TinyPolicy(torch.nn.Module):
+        def forward(self, x: torch.Tensor):
+            bsz = x.shape[0]
+            row = (
+                torch.arange(bsz, dtype=torch.float32, device=x.device).unsqueeze(1)
+                * 10000.0
+            )
+            return {
+                "policy": row + torch.arange(
+                    4672, dtype=torch.float32, device=x.device,
+                ).unsqueeze(0),
+                "wdl": torch.arange(
+                    bsz * 3, dtype=torch.float32, device=x.device,
+                ).reshape(bsz, 3),
+            }
+
+    publish_dir = tmp_path / "publish"
+    publish_dir.mkdir(parents=True, exist_ok=True)
+    broker = SlotBroker(
+        publish_dir=publish_dir,
+        num_slots=1,
+        max_batch_per_slot=8,
+        device="cpu",
+        compile_inference=False,
+        batch_wait_ms=0.0,
+        slot_prefix=f"cae-{label}-{uuid.uuid4().hex}",
+    )
+    broker._model = _TinyPolicy().eval()
+    broker._model_sha = "test"
+    return broker
+
+
+def _submit_compact_legal(slot: _InferenceSlot, counts: list[int], flat: list[int]) -> None:
+    bsz = len(counts)
+    slot.input_bf16_bits[:bsz] = np.zeros((bsz, 146, 8, 8), dtype=np.uint16)
+    slot.policy_i32[0] = len(flat)
+    slot.policy_i32[1:1 + bsz] = np.array(counts, dtype=np.int32)
+    slot.policy_i32[1 + bsz:1 + bsz + len(flat)] = np.array(flat, dtype=np.int32)
+    slot.batch_size = bsz
+    slot.request_mode = _MODE_LEGAL_BF16
+    slot.state = _STATE_REQUEST
+
+
+def test_process_batch_snapshots_metadata_against_a_client_resubmit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A client re-submit mid-batch must not corrupt the batch in flight.
+
+    After a request timeout the worker resets its client and re-submits into the
+    same named slot while the broker is still mid-batch on the previous request.
+    The broker used to hold numpy VIEWS onto that client-writable shared memory,
+    so the validation checked one request while the row-index build below read
+    another: counts.sum() stopped matching flat.size, the row index came out
+    longer than the column index, and the resulting uncaught ValueError killed
+    the broker process and took the whole fleet's inference with it
+    (2026-07-24, ~50 minutes of zero selfplay).
+
+    Here np.repeat is the hook for that window -- it is the first read of
+    ``counts`` after validation -- so rewriting the slot from inside it
+    reproduces the race deterministically.
+    """
+    broker = _compact_legal_broker(tmp_path, "resubmit")
+    try:
+        slot = broker._slots[0]
+        _submit_compact_legal(slot, counts=[2, 2], flat=[0, 5, 7, 4671])
+
+        real_repeat = np.repeat
+        fired: list[bool] = []
+
+        def _repeat_after_a_client_resubmit(a, repeats, *args, **kwargs):
+            if not fired:
+                fired.append(True)
+                # The client gave up waiting and submitted a different, larger
+                # position into the same shared-memory slot.
+                _submit_compact_legal(
+                    slot, counts=[3, 3], flat=[1, 2, 3, 4, 5, 6],
+                )
+            return real_repeat(a, repeats, *args, **kwargs)
+
+        monkeypatch.setattr(np, "repeat", _repeat_after_a_client_resubmit)
+
+        broker._process_batch([slot])
+
+        assert fired, "the re-submit hook never ran; the test is not exercising the race"
+        # The in-flight batch is answered from its own snapshot: 4 legal moves,
+        # scored against the original flat indices.
+        expected = (
+            torch.tensor([0.0, 5.0, 10007.0, 14671.0])
+            .to(torch.bfloat16).view(torch.uint16).numpy()
+        )
+        assert slot.state == _STATE_RESPONSE
+        assert np.array_equal(slot.policy_u16[:4], expected)
+    finally:
+        broker.shutdown()
+
+
+def test_process_batch_releases_slots_instead_of_dying_on_a_failing_batch(
+    tmp_path: Path,
+) -> None:
+    """A bad batch costs a retry, not the broker process (and not fake data)."""
+    broker = _compact_legal_broker(tmp_path, "failbatch")
+    try:
+        slot = broker._slots[0]
+        _submit_compact_legal(slot, counts=[2, 2], flat=[0, 5, 7, 4671])
+
+        def _boom(ready: list[_InferenceSlot], *, mode: int) -> None:
+            del ready, mode
+            raise ValueError("could not broadcast input array")
+
+        broker._process_batch_mode = _boom
+
+        broker._process_batch([slot])
+
+        # IDLE is what the client's own recovery path treats as "slot went
+        # away, re-submit". A zero-filled RESPONSE would instead be recorded as
+        # training data.
+        assert slot.state == _STATE_IDLE
+        assert broker._consecutive_batch_failures == 1
+    finally:
+        broker.shutdown()
+
+
+def test_process_batch_gives_up_after_persistent_failures(tmp_path: Path) -> None:
+    """Persistent failure is a dead context, not a race -- exit, don't livelock."""
+    broker = _compact_legal_broker(tmp_path, "persistfail")
+    try:
+        slot = broker._slots[0]
+        _submit_compact_legal(slot, counts=[2, 2], flat=[0, 5, 7, 4671])
+
+        def _boom(ready: list[_InferenceSlot], *, mode: int) -> None:
+            del ready, mode
+            raise ValueError("dead cuda context")
+
+        broker._process_batch_mode = _boom
+        broker._consecutive_batch_failures = _MAX_CONSECUTIVE_BATCH_FAILURES - 1
+
+        with pytest.raises(ValueError, match="dead cuda context"):
+            broker._process_batch([slot])
+    finally:
+        broker.shutdown()
+
+
+def test_process_batch_resets_the_failure_counter_after_a_good_batch(
+    tmp_path: Path,
+) -> None:
+    """Otherwise scattered races would eventually add up to a spurious exit."""
+    broker = _compact_legal_broker(tmp_path, "resetcount")
+    try:
+        slot = broker._slots[0]
+        _submit_compact_legal(slot, counts=[2, 2], flat=[0, 5, 7, 4671])
+        broker._consecutive_batch_failures = _MAX_CONSECUTIVE_BATCH_FAILURES - 1
+
+        broker._process_batch([slot])
+
+        assert slot.state == _STATE_RESPONSE
+        assert broker._consecutive_batch_failures == 0
+    finally:
+        broker.shutdown()
