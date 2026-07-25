@@ -10,11 +10,15 @@ computes candidate POLICY distributions:
      low=500k / high=2M via --sf-effort, matching the 500k production
      teacher; default 500k), built with the production sf_policy_temp /
      label-smoothing / cp-logistic params from --config
-  d) the production TRAINING target at full sims, and
-  e) the same at the playout-capped fast sims — both run with the RL
-     selfplay search settings from --config and retempered with the
-     production move-selection temperature (policy_t IS the visit
-     distribution at that temperature — see CLAUDE.md head table)
+  d) the production TRAINING target — the RL selfplay search from --config at
+     full sims, retempered with the production move-selection temperature
+     (policy_t IS the visit distribution at that temperature — see CLAUDE.md
+     head table). This is the WHOLE stored policy corpus.
+  e) the same search at the playout-capped fast sims, for reference only.
+     Playout-capped plies carry NO policy target: finalize.py drops them, and
+     with record_fast_ply_value they become value-only rows whose MAIN policy
+     head is masked. Never average (e) into (d) — that invents a mixture the
+     pipeline does not store.
 
 (b) and (d)/(e) are DIFFERENT SEARCHES and must not be substituted for one
 another. RL selfplay keeps `gumbel_c_scale` 0.1 with the legacy LINEAR root
@@ -90,7 +94,7 @@ _CANDIDATE_NAMES = {
     "search": "b) net + Gumbel search (PLAY settings)",
     "sf_soft": "c) SF MultiPV soft target",
     "train": "d) production training target (full sims)",
-    "train_fast": "e) production training target (fast sims)",
+    "train_fast": "e) fast-ply search — NOT a policy target in production",
 }
 
 
@@ -703,24 +707,21 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     headline_search = agg.get(("overall", "search"))
     headline_sf = agg.get(("overall", "sf_soft"))
-  # The SF teacher's CPU bill is priced against what training actually stores,
-  # which is a MIXTURE over positions: `playout_cap_fraction` of them get the
-  # full-sim search and the rest get the fast one. Blending the two group MEANS
-  # is the correct way to score a mixture-over-positions; blending the two
-  # DISTRIBUTIONS per position would describe a search nothing runs.
+  # The stored POLICY corpus is full-sim rows ONLY -- it is NOT a playout-cap
+  # mixture. `finalize.py` drops playout-capped rows outright by default, and
+  # with `record_fast_ply_value` they become value-only rows whose MAIN policy
+  # head is masked ("Fast plies never get SF label queries either way"). That
+  # is KataGo's playout-cap design working as intended: cheap plies buy game
+  # length and value coverage, never policy supervision. So the headline is the
+  # full-sim row alone -- weighting it by playout_cap_fraction would invent a
+  # mixture nothing stores and understate the target by ~9cp.
     headline_full = agg.get(("overall", "train"))
     headline_fast = agg.get(("overall", "train_fast"))
-    if headline_full is not None and headline_fast is not None:
-        headline_train = (
-            full_share * headline_full[0] + (1.0 - full_share) * headline_fast[0]
-        )
-        train_note = (
-            f"{headline_train:.1f} cp "
-            f"({full_share:.0%}×{headline_full[0]:.1f} full + "
-            f"{1.0 - full_share:.0%}×{headline_fast[0]:.1f} fast)"
-        )
-    else:
-        train_note = "—"
+    train_note = "—" if headline_full is None else f"{headline_full[0]:.1f} cp"
+    fast_note = (
+        "—" if headline_fast is None
+        else f"{headline_fast[0]:.1f} cp at {rl_fast_sims} sims"
+    )
     report = (
         f"# Target audit @ {sha}\n\n"
         f"- audit set: {args.audit_set} ({len(deep_wdls)} scored positions)\n"
@@ -735,6 +736,11 @@ def main() -> None:
         f"MultiPV-{args.sf_soft_multipv} labeling is still worth its CPU bill, "
         f"because both sides are targets training actually stores "
         f"(per-phase split below).\n"
+        f"- fast-ply (playout-capped) search: {fast_note} — reported for "
+        f"reference only. Playout-capped plies carry NO policy target: "
+        f"finalize.py drops them, and with record_fast_ply_value they become "
+        f"value-only rows with the MAIN policy head masked. Do not average "
+        f"this into the training-target number.\n"
         f"- PLAY-path search regret (overall): "
         f"{'—' if headline_search is None else f'{headline_search[0]:.1f} cp'} — "
         f"the UCI/TCEC number. NOT comparable to the SF soft target for the "

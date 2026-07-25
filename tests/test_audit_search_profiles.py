@@ -135,18 +135,32 @@ def test_a_retuned_rl_c_scale_reaches_the_training_profile(
     assert profiles["train_fast"].c_scale == 0.042
 
 
-def test_the_playout_cap_split_is_represented_by_two_profiles(
+def test_the_fast_profile_is_scored_at_the_fast_budget(
     audit_targets: ModuleType, flat: dict[str, object],
 ) -> None:
-    """Production stores a MIXTURE: 25% full-sim rows, 75% fast-sim rows.
-
-    Scoring only the full-sim search would describe a quarter of the corpus
-    and call it the training target.
-    """
     profiles = audit_targets.build_search_profiles(flat, play_sims=256, play_topk=16)
 
     assert profiles["train"].sims != profiles["train_fast"].sims
     assert {"train", "train_fast"} <= set(profiles)
+
+
+def test_the_fast_row_is_not_labelled_a_production_policy_target(
+    audit_targets: ModuleType,
+) -> None:
+    """Playout-capped plies carry NO policy target, so (e) must not claim to.
+
+    `finalize.py` drops fast rows outright by default, and with
+    `record_fast_ply_value` they become value-only rows whose MAIN policy head
+    is masked -- KataGo's playout-cap design, where cheap plies buy game length
+    and value coverage but never policy supervision. A first pass at this fix
+    blended (d) and (e) by playout_cap_fraction into the headline, which
+    invented a corpus nothing stores and understated the target by ~9cp: the
+    very "two incomparable scales" error the rest of this file exists to stop.
+    """
+    fast_label = audit_targets._CANDIDATE_NAMES["train_fast"]
+
+    assert "NOT a policy target" in fast_label
+    assert "production training target" not in fast_label
 
 
 def test_every_profile_is_named_in_the_report_legend(
