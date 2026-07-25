@@ -887,25 +887,31 @@ class DiskReplayBuffer:
         of error entirely. The tracking check is immune to all of that and to
         the zarr version.
         """
-        with self._prefetch_lock:
-            still_tracked = sp in self._shard_paths
-        if not still_tracked:
-            self._refresh_vanished_total += 1
-            return
-
-        self._refresh_failed_total += 1
         now = time.monotonic()
-        if now - self._shard_load_warned_at < _SHARD_LOAD_WARN_INTERVAL_S:
-            return
-        self._shard_load_warned_at = now
-        # print, not log: this runs inside the Ray trial actor, whose stdout
-        # train.sh captures into the training log, while logging traffic can
-        # reach only the Ray session logs.
+  # Counters and throttle live under the lock we already need for the
+  # membership test: _refresh_shuffle_buf runs on the sampling thread while
+  # _prefetch_worker runs on its own, so both can land here at once and
+  # bare `+= 1` would drop counts and let the throttle emit twice.
+        with self._prefetch_lock:
+            if sp not in self._shard_paths:
+                self._refresh_vanished_total += 1
+                return
+            self._refresh_failed_total += 1
+            failed = self._refresh_failed_total
+            vanished = self._refresh_vanished_total
+            if now - self._shard_load_warned_at < _SHARD_LOAD_WARN_INTERVAL_S:
+                return
+            self._shard_load_warned_at = now
+
+  # Printed outside the lock -- this is I/O on a path the prefetch thread
+  # hits in bursts, and the sampling thread contends for the same lock.
+  # print, not log: this runs inside the Ray trial actor, whose stdout
+  # train.sh captures into the training log, while logging traffic can
+  # reach only the Ray session logs.
         print(
             f"[disk_buf] WARNING: {context} failed to load a TRACKED shard "
             f"{sp.name}: {type(exc).__name__}: {exc} "
-            f"(failed={self._refresh_failed_total} "
-            f"vanished={self._refresh_vanished_total} since start)",
+            f"(failed={failed} vanished={vanished} since start)",
             flush=True,
         )
 
