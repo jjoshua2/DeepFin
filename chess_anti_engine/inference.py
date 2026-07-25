@@ -2722,6 +2722,10 @@ class SharedSlotBroker:
         self._trial_streams.pop(trial_id, None)
         self._trial_shas.pop(trial_id, None)
         self._trial_manifest_sigs.pop(trial_id, None)
+      # Also the warn throttle, or a trial id re-registered within 30s would
+      # have its first no-model gap silently un-warned by the previous
+      # incarnation's timestamp (and dead ids would accumulate forever).
+        self._trial_no_model_warned_at.pop(trial_id, None)
         print(f"[shared-broker] deregistered stale trial {trial_id}", flush=True)
 
     def _scan_trials(self) -> None:

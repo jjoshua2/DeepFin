@@ -19,6 +19,7 @@ asserted the old behaviour with no stated rationale.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from pathlib import Path
@@ -133,10 +134,18 @@ def test_persistently_modelless_broker_eventually_exits(
 
 
 class _StubSlot:
-    """Only the attributes SharedSlotBroker's no-model branch touches."""
+    """Enough of a slot to drive SharedSlotBroker's no-model branch.
 
-    def __init__(self) -> None:
+    Carries sentinel policy/WDL buffers so a reintroduced zero-fill is
+    distinguishable from "left alone", which is the whole point of the test.
+    """
+
+    def __init__(self, batch_size: int = 2) -> None:
         self.state = _STATE_REQUEST
+        self.batch_size = batch_size
+        self.policy = np.full((batch_size, 8), _SENTINEL, dtype=np.float32)
+        self.wdl = np.full((batch_size, 3), _SENTINEL, dtype=np.float32)
+        self.input = np.zeros((batch_size, 4), dtype=np.float32)
 
 
 def _shared_broker_skeleton(models: dict[str, object]) -> SharedSlotBroker:
@@ -164,6 +173,39 @@ def test_shared_broker_releases_slots_for_a_trial_with_no_model() -> None:
         "a trial with no model must have its slots released, not answered"
     )
     assert all(s.state != _STATE_RESPONSE for s in slots)
+  # Untouched buffers: a reintroduced zero-fill would clear these.
+    assert all(np.allclose(s.policy, _SENTINEL) for s in slots)
+    assert all(np.allclose(s.wdl, _SENTINEL) for s in slots)
+
+
+def test_shared_broker_skips_only_the_modelless_trial() -> None:
+    """One trial without a model must not stop the others being served.
+
+    The shared broker is the multi-trial path; releasing every slot on any
+    trial's missing model would turn one trial's publish gap into a fleet-wide
+    stall.
+    """
+    class _Model:
+        pass
+
+    broker = _shared_broker_skeleton({"trial-b": _Model()})
+
+    a_slots = [_StubSlot()]
+    b_slots = [_StubSlot()]
+  # trial-b has a model, so _process_parallel packs it and runs a real forward,
+  # which fails against this dummy. That is fine and deliberate: the assertions
+  # below are about what happened BEFORE the forward -- trial-a released,
+  # trial-b not -- and trial-a is handled first, so reaching the forward at all
+  # proves the loop got past it.
+    with contextlib.suppress(Exception):
+        broker._process_parallel(
+            {"trial-a": a_slots, "trial-b": b_slots},  # pyright: ignore[reportArgumentType]
+        )
+
+    assert a_slots[0].state == _STATE_IDLE, "model-less trial must be released"
+    assert b_slots[0].state != _STATE_IDLE, (
+        "a trial WITH a model must not be released by another trial's gap"
+    )
 
 
 def test_shared_broker_no_model_warning_is_throttled() -> None:
