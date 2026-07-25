@@ -153,6 +153,46 @@ always re-dump and pair.
   content-addressed (`{prefix}_{sha}_{filename}` in `worker_assets.py`) and the
   server re-hashes fresh (`sha256_file`, deliberately not cached) — the
   manifest reload is sha-triggered, but the in-process caches are path-keyed.
+- **A RESUME can silently OVERWRITE existing checkpoints, including the one it
+  restored from (2026-07-25).** Ray names checkpoint dirs purely from
+  `StorageContext.current_checkpoint_index`. That counter is advanced in two
+  places meant to stay in lockstep — the actor's copy (`Trainable.save`) and
+  the driver's copy (`Trial.on_checkpoint`) — but only the driver's copy is
+  persisted, and only the driver's copy is skipped when `register_checkpoint`
+  raises. So the ratchet is: our `_prune_trial_checkpoints` (actor, disk glob)
+  deletes a dir Ray's manager (driver, own list) still tracks → the manager's
+  eviction calls `_delete_fs_path`, whose unguarded `_is_directory` probe
+  raises `FileNotFoundError` on the absent path → `_process_trial_save`
+  catches it at the top level, skipping `_update_checkpoint_index`,
+  `invalidate_json_state` AND `_mark_trial_to_checkpoint` → the persisted index
+  falls behind → the next restart seeds the actor with it and rewrites live
+  checkpoint dirs → the manager now holds duplicate paths, so evicting the
+  stale twin deletes a CURRENT checkpoint → more raises. **Each restart makes
+  it worse.** Live evidence: restored from `checkpoint_000250`, then wrote
+  246, 247, 248, 249, 250, 251 — five existing checkpoints replaced, including
+  the restore source. `checkpoint_000250` on disk was no longer the weights
+  that name referred to. Fixed by PR #241: eviction of an absent path is now a
+  no-op (removes the cause), and `_guard_checkpoint_index` advances a drifted
+  index past everything on disk at trial start (removes the consequence and
+  repairs an index that already drifted). **Verify after the next restart that
+  the first new checkpoint index is greater than every dir already present.**
+  Two things this was NOT, both checked and both wrong first time: the restored
+  `CheckpointConfig.num_to_keep` is **6**, matching the yaml (decoded straight
+  out of `experiment_state-*.json`), and our pruner's `keep_last` is also 6 —
+  there was no configured-vs-realized retention gap. Do not re-diagnose this
+  from the `Error handling checkpoint` line alone; decode the pickled manager.
+- **Tuner-level settings ARE still frozen at experiment birth (2026-07-25).**
+  `Tuner.restore` takes no run config, so yaml edits to anything passed to
+  `tune.Tuner(...)` are ignored on resume; `_hotpatch_scheduler_bounds` exists
+  precisely because restored PB2 bounds shadow the yaml. **Assume any
+  Tuner/RunConfig-level key is frozen unless something explicitly hotpatches
+  it**; only per-iteration trial config is live-read. For retention specifically
+  this is currently harmless — `_prune_trial_checkpoints` reads live yaml every
+  5 iterations and is the authoritative disk-retention enforcer, and Ray's
+  manager tracking more entries than exist is now a no-op rather than a raise.
+  Note patching `tuner._local_tuner._run_config.checkpoint_config` does NOT
+  reach a restored trial: each trial's `_CheckpointManager` carries its own
+  pickled `CheckpointConfig` in `run_metadata`.
 - **Readout-window sizing (2026-07-16): ~5 iterations (~3h at ~38min/iter) is
   a valid window ONLY for stability/throughput readouts** — crash/wedge
   cadence, games/h, VRAM, train_time_s — where the failure signature is fast

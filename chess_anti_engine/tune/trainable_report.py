@@ -33,27 +33,112 @@ import contextlib
 log = logging.getLogger(__name__)
 
 
+def _checkpoint_index(path: Path) -> int | None:
+    """Index N from a ``checkpoint_NNNNNN`` directory name, or None."""
+    suffix = path.name.removeprefix("checkpoint_")
+    return int(suffix) if suffix.isdigit() else None
+
+
+def _existing_checkpoint_dirs(trial_dir: Path) -> list[tuple[int, Path]]:
+    """Indexed ``checkpoint_NNNNNN`` dirs under ``trial_dir``, oldest first.
+
+    Sorted by parsed index rather than by name so the ordering stays correct if
+    the run ever crosses the six-digit width Ray pads to.
+    """
+    out: list[tuple[int, Path]] = []
+    for p in trial_dir.glob("checkpoint_*"):
+        if not p.is_dir():
+            continue
+        idx = _checkpoint_index(p)
+        if idx is not None:
+            out.append((idx, p))
+    out.sort()
+    return out
+
+
 def _prune_trial_checkpoints(*, trial_dir: Path, keep_last: int) -> None:
     """Best-effort deletion of old checkpoint_* dirs inside a Tune trial.
 
     This complements Ray's `CheckpointConfig(num_to_keep=...)`.
     In particular, it helps when resuming an older experiment whose RunConfig did
     not have checkpoint retention enabled.
+
+    Deletions are logged. This runs in the trainable actor and trims by disk
+    glob, so it cannot see Ray's checkpoint-manager list, which lives in the
+    driver -- meaning it will remove directories Ray still tracks. That is
+    tolerated (`_make_checkpoint_eviction_idempotent` keeps the resulting
+    eviction from raising), but an unlogged deleter of ~650MB directories is
+    impossible to attribute after the fact, and attributing one is exactly what
+    the 2026-07-25 checkpoint-index investigation needed.
     """
 
     keep_last = int(keep_last)
     if keep_last <= 0:
         return
 
-    ckpts = sorted(
-        [p for p in trial_dir.glob("checkpoint_*") if p.is_dir()],
-        key=lambda p: p.name,
-    )
+    ckpts = [p for _, p in _existing_checkpoint_dirs(trial_dir)]
     if len(ckpts) <= keep_last:
         return
 
     for p in ckpts[:-keep_last]:
         shutil.rmtree(p, ignore_errors=True)
+    log.info(
+        "pruned %d trial checkpoint(s) to keep_last=%d: %s",
+        len(ckpts) - keep_last,
+        keep_last,
+        ", ".join(p.name for p in ckpts[:-keep_last]),
+    )
+
+
+def _guard_checkpoint_index(*, trial_dir: Path) -> int | None:
+    """Refuse to resume onto a checkpoint index that would overwrite one on disk.
+
+    Ray derives the checkpoint directory name purely from
+    `StorageContext.current_checkpoint_index`, and that counter is advanced in
+    two places that are meant to stay in lockstep: the actor's own copy in
+    `Trainable.save`, and the driver's copy in `Trial.on_checkpoint`. Only the
+    driver's copy is persisted, and only the driver's copy is skipped when
+    `register_checkpoint` raises -- so a failed eviction leaves the persisted
+    index behind the directories that actually exist.
+
+    On the next restart the actor is seeded from that stale index and starts
+    writing over live checkpoints. Observed 2026-07-25: restored from
+    `checkpoint_000250`, then wrote 246 through 251, silently replacing five
+    existing checkpoints including the restore source itself. Nothing in Ray
+    objects to this -- `persist_current_checkpoint` overwrites whatever is at
+    the path.
+
+    `_make_checkpoint_eviction_idempotent` removes the cause; this removes the
+    consequence, and is what repairs an index that has ALREADY drifted. Returns
+    the index it advanced to, or None if it left things alone.
+    """
+    existing = _existing_checkpoint_dirs(trial_dir)
+    if not existing:
+        return None
+    highest = existing[-1][0]
+
+    try:
+        from ray.train._internal.session import get_session
+
+        storage = get_session().storage  # pyright: ignore[reportOptionalMemberAccess]
+        current = int(storage.current_checkpoint_index)
+    except Exception as exc:
+        log.warning("Could not check the checkpoint index (non-fatal): %s", exc)
+        return None
+
+  # `_update_checkpoint_index` increments BEFORE persisting, so the next
+  # directory written is `current + 1`. A collision means current < highest.
+    if current >= highest:
+        return None
+
+    storage.current_checkpoint_index = highest
+    print(
+        f"[trial] checkpoint index had drifted to {current} while "
+        f"checkpoint_{highest:06d} exists on disk; advanced to {highest} so the "
+        f"next checkpoint does not overwrite a live one",
+        flush=True,
+    )
+    return highest
 
 
 _STATUS_COLS = (
