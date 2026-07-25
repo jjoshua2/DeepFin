@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import shutil
 import time
 import traceback
@@ -280,37 +281,163 @@ def _save_trial_checkpoint(
     return Checkpoint.from_directory(str(ckpt_dir))
 
 
+def _reset_best_on_cross_trial_restore(
+    *, restore, best_loss: float, best_source: str,
+    best_dir: Path, best_state_path: Path,
+) -> tuple[float, str]:
+    """Clear best-model tracking when the weights came from another trial.
+
+    A PB2 exploit replaces the recipient's trainer with a donor checkpoint, but
+    `best.json` and `best/` are the recipient's own and are not carried in the
+    checkpoint. Keeping them would leave the record describing a lineage that
+    no longer exists -- and if that record is on the holdout scale, the donor
+    would have to beat an unrelated recipient number, using a holdout that is
+    itself empty at that moment, before the best model could ever be replaced.
+
+    The on-disk record is deleted, not merely superseded in memory. Resetting
+    only the in-memory tuple leaves `best.json` and `best/` describing the
+    discarded lineage until some later iteration happens to accept a metric --
+    and if none does, an ordinary resume after this one reloads the stale
+    record, because `cross_trial_restore` is false by then. An operator reading
+    `best/` in the meantime would see the wrong model with no indication.
+    """
+    if not getattr(restore, "cross_trial_restore", False):
+        return best_loss, best_source
+
+    print(
+        f"[trial] cross-trial restore ({getattr(restore, 'startup_source', '?')}): "
+        f"resetting best-model tracking, which held {best_loss} ({best_source}) "
+        f"from this trial's own discarded lineage",
+        flush=True,
+    )
+    best_state_path.unlink(missing_ok=True)
+    shutil.rmtree(best_dir, ignore_errors=True)
+    best_dir.mkdir(parents=True, exist_ok=True)
+  # `rmtree(ignore_errors=True)` cannot report failure, so ask the filesystem.
+    leftovers = sorted(p.name for p in best_dir.iterdir())
+    if leftovers or best_state_path.exists():
+        print(
+            f"[trial] WARN: could not fully clear the superseded best record; "
+            f"best.json exists={best_state_path.exists()} leftovers={leftovers}",
+            flush=True,
+        )
+    return float("inf"), "train_loss"
+
+
 def _update_best_model(
     *,
     trainer,
     test_metrics,
     train_metrics,
+    test_metrics_source_iter: int,
+    holdout_generation: int,
     best_loss: float,
+    best_source: str,
     best_dir: Path,
     best_state_path: Path,
     iteration_idx: int,
     opp_strength_ema: float,
-) -> float:
-    """Update best model if current loss improved. Returns updated best_loss."""
-    cur_loss = (
-        float(test_metrics.loss) if test_metrics is not None
-        else (float(train_metrics.loss) if train_metrics is not None else float("inf"))
-    )
-    if cur_loss < best_loss - 1e-12:
-        best_loss = cur_loss
-        trainer.save(best_dir / "trainer.pt")
-        trainer.export_swa(best_dir / "best_model.pt")
-        atomic_write_text(
-            best_state_path,
-            json.dumps({
-                "best_loss": float(best_loss),
-                "iter": int(iteration_idx),
-                "trainer_step": int(getattr(trainer, "step", 0)),
-                "source": "test_loss" if test_metrics is not None else "train_loss",
-                "opp_strength_ema": float(opp_strength_ema),
-            }, indent=2, sort_keys=True),
+) -> tuple[float, str]:
+    """Update best model if current loss improved. Returns (best_loss, source).
+
+    Holdout loss and training loss are DIFFERENT RULERS and must never be
+    compared to each other. Live on 2026-07-25 they sat ~0.3 nats apart --
+    train 4.88-4.94, holdout 5.14-5.25 -- because training loss is measured on
+    batches the model has just fitted.
+
+    The holdout buffer is rebuilt empty on every process start, so for the
+    first several iterations after a restart there is no holdout and
+    `test_metrics` is None. The old code then compared the LOWER training loss
+    against a `best_loss` earned on the holdout, won automatically, and pinned
+    `best_loss` to the training scale -- after which no holdout evaluation
+    could ever beat it again. Best-model tracking silently stopped responding
+    to holdout quality. `best.json` recorded `"source": "train_loss"` the whole
+    time, so the code knew the two differed; only the comparison did not.
+
+    Rules, in order:
+      * Same ruler -> ordinary improvement test.
+      * Holdout available while the record is on the training scale -> ADOPT
+        the holdout as the ruler. Not a claimed improvement, just a handover to
+        the ruler we actually trust; without it the stale training-scale number
+        locks holdout evaluation out forever.
+      * Only training loss available while the record is on the holdout scale
+        -> do nothing. The fallback ruler must never overwrite the real one.
+
+    A non-finite candidate is always rejected. The same-ruler test rejects NaN
+    on its own (`nan < x` is False), but the handover does not, and a single
+    NaN written to `best.json` would poison every later comparison against it
+    permanently, across restarts -- the record would be unbeatable by any
+    finite loss.
+
+    `holdout_generation` is recorded but deliberately NOT compared on.
+    A drift reset (`_maybe_reset_holdout_on_drift`) rebuilds the holdout from a
+    distribution that changed on purpose, so in principle two `test_loss`
+    values from different generations are different rulers too. The counter
+    cannot serve as a ruler identity yet: it is in-memory only, reset to 0 at
+    every process start and never restored, so comparing on it would force a
+    handover on every restart -- reintroducing exactly the per-restart reset
+    that PR #245 removes. Recording it makes the ambiguity auditable now and
+    is what a durable counter would key off later.
+
+    `eval_source_iter` records WHICH model the holdout number describes. With
+    `distributed_async_test_eval` (production), the holdout result collected
+    during iteration N was computed on the snapshot taken at the end of
+    iteration N-1, while `trainer` here holds N. Adoption is still correct --
+    one iteration of drift is far smaller than the ~0.3-nat ruler gap this
+    function exists to stop -- but the exported weights and the recorded loss
+    are one step apart, and that has to be legible in the artifact rather than
+    inferred later.
+    """
+    if test_metrics is not None:
+        cur_loss, cur_source = float(test_metrics.loss), "test_loss"
+    elif train_metrics is not None:
+        cur_loss, cur_source = float(train_metrics.loss), "train_loss"
+    else:
+        return best_loss, best_source
+
+    if not math.isfinite(cur_loss):
+        print(
+            f"[trial] best-model candidate from {cur_source} is {cur_loss}, "
+            f"not a finite loss; leaving the record at {best_loss:.4f} "
+            f"({best_source})",
+            flush=True,
         )
-    return best_loss
+        return best_loss, best_source
+
+    if cur_source == best_source:
+        adopt = cur_loss < best_loss - 1e-12
+    elif cur_source == "test_loss":
+        adopt = True
+        print(
+            f"[trial] best-model ruler handover: adopting holdout loss "
+            f"{cur_loss:.4f} over the training-loss record {best_loss:.4f} "
+            f"(the two are not comparable)",
+            flush=True,
+        )
+    else:
+        adopt = False
+
+    if not adopt:
+        return best_loss, best_source
+
+    trainer.save(best_dir / "trainer.pt")
+    trainer.export_swa(best_dir / "best_model.pt")
+    atomic_write_text(
+        best_state_path,
+        json.dumps({
+            "best_loss": float(cur_loss),
+            "iter": int(iteration_idx),
+            "trainer_step": int(getattr(trainer, "step", 0)),
+            "source": cur_source,
+            "eval_source_iter": (
+                int(test_metrics_source_iter) if cur_source == "test_loss"
+                else int(iteration_idx)
+            ),
+            "holdout_generation": int(holdout_generation),
+            "opp_strength_ema": float(opp_strength_ema),
+        }, indent=2, sort_keys=True),
+    )
+    return cur_loss, cur_source
 
 
 _BEST_REGRET_KEEP = 3  # Keep top-N checkpoints by lowest regret

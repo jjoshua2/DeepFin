@@ -57,6 +57,7 @@ from chess_anti_engine.tune.trainable_phases import (
 from chess_anti_engine.tune.trainable_report import (
     _guard_checkpoint_index,
     _init_status_csv,
+    _reset_best_on_cross_trial_restore,
     _save_trial_checkpoint,
     _update_best_model,
 )
@@ -80,12 +81,22 @@ def _set_log_level(config: dict) -> None:
         logging.getLogger().info("chess_anti_engine logging at DEBUG (gumbel batch-size profiling enabled)")
 
 
-def _load_best_state(best_state_path: Path) -> tuple[float, float]:
-    """Return (best_loss, opp_strength_ema) from best.json or defaults."""
+def _load_best_state(best_state_path: Path) -> tuple[float, float, str]:
+    """Return (best_loss, opp_strength_ema, best_source) from best.json.
+
+    ``best_source`` says which ruler produced ``best_loss`` -- the holdout
+    (``test_loss``) or the training batches (``train_loss``). They are not
+    comparable, so the caller needs it to avoid pitting one against the other.
+    An older best.json without the field is treated as ``train_loss``, the
+    conservative reading: it lets the first holdout evaluation take over the
+    ruler rather than being locked out by a number it cannot beat.
+    """
     d = load_optional_json(best_state_path) or {}
+    source = str(d.get("source", "train_loss"))
     return (
         float(d.get("best_loss", d.get("loss", float("inf")))),
         float(d.get("opp_strength_ema", 0.0)),
+        source if source in ("test_loss", "train_loss") else "train_loss",
     )
 
 
@@ -451,7 +462,7 @@ def train_trial(config: dict):
     best_state_path = work_dir / "best.json"
     best_dir = work_dir / "best"
     best_dir.mkdir(parents=True, exist_ok=True)
-    best_loss, opp_strength_ema = _load_best_state(best_state_path)
+    best_loss, opp_strength_ema, best_source = _load_best_state(best_state_path)
 
     trainer_ctor = trainer_kwargs_from_config(
         config | {"device": device}, log_dir=work_dir / "tb",
@@ -467,6 +478,11 @@ def train_trial(config: dict):
     restored_pid_state = restore.restored_pid_state
     global_iter = restore.global_iter
     opp_strength_ema = restore.opp_strength_ema
+
+    best_loss, best_source = _reset_best_on_cross_trial_restore(
+        restore=restore, best_loss=best_loss, best_source=best_source,
+        best_dir=best_dir, best_state_path=best_state_path,
+    )
 
   # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
     tc = TrialConfig.from_dict(config)
@@ -718,10 +734,14 @@ def train_trial(config: dict):
                 Checkpoint=Checkpoint,
             )
 
-  # Best-model tracking: prefer holdout loss when available, skip if no training yet.
-            best_loss = _update_best_model(
+  # Best-model tracking: the holdout is the ruler; training loss is only a
+  # stand-in until the holdout exists, and the two are never compared.
+            best_loss, best_source = _update_best_model(
                 trainer=trainer, test_metrics=tr.test_metrics, train_metrics=tr.metrics,
-                best_loss=best_loss, best_dir=best_dir, best_state_path=best_state_path,
+                test_metrics_source_iter=tr.test_metrics_source_iter,
+                holdout_generation=holdout_generation,
+                best_loss=best_loss, best_source=best_source,
+                best_dir=best_dir, best_state_path=best_state_path,
                 iteration_idx=iteration_idx, opp_strength_ema=opp_strength_ema,
             )
 
