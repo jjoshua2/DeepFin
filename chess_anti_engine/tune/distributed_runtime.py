@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -1083,6 +1084,84 @@ def _ensure_distributed_workers(
     return out[:want]
 
 
+def revive_dead_selfplay_processes(
+    *,
+    config: dict,
+    trial_id: str,
+    trial_dir: Path,
+    publish_dir: Path,
+    broker_proc_box: list[subprocess.Popen[bytes] | None],
+    worker_procs: list[subprocess.Popen[bytes]],
+) -> bool:
+    """Relaunch the broker and any workers that have EXITED. Returns True if any were.
+
+    Called from inside the ingest wait loop, so it must be safe to run
+    hundreds of times per iteration and must never disturb a healthy fleet.
+    Both halves therefore key strictly off ``poll() is not None`` — a process
+    that is alive but wedged is left alone, because relaunching next to it
+    would leave two brokers bound to the same slots.
+
+    Deliberately NOT ``_ensure_distributed_workers``: that function also
+    restarts workers whose launch signature no longer matches the config, and
+    the config is re-read from the live yaml every iteration. Calling it mid
+    wait-loop would let an unrelated yaml edit tear down workers with games in
+    flight — the exact waste PR #224 removed. Reviving a corpse is
+    unambiguous; re-signing a live worker is a policy decision that belongs at
+    the phase boundary where it already happens.
+    """
+    revived = False
+
+    broker = broker_proc_box[0]
+    if broker is not None and broker.poll() is not None:
+      # print AND log. This is a Ray trial actor: logging traffic often only
+      # reaches the Ray session logs, while trial stdout is what train.sh
+      # captures into /tmp/chess_training.log -- which is exactly where the
+      # pre-registered ledger yardstick greps for this string. Logging alone
+      # could let a real revive fire and still leave the yardstick reading
+      # zero forever. The rest of the fleet path already prints "[trial] ...".
+        print(
+            f"[trial] inference broker exited (code={broker.returncode}) "
+            "mid-iteration; relaunching - workers have had no inference "
+            "since it died",
+            flush=True,
+        )
+        log.warning(
+            "inference broker exited (code=%s) mid-iteration; relaunching — "
+            "workers have had no inference since it died",
+            broker.returncode,
+        )
+        broker_proc_box[0] = _ensure_inference_broker(
+            config=config,
+            trial_id=trial_id,
+            trial_dir=trial_dir,
+            publish_dir=publish_dir,
+            proc=None,
+        )
+        revived = True
+
+    for idx, proc in enumerate(worker_procs):
+        if proc.poll() is None:
+            continue
+        print(
+            f"[trial] distributed worker idx={idx} exited "
+            f"(code={proc.returncode}) mid-iteration; relaunching",
+            flush=True,
+        )
+        log.warning(
+            "distributed worker idx=%d exited (code=%s) mid-iteration; relaunching",
+            idx, proc.returncode,
+        )
+        worker_procs[idx] = _launch_distributed_worker(
+            config=config,
+            trial_dir=trial_dir,
+            trial_id=trial_id,
+            worker_index=idx,
+        )
+        revived = True
+
+    return revived
+
+
 def _empty_ingest_summary() -> dict[str, Any]:
     return {
         "matching_games": 0,
@@ -1502,6 +1581,14 @@ def _ingest_distributed_selfplay(
     prev_model_sha: str | None = None,
     prev_model_max_fraction: float = 1.0,
     prefetcher=None,
+  # REQUIRED, deliberately without a default. This wait loop can run for
+  # wait_timeout_s * 3 (8100s in production), and whether anything checks that
+  # the fleet is still alive during it is the difference between a retry and
+  # the 2026-07-24 50-minute outage. A default of None would let the single
+  # production call site drop the callback in a refactor and still run, just
+  # silently without recovery. Pass None explicitly to opt out.
+    on_poll: Callable[[], None] | None,
+    on_poll_interval_s: float = 60.0,
 ) -> dict[str, Any]:
     """Poll inbox until enough games arrive, then return.
 
@@ -1514,6 +1601,16 @@ def _ingest_distributed_selfplay(
     The timeout only fires once at least ``min_games_fraction`` of
     *target_games* have been collected.  This prevents pathologically
     thin iterations that destabilise training.
+
+    *on_poll* is invoked at most once per *on_poll_interval_s* while waiting,
+    and is where the caller revives dead selfplay processes.  It runs inside
+    the loop rather than at the phase boundary because a broker death here is
+    otherwise invisible until the whole wait times out: with zero matching
+    games the soft deadline's ``min_games`` guard can never fire, so the fleet
+    sits idle for the FULL hard ceiling of ``wait_timeout_s * 3``.  On
+    2026-07-24 that was 50 minutes of zero games from one dead process.
+    Exceptions from *on_poll* are logged and swallowed — a revive that fails
+    must not abort an ingest that is otherwise progressing.
     """
     processed_dir.mkdir(parents=True, exist_ok=True)
     target_games = max(1, int(target_games))
@@ -1554,7 +1651,29 @@ def _ingest_distributed_selfplay(
         for sp, arrs, meta in prefetcher.drain():
             _ingest(sp, preloaded=(arrs, meta))
 
+  # Due immediately, NOT one interval from now. The fleet is ensured at the
+  # phase boundary just above, but a broker can die during its own launch or
+  # in the gap before the first shard scan -- and with zero matching games the
+  # soft deadline's min_games guard can never fire, so that death costs the
+  # full hard ceiling. Waiting 60s to ask the first question is 60s of an
+  # outage we already know how to end.
+    next_poll_cb = _now
+
+    def _maybe_on_poll() -> None:
+        nonlocal next_poll_cb
+        if on_poll is None:
+            return
+        now = time.time()
+        if now < next_poll_cb:
+            return
+        next_poll_cb = now + float(on_poll_interval_s)
+        try:
+            on_poll()
+        except Exception:
+            log.exception("ingest on_poll callback failed; continuing to wait")
+
     while summary["matching_games"] < target_games:
+        _maybe_on_poll()
         _now = time.time()
         if _now >= deadline and summary["matching_games"] >= min_games:
             break
@@ -1570,6 +1689,11 @@ def _ingest_distributed_selfplay(
             continue
 
         for sp in shard_paths:
+          # Also polled here, not just at the top of the while: shard_paths is a
+          # snapshot, so a several-hundred-shard backlog at ~0.2-2s each would
+          # otherwise starve the revive for minutes. The call is a single
+          # time.time() compare when not yet due, so it costs nothing per shard.
+            _maybe_on_poll()
             _ingest(sp)
             if summary["matching_games"] >= target_games:
                 break

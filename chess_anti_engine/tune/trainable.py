@@ -493,7 +493,12 @@ def train_trial(config: dict):
         cache_dir=_resolve_shared_cache_root(config, distributed_server_root)
     )
     distributed_worker_procs: list[subprocess.Popen[bytes]] = []
-    distributed_inference_broker_proc: subprocess.Popen[bytes] | None = None
+  # Boxed, not a bare local: _run_selfplay_phase can relaunch a dead broker
+  # mid-iteration, and a returned handle would leave this scope holding a
+  # corpse if the ingest raised after the relaunch (orphaning a broker that
+  # holds VRAM and shm slots). The box makes every relaunch visible here
+  # immediately, including on the exception path into the finally below.
+    _broker_box: list[subprocess.Popen[bytes] | None] = [None]
 
     if ckpt is not None:
         _quarantine_inbox_on_resume(
@@ -533,12 +538,12 @@ def train_trial(config: dict):
         pause_reason="",
         reuse_existing_model_for_same_step=(ckpt is not None),
     )
-    distributed_inference_broker_proc = _ensure_inference_broker(
+    _broker_box[0] = _ensure_inference_broker(
         config=config,
         trial_id=trial_id,
         trial_dir=trial_dir,
         publish_dir=distributed_dirs["publish_dir"],
-        proc=distributed_inference_broker_proc,
+        proc=_broker_box[0],
     )
     distributed_worker_procs = _ensure_distributed_workers(
         config=config,
@@ -615,7 +620,7 @@ def train_trial(config: dict):
             sims = _resolve_sims(tc, trainer, max_sims=base_sims)
 
             t_selfplay_start = time.monotonic()
-            sp, prev_published_model_sha, current_window, distributed_inference_broker_proc = _run_selfplay_phase(
+            sp, prev_published_model_sha, current_window = _run_selfplay_phase(
                 tc=tc, config=config, trainer=trainer, model_cfg=model_cfg,
                 buf=buf, holdout_buf=holdout_buf,
                 holdout_frozen=holdout_frozen,
@@ -623,7 +628,7 @@ def train_trial(config: dict):
                 distributed_dirs=distributed_dirs,
                 distributed_server_root=distributed_server_root,
                 distributed_worker_procs=distributed_worker_procs,
-                distributed_inference_broker_proc=distributed_inference_broker_proc,
+                broker_proc_box=_broker_box,
                 prev_published_model_sha=prev_published_model_sha,
                 ds=ds,
                 sims=sims,
@@ -765,6 +770,6 @@ def train_trial(config: dict):
             shard_prefetcher=shard_prefetcher,
             async_test_eval=async_test_eval,
             distributed_worker_procs=distributed_worker_procs,
-            distributed_inference_broker_proc=distributed_inference_broker_proc,
+            distributed_inference_broker_proc=_broker_box[0],
             sf=sf, eval_sf=eval_sf,
         )
