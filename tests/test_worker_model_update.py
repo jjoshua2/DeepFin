@@ -1354,14 +1354,22 @@ def test_check_model_update_skips_a_reentrant_call() -> None:
 
     on_step (per ply) and the watch thread both call this; whoever holds the
     lock is already doing the identical work, and blocking would park a game
-    thread behind a model download.
+    thread behind a model download. Driven from a separate thread with a join
+    timeout so that turning the acquire back into a blocking one fails fast
+    here instead of hanging the suite.
     """
     session = _bare_worker_session()
+    called: list[int] = []
+    cast(Any, session)._check_model_update_locked = lambda: called.append(1)
+
     session._model_watch_lock.acquire()
     try:
-        called: list[int] = []
-        session._check_model_update_locked = lambda: called.append(1)  # type: ignore[method-assign]
-        session._check_model_update()
+        worker = threading.Thread(target=session._check_model_update, daemon=True)
+        worker.start()
+        worker.join(timeout=5.0)
+        assert not worker.is_alive(), (
+            "contended call blocked instead of skipping — acquire is not non-blocking"
+        )
     finally:
         session._model_watch_lock.release()
 
@@ -1442,8 +1450,8 @@ def test_model_watch_thread_survives_a_failing_iteration(caplog) -> None:
         if len(calls) == 1:
             raise RuntimeError("transient")
 
-    session._check_model_update = _flaky  # type: ignore[method-assign]
-    session._check_model_freshness = lambda: None  # type: ignore[method-assign]
+    cast(Any, session)._check_model_update = _flaky
+    cast(Any, session)._check_model_freshness = lambda: None
 
     import os as _os
 
@@ -1459,6 +1467,33 @@ def test_model_watch_thread_survives_a_failing_iteration(caplog) -> None:
 
     assert len(calls) >= 3, "watch thread stopped after the failing iteration"
     assert "model watch iteration failed" in caplog.text
+
+
+def test_model_watch_loop_also_runs_the_freshness_alarm() -> None:
+    """The alarm is the only symptom that survives every swallowed swap error.
+
+    Without this, dropping _check_model_freshness from the loop would leave the
+    unit test for the alarm itself passing while nothing ever calls it live.
+    """
+    session = _bare_worker_session()
+    session._model_watch_started = False
+    session._selfplay_session_active = True
+    freshness_calls: list[int] = []
+    cast(Any, session)._check_model_update = lambda: None
+    cast(Any, session)._check_model_freshness = lambda: freshness_calls.append(1)
+
+    import os as _os
+
+    _os.environ["CAE_WORKER_MODEL_WATCH_S"] = "0.05"
+    try:
+        session._start_model_watch_thread()
+        deadline = time.time() + 5.0
+        while not freshness_calls and time.time() < deadline:
+            time.sleep(0.02)
+    finally:
+        _os.environ.pop("CAE_WORKER_MODEL_WATCH_S", None)
+
+    assert freshness_calls, "watch loop never ran the staleness alarm"
 
 
 def test_model_watch_thread_idles_between_sessions() -> None:

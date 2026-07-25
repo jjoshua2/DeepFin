@@ -2096,6 +2096,14 @@ class WorkerSession:
         them. Workers tag shards with ``self.model_sha``; if that trails the
         published manifest the trainer counts everything we upload as stale,
         which is invisible from here without this check.
+
+        LOCAL WORKERS ONLY, deliberately: reading the published manifest off
+        disk is a source independent of every swap path, which is the whole
+        point — an HTTP re-poll would go through the same code whose failure we
+        are trying to detect. Remote workers have no local manifest and get
+        nothing here; the equivalent for them is "no successful poll in N
+        seconds", a different check worth adding when we actually run remote
+        workers (production launches all four locally off the trial dir).
         """
         manifest_path = self._resolve_local_manifest_path()
         if manifest_path is None:
