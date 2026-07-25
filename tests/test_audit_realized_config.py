@@ -21,7 +21,7 @@ def _row(
     stale: int = 0,
     views: float = 2.5,
     seeded: int = 20,
-    positions_added: int = 5000,
+    matching_positions: int = 5000,
     ingested: int = 5000,
     timestamp: float = 1_000_000.0,
     reported_s: float = 1200.0,
@@ -29,11 +29,11 @@ def _row(
 ) -> dict:
     return {
         "training_iteration": it,
-        "games_generated": games,
+        "matching_games": games,
         "selfplay_games": selfplay,
         "distributed_stale_games": stale,
         "train_views_actual": views,
-        "positions_added": positions_added,
+        "matching_positions": matching_positions,
         "replay_positions_ingested": ingested,
         "timestamp": timestamp,
         "time_this_iter_s": reported_s,
@@ -90,9 +90,9 @@ def test_frozen_fleet_needs_two_iters_to_alert() -> None:
     assert any("frozen on an old model_sha" in f for f in ar.audit_counters(twice))
 
 
-def test_positions_added_undercount_is_reported_with_its_factor() -> None:
+def test_matching_positions_undercount_is_reported_with_its_factor() -> None:
     """This ratio IS the views-denominator error factor — surface it numerically."""
-    rows = [_row(positions_added=1000, ingested=6220) for _ in range(2)]
+    rows = [_row(matching_positions=1000, ingested=6220) for _ in range(2)]
     findings = ar.audit_counters(rows)
     assert any("6.22x" in f for f in findings)
 

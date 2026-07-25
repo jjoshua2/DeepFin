@@ -765,8 +765,10 @@ class SelfplayResult:
     total_d: int = 0
     total_l: int = 0
 
-  # Game counts
-    total_games_generated: int = 0
+  # Game counts. "matching" = games whose shard model_sha is accepted for THIS
+  # iteration; stale-model games are ingested too but counted separately in
+  # distributed_stale_games. matching + stale = everything uploaded.
+    matching_games: int = 0
     total_game_plies: int = 0
     total_adjudicated_games: int = 0
     total_tb_adjudicated_games: int = 0
@@ -789,8 +791,10 @@ class SelfplayResult:
     total_plies_draw: int = 0
     total_plies_loss: int = 0
 
-  # Positions / ingest
-    total_positions: int = 0
+  # Positions / ingest. matching_positions is CURRENT-MODEL only;
+  # replay_positions_ingested is every position that entered the buffer and is
+  # the correct denominator for any per-position budget.
+    matching_positions: int = 0
     replay_positions_ingested: int = 0
     replay_window_before: int = 0
     replay_window_after: int = 0

@@ -20,7 +20,7 @@ HEALTHY = {
     "replay_pmass_gap_share": 0.0,
     "pid_ema_winrate": 0.59,
     "train_steps_used": 78,
-    "games_generated": 651,
+    "matching_games": 651,
     "distributed_stale_games": 0,
     "wdl_regret": 0.0447,
     "time_this_iter_s": 2400.0,
@@ -89,10 +89,10 @@ def test_winrate_zero_is_pid_inactive_not_airbag() -> None:
 
 
 def test_low_games_is_alert_but_note_on_restart_iter() -> None:
-    alerts, _ = _check({**HEALTHY, "games_generated": 40})
+    alerts, _ = _check({**HEALTHY, "matching_games": 40})
     assert any("selfplay collapse" in a for a in alerts)
     # Same low count on a restart iteration (stale_games>0) is benign -> NOTE.
-    alerts_r, notes_r = _check({**HEALTHY, "games_generated": 40, "distributed_stale_games": 6})
+    alerts_r, notes_r = _check({**HEALTHY, "matching_games": 40, "distributed_stale_games": 6})
     assert not any("selfplay collapse" in a for a in alerts_r)
     assert any("workers spinning up" in n for n in notes_r)
 
@@ -138,16 +138,16 @@ def test_stale_outrunning_matching_twice_running_is_an_alert() -> None:
     Ran undetected for days (2026-07-24) because each counter looked sane on
     its own — only their ratio, sustained, shows the pipeline throwing work away.
     """
-    frozen = {**HEALTHY, "games_generated": 445, "distributed_stale_games": 1661}
+    frozen = {**HEALTHY, "matching_games": 445, "distributed_stale_games": 1661}
     alerts, _ = _check(frozen, frozen)
     assert any("frozen on an old model_sha" in a for a in alerts)
 
 
 def test_stale_outrunning_matching_once_is_only_a_note() -> None:
     """One such iteration is indistinguishable from a restart — do not cry wolf."""
-    healthy_prev = {**HEALTHY, "games_generated": 445, "distributed_stale_games": 0}
+    healthy_prev = {**HEALTHY, "matching_games": 445, "distributed_stale_games": 0}
     alerts, notes = _check(
-        {**HEALTHY, "games_generated": 20, "distributed_stale_games": 1661},
+        {**HEALTHY, "matching_games": 20, "distributed_stale_games": 1661},
         healthy_prev,
     )
     assert not any("frozen on an old model_sha" in a for a in alerts)
@@ -155,7 +155,7 @@ def test_stale_outrunning_matching_once_is_only_a_note() -> None:
 
 
 def test_stale_games_below_matching_is_not_an_alert() -> None:
-    row = {**HEALTHY, "games_generated": 445, "distributed_stale_games": 40}
+    row = {**HEALTHY, "matching_games": 445, "distributed_stale_games": 40}
     alerts, _ = _check(row, row)
     assert not any("frozen on an old model_sha" in a for a in alerts)
 
@@ -164,7 +164,7 @@ def test_low_games_on_a_true_restart_iter_stays_a_note() -> None:
     """A restart strands in-flight games; matching ramps. Still benign."""
     healthy_prev = {**HEALTHY, "distributed_stale_games": 0}
     _alerts, notes = _check(
-        {**HEALTHY, "games_generated": 20, "distributed_stale_games": 15},
+        {**HEALTHY, "matching_games": 20, "distributed_stale_games": 15},
         healthy_prev,
     )
     assert any("workers spinning up" in n for n in notes)

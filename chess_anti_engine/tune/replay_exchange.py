@@ -21,6 +21,7 @@ from chess_anti_engine.tune._utils import (
     slice_array_batch,
     to_nonnegative_int,
 )
+from chess_anti_engine.tune.result_keys import row_counter
 from chess_anti_engine.utils.atomic import atomic_write_text
 import contextlib
 
@@ -104,12 +105,12 @@ def _latest_trial_snapshot(trial_dir: Path) -> dict | None:
     if metric is None:
         return None
     iter_idx = to_nonnegative_int(row.get("training_iteration", row.get("iter", -1)), default=-1)
-    positions_added = to_nonnegative_int(row.get("positions_added", 0), default=0)
+    matching_positions = row_counter(row, "matching_positions")
     return {
         "trial_dir": Path(trial_dir),
         "metric": float(metric),
         "iter": int(iter_idx),
-        "positions_added": int(positions_added),
+        "matching_positions": int(matching_positions),
     }
 
 
@@ -125,13 +126,13 @@ def _all_trial_snapshots(trial_dir: Path) -> list[dict]:
         if iter_idx < 0 or iter_idx in seen_iters:
             continue
         seen_iters.add(iter_idx)
-        positions_added = to_nonnegative_int(row.get("positions_added", 0), default=0)
+        matching_positions = row_counter(row, "matching_positions")
         snapshots.append(
             {
                 "trial_dir": Path(trial_dir),
                 "metric": float(metric),
                 "iter": int(iter_idx),
-                "positions_added": int(positions_added),
+                "matching_positions": int(matching_positions),
             }
         )
     snapshots.sort(key=lambda s: int(s["iter"]))
@@ -140,12 +141,12 @@ def _all_trial_snapshots(trial_dir: Path) -> list[dict]:
 
 def _estimate_recent_shard_count(
     *,
-    positions_added: int,
+    matching_positions: int,
     shard_size: int,
     holdout_fraction: float,
 ) -> int:
-    """Estimate shard count for the latest generation from positions_added."""
-    pa = max(0, int(positions_added))
+    """Estimate shard count for the latest generation from matching_positions."""
+    pa = max(0, int(matching_positions))
     if pa <= 0:
         return 0
     ss = max(1, int(shard_size))
@@ -231,7 +232,7 @@ def _prune_local_shards_keep_fraction(
     """Delete recipient shards while retaining keep_*_fraction slices of recent/older.
 
     Keeps at least one shard in pathological corner cases. Recent vs older is
-    decided by the recipient's last-iteration snapshot of positions_added.
+    decided by the recipient's last-iteration snapshot of matching_positions.
     """
     local_shards = iter_shard_paths(replay_shard_dir)
     summary["local_before"] = len(local_shards)
@@ -242,7 +243,7 @@ def _prune_local_shards_keep_fraction(
     recipient_recent_shards = 0
     if recipient_snap is not None:
         recipient_recent_shards = _estimate_recent_shard_count(
-            positions_added=int(recipient_snap.get("positions_added", 0)),
+            matching_positions=int(recipient_snap.get("matching_positions", 0)),
             shard_size=shard_size,
             holdout_fraction=holdout_fraction,
         )
@@ -436,7 +437,7 @@ def _collect_iter_shards(
     if source_skip_newest > 0:
         shards = shards[:-source_skip_newest] if len(shards) > source_skip_newest else []
     n_recent = _estimate_recent_shard_count(
-        positions_added=int(unseen_snap.get("positions_added", 0)),
+        matching_positions=int(unseen_snap.get("matching_positions", 0)),
         shard_size=shard_size,
         holdout_fraction=holdout_fraction,
     )

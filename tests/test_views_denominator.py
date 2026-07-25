@@ -21,7 +21,7 @@ BATCH = 512
 
 def _budget(positions: int, views: float) -> dict[str, int]:
     return _compute_train_step_budget(
-        positions_added=positions,
+        positions_ingested=positions,
         imported_samples=0,
         replay_size=1_500_000,
         batch_size=BATCH,
@@ -87,7 +87,7 @@ def test_views_mode_off_falls_back_to_window_fraction() -> None:
     """0 disables views mode; the window-fraction path must still work."""
     steps = _budget(INGESTED, 0.0)["steps"]
     assert steps == _compute_train_step_budget(
-        positions_added=INGESTED, imported_samples=0, replay_size=1_500_000,
+        positions_ingested=INGESTED, imported_samples=0, replay_size=1_500_000,
         batch_size=BATCH, accum_steps=1, base_max_steps=800,
         train_window_fraction=0.04, train_views_per_ingested_position=0.0,
     )["steps"]

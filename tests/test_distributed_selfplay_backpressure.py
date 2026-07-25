@@ -371,8 +371,8 @@ def test_iteration_pause_metrics_zero_when_not_paused() -> None:
 
 
 def test_distributed_iteration_retries_without_fresh_games() -> None:
-    assert _should_retry_iteration_without_games(total_games_generated=0)
-    assert not _should_retry_iteration_without_games(total_games_generated=1)
+    assert _should_retry_iteration_without_games(matching_games=0)
+    assert not _should_retry_iteration_without_games(matching_games=1)
 
 
 def test_selfplay_winrate_raw_is_none_without_games() -> None:
@@ -461,7 +461,7 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
     assert summary["stale_positions"] == 120_000
 
     budget = _compute_train_step_budget(
-        positions_added=int(summary["matching_positions"]),
+        positions_ingested=int(summary["matching_positions"]),
         imported_samples=0,
         replay_size=50_000,
         batch_size=256,
@@ -477,7 +477,7 @@ def test_train_step_budget_views_targeting_overrides_window_fraction() -> None:
     """train_views_per_ingested_position holds samples/ingest fixed instead of tracking
     the window: budget = views * fresh positions, NOT fraction * replay_size."""
     budget = _compute_train_step_budget(
-        positions_added=12_000,
+        positions_ingested=12_000,
         imported_samples=0,
         replay_size=1_000_000,
         batch_size=512,
@@ -497,7 +497,7 @@ def test_train_step_budget_views_targeting_scales_with_ingest() -> None:
     same views target: the reuse ratio stays invariant."""
     def budget_for(positions_added: int) -> dict[str, int]:
         return _compute_train_step_budget(
-            positions_added=positions_added,
+            positions_ingested=positions_added,
             imported_samples=0, replay_size=1_000_000, batch_size=512,
             accum_steps=1, base_max_steps=10_000, train_window_fraction=0.04,
             train_views_per_ingested_position=2.5,
@@ -514,7 +514,7 @@ def test_train_step_budget_views_targeting_is_not_capped_by_base_max_steps() -> 
     when ingest grows. The budget is proportional to fresh ingest, so it is
     self-limiting."""
     budget = _compute_train_step_budget(
-        positions_added=200_000,   # > 800*512/2.5 = 163_840 fresh rows
+        positions_ingested=200_000,   # > 800*512/2.5 = 163_840 fresh rows
         imported_samples=0,
         replay_size=1_000_000,
         batch_size=512,
@@ -529,7 +529,7 @@ def test_train_step_budget_views_targeting_is_not_capped_by_base_max_steps() -> 
 
 def test_train_step_budget_views_zero_keeps_window_fraction_behavior() -> None:
     budget = _compute_train_step_budget(
-        positions_added=2_000,
+        positions_ingested=2_000,
         imported_samples=0,
         replay_size=50_000,
         batch_size=256,
@@ -679,7 +679,7 @@ def test_train_step_budget_views_drought_falls_back_to_window_floor() -> None:
     ~1 step: the window-fraction floor the pre-views budget guaranteed kicks
     back in."""
     budget = _compute_train_step_budget(
-        positions_added=100,
+        positions_ingested=100,
         imported_samples=0,
         replay_size=1_000_000,
         batch_size=512,
@@ -696,7 +696,7 @@ def test_train_step_budget_views_counts_imported_samples_at_one_view() -> None:
     """Imported (shared/donor) samples are re-used history: they get exactly
     one pass, like the pre-views budget gave them — not views x the import."""
     budget = _compute_train_step_budget(
-        positions_added=12_000,
+        positions_ingested=12_000,
         imported_samples=400_000,
         replay_size=1_000_000,
         batch_size=512,
@@ -715,7 +715,7 @@ def test_train_step_budget_views_drought_fallback_respects_step_cap() -> None:
     window fraction, so it must also take the window-fraction step cap —
     views mode's cap bypass is only for the proportional (fresh-driven) path."""
     budget = _compute_train_step_budget(
-        positions_added=100,
+        positions_ingested=100,
         imported_samples=0,
         replay_size=1_000_000,
         batch_size=512,

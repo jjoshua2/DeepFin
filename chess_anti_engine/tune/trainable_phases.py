@@ -317,8 +317,10 @@ def _run_training_and_gating(
             # The replay-reuse denominator must be what actually entered the
             # buffer, NOT matching_positions. Stale-model shards are ingested
             # too (_process_shard calls _ingest_train_arrays before the
-            # model_sha check) and outnumber matching ones 4.5-6.5x.
-            positions_added=int(positions_ingested),
+            # model_sha check) and outnumber matching ones 4.5-6.5x. The
+            # parameter is now named for what it must receive, so passing the
+            # matching-only count would read as obviously wrong at the callsite.
+            positions_ingested=int(positions_ingested),
             imported_samples=int(imported_samples_this_iter),
             replay_size=len(buf),
             batch_size=int(batch_size),
@@ -403,7 +405,7 @@ def _run_pid_and_eval(
     total_l = sp_result.total_l
 
   # --- Derived game stats ---
-    gen = float(max(1, int(sp_result.total_games_generated)))
+    gen = float(max(1, int(sp_result.matching_games)))
     sp = float(max(1, int(sp_result.total_selfplay_games)))
     cur = float(max(1, int(sp_result.total_curriculum_games)))
 
@@ -755,7 +757,7 @@ def _run_selfplay_phase(
     total_w = int(ingest_summary["matching_w"])
     total_d = int(ingest_summary["matching_d"])
     total_l = int(ingest_summary["matching_l"])
-    total_games_generated = int(ingest_summary["matching_games"])
+    matching_games = int(ingest_summary["matching_games"])
     total_game_plies = int(ingest_summary["matching_total_game_plies"])
     total_adjudicated_games = int(ingest_summary["matching_adjudicated_games"])
     total_tb_adjudicated_games = int(ingest_summary.get("matching_tb_adjudicated_games", 0))
@@ -766,7 +768,7 @@ def _run_selfplay_phase(
     total_curriculum_games = int(ingest_summary["matching_curriculum_games"])
     total_curriculum_adjudicated_games = int(ingest_summary["matching_curriculum_adjudicated_games"])
     total_curriculum_draw_games = int(ingest_summary["matching_curriculum_draw_games"])
-    total_positions = int(ingest_summary["matching_positions"])
+    matching_positions = int(ingest_summary["matching_positions"])
     total_plies_win = int(ingest_summary.get("matching_plies_win", 0))
     total_plies_draw = int(ingest_summary.get("matching_plies_draw", 0))
     total_plies_loss = int(ingest_summary.get("matching_plies_loss", 0))
@@ -788,7 +790,7 @@ def _run_selfplay_phase(
     ingest_ms = (time.monotonic() - ingest_t0) * 1000.0
 
   # --- Retry if distributed returned no games ---
-    if _should_retry_iteration_without_games(total_games_generated=total_games_generated):
+    if _should_retry_iteration_without_games(matching_games=matching_games):
         print(
             "[trial] distributed iteration waiting for fresh selfplay: "
             f"trial={trial_id} iter={iteration_idx} replay={len(buf)} "
@@ -835,7 +837,7 @@ def _run_selfplay_phase(
 
     sp = SelfplayResult(
         total_w=total_w, total_d=total_d, total_l=total_l,
-        total_games_generated=total_games_generated,
+        matching_games=matching_games,
         total_game_plies=total_game_plies,
         total_adjudicated_games=total_adjudicated_games,
         total_tb_adjudicated_games=total_tb_adjudicated_games,
@@ -851,7 +853,7 @@ def _run_selfplay_phase(
         total_plies_win=total_plies_win,
         total_plies_draw=total_plies_draw,
         total_plies_loss=total_plies_loss,
-        total_positions=total_positions,
+        matching_positions=matching_positions,
         replay_positions_ingested=replay_positions_ingested,
         replay_window_before=replay_window_before,
         replay_window_after=int(current_window),

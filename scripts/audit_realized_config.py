@@ -4,7 +4,7 @@ Every bug this exists to catch has the same shape: a number in the yaml that
 is not the number the pipeline produced, with nothing anywhere asserting the
 two agree. Four of them shipped to production undetected:
 
-  - `train_views_per_position` 2.5 divided by `matching_positions` while 4.5-6.5x
+  - `train_views_per_position` 2.5 divided by matching-only positions while 4.5-6.5x
     more positions were ingested, so TRUE reuse was ~0.46 and over half of all
     data was never trained on once (fixed 2026-07-24, PR #225).
   - `selfplay_fraction` 0.35 against a realized completed-game mix of 83.5%,
@@ -34,6 +34,7 @@ import sys
 from pathlib import Path
 from collections.abc import Callable
 
+from chess_anti_engine.tune.result_keys import row_counter, row_counter_opt
 from scripts.loop_health import load_rows, parse_outcome_stats
 from scripts.trial_paths import latest_result_path
 
@@ -74,7 +75,7 @@ def _ratio(num: float | None, den: float | None) -> float | None:
 
 
 def _selfplay_share(row: dict, _stats: dict) -> float | None:
-    return _ratio(row.get("selfplay_games"), row.get("games_generated"))
+    return _ratio(row.get("selfplay_games"), row_counter_opt(row, "matching_games"))
 
 
 def _views(row: dict, _stats: dict) -> float | None:
@@ -86,7 +87,7 @@ def _seeded_share_of_selfplay(row: dict, stats: dict) -> float | None:
     """Seeded selfplay games / selfplay games — what the dole cap actually caps.
 
     The cap is deliberately a share of SELFPLAY, not of all games, so the
-    denominator here must be selfplay_games and not games_generated.
+    denominator here must be selfplay_games and not matching_games.
     """
     seeded = int(stats.get("selfplay_fenlist_games", 0)) + int(
         stats.get("selfplay_fenlist_sf_refute_games", 0)
@@ -99,7 +100,7 @@ _KNOBS: tuple[Knob, ...] = (
         "selfplay share of completed games",
         "selfplay_fraction",
         _selfplay_share,
-        note="realized = selfplay_games / games_generated (COMPLETED, not slots)",
+        note="realized = selfplay_games / matching_games (COMPLETED, not slots)",
     ),
     Knob(
         "replay views per ingested position",
@@ -176,30 +177,30 @@ def audit_counters(rows: list[dict]) -> list[str]:
     print("=== counter cross-checks ===")
 
     stale = [float(r.get("distributed_stale_games") or 0) for r in rows]
-    games = [float(r.get("games_generated") or 0) for r in rows]
+    games = [float(row_counter(r, "matching_games")) for r in rows]
     frozen = [s > g > 0 for s, g in zip(stale, games, strict=True)]
     n_frozen = sum(frozen)
-    print(f"  stale_games > games_generated on {n_frozen}/{len(rows)} iters")
-    print("      games_generated counts MATCHING games only; a frozen worker fleet "
+    print(f"  stale_games > matching_games on {n_frozen}/{len(rows)} iters")
+    print("      matching_games counts CURRENT-MODEL games only; a frozen worker fleet "
           "outproduces it")
     if n_frozen >= 2:
         findings.append(
-            f"stale_games exceeded games_generated on {n_frozen}/{len(rows)} iters — "
+            f"stale_games exceeded matching_games on {n_frozen}/{len(rows)} iters — "
             "workers frozen on an old model_sha; most selfplay is being discarded"
         )
 
-    # positions_added is matching-only; replay_positions_ingested is the truth.
+    # matching_positions is current-model only; replay_positions_ingested is the truth.
     ratios = [r for r in (_ratio(row.get("replay_positions_ingested"),
-                                 row.get("positions_added")) for row in rows)
+                                 row_counter_opt(row, "matching_positions")) for row in rows)
               if r is not None]
     med = _median(ratios)
     if med is not None:
-        print(f"  replay_positions_ingested / positions_added = {med:.2f} (median)")
-        print("      positions_added is MATCHING-only. This ratio IS the views-denominator "
-              "error factor: any per-position budget keyed off positions_added is off by it")
+        print(f"  replay_positions_ingested / matching_positions = {med:.2f} (median)")
+        print("      matching_positions is CURRENT-MODEL only. This ratio IS the views-denominator "
+              "error factor: any per-position budget keyed off matching_positions is off by it")
         if med > 1.0 + _DEFAULT_TOL:
             findings.append(
-                f"positions_added undercounts true ingest by {med:.2f}x — verify no budget "
+                f"matching_positions undercounts true ingest by {med:.2f}x — verify no budget "
                 "divides by it (this was the views bug, PR #225)"
             )
     return findings
