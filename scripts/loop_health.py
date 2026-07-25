@@ -84,7 +84,23 @@ def check_row(
 
     stale = row.get("distributed_stale_games")
     stale_n = int(stale) if stale is not None else 0
-    is_restart_iter = stale_n > 0
+    games = row.get("games_generated")
+    games_n = int(games) if games is not None else 0
+    # "Stale" used to be treated as PROOF of a restart, which is why a frozen
+    # worker fleet hid here for days (2026-07-24): every iteration looked like
+    # a restart and got the benign reading.
+    #
+    # A single iteration cannot tell the two apart — a real restart also strands
+    # in-flight games under the previous sha while matching is still ramping.
+    # What separates them is PERSISTENCE: a restart is one-off, whereas workers
+    # pinned to an old model_sha keep outproducing the matching count every
+    # iteration. So stale>matching twice running is the alert; once is a note.
+    stale_outruns = stale_n > 0 and games_n > 0 and stale_n > games_n
+    prev_stale = int(prev.get("distributed_stale_games") or 0) if prev else 0
+    prev_games = int(prev.get("games_generated") or 0) if prev else 0
+    prev_outruns = prev_stale > 0 and prev_games > 0 and prev_stale > prev_games
+    workers_frozen = stale_outruns and prev_outruns
+    is_restart_iter = stale_n > 0 and not workers_frozen
 
     # Value-only-row inflow. Guarded on actual ingest AND on a strictly-positive
     # frac: the producer emits exactly 0.0 both for an empty has_policy
@@ -116,21 +132,31 @@ def check_row(
         alerts.append(f"pid_ema_winrate={float(wr):.3f} <0.35 — airbag territory / weak opponent")
     if steps_zero_streak >= 2:
         alerts.append(f"train_steps_used=0 for {steps_zero_streak} consecutive iters — ingest drought")
-    games = row.get("games_generated")
-    if games is not None and int(games) < 100:
+    if games is not None and games_n < 100:
         # Workers are still spinning up on the first post-restart iteration, so a
         # low count there is benign (the tool's own stale-games NOTE) — demote.
         if is_restart_iter:
-            notes.append(f"games_generated={int(games)} <100 on a restart iter — "
+            notes.append(f"games_generated={games_n} <100 on a restart iter — "
                          "benign (workers spinning up)")
         else:
-            alerts.append(f"games_generated={int(games)} <100 — selfplay collapse")
+            alerts.append(f"games_generated={games_n} <100 — selfplay collapse")
 
     if wr is not None and float(wr) > 0.75:
         notes.append(f"pid_ema_winrate={float(wr):.3f} >0.75 — likely benign "
                      "(post-restart spike / difficulty miscalibration), not airbag")
     if is_restart_iter:
         notes.append(f"stale_games={stale_n} — expect a benign winrate spike (restart artifact)")
+    if workers_frozen:
+        alerts.append(
+            f"stale_games={stale_n} > games_generated={games_n} for 2+ iters — "
+            "workers frozen on an old model_sha; most selfplay is being "
+            "discarded (check worker logs for 'model tag STALE')"
+        )
+    elif stale_outruns:
+        notes.append(
+            f"stale_games={stale_n} > games_generated={games_n} — benign if this "
+            "follows a restart; an alert if it repeats next iteration"
+        )
     if prev is not None:
         r0, r1 = prev.get("wdl_regret"), row.get("wdl_regret")
         if r0 is not None and r1 is not None and float(r0) > 0.0 and float(r1) > 1.4 * float(r0):

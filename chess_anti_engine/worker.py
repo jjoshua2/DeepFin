@@ -115,6 +115,12 @@ class _MissingRequiredReco(RuntimeError):
 _MANIFEST_STATE_ACTIVE = "active"
 _MANIFEST_STATE_PAUSED = "paused_selfplay"
 
+# How long our shard tag may trail the published model before we alarm. Must
+# clear a normal swap (poll + download + compile of a ~250MB checkpoint) so a
+# healthy publish never trips it, while staying far under one training
+# iteration — the window in which stale uploads still cost a whole iteration.
+_MODEL_STALE_ALARM_S = 180.0
+
 
 def _require_compact_policy_encoding(raw: object) -> str:
     """Reject az_4672 as a recording encoding (stale/legacy server manifest).
@@ -885,6 +891,14 @@ class WorkerSession:
         self._selfplay_session_active = False
         self._stall_watchdog_started = False
         self._gil_probe = GilContentionProbe(interval_s=0.010)
+  # Model-freshness watch: a dedicated daemon thread owns manifest polling so
+  # model freshness never depends on any selfplay thread staying alive (see
+  # _start_model_watch_thread). The lock keeps it from running concurrently
+  # with the per-ply on_step call; _model_stale_since_s drives the alarm.
+        self._model_watch_started = False
+        self._model_watch_lock = threading.Lock()
+        self._model_stale_since_s: float | None = None
+        self._model_stale_alarmed = False
   # Manifest-watch state (lazy-init in _check_model_update via getattr fallback).
         self._manifest_path: Path | None = None
         self._manifest_mtime: float | None = None
@@ -1725,7 +1739,23 @@ class WorkerSession:
         1. Every 30s: re-poll manifest for task/pause changes (sets _stop_selfplay)
         2. Every call: stat() the local manifest file mtime (~1µs)
         3. Only if mtime changed: read manifest, download model, swap
+
+        Runs from two callers — play_batch's per-ply ``on_step`` (sub-second
+        swap latency) and the model-watch thread (liveness floor). Neither may
+        run while the other is mid-swap, so a contended call is SKIPPED rather
+        than queued: whichever caller holds the lock is already doing this
+        exact work, and blocking here would park a selfplay thread behind a
+        network download.
         """
+        if not self._model_watch_lock.acquire(blocking=False):
+            return
+        try:
+            self._check_model_update_locked()
+        finally:
+            self._model_watch_lock.release()
+
+    def _check_model_update_locked(self) -> None:
+        """Body of _check_model_update; caller holds _model_watch_lock."""
         _now = time.time()
         if _now - self._last_manifest_poll_s > 30.0:
             self._last_manifest_poll_s = _now
@@ -2004,6 +2034,106 @@ class WorkerSession:
         threading.Thread(
             target=_loop, name="selfplay-stall-watchdog", daemon=True,
         ).start()
+
+    def _start_model_watch_thread(self) -> None:
+        """Own manifest polling and model swaps on a dedicated daemon thread.
+
+        Model freshness is a worker-GLOBAL invariant, but it used to be driven
+        only by play_batch's ``on_step`` hook, which the threaded selfplay path
+        wires to selfplay thread 0 alone. Threads are submitted to a pool and
+        joined via ``future.result()`` only at session end — which in continuous
+        mode never arrives — so if that one thread died or parked, the hook went
+        with it, silently: the other 31 threads kept playing and uploading, every
+        shard tagged with a frozen ``model_sha``, and the trainer counted all of
+        it stale. Observed 2026-07-24: all four workers frozen on one sha for 80+
+        minutes, ~75% of selfplay excluded from the iteration for days before
+        that (one worker's per-iteration session restart was accidentally
+        masking it).
+
+        This thread does the same work on a fixed cadence and cannot be taken
+        down by a selfplay thread, so the worst case is a slow swap, never a
+        permanently stale one.
+        """
+        if self._model_watch_started:
+            return
+        raw = os.environ.get("CAE_WORKER_MODEL_WATCH_S", "5").strip()
+        try:
+            poll_s = float(raw)
+        except ValueError:
+            poll_s = 5.0
+        if poll_s <= 0.0:
+            return
+        self._model_watch_started = True
+
+        def _loop() -> None:
+            while True:
+                time.sleep(poll_s)
+                if not self._selfplay_session_active:
+                    # Between sessions the outer run() loop owns the manifest;
+                    # a concurrent swap here would race its session setup.
+                    continue
+                try:
+                    self._check_model_update()
+                    self._check_model_freshness()
+                except Exception as exc:
+                    # Never let a transient failure kill the watch thread —
+                    # that would recreate the exact single-point-of-failure
+                    # this thread exists to remove.
+                    self.log.warning(
+                        "model watch iteration failed (retrying in %.0fs): %s",
+                        poll_s, exc, exc_info=True,
+                    )
+
+        threading.Thread(
+            target=_loop, name="model-watch", daemon=True,
+        ).start()
+
+    def _check_model_freshness(self) -> None:
+        """Alarm when our shard tag has lagged the published model too long.
+
+        The swap paths are best-effort and swallow their errors, so "we are
+        still on the old sha" is the only symptom that survives every one of
+        them. Workers tag shards with ``self.model_sha``; if that trails the
+        published manifest the trainer counts everything we upload as stale,
+        which is invisible from here without this check.
+
+        LOCAL WORKERS ONLY, deliberately: reading the published manifest off
+        disk is a source independent of every swap path, which is the whole
+        point — an HTTP re-poll would go through the same code whose failure we
+        are trying to detect. Remote workers have no local manifest and get
+        nothing here; the equivalent for them is "no successful poll in N
+        seconds", a different check worth adding when we actually run remote
+        workers (production launches all four locally off the trial dir).
+        """
+        manifest_path = self._resolve_local_manifest_path()
+        if manifest_path is None:
+            return
+        try:
+            published = str(
+                json.loads(manifest_path.read_text(encoding="utf-8"))
+                .get("model", {}).get("sha256", "")
+            )
+        except Exception:
+            return
+        if not published or published == self.model_sha:
+            self._model_stale_since_s = None
+            self._model_stale_alarmed = False
+            return
+        now = time.time()
+        if self._model_stale_since_s is None:
+            self._model_stale_since_s = now
+            return
+        stale_s = now - float(self._model_stale_since_s)
+        if stale_s < _MODEL_STALE_ALARM_S or self._model_stale_alarmed:
+            return
+        # Latched: one loud line per stale episode, not one per poll.
+        self._model_stale_alarmed = True
+        self.log.error(
+            "model tag STALE for %.0fs: uploading shards as sha=%s while the "
+            "server publishes sha=%s — the trainer is counting our games as "
+            "stale. Model swap is wedged; restart this worker if it persists.",
+            stale_s, str(self.model_sha)[:8], published[:8],
+        )
 
     def _maybe_log_selfplay_phase_stats(self, elapsed_s: float) -> None:
         phases = (
@@ -3059,12 +3189,25 @@ class WorkerSession:
         seeds = [int(self.rng.integers(2**63)) for _ in range(n_threads)]
 
         def _run_one_thread(tid):
+            try:
+                return _play_one_thread(tid)
+            except BaseException:
+                # Futures are joined only at session end, which in continuous
+                # mode never arrives — so without this, a thread's death is
+                # invisible for the life of the session and the batch quietly
+                # runs short-handed. Log at the point of failure instead.
+                self.log.exception("selfplay thread %d died", tid)
+                raise
+
+        def _play_one_thread(tid):
             return play_batch(
                 None, device=str(self.device), rng=np.random.default_rng(seeds[tid]),
                 stockfish=sf, evaluator=eval_,
                 games=thread_games[tid],
                 on_game_complete=self._on_completed_game,
                 on_timing=self._record_selfplay_phase_timing,
+                # Sub-second swap latency while this thread lives; the
+                # model-watch thread is the liveness floor if it does not.
                 on_step=self._check_model_update if tid == 0 else None,
                 on_state_ready=self._register_live_state,
                 stop_fn=self._stop_fn,
@@ -3234,6 +3377,7 @@ class WorkerSession:
         self._note_selfplay_progress()
         self._selfplay_session_active = True
         self._start_selfplay_stall_watchdog()
+        self._start_model_watch_thread()
         n_dole = len(fen_dole_queue)
         n_refute = len(fen_sf_refute_queue)
         self.log.info(
