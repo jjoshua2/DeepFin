@@ -1564,7 +1564,13 @@ def _ingest_distributed_selfplay(
     prev_model_sha: str | None = None,
     prev_model_max_fraction: float = 1.0,
     prefetcher=None,
-    on_poll: Callable[[], None] | None = None,
+  # REQUIRED, deliberately without a default. This wait loop can run for
+  # wait_timeout_s * 3 (8100s in production), and whether anything checks that
+  # the fleet is still alive during it is the difference between a retry and
+  # the 2026-07-24 50-minute outage. A default of None would let the single
+  # production call site drop the callback in a refactor and still run, just
+  # silently without recovery. Pass None explicitly to opt out.
+    on_poll: Callable[[], None] | None,
     on_poll_interval_s: float = 60.0,
 ) -> dict[str, Any]:
     """Poll inbox until enough games arrive, then return.

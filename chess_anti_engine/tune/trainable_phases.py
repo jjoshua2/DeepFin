@@ -672,7 +672,7 @@ def _run_selfplay_phase(
     distributed_dirs: dict,
     distributed_server_root: Path,
     distributed_worker_procs: list,
-    distributed_inference_broker_proc,
+    broker_proc_box: list[subprocess.Popen[bytes] | None],
     prev_published_model_sha: str,
     ds: DifficultyState,
     sims: int,
@@ -686,12 +686,16 @@ def _run_selfplay_phase(
     in_salvage_startup_grace: bool,
     prefetcher=None,
     reuse_existing_model_for_same_step: bool = False,
-) -> tuple[SelfplayResult, str, int, subprocess.Popen[bytes] | None]:
+) -> tuple[SelfplayResult, str, int]:
     """Run distributed selfplay, ingest, export shards, grow window, cross-trial share.
 
-    Mutates *buf*, *holdout_buf*, *distributed_worker_procs* in place.
-    Returns ``(sp_result, prev_published_model_sha, current_window,
-    distributed_inference_broker_proc)``.
+    Mutates *buf*, *holdout_buf*, *distributed_worker_procs* and
+    *broker_proc_box* in place. Returns
+    ``(sp_result, prev_published_model_sha, current_window)``.
+
+    The broker handle is returned via *broker_proc_box* rather than the tuple
+    so the caller observes a mid-iteration relaunch even if this function
+    raises afterwards; see the box comment below.
     """
     total_games = _games_per_iter_for_iteration(tc, iteration_idx)
 
@@ -719,29 +723,35 @@ def _run_selfplay_phase(
         pause_reason="",
         reuse_existing_model_for_same_step=bool(reuse_existing_model_for_same_step),
     )
-    distributed_inference_broker_proc = _ensure_inference_broker(
+    broker_proc_box[0] = _ensure_inference_broker(
         config=config,
         trial_id=trial_id,
         trial_dir=trial_dir,
         publish_dir=distributed_dirs["publish_dir"],
-        proc=distributed_inference_broker_proc,
+        proc=broker_proc_box[0],
     )
     _shards_before_ingest = set(buf._shard_paths)
 
   # Ensuring the fleet only here, at the phase boundary, is what turned the
   # 2026-07-24 broker crash into a 50-minute outage: the wait loop below can
   # run for wait_timeout_s * 3 with nothing checking whether anything is still
-  # alive to produce games. Box the handle so the in-loop revive can hand back
-  # a new process without this function losing track of it.
-    _broker_box: list[subprocess.Popen[bytes] | None] = [distributed_inference_broker_proc]
-
+  # alive to produce games.
+  #
+  # The handle lives in a box OWNED BY THE CALLER rather than being returned.
+  # Returning it meant every relaunch had a window where the caller still held
+  # a dead handle: if the ingest raised after a revive, the exception unwound
+  # past the readback, _cleanup_trial_resources stopped the corpse, and the
+  # revived broker was orphaned holding VRAM and its shm slots. A `finally`
+  # could not have fixed that, because the value travelled by return. With the
+  # box, the caller sees every relaunch the instant it happens, on every path
+  # including exceptions.
     def _revive_fleet() -> None:
         revive_dead_selfplay_processes(
             config=config,
             trial_id=trial_id,
             trial_dir=trial_dir,
             publish_dir=distributed_dirs["publish_dir"],
-            broker_proc_box=_broker_box,
+            broker_proc_box=broker_proc_box,
             worker_procs=distributed_worker_procs,
         )
 
@@ -763,7 +773,6 @@ def _run_selfplay_phase(
         prefetcher=prefetcher,
         on_poll=_revive_fleet,
     )
-    distributed_inference_broker_proc = _broker_box[0]
 
     buf.flush()
     _new_selfplay_shards = [p for p in buf._shard_paths if p not in _shards_before_ingest]
@@ -821,7 +830,6 @@ def _run_selfplay_phase(
             SelfplayResult(should_retry=True, ingest_ms=ingest_ms),
             prev_published_model_sha,
             current_window,
-            distributed_inference_broker_proc,
         )
 
     _export_selfplay_shards_for_siblings(
@@ -890,7 +898,7 @@ def _run_selfplay_phase(
         imported_samples_this_iter=imported_samples_this_iter,
         ingest_ms=ingest_ms,
     )
-    return sp, prev_published_model_sha, current_window, distributed_inference_broker_proc
+    return sp, prev_published_model_sha, current_window
 
 
 def _finalize_iteration(

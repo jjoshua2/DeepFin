@@ -453,6 +453,7 @@ def test_distributed_ingest_counts_stale_and_matching_positions_separately(
     holdout = ArrayReplayBuffer(32, rng=np.random.default_rng(1))
 
     summary = _ingest_distributed_selfplay(
+        on_poll=None,
         buf=buf,
         holdout_buf=holdout,
         holdout_frac=0.0,
@@ -601,6 +602,7 @@ def test_distributed_ingest_timeout_does_not_wait_for_empty_inbox_after_prev_cap
         wait_timeout_s=-1.0,
         poll_seconds=0.01,
         rng=np.random.default_rng(2),
+        on_poll=None,
         min_games_fraction=0.2,
         prefetcher=_Prefetcher(),
     )
@@ -644,6 +646,7 @@ def test_prefetched_shard_missing_from_inbox_is_not_reingested(tmp_path: Path) -
         wait_timeout_s=-1.0,
         poll_seconds=0.01,
         rng=np.random.default_rng(2),
+        on_poll=None,
         min_games_fraction=1.0,
         prefetcher=_Prefetcher(),
     )
