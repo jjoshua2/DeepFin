@@ -147,6 +147,25 @@ always re-dump and pair.
   PR #242 (protect what the kept state files actually reference; fail safe to
   keeping everything if one cannot be parsed). **Before any `--fresh` start,
   confirm the dry-run keeps what you expect** — the check is in the PR body.
+- **`get_trial_dir()` is NOT durable — every startup read of a trial sidecar
+  resolved to "missing" (2026-07-25).** `ray.train.get_context().get_trial_dir()`
+  returns the per-Ray-session driver staging dir
+  (`/tmp/ray/session_<id>/artifacts/<ts>/tune/driver_artifacts/<trial>`). Ray
+  syncs it UP to `runs/<exp>/tune/<trial>/` and **never syncs it back DOWN**,
+  and every restart opens a new Ray session, so the dir the trial reads at
+  startup is always empty. Reads failed silently because "sidecar absent" is
+  also the legitimate first-run case. Evidence: **68 per-session staging dirs
+  for trial `4c17c`, each with its own `best.json` holding only that session's
+  minimum**, and **33 of 33 post-restart `result.json` rows set `best_loss`
+  exactly equal to that row's `train_loss`** — i.e. re-seeded from `inf` every
+  time. So `best/best_model.pt` meant "best since the last restart", never
+  "best ever", and 19 of those re-seeds were *upward*. Fixed in PR #245 by
+  anchoring reloaded state to `StorageContext.trial_fs_path`.
+  **Do not read a trial sidecar from `get_trial_dir()` if the next process has
+  to see it** — `_resolve_pause_marker_paths` had already found this for pause
+  markers and the lesson was never carried across. Diagnose it by listing
+  `/tmp/ray/session_*/artifacts/*/tune/driver_artifacts/<trial>/`: one copy per
+  session means the state is per-session.
 - **`opening_fen_list_path` is a CHAIN, and rolling it back silently
   UN-RETIRES seeds (2026-07-25).** `scripts/blindspot_retire_step.py` re-scores
   the seed list the live yaml currently points at, writes
