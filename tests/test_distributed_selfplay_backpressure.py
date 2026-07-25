@@ -393,7 +393,17 @@ def test_manifest_poll_headers_include_worker_state() -> None:
     assert headers["X-CAE-Worker-State-Elapsed-S"] == "1.5"
 
 
-def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp_path: Path) -> None:
+def test_distributed_ingest_counts_stale_and_matching_positions_separately(
+    tmp_path: Path,
+) -> None:
+    """Both counters are reported, and stale shards ARE ingested.
+
+    The budget wiring is NOT asserted here: this test used to feed
+    matching_positions into _compute_train_step_budget, which is the very bug
+    PR #225 removed -- and its old name taught readers that the matching-only
+    denominator was intended. The window-fraction path is exercised on a bare
+    literal below so nothing in this file implies a denominator.
+    """
     inbox_dir = tmp_path / "inbox"
     processed_dir = tmp_path / "processed"
     worker_dir = inbox_dir / "worker_00"
@@ -460,17 +470,12 @@ def test_distributed_ingest_budget_uses_matching_positions_not_stale_backlog(tmp
     assert summary["matching_positions"] == 2_000
     assert summary["stale_positions"] == 120_000
 
-    budget = _compute_train_step_budget(
-        positions_ingested=int(summary["matching_positions"]),
-        imported_samples=0,
-        replay_size=50_000,
-        batch_size=256,
-        accum_steps=4,
-        base_max_steps=100,
-        train_window_fraction=0.10,
+    # The real loop divides by the INGESTED total, so a 6x gap between the two
+    # counters is a 6x gap in the step budget -- see
+    # tests/test_views_denominator.py::test_matching_denominator_reproduces_the_bug.
+    assert summary["positions_replay_added"] == (
+        summary["matching_positions"] + summary["stale_positions"]
     )
-    assert budget["target_sample_budget"] == 5_000
-    assert budget["steps"] == 5
 
 
 def test_train_step_budget_views_targeting_overrides_window_fraction() -> None:

@@ -842,11 +842,17 @@ def _build_report_dict(
             float(sp.replay_wdl_2) / float(replay_wdl_n) if replay_wdl_n > 0 else 0.0
         ),
         "matching_games": int(sp.matching_games),
-        # Everything the workers actually uploaded this iteration. Emitted so
-        # "how much selfplay did we pay for" is a metric rather than a sum a
-        # reader has to know to compute: matching_games alone looked healthy
-        # for days while ~80% of games were being discarded as stale
+        # Every game we INGESTED this iteration, current-model or stale.
+        # Emitted so "how much selfplay did we pay for" is a metric rather than
+        # a sum a reader has to know to compute: matching_games alone looked
+        # healthy for days while ~80% of games were being discarded as stale
         # (2026-07-24, workers frozen on an old model_sha).
+        #
+        # NOT the uploaded total: shards that fail to load are moved to
+        # processed/bad/ and shards present in the inbox on resume are
+        # quarantined, and neither is counted in either summand. If upload
+        # volume itself is ever in question, that needs its own counter --
+        # do not read this one as one.
         "total_games_ingested": int(sp.matching_games) + int(sp.distributed_stale_games),
         "avg_game_plies": float(pr.avg_game_plies),
         "adjudication_rate": float(pr.adjudication_rate),
