@@ -132,6 +132,21 @@ always re-dump and pair.
   the wrong way, and had to undo it — the observation was real, the inference
   was wrong. A key missing from a row means "which code wrote this row?", not
   "this key is fake".
+- **`tune_keep_last_experiments` protected NOTHING; a `--fresh` start would
+  have deleted every trial dir (2026-07-25).** `_cleanup_old_tune_experiments`
+  paired state files to trial dirs by filename timestamp,
+  `glob(f"train_trial_*{ts}")`. But a trial dir carries the timestamp of the
+  experiment that CREATED it, while every resume writes a new state file under
+  a NEW timestamp — 66 state files here for 2 experiments. The kept 2 (07-24,
+  07-25) matched no trial dir, and the only dirs on disk (07-11) were always in
+  `delete_ts`. Realized retention was **0 for any `keep_last`**, and the newest
+  kept file's `relative_logdir` named the very directory the glob would
+  `rmtree` — the live trial, every checkpoint, all TB history since 07-11. It
+  never fired only because the cleanup is guarded by `if not resume`, and
+  `train.sh start` auto-resumes; `--fresh` would have triggered it. Fixed by
+  PR #242 (protect what the kept state files actually reference; fail safe to
+  keeping everything if one cannot be parsed). **Before any `--fresh` start,
+  confirm the dry-run keeps what you expect** — the check is in the PR body.
 - **`opening_fen_list_path` is a CHAIN, and rolling it back silently
   UN-RETIRES seeds (2026-07-25).** `scripts/blindspot_retire_step.py` re-scores
   the seed list the live yaml currently points at, writes
