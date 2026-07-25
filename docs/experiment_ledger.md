@@ -333,6 +333,62 @@ cheaply. Artifacts → `scratchpad/vr_screen_20260721/`.
 | **512-net seed feed += 88 (cheese72 match-mined + 16 staged harvest)** (`opening_fen_list_path`→`data/blindspot_fens_fed_cheese72_staged_ck101.txt`, retire_98's 126 + 88 new = 214; live yaml, live-reload — no restart) | 2026-07-19, post-cheese match on ckpt101 (trial 4c17c), training already resumed from ckpt101 | Same lever as WORKED v1/v2/cheese64 and the 07-13 v4+v5 feed. Source match: `runs/matches/cheese_20260719_1004_checkpoint_000101` — DeepFin **1W–4D–55L**, score 0.050, Elo ≈ −512 (worse than 46M cheese64 baseline 1–11–48 / 0.108 @ckpt722). Mine via `scripts/mine_blindspot_seeds.py` (300k SF + 3-4-5 TB, collapse + value-mismatch gap≥0.5 / min_ply_gap=8): **72 new seeds** (54 collapse + 18 mismatch) from 60 games; holdout panel v1+v2; existing = active retire_98 + prior cheese/v* lists + staged — 0 placement-key overlap. Plus **16** deep-SF-vetted harvest-gate survivors from `data/harvest/staged_candidates.txt` (staged-only backlog from ckpt78–98 monitor runs; promotion stays ledger-gated). Feed via `blindspot_feed_step.py --batch data/blindspot_fens_batch_cheese72_staged16_20260719.txt --tag fed_cheese72_staged_ck101`: 88 new / 0 active / 0 retired / 0 dups → pool 126→214. Baseline @ckpt98 (last clean monitor): v1 BLIND 23/35, v2 BLIND 76/113, value_regret 95.0cp (vs_boot512 −18.07 [−27.66, −8.40] SIG worse — open value damage from prior windows, not this feed). PRIMARY: held-out panel v1/v2 BLIND holds or improves vs 23/35, 76/113. GUARDRAIL/KILL: `value_regret --max-positions 2000` paired CI vs `scratchpad/live_read/monitor/vdump_98.jsonl` worse by >2cp (CI excludes 0 on the worse side) → REVERT. WATCH: pool 126→214 (~70% more doled selfplay seeds/iter at dose 1); dole is selfplay-only (PID-safe); if `sf_pid` games <30 or airbag trips, dial `opening_fen_dole_per_iter` down. Readout via existing monitor_fen cadence (next read ~ckpt 108+). REVERT (live, instant): `opening_fen_list_path` → `data/blindspot_fens_retire_98.txt` — pure seed-pool change, no salvage. Confound: feed lands mid-resume after the cheese pause (training already running; live-reload next iter); value baseline already SIG worse vs boot — kill rule is paired vs ckpt98 dump, not absolute level. **SUPERSEDED SAME DAY (2026-07-19): the active `opening_fen_list_path` is now `data/blindspot_fens_fed_cheese72_refute_upgrade_ck101.txt` (229 lines), not the `_staged_ck101` file named above — the pool was re-fed with the refute-ply-baked ("mine-time free first SF-refute ply") upgrade (header: "upgraded 56 bare cheese holes to post-refute terminals; kept 158; appended 14 new"). Same lever/baseline/kill rule; the seed terminals are one deep-SF refute ply deeper. Revert target unchanged (`retire_98.txt`). This is the list the ckpt108+ readout judges.** **READOUT @ckpt108 (2026-07-20 02:21, CLEAN read — no wedge/stall in the ck98→108 window; the 548891→977791 PID change was a controlled reboot+resume, same trial 4c17c iter 1703): MIXED, leaning CONCERN. GUARDRAIL (value) INTACT — paired ck108 vs vdump_98 = +6.16cp [−3.30, +15.46] NS (value nominally BETTER; the >2cp-worse revert trigger did NOT fire; absolute 95.0→88.8, vs_boot −18.07→−11.91). PRIMARY (held-out panels) NOT MET — v1 BLIND 23→30/35 (+7, ~1.3σ), v2 BLIND 76→94/113 (+18, ~1.8σ, near the row-15 #104-kill point of 83). Divergence caveat: BLIND = "net > −0.2", so a globally-more-optimistic value shift inflates BLIND counts without a true understanding change while regret (ranking) stays flat/better — consistent with [[value_head_calibrated_not_broken]] (seeds/refute move calibration, not ranking). No numeric panel KILL was pre-committed (only the value guardrail), so no auto-revert fires; this is a 3-way-confounded first read (cheese72 feed + SF-refute channel + refute-upgrade list co-activated). DECISION: hold for the ck118 confirming read — if panels stay ≥ck108 or the value guardrail trips, revert (feed→retire_98.txt, `opening_fen_sf_refute_frac`→0); if panels retrace toward ≤baseline, continue. NOT auto-reverting on one confounded read.** |
 | **SF-refute channel 50%×4** (`opening_fen_sf_refute_frac: 0.5`, `opening_fen_sf_refute_plies: 4`, live yaml; worker+selfplay code) | 2026-07-19, restart-gated (new reco keys + worker code; co-ships with dole rearm) | **Hypothesis:** selfplay-only dole cannot break net-net collusion on value holes (net evals +200/80% WR when true is −200/20%; best play goes 99→1 without reciprocal blunders). A thin SF-as-opponent channel on a **round-robin 50% slice** of the live seed list, for the first **4 opponent plies** only then **handoff to selfplay**, forces the true PV side for a few moves at ~`K×M≈425` SF searches/iter (cheaper than ⅓×10 full-length). Selfplay dole (full list ×1) stays. Fenlist* sources remain **out of the PID sample**. Delivery: worker builds `sf_refute` queue on each won dole; **selfplay rolls** drain it (`selfplay_arr=1` from open); SF opponent for M plies via `sf_refute_opp_plies_left` + best-move (`regret=inf`); countdown only (no type flip). Telemetry: `fenlist_sf_refute*` in `outcome_stats`, worker log `sf_refute=N`. PRIMARY: held-out panel v1/v2 BLIND holds or improves vs ckpt98 baseline (23/35, 76/113) over ~1 day. GUARDRAIL/KILL: (1) PID curriculum finished sample (W+D+L) <30 for 3 consecutive healthy iters → set frac=0; (2) `value_regret` paired CI vs `vdump_98` worse by >2cp → set frac=0; (3) sustained `sf_block_starved` / ingest hard-timeout regression vs pre-activation → set frac=0 or cut to 0.25. SUCCESS (secondary): non-zero `selfplay_fenlist_sf_refute*` games (channel is selfplay-tagged; SF only for first M opp plies) and selfplay fenlist still ~full dole. REVERT (live, instant after restart onto code that knows the keys, or set 0 if already live): `opening_fen_sf_refute_frac: 0`. Confound: cheese72 seed feed + dole-rearm fix land in the same resume window — attribute panel/value movement carefully; throughput/PID moves are the SF-refute confounds. **READOUT @ckpt108: judged jointly with the cheese72 feed (row above) — same clean read, same 3-way confound. GUARDRAIL (value paired vs vdump_98) INTACT (+6.16cp NS); PRIMARY panels NOT met (v1 23→30, v2 76→94). No auto-revert (value guardrail is the only pre-committed KILL and it held); DECISION = hold for ck118 confirming read, then revert `opening_fen_sf_refute_frac`→0 if panels don't retrace. See the cheese72 row for the full read.** |
 
+### PRE-REGISTERED (not yet live) — revive dead broker/workers inside the ingest wait loop (PR TBD, 2026-07-25)
+
+**Class: availability plumbing. NOT an experiment — it changes no training
+target, loss, or data mix.** Pre-registered before deploy per protocol.
+
+**Hypothesis.** The 2026-07-24 outage cost ~50 minutes not because the broker
+crashed (PR #231 addresses that) but because **nothing looks for a corpse until
+the next selfplay phase begins.** `_ensure_inference_broker` and
+`_ensure_distributed_workers` are called once, at
+`trainable_phases.py` phase start. If the broker dies at minute 2 of an
+iteration, the wait loop keeps polling an inbox nobody is filling. With ZERO
+matching games the soft deadline's `min_games` guard can never fire, so the
+fleet idles for the **full hard ceiling of `wait_timeout_s * 3` = 8100s**, not
+the 2700s that the timeout appears to promise. This is the third instance of
+the same bug class — a fleet-global invariant checked at one point in time
+(the others: worker model-freshness bound to selfplay thread 0, and the
+per-phase ensure itself).
+
+**Change.** `_ingest_distributed_selfplay` gains an `on_poll` callback invoked
+at most once per `on_poll_interval_s` (default 60s) inside the wait loop;
+`revive_dead_selfplay_processes` relaunches the broker and any workers whose
+`poll()` is not None. Deliberate design constraints, each pinned by a test:
+- **Liveness only, never signature.** A wedged-but-alive broker is left alone —
+  two brokers on the same shm slots is worse than one slow one. Workers are
+  revived only when EXITED; the revive does NOT call
+  `_ensure_distributed_workers`, because that also restarts workers whose
+  launch signature drifted from the config, and the config is re-read from the
+  live yaml every iteration — an unrelated yaml edit would then tear down
+  workers with games in flight, re-introducing exactly the waste PR #224
+  removed.
+- **on_poll exceptions are logged and swallowed**, so a failed relaunch cannot
+  abort an ingest that is otherwise progressing.
+
+**YARDSTICK (availability class) — exact command:**
+```
+grep -cE "exited \(code=.*\) mid-iteration; relaunching" /tmp/chess_training.log
+```
+**SUCCESS = the line appears at least once with training continuing normally
+afterwards**, i.e. the next iteration's `games_generated` is within 10% of the
+442-530 band and no `ingest hard timeout` warning fires in that iteration.
+**This is an insurance policy: the expected count is ZERO in a healthy week,
+so absence of the line is NOT evidence the fix works** — the deciding evidence
+is the unit tests (three sabotages, each caught by a distinct test), plus the
+first real relaunch whenever it happens.
+**KILL/DIAGNOSE = a relaunch line followed by duplicate-broker symptoms**
+(workers timing out on slot acquire while TWO `chess_anti_engine.inference`
+processes exist under `pgrep -af`) ⇒ the liveness check is not sufficient and
+the revive needs a slot-ownership handshake, not just `poll()`.
+**Confounds:** none on learning metrics — this cannot change what is trained,
+only whether generation keeps running. Shares a deploy window with nothing.
+**Revert:** revert the PR; the `on_poll` parameter defaults to None, so the
+wait loop's behaviour with it unset is byte-identical to today.
+**Deploy note:** takes effect at the next trainer restart (it is trainer-side
+Python, not live-yaml). No config key is added, so the strict live-yaml
+validator is unaffected.
+
 ### OUTAGE + BUG FIX (deployed) — inference broker died of a shared-memory race and nothing relaunched it (PR #231, 2026-07-24)
 
 **PROTOCOL NOTE — deployed BEFORE this entry existed.** Production was DOWN
