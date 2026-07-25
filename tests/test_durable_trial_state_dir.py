@@ -188,3 +188,90 @@ def test_the_index_guard_finds_checkpoints_in_the_durable_dir(tmp_path: Path) ->
         "the staging dir is where the guard used to look"
     )
     assert [i for i, _ in _existing_checkpoint_dirs(durable)] == [271, 272, 273]
+
+
+# --- Durability makes the PB2 exploit reset load-bearing ------------------
+#
+# Reviewer P1 on PR #245: once `best.json` / `best/` survive a restart, a PB2
+# exploit that swaps in another trial's checkpoint leaves this trial holding
+# the DISCARDED recipient lineage's record. If that stale loss is lower than
+# anything the donor produces, the advertised best model stays a checkpoint
+# PB2 explicitly replaced.
+#
+# The reset itself shipped in PR #244, where it was inert: it deleted files
+# from the staging dir, which never had any. These pin that the two changes
+# compose -- the reset must run AFTER the durable load, and must clear the
+# durable paths.
+
+
+def test_the_exploit_reset_clears_state_that_now_actually_persists(
+    tmp_path: Path,
+) -> None:
+    from chess_anti_engine.tune.trainable_report import (
+        _reset_best_on_cross_trial_restore,
+    )
+
+    durable = tmp_path / "runs" / "tune" / "train_trial_4c17c"
+    best_dir = durable / "best"
+    best_dir.mkdir(parents=True)
+    best_state_path = durable / "best.json"
+    best_state_path.write_text('{"best_loss": 0.1, "source": "test_loss"}')
+    (best_dir / "best_model.pt").write_text("recipient weights")
+
+    loss, source = _reset_best_on_cross_trial_restore(
+        restore=SimpleNamespace(cross_trial_restore=True, startup_source="exploit"),
+        best_loss=0.1, best_source="test_loss",
+        best_dir=best_dir, best_state_path=best_state_path,
+    )
+
+    assert loss == float("inf")
+    assert source == "train_loss"
+    assert not best_state_path.exists()
+    assert list(best_dir.iterdir()) == []
+
+
+def test_an_ordinary_restart_keeps_the_now_durable_best_record(
+    tmp_path: Path,
+) -> None:
+    """The whole point of PR #245 is that this record survives; the reset
+    must not undo that for a same-trial resume."""
+    from chess_anti_engine.tune.trainable_report import (
+        _reset_best_on_cross_trial_restore,
+    )
+
+    durable = tmp_path / "runs" / "tune" / "train_trial_4c17c"
+    best_dir = durable / "best"
+    best_dir.mkdir(parents=True)
+    best_state_path = durable / "best.json"
+    best_state_path.write_text('{"best_loss": 0.1, "source": "test_loss"}')
+    (best_dir / "best_model.pt").write_text("our own weights")
+
+    loss, source = _reset_best_on_cross_trial_restore(
+        restore=SimpleNamespace(cross_trial_restore=False, startup_source="resume"),
+        best_loss=0.1, best_source="test_loss",
+        best_dir=best_dir, best_state_path=best_state_path,
+    )
+
+    assert loss == 0.1
+    assert source == "test_loss"
+    assert best_state_path.exists()
+    assert (best_dir / "best_model.pt").read_text() == "our own weights"
+
+
+def test_the_best_record_is_read_from_the_durable_dir_before_the_reset() -> None:
+    """Ordering: load durable state, THEN reset it if PB2 swapped the weights.
+
+    Reversed, the reset would clear an empty staging dir and the stale durable
+    record would be loaded straight afterwards -- the reviewer's P1 exactly.
+    """
+    import inspect
+
+    from chess_anti_engine.tune import trainable
+
+    src = inspect.getsource(trainable.train_trial)
+    durable_assign = src.index("durable_dir = _durable_trial_dir(")
+    best_path_assign = src.index('best_state_path = durable_dir / "best.json"')
+    load = src.index("_load_best_state(best_state_path)")
+    reset = src.index("_reset_best_on_cross_trial_restore(")
+
+    assert durable_assign < best_path_assign < load < reset
