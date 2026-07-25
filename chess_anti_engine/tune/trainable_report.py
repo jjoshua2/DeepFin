@@ -188,31 +188,73 @@ def _update_best_model(
     test_metrics,
     train_metrics,
     best_loss: float,
+    best_source: str,
     best_dir: Path,
     best_state_path: Path,
     iteration_idx: int,
     opp_strength_ema: float,
-) -> float:
-    """Update best model if current loss improved. Returns updated best_loss."""
-    cur_loss = (
-        float(test_metrics.loss) if test_metrics is not None
-        else (float(train_metrics.loss) if train_metrics is not None else float("inf"))
-    )
-    if cur_loss < best_loss - 1e-12:
-        best_loss = cur_loss
-        trainer.save(best_dir / "trainer.pt")
-        trainer.export_swa(best_dir / "best_model.pt")
-        atomic_write_text(
-            best_state_path,
-            json.dumps({
-                "best_loss": float(best_loss),
-                "iter": int(iteration_idx),
-                "trainer_step": int(getattr(trainer, "step", 0)),
-                "source": "test_loss" if test_metrics is not None else "train_loss",
-                "opp_strength_ema": float(opp_strength_ema),
-            }, indent=2, sort_keys=True),
+) -> tuple[float, str]:
+    """Update best model if current loss improved. Returns (best_loss, source).
+
+    Holdout loss and training loss are DIFFERENT RULERS and must never be
+    compared to each other. Live on 2026-07-25 they sat ~0.3 nats apart --
+    train 4.88-4.94, holdout 5.14-5.25 -- because training loss is measured on
+    batches the model has just fitted.
+
+    The holdout buffer is rebuilt empty on every process start, so for the
+    first several iterations after a restart there is no holdout and
+    `test_metrics` is None. The old code then compared the LOWER training loss
+    against a `best_loss` earned on the holdout, won automatically, and pinned
+    `best_loss` to the training scale -- after which no holdout evaluation
+    could ever beat it again. Best-model tracking silently stopped responding
+    to holdout quality. `best.json` recorded `"source": "train_loss"` the whole
+    time, so the code knew the two differed; only the comparison did not.
+
+    Rules, in order:
+      * Same ruler -> ordinary improvement test.
+      * Holdout available while the record is on the training scale -> ADOPT
+        the holdout as the ruler. Not a claimed improvement, just a handover to
+        the ruler we actually trust; without it the stale training-scale number
+        locks holdout evaluation out forever.
+      * Only training loss available while the record is on the holdout scale
+        -> do nothing. The fallback ruler must never overwrite the real one.
+    """
+    if test_metrics is not None:
+        cur_loss, cur_source = float(test_metrics.loss), "test_loss"
+    elif train_metrics is not None:
+        cur_loss, cur_source = float(train_metrics.loss), "train_loss"
+    else:
+        return best_loss, best_source
+
+    if cur_source == best_source:
+        adopt = cur_loss < best_loss - 1e-12
+    elif cur_source == "test_loss":
+        adopt = True
+        print(
+            f"[trial] best-model ruler handover: adopting holdout loss "
+            f"{cur_loss:.4f} over the training-loss record {best_loss:.4f} "
+            f"(the two are not comparable)",
+            flush=True,
         )
-    return best_loss
+    else:
+        adopt = False
+
+    if not adopt:
+        return best_loss, best_source
+
+    trainer.save(best_dir / "trainer.pt")
+    trainer.export_swa(best_dir / "best_model.pt")
+    atomic_write_text(
+        best_state_path,
+        json.dumps({
+            "best_loss": float(cur_loss),
+            "iter": int(iteration_idx),
+            "trainer_step": int(getattr(trainer, "step", 0)),
+            "source": cur_source,
+            "opp_strength_ema": float(opp_strength_ema),
+        }, indent=2, sort_keys=True),
+    )
+    return cur_loss, cur_source
 
 
 _BEST_REGRET_KEEP = 3  # Keep top-N checkpoints by lowest regret
