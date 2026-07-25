@@ -745,15 +745,24 @@ def _run_selfplay_phase(
   # could not have fixed that, because the value travelled by return. With the
   # box, the caller sees every relaunch the instant it happens, on every path
   # including exceptions.
+  # Counted, not just logged per-occurrence. A revive is rare and important:
+  # if one fires, whoever reads this iteration afterwards needs to know the
+  # fleet died mid-wait, and a single WARNING thousands of lines up in a
+  # multi-hour ingest is easy to miss. The end-of-ingest line below is emitted
+  # only when the count is non-zero, so a healthy iteration stays silent.
+    _revived_total = 0
+
     def _revive_fleet() -> None:
-        revive_dead_selfplay_processes(
+        nonlocal _revived_total
+        if revive_dead_selfplay_processes(
             config=config,
             trial_id=trial_id,
             trial_dir=trial_dir,
             publish_dir=distributed_dirs["publish_dir"],
             broker_proc_box=broker_proc_box,
             worker_procs=distributed_worker_procs,
-        )
+        ):
+            _revived_total += 1
 
     ingest_summary = _ingest_distributed_selfplay(
         buf=buf,
@@ -773,6 +782,13 @@ def _run_selfplay_phase(
         prefetcher=prefetcher,
         on_poll=_revive_fleet,
     )
+    if _revived_total:
+        log.warning(
+            "iteration %d: revived dead selfplay processes %d time(s) during "
+            "the ingest wait -- the fleet died mid-iteration and was restarted; "
+            "check distributed_inference/broker.out and worker logs",
+            int(iteration_idx), _revived_total,
+        )
 
     buf.flush()
     _new_selfplay_shards = [p for p in buf._shard_paths if p not in _shards_before_ingest]

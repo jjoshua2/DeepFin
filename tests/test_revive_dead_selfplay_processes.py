@@ -130,6 +130,29 @@ def test_on_poll_repeats_on_its_interval(tmp_path: Path) -> None:
     )
 
 
+def test_first_on_poll_is_immediate(tmp_path: Path) -> None:
+    """The first liveness check must not wait out a full interval.
+
+    A broker can die during its own launch or in the gap before the first
+    shard scan. With zero matching games the soft deadline can never fire, so
+    that death costs the whole hard ceiling — and sleeping 60s before asking
+    the first question adds a minute to an outage we already know how to end.
+
+    A 1h interval means the ONLY call that can occur is the immediate one, so
+    exactly 1 pins immediacy; scheduling the first poll one interval out would
+    give 0 here.
+    """
+    calls: list[int] = []
+
+    _run_starved_ingest(
+        tmp_path, on_poll=lambda: calls.append(1), on_poll_interval_s=3600.0,
+    )
+
+    assert len(calls) == 1, (
+        f"expected exactly one immediate poll, got {len(calls)}"
+    )
+
+
 def test_on_poll_failure_does_not_abort_the_ingest(tmp_path: Path) -> None:
     """A failing revive must not take down an ingest that is still working."""
 

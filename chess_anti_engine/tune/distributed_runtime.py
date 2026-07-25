@@ -1634,7 +1634,13 @@ def _ingest_distributed_selfplay(
         for sp, arrs, meta in prefetcher.drain():
             _ingest(sp, preloaded=(arrs, meta))
 
-    next_poll_cb = _now + float(on_poll_interval_s)
+  # Due immediately, NOT one interval from now. The fleet is ensured at the
+  # phase boundary just above, but a broker can die during its own launch or
+  # in the gap before the first shard scan -- and with zero matching games the
+  # soft deadline's min_games guard can never fire, so that death costs the
+  # full hard ceiling. Waiting 60s to ask the first question is 60s of an
+  # outage we already know how to end.
+    next_poll_cb = _now
 
     def _maybe_on_poll() -> None:
         nonlocal next_poll_cb
