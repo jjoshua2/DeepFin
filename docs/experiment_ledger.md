@@ -397,6 +397,84 @@ wait loop's behaviour with it unset is byte-identical to today.
 Python, not live-yaml). No config key is added, so the strict live-yaml
 validator is unaffected.
 
+**DEPLOYED 2026-07-25 ~11:5x**, trial 4c17c, resuming from iter 284 after a
+~4h unplanned downtime (training stopped 07:48:59; not caused by this work).
+Review follow-ups landed in the same PR before deploy: the first liveness poll
+is now IMMEDIATE rather than one interval in (a broker dying right after the
+phase-boundary ensure used to idle up to 60s before anyone looked), the broker
+handle moved into a caller-owned box so a revived broker can never be orphaned
+by an exception unwinding past a readback, `on_poll` became a REQUIRED keyword
+so the single production call site cannot silently drop recovery in a
+refactor, and both revive events now `print("[trial] ...", flush=True)` in
+addition to logging. **That last one matters for THIS entry's yardstick:** the
+grep above reads `/tmp/chess_training.log`, which is trial stdout captured by
+`train.sh`, whereas Ray trial-actor `logging` traffic often only reaches the
+Ray session logs — so with logging alone a real revive could have fired and
+left the yardstick reading zero forever. The yardstick is only trustworthy as
+of this deploy.
+
+### BUG FIX (deployed 2026-07-25) — the broker answered with a fabricated all-zero policy when it had no model (PR #234)
+
+**PROTOCOL NOTE — not an experiment, and not pre-registered as one.** This is
+a correction of silent training-data corruption on a failure path, deployed in
+the same restart as PR #232. It cannot change what is trained in a healthy
+run; it changes only what happens when the broker has no model.
+
+**Bug.** `_ensure_model` returns silently on two paths (publish manifest still
+missing at its 30s deadline; manifest carrying no model sha). Both brokers
+then filled all-zero policy AND all-zero WDL, marked the slot
+`_STATE_RESPONSE`, and returned normally. Three compounding consequences:
+an all-zero response is indistinguishable from a real one, so it reaches MCTS
+and is **recorded as training data**; because the path returned normally,
+`_process_batch` scored it a SUCCESS and reset `_consecutive_batch_failures`,
+so the escalation that exists for exactly this case could never fire and a
+model-less broker served zeros indefinitely; and there was no log line on any
+path. The file already forbade this in `_release_slots_for_retry`'s docstring
+— *"a fabricated all-zero policy would be recorded as training data rather
+than raising"* — 30 lines above the code doing it.
+
+**Why it mattered now.** PR #232's revive re-runs `_ensure_model` from
+scratch mid-iteration, so a transient manifest gap would bring a revived
+broker up serving zeros — and the revive cannot detect that, because the
+process is alive. #232 turned a rare boot-time window into a recovery path,
+which is why #234 was merged first.
+
+**Change.** `SlotBroker` raises `BrokerModelUnavailable`, routing into the
+existing handler: release slots unanswered (clients re-submit), log ONE
+throttled line rather than 50 tracebacks, and count toward
+`_MAX_CONSECUTIVE_BATCH_FAILURES` so a persistently model-less broker exits
+and the next phase relaunches a clean one. `SharedSlotBroker._process_parallel`
+releases the affected trial's slots per-trial, so one trial's publish gap no
+longer degrades the others.
+
+**How it was found.** Salvaged from a review subagent that died on a spend
+limit before writing any conclusion; its surviving tool history showed probes
+printing `counter after 150 legal-mode failures: 0` and
+`wdl delivered: [[0,0,0],[0,0,0]]`.
+
+**YARDSTICK (correctness class) — exact command:**
+```
+grep -cE "refusing to answer with a fabricated all-zero policy|no model for trial" /tmp/chess_training.log
+```
+**SUCCESS = 0 in a healthy run** (the condition should never arise), **AND**
+if it is ever non-zero, the accompanying `releasing slots for retry` lines are
+followed by selfplay continuing rather than by a silent iteration. As with
+#232 this is insurance: absence is not evidence. The deciding evidence is the
+sabotage-verified tests — restoring the zero-fill fails all three SlotBroker
+tests (`assert 2 == 0` on slot state, `assert 0 == 1` on the failure counter,
+and the escalation test), and removing the shared-broker throttle fails at 25
+warnings vs 1.
+**KILL/DIAGNOSE = workers dying on `TimeoutError` in bursts** with the
+no-model line present ⇒ the release path is firing in a situation where the
+old zero-fill was load-bearing for startup, and the 30s `_ensure_model`
+manifest wait needs lengthening instead.
+**Confounds:** shares this restart with PR #232 and PR #235 (ledger only).
+Neither changes training in a healthy run, so the learning metrics are not
+confounded; the availability yardsticks are read independently.
+**Revert:** revert the PR. Note the revert also restores
+`test_slot_broker_zeroes_outputs_when_model_unavailable`, which asserted the
+buggy behaviour with no stated rationale and was deliberately removed.
+
 ### OUTAGE + BUG FIX (deployed) — inference broker died of a shared-memory race and nothing relaunched it (PR #231, 2026-07-24)
 
 **PROTOCOL NOTE — deployed BEFORE this entry existed.** Production was DOWN
