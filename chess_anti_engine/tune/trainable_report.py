@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import shutil
 import time
 import traceback
@@ -182,11 +183,35 @@ def _save_trial_checkpoint(
     return Checkpoint.from_directory(str(ckpt_dir))
 
 
+def _reset_best_on_cross_trial_restore(
+    *, restore, best_loss: float, best_source: str,
+) -> tuple[float, str]:
+    """Clear best-model tracking when the weights came from another trial.
+
+    A PB2 exploit replaces the recipient's trainer with a donor checkpoint, but
+    `best.json` and `best/` are the recipient's own and are not carried in the
+    checkpoint. Keeping them would leave the record describing a lineage that
+    no longer exists -- and if that record is on the holdout scale, the donor
+    would have to beat an unrelated recipient number, using a holdout that is
+    itself empty at that moment, before the best model could ever be replaced.
+    """
+    if not getattr(restore, "cross_trial_restore", False):
+        return best_loss, best_source
+    print(
+        f"[trial] cross-trial restore ({getattr(restore, 'startup_source', '?')}): "
+        f"resetting best-model tracking, which held {best_loss} ({best_source}) "
+        f"from this trial's own discarded lineage",
+        flush=True,
+    )
+    return float("inf"), "train_loss"
+
+
 def _update_best_model(
     *,
     trainer,
     test_metrics,
     train_metrics,
+    test_metrics_source_iter: int,
     best_loss: float,
     best_source: str,
     best_dir: Path,
@@ -218,12 +243,36 @@ def _update_best_model(
         locks holdout evaluation out forever.
       * Only training loss available while the record is on the holdout scale
         -> do nothing. The fallback ruler must never overwrite the real one.
+
+    A non-finite candidate is always rejected. The same-ruler test rejects NaN
+    on its own (`nan < x` is False), but the handover does not, and a single
+    NaN written to `best.json` would poison every later comparison against it
+    permanently, across restarts -- the record would be unbeatable by any
+    finite loss.
+
+    `eval_source_iter` records WHICH model the holdout number describes. With
+    `distributed_async_test_eval` (production), the holdout result collected
+    during iteration N was computed on the snapshot taken at the end of
+    iteration N-1, while `trainer` here holds N. Adoption is still correct --
+    one iteration of drift is far smaller than the ~0.3-nat ruler gap this
+    function exists to stop -- but the exported weights and the recorded loss
+    are one step apart, and that has to be legible in the artifact rather than
+    inferred later.
     """
     if test_metrics is not None:
         cur_loss, cur_source = float(test_metrics.loss), "test_loss"
     elif train_metrics is not None:
         cur_loss, cur_source = float(train_metrics.loss), "train_loss"
     else:
+        return best_loss, best_source
+
+    if not math.isfinite(cur_loss):
+        print(
+            f"[trial] best-model candidate from {cur_source} is {cur_loss}, "
+            f"not a finite loss; leaving the record at {best_loss:.4f} "
+            f"({best_source})",
+            flush=True,
+        )
         return best_loss, best_source
 
     if cur_source == best_source:
@@ -251,6 +300,10 @@ def _update_best_model(
             "iter": int(iteration_idx),
             "trainer_step": int(getattr(trainer, "step", 0)),
             "source": cur_source,
+            "eval_source_iter": (
+                int(test_metrics_source_iter) if cur_source == "test_loss"
+                else int(iteration_idx)
+            ),
             "opp_strength_ema": float(opp_strength_ema),
         }, indent=2, sort_keys=True),
     )

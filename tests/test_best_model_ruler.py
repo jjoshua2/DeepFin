@@ -13,8 +13,9 @@ no holdout evaluation could ever beat it again.
 That is the observed live state: `best.json` held
 `{"best_loss": 4.893, "source": "train_loss"}` while every holdout evaluation
 came in above 5.14, so best-model tracking had stopped responding to holdout
-quality entirely. The model it selects is served to workers via
-`/v1/best_model`.
+quality entirely. `best/` is an operator-facing artifact -- the publish-root
+`best_model.pt` workers fetch is written by a different path -- so the damage
+is a selection that silently means something other than what it says.
 """
 
 from __future__ import annotations
@@ -26,7 +27,10 @@ from types import SimpleNamespace
 import pytest
 
 from chess_anti_engine.tune.trainable import _load_best_state
-from chess_anti_engine.tune.trainable_report import _update_best_model
+from chess_anti_engine.tune.trainable_report import (
+    _reset_best_on_cross_trial_restore,
+    _update_best_model,
+)
 
 
 class _FakeTrainer:
@@ -58,6 +62,7 @@ def _update(tmp_path: Path, **kw):
         best_dir=tmp_path / "best",
         best_state_path=tmp_path / "best.json",
         iteration_idx=kw.pop("iteration_idx", 1871),
+        test_metrics_source_iter=kw.pop("test_metrics_source_iter", 1871),
         opp_strength_ema=313.9,
         **kw,
     )
@@ -237,3 +242,144 @@ def test_an_unrecognised_source_is_not_trusted(tmp_path: Path) -> None:
 
 def test_a_missing_best_json_starts_at_infinity(tmp_path: Path) -> None:
     assert _load_best_state(tmp_path / "nope.json") == (float("inf"), 0.0, "train_loss")
+
+
+# --- A non-finite candidate must never become the record -----------------
+#
+# The same-ruler test rejects NaN on its own (`nan < x` is False), but the
+# cross-ruler handover adopts unconditionally. One NaN written to best.json is
+# permanent: every later `finite < nan - 1e-12` is False, across restarts,
+# so the record becomes unbeatable and best-model tracking stops for good.
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_holdout_loss_cannot_take_over_the_ruler(
+    tmp_path: Path, bad: float
+) -> None:
+    (best_loss, source), trainer = _update(
+        tmp_path,
+        test_metrics=_metrics(bad),
+        train_metrics=_metrics(4.88),
+        best_loss=4.89,
+        best_source="train_loss",
+    )
+
+    assert best_loss == 4.89
+    assert source == "train_loss"
+    assert trainer.exports == []
+    assert not (tmp_path / "best.json").exists()
+
+
+def test_a_non_finite_training_loss_cannot_take_over_the_ruler(
+    tmp_path: Path,
+) -> None:
+    (best_loss, source), trainer = _update(
+        tmp_path,
+        test_metrics=None,
+        train_metrics=_metrics(float("nan")),
+        best_loss=float("inf"),
+        best_source="train_loss",
+    )
+
+    assert best_loss == float("inf")
+    assert source == "train_loss"
+    assert trainer.exports == []
+
+
+def test_a_finite_holdout_still_takes_over_after_a_rejected_nan(
+    tmp_path: Path,
+) -> None:
+    """The guard must reject the NaN, not disable the handover."""
+    (best_loss, source), _ = _update(
+        tmp_path,
+        test_metrics=_metrics(float("nan")),
+        train_metrics=_metrics(4.88),
+        best_loss=4.89,
+        best_source="train_loss",
+    )
+    (best_loss, source), trainer = _update(
+        tmp_path,
+        test_metrics=_metrics(5.14),
+        train_metrics=_metrics(4.88),
+        best_loss=best_loss,
+        best_source=source,
+    )
+
+    assert (best_loss, source) == (5.14, "test_loss")
+    assert len(trainer.exports) == 1
+
+
+# --- The holdout number and the exported weights are one iteration apart --
+#
+# With distributed_async_test_eval (production), the result collected during
+# iteration N was computed on the snapshot from iteration N-1. Adoption is
+# still right -- one iteration of drift is far smaller than the ~0.3-nat ruler
+# gap -- but the artifact has to say so.
+
+
+def test_best_json_records_which_iteration_the_holdout_number_describes(
+    tmp_path: Path,
+) -> None:
+    _update(
+        tmp_path,
+        test_metrics=_metrics(5.14),
+        train_metrics=_metrics(4.88),
+        best_loss=float("inf"),
+        best_source="test_loss",
+        iteration_idx=1871,
+        test_metrics_source_iter=1870,
+    )
+
+    written = json.loads((tmp_path / "best.json").read_text())
+    assert written["iter"] == 1871
+    assert written["eval_source_iter"] == 1870
+    assert written["source"] == "test_loss"
+
+
+def test_a_training_loss_record_describes_the_current_iteration(
+    tmp_path: Path,
+) -> None:
+    """`train_metrics` is measured on the weights being exported, so there is
+    no skew to record -- and the field must not leak a stale holdout iter."""
+    _update(
+        tmp_path,
+        test_metrics=None,
+        train_metrics=_metrics(4.88),
+        best_loss=float("inf"),
+        best_source="train_loss",
+        iteration_idx=1871,
+        test_metrics_source_iter=-1,
+    )
+
+    written = json.loads((tmp_path / "best.json").read_text())
+    assert written["eval_source_iter"] == 1871
+
+
+# --- A cross-trial restore invalidates this trial's best record ----------
+
+
+def test_an_exploit_restore_clears_the_recipients_best_record() -> None:
+    """The donor's weights must not have to beat the recipient's number."""
+    restore = SimpleNamespace(
+        cross_trial_restore=True, startup_source="exploit_restore",
+    )
+
+    assert _reset_best_on_cross_trial_restore(
+        restore=restore, best_loss=5.09, best_source="test_loss",
+    ) == (float("inf"), "train_loss")
+
+
+def test_an_ordinary_resume_keeps_the_best_record() -> None:
+    restore = SimpleNamespace(cross_trial_restore=False, startup_source="checkpoint")
+
+    assert _reset_best_on_cross_trial_restore(
+        restore=restore, best_loss=5.09, best_source="test_loss",
+    ) == (5.09, "test_loss")
+
+
+def test_a_restore_object_without_the_flag_is_treated_as_an_ordinary_resume() -> None:
+    """Fail towards keeping the record: clearing it on every start would make
+    best-model tracking useless, which is worse than a stale lineage."""
+    assert _reset_best_on_cross_trial_restore(
+        restore=SimpleNamespace(), best_loss=5.09, best_source="test_loss",
+    ) == (5.09, "test_loss")

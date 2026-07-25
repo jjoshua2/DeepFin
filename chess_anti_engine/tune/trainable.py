@@ -56,6 +56,7 @@ from chess_anti_engine.tune.trainable_phases import (
 )
 from chess_anti_engine.tune.trainable_report import (
     _init_status_csv,
+    _reset_best_on_cross_trial_restore,
     _save_trial_checkpoint,
     _update_best_model,
 )
@@ -472,6 +473,10 @@ def train_trial(config: dict):
     global_iter = restore.global_iter
     opp_strength_ema = restore.opp_strength_ema
 
+    best_loss, best_source = _reset_best_on_cross_trial_restore(
+        restore=restore, best_loss=best_loss, best_source=best_source,
+    )
+
   # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
     tc = TrialConfig.from_dict(config)
 
@@ -726,6 +731,7 @@ def train_trial(config: dict):
   # stand-in until the holdout exists, and the two are never compared.
             best_loss, best_source = _update_best_model(
                 trainer=trainer, test_metrics=tr.test_metrics, train_metrics=tr.metrics,
+                test_metrics_source_iter=tr.test_metrics_source_iter,
                 best_loss=best_loss, best_source=best_source,
                 best_dir=best_dir, best_state_path=best_state_path,
                 iteration_idx=iteration_idx, opp_strength_ema=opp_strength_ema,
