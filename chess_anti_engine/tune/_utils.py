@@ -30,14 +30,39 @@ def load_optional_json(path: Path) -> dict | None:
     miss (file absent, unreadable, malformed, or non-dict root). Used for
     optional checkpoint sidecar files (pid_state.json, rng_state.json,
     trial_meta.json, etc.) where the absence of the file is not an error.
+
+    A file that EXISTS but cannot be used is reported. Absence is routine --
+    an old checkpoint predating the sidecar, or a fresh start. Corruption is
+    not, and every caller here treats the two identically: restore the state,
+    or silently begin again from defaults.
+
+    The case that motivates this is `pid_state.json`, which operators edit by
+    hand (pinning wdl_regret below the config floor is a documented procedure).
+    A stray comma there parses as nothing, the PID controller starts from
+    defaults, and the curriculum shift that follows is indistinguishable from
+    the controller doing its job. Printed rather than logged because the
+    trainable runs in a Ray actor whose stdout is what train.sh captures --
+    `logging` output only reaches the Ray session logs.
     """
     if not path.exists():
         return None
     try:
         obj = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        print(
+            f"[trial] {path.name} exists but could not be read ({exc}); "
+            f"continuing WITHOUT it, as if it were absent: {path}",
+            flush=True,
+        )
         return None
-    return obj if isinstance(obj, dict) else None
+    if not isinstance(obj, dict):
+        print(
+            f"[trial] {path.name} holds a {type(obj).__name__}, not an object; "
+            f"continuing WITHOUT it, as if it were absent: {path}",
+            flush=True,
+        )
+        return None
+    return obj
 
 
 def stable_seed_u32(*parts: object) -> int:
