@@ -475,6 +475,7 @@ def train_trial(config: dict):
 
     best_loss, best_source = _reset_best_on_cross_trial_restore(
         restore=restore, best_loss=best_loss, best_source=best_source,
+        best_dir=best_dir, best_state_path=best_state_path,
     )
 
   # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
@@ -732,6 +733,7 @@ def train_trial(config: dict):
             best_loss, best_source = _update_best_model(
                 trainer=trainer, test_metrics=tr.test_metrics, train_metrics=tr.metrics,
                 test_metrics_source_iter=tr.test_metrics_source_iter,
+                holdout_generation=holdout_generation,
                 best_loss=best_loss, best_source=best_source,
                 best_dir=best_dir, best_state_path=best_state_path,
                 iteration_idx=iteration_idx, opp_strength_ema=opp_strength_ema,

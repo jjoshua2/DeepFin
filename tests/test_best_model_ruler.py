@@ -63,6 +63,7 @@ def _update(tmp_path: Path, **kw):
         best_state_path=tmp_path / "best.json",
         iteration_idx=kw.pop("iteration_idx", 1871),
         test_metrics_source_iter=kw.pop("test_metrics_source_iter", 1871),
+        holdout_generation=kw.pop("holdout_generation", 0),
         opp_strength_ema=313.9,
         **kw,
     )
@@ -358,28 +359,75 @@ def test_a_training_loss_record_describes_the_current_iteration(
 # --- A cross-trial restore invalidates this trial's best record ----------
 
 
-def test_an_exploit_restore_clears_the_recipients_best_record() -> None:
+def _reset(tmp_path: Path, restore, *, seed_disk: bool = True):
+    best_dir = tmp_path / "best"
+    best_dir.mkdir(exist_ok=True)
+    state = tmp_path / "best.json"
+    if seed_disk:
+        state.write_text('{"best_loss": 5.09, "source": "test_loss"}')
+        (best_dir / "best_model.pt").write_bytes(b"recipient weights")
+        (best_dir / "trainer.pt").write_bytes(b"recipient trainer")
+    out = _reset_best_on_cross_trial_restore(
+        restore=restore, best_loss=5.09, best_source="test_loss",
+        best_dir=best_dir, best_state_path=state,
+    )
+    return out, state, best_dir
+
+
+def test_an_exploit_restore_clears_the_recipients_best_record(tmp_path: Path) -> None:
     """The donor's weights must not have to beat the recipient's number."""
     restore = SimpleNamespace(
         cross_trial_restore=True, startup_source="exploit_restore",
     )
 
-    assert _reset_best_on_cross_trial_restore(
-        restore=restore, best_loss=5.09, best_source="test_loss",
-    ) == (float("inf"), "train_loss")
+    out, state, best_dir = _reset(tmp_path, restore)
+
+    assert out == (float("inf"), "train_loss")
+    assert not state.exists(), "the on-disk record still describes the dead lineage"
+    assert list(best_dir.iterdir()) == [], "stale best/ weights survived the reset"
+    assert best_dir.is_dir(), "best/ must stay usable for the next write"
 
 
-def test_an_ordinary_resume_keeps_the_best_record() -> None:
+def test_the_reset_is_not_left_to_a_later_iteration(tmp_path: Path) -> None:
+    """If no metric is accepted this iteration, nothing else clears the record,
+    and the NEXT ordinary resume reloads it -- cross_trial_restore is false by
+    then. So the delete has to happen here, not as a side effect of an update."""
+    restore = SimpleNamespace(cross_trial_restore=True, startup_source="exploit_restore")
+    _, state, _ = _reset(tmp_path, restore)
+
+    from chess_anti_engine.tune.trainable import _load_best_state
+
+    assert _load_best_state(state) == (float("inf"), 0.0, "train_loss")
+
+
+def test_an_ordinary_resume_keeps_the_best_record(tmp_path: Path) -> None:
     restore = SimpleNamespace(cross_trial_restore=False, startup_source="checkpoint")
 
-    assert _reset_best_on_cross_trial_restore(
-        restore=restore, best_loss=5.09, best_source="test_loss",
-    ) == (5.09, "test_loss")
+    out, state, best_dir = _reset(tmp_path, restore)
+
+    assert out == (5.09, "test_loss")
+    assert state.exists(), "an ordinary resume must not delete the record"
+    assert (best_dir / "best_model.pt").exists()
 
 
-def test_a_restore_object_without_the_flag_is_treated_as_an_ordinary_resume() -> None:
+def test_a_restore_object_without_the_flag_is_treated_as_an_ordinary_resume(
+    tmp_path: Path,
+) -> None:
     """Fail towards keeping the record: clearing it on every start would make
     best-model tracking useless, which is worse than a stale lineage."""
-    assert _reset_best_on_cross_trial_restore(
-        restore=SimpleNamespace(), best_loss=5.09, best_source="test_loss",
-    ) == (5.09, "test_loss")
+    out, state, _ = _reset(tmp_path, SimpleNamespace())
+
+    assert out == (5.09, "test_loss")
+    assert state.exists()
+
+
+def test_best_json_records_the_holdout_generation(tmp_path: Path) -> None:
+    """Recorded for auditability, NOT compared on -- the counter resets to 0 at
+    every process start, so a comparison would force a spurious handover."""
+    _update(
+        tmp_path,
+        test_metrics=_metrics(5.14), train_metrics=_metrics(4.88),
+        best_loss=float("inf"), best_source="test_loss", holdout_generation=3,
+    )
+
+    assert json.loads((tmp_path / "best.json").read_text())["holdout_generation"] == 3

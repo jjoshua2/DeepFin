@@ -185,6 +185,7 @@ def _save_trial_checkpoint(
 
 def _reset_best_on_cross_trial_restore(
     *, restore, best_loss: float, best_source: str,
+    best_dir: Path, best_state_path: Path,
 ) -> tuple[float, str]:
     """Clear best-model tracking when the weights came from another trial.
 
@@ -194,15 +195,34 @@ def _reset_best_on_cross_trial_restore(
     no longer exists -- and if that record is on the holdout scale, the donor
     would have to beat an unrelated recipient number, using a holdout that is
     itself empty at that moment, before the best model could ever be replaced.
+
+    The on-disk record is deleted, not merely superseded in memory. Resetting
+    only the in-memory tuple leaves `best.json` and `best/` describing the
+    discarded lineage until some later iteration happens to accept a metric --
+    and if none does, an ordinary resume after this one reloads the stale
+    record, because `cross_trial_restore` is false by then. An operator reading
+    `best/` in the meantime would see the wrong model with no indication.
     """
     if not getattr(restore, "cross_trial_restore", False):
         return best_loss, best_source
+
     print(
         f"[trial] cross-trial restore ({getattr(restore, 'startup_source', '?')}): "
         f"resetting best-model tracking, which held {best_loss} ({best_source}) "
         f"from this trial's own discarded lineage",
         flush=True,
     )
+    best_state_path.unlink(missing_ok=True)
+    shutil.rmtree(best_dir, ignore_errors=True)
+    best_dir.mkdir(parents=True, exist_ok=True)
+  # `rmtree(ignore_errors=True)` cannot report failure, so ask the filesystem.
+    leftovers = sorted(p.name for p in best_dir.iterdir())
+    if leftovers or best_state_path.exists():
+        print(
+            f"[trial] WARN: could not fully clear the superseded best record; "
+            f"best.json exists={best_state_path.exists()} leftovers={leftovers}",
+            flush=True,
+        )
     return float("inf"), "train_loss"
 
 
@@ -212,6 +232,7 @@ def _update_best_model(
     test_metrics,
     train_metrics,
     test_metrics_source_iter: int,
+    holdout_generation: int,
     best_loss: float,
     best_source: str,
     best_dir: Path,
@@ -249,6 +270,16 @@ def _update_best_model(
     NaN written to `best.json` would poison every later comparison against it
     permanently, across restarts -- the record would be unbeatable by any
     finite loss.
+
+    `holdout_generation` is recorded but deliberately NOT compared on.
+    A drift reset (`_maybe_reset_holdout_on_drift`) rebuilds the holdout from a
+    distribution that changed on purpose, so in principle two `test_loss`
+    values from different generations are different rulers too. The counter
+    cannot serve as a ruler identity yet: it is in-memory only, reset to 0 at
+    every process start and never restored, so comparing on it would force a
+    handover on every restart -- reintroducing exactly the per-restart reset
+    that PR #245 removes. Recording it makes the ambiguity auditable now and
+    is what a durable counter would key off later.
 
     `eval_source_iter` records WHICH model the holdout number describes. With
     `distributed_async_test_eval` (production), the holdout result collected
@@ -304,6 +335,7 @@ def _update_best_model(
                 int(test_metrics_source_iter) if cur_source == "test_loss"
                 else int(iteration_idx)
             ),
+            "holdout_generation": int(holdout_generation),
             "opp_strength_ema": float(opp_strength_ema),
         }, indent=2, sort_keys=True),
     )
