@@ -46,7 +46,17 @@ _DEFAULT_TOL = 0.15
 
 
 class Knob:
-    """One configured ratio and the realized value to compare it against."""
+    """One configured ratio and the realized value to compare it against.
+
+    ``semantics`` decides what "agrees" means, and it is an explicit field
+    rather than something inferred from the note text -- a reworded note must
+    not silently change the comparison:
+
+      "target"       two-sided; realized should equal configured.
+      "cap"          realized must not EXCEED configured. 0 disables the cap.
+      "floor_target" realized should equal configured but is allowed to come
+                     out HIGH, because the loop clamps it up from below.
+    """
 
     def __init__(
         self,
@@ -56,12 +66,16 @@ class Knob:
         *,
         note: str = "",
         tol: float = _DEFAULT_TOL,
+        semantics: str = "target",
     ) -> None:
+        if semantics not in ("target", "cap", "floor_target"):
+            raise ValueError(f"unknown knob semantics: {semantics!r}")
         self.name = name
         self.config_key = config_key
         self.realized = realized
         self.note = note
         self.tol = tol
+        self.semantics = semantics
 
 
 def _ratio(num: float | None, den: float | None) -> float | None:
@@ -74,48 +88,74 @@ def _ratio(num: float | None, den: float | None) -> float | None:
     return float(num) / den_f
 
 
-def _selfplay_share(row: dict, _stats: dict) -> float | None:
-    return _ratio(row.get("selfplay_games"), row_counter_opt(row, "matching_games"))
-
-
 def _views(row: dict, _stats: dict) -> float | None:
     v = row.get("train_views_actual")
     return float(v) if v is not None else None
 
 
-def _seeded_share_of_selfplay(row: dict, stats: dict) -> float | None:
-    """Seeded selfplay games / selfplay games — what the dole cap actually caps.
+def _seeded_share_of_games_per_iter(row: dict, stats: dict) -> float | None:
+    """Seeded games / games_per_iter -- the base the cap is actually computed on.
 
-    The cap is deliberately a share of SELFPLAY, not of all games, so the
-    denominator here must be selfplay_games and not matching_games.
+    distributed_runtime does ``ceil(opening_fen_dole_max_fraction *
+    games_per_iter)`` and hands that down as an absolute per-iteration seeded
+    game bound, so the denominator is TOTAL games, not selfplay games. Dividing
+    by selfplay_games instead inflates the reading by 1/selfplay_fraction --
+    2x at the production 0.50, 5x at 0.20 -- and reports a cap that is being
+    honoured exactly as a 2x breach. The ledger records the operator picking
+    0.25 in full knowledge of this base ("seeded <= half of SELFPLAY, not half
+    of total games", at selfplay_fraction 0.50).
+
+    All four seeded channels count. `fenlist_backed` and
+    `fenlist_sf_refute_backed` are seeded games too -- the backed variants are
+    the GOAL channel -- so summing only the two unbacked ones would let a
+    blame-backup-heavy pool breach the cap while reading compliant.
     """
-    seeded = int(stats.get("selfplay_fenlist_games", 0)) + int(
-        stats.get("selfplay_fenlist_sf_refute_games", 0)
+    seeded = sum(
+        int(v)
+        for k, v in stats.items()
+        if k.startswith("selfplay_fenlist") and k.endswith("_games")
     )
-    return _ratio(seeded, row.get("selfplay_games"))
+    cfg = row.get("config") or {}
+    try:
+        games_per_iter = float(cfg["games_per_iter"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return _ratio(seeded, games_per_iter)
 
 
 _KNOBS: tuple[Knob, ...] = (
     Knob(
-        "selfplay share of completed games",
-        "selfplay_fraction",
-        _selfplay_share,
-        note="realized = selfplay_games / matching_games (COMPLETED, not slots)",
-    ),
-    Knob(
         "replay views per ingested position",
         "train_views_per_ingested_position",
         _views,
-        note="realized = train_views_actual; <1.0 means data is never trained on once",
+        semantics="floor_target",
+        note=("realized = train_views_actual; <1.0 means data is never trained on "
+              "once. Reads HIGH legitimately when the fresh-samples floor or the "
+              "ingest-drought fallback binds, so only the LOW side is a finding"),
     ),
     Knob(
-        "seeded share of selfplay",
+        "seeded share of games_per_iter",
         "opening_fen_dole_max_fraction",
-        _seeded_share_of_selfplay,
-        note="a CAP: realized should be <= configured, not equal to it",
+        _seeded_share_of_games_per_iter,
+        semantics="cap",
+        note=("a CAP on a share of games_per_iter (NOT of selfplay); sums all four "
+              "selfplay_fenlist* channels"),
     ),
 )
 
+# DELIBERATELY NOT AUDITED: selfplay_fraction. It is not a share of completed
+# games -- it is the probability rolled PER SLOT when a game starts
+# (selfplay/state.py _init_color_and_selfplay_arrays, recycle_slot). The
+# completed-game share only equals it when selfplay and curriculum games take
+# the same wall time, and they emphatically do not: curriculum games run long
+# against ~700k-node SF and ~89% of them get abandoned. So the steady-state
+# share is f/d_sp / (f/d_sp + (1-f)/d_cur), and comparing selfplay_games /
+# matching_games against the knob reads DIVERGENT forever while the code does
+# exactly what it says. No emitted metric measures slot rolls (`games_started`
+# exists in selfplay/state.py but is not reported). The honest reading is
+# printed as context by `report_selfplay_mix` below; make it a pass/fail check
+# only once a games-started counter exists.
+#
 # DELIBERATELY NOT AUDITED: holdout_fraction. It gates the share of each
 # iteration's INGEST that is diverted to the holdout buffer, but the only
 # emitted metric is `test_replay` — the buffer's current SIZE, which is also
@@ -130,44 +170,124 @@ def _median(vals: list[float]) -> float | None:
     return statistics.median(vals) if vals else None
 
 
+def _configured(row: dict, key: str) -> tuple[float | None, str | None]:
+    """This row's OWN configured value, or (None, why-not).
+
+    Per-row and not "the newest row's config" on purpose: a window that spans a
+    deploy mixes iterations that ran different values, and a median across the
+    join is a number no configuration ever asked for. That mistake produced two
+    confidently wrong verdicts on this tool's first real run -- a dole cap
+    reported as entirely inert when the five pre-deploy iterations dominated
+    the median, and a selfplay mix measured mostly on rows that ran a different
+    value.
+    """
+    cfg = row.get("config") or {}
+    if key not in cfg:
+        return None, f"{key} is not in this iteration's effective config"
+    raw = cfg[key]
+    try:
+        return float(raw), None
+    except (TypeError, ValueError):
+        return None, f"{key} is not a number in the config: {raw!r}"
+
+
 def audit_knobs(rows: list[dict], stats: list[dict]) -> list[str]:
     """Print the configured-vs-realized table. Returns divergence findings."""
     findings: list[str] = []
-    cfg = rows[-1].get("config") or {}
     print("=== configured vs REALIZED (median over window) ===")
+    compared = 0
     for knob in _KNOBS:
-        if knob.config_key not in cfg:
-            print(f"  {knob.name:38s} SKIP  ({knob.config_key} not in effective config)")
+        configured, why = _configured(rows[-1], knob.config_key)
+        if configured is None:
+            # NOT a silent skip. "Nothing can check this knob" is exactly the
+            # state every bug in the docstring was hiding in.
+            print(f"  {knob.name:38s} UNCHECKABLE  ({why})")
+            findings.append(
+                f"{knob.config_key}: cannot audit — {why}. Either the knob was "
+                "renamed and this script was not updated, or the config value is "
+                "malformed; both leave the knob unverified."
+            )
             continue
-        configured = float(cfg[knob.config_key])
-        vals = [v for v in (knob.realized(r, s) for r, s in zip(rows, stats, strict=True))
-                if v is not None]
+
+        # Only iterations that ran the CURRENT value are comparable.
+        pairs = [
+            (r, st) for r, st in zip(rows, stats, strict=True)
+            if _configured(r, knob.config_key)[0] == configured
+        ]
+        vals = [v for v in (knob.realized(r, st) for r, st in pairs) if v is not None]
         realized = _median(vals)
+
+        if knob.semantics == "cap" and configured == 0.0:
+            print(f"  {knob.name:38s} UNCAPPED     (configured 0 disables the cap; "
+                  f"realized={realized if realized is None else round(realized, 4)})")
+            print(f"      {knob.note}")
+            compared += 1
+            continue
+
         if realized is None:
             print(f"  {knob.name:38s} n/a   configured={configured:.4g} "
                   f"(no iteration in the window reported it)")
             findings.append(
                 f"{knob.config_key}: configured {configured:.4g} but NOTHING realized it "
-                f"over {len(rows)} iters — the knob may be inert or the metric missing"
+                f"over {len(pairs)} iters — the knob may be inert or the metric missing"
             )
             continue
-        # A cap is satisfied by being under it; everything else should match.
-        is_cap = "CAP" in knob.note or knob.note.startswith("a CAP")
-        if is_cap:
+
+        if knob.semantics == "cap":
             ok = realized <= configured * (1.0 + knob.tol)
+        elif knob.semantics == "floor_target":
+            ok = realized >= configured * (1.0 - knob.tol)
         else:
             ok = abs(realized - configured) <= max(knob.tol * abs(configured), 1e-9)
+        compared += 1
         flag = "ok  " if ok else "DIVERGENT"
         ratio = realized / configured if configured else float("inf")
         print(f"  {knob.name:38s} {flag} configured={configured:.4g} "
               f"realized={realized:.4g} (x{ratio:.2f}, n={len(vals)})")
+        if len(pairs) < len(rows):
+            print(f"      NOTE: {knob.config_key} changed inside this window; judged on "
+                  f"the {len(pairs)}/{len(rows)} iters that ran {configured:.4g}")
         print(f"      {knob.note}")
         if not ok:
             findings.append(
                 f"{knob.config_key}: configured {configured:.4g} vs realized "
                 f"{realized:.4g} (x{ratio:.2f}) — {knob.note}"
             )
+    if compared == 0:
+        findings.append(
+            "no knob could be compared at all — this run proves nothing; do not "
+            "read a clean exit as agreement"
+        )
     return findings
+
+
+def report_selfplay_mix(rows: list[dict], _stats: list[dict]) -> None:
+    """Print the realized selfplay data mix as CONTEXT, never as pass/fail.
+
+    See the selfplay_fraction note above: the knob sets a per-slot roll
+    probability, so the completed-game share is expected to exceed it whenever
+    curriculum games run longer than selfplay games. Printed because the mix
+    itself matters (76% selfplay was the value-poison condition) -- but a
+    number with no comparable configured value is not a divergence.
+    """
+    print()
+    print("=== realized selfplay mix (context, not a check) ===")
+    shares = [
+        v for v in (
+            _ratio(r.get("selfplay_games"), row_counter_opt(r, "matching_games"))
+            for r in rows
+        ) if v is not None
+    ]
+    med = _median(shares)
+    configured, _ = _configured(rows[-1], "selfplay_fraction")
+    if med is None:
+        print("  n/a   no iteration reported selfplay_games")
+        return
+    cfg_txt = "unknown" if configured is None else f"{configured:.4g}"
+    print(f"  selfplay share of completed games = {med:.4g} "
+          f"(slot-roll knob = {cfg_txt}, n={len(shares)})")
+    print("      Expected to run HIGHER than the knob: the gap is the "
+          "curriculum/selfplay duration ratio, not a bug.")
 
 
 def audit_counters(rows: list[dict]) -> list[str]:
@@ -297,7 +417,14 @@ def audit_live_yaml(rows: list[dict], yaml_path: Path | None) -> list[str]:
                 f"{effective} — a live reload was likely REJECTED (one unknown key rejects "
                 "the whole file)"
             )
-    if not findings:
+    if checked == 0:
+        print("  UNCHECKABLE  no audited knob appears in both the yaml and the "
+              "effective config")
+        findings.append(
+            "yaml-vs-effective check compared 0 knobs — a live-reload rejection "
+            "would look identical to agreement here"
+        )
+    elif not findings:
         print(f"  ok   {checked} ratio knobs match the yaml on disk")
     return findings
 
@@ -332,6 +459,7 @@ def main() -> None:
     print()
 
     findings = audit_knobs(rows, stats)
+    report_selfplay_mix(rows, stats)
     findings += audit_counters(rows)
     findings += audit_wall_clock(rows)
     findings += audit_live_yaml(rows, args.yaml)
