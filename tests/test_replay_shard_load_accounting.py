@@ -26,6 +26,7 @@ reader can catch a half-deleted group mid-flight.
 
 from __future__ import annotations
 
+import threading
 from collections import deque
 from pathlib import Path
 
@@ -233,3 +234,110 @@ def test_the_seed_load_path_shares_the_accounting(
     assert buf._try_load_shard(path, context="shuffle seed") is None
     assert buf._refresh_failed_total == 1
     assert "shuffle seed failed to load a TRACKED shard" in capsys.readouterr().out
+
+
+class _CountingLock:
+    """Wraps a real lock and counts `with` entries.
+
+    Lets a test assert *structurally* that the streak update happens inside
+    the critical section, rather than inferring it from timing.
+    """
+
+    def __init__(self, inner: object) -> None:
+        self._inner = inner
+        self.entries = 0
+
+    def __enter__(self) -> object:
+        self.entries += 1
+        return self._inner.__enter__()  # pyright: ignore[reportAttributeAccessIssue]
+
+    def __exit__(self, *exc: object) -> object:
+        return self._inner.__exit__(*exc)  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_the_empty_streak_is_updated_under_the_prefetch_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deterministic guard that the streak never drifts back outside the lock.
+
+    On a fully successful refresh nothing else in _load_refresh_chunks takes
+    _prefetch_lock -- _note_shard_load_failure is never reached -- so the lock
+    entry count is exactly the streak reset. Moving that reset back out drops
+    the count to zero and fails here, with no reliance on thread timing.
+    """
+    buf = _buffer(tmp_path)
+    paths = [tmp_path / f"s{i}.zarr" for i in range(3)]
+    _track(buf, paths)
+    _fail_on(monkeypatch, set())  # every load succeeds
+
+    counting = _CountingLock(buf._prefetch_lock)
+    buf._prefetch_lock = counting  # pyright: ignore[reportAttributeAccessIssue]
+
+    loaded = buf._load_refresh_chunks(
+        shard_paths=paths, refresh_shards=3, rng=np.random.default_rng(1),
+    )
+
+    assert len(loaded) == 3
+    assert counting.entries == 1, (
+        "the streak reset must happen inside _prefetch_lock"
+    )
+
+
+def test_concurrent_empty_refreshes_neither_lose_increments_nor_double_alarm(
+    tmp_path: Path,
+) -> None:
+    """_refresh_shuffle_buf and _prefetch_worker both reach this counter.
+
+    Without the lock the read-modify-write loses increments, and two threads
+    crossing the threshold together each see `streak == ALARM` and print the
+    same alarm twice. Under the lock the total is exact and the threshold is
+    crossed by exactly one caller.
+    """
+    buf = _buffer(tmp_path)
+    per_thread = 200
+    n_threads = 4
+    alarms: list[tuple[int, int, int]] = []
+    alarms_lock = threading.Lock()
+    start = threading.Barrier(n_threads)
+
+    def _hammer() -> None:
+        start.wait()
+        for _ in range(per_thread):
+            got = buf._note_refresh_outcome(loaded_any=False)
+            if got is not None:
+                with alarms_lock:
+                    alarms.append(got)
+
+    threads = [threading.Thread(target=_hammer) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert buf._refresh_empty_streak == per_thread * n_threads, (
+        "lost increments mean the read-modify-write was not atomic"
+    )
+    at_threshold = [a for a in alarms if a[0] == _REFRESH_EMPTY_STREAK_ALARM]
+    assert len(at_threshold) == 1, (
+        f"threshold must be crossed exactly once, got {len(at_threshold)}"
+    )
+
+
+def test_a_reset_wins_cleanly_against_a_later_empty(tmp_path: Path) -> None:
+    """A successful refresh must not be followed by a stale alarm.
+
+    The failure the lock prevents is not only a late alarm: an unsynchronised
+    success writing 0 can interleave with a stale thread writing the threshold
+    and fire "training is sampling stale data" immediately after a refresh
+    that worked. A false alarm on that message is worse than a late one.
+    """
+    buf = _buffer(tmp_path)
+    for _ in range(_REFRESH_EMPTY_STREAK_ALARM - 1):
+        assert buf._note_refresh_outcome(loaded_any=False) is None
+
+    assert buf._note_refresh_outcome(loaded_any=True) is None
+    assert buf._refresh_empty_streak == 0
+
+  # The next empty starts from 1, not from the pre-reset streak, so no alarm.
+    assert buf._note_refresh_outcome(loaded_any=False) is None
+    assert buf._refresh_empty_streak == 1

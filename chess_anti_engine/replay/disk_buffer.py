@@ -832,32 +832,57 @@ class DiskReplayBuffer:
   # were asked for, len(loaded) arrived. Only a fully empty result is worth
   # escalating -- a partial load still refreshes the buffer, and the trim
   # race makes small shortfalls routine.
-        if loaded:
-            self._refresh_empty_streak = 0
-        else:
+        alarm = self._note_refresh_outcome(loaded_any=bool(loaded))
+        if alarm is not None:
+            streak, vanished, failed = alarm
+            print(
+                f"[disk_buf] WARNING: shuffle refresh has returned 0 of "
+                f"{n_pick} requested shards {streak} times in a row "
+                f"(vanished={vanished} failed={failed}, tracked_shards="
+                f"{len(shard_paths)}); the shuffle buffer is no longer being "
+                f"refreshed and training is sampling stale data",
+                flush=True,
+            )
+        return loaded
+
+    def _note_refresh_outcome(self, *, loaded_any: bool) -> tuple[int, int, int] | None:
+        """Advance or reset the empty-refresh streak; report when to alarm.
+
+        A refresh that returns nothing is INVISIBLE upstream: _prefetch_worker
+        only stores a non-empty result, so the slot stays empty, the next tick
+        retries, and training keeps sampling a shuffle buffer that has silently
+        stopped being refreshed -- at roughly 10 attempts/s, forever, with no
+        log line. We alarm on the STREAK rather than on any single empty
+        result, which is normal while the window is being trimmed hard.
+
+        The whole read-modify-decide runs under ``_prefetch_lock`` because
+        ``_refresh_shuffle_buf`` (sampling thread) and ``_prefetch_worker``
+        (its own thread) both reach here. Unsynchronised, the failure is not
+        just a delayed alarm: a successful refresh writing 0 can interleave
+        with a stale thread writing 50 and fire the alarm right after a
+        refresh that actually worked. A false "training is sampling stale
+        data" is worse than a late one -- it sends the reader chasing a
+        non-problem and discredits the counter. Holding the lock across the
+        decision also stops two threads reaching the threshold together and
+        printing it twice.
+
+        Returns ``(streak, vanished, failed)`` when the caller should print --
+        totals snapshotted under the same lock so they agree with the streak
+        -- or ``None``. The print itself stays with the caller, outside the
+        lock, because it is I/O on a path the prefetch thread hits in bursts.
+        """
+        with self._prefetch_lock:
+            if loaded_any:
+                self._refresh_empty_streak = 0
+                return None
             self._refresh_empty_streak += 1
-            # A refresh that returns nothing is INVISIBLE upstream:
-            # _prefetch_worker only stores a non-empty result, so the slot
-            # stays empty, the next tick retries, and training keeps sampling
-            # a shuffle buffer that has silently stopped being refreshed --
-            # at roughly 10 attempts/s, forever, with no log line. Alarm on
-            # the streak rather than on any single empty result, which is
-            # normal while the window is being trimmed hard.
             streak = self._refresh_empty_streak
             if streak == _REFRESH_EMPTY_STREAK_ALARM or (
                 streak > _REFRESH_EMPTY_STREAK_ALARM
                 and streak % (_REFRESH_EMPTY_STREAK_ALARM * 20) == 0
             ):
-                print(
-                    f"[disk_buf] WARNING: shuffle refresh has returned 0 of "
-                    f"{n_pick} requested shards {streak} times in a row "
-                    f"(vanished={self._refresh_vanished_total} "
-                    f"failed={self._refresh_failed_total}, tracked_shards="
-                    f"{len(shard_paths)}); the shuffle buffer is no longer being "
-                    f"refreshed and training is sampling stale data",
-                    flush=True,
-                )
-        return loaded
+                return streak, self._refresh_vanished_total, self._refresh_failed_total
+            return None
 
     def _try_load_shard(
         self, sp: Path, *, context: str,
