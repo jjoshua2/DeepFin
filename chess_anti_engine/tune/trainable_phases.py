@@ -783,6 +783,11 @@ def _run_selfplay_phase(
         on_poll=_revive_fleet,
     )
     if _revived_total:
+        print(
+            f"[trial] iteration {int(iteration_idx)}: revived dead selfplay "
+            f"processes {_revived_total} time(s) during the ingest wait",
+            flush=True,
+        )
         log.warning(
             "iteration %d: revived dead selfplay processes %d time(s) during "
             "the ingest wait -- the fleet died mid-iteration and was restarted; "

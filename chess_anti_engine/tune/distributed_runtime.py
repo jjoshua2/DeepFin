@@ -1113,6 +1113,18 @@ def revive_dead_selfplay_processes(
 
     broker = broker_proc_box[0]
     if broker is not None and broker.poll() is not None:
+      # print AND log. This is a Ray trial actor: logging traffic often only
+      # reaches the Ray session logs, while trial stdout is what train.sh
+      # captures into /tmp/chess_training.log -- which is exactly where the
+      # pre-registered ledger yardstick greps for this string. Logging alone
+      # could let a real revive fire and still leave the yardstick reading
+      # zero forever. The rest of the fleet path already prints "[trial] ...".
+        print(
+            f"[trial] inference broker exited (code={broker.returncode}) "
+            "mid-iteration; relaunching - workers have had no inference "
+            "since it died",
+            flush=True,
+        )
         log.warning(
             "inference broker exited (code=%s) mid-iteration; relaunching — "
             "workers have had no inference since it died",
@@ -1130,6 +1142,11 @@ def revive_dead_selfplay_processes(
     for idx, proc in enumerate(worker_procs):
         if proc.poll() is None:
             continue
+        print(
+            f"[trial] distributed worker idx={idx} exited "
+            f"(code={proc.returncode}) mid-iteration; relaunching",
+            flush=True,
+        )
         log.warning(
             "distributed worker idx=%d exited (code=%s) mid-iteration; relaunching",
             idx, proc.returncode,
