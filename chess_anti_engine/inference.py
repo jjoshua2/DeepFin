@@ -1275,6 +1275,19 @@ _MODE_LEGAL_BF16 = 2
 _MAX_CONSECUTIVE_BATCH_FAILURES = 50
 
 
+class BrokerModelUnavailable(RuntimeError):
+    """No model is loaded, so the batch cannot be answered honestly.
+
+    A distinct type because this is an EXPECTED, self-describing condition
+    (the publish manifest is missing or has no sha), not a bug with a
+    traceback worth reading. _process_batch logs it as a single throttled
+    line instead of a full stack, since the released slots come straight back
+    round the serve loop and an unthrottled log.exception would bury the real
+    signal under identical tracebacks. It still counts toward the
+    consecutive-failure ceiling.
+    """
+
+
 _HEADER_BYTES = 8  # 1 byte state + 1 byte mode + 2 pad + 4 byte batch_size
 
 
@@ -1449,6 +1462,8 @@ class SlotBroker:
         self.adaptive_idle_ms = float(adaptive_idle_ms)
         self._hang_watchdog = BrokerHangWatchdog(threshold_s=float(hang_abort_seconds))
         self._consecutive_batch_failures = 0
+      # Throttle for the no-model warning; see BrokerModelUnavailable.
+        self._no_model_warned_at = 0.0
         self._model: torch.nn.Module | None = None
         self._model_sha: str | None = None
         self._stop = False
@@ -1667,6 +1682,28 @@ class SlotBroker:
         for mode, slots in by_mode.items():
             try:
                 self._process_batch_mode(slots, mode=mode)
+            except BrokerModelUnavailable as exc:
+                # Same recovery as any other failed batch, but logged as one
+                # throttled line rather than a traceback: this path repeats
+                # every serve loop until a model appears, and 50 identical
+                # stacks before the exit would bury the reason for the exit.
+                _now_nm = time.monotonic()
+                if _now_nm - self._no_model_warned_at >= 30.0:
+                    self._no_model_warned_at = _now_nm
+                    log.warning(
+                        "broker cannot answer mode=%d slots=%d: %s; releasing "
+                        "slots for retry (%d consecutive failures)",
+                        mode, len(slots), exc, self._consecutive_batch_failures + 1,
+                    )
+                self._release_slots_for_retry(slots)
+                self._consecutive_batch_failures += 1
+                if self._consecutive_batch_failures >= _MAX_CONSECUTIVE_BATCH_FAILURES:
+                    log.error(
+                        "broker had no model for %d batches in a row; exiting so "
+                        "the next selfplay phase relaunches a clean broker",
+                        self._consecutive_batch_failures,
+                    )
+                    raise
             except Exception:
                 # One bad batch must not take down the broker. Every worker in
                 # the fleet depends on this process and nothing relaunches it
@@ -1749,7 +1786,7 @@ class SlotBroker:
             # toward _MAX_CONSECUTIVE_BATCH_FAILURES so a persistently
             # model-less broker exits and the next phase relaunches a clean
             # one. Loud and recoverable beats silent and poisonous.
-            raise RuntimeError(
+            raise BrokerModelUnavailable(
                 "broker has no model loaded (publish manifest missing past its "
                 "deadline, or carries no model sha); refusing to answer with a "
                 "fabricated all-zero policy"

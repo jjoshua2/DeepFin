@@ -19,6 +19,7 @@ asserted the old behaviour with no stated rationale.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
 
@@ -31,6 +32,8 @@ from chess_anti_engine.inference import (
     _STATE_IDLE,
     _STATE_REQUEST,
     _STATE_RESPONSE,
+    BrokerModelUnavailable,
+    SharedSlotBroker,
     SlotBroker,
 )
 
@@ -123,7 +126,69 @@ def test_persistently_modelless_broker_eventually_exits(
             broker._process_batch([slot])  # pyright: ignore[reportArgumentType]
 
         slot.state = _STATE_REQUEST  # pyright: ignore[reportAttributeAccessIssue]
-        with pytest.raises(RuntimeError, match="no model loaded"):
+        with pytest.raises(BrokerModelUnavailable, match="no model loaded"):
             broker._process_batch([slot])  # pyright: ignore[reportArgumentType]
     finally:
         broker.shutdown()
+
+
+class _StubSlot:
+    """Only the attributes SharedSlotBroker's no-model branch touches."""
+
+    def __init__(self) -> None:
+        self.state = _STATE_REQUEST
+
+
+def _shared_broker_skeleton(models: dict[str, object]) -> SharedSlotBroker:
+    """A SharedSlotBroker with just enough state to drive _process_parallel.
+
+    Built with ``object.__new__`` deliberately: the real constructor stands up
+    shared memory, CUDA streams and a manifest watcher, none of which the
+    no-model branch reaches. Keeping the fixture this thin is what makes the
+    test worth having -- it pins the release policy, not the plumbing.
+    """
+    broker = object.__new__(SharedSlotBroker)
+    broker._trial_models = models  # pyright: ignore[reportAttributeAccessIssue]
+    broker._trial_no_model_warned_at = {}
+    broker.device = "cpu"
+    return broker
+
+
+def test_shared_broker_releases_slots_for_a_trial_with_no_model() -> None:
+    broker = _shared_broker_skeleton({})
+    slots = [_StubSlot(), _StubSlot()]
+
+    broker._process_parallel({"trial-a": slots})  # pyright: ignore[reportArgumentType]
+
+    assert [s.state for s in slots] == [_STATE_IDLE, _STATE_IDLE], (
+        "a trial with no model must have its slots released, not answered"
+    )
+    assert all(s.state != _STATE_RESPONSE for s in slots)
+
+
+def test_shared_broker_no_model_warning_is_throttled() -> None:
+    """Released slots come straight back round the serve loop.
+
+    Without the throttle this warns on every pass, thousands of lines a
+    second, burying whatever the operator actually needs to see.
+    """
+    broker = _shared_broker_skeleton({})
+    records: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record.getMessage())
+
+    handler = _Capture()
+    inference_log = logging.getLogger("chess_anti_engine.inference")
+    inference_log.addHandler(handler)
+    try:
+        for _ in range(25):
+            broker._process_parallel(
+                {"trial-a": [_StubSlot()]},  # pyright: ignore[reportArgumentType]
+            )
+    finally:
+        inference_log.removeHandler(handler)
+
+    hits = [r for r in records if "no model for trial" in r]
+    assert len(hits) == 1, f"expected one throttled warning, got {len(hits)}"
