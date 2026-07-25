@@ -55,6 +55,7 @@ from chess_anti_engine.tune.trainable_phases import (
     _run_training_and_gating,
 )
 from chess_anti_engine.tune.trainable_report import (
+    _guard_checkpoint_index,
     _init_status_csv,
     _save_trial_checkpoint,
     _update_best_model,
@@ -435,6 +436,11 @@ def train_trial(config: dict):
     trial_dir = Path(_ctx.get_trial_dir())
     work_dir = trial_dir
     work_dir.mkdir(parents=True, exist_ok=True)
+
+  # Before the first report+checkpoint: a stale index seeded from the driver
+  # would otherwise overwrite existing checkpoint dirs, including the one this
+  # process just restored from.
+    _guard_checkpoint_index(trial_dir=trial_dir)
 
   # Compact status CSV — reset on each process start so checkpoint-restore rows don't accumulate.
     _STATUS_CSV_PATH = _init_status_csv(trial_dir)

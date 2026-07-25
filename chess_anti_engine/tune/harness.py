@@ -613,6 +613,79 @@ def _hotpatch_scheduler_bounds(*, tuner, scheduler) -> None:
         print("[run_tune] Scheduler bounds unchanged after restore.")
 
 
+def _make_checkpoint_eviction_idempotent() -> None:
+    """Stop a missing eviction target from aborting Ray's checkpoint bookkeeping.
+
+    Ray's `_CheckpointManager.register_checkpoint` evicts the oldest tracked
+    checkpoint by calling `_delete_fs_path`, which begins with an unguarded
+    `_is_directory` that raises `FileNotFoundError` when the path is already
+    gone. (The delete *itself* is wrapped in try/except and only logs -- the
+    existence probe in front of it is not, which is what makes an absent path
+    fatal rather than a no-op.)
+
+    We have a second deleter: `_prune_trial_checkpoints` runs inside the
+    trainable actor and trims by disk glob, with no way to see the manager's
+    list, which lives in the driver. So the manager eventually tries to evict a
+    directory we already removed -- guaranteed, not hypothetical.
+
+    That raise is not cosmetic, because it propagates out of
+    `Trial.on_checkpoint` and `TuneController._process_trial_save` catches it
+    at the top level. Three things after the raise point are skipped:
+    `storage._update_checkpoint_index`, `trial.invalidate_json_state`, and
+    `_mark_trial_to_checkpoint`. The driver's checkpoint index therefore stops
+    advancing while the actor's keeps going, and the stale index is what gets
+    persisted -- so it is also what seeds the actor on the NEXT restart.
+
+    The result is a ratchet, observed live on 2026-07-25: the trial restored
+    from `checkpoint_000250`, then wrote new checkpoints numbered 246, 247,
+    248, 249, 250, 251... The index had fallen five behind, so five existing
+    checkpoint directories were silently OVERWRITTEN -- including the very one
+    the run had just restored from. The manager then held two entries with the
+    same path, and evicting the stale one deleted a live checkpoint, which
+    produced the next missing-path raise. Each restart made it worse.
+
+    Deleting a path that is already absent achieves what the caller asked for,
+    so treating it as success is correct in its own right, not just expedient.
+    Patched at the `checkpoint_manager` module binding rather than at the
+    definition, to keep deletion semantics everywhere else untouched.
+
+    Best-effort and non-fatal, like the scheduler hotpatch: a Ray upgrade that
+    moves these private attributes must not stop training from starting.
+    """
+  # Deferred like run_tune's own ray imports: importing ray at module scope
+  # would pull it into every consumer of this module.
+    try:
+        from ray.train._internal import checkpoint_manager as _ckpt_mgr
+    except ImportError as exc:
+        print(f"[run_tune] Could not patch checkpoint eviction (non-fatal): {exc}")
+        return
+
+    inner = getattr(_ckpt_mgr, "_delete_fs_path", None)
+    if inner is None:
+        print(
+            "[run_tune] Could not patch checkpoint eviction (non-fatal): "
+            "ray.train._internal.checkpoint_manager._delete_fs_path is gone"
+        )
+        return
+    if getattr(inner, "_cae_idempotent", False):
+        return
+
+    def _delete_fs_path_idempotent(fs, fs_path: str) -> None:
+        try:
+            inner(fs=fs, fs_path=fs_path)
+        except FileNotFoundError:
+  # Already gone -- the outcome the caller wanted. Printed rather than
+  # logged so it lands in train.sh's capture next to the checkpoint lines.
+            print(
+                f"[run_tune] Checkpoint eviction target already absent, "
+                f"treating as deleted: {fs_path}"
+            )
+
+    _delete_fs_path_idempotent._cae_idempotent = True  # pyright: ignore[reportFunctionMemberAccess]
+    _ckpt_mgr._delete_fs_path = _delete_fs_path_idempotent
+    print("[run_tune] Patched Ray checkpoint eviction to tolerate an absent target.")
+
+
 def run_tune(
     *,
     base_config: dict,
@@ -753,6 +826,11 @@ def run_tune(
                 checkpoint_config=CheckpointConfig(num_to_keep=ckpt_keep),
             ),
         )
+
+  # Both branches: the second deleter that makes an eviction target vanish is
+  # `_prune_trial_checkpoints`, which runs on a fresh experiment too. The
+  # manager itself lives in this (driver) process, so this is the right place.
+    _make_checkpoint_eviction_idempotent()
 
     try:
         return tuner.fit()
