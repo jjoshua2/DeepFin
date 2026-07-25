@@ -1275,6 +1275,19 @@ _MODE_LEGAL_BF16 = 2
 _MAX_CONSECUTIVE_BATCH_FAILURES = 50
 
 
+class BrokerModelUnavailable(RuntimeError):
+    """No model is loaded, so the batch cannot be answered honestly.
+
+    A distinct type because this is an EXPECTED, self-describing condition
+    (the publish manifest is missing or has no sha), not a bug with a
+    traceback worth reading. _process_batch logs it as a single throttled
+    line instead of a full stack, since the released slots come straight back
+    round the serve loop and an unthrottled log.exception would bury the real
+    signal under identical tracebacks. It still counts toward the
+    consecutive-failure ceiling.
+    """
+
+
 _HEADER_BYTES = 8  # 1 byte state + 1 byte mode + 2 pad + 4 byte batch_size
 
 
@@ -1449,6 +1462,8 @@ class SlotBroker:
         self.adaptive_idle_ms = float(adaptive_idle_ms)
         self._hang_watchdog = BrokerHangWatchdog(threshold_s=float(hang_abort_seconds))
         self._consecutive_batch_failures = 0
+      # Throttle for the no-model warning; see BrokerModelUnavailable.
+        self._no_model_warned_at = 0.0
         self._model: torch.nn.Module | None = None
         self._model_sha: str | None = None
         self._stop = False
@@ -1667,6 +1682,28 @@ class SlotBroker:
         for mode, slots in by_mode.items():
             try:
                 self._process_batch_mode(slots, mode=mode)
+            except BrokerModelUnavailable as exc:
+                # Same recovery as any other failed batch, but logged as one
+                # throttled line rather than a traceback: this path repeats
+                # every serve loop until a model appears, and 50 identical
+                # stacks before the exit would bury the reason for the exit.
+                _now_nm = time.monotonic()
+                if _now_nm - self._no_model_warned_at >= 30.0:
+                    self._no_model_warned_at = _now_nm
+                    log.warning(
+                        "broker cannot answer mode=%d slots=%d: %s; releasing "
+                        "slots for retry (%d consecutive failures)",
+                        mode, len(slots), exc, self._consecutive_batch_failures + 1,
+                    )
+                self._release_slots_for_retry(slots)
+                self._consecutive_batch_failures += 1
+                if self._consecutive_batch_failures >= _MAX_CONSECUTIVE_BATCH_FAILURES:
+                    log.error(
+                        "broker had no model for %d batches in a row; exiting so "
+                        "the next selfplay phase relaunches a clean broker",
+                        self._consecutive_batch_failures,
+                    )
+                    raise
             except Exception:
                 # One bad batch must not take down the broker. Every worker in
                 # the fleet depends on this process and nothing relaunches it
@@ -1733,12 +1770,27 @@ class SlotBroker:
         _t_pack0 = time.perf_counter()
         self._ensure_model()
         if self._model is None:
-            for slot in ready:
-                bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
-                slot.policy[:bsz].fill(0.0)
-                slot.wdl[:bsz].fill(0.0)
-                slot.state = _STATE_RESPONSE
-            return
+            # Deliberately NOT a zero-filled response, for the reason spelled
+            # out on _release_slots_for_retry: an all-zero policy+WDL marked
+            # _STATE_RESPONSE is indistinguishable from a real answer, so it
+            # is fed to MCTS and RECORDED AS TRAINING DATA instead of raising.
+            # _ensure_model returns silently on two paths (manifest still
+            # missing at its 30s deadline; manifest carries no model sha), and
+            # the old zero-fill also returned normally -- so _process_batch
+            # scored it a success and reset _consecutive_batch_failures,
+            # meaning a broker that never got a model served zeros forever
+            # with no log line and no escalation.
+            #
+            # Raising hands this to _process_batch's handler, which releases
+            # the slots unanswered (clients re-submit), logs, and counts
+            # toward _MAX_CONSECUTIVE_BATCH_FAILURES so a persistently
+            # model-less broker exits and the next phase relaunches a clean
+            # one. Loud and recoverable beats silent and poisonous.
+            raise BrokerModelUnavailable(
+                "broker has no model loaded (publish manifest missing past its "
+                "deadline, or carries no model sha); refusing to answer with a "
+                "fabricated all-zero policy"
+            )
 
         use_bf16_input = mode in (_MODE_DENSE_BF16, _MODE_LEGAL_BF16)
         compact_legal = mode == _MODE_LEGAL_BF16
@@ -2626,6 +2678,10 @@ class SharedSlotBroker:
         self._trial_models: dict[str, torch.nn.Module] = {}  # per-trial model on GPU
         self._trial_streams: dict[str, torch.cuda.Stream] = {}  # per-trial CUDA stream
         self._trial_manifest_sigs: dict[str, tuple[int, int]] = {}
+      # Last time we warned that a trial has no model, per trial. Slots
+      # released for retry come straight back round the serve loop, so an
+      # unthrottled warning here would write thousands of lines a second.
+        self._trial_no_model_warned_at: dict[str, float] = {}
         self._all_slots: list[tuple[str, _InferenceSlot]] = []
 
     def _register_new_trial(self, trial_id: str) -> None:
@@ -2666,6 +2722,10 @@ class SharedSlotBroker:
         self._trial_streams.pop(trial_id, None)
         self._trial_shas.pop(trial_id, None)
         self._trial_manifest_sigs.pop(trial_id, None)
+      # Also the warn throttle, or a trial id re-registered within 30s would
+      # have its first no-model gap silently un-warned by the previous
+      # incarnation's timestamp (and dead ids would accumulate forever).
+        self._trial_no_model_warned_at.pop(trial_id, None)
         print(f"[shared-broker] deregistered stale trial {trial_id}", flush=True)
 
     def _scan_trials(self) -> None:
@@ -2829,11 +2889,25 @@ class SharedSlotBroker:
         for trial_id, ready in ready_by_trial.items():
             model = self._trial_models.get(trial_id)
             if model is None:
+                # Release unanswered rather than fabricating zeros: an all-zero
+                # policy+WDL marked _STATE_RESPONSE is indistinguishable from a
+                # real answer, so it reaches MCTS and is recorded as training
+                # data. See SlotBroker._release_slots_for_retry for the same
+                # rule on the per-trial path. _STATE_IDLE is what the client's
+                # own recovery treats as "slot went away, re-submit", so a
+                # transient gap costs a retry and a persistent one surfaces as
+                # a loud client-side TimeoutError instead of silent poison.
+                # Only this trial is skipped; other trials still get served.
+                _now_nm = time.monotonic()
+                if _now_nm - self._trial_no_model_warned_at.get(trial_id, 0.0) >= 30.0:
+                    self._trial_no_model_warned_at[trial_id] = _now_nm
+                    log.warning(
+                        "shared broker has no model for trial %s; releasing %d "
+                        "slot(s) for retry (NOT answering with zeros)",
+                        trial_id, len(ready),
+                    )
                 for slot in ready:
-                    bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
-                    slot.policy[:bsz].fill(0.0)
-                    slot.wdl[:bsz].fill(0.0)
-                    slot.state = _STATE_RESPONSE
+                    slot.state = _STATE_IDLE
                 continue
             batch_sizes = [slot.batch_size for slot in ready]
             xs = [np.array(slot.input[:bsz], copy=True, order="C") for slot, bsz in zip(ready, batch_sizes, strict=True)]
