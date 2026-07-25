@@ -132,6 +132,27 @@ always re-dump and pair.
   the wrong way, and had to undo it — the observation was real, the inference
   was wrong. A key missing from a row means "which code wrote this row?", not
   "this key is fake".
+- **`opening_fen_list_path` is a CHAIN, and rolling it back silently
+  UN-RETIRES seeds (2026-07-25).** `scripts/blindspot_retire_step.py` re-scores
+  the seed list the live yaml currently points at, writes
+  `retire_(N+1).txt` from it, and repoints the yaml — so each list is derived
+  from its predecessor, and the value in the yaml advances roughly **every
+  10-15 minutes** (243→250 in one hour on 07-25; 101 lists on disk). Two
+  consequences. (1) The committed value in `main` is stale within minutes of
+  any merge, so a deploy that takes the yaml from `main` rewinds the chain to
+  whatever was committed and un-retires every seed retired since — and it does
+  NOT self-heal, because the next retire step chains forward from the rolled-back
+  list. On 07-25 `main` still said `retire_198` while live was at `retire_250`;
+  the live value was preserved by hand. **A deploy must carry the LIVE value
+  forward, never restore the committed one.** (2) Do NOT "fix" the churn by
+  pointing the yaml at a stable filename or symlink: `_load_fen_list`,
+  `_load_fen_backed_bodies` and `_load_fen_weights` in
+  `chess_anti_engine/selfplay/opening.py` are `@lru_cache`d **on the path
+  string**, so a constant path would serve the first content read for the life
+  of the process. It is safe today only because the worker's copy is
+  content-addressed (`{prefix}_{sha}_{filename}` in `worker_assets.py`) and the
+  server re-hashes fresh (`sha256_file`, deliberately not cached) — the
+  manifest reload is sha-triggered, but the in-process caches are path-keyed.
 - **Readout-window sizing (2026-07-16): ~5 iterations (~3h at ~38min/iter) is
   a valid window ONLY for stability/throughput readouts** — crash/wedge
   cadence, games/h, VRAM, train_time_s — where the failure signature is fast
@@ -474,6 +495,69 @@ confounded; the availability yardsticks are read independently.
 **Revert:** revert the PR. Note the revert also restores
 `test_slot_broker_zeroes_outputs_when_model_unavailable`, which asserted the
 buggy behaviour with no stated rationale and was deliberately removed.
+
+### BUG FIX (pre-registered, not yet live) — the broker answered malformed compact-legal metadata with a STALE policy (PR #237, 2026-07-25)
+
+**PROTOCOL NOTE — not an experiment.** Third and last member of the family
+opened by #234: broker paths that fabricate a response instead of refusing
+one. Correction of silent training-data corruption on a failure path; it
+cannot change what is trained in a healthy run.
+
+**Bug.** When compact-legal metadata validation failed, the broker zeroed
+`policy_u16[:1]`, zeroed the WDL rows, and marked the slot `_STATE_RESPONSE`.
+The client cannot tell that from a real answer — it never reads
+`request_mode` back, and the success path sets `_MODE_DENSE_F32` too.
+
+Worse than the all-zero policy `_release_slots_for_retry` exists to prevent.
+`SlotInferenceClient.evaluate_legal_bf16` reads `slot.policy_u16[:n_legal]`
+using its OWN `n_legal`, so zeroing entry 0 left entries `1..n_legal` holding
+whatever bf16 logits the PREVIOUS request left in that shared buffer — a
+plausible-looking policy for a DIFFERENT position, paired with an all-zero
+WDL, consumed by MCTS (`gumbel_c.py:382`, `:918`; no caller checks for a zero
+policy) and recorded as training data. Nothing counted a failure, nothing
+logged.
+
+**Why it survived.** The fallback dates to `c91bdb99d` (2026-05-07) and has no
+test. `test_process_batch_snapshots_metadata_against_a_client_resubmit`
+injects its re-submit AFTER validation, so it covers the success path. And
+#231 (07-24) interacts: making validation read a private snapshot removed the
+crash but left torn reads landing RELIABLY on this fabricating fallback. #231
+was correct and necessary — the crash cost ~50 min of selfplay — it just
+traded a loud failure for a silent one across part of its timing window.
+
+**Fix.** Release the slot (`_STATE_IDLE`) so the client re-submits, which is
+exactly the recovery the dominant trigger wants. Not counted toward
+`_consecutive_batch_failures`: that ceiling exits the broker, removing
+inference for the whole fleet to punish one client, and a restart cannot fix a
+client-side protocol bug. The client's own 30s `TimeoutError` is the correctly
+scoped consequence.
+
+**YARDSTICK (one command):**
+
+```bash
+grep -c "malformed_legal_meta=" <trial>/distributed_inference/broker.out
+```
+
+**READ THE INSTRUMENT CAVEAT FIRST.** Incidence before this PR is unknowable —
+there was no counter and no log line. **This deploy installs the instrument**;
+it does not measure a pre-existing rate. Same mis-specification class as the
+#224 yardstick: absence of the line was never a measurement of zero. The
+correctness argument stands independent of incidence; the counter is how we
+learn it.
+
+**SUCCESS = counter stays 0 AND games/h unchanged** vs the pre-deploy window.
+That is the expected outcome and it is insurance, not evidence.
+**DECIDING evidence is the sabotage-verified tests**: with the fix stashed all
+8 tests in `tests/test_broker_malformed_legal_meta.py` fail, both
+malformations parametrized, asserting the response buffers are byte-identical
+to pre-call copies (proving the broker wrote NOTHING, not merely "not a valid
+answer").
+**KILL/DIAGNOSE = counter climbing AND workers timing out in bursts** ⇒ the
+tear is far more common than believed and the right fix moves upstream to a
+sequence number in the slot header so the broker can detect a re-submit
+directly instead of inferring it from failed validation.
+**Confounds:** none for learning metrics. Deploys on the next restart.
+**Revert:** revert the PR. Nothing else depends on it.
 
 ### OUTAGE + BUG FIX (deployed) — inference broker died of a shared-memory race and nothing relaunched it (PR #231, 2026-07-24)
 
