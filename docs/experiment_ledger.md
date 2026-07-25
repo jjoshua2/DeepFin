@@ -153,6 +153,26 @@ always re-dump and pair.
   content-addressed (`{prefix}_{sha}_{filename}` in `worker_assets.py`) and the
   server re-hashes fresh (`sha256_file`, deliberately not cached) — the
   manifest reload is sha-triggered, but the in-process caches are path-keyed.
+- **On RESUME, Ray replays the config the experiment was BORN with — yaml
+  edits to Tuner-level settings are silently ignored (2026-07-25).**
+  `Tuner.restore` takes no run config; it unpickles the one saved when the
+  experiment was first created. `run_tune` only passes
+  `CheckpointConfig(num_to_keep=...)` on the FRESH-START branch, so this
+  07-11 run kept the code default of 2 while `configs/pbt2_small.yaml` said
+  `tune_num_to_keep: 6` — realized 2, configured 6, for two weeks. The same
+  class already had one known instance: `_hotpatch_scheduler_bounds` exists
+  precisely because restored PB2 bounds shadow the yaml. **Assume any
+  Tuner/RunConfig-level key is frozen at experiment creation unless something
+  explicitly hotpatches it**; only per-iteration trial config is live-read.
+  Consequences seen: the yaml comment beside the key warns PB2/PBT needs older
+  checkpoints for cloning/exploit, and the run hit exactly that — Ray's
+  restored checkpoint manager raised evicting an already-deleted
+  `checkpoint_000246`, which aborted `on_checkpoint` BEFORE registering the
+  new checkpoint, so Ray's notion of the latest checkpoint went stale. Fixed
+  by PR #240 (`_hotpatch_checkpoint_retention`, mirroring the scheduler one);
+  takes effect on the next restart. NOTE there are also TWO pruners —
+  `_prune_trial_checkpoints` (ours, every 5 iters, live yaml) and Ray's
+  manager (restored value) — so retention is whichever is stricter.
 - **Readout-window sizing (2026-07-16): ~5 iterations (~3h at ~38min/iter) is
   a valid window ONLY for stability/throughput readouts** — crash/wedge
   cadence, games/h, VRAM, train_time_s — where the failure signature is fast

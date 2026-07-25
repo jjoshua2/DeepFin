@@ -549,6 +549,58 @@ def _hotpatch_scheduler_bounds(*, tuner, scheduler) -> None:
         print("[run_tune] Scheduler bounds unchanged after restore.")
 
 
+def _hotpatch_checkpoint_retention(*, tuner, num_to_keep: int) -> None:
+    """Reapply the YAML's ``tune_num_to_keep`` to a RESTORED experiment.
+
+    Exactly the failure `_hotpatch_scheduler_bounds` exists for, on a
+    different setting. ``CheckpointConfig(num_to_keep=...)`` is only passed to
+    ``tune.Tuner(...)`` on the fresh-start branch; ``Tuner.restore`` takes no
+    run config and unpickles the one saved when the experiment was FIRST
+    created. A long-lived run therefore keeps whatever retention it was born
+    with, and later YAML edits are silently ignored -- on 2026-07-25 the live
+    trial had `tune_num_to_keep: 6` in the YAML and exactly 2 checkpoints on
+    disk, the code default it was created with.
+
+    That gap is not cosmetic. The YAML comment beside the key warns that
+    PB2/PBT needs older checkpoints for cloning/exploit and that keeping too
+    few causes missing-checkpoint restore errors -- and the run had already
+    hit one: Ray's restored checkpoint manager tried to evict a checkpoint
+    that was already gone, raised inside `register_checkpoint`, and thereby
+    aborted `on_checkpoint` BEFORE registering the new checkpoint at all.
+
+    Best-effort and non-fatal, like the scheduler hotpatch: a Ray upgrade that
+    moves these private attributes must not stop training from starting.
+    """
+    if num_to_keep <= 0:
+        return
+  # Deferred like run_tune's own ray imports: importing ray at module scope
+  # would pull it into every consumer of this module.
+    from ray.tune import CheckpointConfig
+
+    try:
+  # Private surface, same as the scheduler hotpatch above — no typings.
+        run_config = tuner._local_tuner._run_config
+    except AttributeError as exc:
+        print(f"[run_tune] Could not hotpatch checkpoint retention (non-fatal): {exc}")
+        return
+
+    current = getattr(getattr(run_config, "checkpoint_config", None), "num_to_keep", None)
+    if current == num_to_keep:
+        print(f"[run_tune] Checkpoint retention already num_to_keep={num_to_keep}.")
+        return
+    try:
+        run_config.checkpoint_config = CheckpointConfig(num_to_keep=num_to_keep)
+    except Exception as exc:
+        print(f"[run_tune] Could not hotpatch checkpoint retention (non-fatal): {exc}")
+        return
+    # Printed, not logged: run_tune's stdout is what train.sh captures, and a
+    # silently-ignored retention setting is precisely what this fixes.
+    print(
+        f"[run_tune] Hotpatched checkpoint retention on restore: "
+        f"num_to_keep {current} → {num_to_keep} (from tune_num_to_keep)"
+    )
+
+
 def run_tune(
     *,
     base_config: dict,
@@ -675,6 +727,9 @@ def run_tune(
             resume_unfinished=True,
         )
         _hotpatch_scheduler_bounds(tuner=tuner, scheduler=scheduler)
+        _hotpatch_checkpoint_retention(
+            tuner=tuner, num_to_keep=int(base_config.get("tune_num_to_keep", 2)),
+        )
     else:
         if resume and experiment_path.exists():
             print("[run_tune] All experiment state files corrupt; starting fresh run.")
