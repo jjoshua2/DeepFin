@@ -10,6 +10,8 @@ CONFIG = {
     "selfplay_fraction": 0.5,
     "train_views_per_ingested_position": 2.5,
     "opening_fen_dole_max_fraction": 0.25,
+    # The dole cap is a fraction of games_per_iter, not of selfplay.
+    "games_per_iter": 400,
 }
 
 
@@ -21,7 +23,8 @@ def _row(
     stale: int = 0,
     views: float = 2.5,
     seeded: int = 20,
-    positions_added: int = 5000,
+    seeded_backed: int = 0,
+    matching_positions: int = 5000,
     ingested: int = 5000,
     timestamp: float = 1_000_000.0,
     reported_s: float = 1200.0,
@@ -29,16 +32,20 @@ def _row(
 ) -> dict:
     return {
         "training_iteration": it,
-        "games_generated": games,
+        "matching_games": games,
         "selfplay_games": selfplay,
         "distributed_stale_games": stale,
         "train_views_actual": views,
-        "positions_added": positions_added,
+        "matching_positions": matching_positions,
         "replay_positions_ingested": ingested,
         "timestamp": timestamp,
         "time_this_iter_s": reported_s,
         "iterations_since_restore": isr,
-        "outcome_stats": f"selfplay_fenlist_games={seeded}",
+        # outcome_stats is PIPE-delimited, not space-delimited.
+        "outcome_stats": (
+            f"selfplay_fenlist_games={seeded}"
+            f"|selfplay_fenlist_backed_games={seeded_backed}"
+        ),
         "config": dict(CONFIG),
     }
 
@@ -55,11 +62,20 @@ def test_matching_knobs_produce_no_findings(capsys) -> None:
     assert "DIVERGENT" not in capsys.readouterr().out
 
 
-def test_realized_selfplay_share_divergence_is_reported() -> None:
-    """The live 2026-07-24 case: configured 0.50, realized ~0.86."""
+def test_selfplay_mix_is_context_and_never_a_finding(capsys) -> None:
+    """selfplay_fraction is a per-slot roll, not a completed-game share.
+
+    The completed share is EXPECTED to run above the knob whenever curriculum
+    games outlast selfplay games, so reporting the gap as a divergence trains
+    readers to ignore the tool. The live 0.86-vs-0.50 reading was reported as a
+    knob failure on this tool's first run; it is not one.
+    """
     rows = [_row(selfplay=345), _row(it=101, selfplay=345, timestamp=1_001_200.0)]
-    findings = ar.audit_knobs(rows, _stats(rows))
-    assert any("selfplay_fraction" in f for f in findings)
+    assert not any("selfplay_fraction" in f for f in ar.audit_knobs(rows, _stats(rows)))
+    ar.report_selfplay_mix(rows, _stats(rows))
+    out = capsys.readouterr().out
+    assert "0.8625" in out or "0.862" in out
+    assert "DIVERGENT" not in out
 
 
 def test_a_cap_knob_passes_when_under_and_fails_when_over() -> None:
@@ -67,10 +83,101 @@ def test_a_cap_knob_passes_when_under_and_fails_when_over() -> None:
     assert not any(
         "opening_fen_dole_max_fraction" in f for f in ar.audit_knobs(under, _stats(under))
     )
-    # Seeded == all selfplay games: the cap is inert (realized 1.0 vs 0.25).
-    over = [_row(seeded=200), _row(it=101, seeded=200, timestamp=1_001_200.0)]
+    # 150/400 games_per_iter = 0.375 > the 0.25 cap.
+    over = [_row(seeded=150), _row(it=101, seeded=150, timestamp=1_001_200.0)]
     assert any(
         "opening_fen_dole_max_fraction" in f for f in ar.audit_knobs(over, _stats(over))
+    )
+
+
+def test_the_dole_cap_denominator_is_games_per_iter_not_selfplay() -> None:
+    """110 seeded of 400 total with 200 selfplay MEETS the cap exactly.
+
+    Dividing by selfplay_games instead would read 0.55 and call a compliant cap
+    a 2x breach -- inflated by 1/selfplay_fraction. This pins the base in both
+    directions, so swapping the denominator fails here.
+    """
+    ok_rows = [_row(seeded=100), _row(it=101, seeded=100, timestamp=1_001_200.0)]
+    assert not any(
+        "opening_fen_dole_max_fraction" in f
+        for f in ar.audit_knobs(ok_rows, _stats(ok_rows))
+    )
+    # Same seeded count, half the selfplay: still compliant, because the base
+    # is games_per_iter. A selfplay denominator would flag this one.
+    thin = [
+        _row(seeded=100, selfplay=100),
+        _row(it=101, seeded=100, selfplay=100, timestamp=1_001_200.0),
+    ]
+    assert not any(
+        "opening_fen_dole_max_fraction" in f for f in ar.audit_knobs(thin, _stats(thin))
+    )
+
+
+def test_the_dole_cap_counts_the_backed_seed_channels_too() -> None:
+    """Backed seeds are the GOAL channel; omitting them hides a real breach."""
+    rows = [
+        _row(seeded=20, seeded_backed=140),
+        _row(it=101, seeded=20, seeded_backed=140, timestamp=1_001_200.0),
+    ]
+    assert any(
+        "opening_fen_dole_max_fraction" in f for f in ar.audit_knobs(rows, _stats(rows))
+    )
+
+
+def test_a_cap_configured_to_zero_is_uncapped_not_a_breach(capsys) -> None:
+    """0 disables the cap in distributed_runtime; reporting it as a breach is noise."""
+    rows = [_row(seeded=300), _row(it=101, seeded=300, timestamp=1_001_200.0)]
+    for r in rows:
+        r["config"] = dict(CONFIG, opening_fen_dole_max_fraction=0.0)
+    findings = ar.audit_knobs(rows, _stats(rows))
+    assert not any("opening_fen_dole_max_fraction" in f for f in findings)
+    assert "UNCAPPED" in capsys.readouterr().out
+
+
+def test_a_window_spanning_a_knob_change_judges_only_the_current_value(capsys) -> None:
+    """A median across a deploy is a number no configuration ever asked for.
+
+    This produced the wrong "the dole cap is entirely inert" verdict on the
+    tool's first real run: five pre-deploy iterations with no cap at all
+    dominated the median over three capped ones.
+    """
+    old = _row(seeded=300)
+    old["config"] = dict(CONFIG)
+    del old["config"]["opening_fen_dole_max_fraction"]
+    new = _row(it=101, seeded=20, timestamp=1_001_200.0)
+    findings = ar.audit_knobs([old, new], _stats([old, new]))
+    assert not any("opening_fen_dole_max_fraction" in f for f in findings)
+    assert "changed inside this window" in capsys.readouterr().out
+
+
+def test_a_malformed_config_value_is_a_finding_not_a_traceback() -> None:
+    rows = [_row(), _row(it=101, timestamp=1_001_200.0)]
+    for r in rows:
+        r["config"] = dict(CONFIG, train_views_per_ingested_position=None)
+    findings = ar.audit_knobs(rows, _stats(rows))
+    assert any("not a number" in f for f in findings)
+
+
+def test_a_knob_missing_from_the_config_is_a_finding_not_a_silent_skip() -> None:
+    """"Nothing can check this knob" is the state every one of these bugs hid in."""
+    rows = [_row(), _row(it=101, timestamp=1_001_200.0)]
+    for r in rows:
+        cfg = dict(CONFIG)
+        del cfg["train_views_per_ingested_position"]
+        r["config"] = cfg
+    findings = ar.audit_knobs(rows, _stats(rows))
+    assert any("cannot audit" in f for f in findings)
+
+
+def test_views_reading_high_is_not_a_finding_but_low_is() -> None:
+    """The budget clamps views UP from below (fresh-samples floor, drought mode)."""
+    high = [_row(views=4.0), _row(it=101, views=4.0, timestamp=1_001_200.0)]
+    assert not any(
+        "train_views_per_ingested_position" in f for f in ar.audit_knobs(high, _stats(high))
+    )
+    low = [_row(views=0.46), _row(it=101, views=0.46, timestamp=1_001_200.0)]
+    assert any(
+        "train_views_per_ingested_position" in f for f in ar.audit_knobs(low, _stats(low))
     )
 
 
@@ -90,9 +197,9 @@ def test_frozen_fleet_needs_two_iters_to_alert() -> None:
     assert any("frozen on an old model_sha" in f for f in ar.audit_counters(twice))
 
 
-def test_positions_added_undercount_is_reported_with_its_factor() -> None:
+def test_matching_positions_undercount_is_reported_with_its_factor() -> None:
     """This ratio IS the views-denominator error factor — surface it numerically."""
-    rows = [_row(positions_added=1000, ingested=6220) for _ in range(2)]
+    rows = [_row(matching_positions=1000, ingested=6220) for _ in range(2)]
     findings = ar.audit_counters(rows)
     assert any("6.22x" in f for f in findings)
 
@@ -119,7 +226,9 @@ def test_wall_clock_clean_when_reported_matches_the_timestamp_delta() -> None:
 def test_yaml_on_disk_disagreeing_with_effective_config_is_reported(tmp_path: Path) -> None:
     """A rejected live reload leaves every knob at its pre-edit value, silently."""
     yaml_path = tmp_path / "cfg.yaml"
-    yaml_path.write_text("selfplay:\n  selfplay_fraction: 0.9\n", encoding="utf-8")
+    yaml_path.write_text(
+        "selfplay:\n  opening_fen_dole_max_fraction: 0.9\n", encoding="utf-8"
+    )
     rows = [_row(), _row(it=101, timestamp=1_001_200.0)]
     findings = ar.audit_live_yaml(rows, yaml_path)
     assert any("live reload was likely REJECTED" in f for f in findings)
@@ -127,7 +236,9 @@ def test_yaml_on_disk_disagreeing_with_effective_config_is_reported(tmp_path: Pa
 
 def test_yaml_matching_effective_config_is_clean(tmp_path: Path) -> None:
     yaml_path = tmp_path / "cfg.yaml"
-    yaml_path.write_text("selfplay:\n  selfplay_fraction: 0.5\n", encoding="utf-8")
+    yaml_path.write_text(
+        "selfplay:\n  opening_fen_dole_max_fraction: 0.25\n", encoding="utf-8"
+    )
     rows = [_row(), _row(it=101, timestamp=1_001_200.0)]
     assert ar.audit_live_yaml(rows, yaml_path) == []
 

@@ -716,7 +716,7 @@ def _build_report_dict(
         "global_iter": int(iteration_idx),
         "replay": int(buf_size),
         "test_replay": int(holdout_buf_size),
-        "positions_added": sp.total_positions,
+        "matching_positions": sp.matching_positions,
         "replay_positions_ingested": int(sp.replay_positions_ingested),
         # TRUE replay reuse: trained samples per position that actually entered
         # the buffer. In steady state this IS the mean number of times a
@@ -841,7 +841,19 @@ def _build_report_dict(
         "replay_wdl_loss_frac": (
             float(sp.replay_wdl_2) / float(replay_wdl_n) if replay_wdl_n > 0 else 0.0
         ),
-        "games_generated": int(sp.total_games_generated),
+        "matching_games": int(sp.matching_games),
+        # Every game we INGESTED this iteration, current-model or stale.
+        # Emitted so "how much selfplay did we pay for" is a metric rather than
+        # a sum a reader has to know to compute: matching_games alone looked
+        # healthy for days while ~80% of games were being discarded as stale
+        # (2026-07-24, workers frozen on an old model_sha).
+        #
+        # NOT the uploaded total: shards that fail to load are moved to
+        # processed/bad/ and shards present in the inbox on resume are
+        # quarantined, and neither is counted in either summand. If upload
+        # volume itself is ever in question, that needs its own counter --
+        # do not read this one as one.
+        "total_games_ingested": int(sp.matching_games) + int(sp.distributed_stale_games),
         "avg_game_plies": float(pr.avg_game_plies),
         "adjudication_rate": float(pr.adjudication_rate),
         "tb_adjudication_rate": float(pr.tb_adjudication_rate),

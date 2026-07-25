@@ -23,7 +23,7 @@ ALERT (exit 1) — needs action:
     NOTE: the canonical no-games drought suppresses the result.json row
     entirely (the trainable short-circuits and writes nothing), so a row-scan
     cannot see it — use --max-age-min to alert on a stale newest row instead.
-  - games_generated < 100: selfplay collapse (demoted to a NOTE on a benign
+  - matching_games < 100: selfplay collapse (demoted to a NOTE on a benign
     post-restart iteration, which the stale_games marker identifies).
   - --max-age-min M (opt-in): the newest row's timestamp is older than M
     minutes — result.json has stopped advancing (stall / no-games drought).
@@ -47,6 +47,7 @@ import sys
 import time
 from pathlib import Path
 
+from chess_anti_engine.tune.result_keys import row_counter, row_counter_opt
 from scripts.trial_paths import latest_result_path
 
 
@@ -84,8 +85,8 @@ def check_row(
 
     stale = row.get("distributed_stale_games")
     stale_n = int(stale) if stale is not None else 0
-    games = row.get("games_generated")
-    games_n = int(games) if games is not None else 0
+    games = row_counter_opt(row, "matching_games")
+    games_n = games if games is not None else 0
     # "Stale" used to be treated as PROOF of a restart, which is why a frozen
     # worker fleet hid here for days (2026-07-24): every iteration looked like
     # a restart and got the benign reading.
@@ -97,7 +98,7 @@ def check_row(
     # iteration. So stale>matching twice running is the alert; once is a note.
     stale_outruns = stale_n > 0 and games_n > 0 and stale_n > games_n
     prev_stale = int(prev.get("distributed_stale_games") or 0) if prev else 0
-    prev_games = int(prev.get("games_generated") or 0) if prev else 0
+    prev_games = row_counter(prev, "matching_games") if prev else 0
     prev_outruns = prev_stale > 0 and prev_games > 0 and prev_stale > prev_games
     workers_frozen = stale_outruns and prev_outruns
     is_restart_iter = stale_n > 0 and not workers_frozen
@@ -109,7 +110,7 @@ def check_row(
     # `0 < frac < 0.9` catches the flood without the missing-field false alarm.
     ingested = row.get("replay_positions_ingested")
     if ingested is None:
-        ingested = row.get("positions_added")
+        ingested = row_counter_opt(row, "matching_positions")
     hp = row.get("replay_has_policy_frac")
     if hp is not None and ingested is not None and int(ingested) > 0 and 0.0 < float(hp) < 0.9:
         alerts.append(f"has_policy_frac={float(hp):.3f} <0.9 on {int(ingested)} ingested rows — "
@@ -136,10 +137,10 @@ def check_row(
         # Workers are still spinning up on the first post-restart iteration, so a
         # low count there is benign (the tool's own stale-games NOTE) — demote.
         if is_restart_iter:
-            notes.append(f"games_generated={games_n} <100 on a restart iter — "
+            notes.append(f"matching_games={games_n} <100 on a restart iter — "
                          "benign (workers spinning up)")
         else:
-            alerts.append(f"games_generated={games_n} <100 — selfplay collapse")
+            alerts.append(f"matching_games={games_n} <100 — selfplay collapse")
 
     if wr is not None and float(wr) > 0.75:
         notes.append(f"pid_ema_winrate={float(wr):.3f} >0.75 — likely benign "
@@ -148,13 +149,13 @@ def check_row(
         notes.append(f"stale_games={stale_n} — expect a benign winrate spike (restart artifact)")
     if workers_frozen:
         alerts.append(
-            f"stale_games={stale_n} > games_generated={games_n} for 2+ iters — "
+            f"stale_games={stale_n} > matching_games={games_n} for 2+ iters — "
             "workers frozen on an old model_sha; most selfplay is being "
             "discarded (check worker logs for 'model tag STALE')"
         )
     elif stale_outruns:
         notes.append(
-            f"stale_games={stale_n} > games_generated={games_n} — benign if this "
+            f"stale_games={stale_n} > matching_games={games_n} — benign if this "
             "follows a restart; an alert if it repeats next iteration"
         )
     if prev is not None:
@@ -272,7 +273,7 @@ def main() -> None:
         it = row.get("training_iteration", "?")
         print(f"iter {it}: wr_ema={float(row.get('pid_ema_winrate') or 0):.3f} "
               f"regret={float(row.get('wdl_regret') or 0):.4f} "
-              f"games={int(row.get('games_generated') or 0)} "
+              f"games={row_counter(row, 'matching_games')} "
               f"fen={total_fen}(self {selfplay_fen}) "
               f"steps={int(row.get('train_steps_used') or 0)} "
               f"window={int(row.get('replay') or 0)} "

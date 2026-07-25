@@ -48,7 +48,7 @@ def _iteration_pause_metrics(
 
 def _compute_train_step_budget(
     *,
-    positions_added: int,
+    positions_ingested: int,
     imported_samples: int,
     replay_size: int,
     batch_size: int,
@@ -59,7 +59,7 @@ def _compute_train_step_budget(
 ) -> dict[str, int]:
     effective_batch_size = max(1, int(batch_size) * max(1, int(accum_steps)))
     window_target_samples = math.ceil(float(train_window_fraction) * max(0, int(replay_size)))
-    fresh_samples = max(0, int(positions_added)) + max(0, int(imported_samples))
+    fresh_samples = max(0, int(positions_ingested)) + max(0, int(imported_samples))
     views_mode = float(train_views_per_ingested_position) > 0.0
     drought_fallback = False
     if views_mode:
@@ -70,7 +70,7 @@ def _compute_train_step_budget(
         # where a window fraction silently drifts the reuse ratio. AZ ~1 view,
         # KataGo ~4; 2-3 is the intended operating range.
         #
-        # `positions_added` MUST be positions actually ingested into the replay
+        # `positions_ingested` MUST be positions actually ingested into the replay
         # buffer (positions_replay_added), NOT matching_positions. Until
         # 2026-07-24 it was the latter: stale-model shards are ingested too
         # (_process_shard calls _ingest_train_arrays BEFORE the model_sha
@@ -85,7 +85,7 @@ def _compute_train_step_budget(
         # import by views would produce a single uncapped multi-epoch burst
         # over stale donor data.
         views_target_samples = math.ceil(
-                float(train_views_per_ingested_position) * float(max(0, int(positions_added)))
+                float(train_views_per_ingested_position) * float(max(0, int(positions_ingested)))
             ) + max(0, int(imported_samples))
         target_sample_budget = max(fresh_samples, views_target_samples)
         if fresh_samples < effective_batch_size:
@@ -184,10 +184,10 @@ def _opponent_strength(
 
 def _should_retry_iteration_without_games(
     *,
-    total_games_generated: int,
+    matching_games: int,
 ) -> bool:
     """Return True when a distributed iteration should wait for fresh selfplay."""
-    return int(total_games_generated) <= 0
+    return int(matching_games) <= 0
 
 
 def _curriculum_winrate_raw_or_none(
