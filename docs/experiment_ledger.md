@@ -559,6 +559,55 @@ directly instead of inferring it from failed validation.
 **Confounds:** none for learning metrics. Deploys on the next restart.
 **Revert:** revert the PR. Nothing else depends on it.
 
+### BUG FIX (pre-registered, not yet live) — the replay shuffle refresh silently dropped failed shard loads (PR #238, 2026-07-25)
+
+**PROTOCOL NOTE — not an experiment.** Observability + honest accounting on a
+failure path. In a healthy run it changes nothing about what is trained.
+
+**Bug.** `DiskReplayBuffer._load_refresh_chunks` picks `n_pick` shards to
+refresh the hot shuffle buffer and wrapped each load in a bare
+`except Exception: pass`. Nothing compared `len(loaded)` against `n_pick`, so
+loading three of five — or **zero** of five — looked exactly like loading all
+five. `_scan_existing_shards` had its own copy of the same swallow.
+
+**Why zero matters.** `_prefetch_worker` only stores a NON-EMPTY result, so an
+empty refresh leaves the prefetch slot unset, the next tick retries, and the
+loop refills whenever the slot is empty — roughly every 0.1s. Production runs
+`shuffle_refresh_interval: 1`. A persistent load fault is therefore a hot
+retry loop that never logs, while training goes on sampling a shuffle buffer
+that has stopped being refreshed. Sample diversity would collapse toward a
+frozen subset with no signal anywhere.
+
+**Classification is by TRACKING, not exception type.** `_enforce_window` pops
+a shard out of `_shard_paths` under the lock before calling
+`delete_shard_path`, so an untracked path was deliberately deleted and losing
+it is routine — that race fires constantly and must not be logged as a fault.
+Type-based classification would be wrong AND fragile: `zarr.open_group` on a
+missing group raises `GroupNotFoundError`, a **`ValueError`, not a
+`FileNotFoundError`**; and `delete_shard_path` uses
+`shutil.rmtree(..., ignore_errors=True)`, so a reader can also catch a
+half-deleted group and surface a third error type. Tracking is immune to both,
+and to the zarr version.
+
+**YARDSTICK (one command):**
+
+```bash
+grep -cE "\[disk_buf\] WARNING: (shuffle (refresh|seed)|.*TRACKED shard)" /tmp/chess_training.log
+```
+
+**INSTRUMENT CAVEAT, same as #237.** Incidence before this PR is unknowable —
+there was no counter and no line. This deploy INSTALLS the instrument.
+
+**SUCCESS = 0 tracked-shard failures and 0 empty-streak alarms** over the
+first day. That is the expected reading and it is insurance, not evidence.
+**DECIDING evidence is the sabotage-verified tests** — restoring the bare
+except fails the four covering classification and reporting.
+**KILL/DIAGNOSE = the empty-streak alarm firing** ⇒ the shuffle buffer has
+genuinely stalled; read the accompanying per-shard line for the cause before
+touching anything, because this is a symptom of a load fault, not its cause.
+**Confounds:** none for learning metrics.
+**Revert:** revert the PR.
+
 ### OUTAGE + BUG FIX (deployed) — inference broker died of a shared-memory race and nothing relaunched it (PR #231, 2026-07-24)
 
 **PROTOCOL NOTE — deployed BEFORE this entry existed.** Production was DOWN
