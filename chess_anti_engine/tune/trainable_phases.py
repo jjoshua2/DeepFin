@@ -41,6 +41,7 @@ from chess_anti_engine.tune._utils import concat_array_batches as _concat_array_
 from chess_anti_engine.tune.distributed_runtime import (
     _ensure_distributed_workers,
     _ensure_inference_broker,
+    revive_dead_selfplay_processes,
     _ingest_distributed_selfplay,
     _prune_processed_shards,
     _publish_distributed_trial_state,
@@ -727,6 +728,23 @@ def _run_selfplay_phase(
     )
     _shards_before_ingest = set(buf._shard_paths)
 
+  # Ensuring the fleet only here, at the phase boundary, is what turned the
+  # 2026-07-24 broker crash into a 50-minute outage: the wait loop below can
+  # run for wait_timeout_s * 3 with nothing checking whether anything is still
+  # alive to produce games. Box the handle so the in-loop revive can hand back
+  # a new process without this function losing track of it.
+    _broker_box: list[subprocess.Popen[bytes] | None] = [distributed_inference_broker_proc]
+
+    def _revive_fleet() -> None:
+        revive_dead_selfplay_processes(
+            config=config,
+            trial_id=trial_id,
+            trial_dir=trial_dir,
+            publish_dir=distributed_dirs["publish_dir"],
+            broker_proc_box=_broker_box,
+            worker_procs=distributed_worker_procs,
+        )
+
     ingest_summary = _ingest_distributed_selfplay(
         buf=buf,
         holdout_buf=holdout_buf,
@@ -743,7 +761,9 @@ def _run_selfplay_phase(
         rng=rng,
         min_games_fraction=tc.distributed_min_games_fraction,
         prefetcher=prefetcher,
+        on_poll=_revive_fleet,
     )
+    distributed_inference_broker_proc = _broker_box[0]
 
     buf.flush()
     _new_selfplay_shards = [p for p in buf._shard_paths if p not in _shards_before_ingest]
