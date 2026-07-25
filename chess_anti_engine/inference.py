@@ -1464,6 +1464,12 @@ class SlotBroker:
         self._consecutive_batch_failures = 0
       # Throttle for the no-model warning; see BrokerModelUnavailable.
         self._no_model_warned_at = 0.0
+      # Malformed compact-legal metadata: lifetime count plus a warn throttle.
+      # Lifetime rather than per-interval because the metrics line that reports
+      # it only prints when a batch completed, and a slot rejected here never
+      # reaches a batch -- a monotonic total still grows visibly across reports.
+        self._malformed_legal_meta_total = 0
+        self._malformed_legal_meta_warned_at = 0.0
         self._model: torch.nn.Module | None = None
         self._model_sha: str | None = None
         self._stop = False
@@ -1824,16 +1830,67 @@ class SlotBroker:
                 # path below. ~360KB per batch against a ~1.4s forward.
                 counts = np.array(meta[1:1 + bsz], dtype=np.int32)
                 flat = np.array(meta[1 + bsz:1 + bsz + n_legal], dtype=np.int32)
-                if (
-                    counts.shape[0] != bsz
-                    or int(counts.sum()) != n_legal
-                    or flat.shape[0] != n_legal
-                    or (flat.size > 0 and (int(flat.min()) < 0 or int(flat.max()) >= _POLICY_SIZE))
+                # Named rather than one boolean chain so the rejection log can
+                # say which invariant broke. A bare "malformed" line leaves the
+                # reader unable to tell a torn snapshot (counts/header
+                # disagreement) from a real client encoding bug (out-of-range
+                # indices), which is the first thing worth knowing.
+                counts_sum = int(counts.sum())
+                if counts.shape[0] != bsz:
+                    bad_reason = f"counts len {counts.shape[0]} != batch_size {bsz}"
+                elif counts_sum != n_legal:
+                    bad_reason = f"counts sum {counts_sum} != header n_legal {n_legal}"
+                elif flat.shape[0] != n_legal:
+                    bad_reason = f"flat len {flat.shape[0]} != header n_legal {n_legal}"
+                elif flat.size > 0 and (
+                    int(flat.min()) < 0 or int(flat.max()) >= _POLICY_SIZE
                 ):
-                    slot.policy_u16[:1] = 0
-                    slot.wdl[:bsz].fill(0.0)
-                    slot.request_mode = _MODE_DENSE_F32
-                    slot.state = _STATE_RESPONSE
+                    bad_reason = (
+                        f"flat index range [{int(flat.min())}, {int(flat.max())}] "
+                        f"outside [0, {_POLICY_SIZE})"
+                    )
+                else:
+                    bad_reason = ""
+                if bad_reason:
+                    # Release the slot unanswered rather than fabricating a
+                    # response. The old code here zeroed policy_u16[:1] and the
+                    # WDL rows and marked the slot _STATE_RESPONSE, which the
+                    # client cannot distinguish from a real answer -- it never
+                    # reads request_mode back, and the success path sets
+                    # _MODE_DENSE_F32 too. Worse than the all-zero policy that
+                    # _release_slots_for_retry exists to prevent: the client
+                    # reads slot.policy_u16[:n_legal] using its OWN n_legal, so
+                    # only entry 0 was zeroed and entries 1..n_legal came back
+                    # as whatever bf16 logits the previous request left in this
+                    # shared buffer -- a plausible-looking policy belonging to a
+                    # different position, paired with an all-zero WDL, fed
+                    # straight into MCTS and recorded as training data.
+                    #
+                    # _STATE_IDLE instead makes the client re-submit (see
+                    # _submit_and_wait_locked), which is exactly the recovery
+                    # the dominant cause wants: the torn snapshot described
+                    # above happens because the client rewrote the slot
+                    # mid-read, so re-reading settled metadata succeeds. A
+                    # client that is genuinely malformed retries every ~10ms
+                    # and then raises its own TimeoutError -- loud, and scoped
+                    # to the one broken client.
+                    #
+                    # Deliberately NOT counted toward
+                    # _consecutive_batch_failures: that ceiling exits the
+                    # broker, which would take inference away from the entire
+                    # fleet to punish one client, and a broker restart cannot
+                    # fix a client-side protocol bug, so it would just repeat.
+                    self._malformed_legal_meta_total += 1
+                    _now_mm = time.monotonic()
+                    if _now_mm - self._malformed_legal_meta_warned_at >= 30.0:
+                        self._malformed_legal_meta_warned_at = _now_mm
+                        log.warning(
+                            "broker rejected malformed compact-legal metadata "
+                            "(%s); releasing the slot for retry rather than "
+                            "answering with a stale policy (%d total)",
+                            bad_reason, self._malformed_legal_meta_total,
+                        )
+                    self._release_slots_for_retry([slot])
                     continue
                 legal_counts_by_slot.append(counts)
                 legal_flat_by_slot.append(flat)
@@ -2158,7 +2215,13 @@ class SlotBroker:
             f"pack={m['pack_s'] * 1000.0 / m['batches']:.2f}ms "
             f"fwd={m['forward_s'] * 1000.0 / m['batches']:.2f}ms "
             f"out={m['output_s'] * 1000.0 / m['batches']:.2f}ms "
-            f"sync+scatter={m['scatter_s'] * 1000.0 / m['batches']:.2f}ms",
+            f"sync+scatter={m['scatter_s'] * 1000.0 / m['batches']:.2f}ms"
+  # Only when non-zero, so the healthy line stays unchanged and any
+  # non-zero value is a grep hit rather than something to eyeball.
+            + (
+                f" | malformed_legal_meta={self._malformed_legal_meta_total}"
+                if self._malformed_legal_meta_total else ""
+            ),
             flush=True,
         )
         m["batches"] = 0
