@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import numpy as np
 import pytest
 
 from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
@@ -179,3 +180,157 @@ def test_the_candidate_legend_no_longer_calls_the_play_row_the_training_target(
 
     assert "training target" not in names["search"]
     assert "training target" in names["train"]
+
+
+# --- Review findings on PR #246 ------------------------------------------
+
+
+def test_the_play_profile_carries_the_descent_knobs_too(
+    audit_targets: ModuleType, flat: dict[str, object],
+) -> None:
+    """c_puct / cpuct_factor / fpu_reduction differ between PLAY and training.
+
+    Taking only the root-transform subset of PLAY_SEARCH_DEFAULTS left row (b)
+    a hybrid: play root transform, training descent. Those fields act on tree
+    descent, so it measured a search neither path runs.
+    """
+    play = audit_targets.build_search_profiles(
+        flat, play_sims=256, play_topk=None,
+    )["search"]
+
+    assert play.c_puct == PLAY_SEARCH_DEFAULTS["c_puct"]
+    assert play.cpuct_factor == PLAY_SEARCH_DEFAULTS["cpuct_factor"]
+    assert play.cpuct_base == PLAY_SEARCH_DEFAULTS["cpuct_base"]
+    assert play.fpu_reduction == PLAY_SEARCH_DEFAULTS["fpu_reduction"]
+
+
+def test_the_play_profile_defaults_to_the_play_topk(
+    audit_targets: ModuleType, flat: dict[str, object],
+) -> None:
+    profiles = audit_targets.build_search_profiles(
+        flat, play_sims=256, play_topk=None,
+    )
+
+    assert profiles["search"].topk == PLAY_SEARCH_DEFAULTS["topk"]
+    # ...while the training rows keep selfplay's own value from the config.
+    assert profiles["train"].topk == 16
+
+
+def test_the_topk_override_does_not_reach_the_training_rows(
+    audit_targets: ModuleType, flat: dict[str, object],
+) -> None:
+    """--gumbel-topk retunes the PLAY row only.
+
+    Overriding the training target's own topk would score a search selfplay
+    never runs -- the same error as scoring it with play c_scale.
+    """
+    profiles = audit_targets.build_search_profiles(
+        flat, play_sims=256, play_topk=48,
+    )
+
+    assert profiles["search"].topk == 48
+    assert profiles["train"].topk == 16
+    assert profiles["train_fast"].topk == 16
+
+
+def test_the_training_profiles_carry_volatility_search_settings(
+    audit_targets: ModuleType, flat: dict[str, object],
+) -> None:
+    """Volatility search is default-off but audit-first still has to judge it.
+
+    Without propagation the audit runs the baseline search and reports it as
+    the configured training target, so the pre-training gate is structurally
+    unable to see the one flag family it was asked about.
+    """
+    flat["volatility_q_scale"] = 0.5
+    flat["volatility_fpu"] = 0.25
+    profiles = audit_targets.build_search_profiles(
+        flat, play_sims=256, play_topk=None,
+    )
+
+    assert profiles["train"].volatility_q_scale == 0.5
+    assert profiles["train"].volatility_fpu == 0.25
+    assert profiles["train_fast"].volatility_q_scale == 0.5
+
+
+def test_volatility_is_off_by_default(
+    audit_targets: ModuleType, flat: dict[str, object],
+) -> None:
+    profiles = audit_targets.build_search_profiles(
+        flat, play_sims=256, play_topk=None,
+    )
+
+    assert profiles["train"].volatility_q_scale == 0.0
+    assert profiles["train"].volatility_fpu == 0.0
+
+
+# --- Search WDL must be rebuilt the way selfplay stores it ---------------
+
+
+def test_search_wdl_preserves_the_root_networks_draw_mass(
+    audit_targets: ModuleType,
+) -> None:
+    """`network_turn.py` keeps d_raw and splits only the remaining mass.
+
+    `_q_to_wdl` invents D = 1 - |q|, a different distribution whenever the net
+    predicts any other draw mass -- i.e. almost always.
+    """
+    net_wdl = np.array([0.25, 0.60, 0.15])
+    wdl = audit_targets._search_wdl_like_selfplay(0.2, net_wdl)
+
+    assert wdl[1] == pytest.approx(0.60)
+    rem = 1.0 - 0.60
+    assert wdl[0] == pytest.approx(0.5 * (rem + 0.2))
+    assert wdl[2] == pytest.approx(rem - wdl[0])
+    assert wdl.sum() == pytest.approx(1.0)
+    # The old formula would have said D = 1 - 0.2 = 0.8.
+    assert wdl[1] != pytest.approx(audit_targets._q_to_wdl(0.2)[1])
+
+
+def test_search_wdl_clamps_q_into_the_non_draw_mass(
+    audit_targets: ModuleType,
+) -> None:
+    """A high-confidence Q against a large draw mass must not go negative."""
+    net_wdl = np.array([0.05, 0.90, 0.05])
+    wdl = audit_targets._search_wdl_like_selfplay(0.99, net_wdl)
+
+    assert min(wdl) >= 0.0
+    assert wdl.sum() == pytest.approx(1.0)
+    assert wdl[1] == pytest.approx(0.90)
+
+
+def test_search_wdl_falls_back_to_a_draw_on_a_non_finite_net_wdl(
+    audit_targets: ModuleType,
+) -> None:
+    wdl = audit_targets._search_wdl_like_selfplay(
+        0.2, np.array([np.nan, np.nan, np.nan]),
+    )
+
+    assert wdl.tolist() == [0.0, 1.0, 0.0]
+
+
+def test_the_value_candidate_uses_the_selfplay_wdl_reconstruction(
+    audit_targets: ModuleType,
+) -> None:
+    """Having the right formula is worthless if the call site skips it.
+
+    Sabotaging the call site back to `_q_to_wdl` left every direct test of
+    `_search_wdl_like_selfplay` passing, so this pins the wiring itself.
+    """
+    import inspect
+
+    src = inspect.getsource(audit_targets.main)
+
+    assert "_search_wdl_like_selfplay(root_q[i], root_wdl[i])" in src
+    assert "search_root = _q_to_wdl(" not in src
+
+
+def test_the_search_wdl_is_built_from_the_rl_root_not_the_play_root(
+    audit_targets: ModuleType,
+) -> None:
+    """The blend's search component comes from the RL search."""
+    import inspect
+
+    src = inspect.getsource(audit_targets.main)
+
+    assert 'root_q = root_q_by_profile["train"]' in src

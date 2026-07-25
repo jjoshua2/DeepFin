@@ -40,8 +40,11 @@ full-strength game outcomes on the positions that have them):
   ii)  shallow SF native WDL
   iii) the production blend (sf_wdl_frac / search_wdl_frac from --config;
        the game-outcome component only contributes on outcome-labeled rows)
-  iv)  search root WDL (root Q from (d), the RL search that actually feeds
-       the blend's search component, mapped to W/D/L like the loss does)
+  iv)  search root WDL — the RL search's root Q from (d), reconstructed the
+       way selfplay stores it: the root network's OWN draw mass is preserved
+       and only the remaining mass is split around Q (see
+       _search_wdl_like_selfplay). Not `1 - |Q|`, which is a different
+       distribution and a different target.
 
 as Brier score and expected calibration error.
 
@@ -116,10 +119,22 @@ class _SearchProfile:
     c_visit_root: float
     c_scale_root: float
     q_visit_exp_root: float
+  # Descent knobs. PLAY and training disagree on all four, and they act on
+  # tree descent, so omitting them leaves a hybrid search that neither path
+  # actually runs.
+    c_puct: float
+    cpuct_factor: float
+    cpuct_base: float
+    fpu_reduction: float
+  # Volatility-aware search. Both default OFF; when either is non-zero the
+  # mechanism exists only on the PYTHON search path, and selfplay drops to it.
+    volatility_q_scale: float = 0.0
+    volatility_fpu: float = 0.0
+    volatility_anchor: float | None = None
 
 
 def build_search_profiles(
-    flat: dict[str, object], *, play_sims: int, play_topk: int,
+    flat: dict[str, object], *, play_sims: int, play_topk: int | None,
 ) -> dict[str, _SearchProfile]:
     """The search shapes to score: one PLAY, two TRAINING.
 
@@ -130,28 +145,50 @@ def build_search_profiles(
     sentinels below), which is the deliberate "training/RL stays bit-identical"
     choice from PR #84 — the sentinels are not placeholders.
     """
-    from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS
+    from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
 
-    rl_c_scale = float(flat.get("gumbel_c_scale", 0.1))  # pyright: ignore[reportArgumentType]
-    rl_topk = int(flat.get("gumbel_topk", 16))  # pyright: ignore[reportArgumentType]
+    rl = GumbelConfig()  # the RL/training shape, by construction
+    rl_c_scale = float(flat.get("gumbel_c_scale", rl.c_scale))  # pyright: ignore[reportArgumentType]
+    rl_topk = int(flat.get("gumbel_topk", rl.topk))  # pyright: ignore[reportArgumentType]
     rl_sims = int(flat.get("mcts_simulations", 256))  # pyright: ignore[reportArgumentType]
     rl_fast_sims = int(flat.get("fast_simulations", 32))  # pyright: ignore[reportArgumentType]
 
     def _rl(label: str, sims: int) -> _SearchProfile:
         return _SearchProfile(
             label=label, sims=sims, topk=rl_topk, c_scale=rl_c_scale,
-            c_visit=50.0, c_visit_root=-1.0, c_scale_root=-1.0,
-            q_visit_exp_root=99.0,
+            c_visit=rl.c_visit, c_visit_root=rl.c_visit_root,
+            c_scale_root=rl.c_scale_root, q_visit_exp_root=rl.q_visit_exp_root,
+            c_puct=rl.c_puct, cpuct_factor=rl.cpuct_factor,
+            cpuct_base=rl.cpuct_base, fpu_reduction=rl.fpu_reduction,
+          # Volatility search is an open, default-off flag family that the
+          # audit-first rule still has to be able to judge. Carrying the
+          # values means enabling them in the yaml changes the audited
+          # target, instead of the audit quietly scoring the baseline.
+            volatility_q_scale=float(flat.get("volatility_q_scale", 0.0)),  # pyright: ignore[reportArgumentType]
+            volatility_fpu=float(flat.get("volatility_fpu", 0.0)),  # pyright: ignore[reportArgumentType]
+            volatility_anchor=(
+                float(flat["volatility_anchor"])  # pyright: ignore[reportArgumentType]
+                if flat.get("volatility_anchor") is not None else None
+            ),
         )
 
     return {
         "search": _SearchProfile(
-            label="PLAY (UCI/TCEC)", sims=int(play_sims), topk=int(play_topk),
+            label="PLAY (UCI/TCEC)", sims=int(play_sims),
+          # The PLAY row must be the WHOLE play shape. topk, c_puct,
+          # cpuct_factor and fpu_reduction all differ from the training
+          # defaults and all act on descent; taking only the root-transform
+          # subset left a hybrid neither path runs.
+            topk=int(play_topk if play_topk is not None else PLAY_SEARCH_DEFAULTS["topk"]),
             c_scale=float(PLAY_SEARCH_DEFAULTS["c_scale"]),
             c_visit=float(PLAY_SEARCH_DEFAULTS["c_visit"]),
             c_visit_root=float(PLAY_SEARCH_DEFAULTS["c_visit_root"]),
             c_scale_root=float(PLAY_SEARCH_DEFAULTS["c_scale_root"]),
             q_visit_exp_root=float(PLAY_SEARCH_DEFAULTS["q_visit_exp_root"]),
+            c_puct=float(PLAY_SEARCH_DEFAULTS["c_puct"]),
+            cpuct_factor=float(PLAY_SEARCH_DEFAULTS["cpuct_factor"]),
+            cpuct_base=float(PLAY_SEARCH_DEFAULTS["cpuct_base"]),
+            fpu_reduction=float(PLAY_SEARCH_DEFAULTS["fpu_reduction"]),
         ),
         "train": _rl("RL selfplay, full sims", rl_sims),
         "train_fast": _rl("RL selfplay, playout-capped fast sims", rl_fast_sims),
@@ -167,12 +204,44 @@ _VALUE_NAMES = {
 
 
 def _q_to_wdl(q: float) -> np.ndarray:
-    """Root Q in [-1, 1] -> (W, D, L), mirroring losses._q_to_wdl_probs."""
+    """Root Q in [-1, 1] -> (W, D, L), mirroring losses._q_to_wdl_probs.
+
+    NOTE this is NOT how selfplay builds the stored search WDL -- see
+    `_search_wdl_like_selfplay`. `losses._q_to_wdl_probs` is the game-outcome
+    regret correction, a different target.
+    """
     qc = max(-1.0, min(1.0, float(q)))
     win = max(0.0, qc)
     loss = max(0.0, -qc)
     draw = max(0.0, 1.0 - win - loss)
     return np.array([win, draw, loss], dtype=np.float64)
+
+
+def _search_wdl_like_selfplay(q: float, net_wdl: np.ndarray) -> np.ndarray:
+    """The search WDL exactly as `network_turn.py` stores it.
+
+    Selfplay KEEPS the root network's own draw mass and splits only the
+    remaining mass around the searched Q::
+
+        d_raw = net_wdl[1]; rem = 1 - d_raw
+        q     = clip(q, -rem, +rem)
+        W     = 0.5 * (rem + q);  D = d_raw;  L = rem - W
+
+    `_q_to_wdl` instead invents ``D = 1 - |q|``, which is a different
+    distribution whenever the net predicts a draw mass other than ``1 - |q|``
+    -- i.e. almost always. Scoring the production WDL blend with the wrong
+    draw mass makes candidates (iii) and (iv) describe a target the pipeline
+    never writes, which is the same mislabeling this script was just fixed for
+    on the policy side.
+    """
+    d_raw = float(net_wdl[1])
+    rem = max(0.0, 1.0 - d_raw)
+    qc = float(max(-rem, min(rem, float(q))))
+    win = 0.5 * (rem + qc)
+    out = np.array([win, d_raw, rem - win], dtype=np.float64)
+    if not np.all(np.isfinite(out)):
+        return np.array([0.0, 1.0, 0.0], dtype=np.float64)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +258,7 @@ def _net_candidates(
     seed: int,
     profiles: dict[str, _SearchProfile],
     policy_temp: float = 1.0,
-) -> tuple[list[np.ndarray], dict[str, list[np.ndarray]], dict[str, list[float]]]:
+) -> tuple[list[np.ndarray], dict[str, list[np.ndarray]], dict[str, list[float]], list[np.ndarray]]:
     """(raw-policy probs, {profile: search visit probs}, {profile: root Q}).
 
     Every profile is run over the same batches against the same evaluator, so
@@ -199,7 +268,12 @@ def _net_candidates(
 
     from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
     from chess_anti_engine.inference import LocalModelEvaluator
-    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.mcts.gumbel import (
+        GumbelConfig,
+        run_gumbel_root_many,
+        volatility_search_enabled,
+        warn_volatility_python_path,
+    )
     from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
     from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
@@ -217,8 +291,11 @@ def _net_candidates(
   # than a single noisy draw of it. That is a deliberate, stated deviation --
   # the alternative is a non-deterministic ruler -- and it is the ONE axis on
   # which the train profiles still differ from live selfplay.
-    cfgs = {
-        name: GumbelConfig(
+    def _build(p: _SearchProfile) -> GumbelConfig:
+        kw = {}
+        if p.volatility_anchor is not None:
+            kw["volatility_anchor"] = p.volatility_anchor
+        return GumbelConfig(
             simulations=int(p.sims), add_noise=False, temperature=0.0,
             input_history_encoding=hist, input_extra_features=extra,
             policy_encoding=pol_enc, compute_relations=use_rel,
@@ -226,13 +303,39 @@ def _net_candidates(
             c_scale=p.c_scale, c_visit=p.c_visit,
             c_visit_root=p.c_visit_root, c_scale_root=p.c_scale_root,
             q_visit_exp_root=p.q_visit_exp_root,
+            c_puct=p.c_puct, cpuct_factor=p.cpuct_factor,
+            cpuct_base=p.cpuct_base, fpu_reduction=p.fpu_reduction,
+            volatility_q_scale=p.volatility_q_scale,
+            volatility_fpu=p.volatility_fpu,
+            **kw,
         )
-        for name, p in profiles.items()
-    }
+
+    cfgs = {name: _build(p) for name, p in profiles.items()}
+  # Volatility-aware search exists ONLY on the Python path; selfplay drops to
+  # it when either flag is set. Always calling the C path would silently score
+  # the baseline search and report it as the configured training target -- the
+  # audit-first gate would then be structurally unable to judge the one flag
+  # family it was asked about.
+    runners = {}
+    for name, cfg in cfgs.items():
+        if volatility_search_enabled(cfg):
+            warn_volatility_python_path()
+            print(
+                f"[audit] {_CANDIDATE_NAMES[name]}: volatility search on "
+                f"(q_scale={cfg.volatility_q_scale}, fpu={cfg.volatility_fpu}) "
+                f"— using the Python search path, as selfplay does",
+                flush=True,
+            )
+            runners[name] = run_gumbel_root_many
+        else:
+            runners[name] = run_gumbel_root_many_c
 
     raw_out: list[np.ndarray] = []
     search_out: dict[str, list[np.ndarray]] = {name: [] for name in profiles}
     root_q: dict[str, list[float]] = {name: [] for name in profiles}
+  # The ROOT NETWORK's WDL, needed to rebuild the search WDL the way selfplay
+  # does (see _search_wdl_like_selfplay).
+    root_wdl_out: list[np.ndarray] = []
     for start in range(0, len(boards), batch_size):
         chunk = boards[start:start + batch_size]
         cbs = [CBoard.from_board(b) for b in chunk]
@@ -245,19 +348,20 @@ def _net_candidates(
         )
         with torch.no_grad():
             if rels is None:
-                pol_logits, _wdl = evaluator.evaluate_encoded(xs)
+                pol_logits, net_wdl = evaluator.evaluate_encoded(xs)
             else:
-                pol_logits, _wdl = evaluator.evaluate_encoded(xs, relations=rels)
+                pol_logits, net_wdl = evaluator.evaluate_encoded(xs, relations=rels)
+        net_wdl = np.asarray(net_wdl, dtype=np.float64)
         pol_logits = np.asarray(pol_logits, dtype=np.float32)
         if pol_logits.shape[1] != POLICY_SIZE:
             pol_logits = policy_batch_to_full_if_needed(pol_logits, policy_encoding=pol_enc, fill_value=-1e9)
 
         searched = {
-            name: run_gumbel_root_many_c(
-                model=None, boards=list(chunk), device=device, rng=rng, cfg=cfg,
-                evaluator=evaluator,
+            name: runners[name](
+                model=None, boards=list(chunk), device=device, rng=rng,
+                cfg=cfgs[name], evaluator=evaluator,
             )
-            for name, cfg in cfgs.items()
+            for name in cfgs
         }
         for j, board in enumerate(chunk):
             _, idxs = legal_full_indices(board)
@@ -273,6 +377,7 @@ def _net_candidates(
                     visit = full
                 search_out[name].append(visit[idxs])
                 root_q[name].append(float(values[j]))
+            root_wdl_out.append(net_wdl[j].copy())
         done = min(start + batch_size, len(boards))
         print(f"[net] {done}/{len(boards)} positions")
         # Release the batch's reserved CUDA blocks so the allocator's pool
@@ -281,7 +386,7 @@ def _net_candidates(
         # high sims (256) where per-batch trees are largest.
         if str(device).startswith("cuda"):
             torch.cuda.empty_cache()
-    return raw_out, search_out, root_q
+    return raw_out, search_out, root_q, root_wdl_out
 
 
 def _shallow_sf_records(
@@ -477,10 +582,13 @@ def main() -> None:
                     help="prior temperature on policy logits before gumbel search "
                          "(>1 softens prior, <1 sharpens, 1.0=no-op). Measures search-prior "
                          "calibration on the REAL audit-set distribution (vs puzzle bias).")
-    ap.add_argument("--gumbel-topk", type=int, default=16,
-                    help="Gumbel root candidate count (consideration gate). Selfplay uses 16, "
-                         "UCI/match 32. At 256 sims, ~30 legal moves means topk=32 ≈ all-legal. "
-                         "Wider gate = more candidates considered but fewer sims each.")
+    ap.add_argument("--gumbel-topk", type=int, default=None,
+                    help="Override the PLAY row's Gumbel root candidate count. "
+                         "Default None = the PLAY default (32). The TRAINING rows "
+                         "always take selfplay's value from --config (16) and are "
+                         "NOT affected by this flag -- overriding the target's own "
+                         "topk would score a search selfplay never runs. At 256 "
+                         "sims, ~30 legal moves means topk=32 ≈ all-legal.")
     ap.add_argument("--gpu-mem-fraction", type=float, default=None,
                     help="cap this process to a fraction of GPU memory "
                          "(set_per_process_memory_fraction) so a high-sim audit run "
@@ -548,7 +656,7 @@ def main() -> None:
 
     full_share = float(flat.get("playout_cap_fraction", 1.0))
     profiles = build_search_profiles(
-        flat, play_sims=int(args.sims), play_topk=int(args.gumbel_topk),
+        flat, play_sims=int(args.sims), play_topk=(int(args.gumbel_topk) if args.gumbel_topk is not None else None),
     )
     rl_c_scale = profiles["train"].c_scale
     rl_sims = profiles["train"].sims
@@ -561,7 +669,7 @@ def main() -> None:
             flush=True,
         )
 
-    raw_probs, search_by_profile, root_q_by_profile = _net_candidates(
+    raw_probs, search_by_profile, root_q_by_profile, root_wdl = _net_candidates(
         boards, checkpoint=args.checkpoint, device=args.device,
         batch_size=int(args.batch_size), seed=int(args.seed),
         profiles=profiles, policy_temp=float(args.policy_temp),
@@ -650,7 +758,7 @@ def main() -> None:
             ).astype(np.float64)
         else:
             cp_log = sf_native
-        search_root = _q_to_wdl(root_q[i])
+        search_root = _search_wdl_like_selfplay(root_q[i], root_wdl[i])
         # Production blend: outcome component only exists on outcome-labeled
         # rows; elsewhere the sf/search fractions are renormalized (this is
         # the same fallback shape the loss uses when a component is absent).
