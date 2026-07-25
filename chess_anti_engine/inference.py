@@ -1733,12 +1733,27 @@ class SlotBroker:
         _t_pack0 = time.perf_counter()
         self._ensure_model()
         if self._model is None:
-            for slot in ready:
-                bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
-                slot.policy[:bsz].fill(0.0)
-                slot.wdl[:bsz].fill(0.0)
-                slot.state = _STATE_RESPONSE
-            return
+            # Deliberately NOT a zero-filled response, for the reason spelled
+            # out on _release_slots_for_retry: an all-zero policy+WDL marked
+            # _STATE_RESPONSE is indistinguishable from a real answer, so it
+            # is fed to MCTS and RECORDED AS TRAINING DATA instead of raising.
+            # _ensure_model returns silently on two paths (manifest still
+            # missing at its 30s deadline; manifest carries no model sha), and
+            # the old zero-fill also returned normally -- so _process_batch
+            # scored it a success and reset _consecutive_batch_failures,
+            # meaning a broker that never got a model served zeros forever
+            # with no log line and no escalation.
+            #
+            # Raising hands this to _process_batch's handler, which releases
+            # the slots unanswered (clients re-submit), logs, and counts
+            # toward _MAX_CONSECUTIVE_BATCH_FAILURES so a persistently
+            # model-less broker exits and the next phase relaunches a clean
+            # one. Loud and recoverable beats silent and poisonous.
+            raise RuntimeError(
+                "broker has no model loaded (publish manifest missing past its "
+                "deadline, or carries no model sha); refusing to answer with a "
+                "fabricated all-zero policy"
+            )
 
         use_bf16_input = mode in (_MODE_DENSE_BF16, _MODE_LEGAL_BF16)
         compact_legal = mode == _MODE_LEGAL_BF16
@@ -2626,6 +2641,10 @@ class SharedSlotBroker:
         self._trial_models: dict[str, torch.nn.Module] = {}  # per-trial model on GPU
         self._trial_streams: dict[str, torch.cuda.Stream] = {}  # per-trial CUDA stream
         self._trial_manifest_sigs: dict[str, tuple[int, int]] = {}
+      # Last time we warned that a trial has no model, per trial. Slots
+      # released for retry come straight back round the serve loop, so an
+      # unthrottled warning here would write thousands of lines a second.
+        self._trial_no_model_warned_at: dict[str, float] = {}
         self._all_slots: list[tuple[str, _InferenceSlot]] = []
 
     def _register_new_trial(self, trial_id: str) -> None:
@@ -2829,11 +2848,25 @@ class SharedSlotBroker:
         for trial_id, ready in ready_by_trial.items():
             model = self._trial_models.get(trial_id)
             if model is None:
+                # Release unanswered rather than fabricating zeros: an all-zero
+                # policy+WDL marked _STATE_RESPONSE is indistinguishable from a
+                # real answer, so it reaches MCTS and is recorded as training
+                # data. See SlotBroker._release_slots_for_retry for the same
+                # rule on the per-trial path. _STATE_IDLE is what the client's
+                # own recovery treats as "slot went away, re-submit", so a
+                # transient gap costs a retry and a persistent one surfaces as
+                # a loud client-side TimeoutError instead of silent poison.
+                # Only this trial is skipped; other trials still get served.
+                _now_nm = time.monotonic()
+                if _now_nm - self._trial_no_model_warned_at.get(trial_id, 0.0) >= 30.0:
+                    self._trial_no_model_warned_at[trial_id] = _now_nm
+                    log.warning(
+                        "shared broker has no model for trial %s; releasing %d "
+                        "slot(s) for retry (NOT answering with zeros)",
+                        trial_id, len(ready),
+                    )
                 for slot in ready:
-                    bsz = max(0, min(int(slot.batch_size), self._layout.max_batch))
-                    slot.policy[:bsz].fill(0.0)
-                    slot.wdl[:bsz].fill(0.0)
-                    slot.state = _STATE_RESPONSE
+                    slot.state = _STATE_IDLE
                 continue
             batch_sizes = [slot.batch_size for slot in ready]
             xs = [np.array(slot.input[:bsz], copy=True, order="C") for slot, bsz in zip(ready, batch_sizes, strict=True)]

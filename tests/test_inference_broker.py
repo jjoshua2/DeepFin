@@ -736,30 +736,18 @@ def test_slot_inference_client_attach_does_not_unlink_broker_slot(tmp_path: Path
         broker.shutdown()
 
 
-def test_slot_broker_zeroes_outputs_when_model_unavailable(tmp_path: Path) -> None:
-    publish_dir = tmp_path / "publish"
-    publish_dir.mkdir(parents=True, exist_ok=True)
-    broker = SlotBroker(
-        publish_dir=publish_dir,
-        num_slots=1,
-        max_batch_per_slot=8,
-        device="cpu",
-        compile_inference=False,
-        batch_wait_ms=0.0,
-        slot_prefix=f"cae-zero-{uuid.uuid4().hex}",
-    )
-    try:
-        slot = broker._slots[0]
-        slot.batch_size = 2
-        slot.policy[:2].fill(7.0)
-        slot.wdl[:2].fill(9.0)
-        broker._ensure_model = lambda: None
-        broker._process_batch([slot])
-        assert slot.state == 2
-        assert np.allclose(slot.policy[:2], 0.0)
-        assert np.allclose(slot.wdl[:2], 0.0)
-    finally:
-        broker.shutdown()
+# REMOVED 2026-07-25: test_slot_broker_zeroes_outputs_when_model_unavailable.
+#
+# It asserted that a model-less broker answers with an all-zero policy+WDL and
+# marks the slot _STATE_RESPONSE. That pinned a bug rather than a decision: it
+# carried no docstring or rationale and simply restated the implementation,
+# while _release_slots_for_retry's docstring — 30 lines from the code it was
+# pinning — spells out that a fabricated all-zero policy is precisely what must
+# never happen, because clients feed selfplay and the zeros get recorded as
+# training data instead of raising. The reasoned side won.
+#
+# The scenario is now covered, with that rationale written down, by
+# tests/test_broker_no_zero_fill.py.
 
 
 def test_local_model_evaluator_respects_amp_settings(monkeypatch: pytest.MonkeyPatch) -> None:
