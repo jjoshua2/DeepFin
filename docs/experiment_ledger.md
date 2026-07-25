@@ -396,6 +396,21 @@ the race still occurs, it just no longer kills the process.
 close the hole; look for a second client-writable field read across the batch
 window (`slot.batch_size` and `slot.request_mode` are the candidates).
 
+**VERDICT 2026-07-25: WORKED.** Over ~3.5h and 8 iterations (244-251) since the
+22:52 restart onto `116cb557a`:
+`grep -cE "Traceback" .../distributed_inference/broker.out` = **0**, and
+`grep -c "releasing slots for retry"` = **0** as well. Games flowed the whole
+window (442-530/iter, ~5-7k pos/s sustained). Note the second zero is a
+STRONGER result than the entry anticipated, and it means the readout does not
+by itself prove the snapshot is what saved us — the race simply did not fire in
+this window. The snapshot is still correct on the code reading (a view into
+client-writable shm cannot be validated), and the process guard remains the
+thing that converts any future occurrence from an outage into a retry. What
+this window DOES establish: the fix introduced no regression and the 50-minute
+failure mode is gone. **Still owed and NOT closed by this verdict:**
+`_ensure_inference_broker` still runs only at selfplay-phase start, so a broker
+death mid-iteration still costs a whole iteration — that is its own entry.
+
 **Confounds:** deployed in the same live tree as PR #228 (`826f4864b`) and
 PR #226 (`0702acbfb`). Disjoint metrics — #228 is judged on stale/matching
 ratio, this one on broker tracebacks — but the games/h read is shared, and the
@@ -453,6 +468,17 @@ trivial), i.e. no `stale_games=... > games_generated=...` alert fires.
 iteration** ⇒ the watch thread is not swapping; grep worker logs for
 `model tag STALE` (alarm fired, swap path broken) vs its absence (watch thread
 itself not running).
+
+**VERDICT 2026-07-25: WORKED.** Read on iters 244-251, a window that starts
+AFTER the 2026-07-24 22:52 broker restart (the earlier window was void — the
+broker outage meant zero games, so the ratio was undefined, not passing).
+`distributed_stale_games` is **0 on every one of the 8 iterations**, against
+`games_generated` 442-530 — ratio 0.0000 vs the <0.15 bar, from a pre-fix
+baseline of 1,661 stale games/iter. The "fresh workers trivially produce zero
+stale" caveat recorded on the iter-228 row is now DISCHARGED: the fleet has run
+**one continuous session per worker** (`sessions=[1,1,1,1]`, zero thread deaths)
+for 3.5h across these iterations, so this is steady state, not a restart
+artifact. Nothing further owed on this row.
 
 **MEASURED STEADY-STATE COST (the real damage, from the trainer's own metrics).**
 Stale iterations wait out essentially the ENTIRE `distributed_wait_timeout_seconds:
