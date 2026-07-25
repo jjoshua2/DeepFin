@@ -23,6 +23,7 @@ Two independent fixes, tested separately here:
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -354,3 +355,61 @@ def test_pruning_below_the_keep_count_deletes_nothing_and_stays_quiet(
 
     assert len(list(tmp_path.glob("checkpoint_*"))) == 2
     assert caplog.text == ""
+
+
+def test_a_checkpoint_that_survives_deletion_is_reported_as_a_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ignore_errors=True` hides the failure, so the log must not repeat it.
+
+    Claiming a directory was pruned when it is still on disk is the same
+    class of defect this whole module exists to remove: a confident number
+    that nothing checked against reality.
+    """
+    _make_checkpoint_dirs(tmp_path, [20, 21, 22, 23])
+
+  # Stand in for the real causes (EACCES, EBUSY, a read-only mount): rmtree
+  # swallows the error and the directory is still there afterwards.
+    monkeypatch.setattr(
+        "chess_anti_engine.tune.trainable_report.shutil.rmtree",
+        lambda path, ignore_errors=False: None,
+    )
+
+    with caplog.at_level(logging.INFO):
+        _prune_trial_checkpoints(trial_dir=tmp_path, keep_last=2)
+
+    assert len(list(tmp_path.glob("checkpoint_*"))) == 4
+    assert "failed to prune 2" in caplog.text
+    assert "checkpoint_000020" in caplog.text
+    assert "checkpoint_000021" in caplog.text
+    assert "retention is NOT being realized" in caplog.text
+    assert "pruned" not in caplog.text.replace("failed to prune", "")
+
+
+def test_a_partial_failure_reports_both_halves(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One stuck directory must not suppress the report of the ones that went."""
+    _make_checkpoint_dirs(tmp_path, [30, 31, 32, 33])
+    stuck = tmp_path / "checkpoint_000030"
+    real_rmtree = shutil.rmtree
+
+    def flaky(path, ignore_errors: bool = False) -> None:
+        if Path(path) == stuck:
+            return
+        real_rmtree(path, ignore_errors=ignore_errors)
+
+    monkeypatch.setattr(
+        "chess_anti_engine.tune.trainable_report.shutil.rmtree", flaky
+    )
+
+    with caplog.at_level(logging.INFO):
+        _prune_trial_checkpoints(trial_dir=tmp_path, keep_last=2)
+
+    assert sorted(p.name for p in tmp_path.glob("checkpoint_*")) == [
+        "checkpoint_000030", "checkpoint_000032", "checkpoint_000033",
+    ]
+    assert "pruned 1 trial checkpoint(s)" in caplog.text
+    assert "checkpoint_000031" in caplog.text
+    assert "failed to prune 1" in caplog.text
+    assert "checkpoint_000030" in caplog.text

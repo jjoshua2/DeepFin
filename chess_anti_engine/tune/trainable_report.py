@@ -80,14 +80,27 @@ def _prune_trial_checkpoints(*, trial_dir: Path, keep_last: int) -> None:
     if len(ckpts) <= keep_last:
         return
 
+  # `ignore_errors=True` means rmtree cannot tell us whether it worked, so ask
+  # the filesystem afterwards. Logging the *selected* set as "pruned" would
+  # recreate the very failure this log exists to prevent: an operator reading a
+  # confident retention message while ~650MB dirs quietly accumulate.
+    removed: list[str] = []
+    survived: list[str] = []
     for p in ckpts[:-keep_last]:
         shutil.rmtree(p, ignore_errors=True)
-    log.info(
-        "pruned %d trial checkpoint(s) to keep_last=%d: %s",
-        len(ckpts) - keep_last,
-        keep_last,
-        ", ".join(p.name for p in ckpts[:-keep_last]),
-    )
+        (survived if p.exists() else removed).append(p.name)
+
+    if removed:
+        log.info(
+            "pruned %d trial checkpoint(s) to keep_last=%d: %s",
+            len(removed), keep_last, ", ".join(removed),
+        )
+    if survived:
+        log.warning(
+            "failed to prune %d trial checkpoint(s); they still exist on disk "
+            "and retention is NOT being realized: %s",
+            len(survived), ", ".join(survived),
+        )
 
 
 def _guard_checkpoint_index(*, trial_dir: Path) -> int | None:
