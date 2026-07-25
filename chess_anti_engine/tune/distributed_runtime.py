@@ -1660,6 +1660,11 @@ def _ingest_distributed_selfplay(
             continue
 
         for sp in shard_paths:
+          # Also polled here, not just at the top of the while: shard_paths is a
+          # snapshot, so a several-hundred-shard backlog at ~0.2-2s each would
+          # otherwise starve the revive for minutes. The call is a single
+          # time.time() compare when not yet due, so it costs nothing per shard.
+            _maybe_on_poll()
             _ingest(sp)
             if summary["matching_games"] >= target_games:
                 break

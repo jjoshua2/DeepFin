@@ -101,18 +101,33 @@ def test_wait_loop_invokes_on_poll_while_starved(tmp_path: Path) -> None:
     assert calls, "on_poll never ran during a fully starved ingest wait"
 
 
-def test_on_poll_is_rate_limited(tmp_path: Path) -> None:
-    """A once-per-interval guard, so polling stays cheap in the hot loop."""
+def test_on_poll_repeats_on_its_interval(tmp_path: Path) -> None:
+    """The callback must keep firing on a cadence — not once, not every spin.
+
+    Both bounds are load-bearing, and an earlier version of this test asserted
+    only ``len(calls) <= 1`` against a 1h interval. That passes when the
+    callback fires exactly ONCE for the whole 8100s wait, which is precisely
+    the 2026-07-24 outage: broker healthy at the first poll, dead at t=5min,
+    never noticed. A revive that does not repeat is not a revive.
+
+    Starved, so the loop runs to the hard ceiling (wait_timeout_s * 3 = 1.2s)
+    with a 0.1s interval => ~12 calls. The bounds are deliberately loose for
+    slow CI while still killing both failure modes: one-shot gives 1, and a
+    missing rate-limit gives ~1200 (the loop spins every poll_seconds=1ms).
+    """
     calls: list[int] = []
 
     _run_starved_ingest(
         tmp_path,
         on_poll=lambda: calls.append(1),
-      # Far longer than the whole wait: only the initial due-time may pass.
-        on_poll_interval_s=3600.0,
+        on_poll_interval_s=0.1,
+        wait_timeout_s=0.4,
     )
 
-    assert len(calls) <= 1, f"on_poll ran {len(calls)}x despite a 1h interval"
+    assert 4 <= len(calls) <= 60, (
+        f"on_poll ran {len(calls)}x over a ~1.2s starved wait at a 0.1s "
+        "interval; expected repeated firing (~12), not one-shot or every-spin"
+    )
 
 
 def test_on_poll_failure_does_not_abort_the_ingest(tmp_path: Path) -> None:
