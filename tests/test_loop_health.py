@@ -133,14 +133,31 @@ def test_load_rows_returns_only_last_n(tmp_path: Path) -> None:
 
 
 def test_stale_outrunning_matching_twice_running_is_an_alert() -> None:
-    """Workers frozen on an old model_sha: most selfplay silently discarded.
+    """A sustained stale/matching ratio is worth an alert — but not the old one.
 
-    Ran undetected for days (2026-07-24) because each counter looked sane on
-    its own — only their ratio, sustained, shows the pipeline throwing work away.
+    The condition still fires: it ran undetected for days (2026-07-24) because
+    each counter looks sane alone and only the sustained ratio shows anything.
+
+    What changed 2026-07-26 is the CLAIM. The alert used to say "workers frozen
+    on an old model_sha; most selfplay is being discarded". Both halves were
+    false. `_process_shard` calls `_ingest_train_arrays` unconditionally, BEFORE
+    the `model_sha in accepted_model_shas` check, so stale shards still reach the
+    replay buffer — stale/matching is an accounting split, not a data-loss ratio.
+    And when it fired for real at 74-78% stale, all four workers were switching
+    shas normally; iterations were simply slow (578s -> 3114s under a concurrent
+    arena) so surplus games arrived under an aged-out sha.
+
+    This test therefore pins the DETECTION and explicitly forbids the two false
+    assertions coming back.
     """
     frozen = {**HEALTHY, "matching_games": 445, "distributed_stale_games": 1661}
     alerts, _ = _check(frozen, frozen)
-    assert any("frozen on an old model_sha" in a for a in alerts)
+    stale_alerts = [a for a in alerts if "stale_games=1661" in a]
+    assert stale_alerts, f"the sustained stale ratio must still alert: {alerts}"
+    joined = " ".join(stale_alerts)
+    assert "frozen on an old model_sha" not in joined
+    assert "discarded" not in joined
+    assert "NOT lost" in joined
 
 
 def test_stale_outrunning_matching_once_is_only_a_note() -> None:
