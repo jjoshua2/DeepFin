@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR
+from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.utils.architecture import (
     normalize_embed_dim_by_layer,
@@ -171,7 +171,7 @@ class TrialConfig:
     volatility_q_scale: float = 0.0
     volatility_fpu: float = 0.0
     volatility_anchor: float = DEFAULT_VOLATILITY_ANCHOR
-    gumbel_c_scale: float = 0.1
+    gumbel_c_scale: float = SELFPLAY_GUMBEL_C_SCALE
     gumbel_scale: float = 1.0
     gumbel_scale_after: float = 0.0
     gumbel_scale_decay_start_move: int = 0
@@ -502,7 +502,9 @@ class TrialConfig:
             volatility_q_scale=float(config.get("volatility_q_scale", 0.0)),
             volatility_fpu=float(config.get("volatility_fpu", 0.0)),
             volatility_anchor=float(config.get("volatility_anchor", DEFAULT_VOLATILITY_ANCHOR)),
-            gumbel_c_scale=_nonnegative_float(config.get("gumbel_c_scale", 0.1), name="gumbel_c_scale"),
+            gumbel_c_scale=_nonnegative_float(
+                config.get("gumbel_c_scale", SELFPLAY_GUMBEL_C_SCALE), name="gumbel_c_scale",
+            ),
             gumbel_scale=_nonnegative_float(config.get("gumbel_scale", 1.0), name="gumbel_scale"),
             gumbel_scale_after=_nonnegative_float(
                 config.get("gumbel_scale_after", 0.0),

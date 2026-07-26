@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 
 from chess_anti_engine.encoding.features import EXTRA_FEATURES_V2_THREATS
-from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR
+from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY
 from chess_anti_engine.moves import MODEL_POLICY_ENCODING
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
@@ -50,7 +50,7 @@ class SearchConfig:
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0
     gumbel_topk: int = 16
-    gumbel_c_scale: float = 0.1
+    gumbel_c_scale: float = SELFPLAY_GUMBEL_C_SCALE
     gumbel_scale: float = 1.0
     gumbel_scale_after: float = 0.0
     gumbel_scale_decay_start_move: int = 0
