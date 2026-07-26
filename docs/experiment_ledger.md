@@ -768,7 +768,7 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
-### DEPLOY (pre-registered, not yet live) — control-surface + observability bundle: I13/I9/I11/I19 (PR #TBD, 2026-07-26)
+### DEPLOY (pre-registered, not yet live) — control-surface + observability bundle: I13/I9/I11/I19 (PR #260, 2026-07-26)
 
 **PROTOCOL NOTE — not an experiment, and deliberately numerics-neutral.**
 Three `rl_loop_audit` defects, all about being able to SEE or SET something,
