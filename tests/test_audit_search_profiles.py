@@ -272,8 +272,8 @@ def test_search_wdl_preserves_the_root_networks_draw_mass(
 ) -> None:
     """`network_turn.py` keeps d_raw and splits only the remaining mass.
 
-    `_q_to_wdl` invents D = 1 - |q|, a different distribution whenever the net
-    predicts any other draw mass -- i.e. almost always.
+    `losses._q_to_wdl_probs` invents D = 1 - |q|, a different distribution
+    whenever the net predicts any other draw mass -- i.e. almost always.
     """
     net_wdl = np.array([0.25, 0.60, 0.15])
     wdl = audit_targets._search_wdl_like_selfplay(0.2, net_wdl)
@@ -283,8 +283,8 @@ def test_search_wdl_preserves_the_root_networks_draw_mass(
     assert wdl[0] == pytest.approx(0.5 * (rem + 0.2))
     assert wdl[2] == pytest.approx(rem - wdl[0])
     assert wdl.sum() == pytest.approx(1.0)
-    # The old formula would have said D = 1 - 0.2 = 0.8.
-    assert wdl[1] != pytest.approx(audit_targets._q_to_wdl(0.2)[1])
+    # The game-outcome formula's D = 1 - |q| would have said 0.8 here.
+    assert wdl[1] != pytest.approx(1.0 - 0.2)
 
 
 def test_search_wdl_clamps_q_into_the_non_draw_mass(
@@ -334,3 +334,74 @@ def test_the_search_wdl_is_built_from_the_rl_root_not_the_play_root(
     src = inspect.getsource(audit_targets.main)
 
     assert 'root_q = root_q_by_profile["train"]' in src
+
+
+def test_raw_wdl_logits_are_softmaxed_before_the_reconstruction(
+    audit_targets: ModuleType,
+) -> None:
+    """`evaluate_encoded` returns RAW wdl logits, not probabilities.
+
+    Feeding logits straight in produces finite-but-out-of-range entries that
+    slip past `_search_wdl_like_selfplay`'s non-finite fallback, so the draw
+    mass -- and with it candidates (iii) and (iv) -- comes out corrupt.
+    """
+    logits = np.array([[2.0, -1.0, 0.5], [0.0, 0.0, 0.0]])
+
+    probs = audit_targets._wdl_softmax(logits)
+
+    assert probs.shape == logits.shape
+    assert np.all(probs >= 0.0)
+    np.testing.assert_allclose(probs.sum(axis=-1), 1.0)
+    np.testing.assert_allclose(probs[1], [1 / 3, 1 / 3, 1 / 3])
+  # A raw logit of -1.0 would have been read as a NEGATIVE draw probability.
+    assert 0.0 < probs[0][1] < 1.0
+
+
+def test_the_net_candidates_softmax_the_root_wdl_at_the_call_site(
+    audit_targets: ModuleType,
+) -> None:
+    """Pins the wiring, not just the helper."""
+    import inspect
+
+    src = inspect.getsource(audit_targets._net_candidates)
+
+    assert "net_wdl = _wdl_softmax(net_wdl)" in src
+    assert "net_wdl = np.asarray(net_wdl, dtype=np.float64)" not in src
+
+
+def test_the_runner_result_is_indexed_not_destructured(
+    audit_targets: ModuleType,
+) -> None:
+    """The C runner returns 6 elements, the Python volatility one 4.
+
+    A six-element destructure raises `ValueError: not enough values to unpack`
+    on the first position of any volatility run -- i.e. the audit-first gate
+    could not judge the one flag family the runner dispatch was added for.
+    """
+    import inspect
+
+    src = inspect.getsource(audit_targets._net_candidates)
+
+    assert "probs_b, values = result[0], result[2]" in src
+    assert "_tree, _ids" not in src
+
+
+def test_the_training_search_gets_the_production_syzygy_probe(
+    audit_targets: ModuleType,
+) -> None:
+    """Production runs `syzygy_in_search: true` and passes a probe.
+
+    Without it the endgame bucket scores a pure-network search rather than the
+    target production stores.
+    """
+    import inspect
+
+    cand_src = inspect.getsource(audit_targets._net_candidates)
+    main_src = inspect.getsource(audit_targets.main)
+
+    assert "tb_probe = SyzygyProbe(syzygy_path)" in cand_src
+    assert '"tb_probe": tb_probe' in cand_src
+    assert "**tb_kwargs[name]" in cand_src
+  # ... and only when the production flag is actually on.
+    assert 'flat.get("syzygy_in_search")' in main_src
+    assert "syzygy_path=sz_path or None" in main_src

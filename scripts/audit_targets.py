@@ -203,22 +203,27 @@ _VALUE_NAMES = {
 }
 
 
-def _q_to_wdl(q: float) -> np.ndarray:
-    """Root Q in [-1, 1] -> (W, D, L), mirroring losses._q_to_wdl_probs.
+def _wdl_softmax(logits: np.ndarray) -> np.ndarray:
+    """Row-wise softmax of raw WDL logits, as `network_turn.py` does.
 
-    NOTE this is NOT how selfplay builds the stored search WDL -- see
-    `_search_wdl_like_selfplay`. `losses._q_to_wdl_probs` is the game-outcome
-    regret correction, a different target.
+    `LocalModelEvaluator.evaluate_encoded` returns the model's RAW ``out["wdl"]``
+    logits, not probabilities. Selfplay softmaxes them before reading the draw
+    component (`network_turn.py:365-371`); feeding the logits straight into
+    `_search_wdl_like_selfplay` would treat an arbitrary real number as a draw
+    probability and produce negative or >1 entries that are still finite, so the
+    non-finite fallback there would not catch them.
     """
-    qc = max(-1.0, min(1.0, float(q)))
-    win = max(0.0, qc)
-    loss = max(0.0, -qc)
-    draw = max(0.0, 1.0 - win - loss)
-    return np.array([win, draw, loss], dtype=np.float64)
+    z = np.asarray(logits, dtype=np.float64)
+    z = z - z.max(axis=-1, keepdims=True)
+    np.exp(z, out=z)
+    z /= z.sum(axis=-1, keepdims=True)
+    return z
 
 
 def _search_wdl_like_selfplay(q: float, net_wdl: np.ndarray) -> np.ndarray:
     """The search WDL exactly as `network_turn.py` stores it.
+
+    ``net_wdl`` must be PROBABILITIES (see `_wdl_softmax`), not logits.
 
     Selfplay KEEPS the root network's own draw mass and splits only the
     remaining mass around the searched Q::
@@ -227,7 +232,8 @@ def _search_wdl_like_selfplay(q: float, net_wdl: np.ndarray) -> np.ndarray:
         q     = clip(q, -rem, +rem)
         W     = 0.5 * (rem + q);  D = d_raw;  L = rem - W
 
-    `_q_to_wdl` instead invents ``D = 1 - |q|``, which is a different
+    `losses._q_to_wdl_probs` -- the game-outcome regret correction, a DIFFERENT
+    target -- instead invents ``D = 1 - |q|``, which is a different
     distribution whenever the net predicts a draw mass other than ``1 - |q|``
     -- i.e. almost always. Scoring the production WDL blend with the wrong
     draw mass makes candidates (iii) and (iv) describe a target the pipeline
@@ -258,6 +264,7 @@ def _net_candidates(
     seed: int,
     profiles: dict[str, _SearchProfile],
     policy_temp: float = 1.0,
+    syzygy_path: str | None = None,
 ) -> tuple[list[np.ndarray], dict[str, list[np.ndarray]], dict[str, list[float]], list[np.ndarray]]:
     """(raw-policy probs, {profile: search visit probs}, {profile: root Q}).
 
@@ -316,7 +323,19 @@ def _net_candidates(
   # the baseline search and report it as the configured training target -- the
   # audit-first gate would then be structurally unable to judge the one flag
   # family it was asked about.
+  # Production runs `syzygy_in_search: true`, and selfplay hands the probe to
+  # the C search so TB-eligible roots and leaves get their WDL overridden
+  # (`network_turn.py:762`). Without it the endgame bucket -- a third of the
+  # audit set, and the bucket TB probing exists for -- scores a pure-network
+  # search rather than the target production stores.
+    tb_probe = None
+    if syzygy_path:
+        from chess_anti_engine.tablebase import SyzygyProbe
+        tb_probe = SyzygyProbe(syzygy_path)
+        print(f"[audit] syzygy_in_search: probing {syzygy_path}", flush=True)
+
     runners = {}
+    tb_kwargs: dict[str, dict[str, object]] = {}
     for name, cfg in cfgs.items():
         if volatility_search_enabled(cfg):
             warn_volatility_python_path()
@@ -326,9 +345,21 @@ def _net_candidates(
                 f"— using the Python search path, as selfplay does",
                 flush=True,
             )
+            if tb_probe is not None:
+              # The Python path takes no probe, so this profile is scored
+              # WITHOUT the TB overrides production applies. Say so rather
+              # than reporting it as the production target.
+                print(
+                    f"[audit] WARNING {_CANDIDATE_NAMES[name]}: the Python "
+                    "volatility path cannot take a syzygy probe — endgame "
+                    "numbers for this row are NOT the production target",
+                    flush=True,
+                )
             runners[name] = run_gumbel_root_many
+            tb_kwargs[name] = {}
         else:
             runners[name] = run_gumbel_root_many_c
+            tb_kwargs[name] = {"tb_probe": tb_probe} if tb_probe is not None else {}
 
     raw_out: list[np.ndarray] = []
     search_out: dict[str, list[np.ndarray]] = {name: [] for name in profiles}
@@ -351,7 +382,7 @@ def _net_candidates(
                 pol_logits, net_wdl = evaluator.evaluate_encoded(xs)
             else:
                 pol_logits, net_wdl = evaluator.evaluate_encoded(xs, relations=rels)
-        net_wdl = np.asarray(net_wdl, dtype=np.float64)
+        net_wdl = _wdl_softmax(net_wdl)
         pol_logits = np.asarray(pol_logits, dtype=np.float32)
         if pol_logits.shape[1] != POLICY_SIZE:
             pol_logits = policy_batch_to_full_if_needed(pol_logits, policy_encoding=pol_enc, fill_value=-1e9)
@@ -359,7 +390,7 @@ def _net_candidates(
         searched = {
             name: runners[name](
                 model=None, boards=list(chunk), device=device, rng=rng,
-                cfg=cfgs[name], evaluator=evaluator,
+                cfg=cfgs[name], evaluator=evaluator, **tb_kwargs[name],
             )
             for name in cfgs
         }
@@ -369,7 +400,11 @@ def _net_candidates(
             logits -= logits.max()
             e = np.exp(logits)
             raw_out.append(e / e.sum())
-            for name, (probs_b, _actions, values, _masks, _tree, _ids) in searched.items():
+          # The C runner returns 6 elements and the Python one 4; only the
+          # leading (probs, actions, values, masks) are common, so index in
+          # rather than destructuring a length this code does not control.
+            for name, result in searched.items():
+                probs_b, values = result[0], result[2]
                 visit = np.asarray(probs_b[j], dtype=np.float64)
                 if visit.shape[0] != POLICY_SIZE:
                     full = np.zeros(POLICY_SIZE, dtype=np.float64)
@@ -669,10 +704,15 @@ def main() -> None:
             flush=True,
         )
 
+  # Production probes tablebases inside the search; the audited target has to
+  # as well or the endgame bucket describes a search production never runs.
+    sz_path = str(flat.get("syzygy_path") or "") if flat.get("syzygy_in_search") else ""
+
     raw_probs, search_by_profile, root_q_by_profile, root_wdl = _net_candidates(
         boards, checkpoint=args.checkpoint, device=args.device,
         batch_size=int(args.batch_size), seed=int(args.seed),
         profiles=profiles, policy_temp=float(args.policy_temp),
+        syzygy_path=sz_path or None,
     )
     search_probs = search_by_profile["search"]
   # The production WDL blend's search component comes from the RL search, so
