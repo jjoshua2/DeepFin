@@ -1070,7 +1070,7 @@ def _finalize_iteration(
         total_w=sp.total_w,
         total_d=sp.total_d,
         total_l=sp.total_l,
-        opt_lr=float(trainer.opt.param_groups[0]["lr"]),
+        opt_lr_mean=float(report_dict["opt_lr_mean"]),
         startup_source=restore.startup_source,
     )
 

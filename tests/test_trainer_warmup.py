@@ -15,6 +15,7 @@ from chess_anti_engine.train.aurora import AuroraWithAuxAdam
 from chess_anti_engine.train.soda import SODAWeightDecayWrapper
 from chess_anti_engine.train.trainer import (
     Trainer,
+    TrainMetrics,
     _ChainedOptimizer,
     _SqrtReleaseLRScheduler,
     _TrainBatchIterator,
@@ -160,13 +161,14 @@ def test_train_steps_extends_prefetch_exactly_for_cuda_retry(
         *,
         step_sums: dict[str, float],
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        step_opt_stats: dict[str, float],
         buf: Any,
         batch_size: int,
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
+        del step_opt_stats, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
         seen.append(int(next(batch_iter)["x"].item()))
         if len(seen) == 1:
             raise RuntimeError("CUDA transient test failure")
@@ -226,13 +228,14 @@ def test_train_steps_closes_prefetch_after_terminal_error(
         *,
         step_sums: dict[str, float],
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        step_opt_stats: dict[str, float],
         buf: Any,
         batch_size: int,
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
     ) -> tuple[int, float]:
-        del step_sums, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
+        del step_opt_stats, step_sums, step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats
         next(batch_iter)
         raise RuntimeError("terminal host failure")
 
@@ -745,13 +748,14 @@ def test_sqrt_release_zero_cycle_uses_train_window(
         *,
         step_sums: dict[str, float],
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        step_opt_stats: dict[str, float],
         buf: Any,
         batch_size: int,
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size, batch_iter
+        del step_opt_stats, step_acc_sums, buf, batch_size, batch_iter
         assert update_lr is False
         seen_collect.append(bool(collect_optimizer_stats))
         seen_lrs.append([float(pg["lr"]) for pg in trainer.opt.param_groups])
@@ -824,13 +828,14 @@ def test_sqrt_release_zero_cycle_switches_after_warmup(
         *,
         step_sums: dict[str, float],
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        step_opt_stats: dict[str, float],
         buf: Any,
         batch_size: int,
         update_lr: bool = True,
         collect_optimizer_stats: bool = True,
         batch_iter: Any = None,
     ) -> tuple[int, float]:
-        del step_acc_sums, buf, batch_size, collect_optimizer_stats, batch_iter
+        del step_opt_stats, step_acc_sums, buf, batch_size, collect_optimizer_stats, batch_iter
         seen.append((int(trainer.step), bool(update_lr), [float(pg["lr"]) for pg in trainer.opt.param_groups]))
         for key in (
             "loss",
@@ -1170,3 +1175,330 @@ def test_zclip_step_reports_hard_and_adaptive_clipping(tmp_path: Path) -> None:
     assert stats["adaptive_clip"] == 1.0
     assert stats["hard_clip"] == 0.0
     assert stats["clipped"] == 1.0
+
+
+# --- rl_loop_audit I13: configured param-group hyperparameters survive a load ---
+
+
+def test_configured_matrix_weight_decay_survives_checkpoint_round_trip(tmp_path: Path) -> None:
+    # The exact defect: Optimizer.load_state_dict replaces every group's
+    # hyperparameters with the checkpoint's, so `matrix_weight_decay: 0` in the
+    # yaml stayed a no-op against a checkpoint stamped with 1e-4, forever.
+    donor = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="aurora",
+        matrix_weight_decay=1e-4,
+        aux_weight_decay=1e-4,
+        use_amp=False,
+        log_dir=tmp_path / "donor",
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    ckpt = tmp_path / "donor.pt"
+    donor.save(ckpt)
+    assert float(donor.opt.param_groups[0]["weight_decay"]) == 1e-4
+
+    loaded = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="aurora",
+        matrix_weight_decay=0.0,
+        aux_weight_decay=3e-5,
+        use_amp=False,
+        log_dir=tmp_path / "loaded",
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    loaded.load(ckpt)
+
+    aurora_groups = [pg for pg in loaded.opt.param_groups if pg.get("use_aurora", False)]
+    aux_decay_groups = [
+        pg for pg in loaded.opt.param_groups
+        if not pg.get("use_aurora", False) and float(pg.get("weight_decay", 0.0)) > 0.0
+    ]
+    assert float(aurora_groups[0]["weight_decay"]) == 0.0
+    assert [float(pg["weight_decay"]) for pg in aux_decay_groups] == [3e-5]
+
+
+def test_configured_aurora_uw_floor_survives_checkpoint_round_trip(tmp_path: Path) -> None:
+    # weight_decay was not the only group hyperparameter with no re-application
+    # path — aurora_uw_floor is read per step straight off the group dict.
+    donor = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="aurora",
+        aurora_uw_floor=0.25,
+        use_amp=False,
+        log_dir=tmp_path / "donor",
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    ckpt = tmp_path / "donor.pt"
+    donor.save(ckpt)
+
+    loaded = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="aurora",
+        aurora_uw_floor=0.0,
+        use_amp=False,
+        log_dir=tmp_path / "loaded",
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    loaded.load(ckpt)
+
+    assert float(loaded.opt.param_groups[0]["aurora_uw_floor"]) == 0.0
+
+
+def test_load_keeps_checkpoint_owned_group_keys(tmp_path: Path) -> None:
+    # `lr` stays the checkpoint's — set_peak_lr re-applies it afterwards and the
+    # scheduler owns the phase, so the re-application must not fight that.
+    donor = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=1e-3,
+        optimizer="aurora",
+        warmup_steps=0,
+        use_amp=False,
+        log_dir=tmp_path / "donor",
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    donor_lrs = [float(pg["lr"]) for pg in donor.opt.param_groups]
+    ckpt = tmp_path / "donor.pt"
+    donor.save(ckpt)
+
+    loaded = Trainer(
+        _TinyMuonModel(),
+        device="cpu",
+        lr=5e-3,
+        optimizer="aurora",
+        warmup_steps=0,
+        use_amp=False,
+        log_dir=tmp_path / "loaded",
+        tb_log_interval=1000,
+        prefetch_batches=False,
+    )
+    loaded.load(ckpt)
+
+    assert [float(pg["lr"]) for pg in loaded.opt.param_groups] == donor_lrs
+
+
+def test_load_keeps_soda_step_counter_but_reapplies_soda_config(tmp_path: Path) -> None:
+    def _make_soda_trainer(label: str, *, matrix_weight_decay: float) -> Trainer:
+        return Trainer(
+            _TinyMuonModel(),
+            device="cpu",
+            lr=1e-3,
+            optimizer="aurora",
+            weight_decay_mode="soda",
+            matrix_weight_decay=matrix_weight_decay,
+            aux_weight_decay=1e-4,
+            use_amp=False,
+            log_dir=tmp_path / label,
+            tb_log_interval=1000,
+            prefetch_batches=False,
+        )
+
+    donor = _make_soda_trainer("donor", matrix_weight_decay=1e-4)
+    donor_group = next(pg for pg in donor.opt.param_groups if pg.get("soda_regularize", False))
+    donor_group["soda_k"] = 7
+    ckpt = tmp_path / "donor.pt"
+    donor.save(ckpt)
+
+    loaded = _make_soda_trainer("loaded", matrix_weight_decay=3e-5)
+    loaded.load(ckpt)
+
+    loaded_group = next(pg for pg in loaded.opt.param_groups if pg.get("soda_regularize", False))
+    # soda_k is a per-group COUNTER: the checkpoint owns it.
+    assert int(loaded_group["soda_k"]) == 7
+    # soda_replaced_weight_decay is config-derived: this run's value wins.
+    assert float(loaded_group["soda_replaced_weight_decay"]) == 3e-5
+
+
+# --- rl_loop_audit I9/I11: grad-norm + clip rate reach the metric stream ---
+
+
+_REQUIRED_LOSS_METRIC_KEYS = (
+    "loss", "policy_loss", "soft_policy_loss", "future_policy_loss", "wdl_loss",
+    "sf_move_loss", "sf_eval_loss", "categorical_loss", "volatility_loss",
+    "sf_volatility_loss", "moves_left_loss",
+)
+
+
+def _zeroed_metrics(**overrides: Any) -> TrainMetrics:
+    base: dict[str, Any] = dict.fromkeys(_REQUIRED_LOSS_METRIC_KEYS, 0.0)
+    base["sf_move_acc"] = 0.0
+    base.update(overrides)
+    return TrainMetrics(**base)
+
+
+def test_grad_clip_metric_kwargs_aggregates_the_whole_iteration() -> None:
+    kwargs = trainer_mod._grad_clip_metric_kwargs(
+        [1.0, 5.0, 3.0, 4.0],
+        {"clipped": 2, "adaptive_clip": 1, "hard_clip": 1},
+    )
+
+    assert kwargs["grad_norm_mean"] == pytest.approx(3.25)
+    assert kwargs["grad_norm_median"] == pytest.approx(3.5)
+    assert kwargs["grad_norm_p95"] == pytest.approx(5.0)
+    assert kwargs["grad_norm_max"] == pytest.approx(5.0)
+    assert kwargs["grad_clip_rate"] == pytest.approx(0.5)
+    assert kwargs["grad_adaptive_clip_rate"] == pytest.approx(0.25)
+    assert kwargs["grad_hard_clip_rate"] == pytest.approx(0.25)
+    assert kwargs["grad_norm_samples"] == 4
+    assert trainer_mod._grad_clip_metric_kwargs([], {}) == {}
+
+
+def test_run_optimizer_step_collects_clip_stats_off_the_tb_log_stride(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The stats used to be gathered only when a step landed on tb_log_interval;
+    # a 1-in-10 subsample cannot be aggregated into an honest clip rate.
+    trainer = _make_trainer(tmp_path, optimizer="adamw", warmup_steps=0)
+    trainer.step = 5
+    assert trainer._should_log_step_scalars() is False
+
+    param = next(trainer.model.parameters())
+
+    def fake_compute_loss(out: Any, batch: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        del out, batch, kwargs
+        return {"total": (param * param).sum()}
+
+    monkeypatch.setattr(trainer_mod, "compute_loss", fake_compute_loss)
+    monkeypatch.setattr(trainer, "_policy_accuracy_stats", lambda out, batch: {})
+
+    step_opt_stats: dict[str, float] = {}
+    trainer._run_optimizer_step(
+        step_sums={},
+        step_acc_sums={},
+        step_opt_stats=step_opt_stats,
+        buf=cast(Any, None),
+        batch_size=1,
+        batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
+    )
+
+    assert set(step_opt_stats) >= {"grad_norm", "total_norm", "clipped", "hard_clip", "adaptive_clip", "lr"}
+    assert step_opt_stats["grad_norm"] > 0.0
+    assert step_opt_stats["total_norm"] == pytest.approx(step_opt_stats["grad_norm"])
+    assert step_opt_stats["lr"] == pytest.approx(float(trainer._base_lrs()[0]))
+
+
+def test_train_steps_reports_clip_rate_without_double_counting_retries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(tmp_path, warmup_steps=0)
+    attempts = {"n": 0}
+
+    def fake_run_optimizer_step(
+        *,
+        step_sums: dict[str, float],
+        step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        step_opt_stats: dict[str, float],
+        buf: Any,
+        batch_size: int,
+        update_lr: bool = True,
+        collect_optimizer_stats: bool = True,
+        batch_iter: Any = None,
+    ) -> tuple[int, float]:
+        del step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
+        attempts["n"] += 1
+        # The first attempt records a huge clipped norm and then dies: the retry
+        # must replace it, not add to it.
+        first = attempts["n"] == 1
+        step_opt_stats["grad_norm"] = 100.0 if first else float(attempts["n"])
+        step_opt_stats["clipped"] = 1.0 if first else 0.0
+        step_opt_stats["hard_clip"] = 1.0 if first else 0.0
+        step_opt_stats["adaptive_clip"] = 0.0
+        step_opt_stats["lr"] = 1e-3
+        if first:
+            raise RuntimeError("CUDA transient test failure")
+        step_sums.update(dict.fromkeys(_REQUIRED_LOSS_METRIC_KEYS, 0.0))
+        return 1, 0.0
+
+    monkeypatch.setattr(trainer, "_run_optimizer_step", fake_run_optimizer_step)
+    monkeypatch.setattr(trainer_mod.torch.cuda, "synchronize", lambda: None)
+    monkeypatch.setattr(trainer_mod.torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(trainer_mod.time, "sleep", lambda _seconds: None)
+
+    metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=3)
+
+    assert metrics.grad_norm_samples == 3
+    assert metrics.grad_norm_max == pytest.approx(4.0)
+    assert metrics.grad_norm_mean == pytest.approx(3.0)
+    assert metrics.grad_clip_rate == 0.0
+    assert metrics.grad_hard_clip_rate == 0.0
+
+
+def test_grad_norm_median_past_watch_threshold_warns(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    trainer = _make_trainer(tmp_path, zclip_max_norm=5.0)
+    metrics = _zeroed_metrics(
+        grad_norm_samples=200,
+        grad_norm_median=trainer_mod.GRAD_NORM_MEDIAN_WATCH + 0.1,
+    )
+
+    with caplog.at_level("WARNING", logger="chess_anti_engine.train.trainer"):
+        trainer._warn_if_grad_norm_median_past_watch(metrics)
+    assert "watch threshold" in caplog.text
+
+    caplog.clear()
+    metrics.grad_norm_median = trainer_mod.GRAD_NORM_MEDIAN_WATCH - 0.1
+    with caplog.at_level("WARNING", logger="chess_anti_engine.train.trainer"):
+        trainer._warn_if_grad_norm_median_past_watch(metrics)
+    assert caplog.text == ""
+
+
+# --- rl_loop_audit I19: the reported LR is not the sqrt_release trough ---
+
+
+def test_train_steps_reports_iteration_mean_lr_not_the_release_trough(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trainer = _make_trainer(
+        tmp_path,
+        warmup_steps=0,
+        lr_schedule="sqrt_release",
+        lr_release_cycle_steps=0,
+        lr_release_start_frac=0.8,
+        lr_release_min_scale=0.1,
+    )
+    base_lr = float(trainer._base_lrs()[0])
+
+    def fake_run_optimizer_step(
+        *,
+        step_sums: dict[str, float],
+        step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        step_opt_stats: dict[str, float],
+        buf: Any,
+        batch_size: int,
+        update_lr: bool = True,
+        collect_optimizer_stats: bool = True,
+        batch_iter: Any = None,
+    ) -> tuple[int, float]:
+        del step_acc_sums, buf, batch_size, update_lr, collect_optimizer_stats, batch_iter
+        step_opt_stats["lr"] = float(trainer.opt.param_groups[0]["lr"])
+        step_sums.update(dict.fromkeys(_REQUIRED_LOSS_METRIC_KEYS, 0.0))
+        return 1, 0.0
+
+    monkeypatch.setattr(trainer, "_run_optimizer_step", fake_run_optimizer_step)
+
+    metrics = trainer.train_steps(cast(Any, None), batch_size=1, steps=100)
+
+    trough = float(trainer.opt.param_groups[0]["lr"])
+    assert trough == pytest.approx(base_lr * 0.1)
+    assert metrics.opt_lr_max == pytest.approx(base_lr)
+    # The duty cycle predicts ~0.88 of the plateau; the trough is 10x below it.
+    assert metrics.opt_lr_mean == pytest.approx(base_lr * 0.88, rel=0.05)
+    assert metrics.opt_lr_mean > 5.0 * trough

@@ -160,7 +160,10 @@ def _guard_checkpoint_index(*, trial_dir: Path) -> int | None:
 _STATUS_COLS = (
     "iter", "global_iter", "opp", "opp_ema", "sf_nodes", "regret",
     "ingest_s", "train_s", "iter_s", "steps", "replay", "pos_added",
-    "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr", "startup",
+    # `lr_mean` (was `lr`): the iteration-mean LR of the matrix/trunk group.
+    # The old column sampled the optimizer after the train phase, i.e. at the
+    # trough of the sqrt_release ramp (docs/rl_loop_audit.md I19).
+    "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr_mean", "startup",
 )
 
 
@@ -197,7 +200,7 @@ def _write_status_csv_row(
     total_w: int,
     total_d: int,
     total_l: int,
-    opt_lr: float,
+    opt_lr_mean: float,
     startup_source: str,
 ) -> None:
     """Append a compact status CSV row (best-effort)."""
@@ -222,7 +225,7 @@ def _write_status_csv_row(
                 int(total_w),
                 int(total_d),
                 int(total_l),
-                f"{float(opt_lr):.2e}",
+                f"{float(opt_lr_mean):.2e}",
                 str(startup_source),
             ])
     except Exception:
@@ -817,6 +820,10 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "frac_is_selfplay_batch": 0.0, "frac_tagged_batch": 0.0,
     "policy_loss_open": 0.0, "policy_loss_mid": 0.0, "policy_loss_end": 0.0,
     "wdl_loss_open": 0.0, "wdl_loss_mid": 0.0, "wdl_loss_end": 0.0,
+    "grad_norm_mean": 0.0, "grad_norm_median": 0.0, "grad_norm_p95": 0.0,
+    "grad_norm_max": 0.0, "grad_clip_rate": 0.0, "grad_adaptive_clip_rate": 0.0,
+    "grad_hard_clip_rate": 0.0, "grad_norm_samples": 0,
+    "opt_lr_mean": 0.0, "opt_lr_max": 0.0,
 }
 
 
@@ -863,6 +870,23 @@ def _train_metrics_dict(metrics) -> dict:
         "wdl_loss_open": float(metrics.wdl_loss_open),
         "wdl_loss_mid": float(metrics.wdl_loss_mid),
         "wdl_loss_end": float(metrics.wdl_loss_end),
+        # Grad-norm / clipping, aggregated over every step of the iteration.
+        # Previously TensorBoard-only, at a 1-in-10 subsample, in event files
+        # that rotate per Ray session — so no ledger yardstick could cite them
+        # and audit_realized_config.py could not gate on them (I9).
+        "grad_norm_mean": float(metrics.grad_norm_mean),
+        "grad_norm_median": float(metrics.grad_norm_median),
+        "grad_norm_p95": float(metrics.grad_norm_p95),
+        "grad_norm_max": float(metrics.grad_norm_max),
+        "grad_clip_rate": float(metrics.grad_clip_rate),
+        "grad_adaptive_clip_rate": float(metrics.grad_adaptive_clip_rate),
+        "grad_hard_clip_rate": float(metrics.grad_hard_clip_rate),
+        "grad_norm_samples": int(metrics.grad_norm_samples),
+        # Iteration mean/max of the matrix (trunk) group's LR — the LR the
+        # trunk actually trains at. `opt_lr_final` below is the trough of the
+        # sqrt_release ramp and is ~9x smaller (I19).
+        "opt_lr_mean": float(metrics.opt_lr_mean),
+        "opt_lr_max": float(metrics.opt_lr_max),
     }
 
 
@@ -1201,7 +1225,12 @@ def _build_report_dict(
         "wdl_regret_next": float(pr.wdl_regret_next),
         "opponent_strength": float(pr.opp_strength),
         "opponent_strength_ema": float(pr.opp_strength_ema),
-        "opt_lr": float(trainer.opt.param_groups[0]["lr"]),
+        # Renamed from `opt_lr`, which read as "the learning rate" but is
+        # sampled after the train phase, i.e. at the END of the sqrt_release
+        # ramp — the TROUGH, ~9x below the mean the matrix group sees. The
+        # honest per-iteration numbers are opt_lr_mean / opt_lr_max, spliced
+        # in from train_metrics_dict below (docs/rl_loop_audit.md I19).
+        "opt_lr_final": float(trainer.opt.param_groups[0]["lr"]),
         "peak_lr": float(getattr(trainer, "_peak_lr", 0.0)),
         "w_wdl": float(trainer.w_wdl),
         "w_soft": float(trainer.w_soft),

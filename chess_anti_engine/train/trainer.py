@@ -75,7 +75,7 @@ from .losses import (
     wdl_calibration_stats,
 )
 from .muon import MuonWithAuxAdam
-from .soda import SODAWeightDecayWrapper, mark_soda_weight_decay_groups
+from .soda import SODA_STEP_KEY, SODAWeightDecayWrapper, mark_soda_weight_decay_groups
 
 SummaryWriter = _SummaryWriter  # skylos: ignore (used via runtime fallback)
 
@@ -749,6 +749,26 @@ class TrainMetrics:
   # Value-head calibration (populated on holdout eval).
     wdl_brier: float = 0.0
     wdl_ece: float = 0.0
+  # Gradient-norm / clipping, aggregated over EVERY optimizer step of the
+  # iteration (not the tb_log_interval subsample). These used to exist only as
+  # TensorBoard scalars, whose event files rotate per Ray session — so the
+  # history died at every restart and no ledger yardstick could cite them
+  # (docs/rl_loop_audit.md I9).
+    grad_norm_mean: float = 0.0
+    grad_norm_median: float = 0.0
+    grad_norm_p95: float = 0.0
+    grad_norm_max: float = 0.0
+    grad_clip_rate: float = 0.0
+    grad_adaptive_clip_rate: float = 0.0
+    grad_hard_clip_rate: float = 0.0
+    grad_norm_samples: int = 0
+  # Iteration mean/max of param_groups[0] (the matrix/trunk group) LR. The
+  # end-of-iteration LR reported elsewhere is the TROUGH of the sqrt_release
+  # ramp, ~9x below the LR the trunk actually trains at (I19). Every group
+  # shares the schedule's scale factor, so the aux groups' means are this one
+  # divided by matrix_lr_multiplier.
+    opt_lr_mean: float = 0.0
+    opt_lr_max: float = 0.0
 
 
 # Map compute_loss dict keys → TrainMetrics field names where they differ.
@@ -768,6 +788,76 @@ _LOSS_KEY_TO_METRIC_FIELD = {
     "blended_wdl_ce": "blended_wdl_loss",
 }
 _TRAIN_METRICS_FIELDS = frozenset(f.name for f in dataclasses.fields(TrainMetrics))
+
+
+# Param-group keys the CHECKPOINT legitimately owns on resume: the schedule's
+# phase (`lr` is re-applied by set_peak_lr right after load, `initial_lr` is
+# scheduler bookkeeping) and per-group counters (SODA's step). EVERY other
+# param-group key is config-derived and must be re-applied from this run's
+# config after a load — see Trainer._reapply_configured_param_group_hparams.
+_CHECKPOINT_OWNED_GROUP_KEYS = frozenset({"params", "lr", "initial_lr", SODA_STEP_KEY})
+
+
+def _scalar_hparam_differs(old: Any, new: Any) -> bool:
+    """True when a plain-scalar param-group hyperparameter changed.
+
+    Restricted to scalars so a non-comparable group value (tuple of tensors,
+    dtype object, ...) can never make the diagnostic logging path raise.
+    """
+    if not isinstance(old, (int, float, bool, str)) or not isinstance(new, (int, float, bool, str)):
+        return False
+    return old != new
+
+
+# Pre-committed watch threshold from docs/rl_loop_audit.md I11: once the
+# windowed MEDIAN grad norm passes this (hard-clip rate ~10%), zclip_max_norm
+# has stopped being a tail guard and has become an LR cap in disguise. Recorded
+# here (and in the yaml comment on zclip_max_norm) so the call is not made
+# post-hoc.
+GRAD_NORM_MEDIAN_WATCH = 4.75
+
+
+def _nearest_rank_quantile(sorted_values: list[float], q: float) -> float:
+    """Nearest-rank quantile of an already-sorted list (0.0 when empty)."""
+    if not sorted_values:
+        return 0.0
+    rank = math.ceil(q * len(sorted_values)) - 1
+    return float(sorted_values[min(len(sorted_values) - 1, max(0, rank))])
+
+
+def _median(sorted_values: list[float]) -> float:
+    n = len(sorted_values)
+    if n == 0:
+        return 0.0
+    mid = n // 2
+    if n % 2:
+        return float(sorted_values[mid])
+    return 0.5 * (float(sorted_values[mid - 1]) + float(sorted_values[mid]))
+
+
+def _grad_clip_metric_kwargs(
+    grad_norms: list[float], clip_counts: dict[str, int],
+) -> dict[str, float | int]:
+    """Aggregate per-step grad norms + clip flags into TrainMetrics kwargs.
+
+    Aggregated over EVERY step of the iteration, not the tb_log_interval
+    subsample — a 1-in-10 sample cannot rule out a burst pattern aligned to the
+    stride (the caveat recorded against I10).
+    """
+    n = len(grad_norms)
+    if n == 0:
+        return {}
+    ordered = sorted(grad_norms)
+    return {
+        "grad_norm_mean": float(sum(grad_norms) / n),
+        "grad_norm_median": _median(ordered),
+        "grad_norm_p95": _nearest_rank_quantile(ordered, 0.95),
+        "grad_norm_max": float(ordered[-1]),
+        "grad_clip_rate": float(clip_counts.get("clipped", 0)) / n,
+        "grad_adaptive_clip_rate": float(clip_counts.get("adaptive_clip", 0)) / n,
+        "grad_hard_clip_rate": float(clip_counts.get("hard_clip", 0)) / n,
+        "grad_norm_samples": n,
+    }
 
 
 def _loss_sums_to_metric_kwargs(sums: dict[str, float], n: float) -> dict[str, float]:
@@ -1282,6 +1372,9 @@ class Trainer:
 
         if use_soda_weight_decay:
             self.opt = SODAWeightDecayWrapper(self.opt)
+  # Snapshot the CONFIGURED param-group hyperparameters before any checkpoint
+  # restore can overwrite them. See _reapply_configured_param_group_hparams.
+        self._configured_param_group_hparams = self._snapshot_param_group_hparams()
         max_grad_norm = None if zclip_max_norm is None else float(zclip_max_norm)
         self.zclip = ZClip(
             mode="zscore",
@@ -1429,6 +1522,23 @@ class Trainer:
 
     def _should_log_step_scalars(self) -> bool:
         return (self.step % self._tb_log_interval) == 0
+
+    def _warn_if_grad_norm_median_past_watch(self, metrics: TrainMetrics) -> None:
+        """Fire the pre-committed I11 watch when the hard cap stops being a tail guard."""
+        max_grad_norm = getattr(self.zclip, "max_grad_norm", None)
+        if max_grad_norm is None or metrics.grad_norm_samples <= 0:
+            return
+        if metrics.grad_norm_median <= GRAD_NORM_MEDIAN_WATCH:
+            return
+        logging.getLogger(__name__).warning(
+            "grad-norm median %.3f over %d step(s) is past the pre-committed "
+            "watch threshold %.2f with zclip_max_norm=%.2f (clip rate %.1f%%, "
+            "hard-clip rate %.1f%%): the hard cap is acting as an LR cap, not a "
+            "tail guard — re-set it (docs/rl_loop_audit.md I11)",
+            metrics.grad_norm_median, metrics.grad_norm_samples,
+            GRAD_NORM_MEDIAN_WATCH, float(max_grad_norm),
+            100.0 * metrics.grad_clip_rate, 100.0 * metrics.grad_hard_clip_rate,
+        )
 
     def _zclip_step(self, *, collect_stats: bool) -> tuple[float, dict[str, float] | None]:
         if not collect_stats:
@@ -1960,6 +2070,7 @@ class Trainer:
         self, *,
         step_sums: dict[str, float],
         step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]],
+        step_opt_stats: dict[str, float],
         buf: ReplayBuffer,
         batch_size: int,
         update_lr: bool = True,
@@ -1968,7 +2079,8 @@ class Trainer:
     ) -> tuple[int, float]:
         """Run accum_steps microbatches, do zclip + opt.step + lr update.
 
-        Mutates step_sums/step_acc_sums in place. Returns (step_n_micro, opt_step_time_s).
+        Mutates step_sums/step_acc_sums/step_opt_stats in place. Returns
+        (step_n_micro, opt_step_time_s).
         """
         self.opt.zero_grad(set_to_none=True)
         step_n_micro = 0
@@ -2010,9 +2122,15 @@ class Trainer:
 
             step_n_micro += 1
 
-        should_log = self._should_log_step_scalars()
-        grad_norm, zclip_stats = self._zclip_step(collect_stats=should_log)
-        if should_log:
+  # Collect on EVERY step, not just tb_log_interval ones: the stats are
+  # pure Python arithmetic over floats zclip already materialized, and a
+  # 1-in-10 sample cannot be aggregated into an honest per-iteration clip
+  # rate (rl_loop_audit I9/I10).
+        grad_norm, zclip_stats = self._zclip_step(collect_stats=True)
+        if zclip_stats is not None:
+            step_opt_stats.update(zclip_stats)
+        step_opt_stats["grad_norm"] = float(grad_norm)
+        if self._should_log_step_scalars():
             self.writer.add_scalar("train/grad_norm", float(grad_norm), self.step)
             if zclip_stats is not None:
                 self.writer.add_scalar("zclip/total_norm", zclip_stats["total_norm"], self.step)
@@ -2020,6 +2138,10 @@ class Trainer:
                 self.writer.add_scalar("zclip/adaptive_clipped", zclip_stats["adaptive_clip"], self.step)
                 self.writer.add_scalar("zclip/hard_clipped", zclip_stats["hard_clip"], self.step)
                 self.writer.add_scalar("zclip/clipped", zclip_stats["clipped"], self.step)
+  # The LR in force for THIS step, sampled before opt.step() and before
+  # _update_lr() moves it on. Averaging these is the only honest answer to
+  # "what LR is the trunk training at" under sqrt_release (I19).
+        step_opt_stats["lr"] = float(self.opt.param_groups[0]["lr"])
         opt_step_start = time.perf_counter()
         set_collect_uw_stats = getattr(self.opt, "set_collect_uw_stats", None)
         if callable(set_collect_uw_stats):
@@ -2039,6 +2161,11 @@ class Trainer:
         n_micro = 0
         opt_step_time_s = 0.0
         train_steps_done = 0
+  # Committed only on a successful step, so a retried CUDA-error attempt
+  # can't double-count (same discipline as step_sums).
+        grad_norms: list[float] = []
+        lr_samples: list[float] = []
+        clip_counts: dict[str, int] = {"clipped": 0, "adaptive_clip": 0, "hard_clip": 0}
 
         _log = logging.getLogger(__name__)
 
@@ -2059,6 +2186,7 @@ class Trainer:
               for _attempt in range(3):
                 step_sums: dict[str, float] = {}
                 step_acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+                step_opt_stats: dict[str, float] = {}
                 consumed_before_attempt = batch_iter.consumed
                 try:
                     local_release_cycle = self._uses_train_window_release_cycle()
@@ -2069,6 +2197,7 @@ class Trainer:
                         )
                     step_n_micro, this_opt_time = self._run_optimizer_step(
                         step_sums=step_sums, step_acc_sums=step_acc_sums,
+                        step_opt_stats=step_opt_stats,
                         buf=buf, batch_size=batch_size,
                         update_lr=not local_release_cycle,
                         collect_optimizer_stats=train_steps_done + 1 >= requested_steps,
@@ -2093,6 +2222,12 @@ class Trainer:
                     prev = acc_sums.get(name)
                     acc_sums[name] = (n_, d_) if prev is None else (prev[0] + n_, prev[1] + d_)
                 n_micro += step_n_micro
+                if "grad_norm" in step_opt_stats:
+                    grad_norms.append(step_opt_stats["grad_norm"])
+                    for flag in clip_counts:
+                        clip_counts[flag] += int(step_opt_stats.get(flag, 0.0) > 0.0)
+                if "lr" in step_opt_stats:
+                    lr_samples.append(step_opt_stats["lr"])
 
                 if (
                     self._swa_model is not None
@@ -2118,8 +2253,12 @@ class Trainer:
             opt_step_time_s=float(opt_step_time_s),
             train_steps_done=int(train_steps_done),
             train_samples_seen=int(train_samples_seen),
+            opt_lr_mean=float(sum(lr_samples) / len(lr_samples)) if lr_samples else 0.0,
+            opt_lr_max=float(max(lr_samples)) if lr_samples else 0.0,
+            **_grad_clip_metric_kwargs(grad_norms, clip_counts),
             **getattr(self.opt, "last_uw_stats", {}),
         )
+        self._warn_if_grad_norm_median_past_watch(metrics)
         self._log_metrics(metrics, "train_avg")
 
   # Compile probe: report once after the first batch of train steps that
@@ -2229,6 +2368,63 @@ class Trainer:
             "param_groups": out_groups,
         }
 
+    def _snapshot_param_group_hparams(self) -> list[dict[str, Any]]:
+        """Copy every config-derived key out of the live optimizer groups."""
+        return [
+            {
+                key: value
+                for key, value in group.items()
+                if key not in _CHECKPOINT_OWNED_GROUP_KEYS
+            }
+            for group in self.opt.param_groups
+        ]
+
+    def _reapply_configured_param_group_hparams(self) -> None:
+        """Restore this run's configured param-group hyperparameters after a load.
+
+        ``torch.optim.Optimizer.load_state_dict`` does not merge group
+        hyperparameters — it REPLACES each live group dict with the
+        checkpoint's, keeping only ``params``. So every construction-time group
+        key is inherited from whatever checkpoint the run happens to resume
+        from, and the config value is silently discarded.
+
+        Two keys survived that by accident: ``lr`` (``set_peak_lr`` re-applies
+        it right after ``load``) and the ``aurora_*`` polar knobs
+        (``_apply_lr_gamma_weights`` re-pushes them every iteration).
+        ``weight_decay`` had no such path, which is how ``matrix_weight_decay:
+        0`` sat in the yaml for seven weeks while the live Aurora group ran at
+        ``1e-4`` — a config key that could not be changed (rl_loop_audit I13).
+        ``aurora_uw_floor`` and the SODA marker keys are in the same class.
+
+        Re-applying the whole snapshot (rather than special-casing
+        ``weight_decay``) means any future construction-time group key is
+        covered automatically. ``_CHECKPOINT_OWNED_GROUP_KEYS`` is the
+        deliberate exception list: schedule phase and per-group counters must
+        come from the checkpoint, not from config.
+        """
+        configured = getattr(self, "_configured_param_group_hparams", None)
+        if not configured:
+            return
+        log = logging.getLogger(__name__)
+        groups = self.opt.param_groups
+        if len(groups) != len(configured):
+            log.warning(
+                "Optimizer has %d param group(s) after restore but %d were "
+                "configured — skipping the configured-hyperparameter "
+                "re-application (rl_loop_audit I13)",
+                len(groups), len(configured),
+            )
+            return
+        for idx, (group, hparams) in enumerate(zip(groups, configured, strict=True)):
+            for key, value in hparams.items():
+                if _scalar_hparam_differs(group.get(key), value):
+                    log.info(
+                        "Restore overwrote optimizer group %d %s (%r); "
+                        "re-applying the configured %r",
+                        idx, key, group.get(key), value,
+                    )
+            group.update(hparams)
+
     def load(self, path: Path) -> None:
         from chess_anti_engine.model import (
             load_state_dict_tolerant,
@@ -2274,6 +2470,10 @@ class Trainer:
             self.opt.load_state_dict(fresh_opt_state)
             self._scheduler.load_state_dict(fresh_scheduler_state)
             self.reset_optimizer_reference_weights()
+  # Both branches above went through Optimizer.load_state_dict, which
+  # replaces every group's hyperparameters wholesale. Put this run's
+  # configured values back (rl_loop_audit I13).
+        self._reapply_configured_param_group_hparams()
         if "scheduler" in ckpt and optimizer_state_loaded:
             try:
                 self._scheduler.load_state_dict(ckpt["scheduler"])
