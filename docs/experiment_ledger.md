@@ -3932,13 +3932,41 @@ that were being read as "flat/noisy": winrate 0.63 → 0.50, draws 0.20 → 0.47
 `wdl_regret` drifting 0.077 → 0.102 (the controller EASING Stockfish because
 the net kept losing ground).
 
-**Diagnostic ladder in flight** (same pair, GPU free during the stop): sims-1
-isolates the raw heads from tree behaviour. At swap time sims-1 read +9.6 NS
-(parity) against sims-32 −66 — if sims-1 is again near parity while sims-32 is
-−252, the entire deficit is search integration (the value head misleading the
-tree), which is diagnosable and fixable without discarding the trunk. That
-distinction should drive HOW to revert, not WHETHER the gate failed — it
-failed.
+**DIAGNOSTIC LADDER — the comforting explanation is REFUTED.** Same pair,
+400 games / 200 pairs, `--sims 1`:
+**Elo −91.5, 95% CI [−125.9, −58.8]**, score 0.3713 (WW 22, LL 70).
+
+| budget | at swap (07-11, boot512) | at iter 346 (07-26) | change |
+|---|---|---|---|
+| sims 1  | **+9.6 NS** (parity) | **−91.5 SIG** | ≈ −100 |
+| sims 32 | **−66 SIG** | **−252 SIG** | ≈ −186 |
+
+The swap rationale had two halves and BOTH are now dead. (a) "sims-1 is at
+parity so the nets are equal ex-search" — no longer true: the raw heads are
+−91.5, so they regressed too. (b) "the sims-32 deficit is a search-integration
+gap that in-loop selfplay fixes fastest" — the amplification factor is still
+2.75× (−91.5 → −252) and the absolute gap tripled, so in-loop selfplay
+deepened it.
+
+**Therefore: 346 iterations of RL did not merely fail to improve this net, they
+made it substantially WEAKER at every search budget measured, against a fixed
+reference.** That is a loop defect, not a capacity or a scheduling problem, and
+it is the finding that should drive what happens next — not the swap gate's
+revert rule on its own.
+
+**Corroborating in-loop evidence, previously dismissed as noise:**
+`pid_ema_winrate` 0.65 → 0.50 while `wdl_regret` went 0.039 → 0.10 — the net
+won LESS against a Stockfish the PID kept making EASIER (higher regret = weaker
+SF). `curriculum_draw_rate` → 0.45-0.51, `selfplay_games/iter` 776 → 228.
+Every live strength signal pointed down for weeks and was read as flat-by-design.
+
+**Leading suspect for the raw-head half:** the selfplay input distribution.
+The 07-24 dole finding recorded seeded blind-spot openings reaching **100% of
+selfplay** (81.8 → 93.4 → 98.9 → 100%), i.e. the net has been training on
+almost nothing but adversarial positions — which would degrade generic play
+exactly as observed while leaving 1-ply SF-regret on the frozen audit set
+intact or improving. NOT yet confirmed as the cause; it is the first thing to
+measure.
 
 **DECISION OWED (user's call, not a default):** the pre-committed action is
 `./scripts/train.sh salvage-restart data/salvage/recover_ckpt751_20260711`.
