@@ -25,7 +25,7 @@ import torch
 if TYPE_CHECKING:
     import requests
 
-from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR
+from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.inference import (
     AOTEvaluator,
@@ -2980,7 +2980,9 @@ class WorkerSession:
                 volatility_q_scale=self._resolve_reco(reco, "volatility_q_scale", 0.0),
                 volatility_fpu=self._resolve_reco(reco, "volatility_fpu", 0.0),
                 volatility_anchor=self._resolve_reco(reco, "volatility_anchor", DEFAULT_VOLATILITY_ANCHOR),
-                gumbel_c_scale=self._resolve_reco(reco, "gumbel_c_scale", 0.1),
+                gumbel_c_scale=self._resolve_reco(
+                    reco, "gumbel_c_scale", SELFPLAY_GUMBEL_C_SCALE,
+                ),
                 gumbel_scale=self._resolve_reco(reco, "gumbel_scale", 1.0),
                 gumbel_scale_after=self._resolve_reco(reco, "gumbel_scale_after", 0.0),
                 gumbel_scale_decay_start_move=self._resolve_reco(

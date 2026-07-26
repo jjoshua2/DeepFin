@@ -54,6 +54,19 @@ from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax  # noqa
 # SearchConfig/TrialConfig/worker plumbing defaults mirror.
 DEFAULT_VOLATILITY_ANCHOR = 0.05
 
+# Single source of truth for the SELFPLAY/RL Gumbel value-transform scale — the
+# `gumbel_c_scale` the yaml pins and every plumbing default mirrors (SearchConfig,
+# TrialConfig, the worker reco fallback, the published recommended_worker).
+#
+# DELIBERATELY different from PLAY_SEARCH_DEFAULTS["c_scale"] = 0.025 below. Do NOT
+# "clean up" the two to agree: the optimal q_scale keys off the TOTAL sim budget, so
+# no single value is sim-invariant and each deployment gets its own measured optimum.
+#   selfplay @256 sims (2026-06-16 puzzle screen, n=1000): 0.1 -> 0.688 accuracy,
+#     0.05 -> 0.652, 0.025 -> 0.598. Lowering it HURTS the RL regime.
+#   UCI/match @8000 sims: 0.025 measured +301 Elo, adopted for the high-sim regime.
+# tests/test_selfplay_gumbel_c_scale.py fails if anyone unifies them.
+SELFPLAY_GUMBEL_C_SCALE = 0.1
+
 # Single source of truth for the production PLAY/EVAL Gumbel search settings (UCI,
 # puzzle eval, the standardized arena, the training-gate match). Reference this
 # from every such entry point so the tuned optimum never drifts across call sites.
@@ -90,7 +103,10 @@ class GumbelConfig:
     # (logits/policy_temp). >1 softens the prior, <1 sharpens it; 1.0 = no-op.
     policy_temp: float = 1.0
     c_visit: float = 50.0
-    c_scale: float = 0.1
+    # Library default == the SELFPLAY/RL optimum; PLAY/EVAL entry points override
+    # it from PLAY_SEARCH_DEFAULTS. `GumbelConfig()` is used as "the RL shape by
+    # construction" (scripts/audit_targets.py), so the two must stay bound.
+    c_scale: float = SELFPLAY_GUMBEL_C_SCALE
     c_puct: float = 2.5
     # Lc0 classic visit-dependent Cpuct (PUCT descent only). factor<=0 = fixed.
     # Library default factor=0 preserves training bit-identity; UCI play uses
