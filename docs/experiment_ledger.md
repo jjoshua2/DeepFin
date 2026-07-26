@@ -631,6 +631,74 @@ confounded; the availability yardsticks are read independently.
 `test_slot_broker_zeroes_outputs_when_model_unavailable`, which asserted the
 buggy behaviour with no stated rationale and was deliberately removed.
 
+### ROOT CAUSE FOUND (2026-07-26) — the swap ran a 3e-5-converged net at 3e-4; the RL loop is NOT the problem
+
+**This SUPERSEDES the "RL loop is degrading the net" reading recorded in the
+swap-gate row below. That reading was wrong.** A within-series arena ladder
+(candidate vs boot512, the swap vehicle itself, 32 matched sims, paired) shows
+the decline is **not monotonic** — it is a crash followed by recovery:
+
+| checkpoint | step | Elo vs boot512 | games |
+|---|---|---|---|
+| boot512 (`gateread/boot_snap_recheck_0711_0404.pt`) | 56000 | 0 (ref) | — |
+| ~iter 74 (`pre_aot_deploy_20260714`) | 59652 | **−494.0** [−630.8, −414.6], score 0.055 | 200 |
+| iter 346 (`pre_durable_deploy_20260726`) | 77428 | **−193.2** [−232.2, −158.1] | 400 |
+
+The net was destroyed inside the first **3652 optimizer steps** (~74
+iterations, 87 of 100 pairs double-lost), and has **RECOVERED +301 Elo over the
+following 272 iterations.** RL is working; it has been climbing out of a hole.
+
+**THE CAUSE — a warm-start inherits WEIGHTS but not the LEARNING-RATE REGIME
+those weights were converged under.** Read straight out of the checkpoints:
+
+| | `peak_lr` | `base_lrs` (param groups) |
+|---|---|---|
+| boot512 (donor, offline bootstrap) | **3e-05** | [6e-4, 3e-5, 3e-5, 3e-5] |
+| trial 4c17c (live RL) | **3e-04** | [**6e-3**, 3e-4, 3e-4, 3e-4] |
+
+`configs/pbt2_small.yaml` sets `lr: 0.0003` and `matrix_lr_multiplier: 20`, so
+the matrix group runs at **6e-3 — DOUBLE the 0.003 this ledger already records
+as the threshold above which LR destroys the model** (Apr 2026 exploit-
+degradation entry). `warmup_steps: 72` at 45-100 steps/iter means full LR is
+reached inside the first iteration or two. boot512's snapshot has a FRESH
+scheduler (`last_epoch=0`), so 3e-5 is its configured base, not a decayed tail.
+
+**Why this is causal, not correlational: the recovery tracks the LR coming back
+down.** `sqrt_release` decays the schedule; by `last_epoch=5` `_last_lr` was
+already [6e-4, 3e-5, ...] and at iter 346 it sits at **exactly boot512's
+original regime**. Crash while LR is 10× the donor's, recovery as it returns.
+
+**Corroborating in-loop evidence that was in `result.json` all along:**
+`train_loss` **4.595** and `policy_loss` **1.444** at **iteration 1 are the
+lowest values of the entire 346-iteration run**, degrading to ~4.75 / ~1.53
+within 5 iterations and never returning. The damage is visible in the first
+five rows of the run.
+
+**Hypotheses eliminated by direct measurement before finding this** (recorded
+so they are not re-chased): adversarial seeding diet (10.9% of training rows,
+83% book); value-blend collapsing to game-outcome on missing labels
+(`has_sf_wdl` 99.55%, `has_search_wdl` 100% over 1.5M rows — realized mix
+0.30/0.498/0.20, exactly as configured); SF-vs-search `keep` dampening (both
+`sf_search_dampen_*` are 0.0, inert); stale AOT packages (`.pt2` files are 10
+days old but built `package_constants_in_so=False`, and constants are rebound
+from the freshly-loaded raw model on every publish, `inference.py:1639-1661`).
+
+**THE FIX.** Restart from **boot512, not iter 346** (iter 346 is 193 Elo worse
+and carries the damage), with `lr` matched to the donor's 3e-5 — or ramped to
+3e-4 over thousands of steps rather than 72. 3e-4 is not wrong in general; it
+is the known-good anchor for a net trained on its OWN trajectory, and
+destructive for a donor converged 10× lower.
+
+**GUARD WORTH WRITING (real code fix):** on warm-start / salvage-restart,
+compare the checkpoint's stored `peak_lr` against the config `lr` and refuse —
+or warn loudly — when the config exceeds it by more than ~2×. Every checkpoint
+already stores `peak_lr`, `base_lrs` and the scheduler state; nothing ever
+looked at them. This single guard would have prevented a 15-day, ~500-Elo
+regression, and it generalizes to every future topology swap.
+
+**Probable collateral:** the "512×16 has capacity limits" impression was formed
+against a net that had been crippled at step 0 and never given a fair run.
+
 ### DEPLOY (pre-registered) — tune-state correctness bundle, 9 PRs in one restart (2026-07-26, from iter 346)
 
 **PROTOCOL NOTE — not an experiment.** Nine correctness fixes deployed in a
