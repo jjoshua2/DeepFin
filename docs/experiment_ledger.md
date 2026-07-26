@@ -82,6 +82,7 @@ and 2026-07-02):
 
 | snapshot | state captured | restore |
 |---|---|---|
+| `data/salvage/pre_audit_window_20260726` | 2026-07-26 ~16:40, trial 13a9f **iter 41** (ckpt_000040, 820 shards, 2.3G) — banked immediately before the audit restart that merges `origin/main` (PRs #249–#253) and sets `freeze_holdout_at: 2000`. Export guard verified: printed iter 41 == live iter 41 (`result.json` row 4.1 min old), and `newest on disk: checkpoint_000040` matched the exported ckpt. This is the boot512-restart lineage at the donor's own LR (3e-5), seeding off. | `./scripts/train.sh salvage-restart data/salvage/pre_audit_window_20260726` |
 | `data/salvage/pre_durable_deploy_20260726` | 2026-07-26 02:33, trial 4c17c **iter 346** (ckpt_000307, 809 shards) — banked immediately before the stop that deployed PRs #237/#238/#239/#241/#242/#243/#244/#245. Export guard verified: printed iter 346 == live iter 346 (`result.json` ts 7 min old). Also the last state under the DEAD best-model tracker (`best_loss` 4.8934 frozen since iter 286). | `./scripts/train.sh salvage-restart data/salvage/pre_durable_deploy_20260726` |
 | `data/salvage/pre_aot_deploy_20260714` | 2026-07-14, pre-AOT-broker deploy (trial 4c17c ~iter 74, wedge-recovered). NOTE: AOT is an inference-path perf change — weights/optimizer/replay are UNCHANGED, so the real revert is just blanking `distributed_inference_aot_dir` + restart; this pool is belt-and-suspenders. | `./scripts/train.sh salvage-restart data/salvage/pre_aot_deploy_20260714` |
 | `data/salvage/prechange_20260702_ckpt479` | iter 479, 2026-07-02 evening: post-uncap, rung-1 live ~2 iters, PRE fast-ply-revert / PRE LR-decision / PRE #104. 686 shards | `./scripts/train.sh salvage-restart data/salvage/prechange_20260702_ckpt479` |
@@ -497,6 +498,59 @@ measured. **Do NOT run that arena concurrent with training** — 512×16 search 
 ~700MB/game and the 400-game run OOM'd twice; it needs a training pause or a
 strict low-concurrency/low-sims configuration.
 
+> **RAN 2026-07-25 23:02 / 23:09 — and the sims LADDER is the finding, not the
+> verdict.** Candidate `data/salvage/pre_durable_deploy_20260726` (the DAMAGED
+> 512 net, ~iter 346, pre-restart); reference `data/salvage/recover_ckpt751_20260711`
+> (banked 46M). Paired openings, 400 games each, seed 42, identical settings
+> except the sim budget:
+>
+> | matched sims | Elo (512 vs 46M) | 95% CI | score | pentanomial WW/WD/DD/LD/LL |
+> |---|---|---|---|---|
+> | **1** | **−91.5** | [−125.9, −58.8] | 0.3713 | 22/6/89/13/70 |
+> | **32** | **−251.9** | [−292.4, −216.5] | 0.1900 | 2/4/50/32/112 |
+>
+> **The gap WIDENS by ~160 Elo from 1 to 32 sims, with non-overlapping CIs.**
+> This is the ladder [[rl_loop_is_degrading_play_strength]] prescribed ("run
+> sims-1 AND sims-32 vs a FIXED banked ref; one budget hides which half moved").
+>
+> **BOTH HALVES MOVED — and against the swap-time baseline this is the honest
+> decomposition.** At the 07-11 swap the same ladder read sims-1 **+9.6 NS
+> (parity)** and sims-32 **−66**:
+>
+> | rung | at swap (07-11) | now (iter 346) | change |
+> |---|---|---|---|
+> | sims-1 (raw net) | +9.6 (parity) | −91.5 | **−101 Elo** |
+> | sims-32 | −66 | −251.9 | **−186 Elo** |
+> | search-conversion gap | 76 | 160 | **−84 Elo** |
+>
+> So roughly **half** the −252 is a genuinely weaker raw network (parity → −91.5
+> at 1 sim) and half is a widened search-conversion deficit (76 → 160). Do NOT
+> read this row as "the raw net is fine and only search is broken" — an earlier
+> draft of this entry said that and it is wrong. The memory
+> [[cross_era_512_vs_46m_not_caught_up]] pre-committed the test as "if sims-1 is
+> again near parity while sims-32 is −252, the whole deficit is search
+> integration"; **sims-1 is NOT near parity, so that antecedent is false** and
+> the single-cause reading it would have licensed does not apply.
+>
+> This is the measured form of the operator's standing observation that "more
+> search doesn't help as much as it should", and it is consistent with
+> [[value_head_calibrated_not_broken]]: in Gumbel MCTS the value head's RANKING
+> is what turns sims into strength, so a calibrated-but-poorly-ranked value head
+> yields exactly this signature — competitive at 1 sim, falling behind as the
+> budget grows. It also explains the views-row finding directly above (raw
+> policy gained 9.4cp while SEARCH policy moved −1.14cp NS): gains that do not
+> survive search are the same phenomenon seen through a different ruler.
+>
+> **CONFOUND — do not over-read:** this was measured on the LR-damaged net, so
+> the deficit may be damage rather than an architectural property of 512×16.
+> **DECIDING FOLLOW-UP (owed):** run the SAME two-rung ladder with `boot512` as
+> candidate against the same banked 46M reference. If boot512 shows the same
+> widening, the deficit is a property of the 512 net/its data and the restart
+> will NOT fix it — and the value head's ranking becomes the priority target. If
+> boot512 scales normally, the deficit was LR damage and the restart already
+> addresses it. Must NOT run concurrently with another arena; sims 1/32 at
+> `--max-concurrent-games 4` is safe alongside training.
+
 ### PRE-REGISTERED (not yet live) — revive dead broker/workers inside the ingest wait loop (PR TBD, 2026-07-25)
 
 **Class: availability plumbing. NOT an experiment — it changes no training
@@ -631,13 +685,341 @@ confounded; the availability yardsticks are read independently.
 `test_slot_broker_zeroes_outputs_when_model_unavailable`, which asserted the
 buggy behaviour with no stated rationale and was deliberately removed.
 
-### RESTART (pre-registered, STAGED — not yet launched) — boot512 at the donor's own LR (2026-07-26)
+### FINDING (2026-07-26) — ~63% of the blind-spot seed pool are PHANTOMS, not blind spots
+
+Tracked the ckpt48 pool (120 FENs, 07-13) to the live ckpt307 pool 259
+checkpoints later: 44 SOLVED (retired, stayed retired), 76 STUCK (never
+resolved under continuous 2x dosing). The STUCK ones are **dead-equal
+positions**, and 16× more search does not change that:
+
+| nodes | STUCK mean / med / lost(≤0.25) | SOLVED |
+|---|---|---|
+| 300k | 0.516 / **0.500** / 15% | 0.398 / 0.356 / 46% |
+| 700k | 0.520 / 0.499 / 15% | 0.387 / 0.348 / 42% |
+| 2M | 0.526 / **0.500** / 12% | — |
+| 5M | 0.531 / **0.500** / 15% | — |
+
+(`scratchpad/seed_pattern/vet_depth_ladder.py`, STM-POV expected score.) STUCK
+median is exactly 0.500 at every rung and the mean drifts slightly TOWARD the
+side to move; SOLVED are losing at every depth and get worse with depth, which
+is what a real refutation looks like. Corroborated in-buffer: `sf_wdl` **at the
+seed position** (labels attach to the first row of every seeded game — verified
+offset 0 for 100% of 669 cohort games) reads 0.485 for STUCK with **0 of 26
+labelled lost**, vs 0.397 / 20% lost for SOLVED.
+
+**Cause: they predate the vetting gate.** `harvest_gate` first appears in
+`monitor.log` at ckpt78 (07-16); the cohort is from retire_48 (07-13) — legacy
+v1/v2/cheese entries never vetted by anything. The gate now rejects 70-90% of
+candidates (`vetted_kept` 4/26, 0/9, 3/14); the pre-existing pool was never
+re-run through it.
+
+**Depth was NOT the discriminator** — 300k already separates the groups
+cleanly. `harvest_gate_step.py --sf-nodes` was changed 300k → 2M (so the vet
+ruler is no longer shallower than the ~698k training-label budget) but that is
+hygiene, not the fix, and would not have caught these.
+
+**ACTION:** re-vet the live 227-seed pool (`scratchpad/revet_active_pool.py`)
+and drop what fails; phantoms consume dole budget under the 25% cap and
+displace real seeds. **Also retires a question:** "why won't the value head
+learn its blind spots" was the wrong question for most of the pool — the net
+rating these equal is the net being correct, and the value-ceiling framing does
+not apply to them.
+
+**RE-VET DONE (2026-07-26) — the estimate holds on an independent cohort.**
+`scratchpad/revet_active_pool.py` re-scored all 202 seeds of the LIVE active
+pool (`blindspot_fens_auto_ck163_20260723T140431Z.txt`) at 2M nodes / MultiPV 1
+/ 6-man TB, using the gate's own scoring function and its own admission bar
+(`_make_sf_score`, expected score ∈ [-1,1], keep if ≤ −0.80). Only the depth
+differs from the live gate, so this is the gate's verdict at 2M, not a new
+ruler. 1160s, 0 errors.
+
+| verdict at 2M | seeds | share |
+|---|---|---|
+| still lost (≤ −0.80) — **survivors** | 78 | 38.6% |
+| −0.80 … −0.40 (bad, not lost) | 53 | 26.8% |
+| −0.40 … 0 (mild tilt) | 44 | 22.2% |
+| **> 0 — side to move is WINNING** | 23 | 11.6% |
+
+**61.4% (124/202) fail the gate's own bar.** That independently reproduces the
+~63% phantom estimate above on a different cohort (live active pool vs the
+retire_48 tranche) by a different method (gate re-score vs depth ladder). The
+23 winning-for-STM seeds are worse than inert: they were teaching the value head
+that a won position is lost.
+
+Caveat: 4 of the 202 returned no score (SF gave neither cp, mate, nor wdl) and
+the script counts them as failures, whereas the live gate *re-queues* that case
+rather than rejecting it — the honest failure count is 120–124, which does not
+move the conclusion.
+
+Not applied. `scratchpad/revet_active_pool_clean.txt` holds the 78 survivors as
+a candidate list; seeding is OFF (see the RESTART amendment below), so the
+decision of whether the survivors come back is deferred to the no-seed readout
+rather than made now.
+
+### FINDING (2026-07-26) — the holdout is a ROLLING ring, so `test_loss` has no stable ruler; a durable `holdout_generation` would make it look stable when it is not
+
+Investigating "make `holdout_generation` durable so it can serve as ruler
+identity" (the open item left by PR #244/#245). **The premise is backwards.**
+
+**1. The counter is INERT in production, not merely ephemeral.**
+`_maybe_reset_holdout_on_drift` is gated on
+`tc.reset_holdout_on_drift and tc.drift_threshold > 0.0`; the live yaml has
+`reset_holdout_on_drift: false` and `drift_threshold: 0.0`. Confirmed on the
+live trial: `holdout_generation` = **0 on every one of 26 rows**. Persisting a
+value that can only ever be 0 accomplishes nothing.
+
+**2. The real instability is the holdout BUFFER, which the counter does not
+track.** `ArrayReplayBuffer._enforce_capacity` → `_drop_oldest` is a FIFO ring.
+Live numbers: `holdout_capacity: 2000`, `holdout_fraction: 0.02`,
+`replay_positions_ingested` 7,168–8,353/iter ⇒ ~159 new holdout rows/iter, and
+`test_size` is pinned at **2000 = already at capacity**, so eviction is active
+now. **The holdout set turns over completely about every 13 iterations.**
+
+**3. Therefore a durable counter would be actively MISLEADING** — it would
+assert "same ruler" across restarts and across an entire run while the
+underlying position set is fully replaced every ~13 iterations. That is worse
+than the current honest state, where the counter is recorded but explicitly NOT
+compared on.
+
+**4. Consequence for `best_loss`.** Best-model selection compares `test_loss`
+values measured on *different position sets*, so it partly selects on which
+positions happened to be in the window. Live `test_loss` over the last 5 iters:
+5.066 / 5.054 / 5.009 / 4.935 / 5.027 — ~0.13 nats of spread, an unknown share
+of which is the ruler moving rather than the model. This is the same family as
+[[best_model_ruler_mixing]] (train-vs-holdout scale mixing, fixed by PR #244);
+that fix stopped comparing two *different rulers*, but the holdout ruler is
+itself non-stationary.
+
+**THE FIX ALREADY EXISTS IN CODE AND IS SWITCHED OFF.** `freeze_holdout_at`
+(`trainable.py:739`: `if (not holdout_frozen) and tc.freeze_holdout_at > 0 and
+len(holdout_buf) >= tc.freeze_holdout_at: holdout_frozen = True`) stops holdout
+intake once the buffer reaches N. The live yaml has `freeze_holdout_at: 0`, so
+it never fires. Setting it to 2000 would give a stable within-run ruler.
+
+**NOT APPLIED, deliberately.** Freezing flips `holdout_mask` to all-false, which
+returns the 2% currently diverted to holdout back into training — a real (if
+small) data-pipeline change, and the no-seed restart is mid-readout. **One
+data-affecting change per readout window.** Queue it as its own entry after the
+no-seed readout, with: `freeze_holdout_at: 2000`, and note it still resets per
+restart (the buffer is rebuilt empty), so a truly fixed cross-restart ruler
+additionally needs the frozen set persisted to the durable trial dir
+(`_durable_trial_dir`, PR #245) — at 2000 rows that is cheap.
+
+### PRE-REGISTERED — freeze the holdout ruler (`freeze_holdout_at: 0 → 2000`, 2026-07-26)
+
+**Hypothesis.** The holdout is not a ruler, it is a conveyor belt.
+`holdout_capacity: 2000` with ~159 new rows/iter and `test_size` pinned at 2000
+means the set turns over COMPLETELY every ~13 iterations, so `test_*` losses
+compared across any longer span compare two different measuring sticks. This is
+the mechanism behind both G4 and J2 in `docs/rl_loop_audit.md`, and behind
+best-model tracking being dead since iter 286 — it adopted the worse of two
+rulers ~0.3 nats apart. Freezing the set at 2000 rows makes successive `test_*`
+readings comparable to each other.
+
+**The cost, stated up front.** A frozen holdout AGES. The replay window turns
+over roughly daily, so the frozen rows drift out of the current data
+distribution and the train/holdout gap will widen for reasons that are not
+overfitting. That is an acceptable trade — a stable ruler that drifts slowly and
+visibly beats one that is silently reshuffled every 13 iterations — but it means
+the gap's ABSOLUTE value stops being interpretable while its TREND stays useful.
+
+**ONE deciding yardstick.** Over the 30 iterations after the restart, the holdout
+row count reported alongside `test_policy_loss_selfplay` must stay pinned at
+2000 with an unchanging identity, and `test_*` must become a monotone-ish series
+rather than the sawtooth it is now:
+`PYTHONPATH=. python3 scripts/loop_health.py --last 30`
+plus `train_policy_loss_selfplay` vs `test_policy_loss_selfplay` from
+`result.json`.
+
+**SUCCESS:** holdout size pinned at 2000 across all 30 iters AND the iter-to-iter
+absolute change in `test_policy_loss_selfplay` drops below its pre-freeze median
+(the sawtooth was ruler churn, not learning).
+
+**KILL:** the train/holdout gap widens by >0.5 nats within 30 iters — that is the
+frozen set going stale faster than expected, and the answer is a periodic
+re-freeze with a durable generation counter rather than a permanent freeze.
+
+**Not included, deliberately.** Persisting the frozen set ACROSS restarts is a
+code change and is not in this deploy. Until it lands, every restart re-freezes
+a new set, so the ruler still changes identity at each restart — far better than
+every 13 iterations, and restarts are logged. `holdout_generation` remains
+in-memory; making it durable only becomes meaningful once the set is frozen
+(this entry supersedes the earlier "make holdout_generation durable" item, which
+was backwards: a durable counter over a churning set would have asserted a
+stability that did not exist).
+
+**Confounds.** Deployed in the same restart as the `origin/main` merge (PRs
+#249/#250/#251/#252/#253 — all tooling, docs and observer changes; the only
+runtime key among them is `gumbel_c_scale: 0.1`, which is value-identical to
+every code default and therefore a no-op). No other training-affecting change
+rides along. The restart itself re-imposes the C6 worker transient, so the
+no-seed readout clock restarts here.
+
+**Revert.** `freeze_holdout_at: 0` — but note it is read at trial construction,
+so a revert needs a restart. Weight/optimizer/PID/replay revert point banked as
+`data/salvage/pre_audit_window_20260726` (see Revert points).
+
+### RESTART (pre-registered) — boot512 at the donor's own LR (2026-07-26)
+
+> **FIRST STRENGTH READING (2026-07-26, iter 25): PARITY WITH THE DONOR.**
+> `scripts/daily_gate_ratchet.sh`, 200 paired games @32 matched sims vs the
+> frozen `boot512` anchor: **−12.2 Elo, 95% CI [−61.5, +36.7]**, score 0.4825.
+> The CI spans zero, so this is statistical parity — against the damaged net's
+> **−193.2 [−292.4, −216.5]** on the same ruler. The LR hypothesis predicted the
+> restart would stop the net falling below boot512, and at iter 25 it has.
+>
+> **Do NOT read this as "the restart worked" yet.** Parity with the donor is the
+> floor the restart was supposed to restore, not progress past it; iter 25 is
+> ~25 iterations of training, and the ledger's own rule is that learning-quality
+> claims need day-plus windows and paired CIs. It is also inside the C6 window
+> (`docs/rl_loop_audit.md`) — iters 27–32 carry a restart-induced mix transient,
+> so the trend read starts at iter 33. What this DOES retire is the worry that
+> the restart reproduced the collapse: it did not.
+>
+> Logged to `data/ratchet/ratchet.csv`; the `vs_prev` day-over-day series begins
+> tomorrow once a second snapshot exists.
+>
+> **COST WARNING — that reading was NOT free.** The run took 4h32m at `CONC=4`
+> and cost ~23 iterations of training (82% throughput loss; invariant L6 in
+> `docs/rl_loop_audit.md`). `CONC=16` shipped in PR #250 and cuts the same 200
+> games to ~12 minutes. Do not read a pre-#250 ratchet row without accounting
+> for the hole it left in that day's training.
+
+> **NEXT-DEPLOY PREP (2026-07-26, verified — do this at the next restart, not
+> before).** PRs #250 and #251 are merged, and the live tree's uncommitted
+> versions of `scripts/train.sh` and `scripts/harvest_gate_step.py` are now
+> **byte-identical to `origin/main`**, as are the untracked
+> `scripts/ratchet_loop.sh` and `scripts/daily_gate_ratchet.sh`. So the merge is
+> content-neutral for all four — but git still refuses to overwrite untracked
+> files, so with training DOWN the sequence is: delete the two untracked script
+> copies, then `git merge origin/main`, then restart. Do NOT delete them while
+> the ratchet loop is running off them.
+>
+> The merge also brings PR #249, which pins `gumbel_c_scale: 0.1` in the yaml.
+> **This is a no-op at runtime** — every production path already resolves to 0.1
+> (`worker.py`, `trial_config.py` ×2, `distributed_runtime.py`); #249 adds a
+> named constant and a test that fails if anyone unifies it with the play-side
+> 0.025. Bundle `freeze_holdout_at: 2000` (audit G4/J2) in the same restart.
+>
+> **`freeze_holdout_at` is NOT a free rider — hold it until the no-seed readout
+> closes.** It is already a known key (live yaml value `0`,
+> `trial_config.py:313`, consumed at `trainable.py:739`), so it carries no
+> unknown-key reload hazard and may even be live-reloadable. Do it anyway at the
+> restart, and only after iters 33+ have been read: freezing the holdout changes
+> which rows are held OUT, and therefore which rows train. That is a
+> data-affecting change, however small, and the ledger's one-change-per-window
+> rule applies to it. Correcting an earlier note in this block that called it
+> non-data-affecting.
+
+
+
+> **CONTROLLED PRE-TEST — CONFIRMED CAUSAL (2026-07-26).** Before launching,
+> the LR hypothesis was tested directly with a two-arm offline screen
+> (`scratchpad/lr_screen/`): identical init (boot512), identical window, seed
+> and step count (1500), production optimizer (`aurora_mlp_out`,
+> `matrix_lr_multiplier 20`, verified `param_group_lrs
+> [6e-3, 3e-4, 3e-4, 3e-4]` — the live trial's exact `base_lrs`). ONLY `lr`
+> differs. Both arms then arena'd vs boot512 with the ladder's own command
+> (32 matched sims, 200 games, paired):
+>
+> | arm | `lr` | Elo vs boot512 | score | pentanomial WW/WD/DD/LD/LL |
+> |---|---|---|---|---|
+> | A (positive control) | 3e-4 | **−193.2** [−248.7, −145.4] | 0.2475 | 3/3/34/10/**50** |
+> | B (proposed restart) | 3e-5 | **−3.5** [−41.5, +34.4] | 0.4950 | 13/6/62/4/15 |
+>
+> Offline metrics agreed on every head before the arenas ran (A vs B —
+> eval_loss 5.189/**4.755**, policy_loss 1.655/**1.413**, policy top-1
+> 0.488/**0.579**, wdl_loss 0.806/**0.772**, ECE 0.0400/**0.0239**), so this is
+> not a search or arena artifact.
+>
+> **1500 steps at 3e-4 reproduce the ENTIRE live deficit.** Arm A's −193.2 is
+> the live run's iter-346 plateau (−193.2 [−232.2, −158.1]) — the precision is
+> coincidence (both ±50) but the magnitude is not. The plateau is the LR
+> damage FLOOR, not a training ceiling. Arm B holding at parity confirms the
+> donor LR is safe for these weights.
+>
+> Pre-committed rule (A crashes AND B holds ⇒ launch) is MET. This does NOT
+> establish that the loop GAINS at 3e-5 — B gained nothing either (−3.5, CI
+> spans 0) — but 1500 offline steps on a fixed window is not the RL loop, so
+> that question is open and is what the restart reads out.
+
+> **AMENDMENT (2026-07-26, applied live at ckpt≈25) — SEEDING IS OFF for this
+> readout.** `opening_fen_dole_per_iter: 1 → 0` (the documented KILL). The
+> pre-registration above assumed the live `retire_*` seed stream carried
+> forward; it does not. Two reasons: (a) one data-affecting change per readout
+> window, and the LR change owns this one — a seed stream is a second; (b) the
+> pool is measurably contaminated (see the PHANTOMS finding above: 26 long-stuck
+> seeds sit at median 0.500 from 300k to 5M nodes).
+>
+> `opening_fen_prob` was already 0.0 and `opening_fen_sf_refute_frac` is a
+> fraction OF seeded games, so it goes inert — this single key disables every
+> seeding channel. **Do NOT use `opening_fen_dole_max_fraction` for this: on
+> that key 0 means UNCAPPED** and would cause the dole runaway, not stop it.
+> Config validated, live reload accepted with no validator error, training
+> continued through ckpt 25 with zero tracebacks.
+>
+> **What this makes the restart measure:** no-seed RL at the donor's LR vs
+> boot512 — the cleanest available control, and the first time the loop has been
+> read without a seed stream. Re-vet of the 202 active seeds at 2M nodes is
+> running separately and read-only (`scratchpad/revet_active_pool.py`); its
+> result decides what, if anything, comes back.
+>
+> **CORRECTION (2026-07-26) — this toggle is NOT free, and iters 27-32 are
+> CONTAMINATED.** The amendment above called the restore "live-reloadable,
+> instant". Wrong: `opening_fen_dole_per_iter` is in `worker._RECO_RESTART_KEYS`,
+> so writing it **restarts every worker's selfplay session**, and a session
+> restart abandons every in-flight game (`worker.py:1390`). Curriculum games are
+> the long ones (they run against 698k-node SF), so they are abandoned
+> preferentially. Measured on the live trial — worker logs show
+> `restarting selfplay session [restart_keys=opening_fen_dole_per_iter]` on all
+> workers at 10:20:20:
+>
+> | iters | realized selfplay share (configured 0.50) | curriculum games |
+> |---|---|---|
+> | 21-26 (before) | 0.46-0.53 | 213-268 |
+> | **27-31** | **0.83 -> 1.00** | **80 -> 0** |
+> | 32-34 (recovering) | 0.85 -> 0.41 | 68 -> 268 |
+>
+> For four iterations the loop produced essentially NO curriculum games, and
+> `pid_curriculum_{w,d,l}` collapsed to 0/0/1/3 with `pid_regret_reason
+> not_active` — the PID was blind. Recovered by iter 33 as the abandoned
+> curriculum backlog refilled.
+>
+> **Consequences.** (1) **Start the no-seed readout at iter 33, not 28** — the
+> first six iterations are a mix transient, not no-seed steady state.
+> (2) Restoring seeds costs the SAME restart and the same ~5-iteration
+> distortion; budget for it rather than treating it as a free A/B.
+> (3) `audit_realized_config.py` scored the selfplay mix `ok` at 0.5137 because
+> it medians over the window — the per-iteration rows are what show this. See
+> `docs/rl_loop_audit.md` method rule 4.
+>
+> Note this is NOT the PR #224 regression returning: #224 stopped *FEN-list
+> rewrites* from triggering restarts, and those still log
+> `live-applied ... no session restart`. Toggling the dole itself was always
+> restart-gated and correctly declares its trigger.
 
 **Hypothesis.** The 512×16 collapse was caused by the warm-start LR jump, not
 by the RL loop. Restarting from **boot512** (the undamaged donor) at **`lr`
 3e-5** (the donor's converged regime, and the LR under which this net
 demonstrably GAINED +303 Elo in iters 74→148) should produce a net that
 improves on boot512 rather than falling below it.
+
+**Anchor validity — boot512 is CLEAN for this purpose (resolved 2026-07-26).**
+Raised and dismissed: "the run is now seed-free, so does the anchor differ by
+more than LR?" boot512 was produced by an OFFLINE pass over a whole replay
+window, not by the RL selfplay loop, so it had no seed *stream* (operator
+confirmation, consistent with the 512×16 offline-recovery playbook). The seeded
+share of the window it consumed is NOT measurable — dole was live on the 46M
+trial from 07-08, but the 5fac4-era shards spanning boot512's 07-11 04:04
+snapshot carry no `seed_id` / `seed_family_id` / `opening_source_code` fields;
+seed provenance was added to the shard format later. **This does not matter for
+the ratchet.** An arena scores head-to-head strength, so the training-data
+provenance of either side is not a confound; it would only bite if the
+`vs_boot512` series were being used to isolate the LR effect, and it is not —
+LR causality was settled by the two-arm offline screen above (identical init,
+window, seed and step count; only `lr` differed). The series is a cumulative-
+drift tracker against a frozen opponent, which is what a fixed anchor is for.
+Do not re-open this.
 
 **Why boot512 and not iter 346.** The ladder shows recovery STALLED: −494
 (iter 74) → −190.8 (iter 148) → −193.2 (iter 346), the last two with fully

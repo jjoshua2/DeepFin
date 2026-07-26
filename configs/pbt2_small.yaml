@@ -220,7 +220,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_307.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_39.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -231,7 +231,17 @@ selfplay:
   # selfplay seeded games/iter. Threaded-path delivery wired+verified. Live-reloadable.
   # KILL: set 0 + opening_fen_prob 0.05. Ledger LIVE-UNREAD row (readout ~iter 725); baseline
   # ckpt686 (v1 16/35, value 74.3), revert trunk data/salvage/pre_dole_ckpt686_20260708.
-  opening_fen_dole_per_iter: 1
+  opening_fen_dole_per_iter: 0   # 2026-07-26: SEEDING OFF for the boot512 restart readout.
+  # This is the documented KILL above (dose 0). Rationale: (a) one data-affecting
+  # change per readout window and the LR change owns this one; (b) the pool is
+  # measurably contaminated — of 26 long-stuck seeds, SF rates them median 0.500
+  # at EVERY rung from 300k to 5M nodes (vs 0.35 for seeds the net actually
+  # learned), i.e. they were never blind spots and were consuming dole budget.
+  # See the 2026-07-26 FINDING in docs/experiment_ledger.md.
+  # NOTE do NOT try to disable seeding via opening_fen_dole_max_fraction: on that
+  # key 0 means UNCAPPED, which would cause the dole runaway, not stop it.
+  # opening_fen_prob is already 0.0; opening_fen_sf_refute_frac becomes inert
+  # with no seeded games. Live-reloadable — restore by setting this back to 1.
   # 2026-07-24 (PR #223, NEW KEY — requires the restart onto that code; adding it
   # to a running older build makes the strict validator reject the WHOLE reload).
   # Upper bound on seeded games/iter as a fraction of games_per_iter. The dole
@@ -562,4 +572,13 @@ tune:
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [0.0003, 0.0003]  # 2026-07-02: re-pinned at 0.0003 (flat-LR revert; scheduler bounds hotpatch on resume)
+  pb2_bounds_lr: [0.00003, 0.00003]  # 2026-07-26: repinned 0.0003 -> 3e-5 with train.lr for the boot512 restart.
+  # WARNING — THIS KEY OVERRIDES `train.lr`, IT DOES NOT BOUND IT.
+  # _build_mutation_param_space (tune/harness.py) does
+  #     param_space = {**base_config}; param_space[name] = tune.uniform(*bounds)
+  # so a degenerate [x, x] range REPLACES the flattened train.lr with x for
+  # every new trial. On 2026-07-26 the boot512 restart was launched with
+  # train.lr 3e-5 and the trial still came up at lr=0.0003 from this line;
+  # only the warm-start guard (trainable_init.guard_warm_start_lr) caught it.
+  # Change both together, always. Prior: 2026-07-02 re-pinned at 0.0003
+  # (flat-LR revert; scheduler bounds hotpatch on resume).
