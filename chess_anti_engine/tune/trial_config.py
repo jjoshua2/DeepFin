@@ -977,3 +977,10 @@ class RestoreResult:
     cross_trial_restore: bool = False
     restored_owner_trial_dir: str = ""
     restored_window: int = 0
+  # Where the holdout sidecar was restored from (a Ray checkpoint dir or a
+  # salvage seed slot), plus the two scalars that ride in its trial_meta.json.
+  # None means "nothing to restore from" -- a fresh start, which is the only
+  # case where an empty holdout is the truth rather than a loss.
+    holdout_state_dir: Any = None
+    holdout_frozen: bool = False
+    holdout_generation: int = 0

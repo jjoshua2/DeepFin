@@ -30,6 +30,10 @@ from chess_anti_engine.tune._utils import (
     load_optional_json,
     stable_seed_u32 as _stable_seed_u32,
 )
+from chess_anti_engine.tune.holdout_state import (
+    load_holdout_rows,
+    restored_holdout_scalars,
+)
 from chess_anti_engine.tune.recovery import (
     _load_salvage_manifest_entry,
     _merge_pid_state_from_result_row,
@@ -162,6 +166,7 @@ def _restore_from_ray_checkpoint(
     """
     ckpt_dir = Path(ckpt.to_directory())
     maybe = ckpt_dir / "trainer.pt"
+    rr.holdout_state_dir = ckpt_dir
     rr.restored_pid_state = load_optional_json(ckpt_dir / SIDECAR_PID_STATE)
     restored_rng_state = load_optional_json(ckpt_dir / SIDECAR_RNG_STATE)
     restored_trial_meta = load_optional_json(ckpt_dir / SIDECAR_TRIAL_META)
@@ -217,7 +222,9 @@ def _restore_from_salvage_pool(
 
     restored_rng_state = load_optional_json(Path(picked_dir) / SIDECAR_RNG_STATE)
     restored_trial_meta = load_optional_json(Path(picked_dir) / SIDECAR_TRIAL_META)
+    rr.holdout_state_dir = Path(picked_dir)
     if isinstance(restored_trial_meta, dict):
+        _apply_restored_holdout_scalars(rr, restored_trial_meta)
         rr.global_iter = int(restored_trial_meta.get("global_iter", rr.global_iter))
         rr.restored_window = int(restored_trial_meta.get("current_window", rr.restored_window))
         rr.restored_owner_trial_dir = str(
@@ -289,11 +296,25 @@ def _apply_donor_config_overlay(config: dict, donor_cfg: dict, trainer) -> None:
     _apply_lr_gamma_weights(trainer, config, rescale_current_lr=False)
 
 
+def _apply_restored_holdout_scalars(rr: RestoreResult, restored_trial_meta: dict) -> None:
+    """Pull the holdout's two scalars out of a checkpoint's trial_meta.json.
+
+    They live here rather than in their own sidecar because ``ShardMeta`` --
+    the npz's metadata carrier -- is a closed dataclass that rejects unknown
+    keys, and because trial_meta.json is already read on BOTH restore paths
+    and already copied into salvage pools. Whether they are honoured depends
+    on the rows actually loading; see ``restored_holdout_scalars``.
+    """
+    rr.holdout_frozen = bool(restored_trial_meta.get("holdout_frozen", False))
+    rr.holdout_generation = int(restored_trial_meta.get("holdout_generation", 0))
+
+
 def _apply_restored_trial_meta(rr: RestoreResult, restored_trial_meta: dict | None) -> tuple[str, str]:
     """Pull owner/salvage/global-iter fields from checkpoint metadata into ``rr``.
     Returns (owner_trial_id, owner_optimizer)."""
     if not isinstance(restored_trial_meta, dict):
         return "", ""
+    _apply_restored_holdout_scalars(rr, restored_trial_meta)
     rr.restored_owner_trial_dir = str(restored_trial_meta.get("owner_trial_dir", ""))
     rr.salvage_origin_used = bool(restored_trial_meta.get("salvage_origin_used", rr.salvage_origin_used))
     rr.salvage_origin_slot = int(restored_trial_meta.get("salvage_origin_slot", rr.salvage_origin_slot))
@@ -628,5 +649,52 @@ def _init_replay_buffers(
         f"upgrade_v1_planes={tc.replay_upgrade_v1_planes}"
     )
     holdout_buf = ArrayReplayBuffer(tc.holdout_capacity, rng=rng)
+    _restore_holdout_buffer(tc=tc, restore=restore, holdout_buf=holdout_buf)
 
     return buf, holdout_buf, current_window, replay_shard_dir, selfplay_shards_dir
+
+
+def _restore_holdout_buffer(
+    *, tc: TrialConfig, restore: RestoreResult, holdout_buf: ArrayReplayBuffer,
+) -> None:
+    """Refill the holdout from the checkpoint and settle its frozen/generation.
+
+    Writes the reconciled scalars back onto ``restore`` so the trial loop can
+    pick them up; they are the checkpoint's state, and this is the point at
+    which we learn whether the rows behind them actually came back.
+
+    A shrunk ``holdout_capacity`` is handled by ``add_many_arrays`` itself,
+    which enforces capacity as it appends — the oldest rows drop, exactly as
+    they would have during ingest.
+    """
+    rows = load_holdout_rows(
+        state_dir=restore.holdout_state_dir,
+        holdout_buf=holdout_buf,
+        expected_planes=input_plane_count(tc.input_extra_features),
+        expected_policy_size=policy_size_for_encoding(tc.policy_encoding),
+    )
+    restore.holdout_frozen, restore.holdout_generation = restored_holdout_scalars(
+        rows_restored=rows,
+        stored_frozen=restore.holdout_frozen,
+        stored_generation=restore.holdout_generation,
+        had_stored_state=restore.holdout_state_dir is not None,
+    )
+    if restore.holdout_frozen and tc.freeze_holdout_at <= 0:
+  # Freezing is one-way inside a process, so with the flag now durable the
+  # config has to stay the authority or there would be no way back: an
+  # operator who sets freeze_holdout_at to 0 and restarts means "stop
+  # freezing", and before the holdout was persisted the restart itself was
+  # what delivered that.
+        print(
+            "[trial] restored holdout was frozen but freeze_holdout_at is off; "
+            "unfreezing so ingest resumes filling it",
+            flush=True,
+        )
+        restore.holdout_frozen = False
+    print(
+        f"[trial] holdout init: restored_rows={rows} len={len(holdout_buf)} "
+        f"capacity={holdout_buf.capacity} frozen={restore.holdout_frozen} "
+        f"generation={restore.holdout_generation} "
+        f"source={restore.holdout_state_dir if restore.holdout_state_dir is not None else 'fresh'}",
+        flush=True,
+    )

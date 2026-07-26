@@ -23,6 +23,10 @@ from chess_anti_engine.replay.shard import (
 SIDECAR_PID_STATE = "pid_state.json"
 SIDECAR_RNG_STATE = "rng_state.json"
 SIDECAR_TRIAL_META = "trial_meta.json"
+  # The holdout ruler's rows. A single .npz (not a zarr directory) so it is
+  # copied by name into salvage pools next to trainer.pt. Its two scalars --
+  # frozen + generation -- ride in trial_meta.json; see tune/holdout_state.py.
+SIDECAR_HOLDOUT_ROWS = "holdout.npz"
 
 
 def load_optional_json(path: Path) -> dict | None:
