@@ -148,10 +148,30 @@ def check_row(
     if is_restart_iter:
         notes.append(f"stale_games={stale_n} — expect a benign winrate spike (restart artifact)")
     if workers_frozen:
+        # NOT "discarded", and usually NOT frozen workers. `_process_shard` calls
+        # `_ingest_train_arrays` UNCONDITIONALLY, *before* the
+        # `model_sha in accepted_model_shas` check (distributed_runtime.py), so a
+        # stale shard still lands in the replay buffer. stale/matching is an
+        # accounting split for the wait-loop target, not a data-loss ratio.
+        #
+        # What a sustained high ratio actually means is that iterations are SLOW
+        # relative to game production: the workers keep generating while the
+        # trainer takes longer, so the surplus arrives under a sha that has aged
+        # out. Measured 2026-07-26 (iters 34-37): 74-78% stale with all four
+        # workers demonstrably switching shas normally, driven entirely by a
+        # concurrent arena stretching iterations 578s -> 3114s.
+        #
+        # The old text asserted mass data loss and frozen workers. Both were
+        # false, and it is exactly the kind of confident-but-wrong diagnosis that
+        # sends a session chasing a phantom (see the dole-cap incident, method
+        # rule 1). Report the ratio and the real question instead.
         alerts.append(
             f"stale_games={stale_n} > matching_games={games_n} for 2+ iters — "
-            "workers frozen on an old model_sha; most selfplay is being "
-            "discarded (check worker logs for 'model tag STALE')"
+            "iterations are slow relative to game production, so surplus games "
+            "arrive under an aged-out sha. Data is NOT lost (stale shards are "
+            "still ingested) and views-targeting rescales steps to compensate — "
+            "check train_views_actual held near its target, then find what is "
+            "stretching the iteration (concurrent GPU work? ingest stall?)"
         )
     elif stale_outruns:
         notes.append(
@@ -199,6 +219,36 @@ def load_rows(path: Path, last: int) -> list[dict]:
     return rows[-last:]
 
 
+def _live_fen_dose(path: Path) -> tuple[int | None, float | None]:
+    """Read the FEN-seeding dose from the live yaml, or ``(None, None)``.
+
+    Returns ``None`` for anything it cannot read with confidence — a missing
+    file, bad yaml, or an absent key. The caller only ever uses a confident
+    ``0`` to SUPPRESS an alert, so every failure path here is safe by
+    construction: worst case the auto-detect keeps deciding.
+    """
+    try:
+        import yaml
+        with path.open() as fh:
+            doc = yaml.safe_load(fh) or {}
+    except Exception:
+        return (None, None)
+    if not isinstance(doc, dict):
+        return (None, None)
+    # The knobs live under `selfplay:`, but tolerate a flat layout rather than
+    # assuming a shape that a config refactor could quietly change.
+    for section in (doc.get("selfplay"), doc):
+        if not isinstance(section, dict):
+            continue
+        if "opening_fen_dole_per_iter" in section:
+            try:
+                return (int(section["opening_fen_dole_per_iter"]),
+                        float(section.get("opening_fen_prob", 0.0)))
+            except (TypeError, ValueError):
+                return (None, None)
+    return (None, None)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -212,6 +262,13 @@ def main() -> None:
                     help="alert if the newest row's timestamp is older than this many minutes "
                          "(catches the no-games drought / stall, which writes no result row). "
                          "Off by default — set it to the expected iteration cadence x ~2.")
+    ap.add_argument("--live-config", type=Path, default=Path("configs/pbt2_small.yaml"),
+                    help="live yaml, consulted ONLY to downgrade the FEN-delivery alerts when "
+                         "seeding is deliberately disabled there (dole 0 and prob 0). Never used "
+                         "to raise an alert, so a missing or unreadable file just leaves the "
+                         "auto-detect in charge. NOT params.json: that is the trial's LAUNCH "
+                         "config and goes stale the moment a live reload lands (2026-07-26 it "
+                         "still read dole=1/retire_307 while the live yaml was 0/retire_35).")
     args = ap.parse_args()
     if args.last < 1:
         sys.exit("--last must be >= 1")
@@ -240,6 +297,19 @@ def main() -> None:
     # exists to catch), so fen_expected is the ONLY gate below — the seen_*
     # signals are not ANDed into the alert conditions.
     fen_expected = args.expect_fenlist if args.expect_fenlist is not None else seen_total_fen
+    # An explicit --expect-fenlist always wins; otherwise, seeding that is
+    # deliberately OFF in the live yaml is not an outage. Without this the tool
+    # fires two ALERTs every iteration for an intended config, "ALERTS PRESENT"
+    # latches on permanently, and a real alert becomes invisible — the failure
+    # mode is not a missed message, it is a monitor nobody reads any more.
+    fen_off_reason = ""
+    if args.expect_fenlist is None and fen_expected:
+        dole, prob = _live_fen_dose(args.live_config)
+        if dole == 0 and prob == 0.0:
+            fen_expected = False
+            fen_off_reason = (f"seeding is OFF by config in {args.live_config} "
+                              "(opening_fen_dole_per_iter 0, opening_fen_prob 0.0) — "
+                              "FEN-delivery checks suppressed, not an outage")
 
     times = sorted(float(r["time_this_iter_s"]) for r in rows if r.get("time_this_iter_s"))
     median_iter_s = statistics.median(times) if times else 0.0
@@ -297,6 +367,11 @@ def main() -> None:
                       f"(> {args.max_age_min:.0f}) — result.json not advancing "
                       "(stall / no-games drought)")
 
+    # Say WHY a check is off. A silently suppressed check is indistinguishable
+    # from one that passed, which is how a real outage hides behind an intended
+    # config.
+    if fen_off_reason:
+        print(f"\nSUPPRESSED: {fen_off_reason}")
     print(f"\n{'ALERTS PRESENT' if any_alert else 'all invariants green'} "
           f"({len(rows)} iters scanned, fen_check={'on' if fen_expected else 'off'}, {path})")
     sys.exit(1 if any_alert else 0)
