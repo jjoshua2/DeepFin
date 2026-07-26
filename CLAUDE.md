@@ -31,12 +31,20 @@ see `docs/operations.md` for that and for salvage, blind-spot seeding, and lint 
 ## Configs
 
 - `configs/pbt2_small.yaml` — **production**, and the only config active training uses.
-  512-dim × 16-layer × 16-head, **78.8M params** (measured 2026-07-26 from the
-  live trunk, not the stale ~63M this line used to claim). Per-layer Smolgen
-  really does dominate: `layer_smolgens` 42.4M of 78.8M (54%), `blocks` 30.7M,
-  all heads together ~5.5M. `ffn_mult` is per-layer and non-uniform (1.5 rising
-  to ~1.9 in the upper blocks), so the count is not reproducible by assuming a
-  flat multiplier.
+  512-dim × 16-layer × 16-head, **63.08M trainable params** (63,084,128, counted
+  2026-07-26 by unique storage on `checkpoint_000042`). **An earlier revision of
+  this line "corrected" 63M up to 78.8M. That was the error, not the fix.**
+  78.81M is the sum of `numel()` over the 496 `state_dict` entries, which
+  double-counts weight tying: the 16 `layer_smolgens.N.gen_weight.weight` keys
+  are **one shared tensor** (16 keys, 1 distinct storage, 1,048,576 params), so
+  15 × 1,048,576 = 15,728,640 is counted 15 times too many — exactly the gap.
+  Count unique `v.untyped_storage().data_ptr()`, never `sum(v.numel())`.
+  Per-layer Smolgen still dominates, but by less than advertised:
+  `layer_smolgens` **26.7M of 63.08M (42.3%)**, not 42.4M of 78.8M (54%).
+  `ffn_mult` is per-layer and non-uniform (1.5 rising to ~1.9 in the upper
+  blocks), so the count is not reproducible by assuming a flat multiplier.
+  Related: only 28.6% of trainable params are in the Aurora matrix group
+  (`matrix_optimizer_scope: mlp_out`) — see `docs/rl_loop_audit.md` I12.
 - `configs/default.yaml` — reference BT3-scale model (768-dim, 15-layer, ~105M), unused.
 - `configs/exp_*.yaml` — flag-gated research bets, ALL default off. A flag enters the
   production config only once promoted; promotion status lives in the ledger, not here.
