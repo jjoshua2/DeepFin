@@ -56,6 +56,7 @@ def score_seeds(checkpoint: str, seed_lines: list[str], *, device: str,
     """DeepFin-POV value ``net_q = W-L`` per seed terminal, scored WITH history."""
     import torch
 
+    from chess_anti_engine.encoding import model_encoding_kwargs
     from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
     from chess_anti_engine.inference import LocalModelEvaluator
     from chess_anti_engine.selfplay.opening import seed_board_from_line
@@ -67,8 +68,7 @@ def score_seeds(checkpoint: str, seed_lines: list[str], *, device: str,
 
     model = load_model_from_checkpoint(checkpoint, device=device)
     model.eval()
-    hist = str(getattr(model, "input_history_encoding", "legacy"))
-    extra = str(getattr(model, "input_extra_features", "v1"))
+    enc_kwargs = model_encoding_kwargs(model)
     use_rel = bool(getattr(model, "use_dynamic_relations", False))
     ev = LocalModelEvaluator(model, device=device)
 
@@ -78,7 +78,7 @@ def score_seeds(checkpoint: str, seed_lines: list[str], *, device: str,
         # seed's real move history.
         board = seed_board_from_line(reconstruct_lost_line(line))
         cb = CBoard.from_board(board)
-        encs.append(encode_cboard(cb, input_history_encoding=hist, input_extra_features=extra))
+        encs.append(encode_cboard(cb, **enc_kwargs))
         if use_rel:
             rels.append(cb.compute_relations())
     enc_arr = np.stack(encs)

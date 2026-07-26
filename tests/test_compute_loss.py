@@ -479,3 +479,61 @@ def test_wdl_targets_accept_all_classes():
     losses = compute_loss(out, batch)
     assert torch.isfinite(losses["wdl_ce"])
     assert losses["wdl_ce"].item() > 0
+
+
+# ── Reported value-loss names (docs/rl_loop_audit.md I7) ─────────────
+
+
+def _blend_batch(b: int) -> dict[str, torch.Tensor]:
+    """A batch where the blended target genuinely differs from the one-hot."""
+    batch = _full_batch(b)
+    batch["has_search_wdl"] = torch.ones((b,))
+    batch["search_wdl"] = torch.tensor([[0.6, 0.3, 0.1]] * b)
+    return batch
+
+
+def test_wdl_ce_reports_the_trained_loss_not_the_onehot_diagnostic():
+    b = 8
+    torch.manual_seed(0)
+    losses = compute_loss(
+        _fake_outputs(b), _blend_batch(b), sf_wdl_frac=0.45, search_wdl_frac=0.20,
+    )
+    # `wdl_ce` is the name people reach for; it must BE the trained tensor.
+    assert losses["wdl_ce"].item() == losses["blended_wdl_ce"].item()
+    # The diagnostic is still reported, under a name that cannot be mistaken
+    # for the trained loss, and it is a genuinely different number.
+    assert "wdl_onehot_ce" in losses
+    assert abs(losses["wdl_onehot_ce"].item() - losses["blended_wdl_ce"].item()) > 1e-6
+
+
+def test_total_uses_the_blended_wdl_loss_and_never_the_onehot():
+    b = 8
+    torch.manual_seed(1)
+    out = _fake_outputs(b)
+    batch = _blend_batch(b)
+    losses = compute_loss(
+        out, batch,
+        w_wdl=1.0,
+        w_policy=0.0, w_soft=0.0, w_future=0.0, w_sf_move=0.0, w_sf_eval=0.0,
+        w_categorical=0.0, w_volatility=0.0, w_sf_volatility=0.0, w_moves_left=0.0,
+        sf_wdl_frac=0.45, search_wdl_frac=0.20,
+    )
+    assert abs(losses["total"].item() - losses["blended_wdl_ce"].item()) < 1e-6
+    assert abs(losses["total"].item() - losses["wdl_onehot_ce"].item()) > 1e-6
+
+
+def test_wdl_split_losses_track_the_trained_loss():
+    b = 8
+    torch.manual_seed(2)
+    out = _fake_outputs(b)
+    batch = _blend_batch(b)
+    # Every row selfplay-tagged, so the selfplay split covers the whole batch.
+    batch["has_is_selfplay"] = torch.ones((b,))
+    batch["is_selfplay"] = torch.ones((b,))
+    losses = compute_loss(out, batch, sf_wdl_frac=0.45, search_wdl_frac=0.20)
+    assert abs(
+        losses["wdl_loss_selfplay"].item() - losses["blended_wdl_ce"].item()
+    ) < 1e-6
+    assert abs(
+        losses["wdl_loss_selfplay"].item() - losses["wdl_onehot_ce"].item()
+    ) > 1e-6

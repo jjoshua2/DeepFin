@@ -803,7 +803,10 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "trainer_steps_done": 0, "train_samples_seen": 0,
     "trainer_steps_per_s": 0.0, "trainer_samples_per_s": 0.0, "optimizer_steps_per_s": 0.0,
     "policy_loss": 0.0, "soft_policy_loss": 0.0, "future_policy_loss": 0.0,
-    "wdl_loss": 0.0, "blended_wdl_loss": 0.0, "sf_move_loss": 0.0, "sf_move_acc": 0.0, "sf_eval_loss": 0.0,
+  # `wdl_loss` == `blended_wdl_loss` == the trained value loss;
+  # `wdl_onehot_loss` is the hard-label diagnostic (no gradient).
+    "wdl_loss": 0.0, "blended_wdl_loss": 0.0, "wdl_onehot_loss": 0.0,
+    "sf_move_loss": 0.0, "sf_move_acc": 0.0, "sf_eval_loss": 0.0,
     "sf_search_agree_frac": 0.0,
     "sf_search_disagree_sf_low_frac": 0.0,
     "sf_search_disagree_sf_high_frac": 0.0,
@@ -837,6 +840,7 @@ def _train_metrics_dict(metrics) -> dict:
         "future_policy_loss": float(metrics.future_policy_loss),
         "wdl_loss": float(metrics.wdl_loss),
         "blended_wdl_loss": float(metrics.blended_wdl_loss),
+        "wdl_onehot_loss": float(metrics.wdl_onehot_loss),
         "sf_search_agree_frac": float(metrics.sf_search_agree_frac),
         "sf_search_disagree_sf_low_frac": float(metrics.sf_search_disagree_sf_low_frac),
         "sf_search_disagree_sf_high_frac": float(metrics.sf_search_disagree_sf_high_frac),
@@ -872,7 +876,8 @@ def _mean_std(n: int, total: float, sq_total: float) -> tuple[float, float]:
 
 _TEST_METRIC_KEYS: tuple[str, ...] = (
     "test_loss", "test_policy_loss", "test_soft_policy_loss", "test_future_policy_loss",
-    "test_wdl_loss", "test_sf_move_loss", "test_sf_move_acc", "test_sf_eval_loss",
+    "test_wdl_loss", "test_wdl_onehot_loss",
+    "test_sf_move_loss", "test_sf_move_acc", "test_sf_eval_loss",
     "test_categorical_loss", "test_volatility_loss", "test_sf_volatility_loss",
     "test_moves_left_loss", "test_wdl_brier", "test_wdl_ece",
     "test_policy_loss_selfplay", "test_policy_loss_curriculum",
@@ -923,6 +928,7 @@ def _test_and_drift_dict(
             "test_soft_policy_loss": tm.soft_policy_loss,
             "test_future_policy_loss": tm.future_policy_loss,
             "test_wdl_loss": tm.wdl_loss,
+            "test_wdl_onehot_loss": float(tm.wdl_onehot_loss),
             "test_sf_move_loss": tm.sf_move_loss,
             "test_sf_move_acc": tm.sf_move_acc,
             "test_sf_eval_loss": tm.sf_eval_loss,

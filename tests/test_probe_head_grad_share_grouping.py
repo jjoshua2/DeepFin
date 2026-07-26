@@ -1,0 +1,69 @@
+"""The grad-share probe's groups must partition the TRAINED loss components.
+
+docs/rl_loop_audit.md I3: the first measurement reported POLICY 65.09% /
+VALUE 15.51% / OTHER 0.02% — a sum of 80.62%, because the gradient-free
+`wdl_ce` diagnostic sat in the weighted denominator but in no group.
+"""
+from __future__ import annotations
+
+import inspect
+
+import torch
+
+from chess_anti_engine.train.losses import compute_loss
+from scripts.probe_head_grad_share import (
+    COMPONENT_WEIGHT_KEY,
+    DIAGNOSTIC_COMPONENTS,
+    GROUPS,
+    check_grouping_partitions_components,
+)
+
+
+def test_groups_partition_the_trained_components() -> None:
+    check_grouping_partitions_components()
+    grouped = [comp for members in GROUPS.values() for comp in members]
+    assert sorted(grouped) == sorted(COMPONENT_WEIGHT_KEY)
+    assert len(grouped) == len(set(grouped))
+
+
+def test_the_diagnostic_is_not_a_weighted_component() -> None:
+    for comp in DIAGNOSTIC_COMPONENTS:
+        assert comp not in COMPONENT_WEIGHT_KEY
+        assert all(comp not in members for members in GROUPS.values())
+
+
+def test_the_alias_key_is_not_double_counted() -> None:
+    """`wdl_ce` and `blended_wdl_ce` are the same tensor; only one may count."""
+    assert "blended_wdl_ce" in COMPONENT_WEIGHT_KEY
+    assert "wdl_ce" not in COMPONENT_WEIGHT_KEY
+
+
+def test_weight_keys_are_real_compute_loss_parameters() -> None:
+    params = inspect.signature(compute_loss).parameters
+    for comp, weight_key in COMPONENT_WEIGHT_KEY.items():
+        assert weight_key in params, f"{comp} maps to unknown weight {weight_key}"
+
+
+def test_components_and_diagnostics_are_keys_compute_loss_returns() -> None:
+    b = 2
+    batch = {
+        "x": torch.randn((b, 146, 8, 8)),
+        "policy_t": torch.full((b, 1858), 1.0 / 1858.0),
+        "wdl_t": torch.randint(0, 3, (b,)),
+        "has_policy": torch.ones((b,)),
+    }
+    outputs = {
+        "policy_own": torch.randn((b, 1858)),
+        "policy_soft": torch.randn((b, 1858)),
+        "policy_sf": torch.randn((b, 1858)),
+        "policy_future": torch.randn((b, 1858)),
+        "wdl": torch.randn((b, 3)),
+        "sf_eval": torch.randn((b, 3)),
+        "categorical": torch.randn((b, 32)),
+        "volatility": torch.rand((b, 3)),
+        "sf_volatility": torch.rand((b, 3)),
+        "moves_left": torch.rand((b, 1)),
+    }
+    keys = set(compute_loss(outputs, batch))
+    missing = sorted((set(COMPONENT_WEIGHT_KEY) | set(DIAGNOSTIC_COMPONENTS)) - keys)
+    assert not missing, f"probe measures keys compute_loss does not return: {missing}"

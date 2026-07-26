@@ -15,7 +15,8 @@ import chess.pgn
 import numpy as np
 import torch
 
-from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
+from chess_anti_engine.encoding import encode_cboard_for_model, model_input_plane_count
+from chess_anti_engine.encoding.cboard_encode import CBoard
 from chess_anti_engine.moves import (
     index_to_move_for_encoding,
     legal_move_indices_for_encoding,
@@ -110,15 +111,16 @@ def _policy_top_moves(
     boards: list[chess.Board],
     *,
     device: str,
-    input_history_encoding: str,
     policy_encoding: str,
     top_k: int,
 ) -> list[list[tuple[chess.Move, float]]]:
     if not boards:
         return []
-    xs = np.empty((len(boards), 146, 8, 8), dtype=np.float32)
+    # Planes and history layout both come from the model, never from a
+    # hardcoded v1 default (docs/rl_loop_audit.md M11).
+    xs = np.empty((len(boards), model_input_plane_count(model), 8, 8), dtype=np.float32)
     for i, board in enumerate(boards):
-        xs[i] = encode_cboard(CBoard.from_board(board), input_history_encoding=input_history_encoding)
+        xs[i] = encode_cboard_for_model(model, CBoard.from_board(board))
     x = torch.from_numpy(xs).to(device)
     autocast_enabled = str(device).startswith("cuda")
     with torch.amp.autocast("cuda", dtype=torch.bfloat16, enabled=autocast_enabled):
@@ -155,7 +157,6 @@ def _expand_prefix(
     seq: tuple[str, ...],
     *,
     device: str,
-    input_history_encoding: str,
     policy_encoding: str,
     top_k: int,
     beam_width: int,
@@ -171,7 +172,6 @@ def _expand_prefix(
                 model,
                 [item.board for item in chunk],
                 device=device,
-                input_history_encoding=input_history_encoding,
                 policy_encoding=policy_encoding,
                 top_k=top_k,
             )
@@ -212,7 +212,6 @@ def main() -> None:
 
     print(f"[policybeam] loading model {args.checkpoint}", flush=True)
     model = load_model_from_checkpoint(args.checkpoint, device=args.device).eval()
-    input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
     policy_encoding = normalize_policy_encoding(getattr(model, "policy_encoding", "lc0_1858"))
 
     existing_final_keys: set[str] = set()
@@ -265,7 +264,6 @@ def main() -> None:
                 board,
                 seq,
                 device=args.device,
-                input_history_encoding=input_history_encoding,
                 policy_encoding=policy_encoding,
                 top_k=args.top_k,
                 beam_width=args.beam_width,

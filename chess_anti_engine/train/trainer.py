@@ -286,7 +286,15 @@ def _single_metadata_string(arrs: dict[str, np.ndarray], key: str) -> str | None
 
 
 def _legacy_x_to_synthetic_lc0_root(x: np.ndarray) -> np.ndarray:
-    """Best-effort LC0-root history remap for legacy replay tensors."""
+    """Best-effort LC0-root history remap for legacy replay tensors.
+
+    LOSSY, and not fixable in place: the root layout's plane 108 is the
+    absolute side-to-move flag (1.0 when the root side to move is black),
+    while the legacy layout has no absolute colour anywhere — its plane 101
+    is a constant 1.0 for every position (``_write_metadata_planes``). Every
+    converted row therefore reads as white-to-move. Callers must opt in via
+    ``allow_lossy_legacy_remap`` (docs/rl_loop_audit.md M12).
+    """
     src = np.asarray(x)
     out = np.array(src, copy=True, order="C")
     out[:, :LC0_FULL.num_planes, :, :] = 0
@@ -335,8 +343,17 @@ def select_input_history_arrays(
     arrs: dict[str, np.ndarray],
     *,
     input_history_encoding: str,
+    allow_lossy_legacy_remap: bool = False,
 ) -> dict[str, np.ndarray]:
-    """Select the replay input tensor matching the model's configured history layout."""
+    """Select the replay input tensor matching the model's configured history layout.
+
+    Rows already stored in the target layout, and legacy rows that carry a
+    recorded ``x_lc0_root`` tensor, convert losslessly. Legacy rows with
+    neither can only go through :func:`_legacy_x_to_synthetic_lc0_root`, which
+    cannot recover side-to-move — every such row would train as white-to-move.
+    That case raises unless the caller passes ``allow_lossy_legacy_remap``,
+    which offline tooling may do knowingly; the training path never does.
+    """
     hist_enc = normalize_lc0_history_encoding(input_history_encoding)
     n = int(np.asarray(arrs["x"]).shape[0])
     stored_value = arrs.get(INPUT_HISTORY_ENCODING_ARRAY_KEY)
@@ -416,15 +433,29 @@ def select_input_history_arrays(
     out = dict(arrs)
     legacy_x = np.asarray(out["x"])
     convert_rows = ~already_root
-    root_x = np.array(legacy_x, copy=True, order="C")
-    if bool(np.any(convert_rows)):
-        root_x[convert_rows] = _legacy_x_to_synthetic_lc0_root(legacy_x[convert_rows])
+    use_recorded = np.zeros_like(convert_rows)
     if "x_lc0_root" in out:
         recorded = np.asarray(out["x_lc0_root"])
         has = np.asarray(out.get("has_x_lc0_root", np.ones((legacy_x.shape[0],), dtype=np.uint8))) != 0
         if recorded.shape == legacy_x.shape and has.shape == (legacy_x.shape[0],):
             use_recorded = has & convert_rows
-            root_x[use_recorded] = recorded[use_recorded]
+    needs_synthetic = convert_rows & ~use_recorded
+    n_synthetic = int(needs_synthetic.sum())
+    if n_synthetic and not allow_lossy_legacy_remap:
+        raise ValueError(
+            f"{n_synthetic} of {n} replay rows are stored as legacy history with no "
+            f"recorded x_lc0_root, so selecting {hist_enc!r} would synthesize them via "
+            "a remap that CANNOT recover side-to-move: every converted row reads as "
+            "white-to-move (docs/rl_loop_audit.md M12). Re-encode the shards for the "
+            "current model (scripts/convert_shards_v2_threats.py) or drop them from "
+            "the window; pass allow_lossy_legacy_remap=True only for offline "
+            "diagnostics that accept a wrong POV plane."
+        )
+    root_x = np.array(legacy_x, copy=True, order="C")
+    if n_synthetic:
+        root_x[needs_synthetic] = _legacy_x_to_synthetic_lc0_root(legacy_x[needs_synthetic])
+    if bool(np.any(use_recorded)):
+        root_x[use_recorded] = np.asarray(out["x_lc0_root"])[use_recorded]
     if uses_lc0_root_legacy_meta(hist_enc) and bool(np.any(convert_rows)):
         patched = _apply_lc0_root_legacy_meta(root_x[convert_rows], legacy_x[convert_rows])
         root_x[convert_rows] = patched
@@ -438,8 +469,13 @@ def select_input_history_samples(
     samples: list[ReplaySample],
     *,
     input_history_encoding: str,
+    allow_lossy_legacy_remap: bool = False,
 ) -> list[ReplaySample]:
-    """Select configured input planes for in-memory replay samples."""
+    """Select configured input planes for in-memory replay samples.
+
+    ``allow_lossy_legacy_remap`` has the same meaning as in
+    :func:`select_input_history_arrays`.
+    """
     hist_enc = normalize_lc0_history_encoding(input_history_encoding)
     if not samples:
         return samples
@@ -480,7 +516,11 @@ def select_input_history_samples(
         arrs["x_lc0_root"] = recorded
         arrs["has_x_lc0_root"] = has
 
-    selected = select_input_history_arrays(arrs, input_history_encoding=hist_enc)["x"]
+    selected = select_input_history_arrays(
+        arrs,
+        input_history_encoding=hist_enc,
+        allow_lossy_legacy_remap=allow_lossy_legacy_remap,
+    )["x"]
     return [
         dataclasses.replace(sample, x=selected[i], input_history_encoding=hist_enc)
         for i, sample in enumerate(samples)
@@ -653,6 +693,9 @@ class TrainMetrics:
     policy_loss: float
     soft_policy_loss: float
     future_policy_loss: float
+  # The value loss the optimizer sees (blended soft CE). ``blended_wdl_loss``
+  # below carries the same number under its explicit name; ``wdl_onehot_loss``
+  # is the hard one-hot diagnostic that used to be reported here.
     wdl_loss: float
     sf_move_loss: float
     sf_move_acc: float
@@ -662,6 +705,8 @@ class TrainMetrics:
     sf_volatility_loss: float
     moves_left_loss: float
     blended_wdl_loss: float = 0.0
+  # Diagnostic: hard one-hot CE against the recorded result. No gradient.
+    wdl_onehot_loss: float = 0.0
     channel_balance: float = 0.0
     sf_search_agree_frac: float = 0.0
     sf_search_disagree_sf_low_frac: float = 0.0
@@ -713,6 +758,7 @@ _LOSS_KEY_TO_METRIC_FIELD = {
     "soft_policy_ce": "soft_policy_loss",
     "future_policy_ce": "future_policy_loss",
     "wdl_ce": "wdl_loss",
+    "wdl_onehot_ce": "wdl_onehot_loss",
     "sf_move_ce": "sf_move_loss",
     "sf_eval_ce": "sf_eval_loss",
     "categorical_ce": "categorical_loss",
