@@ -666,6 +666,11 @@ def _restore_holdout_buffer(
     A shrunk ``holdout_capacity`` is handled by ``add_many_arrays`` itself,
     which enforces capacity as it appends — the oldest rows drop, exactly as
     they would have during ingest.
+
+    On a PB2 exploit clone the DONOR's holdout comes along, which is right: a
+    holdout is data, not lineage, and the recipient's best-model record is
+    deleted separately by ``_reset_best_on_cross_trial_restore``, so there is
+    no stale number left to be compared against it.
     """
     rows = load_holdout_rows(
         state_dir=restore.holdout_state_dir,

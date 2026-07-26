@@ -45,7 +45,6 @@ holdout as new — see `restored_holdout_scalars`.
 """
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import numpy as np
@@ -54,7 +53,11 @@ from chess_anti_engine.replay import ArrayReplayBuffer
 from chess_anti_engine.replay.shard import load_shard_arrays, save_npz_arrays
 from chess_anti_engine.tune._utils import SIDECAR_HOLDOUT_ROWS
 
-log = logging.getLogger(__name__)
+  # `print`, not `logging`: this runs inside a Ray actor, whose stdout is what
+  # train.sh captures. A `logging` call reaches only the Ray session logs --
+  # the same reason `load_optional_json` prints. Every message here explains a
+  # ruler that silently did not come back, which is exactly the class of thing
+  # this audit found by reading the training log.
 
 
 def save_holdout_rows(*, ckpt_dir: Path, holdout_buf: ArrayReplayBuffer) -> int:
@@ -77,8 +80,13 @@ def save_holdout_rows(*, ckpt_dir: Path, holdout_buf: ArrayReplayBuffer) -> int:
             return 0
         save_npz_arrays(path, arrs=rows, meta=None, compress=True)
         return int(np.asarray(rows["x"]).shape[0])
-    except (OSError, ValueError, KeyError) as exc:
-        log.warning("[trial] failed to save the holdout sidecar to %s: %s", path, exc)
+    except Exception as exc:
+        print(
+            f"[trial] failed to save the holdout sidecar to {path} ({exc}); "
+            f"the checkpoint is still valid, but a restart from it will start "
+            f"with an empty holdout",
+            flush=True,
+        )
         return 0
 
 
@@ -109,30 +117,32 @@ def load_holdout_rows(
     try:
         arrs, _meta = load_shard_arrays(path)
     except Exception as exc:
-        log.warning(
-            "[trial] holdout sidecar %s exists but could not be read (%s); "
-            "starting from an empty holdout",
-            path, exc,
+        print(
+            f"[trial] holdout sidecar {path} exists but could not be read "
+            f"({exc}); starting from an empty holdout",
+            flush=True,
         )
         return 0
 
     x = np.asarray(arrs.get("x"))
     policy = np.asarray(arrs.get("policy_target"))
     if x.ndim != 4 or policy.ndim != 2:
-        log.warning(
-            "[trial] holdout sidecar %s has unexpected array shapes "
-            "(x=%s policy_target=%s); starting from an empty holdout",
-            path, x.shape, policy.shape,
+        print(
+            f"[trial] holdout sidecar {path} has unexpected array shapes "
+            f"(x={x.shape} policy_target={policy.shape}); starting from an "
+            f"empty holdout",
+            flush=True,
         )
         return 0
     planes = int(x.shape[1])
     policy_size = int(policy.shape[1])
     if planes != int(expected_planes) or policy_size != int(expected_policy_size):
-        log.warning(
-            "[trial] holdout sidecar %s was written with %d input planes / "
-            "policy width %d, but this run uses %d / %d; discarding it and "
-            "starting from an empty holdout",
-            path, planes, policy_size, int(expected_planes), int(expected_policy_size),
+        print(
+            f"[trial] holdout sidecar {path} was written with {planes} input "
+            f"planes / policy width {policy_size}, but this run uses "
+            f"{int(expected_planes)} / {int(expected_policy_size)}; discarding "
+            f"it and starting from an empty holdout",
+            flush=True,
         )
         return 0
 
@@ -140,10 +150,10 @@ def load_holdout_rows(
     try:
         holdout_buf.add_many_arrays(arrs)
     except (ValueError, KeyError) as exc:
-        log.warning(
-            "[trial] holdout sidecar %s could not be loaded into the buffer (%s); "
-            "starting from an empty holdout",
-            path, exc,
+        print(
+            f"[trial] holdout sidecar {path} could not be loaded into the "
+            f"buffer ({exc}); starting from an empty holdout",
+            flush=True,
         )
         holdout_buf.clear()
         return 0
