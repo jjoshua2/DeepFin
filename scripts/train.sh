@@ -165,6 +165,11 @@ start_observers() {
             > scratchpad/live_read/monitor_fen.out 2>&1 &
         echo "Started monitor_fen (PID $!) — log: scratchpad/live_read/monitor/monitor.log"
     fi
+    if ! pgrep -f "scripts/ratchet_loop.sh" >/dev/null; then
+        setsid nohup bash scripts/ratchet_loop.sh < /dev/null \
+            > /dev/null 2>&1 &
+        echo "Started ratchet_loop (PID $!) — log: scratchpad/ratchet_loop.log"
+    fi
 }
 
 stop() {
