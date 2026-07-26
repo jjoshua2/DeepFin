@@ -52,6 +52,7 @@ _CORE_KEYS = (
     "salvage_restore_donor_config", "salvage_restore_full_trainer_state",
     "salvage_startup_no_share_iters", "salvage_startup_max_train_steps",
     "salvage_startup_post_share_ramp_iters", "salvage_startup_post_share_max_train_steps",
+    "warm_start_lr_max_ratio",
     "puzzle_epd", "puzzle_interval", "puzzle_simulations",
 )
 
@@ -277,6 +278,7 @@ _TUNE_KEYS = (
     "salvage_restore_full_trainer_state",
     "salvage_startup_no_share_iters", "salvage_startup_max_train_steps",
     "salvage_startup_post_share_ramp_iters", "salvage_startup_post_share_max_train_steps",
+    "warm_start_lr_max_ratio",
 )
 
 
