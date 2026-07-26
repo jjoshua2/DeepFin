@@ -388,10 +388,10 @@ stages A, C, E, G, H, I, J, K and L were all extended.
 |---|---|---|
 | VERIFIED family (-BY-DESIGN / -WITH-CONTEXT / -WITH-CAVEAT / -DIVERGENT / -INERT / -BUT-NARROW / -BY-THROUGHPUT / -BY-CODE) | 88 | |
 | RESOLVED | 1 | C5 |
-| **FAILED** | 27 | A6, A7, B4, C13, C6, E13, G11, G4, G5, G6, G7, G8, H5, H7, I11, I13, I7, I9, J11, J2, J5, J9, L11, L4, L6, M10, M8 |
-| FAILED, qualified (-BY-DESIGN / -BENIGN / -COSMETICALLY / -DORMANT) | 4 | E14, M7, I14, M11 |
-| FAILED-THEN-FIXED | 1 | J6 |
-| CODE-ONLY (argued from source, still unmeasured) | 5 | L5, L12, M12, M13, G12 |
+| **FAILED** | 26 | A6, A7, B4, C13, C6, E13, G11, G4, G5, G6, G7, G8, H5, H7, I11, I13, I9, J11, J2, J5, J9, L11, L4, L6, M10, M8 |
+| FAILED, qualified (-BY-DESIGN / -BENIGN / -COSMETICALLY / -DORMANT) | 3 | E14, I14, M7 |
+| FAILED-THEN-FIXED | 4 | I7, J6, M11, M12 |
+| CODE-ONLY (argued from source, still unmeasured) | 4 | G12, L12, L5, M13 |
 | OPEN (measured, no pre-committed rule) | 2 | I8, L13 |
 | PENDING (needs elapsed time) | 1 | L2 |
 | NOTE / DECIDED (not pass-fail rows) | 4 | C8, C12, D5, E9 |
@@ -404,7 +404,7 @@ cleared. That mistake was made on this very table on 2026-07-26, which is
 method rule 2 biting the document that contains method rule 2. Count with a
 parser that takes cell 4 and reads its first `**TOKEN`.
 
-**Reading the trend honestly:** the FAILED count went from 7 to 27 on a day of
+**Reading the trend honestly:** the FAILED count went from 7 to 26 on a day of
 progress, and that is the expected shape. None of the new failures are new
 breakages — every one was already true and simply unmeasured. G5/G6 hid behind a
 G4 row that described the ruler's churn *within* a run and never asked what a
