@@ -2910,7 +2910,8 @@ class WorkerSession:
   # mcts, playout_cap_fraction, random_start_plies, timeout_adjudication_threshold),
   # opening sampling, or the volatility-search knobs would silently never reach
   # workers. test_every_reco_field_is_watched guards completeness.
-        "sf_policy_temp", "sf_policy_label_smooth", "timeout_adjudication_threshold",
+        "sf_policy_temp", "sf_policy_label_smooth", "soft_policy_temp",
+        "timeout_adjudication_threshold",
         "max_plies", "mcts", "playout_cap_fraction", "full_ply_pair_fraction",
         "random_start_plies",
         "opening_book_prob", "opening_book_max_plies", "opening_book_max_games",
@@ -3064,6 +3065,10 @@ class WorkerSession:
                 sf_wdl_use_cp_logistic=bool(reco.get("sf_wdl_use_cp_logistic", False)),
                 sf_wdl_cp_slope=float(reco.get("sf_wdl_cp_slope", 0.010)),
                 sf_wdl_cp_draw_width=float(reco.get("sf_wdl_cp_draw_width", 60.0)),
+  # No CLI counterpart on purpose (hence reco.get, not _resolve_reco): this
+  # is a TRAINING TARGET exponent, and a per-worker override would silently
+  # mix two target sharpnesses inside one replay window.
+                soft_policy_temp=float(reco.get("soft_policy_temp", 2.0)),
                 timeout_adjudication_threshold=float(reco.get("timeout_adjudication_threshold", 0.90)),
                 syzygy_path=syzygy_path,
                 stockfish_syzygy_path=stockfish_syzygy_path,

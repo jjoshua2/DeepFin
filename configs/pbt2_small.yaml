@@ -302,7 +302,17 @@ selfplay:
   sf_wdl_use_cp_logistic: true   # Replace SF's UCI_ShowWDL (72% one-hot) with own logistic on cp score.
   sf_wdl_cp_slope: 0.0060        # 2026-05-23: move toward replay-fit slope (~0.0045-0.0055) while staying conservative.
   sf_wdl_cp_draw_width: 120.0    # Half-width of draw zone in cp; moved toward current-regret replay fit (~130-145).
-  soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
+  # Exponent of the policy_soft target: p^(1/soft_policy_temp).
+  # 2026-07-26: WAS 3.0 since 2026-03-02, and 3.0 WAS NEVER IN EFFECT. The key
+  # was published by nobody and consumed by nobody in distributed mode, so every
+  # worker built the target at GameConfig's dataclass default of 2.0 — measured
+  # on live shards as a fitted exponent of 0.50000 (rl_loop_audit.md E13). The
+  # plumbing is fixed in this same change, so the yaml value is now real; it is
+  # set to 2.0 because 2.0 is what five months of this net actually trained on
+  # and the point of this change is to make the config honest, not to move the
+  # target. 2.0 -> 3.0 is a separate, data-affecting ledger experiment: it needs
+  # its own entry, yardstick and kill rule before anyone edits this line.
+  soft_policy_temp: 2.0
 
   syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6
   # Ordinary high-volume Stockfish curriculum searches stay on local SSD TBs.

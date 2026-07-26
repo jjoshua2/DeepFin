@@ -257,6 +257,141 @@ def _prune_processed_shards(
     return deleted
 
 
+def build_recommended_worker(
+    *,
+    config: dict,
+    model_cfg: ModelConfig,
+    sf_nodes: int,
+    mcts_simulations: int,
+    wdl_regret: float = -1.0,
+    pause_selfplay: bool = False,
+    pause_reason: str = "",
+) -> dict[str, object]:
+    """Build the ``recommended_worker`` block of the worker manifest.
+
+    This is the ONLY channel by which a yaml selfplay knob reaches a
+    distributed worker: a key that is not built here is not published, the
+    worker never sees it, and the corresponding selfplay dataclass silently
+    keeps its own default. That failure mode is invisible to a diff over the
+    keys the manifest and the yaml *share* — it was how ``soft_policy_temp``
+    ran at 2.0 against a configured 3.0 for five months (rl_loop_audit E13).
+    ``scripts/audit_realized_config.py --reco-diff`` now diffs over the UNION
+    of the two key sets; keep it green when adding a knob here.
+
+    Split out of ``_publish_distributed_trial_state`` so that the published
+    key set is computable from a config alone, without exporting a model.
+    """
+    return {
+        "games_per_batch": int(config.get("selfplay_batch", 4)),
+        "max_plies": int(config.get("max_plies", 240)),
+        "mcts": str(config.get("mcts", "puct")),
+        "mcts_simulations": int(mcts_simulations),
+        "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
+        "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
+        "fast_simulations": int(config.get("fast_simulations", 8)),
+        "gumbel_topk": int(config.get("gumbel_topk", 16)),
+        "gumbel_c_scale": float(config.get("gumbel_c_scale", SELFPLAY_GUMBEL_C_SCALE)),
+        "gumbel_scale": float(config.get("gumbel_scale", 1.0)),
+        "gumbel_scale_after": float(config.get("gumbel_scale_after", 0.0)),
+        "gumbel_scale_decay_start_move": int(config.get("gumbel_scale_decay_start_move", 0)),
+        "gumbel_scale_decay_moves": int(config.get("gumbel_scale_decay_moves", 0)),
+        "curriculum_gumbel_scale": float(config.get("curriculum_gumbel_scale", 0.0)),
+        "curriculum_gumbel_scale_after": float(config.get("curriculum_gumbel_scale_after", 0.0)),
+        "curriculum_gumbel_scale_decay_start_move": int(config.get("curriculum_gumbel_scale_decay_start_move", 0)),
+        "curriculum_gumbel_scale_decay_moves": int(config.get("curriculum_gumbel_scale_decay_moves", 0)),
+        "opening_book_max_plies": int(config.get("opening_book_max_plies", 4)),
+        "opening_book_max_games": int(config.get("opening_book_max_games", 200_000)),
+        "opening_book_prob": float(config.get("opening_book_prob", 1.0)),
+        "opening_book_path_2": config.get("opening_book_path_2"),
+        "opening_book_max_plies_2": int(config.get("opening_book_max_plies_2", 16)),
+        "opening_book_max_games_2": int(config.get("opening_book_max_games_2", 200_000)),
+        "opening_book_mix_prob_2": float(config.get("opening_book_mix_prob_2", 0.0)),
+        "random_start_plies": int(config.get("random_start_plies", 0)),
+        "opening_fen_prob": float(config.get("opening_fen_prob", 0.0)),
+        "opening_fen_net_side_to_move": bool(
+            config.get("opening_fen_net_side_to_move", True)
+        ),
+        "opening_fen_selfplay_only": bool(config.get("opening_fen_selfplay_only", False)),
+        "opening_fen_dole_per_iter": int(config.get("opening_fen_dole_per_iter", 0)),
+        # Absolute per-iteration seeded-game budget, resolved here (the worker
+        # does not know games_per_iter). 0 = uncapped.
+        "opening_fen_dole_max_games": math.ceil(
+            max(0.0, float(config.get("opening_fen_dole_max_fraction", 0.0)))
+            * float(config.get("games_per_iter", 0) or 0)
+        ),
+        "opening_fen_sf_refute_frac": float(config.get("opening_fen_sf_refute_frac", 0.0)),
+        "opening_fen_sf_refute_plies": int(config.get("opening_fen_sf_refute_plies", 5)),
+        "sf_refute_full_node_moves": bool(config.get("sf_refute_full_node_moves", False)),
+        "sf_refute_record_opp_rows": bool(config.get("sf_refute_record_opp_rows", False)),
+        "sf_refute_opp_policy_net_blend": float(
+            config.get("sf_refute_opp_policy_net_blend", 0.0)
+        ),
+        "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
+        "slot_oversubscribe": float(config.get("slot_oversubscribe", 1.0)),
+        "sf_nodes": int(sf_nodes),
+        "sf_move_nodes": int(config.get("sf_move_nodes", 0)),
+        "sf_fast_ply_node_scale": float(config.get("sf_fast_ply_node_scale", 0.25)),
+        "sf_label_nodes_cap": int(config.get("sf_label_nodes_cap", 0)),
+        "sf_label_escalate_q_gap": float(config.get("sf_label_escalate_q_gap", 0.0)),
+        "sf_label_escalate_nodes": int(config.get("sf_label_escalate_nodes", 3_000_000)),
+        "sf_label_escalate_max_per_game": int(
+            config.get("sf_label_escalate_max_per_game", 2)
+        ),
+        "sf_multipv": int(config.get("sf_multipv", 1)),
+        "sf_hash_mb": int(config.get("sf_hash_mb", 16)),
+        "sf_policy_temp": float(config.get("sf_policy_temp", 0.25)),
+        "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
+  # Exponent of the policy_soft target (p^(1/T), selfplay/finalize.py). The
+  # default MUST stay at GameConfig.soft_policy_temp: this key was absent
+  # from the manifest until 2026-07-26, so every worker built the target at
+  # the dataclass default while the yaml claimed otherwise (audit E13).
+        "soft_policy_temp": float(config.get("soft_policy_temp", 2.0)),
+        "policy_encoding": str(model_cfg.policy_encoding),
+        "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
+        "input_extra_features": str(model_cfg.input_extra_features),
+        "use_dynamic_relations": bool(model_cfg.use_dynamic_relations),
+        "record_relations": bool(
+            config.get("record_relations", model_cfg.use_dynamic_relations)
+        ),
+        "record_lc0_root_input": bool(config.get("record_lc0_root_input", False)),
+        "history_rep_fix": bool(config.get("history_rep_fix", False)),
+        "record_dense_sf_policy": bool(config.get("record_dense_sf_policy", True)),
+        "record_sf_p0_policy": bool(config.get("record_sf_p0_policy", False)),
+        "record_sf_p0_regret": bool(config.get("record_sf_p0_regret", False)),
+        "record_fast_ply_value": bool(config.get("record_fast_ply_value", False)),
+        "blindspot_harvest_out_path": str(config.get("blindspot_harvest_out_path", "")),
+        "categorical_blend_frac": float(config.get("categorical_blend_frac", 0.0)),
+        "categorical_search_blend_frac": float(
+            config.get("categorical_search_blend_frac", 0.0)
+        ),
+        "sf_wdl_use_cp_logistic": bool(config.get("sf_wdl_use_cp_logistic", False)),
+        "sf_wdl_cp_slope": float(config.get("sf_wdl_cp_slope", 0.010)),
+        "sf_wdl_cp_draw_width": float(config.get("sf_wdl_cp_draw_width", 60.0)),
+        "opponent_wdl_regret_limit": float(wdl_regret) if float(wdl_regret) >= 0.0 else None,
+        "temperature": float(config.get("temperature", 1.0)),
+        "temperature_decay_start_move": int(config.get("temperature_decay_start_move", 20)),
+        "temperature_decay_moves": int(config.get("temperature_decay_moves", 60)),
+        "temperature_endgame": float(config.get("temperature_endgame", 0.6)),
+        "selfplay_temperature": config.get("selfplay_temperature"),
+        "selfplay_temperature_decay_start_move": config.get("selfplay_temperature_decay_start_move"),
+        "selfplay_temperature_decay_moves": config.get("selfplay_temperature_decay_moves"),
+        "selfplay_temperature_endgame": config.get("selfplay_temperature_endgame"),
+        "timeout_adjudication_threshold": float(config.get("timeout_adjudication_threshold", 0.90)),
+  # Syzygy. `path` must be a filesystem location visible to workers
+  # (same layout on all nodes in a multi-node deployment). Server
+  # operators can edit these directly in publish/manifest.json to
+  # change endgame adjudication behavior without restarting anyone.
+        "syzygy_path": config.get("syzygy_path") or None,
+        "stockfish_syzygy_path": config.get("stockfish_syzygy_path") or None,
+        "syzygy_rescore_policy": bool(config.get("syzygy_rescore_policy", False)),
+        "syzygy_adjudicate": bool(config.get("syzygy_adjudicate", False)),
+        "syzygy_adjudicate_fraction": float(config.get("syzygy_adjudicate_fraction", 1.0)),
+        "syzygy_in_search": bool(config.get("syzygy_in_search", False)),
+        "pause_selfplay": bool(pause_selfplay),
+        "pause_reason": str(pause_reason),
+    }
+
+
 def _publish_distributed_trial_state(
     *,
     trainer: Trainer,
@@ -317,110 +452,15 @@ def _publish_distributed_trial_state(
             except Exception:
                 published_worker_wheel_path = None
 
-    recommended_worker = {
-        "games_per_batch": int(config.get("selfplay_batch", 4)),
-        "max_plies": int(config.get("max_plies", 240)),
-        "mcts": str(config.get("mcts", "puct")),
-        "mcts_simulations": int(mcts_simulations),
-        "playout_cap_fraction": float(config.get("playout_cap_fraction", 0.25)),
-        "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
-        "fast_simulations": int(config.get("fast_simulations", 8)),
-        "gumbel_topk": int(config.get("gumbel_topk", 16)),
-        "gumbel_c_scale": float(config.get("gumbel_c_scale", SELFPLAY_GUMBEL_C_SCALE)),
-        "gumbel_scale": float(config.get("gumbel_scale", 1.0)),
-        "gumbel_scale_after": float(config.get("gumbel_scale_after", 0.0)),
-        "gumbel_scale_decay_start_move": int(config.get("gumbel_scale_decay_start_move", 0)),
-        "gumbel_scale_decay_moves": int(config.get("gumbel_scale_decay_moves", 0)),
-        "curriculum_gumbel_scale": float(config.get("curriculum_gumbel_scale", 0.0)),
-        "curriculum_gumbel_scale_after": float(config.get("curriculum_gumbel_scale_after", 0.0)),
-        "curriculum_gumbel_scale_decay_start_move": int(config.get("curriculum_gumbel_scale_decay_start_move", 0)),
-        "curriculum_gumbel_scale_decay_moves": int(config.get("curriculum_gumbel_scale_decay_moves", 0)),
-        "opening_book_max_plies": int(config.get("opening_book_max_plies", 4)),
-        "opening_book_max_games": int(config.get("opening_book_max_games", 200_000)),
-        "opening_book_prob": float(config.get("opening_book_prob", 1.0)),
-        "opening_book_path_2": config.get("opening_book_path_2"),
-        "opening_book_max_plies_2": int(config.get("opening_book_max_plies_2", 16)),
-        "opening_book_max_games_2": int(config.get("opening_book_max_games_2", 200_000)),
-        "opening_book_mix_prob_2": float(config.get("opening_book_mix_prob_2", 0.0)),
-        "random_start_plies": int(config.get("random_start_plies", 0)),
-        "opening_fen_prob": float(config.get("opening_fen_prob", 0.0)),
-        "opening_fen_net_side_to_move": bool(
-            config.get("opening_fen_net_side_to_move", True)
-        ),
-        "opening_fen_selfplay_only": bool(config.get("opening_fen_selfplay_only", False)),
-        "opening_fen_dole_per_iter": int(config.get("opening_fen_dole_per_iter", 0)),
-        # Absolute per-iteration seeded-game budget, resolved here (the worker
-        # does not know games_per_iter). 0 = uncapped.
-        "opening_fen_dole_max_games": math.ceil(
-            max(0.0, float(config.get("opening_fen_dole_max_fraction", 0.0)))
-            * float(config.get("games_per_iter", 0) or 0)
-        ),
-        "opening_fen_sf_refute_frac": float(config.get("opening_fen_sf_refute_frac", 0.0)),
-        "opening_fen_sf_refute_plies": int(config.get("opening_fen_sf_refute_plies", 5)),
-        "sf_refute_full_node_moves": bool(config.get("sf_refute_full_node_moves", False)),
-        "sf_refute_record_opp_rows": bool(config.get("sf_refute_record_opp_rows", False)),
-        "sf_refute_opp_policy_net_blend": float(
-            config.get("sf_refute_opp_policy_net_blend", 0.0)
-        ),
-        "selfplay_fraction": float(config.get("selfplay_fraction", 0.0)),
-        "slot_oversubscribe": float(config.get("slot_oversubscribe", 1.0)),
-        "sf_nodes": int(sf_nodes),
-        "sf_move_nodes": int(config.get("sf_move_nodes", 0)),
-        "sf_fast_ply_node_scale": float(config.get("sf_fast_ply_node_scale", 0.25)),
-        "sf_label_nodes_cap": int(config.get("sf_label_nodes_cap", 0)),
-        "sf_label_escalate_q_gap": float(config.get("sf_label_escalate_q_gap", 0.0)),
-        "sf_label_escalate_nodes": int(config.get("sf_label_escalate_nodes", 3_000_000)),
-        "sf_label_escalate_max_per_game": int(
-            config.get("sf_label_escalate_max_per_game", 2)
-        ),
-        "sf_multipv": int(config.get("sf_multipv", 1)),
-        "sf_hash_mb": int(config.get("sf_hash_mb", 16)),
-        "sf_policy_temp": float(config.get("sf_policy_temp", 0.25)),
-        "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
-        "policy_encoding": str(model_cfg.policy_encoding),
-        "input_history_encoding": str(config.get("input_history_encoding", "legacy")),
-        "input_extra_features": str(model_cfg.input_extra_features),
-        "use_dynamic_relations": bool(model_cfg.use_dynamic_relations),
-        "record_relations": bool(
-            config.get("record_relations", model_cfg.use_dynamic_relations)
-        ),
-        "record_lc0_root_input": bool(config.get("record_lc0_root_input", False)),
-        "history_rep_fix": bool(config.get("history_rep_fix", False)),
-        "record_dense_sf_policy": bool(config.get("record_dense_sf_policy", True)),
-        "record_sf_p0_policy": bool(config.get("record_sf_p0_policy", False)),
-        "record_sf_p0_regret": bool(config.get("record_sf_p0_regret", False)),
-        "record_fast_ply_value": bool(config.get("record_fast_ply_value", False)),
-        "blindspot_harvest_out_path": str(config.get("blindspot_harvest_out_path", "")),
-        "categorical_blend_frac": float(config.get("categorical_blend_frac", 0.0)),
-        "categorical_search_blend_frac": float(
-            config.get("categorical_search_blend_frac", 0.0)
-        ),
-        "sf_wdl_use_cp_logistic": bool(config.get("sf_wdl_use_cp_logistic", False)),
-        "sf_wdl_cp_slope": float(config.get("sf_wdl_cp_slope", 0.010)),
-        "sf_wdl_cp_draw_width": float(config.get("sf_wdl_cp_draw_width", 60.0)),
-        "opponent_wdl_regret_limit": float(wdl_regret) if float(wdl_regret) >= 0.0 else None,
-        "temperature": float(config.get("temperature", 1.0)),
-        "temperature_decay_start_move": int(config.get("temperature_decay_start_move", 20)),
-        "temperature_decay_moves": int(config.get("temperature_decay_moves", 60)),
-        "temperature_endgame": float(config.get("temperature_endgame", 0.6)),
-        "selfplay_temperature": config.get("selfplay_temperature"),
-        "selfplay_temperature_decay_start_move": config.get("selfplay_temperature_decay_start_move"),
-        "selfplay_temperature_decay_moves": config.get("selfplay_temperature_decay_moves"),
-        "selfplay_temperature_endgame": config.get("selfplay_temperature_endgame"),
-        "timeout_adjudication_threshold": float(config.get("timeout_adjudication_threshold", 0.90)),
-  # Syzygy. `path` must be a filesystem location visible to workers
-  # (same layout on all nodes in a multi-node deployment). Server
-  # operators can edit these directly in publish/manifest.json to
-  # change endgame adjudication behavior without restarting anyone.
-        "syzygy_path": config.get("syzygy_path") or None,
-        "stockfish_syzygy_path": config.get("stockfish_syzygy_path") or None,
-        "syzygy_rescore_policy": bool(config.get("syzygy_rescore_policy", False)),
-        "syzygy_adjudicate": bool(config.get("syzygy_adjudicate", False)),
-        "syzygy_adjudicate_fraction": float(config.get("syzygy_adjudicate_fraction", 1.0)),
-        "syzygy_in_search": bool(config.get("syzygy_in_search", False)),
-        "pause_selfplay": bool(pause_selfplay),
-        "pause_reason": str(pause_reason),
-    }
+    recommended_worker = build_recommended_worker(
+        config=config,
+        model_cfg=model_cfg,
+        sf_nodes=sf_nodes,
+        mcts_simulations=mcts_simulations,
+        wdl_regret=wdl_regret,
+        pause_selfplay=pause_selfplay,
+        pause_reason=pause_reason,
+    )
 
     manifest: dict[str, object] = {
         "server_time_unix": int(time.time()),
