@@ -851,16 +851,27 @@ overfitting. That is an acceptable trade — a stable ruler that drifts slowly a
 visibly beats one that is silently reshuffled every 13 iterations — but it means
 the gap's ABSOLUTE value stops being interpretable while its TREND stays useful.
 
-**ONE deciding yardstick.** Over the 30 iterations after the restart, the holdout
-row count reported alongside `test_policy_loss_selfplay` must stay pinned at
-2000 with an unchanging identity, and `test_*` must become a monotone-ish series
-rather than the sawtooth it is now:
-`PYTHONPATH=. python3 scripts/loop_health.py --last 30`
-plus `train_policy_loss_selfplay` vs `test_policy_loss_selfplay` from
-`result.json`.
+**ONE deciding yardstick.** `result.json` already emits **`holdout_frozen`** and
+**`holdout_generation`** per iteration — a direct read of the thing this entry
+changes, better than the row-count proxy first written here. `test_size` was
+already pinned at 2000 BEFORE the change (capacity, not identity), so **row
+count alone cannot distinguish a frozen set from a churning one** — it read 2000
+throughout the broken era. Use the flag:
 
-**SUCCESS:** holdout size pinned at 2000 across all 30 iters AND the iter-to-iter
-absolute change in `test_policy_loss_selfplay` drops below its pre-freeze median
+`PYTHONPATH=. python3 -c "import json; rows=[json.loads(l) for l in
+open('runs/pbt2_small/tune/<trial>/result.json') if l.strip()];
+print([(r['training_iteration'], r.get('holdout_frozen'),
+r.get('holdout_generation')) for r in rows[-30:]])"`
+
+plus `train_policy_loss_selfplay` vs `test_policy_loss_selfplay`.
+
+Pre-change baseline for the comparison (iters 36–41, all `holdout_frozen=0`,
+`holdout_generation=0`): `test_policy_loss_selfplay` 1.601, 1.581, 1.640, 1.580,
+1.667, 1.602 — mean absolute iter-to-iter change **0.043**.
+
+**SUCCESS:** `holdout_frozen == 1` and `holdout_generation` unchanged across all
+30 iters, AND the mean absolute iter-to-iter change in
+`test_policy_loss_selfplay` drops below the **0.043** pre-freeze baseline above
 (the sawtooth was ruler churn, not learning).
 
 **KILL:** the train/holdout gap widens by >0.5 nats within 30 iters — that is the
