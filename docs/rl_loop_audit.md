@@ -179,7 +179,7 @@ from `main` by design. As of 2026-07-26 the deltas are:
 | C7 | stage 1 (regret) descends toward `stage_end` once winrate exceeds target | `wdl_regret`, `pid_raw_winrate`, `pid_regret_delta` per iteration | **VERIFIED-WITH-CONTEXT 2026-07-26 (an earlier FAILED verdict was retracted — the controller is behaving correctly)**. Sequence: regret opened 0.0393; **raw winrate at iters 1–3 was 0.41 / 0.36 / 0.41 — the restarted net was genuinely LOSING** — so the airbag fired at iter 2 exactly as specified (`raw_wr + 1.5·se = 0.364 + 0.047 = 0.411 < 0.45` floor, n=250) and eased regret to 0.0896. Raw winrate then recovered past target; `pid_ema_winrate` 0.513 → **0.589** (EMA lag is why tightening was delayed), and regret has been descending since iter 32 (Δ −0.0003, −0.0013, −0.0015). **The apparent 32-iteration "stall" was a correct airbag rescue plus EMA lag, not a defect.** NOTE the airbag reads `raw_wr`, NOT `ema_wr` — comparing the EMA against the floor gives the wrong answer |
 | C8 | *(understanding, not a defect)* stage 2 is gated on MODEL STRENGTH, not on the controller | — | The controller targets winrate 0.50, so it stops tightening once the net holds 50%. Regret only reaches `stage_end` 0.0075 if the net can hold 50% against near-full-strength SF. **"The nodes lever never fires" is therefore a measure of the net not being strong enough yet, not a bug to fix.** Do not "fix" it by lowering `stage_end` without deciding that a nodes-based ladder is wanted at a weaker regret level |
 | C6 | toggling a `_RECO_RESTART_KEYS` key does not silently distort the data mix | worker log `restarting selfplay session [restart_keys=...]`, then per-iteration mix for ~6 iters | **FAILED 2026-07-26** — `opening_fen_dole_per_iter` is restart-gated; writing it abandoned all in-flight games, driving selfplay share to **1.00 for 4 iterations** (configured 0.50) and blinding the PID. Recovers by ~iter +6. **Any config toggle on a restart key contaminates the following ~6 iterations — start readouts after it, and never treat such a toggle as a free A/B** |
-| C5 | search converts sims into strength at the expected rate | sims-1 vs sims-32 paired arena vs a FIXED banked ref | **FAILED 2026-07-26** — gap widens 91.5 → 251.9 Elo; boot512 control queued |
+| C5 | search converts sims into strength at the expected rate | sims-1 vs sims-32 paired arena vs a FIXED banked ref | **RESOLVED 2026-07-26 — the deficit was LR DAMAGE, not the architecture.** The damaged 512 net widened 91.5 -> 251.9 Elo across the two rungs (~160 Elo of lost search conversion). The control settles it: **boot512, the undamaged donor, does not widen at all** — sims-1 **-41.9** [-95.3, +9.6] vs sims-32 **-43.7** [-88.1, -0.6], ~2 Elo apart with heavily overlapping CIs, 200 paired games per rung, run with training STOPPED so neither rung was contention-contaminated. Search converts sims to strength normally on this architecture; what failed to convert was a net whose matrix group had been run at 6e-3. **Retires the alternative branch:** the value head's ranking is NOT the emergency priority. Caveat: boot512 still sits ~43 Elo below the banked 46M at BOTH budgets, so the donor was behind its predecessor — judge the climb on the `vs_boot512` ratchet series, not on this ladder |
 
 ## D. SF labelling
 
@@ -187,7 +187,7 @@ from `main` by design. As of 2026-07-26 the deltas are:
 |---|---|---|---|
 | D1 | label depth is the live PID budget, not the yaml floor | `_eff_sf_nodes`; `opponent_sf_nodes` in `progress.csv` | **VERIFIED 2026-07-26** — 698289, `sf_label_nodes_cap: 0` |
 | D2 | label coverage: rows that should have `sf_wdl` do | `replay_has_sf_wdl_frac` | **VERIFIED 2026-07-26** — 0.947–0.999 over the last 5 iters |
-| D3 | fast plies get 0.25x scale by design, not by accident | `_eff_sf_nodes` fast_scale path | **CODE-ONLY** (intended, see `eff_sf_nodes_fast_ply_scale`) |
+| D3 | fast plies get 0.25x scale by design, not by accident | `sf_fast_ply_node_scale`; `stockfish_turn.py:236-239` | **VERIFIED 2026-07-26** — 0.25 resolved from the code default (no yaml override), applied only when the ply is neither a full-node ply nor an `sf_refute` full move. Note it affects only SF's in-play move choice: with `record_fast_ply_value: false`, fast-ply rows never reach training at all (see E1) |
 | D4 | vet ruler ≥ label ruler (no gate shallower than the labels) | `harvest_gate_step.py --sf-nodes` default | **VERIFIED 2026-07-26** — raised 300k → 2M |
 | D5 | *(decision, not a check)* the SF teacher's cost is ACCEPTED, do not re-propose cutting it | `ps` by process class | **DECIDED 2026-07-26 — keep the strong teacher.** Measured: Stockfish label generation holds **27.1 of 32 cores** (32 procs at the full ~698k PID budget, `sf_label_nodes_cap: 0`), i.e. ~85% of the machine; load average sits at ~48/32. Capping labels at e.g. 200k would free ~19 cores. **Rejected by the operator:** the value head is SF-label-bound and the WDL blend's SF component is load-bearing (zeroing it crashed winrate 0.64 → 0.40), so cheapening the teacher trades away the thing the labels exist to improve. **Consequence to design around, not fix:** this box is permanently CPU-saturated during training. Anything else that needs CPU must be scheduled around it or made batch-efficient — which is why arena concurrency, not sim count, is the lever that matters (see L1) |
 
@@ -195,18 +195,18 @@ from `main` by design. As of 2026-07-26 the deltas are:
 
 | # | invariant | instrument | status |
 |---|---|---|---|
-| E1 | playout-capped rows are excluded from the POLICY corpus | `finalize.py:892` | **CODE-ONLY** |
+| E1 | playout-capped rows are excluded from the POLICY corpus | `replay_has_policy_frac` in `result.json` | **VERIFIED 2026-07-26 (measured, was CODE-ONLY)** — `replay_has_policy_frac = 1.0` on each of the last 10 live iterations, i.e. zero value-only rows in the window, consistent with `record_fast_ply_value: false`. Same pass confirmed `replay_pmass_gap_share = 0.0`, so the KILLED #104 gap-priority knob is genuinely inert |
 | E2 | seed labels attach to the seed position (offset 0) | join `content_seed_id` to first labelled ply | **VERIFIED 2026-07-26** — offset 0 for 100% of 669 cohort games |
-| E3 | `policy_sf` targets are the OPPONENT reply, POV-flipped | `sf_policy_target_is_opponent_reply` | **CODE-ONLY** (documented, load-bearing) |
+| E3 | `policy_sf` targets are the OPPONENT reply, POV-flipped | `sf_move_index` / `sf_policy_target` vs `sf_legal_mask` and `legal_mask` in live shards | **VERIFIED 2026-07-26 (measured, was CODE-ONLY) — decisive.** Over 6,069 live rows carrying `has_sf_move` + `has_sf_legal_mask`: `sf_move_index` is legal under `sf_legal_mask` (the NEXT position) in **100.00%** of rows but under `legal_mask` (THIS position) in only **8.47%** — coincidental overlap, as expected across a ply. The two masks are **never** identical (0.00%). `sf_policy_target` puts **1.0000 of its mass (min 1.0000)** inside `sf_legal_mask` vs 0.0891 inside `legal_mask`. The head is unambiguously trained on the opponent's reply, which is why upweighting `w_sf_move` hurt |
 | E4 | no all-zero / malformed policy or WDL rows reach the buffer | `PYTHONPATH=. python3 scripts/audit_row_integrity.py --shards 12` | **VERIFIED 2026-07-26** — 18,273 rows over the 10 newest live shards, CLEAN. Checks: `x` all-zero/NaN, policy all-zero/NaN/negative/sum≠1, `wdl_target` out of range, `sf_wdl` NaN or outside [0,1] |
 
 ## F. Upload → inbox
 
 | # | invariant | instrument | status |
 |---|---|---|---|
-| F1 | `._tmp_` shards are never ingested | `_iter_shard_paths_nested` filter | **CODE-ONLY** (fixed historically) |
+| F1 | `._tmp_` shards are never ingested | `is_tmp_shard_name` unit cases + `iter_shard_paths` over the live dir | **VERIFIED 2026-07-26 (measured, was CODE-ONLY)** — filter correct on all probes including the near-misses `atmp_shard.zarr` and `shard_tmp_x.zarr` (both correctly INGESTED; the rule is a prefix match on `tmp_`/`._tmp_`, matching the writer in `shard.py:1310`). Live dir: 820 entries, 0 tmp-named, 820 selected, **0 leaked** |
 | F2 | un-ingested shards survive a restart | trace `replay_shard_dir` vs `selfplay_shards` durability | **VERIFIED 2026-07-26** — replay dir is durable via `tune_replay_root_override`; `selfplay_shards/` on `/tmp` is a derived export with no reader. NOT a data-loss path |
-| F3 | shard load failures are surfaced, not silently dropped | `test_replay_shard_load_accounting` | **CODE-ONLY** (PR #11) |
+| F3 | shard load failures are surfaced, not silently dropped | `[disk_buf] WARNING` in the training log + `tests/test_replay_shard_load_accounting.py` | **VERIFIED 2026-07-26 (measured, was CODE-ONLY)** — **0** occurrences across the full run log, and the instrument is proven able to fire: 18 tests pass covering tracked-shard failure counted AND reported, the untracked-shard benign trim race, FileNotFound still counting as a fault, and the warn throttle. A zero here is evidence because the alarm is tested, not merely present |
 
 ## G. Ingest → replay + holdout split
 
@@ -223,7 +223,7 @@ from `main` by design. As of 2026-07-26 the deltas are:
 |---|---|---|---|
 | H1 | realized views per ingested position matches config | `train_views_actual` | **VERIFIED 2026-07-26** — 2.52 vs 2.5 |
 | H2 | priority/surprise weighting is actually non-uniform and safe | load `priority` from the newest shards; measure CV + mass concentration | **VERIFIED 2026-07-26** — CV **0.94**, 14,297 distinct values / 14,303 rows; top 10% of rows carry **31.5%** of priority mass (uniform = 10%), top 25% carry 57.1%. Sampling is 50% uniform / 50% priority (`surprise_mix`). `replay_sf_gap_priority_weight: 0` (experiment #104 killed), so the spread comes from `diff_focus` — which is therefore **not** inert as sampling pressure, whatever its Elo effect. Edge cases safe: 3 rows (0.021%) carry NEGATIVE priority, clamped by `np.maximum(pri, 0.0)` before use, with `nan_to_num` and a uniform fallback when the sum is non-positive |
-| H3 | shuffle refresh does not drop shards silently | PR #11 accounting | **CODE-ONLY** |
+| H3 | shuffle refresh does not drop shards silently | same instrument as F3 (`_refresh_failed_total` / `_refresh_vanished_total`) | **VERIFIED 2026-07-26 (measured, was CODE-ONLY)** — the counter split distinguishes a genuine tracked-shard fault from the benign vanish race, both under the prefetch lock so concurrent sampling/prefetch threads cannot lose counts. Zero of either in production |
 
 ## I. Training step
 
@@ -231,9 +231,9 @@ from `main` by design. As of 2026-07-26 the deltas are:
 |---|---|---|---|
 | I1 | realized LR == configured, including after warm start | `param_group_lrs` / `progress.csv` `lr` | **VERIFIED 2026-07-26** — 3e-5; warm-start guard silent |
 | I2 | the warm-start LR guard fires on a regime mismatch | `guard_warm_start_lr` | **VERIFIED 2026-07-26** — it caught the `pb2_bounds_lr` override |
-| I3 | every head receives gradient (none silently dead) | per-head grad-norm probe | **OPEN** — `scripts/probe_head_grad_share.py` exists, unrun |
+| I3 | every head receives gradient (none silently dead) | `scripts/probe_head_grad_share.py` | **VERIFIED 2026-07-26 (measured, was the last OPEN item)** — no dead heads: all 11 loss components produce non-zero trunk gradient. Weighted trunk-grad share: POLICY (policy_ce+soft+future+sf_move) **65.09%**, VALUE (blended_wdl+sf_eval+categorical) **15.51%**, OTHER (volatility+sf_volatility+moves_left) **0.02%**; headline policy_ce:blended_wdl_ce = **5.477x**. `volatility`/`sf_volatility`/`moves_left` are near-inert at ~0.01% each but genuinely non-zero, so inert-by-weight, not dead. **Reporting caveat — do not quote 15.51% as 'value' without it:** the three groups sum to 80.62%, because `wdl_ce` (19.38%) is in none of them. If `wdl_ce` counts as value then value is ~34.9%, not 15.5%. Fix the probe's grouping before using either number to set `w_wdl` ([[value_head_trunk_gradient_share]]) |
 | I4 | train/holdout gap is not widening | `policy_loss` vs `test_policy_loss` | **VERIFIED** (views readout: 0.13–0.18 flat) — but see G4, the holdout ruler moves |
-| I5 | WDL blend's SF component is non-zero | loss weights in effective config | **CODE-ONLY** — load-bearing, removing it crashed winrate 0.64→0.40 |
+| I5 | WDL blend's SF component is non-zero | live yaml + trial realized params | **VERIFIED 2026-07-26 (measured, was CODE-ONLY)** — `sf_wdl_frac 0.50`, `sf_wdl_frac_floor 0.45`, `search_wdl_frac 0.20`, `w_wdl 1.0`. Live yaml and realized params agree, so the launch-config staleness trap (see J5) does not apply here. The load-bearing SF component is intact and floored |
 
 ## J. Checkpoint + best-model
 
@@ -242,14 +242,16 @@ from `main` by design. As of 2026-07-26 the deltas are:
 | J1 | best-model never compares two different rulers | `best.json` `source` field | **VERIFIED** (PR #244) |
 | J2 | best-model's ruler is itself stable | see G4 | **FAILED 2026-07-26** — inherited from G4 |
 | J3 | a resume never overwrites live checkpoints | checkpoint-index ratchet | **VERIFIED** (PR #241) |
-| J4 | `salvage-export` captures CURRENT state, not best-metric | requires `--metric training_iteration` | **CODE-ONLY** (guard PR #130) |
+| J4 | `salvage-export` captures CURRENT state, not best-metric | the export's own printed iter vs live `result.json` | **VERIFIED 2026-07-26 (measured, was CODE-ONLY)** — a real pre-restart export with `--metric training_iteration` printed `iter=41 ckpt=checkpoint_000040 (newest on disk: checkpoint_000040)` while live `result.json` read iter 41 on a 4.1-min-old row. Guard satisfied end to end on a pool that is now a live revert point |
+| J5 | the source you read a "realized" config from is actually realized | `params.json` vs the live yaml vs `audit_realized_config.py` | **FAILED 2026-07-26 — `params.json` is the LAUNCH config, not the realized one.** Measured on the live trial: `params.json` reported `opening_fen_dole_per_iter = 1` and `opening_fen_list_path = ...retire_307.txt` while the live yaml — which is re-read every iteration and live-reloaded — held `0` and `retire_35`. Ray writes `params.json` once at trial construction, so for every live-reloadable key it is a snapshot of history wearing the name of current state. **This is the same bug class as the whole audit: a number that does not mean what its name says.** Rule: for a live-reloadable key read the live yaml (or `audit_realized_config.py`); `params.json` is only authoritative for keys fixed at construction. `scripts/loop_health.py` was fixed to consult the live yaml for exactly this reason |
+| J6 | a config change you deployed is actually in effect | the startup banner / first new result row vs the yaml | **FAILED-THEN-FIXED 2026-07-26.** Setting `freeze_holdout_at: 0 -> 2000` in the live yaml and restarting **silently no-opped**: the resume restored the trial's config from Ray's `experiment_state`, and the startup banner still printed `0`. The ledger's PBT-pinned procedure covers this, but it is filed under *PB2-searched* keys and `freeze_holdout_at` is not one — **the resume preserves the whole trial config, so ANY construction-time key is exposed**, not just searched ones. Fix: atomic, parse-verified edit of the newest-BY-FILENAME `experiment_state`, patching `/config` and `/_Trial__unresolved_config` only and leaving `/last_result` alone (that is history, not state). Re-verified: banner reads 2000. **The generalisable rule is step 5 of that procedure — verify the deployed value on the first new row.** It is the only thing standing between a pre-registered experiment and a verdict read off a change that never happened |
 
 ## K. Publish → worker freshness
 
 | # | invariant | instrument | status |
 |---|---|---|---|
 | K1 | workers pick up new weights (no frozen `model_sha`) | `distributed_stale_games`; worker `model_sha` | **VERIFIED 2026-07-26** — stale 0/20 iters |
-| K2 | model freshness is not bound to thread 0 | `worker_model_freshness_thread0_trap` | **CODE-ONLY** (fixed) |
+| K2 | model freshness is not bound to thread 0 | `model tag switch sha=` per worker log | **VERIFIED 2026-07-26 (measured, was CODE-ONLY)** — all 4 workers logged 35-37 tag switches over 41 iterations and **all four end on the same sha** (`007c0d5b`), following the same sequence with only occasional single-sha skips (a worker polling after two publishes). No worker is pinned. This also independently refutes the loop_health alert that claimed frozen workers at 74-78% stale (see L6 / the alert fix) |
 | K3 | AOT broker serves the current weights (externalized + rebound) | `/proc` maps; broker pos/s | **CODE-ONLY** — stale `.pt2` files are expected and fine |
 
 ## L. Evaluation / rulers
@@ -270,23 +272,35 @@ from `main` by design. As of 2026-07-26 the deltas are:
 0. **C6 readout hygiene (act on this first, it invalidates other reads)** — the
    no-seed readout must start at **iter 33**, not 28. Iters 27–32 are a
    restart-induced mix transient.
-1. **C5 boot512 control ladder** — decides whether the search-conversion deficit
-   is LR damage (restart fixes it) or structural (value-head *ranking* becomes
-   the priority target). Queued: `scratchpad/swap_gate/boot512_ladder.sh`.
+1. ~~C5 boot512 control ladder~~ **DONE 2026-07-26 — LR damage, not structural.**
+   boot512 does not widen across the sims ladder (−41.9 → −43.7, ~2 Elo) where
+   the damaged net widened ~160. The restart is the right fix and value-head
+   *ranking* is retired as the emergency priority.
 1b. ~~C7 stage 1 stalled~~ **RESOLVED — no action.** The airbag fired correctly
    on a genuinely losing restart (raw winrate 0.36) and regret has been
    descending since iter 32 as the EMA caught up. Stage 2 is strength-gated
    (C8), not blocked. **Watch, don't touch:** confirm regret keeps falling over
    iters 35–60. If it plateaus while raw winrate sits above 0.50, revisit.
-2. **G4 / J2 holdout ruler** — `freeze_holdout_at: 2000` + persist the frozen set
-   to `_durable_trial_dir`. Deferred until the no-seed readout closes (it returns
-   the 2% holdout split to training, so it is data-affecting).
+2. **G4 / J2 holdout ruler** — `freeze_holdout_at: 2000` **SHIPPED 2026-07-26**
+   (verified applied: the yaml edit alone silently no-opped on resume; it needed
+   the experiment_state patch, see J6). Still owed: **persist the frozen set** to
+   `_durable_trial_dir`, so the ruler survives a restart instead of re-freezing.
+   Read the pre-committed yardstick after 30 iterations.
 3. **E4 row-integrity live check** — two poisoning paths were found and fixed
    with no standing assertion that a third is not open.
-4. **I3 per-head gradient share** — `scripts/probe_head_grad_share.py` unrun.
+4. ~~I3 per-head gradient share~~ **DONE 2026-07-26 — no dead heads.** Left a
+   follow-up: the probe's group shares sum to 80.62% because `wdl_ce` is in no
+   group, so "value = 15.51%" is not usable for setting `w_wdl` until the
+   grouping is fixed.
 5. **C3 / C4 PID health** — re-read now that seeding is off and the mix changed.
-6. **A4 / A5 config divergence** — published-reco diff, and reconcile the live
-   yaml against `main` at the next restart.
+6. **A4 / A5 config divergence** — A5 **DONE 2026-07-26**: the live yaml was
+   reconciled against `main` in the audit restart (merge auto-resolved the yaml
+   cleanly; all live values verified preserved afterwards — lr 3e-5, dole 0, the
+   rotating FEN list at its merge-time value, and `gumbel_c_scale: 0.1` arriving
+   from #249 as a no-op). A4 published-reco diff still owed.
+7. **K3 AOT broker weight freshness** — the last measurable CODE-ONLY item; needs
+   the broker up, so it is a live-run check (`/proc` maps per
+   [[aot_broker_live_deploy]]). L5 is documentation-only and stays CODE-ONLY.
 
 ## 5. Cadence
 
