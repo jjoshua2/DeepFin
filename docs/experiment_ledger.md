@@ -833,6 +833,52 @@ restart (the buffer is rebuilt empty), so a truly fixed cross-restart ruler
 additionally needs the frozen set persisted to the durable trial dir
 (`_durable_trial_dir`, PR #245) — at 2000 rows that is cheap.
 
+### CONFOUND NOTICE (2026-07-26 evening) — do not read iters 42–48 as a training signal
+
+Two independent contaminations overlap this stretch. Both are ours. Recording
+them now so nobody later reads a throughput or loss regression off these rows.
+
+**1. The audit itself is the load (method rule 11, on ourselves).** Six analysis
+subagents ran concurrently against a box that is already CPU-saturated by the SF
+teacher (D5: Stockfish holds ~27 of 32 cores). Measured at 18:54: **load average
+66** against the ~48 that D5 records as normal, with three probe processes at
+348% / 156% / 131% CPU. Iteration wall time over the same window:
+
+| iter | wall delta | matching+stale games | games/h |
+|---|---|---|---|
+| 41 (clean) | 532s | 454 | ~3070 |
+| 43 | 776s | 1675 (backlog drain) | — |
+| 44 | **2261s** | 551 | **~877** |
+
+That is a ~3.5x throughput drop, and the honest attribution is **the audit
+probes, not the loop**. I priced the daily ratchet's observer cost in L6 and then
+did exactly the same thing at larger scale a few hours later. The cost is bounded
+(agents are short-lived, ~2 iterations) and far below the ratchet's 23, but it is
+the same mistake and it belongs in the record.
+
+**Do not attribute iter 44's slowdown to the C13 thread-death finding without
+re-measuring on a quiet box.** C13 is a real mechanism (28–29 of 32 selfplay
+threads die in a startup race and never respawn) and it is a *candidate*
+explanation, but it was equally present in the fast iterations 40–41, so the
+timing does not fit it on its own. Re-measure games/h after the agents are done.
+
+**2. The replay window is continuously changing composition (audit G8).** 520 of
+820 shards are symlinks into the 07-11 salvage pool, content 15.5–18.6 days old,
+draining at ~23.6 shards/h. **This is not a step change at the end — the mix
+shifts continuously over ~22h**, from 63% stale toward 0%. Any readout taken in
+this period sits on a moving training distribution.
+
+**Consequence for the freeze-holdout yardstick pre-registered above.** At the
+current cadence 30 iterations is ~19–21h, so its readout window **spans most of
+the drain**. That is a real confound on a yardstick pre-registered the same day.
+Options, to be chosen before the clock starts: (a) start the count after the
+drain completes (~2026-07-27 17:00) and accept the delay, or (b) start it when
+`holdout_frozen` first reads 1 and record the drain crossing explicitly in the
+verdict. **(a) is the better science and (b) is the honest fallback — but
+whichever is picked must be written down before the readout, not after.**
+
+---
+
 ### PRE-REGISTERED (not yet live) — feature dropout has no `1/(1-p)` rescale, so train and play see different feature magnitudes (audit M8, 2026-07-26)
 
 **What was found.** `trainer._apply_feature_group_dropout` zeroes each of 6
