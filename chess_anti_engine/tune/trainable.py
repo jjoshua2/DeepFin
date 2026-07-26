@@ -361,6 +361,23 @@ def _maybe_reset_holdout_on_drift(
     return False, holdout_generation + 1
 
 
+def _maybe_freeze_holdout(
+    *, holdout_buf, tc: TrialConfig, holdout_frozen: bool,
+) -> bool:
+    """Freeze the holdout once it holds `freeze_holdout_at` rows.
+
+    Freezing is one-way within a process, and now across processes too: the
+    flag rides in the checkpoint. A holdout restored at or above the threshold
+    therefore freezes on its first iteration back, which is the point --
+    before the holdout was persisted this test could only ever fire against a
+    fresh post-restart sample, so `freeze_holdout_at` re-froze a DIFFERENT
+    2000 rows after every restart and the ruler moved anyway.
+    """
+    if holdout_frozen or tc.freeze_holdout_at <= 0:
+        return holdout_frozen
+    return len(holdout_buf) >= tc.freeze_holdout_at
+
+
 def _log_pid_iter_summary(
     *, iteration_idx: int, pid_result, sp,
 ) -> None:
@@ -559,8 +576,11 @@ def train_trial(config: dict):
 
     _maybe_load_bootstrap(tc=tc, trainer=trainer, device=device, ckpt=ckpt, restore=restore)
 
-    holdout_frozen = False
-    holdout_generation = 0
+  # Both settled by _init_replay_buffers against what the holdout sidecar
+  # actually restored — NOT reset per process, which is what made every
+  # restart silently swap the ruler `test_loss` is read against.
+    holdout_frozen = bool(restore.holdout_frozen)
+    holdout_generation = int(restore.holdout_generation)
 
     _assert_distributed_configured(tc)
     sf = _init_local_stockfish(tc)
@@ -736,8 +756,9 @@ def train_trial(config: dict):
             if sp.should_retry:
                 continue
 
-            if (not holdout_frozen) and tc.freeze_holdout_at > 0 and len(holdout_buf) >= tc.freeze_holdout_at:
-                holdout_frozen = True
+            holdout_frozen = _maybe_freeze_holdout(
+                holdout_buf=holdout_buf, tc=tc, holdout_frozen=holdout_frozen,
+            )
 
             drift = _compute_drift_metrics(
                 buf=buf, holdout_buf=holdout_buf,
@@ -783,7 +804,7 @@ def train_trial(config: dict):
                 eval_sf=eval_sf,
             )
 
-  # Flush replay + save checkpoint (model+optimizer+step + PID state).
+  # Flush replay + save checkpoint (model+optimizer+step + PID state + holdout).
             checkpoint = _save_trial_checkpoint(
                 trainer=trainer,
                 buf=buf,
@@ -796,6 +817,9 @@ def train_trial(config: dict):
                 restore=restore,
                 iteration_idx=iteration_idx,
                 current_window=current_window,
+                holdout_buf=holdout_buf,
+                holdout_frozen=holdout_frozen,
+                holdout_generation=holdout_generation,
                 Checkpoint=Checkpoint,
             )
 

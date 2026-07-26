@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from chess_anti_engine.replay.shard import iter_shard_paths
+from chess_anti_engine.tune._utils import SIDECAR_HOLDOUT_ROWS
 from chess_anti_engine.tune.replay_exchange import _read_jsonl_rows
 
 # How far (in checkpoint-dir index units) the newest result row may lag the
@@ -437,7 +438,11 @@ def _export_one_seed(
     seed_dir = seeds_dir / f"slot_{slot:03d}"
     seed_dir.mkdir(parents=True, exist_ok=True)
 
-    for fn in ("trainer.pt", "pid_state.json", "trial_meta.json", "rng_state.json"):
+  # SIDECAR_HOLDOUT_ROWS carries the holdout ruler so a salvage restart
+  # resumes measuring `test_loss` against the same rows instead of a fresh
+  # post-restart sample; trial_meta.json carries its frozen/generation flags.
+    for fn in ("trainer.pt", "pid_state.json", "trial_meta.json", "rng_state.json",
+               SIDECAR_HOLDOUT_ROWS):
         src = plan.ckpt_dir / fn
         if src.exists():
             shutil.copy2(str(src), str(seed_dir / fn))

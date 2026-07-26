@@ -422,8 +422,9 @@ def test_a_restore_object_without_the_flag_is_treated_as_an_ordinary_resume(
 
 
 def test_best_json_records_the_holdout_generation(tmp_path: Path) -> None:
-    """Recorded for auditability, NOT compared on -- the counter resets to 0 at
-    every process start, so a comparison would force a spurious handover."""
+    """Which holdout the recorded loss was measured on. Now that the counter
+    is durable (it rides in the checkpoint's trial_meta.json), this field is
+    the ruler identity the comparison below keys off."""
     _update(
         tmp_path,
         test_metrics=_metrics(5.14), train_metrics=_metrics(4.88),
@@ -431,3 +432,79 @@ def test_best_json_records_the_holdout_generation(tmp_path: Path) -> None:
     )
 
     assert json.loads((tmp_path / "best.json").read_text())["holdout_generation"] == 3
+
+
+def _record(tmp_path: Path, **fields) -> None:
+    """An existing best.json, as a prior iteration would have left it."""
+    (tmp_path / "best.json").write_text(
+        json.dumps({"best_loss": 5.1409, "source": "test_loss", **fields}), encoding="utf-8",
+    )
+
+
+def test_a_new_holdout_generation_forces_a_handover(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A drift reset -- or a restart that could not restore the sidecar --
+    rebuilds the holdout from a different sample. Two `test_loss` values from
+    different generations are different rulers for the same reason train and
+    holdout loss are, so the record is adopted, not beaten: 5.2481 is WORSE
+    than the 5.1409 on record and must still take over."""
+    _record(tmp_path, holdout_generation=3)
+
+    (best_loss, source), trainer = _update(
+        tmp_path,
+        test_metrics=_metrics(5.2481), train_metrics=_metrics(4.88),
+        best_loss=5.1409, best_source="test_loss", holdout_generation=4,
+    )
+
+    assert (best_loss, source) == (5.2481, "test_loss")
+    assert len(trainer.exports) == 1
+    assert "generation" in capsys.readouterr().out
+
+
+def test_the_same_generation_is_an_ordinary_comparison(tmp_path: Path) -> None:
+    """The common path -- an ordinary resume restores the holdout AND its
+    generation, so a restart must not trigger a handover. This is what the
+    counter could not be trusted for while it was in-memory only."""
+    _record(tmp_path, holdout_generation=4)
+
+    (best_loss, source), trainer = _update(
+        tmp_path,
+        test_metrics=_metrics(5.2481), train_metrics=_metrics(4.88),
+        best_loss=5.1409, best_source="test_loss", holdout_generation=4,
+    )
+
+    assert (best_loss, source) == (5.1409, "test_loss")
+    assert trainer.exports == []
+
+
+def test_a_record_with_no_generation_is_left_to_the_ordinary_rules(tmp_path: Path) -> None:
+    """A best.json written before the field existed reads as unknown, not as
+    generation 0 -- zero is a real generation, and claiming a match there
+    would suppress the handover exactly when the record is oldest. Unknown
+    means: do not force a handover, just compare as before."""
+    _record(tmp_path)
+
+    (best_loss, source), trainer = _update(
+        tmp_path,
+        test_metrics=_metrics(5.2481), train_metrics=_metrics(4.88),
+        best_loss=5.1409, best_source="test_loss", holdout_generation=4,
+    )
+
+    assert (best_loss, source) == (5.1409, "test_loss")
+    assert trainer.exports == []
+
+
+def test_a_generation_change_cannot_resurrect_a_training_loss_record(tmp_path: Path) -> None:
+    """The generation rule is about two holdout numbers. It must not become a
+    back door for training loss to overwrite a holdout record."""
+    _record(tmp_path, holdout_generation=3)
+
+    (best_loss, source), trainer = _update(
+        tmp_path,
+        test_metrics=None, train_metrics=_metrics(4.8934),
+        best_loss=5.1409, best_source="test_loss", holdout_generation=4,
+    )
+
+    assert (best_loss, source) == (5.1409, "test_loss")
+    assert trainer.exports == []

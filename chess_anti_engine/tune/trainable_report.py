@@ -19,7 +19,9 @@ from chess_anti_engine.tune._utils import (
     SIDECAR_PID_STATE,
     SIDECAR_RNG_STATE,
     SIDECAR_TRIAL_META,
+    load_optional_json,
 )
+from chess_anti_engine.tune.holdout_state import save_holdout_rows
 from chess_anti_engine.tune.trial_config import (
     DriftMetrics,
     PidResult,
@@ -251,12 +253,22 @@ def _save_trial_checkpoint(
     restore: RestoreResult,
     iteration_idx: int,
     current_window: int,
+    holdout_buf,
+    holdout_frozen: bool,
+    holdout_generation: int,
     Checkpoint,
 ):
-    """Flush replay buffer and save a lightweight checkpoint."""
+    """Flush replay buffer and save a lightweight checkpoint.
+
+    The holdout rides along: its rows as a sidecar npz, its two scalars in
+    trial_meta.json. That is what makes `test_loss` comparable across a
+    restart instead of being re-measured against whatever the next few
+    iterations of ingest happen to donate. See ``tune/holdout_state``.
+    """
     buf.flush()
     trainer.save(ckpt_dir / "trainer.pt")
     _write_rng_state_sidecar(ckpt_dir=ckpt_dir, rng=rng)
+    save_holdout_rows(ckpt_dir=ckpt_dir, holdout_buf=holdout_buf)
     try:
         atomic_write_text(
             ckpt_dir / SIDECAR_TRIAL_META,
@@ -273,6 +285,8 @@ def _save_trial_checkpoint(
                 "salvage_origin_dir": str(restore.salvage_origin_dir),
                 "global_iter": int(iteration_idx),
                 "current_window": int(current_window),
+                "holdout_frozen": bool(holdout_frozen),
+                "holdout_generation": int(holdout_generation),
             }, sort_keys=True, indent=2),
         )
     except (OSError, TypeError, ValueError) as exc:
@@ -324,6 +338,19 @@ def _reset_best_on_cross_trial_restore(
     return float("inf"), "train_loss"
 
 
+def _best_record_generation(best_state_path: Path) -> int | None:
+    """Which holdout generation the loss in `best.json` was measured on.
+
+    ``None`` when there is no record, or one written before the field existed
+    -- unknown, not zero. Zero is a real generation (every run starts there),
+    so defaulting to it would claim a match with the current holdout and
+    suppress the handover exactly when the record is oldest.
+    """
+    d = load_optional_json(best_state_path) or {}
+    gen = d.get("holdout_generation")
+    return int(gen) if isinstance(gen, (int, float)) and not isinstance(gen, bool) else None
+
+
 def _update_best_model(
     *,
     trainer,
@@ -369,15 +396,23 @@ def _update_best_model(
     permanently, across restarts -- the record would be unbeatable by any
     finite loss.
 
-    `holdout_generation` is recorded but deliberately NOT compared on.
-    A drift reset (`_maybe_reset_holdout_on_drift`) rebuilds the holdout from a
-    distribution that changed on purpose, so in principle two `test_loss`
-    values from different generations are different rulers too. The counter
-    cannot serve as a ruler identity yet: it is in-memory only, reset to 0 at
-    every process start and never restored, so comparing on it would force a
-    handover on every restart -- reintroducing exactly the per-restart reset
-    that PR #245 removes. Recording it makes the ambiguity auditable now and
-    is what a durable counter would key off later.
+    `holdout_generation` IS now compared on, as a ruler identity. Two
+    `test_loss` values from different generations are different rulers for the
+    same reason train and holdout loss are: a drift reset
+    (`_maybe_reset_holdout_on_drift`) rebuilds the holdout from a distribution
+    that changed on purpose, and a restart that could not restore the sidecar
+    starts from a different sample. A generation change therefore triggers the
+    same handover as a train->holdout change: adopt, don't compare.
+
+    This only became safe once the counter was durable. While it was
+    in-memory-only -- reset to 0 at every process start -- comparing on it
+    would have forced a handover on every restart. It now rides in the
+    checkpoint's trial_meta.json next to the rows themselves
+    (``tune/holdout_state``), so an ordinary resume keeps both the ruler and
+    its identity, and the handover fires only when the ruler really changed.
+    An older `best.json` with no recorded generation reads as unknown and is
+    left to the ordinary rules -- the conservative direction, matching how a
+    missing `source` is treated.
 
     `eval_source_iter` records WHICH model the holdout number describes. With
     `distributed_async_test_eval` (production), the holdout result collected
@@ -404,7 +439,23 @@ def _update_best_model(
         )
         return best_loss, best_source
 
-    if cur_source == best_source:
+    record_generation = _best_record_generation(best_state_path)
+    stale_ruler = (
+        cur_source == "test_loss"
+        and best_source == "test_loss"
+        and record_generation is not None
+        and record_generation != int(holdout_generation)
+    )
+    if stale_ruler:
+        adopt = True
+        print(
+            f"[trial] best-model ruler handover: the record {best_loss:.4f} was "
+            f"measured on holdout generation {record_generation}, the current "
+            f"holdout is generation {holdout_generation}; adopting "
+            f"{cur_loss:.4f} rather than comparing across rulers",
+            flush=True,
+        )
+    elif cur_source == best_source:
         adopt = cur_loss < best_loss - 1e-12
     elif cur_source == "test_loss":
         adopt = True
@@ -830,11 +881,23 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
 
 
 def _test_and_drift_dict(
-    *, tr: TrainingResult, drift: DriftMetrics,
-    holdout_buf_size: int, holdout_frozen: bool, holdout_generation: int,
+    *, tc: TrialConfig, tr: TrainingResult, drift: DriftMetrics,
+    holdout_frozen: bool, holdout_generation: int,
 ) -> dict:
     """Holdout-eval metrics + data-drift telemetry. Pre-seed test_iter so Ray
-    Tune locks the column on row 1 (else CSV consumers find it missing)."""
+    Tune locks the column on row 1 (else CSV consumers find it missing).
+
+    `test_size` is the number of rows the eval actually DREW --
+    ``test_steps * batch_size``, sampled WITH REPLACEMENT. It used to be the
+    holdout buffer's size, which reads like an evaluated-row count and is not
+    one: production draws 5 x 512 = 2560 rows from a buffer capped at 2000, so
+    the name promised a set size and delivered a different, smaller number.
+    The buffer size is still emitted, under the name that means it --
+    `test_replay`, which is what `audit_realized_config.py` already reads. No
+    column is added or removed: Ray's CSV logger fixes the header on row 1 and
+    a resume appends without re-heading, so a schema change here would
+    misalign every post-restart segment.
+    """
     test_dict: dict = {
         "holdout_frozen": int(holdout_frozen),
         "holdout_generation": int(holdout_generation),
@@ -853,7 +916,7 @@ def _test_and_drift_dict(
     if tr.test_metrics is not None:
         tm = tr.test_metrics
         test_dict.update({
-            "test_size": int(holdout_buf_size),
+            "test_size": max(0, int(tc.test_steps)) * max(0, int(tc.batch_size)),
             "test_iter": int(tr.test_metrics_source_iter),
             "test_loss": tm.loss,
             "test_policy_loss": tm.policy_loss,
@@ -903,7 +966,7 @@ def _build_report_dict(
 ) -> dict:
     """Assemble the per-iteration report dict for Ray Tune."""
     test_dict = _test_and_drift_dict(
-        tr=tr, drift=drift, holdout_buf_size=holdout_buf_size,
+        tc=tc, tr=tr, drift=drift,
         holdout_frozen=holdout_frozen, holdout_generation=holdout_generation,
     )
     train_metrics_dict = _train_metrics_dict(tr.metrics)
