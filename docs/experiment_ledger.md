@@ -631,6 +631,75 @@ confounded; the availability yardsticks are read independently.
 `test_slot_broker_zeroes_outputs_when_model_unavailable`, which asserted the
 buggy behaviour with no stated rationale and was deliberately removed.
 
+### RESTART (pre-registered, STAGED — not yet launched) — boot512 at the donor's own LR (2026-07-26)
+
+**Hypothesis.** The 512×16 collapse was caused by the warm-start LR jump, not
+by the RL loop. Restarting from **boot512** (the undamaged donor) at **`lr`
+3e-5** (the donor's converged regime, and the LR under which this net
+demonstrably GAINED +303 Elo in iters 74→148) should produce a net that
+improves on boot512 rather than falling below it.
+
+**Why boot512 and not iter 346.** The ladder shows recovery STALLED: −494
+(iter 74) → −190.8 (iter 148) → −193.2 (iter 346), the last two with fully
+overlapping CIs. ~200 iterations at the corrected LR did not climb further, so
+the damage is partly persistent — iter 346 is a worse basin, 193 Elo below
+boot512, and continuing from it means starting from a trunk that has already
+shown it cannot recover the gap on its own.
+
+**Changes in this restart (staged for review, nothing launched):**
+1. `configs/pbt2_small.yaml`: `lr: 0.0003` → `0.00003`; add
+   `warm_start_lr_max_ratio: 2.0` (requires PR #247 merged — an unknown key
+   rejects the WHOLE live reload).
+2. PB2 pin: `experiment_state-2026-07-25_12-12-34.json` (**newest by
+   FILENAME**, not mtime — Ray rewrites all of them so mtimes are identical),
+   4 occurrences of `"lr": 0.0003` incl. `evaluated_params`. Dry-run script:
+   `scratchpad/swap_gate/patch_experiment_state_lr.py` (`--apply` to write,
+   leaves a `.bak_pre_lr3e5`).
+3. Restart vehicle: `./scripts/train.sh salvage-restart
+   data/salvage/swap_512x16_20260711` (boot512, step 56000, 815 shards).
+4. Blind-spot seeding CONTINUES unchanged (`retire_307`, dole cap 0.25) — the
+   seeds are trunk-independent and are wanted for the value head.
+
+**ONE deciding yardstick (exact command), read at ~50 iterations:**
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate <new trial's newest checkpoint or a salvage-export of it> \
+  --reference scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt \
+  --mode matched_sims --sims 32 --games 400 --max-concurrent-games 16 \
+  --no-compile --device cuda --seed 42 --label restart_lr3e5_vs_boot512_sims32
+```
+
+Requires training STOPPED (~700MB/game). Same reference, same settings, same
+seed as the three ladder points, so the numbers are directly comparable.
+
+**SUCCESS (pre-committed):** at ~50 iterations, Elo vs boot512 is **not
+significantly negative** (95% CI does not exclude 0 on the losing side); and by
+~150 iterations it is **significantly POSITIVE**. Anything less means the loop
+cannot beat its own starting point even from an undamaged trunk at the correct
+LR.
+
+**KILL (pre-committed):** at ~50 iterations Elo vs boot512 is significantly
+negative (CI excludes 0 on the losing side). That would refute the LR
+hypothesis as a sufficient explanation and mean something in the loop damages
+nets independently of learning rate — stop and re-open the investigation
+rather than run another 15 days.
+
+**Revert points:** `data/salvage/swap_512x16_20260711` (boot512 itself,
+immutable) and `data/salvage/pre_durable_deploy_20260726` (iter 346, the
+damaged trunk, if we ever want it back).
+
+**Confounds (stated, accepted):** the 9-PR tune-state correctness bundle
+deploys in the same restart — argued disjoint in the DEPLOY row below (failure-
+path and bookkeeping fixes, no training-target semantics). The replay window
+resets to the boot512-era 815 shards, discarding 15 days of self-generated
+data; that is intentional, since that data was produced by the damaged trunk.
+
+**Expected bookkeeping surprises at first light:** `best_loss` jumps to the
+holdout scale and `source` flips to `test_loss` (#244, working as intended);
+the durable per-trial state path is named on stdout (#245); the first new
+checkpoint index must exceed every directory present (#241).
+
 ### ROOT CAUSE FOUND (2026-07-26) — the swap ran a 3e-5-converged net at 3e-4; the RL loop is NOT the problem
 
 **This SUPERSEDES the "RL loop is degrading the net" reading recorded in the

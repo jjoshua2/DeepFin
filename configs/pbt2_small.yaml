@@ -350,7 +350,16 @@ train:
   aurora_polar_method: polar_express
   aurora_polar_dtype: fp16
   aurora_polar_safety: 1.01
-  lr: 0.0003        # 2026-07-02: REVERTED 0.0001→0.0003 — flat-lower-LR verdict: UNREADABLE (throughput triple landed the same day, perfect confound) and the known-good anchors (49.6/51.5/72.4 @ckpt457) were earned at 0.0003 sqrt_release; return-to-known-good bundle. PB2-pinned: changing needs the experiment_state JSON edit + restart (see memory/ledger). Base LR; Aurora matrix params use matrix_lr_multiplier.
+  # 2026-07-26: 0.0003 -> 0.00003 for the boot512 restart. THE ROOT CAUSE of the
+  # 512x16 collapse: boot512 was converged at peak_lr 3e-5, and set_peak_lr
+  # rescales EVERY base LR by new/old, so lr 0.0003 started the matrix group
+  # (matrix_lr_multiplier 20) at 6e-3 -- double the 0.003 recorded as
+  # model-destroying. Measured -494 Elo by iter 74. 3e-5 is not merely the
+  # donor's regime, it is the LR under which this net demonstrably GAINED +303
+  # Elo (iters 74->148). PB2-pinned: this yaml edit alone is NOT enough --
+  # experiment_state JSON (newest by FILENAME) must be edited too, then restart.
+  # Guarded by warm_start_lr_max_ratio (PR #247) from here on.
+  lr: 0.00003       # PRIOR 0.0003 — 2026-07-02: REVERTED 0.0001→0.0003 — flat-lower-LR verdict: UNREADABLE (throughput triple landed the same day, perfect confound) and the known-good anchors (49.6/51.5/72.4 @ckpt457) were earned at 0.0003 sqrt_release; return-to-known-good bundle. PB2-pinned: changing needs the experiment_state JSON edit + restart (see memory/ledger). Base LR; Aurora matrix params use matrix_lr_multiplier.
   batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
   train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
   train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
@@ -391,6 +400,10 @@ train:
   sf_search_dampen_sf_high: 0.0  # Damping (0..1) on SF target when SF says STM winning but search says STM losing. Live-tunable.
 
   accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
+  # 2026-07-26 (PR #247): refuse a warm start whose configured lr exceeds the
+  # donor checkpoint's stored peak_lr by more than this. 0 disables. Requires
+  # code from #247 -- an unknown key rejects the WHOLE live reload.
+  warm_start_lr_max_ratio: 2.0
   warmup_steps: 72   # Run 26 default.
   lr_eta_min: 0.00001
   lr_T0: 999999        # Ignored while lr_schedule=sqrt_release; kept for cosine fallback.
