@@ -288,6 +288,14 @@ selfplay:
   playout_cap_fraction: 0.25  # 25% get full sims, 75% get fast
   fast_simulations: 32
   gumbel_topk: 16
+  # Gumbel value-transform scale for SELFPLAY/RL. Was never written here — it came
+  # from code defaults only, and UCI/match uses a DIFFERENT measured value (0.025,
+  # +301 Elo @8000 sims, mcts/gumbel.py PLAY_SEARCH_DEFAULTS). Do not unify them:
+  # optimal q_scale keys off the TOTAL sim budget, so no value is sim-invariant.
+  # At this 256-sim budget (2026-06-16 puzzle screen, n=1000): 0.1 -> 0.688,
+  # 0.05 -> 0.652, 0.025 -> 0.598 — lowering it HURTS selfplay. Restart-gated
+  # (worker _RECO_RESTART_KEYS).
+  gumbel_c_scale: 0.1
   gumbel_scale: 0.75     # Full selfplay root Gumbel noise scale before decay. mctx default is 1.0; final action temp stays 0.
   gumbel_scale_after: 0.0
   gumbel_scale_decay_start_move: 12

@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.mcts.gumbel import SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
@@ -325,7 +326,7 @@ def _publish_distributed_trial_state(
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
         "fast_simulations": int(config.get("fast_simulations", 8)),
         "gumbel_topk": int(config.get("gumbel_topk", 16)),
-        "gumbel_c_scale": float(config.get("gumbel_c_scale", 0.1)),
+        "gumbel_c_scale": float(config.get("gumbel_c_scale", SELFPLAY_GUMBEL_C_SCALE)),
         "gumbel_scale": float(config.get("gumbel_scale", 1.0)),
         "gumbel_scale_after": float(config.get("gumbel_scale_after", 0.0)),
         "gumbel_scale_decay_start_move": int(config.get("gumbel_scale_decay_start_move", 0)),
