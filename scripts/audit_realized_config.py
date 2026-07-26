@@ -635,7 +635,7 @@ def audit_reco_coverage(
 
         raw = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         published = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+    except Exception as exc:  # yaml.YAMLError is not an OSError/ValueError
         print(f"  SKIP  could not read {path} / {manifest}: {exc}")
         return []
     reco = published.get("recommended_worker")
