@@ -472,6 +472,7 @@ def play_paired_games_matched_sims_rolling(
     pool_size: int = 256,
     gumbel_candidate: dict[str, float] | None = None,
     gumbel_reference: dict[str, float] | None = None,
+    report_every: int = 64,
 ) -> list[float]:
     """Rolling-pool variant: keep ``pool_size`` games active at all times, starting
     a fresh game the instant one finishes (like production selfplay), instead of
@@ -555,7 +556,7 @@ def play_paired_games_matched_sims_rolling(
         _refill()  # backfill the slots the reaped games freed — keep the pool full
         if not boards:
             break
-        if done - last_report >= 64:
+        if done - last_report >= report_every:
             print(
                 f"[arena] rolling: {done}/{n_games} games done, "
                 f"{len(boards)} active ({time.time() - t0:.0f}s)",
@@ -788,6 +789,7 @@ def run_arena(
     label: str | None = None,
     volatility_candidate: dict[str, float] | None = None,
     max_concurrent_games: int = 128,
+    report_every: int = 64,
     syzygy_path: str | None = None,
     tb_max_pieces: int = 6,
     compile_models: bool = True,
@@ -870,6 +872,7 @@ def run_arena(
                 syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
                 pool_size=int(max_concurrent_games),
                 gumbel_candidate=gumbel_candidate, gumbel_reference=gumbel_reference,
+                report_every=int(report_every),
             )
         else:
             # Chunked: plays each chunk of `max_concurrent_games` to completion
@@ -1000,6 +1003,14 @@ def main() -> None:
                    help="matched_sims: cap simultaneous games per batch to bound "
                         "GPU memory; total --games still played in chunks "
                         "(default: 128). Lower if you OOM on a small card.")
+    p.add_argument("--report-every", type=int, default=64,
+                   help="rolling mode: print a RUNNING Elo block every N finished "
+                        "games (default: 64). Lower it when the run is under a "
+                        "wall-clock cap — a capped run that never reaches the "
+                        "first report yields NO reading at all and the GPU time "
+                        "is simply lost. 2026-07-26: a 32-sim rung was stopped at "
+                        "18 min having printed nothing, because the first block "
+                        "only lands at 64 games.")
     p.add_argument("--syzygy", default=None,
                    help="matched_sims: colon-separated Syzygy dir(s) to adjudicate "
                         "games the instant they reach a covered position (kills "
@@ -1124,6 +1135,7 @@ def main() -> None:
         reference=args.reference,
         games=args.games,
         max_concurrent_games=args.max_concurrent_games,
+        report_every=args.report_every,
         syzygy_path=args.syzygy,
         tb_max_pieces=args.syzygy_max_pieces,
         compile_models=compile_models,

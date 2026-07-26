@@ -28,6 +28,20 @@
 #
 #   ./scripts/daily_gate_ratchet.sh            # run once, now
 #   ./scripts/daily_gate_ratchet.sh --games 100
+#
+# THIS JOB RUNS ON A HARD WALL-CLOCK BUDGET (--max-minutes, default 30) SPLIT
+# ACROSS BOTH SERIES. That is a deliberate inversion of how it was first built.
+# The original sized itself by statistical power — 200 games because that
+# resolves the effect — and let the clock fall where it may. On 2026-07-26 the
+# clock fell at 4h32m and cost ~23 iterations of training (82% throughput loss;
+# invariant L6 in docs/rl_loop_audit.md). A daily observer that eats half a day
+# of the training it observes is worse than no observer.
+#
+# So the budget is the fixed quantity and the CI is what floats. A capped run
+# records however many games finished, with the games column reporting the TRUE
+# count rather than the requested one. --report-every 16 exists for the same
+# reason: the arena's default RUNNING-Elo block only lands at 64 games, so a
+# capped run could burn its whole budget and print nothing.
 set -u
 cd /home/josh/projects/chess
 export PYTHONPATH=.
@@ -51,6 +65,10 @@ SIMS=32
 # swap-gate arena ran (400 games) without trouble; the 2026-06-18 OOM was 256
 # sims, not 32.
 CONC=16
+# Hard total wall-clock budget for the whole job, split across the series that
+# actually run. See the header: the budget is fixed, the CI floats.
+BUDGET_MIN=30
+REPORT_EVERY=16
 SNAP_DIR=data/ratchet/snapshots
 LOG=data/ratchet/ratchet.csv
 ANCHOR=scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
@@ -60,9 +78,16 @@ while [ $# -gt 0 ]; do
         --games) GAMES=$2; shift 2 ;;
         --sims)  SIMS=$2;  shift 2 ;;
         --max-concurrent-games) CONC=$2; shift 2 ;;
+        --max-minutes) BUDGET_MIN=$2; shift 2 ;;
+        --report-every) REPORT_EVERY=$2; shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
+
+# Deadline for the WHOLE job. Each series takes an equal share of whatever is
+# left, so a slow first series cannot starve the second.
+DEADLINE=$(( $(date +%s) + BUDGET_MIN * 60 ))
+SERIES_LEFT=2
 
 mkdir -p "$SNAP_DIR" "$(dirname "$LOG")"
 [ -s "$LOG" ] || echo "date,iter,series,elo,ci_lo,ci_hi,score,games" > "$LOG"
@@ -95,12 +120,29 @@ run_arena () {   # $1=reference  $2=series-label
         echo "[ratchet] $series already done today"; return
     fi
     if [ ! -s "$ref" ]; then echo "[ratchet] $series: reference missing ($ref) — skip"; return; fi
-    echo "[ratchet] $series: iter$iter vs $(basename "$ref"), $GAMES games @${SIMS} sims"
-    python3 scripts/arena_standard.py \
+
+    # Equal share of the time that is actually left, not of the original budget.
+    local budget=$(( (DEADLINE - $(date +%s)) / SERIES_LEFT ))
+    SERIES_LEFT=$(( SERIES_LEFT - 1 ))
+    if [ "$budget" -lt 60 ]; then
+        echo "[ratchet] $series: out of budget (${budget}s left) — skipping"; return
+    fi
+
+    echo "[ratchet] $series: iter$iter vs $(basename "$ref"), up to $GAMES games @${SIMS} sims, ${budget}s budget"
+    # SIGTERM at the deadline, SIGKILL 20s later if it ignores it. A timed-out
+    # arena is NOT an error here — it has been printing RUNNING Elo blocks every
+    # $REPORT_EVERY games, and the parser below reads the last one.
+    timeout -k 20 "${budget}s" \
+        python3 scripts/arena_standard.py \
         --candidate "$snap" --reference "$ref" \
         --mode matched_sims --sims "$SIMS" --games "$GAMES" \
-        --max-concurrent-games "$CONC" --no-compile --device cuda --seed 42 \
+        --max-concurrent-games "$CONC" --report-every "$REPORT_EVERY" \
+        --no-compile --device cuda --seed 42 \
         --label "ratchet_${today}_iter${iter}_${series}" > "$out" 2>&1
+    local rc=$?
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+        echo "[ratchet] $series: hit the ${budget}s cap — recording the partial result"
+    fi
 
     # arena_standard prints  [arena] Elo: -193.2  95% CI: [-248.7, -145.4]
     # ...but a POSITIVE result prints  Elo: +16.3  95% CI: [-70.3, +105.0].
@@ -110,7 +152,7 @@ run_arena () {   # $1=reference  $2=series-label
     # emptiness check below does NOT catch it because the value is non-empty.
     # Negative Elo parsed fine, so this failed ONLY when the net improved —
     # exactly the case this ratchet exists to detect. Fixed 2026-07-26.
-    local line elo lo hi score
+    local line elo lo hi score played
     line=$(grep -E "^\[arena\] Elo:" "$out" | tail -1)
     elo=$(sed -E 's/.*Elo: *\+?([-0-9.]+).*/\1/'     <<<"$line")
     lo=$(sed  -E 's/.*CI: *\[ *\+?([-0-9.]+).*/\1/'  <<<"$line")
@@ -121,8 +163,15 @@ run_arena () {   # $1=reference  $2=series-label
     case "${elo:-}" in
         ''|*[!0-9.+-]*) echo "[ratchet] $series: unparseable Elo '${elo:-}' — see $out"; return ;;
     esac
-    echo "$today,$iter,$series,$elo,$lo,$hi,$score,$GAMES" >> "$LOG"
-    echo "[ratchet] $series: Elo $elo [$lo, $hi]"
+    # The games column must be what was PLAYED, not what was requested. Under a
+    # wall-clock cap those differ, and a row claiming 200 games behind a 96-game
+    # CI is exactly the class of bug this whole audit is about: a number that
+    # does not mean what its name says. Both the final and the RUNNING blocks
+    # print "[arena] N games (M opening pairs)", so the last one is the truth.
+    played=$(grep -E "^\[arena\] [0-9]+ games \(" "$out" | tail -1 | sed -E 's/.*\] ([0-9]+) games.*/\1/')
+    case "${played:-}" in ''|*[!0-9]*) played=$GAMES ;; esac
+    echo "$today,$iter,$series,$elo,$lo,$hi,$score,$played" >> "$LOG"
+    echo "[ratchet] $series: Elo $elo [$lo, $hi]  ($played games)"
 }
 
 # --- series 1: vs yesterday (most recent earlier snapshot) ------------------
