@@ -565,7 +565,23 @@ tune:
   holdout_capacity: 2000
   test_steps: 5
 
-  freeze_holdout_at: 0
+  # 2026-07-26: 0 -> 2000. The holdout was a conveyor belt, not a ruler:
+  # holdout_capacity 2000 with ~159 new rows/iter turns the set over COMPLETELY
+  # every ~13 iterations, so any test_* comparison spanning longer compares two
+  # different measuring sticks. That is the mechanism behind audit G4/J2 and
+  # behind best-model tracking being dead since iter 286 (it adopted the worse
+  # of two rulers ~0.3 nats apart). Freezing at 2000 makes successive test_*
+  # readings comparable to each other.
+  #
+  # KNOWN COST: a frozen holdout AGES. The replay window turns over ~daily, so
+  # the frozen rows drift out of distribution and the train/holdout gap widens
+  # for reasons that are not overfitting. Accepted trade — the gap's TREND stays
+  # useful even though its ABSOLUTE value stops being interpretable. Kill rule
+  # (ledger): gap widening >0.5 nats within 30 iters means re-freeze
+  # periodically instead. Read at trial construction, so a revert needs a
+  # restart. NOT yet persisted across restarts — each restart re-freezes a new
+  # set, which is still far better than every 13 iterations.
+  freeze_holdout_at: 2000
   reset_holdout_on_drift: false
   drift_threshold: 0.0
   drift_sample_size: 128

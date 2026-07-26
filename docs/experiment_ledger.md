@@ -551,6 +551,34 @@ strict low-concurrency/low-sims configuration.
 > addresses it. Must NOT run concurrently with another arena; sims 1/32 at
 > `--max-concurrent-games 4` is safe alongside training.
 
+> **ANSWERED 2026-07-26 — THE DEFICIT WAS LR DAMAGE, NOT THE 512 ARCHITECTURE.**
+> Ladder run with `boot512` (the undamaged donor) as candidate against the same
+> banked 46M `recover_ckpt751`, 200 paired games per rung, seed 42, conc 32, run
+> with **training stopped** so neither rung was contaminated by contention:
+>
+> | net | sims 1 | sims 32 | widening |
+> |---|---|---|---|
+> | **boot512** (undamaged) | **−41.9** [−95.3, +9.6] | **−43.7** [−88.1, −0.6] | **~2 Elo** |
+> | damaged 512 (~iter 346) | −91.5 [−125.9, −58.8] | −251.9 [−292.4, −216.5] | **~160 Elo** |
+>
+> **boot512 does not widen.** −41.9 → −43.7 is flat within heavily overlapping
+> CIs, against ~160 Elo of widening on the damaged net. Search converts sims to
+> strength normally on this architecture; what did not convert was a net whose
+> matrix group had been run at 6e-3. This CLOSES audit C5's deciding follow-up on
+> the favourable branch and **retires the alternative** — the value head's
+> ranking does NOT become the emergency priority target. It remains a real
+> ceiling ([[value_ceiling_bt4_distill_direction]]) but not an emergency.
+>
+> **What it does NOT say.** boot512 still sits ~43 Elo below the banked 46M net
+> at both budgets, so the donor was behind its predecessor when it was adopted;
+> the restart's job is to climb from there, not to declare parity. Judge that on
+> the `vs_boot512` ratchet series, not on this ladder.
+>
+> **Cost note:** at full GPU with training stopped, 200 games at 32 sims took
+> **~7 minutes** (conc 32). The same measurement concurrent at conc 4 would have
+> taken ~4.5h and cost ~23 iterations (L6). Stopping training to measure is
+> cheaper than measuring alongside it — see method rule 11.
+
 ### PRE-REGISTERED (not yet live) — revive dead broker/workers inside the ingest wait loop (PR TBD, 2026-07-25)
 
 **Class: availability plumbing. NOT an experiment — it changes no training
