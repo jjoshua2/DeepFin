@@ -63,6 +63,61 @@ def _load_model_only(maybe: Path, trainer, *, device: str, label: str) -> None:
     del ckpt
 
 
+WARM_START_LR_RATIO_DEFAULT = 2.0
+
+
+def peek_checkpoint_peak_lr(maybe: Path) -> float | None:
+    """Read just the donor's ``peak_lr`` from a trainer.pt.
+
+    ``mmap=True`` keeps the model/optimizer tensors on disk (same trick as
+    :func:`peek_checkpoint_arch`) so this costs a scalar read, not a 685MB
+    materialization. Returns None for older checkpoints with no ``peak_lr``.
+    """
+    try:
+        ckpt = torch.load(str(maybe), map_location="cpu", mmap=True)
+    except Exception:
+        return None
+    try:
+        raw = ckpt.get("peak_lr") if isinstance(ckpt, dict) else None
+        return float(raw) if raw is not None and float(raw) > 0.0 else None
+    finally:
+        del ckpt
+
+
+def guard_warm_start_lr(maybe: Path, config: dict, *, source: str) -> None:
+    """Refuse a warm start that runs a donor net far above its converged LR.
+
+    A warm start inherits WEIGHTS but not the learning-rate regime those
+    weights were converged under. 2026-07-11 the 512x16 swap adopted a net
+    converged at ``peak_lr`` 3e-5 into a trial configured ``lr: 0.0003``;
+    ``set_peak_lr`` rescales every base LR by ``new/old`` = 10x, so the matrix
+    group (``matrix_lr_multiplier: 20``) started at 6e-3 -- double the 0.003
+    this project had already recorded as model-destroying. Cost: -494 Elo in
+    74 iterations, then 272 iterations spent recovering as the schedule
+    decayed back toward the donor's regime. Every checkpoint stored ``peak_lr``
+    the whole time and nothing read it.
+
+    ``warm_start_lr_max_ratio: 0`` disables the check.
+    """
+    limit = float(config.get("warm_start_lr_max_ratio", WARM_START_LR_RATIO_DEFAULT))
+    if limit <= 0.0 or "lr" not in config:
+        return
+    donor = peek_checkpoint_peak_lr(maybe)
+    if donor is None:
+        return
+    new_lr = float(config["lr"])
+    if new_lr <= donor * limit:
+        return
+    raise ValueError(
+        f"warm start from {source} would run a net converged at peak_lr "
+        f"{donor:.3g} at lr {new_lr:.3g} ({new_lr / donor:.1f}x, limit "
+        f"{limit:.1f}x). set_peak_lr rescales EVERY base LR by that factor, so "
+        f"with matrix_lr_multiplier the top group goes far higher still. "
+        f"Either set lr to <= {donor * limit:.3g} for this restart, or set "
+        f"warm_start_lr_max_ratio: 0 to override deliberately."
+    )
+
+
 def peek_checkpoint_arch(ckpt) -> dict | None:
     """Read just the ``arch`` topology dict from a Ray checkpoint's trainer.pt.
 
@@ -126,6 +181,7 @@ def _restore_from_ray_checkpoint(
                 model_only_restore = owner_optimizer.lower() != current_optimizer
             elif bool(config.get("search_optimizer", False)):
                 model_only_restore = True
+    guard_warm_start_lr(maybe, config, source="checkpoint")
     if model_only_restore:
         _load_model_only(maybe, trainer, device=device, label="checkpoint_model_only")
         trainer._init_swa()
@@ -194,6 +250,7 @@ def _restore_from_salvage_pool(
     ):
         _apply_donor_config_overlay(config, donor_cfg, trainer)
 
+    guard_warm_start_lr(maybe, config, source="salvage pool")
     if bool(config.get("salvage_restore_full_trainer_state", False)):
         trainer.load(maybe)
     else:
