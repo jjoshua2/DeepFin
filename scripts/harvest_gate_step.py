@@ -440,8 +440,16 @@ def main(argv: list[str] | None = None) -> int:
         help="persisted offsets + emitted/rejected keys + pending queue",
     )
     ap.add_argument("--sf-path", default=None, help="Stockfish binary (required unless --dry-run)")
-    ap.add_argument("--sf-nodes", type=int, default=300_000,
-                    help="deep-SF node budget per vet (mine_blindspot_seeds default)")
+    ap.add_argument("--sf-nodes", type=int, default=2_000_000,
+                    help="deep-SF node budget per vet. MUST EXCEED THE TRAINING LABEL "
+                         "BUDGET (~698k live: PID base_nodes with sf_label_nodes_cap=0). "
+                         "Was 300_000 until 2026-07-26 — i.e. 2.3x SHALLOWER than the "
+                         "labels, so the gate staged positions as deep-LOST that the "
+                         "training target then rated EQUAL. Measured consequence: of 26 "
+                         "long-stuck seeds, sf_wdl at the seed position averaged 0.485 "
+                         "and ZERO were labelled lost, versus 0.397 / 20% for seeds the "
+                         "net actually learned. A seed vetted shallower than it is "
+                         "labelled is unlearnable by construction.")
     ap.add_argument("--multipv", type=int, default=10, help="Stockfish MultiPV for vetting")
     ap.add_argument("--syzygy-path", default=None,
                     help="Stockfish SyzygyPath for <=6-man endgame rows")

@@ -64,6 +64,13 @@ The run is usually live. These break production:
 LIVE-UNREAD verdicts, yardstick anchors, revert points). Read it before proposing,
 launching, judging, or reverting any experiment.
 
+**`docs/rl_loop_audit.md` is the companion invariant record** — per-stage checks with
+the exact instrument and current status. The ledger says whether an experiment worked;
+the audit says whether the pipeline that produced the number was sound. Read its
+"Method rules" before deriving any metric by hand: several confident findings there
+turned out to be artifacts of the measurement, not the loop. A verdict read off a stage
+that FAILS its invariant is not a verdict.
+
 1. **Before a training-affecting change goes live** (config key, loss weight,
    data-pipeline or selfplay change, PR merge that alters training): add a ledger entry
    with the hypothesis, ONE deciding yardstick as an exact command, and a pre-committed
