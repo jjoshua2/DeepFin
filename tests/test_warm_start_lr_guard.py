@@ -128,16 +128,38 @@ def test_both_restore_paths_call_the_guard() -> None:
     assert 'guard_warm_start_lr(maybe, config, source="salvage pool")' in salvage_path
 
 
-def test_the_new_key_is_accepted_by_the_yaml_validator() -> None:
-    """An unrecognised key rejects the WHOLE live reload, so it must be listed."""
-    from chess_anti_engine.utils import config_yaml
+def test_the_key_survives_validation_and_flattening_in_the_train_section() -> None:
+    """Assert the validator's BEHAVIOUR, not a source-text substring.
 
-    src = inspect_source(config_yaml)
+    The first version of this test asserted the key merely APPEARED in
+    config_yaml.py. It did -- in two allowlists, neither of which was
+    ``_TRAIN_KEYS``, the one governing the ``train:`` section the key actually
+    lives in. The validator is all-or-nothing, so every tool that loaded the
+    config died with "Unknown keys in yaml 'train:' section" while the test
+    stayed green.
+    """
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 
-    assert src.count('"warm_start_lr_max_ratio"') >= 2
+    cfg = flatten_run_config_defaults({"train": {"warm_start_lr_max_ratio": 2.0}})
+
+    assert cfg["warm_start_lr_max_ratio"] == 2.0
 
 
-def inspect_source(mod: object) -> str:
-    import inspect
+def test_an_unknown_train_key_is_still_rejected() -> None:
+    """The test above must not pass by the validator having gone permissive."""
+    from chess_anti_engine.utils.config_yaml import flatten_run_config_defaults
 
-    return inspect.getsource(mod)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ValueError, match="Unknown keys in yaml 'train:'"):
+        flatten_run_config_defaults({"train": {"definitely_not_a_real_key": 1}})
+
+
+def test_the_shipped_production_config_validates() -> None:
+    """Catches the all-or-nothing validator breaking on the real file."""
+    from chess_anti_engine.utils.config_yaml import (
+        flatten_run_config_defaults,
+        load_yaml_file,
+    )
+
+    cfg = flatten_run_config_defaults(load_yaml_file("configs/pbt2_small.yaml"))
+
+    assert float(cfg["lr"]) > 0

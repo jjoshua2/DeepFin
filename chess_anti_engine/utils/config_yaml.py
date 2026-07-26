@@ -194,6 +194,7 @@ _TRAIN_KEYS = (
     "fdp_king_safety", "fdp_pins", "fdp_pawns", "fdp_mobility", "fdp_outposts",
     "w_volatility",
     "accum_steps", "warmup_steps", "warmup_lr_start", "lr_eta_min", "lr_T0", "lr_T_mult",
+    "warm_start_lr_max_ratio",
     "lr_schedule", "lr_release_cycle_steps", "lr_release_start_frac", "lr_release_min_scale",
     "lr_release_shape",
     "grad_clip", "zclip_z_thresh", "zclip_alpha", "zclip_clip_factor", "zclip_max_norm",
