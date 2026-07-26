@@ -833,6 +833,98 @@ restart (the buffer is rebuilt empty), so a truly fixed cross-restart ruler
 additionally needs the frozen set persisted to the durable trial dir
 (`_durable_trial_dir`, PR #245) — at 2000 rows that is cheap.
 
+### FINDING (2026-07-26) — `soft_policy_temp` has been 2.0, not the configured 3.0, for five months
+
+**What.** `configs/pbt2_small.yaml` has read `soft_policy_temp: 3.0` since commit
+`6862c5151` (2026-03-02), with the comment "LC0 uses 3, was hardcoded 2". It was
+never un-hardcoded. The workers have built every soft policy target at **T = 2.0**.
+
+**Chain, verified end to end.**
+
+- `distributed_runtime.py` builds `recommended_worker` naming `sf_policy_temp` and
+  `sf_policy_label_smooth` but **omits `soft_policy_temp`**. Confirmed against the
+  live `publish/manifest.json`: 83 keys, not among them.
+- `worker.py::_build_selfplay_configs` never reads it either.
+- `GameConfig` therefore takes its dataclass default 2.0 (`selfplay/config.py:141`).
+- `finalize.py:936` is the only producer of `policy_soft_target`, and it runs on
+  the worker.
+
+**Measurement.** Fit the exponent from `log(policy_soft_target)` vs
+`log(policy_target)` on live shards: `1/T = 0.50000` (median; p1 0.49986, p99
+0.50023, n=944 row-fits, re-measured independently). Not a rounding artifact.
+
+**Why it matters.** `w_soft: 1.0`, and the trunk-gradient probe puts
+`soft_policy_ce` at ~41% of weighted trunk gradient — the second-largest term in
+the loss, built at the wrong sharpness for five months.
+`configs/exp_soft_policy_ablation.yaml` would have been a silent no-op in
+distributed mode.
+
+**Nothing is retroactively invalidated.** No ledger verdict has ever cited this
+key. Every past readout was taken at T=2.0 consistently, so comparisons among
+them remain valid; only the *description* of the setting was wrong.
+
+**Action, in two separate steps — do not merge them.**
+
+1. **Plumb the key** (publish in `distributed_runtime.py`, consume in
+   `worker.py`), and in the SAME change set `soft_policy_temp: 2.0` in the yaml so
+   realized behaviour is unchanged. This is a correctness fix with no data effect
+   and needs no yardstick.
+2. **Then, separately, decide the value.** 2.0 → 3.0 is a real data-affecting
+   experiment: five months of this net trained at 2.0, the replay window holds
+   ~a day of it, and 3.0 is an untested preference inherited from LC0. It needs
+   its own entry, yardstick and kill rule. **Do not fold it into the plumbing PR.**
+
+**Instrument gap that hid it (audit A7).** The reco-vs-yaml check diffs the
+**intersection** of key sets, so a key absent from the reco is structurally
+invisible to it. 7 worker-affecting fields are never published; six are harmless
+only because they equal their dataclass defaults. The diff is being changed to
+compare the union.
+
+---
+
+### FINDING (2026-07-26) — a restart destroys the holdout ruler, which is why the freeze could not arm
+
+**What.** `trainable_init.py:630` constructs `holdout_buf =
+ArrayReplayBuffer(tc.holdout_capacity, rng=rng)` unconditionally on every start
+and resume. Nothing restores it. Measured across both of today's restarts:
+
+| iter | test_replay | test_size | test_loss |
+|---|---|---|---|
+| 1 (after 06:02 restart) | 210 | 0 | NaN |
+| 4 | 659 | 659 | 5.1044 |
+| 7 | 1150 | 1150 | 4.9215 |
+| 14 | 2000 | 2000 | — |
+| 42 (after 17:05 restart) | 194 | 0 | NaN |
+| 43 | 847 | — | — |
+
+**Three consequences.** (a) ~3 iterations run with **no holdout eval at all** —
+eval is gated on `len(holdout_buf) >= batch_size` (512). (b) ~10 more are judged
+against a **growing** set, so `test_loss` is not comparable row-to-row there.
+(c) `best_loss` carries across the boundary unchanged (4.8982 at iter 41 → 4.8982
+at 42), defending a value measured against a ruler that no longer exists.
+
+**Candidate artifact, flagged not claimed:** `best_loss` fell 5.1044 → 4.9215 over
+iters 4–7 — exactly the fill window, i.e. precisely when the denominator was
+changing. This is a concrete mechanism for the long-standing "best_loss rises
+across restarts" puzzle, but the ruler change and real learning are not separated
+here and this entry does not claim they are.
+
+**Consequence for the freeze entry below:** `freeze_holdout_at: 2000` deployed
+correctly (banner verified) but **could not arm**, because the freeze fires at
+`len(holdout_buf) >= 2000` and the restart had emptied it. Refill measured at +653
+rows on iter 43, so it arms around **iter 45–46**. The pre-committed 30-iteration
+clock starts when `holdout_frozen` first reads 1, NOT at iter 42 — verify that row
+before starting the count.
+
+**Persisting the holdout is therefore the whole fix, not a follow-up.** Without it
+the cycle repeats at every restart: ruler destroyed → 3 blind iterations → 10
+iterations on a moving ruler → freeze a fresh sample → repeat.
+
+**Standing rule until it lands: do not compare `test_loss` or `best_loss` across a
+restart boundary,** including today's 06:02 and 17:05 boundaries.
+
+---
+
 ### PRE-REGISTERED — freeze the holdout ruler (`freeze_holdout_at: 0 → 2000`, 2026-07-26)
 
 **Hypothesis.** The holdout is not a ruler, it is a conveyor belt.
