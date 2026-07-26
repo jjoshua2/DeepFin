@@ -3976,12 +3976,38 @@ adversarial positions chosen because the net plays them badly. That is exactly
 the shape that would degrade generic play while leaving (or improving) 1-ply
 SF-regret on a frozen audit set built from the same kind of positions.
 
-**This is a hypothesis, not a finding.** There is no metric in `result.json`
-for the realized seeded share (no `seed`/`dole`/`fen` key exists), so the
-configured cap has never been verified against actual game provenance — the
-same realized-vs-configured gap that produced the views-per-position error.
-FIRST ACTION: emit a realized seeded-share metric and read it, before changing
-any seeding knob.
+**MEASURED 2026-07-26 — THE SEEDING HYPOTHESIS IS REFUTED. Do not pursue it.**
+Every shard carries per-record `opening_source_code` (0=start 1=book/pgn
+2=fenlist 3=fenlist_sf_refute 4=salvage 5=random) plus `is_selfplay` and
+`game_id`, so the realized share is computable offline with no running loop.
+Counted over the whole banked replay window (809 shards, **96,273 games /
+1,499,166 training rows**), by unique game rather than by position:
+
+| slice | book/pgn | fenlist | fenlist_sf_refute | **SEEDED** |
+|---|---|---|---|---|
+| all games (96,273) | 83.3% | 7.7% | 9.0% | **16.7%** |
+| selfplay (47,800) | 66.3% | 15.6% | 18.1% | **33.7%** |
+| curriculum (48,473) | 100.0% | 0% | 0% | **0.0%** |
+| training ROWS (1.50M) | — | — | — | **10.9%** |
+
+So the diet is **83% ordinary book openings**; curriculum (the games against
+Stockfish) is 100% book; and only **10.9% of training rows** come from
+blind-spot seeds — seeded games are also SHORTER than average (16.7% of games
+but 10.9% of rows), which the SF-refutation channel's short-game design
+predicts. `opening_fen_dole_max_fraction: 0.25` is doing its job. A 10.9% row
+share cannot plausibly produce a −252 Elo collapse, and the earlier framing in
+this row ("roughly half of all games begin from adversarial positions") was my
+arithmetic from config values, not measurement — it was WRONG by ~5×.
+
+**Method note worth keeping:** count GAMES by unique `game_id`, not positions —
+a per-game property like opening source is otherwise weighted by game length,
+which is exactly the bias that makes the row-share and game-share numbers
+differ here.
+
+**Still worth shipping:** a per-iteration realized seeded-share metric, since
+this took a 20-minute offline scan of the banked window and `result.json`
+carries no `seed`/`dole`/`fen` key at all. But it is now instrumentation, not a
+lead.
 
 **Second corroborating datum, same session:** re-running the audit on iter 346
 (with the #246 fixes) gives raw-policy E[regret] **94.1 / 68.2**, against
