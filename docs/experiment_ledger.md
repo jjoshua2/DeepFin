@@ -132,6 +132,101 @@ always re-dump and pair.
   the wrong way, and had to undo it — the observation was real, the inference
   was wrong. A key missing from a row means "which code wrote this row?", not
   "this key is fake".
+- **`tune_keep_last_experiments` protected NOTHING; a `--fresh` start would
+  have deleted every trial dir (2026-07-25).** `_cleanup_old_tune_experiments`
+  paired state files to trial dirs by filename timestamp,
+  `glob(f"train_trial_*{ts}")`. But a trial dir carries the timestamp of the
+  experiment that CREATED it, while every resume writes a new state file under
+  a NEW timestamp — 66 state files here for 2 experiments. The kept 2 (07-24,
+  07-25) matched no trial dir, and the only dirs on disk (07-11) were always in
+  `delete_ts`. Realized retention was **0 for any `keep_last`**, and the newest
+  kept file's `relative_logdir` named the very directory the glob would
+  `rmtree` — the live trial, every checkpoint, all TB history since 07-11. It
+  never fired only because the cleanup is guarded by `if not resume`, and
+  `train.sh start` auto-resumes; `--fresh` would have triggered it. Fixed by
+  PR #242 (protect what the kept state files actually reference; fail safe to
+  keeping everything if one cannot be parsed). **Before any `--fresh` start,
+  confirm the dry-run keeps what you expect** — the check is in the PR body.
+- **`get_trial_dir()` is NOT durable — every startup read of a trial sidecar
+  resolved to "missing" (2026-07-25).** `ray.train.get_context().get_trial_dir()`
+  returns the per-Ray-session driver staging dir
+  (`/tmp/ray/session_<id>/artifacts/<ts>/tune/driver_artifacts/<trial>`). Ray
+  syncs it UP to `runs/<exp>/tune/<trial>/` and **never syncs it back DOWN**,
+  and every restart opens a new Ray session, so the dir the trial reads at
+  startup is always empty. Reads failed silently because "sidecar absent" is
+  also the legitimate first-run case. Evidence: **68 per-session staging dirs
+  for trial `4c17c`, each with its own `best.json` holding only that session's
+  minimum**, and **33 of 33 post-restart `result.json` rows set `best_loss`
+  exactly equal to that row's `train_loss`** — i.e. re-seeded from `inf` every
+  time. So `best/best_model.pt` meant "best since the last restart", never
+  "best ever", and 19 of those re-seeds were *upward*. Fixed in PR #245 by
+  anchoring reloaded state to `StorageContext.trial_fs_path`.
+  **Do not read a trial sidecar from `get_trial_dir()` if the next process has
+  to see it** — `_resolve_pause_marker_paths` had already found this for pause
+  markers and the lesson was never carried across. Diagnose it by listing
+  `/tmp/ray/session_*/artifacts/*/tune/driver_artifacts/<trial>/`: one copy per
+  session means the state is per-session.
+- **`opening_fen_list_path` is a CHAIN, and rolling it back silently
+  UN-RETIRES seeds (2026-07-25).** `scripts/blindspot_retire_step.py` re-scores
+  the seed list the live yaml currently points at, writes
+  `retire_(N+1).txt` from it, and repoints the yaml — so each list is derived
+  from its predecessor, and the value in the yaml advances roughly **every
+  10-15 minutes** (243→250 in one hour on 07-25; 101 lists on disk). Two
+  consequences. (1) The committed value in `main` is stale within minutes of
+  any merge, so a deploy that takes the yaml from `main` rewinds the chain to
+  whatever was committed and un-retires every seed retired since — and it does
+  NOT self-heal, because the next retire step chains forward from the rolled-back
+  list. On 07-25 `main` still said `retire_198` while live was at `retire_250`;
+  the live value was preserved by hand. **A deploy must carry the LIVE value
+  forward, never restore the committed one.** (2) Do NOT "fix" the churn by
+  pointing the yaml at a stable filename or symlink: `_load_fen_list`,
+  `_load_fen_backed_bodies` and `_load_fen_weights` in
+  `chess_anti_engine/selfplay/opening.py` are `@lru_cache`d **on the path
+  string**, so a constant path would serve the first content read for the life
+  of the process. It is safe today only because the worker's copy is
+  content-addressed (`{prefix}_{sha}_{filename}` in `worker_assets.py`) and the
+  server re-hashes fresh (`sha256_file`, deliberately not cached) — the
+  manifest reload is sha-triggered, but the in-process caches are path-keyed.
+- **A RESUME can silently OVERWRITE existing checkpoints, including the one it
+  restored from (2026-07-25).** Ray names checkpoint dirs purely from
+  `StorageContext.current_checkpoint_index`. That counter is advanced in two
+  places meant to stay in lockstep — the actor's copy (`Trainable.save`) and
+  the driver's copy (`Trial.on_checkpoint`) — but only the driver's copy is
+  persisted, and only the driver's copy is skipped when `register_checkpoint`
+  raises. So the ratchet is: our `_prune_trial_checkpoints` (actor, disk glob)
+  deletes a dir Ray's manager (driver, own list) still tracks → the manager's
+  eviction calls `_delete_fs_path`, whose unguarded `_is_directory` probe
+  raises `FileNotFoundError` on the absent path → `_process_trial_save`
+  catches it at the top level, skipping `_update_checkpoint_index`,
+  `invalidate_json_state` AND `_mark_trial_to_checkpoint` → the persisted index
+  falls behind → the next restart seeds the actor with it and rewrites live
+  checkpoint dirs → the manager now holds duplicate paths, so evicting the
+  stale twin deletes a CURRENT checkpoint → more raises. **Each restart makes
+  it worse.** Live evidence: restored from `checkpoint_000250`, then wrote
+  246, 247, 248, 249, 250, 251 — five existing checkpoints replaced, including
+  the restore source. `checkpoint_000250` on disk was no longer the weights
+  that name referred to. Fixed by PR #241: eviction of an absent path is now a
+  no-op (removes the cause), and `_guard_checkpoint_index` advances a drifted
+  index past everything on disk at trial start (removes the consequence and
+  repairs an index that already drifted). **Verify after the next restart that
+  the first new checkpoint index is greater than every dir already present.**
+  Two things this was NOT, both checked and both wrong first time: the restored
+  `CheckpointConfig.num_to_keep` is **6**, matching the yaml (decoded straight
+  out of `experiment_state-*.json`), and our pruner's `keep_last` is also 6 —
+  there was no configured-vs-realized retention gap. Do not re-diagnose this
+  from the `Error handling checkpoint` line alone; decode the pickled manager.
+- **Tuner-level settings ARE still frozen at experiment birth (2026-07-25).**
+  `Tuner.restore` takes no run config, so yaml edits to anything passed to
+  `tune.Tuner(...)` are ignored on resume; `_hotpatch_scheduler_bounds` exists
+  precisely because restored PB2 bounds shadow the yaml. **Assume any
+  Tuner/RunConfig-level key is frozen unless something explicitly hotpatches
+  it**; only per-iteration trial config is live-read. For retention specifically
+  this is currently harmless — `_prune_trial_checkpoints` reads live yaml every
+  5 iterations and is the authoritative disk-retention enforcer, and Ray's
+  manager tracking more entries than exist is now a no-op rather than a raise.
+  Note patching `tuner._local_tuner._run_config.checkpoint_config` does NOT
+  reach a restored trial: each trial's `_CheckpointManager` carries its own
+  pickled `CheckpointConfig` in `run_metadata`.
 - **Readout-window sizing (2026-07-16): ~5 iterations (~3h at ~38min/iter) is
   a valid window ONLY for stability/throughput readouts** — crash/wedge
   cadence, games/h, VRAM, train_time_s — where the failure signature is fast
@@ -534,6 +629,118 @@ confounded; the availability yardsticks are read independently.
 **Revert:** revert the PR. Note the revert also restores
 `test_slot_broker_zeroes_outputs_when_model_unavailable`, which asserted the
 buggy behaviour with no stated rationale and was deliberately removed.
+
+### BUG FIX (pre-registered, not yet live) — the broker answered malformed compact-legal metadata with a STALE policy (PR #237, 2026-07-25)
+
+**PROTOCOL NOTE — not an experiment.** Third and last member of the family
+opened by #234: broker paths that fabricate a response instead of refusing
+one. Correction of silent training-data corruption on a failure path; it
+cannot change what is trained in a healthy run.
+
+**Bug.** When compact-legal metadata validation failed, the broker zeroed
+`policy_u16[:1]`, zeroed the WDL rows, and marked the slot `_STATE_RESPONSE`.
+The client cannot tell that from a real answer — it never reads
+`request_mode` back, and the success path sets `_MODE_DENSE_F32` too.
+
+Worse than the all-zero policy `_release_slots_for_retry` exists to prevent.
+`SlotInferenceClient.evaluate_legal_bf16` reads `slot.policy_u16[:n_legal]`
+using its OWN `n_legal`, so zeroing entry 0 left entries `1..n_legal` holding
+whatever bf16 logits the PREVIOUS request left in that shared buffer — a
+plausible-looking policy for a DIFFERENT position, paired with an all-zero
+WDL, consumed by MCTS (`gumbel_c.py:382`, `:918`; no caller checks for a zero
+policy) and recorded as training data. Nothing counted a failure, nothing
+logged.
+
+**Why it survived.** The fallback dates to `c91bdb99d` (2026-05-07) and has no
+test. `test_process_batch_snapshots_metadata_against_a_client_resubmit`
+injects its re-submit AFTER validation, so it covers the success path. And
+#231 (07-24) interacts: making validation read a private snapshot removed the
+crash but left torn reads landing RELIABLY on this fabricating fallback. #231
+was correct and necessary — the crash cost ~50 min of selfplay — it just
+traded a loud failure for a silent one across part of its timing window.
+
+**Fix.** Release the slot (`_STATE_IDLE`) so the client re-submits, which is
+exactly the recovery the dominant trigger wants. Not counted toward
+`_consecutive_batch_failures`: that ceiling exits the broker, removing
+inference for the whole fleet to punish one client, and a restart cannot fix a
+client-side protocol bug. The client's own 30s `TimeoutError` is the correctly
+scoped consequence.
+
+**YARDSTICK (one command):**
+
+```bash
+grep -c "malformed_legal_meta=" <trial>/distributed_inference/broker.out
+```
+
+**READ THE INSTRUMENT CAVEAT FIRST.** Incidence before this PR is unknowable —
+there was no counter and no log line. **This deploy installs the instrument**;
+it does not measure a pre-existing rate. Same mis-specification class as the
+#224 yardstick: absence of the line was never a measurement of zero. The
+correctness argument stands independent of incidence; the counter is how we
+learn it.
+
+**SUCCESS = counter stays 0 AND games/h unchanged** vs the pre-deploy window.
+That is the expected outcome and it is insurance, not evidence.
+**DECIDING evidence is the sabotage-verified tests**: with the fix stashed all
+8 tests in `tests/test_broker_malformed_legal_meta.py` fail, both
+malformations parametrized, asserting the response buffers are byte-identical
+to pre-call copies (proving the broker wrote NOTHING, not merely "not a valid
+answer").
+**KILL/DIAGNOSE = counter climbing AND workers timing out in bursts** ⇒ the
+tear is far more common than believed and the right fix moves upstream to a
+sequence number in the slot header so the broker can detect a re-submit
+directly instead of inferring it from failed validation.
+**Confounds:** none for learning metrics. Deploys on the next restart.
+**Revert:** revert the PR. Nothing else depends on it.
+
+### BUG FIX (pre-registered, not yet live) — the replay shuffle refresh silently dropped failed shard loads (PR #238, 2026-07-25)
+
+**PROTOCOL NOTE — not an experiment.** Observability + honest accounting on a
+failure path. In a healthy run it changes nothing about what is trained.
+
+**Bug.** `DiskReplayBuffer._load_refresh_chunks` picks `n_pick` shards to
+refresh the hot shuffle buffer and wrapped each load in a bare
+`except Exception: pass`. Nothing compared `len(loaded)` against `n_pick`, so
+loading three of five — or **zero** of five — looked exactly like loading all
+five. `_scan_existing_shards` had its own copy of the same swallow.
+
+**Why zero matters.** `_prefetch_worker` only stores a NON-EMPTY result, so an
+empty refresh leaves the prefetch slot unset, the next tick retries, and the
+loop refills whenever the slot is empty — roughly every 0.1s. Production runs
+`shuffle_refresh_interval: 1`. A persistent load fault is therefore a hot
+retry loop that never logs, while training goes on sampling a shuffle buffer
+that has stopped being refreshed. Sample diversity would collapse toward a
+frozen subset with no signal anywhere.
+
+**Classification is by TRACKING, not exception type.** `_enforce_window` pops
+a shard out of `_shard_paths` under the lock before calling
+`delete_shard_path`, so an untracked path was deliberately deleted and losing
+it is routine — that race fires constantly and must not be logged as a fault.
+Type-based classification would be wrong AND fragile: `zarr.open_group` on a
+missing group raises `GroupNotFoundError`, a **`ValueError`, not a
+`FileNotFoundError`**; and `delete_shard_path` uses
+`shutil.rmtree(..., ignore_errors=True)`, so a reader can also catch a
+half-deleted group and surface a third error type. Tracking is immune to both,
+and to the zarr version.
+
+**YARDSTICK (one command):**
+
+```bash
+grep -cE "\[disk_buf\] WARNING: (shuffle (refresh|seed)|.*TRACKED shard)" /tmp/chess_training.log
+```
+
+**INSTRUMENT CAVEAT, same as #237.** Incidence before this PR is unknowable —
+there was no counter and no line. This deploy INSTALLS the instrument.
+
+**SUCCESS = 0 tracked-shard failures and 0 empty-streak alarms** over the
+first day. That is the expected reading and it is insurance, not evidence.
+**DECIDING evidence is the sabotage-verified tests** — restoring the bare
+except fails the four covering classification and reporting.
+**KILL/DIAGNOSE = the empty-streak alarm firing** ⇒ the shuffle buffer has
+genuinely stalled; read the accompanying per-shard line for the cause before
+touching anything, because this is a symptom of a load fault, not its cause.
+**Confounds:** none for learning metrics.
+**Revert:** revert the PR.
 
 ### OUTAGE + BUG FIX (deployed) — inference broker died of a shared-memory race and nothing relaunched it (PR #231, 2026-07-24)
 

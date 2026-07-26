@@ -55,7 +55,9 @@ from chess_anti_engine.tune.trainable_phases import (
     _run_training_and_gating,
 )
 from chess_anti_engine.tune.trainable_report import (
+    _guard_checkpoint_index,
     _init_status_csv,
+    _reset_best_on_cross_trial_restore,
     _save_trial_checkpoint,
     _update_best_model,
 )
@@ -79,12 +81,77 @@ def _set_log_level(config: dict) -> None:
         logging.getLogger().info("chess_anti_engine logging at DEBUG (gumbel batch-size profiling enabled)")
 
 
-def _load_best_state(best_state_path: Path) -> tuple[float, float]:
-    """Return (best_loss, opp_strength_ema) from best.json or defaults."""
+def _durable_trial_dir(staging_trial_dir: Path) -> Path:
+    """The trial directory whose contents survive a process restart.
+
+    `ray.train.get_context().get_trial_dir()` does NOT return one.  It returns
+    the per-Ray-session driver staging directory,
+    ``/tmp/ray/session_<id>/artifacts/<ts>/tune/driver_artifacts/<trial>``.
+    Ray syncs that UP to persistent storage; it never syncs it back DOWN, and
+    every restart opens a new Ray session, so the staging dir is EMPTY at
+    process start.  Anything the trial reads back from it during startup
+    therefore always reads as missing -- silently, because "sidecar absent" is
+    also the legitimate first-run case.
+
+    Measured live 2026-07-25: 68 session staging dirs for one trial, each
+    holding its own `best.json` with only that session's minimum, and 33 of 33
+    post-restart rows in `result.json` re-seeding `best_loss` from that
+    iteration's training loss.
+
+    The persistent location is `StorageContext.trial_fs_path` -- the same
+    directory the synced copies already land in, so nothing moves.  Ray's
+    artifact sync copies staging files up without deleting anything else
+    there, so a file only we write is left alone.  Fall back to the staging
+    dir when storage is not a local filesystem: writing a torch checkpoint
+    through a pyarrow filesystem is a different problem, and today's behaviour
+    is the honest default until someone needs it.
+
+    `_resolve_pause_marker_paths` documents this same hazard for pause
+    markers; it was never carried across to the state the trial reloads.
+    """
+    try:
+        from pyarrow.fs import LocalFileSystem
+        from ray.train._internal.session import get_session
+
+        storage = get_session().storage  # pyright: ignore[reportOptionalMemberAccess]
+        if not isinstance(storage.storage_filesystem, LocalFileSystem):
+            print(
+                f"[trial] storage is {type(storage.storage_filesystem).__name__}, "
+                f"not a local filesystem; keeping per-trial state in the "
+                f"per-session staging dir (it will NOT survive a restart): "
+                f"{staging_trial_dir}",
+                flush=True,
+            )
+            return staging_trial_dir
+        durable = Path(storage.trial_fs_path)
+        durable.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        print(
+            f"[trial] could not resolve the durable trial dir ({exc}); keeping "
+            f"per-trial state in the per-session staging dir (it will NOT "
+            f"survive a restart): {staging_trial_dir}",
+            flush=True,
+        )
+        return staging_trial_dir
+    return durable
+
+
+def _load_best_state(best_state_path: Path) -> tuple[float, float, str]:
+    """Return (best_loss, opp_strength_ema, best_source) from best.json.
+
+    ``best_source`` says which ruler produced ``best_loss`` -- the holdout
+    (``test_loss``) or the training batches (``train_loss``). They are not
+    comparable, so the caller needs it to avoid pitting one against the other.
+    An older best.json without the field is treated as ``train_loss``, the
+    conservative reading: it lets the first holdout evaluation take over the
+    ruler rather than being locked out by a number it cannot beat.
+    """
     d = load_optional_json(best_state_path) or {}
+    source = str(d.get("source", "train_loss"))
     return (
         float(d.get("best_loss", d.get("loss", float("inf")))),
         float(d.get("opp_strength_ema", 0.0)),
+        source if source in ("test_loss", "train_loss") else "train_loss",
     )
 
 
@@ -426,8 +493,10 @@ def train_trial(config: dict):
         model_cfg = config_model_cfg
     model = build_model(model_cfg)
 
-  # Use Ray-provided trial directory for ALL per-trial state (checkpoints,
-  # replay shards, gate state, best model, TensorBoard logs).
+  # Ray-provided trial directory for per-trial WORKING files (checkpoint
+  # staging, replay shards, TensorBoard logs). It is per-Ray-session and does
+  # not survive a restart, so anything this trial reads back at startup uses
+  # `durable_dir` below instead.
   # IMPORTANT: Do NOT use config["work_dir"] here — it points to the shared
   # runs/pbt2_small/ directory. Using it caused all 10 trials to write
   # checkpoints to the same directory, making PB2 unable to clone checkpoints
@@ -436,16 +505,29 @@ def train_trial(config: dict):
     work_dir = trial_dir
     work_dir.mkdir(parents=True, exist_ok=True)
 
+  # Per-trial state the NEXT process has to read back does not belong in
+  # `trial_dir` — that is a per-Ray-session staging dir, empty at every start.
+    durable_dir = _durable_trial_dir(trial_dir)
+    if durable_dir != trial_dir:
+        print(f"[trial] per-trial state that outlives this process: {durable_dir}", flush=True)
+
+  # Before the first report+checkpoint: a stale index seeded from the driver
+  # would otherwise overwrite existing checkpoint dirs, including the one this
+  # process just restored from. `checkpoint_NNNNNN/` dirs are written to
+  # PERSISTENT storage, so the guard has to scan there — pointed at the staging
+  # dir it would find nothing and silently never fire.
+    _guard_checkpoint_index(trial_dir=durable_dir)
+
   # Compact status CSV — reset on each process start so checkpoint-restore rows don't accumulate.
     _STATUS_CSV_PATH = _init_status_csv(trial_dir)
 
-    gate_state_path = work_dir / "gate_state.json"
+    gate_state_path = durable_dir / "gate_state.json"
     gate_match_idx = int((load_optional_json(gate_state_path) or {}).get("matches", 0))
 
-    best_state_path = work_dir / "best.json"
-    best_dir = work_dir / "best"
+    best_state_path = durable_dir / "best.json"
+    best_dir = durable_dir / "best"
     best_dir.mkdir(parents=True, exist_ok=True)
-    best_loss, opp_strength_ema = _load_best_state(best_state_path)
+    best_loss, opp_strength_ema, best_source = _load_best_state(best_state_path)
 
     trainer_ctor = trainer_kwargs_from_config(
         config | {"device": device}, log_dir=work_dir / "tb",
@@ -461,6 +543,11 @@ def train_trial(config: dict):
     restored_pid_state = restore.restored_pid_state
     global_iter = restore.global_iter
     opp_strength_ema = restore.opp_strength_ema
+
+    best_loss, best_source = _reset_best_on_cross_trial_restore(
+        restore=restore, best_loss=best_loss, best_source=best_source,
+        best_dir=best_dir, best_state_path=best_state_path,
+    )
 
   # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
     tc = TrialConfig.from_dict(config)
@@ -712,10 +799,14 @@ def train_trial(config: dict):
                 Checkpoint=Checkpoint,
             )
 
-  # Best-model tracking: prefer holdout loss when available, skip if no training yet.
-            best_loss = _update_best_model(
+  # Best-model tracking: the holdout is the ruler; training loss is only a
+  # stand-in until the holdout exists, and the two are never compared.
+            best_loss, best_source = _update_best_model(
                 trainer=trainer, test_metrics=tr.test_metrics, train_metrics=tr.metrics,
-                best_loss=best_loss, best_dir=best_dir, best_state_path=best_state_path,
+                test_metrics_source_iter=tr.test_metrics_source_iter,
+                holdout_generation=holdout_generation,
+                best_loss=best_loss, best_source=best_source,
+                best_dir=best_dir, best_state_path=best_state_path,
                 iteration_idx=iteration_idx, opp_strength_ema=opp_strength_ema,
             )
 
@@ -741,8 +832,7 @@ def train_trial(config: dict):
                 checkpoint=checkpoint,
                 best_loss=best_loss,
                 ckpt_dir=ckpt_dir,
-                work_dir=work_dir,
-                trial_dir=trial_dir,
+                durable_dir=durable_dir,
                 status_csv_path=_STATUS_CSV_PATH,
                 tune_report_fn=_tune_report,
                 puzzle_suite=puzzle_suite,

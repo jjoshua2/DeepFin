@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import deque
 from pathlib import Path
 
@@ -46,6 +47,15 @@ from .threat_upgrade import (
 import contextlib
 
 log = logging.getLogger(__name__)
+
+# Consecutive fully-empty shuffle refreshes before we say so out loud. The
+# prefetch thread retries roughly every 0.1s, so this is a few seconds of
+# genuinely stalled refresh -- long enough to ride out a burst of window
+# trimming, short enough to precede any training damage.
+_REFRESH_EMPTY_STREAK_ALARM = 50
+# Throttle for the tracked-shard load-failure line. Generous because the
+# failure it reports is per-shard and can arrive in bursts.
+_SHARD_LOAD_WARN_INTERVAL_S = 60.0
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
 _SCALAR_METADATA_FIELDS = (
@@ -202,6 +212,18 @@ class DiskReplayBuffer:
         self._prefetched_refresh: list[dict[str, np.ndarray]] | None = None
         self._prefetch_thread: threading.Thread | None = None
         self._prefetch_generation = 0
+
+  # Shard-load accounting for the shuffle refresh. Split into two counters
+  # because the two causes need opposite responses: a shard the window
+  # trimmer deleted out from under us is EXPECTED (see
+  # _note_shard_load_failure), while any other failure is a real problem
+  # worth a line. Without the split there is only "except Exception: pass",
+  # and the number of shards actually loaded is never compared against the
+  # number requested.
+        self._refresh_vanished_total = 0
+        self._refresh_failed_total = 0
+        self._refresh_empty_streak = 0
+        self._shard_load_warned_at = 0.0
 
   # In-memory hot replay as chunked sparse arrays with logical front offsets.
   # Sampling stays random over the hot pool while trims avoid front-copy churn.
@@ -708,11 +730,9 @@ class DiskReplayBuffer:
         if seed_paths:
             n_seed = min(len(seed_paths), self._refresh_shards * 2)
             for sp in seed_paths[-n_seed:]:
-                try:
-                    arrs, _ = load_shard_arrays(sp, lazy=False)
+                arrs = self._try_load_shard(sp, context="shuffle seed")
+                if arrs is not None:
                     self._append_shuffle_arrays(arrs)
-                except Exception:
-                    pass
             self._trim_shuffle_buf()
 
     def _ensure_prefetch_thread(self) -> None:
@@ -804,12 +824,121 @@ class DiskReplayBuffer:
 
         loaded: list[dict[str, np.ndarray]] = []
         for idx in np.asarray(chosen_idxs, dtype=np.int64):
-            try:
-                arrs, _ = load_shard_arrays(shard_paths[int(idx)], lazy=False)
+            arrs = self._try_load_shard(shard_paths[int(idx)], context="shuffle refresh")
+            if arrs is not None:
                 loaded.append(arrs)
-            except Exception:
-                pass
+
+  # The realized-vs-configured check this function never had: n_pick shards
+  # were asked for, len(loaded) arrived. Only a fully empty result is worth
+  # escalating -- a partial load still refreshes the buffer, and the trim
+  # race makes small shortfalls routine.
+        alarm = self._note_refresh_outcome(loaded_any=bool(loaded))
+        if alarm is not None:
+            streak, vanished, failed = alarm
+            print(
+                f"[disk_buf] WARNING: shuffle refresh has returned 0 of "
+                f"{n_pick} requested shards {streak} times in a row "
+                f"(vanished={vanished} failed={failed}, tracked_shards="
+                f"{len(shard_paths)}); the shuffle buffer is no longer being "
+                f"refreshed and training is sampling stale data",
+                flush=True,
+            )
         return loaded
+
+    def _note_refresh_outcome(self, *, loaded_any: bool) -> tuple[int, int, int] | None:
+        """Advance or reset the empty-refresh streak; report when to alarm.
+
+        A refresh that returns nothing is INVISIBLE upstream: _prefetch_worker
+        only stores a non-empty result, so the slot stays empty, the next tick
+        retries, and training keeps sampling a shuffle buffer that has silently
+        stopped being refreshed -- at roughly 10 attempts/s, forever, with no
+        log line. We alarm on the STREAK rather than on any single empty
+        result, which is normal while the window is being trimmed hard.
+
+        The whole read-modify-decide runs under ``_prefetch_lock`` because
+        ``_refresh_shuffle_buf`` (sampling thread) and ``_prefetch_worker``
+        (its own thread) both reach here. Unsynchronised, the failure is not
+        just a delayed alarm: a successful refresh writing 0 can interleave
+        with a stale thread writing 50 and fire the alarm right after a
+        refresh that actually worked. A false "training is sampling stale
+        data" is worse than a late one -- it sends the reader chasing a
+        non-problem and discredits the counter. Holding the lock across the
+        decision also stops two threads reaching the threshold together and
+        printing it twice.
+
+        Returns ``(streak, vanished, failed)`` when the caller should print --
+        totals snapshotted under the same lock so they agree with the streak
+        -- or ``None``. The print itself stays with the caller, outside the
+        lock, because it is I/O on a path the prefetch thread hits in bursts.
+        """
+        with self._prefetch_lock:
+            if loaded_any:
+                self._refresh_empty_streak = 0
+                return None
+            self._refresh_empty_streak += 1
+            streak = self._refresh_empty_streak
+            if streak == _REFRESH_EMPTY_STREAK_ALARM or (
+                streak > _REFRESH_EMPTY_STREAK_ALARM
+                and streak % (_REFRESH_EMPTY_STREAK_ALARM * 20) == 0
+            ):
+                return streak, self._refresh_vanished_total, self._refresh_failed_total
+            return None
+
+    def _try_load_shard(
+        self, sp: Path, *, context: str,
+    ) -> dict[str, np.ndarray] | None:
+        """Load one shard, accounting for -- rather than swallowing -- failures."""
+        try:
+            arrs, _ = load_shard_arrays(sp, lazy=False)
+        except Exception as exc:
+            self._note_shard_load_failure(sp, exc, context=context)
+            return None
+        return arrs
+
+    def _note_shard_load_failure(
+        self, sp: Path, exc: BaseException, *, context: str,
+    ) -> None:
+        """Classify a shard-load failure as the benign trim race or a real fault.
+
+        Classification is by TRACKING, not by exception type, and deliberately
+        so. ``_enforce_window`` pops a shard out of ``_shard_paths`` under the
+        lock and only then calls ``delete_shard_path``, so a path that is no
+        longer tracked was deliberately deleted and losing it is expected.
+        Going by exception type instead would be both wrong and fragile:
+        ``zarr.open_group`` on a missing group raises ``GroupNotFoundError``
+        (a ``ValueError``, NOT a ``FileNotFoundError``), and because
+        ``delete_shard_path`` uses ``shutil.rmtree(..., ignore_errors=True)``
+        a reader can also catch a half-deleted group and surface a third kind
+        of error entirely. The tracking check is immune to all of that and to
+        the zarr version.
+        """
+        now = time.monotonic()
+  # Counters and throttle live under the lock we already need for the
+  # membership test: _refresh_shuffle_buf runs on the sampling thread while
+  # _prefetch_worker runs on its own, so both can land here at once and
+  # bare `+= 1` would drop counts and let the throttle emit twice.
+        with self._prefetch_lock:
+            if sp not in self._shard_paths:
+                self._refresh_vanished_total += 1
+                return
+            self._refresh_failed_total += 1
+            failed = self._refresh_failed_total
+            vanished = self._refresh_vanished_total
+            if now - self._shard_load_warned_at < _SHARD_LOAD_WARN_INTERVAL_S:
+                return
+            self._shard_load_warned_at = now
+
+  # Printed outside the lock -- this is I/O on a path the prefetch thread
+  # hits in bursts, and the sampling thread contends for the same lock.
+  # print, not log: this runs inside the Ray trial actor, whose stdout
+  # train.sh captures into the training log, while logging traffic can
+  # reach only the Ray session logs.
+        print(
+            f"[disk_buf] WARNING: {context} failed to load a TRACKED shard "
+            f"{sp.name}: {type(exc).__name__}: {exc} "
+            f"(failed={failed} vanished={vanished} since start)",
+            flush=True,
+        )
 
     def _apply_refresh_chunks(self, loaded: list[dict[str, np.ndarray]]) -> None:
         loaded_n = sum(int(arrs["x"].shape[0]) for arrs in loaded if "x" in arrs)

@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import shutil
 import time
 import traceback
@@ -33,27 +34,125 @@ import contextlib
 log = logging.getLogger(__name__)
 
 
+def _checkpoint_index(path: Path) -> int | None:
+    """Index N from a ``checkpoint_NNNNNN`` directory name, or None."""
+    suffix = path.name.removeprefix("checkpoint_")
+    return int(suffix) if suffix.isdigit() else None
+
+
+def _existing_checkpoint_dirs(trial_dir: Path) -> list[tuple[int, Path]]:
+    """Indexed ``checkpoint_NNNNNN`` dirs under ``trial_dir``, oldest first.
+
+    Sorted by parsed index rather than by name so the ordering stays correct if
+    the run ever crosses the six-digit width Ray pads to.
+    """
+    out: list[tuple[int, Path]] = []
+    for p in trial_dir.glob("checkpoint_*"):
+        if not p.is_dir():
+            continue
+        idx = _checkpoint_index(p)
+        if idx is not None:
+            out.append((idx, p))
+    out.sort()
+    return out
+
+
 def _prune_trial_checkpoints(*, trial_dir: Path, keep_last: int) -> None:
     """Best-effort deletion of old checkpoint_* dirs inside a Tune trial.
 
     This complements Ray's `CheckpointConfig(num_to_keep=...)`.
     In particular, it helps when resuming an older experiment whose RunConfig did
     not have checkpoint retention enabled.
+
+    Deletions are logged. This runs in the trainable actor and trims by disk
+    glob, so it cannot see Ray's checkpoint-manager list, which lives in the
+    driver -- meaning it will remove directories Ray still tracks. That is
+    tolerated (`_make_checkpoint_eviction_idempotent` keeps the resulting
+    eviction from raising), but an unlogged deleter of ~650MB directories is
+    impossible to attribute after the fact, and attributing one is exactly what
+    the 2026-07-25 checkpoint-index investigation needed.
     """
 
     keep_last = int(keep_last)
     if keep_last <= 0:
         return
 
-    ckpts = sorted(
-        [p for p in trial_dir.glob("checkpoint_*") if p.is_dir()],
-        key=lambda p: p.name,
-    )
+    ckpts = [p for _, p in _existing_checkpoint_dirs(trial_dir)]
     if len(ckpts) <= keep_last:
         return
 
+  # `ignore_errors=True` means rmtree cannot tell us whether it worked, so ask
+  # the filesystem afterwards. Logging the *selected* set as "pruned" would
+  # recreate the very failure this log exists to prevent: an operator reading a
+  # confident retention message while ~650MB dirs quietly accumulate.
+    removed: list[str] = []
+    survived: list[str] = []
     for p in ckpts[:-keep_last]:
         shutil.rmtree(p, ignore_errors=True)
+        (survived if p.exists() else removed).append(p.name)
+
+    if removed:
+        log.info(
+            "pruned %d trial checkpoint(s) to keep_last=%d: %s",
+            len(removed), keep_last, ", ".join(removed),
+        )
+    if survived:
+        log.warning(
+            "failed to prune %d trial checkpoint(s); they still exist on disk "
+            "and retention is NOT being realized: %s",
+            len(survived), ", ".join(survived),
+        )
+
+
+def _guard_checkpoint_index(*, trial_dir: Path) -> int | None:
+    """Refuse to resume onto a checkpoint index that would overwrite one on disk.
+
+    Ray derives the checkpoint directory name purely from
+    `StorageContext.current_checkpoint_index`, and that counter is advanced in
+    two places that are meant to stay in lockstep: the actor's own copy in
+    `Trainable.save`, and the driver's copy in `Trial.on_checkpoint`. Only the
+    driver's copy is persisted, and only the driver's copy is skipped when
+    `register_checkpoint` raises -- so a failed eviction leaves the persisted
+    index behind the directories that actually exist.
+
+    On the next restart the actor is seeded from that stale index and starts
+    writing over live checkpoints. Observed 2026-07-25: restored from
+    `checkpoint_000250`, then wrote 246 through 251, silently replacing five
+    existing checkpoints including the restore source itself. Nothing in Ray
+    objects to this -- `persist_current_checkpoint` overwrites whatever is at
+    the path.
+
+    `_make_checkpoint_eviction_idempotent` removes the cause; this removes the
+    consequence, and is what repairs an index that has ALREADY drifted. Returns
+    the index it advanced to, or None if it left things alone.
+    """
+    existing = _existing_checkpoint_dirs(trial_dir)
+    if not existing:
+        return None
+    highest = existing[-1][0]
+
+    try:
+        from ray.train._internal.session import get_session
+
+        storage = get_session().storage  # pyright: ignore[reportOptionalMemberAccess]
+        current = int(storage.current_checkpoint_index)
+    except Exception as exc:
+        log.warning("Could not check the checkpoint index (non-fatal): %s", exc)
+        return None
+
+  # `_update_checkpoint_index` increments BEFORE persisting, so the next
+  # directory written is `current + 1`. A collision means current < highest.
+    if current >= highest:
+        return None
+
+    storage.current_checkpoint_index = highest
+    print(
+        f"[trial] checkpoint index had drifted to {current} while "
+        f"checkpoint_{highest:06d} exists on disk; advanced to {highest} so the "
+        f"next checkpoint does not overwrite a live one",
+        flush=True,
+    )
+    return highest
 
 
 _STATUS_COLS = (
@@ -182,37 +281,163 @@ def _save_trial_checkpoint(
     return Checkpoint.from_directory(str(ckpt_dir))
 
 
+def _reset_best_on_cross_trial_restore(
+    *, restore, best_loss: float, best_source: str,
+    best_dir: Path, best_state_path: Path,
+) -> tuple[float, str]:
+    """Clear best-model tracking when the weights came from another trial.
+
+    A PB2 exploit replaces the recipient's trainer with a donor checkpoint, but
+    `best.json` and `best/` are the recipient's own and are not carried in the
+    checkpoint. Keeping them would leave the record describing a lineage that
+    no longer exists -- and if that record is on the holdout scale, the donor
+    would have to beat an unrelated recipient number, using a holdout that is
+    itself empty at that moment, before the best model could ever be replaced.
+
+    The on-disk record is deleted, not merely superseded in memory. Resetting
+    only the in-memory tuple leaves `best.json` and `best/` describing the
+    discarded lineage until some later iteration happens to accept a metric --
+    and if none does, an ordinary resume after this one reloads the stale
+    record, because `cross_trial_restore` is false by then. An operator reading
+    `best/` in the meantime would see the wrong model with no indication.
+    """
+    if not getattr(restore, "cross_trial_restore", False):
+        return best_loss, best_source
+
+    print(
+        f"[trial] cross-trial restore ({getattr(restore, 'startup_source', '?')}): "
+        f"resetting best-model tracking, which held {best_loss} ({best_source}) "
+        f"from this trial's own discarded lineage",
+        flush=True,
+    )
+    best_state_path.unlink(missing_ok=True)
+    shutil.rmtree(best_dir, ignore_errors=True)
+    best_dir.mkdir(parents=True, exist_ok=True)
+  # `rmtree(ignore_errors=True)` cannot report failure, so ask the filesystem.
+    leftovers = sorted(p.name for p in best_dir.iterdir())
+    if leftovers or best_state_path.exists():
+        print(
+            f"[trial] WARN: could not fully clear the superseded best record; "
+            f"best.json exists={best_state_path.exists()} leftovers={leftovers}",
+            flush=True,
+        )
+    return float("inf"), "train_loss"
+
+
 def _update_best_model(
     *,
     trainer,
     test_metrics,
     train_metrics,
+    test_metrics_source_iter: int,
+    holdout_generation: int,
     best_loss: float,
+    best_source: str,
     best_dir: Path,
     best_state_path: Path,
     iteration_idx: int,
     opp_strength_ema: float,
-) -> float:
-    """Update best model if current loss improved. Returns updated best_loss."""
-    cur_loss = (
-        float(test_metrics.loss) if test_metrics is not None
-        else (float(train_metrics.loss) if train_metrics is not None else float("inf"))
-    )
-    if cur_loss < best_loss - 1e-12:
-        best_loss = cur_loss
-        trainer.save(best_dir / "trainer.pt")
-        trainer.export_swa(best_dir / "best_model.pt")
-        atomic_write_text(
-            best_state_path,
-            json.dumps({
-                "best_loss": float(best_loss),
-                "iter": int(iteration_idx),
-                "trainer_step": int(getattr(trainer, "step", 0)),
-                "source": "test_loss" if test_metrics is not None else "train_loss",
-                "opp_strength_ema": float(opp_strength_ema),
-            }, indent=2, sort_keys=True),
+) -> tuple[float, str]:
+    """Update best model if current loss improved. Returns (best_loss, source).
+
+    Holdout loss and training loss are DIFFERENT RULERS and must never be
+    compared to each other. Live on 2026-07-25 they sat ~0.3 nats apart --
+    train 4.88-4.94, holdout 5.14-5.25 -- because training loss is measured on
+    batches the model has just fitted.
+
+    The holdout buffer is rebuilt empty on every process start, so for the
+    first several iterations after a restart there is no holdout and
+    `test_metrics` is None. The old code then compared the LOWER training loss
+    against a `best_loss` earned on the holdout, won automatically, and pinned
+    `best_loss` to the training scale -- after which no holdout evaluation
+    could ever beat it again. Best-model tracking silently stopped responding
+    to holdout quality. `best.json` recorded `"source": "train_loss"` the whole
+    time, so the code knew the two differed; only the comparison did not.
+
+    Rules, in order:
+      * Same ruler -> ordinary improvement test.
+      * Holdout available while the record is on the training scale -> ADOPT
+        the holdout as the ruler. Not a claimed improvement, just a handover to
+        the ruler we actually trust; without it the stale training-scale number
+        locks holdout evaluation out forever.
+      * Only training loss available while the record is on the holdout scale
+        -> do nothing. The fallback ruler must never overwrite the real one.
+
+    A non-finite candidate is always rejected. The same-ruler test rejects NaN
+    on its own (`nan < x` is False), but the handover does not, and a single
+    NaN written to `best.json` would poison every later comparison against it
+    permanently, across restarts -- the record would be unbeatable by any
+    finite loss.
+
+    `holdout_generation` is recorded but deliberately NOT compared on.
+    A drift reset (`_maybe_reset_holdout_on_drift`) rebuilds the holdout from a
+    distribution that changed on purpose, so in principle two `test_loss`
+    values from different generations are different rulers too. The counter
+    cannot serve as a ruler identity yet: it is in-memory only, reset to 0 at
+    every process start and never restored, so comparing on it would force a
+    handover on every restart -- reintroducing exactly the per-restart reset
+    that PR #245 removes. Recording it makes the ambiguity auditable now and
+    is what a durable counter would key off later.
+
+    `eval_source_iter` records WHICH model the holdout number describes. With
+    `distributed_async_test_eval` (production), the holdout result collected
+    during iteration N was computed on the snapshot taken at the end of
+    iteration N-1, while `trainer` here holds N. Adoption is still correct --
+    one iteration of drift is far smaller than the ~0.3-nat ruler gap this
+    function exists to stop -- but the exported weights and the recorded loss
+    are one step apart, and that has to be legible in the artifact rather than
+    inferred later.
+    """
+    if test_metrics is not None:
+        cur_loss, cur_source = float(test_metrics.loss), "test_loss"
+    elif train_metrics is not None:
+        cur_loss, cur_source = float(train_metrics.loss), "train_loss"
+    else:
+        return best_loss, best_source
+
+    if not math.isfinite(cur_loss):
+        print(
+            f"[trial] best-model candidate from {cur_source} is {cur_loss}, "
+            f"not a finite loss; leaving the record at {best_loss:.4f} "
+            f"({best_source})",
+            flush=True,
         )
-    return best_loss
+        return best_loss, best_source
+
+    if cur_source == best_source:
+        adopt = cur_loss < best_loss - 1e-12
+    elif cur_source == "test_loss":
+        adopt = True
+        print(
+            f"[trial] best-model ruler handover: adopting holdout loss "
+            f"{cur_loss:.4f} over the training-loss record {best_loss:.4f} "
+            f"(the two are not comparable)",
+            flush=True,
+        )
+    else:
+        adopt = False
+
+    if not adopt:
+        return best_loss, best_source
+
+    trainer.save(best_dir / "trainer.pt")
+    trainer.export_swa(best_dir / "best_model.pt")
+    atomic_write_text(
+        best_state_path,
+        json.dumps({
+            "best_loss": float(cur_loss),
+            "iter": int(iteration_idx),
+            "trainer_step": int(getattr(trainer, "step", 0)),
+            "source": cur_source,
+            "eval_source_iter": (
+                int(test_metrics_source_iter) if cur_source == "test_loss"
+                else int(iteration_idx)
+            ),
+            "holdout_generation": int(holdout_generation),
+            "opp_strength_ema": float(opp_strength_ema),
+        }, indent=2, sort_keys=True),
+    )
+    return cur_loss, cur_source
 
 
 _BEST_REGRET_KEEP = 3  # Keep top-N checkpoints by lowest regret

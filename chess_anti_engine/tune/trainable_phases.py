@@ -936,8 +936,7 @@ def _finalize_iteration(
     checkpoint,
     best_loss: float,
     ckpt_dir: Path,
-    work_dir: Path,
-    trial_dir: Path,
+    durable_dir: Path,
     status_csv_path: Path,
     tune_report_fn,
     puzzle_suite,
@@ -989,7 +988,9 @@ def _finalize_iteration(
                 else:
                     _best_regret_dir = Path.cwd() / _best_regret_dir
         else:
-            _best_regret_dir = work_dir / "best_regret"
+  # Legacy in-trial location. Must be the durable dir, not the per-session
+  # staging dir, or the pool it keeps is silently emptied by every restart.
+            _best_regret_dir = durable_dir / "best_regret"
         _update_best_regret_checkpoints(
             trainer=trainer, pid=pid,
             best_regret_dir=_best_regret_dir,
@@ -1073,9 +1074,12 @@ def _finalize_iteration(
         startup_source=restore.startup_source,
     )
 
-  # Best-effort: keep disk usage bounded.
+  # Best-effort: keep disk usage bounded. `checkpoint_NNNNNN/` dirs are
+  # written to PERSISTENT storage, not to the per-session staging dir, so this
+  # has to scan `durable_dir` — against `trial_dir` it globbed an empty
+  # directory and pruned nothing, ever.
     if (completed_iterations + 1) % 5 == 0:
         _prune_trial_checkpoints(
-            trial_dir=trial_dir,
+            trial_dir=durable_dir,
             keep_last=tc.tune_num_to_keep,
         )

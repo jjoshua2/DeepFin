@@ -154,14 +154,12 @@ def _prepare_distributed_worker_auth(
     return username, password_file
 
 
-def _delete_obsolete_tune_files(*, tune_dir: Path, ts: str) -> None:
-    """Remove train_trial dirs + state aux files for one experiment timestamp."""
-    import shutil
+def _delete_obsolete_state_files(*, tune_dir: Path, ts: str) -> None:
+    """Remove the state aux files for one experiment timestamp.
 
-    for d in tune_dir.glob(f"train_trial_*{ts}"):
-        if d.is_dir():
-            print(f"[run_tune] Pruning old Ray Tune trial dir: {d}")
-            shutil.rmtree(d, ignore_errors=True)
+    Trial directories are NOT keyed off this timestamp -- see
+    `_trial_dirs_referenced_by`.
+    """
     for p in (
         tune_dir / f"experiment_state-{ts}.json",
         tune_dir / f"basic-variant-state-{ts}.json",
@@ -172,35 +170,78 @@ def _delete_obsolete_tune_files(*, tune_dir: Path, ts: str) -> None:
                 p.unlink()
 
 
-def _prune_orphan_pb2_policy_logs(*, tune_dir: Path) -> None:
-    """Drop pbt_policy_<prefix>_<id>.txt files whose prefix has no surviving
-    train_trial_<prefix>_* directory."""
-    import re
+def _trial_dirs_referenced_by(state_file: Path) -> set[str] | None:
+    """Trial directory names a Tune experiment-state file points at.
 
-    live_prefixes: set[str] = set()
-    for d in tune_dir.glob("train_trial_*"):
-        if not d.is_dir():
-            continue
-        parts = d.name.split("_", 2)
-        if len(parts) >= 3:
-            live_prefixes.add(parts[1])
+    Each entry in `trial_data` carries a plain-JSON `relative_logdir` -- the
+    trial's directory name -- alongside a cloudpickled `storage` blob we do not
+    need to touch. Returns None if the file cannot be read as expected, which
+    the caller must treat as "protect everything" rather than "protect nothing".
+    """
+    try:
+        payload = json.loads(state_file.read_text())
+        names: set[str] = set()
+        for entry in payload["trial_data"]:
+            logdir = json.loads(entry[0]).get("relative_logdir")
+            if isinstance(logdir, str) and logdir:
+                names.add(logdir)
+    except Exception as exc:
+        print(f"[run_tune] Could not read trial dirs from {state_file.name}: {exc}")
+        return None
+    return names
+
+
+def _prune_orphan_pb2_policy_logs(*, tune_dir: Path) -> None:
+    """Drop `pbt_policy_<trial_id>.txt` files with no surviving trial dir.
+
+    Ray writes these as `pbt_policy_{trial_id}.txt` (`schedulers/pbt.py`) and
+    names the trial dir `train_trial_{trial_id}_{tag}_{timestamp}`, so a policy
+    log is live exactly when some directory starts with
+    `train_trial_{trial_id}_`. Matching the whole trial id avoids having to
+    guess where it ends.
+
+    The previous version derived the live set with `name.split("_", 2)[1]`,
+    which on `train_trial_4c17c_00000_...` is the literal string `"trial"` --
+    never a trial id. So the live set could never match anything and EVERY
+    policy log was deleted on each fresh start, including live ones. Latent
+    rather than damaging so far, because GPBT is effectively off in production
+    and no policy logs are being written.
+    """
+    live_dirs = [d.name for d in tune_dir.glob("train_trial_*") if d.is_dir()]
 
     for p in tune_dir.glob("pbt_policy_*.txt"):
-        m = re.match(r"^pbt_policy_(?P<prefix>[^_]+)_\d+\.txt$", p.name)
-        if m and m.group("prefix") not in live_prefixes:
-            print(f"[run_tune] Pruning old PB2 policy log: {p}")
-            with contextlib.suppress(Exception):
-                p.unlink()
+        trial_id = p.name[len("pbt_policy_"):-len(".txt")]
+        if not trial_id or any(
+            d.startswith(f"train_trial_{trial_id}_") for d in live_dirs
+        ):
+            continue
+        print(f"[run_tune] Pruning old PB2 policy log: {p}")
+        with contextlib.suppress(Exception):
+            p.unlink()
 
 
 def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
     """Best-effort pruning of old Ray Tune experiments.
 
-    Keeps the newest `keep_last` experiment_state-*.json files and deletes
-    train_trial_* directories associated with older experiment timestamps.
+    Keeps the newest `keep_last` experiment_state-*.json files, then deletes
+    trial directories that none of those kept files reference.
     Only intended to run on fresh starts (not --resume).
+
+    The reference has to be read out of the state files. It CANNOT be derived
+    from the filenames, which is what this used to do: a trial directory is
+    named with the timestamp of the experiment that created it, while every
+    resume writes a NEW experiment_state file under a NEW timestamp. After a
+    few restarts the kept state files share no timestamp with any trial
+    directory, so `glob(f"train_trial_*{ts}")` protected nothing at all --
+    `keep_last` realized as zero no matter what the YAML said.
+
+    Live on 2026-07-25: 66 state files for 2 experiments, and the newest kept
+    file's `relative_logdir` named the very directory the timestamp glob would
+    have deleted -- the live trial, holding every checkpoint and all
+    TensorBoard history since 07-11.
     """
     import re
+    import shutil
 
     keep_last = int(keep_last)
     if keep_last <= 0 or not tune_dir.exists():
@@ -210,18 +251,41 @@ def _cleanup_old_tune_experiments(*, tune_dir: Path, keep_last: int) -> None:
     if len(state_files) <= keep_last:
         return
 
-    keep = set(state_files[-keep_last:])
-    delete_states = [p for p in state_files if p not in keep]
+    keep = state_files[-keep_last:]
+
+  # Fail safe: an unreadable kept state file means we do not know what it
+  # protects, so we delete no trial directories at all this pass. Deleting the
+  # state files is still fine -- they are small and not the irreplaceable part.
+    protected: set[str] = set()
+    protection_is_complete = True
+    for p in keep:
+        names = _trial_dirs_referenced_by(p)
+        if names is None:
+            protection_is_complete = False
+        else:
+            protected |= names
 
     ts_re = re.compile(r"^experiment_state-(?P<ts>.+)\.json$")
-    delete_ts: set[str] = set()
-    for p in delete_states:
+    keep_set = set(keep)
+    for p in state_files:
+        if p in keep_set:
+            continue
         m = ts_re.match(p.name)
         if m:
-            delete_ts.add(m.group("ts"))
+            _delete_obsolete_state_files(tune_dir=tune_dir, ts=m.group("ts"))
 
-    for ts in sorted(delete_ts):
-        _delete_obsolete_tune_files(tune_dir=tune_dir, ts=ts)
+    if not protection_is_complete:
+        print(
+            "[run_tune] Keeping every trial dir: a retained experiment-state "
+            "file could not be read, so its trial dirs are unknown."
+        )
+        return
+
+    for d in sorted(tune_dir.glob("train_trial_*")):
+        if not d.is_dir() or d.name in protected:
+            continue
+        print(f"[run_tune] Pruning old Ray Tune trial dir: {d}")
+        shutil.rmtree(d, ignore_errors=True)
 
     _prune_orphan_pb2_policy_logs(tune_dir=tune_dir)
 
@@ -549,6 +613,79 @@ def _hotpatch_scheduler_bounds(*, tuner, scheduler) -> None:
         print("[run_tune] Scheduler bounds unchanged after restore.")
 
 
+def _make_checkpoint_eviction_idempotent() -> None:
+    """Stop a missing eviction target from aborting Ray's checkpoint bookkeeping.
+
+    Ray's `_CheckpointManager.register_checkpoint` evicts the oldest tracked
+    checkpoint by calling `_delete_fs_path`, which begins with an unguarded
+    `_is_directory` that raises `FileNotFoundError` when the path is already
+    gone. (The delete *itself* is wrapped in try/except and only logs -- the
+    existence probe in front of it is not, which is what makes an absent path
+    fatal rather than a no-op.)
+
+    We have a second deleter: `_prune_trial_checkpoints` runs inside the
+    trainable actor and trims by disk glob, with no way to see the manager's
+    list, which lives in the driver. So the manager eventually tries to evict a
+    directory we already removed -- guaranteed, not hypothetical.
+
+    That raise is not cosmetic, because it propagates out of
+    `Trial.on_checkpoint` and `TuneController._process_trial_save` catches it
+    at the top level. Three things after the raise point are skipped:
+    `storage._update_checkpoint_index`, `trial.invalidate_json_state`, and
+    `_mark_trial_to_checkpoint`. The driver's checkpoint index therefore stops
+    advancing while the actor's keeps going, and the stale index is what gets
+    persisted -- so it is also what seeds the actor on the NEXT restart.
+
+    The result is a ratchet, observed live on 2026-07-25: the trial restored
+    from `checkpoint_000250`, then wrote new checkpoints numbered 246, 247,
+    248, 249, 250, 251... The index had fallen five behind, so five existing
+    checkpoint directories were silently OVERWRITTEN -- including the very one
+    the run had just restored from. The manager then held two entries with the
+    same path, and evicting the stale one deleted a live checkpoint, which
+    produced the next missing-path raise. Each restart made it worse.
+
+    Deleting a path that is already absent achieves what the caller asked for,
+    so treating it as success is correct in its own right, not just expedient.
+    Patched at the `checkpoint_manager` module binding rather than at the
+    definition, to keep deletion semantics everywhere else untouched.
+
+    Best-effort and non-fatal, like the scheduler hotpatch: a Ray upgrade that
+    moves these private attributes must not stop training from starting.
+    """
+  # Deferred like run_tune's own ray imports: importing ray at module scope
+  # would pull it into every consumer of this module.
+    try:
+        from ray.train._internal import checkpoint_manager as _ckpt_mgr
+    except ImportError as exc:
+        print(f"[run_tune] Could not patch checkpoint eviction (non-fatal): {exc}")
+        return
+
+    inner = getattr(_ckpt_mgr, "_delete_fs_path", None)
+    if inner is None:
+        print(
+            "[run_tune] Could not patch checkpoint eviction (non-fatal): "
+            "ray.train._internal.checkpoint_manager._delete_fs_path is gone"
+        )
+        return
+    if getattr(inner, "_cae_idempotent", False):
+        return
+
+    def _delete_fs_path_idempotent(fs, fs_path: str) -> None:
+        try:
+            inner(fs=fs, fs_path=fs_path)
+        except FileNotFoundError:
+  # Already gone -- the outcome the caller wanted. Printed rather than
+  # logged so it lands in train.sh's capture next to the checkpoint lines.
+            print(
+                f"[run_tune] Checkpoint eviction target already absent, "
+                f"treating as deleted: {fs_path}"
+            )
+
+    _delete_fs_path_idempotent._cae_idempotent = True  # pyright: ignore[reportFunctionMemberAccess]
+    _ckpt_mgr._delete_fs_path = _delete_fs_path_idempotent
+    print("[run_tune] Patched Ray checkpoint eviction to tolerate an absent target.")
+
+
 def run_tune(
     *,
     base_config: dict,
@@ -689,6 +826,11 @@ def run_tune(
                 checkpoint_config=CheckpointConfig(num_to_keep=ckpt_keep),
             ),
         )
+
+  # Both branches: the second deleter that makes an eviction target vanish is
+  # `_prune_trial_checkpoints`, which runs on a fresh experiment too. The
+  # manager itself lives in this (driver) process, so this is the right place.
+    _make_checkpoint_eviction_idempotent()
 
     try:
         return tuner.fit()
