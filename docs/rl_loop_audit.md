@@ -84,11 +84,28 @@ These are written from mistakes made *while doing this audit*, not hypotheticals
 9. **Never edit a shell script while it is running.** Bash reads scripts
    incrementally by byte offset, so an edit that shifts offsets can make the
    running instance execute garbage. Kill and relaunch, or wait for it to exit.
+   Two corollaries, both hit on 2026-07-26. **(a)** *Atomic rename is the safe
+   install, and that safety means the running instance keeps the OLD file.*
+   The ratchet was raised to `CONC=16` while its one-shot was mid-flight; the
+   run correctly finished at the `CONC=4` it started with. A config edit is not
+   in effect until the next launch — verify against the arena's own log
+   (`keep N games active`), never against the file on disk. **(b)** *Run
+   long-lived scripts from an immutable copy.* `cp foo.sh .foo.running.sh` and
+   launch the copy, so later edits to the source cannot reach the live process.
+   The boot512 ladder died silently in its wait loop from exactly this.
 
 10. **Beware `pgrep -f` self-matching.** A pattern passed on the command line
     appears in that command's own `/proc` cmdline, so `pgrep -f` matches the
     watcher itself. An `until ! pgrep -f "..."` loop written inline can never
     exit — one spun for 12h. Put the pattern inside a script file instead.
+
+11. **Price the instrument, not just the reading.** An observer that runs
+    against live training is a load on the thing it measures, and that load is
+    part of its verdict. The daily ratchet's first run cost ~23 iterations of
+    training to buy one Elo point with a ±50 CI (L6) — it was net-negative and
+    nothing in its design would have said so. Before putting any job on a
+    cadence, measure `timestamp` deltas and `matching_games` inside its window
+    against a clean baseline window, and state the exchange rate in the entry.
 
 ---
 
@@ -167,6 +184,7 @@ from `main` by design. As of 2026-07-26 the deltas are:
 | D2 | label coverage: rows that should have `sf_wdl` do | `replay_has_sf_wdl_frac` | **VERIFIED 2026-07-26** — 0.947–0.999 over the last 5 iters |
 | D3 | fast plies get 0.25x scale by design, not by accident | `_eff_sf_nodes` fast_scale path | **CODE-ONLY** (intended, see `eff_sf_nodes_fast_ply_scale`) |
 | D4 | vet ruler ≥ label ruler (no gate shallower than the labels) | `harvest_gate_step.py --sf-nodes` default | **VERIFIED 2026-07-26** — raised 300k → 2M |
+| D5 | *(decision, not a check)* the SF teacher's cost is ACCEPTED, do not re-propose cutting it | `ps` by process class | **DECIDED 2026-07-26 — keep the strong teacher.** Measured: Stockfish label generation holds **27.1 of 32 cores** (32 procs at the full ~698k PID budget, `sf_label_nodes_cap: 0`), i.e. ~85% of the machine; load average sits at ~48/32. Capping labels at e.g. 200k would free ~19 cores. **Rejected by the operator:** the value head is SF-label-bound and the WDL blend's SF component is load-bearing (zeroing it crashed winrate 0.64 → 0.40), so cheapening the teacher trades away the thing the labels exist to improve. **Consequence to design around, not fix:** this box is permanently CPU-saturated during training. Anything else that needs CPU must be scheduled around it or made batch-efficient — which is why arena concurrency, not sim count, is the lever that matters (see L1) |
 
 ## E. Finalize → rows
 
@@ -233,11 +251,12 @@ from `main` by design. As of 2026-07-26 the deltas are:
 
 | # | invariant | instrument | status |
 |---|---|---|---|
-| L1 | a strength ruler exists and runs on a cadence | `scripts/daily_gate_ratchet.sh` via `scripts/ratchet_loop.sh` | **VERIFIED 2026-07-26** — fires, snapshots, arenas. Two self-audit defects found and **FIXED the same day**: (a) the Elo regex omitted `+`, so a POSITIVE result passed the whole log line into the CSV and corrupted it — negative Elo parsed fine, so it broke *precisely* when the net improved; now `\+?` plus a numeric reject-guard; (b) 4 concurrent measured ~6h/run (43→105s/game under trainer contention), raised to 8. Installed by **atomic rename**, not in-place edit, because the one-shot was still running (see method rule 9) |
+| L1 | a strength ruler exists and runs on a cadence | `scripts/daily_gate_ratchet.sh` via `scripts/ratchet_loop.sh` | **VERIFIED 2026-07-26** — fires, snapshots, arenas. Two self-audit defects found and **FIXED the same day**: (a) the Elo regex omitted `+`, so a POSITIVE result passed the whole log line into the CSV and corrupted it — negative Elo parsed fine, so it broke *precisely* when the net improved; now `\+?` plus a numeric reject-guard; (b) concurrency raised 4 → 16, see L6. Installed by **atomic rename**, not in-place edit, because the one-shot was still running (see method rule 9) |
 | L2 | day-over-day regression is attributable to a day | `data/ratchet/ratchet.csv` `vs_prev` series | **PENDING** — starts on the second day (needs an earlier snapshot) |
 | L3 | drift from a frozen anchor is tracked | `vs_boot512` series | **VERIFIED 2026-07-26** — first run in flight |
 | L4 | the in-loop gate is not reporting a fake pass | `gate_games`, `gate_passed` | **FAILED (known)** — `gate_games: 0` while `gate_passed: 1`; superseded by L1 rather than fixed |
 | L5 | `value_regret` comparisons are era-matched | `--min-pieces` default 8 (TB-excluded) | **CODE-ONLY** — historical 70–76 / BT4=43 were full-set, NOT comparable |
+| L6 | an observer costs less training than the signal it buys | `timestamp` deltas + `matching_games` in `result.json`, baseline vs arena window | **FAILED 2026-07-26, FIX SHIPPED, RE-READ OWED.** The ratchet's first live run was self-defeating. It ran at `CONC=4` and took **4h32m** for 200 games; across that window training fell from **578s/iter, 483 games/iter (~3010 games/h)** to **3114s/iter, 462 games/iter (~534 games/h)** — an **82% throughput loss**, ≈**11,200 games ≈ 23 iterations** surrendered to buy one Elo point with a ±50 CI. The daily observer was costing more than half a day of the training it exists to measure. **Mechanism:** at 4 concurrent the arena is latency-bound on GPU round-trips, not compute (64 games/2770s at conc 4 vs 64 games/194s at conc 16 — 14x for 4x, superlinear), so it holds GPU memory and interleaves with the `distributed_pause_selfplay_during_training` alternation for *hours* while doing very little work. Total arena GPU-work is fixed by games × sims; **concurrency buys back the wall-clock over which that work is smeared**, and interference is duration-driven, so conc 16 should cut the damage ~10x rather than merely moving it. **Caveat on the attribution:** this is observational, not a controlled A/B — iters 28–32 ramped noisily (275s → 1369s) rather than stepping cleanly. The control is running: the boot512 ladder started 15:43 at conc 16, so if iterations hold near ~600s under it, concurrency is confirmed as the lever and a daily ratchet is affordable. If they do not, the ratchet is too expensive to run daily and drops to weekly |
 
 ---
 

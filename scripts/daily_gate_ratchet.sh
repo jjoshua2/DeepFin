@@ -39,10 +39,18 @@ SIMS=32
 # run 2026-06-18. 8 keeps the arena near ~6GB of the ~19GB free, so it coexists
 # with the trainer and monitor_fen's panel/value_regret reads while staying far
 # from that OOM (which was 256 sims at 16 concurrent, not 32 at 8).
-# 2026-07-26: raised 4 -> 8. At 4 the first run measured 43s/game for games
-# 1-64 then 105s/game for 65-128 under trainer contention — ~6h for 200 games,
-# too slow for a job that is supposed to run daily.
-CONC=8
+# 2026-07-26: raised 4 -> 16 (via 8). Measured, at 32 sims:
+#     conc 16 (swap gate)  64 games / 194s
+#     conc 4  (this job)   64 games / 2770s
+# 14x slower for 4x less concurrency — SUPERLINEAR, because with only a few
+# games in flight the GPU batches are tiny and the run is latency-bound on
+# round-trips rather than compute. The box is also CPU-starved: Stockfish label
+# generation holds ~27 of 32 cores (32 procs at ~698k nodes), leaving the arena
+# ~0.9 of a core, so the win comes from making each GPU round-trip carry more
+# work rather than from more CPU. 16 at 32 sims is exactly what the 2026-07-25
+# swap-gate arena ran (400 games) without trouble; the 2026-06-18 OOM was 256
+# sims, not 32.
+CONC=16
 SNAP_DIR=data/ratchet/snapshots
 LOG=data/ratchet/ratchet.csv
 ANCHOR=scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
