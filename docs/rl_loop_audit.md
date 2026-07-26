@@ -116,6 +116,26 @@ These are written from mistakes made *while doing this audit*, not hypotheticals
 
 ## 3. The loop, as stages
 
+**Tally as of 2026-07-26 — 58 invariants.**
+
+| verdict | n | which |
+|---|---|---|
+| VERIFIED (incl. -BY-DESIGN / -WITH-CONTEXT / -DIVERGENT) | 44 | |
+| RESOLVED | 1 | C5 |
+| FAILED | 7 | B4, C6, G4, J2, J5, L4, L6 |
+| FAILED-THEN-FIXED | 1 | J6 |
+| CODE-ONLY (argued from source, still unmeasured) | 2 | K3, L5 |
+| PENDING (needs elapsed time) | 1 | L2 |
+| NOTE / DECIDED (not pass-fail rows) | 2 | C8, D5 |
+
+**How to count this table — do NOT substring-match.** The verdict is the FIRST
+bolded token of the status cell. Several rows carry the word "FAILED" inside a
+*retraction* ("an earlier FAILED verdict here was premature" — C4, C7), so a
+`grep -c FAILED` overcounts and reports rows as broken that were explicitly
+cleared. That mistake was made on this very table on 2026-07-26, which is
+method rule 2 biting the document that contains method rule 2.
+
+
 ```
  (A) config resolve -> (B) opening select -> (C) selfplay generate
         -> (D) SF label -> (E) finalize to rows -> (F) upload/inbox
@@ -177,7 +197,7 @@ from `main` by design. As of 2026-07-26 the deltas are:
 | C3 | PID sample is healthy (curriculum W+D+L ≥ 30) | `pid_curriculum_w/d/l`, `pid_regret_reason` | **VERIFIED 2026-07-26 with a caveat** — 68–268/iter in steady state, but collapsed to 0/0/1/3 (`not_active`) for iters 28–31; see C6 |
 | C4 | PID levers actually move (nodes lever not pinned) | `pid_nodes_active`; `wdl_regret` trajectory vs `sf_pid_wdl_regret_stage_end` | **VERIFIED-BY-DESIGN 2026-07-26 (an earlier FAILED verdict here was premature)** — `nodes_active = (not regret_enabled) or (gate_enabled and regret_stage_complete)`. Regret IS enabled, so nodes unlocks only once `wdl_regret <= 0.0075`. Live regret is **0.088**, 12× above. The pin is correct staging, not a broken lever. The real issue is C7 |
 | C7 | stage 1 (regret) descends toward `stage_end` once winrate exceeds target | `wdl_regret`, `pid_raw_winrate`, `pid_regret_delta` per iteration | **VERIFIED-WITH-CONTEXT 2026-07-26 (an earlier FAILED verdict was retracted — the controller is behaving correctly)**. Sequence: regret opened 0.0393; **raw winrate at iters 1–3 was 0.41 / 0.36 / 0.41 — the restarted net was genuinely LOSING** — so the airbag fired at iter 2 exactly as specified (`raw_wr + 1.5·se = 0.364 + 0.047 = 0.411 < 0.45` floor, n=250) and eased regret to 0.0896. Raw winrate then recovered past target; `pid_ema_winrate` 0.513 → **0.589** (EMA lag is why tightening was delayed), and regret has been descending since iter 32 (Δ −0.0003, −0.0013, −0.0015). **The apparent 32-iteration "stall" was a correct airbag rescue plus EMA lag, not a defect.** NOTE the airbag reads `raw_wr`, NOT `ema_wr` — comparing the EMA against the floor gives the wrong answer |
-| C8 | *(understanding, not a defect)* stage 2 is gated on MODEL STRENGTH, not on the controller | — | The controller targets winrate 0.50, so it stops tightening once the net holds 50%. Regret only reaches `stage_end` 0.0075 if the net can hold 50% against near-full-strength SF. **"The nodes lever never fires" is therefore a measure of the net not being strong enough yet, not a bug to fix.** Do not "fix" it by lowering `stage_end` without deciding that a nodes-based ladder is wanted at a weaker regret level |
+| C8 | *(understanding, not a defect)* stage 2 is gated on MODEL STRENGTH, not on the controller | — | **NOTE — not a pass/fail row.** The controller targets winrate 0.50, so it stops tightening once the net holds 50%. Regret only reaches `stage_end` 0.0075 if the net can hold 50% against near-full-strength SF. **"The nodes lever never fires" is therefore a measure of the net not being strong enough yet, not a bug to fix.** Do not "fix" it by lowering `stage_end` without deciding that a nodes-based ladder is wanted at a weaker regret level |
 | C6 | toggling a `_RECO_RESTART_KEYS` key does not silently distort the data mix | worker log `restarting selfplay session [restart_keys=...]`, then per-iteration mix for ~6 iters | **FAILED 2026-07-26** — `opening_fen_dole_per_iter` is restart-gated; writing it abandoned all in-flight games, driving selfplay share to **1.00 for 4 iterations** (configured 0.50) and blinding the PID. Recovers by ~iter +6. **Any config toggle on a restart key contaminates the following ~6 iterations — start readouts after it, and never treat such a toggle as a free A/B** |
 | C5 | search converts sims into strength at the expected rate | sims-1 vs sims-32 paired arena vs a FIXED banked ref | **RESOLVED 2026-07-26 — the deficit was LR DAMAGE, not the architecture.** The damaged 512 net widened 91.5 -> 251.9 Elo across the two rungs (~160 Elo of lost search conversion). The control settles it: **boot512, the undamaged donor, does not widen at all** — sims-1 **-41.9** [-95.3, +9.6] vs sims-32 **-43.7** [-88.1, -0.6], ~2 Elo apart with heavily overlapping CIs, 200 paired games per rung, run with training STOPPED so neither rung was contention-contaminated. Search converts sims to strength normally on this architecture; what failed to convert was a net whose matrix group had been run at 6e-3. **Retires the alternative branch:** the value head's ranking is NOT the emergency priority. Caveat: boot512 still sits ~43 Elo below the banked 46M at BOTH budgets, so the donor was behind its predecessor — judge the climb on the `vs_boot512` ratchet series, not on this ladder |
 
