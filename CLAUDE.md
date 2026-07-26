@@ -31,7 +31,12 @@ see `docs/operations.md` for that and for salvage, blind-spot seeding, and lint 
 ## Configs
 
 - `configs/pbt2_small.yaml` — **production**, and the only config active training uses.
-  512-dim × 16-layer, ~63M params (per-layer Smolgen dominates the count).
+  512-dim × 16-layer × 16-head, **78.8M params** (measured 2026-07-26 from the
+  live trunk, not the stale ~63M this line used to claim). Per-layer Smolgen
+  really does dominate: `layer_smolgens` 42.4M of 78.8M (54%), `blocks` 30.7M,
+  all heads together ~5.5M. `ffn_mult` is per-layer and non-uniform (1.5 rising
+  to ~1.9 in the upper blocks), so the count is not reproducible by assuming a
+  flat multiplier.
 - `configs/default.yaml` — reference BT3-scale model (768-dim, 15-layer, ~105M), unused.
 - `configs/exp_*.yaml` — flag-gated research bets, ALL default off. A flag enters the
   production config only once promoted; promotion status lives in the ledger, not here.
