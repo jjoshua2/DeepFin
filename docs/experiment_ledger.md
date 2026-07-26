@@ -833,6 +833,66 @@ restart (the buffer is rebuilt empty), so a truly fixed cross-restart ruler
 additionally needs the frozen set persisted to the durable trial dir
 (`_durable_trial_dir`, PR #245) — at 2000 rows that is cheap.
 
+### PRE-REGISTERED (not yet live) — feature dropout has no `1/(1-p)` rescale, so train and play see different feature magnitudes (audit M8, 2026-07-26)
+
+**What was found.** `trainer._apply_feature_group_dropout` zeroes each of 6
+classical-feature groups with p=0.10 and **never scales the survivors back up**:
+`x[:, base+off : base+off+len] *= (1.0 - drop)`. So `1 − 0.9⁶ = 46.9%` of training
+rows have at least one feature group zeroed, while **0% of inference rows do**. In
+expectation every extra plane arrives at 0.9× at train time and 1.0× at play,
+and the 112 LC0 planes are never dropped — so this is a systematic shift in the
+**LC0-vs-features balance** between training and play, not just regularisation
+noise. It is applied in `_run_optimizer_step` only, so the holdout eval also sees
+undropped inputs.
+
+**Framing, and this is the important part: this is NOT a bug fix.** The behaviour
+has been in place for the whole life of this net, which has trained against it
+and adapted to it. Removing or compensating it *changes the training
+distribution*. So it is an experiment with a yardstick, not a correctness patch,
+and it must not be smuggled into a cleanup PR.
+
+**Hypothesis.** Compensating the dropout (inverted dropout: scale survivors by
+`1/(1-p)`) removes a systematic train/serve magnitude gap on the 63 feature
+planes, and should help slightly or be neutral. The competing hypothesis is that
+the uncompensated form is doing useful work — teaching the net not to lean on any
+single feature group — in which case compensating it costs robustness.
+
+**Arms.** Rung 1 only, decided before any live window:
+- **A (control):** `feature_dropout_p: 0.10`, no rescale — today's behaviour.
+- **B:** `feature_dropout_p: 0.10` with `1/(1-p)` rescale (inverted dropout).
+- **C (only if B is neutral-or-worse):** `feature_dropout_p: 0.0`. If the
+  regulariser is not earning its keep either way, the honest end state is to
+  delete it rather than keep a knob nobody can reason about.
+
+**Offline gate FIRST — ledger rule 6 applies.** This reshapes what the trainer
+sees, so before any live window it must show **≥ neutral broad `value_regret`** on
+a 2-seed offline `retarget_retrain` arm vs a same-seed control. Live windows are
+the scarce resource; this screen is GPU-cheap and would settle B vs A without
+touching the run.
+
+**Deciding yardstick (if it earns a live window).** Paired arena, new-vs-old,
+`matched_sims` at sims-32, 200 games under the 30-min budget — because this is a
+change to what the net *sees*, and only a paired arena decides strength (method
+rule 6).
+
+**Pre-committed thresholds.**
+- **Kill B** if offline broad `value_regret` is worse than control by more than
+  the 2-seed noise floor, or if the live paired arena CI upper bound is below 0.
+- **Adopt B** only on a positive paired CI that excludes 0.
+- **Neutral** ⇒ take arm C and delete the knob, because a regulariser that
+  measurably does nothing is a maintenance liability and a source of exactly this
+  kind of confusion.
+
+**Confounds.** Must NOT share a readout window with the holdout-persistence fix
+(audit G5) or with any `soft_policy_temp` value change — both alter what the
+rulers or the targets mean. Sequence them.
+
+**Revert.** Single boolean/knob in the trainer plus `feature_dropout_p` in the
+yaml; no state migration. But note the standing rule: a yaml revert is not a
+rollback, the replay window holds ~a day of data made under the changed setting.
+
+---
+
 ### FINDING (2026-07-26) — `soft_policy_temp` has been 2.0, not the configured 3.0, for five months
 
 **What.** `configs/pbt2_small.yaml` has read `soft_policy_temp: 3.0` since commit
