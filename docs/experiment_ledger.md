@@ -3960,13 +3960,37 @@ won LESS against a Stockfish the PID kept making EASIER (higher regret = weaker
 SF). `curriculum_draw_rate` → 0.45-0.51, `selfplay_games/iter` 776 → 228.
 Every live strength signal pointed down for weeks and was read as flat-by-design.
 
-**Leading suspect for the raw-head half:** the selfplay input distribution.
-The 07-24 dole finding recorded seeded blind-spot openings reaching **100% of
-selfplay** (81.8 → 93.4 → 98.9 → 100%), i.e. the net has been training on
-almost nothing but adversarial positions — which would degrade generic play
-exactly as observed while leaving 1-ply SF-regret on the frozen audit set
-intact or improving. NOT yet confirmed as the cause; it is the first thing to
-measure.
+**Leading suspect for the raw-head half: the selfplay input distribution —
+stated carefully, because the alarming version of this number is stale.** The
+07-24 runaway (seeded share 81.8 → 93.4 → 98.9 → **100%** of selfplay) was
+CAPPED in response: `opening_fen_dole_max_fraction: 0.25` is live, and by the
+config's own arithmetic that bounds seeded games at ~25% of TOTAL games ≈ ~50%
+of selfplay, not 100%. So the runaway is fixed and must not be cited as the
+current state.
+
+What remains is still a large, deliberate distribution shift, and it is
+UNMEASURED end-to-end: ~half of selfplay starts from blind-spot FENs, and the
+07-19 SF-refutation channel round-robins 50% of the same seed list through the
+CURRICULUM half as short games. Combined, roughly half of ALL games begin from
+adversarial positions chosen because the net plays them badly. That is exactly
+the shape that would degrade generic play while leaving (or improving) 1-ply
+SF-regret on a frozen audit set built from the same kind of positions.
+
+**This is a hypothesis, not a finding.** There is no metric in `result.json`
+for the realized seeded share (no `seed`/`dole`/`fen` key exists), so the
+configured cap has never been verified against actual game provenance — the
+same realized-vs-configured gap that produced the views-per-position error.
+FIRST ACTION: emit a realized seeded-share metric and read it, before changing
+any seeding knob.
+
+**Second corroborating datum, same session:** re-running the audit on iter 346
+(with the #246 fixes) gives raw-policy E[regret] **94.1 / 68.2**, against
+**89.5 / 63.6** measured at iter 284. Raw policy is search-independent and
+unaffected by the syzygy-probe fix, so that comparison is clean: **the one
+frozen ruler that was improving has now turned down too, −4.6cp over iters
+284→346.** (Rows (b)/(d)/(e) are NOT comparable across those two runs — the
+probe fix changes endgame search, and this run passed `--sims 32` where the
+earlier one used the config's 256 for the PLAY row.)
 
 **DECISION OWED (user's call, not a default):** the pre-committed action is
 `./scripts/train.sh salvage-restart data/salvage/recover_ckpt751_20260711`.
