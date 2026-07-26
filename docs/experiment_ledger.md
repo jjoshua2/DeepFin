@@ -82,6 +82,7 @@ and 2026-07-02):
 
 | snapshot | state captured | restore |
 |---|---|---|
+| `data/salvage/pre_durable_deploy_20260726` | 2026-07-26 02:33, trial 4c17c **iter 346** (ckpt_000307, 809 shards) — banked immediately before the stop that deployed PRs #237/#238/#239/#241/#242/#243/#244/#245. Export guard verified: printed iter 346 == live iter 346 (`result.json` ts 7 min old). Also the last state under the DEAD best-model tracker (`best_loss` 4.8934 frozen since iter 286). | `./scripts/train.sh salvage-restart data/salvage/pre_durable_deploy_20260726` |
 | `data/salvage/pre_aot_deploy_20260714` | 2026-07-14, pre-AOT-broker deploy (trial 4c17c ~iter 74, wedge-recovered). NOTE: AOT is an inference-path perf change — weights/optimizer/replay are UNCHANGED, so the real revert is just blanking `distributed_inference_aot_dir` + restart; this pool is belt-and-suspenders. | `./scripts/train.sh salvage-restart data/salvage/pre_aot_deploy_20260714` |
 | `data/salvage/prechange_20260702_ckpt479` | iter 479, 2026-07-02 evening: post-uncap, rung-1 live ~2 iters, PRE fast-ply-revert / PRE LR-decision / PRE #104. 686 shards | `./scripts/train.sh salvage-restart data/salvage/prechange_20260702_ckpt479` |
 | `data/best_pools/` (various) | older best-regret pools, pre-June-17 run | pick a pool from `./scripts/train.sh best-list`, then `./scripts/train.sh salvage-restart data/best_pools/<pool>` |
@@ -629,6 +630,79 @@ confounded; the availability yardsticks are read independently.
 **Revert:** revert the PR. Note the revert also restores
 `test_slot_broker_zeroes_outputs_when_model_unavailable`, which asserted the
 buggy behaviour with no stated rationale and was deliberately removed.
+
+### DEPLOY (pre-registered) — tune-state correctness bundle, 9 PRs in one restart (2026-07-26, from iter 346)
+
+**PROTOCOL NOTE — not an experiment.** Nine correctness fixes deployed in a
+single stop/restart: #237 (broker stale-policy on malformed compact-legal
+metadata), #238/#239 (replay shard-load accounting + empty-refresh streak
+under the prefetch lock), #241 (checkpoint-index ratchet), #242 (fresh-start
+cleanup deleting retained trial dirs), #243 (corrupt resume sidecar vs missing
+one), #244 (best-model compared holdout loss against training loss), #245
+(per-trial state read from the ephemeral per-session staging dir), #246
+(`audit_targets.py` scored the training target with the PLAY search).
+**Bundling is deliberate and does NOT violate the one-change-per-window rule:**
+every one of these is a failure-path or bookkeeping fix on a disjoint
+subsystem, none alters a training target, loss weight, or data-selection
+policy, and the yardstick below is a set of invariants rather than a learning
+metric — so they cannot confound each other. #246 is tooling only (no live
+code path).
+
+**Hypothesis.** Zero effect on learning metrics in a healthy run. The only
+VISIBLE live changes are bookkeeping: `best_loss` hands over from the training
+scale to the holdout scale, and the trial's durable-state path moves out of the
+Ray session staging dir.
+
+**EXPECTED, NOT A REGRESSION:** at the first post-restart iteration reporting a
+holdout, `best_loss` JUMPS 4.8934 → ~5.03-5.15 and `source` flips
+`train_loss` → `test_loss`. That is #244's ruler handover working. The old
+4.8934 was frozen from iter 286 and unbeatable-by-construction; 33 of the
+following 53 iterations had `train_loss` strictly below it (down to 4.824) and
+none was adopted, i.e. best-model tracking was DEAD from the first holdout
+evaluation of every session onward.
+
+**ONE deciding yardstick (exact command), read at +5 iterations:**
+
+```
+T=runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/result.json
+python3 -c "
+import json,glob,os,re
+rows=[]
+for l in open('\$T'):
+    try: rows.append(json.loads(l))
+    except Exception: pass
+post=[r for r in rows if r['training_iteration']>346]
+print('iters since restart:', len(post))
+print('best_loss:', [r.get('best_loss') for r in post])
+print('period_s:', [round(b['timestamp']-a['timestamp']) for a,b in zip(post,post[1:])])
+d=os.path.dirname('\$T')
+idx=sorted(int(re.search(r'(\d+)\$',p).group(1)) for p in glob.glob(d+'/checkpoint_*'))
+print('checkpoint indices:', idx[-6:])
+"
+grep -m1 'per-trial state that outlives this process' runs/pbt2_small/train.out
+```
+
+**SUCCESS (all four, pre-committed):**
+1. `best_loss` adopts a holdout-sourced value (jumps to ~5.0-5.2, `best.json`
+   `source == "test_loss"`) and thereafter MOVES when the holdout improves —
+   i.e. it is no longer a constant.
+2. The first new checkpoint index EXCEEDS every `checkpoint_*` dir already on
+   disk (max was 307 at the stop) — no overwrite of live checkpoints (#241).
+3. `[trial] per-trial state that outlives this process:` names a path under
+   `runs/pbt2_small/tune/`, NOT under a Ray session dir (#245).
+4. Iteration period within 15% of the pre-stop baseline **609.5s mean over
+   iters 336-346** (range 548-720), and `train_time_s` within 15% of **~110s**.
+
+**KILL:** any of 1-3 false, or (4) breached for 5 consecutive iterations →
+`./scripts/train.sh salvage-restart data/salvage/pre_durable_deploy_20260726`
+(iter 346, banked at the stop, guard-verified) and re-open the offending PR.
+
+**Confounds.** None internal (argued above). External: the swap-gate arena ran
+during the stop window on the PRE-stop checkpoint, so its verdict is not
+affected by this deploy. Live-only yaml value carried across the merge:
+`opening_fen_list_path: .../blindspot_fens_retire_307.txt` (main still held
+`retire_250` and the merge conflicted on exactly that line — the trap the
+carry-forward rule exists for).
 
 ### BUG FIX (pre-registered, not yet live) — the broker answered malformed compact-legal metadata with a STALE policy (PR #237, 2026-07-25)
 
@@ -3811,6 +3885,69 @@ its own search) fixes fastest — precisely what the sidecar cannot teach.
 paired value at ~10 iters as the early canary (regression >2cp SIG = early
 revert).** Runbook: `scratchpad/scaleup/swap_runbook.md` (trigger section
 amended this session).
+
+**SWAP-GATE VERDICT 2026-07-26 — FAILED. The rule fires: revert.** Run 9 days
+late (due 07-17, blocked on needing a training pause; run during the
+stop that deployed the tune-state bundle, so the GPU was free and the
+"never arena concurrent with training" rule was not breached).
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate data/salvage/pre_durable_deploy_20260726/seeds/slot_000/trainer.pt \
+  --reference data/salvage/recover_ckpt751_20260711/seeds/slot_000/trainer.pt \
+  --mode matched_sims --sims 32 --games 400 --max-concurrent-games 16 \
+  --no-compile --device cuda --seed 42 --label swap_gate_512x16_vs_ckpt751_sims32
+```
+
+**400 games / 200 pairs: Elo −251.9, 95% CI [−292.4, −216.5]; score 0.1900
+± 0.0170.** Pentanomial (candidate POV) WW 2, WD_DW 4, DD_WL 50, LD_DL 32,
+**LL 112** — the 512×16 net lost BOTH games of 112 of 200 opening pairs and
+swept only 2. The CI excludes 0 on the losing side by a wide margin, which is
+verbatim the pre-committed revert condition.
+
+**The gap WIDENED rather than closed.** At swap time (07-11) the same
+sims-32 cross-series arena read **−66 SIG**, and the swap was approved anyway
+on the explicit argument that "the sims-32 deficit is a search-integration gap
+that in-loop selfplay (training under its own search) fixes fastest — precisely
+what the sidecar cannot teach." 346 iterations and 15 days of in-loop selfplay
+later it is **−252**. That argument is now refuted by its own yardstick: in-loop
+selfplay did not fix the gap, it deepened it ~3.8×.
+
+**Harness verified before believing the number** (0 wins in the first 30 pairs
+warranted it): both checkpoints carry `policy_encoding: lc0_1858`,
+`input_extra_features: v2_threats`, `input_history_encoding:
+lc0_root_legacy_meta`, `history_rep_fix: true`. Same I/O contract on both
+sides, so this is not an encoding-mismatch artifact. Candidate = salvage
+`pre_durable_deploy_20260726` (iter 346 / ckpt_000307); reference = the banked
+`recover_ckpt751_20260711` trunk.
+
+**This is the strength answer the frozen rulers could not give**, and it points
+the opposite way from them — the same RULER MIRAGE shape as the 2026-07-21 row.
+Over the same window the frozen rulers said: raw-policy E[regret] **+9.39cp
+SIG better**, value_regret vs bootstrap **+0.09 NS** (i.e. flat), search-policy
+E[regret] **−1.14 NS**. Real play says −252 Elo. Reconciling: raw policy
+improved, played strength collapsed → the deficit is in what SEARCH does with
+the heads, not in the raw policy head. Consistent with the live PID signals
+that were being read as "flat/noisy": winrate 0.63 → 0.50, draws 0.20 → 0.47,
+`wdl_regret` drifting 0.077 → 0.102 (the controller EASING Stockfish because
+the net kept losing ground).
+
+**Diagnostic ladder in flight** (same pair, GPU free during the stop): sims-1
+isolates the raw heads from tree behaviour. At swap time sims-1 read +9.6 NS
+(parity) against sims-32 −66 — if sims-1 is again near parity while sims-32 is
+−252, the entire deficit is search integration (the value head misleading the
+tree), which is diagnosable and fixable without discarding the trunk. That
+distinction should drive HOW to revert, not WHETHER the gate failed — it
+failed.
+
+**DECISION OWED (user's call, not a default):** the pre-committed action is
+`./scripts/train.sh salvage-restart data/salvage/recover_ckpt751_20260711`.
+Training is currently STOPPED at iter 346 with the tune-state bundle merged and
+staged; the restart target — 46M trunk vs continuing the 512×16 — is
+deliberately NOT being chosen unilaterally, because it discards 15 days of
+training either way it goes wrong. Both trunks are banked:
+`pre_durable_deploy_20260726` (512×16 iter 346) and `recover_ckpt751_20260711`
+(46M).
 
 **cheese64 tranche FIRST READOUT @ckpt742 (2026-07-11 01:38) — ON TRACK.**
 Pre-committed primary (v1 holds/improves vs 13/35): HELD at 13/35. v2
