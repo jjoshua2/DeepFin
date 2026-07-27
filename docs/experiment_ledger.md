@@ -833,6 +833,54 @@ restart (the buffer is rebuilt empty), so a truly fixed cross-restart ruler
 additionally needs the frozen set persisted to the durable trial dir
 (`_durable_trial_dir`, PR #245) — at 2000 rows that is cheap.
 
+### CLOCK STARTED (2026-07-26 20:35) — the holdout freeze is ARMED at iter 48; read at iter 78
+
+`holdout_frozen` first read **1 on iteration 48** and has held through 52, with
+`test_replay` pinned at 2000. That is the step-5 verification the freeze
+pre-registration owes: the change is in effect on the data, not just in the
+banner. **The 30-iteration clock starts at iter 48, so the readout is iter 78.**
+
+Refill after the 17:05 restart went 194 → 847 → … → 2000, arming at 48 rather
+than the 45–46 I projected. The projection was from one iteration's refill rate;
+the rate is not constant because it tracks ingested rows.
+
+**Early numbers, explicitly NOT a verdict** (n=4, the rule says 30): post-freeze
+mean absolute iter-to-iter change in `test_loss` is **0.039** over iters 48–52
+against a pre-change baseline of **0.043**. Directionally right, nowhere near
+decidable, and recorded here only so it cannot later be presented as if it had
+been the plan.
+
+**Decision on the drain confound, made before the readout rather than after.**
+Audit G8 found the replay window is draining from 63% fifteen-day-old salvage
+data toward 0% at ~23.6 shards/h. Over iters 48–78 (~6h at the current ~715s
+cadence) the stale share falls roughly **63% → 42%**. So the window does not
+span the drain's *completion* (~2026-07-27 17:00), but it does sit inside the
+continuous shift.
+
+**Read it anyway, at iter 78, and here is why that is defensible rather than
+lazy:** the yardstick measures *iter-to-iter variability of `test_loss` on a
+fixed ruler*. A training distribution that is still moving adds genuine model
+drift on top of ruler noise, which **inflates** the measured variability. The
+confound therefore biases **against** the hypothesis. If the freeze still shows
+reduced variability while the window is drifting underneath it, that is a
+stronger result than a clean read, not a weaker one. If it shows no
+improvement, the drain is a live alternative explanation and the readout must be
+repeated on a settled window before FAILED is recorded.
+
+**Pre-committed, restated so the rule is fixed now:** WORKED if mean absolute
+iter-to-iter `test_loss` change over iters 48–78 is below the 0.043 baseline;
+FAILED if it is at or above it AND the window was settled; INCONCLUSIVE-REPEAT
+if it is at or above it while the drain is still running.
+
+**One thing the readout must NOT be used for:** `best_loss` still reads 4.8982,
+carried across the 17:05 restart and defended against a ruler that no longer
+existed at that point (G5). PR #261 fixes that going forward — a lost holdout
+now bumps `holdout_generation` and forces a handover — but it is **not deployed
+yet**, so `holdout_generation` reads 0 on every current row and the pre-restart
+`best_loss` remains incomparable to anything after it.
+
+---
+
 ### CONFOUND NOTICE (2026-07-26 evening) — do not read iters 42–48 as a training signal
 
 Two independent contaminations overlap this stretch. Both are ours. Recording
