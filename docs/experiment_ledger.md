@@ -2374,6 +2374,60 @@ artefact needed to pair against it.* A baseline is not banked until the checkpoi
 per-position dump) is somewhere Ray cannot prune. Bank the dump at the same moment the
 number is written down.
 
+**✅ READOUT RUNBOOK — PRE-VERIFIED 2026-07-27 ~17:2x, run it exactly as written.**
+
+The teacher-off baseline has now been MEASURED on the surviving banked checkpoint, with a
+per-position dump, so tomorrow is one GPU run and a join rather than two runs and a guess.
+
+**Baseline (banked, teacher-OFF, `training_iteration` 121):**
+```
+data/salvage/pre_zclip65_20260727/seeds/slot_000/trainer.pt
+dump: scratchpad/sfp0_readout/baseline_ckpt121_teacher_off.jsonl   (2000 rows)
+```
+
+| leg | ckpt121 (measured) | ckpt129 (recorded) |
+|---|---|---|
+| a) net raw policy | 85.6 / 58.6 | 85.3 / 62.4 |
+| **b) net + Gumbel search (PLAY)** | **50.5 / 48.7** | **50.2 / 49.1** |
+| **c) SF MultiPV soft target** | **51.5 / 33.7** | **51.5 / 33.7** |
+| d) production training target (256 sims) | **49.6** / 42.8 | **54.2** / 48.3 |
+| e) fast-ply search | 61.3 / 50.5 | 57.9 / 46.3 |
+
+**RULER CONTINUITY: PASSES.** Leg (c) is pure Stockfish and cannot depend on the net — it
+reproduces **51.5 / 33.7 exactly**, so the audit set and scorer are the same instrument
+that produced the ckpt129 table (and June's 33.7).
+
+**⚠ OPEN, AND IT MATTERS FOR C17: leg (d) differs by 4.6 cp between two checkpoints 8
+iterations apart — nearly the whole size of the C17 effect (−4.5 cp).** Leg (a)'s top-1
+also moved (58.6 vs 62.4) and raw policy is deterministic given weights, so the checkpoints
+genuinely differ. But whether leg (d) can swing 4.6 cp from 8 iterations of training, or
+carries that much run-to-run spread, is **not yet established**. A same-checkpoint
+same-seed repeat is running to settle it. **This does NOT retroactively weaken the C17
+measurement**, which was a same-checkpoint comparison with legs (a) and (c) verified
+bit-identical across arms — a genuinely controlled design. It does mean **a single leg-(d)
+number should not be read without a variance estimate**, and that is exactly the family of
+measurement tomorrow's verdict lives in.
+
+**TOMORROW, exactly this:**
+```bash
+# 1. fresh read on the current live checkpoint (teacher ON, coverage ~full)
+PYTHONPATH=. python3 scripts/audit_targets.py   --checkpoint <newest tune checkpoint>/trainer.pt   --sims 32 --max-positions 2000 --sf-soft-nodes 50000   --nice 19 --gpu-mem-fraction 0.20   --dump-per-position scratchpad/sfp0_readout/readout_teacher_on.jsonl
+
+# 2. THE VERDICT: absolute, pre-committed -- leg (b) E[regret] <= 47.2
+#    (read straight off the printed table)
+
+# 3. SUPPLEMENTARY paired CI (reported, never substituted for step 2)
+PYTHONPATH=. python3 scripts/paired_compare.py   scratchpad/sfp0_readout/readout_teacher_on.jsonl   scratchpad/sfp0_readout/baseline_ckpt121_teacher_off.jsonl   --join-key key --field cand.search.exp --label-a teacher_on --label-b teacher_off
+```
+
+**The join is pre-verified, not assumed.** The dump has 2000 rows with 2000 unique `key`s,
+and a self-join null control returns **2000 paired / 0 dropped / delta +0.00 [+0.00,
++0.00] / 100% tied**, with mean 50.47 matching the printed leg (b). The tooling works; only
+the second read is missing.
+
+**First check leg (c) on the new run.** If it is not 51.5 / 33.7, the ruler moved and
+NOTHING else on the page is comparable — stop and diagnose before reading any verdict.
+
 **⚠ THIS TEMPERS THE EXPECTATION, and it is recorded BEFORE the readout.** June moved the
 46M net 56.7 → 49.6. **The 63M net already sits at 50.2 with the teacher OFF** — essentially
 at the June post-experiment level, presumably bought by the capacity increase. So the
