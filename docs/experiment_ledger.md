@@ -1789,14 +1789,24 @@ suite were all stuck in **D state** (uninterruptible; SIGKILL does not take) wit
 healthy precisely because it never has to ask for a device again, and
 `train.sh stop` would have been a one-way door: nothing would have come back up.
 
-**The trigger was an observer, not the trainer.** `scripts/monitor_fen.sh` runs
-`blindspot_retire_step.py --gpu-mem-fraction 0.15` on every new checkpoint; the
-instance launched ~23:10 wedged and blocked every device-create after it. **A
-monitoring job can make training un-restartable while every training metric
-stays green** — no training signal moved, and nothing in `progress.csv`,
-the watchdog, or the ledger's yardsticks can see this. The monitor loop is
-SIGSTOPped (PIDs 9314, 1778213) so it stops adding one unkillable D-state
-process per iteration; `kill -CONT` both to resume it.
+**CAUSE NOT ESTABLISHED — and my first attribution was wrong to state as fact.**
+I initially wrote that the trigger was an observer, `scripts/monitor_fen.sh`'s
+per-checkpoint `blindspot_retire_step.py --gpu-mem-fraction 0.15`, because it
+was the oldest process stuck in D state (~23:10). That is weak evidence and I
+over-claimed it. Against it: the job has run on every checkpoint for weeks
+without incident; the **daily ratchet arena was doing GPU work in the same
+window and died in it too** (00:39, hit its 880s cap, produced no row); and the
+historical record for these wedges is host-side power/vmbus events, not
+application behaviour. A process found blocked in the ioctl is as likely a
+victim as a cause. The loops were SIGSTOPped as a precaution and **resumed
+2026-07-27 ~03:0x** on the better prior that they have been safe historically.
+
+**What IS established, and it is the part that matters:** a GPU side-job can
+leave the dxg layer in a state where training keeps running but **cannot be
+restarted**, and *no training metric can see it* — not `progress.csv`, not the
+watchdog, not any ledger yardstick. That exposure is real regardless of what
+triggered this instance, and it is the reason to batch GPU side-work into
+deliberate pause windows rather than trickle it alongside a live run.
 
 **Pre-committed restart gate — do not stop training until this passes.** The
 stuck `nvidia-smi` (PID 1808360) already carries a pending SIGKILL, so it dies
