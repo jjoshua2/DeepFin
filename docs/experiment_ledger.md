@@ -1876,19 +1876,25 @@ protecting.**
 
 | change | from → to | why |
 |---|---|---|
-| `train_views_per_ingested_position` | **2.5 → 7.5** | the actual bet: 132 steps/iter instead of 44 |
+| `train_views_per_ingested_position` | **2.5 → 5.0** | the actual bet: ~88 steps/iter instead of 44 |
 | `shuffle_buffer_size` | 25,000 → 100,000 | makes those steps affordable |
 | `shuffle_refresh_interval` | 1 → 4 | 19.5× → 4.9× read amplification |
 | `zclip_max_norm` | 5.0 → 6.5 | inert per I21; rides along |
 
-**Net effect: gradient triples while training wall clock FALLS** — 132 steps × ~756 ms
-≈ 100s, against 44 steps × 2920 ms ≈ 129s today.
+**Net effect: gradient DOUBLES while training wall clock HALVES** — ~88 steps × ~756 ms
+≈ 66s, against 44 steps × 2920 ms ≈ 129s today.
 
-**Why 7.5 and not the ~15 the loader could now feed.** AlphaZero ~1 view, KataGo ~4. Our
-value/policy targets are ground truth from a FIXED external SF, not bootstrapped from the
-current net, so they never go stale and the reuse ceiling is set by overfitting rather
-than target staleness — which is why exceeding KataGo is defensible at all. 7.5 stops
-short so the train/holdout gap can be read before going further.
+**Why 5.0, revised down from 7.5 before deploy.** The first draft set 7.5, justified by
+our targets being ground truth from a FIXED external SF — never stale, so the reuse
+ceiling is set by OVERFITTING rather than target staleness. **That argument is right about
+the mechanism and wrong about the conclusion: it identifies overfitting as the binding
+constraint and then proceeds as though nothing binds.** AlphaZero ~1 and KataGo ~4 are
+empirical ceilings from loops that demonstrably work; going 2× past KataGo on the first
+attempt, on a loop already believed broken, adds a failure mode that would then have to be
+disentangled from the one under investigation. **5.0 is a FLOOR, not a target** — the key
+is live-tunable, so it rises by yaml edit with no restart once the train/holdout gap has
+been watched. The loader keys get only this one shot; they are construction-time. Asymmetric
+costs deserve asymmetric caution, and they point in opposite directions here.
 
 **NOT changed, and this is a reasoned exception rather than caution: the learning rate.**
 The warm-start disaster was precisely raising LR on THIS donor — a 3e-5 net run at 3e-4,
@@ -1900,12 +1906,12 @@ is the next lever** — with that history in front of us.
 **DECIDING YARDSTICK — the ratchet, not a loss column.** Next `vs_boot512` row at ≥200
 games. **SUCCESS = point estimate above +20 Elo with the CI excluding 0.** Anything less
 and the gradient-starvation thesis is wrong and we move to LR / data / the C17 search
-defect. Plumbing pre-check on the first 3 iterations: `train_time_s` < 110s,
-`train_views_actual` ≈ 7.5, `trainer_steps_done` ≈ 132.
+defect. Plumbing pre-check on the first 3 iterations: `train_time_s` < 90s,
+`train_views_actual` ≈ 5.0, `trainer_steps_done` ≈ 88.
 
 **KILL (views is live-tunable — revert is a yaml edit, no restart):** train/holdout policy
 gap past ~0.30 (live 0.13–0.18); frozen `test_wdl_loss` +>0.026 (4σ) over 3 consecutive
-iterations; or `train_views_actual` not tracking 7.5.
+iterations; or `train_views_actual` not tracking 5.0.
 
 **Revert point:** `data/salvage/pre_zclip65_20260727` (verified iter=121, 3.8G).
 

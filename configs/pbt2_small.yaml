@@ -411,7 +411,7 @@ train:
   batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
   train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
   train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
-  # 2026-07-27: 2.5 -> 7.5, PAIRED with the replay-loader fix below. THE BET:
+  # 2026-07-27: 2.5 -> 5.0, PAIRED with the replay-loader fix below. THE BET:
   # the loop is gradient-STARVED, not unstable. Whole trial to iter 123 =
   # 6,253 optimizer steps / 3.2M samples = 0.53% of a 600M AlphaZero-scale
   # budget, and the GPU computed gradients for 3.0% of wall clock. Steps are
@@ -419,17 +419,25 @@ train:
   # = 2.502-2.552 on every row), so this key, not the loader, is what sets
   # gradient volume -- the loader fix only makes each step ~3.9x cheaper
   # (2920 -> ~756 ms) so this raise costs LESS wall clock than 2.5 did:
-  # 132 steps/iter in ~100s, vs 44 steps in 129s.
-  # Why past KataGo's ~4: our value/policy targets are GROUND TRUTH from a
-  # fixed external SF, not bootstrapped from the current net, so they never go
-  # stale and the reuse ceiling is set by OVERFITTING rather than by target
-  # staleness. 7.5 is ~2x KataGo and ~7x AlphaZero, deliberately short of the
-  # ~15 the loader could now feed, so the train/holdout gap has room to be read
-  # before going further.
+  # ~88 steps/iter in ~66s, vs 44 steps in 129s. DOUBLE the gradient at HALF
+  # the training wall clock.
+  # WHY 5.0 AND NOT HIGHER. The loader could now feed ~15 views, and an earlier
+  # draft of this line set 7.5 on the argument that our value/policy targets are
+  # GROUND TRUTH from a fixed external SF (never stale, so the reuse ceiling is
+  # OVERFITTING rather than target staleness). That argument is right about the
+  # mechanism and wrong about the conclusion: it identifies overfitting as the
+  # binding constraint and then ignores it. AlphaZero ~1, KataGo ~4 -- those are
+  # empirical ceilings from loops that demonstrably work. Going 2x past KataGo
+  # on the FIRST attempt, on a loop already believed broken, would add a failure
+  # mode we would then have to disentangle from the one we are chasing.
+  # 5.0 is a FLOOR, not a target: this key is live-tunable, so it can be raised
+  # by yaml edit with no restart once the train/holdout gap has been watched for
+  # a day. The loader keys below get only this one shot -- they are
+  # construction-time.
   # KILL: train/holdout policy gap widens past ~0.30 (live 0.13-0.18), or the
   # frozen test_wdl_loss rises >0.026 (4 sigma) over 3 consecutive iterations.
   # LIVE-TUNABLE -- revert is a yaml edit, no restart.
-  train_views_per_ingested_position: 7.5  # 2026-07-24 (renamed + denominator FIXED): trained-samples per position ACTUALLY INGESTED into the replay buffer (AZ ~1, KataGo ~4). Was train_views_per_position, which divided by matching_positions (current-model games only) while 4.5-6.5x more positions were ingested -- so 2.5 there produced only ~0.46 TRUE views and over half of all data was never trained on. Verify with the train_views_actual metric. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable.
+  train_views_per_ingested_position: 5.0  # 2026-07-24 (renamed + denominator FIXED): trained-samples per position ACTUALLY INGESTED into the replay buffer (AZ ~1, KataGo ~4). Was train_views_per_position, which divided by matching_positions (current-model games only) while 4.5-6.5x more positions were ingested -- so 2.5 there produced only ~0.46 TRUE views and over half of all data was never trained on. Verify with the train_views_actual metric. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable.
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
