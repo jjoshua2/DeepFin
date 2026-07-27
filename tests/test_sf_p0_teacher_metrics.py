@@ -182,6 +182,29 @@ def test_fractions_are_zero_when_no_row_is_eligible() -> None:
     assert got["has_sf_p0_regret_frac"] == 0.0
 
 
+def test_fractions_are_zero_when_the_has_flag_survives_but_the_target_does_not() -> None:
+    """The `has_` flag alone must not read as a live teacher.
+
+    With the target missing the loss tensor is all zeros and the term trains
+    nothing, so counting flagged-but-targetless rows would report a healthy
+    fraction over a dead teacher — the false negative these columns exist to
+    rule out.
+    """
+    outputs, inputs = _make_batch(
+        [_FLAT, _AGAINST_SF],
+        eligible=[1.0, 1.0],
+        regret_eligible=[1.0, 1.0],
+    )
+    del inputs["sf_p0_policy_t"]
+    del inputs["sf_p0_regret_t"]
+
+    got = _metrics_from((outputs, inputs))
+    assert got["has_sf_p0_frac"] == 0.0
+    assert got["has_sf_p0_regret_frac"] == 0.0
+    assert got["m_sf_own"] == 0.0
+    assert got["m_sf_own_regret"] == 0.0
+
+
 def test_fractions_report_the_eligible_share_when_rows_are_eligible() -> None:
     """5 of 10 rows eligible for the CE term, 3 of 10 for the regret term."""
     got = _metrics_from(_batch_a(), _batch_b())

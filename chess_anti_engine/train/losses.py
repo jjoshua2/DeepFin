@@ -549,8 +549,17 @@ def compute_loss(
     m_policy = masked_mean(pol_ce, pol_base)
     m_soft = masked_mean(soft_ce, net_mask * has_soft)
     m_future = masked_mean(future_ce, net_mask * has_future)
-    sf_p0_base = net_mask * has_sf_p0
-    sf_p0_regret_base = net_mask * has_sf_p0_regret
+  # A row only counts as eligible if the TARGET is actually in the batch, not
+  # merely because the shard set the `has_` flag: with the target absent the
+  # loss tensor is `zero_loss` and the term trains nothing, so counting those
+  # rows would make `has_sf_p0_frac` report a live teacher over a dead one —
+  # the exact false negative these columns exist to rule out. `masked_mean` is
+  # unaffected either way (its numerator is all zeros in that case).
+    no_rows = torch.zeros_like(net_mask)
+    sf_p0_base = net_mask * has_sf_p0 if sf_p0_target is not None else no_rows
+    sf_p0_regret_base = (
+        net_mask * has_sf_p0_regret if sf_p0_regret_t is not None else no_rows
+    )
     m_sf_own = masked_mean(sf_p0_ce, sf_p0_base)
     m_sf_own_regret = masked_mean(sf_own_regret, sf_p0_regret_base)
     sf_own_ce_sum, sf_own_rows = masked_sum_and_count(sf_p0_ce, sf_p0_base)
