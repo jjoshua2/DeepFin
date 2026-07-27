@@ -1668,6 +1668,101 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### PRE-REGISTERED (2026-07-27 ~07:3x) — raise `zclip_max_norm` 5.0 → 6.5, by graceful restart, together with PR #272
+
+**Why this needs a RESTART and not a yaml edit.** PR #272 makes the key live-editable,
+but the running process started **01:59:21**, before #272 existed, so
+`Trainer.set_grad_clip_max_norm` is not in its address space. *A merged PR is not a
+deployed PR* applies to the fix for "this knob needs a restart" as much as to anything
+else — the first change of this cap costs a restart no matter what; #272 only makes the
+**second and later** ones free. This is the whole reason the value is worth choosing
+carefully now rather than iterating on it.
+
+**Hypothesis.** `zclip_max_norm: 5.0` has stopped being a tail guard and become the
+step-size controller: median grad norm 5.38 against a cap of 5.0 means **88.9% of
+optimizer steps are hard-clipped to exactly 5.0** (iter 101), while the adaptive
+z-score clipper — the mechanism that is supposed to do this job — handles only ~5%. At
+that rate the update direction is preserved but its magnitude is discarded on nearly
+every step, which is a LARS-like normalized-step regime nobody chose. Raising the cap
+to **6.5** returns outlier duty to the adaptive clipper and restores the intended
+division of labour.
+
+**Why 6.5 and not 11.** 6.5 sits just above the measured `grad_norm_p95` (6.17–6.20 over
+iters 96–101), so it clips ~5% of steps *today* — the rate the adaptive clipper was
+tuned for, and the smallest change that fixes the semantics. It is deliberately the
+CONSERVATIVE end: the historically-inert ratio (cap/median ≈ 2.1 on the 384×12 net,
+which ran cap 5.0 at median 2.4 with a 0.000 hard-clip rate) would put the cap near 11
+at today's median. **Known cost of the conservative choice: if the ramp continues at its
+current ~+0.01/iter, 6.5 re-binds in roughly two days and we are back here.** That is
+accepted, because with #272 deployed the next move is a yaml edit rather than a restart —
+and because a smaller step is a cleaner read on whether the ramp is cap-driven.
+
+**The two causal stories this discriminates between.** (a) *LR-driven (better supported):*
+grad norm tracks LR inversely — the one clean natural experiment, `5fac4` 07-01→07-03,
+moved matrix LR 6e-3 → 2e-3 and back with nothing else changing and took median grad norm
+2.49 → 4.64 → 2.75, recovering fully on revert — and this trial runs at 10× lower base LR
+(3e-5) than either predecessor. Prediction: the ramp continues after the cap moves,
+because the cap was never its cause. (b) *Cap-self-reinforcing:* clipping 89% of steps
+lowers the effective step, which per (a) raises the grad norm, which clips more.
+Prediction: the ramp flattens or reverses once the cap stops binding. **Either outcome is
+informative and neither is a kill.**
+
+**ONE deciding yardstick — did the change take effect at all** (this is the pre-committed
+readout; it is deliberately a *plumbing* check, because the learning-quality question
+cannot be answered in the ~5-iteration window a stability change reads out in):
+
+```
+python3 -c "import csv;rows=list(csv.DictReader(open('runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/progress.csv')));[print(r['training_iteration'],r['grad_norm_median'],r['grad_hard_clip_rate']) for r in rows[-5:]]"
+```
+
+**SUCCESS = `grad_hard_clip_rate` < 0.15 on the first post-restart iteration** (from
+**0.889**). This is a near-deterministic consequence of the cap moving above p95, so it is
+a test of *deployment*, not of the hypothesis — and that is exactly what it is for: this
+key is a construction-time key, and the config-may-not-be-in-effect trap has bitten this
+project before. **If the rate stays ≥0.80, the yaml edit did NOT reach the trainer** —
+patch the newest-BY-FILENAME `experiment_state` file and restart again; do not interpret
+anything else until this passes.
+
+**KILL (revert to 5.0 — now a live yaml edit, no restart, thanks to #272):**
+1. Frozen-holdout `test_wdl_loss` rises **> 0.032** (4σ; the frozen window sd is **0.0079**,
+   n=13, mean 0.8401) sustained over **3 consecutive** iterations.
+2. Any NaN/inf in `train_loss`, or `grad_norm_median` exceeding **10.0** on any iteration.
+3. `games_generated` per iteration drops >20% (would mean the restart, not the cap, broke
+   something).
+
+**Pre-committed NON-kill:** the grad-norm ramp continuing. That is prediction (a), it is
+the better-supported story, and treating it as a failure would be reading the outcome
+after the fact.
+
+**Baseline to beat, measured at iter 101 (pre-change):** `grad_norm_median` 5.378,
+`grad_hard_clip_rate` 0.889, frozen `test_wdl_loss` 0.8401 ± 0.0079 (iters 89–101),
+`test_loss` 5.0085 ± 0.0246. **The control that makes the "no damage" claim non-vacuous:
+across a grad-norm shift of +1.74 sd (iters 89–95 → 96–101), `test_wdl_loss` moved
++0.0000** — so the ruler is sensitive enough to be worth watching and has, so far, seen
+nothing.
+
+**Confounds — three, all noted deliberately:**
+1. **PR #272 deploys in the same restart.** It adds a per-iteration push of an unchanged
+   value plus a validation guard; it touches no loss, target, or data path. Not a
+   confound for the yardstick, which reads the cap's effect.
+2. **The replay window carries ~a day of data generated under cap 5.0.** A yaml revert
+   would not undo that; this is the standing "a yaml revert is NOT a rollback" caveat.
+3. **The live yaml's `opening_fen_list_path` has rotated `retire_65` → `retire_115`**
+   since the last restart (monitor-driven, not mine). Seed-pool composition therefore
+   differs across the boundary. It is judged on panels/Cheese, not on grad norm — disjoint
+   metrics — but any games/h or winrate read across this restart inherits it.
+
+**Revert point.** `data/salvage/pre_zclip65_20260727` via
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out data/salvage/pre_zclip65_20260727`
+(`--metric training_iteration` is REQUIRED — the default picks the best-metric row, not
+current state; VERIFY the printed iteration against the live one, `result.json` is a Ray
+sync copy and goes stale).
+
+**Also in this pause window (GPU work, batched deliberately while training is DOWN):**
+G13 holdout split-leak probe (`scripts/probe_holdout_split_leak.py`) and the C17
+`target_batch` A/B. Both were queued for exactly this window rather than run concurrently.
+
+
 ### READOUT (2026-07-27 03:1x, iters 81–97) — the holdout ruler is now AT its noise floor, and I11 is drifting the WRONG way
 
 **The ruler works now, and this reframes yesterday's freeze verdict without
