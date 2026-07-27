@@ -30,8 +30,11 @@ class _CaptureModel(torch.nn.Module):
 
 class _NoPostMetricsTrainer(Trainer):
     @torch.no_grad()
-    def _compute_metrics(self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str) -> TrainMetrics:  # matches parent signature
-        del buf, batch_size, steps, tag
+    def _compute_metrics(  # matches parent signature
+        self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str,
+        model_override: torch.nn.Module | None = None, full_pass: bool = False,
+    ) -> TrainMetrics:
+        del buf, batch_size, steps, tag, model_override, full_pass
         # Avoid a second forward pass that would overwrite _CaptureModel.last_x.
         return TrainMetrics(
             loss=0.0,

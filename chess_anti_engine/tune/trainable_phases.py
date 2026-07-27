@@ -238,7 +238,19 @@ def _run_holdout_evaluation(
     iteration_idx: int, async_test_eval=None,
 ) -> tuple[TrainMetrics | None, int]:
     """Run synchronous or async holdout eval. Async path: collect last iter's
-    result, then start the next one. Returns (metrics, source_iter)."""
+    result, then start the next one. Returns (metrics, source_iter).
+
+    Both paths run a DETERMINISTIC FULL PASS: every holdout row scored exactly
+    once, in buffer order, with no resampling, no WDL rebalance and no
+    priority weighting (docs/rl_loop_audit.md G14). ``tc.test_steps`` no longer
+    reaches either path -- the number of batches is the set's size divided by
+    ``batch_size``, 4 rather than 5 at the production shape.
+
+    The ``len(holdout_buf) >= tc.batch_size`` guard is unchanged and is now a
+    minimum SET size rather than the "enough rows to fill one draw" it used to
+    be: below it the ruler is too small to compare against itself anyway, which
+    is the G5 refill window.
+    """
     if async_test_eval is not None:
         test_metrics, source_iter = async_test_eval.collect(
             timeout=tc.distributed_async_test_eval_timeout_s,
@@ -267,14 +279,15 @@ def _run_holdout_evaluation(
                 model_cfg=model_cfg,
                 holdout_buf=holdout_buf,
                 batch_size=tc.batch_size,
-                steps=tc.test_steps,
+                steps=0,
                 device=device,
                 source_iter=int(iteration_idx),
                 compile_mode=cm_eval,
+                full_pass=True,
             )
         return test_metrics, source_iter
     if len(holdout_buf) >= tc.batch_size:
-        return trainer.eval_steps(holdout_buf, batch_size=tc.batch_size, steps=tc.test_steps), int(iteration_idx)
+        return trainer.eval_full_pass(holdout_buf, batch_size=tc.batch_size), int(iteration_idx)
     return None, -1
 
 

@@ -37,11 +37,12 @@ def _make_trainer_stub(model: torch.nn.Module, eval_payload):
 
     captured = {}
 
-    def _compute_metrics(*, buf, batch_size, steps, tag, model_override=None):
+    def _compute_metrics(*, buf, batch_size, steps, tag, model_override=None, full_pass=False):
         del buf, tag  # consumed only via captured below
         captured["model_override"] = model_override
         captured["batch_size"] = batch_size
         captured["steps"] = steps
+        captured["full_pass"] = full_pass
         return eval_payload
 
     trainer._compute_metrics = _compute_metrics
@@ -110,8 +111,8 @@ def test_snapshot_isolated_from_trainer_model(cfg_and_builder):
     model = _StubChessNet(dim=4)
     snap_seen = {}
 
-    def _compute_metrics_capturing(*, buf, batch_size, steps, tag, model_override=None):
-        del buf, batch_size, steps, tag  # only model_override matters here
+    def _compute_metrics_capturing(*, buf, batch_size, steps, tag, model_override=None, full_pass=False):
+        del buf, batch_size, steps, tag, full_pass  # only model_override matters here
   # Sleep so the test has time to mutate trainer.model before the
   # eval thread reads it. AsyncTestEval should have already snapped
   # the state_dict before kicking the thread, so this mutation
@@ -190,8 +191,8 @@ def test_load_state_dict_works_through_compile_wrapper(cfg_and_builder, monkeypa
 
     monkeypatch.setattr("chess_anti_engine.train.async_eval.apply_compile", _fake_apply_compile)
 
-    def _capture(*, buf, batch_size, steps, tag, model_override=None):
-        del buf, batch_size, steps, tag
+    def _capture(*, buf, batch_size, steps, tag, model_override=None, full_pass=False):
+        del buf, batch_size, steps, tag, full_pass
   # Reach into the compiled snap and read the loaded params.
         assert model_override is not None
         captured["w"] = model_override._orig_mod.linear.weight.detach().clone()
@@ -222,8 +223,8 @@ def test_second_iter_reuses_snap_with_new_weights(cfg_and_builder):
     model = _StubChessNet(dim=4)
     seen_weights: list[torch.Tensor] = []
 
-    def _capture(*, buf, batch_size, steps, tag, model_override=None):
-        del buf, batch_size, steps, tag
+    def _capture(*, buf, batch_size, steps, tag, model_override=None, full_pass=False):
+        del buf, batch_size, steps, tag, full_pass
         assert model_override is not None
         seen_weights.append(model_override.linear.weight.detach().clone())
         return f"iter_{len(seen_weights)}"

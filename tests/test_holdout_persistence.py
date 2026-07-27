@@ -362,7 +362,7 @@ def test_drift_below_threshold_leaves_a_restored_holdout_alone(tmp_path: Path) -
 # --- what the result row says the holdout is ------------------------------
 
 
-def _test_dict(*, evaluated: bool, tc: TrialConfig) -> dict:
+def _test_dict(*, evaluated: bool, eval_rows: int = 0) -> dict:
     from chess_anti_engine.train.trainer import TrainMetrics
     from chess_anti_engine.tune.trainable_report import _test_and_drift_dict
     from chess_anti_engine.tune.trial_config import DriftMetrics, TrainingResult
@@ -373,27 +373,28 @@ def _test_dict(*, evaluated: bool, tc: TrialConfig) -> dict:
             loss=0.5, policy_loss=0.5, soft_policy_loss=0.5, future_policy_loss=0.5,
             wdl_loss=0.5, sf_move_loss=0.5, sf_move_acc=0.5, sf_eval_loss=0.5,
             categorical_loss=0.5, volatility_loss=0.5, sf_volatility_loss=0.5,
-            moves_left_loss=0.5,
+            moves_left_loss=0.5, eval_rows=eval_rows,
         )
         tr.test_metrics_source_iter = 41
     return _test_and_drift_dict(
-        tc=tc, tr=tr, drift=DriftMetrics(),
+        tr=tr, drift=DriftMetrics(),
         holdout_frozen=False, holdout_generation=0,
     )
 
 
-def test_test_size_counts_the_rows_the_eval_actually_drew() -> None:
-    """G6. `test_size` used to be the holdout BUFFER size while reading like
-    an evaluated-row count. Production draws `test_steps * batch_size` =
-    5 x 512 = 2560 rows, with replacement, from a buffer capped at 2000 -- so
-    the name promised a set size and delivered a different, smaller number."""
-    row = _test_dict(evaluated=True, tc=_tc(test_steps=5, batch_size=512))
+def test_test_size_counts_the_rows_the_eval_actually_scored() -> None:
+    """G6, then G14. `test_size` was the holdout BUFFER size while reading like
+    an evaluated-row count; it then became ``test_steps * batch_size`` = 2560
+    draws WITH REPLACEMENT from a 2000-row set. The eval is now a deterministic
+    full pass, so it reports the rows it scored and nothing reconstructs that
+    from config -- 2000 rows at batch 512 is 3 x 512 + a ragged 464."""
+    row = _test_dict(evaluated=True, eval_rows=2000)
 
-    assert row["test_size"] == 2560
+    assert row["test_size"] == 2000
 
 
 def test_test_size_is_zero_when_no_eval_ran() -> None:
-    row = _test_dict(evaluated=False, tc=_tc(test_steps=5, batch_size=512))
+    row = _test_dict(evaluated=False)
 
     assert row["test_size"] == 0
 
