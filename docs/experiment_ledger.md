@@ -2143,6 +2143,45 @@ as "another ~7cp is waiting" would be overselling it, and that framing was in th
 
 ---
 
+### PRE-REGISTERED READING RULE — the C17 separating test (2026-07-27 ~15:3x, written while the run is in flight, BEFORE any number)
+
+**What is running.** `scripts/audit_targets.py` at `--target-batch 1` against the identical
+checkpoint (`data/salvage/pre_sfp0_restore_20260727/seeds/slot_000/trainer.pt`), identical
+2000 audit positions, identical flags — **only leaf-duplication differs.** The
+`--target-batch 0` arm is this morning's baseline. `--target-batch` was plumbed into this
+script today (it had always existed on `run_gumbel_root_many_c`, just never exposed), which
+is why C17 had been untestable here.
+
+**The quantity: leg (d) "production training target (full sims)" E[regret]. Baseline
+54.2 cp** (top-1 48.3). Legs (a)/(b)/(c) are controls — (c) is pure SF and MUST NOT move;
+if it does, something other than `target_batch` changed and the comparison is void.
+
+**PRE-COMMITTED READINGS — all three, including the awkward one:**
+- **(d) improves ≥2 cp** ⇒ **C17 is a TARGET-QUALITY defect, not a compute defect.** The
+  duplicate leaves are degrading the distribution the policy head is trained on. Fixing it
+  is then data-affecting (it changes every policy target written), needs its own ledger
+  entry with a revert point, and ranks at the top.
+- **(d) within ±1 cp** ⇒ **compute waste only.** Fix it for throughput whenever convenient;
+  it is NOT the flywheel stall and should stop being cited as a candidate for it.
+- **(d) gets WORSE** ⇒ **the duplicates are LOAD-BEARING.** Do not "fix" C17. The inflated
+  `max_visit` raises the root `q_scale`, which sharpens the improved-policy target; if that
+  sharpening is helping, then removing the duplicates flattens the target as a side effect
+  — precisely the hazard the audit's own C17 note warns about ("removing them would flatten
+  the training targets as a side effect"). This outcome is recorded in advance because it
+  is the one most likely to be explained away.
+
+**⚠ A BIAS TO STATE UP FRONT: (d) improving is partly expected BY CONSTRUCTION and is not
+by itself evidence of a defect.** At `target_batch=1` the same nominal 256 sims buy ~34%
+more DISTINCT nodes, so the search is simply given more real information per sim. **The
+question is not "is tb=1 better" — it is "is it better by enough to matter for target
+quality".** Hence the 2 cp bar rather than "any improvement". For scale: the whole gap
+between the training target (54.2) and the net's own PLAY search (50.2) is 4 cp.
+
+**NOT a strength experiment and no kill rule** — it is a measurement that decides how C17
+gets classified. Read-only, no config change, nothing deploys off it.
+
+---
+
 ### ⚑ NEW, FROM THE SAME BASELINE — the production training target is measurably WORSE than the net's own play search (2026-07-27, NOT yet pre-registered)
 
 **On the same ruler, same 2000 positions, same checkpoint: production training target
