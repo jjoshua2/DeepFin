@@ -916,6 +916,26 @@ def align_compile_prefix(
     }
 
 
+def resolve_zclip_max_norm(config: dict) -> float | None:
+    """The one answer to "what fixed grad-norm cap does this config mean?".
+
+    Two callers need it and they must not disagree: the constructor path
+    (``trainer_kwargs_from_config``) and the per-iteration live push in
+    ``tune/trainable.py``. An earlier revision of the push spelled this
+    ``config.get("zclip_max_norm")``, which resolves an ABSENT key to ``None``
+    -- i.e. "cap disabled" -- while the constructor resolved the same config to
+    ``grad_clip`` or ``1.0``. Any config that sets only ``grad_clip``
+    (``configs/default.yaml``, or a bare CLI run) would have had its hard cap
+    silently switched off at iteration 1. Resolve in one place so the divergence
+    cannot come back.
+
+    ``grad_clip`` is the argparse spelling in run.py. An explicit ``None``
+    disables the fixed cap while leaving adaptive z-score clipping active.
+    """
+    raw = config.get("zclip_max_norm", config.get("grad_clip", 1.0))
+    return None if raw is None else float(raw)
+
+
 def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> dict:
     """Extract Trainer constructor kwargs from a flat config dict.
 
@@ -929,10 +949,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
     def _f(key: str, default: float, typ: type = float) -> Any:
         return typ(config.get(key, default))
 
-  # Handle grad_clip -> zclip_max_norm alias. None disables the fixed hard cap
-  # while leaving adaptive z-score clipping active.
-    zclip_max_norm_raw = config.get("zclip_max_norm", config.get("grad_clip", 1.0))
-    zclip_max_norm = None if zclip_max_norm_raw is None else float(zclip_max_norm_raw)
+    zclip_max_norm = resolve_zclip_max_norm(config)
 
   # w_sf_volatility falls back to w_volatility if not explicitly set
     w_volatility = _f("w_volatility", 0.05)
@@ -1914,6 +1931,55 @@ class Trainer:
             pg["lr"] = warm_start + (new_base - warm_start) * frac
         else:
             pg["lr"] = float(scheduler_last_lr_for_group) if scheduler_last_lr_for_group is not None else new_base
+
+    def set_grad_clip_max_norm(self, max_norm: float | None) -> bool:
+        """Re-point zclip's fixed hard cap on a RUNNING trainer.
+
+        ``ZClip`` reads ``max_grad_norm`` once in its constructor, so before
+        this existed a live yaml edit to ``zclip_max_norm`` was a silent no-op:
+        the key is in none of the restart-required sets, so ``_reload_yaml_into_config``
+        overlaid it into the config every iteration, nothing pushed it at the
+        optimizer, and the reloader did not even log the ``requires restart``
+        warning it gives ``lr_schedule``. Same shape as the ``weight_decay``
+        defect in ``_reapply_configured_param_group_hparams`` (rl_loop_audit
+        I13): a control surface that reads as live and is not.
+
+        The cap is a per-step threshold with no state behind it, so re-pointing
+        it mid-run is safe and takes effect on the next optimizer step.
+
+        Returns True when the value actually changed, so the caller can log the
+        transition rather than every iteration.
+
+        Rejects values that would corrupt training rather than clip it. zclip
+        computes ``clip_coef = max_grad_norm / (global_norm + 1e-6)`` with no
+        clamp, so a cap of ``0`` zeroes every gradient and a NEGATIVE cap flips
+        their sign into gradient ASCENT. Those were restart-only typos before
+        this became a live surface; now a slip in the live yaml would land
+        within one iteration. A bad value is refused and the current cap kept,
+        because erroring out would take down a running trial over a typo.
+        """
+        old = self.grad_clip_max_norm
+        if max_norm is None:
+            new = None
+        else:
+            new = float(max_norm)
+            if not math.isfinite(new) or new <= 0.0:
+                print(
+                    f"[trainer] REFUSING zclip_max_norm={max_norm!r} "
+                    f"(must be finite and > 0); keeping {old}",
+                    flush=True,
+                )
+                return False
+        if new == old:
+            return False
+        self.zclip.max_grad_norm = new  # pyright: ignore[reportAttributeAccessIssue]
+        return True
+
+    @property
+    def grad_clip_max_norm(self) -> float | None:
+        """The fixed hard cap the LIVE zclip object is currently applying."""
+        raw = getattr(self.zclip, "max_grad_norm", None)
+        return None if raw is None else float(raw)
 
     def set_peak_lr(self, lr: float, *, rescale_current: bool = True) -> None:
         """Rebase LR schedule to a new peak while preserving schedule phase.
