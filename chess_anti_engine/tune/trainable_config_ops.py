@@ -403,6 +403,42 @@ _LAUNCH_FIXED_ASSET_PATH_KEYS = frozenset({
     "opening_book_path", "opening_book_path_2",
 })
 
+# `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is
+# already built), but IS applied during startup/resume before the trainer
+# exists — so it is restart-required for a running trial like the rest.
+_LIVE_RELOAD_SKIPPED_KEYS = frozenset({"lr_schedule"})
+
+
+def restart_required_config_keys() -> frozenset[str]:
+    """Yaml keys a live reload refuses to apply to a running trial.
+
+    The other half of this answer is the one that keeps biting: for every key
+    NOT in here, the live yaml is re-read each iteration and wins, so the
+    trial's ``params.json`` — which Ray writes from the launch config — is a
+    historical snapshot wearing the name of current state. Ray rewrites the
+    file on every checkpoint, so its mtime tracks the run while its contents do
+    not: on 2026-07-26 it read ``opening_fen_dole_per_iter = 1`` and
+    ``...retire_307.txt`` against a live 0 / ``retire_56`` (rl_loop_audit J5).
+    For keys IN here the reverse holds — the yaml may have moved and the trial
+    is still running the launch value until someone restarts it.
+
+    Composed from the exact sets ``_reload_yaml_into_config`` branches on, so a
+    key added to any of them is reclassified here in the same commit.
+    ``test_restart_required_keys_match_the_reloader`` re-derives the answer by
+    running the reloader instead of restating these sets, so the two cannot
+    agree merely by construction.
+
+    PB2-searched keys are also preserved across a reload, but that is a
+    property of the trial's own ``pb2_bounds_*`` entries rather than of the key,
+    so callers must exclude them separately.
+    """
+    return (
+        _TOPOLOGY_KEYS
+        | _RESUME_CONSTRUCTION_BOUND_KEYS
+        | _LAUNCH_FIXED_ASSET_PATH_KEYS
+        | _LIVE_RELOAD_SKIPPED_KEYS
+    )
+
 
 def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload: bool = False) -> None:
     """Overlay YAML values into *config*, preserving PB2-searched keys.
