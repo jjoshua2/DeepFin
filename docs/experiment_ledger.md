@@ -2283,6 +2283,76 @@ silent garbage. Fixed by rotating `progress.csv` on a schema change instead of
 freezing the report schema forever. A comment asking future authors not to add
 columns is not a mechanism.
 
+**C17 duplicate-leaf batching (`target_batch`) — STAGED / NOT LAUNCHED
+(2026-07-26).** Pre-registered so that flipping it later is an experiment and not
+a cleanup. **Nothing has been changed; do not launch without the operator.**
+
+**Mechanism (measured, not argued).** `gss_step` accumulates leaves across
+several sequential-halving reps to fill `GSS_GPU_BATCH = 1024`, while
+`gumbel_c.py` passes `vloss_weight = 0`. With no virtual loss a later rep
+re-walks an **unchanged** tree, reaches the **same** leaf, and back-propagates
+the **same** value. The `gss_step` comment calls this "slightly staler tree
+state"; the walks are not staler, they are *identical*, so they carry zero
+information. Production shape builds **677,801 tree nodes vs 1,030,737** at
+per-rep flush (−34%) for the same nominal sim budget. Duplicate leaf fraction is
+29–76% at 256 sims depending on how many boards are in the batch, but only 6–8%
+at 32 sims — so essentially the whole deficit lands on the **full-sim plies**,
+which are exactly the rows that become policy targets (E1 excludes
+playout-capped rows).
+
+**Hypothesis.** Flushing once per halving rep (`target_batch = 1`) makes every
+simulation add information, and the resulting deeper/wider tree produces a
+better policy target and a stronger net at equal nominal sims.
+
+**Why this is data-affecting and NOT a throughput tweak.** The duplicate visits
+still increment `N`, which raises `max_visit`, which enters the root
+`q_scale = c_scale·(c_visit + max_visit)` used to build the final training
+policy target. Removing the duplicates therefore **flattens the targets** as a
+side effect. Any readout must not confuse "the targets changed shape" with "the
+search got better". It will also cost wall-clock: per-rep flushing means many
+more, much smaller GPU batches.
+
+**ONE deciding yardstick** (paired, fixed reference, run with training STOPPED so
+neither arm is contention-contaminated):
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --a <live-ckpt> --b <live-ckpt> --a-gumbel target_batch=1 \
+  --matched-sims 32 --games 400 --concurrency 16 --paired-openings
+```
+
+Same checkpoint both sides, so the ONLY difference is the batching. That
+isolates the search change from every model difference — and note the arena is a
+**play-shape** consumer, so this measures search strength, not target quality.
+
+**Pre-committed thresholds.**
+- **WORKED** if the `target_batch=1` arm is ≥ +15 Elo with a 95% CI excluding 0.
+- **KILLED** if the CI includes 0, or if the arm is negative at any point in the
+  CI. A −34% node deficit that buys no measurable strength means the duplicate
+  visits are not costing what the node count suggests, and the C file should be
+  left alone.
+- **INCONCLUSIVE → do not proceed** on anything narrower than that. A search
+  change that cannot clear a same-checkpoint paired arena has no business
+  touching the training-target path.
+
+**Second gate before any live deploy, even on a WORKED verdict:** the target
+flattening must be priced separately, because the arena above cannot see it.
+Compare `policy_target` entropy and top-1 mass between arms on recorded rows;
+current live entropy is **0.63 nats** and that is the number to beat or match,
+not a free variable.
+
+**Confounds.** `arena_standard.py` at 256 sims and concurrency 16 sits in the
+~76%-duplicate regime while the sims-32 rung sits at 6–8%, so the two rungs are
+NOT measuring the same amount of the effect — run sims-32 as specified and do
+not average the rungs.
+
+**Do NOT cite C17 as a demonstrated strength loss.** C5's control refutes that
+reading: boot512, the undamaged donor, does not widen across the sims-1/sims-32
+rungs (−41.9 vs −43.7 Elo, overlapping CIs) *while C17 is live*. Search converts
+sims into strength normally on this architecture today, which **bounds** C17's
+Elo cost rather than implicating it. C17 is a node-economy inefficiency until
+this arena says otherwise.
+
 **SF-refute opp-row recording — STAGED / TOOLING-READY (2026-07-19).**
 Hypothesis: the SF-refute channel is selfplay-tagged and the SF-played refute
 plies generate NO training rows today, so the net never trains its MAIN policy
