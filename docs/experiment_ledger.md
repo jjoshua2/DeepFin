@@ -2247,6 +2247,20 @@ mistaken for a verdict. **It also means the sf_p0 window and the views-bundle 4-
 overlap almost entirely** — already on the Confounds line, restated because the overlap is
 now known to be near-total rather than partial.
 
+**⛔ SEQUENCING CONSTRAINT — DO NOT DEPLOY THE C17 FIX BEFORE THIS READS OUT.** Both are
+data-affecting and both change the POLICY TARGET, so shipping C17 into this window would
+make the sf_p0 verdict unreadable in the one place it is measured. Concretely, the
+pre-committed yardstick scores leg (d) — the production training target at 256 sims — and
+that is exactly the leg C17 moves (−4.5 cp, and it changes the target's SHAPE, not just its
+score). A joint deploy would leave no way to attribute a change to either.
+
+This is a real risk rather than a theoretical one: the C17 fix is being built now and will
+be ready before the readout. **Order: sf_p0 reads out FIRST (≈26 h after 2026-07-27 14:12),
+verdict recorded, THEN C17 deploys as its own pre-registered entry with its own revert
+point.** Task #40 already says no config change without that entry; this pins the ordering
+as well. The same applies to `sf_policy_temp` (task #41) — one data-affecting change per
+readout window, and there are now three candidates queued for the same knob's blast radius.
+
 **DEPLOY VERIFIED, both paths, 2026-07-27 14:12.**
 - *Recording (empirical):* `has_sf_p0` now present in newly written shards at **8/2000 =
   0.4%** and climbing — a key that existed in **no** live shard an hour earlier. The
