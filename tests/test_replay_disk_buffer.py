@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import fcntl
+import logging
+import os
 import threading
 import time
 
@@ -15,6 +18,7 @@ from chess_anti_engine.replay.shard import (
     delete_shard_path,
     iter_shard_paths,
     load_shard_arrays,
+    local_shard_path,
 )
 
 
@@ -670,3 +674,81 @@ def test_priority_mass_excludes_fast_row_kl_and_seed_scan(tmp_path) -> None:
     assert st2["replay_pmass_rows_full"] == 0
     assert st2["replay_pmass_kl_share"] == 0.0
     buf2.close()
+
+
+def test_second_writer_into_one_shard_dir_is_reported(tmp_path, caplog) -> None:
+    """Audit G7: two writers into one window dir duplicate every row silently.
+
+    On 2026-07-11 that ran for 87 minutes and left 20.5k byte-identical
+    duplicate rows in the window (and in a salvage revert point). Nothing
+    detected it. The lock is advisory: the second writer still writes, so the
+    only thing this asserts is that it SAYS so.
+    """
+    shard_dir = tmp_path / "replay"
+    shard_dir.mkdir()
+    fd = os.open(str(shard_dir / ".writer.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    os.pwrite(fd, b"424242\n", 0)
+    try:
+        buf = DiskReplayBuffer(
+            100, shard_dir=shard_dir, rng=np.random.default_rng(0),
+            shuffle_cap=100, shard_size=2,
+        )
+        with caplog.at_level(logging.ERROR, logger="chess_anti_engine.replay.disk_buffer"):
+            buf.add_many([_sample() for _ in range(2)])
+            buf.flush()
+        assert "CONCURRENT WRITER" in caplog.text
+        assert "424242" in caplog.text
+        # Reported once, not once per shard.
+        buf.add_many([_sample() for _ in range(2)])
+        buf.flush()
+        assert caplog.text.count("CONCURRENT WRITER") == 1
+        assert len(iter_shard_paths(shard_dir)) == 2
+        buf.close()
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def test_sole_writer_is_silent_and_releases_the_lock_on_close(tmp_path, caplog) -> None:
+    shard_dir = tmp_path / "replay"
+    with caplog.at_level(logging.ERROR, logger="chess_anti_engine.replay.disk_buffer"):
+        buf = DiskReplayBuffer(
+            100, shard_dir=shard_dir, rng=np.random.default_rng(0),
+            shuffle_cap=100, shard_size=2,
+        )
+        buf.add_many([_sample() for _ in range(2)])
+        buf.flush()
+        buf.close()
+        # A resume in the same process must not inherit a stale complaint.
+        resumed = DiskReplayBuffer(
+            100, shard_dir=shard_dir, rng=np.random.default_rng(1),
+            shuffle_cap=100, shard_size=2,
+        )
+        resumed.add_many([_sample() for _ in range(2)])
+        resumed.flush()
+        resumed.close()
+    assert "CONCURRENT WRITER" not in caplog.text
+    assert len(iter_shard_paths(shard_dir)) == 2
+
+
+def test_shard_write_steps_over_an_index_another_writer_owns(tmp_path, caplog) -> None:
+    """The overwrite variant of G7: same index, one shard silently destroyed."""
+    shard_dir = tmp_path / "replay"
+    buf = DiskReplayBuffer(
+        100, shard_dir=shard_dir, rng=np.random.default_rng(0),
+        shuffle_cap=100, shard_size=2,
+    )
+    # Somebody else already owns index 0.
+    squatter = local_shard_path(shard_dir, 0)
+    squatter.mkdir(parents=True)
+    (squatter / "marker").write_text("not ours", encoding="utf-8")
+
+    with caplog.at_level(logging.ERROR, logger="chess_anti_engine.replay.disk_buffer"):
+        buf.add_many([_sample() for _ in range(2)])
+        buf.flush()
+    assert "shard index collision" in caplog.text
+    assert (squatter / "marker").read_text(encoding="utf-8") == "not ours"
+    assert local_shard_path(shard_dir, 1).exists()
+    assert buf._tracked_shard_positions() == 2
+    buf.close()
