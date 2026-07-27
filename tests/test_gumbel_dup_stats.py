@@ -103,10 +103,11 @@ def test_no_observations_is_distinguishable_from_no_duplication(
         None, boards, device="cpu", rng=np.random.default_rng(0), cfg=cfg,
         evaluator=_CountingHashEvaluator(), target_batch=0,
     )
-    rows, dupes, hashed = duplicate_stats()
+    rows, dupes, hashed, pad = duplicate_stats()
     assert hashed == 0
     assert rows == 0
     assert dupes == 0
+    assert pad == 0
     assert duplicate_rate() is None, "0/0 must not read as 0.0"
 
 
@@ -117,6 +118,31 @@ def test_disabled_telemetry_records_nothing(
     genuinely inert when off -- not merely default-off."""
     monkeypatch.setattr(gumbel_c_mod, "_DUP_STATS", False)
     reset_duplicate_stats()
-    gumbel_c_mod._record_batch_dup(np.zeros((64, 175 * 64), dtype=np.float32))
-    assert duplicate_stats() == (0, 0, 0)
+    gumbel_c_mod._record_batch_dup(np.zeros((64, 175 * 64), dtype=np.float32), 64, 64)
+    assert duplicate_stats() == (0, 0, 0, 0)
     assert duplicate_rate() is None
+
+
+def test_bucket_padding_is_not_counted_as_duplication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_pad_for_bucket` rounds a batch up to a bucket size, and the pad rows are
+    stale buffer content that hashes as duplicates of each other.
+
+    Folding them into a number called "duplicate rate" would restate bucket
+    padding as search redundancy -- this project's signature defect, a quantity
+    that does not mean what its name says. They are real GPU work, so they are
+    reported, under their own name.
+    """
+    monkeypatch.setattr(gumbel_c_mod, "_DUP_STATS", True)
+    monkeypatch.setattr(gumbel_c_mod, "_DUP_STRIDE", 1)
+    monkeypatch.setattr(gumbel_c_mod, "_DUP_SAMPLE", 1)
+    reset_duplicate_stats()
+    # 8 distinct real rows, then 56 identical pad rows the GPU also evaluates.
+    buf = np.zeros((64, 16), dtype=np.float32)
+    buf[:8] = np.arange(8, dtype=np.float32)[:, None]
+    gumbel_c_mod._record_batch_dup(buf, 8, 64)
+    rows, dupes, hashed, pad = duplicate_stats()
+    assert (rows, dupes, hashed, pad) == (8, 0, 1, 56)
+    assert duplicate_rate() == 0.0, "pad rows leaked into the duplicate rate"
+    assert gumbel_c_mod.pad_rate() == pytest.approx(56 / 64)
