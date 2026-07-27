@@ -1301,6 +1301,22 @@ typedef struct {
      * the reverse. Set by start_gumbel_sims; falls back to GSS_GPU_BATCH. */
     int32_t target_batch;
 
+    /* Duplicate-leaf flush cursor (C17). When cross-rep accumulation walks a
+     * later rep into a leaf that is ALREADY awaiting eval in this batch, the
+     * duplicate carries no information — it re-backprops the same value and
+     * burns an NN slot. Instead of appending it we stop mid-query-list, flush
+     * what we have, and resume at this cursor once the results have landed.
+     * q_resume >= 0 means "gss_prepare_batch stopped early at query q_resume of
+     * q_pending_n"; -1 means no pending work. It must be -1 and not 0: a
+     * collision on the FIRST query of a list is normal (leaves can already be
+     * pending from an earlier prepare call in the same accumulation), and a
+     * 0-means-idle encoding would drop that whole list on the floor -- worth
+     * 20-30% of the sim budget at small batch shapes. Only reachable with
+     * virtual loss on, because without it EVERY later rep collides and the
+     * flush degenerates to per-rep batching. */
+    int32_t q_resume;
+    int32_t q_pending_n;
+
     /* State machine phase */
     int phase;    /* 0=not started, 1=needs_eval, 2=done */
     int allocated;
@@ -1549,8 +1565,13 @@ static int32_t gss_prepare_batch(
     int cache_ok = (t->cb_cache != NULL);
     int32_t path_buf[MCTS_MAX_PATH];
     int32_t old_n_leaves = s->n_leaves;
+    int vloss_w = g->sel.vloss_weight;
 
-    for (int32_t qi = 0; qi < n_queries; qi++) {
+    /* Resume where a duplicate-leaf flush stopped (see GumbelSimState.q_resume). */
+    int32_t qi_start = (g->q_resume >= 0) ? g->q_resume : 0;
+    g->q_resume = -1;
+
+    for (int32_t qi = qi_start; qi < n_queries; qi++) {
         int32_t bi = g->q_board_idx[qi];
         int32_t rid = g->q_root_ids[qi];
         int32_t forced = g->q_forced[qi];
@@ -1656,8 +1677,23 @@ static int32_t gss_prepare_batch(
             continue;
         }
 
+        /* C17 duplicate guard. A pending leaf is the ONLY unexpanded node that
+         * carries virtual loss (it is applied on append, removed at backprop),
+         * so vl>0 here means this exact leaf is already in the batch awaiting
+         * eval. Re-evaluating it yields the identical value, so instead of
+         * spending an NN slot and an extra N on it we flush and resume this
+         * query against the updated tree. Virtual loss keeps the collision
+         * rare — without it every later rep collides and this degenerates to
+         * per-rep flushing. */
+        if (vloss_w > 0 && s->n_leaves > 0 && t->virtual_loss[leaf_id] > 0) {
+            g->q_resume = qi;
+            break;
+        }
+
         /* Save leaf for deferred encoding */
         if (stored_append_leaf(s, t, &cb, leaf_id, path_buf, path_len, cache_ok) < 0) return -1;
+        /* Keep later descents in this batch off the path we just committed. */
+        if (vloss_w > 0) tree_apply_vloss_path(t, path_buf, path_len);
     }
 
     /* Backprop terminals + propagate proven statuses upward. */
@@ -1714,7 +1750,7 @@ static int32_t gss_prepare_batch(
  * Pure C, no GIL needed. */
 static void gss_finish_batch(
     TreeData *t, StoredPrepState *s,
-    const float *pol_data, const float *wdl_data)
+    const float *pol_data, const float *wdl_data, int vloss_weight)
 {
     for (int32_t li = 0; li < s->n_leaves; li++) {
         int32_t nid = s->leaf_ids[li];
@@ -1739,6 +1775,9 @@ static void gss_finish_batch(
             }
         }
 
+        /* Drop the in-flight penalty just before the real visit lands, so the
+         * net effect of a pending leaf on its path is +1 visit, not +2. */
+        if (vloss_weight > 0) tree_remove_vloss_path(t, path, path_len);
         tree_backprop(t, path, path_len, q);
         tree_ht_insert(t, s->hashes[li], nid);
     }
@@ -1750,7 +1789,7 @@ static void gss_finish_batch(
  */
 static void gss_finish_batch_legal_bf16(
     TreeData *t, StoredPrepState *s,
-    const uint16_t *pol_bf16, const float *wdl_data)
+    const uint16_t *pol_bf16, const float *wdl_data, int vloss_weight)
 {
     for (int32_t li = 0; li < s->n_leaves; li++) {
         int32_t nid = s->leaf_ids[li];
@@ -1775,6 +1814,9 @@ static void gss_finish_batch_legal_bf16(
             }
         }
 
+        /* Drop the in-flight penalty just before the real visit lands, so the
+         * net effect of a pending leaf on its path is +1 visit, not +2. */
+        if (vloss_weight > 0) tree_remove_vloss_path(t, path, path_len);
         tree_backprop(t, path, path_len, q);
         tree_ht_insert(t, s->hashes[li], nid);
     }
@@ -1792,8 +1834,16 @@ static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, void
     int32_t target_batch = (g->target_batch > 0) ? g->target_batch : GSS_GPU_BATCH;
 
     for (;;) {
-        /* Build queries for one rep at a time */
-        int32_t n_queries = gss_build_queries(g);
+        /* Build queries for one rep at a time. When a duplicate-leaf flush
+         * stopped mid-list last time, resume that same list instead of
+         * advancing the rep cursor. */
+        int32_t n_queries;
+        if (g->q_resume >= 0) {
+            n_queries = g->q_pending_n;
+        } else {
+            n_queries = gss_build_queries(g);
+            g->q_pending_n = n_queries;
+        }
 
         if (n_queries > 0) {
             /* Ensure stored capacity. A failed realloc stops the whole step
@@ -1816,6 +1866,16 @@ static int32_t gss_step(TreeData *t, StoredPrepState *s, GumbelSimState *g, void
             }
 
             if (gss_prepare_batch(t, s, g, n_queries, enc_data) < 0) return -1;
+
+            /* A duplicate-leaf flush stopped mid-list: the remaining queries
+             * need the pending evals to have landed before they can produce
+             * new information, so return now and resume from q_resume. */
+            if (g->q_resume >= 0) {
+                if (s->n_leaves > 0) return s->n_leaves;
+                /* Unreachable in practice (a collision implies a pending leaf);
+                 * clear the cursor rather than spin. */
+                g->q_resume = -1;
+            }
 
             /* Accumulate more leaves before returning, unless:
              * - We've hit the target batch size
@@ -3954,6 +4014,8 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
 
     /* Minibatch target (0 => fall back to GSS_GPU_BATCH in gss_step) */
     g->target_batch = (int32_t)target_batch;
+    g->q_resume = -1;
+    g->q_pending_n = 0;
 
     /* Seed CBoard cache */
     tree_ensure_cb_cache(&self->tree, self->tree.node_count);
@@ -4056,7 +4118,7 @@ static PyObject *MCTSTree_continue_gumbel_sims(MCTSTreeObject *self, PyObject *a
     /* Finish batch (expand + backprop) and continue simulation */
     Py_BEGIN_ALLOW_THREADS
 
-    gss_finish_batch(&self->tree, s, pol_data, wdl_data);
+    gss_finish_batch(&self->tree, s, pol_data, wdl_data, g->sel.vloss_weight);
 
     /* Reset stored state for next batch */
     s->n_leaves = 0;
@@ -4124,7 +4186,7 @@ static PyObject *MCTSTree_continue_gumbel_sims_legal_bf16(MCTSTreeObject *self, 
 
     Py_BEGIN_ALLOW_THREADS
 
-    gss_finish_batch_legal_bf16(&self->tree, s, pol_data, wdl_data);
+    gss_finish_batch_legal_bf16(&self->tree, s, pol_data, wdl_data, g->sel.vloss_weight);
 
     s->n_leaves = 0;
     s->n_terminals = 0;
