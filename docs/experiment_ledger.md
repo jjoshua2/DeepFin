@@ -1746,10 +1746,68 @@ steps) and any single loss head (across the iter-96 step every train head moved
 &lt;0.5%, |d| ≤ 0.34, while `grad_norm_mean` moved +4.0% at d=4.04). The cause of
 the step is not present in the 276 logged columns.
 
+**Fourth correction (2026-07-27 07:0x), and it partly un-does the first: my
+"there is no slow drift" was itself over-broad.** The step-not-drift reading is
+right *about iters 81–99* and wrong *about the trial*. Reconstructing the full
+TB history across all three surviving lineages settles it:
+
+| era | net / base LR | median grad norm | shape |
+|---|---|---|---|
+| `5fac4` 06-21 → 07-11 | 384×12 @ 3e-4 | **2.36 – 2.50** | **flat for the entire 20 days measurable** (+0.035 over 48,190 steps, excluding the LR excursion) |
+| `4c17c` 07-11 → 07-25 | 512×16 @ 3e-4 | 3.12 – 3.70 | flat-with-a-U (+0.141 over 21,420 steps) |
+| `13a9f` 07-26 → now | 512×16 @ **3e-5** | **4.08 → 5.30** | **monotone ramp, +1.25 in 24h** |
+
+Today's 5.4 is a **sum of three things, only one of which is a drift**: +1.3
+*instantaneous* at the 512×16 swap (07-11), +0.4 *instantaneous* at the boot512
+restart (07-26), and +1.25 *continuous* inside the live trial. Decile medians on
+the live trial climb 4.08 → 5.30 monotonically over 525 logged points and **the
+last third is still rising** (+0.181/1000 steps, t=+2.7). The iters-81–95
+plateau I fitted was a real pause partway up a longer ramp, and iter 96 is the
+ramp resuming — which is why "fit the changepoint" found a step and "fit the
+trial" finds a slope. Both fits are correct on their own window; the 19-row
+window was simply too short to see what it was a piece of.
+
+*Confirmed with 5 post-96 rows (96–100): mean 5.424 vs 5.204 pre. Not an
+excursion.*
+
+**Two further method rules, both paid for here.** (1) `train/grad_norm` and
+`zclip/total_norm` are **byte-identical** — one quantity logged twice, as with
+`grad_clip_rate`/`grad_hard_clip_rate`. This table has now double-counted the
+same number as two agreeing indicators twice in one day. (2) **TB step counters
+RESET at every lineage change** (`5fac4` ended at 132,810; both 512×16 trials
+restart at exactly 56,000). Splicing them produces a smooth-looking history that
+never happened.
+
+**Best-supported cause — correlational, NOT established: the 10× LR cut.** The
+one clean natural experiment in the whole record is `5fac4` 07-01 → 07-03, the
+flat-lower-LR experiment, where matrix LR moved 6e-3 → 2e-3 and back with
+nothing else changing: median grad norm went **2.49 → 4.64 → 2.75**, tracking LR
+*inversely* and recovering *fully* on revert. The live trial runs at 10× lower
+base LR than either predecessor (3e-5, deliberately — it matches the donor's
+regime per the warm-start finding). **This inverts the intuition the whole
+question started from:** a high clip rate reads as "LR too high", but every
+measurement here points the other way. It does not explain the monotone ramp,
+since LR has been constant at 3e-5 throughout it.
+
+**Not restart-driven.** The two restarts inside `13a9f` — including the six-PR
+deploy at 01:58 — each move the median by <0.08 across the gap, and the ramp
+predates both. Across all three lineages, no restart in any gap >40 min produced
+a persistent level change.
+
+**Where the instability question lands.** The drift is real, which is the thing
+worth being uneasy about, and it has not stopped. But every downstream indicator
+is flat: ‖θ‖ +0.09%, all train heads <0.5% across the shift, the frozen holdout
+at its noise floor. So the evidence for *damage* is weak while the evidence that
+*the knob is mis-set* is strong and independent of the drift: at median 5.4
+against a cap of 5.0, the fixed cap binds on 88% of steps, which makes it the
+step-size controller rather than the airbag it was raised to 5.0 to be. The
+historically-inert ratio was cap/median ≈ 2.1 (384×12: median 2.4, cap 5.0,
+hard-clip 0.000) — which at today's median would be a cap near 11, squarely in
+the 10–15 range proposed independently.
+
 **The knob was NOT touched.** PR #272 makes `zclip_max_norm` live-reloadable
 (audit I20) — it was decorative on a running trainer — so the eventual change is
-a yaml edit that reverts as fast as it applies. Next read: iters 100+ decide
-whether 5.41 is a new plateau or a four-iteration excursion.
+a yaml edit that reverts as fast as it applies.
 
 ### DEPLOY DONE (2026-07-27 01:58) — the ten-PR restart executed after the GPU gate cleared; the three dead-key pins VERIFIED on the wire
 
