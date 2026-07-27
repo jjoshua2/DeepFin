@@ -46,6 +46,28 @@ full-strength game outcomes on the positions that have them):
        _search_wdl_like_selfplay). Not `1 - |Q|`, which is a different
        distribution and a different target.
 
+  !! THIS VALUE TABLE IS A CALIBRATION RULER, NOT A TARGET-QUALITY RULER. It
+  ranks candidates by AGREEMENT WITH DEEP SF, and (ii) shallow SF native WDL
+  will normally win it for a reason that has nothing to do with being a good
+  teacher: it is the SAME KIND OF OBJECT as the reference. Both are Stockfish,
+  so wherever SF is decisive they go one-hot together and the ECE collapses.
+  Measured 2026-07-27 on 2000 audit positions: (ii) Brier 0.0348 / ECE 0.0069
+  vs the production blend (iii) 0.0484 / 0.0868 — a 12x ECE gap that reads as
+  "switch to native WDL" and is NOT that.
+
+  Production deliberately does the opposite (`sf_wdl_use_cp_logistic: true`)
+  because SF's UCI_ShowWDL is **~72% one-hot**, and a one-hot value target
+  teaches over-confidence — the failure actually observed in play (2026-06-28
+  loss: the net evaluated +557 while the position was lost by ~300, an ~860cp
+  sign error). The cp-logistic's high ECE **against a deep-SF ruler IS the
+  deliberate softness**, not a defect; see CLAUDE.md ("the cp-logistic label is
+  deliberately soft; don't chase value sharpness against a deep-SF ruler") and
+  the WDL blend section of docs/model_heads.md.
+
+  So: use this table to detect a candidate that has DRIFTED or BROKEN, never to
+  pick the value target. Reading it as a target ranking was attempted and
+  retracted on 2026-07-27.
+
 as Brier score and expected calibration error.
 
 Shallow SF results are cached to <audit>.shallow_sf.jsonl (append-only,
