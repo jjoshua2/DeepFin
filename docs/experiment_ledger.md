@@ -1842,12 +1842,18 @@ the diff_focus and soft_policy_temp fixes ended up measuring nothing.
 | series | candidate | reference | Elo | 95% CI | games |
 |---|---|---|---|---|---|
 | `vs_prev` | iter 122 | iter 70 (~52 iters, ~10h) | **−26.7** | [−63.3, +9.3] | 300 |
-| `vs_boot512` | iter 122 | boot512 anchor | **−8.4** | [−49.0, +31.9] | 206 |
+| `vs_boot512` | iter 122 | boot512 anchor | **−11.1** | [−44.8, +22.5] | 314 |
 | *(prior row)* | *iter 25* | *boot512 anchor* | *−12.2* | *[−61.5, +36.7]* | *200* |
 
+*(FINAL numbers; an in-session note quoted the 206-game interim −8.4. The arena ran to its
+wall-clock cap at 314 games.)*
+
 **In 97 iterations (iter 25 → 122) — ~5,000 optimizer steps, ~24h — the net moved −12.2 →
-−8.4 Elo against its own bootstrap weights. +3.8 Elo, CI spanning ~90. It has not
-surpassed the weights it started from.** By the pre-committed rule both series are formal
+−11.1 Elo against its own bootstrap weights. That is +1.1 Elo.** Pentanomial score 0.4825
+→ 0.4841. Both points sit statistically on top of the bootstrap weights the trial started
+from, and on top of each other. **This is not a wide-CI null that happens to lean
+negative; it is a point estimate of essentially zero movement over a day of training,
+measured twice against a frozen anchor.** By the pre-committed rule both series are formal
 nulls (CIs include 0; the two `vs_boot512` rows overlap almost entirely). But three
 independent readings point the same way — `vs_prev` negative, `vs_boot512` flat, frozen
 `test_wdl_loss` slope −0.0000 (t=−0.10, n=33) — and **a working loop should produce
