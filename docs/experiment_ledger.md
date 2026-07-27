@@ -2530,6 +2530,39 @@ Both controls bit-identical, so nothing but the search changed. **The direction 
 a checkpoint the original work never touched** (which measured 54.2 → 46.8 = −7.4 on its
 own); magnitudes differ by checkpoint, the sign does not.
 
+**⚑⚑ THREE-WAY RESULT — VIRTUAL_MEAN vs LEGACY, and MY THEORETICAL ARGUMENT IS PARTLY
+REFUTED (2026-07-27 ~22:1x, ckpt121, controls bit-identical in all three arms):**
+
+| leg | baseline (vloss 0) | **LEGACY** | **VIRTUAL_MEAN** |
+|---|---|---|---|
+| a) net raw policy | 85.6 / 58.6 | 85.6 / 58.6 | 85.6 / 58.6 |
+| b) PLAY search, **32 sims** | 50.5 / 48.7 | 50.9 / 47.3 *(+0.4 worse)* | **48.9 / 45.6 *(−1.6 better)*** |
+| c) SF MultiPV soft | 51.5 / 33.7 | 51.5 / 33.7 | 51.5 / 33.7 |
+| **d) training target, 256 sims** | 49.6 / 42.8 | **45.1 / 37.7 *(−4.5)*** | 47.6 / 41.5 *(−2.0)* |
+| e) fast-ply, 32 sims | 61.3 / 50.5 | 60.3 / 47.3 | 60.5 / 49.3 |
+
+**The two modes TRADE OFF, and the trade runs opposite to the theory.** I argued
+VIRTUAL_MEAN must be the better construct because Gumbel's descent is already
+visit-matching and needs none of PUCT's pessimism. **On the training target that is wrong
+by 2.5 cp** — LEGACY gets −4.5, VIRTUAL_MEAN only −2.0. The pessimism evidently does real
+work when 29-76% of leaves would otherwise duplicate: actively pushing walkers apart beats
+merely not counting a duplicate twice. **On the PLAY search the theory holds** — LEGACY is
++0.4 *worse* while VIRTUAL_MEAN is −1.6 better.
+
+**Lesson, and it is the day's recurring one pointed the other way:** a mechanism argument
+that sounds right is a hypothesis, not a result. I was right that LEGACY is the wrong
+construct *for the play budget* and wrong that it is the wrong construct *everywhere*. The
+measurement was cheap and the argument was confident; the argument lost.
+
+**⚠ E[regret] and top-1 DISAGREE on leg (b)** — VIRTUAL_MEAN improves E[regret] (50.5 →
+48.9) while dropping top-1 further than LEGACY (48.7 → 45.6 vs 47.3). Do not read leg (b)
+on one column. A change that lowers expected regret while picking the single best move less
+often is redistributing mass, not straightforwardly improving.
+
+**Deploy shape this implies:** LEGACY on the 256-sim target-generation path, and **nothing
+(or VIRTUAL_MEAN) on the 32-sim play path** — never one global weight. See the scoping
+paragraph below, which this measurement now makes concrete rather than precautionary.
+
 **⚑ THE NEW INFORMATION: the fix is not uniformly good — it is DOSE-DEPENDENT ON SIM COUNT,
 and it slightly HURTS the play search.** Leg (d) at 256 sims gains 4.5 cp; leg (b) at 32
 sims **loses 0.4 cp and drops 1.4 points of top-1** (48.7 → 47.3). That is exactly what the
