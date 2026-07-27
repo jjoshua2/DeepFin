@@ -556,6 +556,39 @@ train:
   # #272. REVERT to 5.0 by yaml edit if the ledger's kill rule fires (frozen
   # test_wdl_loss +>0.032 over 3 consecutive iters, any NaN, or
   # grad_norm_median >10). The ramp CONTINUING is a pre-committed NON-kill.
+  # SCOPE (changed 2026-07-27): the cap and the adaptive EMA are computed over
+  # the ADAMW PARAMS ONLY. The Aurora group's update is the polar factor of the
+  # gradient (scale-invariant: max|polar(cG)-polar(G)| = 1.6e-07 at c=0.90,
+  # 0.0 at c=0.50), so a norm clip is EXACTLY INERT for it and including it
+  # only inflated the quantity the clip decides on. Measured on
+  # checkpoint_000122 over 8 real batches: ||g|| aurora 3.648, adamw 12.137,
+  # global 12.673 -- the AdamW group carries 91.7% of the global norm^2 on
+  # 71.4% of the params, and global = adamw x 1.044.
+  # EXPECT A ONE-OFF ~4.4% STEP DOWN in `grad_norm_median` / `grad_norm_mean` /
+  # `grad_norm_p95` at the deploy iteration. That is the MEASUREMENT changing,
+  # NOT the run. RESTATED FOR THE LIVE 6.5 CAP (this block was written against
+  # 5.0, before #273 landed 6.5): an AdamW-only 6.5 binds where the global norm
+  # would be ~6.79, i.e. the cap gets slightly LOOSER, not tighter.
+  # ⚠ THE "near-zero effect today" CLAUSE THAT STOOD HERE IS STALE -- it read
+  # "`grad_hard_clip_rate` has been 0.000 since iter 126, so the fixed arm is
+  # not binding at all". That was true when written (126-131 are all 0.000) and
+  # the sf_p0 restore at iter 132 falsified it the same day: the fixed arm went
+  # 0.000 -> 0.176 -> 0.255 -> 0.385 -> 0.430 and is ~0.26 at iter 137. So on
+  # today's numbers this deploy is NOT inert -- a ~4.4% looser effective cap
+  # applied to a ~26%-binding arm is a real change to the update.
+  # It is also probably transient: the elevated tail is the low-coverage
+  # masked-mean artifact (p95 13.20 -> 7.42 over iters 133-137 as sf_p0
+  # coverage grows), so the rate should fall back toward 0.000 on its own.
+  # RULE AT DEPLOY: re-measure `grad_hard_clip_rate` on the 3 iterations
+  # immediately before the restart and state it. Do not carry forward either
+  # the old 0.000 or today's 0.26 -- both are era-specific.
+  # The adaptive z-score arm carries spike protection regardless (rate 0.087,
+  # unchanged across the 5.0->6.5 move).
+  # Do NOT read the step-down as the drift reversing -- compare only within one
+  # scope era; the ledger's per-STEP drift baseline (+0.00044/step) was measured
+  # in the GLOBAL scope and must not be spliced across this deploy. New
+  # columns `grad_norm_aurora` / `grad_norm_adamw` make the split readable
+  # per-iteration instead of via an offline probe.
   zclip_max_norm: 6.5
 
   w_policy: 1.0             # Pinned: anchor for all other weights
