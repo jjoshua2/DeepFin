@@ -722,18 +722,32 @@ def _rotate_progress_csv_if_schema_changed(callback, trial, result: dict) -> Non
         n += 1
         rotated = path.with_suffix(f".{int(time.time())}.{n}.csv")
 
-  # Rename BEFORE closing anything: if it raises, no state has changed and the
-  # open handle is still the right one, so Ray's append proceeds untouched.
-  # (The old handle follows the inode to the rotated file, so it must still be
-  # replaced afterwards -- but only once the risky step has succeeded.)
-    path.rename(rotated)
+  # THE DURABLE COPY MUST GO FIRST, and rotating only the local one is the
+  # trap this function fell into originally. `trial.local_path` is the
+  # per-Ray-session STAGING dir (`/tmp/ray/session_*/.../driver_artifacts/`),
+  # not the durable trial dir -- the distinction PR #245 documents. Ray's
+  # `_setup_trial` calls `_restore_from_remote`, which unconditionally copies
+  # the durable `progress.csv` back down into staging whenever the trial has a
+  # checkpoint. Rotate staging alone and that re-download restores the OLD
+  # header, `_trial_continue` comes back True, and Ray appends the misaligned
+  # row anyway -- while this function prints a success message.
+  #
+  # Rotating the durable file first makes the re-download a no-op:
+  # `_restore_from_remote` catches FileNotFoundError and only warns, so
+  # `_trial_continue` is then derived from an absent staging file and Ray
+  # writes a fresh header itself. It also puts the preserved rows where the
+  # consumers actually read (`monitor_pbt.sh`, `pbt_hourly_audit.py`), rather
+  # than in a session tmpdir that is discarded.
+    _rotate_durable_progress_csv(trial, rotated.name)
+
+  # Then staging. Rename BEFORE closing anything: if it raises, no state has
+  # changed and the open handle is still the right one.
+    if path.exists():
+        path.rename(rotated)
   # Drop the trial and let Ray's own _setup_trial reopen it. That re-derives
   # `_trial_continue` from the now-absent file, so Ray writes the new header
   # itself, and it is also the path Ray retries if the reopen fails: its
   # `if trial not in self._trial_files` guard runs again on the next result.
-  # Doing it this way means no partially-mutated state can survive an error --
-  # the previous version closed the handle first, so a failed rename left Ray
-  # writing to a closed file.
     stale = callback._trial_files.pop(trial)
     callback._trial_csv.pop(trial, None)
     callback._trial_continue.pop(trial, None)
@@ -747,6 +761,38 @@ def _rotate_progress_csv_if_schema_changed(callback, trial, result: dict) -> Non
         f"added={added[:8]} removed={removed[:8]}); "
         f"rotated previous rows to {rotated.name} and started a fresh header."
     )
+
+
+def _rotate_durable_progress_csv(trial, rotated_name: str) -> None:
+    """Move the DURABLE progress.csv aside, on whatever filesystem it lives on.
+
+    Best-effort and non-fatal on its own: if the durable copy cannot be moved
+    we still rotate staging, which at worst reproduces the old (broken)
+    behaviour rather than adding a new failure mode.
+    """
+    from ray.air.constants import EXPR_PROGRESS_FILE
+
+    storage = getattr(trial, "storage", None)
+    fs_dir = getattr(storage, "trial_fs_path", None)
+    fs = getattr(storage, "storage_filesystem", None)
+    if storage is None or not fs_dir:
+        print("[run_tune] progress.csv rotation: no durable trial path on this trial")
+        return
+
+    src = f"{str(fs_dir).rstrip('/')}/{EXPR_PROGRESS_FILE}"
+    dst = f"{str(fs_dir).rstrip('/')}/{rotated_name}"
+    try:
+        if fs is not None:
+            fs.move(src, dst)
+        else:
+  # No explicit filesystem => local storage; trial_fs_path is a real path.
+            Path(src).rename(dst)
+        print(f"[run_tune] rotated durable {src} -> {rotated_name}")
+    except FileNotFoundError:
+  # Nothing durable to preserve (fresh trial, or already rotated).
+        pass
+    except Exception as exc:  # never block a training row on the durable move
+        print(f"[run_tune] could not rotate the durable progress.csv ({exc})")
 
 
 def _make_csv_logger_schema_safe() -> None:
