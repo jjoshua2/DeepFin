@@ -642,8 +642,33 @@ tune:
   tune_replay_root_override: /home/josh/projects/chess/runs/pbt2_small/replay
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
-  shuffle_buffer_size: 25000  # In-memory shuffle buffer (run26 value)
-  shuffle_refresh_interval: 1
+  # 2026-07-27: 25000 -> 100000 and refresh_interval 1 -> 4. MEASURED against
+  # the live 832-shard window: the ENTIRE training data-loading cost is the
+  # per-batch disk refresh. A pure in-memory batch costs 10 ms; the old config
+  # paid a 1073 ms MEDIAN for the same batch, because refresh_interval: 1 made
+  # every single batch reload 5 x 2000 = 10,000 positions to serve 512 --
+  # 19.5x read amplification, ~437 MB per batch. Worse than the latency: at
+  # that churn a position lived ~2.5 batches in a 25,000 pool while only 512
+  # were drawn per batch, so ~95% of everything read from disk was evicted
+  # BEFORE IT WAS EVER SAMPLED. New values: amplification 4.9x, residence ~40
+  # batches (~0.9 iterations). Memory is 65.6 kB/position measured by RSS, so
+  # 100,000 = 6.6 GB (was 1.6 GB) against ~69 GB free.
+  # THE INTERVAL IS THE LEVER, NOT THE POOL SIZE: at interval 4, cap 25k vs
+  # 200k measured 381 vs 404 ms. The larger pool is here for MIXING (residence),
+  # not speed.
+  # This does NOT by itself buy more gradient. Steps/iteration are VIEWS-capped
+  # (trainer_steps_done x 512 / replay_positions_ingested = 2.502-2.552 on every
+  # row = train_views_per_ingested_position exactly). It makes each step ~3x
+  # cheaper, which is what makes a later views raise affordable -- that key IS
+  # live-tunable, so it is deliberately a SEPARATE change in its own window.
+  # ⚑ THESE THREE KEYS ARE CONSTRUCTION-TIME ONLY. They are not in any
+  # restart-required set, so the validator overlays them every iteration with no
+  # warning, but DiskReplayBuffer reads them once in __init__ and trainable.py
+  # pushes only sf_gap_priority_weight / fast_low_surprise_priority /
+  # diff_focus_{pol_scale,q_weight} to the live buffer. A live edit here does
+  # NOTHING. Sixth instance of the dead-key class. Change them at a RESTART.
+  shuffle_buffer_size: 100000
+  shuffle_refresh_interval: 4
   shuffle_refresh_shards: 5
   shard_size: 2000            # Samples per on-disk shard (~1 MB compressed)
   # On PB2 exploit (cross-trial restore), replace most recent local bad data and

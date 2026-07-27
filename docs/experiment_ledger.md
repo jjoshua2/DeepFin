@@ -1668,6 +1668,61 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### PRE-REGISTERED (2026-07-27 12:1x) — replay loader: `shuffle_buffer_size` 25000 → 100000, `shuffle_refresh_interval` 1 → 4
+
+**Hypothesis.** The per-batch disk refresh is the entire training data-loading cost
+(measured: `sample_batch_arrays` is 100% of it; a pure in-memory batch is 10 ms against a
+1073 ms live median). Cutting the refresh to every 4th batch takes read amplification
+**19.5× → 4.9×** and should take `train_time_s` from ~129s to ~43s. The larger pool is for
+MIXING, not speed — it raises position residence from ~2.5 batches to ~40 (~0.9
+iterations), so a smaller share of what we read off disk is evicted unsampled (~95% → ~80%).
+
+**Explicitly NOT claimed: more optimizer steps.** Steps are views-capped and will stay at
+~44/iteration. This buys cheaper steps, not more of them. Anyone reading this row later:
+do not score it on `trainer_steps_done`.
+
+**ONE deciding yardstick** — `train_time_s` on the first 3 post-restart iterations:
+
+```
+python3 -c "import json;f='runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/result.json';rows=[]
+for l in open(f):
+    l=l.strip()
+    if l:
+        try: rows.append(json.loads(l))
+        except Exception: pass
+[print(r['training_iteration'], round(r.get('train_time_s',0),1), round(r.get('trainer_samples_per_s',0),1), round(r.get('train_views_actual',0),3)) for r in rows[-5:]]"
+```
+
+**SUCCESS = `train_time_s` < 70s** (from a 30-iteration mean of 128.8s) on ≥2 of the first
+3 iterations, **AND** `trainer_samples_per_s` above 400 (from 187.6). Predicted ~43s /
+~560. **A plumbing readout by design** — the sampling-quality question is separate and
+slower.
+
+**KILL (revert to 25000/1; requires a restart, so this is a real cost — do not fire it on
+one row):**
+1. Frozen `test_wdl_loss` rises **> 0.026** (4σ; frozen-window sd **0.0066**, n=33,
+   mean 0.8384) sustained over **3 consecutive** iterations.
+2. `train_views_actual` departs 2.5 by more than 5% — would mean the change perturbed the
+   step budget, which it must not.
+3. Host RAM pressure: RSS growth beyond ~10 GB for the trainer, or any OOM.
+
+**Pre-committed NON-kill:** iteration wall clock failing to drop much. Training is 18% of
+the iteration, so even a perfect fix is bounded at ~12% end-to-end; the point is the cost
+PER STEP, which is what a later views raise spends.
+
+**Confounds in this restart, both argued small:** (1) `zclip_max_norm` 5.0 → 6.5, which
+I21 established is a no-op on 28.6% of the net and second-order on the rest; (2) PR #272,
+which adds a per-iteration push of an otherwise-unchanged value plus a validation guard.
+Neither touches the data path. (3) The FEN pool rotated `retire_65` → `retire_115`
+(monitor-driven) since the last restart.
+
+**Revert point:** `data/salvage/pre_zclip65_20260727` (banked 11:1x, verified iter=121).
+
+**Follow-up already identified, deliberately NOT bundled:**
+`train_views_per_ingested_position` 2.5 → higher, once the step cost is confirmed. That
+key is live-tunable, so it needs no restart and gets its own window and its own CI.
+
+
 ### ⚑ FINDING (2026-07-27 11:45) — the GPU computes gradients for 3.0% of wall clock; the replay loader is a 6.05× tax on every optimizer step
 
 **Measured over the last 30 live iterations** (`result.json`, trial 13a9f):
