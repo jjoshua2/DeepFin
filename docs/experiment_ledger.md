@@ -1835,6 +1835,85 @@ proposing anything. Do not "fix" a bottleneck that has not been localised — th
 the diff_focus and soft_policy_temp fixes ended up measuring nothing.
 
 
+### ⚑ READOUT + DELIBERATE MULTI-CHANGE BUNDLE (2026-07-27 12:2x) — 122 iterations produced no measurable strength, so the one-change-per-window rule is suspended ON PURPOSE
+
+**THE RATCHET, judged by the rule pre-committed before the numbers landed.**
+
+| series | candidate | reference | Elo | 95% CI | games |
+|---|---|---|---|---|---|
+| `vs_prev` | iter 122 | iter 70 (~52 iters, ~10h) | **−26.7** | [−63.3, +9.3] | 300 |
+| `vs_boot512` | iter 122 | boot512 anchor | **−8.4** | [−49.0, +31.9] | 206 |
+| *(prior row)* | *iter 25* | *boot512 anchor* | *−12.2* | *[−61.5, +36.7]* | *200* |
+
+**In 97 iterations (iter 25 → 122) — ~5,000 optimizer steps, ~24h — the net moved −12.2 →
+−8.4 Elo against its own bootstrap weights. +3.8 Elo, CI spanning ~90. It has not
+surpassed the weights it started from.** By the pre-committed rule both series are formal
+nulls (CIs include 0; the two `vs_boot512` rows overlap almost entirely). But three
+independent readings point the same way — `vs_prev` negative, `vs_boot512` flat, frozen
+`test_wdl_loss` slope −0.0000 (t=−0.10, n=33) — and **a working loop should produce
+positive point estimates even when they are not significant.** Recorded as: *no evidence
+of improvement, and the burden has shifted.*
+
+**I withdraw my own "the window is too small" defence, and the reason it was wrong is
+worth keeping.** I argued a ±36 Elo ruler cannot resolve 2,650 steps. True in isolation,
+but it ignores that this is a WARM START ONTO A NEW DATA DISTRIBUTION — the regime where
+the improvement rate should be steepest, not shallowest. A null there is more damning than
+a null late in training, not less. **Sample-size scepticism is not a free pass; it has to
+argue against the specific prior, and mine did not.**
+
+**METHODOLOGY CHANGE, adopted deliberately and recorded so it is not mistaken for drift.**
+The "one data-affecting change per readout window" rule (CLAUDE.md, protocol item 4)
+exists to stop an unattributable regression from contaminating a KNOWN-GOOD state. **There
+is no known-good state here.** Against a system that is not producing gains, the rule
+inverts: it makes each diagnostic cycle a day long while protecting a baseline nobody
+wants to keep. The correct discipline for a broken system is to change several things at
+once, record exactly what changed, keep the revert point, and BISECT once something works.
+**This suspension is scoped: it ends the moment a bundle produces a positive ratchet row.
+From that point the rule is back in force, because there will finally be something worth
+protecting.**
+
+**THE BUNDLE (all live at the next restart).** One bet, three keys:
+
+| change | from → to | why |
+|---|---|---|
+| `train_views_per_ingested_position` | **2.5 → 7.5** | the actual bet: 132 steps/iter instead of 44 |
+| `shuffle_buffer_size` | 25,000 → 100,000 | makes those steps affordable |
+| `shuffle_refresh_interval` | 1 → 4 | 19.5× → 4.9× read amplification |
+| `zclip_max_norm` | 5.0 → 6.5 | inert per I21; rides along |
+
+**Net effect: gradient triples while training wall clock FALLS** — 132 steps × ~756 ms
+≈ 100s, against 44 steps × 2920 ms ≈ 129s today.
+
+**Why 7.5 and not the ~15 the loader could now feed.** AlphaZero ~1 view, KataGo ~4. Our
+value/policy targets are ground truth from a FIXED external SF, not bootstrapped from the
+current net, so they never go stale and the reuse ceiling is set by overfitting rather
+than target staleness — which is why exceeding KataGo is defensible at all. 7.5 stops
+short so the train/holdout gap can be read before going further.
+
+**NOT changed, and this is a reasoned exception rather than caution: the learning rate.**
+The warm-start disaster was precisely raising LR on THIS donor — a 3e-5 net run at 3e-4,
+**−494 Elo by iter 74**. 3e-5 is the donor's regime and the fix for that bug. "More steps
+at the correct LR" and "fewer steps at a wrong LR" are different bets and the second has
+already been run here and lost badly. **If tripled gradient does not move the ratchet, LR
+is the next lever** — with that history in front of us.
+
+**DECIDING YARDSTICK — the ratchet, not a loss column.** Next `vs_boot512` row at ≥200
+games. **SUCCESS = point estimate above +20 Elo with the CI excluding 0.** Anything less
+and the gradient-starvation thesis is wrong and we move to LR / data / the C17 search
+defect. Plumbing pre-check on the first 3 iterations: `train_time_s` < 110s,
+`train_views_actual` ≈ 7.5, `trainer_steps_done` ≈ 132.
+
+**KILL (views is live-tunable — revert is a yaml edit, no restart):** train/holdout policy
+gap past ~0.30 (live 0.13–0.18); frozen `test_wdl_loss` +>0.026 (4σ) over 3 consecutive
+iterations; or `train_views_actual` not tracking 7.5.
+
+**Revert point:** `data/salvage/pre_zclip65_20260727` (verified iter=121, 3.8G).
+
+**Bisection order if the bundle wins**, so attribution is recoverable: views is the only
+one with a plausible strength effect — drop it to 2.5 first and re-read; the loader keys
+change mixing but not volume; zclip is I21-inert.
+
+
 ### PRE-REGISTERED READING RULE (2026-07-27 11:35, written BEFORE the numbers land) — the strength ratchet at iter 122
 
 **Why this is written first.** Three times today I read a moving series and got it wrong
