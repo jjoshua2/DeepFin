@@ -2530,6 +2530,44 @@ Both controls bit-identical, so nothing but the search changed. **The direction 
 a checkpoint the original work never touched** (which measured 54.2 → 46.8 = −7.4 on its
 own); magnitudes differ by checkpoint, the sign does not.
 
+**⚑⚑ DEPLOY DECISION (2026-07-27 ~22:4x) — VIRTUAL_MEAN, NOT LEGACY, AND vloss OFF ON FAST
+PLIES. The E[regret]-only reading was wrong.**
+
+`playout_cap_fraction: 0.25`, so **75% of selfplay plies are PLAYED at 32 sims** and 25% at
+256. Both budgets matter and they matter for different reasons: the 32-sim plies decide
+whether we blunder, and a blunder corrupts the GAME OUTCOME, which is the Z label the value
+head trains on. The 256-sim plies produce every policy and value target.
+
+Weighting **top-1** — "picks the best move", i.e. does not blunder — rather than reading
+E[regret] alone:
+
+| regime | share of plies | LEGACY | VIRTUAL_MEAN |
+|---|---|---|---|
+| **fast, 32 sims** | **75% of moves played** | regret −1.0, **top-1 −3.2** | regret −0.8, **top-1 −1.2** |
+| **full, 256 sims** | 25% of moves + ALL targets | regret −4.5, **top-1 −5.1** | regret −2.0, **top-1 −1.3** |
+
+**LEGACY systematically buys E[regret] with top-1**, and because the SAME search both plays
+and labels, that is a Faustian trade: a better target *distribution* paid for with worse
+moves actually played — 3.2 points of top-1 on three quarters of every game. Worse moves →
+worse outcomes → worse Z labels → a damaged value head, which is the mechanism the ledger
+already knows as the most expensive kind of self-inflicted harm.
+
+**VIRTUAL_MEAN takes 44% of LEGACY's target-quality gain for 25% of its top-1 cost**
+(−2.0/−1.3 against −4.5/−5.1), and costs a third as much top-1 on fast plies.
+
+**Recommended shape: VIRTUAL_MEAN, and vloss OFF for fast plies.** Even VIRTUAL_MEAN is
+mildly negative on fast-ply top-1 (−1.2 for −0.8 regret), and fast plies **carry no policy
+target at all** (`finalize.py` drops playout-capped rows), so there is nothing to gain
+there and a blunder rate to lose. Scoping by PLY TYPE is available — full and fast plies
+are already distinguished in selfplay — and is a different axis from the UCI-vs-selfplay
+scoping refuted above.
+
+**⚠ THIS PARTLY RESTORES THE THEORETICAL ARGUMENT I CONCEDED.** I claimed VIRTUAL_MEAN was
+better-motivated for Gumbel, then withdrew it when LEGACY won leg (d) on E[regret]. That
+concession was made on ONE COLUMN of ONE LEG. Weighted across the regimes selfplay actually
+runs, and counting top-1, the original argument holds. **Reading a two-column table on one
+column is the same error as reading a metric by its name.**
+
 **⛔ CORRECTION (2026-07-27 ~22:3x, user-raised) — LEG (b) IS NOT THE PLAY REGIME, AND THE
 SCOPING WORRY BELOW IS VOID.** Two facts I had wrong:
 
