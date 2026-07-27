@@ -2513,6 +2513,37 @@ figure of 1.352 from the other side) and closes only **7.3%** of the gap. The no
 control moves sharpness the *opposite* way (0.5925 nats, 28.7% ≥0.99), so "more sims" and
 "this fix" are **opposed** on sharpness.
 
+**✅ INDEPENDENT REPLICATION ON A SECOND CHECKPOINT (2026-07-27 ~22:0x, ckpt121) — and it
+separates an effect the first measurement could not.** Run by the session owner on the
+banked teacher-off `checkpoint_000121`, against the tb=0/vloss=0 baseline measured on the
+SAME checkpoint hours earlier:
+
+| leg | baseline (tb=0, vloss=0) | LEGACY vloss=1 | Δ |
+|---|---|---|---|
+| a) net raw policy | 85.6 / 58.6 | 85.6 / 58.6 | **0.0 — control** |
+| b) PLAY search, **32 sims** | 50.5 / 48.7 | 50.9 / 47.3 | **+0.4 WORSE** |
+| c) SF MultiPV soft target | 51.5 / 33.7 | 51.5 / 33.7 | **0.0 — control** |
+| **d) production training target, 256 sims** | 49.6 / 42.8 | **45.1 / 37.7** | **−4.5 BETTER** |
+| e) fast-ply search, 32 sims | 61.3 / 50.5 | 60.3 / 47.3 | −1.0 |
+
+Both controls bit-identical, so nothing but the search changed. **The direction replicates on
+a checkpoint the original work never touched** (which measured 54.2 → 46.8 = −7.4 on its
+own); magnitudes differ by checkpoint, the sign does not.
+
+**⚑ THE NEW INFORMATION: the fix is not uniformly good — it is DOSE-DEPENDENT ON SIM COUNT,
+and it slightly HURTS the play search.** Leg (d) at 256 sims gains 4.5 cp; leg (b) at 32
+sims **loses 0.4 cp and drops 1.4 points of top-1** (48.7 → 47.3). That is exactly what the
+duplication dose-response predicts — duplicates are 29-76% at 256 sims but only 6-8% at 32
+— so at PLAY budgets virtual loss mostly just perturbs a search that had little to fix.
+
+**Consequence for the deploy, and it is a scoping decision nobody had flagged:** production
+selfplay generates targets at **256 sims** (RL settings) while UCI/TCEC **plays** at 32 sims
+with `PLAY_SEARCH_DEFAULTS`. **The fix should be scoped to the TARGET-GENERATION search, not
+applied globally** — enabling it on the play path buys nothing and costs top-1 on the
+budget that actually plays games. Any `gumbel_vloss_weight` key must therefore be
+settable per-path, or default off for the play path. Deploying one global weight would
+silently trade play strength for target quality.
+
 **⚠⚠ TWO OBJECTIONS RAISED 2026-07-27 ~21:0x THAT THE MEASUREMENT DOES NOT ANSWER. THE
 "STRICTLY BETTER ON EVERY AXIS" CONCLUSION IS WITHDRAWN; the 7.4 cp measurement STANDS.**
 
