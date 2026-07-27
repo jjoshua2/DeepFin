@@ -538,6 +538,27 @@ train:
   # #272. REVERT to 5.0 by yaml edit if the ledger's kill rule fires (frozen
   # test_wdl_loss +>0.032 over 3 consecutive iters, any NaN, or
   # grad_norm_median >10). The ramp CONTINUING is a pre-committed NON-kill.
+  # SCOPE (changed 2026-07-27): the cap and the adaptive EMA are computed over
+  # the ADAMW PARAMS ONLY. The Aurora group's update is the polar factor of the
+  # gradient (scale-invariant: max|polar(cG)-polar(G)| = 1.6e-07 at c=0.90,
+  # 0.0 at c=0.50), so a norm clip is EXACTLY INERT for it and including it
+  # only inflated the quantity the clip decides on. Measured on
+  # checkpoint_000122 over 8 real batches: ||g|| aurora 3.648, adamw 12.137,
+  # global 12.673 -- the AdamW group carries 91.7% of the global norm^2 on
+  # 71.4% of the params, and global = adamw x 1.044.
+  # EXPECT A ONE-OFF ~4.4% STEP DOWN in `grad_norm_median` / `grad_norm_mean` /
+  # `grad_norm_p95` at the deploy iteration. That is the MEASUREMENT changing,
+  # NOT the run. RESTATED FOR THE LIVE 6.5 CAP (this block was written against
+  # 5.0, before #273 landed 6.5): an AdamW-only 6.5 binds where the global norm
+  # would be ~6.79, i.e. the cap gets slightly LOOSER, not tighter. In practice
+  # near-zero effect today -- `grad_hard_clip_rate` has been 0.000 since iter
+  # 126, so the fixed arm is not binding at all and the adaptive z-score arm is
+  # carrying spike protection (rate 0.087, unchanged across the 5.0->6.5 move).
+  # Do NOT read the step-down as the drift reversing -- compare only within one
+  # scope era; the ledger's per-STEP drift baseline (+0.00044/step) was measured
+  # in the GLOBAL scope and must not be spliced across this deploy. New
+  # columns `grad_norm_aurora` / `grad_norm_adamw` make the split readable
+  # per-iteration instead of via an offline probe.
   zclip_max_norm: 6.5
 
   w_policy: 1.0             # Pinned: anchor for all other weights

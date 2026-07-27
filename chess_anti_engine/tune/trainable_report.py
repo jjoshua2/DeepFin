@@ -823,6 +823,8 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "grad_norm_mean": 0.0, "grad_norm_median": 0.0, "grad_norm_p95": 0.0,
     "grad_norm_max": 0.0, "grad_clip_rate": 0.0, "grad_adaptive_clip_rate": 0.0,
     "grad_hard_clip_rate": 0.0, "grad_norm_samples": 0,
+    "grad_norm_aurora": 0.0, "grad_norm_adamw": 0.0,
+    "grad_nonfinite_skip_rate": 0.0,
     "opt_lr_mean": 0.0, "opt_lr_max": 0.0,
 }
 
@@ -882,6 +884,16 @@ def _train_metrics_dict(metrics) -> dict:
         "grad_adaptive_clip_rate": float(metrics.grad_adaptive_clip_rate),
         "grad_hard_clip_rate": float(metrics.grad_hard_clip_rate),
         "grad_norm_samples": int(metrics.grad_norm_samples),
+        # Per-optimizer-group split. The clip acts on the AdamW group alone —
+        # the Aurora group's update is the polar factor of the gradient, which
+        # is scale-invariant, so a norm clip provably cannot move it — hence
+        # `grad_norm_mean`/`_median`/`_p95`/`_max` and the clip rates are all
+        # AdamW-group quantities and `grad_norm_adamw` restates that
+        # explicitly. `grad_norm_aurora` is the number that previously needed a
+        # bespoke offline probe to obtain.
+        "grad_norm_aurora": float(metrics.grad_norm_aurora),
+        "grad_norm_adamw": float(metrics.grad_norm_adamw),
+        "grad_nonfinite_skip_rate": float(metrics.grad_nonfinite_skip_rate),
         # Iteration mean/max of the matrix (trunk) group's LR — the LR the
         # trunk actually trains at. `opt_lr_final` below is the trough of the
         # sqrt_release ramp and is ~9x smaller (I19).
