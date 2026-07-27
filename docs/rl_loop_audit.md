@@ -509,9 +509,9 @@ verified-fraction and a low invariant count as unexamined, not clean.**
 |---|---|---|
 | VERIFIED family (-BY-DESIGN / -WITH-CONTEXT / -WITH-CAVEAT / -DIVERGENT / -INERT / -BUT-NARROW / -BY-THROUGHPUT / -BY-CODE) | 96 | |
 | RESOLVED | 1 | C5 |
-| **FAILED** | 34 | A6, A7, B4, C13, C16, C17, C26, C27, C6, D11, D12, D17, D18, G11, G13, G14, G15, G4, G5, G6, G7, G8, H5, H7, I11, I13, I9, J11, J2, J5, J9, L11, L4, L6, M10, M8 |
+| **FAILED** | 34 | A6, A7, B4, C13, C16, C17, C26, C27, C6, D11, D12, D17, D18, G11, G13, G14, G15, G4, G5, G6, G7, G8, H5, H7, I11, J11, J2, J5, J9, L11, L4, L6, M10, M8 |
 | FAILED, qualified (-BY-DESIGN / -BENIGN / -COSMETICALLY / -DORMANT) | 3 | E14, I14, M7 |
-| FAILED-THEN-FIXED | 8 | C25, E13, I7, J6, M11, M12 |
+| FAILED-THEN-FIXED | 8 | C25, E13, I13, I7, I9, J6, M11, M12 |
 | CODE-ONLY (argued from source, still unmeasured) | 5 | D19, G12, L12, L5, M13 |
 | OPEN (measured, no pre-committed rule) | 2 | I8, L13 |
 | PENDING (needs elapsed time) | 1 | L2 |
