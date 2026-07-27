@@ -167,6 +167,31 @@ These are written from mistakes made *while doing this audit*, not hypotheticals
     implementation is its own oracle. Rank candidate work by *does this change
     what gets played or learned*, not by which stage has the most red.
 
+16. **A STEP is not a RAMP. Before attributing a metric's move to any mechanism
+    you pre-registered, check whether it moved gradually or in one iteration —
+    and if it stepped, find what was deployed that iteration.**
+    2026-07-27, `zclip_max_norm` 5.0 → 6.5. The entry pre-registered two rival
+    causes for the grad-norm rise — LR-driven ramp vs cap-self-reinforcing — and
+    predicted the cap would re-bind in ~16h at +0.012/iter. It re-bound in ~8
+    iterations, and the pre-registered story would have been ratified on that
+    fit. It is wrong: `grad_norm_median` went **5.547 → 6.885 in a single
+    iteration** (131 → 132), a +1.34 jump against a claimed +0.012/iter creep,
+    then settled onto a new plateau. Iter 132 is where the sf_p0 teacher was
+    restored by live reload — the iteration ran 31 minutes after the previous
+    one against an ~11-minute cadence, and the live yaml's own comment dates the
+    restore there. **Adding a loss term adds gradient.** That is cause (c), it
+    was not on the pre-registered list, and it dominated both listed causes.
+    **The general rule: "the number moved the way I predicted" is not
+    confirmation when the SHAPE of the move contradicts the mechanism.** A right
+    answer for the wrong reason is a post-hoc verdict wearing a pre-registered
+    one's clothes, and this project's own standard rejects it. Two cheap checks
+    that would have caught it in seconds: plot per-iteration deltas rather than a
+    fitted slope, and diff the iteration timestamps for a cadence gap — a live
+    reload or restart always leaves one. Related: [[C14]] (restart contaminates
+    the PID), and the standing "one data-affecting change per readout window"
+    rule, which this violated by deploying two of my own changes 8 iterations
+    apart.
+
 ---
 
 ## 3. The loop, as stages

@@ -3431,6 +3431,61 @@ context" are the same thing to the dxg bridge. The queued G13 probe and C17 A/B 
 correctly still queued.
 
 
+### VERDICT (2026-07-27 ~22:1x) — zclip 5.0 → 6.5: DEPLOY CONFIRMED, no kill, and the cap has ALREADY RE-BOUND for a reason this entry did not consider
+
+**Judged by the pre-committed rule, not post-hoc.** SUCCESS was
+`grad_hard_clip_rate < 0.15` on the first post-restart iteration, from 0.889.
+**Iter 124 read 0.0891 → PASS**, and it held: 0.0235, then **0.0000 for seven
+consecutive iterations (126–131)** at `grad_norm_median` 5.48–5.63. The
+construction-time key reached the trainer. Neither kill fired and neither is
+close: `grad_norm_median` peaked at 6.64 against a kill of 10.0, and frozen
+`test_wdl_loss` sits 0.833–0.864 against a kill bar of >0.872 sustained ×3.
+
+**But the cap re-bound in ~8 iterations, and NOT by either mechanism this entry
+set up to discriminate.** The entry framed the question as (a) LR-driven ramp vs
+(b) cap-self-reinforcing, and predicted a ~+0.012/iter creep with a "~16h"
+re-bind horizon. What actually happened is a **step change**, not a ramp:
+
+| iter | 131 | **132** | 135 | 140 | 157 |
+|---|---|---|---|---|---|
+| `grad_norm_median` | 5.547 | **6.885** | 6.402 | 6.635 | 6.418 |
+| `grad_hard_clip_rate` | 0.000 | **0.176** | 0.430 | 0.613 | 0.483 |
+
+**+1.34 in one iteration is not a creep.** Cause: **iter 132 is the sf_p0 teacher
+coming back online.** Iter 131 ended 13:57:08, iter 132 ran 14:28:10 — a 31-minute
+gap where the cadence is ~11 minutes, which is the live reload landing; the live
+yaml's own comment independently dates the restore to iter 132. Restoring
+`w_sf_own` / `w_sf_own_regret` **adds loss terms**, which adds gradient. The
+grad-norm level has since settled at ~6.2–6.4, i.e. a new plateau, not a runaway.
+
+**Consequences, in order of how much they cost:**
+
+1. **(c) "a loss term was added" belongs beside (a) and (b) as a cause of a
+   grad-norm shift, and it dominates both here.** The pre-registered dichotomy was
+   incomplete, and its re-bind prediction was right by ~coincidence — right horizon,
+   wrong mechanism. **Ratifying "the ramp continued, as predicted" would have been
+   a post-hoc verdict laundered through a correct-looking number.**
+2. **The zclip and sf_p0 readouts are now mutually confounded from iter 132 on.**
+   Both are mine, deployed 8 iterations apart, which is the "one data-affecting
+   change per readout window" rule broken by me. It does not damage the sf_p0
+   readout — that is judged on `audit_targets` leg (d) against a banked dump, not
+   on grad norm — but any *grad-norm* claim after iter 132 must carry both.
+3. **I11 has re-fired.** Clip rate is climbing again inside the new plateau: 0.26
+   (136) → 0.34 (145) → 0.48 (157). 6.5 is binding on roughly half of steps. Per
+   #272 this is now a **free live yaml edit**, which is precisely what that PR was
+   bought for. **NOT actioned here** — a cap move is a training-affecting change
+   and needs its own pre-registration, and stacking a third change into an
+   already-confounded window is the mistake in (2) repeated.
+
+**What is genuinely settled:** the frozen holdout still has not moved. Across the
+whole sequence — cap 5.0 clipping 95% of steps, cap 6.5 clipping 0%, and a new
+loss term adding +24% to the median gradient — `test_wdl_loss` stays inside
+0.833–0.864 around a pre-change mean of 0.8384 ± 0.0066. Three large changes to
+the optimizer's step regime, and the value ruler is flat through all of them.
+That is either strong evidence the step regime is not the binding constraint, or
+evidence the ruler cannot see it; the holdout's own **0.052-nat noise floor** says
+do not read the flatness as proof of no damage.
+
 ### PRE-REGISTERED (2026-07-27 ~07:3x) — raise `zclip_max_norm` 5.0 → 6.5, by graceful restart, together with PR #272
 
 **Why this needs a RESTART and not a yaml edit.** PR #272 makes the key live-editable,
@@ -4754,6 +4809,51 @@ training state; the −42.8 arena is a single 32-sim run (wide CI) — treat as
 directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
+
+### C17 duplicate-rate telemetry — BUILT AND VALIDATED, live number still UNMEASURED (2026-07-27 ~22:0x)
+
+`gumbel_c.duplicate_rate()` / `pad_rate()` (PR #279, opt-in via `CAE_DUP_STATS`,
+off by default). Counts duplicate rows in the buffer handed to the evaluator —
+the only place the question "what share of our NN forwards carry no information"
+is unambiguous.
+
+**Validated against an independent exact-hashing evaluator**, bucketing disabled
+so both see identical rows: **77.8 / 0.0 / 0.0 / 0.0 against 77.5 / 0.0 / 0.0 /
+0.0** across `target_batch=0`, `target_batch=1`, `vloss=1 LEGACY`, `vloss=1
+VIRTUAL_MEAN`.
+
+**It was wrong three times before it was right, and every failure is now a test**
+(`tests/test_gumbel_dup_stats.py`, 7 tests):
+
+| attempt | read | truth | why |
+|---|---|---|---|
+| per-prepare-call C counter | 0.0% | 77.5% | duplicates accumulate ACROSS the reps filling one batch; a per-call range cannot see them by construction |
+| strided fingerprint (stride 128) | 52.3% | 0.0% | encoded planes are mostly zero, subsamples collide, collisions under-count distinct rows |
+| wired to the copying arms only | *nothing* | 77.8% | production takes the zero-copy `_inplace` path and skipped the hook entirely |
+| `CAE_DUP_SAMPLE=20` | 0.0% | >50% | a search issues only ~18 batches, so it hashed none; 0/0 read as "no duplication" |
+
+The last one is why `duplicate_rate()` returns **None**, not 0.0, when nothing
+was sampled — the same fix as `has_sf_p0_frac` beside a masked-mean loss.
+
+**Bucket padding is counted separately, and the reason is the reverse of the
+guess.** `_pad_for_bucket` rounds each batch up to a compiled bucket. I split pad
+rows out expecting them to hash as duplicates of each other and INFLATE the rate.
+They do the opposite: pad rows hold the PREVIOUS batch's content, so they are
+mostly distinct from the current batch and DILUTE it. With bucketing on,
+telemetry (real rows only) vs the exact evaluator (padded buffer): 0.7783 vs
+0.7684 at `target_batch=0`, and **0.0000 vs 0.0139 at `target_batch=1` — that
+0.0139 is entirely padding, so `target_batch=1` leaves no surviving search
+duplication at all.**
+
+**Side finding, not yet chased: padding is 11–17% of all rows sent to the GPU**
+in these runs. That is pure waste, independent of C17, and it sits next to the
+unexplained broker reading of 220 pos/batch at 1% of the 19040 cap. Neither is
+explained; both are throughput, not target quality.
+
+**What this entry does NOT establish.** No live rate, no Elo, no verdict. The
+instrument cannot read production until the workers run this code, which needs
+the restart. Recording it here so the *number*, when it arrives, is judged
+against an instrument whose failure modes were written down first.
 
 **⚑ I11 THRESHOLD FIRED — `zclip_max_norm: 5.0` has stopped being a tail guard
 and is now clipping the majority of steps (2026-07-26 23:5x). LIVE CONDITION,
