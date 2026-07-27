@@ -4017,6 +4017,18 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->q_resume = -1;
     g->q_pending_n = 0;
 
+    /* Start every virtual-loss search from a clean slate. Every penalty this
+     * path applies is removed in gss_finish_batch, but a search ABANDONED
+     * between start and the final continue (a Python-side exception, an OOM
+     * return) leaves its penalties behind — and selfplay reuses one tree
+     * across plies, so a leaked count would quietly bias every later search on
+     * it. O(nodes) once per search against O(sims x depth) of work, and only
+     * when virtual loss is on at all. */
+    if (vloss_weight > 0 && self->tree.virtual_loss != NULL) {
+        memset(self->tree.virtual_loss, 0,
+               (size_t)self->tree.node_count * sizeof(int32_t));
+    }
+
     /* Seed CBoard cache */
     tree_ensure_cb_cache(&self->tree, self->tree.node_count);
     for (int32_t i = 0; i < n_boards; i++) {
