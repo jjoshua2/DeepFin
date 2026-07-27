@@ -1668,6 +1668,51 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### READOUT (2026-07-27 03:1x, iters 81–97) — the holdout ruler is now AT its noise floor, and I11 is drifting the WRONG way
+
+**The ruler works now, and this reframes yesterday's freeze verdict without
+overturning it.** The holdout refilled from 0 and **froze at iter 89**
+(`test_replay` 2000, `holdout_frozen: 1`, `holdout_generation: 1` stable).
+Split the window accordingly — iters 84–88 were still FILLING (846 → 1806 rows),
+so the apparent `test_wdl_loss` decline there is set-composition change and must
+not be read as learning.
+
+On the **frozen** window (iters 89–97, n=9): `test_wdl_loss` mean **0.8395**,
+**sd 0.0079**, range [0.8263, 0.8510].
+
+- The G14 screen put the **sampler-noise floor at sd 0.0086** (fixed model,
+  fixed rows, 2000 rows). The live frozen ruler is now at **0.0079 — at, and
+  fractionally below, that floor.** There is no excess within-session variance
+  left to remove.
+- Yesterday's freeze readout was sd **0.0708** over 14 points. **The FAILED
+  verdict stands as recorded** — it was judged by the pre-committed rule on the
+  data then available, and post-hoc rescue is exactly what the protocol
+  forbids. But the *mechanism* is now clear: that measurement spanned restarts
+  while G5 (holdout destroyed at every restart) was still unfixed, so the freeze
+  was being defeated by the restart rather than failing on its own terms. **The
+  precondition was missing, not the idea.**
+- Caveat, and it is load-bearing: 0.0708 spanned restarts, 0.0079 does not.
+  These are not the same measurement, and the comparison is indicative only.
+  **What settles it is the NEXT restart** — that is precisely what G5 tests, and
+  `checkpoint_000080/holdout.npz` now exists to be restored from.
+- The G13 per-row leak still biases the level (each holdout row has ~23
+  same-game rows in training). On a FROZEN set that is a constant offset, so
+  trends remain readable; absolute values do not.
+
+**Learning signal over the frozen window: none detectable, and the window is far
+too short to expect one.** OLS slope **−0.00014 nats/iter** (−0.0011 total over
+9 iterations) against a noise floor of 0.0079 — detection needs roughly 2σ ≈
+0.016. This is "no reading yet", NOT "no learning".
+
+**I11 is getting worse, measured over 17 iterations by the new #260 instrument.**
+`grad_norm_median` mean 5.180, slope **+0.0086/iter**; `grad_hard_clip_rate`
+mean **0.663**, slope **+0.0062/iter**; last three medians 5.100 / 5.423 / 5.382
+against a cap of 5.0. Two thirds of all optimizer steps are being hard-clipped
+and the fraction is climbing. **The knob was NOT touched:** the pre-registered
+rule is to wait for the G8 window drain (~2026-07-27 17:00) and re-read, and the
+suspected confound is still running. Recording the trend now so the readout
+cannot be reconstructed favourably later.
+
 ### DEPLOY DONE (2026-07-27 01:58) — the ten-PR restart executed after the GPU gate cleared; the three dead-key pins VERIFIED on the wire
 
 **Outcome of the HELD entry below.** The wedge drained on its own at 01:52 (the
