@@ -1668,6 +1668,65 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### DEPLOY DONE (2026-07-27 01:58) — the ten-PR restart executed after the GPU gate cleared; the three dead-key pins VERIFIED on the wire
+
+**Outcome of the HELD entry below.** The wedge drained on its own at 01:52 (the
+backlog cleared; the layer did not "recover" so much as finish). The
+pre-committed gate was then re-run and passed on its own terms: `nvidia-smi -L`
+returned the 5090, and a fresh-process CUDA context went 113s → 84s → 12.3s →
+5.6s → 3.7s, i.e. converging to normal rather than merely succeeding once. Only
+then was training stopped, at **iter 80**.
+
+**Sequence:** `train.sh stop` (clean) → fast-forward the live tree to
+`9b78edad6` → `train.sh start`. The fast-forward was blocked by an untracked
+`scripts/probe_head_grad_share.py`; the local copy turned out to be the OLDER
+pre-PR version (main's carries the corrected I3/I7 grouping that fixed the
+80.62%-not-100% denominator), so it was preserved to
+`scratchpad/pre_ff_untracked/` rather than dropped. Post-deploy the yaml
+re-verified as identical in VALUES to the pre-stop live yaml — 313 keys, zero
+diffs, none added or removed — and no `.c`/`.h` changed, so no extension rebuild.
+
+**THE STARTUP BANNER LIES, AND IT LIES EXACTLY WHERE IT MATTERS.** The banner
+printed `soft_policy_temp 3.0`, `matrix_weight_decay 0`, `diff_focus 4.8/0.09`,
+`opening_fen_dole_per_iter 1`, `opening_fen_list_path ...retire_307` — every one
+of them the STALE `experiment_state` value, i.e. precisely the five keys this
+session pinned. It is printed by the Ray driver at trial setup, BEFORE
+`train_trial` runs `_reload_yaml_into_config` (`trainable.py:473`, the first
+statement in the function). **J6 says verify the deployed value, and the banner
+is not that verification** — anyone reading it would have concluded the deploy
+had silently reverted all five pins and might well have "fixed" it.
+
+**What the wire says (this is the verification).** Fetched the live manifest the
+workers actually consume, with the protocol/version headers the server requires:
+
+- `soft_policy_temp` = **2.0** — the pin took; the five-month near-miss is closed
+  and now measured, not argued.
+- `opening_fen_dole_per_iter` = **0** — seeding stays off per decision #18.
+- reco key count = **84**, up from the 83 recorded when E13 was diagnosed, which
+  is the +1 for `soft_policy_temp` that PR #257 added. The count corroborates the
+  value.
+- `diff_focus_*` = **ABSENT**, as it must be: those keys are still unpublished,
+  so the worker builds `DiffFocusConfig` from its dataclass defaults. That is the
+  whole reason pinning the yaml to the REALIZED 6.0/3.5/3.0/0.025 was the safe
+  move rather than a change.
+
+**Health at +20 min:** broker ~17,000 pos/s steady, all four workers generating
+(broker requests 6151 → 9144), zero tracebacks, buffer restored at 1,498,872
+rows / 826 shards. `holdout init: restored_rows=0 len=0 capacity=2000
+generation=1` — G5's persistence path running for the first time; 0 restored is
+EXPECTED because no retained checkpoint carries `holdout.npz`, so this restart
+*creates* the first durable ruler and the NEXT restart is the one that proves
+G5. Do not read this restart's `test_loss` as continuous with the last one.
+
+**Still owed on the first new rows:** the #262 rotation (schema goes 264 cols →
++`wdl_onehot_loss`/`grad_norm_*`, so `progress.csv` must ROTATE, not append —
+`timestamp` must still parse as a timestamp), and `matrix_weight_decay` = 1e-4
+read from the next checkpoint's `opt.param_groups` rather than from config.
+
+**`scripts/monitor_fen.sh` is left SIGSTOPped** (PIDs 9314, 1778213). It was the
+proximate trigger of the wedge and its GPU job would resume on the next
+checkpoint; `kill -CONT` both to restore it once someone is watching.
+
 ### DEPLOY HELD (2026-07-27 00:5x) — the ten-PR restart is ready and was NOT executed: the GPU cannot create a new CUDA context
 
 **Status: everything except the restart itself is done.** All ten PRs are merged
