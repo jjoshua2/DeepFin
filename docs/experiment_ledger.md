@@ -1710,7 +1710,24 @@ and is also stalled. The D-state process cannot be killed anyway — uninterrupt
 ignores SIGKILL. Correct action is to wait, exactly as at 01:52 when the previous wedge
 drained on its own.
 
-**Held until the gate passes on its own terms** (watcher running): the D-state process
+**UPDATE 11:12 — it did NOT drain, and the resolution was a REBOOT.** At 66 minutes the
+process was still `D-state`/`dxgvmb_send_sync_msg` and `nvidia-smi -L` still timed out, so
+unlike the 01:52 wedge this one did not clear on its own. **Do not plan on waiting it
+out**; the 01:52 precedent is one sample, not a rule.
+
+*Two false readings I made while diagnosing this, both worth the warning.* (1) I reported
+the wedge as drained on the strength of a shell chain
+`cd X && python3 -c ... && ... || echo GONE` — the python leg failed on a partially-written
+`result.json` line, the whole `&&` chain went false, and `|| echo GONE` fired. **The
+fallback reported the failure of an unrelated command as the absence of the process.**
+Test process existence with `[ -d /proc/PID ]` on its own line, never as the tail of an
+`&&` chain. (2) From that I concluded the host bridge itself had degraded, since the
+holder was gone. It had not; the holder was still there. **A wrong premise produced a
+plausible-sounding escalation.** (3) Related: `result.json` is appended live, so the last
+line is routinely a partial write — always parse it line-by-line with a `try/except`, not
+`json.loads` over every line.
+
+**Original hold condition, kept for the next occurrence:** the D-state process
 clears AND `nvidia-smi -L` answers within 30s AND — per the 01:52 precedent — a
 fresh-process CUDA context shows *converging* init times rather than merely succeeding
 once.
