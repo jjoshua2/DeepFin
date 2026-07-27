@@ -2033,6 +2033,35 @@ as `has_sf_p0` window coverage rises**, without any weight change. If instead th
 grow while coverage passes ~10%, the low-coverage explanation is FALSIFIED and
 `w_sf_own_regret` really is mis-scaled — recalibrate then (task #38), not now.
 
+**✅ PREDICTION CONFIRMED AT ITER 134, no weight change made:**
+
+| | 131 (pre) | 132 | 133 | **134** |
+|---|---|---|---|---|
+| `grad_norm_p95` | 6.230 | 12.714 | 13.197 | **8.444** |
+| `grad_norm_max` | 6.774 | 18.390 | 24.758 | **14.631** |
+| `grad_adaptive_clip_rate` | 0.024 | 0.618 | 0.245 | **0.160** |
+| `test_wdl_loss` | 0.835 | 0.841 | 0.863 | **0.836** |
+| `policy_loss` | 1.446 | 1.438 | 1.427 | 1.436 |
+
+**p95 −36%, max −41% in one iteration, both heading back toward baseline while eligible
+coverage roughly doubled (~1% → ~2.6% of window rows, i.e. ~5 → ~13 eligible rows per
+512-batch).** `test_wdl_loss` returned to 0.836. `policy_loss` never moved at any point.
+Still above baseline (p95 8.4 vs 6.3), consistent with coverage continuing toward ~24%.
+
+**THE COUNTERFACTUAL IS THE POINT.** Had `w_sf_own_regret` been cut at iter 133 — which is
+what the first reading called for — this decline would have arrived anyway and been
+recorded as "the cut worked." The weight would have been left wrong, the real mechanism
+never found, and a false causal claim entered the ledger as a WORKED verdict. **The
+pre-committed prediction is the only thing that made those two futures distinguishable,
+and it cost one iteration of waiting.**
+
+Generalisable rule, earned here: **when a metric moves right after a change, ask what the
+metric would do if the change were irrelevant.** A masked-mean loss term over a growing
+eligible set has a mechanically decaying variance; ANY statistic of its gradient falls over
+the first hours regardless of the weight. That decay is not evidence about the weight.
+`trainer_steps_done` 102 → 244 at iter 134 is likewise not a new effect — it is the ingest
+backlog from the 1862s iteration draining (24,986 positions at 5.0 views).
+
 **Why this is recorded rather than quietly acted on:** cutting the weight today would have
 been "confirmed" by the tail falling as coverage grew, which happens either way. That is an
 unfalsifiable intervention, and the whole point of writing the prediction first is to make
