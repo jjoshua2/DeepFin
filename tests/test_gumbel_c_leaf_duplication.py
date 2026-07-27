@@ -184,3 +184,36 @@ def test_virtual_loss_leaves_no_residue_on_the_tree(
         if tree.get_virtual_loss(nid) != 0
     ]
     assert not leaked, f"{len(leaked)} nodes kept virtual loss after the search"
+
+
+def test_the_default_weight_never_touches_the_virtual_loss_array(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``vloss_weight=0`` must leave the feature provably inert.
+
+    This is the merge-safety property, not a behavioural one: production runs
+    at the default 0 until a config key lands at a restart, so every write site
+    (``if (vloss_w > 0) tree_apply_vloss_path(...)``) and every read site
+    (``(vloss_weight > 0) ? t->virtual_loss[id] : 0``) is guarded. Today that
+    holds by inspection; the guards are three lines apart in ``_mcts_tree.c``
+    and a later refactor could drop one without any existing test noticing,
+    because at weight 0 a leaked penalty changes nothing the other tests watch.
+    """
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    boards = [chess.Board(f) for f in _FENS[:4]]
+    cfg = GumbelConfig(
+        simulations=128, topk=16, c_scale=0.1, temperature=0.0, add_noise=False,
+    )
+    result = run_gumbel_root_many_c(
+        None, boards, device="cpu", rng=np.random.default_rng(0), cfg=cfg,
+        evaluator=_CountingHashEvaluator(), target_batch=0, vloss_weight=0,
+    )
+    tree = result[4]
+    touched = [
+        nid for nid in range(int(tree.node_count()))
+        if tree.get_virtual_loss(nid) != 0
+    ]
+    assert not touched, (
+        f"{len(touched)} nodes carry virtual loss at vloss_weight=0 — a write "
+        "site lost its guard, so the default is no longer inert"
+    )
