@@ -1668,6 +1668,63 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### PRE-REGISTERED READING RULE (2026-07-27 11:35, written BEFORE the numbers land) — the strength ratchet at iter 122
+
+**Why this is written first.** Three times today I read a moving series and got it wrong
+(linear-drift, then step-not-drift, then no-drift-at-all), each time because the rule was
+formed after seeing the data. This entry fixes the interpretation before the arena
+finishes. It is an OBSERVATION, not an experiment — there is no knob and no kill switch —
+but the reading rule is pre-committed all the same.
+
+**What is running.** `./scripts/daily_gate_ratchet.sh --games 600 --max-minutes 40
+--max-concurrent-games 16`, launched 11:24 with training DOWN and the GPU otherwise idle
+(post-reboot). 600 requested, ~370/series expected inside the 1200s/series budget at the
+measured 0.31 games/s. Two paired series at matched 32 sims, candidate =
+`ck_2026-07-27_iter122.pt`:
+
+| series | reference | span |
+|---|---|---|
+| `vs_prev` | `ck_2026-07-27_iter70.pt` | ~52 iterations, ~10h |
+| `vs_boot512` | `boot_snap_recheck_0711_0404.pt` | the frozen 07-11 anchor, 16 days |
+
+**Reading rule — `vs_prev` (short horizon).**
+- CI excludes 0 and NEGATIVE ⇒ **the loop is actively regressing**, and it is doing so
+  inside a single day. That is a stop-and-diagnose finding, not a tuning signal.
+- CI includes 0 ⇒ **no detectable change in 10 hours.** At ~370 games the half-width is
+  ~±50 Elo, so this does NOT mean "nothing happened" — it means any true effect is
+  smaller than ±50 Elo. **Do not report a null here as "stable".** 52 iterations that
+  cannot move a ±50 Elo ruler is itself the answer to "are we learning fast enough".
+- CI excludes 0 and POSITIVE ⇒ learning, at a measurable rate.
+
+**Reading rule — `vs_boot512` (the series that matters).** This is the one that exposed
+the warm-start crash, because that damage arrived as many small daily steps that
+day-over-day comparison could never see. The single prior row is **2026-07-26, iter 25,
+−12.2 [−61.5, +36.7]**. Judge today's row AGAINST THAT ROW, not against zero:
+- today's point estimate materially BELOW −12.2 with non-overlapping CIs ⇒ cumulative
+  regression since yesterday.
+- materially ABOVE ⇒ genuine cumulative progress.
+- overlapping CIs ⇒ **the two-point series cannot resolve a day of training**, which is a
+  verdict about the INSTRUMENT's cadence, not about the net. The fix is more frequent
+  points, not more games per point.
+
+**Pre-committed confound, and it is not small.** The `vs_prev` window (iter 70 → 122)
+straddles the **01:59 ten-PR deploy**, which included I13 — `matrix_weight_decay` going
+from a decorative `0` to an actually-applied `1e-4`. That is a real change to the update
+rule, live inside the comparison window. So a negative `vs_prev` has at least two
+readings (the loop regresses / the weight-decay fix costs strength) and this arena cannot
+separate them. `vs_boot512` is not affected in the same way, since it spans both regimes
+anyway.
+
+**Second confound:** iters 70→122 also carry the FEN pool rotation `retire_65` →
+`retire_115`, i.e. a different seed mix. Judged on panels/Cheese normally, but a strength
+arena inherits it.
+
+**What this reading CANNOT do.** It cannot detect the ~400 Elo recovery hypothesis on its
+own, because that hypothesis is about the trajectory from here, not about a 10-hour
+window. What it CAN do is say whether the loop is currently moving in the right direction
+at all — which has been unmeasured since iter 25.
+
+
 ### DEPLOY HELD (2026-07-27 11:00) — the zclip restart is staged but NOT executed: a monitor GPU observer has the dxg bridge wedged, with a kernel-level fingerprint this time
 
 **Everything is staged and nothing is deployed.** The live yaml reads
