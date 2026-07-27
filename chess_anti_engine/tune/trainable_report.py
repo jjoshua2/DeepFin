@@ -815,6 +815,10 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "sf_search_disagree_sf_high_frac": 0.0,
     "categorical_loss": 0.0, "volatility_loss": 0.0, "sf_volatility_loss": 0.0,
     "moves_left_loss": 0.0,
+  # sf_p0 policy teacher: masked losses over eligible rows + the eligible
+  # fractions. The fractions are the outage detector (see TrainMetrics).
+    "m_sf_own": 0.0, "m_sf_own_regret": 0.0,
+    "has_sf_p0_frac": 0.0, "has_sf_p0_regret_frac": 0.0,
     "policy_loss_selfplay": 0.0, "policy_loss_curriculum": 0.0,
     "wdl_loss_selfplay": 0.0, "wdl_loss_curriculum": 0.0,
     "frac_is_selfplay_batch": 0.0, "frac_tagged_batch": 0.0,
@@ -860,6 +864,14 @@ def _train_metrics_dict(metrics) -> dict:
         "volatility_loss": float(metrics.volatility_loss),
         "sf_volatility_loss": float(metrics.sf_volatility_loss),
         "moves_left_loss": float(metrics.moves_left_loss),
+        # sf_p0 teacher. `has_sf_p0_frac == 0.0` means the selfplay workers
+        # recorded no eligible rows at all this iteration — the teacher is dead
+        # regardless of what `m_sf_own` reads. Do not judge either `m_*` column
+        # without its `_frac`.
+        "m_sf_own": float(metrics.m_sf_own),
+        "m_sf_own_regret": float(metrics.m_sf_own_regret),
+        "has_sf_p0_frac": float(metrics.has_sf_p0_frac),
+        "has_sf_p0_regret_frac": float(metrics.has_sf_p0_regret_frac),
         "policy_loss_selfplay": float(metrics.policy_loss_selfplay),
         "policy_loss_curriculum": float(metrics.policy_loss_curriculum),
         "wdl_loss_selfplay": float(metrics.wdl_loss_selfplay),

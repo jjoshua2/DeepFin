@@ -31,6 +31,22 @@ def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return (x * mask).sum() / denom
 
 
+def masked_sum_and_count(
+    x: torch.Tensor, mask: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """The unreduced ingredients of ``masked_mean``: (sum over mask, mask count).
+
+    Reported instead of the ratio when the caller aggregates ACROSS batches:
+    summing these and dividing once gives the true mask-weighted mean over the
+    whole iteration, whereas averaging per-batch ``masked_mean`` values weights
+    every batch equally and is a different estimator as soon as the mask count
+    varies between batches. Both accumulate in float32 regardless of the
+    autocast dtype ``x`` arrives in.
+    """
+    m = mask.to(torch.float32)
+    return (x.to(torch.float32) * m).sum(), m.sum()
+
+
 def normalize_distribution(probs: torch.Tensor, *, eps: float = 1e-8) -> torch.Tensor:
     """Renormalize a distribution along the last axis so each row sums to 1.
 
@@ -533,8 +549,24 @@ def compute_loss(
     m_policy = masked_mean(pol_ce, pol_base)
     m_soft = masked_mean(soft_ce, net_mask * has_soft)
     m_future = masked_mean(future_ce, net_mask * has_future)
-    m_sf_own = masked_mean(sf_p0_ce, net_mask * has_sf_p0)
-    m_sf_own_regret = masked_mean(sf_own_regret, net_mask * has_sf_p0_regret)
+  # A row only counts as eligible if the TARGET is actually in the batch, not
+  # merely because the shard set the `has_` flag: with the target absent the
+  # loss tensor is `zero_loss` and the term trains nothing, so counting those
+  # rows would make `has_sf_p0_frac` report a live teacher over a dead one —
+  # the exact false negative these columns exist to rule out. `masked_mean` is
+  # unaffected either way (its numerator is all zeros in that case).
+    no_rows = torch.zeros_like(net_mask)
+    sf_p0_base = net_mask * has_sf_p0 if sf_p0_target is not None else no_rows
+    sf_p0_regret_base = (
+        net_mask * has_sf_p0_regret if sf_p0_regret_t is not None else no_rows
+    )
+    m_sf_own = masked_mean(sf_p0_ce, sf_p0_base)
+    m_sf_own_regret = masked_mean(sf_own_regret, sf_p0_regret_base)
+    sf_own_ce_sum, sf_own_rows = masked_sum_and_count(sf_p0_ce, sf_p0_base)
+    sf_own_regret_sum, sf_own_regret_rows = masked_sum_and_count(
+        sf_own_regret, sf_p0_regret_base,
+    )
+    net_rows = net_mask.to(torch.float32).sum()
     m_wdl_onehot = masked_mean(wdl_onehot_ce, net_mask)
     m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
     m_sf_move = masked_mean(sf_move_ce, net_mask * has_sf_policy)
@@ -593,6 +625,20 @@ def compute_loss(
         "future_policy_ce": m_future,
         "sf_own_ce": m_sf_own,
         "sf_own_regret": m_sf_own_regret,
+  # sf_p0 policy-teacher observability. Emitted as SUMS + eligible-row COUNTS
+  # rather than as per-batch means because the trainer accumulates these over
+  # every microbatch of the iteration and divides once: eligibility is a
+  # property of consecutive full-sim plies, so the eligible count varies per
+  # batch and a mean of per-batch means would be the wrong estimator. The
+  # counts are also the outage detector — `sf_own_rows` goes to exactly 0
+  # when recording stops, whatever `w_sf_own` happens to be, which a masked
+  # mean alone cannot distinguish from eligible rows sitting at zero loss.
+  # Mapped to the m_sf_own / has_sf_p0_frac columns in train/trainer.py.
+        "sf_own_ce_sum": sf_own_ce_sum,
+        "sf_own_rows": sf_own_rows,
+        "sf_own_regret_sum": sf_own_regret_sum,
+        "sf_own_regret_rows": sf_own_regret_rows,
+        "net_rows": net_rows,
         "sf_move_ce": m_sf_move,
         "sf_eval_ce": m_sf_eval,
         "categorical_ce": m_cat,
