@@ -1704,14 +1704,52 @@ too short to expect one.** OLS slope **−0.00014 nats/iter** (−0.0011 total o
 9 iterations) against a noise floor of 0.0079 — detection needs roughly 2σ ≈
 0.016. This is "no reading yet", NOT "no learning".
 
-**I11 is getting worse, measured over 17 iterations by the new #260 instrument.**
-`grad_norm_median` mean 5.180, slope **+0.0086/iter**; `grad_hard_clip_rate`
-mean **0.663**, slope **+0.0062/iter**; last three medians 5.100 / 5.423 / 5.382
-against a cap of 5.0. Two thirds of all optimizer steps are being hard-clipped
-and the fraction is climbing. **The knob was NOT touched:** the pre-registered
-rule is to wait for the G8 window drain (~2026-07-27 17:00) and re-read, and the
-suspected confound is still running. Recording the trend now so the readout
-cannot be reconstructed favourably later.
+**I11 — CORRECTED CHARACTERISATION (2026-07-27, iters 81–99).** My first reading
+of this was wrong and is withdrawn.
+
+*What I claimed:* a linear drift, `grad_norm_median` +0.0086/iter and
+`grad_hard_clip_rate` +0.0062/iter, "the drift is getting worse".
+
+*What is actually there:* **a STEP, not a drift.** Iters 81–95 are flat —
+`grad_norm_mean` slope **−0.0020/iter (p=0.54)**, mean 5.204 — and then a
+discrete jump at **iter 96** to mean 5.410 (Welch t=10.8, **p=1.7e-6**; a
+changepoint scan over every split picks 96 as the global optimum for
+`grad_norm_mean`, `grad_norm_median` and `grad_hard_clip_rate` alike). The
+pooled +0.0099/iter I reported is the artifact of fitting one line across the
+level shift. Verified independently from `progress.csv` after the finding was
+raised. **Method rule: with n≈19 and a suspected regime change, fit the
+changepoint before quoting a slope.**
+
+*Second correction:* `grad_hard_clip_rate` is **bit-identical** to
+`grad_clip_rate` (checked to 1e-12 on every row), and because the median sits
+just above the cap the clip rate is a hypersensitive readout of the same
+location shift (+4% in location → +17 points of clip rate). I presented them as
+two rising indicators; they are **one observation**.
+
+*Third, and it voids the pre-registration:* **the G8 replay-window drain that I
+pre-registered as the suspected cause DOES NOT EXIST.** The window is pinned at
+its 1.5M cap on every iteration (`replay`, `replay_window_before/after`,
+`train_window_target_samples` all flat/constant; `enforce_window` deletes 1–2
+shards per pass at total_pos ≈ 1.499M). So "wait for the drain to complete at
+~17:00, then re-read" is waiting for something that is not happening, and the
+decision is not gated on it.
+
+**What survives all three corrections, and it is the part that matters:** the
+watch threshold is breached at **every** iteration 81–99, and 65–84% of
+optimizer steps are hard-clipped by the FIXED cap while the adaptive z-score
+clipper handles only ~5%. `zclip_max_norm: 5.0` is setting the step size rather
+than bounding outliers, and that is true independently of whether anything is
+drifting.
+
+**Ruled out as causes (both MEASURED):** parameter growth (‖θ‖ +0.09% over 2824
+steps) and any single loss head (across the iter-96 step every train head moved
+&lt;0.5%, |d| ≤ 0.34, while `grad_norm_mean` moved +4.0% at d=4.04). The cause of
+the step is not present in the 276 logged columns.
+
+**The knob was NOT touched.** PR #272 makes `zclip_max_norm` live-reloadable
+(audit I20) — it was decorative on a running trainer — so the eventual change is
+a yaml edit that reverts as fast as it applies. Next read: iters 100+ decide
+whether 5.41 is a new plateau or a four-iteration excursion.
 
 ### DEPLOY DONE (2026-07-27 01:58) — the ten-PR restart executed after the GPU gate cleared; the three dead-key pins VERIFIED on the wire
 
