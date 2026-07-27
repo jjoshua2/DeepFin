@@ -187,8 +187,42 @@ from `main` by design. As of 2026-07-26 the deltas are:
 | `opening_fen_dole_per_iter` | **0** | 1 | keep live until the no-seed readout closes; restoring costs a session restart (see C6) |
 | `opening_fen_list_path` | `retire_32` | `retire_250` | **KEEP LIVE.** The monitor rewrites this every iteration; main's value is always stale |
 | `gumbel_c_scale` | *absent* | **0.1** | **TAKE MAIN'S.** PR #249; value-identical to the resolved default so it is a no-op now, but the live yaml should gain the pin |
+| `soft_policy_temp` | 3.0 → **2.0** | 2.0 | **CLOSED 2026-07-26 — do not reopen.** Was the one delta this table did not list, and the only one that would have re-targeted training. See below |
 
 **Rule: reconcile key-by-key, never by wholesale copy in either direction.**
+
+**`soft_policy_temp` — why this row exists.** Until 2026-07-26 the live yaml said
+`3.0` while selfplay ran the `2.0` dataclass default, because the key was never
+published to the worker (E13). PR #257 makes the key real and correctly set
+**main's** yaml to 2.0 — but main's yaml is not what a restart reads. The *live*
+yaml still said 3.0, and this key was absent from this table, so an operator
+reconciling key-by-key exactly as mandated would have kept 3.0 and shipped a
+first-magnitude change to `soft_policy_ce` (~41% of weighted trunk gradient)
+inside a PR whose stated purpose was to preserve behaviour, with no ledger entry
+and no yardstick.
+
+Realized temperature measured from the stored targets rather than read off any
+config, by regressing `log(soft_i/soft_j)` on `log(p_i/p_j)` (slope = 1/T) over
+1005 rows of three live shards: slope **0.5000**, i.e. **T = 2.0000 on 100% of
+rows** (method rule 12). Had 3.0 shipped: mean top-1 target mass 0.5803 →
+0.4219, target entropy 1.3631 → 2.0258 nats (**+48.6%**), KL(T2‖T3) 0.117 nats.
+
+The live yaml is now pinned to the measured value. Verified the pin survives a
+resume, which is not automatic: `setup()` overlays the yaml over the restored
+trial config for every key that is neither PB2-searched nor in `_TOPOLOGY_KEYS` /
+`_RESUME_CONSTRUCTION_BOUND_KEYS` / `_LAUNCH_FIXED_ASSET_PATH_KEYS`.
+`soft_policy_temp` is in none of them and the only searched key is
+`pb2_bounds_lr`, so the overlay applies 2.0 before the trainer and the first reco
+are built — no `experiment_state` patch needed, even though `experiment_state`
+still carries `3.0`.
+
+**Adopting 3.0 is a real experiment** and needs its own ledger entry, not a
+config-reconciliation decision.
+
+**Generalisation.** When a PR makes a previously-dead key live, the live value of
+that key is a **deployment step, not a merge detail**. A behaviour-preserving PR
+whose safety argument lives in a file the deploy procedure never touches is not
+behaviour-preserving. Add it to this table the same day.
 
 ## B. Opening / seed selection
 
@@ -217,6 +251,32 @@ from `main` by design. As of 2026-07-26 the deltas are:
 | C13 | the selfplay thread pool survives worker startup | count `inference broker timed out` / `slot acquire timed out` per worker log; corroborate with `active_threads` | **FAILED 2026-07-26 (mechanism established, magnitude NOT) — a startup race that costs ~90% of selfplay concurrency for the life of every session.** All four workers launch with `--selfplay-threads 32`, and in a 30-second window at 17:06:58–17:07:28 — while the broker was still booting (`AOT packages loaded` at 7.08s, `model ready` only at **67.30s** since boot) — **28–29 threads per worker died** on `inference broker timed out after 30.000s` (8) and `inference slot acquire timed out after 60.0s … all slots held` (21). They are never respawned: `worker.py:3193` already carries the comment that futures are joined only at session end, "which in continuous mode never arrives — so … the batch quietly runs short-handed". Corroboration: `active_threads` reads **3** in 57 of 63 stats windows and never exceeds 3 for the whole session. **Two honesty caveats, both load-bearing.** (1) `active_threads` counts threads that *completed a game* in the window (`_completion_telemetry_delta` returns `len(active)` over positive per-thread deltas), so it is a completion proxy, not a liveness count. (2) **The throughput cost is unestablished and may be small** — the box is GPU/broker-bound (K4: forward pass is 76.4% of batch time), `in_flight_avg` is still 24.0, and iters 40/41 ran at 515/530s. Iteration 42 took **2,839s**, but it is confounded by the restart, the ingest wait and the holdout refill. **This is chronic, not new** — the same pattern appears in the previous session's logs. Pre-committed instrument before anyone "fixes" it: compare games/h across a session where the workers are started *after* `model ready sha=` appears against one where they are not |
 | C6 | toggling a `_RECO_RESTART_KEYS` key does not silently distort the data mix | worker log `restarting selfplay session [restart_keys=...]`, then per-iteration mix for ~6 iters | **FAILED 2026-07-26** — `opening_fen_dole_per_iter` is restart-gated; writing it abandoned all in-flight games, driving selfplay share to **1.00 for 4 iterations** (configured 0.50) and blinding the PID. Recovers by ~iter +6. **Any config toggle on a restart key contaminates the following ~6 iterations — start readouts after it, and never treat such a toggle as a free A/B** |
 | C5 | search converts sims into strength at the expected rate | sims-1 vs sims-32 paired arena vs a FIXED banked ref | **RESOLVED 2026-07-26 — the deficit was LR DAMAGE, not the architecture.** The damaged 512 net widened 91.5 -> 251.9 Elo across the two rungs (~160 Elo of lost search conversion). The control settles it: **boot512, the undamaged donor, does not widen at all** — sims-1 **-41.9** [-95.3, +9.6] vs sims-32 **-43.7** [-88.1, -0.6], ~2 Elo apart with heavily overlapping CIs, 200 paired games per rung, run with training STOPPED so neither rung was contention-contaminated. Search converts sims to strength normally on this architecture; what failed to convert was a net whose matrix group had been run at 6e-3. **Retires the alternative branch:** the value head's ranking is NOT the emergency priority. Caveat: boot512 still sits ~43 Elo below the banked 46M at BOTH budgets, so the donor was behind its predecessor — judge the climb on the `vs_boot512` ratchet series, not on this ladder |
+
+| C16 | C `gss_score_and_halve` matches the Python reference **as shipped** | 6 edge-case boards, deterministic hash evaluator, `target_batch` at the production default | **FAILED 2026-07-26, reproduced by hand** — 3/6 boards diverge and the two implementations pick a **different move** (`actions_eq=False`); L1 up to 1.90 at 256 sims. At `target_batch=1` they are bit-identical through 64 sims. The parity claim in `gumbel.py:278-306` is true about the formula and false about the algorithm |
+| C17 | a simulation adds information: no leaf is evaluated twice in one GPU batch | distinct encoded rows vs `MCTSTree.node_count()` at the production shape | **FAILED 2026-07-26** — `gss_step` accumulates leaves across several halving reps to fill `GSS_GPU_BATCH=1024` while `gumbel_c.py` passes `vloss_weight=0`. With no virtual loss a later rep re-walks an **unchanged** tree, reaches the **same** leaf, and back-propagates the **same** value. Production shape builds 677,801 nodes vs 1,030,737 at per-rep flush (**−34%**); duplicate fraction 29–76% at 256 sims by batch size, 6–8% at 32 sims, so essentially the whole deficit lands on the full-sim plies — the ones that produce the policy targets (E1). **Do NOT "fix" without a ledger entry:** the duplicate visits still increment `N`, which inflates `max_visit`, which feeds the root `q_scale`, so removing them would flatten the training targets as a side effect. `target_batch` is already a plumbed argument, so the A/B is cheap at the sims-1 rung |
+| C25 | the cross-implementation test can actually detect a divergence | read + mutation-test `tests/test_mcts_uci_parity_gates.py` | **FAILED-THEN-FIXED 2026-07-26 (PR #263)** — the Gumbel test asserted legal masks only and **never compared `py_prob` to `c_prob`**, while its PUCT sibling twenty lines above does; it also ran at `simulations=1` against a zero evaluator, where every leaf is worth the same so revisiting one costs nothing. Structurally incapable of failing on C16/C17. Fixed by adding the missing assertion plus a parametrized gate under a non-degenerate evaluator, **verified failable by mutation** (goes red on the move, 228 != 229) |
+| C26 | every PLAY/EVAL entry point uses `PLAY_SEARCH_DEFAULTS` | grep the call sites | **FAILED 2026-07-26 (partial)** — `scripts/arena_standard.py` is fine, so the standard arena and the daily ratchet do run the tuned play shape. But `play_match_batch`'s `_pick` calls `pick_moves_for_boards` with **no `gumbel_overrides`**, so `chess_anti_engine/arena.py` (the in-loop gate) and `scripts/match_checkpoints.py` play the SELFPLAY shape — `c_scale` 0.1 not 0.025, `topk` 16 not 32, root LINEAR not LOG. The `PLAY_SEARCH_DEFAULTS` docstring claims it is referenced "from every such entry point" and names "the training-gate match". Bounded today because the in-loop gate is dead (L4, `gate_games: 0`), but `match_checkpoints.py` is a live tool |
+
+**Stage-C addendum provenance (2026-07-26).** C16/C17/C25/C26 come from the first
+audit of the C search kernel against its Python reference. C16, C25 and C26 were
+**re-verified by hand** before being recorded; C17's mechanism was reproduced
+(parity at `target_batch=1`, divergence at the production value) but its
+node-count magnitudes come from a CPU hash-evaluator harness, not live selfplay.
+
+**C17 does NOT explain C5, and C5 is the reason to believe that.** The obvious
+story — duplicated leaves mean sims buy less strength — is refuted by C5's own
+control: boot512, the undamaged donor, does **not** widen across the sims-1/sims-32
+rungs (−41.9 vs −43.7 Elo, ~2 apart, heavily overlapping CIs). Search converts
+sims to strength normally on this architecture *while C17 is live*, which bounds
+C17's Elo cost rather than implicating it. C17 is a real inefficiency in node
+economy; it is not a demonstrated strength loss, and it must not be cited as one.
+
+Further findings from that pass that are real in code but latent or untested in
+production — the root-`Q` convention, the Python descent silently ignoring
+`halving_div` / `q_visit_exp` / `q_visit_floor` / `q_global_scale`, the
+`GSS_MAX_CANDS = 64` clamp, and a missing `isfinite` guard at the C root-halving
+site — are deliberately NOT recorded as invariants, because none of them has an
+instrument that can currently see it fire.
 
 ## D. SF labelling
 
@@ -393,16 +453,18 @@ regime it never otherwise sees.
 
 ---
 
-**Tally as of 2026-07-26 — 133 invariants** (58 this morning). Stage M is new;
-stages A, C, E, G, H, I, J, K and L were all extended.
+**Tally as of 2026-07-26 (evening) — 137 invariants** (58 this morning). Stage M
+is new; stages A, C, E, G, H, I, J, K and L were all extended. The last four are
+C16/C17/C25/C26, from the first audit of the C search kernel against its Python
+reference.
 
 | verdict | n | which |
 |---|---|---|
 | VERIFIED family (-BY-DESIGN / -WITH-CONTEXT / -WITH-CAVEAT / -DIVERGENT / -INERT / -BUT-NARROW / -BY-THROUGHPUT / -BY-CODE) | 88 | |
 | RESOLVED | 1 | C5 |
-| **FAILED** | 25 | A6, A7, B4, C13, C6, G11, G4, G5, G6, G7, G8, H5, H7, I11, I13, I9, J11, J2, J5, J9, L11, L4, L6, M10, M8 |
+| **FAILED** | 28 | A6, A7, B4, C13, C16, C17, C26, C6, G11, G4, G5, G6, G7, G8, H5, H7, I11, I13, I9, J11, J2, J5, J9, L11, L4, L6, M10, M8 |
 | FAILED, qualified (-BY-DESIGN / -BENIGN / -COSMETICALLY / -DORMANT) | 3 | E14, I14, M7 |
-| FAILED-THEN-FIXED | 5 | E13, I7, J6, M11, M12 |
+| FAILED-THEN-FIXED | 6 | C25, E13, I7, J6, M11, M12 |
 | CODE-ONLY (argued from source, still unmeasured) | 4 | G12, L12, L5, M13 |
 | OPEN (measured, no pre-committed rule) | 2 | I8, L13 |
 | PENDING (needs elapsed time) | 1 | L2 |
@@ -416,7 +478,7 @@ cleared. That mistake was made on this very table on 2026-07-26, which is
 method rule 2 biting the document that contains method rule 2. Count with a
 parser that takes cell 4 and reads its first `**TOKEN`.
 
-**Reading the trend honestly:** the FAILED count went from 7 to 25 on a day of
+**Reading the trend honestly:** the FAILED count went from 7 to 28 on a day of
 progress, and that is the expected shape. None of the new failures are new
 breakages — every one was already true and simply unmeasured. G5/G6 hid behind a
 G4 row that described the ruler's churn *within* a run and never asked what a
