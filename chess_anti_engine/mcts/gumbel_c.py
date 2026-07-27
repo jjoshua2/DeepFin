@@ -71,6 +71,78 @@ from chess_anti_engine.mcts.root_tactics import (
     immediate_terminal_cboard_policy_or_draws,
 )
 from chess_anti_engine.moves import POLICY_SIZE
+import os
+
+
+# --- opt-in duplicate telemetry (audit C17) -------------------------------
+# A GPU batch under `target_batch=0` accumulates the visits of one
+# sequential-halving round, and within a round the tree cannot update -- so
+# every visit allocated to a candidate descends to the SAME leaf and produces a
+# byte-identical row. Measured on 8 boards / 256 sims: the final round sends 496
+# rows for 16 distinct positions (31x). This counts that directly, at the only
+# place it is unambiguous: the buffer actually handed to the evaluator.
+#
+# OFF unless CAE_DUP_STATS is set, because it hashes rows on the hot path.
+# CAE_DUP_STRIDE subsamples each row. DEFAULT 1 = EXACT, and it must stay that
+# way: the encoded planes are mostly zero, so a strided fingerprint collides
+# constantly. Measured at stride 128 it read 52.3% duplication on an arm whose
+# true rate is 0.0% -- collisions under-count distinct rows and so OVER-state
+# duplication. Validated at stride 1 against an exact-hashing evaluator on four
+# arms: 77.8/0.0/0.0/0.0 against 77.5/0.0/0.0/0.0.
+_DUP_STATS = os.environ.get("CAE_DUP_STATS", "") not in ("", "0")
+_DUP_STRIDE = max(1, int(os.environ.get("CAE_DUP_STRIDE", "1")))
+# Hash every Nth batch. Exact hashing costs ~49% on a CPU-only benchmark where
+# search dominates; sampling buys the rate back at 1/N the cost, and a rate
+# estimated over hundreds of batches needs no more. 1 = every batch.
+_DUP_SAMPLE = max(1, int(os.environ.get("CAE_DUP_SAMPLE", "1")))
+_dup_seen = 0
+_dup_rows = 0
+_dup_dupes = 0
+_dup_calls = 0
+
+
+def _record_batch_dup(x: np.ndarray) -> None:
+    """Accumulate duplicate-row counts for one GPU batch. No-op when disabled."""
+    global _dup_rows, _dup_dupes, _dup_calls, _dup_seen
+    if not _DUP_STATS:
+        return
+    _dup_seen += 1
+    if _dup_seen % _DUP_SAMPLE:
+        return
+    arr = np.asarray(x)
+    n = int(arr.shape[0])
+    _dup_calls += 1
+    _dup_rows += n
+    if n <= 1:
+        return
+    flat = np.ascontiguousarray(arr.reshape(n, -1)[:, ::_DUP_STRIDE])
+    raw = flat.view(np.uint8).reshape(n, -1)
+    _dup_dupes += n - len({raw[i].tobytes() for i in range(n)})
+
+
+def duplicate_stats() -> tuple[int, int, int]:
+    """``(rows, duplicate_rows, batches_hashed)`` since the last reset.
+
+    ``batches_hashed`` is NOT decoration: under sampling it can be 0 while the
+    search ran thousands of batches, and then ``duplicate_rows / rows`` is 0/0.
+    A consumer that divides without checking it reports "no duplication" when
+    it means "no observations" -- the same ambiguity that made a masked-mean
+    loss unreadable until `has_sf_p0_frac` was added beside it. Use
+    :func:`duplicate_rate`, which returns None instead of lying.
+    """
+    return (_dup_rows, _dup_dupes, _dup_calls)
+
+
+def duplicate_rate() -> float | None:
+    """Duplicate share of hashed rows, or None when nothing was sampled."""
+    if _dup_calls == 0 or _dup_rows == 0:
+        return None
+    return _dup_dupes / _dup_rows
+
+
+def reset_duplicate_stats() -> None:
+    global _dup_rows, _dup_dupes, _dup_calls, _dup_seen
+    _dup_rows = _dup_dupes = _dup_calls = _dup_seen = 0
 
 # Minimum compiled-extension ABI the C search path requires. ABI 2 added the
 # start_gumbel_sims c_scale_root/q_visit_exp_root args; calling an older compiled
@@ -707,6 +779,7 @@ def run_gumbel_root_many_c(
                 if _inplace:
                     pol_t, wdl_t, ev = eval_impl.evaluate_inplace_async(padded, slot=g)  # pyright: ignore[reportAttributeAccessIssue]
                 else:
+                    _record_batch_dup(_enc_bufs[g][:padded])
                     pol_t, wdl_t, ev = _async_eval.evaluate_encoded_async(_enc_bufs[g][:padded])
                 if ev is not None:
                     ev.synchronize()
@@ -765,6 +838,7 @@ def run_gumbel_root_many_c(
             if _inplace:
                 pol_t0, wdl_t0, ev0 = eval_impl.evaluate_inplace_async(padded0, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
             else:
+                _record_batch_dup(_enc_bufs[0][:padded0])
                 pol_t0, wdl_t0, ev0 = _async_eval.evaluate_encoded_async(_enc_bufs[0][:padded0])
 
   # 2) While GPU processes group 0, do C tree walks for group 1
@@ -819,6 +893,7 @@ def run_gumbel_root_many_c(
                 if _inplace:
                     pol_t1, wdl_t1, ev1 = eval_impl.evaluate_inplace_async(padded1, slot=1)  # pyright: ignore[reportAttributeAccessIssue]
                 else:
+                    _record_batch_dup(_enc_bufs[1][:padded1])
                     pol_t1, wdl_t1, ev1 = _async_eval.evaluate_encoded_async(_enc_bufs[1][:padded1])
 
   # 5) While GPU processes group 1, do C tree walks for group 0
@@ -958,6 +1033,7 @@ def run_gumbel_root_many_c(
                 pol_all = pol_t[:n_leaves].numpy()
                 wdl_all = wdl_t[:n_leaves].numpy()
             elif _has_async:
+                _record_batch_dup(_enc_buf[:padded])
                 pol_t, wdl_t, event = (
                     _async_eval.evaluate_encoded_async(_enc_buf[:padded], relations=_rel_buf[:padded])
                     if _rel_buf is not None
@@ -968,6 +1044,7 @@ def run_gumbel_root_many_c(
                 pol_all = pol_t[:n_leaves].numpy()
                 wdl_all = wdl_t[:n_leaves].numpy()
             else:
+                _record_batch_dup(_enc_buf[:padded])
                 pol_all, wdl_all = (
                     eval_impl.evaluate_encoded(_enc_buf[:padded], relations=_rel_buf[:padded])
                     if _rel_buf is not None
