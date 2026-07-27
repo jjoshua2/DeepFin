@@ -14,7 +14,11 @@ import torch
 
 from chess_anti_engine.model import ModelConfig, build_model, resume_model_config_from_arch
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI, pid_from_config
-from chess_anti_engine.train import Trainer, trainer_kwargs_from_config
+from chess_anti_engine.train import (
+    Trainer,
+    resolve_zclip_max_norm,
+    trainer_kwargs_from_config,
+)
 from chess_anti_engine.tune._utils import (
     load_optional_json,
     resolve_local_override_root as _resolve_local_override_root,
@@ -697,6 +701,19 @@ def train_trial(config: dict):
             buf.fast_low_surprise_priority = tc.replay_fast_low_surprise_priority
             buf.diff_focus_pol_scale = tc.diff_focus_pol_scale
             buf.diff_focus_q_weight = tc.diff_focus_q_weight
+
+  # zclip's fixed hard cap is read once in ZClip.__init__, so without this
+  # push a yaml edit to zclip_max_norm silently does nothing to a running
+  # trainer (rl_loop_audit I11/I13). Log only on transition.
+  # Resolve through the SAME helper the constructor uses -- a bare
+  # config.get() would read an absent key as "cap disabled".
+            _old_cap = trainer.grad_clip_max_norm
+            if trainer.set_grad_clip_max_norm(resolve_zclip_max_norm(config)):
+                print(
+                    f"[trial] zclip_max_norm {_old_cap} -> {trainer.grad_clip_max_norm} "
+                    f"(live reload, iteration {iteration_idx})",
+                    flush=True,
+                )
 
             shard_prefetcher, async_test_eval = _lazy_construct_iter_helpers(
                 shard_prefetcher=shard_prefetcher,
