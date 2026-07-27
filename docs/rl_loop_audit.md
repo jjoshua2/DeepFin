@@ -207,6 +207,29 @@ nats) and needs its own ledger entry, not a config-reconciliation decision.
 | C8 | *(understanding, not a defect)* stage 2 is gated on MODEL STRENGTH, not on the controller | — | The controller targets winrate 0.50, so it stops tightening once the net holds 50%. Regret only reaches `stage_end` 0.0075 if the net can hold 50% against near-full-strength SF. **"The nodes lever never fires" is therefore a measure of the net not being strong enough yet, not a bug to fix.** Do not "fix" it by lowering `stage_end` without deciding that a nodes-based ladder is wanted at a weaker regret level |
 | C6 | toggling a `_RECO_RESTART_KEYS` key does not silently distort the data mix | worker log `restarting selfplay session [restart_keys=...]`, then per-iteration mix for ~6 iters | **FAILED 2026-07-26** — `opening_fen_dole_per_iter` is restart-gated; writing it abandoned all in-flight games, driving selfplay share to **1.00 for 4 iterations** (configured 0.50) and blinding the PID. Recovers by ~iter +6. **Any config toggle on a restart key contaminates the following ~6 iterations — start readouts after it, and never treat such a toggle as a free A/B** |
 | C5 | search converts sims into strength at the expected rate | sims-1 vs sims-32 paired arena vs a FIXED banked ref | **FAILED 2026-07-26** — gap widens 91.5 → 251.9 Elo; boot512 control queued |
+| C16 | C `gss_score_and_halve` matches the Python reference **as shipped** | 6 edge-case boards, deterministic hash evaluator, `target_batch` at the production default | **FAILED 2026-07-26, independently reproduced** — 3/6 boards diverge and the two implementations pick a **different move** (`actions_eq=False`); L1 up to 1.90 at 256 sims. At `target_batch=1` they are bit-identical through 64 sims. So the parity claim in `gumbel.py:278-306` is true about the formula and false about the algorithm |
+| C17 | a simulation adds information: no leaf is evaluated twice in one GPU batch | distinct encoded rows vs `MCTSTree.node_count()` at the production shape | **FAILED 2026-07-26** — `gss_step` accumulates leaves across several halving reps to fill `GSS_GPU_BATCH=1024`, while `gumbel_c.py` passes `vloss_weight=0`. With no virtual loss a later rep re-walks an **unchanged** tree, reaches the **same** leaf, and back-propagates the **same** value. Production shape builds 677,801 nodes vs 1,030,737 at per-rep flush (**−34%**); duplicate leaf fraction 29–76% at 256 sims by batch size, 6–8% at 32 sims. Fast plies barely duplicate, so essentially the whole deficit lands on the full-sim plies — the ones that produce the policy targets (E1). **Do NOT "fix" this without a ledger entry**: per-rep flushing also lowers `max_visit`, which feeds the root `q_scale`, so it would flatten the training targets as a side effect. `target_batch` is already a plumbed argument, so the A/B is free at the sims-1 rung |
+| C25 | the cross-implementation test can actually detect a divergence | read + mutation-test `tests/test_mcts_uci_parity_gates.py` | **FAILED 2026-07-26 → FIXED (PR #263)** — the Gumbel test asserted masks only and **never compared `py_prob` to `c_prob`**, while its PUCT sibling twenty lines above does; it also ran at `simulations=1` against a zero evaluator, where every leaf is worth the same and revisiting one costs nothing. Structurally incapable of failing on C16/C17. Fixed by adding the missing assertion plus a parametrized gate under a non-degenerate evaluator, **verified failable by mutation** |
+| C26 | every PLAY/EVAL entry point uses `PLAY_SEARCH_DEFAULTS` | grep the call sites | **FAILED 2026-07-26 (partial)** — `scripts/arena_standard.py` is fine, so the standard arena and the daily ratchet do run the tuned play shape. But `play_match_batch`'s `_pick` calls `pick_moves_for_boards` with **no `gumbel_overrides`**, so `chess_anti_engine/arena.py` (the in-loop gate) and `scripts/match_checkpoints.py` play the SELFPLAY shape — `c_scale` 0.1 not 0.025, `topk` 16 not 32, root LINEAR not LOG. The `PLAY_SEARCH_DEFAULTS` docstring claims it is referenced "from every such entry point" and names "the training-gate match" by name. Bounded today because the in-loop gate is dead (L4, `gate_games: 0`), but `match_checkpoints.py` is a live tool |
+
+**Stage-C addendum provenance (2026-07-26).** C16/C17/C25/C26 came out of a
+dedicated audit of the C search kernel against its Python reference — the first
+time `gumbel.py`'s parity assertion has been checked. C16, C25 and C26 were
+**re-verified by hand** before being recorded here; C17's mechanism was
+reproduced (parity at `target_batch=1`, divergence at the production value) but
+its node-count magnitudes come from the agent's harness under a hash evaluator
+on CPU, not from live selfplay. Further findings from that pass that are real in
+code but latent or untested in production — root-`Q` convention (C20), the
+Python descent silently ignoring `halving_div` / `q_visit_exp` / `q_visit_floor`
+/ `q_global_scale` (C21), the `GSS_MAX_CANDS = 64` clamp (C24), and a missing
+`isfinite` guard at the C root-halving site — are recorded in the session
+summary rather than as invariants, because none of them has an instrument that
+can currently see it fire.
+
+**Note for C5.** C17 is a plausible contributor to C5 (sims buy less strength
+than they should, and the duplication rate rises with the sim budget), and the
+direction fits. That is a hypothesis, not a verdict — pricing it needs the
+`target_batch` A/B, pre-registered.
 
 ## D. SF labelling
 
