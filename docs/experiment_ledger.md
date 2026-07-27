@@ -768,6 +768,81 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### DEPLOY (pre-registered, not yet live) — the grad-norm clip is computed over the params it can move (PR TBD, 2026-07-27)
+
+**PROTOCOL NOTE — a semantics fix, not a strength experiment.** Entered here
+because it is training-affecting by the letter of the rule (the effective cap
+moves) and because the columns every I11 argument is read off change meaning at
+the same iteration. It is NOT an intervention on the I11 decision and must not
+be scored as one.
+
+**The defect.** Aurora's update is the polar factor of the gradient via
+Newton-Schulz, which is scale-invariant (audit I21: max|polar(cG)-polar(G)| =
+1.6e-07 at c=0.90, 0.0 at c=0.50). A global gradient-norm clip is therefore
+EXACTLY inert for the 48 tensors / 18,033,664 params (28.6%) in
+`matrix_optimizer_scope: mlp_out` — yet their norm was still folded into the
+quantity the clip decides on, for both the fixed cap and the adaptive z-score
+EMA. Measured on `checkpoint_000122`, 8 real batches through the real loss:
+`||g||` aurora **3.648**, adamw **12.137**, global **12.673**. The AdamW group
+carries **91.7% of the global norm² on 71.4% of the params**; the
+scale-invariant group contributes 8.3%. `global = adamw × 1.044`, and that
+1.044 is not a constant — it is the ratio of two independently drifting norms.
+
+**What changed.** zclip is handed a scope object holding the AdamW params
+instead of the model. The list is built from `_matrix_optimizer_filter`, the
+same predicate that builds the optimizer's groups, and `Trainer.__init__`
+raises if the two disagree. Two new per-iteration columns, `grad_norm_aurora`
+and `grad_norm_adamw`, make the split above readable from `progress.csv`
+instead of from a bespoke offline probe. A non-finite guard skips the optimizer
+step (`grad_nonfinite_skip_rate`) — removing Aurora from the clip removes its
+only inf/nan interception, and scale-invariance covers finite rescales only.
+
+**Hypothesis.** No detectable effect on any learning or throughput metric. The
+AdamW group's effective norm under a 5.0 cap goes 4.79 → 5.0 (+4.4% allowance
+on the ~1% of steps that bind hard at the pre-registered reading); the Aurora
+group's update is bit-identical by construction.
+
+**EXPECTED, NOT A REGRESSION — a one-off step DOWN of ~4.4% in
+`grad_norm_median` / `grad_norm_mean` / `grad_norm_p95` and a fall in
+`grad_hard_clip_rate` at the deploy iteration.** Those columns are now the
+AdamW group's, which is the only scope in which comparing them against
+`zclip_max_norm` (or against `GRAD_NORM_MEDIAN_WATCH`) is a comparison of one
+quantity with itself. **Do not read the step as the I11 ramp reversing, and
+never splice a pre-deploy and post-deploy grad-norm series.**
+
+**ONE deciding yardstick (exact command), read at +5 iterations:**
+
+```
+T=runs/pbt2_small/tune/<trial>/result.json
+python3 -c "
+import json
+rows=[json.loads(l) for l in open('\$T') if l.strip()]
+for r in rows[-5:]:
+    print({k: r.get(k) for k in ('training_iteration','grad_norm_median',
+        'grad_norm_aurora','grad_norm_adamw','grad_hard_clip_rate',
+        'grad_nonfinite_skip_rate','train_loss','train_time_s')})
+"
+```
+
+**SUCCESS (all four, pre-committed):**
+1. `grad_norm_aurora` and `grad_norm_adamw` are present and non-zero on every
+   post-restart row.
+2. `grad_norm_adamw` equals `grad_norm_mean` to reported precision — the clip
+   scope is the AdamW group and nothing else.
+3. `grad_nonfinite_skip_rate` is exactly 0.0 on every row. Anything above 0
+   means real non-finite gradients, which is a finding in its own right and
+   stops this readout.
+4. `train_loss` and `train_time_s` within 5% of the pre-stop 5-iteration mean.
+
+**KILL:** (3) non-zero, or (4) breached for 5 consecutive iterations → revert
+the PR. No salvage needed: nothing here touches weights, optimizer state, or
+the replay window, and a revert restores the previous clip scope exactly.
+
+**Confounds.** The three new report keys change the progress.csv key SET, and
+Ray's CSV logger fixes the header from a file's first row — so columns line up
+only in a progress.csv that starts fresh with this code (same caveat as #260).
+`result.json` is unaffected and is the file the yardstick reads.
+
 ### DEPLOY (pre-registered, not yet live) — control-surface + observability bundle: I13/I9/I11/I19 (PR #260, 2026-07-26)
 
 **PROTOCOL NOTE — not an experiment, and deliberately numerics-neutral.**

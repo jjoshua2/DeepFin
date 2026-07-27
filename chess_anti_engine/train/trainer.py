@@ -4,7 +4,7 @@ import dataclasses
 import logging
 import math
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
@@ -687,6 +687,89 @@ def _matrix_optimizer_filter(
     )
 
 
+# Optimizers whose matrix group applies a SCALE-INVARIANT update, so a global
+# gradient-norm clip provably cannot move it. Muon and Aurora both take the
+# polar factor of the (momentum-smoothed) gradient via Newton-Schulz; measured
+# on `_polar_factor`, max|polar(c*G) - polar(G)| is 1.6e-07 at c=0.90 and
+# exactly 0.0 at c=0.50. Every other optimizer here keeps the historical
+# whole-model clip, because none of them has been shown to have this property.
+_SCALE_INVARIANT_MATRIX_OPTIMIZERS = frozenset({"muon", "aurora"})
+
+
+class _GradClipScope:
+    """A fixed parameter list wearing the exact surface `ZClip` consumes.
+
+    `ZClip` reaches into the model it is handed through only two methods:
+    `parameters()` (the norm it measures in `_compute_grad_norm`, the tensors
+    it rescales in `apply_in_place_clipping`, and the warmup
+    `clip_grad_norm_`) and `modules()` (its `is_fsdp_model` probe). Handing it
+    one of these instead of the model therefore restricts BOTH what the clip
+    measures and what it rescales, with no other behavioural difference.
+
+    `modules()` is deliberately empty: training here is single-process, and an
+    empty iterator keeps `is_fsdp_model` False so zclip stays on its local
+    path rather than trying to `all_reduce` on an uninitialised process group.
+    """
+
+    def __init__(self, params: Iterable[torch.nn.Parameter]) -> None:
+        self._params: list[torch.nn.Parameter] = list(params)
+
+    def parameters(self) -> Iterator[torch.nn.Parameter]:
+        return iter(self._params)
+
+    def modules(self) -> Iterator[torch.nn.Module]:
+        return iter(())
+
+
+def split_matrix_and_clipped_params(
+    model: torch.nn.Module,
+    *,
+    optimizer: str,
+    matrix_optimizer_scope: str,
+) -> tuple[list[torch.nn.Parameter], list[torch.nn.Parameter]]:
+    """Split trainable parameters into (scale-invariant matrix group, the rest).
+
+    The predicate is `_matrix_optimizer_filter` — literally the one the
+    optimizer used to build its param groups — so the clip scope and the
+    optimizer cannot drift apart by someone editing one and forgetting the
+    other. `include_embed_default` mirrors the optimizer branch exactly: under
+    the legacy `default` scope Muon claims `embed.weight` and Aurora does not.
+
+    The 1-D/bias carve-out mirrors `_split_decay_groups`, which routes those to
+    an AdamW group (`use_muon`/`use_aurora` False) even when the filter matches
+    them. `Trainer.__init__` cross-checks the result against the optimizer's
+    own groups, so a future divergence is a hard failure rather than a silently
+    mis-scoped clip.
+    """
+    if str(optimizer).lower() not in _SCALE_INVARIANT_MATRIX_OPTIMIZERS:
+        return [], [p for p in model.parameters() if p.requires_grad]
+    predicate = _matrix_optimizer_filter(
+        matrix_optimizer_scope,
+        include_embed_default=str(optimizer).lower() == "muon",
+    )
+    matrix: list[torch.nn.Parameter] = []
+    clipped: list[torch.nn.Parameter] = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        is_no_decay = param.ndim <= 1 or name.endswith(".bias")
+        if predicate(name, param) and not is_no_decay:
+            matrix.append(param)
+        else:
+            clipped.append(param)
+    return matrix, clipped
+
+
+def _optimizer_matrix_param_ids(opt: torch.optim.Optimizer) -> set[int]:
+    """ids of the parameters the optimizer actually routes to its matrix path."""
+    return {
+        id(param)
+        for group in getattr(opt, "param_groups", [])
+        if bool(group.get("use_aurora", False)) or bool(group.get("use_muon", False))
+        for param in group["params"]
+    }
+
+
 @dataclass
 class TrainMetrics:
     loss: float
@@ -762,6 +845,19 @@ class TrainMetrics:
     grad_adaptive_clip_rate: float = 0.0
     grad_hard_clip_rate: float = 0.0
     grad_norm_samples: int = 0
+  # Per-optimizer-group grad norms, iteration means. The clip acts on the
+  # AdamW group ALONE (the matrix group's update is scale-invariant, so the
+  # clip cannot move it), which makes `grad_norm_adamw` equal to
+  # `grad_norm_mean` by construction — kept as its own column so a reader does
+  # not have to know the clip scope to know which group they are looking at,
+  # and so a future scope change shows up as the two disagreeing rather than
+  # as `grad_norm_mean` silently changing meaning. `grad_norm_aurora` is the
+  # split that previously required a bespoke offline probe to establish.
+    grad_norm_aurora: float = 0.0
+    grad_norm_adamw: float = 0.0
+  # Fraction of optimizer steps skipped because some gradient was inf/nan.
+  # Expected to be exactly 0.0 in a healthy run.
+    grad_nonfinite_skip_rate: float = 0.0
   # Iteration mean/max of param_groups[0] (the matrix/trunk group) LR. The
   # end-of-iteration LR reported elsewhere is the TROUGH of the sqrt_release
   # ramp, ~9x below the LR the trunk actually trains at (I19). Every group
@@ -814,6 +910,12 @@ def _scalar_hparam_differs(old: Any, new: Any) -> bool:
 # has stopped being a tail guard and has become an LR cap in disguise. Recorded
 # here (and in the yaml comment on zclip_max_norm) so the call is not made
 # post-hoc.
+#
+# The median it is compared against is the CLIPPED group's norm, which is what
+# makes the comparison meaningful: since 2026-07-27 the clip scope excludes the
+# scale-invariant matrix group, so both sides of this inequality are the same
+# quantity. Threshold unchanged; the series it reads steps down ~4.4% at that
+# deploy, which is the measurement narrowing onto the clip, not the run moving.
 GRAD_NORM_MEDIAN_WATCH = 4.75
 
 
@@ -836,19 +938,25 @@ def _median(sorted_values: list[float]) -> float:
 
 
 def _grad_clip_metric_kwargs(
-    grad_norms: list[float], clip_counts: dict[str, int],
+    grad_norms: list[float],
+    clip_counts: dict[str, int],
+    aurora_grad_norms: list[float] | None = None,
 ) -> dict[str, float | int]:
     """Aggregate per-step grad norms + clip flags into TrainMetrics kwargs.
 
     Aggregated over EVERY step of the iteration, not the tb_log_interval
     subsample — a 1-in-10 sample cannot rule out a burst pattern aligned to the
     stride (the caveat recorded against I10).
+
+    `grad_norms` is the CLIPPED group's norm (see `Trainer._grad_clip_target`);
+    `aurora_grad_norms` is the scale-invariant matrix group's, empty when the
+    optimizer has no such group.
     """
     n = len(grad_norms)
     if n == 0:
         return {}
     ordered = sorted(grad_norms)
-    return {
+    out: dict[str, float | int] = {
         "grad_norm_mean": float(sum(grad_norms) / n),
         "grad_norm_median": _median(ordered),
         "grad_norm_p95": _nearest_rank_quantile(ordered, 0.95),
@@ -856,8 +964,13 @@ def _grad_clip_metric_kwargs(
         "grad_clip_rate": float(clip_counts.get("clipped", 0)) / n,
         "grad_adaptive_clip_rate": float(clip_counts.get("adaptive_clip", 0)) / n,
         "grad_hard_clip_rate": float(clip_counts.get("hard_clip", 0)) / n,
+        "grad_nonfinite_skip_rate": float(clip_counts.get("nonfinite_grad", 0)) / n,
         "grad_norm_samples": n,
+        "grad_norm_adamw": float(sum(grad_norms) / n),
     }
+    aurora = aurora_grad_norms or []
+    out["grad_norm_aurora"] = float(sum(aurora) / len(aurora)) if aurora else 0.0
+    return out
 
 
 def _loss_sums_to_metric_kwargs(sums: dict[str, float], n: float) -> dict[str, float]:
@@ -1434,6 +1547,43 @@ class Trainer:
   # Snapshot the CONFIGURED param-group hyperparameters before any checkpoint
   # restore can overwrite them. See _reapply_configured_param_group_hparams.
         self._configured_param_group_hparams = self._snapshot_param_group_hparams()
+  # Gradient-clip scope. Muon/Aurora take the POLAR FACTOR of the gradient,
+  # which is scale-invariant, so a global norm clip is exactly inert for that
+  # group while still inflating the norm the clip decides on — measured on
+  # checkpoint_000122 over 8 real batches: ||g|| aurora 3.648, adamw 12.137,
+  # global 12.673, i.e. the AdamW group carries 91.7% of the global norm^2 on
+  # 71.4% of the parameters and the global norm sits 4.4% above the only
+  # quantity the clip can actually move. Clip on the AdamW group alone, for
+  # both the fixed cap and the adaptive z-score EMA.
+        self._matrix_clip_params, clipped_params = split_matrix_and_clipped_params(
+            self.model,
+            optimizer=str(optimizer),
+            matrix_optimizer_scope=str(matrix_optimizer_scope),
+        )
+  # The optimizer's own groups are the ground truth for who gets the
+  # scale-invariant update. The predicate above is the one that BUILT those
+  # groups, so this can only fire if the two are edited apart — in which case
+  # the clip would be silently mis-scoped, which is the exact defect class
+  # this change exists to remove. Fail loudly at construction instead.
+        expected_matrix_ids = _optimizer_matrix_param_ids(self.opt)
+        if {id(p) for p in self._matrix_clip_params} != expected_matrix_ids:
+            raise ValueError(
+                "grad-clip scope disagrees with the optimizer's matrix groups: "
+                f"{len(self._matrix_clip_params)} param(s) from "
+                f"matrix_optimizer_scope={matrix_optimizer_scope!r} vs "
+                f"{len(expected_matrix_ids)} flagged use_muon/use_aurora "
+                f"(optimizer={optimizer!r})"
+            )
+  # None = nothing to exclude (or nothing left to clip), in which case zclip
+  # keeps getting the model and behaviour is bit-identical to before. Also
+  # keeps `_compute_grad_norm`'s `next(model.parameters())` off an empty
+  # iterator. Stored as a sentinel rather than as `self.model` because
+  # `apply_compile` REBINDS `self.model` further down this constructor.
+        self._grad_clip_scope: _GradClipScope | None = (
+            _GradClipScope(clipped_params)
+            if self._matrix_clip_params and clipped_params
+            else None
+        )
         max_grad_norm = None if zclip_max_norm is None else float(zclip_max_norm)
         self.zclip = ZClip(
             mode="zscore",
@@ -1599,16 +1749,43 @@ class Trainer:
             100.0 * metrics.grad_clip_rate, 100.0 * metrics.grad_hard_clip_rate,
         )
 
+    @property
+    def _grad_clip_target(self) -> Any:
+        """Whatever `ZClip.step` is handed: the AdamW scope, or the whole model.
+
+        Resolved on every call so it follows `self.model` through
+        `apply_compile`'s rebinding, exactly as the pre-scope code did.
+        """
+        return self.model if self._grad_clip_scope is None else self._grad_clip_scope
+
+    def _matrix_grad_norm(self) -> float:
+        """2-norm of the scale-invariant matrix group's grads (0.0 when empty).
+
+        Accumulated in float32 regardless of parameter dtype: the number has to
+        be comparable with the AdamW group's, and it doubles as the non-finite
+        guard in `_run_optimizer_step`, so it must not itself overflow. A
+        2-norm is non-finite exactly when some element is, which is what makes
+        that guard free — it rides the sync `_zclip_step` already pays for.
+        """
+        norms = [
+            param.grad.detach().to(torch.float32).norm(2)
+            for param in self._matrix_clip_params
+            if param.grad is not None
+        ]
+        if not norms:
+            return 0.0
+        return float(torch.linalg.vector_norm(torch.stack(norms)))
+
     def _zclip_step(self, *, collect_stats: bool) -> tuple[float, dict[str, float] | None]:
         if not collect_stats:
-            return float(self.zclip.step(self.model)), None
+            return float(self.zclip.step(self._grad_clip_target)), None
 
         was_initialized = bool(getattr(self.zclip, "initialized", False))
         mean_raw = getattr(self.zclip, "mean", 0.0)
         var_raw = getattr(self.zclip, "var", 0.0)
         mean = float(mean_raw if mean_raw is not None else 0.0)
         var = float(var_raw if var_raw is not None else 0.0)
-        total_norm = float(self.zclip.step(self.model))
+        total_norm = float(self.zclip.step(self._grad_clip_target))
         clip_val = None
         if was_initialized:
             std = var ** 0.5
@@ -2234,12 +2411,36 @@ class Trainer:
   # pure Python arithmetic over floats zclip already materialized, and a
   # 1-in-10 sample cannot be aggregated into an honest per-iteration clip
   # rate (rl_loop_audit I9/I10).
+  # Measured BEFORE the clip, which is a distinction without a difference
+  # while the matrix group is outside the clip scope, and the honest
+  # pre-clip reading if it ever is not.
+        matrix_grad_norm = self._matrix_grad_norm()
         grad_norm, zclip_stats = self._zclip_step(collect_stats=True)
         if zclip_stats is not None:
             step_opt_stats.update(zclip_stats)
         step_opt_stats["grad_norm"] = float(grad_norm)
+        step_opt_stats["grad_norm_aurora"] = float(matrix_grad_norm)
+  # The matrix group no longer passes through the clip, and scale-invariance
+  # covers a FINITE rescale only: an inf/nan gradient is not a rescale and
+  # would reach `_polar_factor` unchecked, where it becomes a hard
+  # RuntimeError mid-iteration. Guard the clipped group too — zclip never
+  # protected it either (`clip_coef = cap / (nan + 1e-6)` leaves `nan > cap`
+  # False, so the whole non-finite gradient passes through unscaled).
+        if not (math.isfinite(matrix_grad_norm) and math.isfinite(grad_norm)):
+            logging.getLogger(__name__).warning(
+                "non-finite gradient at step %d (matrix ||g||=%r, clipped "
+                "||g||=%r): skipping the optimizer step",
+                self.step, matrix_grad_norm, grad_norm,
+            )
+            step_opt_stats["nonfinite_grad"] = 1.0
+            step_opt_stats["lr"] = float(self.opt.param_groups[0]["lr"])
+            self.opt.zero_grad(set_to_none=True)
+            if update_lr:
+                self._update_lr()
+            return step_n_micro, 0.0
         if self._should_log_step_scalars():
             self.writer.add_scalar("train/grad_norm", float(grad_norm), self.step)
+            self.writer.add_scalar("train/grad_norm_aurora", float(matrix_grad_norm), self.step)
             if zclip_stats is not None:
                 self.writer.add_scalar("zclip/total_norm", zclip_stats["total_norm"], self.step)
                 self.writer.add_scalar("zclip/effective_clip", zclip_stats["effective_clip"], self.step)
@@ -2272,8 +2473,11 @@ class Trainer:
   # Committed only on a successful step, so a retried CUDA-error attempt
   # can't double-count (same discipline as step_sums).
         grad_norms: list[float] = []
+        aurora_grad_norms: list[float] = []
         lr_samples: list[float] = []
-        clip_counts: dict[str, int] = {"clipped": 0, "adaptive_clip": 0, "hard_clip": 0}
+        clip_counts: dict[str, int] = {
+            "clipped": 0, "adaptive_clip": 0, "hard_clip": 0, "nonfinite_grad": 0,
+        }
 
         _log = logging.getLogger(__name__)
 
@@ -2334,6 +2538,8 @@ class Trainer:
                     grad_norms.append(step_opt_stats["grad_norm"])
                     for flag in clip_counts:
                         clip_counts[flag] += int(step_opt_stats.get(flag, 0.0) > 0.0)
+                if "grad_norm_aurora" in step_opt_stats:
+                    aurora_grad_norms.append(step_opt_stats["grad_norm_aurora"])
                 if "lr" in step_opt_stats:
                     lr_samples.append(step_opt_stats["lr"])
 
@@ -2363,7 +2569,7 @@ class Trainer:
             train_samples_seen=int(train_samples_seen),
             opt_lr_mean=float(sum(lr_samples) / len(lr_samples)) if lr_samples else 0.0,
             opt_lr_max=float(max(lr_samples)) if lr_samples else 0.0,
-            **_grad_clip_metric_kwargs(grad_norms, clip_counts),
+            **_grad_clip_metric_kwargs(grad_norms, clip_counts, aurora_grad_norms),
             **getattr(self.opt, "last_uw_stats", {}),
         )
         self._warn_if_grad_norm_median_past_watch(metrics)
