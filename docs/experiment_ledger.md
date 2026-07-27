@@ -2341,6 +2341,39 @@ depend on the net, and its top-1 is **33.7 against June's 33.7** — identical. 
 and scorer are the same instrument. So the 46M-era numbers can be *compared* even though
 they are not a valid *baseline*.
 
+**⚑ READOUT PREP (2026-07-27 ~17:0x) — THE BASELINE CHECKPOINT HAS BEEN PRUNED; A PAIRED
+BASELINE SURVIVES ELSEWHERE.** Checked now rather than discovered tomorrow.
+
+`checkpoint_000129`, on which the table above was measured, **no longer exists** — Ray
+prunes live checkpoints and the oldest surviving in the tune dir is `checkpoint_000134`.
+**The 50.2 can therefore never be re-derived, and no per-position dump of it was saved.**
+Taken alone that leaves tomorrow's read as an UNPAIRED comparison of a fresh number against
+a recorded one, with no way to form a CI — much weaker than this project's standard.
+
+**A valid teacher-off checkpoint does survive**, banked for a different purpose:
+
+```
+data/salvage/pre_zclip65_20260727/seeds/slot_000/trainer.pt
+  training_iteration 121   (manifest.json), banked 10:49, peak_lr 3e-5
+  `w_sf_own` ABSENT from its stored config -- the teacher-off signature
+```
+iter 121 is **before the 14:12 deploy** (which landed at iter 132), so it is genuinely
+pre-teacher. Two differences from the 129 that produced the table, both to be stated in the
+readout rather than glossed: it is **8 iterations earlier**, and it predates the
+`zclip_max_norm` 5.0 → 6.5 move.
+
+**HOW TO USE IT WITHOUT MOVING THE GOALPOSTS.** The pre-committed rule stays exactly as
+written — **absolute, ≥3 cp below 50.2 (i.e. ≤47.2)** — and that is the verdict. The paired
+comparison against banked ckpt121 is **SUPPLEMENTARY**, reported alongside with its own CI
+because it is far more sensitive. It must not be substituted for the pre-committed bar:
+swapping in a more sensitive ruler after the fact, when the pre-registered one looks likely
+to miss, is precisely how a post-hoc verdict gets laundered. Report both, judge by the bar.
+
+**Operational lesson, generalised:** *the ledger recorded the baseline NUMBER but not the
+artefact needed to pair against it.* A baseline is not banked until the checkpoint (or a
+per-position dump) is somewhere Ray cannot prune. Bank the dump at the same moment the
+number is written down.
+
 **⚠ THIS TEMPERS THE EXPECTATION, and it is recorded BEFORE the readout.** June moved the
 46M net 56.7 → 49.6. **The 63M net already sits at 50.2 with the teacher OFF** — essentially
 at the June post-experiment level, presumably bought by the capacity increase. So the
