@@ -199,7 +199,14 @@ def read_row_index(shards: list[ShardInfo]) -> RowIndex:
 
     def _col(cols: dict[str, np.ndarray], name: str, n: int, fill: int) -> np.ndarray:
         got = cols.get(name)
-        return np.full((n,), fill, dtype=np.int64) if got is None else got.astype(np.int64)
+        if got is None:
+            return np.full((n,), fill, dtype=np.int64)
+        # A short column would concatenate into a RowIndex whose fields have
+        # different lengths, i.e. silently misaligned identities rather than an
+        # error. Refuse instead.
+        if int(got.shape[0]) != n:
+            raise ValueError(f"shard column {name!r} has {got.shape[0]} rows, expected {n}")
+        return got.astype(np.int64)
 
     shard_pos, row, game_id, wdl, ply, selfplay = [], [], [], [], [], []
     for pos, cols in parts:
@@ -375,6 +382,22 @@ def cluster_bootstrap_means(
             wsum += weight
         out[b] = acc / max(1e-12, wsum)
     return out
+
+
+def class_aligned_order(wdl_a: np.ndarray, wdl_b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Orders making position *i* of both sets the same W/D/L class.
+
+    Rows are scored in shard order, so position *i* of one set is otherwise an
+    arbitrary class in the other and a row-level "paired" delta would pair a
+    win against a draw — inflating the variance the matched mix was supposed to
+    remove. The per-class counts are equal after ``match_wdl_mix``, so a stable
+    sort by class lines the two up exactly.
+    """
+    ord_a = np.argsort(wdl_a, kind="stable")
+    ord_b = np.argsort(wdl_b, kind="stable")
+    if not np.array_equal(wdl_a[ord_a], wdl_b[ord_b]):
+        raise AssertionError("class-aligned pairing failed: W/D/L counts differ")
+    return ord_a, ord_b
 
 
 def stratified_mean(values: np.ndarray, wdl: np.ndarray, weights: dict[int, float]) -> float:
@@ -811,6 +834,7 @@ def main() -> None:
     wdl_b = source_b.index.wdl[keep_b]
     counts = np.bincount(np.clip(wdl_a, 0, 2), minlength=3)
     weights = {c: float(counts[c]) for c in range(3) if counts[c] > 0}
+    ord_a, ord_b = class_aligned_order(wdl_a, wdl_b)
 
     print("\n=== losses ===")
     print(f"  per-row/chunk reconstruction max |dev|: A "
@@ -834,7 +858,7 @@ def main() -> None:
             rng=np.random.default_rng(args.seed + 2),
         )
         lo, hi = np.percentile(boot_a - boot_b, [2.5, 97.5])
-        ilo, ihi = paired_bootstrap_ci(va - vb, n_boot=args.n_boot, seed=args.seed)
+        ilo, ihi = paired_bootstrap_ci(va[ord_a] - vb[ord_b], n_boot=args.n_boot, seed=args.seed)
         results[metric] = {
             "mean_a": mean_a, "mean_b": mean_b, "gap": gap,
             "ci_lo": float(lo), "ci_hi": float(hi),
@@ -847,9 +871,12 @@ def main() -> None:
 
     if args.dump_dir is not None:
         args.dump_dir.mkdir(parents=True, exist_ok=True)
-        keys = [f"{WDL_NAMES[int(c)]}:{i}" for i, c in enumerate(wdl_a)]
-        _dump_jsonl(args.dump_dir / "set_a.jsonl", scored_a["wdl_ce"], wdl_a, keys)
-        _dump_jsonl(args.dump_dir / "set_b.jsonl", scored_b["wdl_ce"], wdl_b, keys)
+        paired_wdl = wdl_a[ord_a]
+        keys = [f"{WDL_NAMES[int(c)]}:{i}" for i, c in enumerate(paired_wdl)]
+        _dump_jsonl(args.dump_dir / "set_a.jsonl",
+                    scored_a["wdl_ce"][ord_a], paired_wdl, keys)
+        _dump_jsonl(args.dump_dir / "set_b.jsonl",
+                    scored_b["wdl_ce"][ord_b], paired_wdl, keys)
         print(f"\n  per-row dumps -> {args.dump_dir}; cross-check the iid CI with:\n"
               f"    PYTHONPATH=. python3 scripts/paired_compare.py "
               f"{args.dump_dir}/set_a.jsonl {args.dump_dir}/set_b.jsonl "

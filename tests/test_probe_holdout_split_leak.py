@@ -202,6 +202,23 @@ def test_cluster_bootstrap_covers_at_the_nominal_rate() -> None:
     assert covered_rows / replicates < 0.60, covered_rows
 
 
+def test_class_aligned_order_pairs_like_with_like() -> None:
+    """Row i of one set must be the same W/D/L class as row i of the other."""
+    wdl_a = np.array([0, 2, 1, 0, 2])
+    wdl_b = np.array([2, 0, 0, 2, 1])
+
+    ord_a, ord_b = probe.class_aligned_order(wdl_a, wdl_b)
+
+    assert np.array_equal(wdl_a[ord_a], wdl_b[ord_b])
+    # stable, so it is a deterministic pairing rather than an arbitrary one
+    assert ord_a.tolist() == [0, 3, 2, 1, 4]
+
+
+def test_class_aligned_order_rejects_unmatched_mixes() -> None:
+    with pytest.raises(AssertionError, match="W/D/L counts differ"):
+        probe.class_aligned_order(np.array([0, 0, 1]), np.array([0, 1, 1]))
+
+
 def test_stratified_mean_uses_the_supplied_weights() -> None:
     values = np.array([1.0, 1.0, 3.0, 3.0])
     wdl = np.array([0, 0, 1, 1])
