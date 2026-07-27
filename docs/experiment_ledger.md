@@ -2530,6 +2530,40 @@ Both controls bit-identical, so nothing but the search changed. **The direction 
 a checkpoint the original work never touched** (which measured 54.2 → 46.8 = −7.4 on its
 own); magnitudes differ by checkpoint, the sign does not.
 
+**⛔ CORRECTION (2026-07-27 ~22:3x, user-raised) — LEG (b) IS NOT THE PLAY REGIME, AND THE
+SCOPING WORRY BELOW IS VOID.** Two facts I had wrong:
+
+**1. Leg (b) runs 32 sims. Real UCI/TCEC play is 17,600-176,000.** The audit labels it
+"PLAY (UCI/TCEC)" because it uses the PLAY *settings* (`c_scale 0.025`, root=log, topk=32),
+but at a budget **550×-5,500× below** the regime it names. At the measured single-game
+ceiling (~17.6k sims/s) 1 s/move ≈ **17,600 sims** and a 10 s TCEC move ≈ **176,000**. So
+"virtual loss hurts the play search" was measured three orders of magnitude from play and
+says nothing about it.
+
+**2. UCI does not use the Gumbel path AT ALL — and it already runs virtual loss.** UCI/TCEC
+plays through the **PUCV walker search** (`n_walkers`, `walker_gather`, `pucv_vloss_mode`,
+multi-GPU PUCV), whose `--vloss-weight` **defaults to 3**, with a `--pucv-pending-mode
+virtual-mean` option already exposed. The C17 change touches
+`run_gumbel_root_many_c` only.
+
+**Therefore the deploy is SIMPLER than the scoping paragraph below claims, not harder:**
+- **Selfplay both PLAYS and LABELS through the Gumbel path at `mcts_simulations: 256`,
+  `gumbel_c_scale: 0.1`, `gumbel_topk: 16` — i.e. leg (d)'s exact configuration.** So
+  leg (d) is the production regime, and LEGACY's **−4.5 cp lands on the search that
+  actually generates every game and every target.**
+- **UCI play is untouched by this change** and has had virtual loss for a long time, which
+  is independent evidence that the construct is already accepted in this codebase for the
+  deep-search path.
+- The leg-(b) regression is a regression **in an audit artifact**, not in play strength.
+  It should not gate the deploy, and no per-path scoping of `gumbel_vloss_weight` is
+  needed for the reason given below.
+
+**What this does NOT resolve:** duplication at real play budgets is still unmeasured, and
+the mechanism suggests it could be worse there — a single-game search has no *other games*
+to batch across, so filling a GPU batch requires accumulating leaves from one tree, which
+is exactly what produces duplicates. That is a question for the PUCV path, which already
+has vloss enabled, and is not part of this deploy.
+
 **⚑⚑ THREE-WAY RESULT — VIRTUAL_MEAN vs LEGACY, and MY THEORETICAL ARGUMENT IS PARTLY
 REFUTED (2026-07-27 ~22:1x, ckpt121, controls bit-identical in all three arms):**
 
