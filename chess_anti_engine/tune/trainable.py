@@ -698,6 +698,15 @@ def train_trial(config: dict):
             buf.diff_focus_pol_scale = tc.diff_focus_pol_scale
             buf.diff_focus_q_weight = tc.diff_focus_q_weight
 
+  # zclip's fixed hard cap is read once in ZClip.__init__, so without this
+  # push a yaml edit to zclip_max_norm silently does nothing to a running
+  # trainer (rl_loop_audit I11/I13). Log only on transition.
+            if trainer.set_grad_clip_max_norm(config.get("zclip_max_norm")):
+                print(
+                    f"[trial] zclip_max_norm -> {config.get('zclip_max_norm')} "
+                    f"(live reload, iteration {iteration_idx})"
+                )
+
             shard_prefetcher, async_test_eval = _lazy_construct_iter_helpers(
                 shard_prefetcher=shard_prefetcher,
                 async_test_eval=async_test_eval,

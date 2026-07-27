@@ -1915,6 +1915,32 @@ class Trainer:
         else:
             pg["lr"] = float(scheduler_last_lr_for_group) if scheduler_last_lr_for_group is not None else new_base
 
+    def set_grad_clip_max_norm(self, max_norm: float | None) -> bool:
+        """Re-point zclip's fixed hard cap on a RUNNING trainer.
+
+        ``ZClip`` reads ``max_grad_norm`` once in its constructor, so before
+        this existed a live yaml edit to ``zclip_max_norm`` was a silent no-op:
+        the key is in none of the restart-required sets, so ``_reload_yaml_into_config``
+        overlaid it into the config every iteration, nothing pushed it at the
+        optimizer, and the reloader did not even log the ``requires restart``
+        warning it gives ``lr_schedule``. Same shape as the ``weight_decay``
+        defect in ``_reapply_configured_param_group_hparams`` (rl_loop_audit
+        I13): a control surface that reads as live and is not.
+
+        The cap is a per-step threshold with no state behind it, so re-pointing
+        it mid-run is safe and takes effect on the next optimizer step.
+
+        Returns True when the value actually changed, so the caller can log the
+        transition rather than every iteration.
+        """
+        new = None if max_norm is None else float(max_norm)
+        old_raw = getattr(self.zclip, "max_grad_norm", None)
+        old = None if old_raw is None else float(old_raw)
+        if new == old:
+            return False
+        self.zclip.max_grad_norm = new  # pyright: ignore[reportAttributeAccessIssue]
+        return True
+
     def set_peak_lr(self, lr: float, *, rescale_current: bool = True) -> None:
         """Rebase LR schedule to a new peak while preserving schedule phase.
 
