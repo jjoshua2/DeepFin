@@ -157,6 +157,7 @@ class _SearchProfile:
 
 def build_search_profiles(
     flat: dict[str, object], *, play_sims: int, play_topk: int | None,
+    rl_sims_override: int | None = None,
 ) -> dict[str, _SearchProfile]:
     """The search shapes to score: one PLAY, two TRAINING.
 
@@ -173,6 +174,13 @@ def build_search_profiles(
     rl_c_scale = float(flat.get("gumbel_c_scale", rl.c_scale))  # pyright: ignore[reportArgumentType]
     rl_topk = int(flat.get("gumbel_topk", rl.topk))  # pyright: ignore[reportArgumentType]
     rl_sims = int(flat.get("mcts_simulations", 256))  # pyright: ignore[reportArgumentType]
+  # Node-matched arm for the C17 readout. `--target-batch 1` and `--vloss-weight`
+  # both buy ~60% more DISTINCT nodes at the same nominal sim count, so any gain
+  # they show is partly "more search". Raising the PRODUCTION arm's sims until
+  # its distinct-node count matches the fixed arm's separates the two. Training
+  # rows only -- the PLAY row keeps --sims.
+    if rl_sims_override is not None and rl_sims_override > 0:
+        rl_sims = int(rl_sims_override)
     rl_fast_sims = int(flat.get("fast_simulations", 32))  # pyright: ignore[reportArgumentType]
 
     def _rl(label: str, sims: int) -> _SearchProfile:
@@ -288,6 +296,7 @@ def _net_candidates(
     policy_temp: float = 1.0,
     syzygy_path: str | None = None,
     target_batch: int = 0,
+    vloss_weight: int = 0,
 ) -> tuple[list[np.ndarray], dict[str, list[np.ndarray]], dict[str, list[float]], list[np.ndarray]]:
     """(raw-policy probs, {profile: search visit probs}, {profile: root Q}).
 
@@ -395,6 +404,14 @@ def _net_candidates(
             # argument, hence C-runner only.
             if target_batch > 0:
                 tb_kwargs[name]["target_batch"] = int(target_batch)
+            # The other fix for the same defect, and the one that KEEPS the
+            # large cross-rep batches: an in-flight leaf carries a visit
+            # penalty, so a later rep descends somewhere else instead of
+            # re-walking to it. `--target-batch 1` removes the duplicates by
+            # removing the batching; `--vloss-weight 1` removes them and keeps
+            # it. Score both against the tb=0/vloss=0 baseline.
+            if vloss_weight > 0:
+                tb_kwargs[name]["vloss_weight"] = int(vloss_weight)
 
     raw_out: list[np.ndarray] = []
     search_out: dict[str, list[np.ndarray]] = {name: [] for name in profiles}
@@ -625,6 +642,36 @@ def _aggregate(
     }
 
 
+def _shape_stats(probs: list[np.ndarray]) -> tuple[float, float, float, float]:
+    """(mean entropy nats, mean top-1, mean exp(entropy), fraction top-1 >= 0.99).
+
+    The visit distribution IS the stored policy target, so its sharpness is a
+    property of the training data, not a diagnostic. C17's duplicate leaves
+    sharpen it twice over -- they pile visits onto the already-winning path,
+    and the inflated max_visit raises the root q_scale that sharpens the Gumbel
+    improved policy on top of that. Any fix therefore FLATTENS the target, and
+    this is where to read how much.
+    """
+    ents: list[float] = []
+    tops: list[float] = []
+    for p in probs:
+        q = np.asarray(p, dtype=np.float64)
+        q = q[q > 0.0]
+        if q.size == 0:
+            continue
+        ents.append(float(-(q * np.log(q)).sum()))
+        tops.append(float(np.max(p)))
+    if not ents:
+        nan = float("nan")
+        return (nan, nan, nan, nan)
+    arr = np.asarray(ents)
+    tarr = np.asarray(tops)
+    return (
+        float(arr.mean()), float(tarr.mean()),
+        float(np.exp(arr).mean()), float((tarr >= 0.99).mean()),
+    )
+
+
 def _policy_table(agg: dict, group_names: list[str]) -> str:
     lines = ["| candidate | " + " | ".join(f"{g} E[regret] / top-1 (n)" for g in group_names) + " |"]
     lines.append("|" + "---|" * (len(group_names) + 1))
@@ -686,6 +733,20 @@ def main() -> None:
                          "the training target': duplicate visits still increment N, inflating "
                          "max_visit and hence the root q_scale that sharpens the improved-policy "
                          "target. C-runner only; the Python reference path takes no such argument.")
+    ap.add_argument("--vloss-weight", type=int, default=0,
+                    help="C-search virtual-loss weight. 0 = production (none), so a leaf "
+                         "already awaiting eval in the current batch carries no penalty and "
+                         "a later halving rep re-walks straight back to it (C17). >0 makes "
+                         "in-flight leaves count as penalized visits during descent, which "
+                         "removes the duplicates WITHOUT giving up the cross-rep batching "
+                         "that --target-batch 1 has to give up. C-runner only.")
+    ap.add_argument("--rl-sims", type=int, default=0,
+                    help="override the TRAINING rows' sim budget (default: the config's "
+                         "mcts_simulations). The node-matched control for --target-batch / "
+                         "--vloss-weight: those buy ~60%% more distinct nodes per nominal "
+                         "sim, so run the production arm at the matched node count to "
+                         "separate 'less duplication' from 'more search'. Does not touch "
+                         "the PLAY row (--sims).")
     ap.add_argument("--max-positions", type=int, default=0,
                     help=">0 limits positions (smoke runs)")
     ap.add_argument("--dump-per-position", type=Path, default=None,
@@ -735,6 +796,7 @@ def main() -> None:
     full_share = float(flat.get("playout_cap_fraction", 1.0))
     profiles = build_search_profiles(
         flat, play_sims=int(args.sims), play_topk=(int(args.gumbel_topk) if args.gumbel_topk is not None else None),
+        rl_sims_override=(int(args.rl_sims) if args.rl_sims else None),
     )
     rl_c_scale = profiles["train"].c_scale
     rl_sims = profiles["train"].sims
@@ -757,6 +819,7 @@ def main() -> None:
         profiles=profiles, policy_temp=float(args.policy_temp),
         syzygy_path=sz_path or None,
         target_batch=int(args.target_batch),
+        vloss_weight=int(args.vloss_weight),
     )
     search_probs = search_by_profile["search"]
   # The production WDL blend's search component comes from the RL search, so
@@ -765,6 +828,10 @@ def main() -> None:
 
     policy_rows: list[dict] = []
     per_pos_dump: list[dict] = []
+  # Distribution shape per candidate, over the SAME rows the regret table
+  # scores. Collected from the same `cands` dict so the stored-form transforms
+  # (soft-policy temp, legal renormalisation) are already applied.
+    shape_probs: dict[str, list[np.ndarray]] = {k: [] for k in _CANDIDATE_NAMES}
     value_rows: dict[str, list[np.ndarray]] = {k: [] for k in _VALUE_NAMES}
     deep_wdls: list[np.ndarray] = []
     # Rows can be skipped (no encodable legal moves); every per-row list below
@@ -798,6 +865,7 @@ def main() -> None:
         }
         per_cand: dict[str, dict] = {}
         for cand, probs in cands.items():
+            shape_probs[cand].append(np.asarray(probs, dtype=np.float64))
             exp_r, top1_r = expected_and_top1_regret(probs, regrets)
             policy_rows.append({
                 "cand": cand, "phase": pos.phase, "source": pos.source,
@@ -894,6 +962,20 @@ def main() -> None:
             oc_cell = "— (0)"
         value_lines.append(f"| {label} | {brier:.4f} | {ece:.4f} | {oc_cell} |")
 
+    shape_lines = [
+        "| search profile | entropy (nats) | mean top-1 | eff. support | frac top-1 >= 0.99 |",
+        "|---|---|---|---|---|",
+    ]
+    for name, label in _CANDIDATE_NAMES.items():
+        rows = shape_probs.get(name) or []
+        if not rows:
+            continue
+        ent, top1, supp, frac99 = _shape_stats(rows)
+        shape_lines.append(
+            f"| {label} | {ent:.4f} | {top1:.4f} | {supp:.3f} | {frac99:.3f} |",
+        )
+    shape_table = "\n".join(shape_lines)
+
     sha = git_sha(short=True)
     out_path = args.out_dir / f"target_audit_{sha}.md"
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -945,6 +1027,11 @@ def main() -> None:
         f"Unlisted legal moves carry the worst-listed-line regret as a "
         f"floor (lower bound; MultiPV >= 10 at >=1M nodes).\n\n"
         f"{_policy_table(agg, group_names)}\n\n"
+        f"## Target distribution shape (the stored policy target's sharpness)\n\n"
+        f"Row (d) is the distribution the policy head is trained on; row (c) is "
+        f"the SF teacher it is blended against. Shape is a property of the "
+        f"training DATA, not a diagnostic.\n\n"
+        f"{shape_table}\n\n"
         f"## Value: calibration against deep-SF WDL\n\n"
         + "\n".join(value_lines)
         + "\n\nOutcome column counts only positions whose game continued at "
