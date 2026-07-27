@@ -554,6 +554,51 @@ executed live, so D14's clean result says nothing about whether it works.
 | K7 | publish is atomic (no torn read) | `atomic_write` usage | **VERIFIED-BY-CODE 2026-07-26, with one bounded in-process gap** — both `save` and `export_swa` write `<name>.tmp.<pid>.<uuid>` then `os.replace`. No `fsync` before rename, so crash-atomicity leans on FS ordering. The gap: `SharedSlotBroker._load_trial_weights` (`inference.py:2929`) records the *manifest's* sha but `torch.load`s the file, so a publish landing between those two lines makes the broker serve weights whose sha ≠ its recorded `model_sha` for one poll. Self-corrects at the next manifest change; bounded to one iteration |
 | K8 | the published model reconstructs into a COMPLETE production net | build from manifest `model_config`, load with `require_complete=True` | **VERIFIED 2026-07-26** — passes from *both* the manifest's `model_config` and the checkpoint's own `arch`: 0 keys skipped, missing or unexpected. The two agree on all 40 `ModelConfig` fields; only `use_gradient_checkpointing` is not carried, deliberately forced `False` for inference |
 
+### Duplicate leaves live BETWEEN reps, not within one — and the rate scales with leaves-per-board (added 2026-07-27)
+
+Attempted a live duplicate-rate counter, got it wrong, and the failure localised the
+mechanism better than the counter would have. Recorded because the wrong version is an
+inviting thing to build.
+
+**What was built:** a C counter over `[old_n_leaves, n_leaves)` — the leaves added by one
+`gss_prepare_batch` call — first keyed on node id, then on position hash.
+
+**What it read, against the evaluator's own count on the same run (8 boards, 256 sims):**
+
+| arm | C counter (per prepare call) | evaluator (per GPU call) |
+|---|---|---|
+| `target_batch=0` (production) | **0.0%** | **77.5%** |
+| `target_batch=1` | 0.2% | 0.0% |
+| `vloss=1` | 0.1-1.1% | 0.0% |
+
+**Why: with `target_batch=0` the encode buffer ACCUMULATES ACROSS REPS before flushing to
+the GPU.** One evaluator call received ~206 rows across 10 calls for 2,048 leaves, so a GPU
+batch spans many prepare calls. Duplicates are therefore *between* prepare ranges, and a
+per-prepare-call counter cannot see them **by construction** — it reads ~0 no matter how bad
+the duplication is. **That is a positive confirmation of the C17 mechanism**: the
+duplication is specifically cross-rep accumulation into one GPU batch, not re-walking within
+a single rep.
+
+**The correct instrument** counts distinct position hashes over the ACCUMULATED encode
+buffer between GPU flushes, resetting at each flush — not per prepare call. Not yet built;
+the wrong one was reverted rather than shipped (PR #279 carries only the VIRTUAL_MEAN
+plumbing).
+
+**⚑ AND A REAL NUMBER FELL OUT: duplication scales steeply with leaves-per-board.**
+`GSS_GPU_BATCH = 1024`, so boards/call sets how many leaves each board must supply:
+
+| boards | leaves per board | duplicate rate |
+|---|---|---|
+| 8 (this run) | 128 | **77.5%** |
+| 256 (the C17 audit) | 4 | **38.7%** |
+| **production selfplay** | **2.0-5.1** | **unmeasured, but bracketed by the above** |
+
+Production sits at 2.0-5.1 leaves/board, i.e. **at or below the 256-board case**, so its
+duplicate rate is plausibly **≈38.7% or lower** — which supports the audit's numbers being
+roughly representative rather than inflated, and correspondingly weakens the worry that C17
+is much smaller live than on the frozen set. Two points is not a curve; the live counter is
+still owed.
+
 ### The concurrent arena EXISTS but cannot exercise the search knobs (added 2026-07-27)
 
 Recorded because the question "can we measure this as Elo rather than cp?" turned out to
