@@ -784,6 +784,36 @@ a candidate list; seeding is OFF (see the RESTART amendment below), so the
 decision of whether the survivors come back is deferred to the no-seed readout
 rather than made now.
 
+**THE boot512 / no-seed READOUT CANNOT CLOSE TODAY — one data point exists, and
+that is a cadence fact, not a missing decision (2026-07-26 ~23:00).**
+`data/ratchet/ratchet.csv` holds exactly one row:
+
+```
+2026-07-26, iter 25, vs_boot512, Elo -12.2 [-61.5, +36.7], score 0.4825, 200 games
+```
+
+CI spans 0 — parity with the donor at iter 25, which is the reading the RESTART
+block already records. The second series legitimately did not run: `[ratchet]
+no earlier snapshot yet — vs_prev starts tomorrow`. `last_run_date` is today and
+the driver is once-per-calendar-day, so there is no second point until tomorrow,
+and we are now at iter 65. **A one-point series cannot answer "does the loop
+gain at 3e-5".**
+
+**Decided NOT to force a second point before the deploy restart, and the reason
+is L6.** Today's single 200-game series ran **10:49 → 15:21 — 4.5 hours** of
+degraded training throughput, at `CONC=16` and 32 matched sims, i.e. *after* the
+4→16 concurrency raise that was supposed to make this affordable. That is direct
+evidence for L6 (an observer must cost less training than the signal it buys)
+still FAILING. Spending another 4.5h to de-confound a readout that will get its
+next point tomorrow anyway is the wrong trade.
+
+**Consequence to record now rather than discover later:** tomorrow's `vs_prev`
+compares against `data/ratchet/snapshots/ck_2026-07-26_iter25.pt`, so its window
+spans the deploy restart and everything merged into it (#260/#262/#263/#264/
+#265/#266/#267). That is unavoidable given the cadence. Read tomorrow's
+`vs_boot512` as the cleaner of the two — it is an absolute reference and does
+not depend on where the previous snapshot sat.
+
 **DECIDED 2026-07-26 (evening) — the 78 survivors do NOT come back at the
 upcoming deploy restart.** "Deferred" is not a verdict, so here is the call and
 its reasoning.
