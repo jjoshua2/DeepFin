@@ -276,7 +276,9 @@ class ArrayReplayBuffer:
         The LAST pair is RAGGED whenever the row count is not a multiple of
         ``batch_size`` (production: 2000 rows at 512 = 3 x 512 + 464). A
         consumer that averages per-batch means without weighting by row count
-        overweights that tail -- 1.10x at the production shape.
+        overweights that tail -- 1.078x at the production shape, i.e. the tail
+        gets 1/4 = 0.2500 of the weight instead of the 464/2000 = 0.2320 its
+        row count earns.
         """
         n = int(self._size)
         bs = int(batch_size)
