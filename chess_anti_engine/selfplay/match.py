@@ -13,6 +13,7 @@ import torch
 from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.mcts import GumbelConfig, MCTSConfig
 from chess_anti_engine.mcts.gumbel import (
+    PLAY_SEARCH_DEFAULTS,
     run_gumbel_root_many,
     volatility_search_enabled,
     warn_volatility_python_path,
@@ -212,6 +213,7 @@ def play_match_batch(
     c_puct: float = 2.5,
     gumbel_add_noise: bool = True,
     opening_cfg: OpeningConfig | None = None,
+    gumbel_overrides: dict[str, float] | None = None,
 ) -> MatchStats:
     """Play model-vs-model matches.
 
@@ -220,6 +222,20 @@ def play_match_batch(
     `opening_cfg` controls opening diversification — pass an OpeningConfig with
     a book path or random_start_plies so games don't all start from the same position.
     Defaults to 2 random start plies if not provided.
+
+    `gumbel_overrides` tunes the Gumbel search knobs. It defaults to
+    `PLAY_SEARCH_DEFAULTS`, because every caller of this function is an
+    arena/gate/eval path and none of them records training rows: the in-loop
+    gate (`chess_anti_engine/arena.py`), the worker's arena task, and
+    `scripts/match_checkpoints.py`. Passing `None` previously meant a bare
+    `GumbelConfig()` — the SELFPLAY shape (`c_scale` 0.1, `topk` 16, linear
+    root, `fpu_reduction` 1.2) — so those paths silently measured at a search
+    shape nobody tuned, while `PLAY_SEARCH_DEFAULTS` claimed to be referenced
+    "from every such entry point" and named the training-gate match by name.
+    Pass an explicit dict to sweep, or `{}` to force the dataclass defaults.
+
+    Note `PLAY_SEARCH_DEFAULTS` deliberately carries no `simulations`, so the
+    caller's sim budget is never overridden here.
     """
     g = int(games)
     if g <= 0:
@@ -238,6 +254,10 @@ def play_match_batch(
     if sims_a <= 0 or sims_b <= 0:
         raise ValueError("mcts simulations must be > 0")
 
+    play_overrides = (
+        dict(PLAY_SEARCH_DEFAULTS) if gumbel_overrides is None else dict(gumbel_overrides)
+    )
+
     def _pick(model: torch.nn.Module, idxs: list[int], *, sims: int) -> list[int]:
         if not idxs:
             return []
@@ -247,6 +267,7 @@ def play_match_batch(
             mcts_type=mcts_type, mcts_simulations=sims,
             temperature=temperature, c_puct=c_puct,
             gumbel_add_noise=bool(gumbel_add_noise),
+            gumbel_overrides=play_overrides,
         )
 
     for _ply in range(int(max_plies)):
