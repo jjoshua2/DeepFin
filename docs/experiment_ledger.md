@@ -4810,6 +4810,54 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### ⚑ READOUT 1b — CORRECTING READOUT 1, WHICH I GOT WRONG THE OTHER WAY (2026-07-27 ~23:4x)
+
+**Readout 1 (below) used 344 boards as "the production condition". That is wrong, and
+it under-states the defect.** `selfplay_batch: 384` is games per WORKER SESSION, not per
+search call. The realized shape is **4 workers x 32 threads x ceil(12 x 2.0 oversubscribe)**,
+so each thread owns ~24 concurrent games and `_run_mcts_group(all_idxs, ...)` only ever
+sees ONE THREAD's games. **Boards-per-call is ~12-24, not 344.**
+
+**Measured at the real per-thread condition** (production 25/75 sim mix, 6 disjoint
+board groups per cell, exact hashing):
+
+| boards/call | arm | calls | rows | rows/call | DUP | distinct rows |
+|---|---|---|---|---|---|---|
+| 12 | `vloss=0` | 30 | 5408 | 180.3 | **0.565** | 2352 |
+| 12 | `vloss=1` LEGACY | 31 | 5146 | 166.0 | 0.000 | **5146** |
+| 24 | `vloss=0` | 34 | 10336 | 304.0 | **0.564** | 4510 |
+| 24 | `vloss=1` LEGACY | 38 | 9938 | 261.5 | 0.000 | **9938** |
+| 48 | `vloss=0` | 40 | 23200 | 580.0 | **0.608** | 9100 |
+| 48 | `vloss=1` LEGACY | 46 | 22166 | 481.9 | 0.000 | **22166** |
+
+**Across the entire plausible production range (12-48 boards) duplication is 56-61% and
+LEGACY removes ALL of it, yielding 2.2-2.4x more distinct positions for ~4% FEWER rows
+at ~12% more calls.** The defect is real at production scale and larger than Readout 1
+concluded.
+
+**The three numbers I have now quoted for "the duplicate rate", and why they differ:**
+
+| claim | board count | rate | status |
+|---|---|---|---|
+| 77.8% | 8 | 0.778 | too high — 128 leaves/board, not a production shape |
+| 39.5% | 344 | 0.395 | too low — assumed all games in one call; they are split across 32 threads |
+| **56.4%** | **24** | **0.564** | the realized per-thread shape |
+
+**The lesson is not "I keep getting it wrong", it is that this quantity has a
+FREE PARAMETER I was reading off an assumption instead of measuring.** Duplicate rate is
+a function of leaves-per-board = `GSS_GPU_BATCH`(1024) / boards-per-call, so any statement
+of it without a stated board count is meaningless. Every earlier citation of it in this
+ledger omitted the board count. **Fixed rule: quote the duplicate rate only as a pair
+(rate @ boards-per-call).**
+
+**⚠ ONE THING STILL DOES NOT RECONCILE, and it is not being explained away.** The live
+broker reports **25.5 pos/slot and 220 pos/batch**, while this measurement says ~304
+rows/call at 24 boards — a ~12x disagreement. Either production's on-turn subset is far
+smaller than 24, or "pos/slot" counts something other than one search call's submission.
+**Until that reconciles, the per-call row counts above are NOT confirmed to be
+production's**, and the deploy decision rests on the duplicate RATE (robust across
+12-48 boards) rather than on the absolute row counts. Open item.
+
 ### READOUT 1 of 2 (2026-07-27 ~23:2x) — the 77.8% was an 8-BOARD ARTEFACT. Production condition is 39.5%, and LEGACY still wins decisively.
 
 **The headline number I have been quoting all day does not describe production.**
