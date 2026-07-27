@@ -2530,6 +2530,44 @@ Both controls bit-identical, so nothing but the search changed. **The direction 
 a checkpoint the original work never touched** (which measured 54.2 → 46.8 = −7.4 on its
 own); magnitudes differ by checkpoint, the sign does not.
 
+**⚑⚑ MEASURED FROM PRODUCTION, FREE — THE "DUPLICATES FILL THE GPU" PREMISE DOES NOT HOLD
+LIVE (2026-07-27 ~23:0x).** No instrumentation was needed: `broker.out` has been logging
+this all along. 2,152 samples, last 200 summarised:
+
+```
+[broker] avg 220.4 pos/batch (1% of 19040-cap), 8.6/16 slots/batch, 6174 pos/s
+         pack=2.2ms  fwd=26.8ms  out=1.9ms
+   => 25.5 positions per SLOT per batch
+```
+
+**Against `GSS_GPU_BATCH = 1024`, which is what `target_batch=0` accumulates toward.**
+Production is not running 1024-leaf batches: each slot contributes ~25 positions and the
+GPU receives ~220 per forward, at **1% of the buffer capacity**.
+
+**Why this matters for C17.** The entire case for cross-rep accumulation — and therefore
+for tolerating 38.7% duplicate leaves — is that a single board cannot fill a GPU batch on
+its own. **Live, the batch is filled by aggregating across SLOTS, not by accumulating reps
+within a tree**, and it is not being filled well even so. That removes the main argument
+against `target_batch=1`, which is the option with **no new mechanism, no value bias, and
+nothing to scope by ply type**. The 3.5× wall-clock penalty measured for it in
+`audit_targets` came from a single-process harness with no broker and should not be
+expected here.
+
+**⚠ It also cuts the other way, and this must be checked before believing the audit's
+duplicate rate applies live.** The audit measured 38.7% duplication with ~4 leaves per
+board (256 boards toward a 1024 batch). If a production slot only asks for ~25 leaves at a
+time, its per-board accumulation — and hence its duplicate rate — may be **much lower than
+38.7%**, in which case C17 is worth materially less live than the frozen-set numbers imply.
+**The audit-vs-production duplicate rate is now the deciding unknown**, and it is the one
+number no measurement so far has produced. Nothing about the deploy should be settled until
+it exists.
+
+**Separate finding, possibly larger than C17:** 220 pos/batch at 1% of a 19,040 capacity
+with 8.6 of 16 slots participating, and `fwd=26.8ms` dominating `pack`/`out` at ~2ms, says
+the GPU is being handed batches roughly an order of magnitude smaller than it can take.
+That is a throughput question, not a quality one, and it is bounded by
+[[broker_gather_regime_solved]] — batching must never be swept live. Recorded, not acted on.
+
 **⚑⚑ DEPLOY DECISION (2026-07-27 ~22:4x) — VIRTUAL_MEAN, NOT LEGACY, AND vloss OFF ON FAST
 PLIES. The E[regret]-only reading was wrong.**
 
