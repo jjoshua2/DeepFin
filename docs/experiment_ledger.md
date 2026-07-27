@@ -989,6 +989,49 @@ the measured 0.0522 baseline, reject above 0.030. `test_loss`/`best_loss` are
 **not comparable across that change** — reset `best_loss` at deployment rather
 than carrying it, the same way a restart boundary is handled.
 
+**AUDIT-FIRST SCREEN RUN 2026-07-26 ~23:40 — and it says PRE-REG B's threshold
+was mis-set by me. Do not deploy it as written.** The screen holds the model and
+the rows FIXED and re-runs the production eval, so the only thing varying is the
+sampler; anything it produces is pure sampler noise with model drift removed by
+construction. Twelve repeats, checkpoint_000065, a 2000-row buffer rebuilt from
+70 live shards at the production 2% rate:
+
+| quantity | sd |
+|---|---|
+| `test_wdl_loss` across iterations, frozen span (n=20) | **0.0118** |
+| **sampler-only**, fixed model + fixed rows (n=12) | **0.0086** |
+
+The sampler is ~**53% of the variance** — the largest single term, and real. But
+the residual is √(0.0118² − 0.0086²) ≈ **0.0081**, essentially equal to it. So
+model drift is the other half, and **removing the sampler cannot take `sd` below
+roughly 70% of its current value.** Extrapolating that ratio to the total,
+`test_loss` would land near 0.035, which **fails PRE-REG B's own "adopt at
+≤ 0.015" bar and lands in its "reject above 0.030" band.**
+
+**This corrects an overstatement of mine above.** The entry says the yardstick
+"was measuring a resampling noise floor that the freeze does not touch". That is
+half right: the resampling floor is about half the variance, not all of it. The
+freeze FAILED verdict stands — 0.0708 is worse than either baseline regardless —
+but G14 is a partial explanation, not a complete one.
+
+**Consequences, decided now:**
+1. **PRE-REG B is withdrawn as written** and must be re-registered with a
+   threshold derived from this screen rather than from optimism. A defensible
+   rule: adopt if `test_loss` sd falls **below 0.040** AND the deterministic
+   estimator is cheaper (4 batches vs 5, which it is by construction).
+2. **The deterministic pass is still worth doing** — it is strictly the better
+   estimator (no replacement draws, no WDL rebalancing, no priority weighting)
+   and strictly cheaper. It just must not be sold as fixing the ruler.
+3. **The remaining ~0.008 is model drift on a frozen set across ~1 iteration.**
+   That is the real floor on this yardstick, and no eval change touches it.
+
+**Caveats, stated because they bound the conclusion:** `total` came back NaN in
+this run (instrument limitation — the screen only produced a clean number for
+the WDL head), so the extrapolation to `test_loss` is a ratio argument, not a
+measurement. The 2000-row buffer is a faithful reconstruction of the holdout's
+construction, not the actual frozen set, which no checkpoint persists. And the
+sd of an sd at n=12 is ≈ ±0.0018.
+
 **Reconciling the two drain-confound directions, because they look
 contradictory and are not.** This entry argued above that the drain *inflates*
 variability and so biases **against** the hypothesis. Audit G8 now argues the
