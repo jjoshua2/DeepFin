@@ -106,13 +106,21 @@ def run_once(*, root: Path, prefix: str | None) -> int:
     per_trial: list[dict] = []
     for td in trial_dirs:
         row = _read_last_json_row(td / "result.json")
-        params = {}
-        try:
-            params = json.loads((td / "params.json").read_text(encoding="utf-8"))
-        except Exception:
-            params = {}
+        # exploit_replay_share_top_enabled is live-reloadable, so params.json —
+        # the config the trial was CONSTRUCTED with — can report the opposite of
+        # what is running and never look stale (Ray rewrites the file on every
+        # checkpoint, so its mtime tracks the run; see rl_loop_audit J5). The
+        # result row's own config block is post-reload, one snapshot per
+        # iteration; params.json is only the fallback for a trial that has not
+        # reported a row yet.
+        realized_cfg = (row or {}).get("config")
+        if not isinstance(realized_cfg, dict):
+            try:
+                realized_cfg = json.loads((td / "params.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                realized_cfg = {}
 
-        share_expected = bool(params.get("exploit_replay_share_top_enabled", False))
+        share_expected = bool(realized_cfg.get("exploit_replay_share_top_enabled", False))
         if row is None:
             per_trial.append(
                 {
