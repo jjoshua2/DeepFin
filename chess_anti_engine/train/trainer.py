@@ -822,6 +822,19 @@ class TrainMetrics:
     frac_tagged: float = 0.0
   # Fraction of soft-policy rows surviving the soft_policy_min_tv mask (1.0 when off).
     soft_mask_kept_frac: float = 1.0
+  # sf_p0 policy teacher (w_sf_own / w_sf_own_regret on policy_own, the head
+  # MCTS reads). `m_*` are the masked losses over ELIGIBLE rows only; the
+  # `_frac` pair is the eligible fraction of the iteration's rows and is the
+  # part that catches an outage — it goes to exactly 0.0 when the selfplay
+  # workers stop recording sf_p0 labels, independently of the loss weights.
+  # Reporting only the masked means would leave "no eligible rows" and
+  # "eligible rows at zero loss" indistinguishable, which is what let the
+  # teacher sit dead for a month unnoticed (docs/experiment_ledger.md,
+  # 2026-07-27 sf_p0 restore).
+    m_sf_own: float = 0.0
+    m_sf_own_regret: float = 0.0
+    has_sf_p0_frac: float = 0.0
+    has_sf_p0_regret_frac: float = 0.0
   # Per-game-phase loss split (bucketed by moves_left).
     policy_loss_open: float = 0.0
     policy_loss_mid: float = 0.0
@@ -884,6 +897,23 @@ _LOSS_KEY_TO_METRIC_FIELD = {
     "blended_wdl_ce": "blended_wdl_loss",
 }
 _TRAIN_METRICS_FIELDS = frozenset(f.name for f in dataclasses.fields(TrainMetrics))
+
+
+# TrainMetrics field -> (numerator key, denominator key) among the compute_loss
+# scalars accumulated in ``sums``. These are RATIOS OF SUMS: the numerator and
+# the denominator are each summed over every microbatch of the iteration and
+# divided once, so the result is weighted by how many rows each batch actually
+# contributed. The `sums`/`n` path above cannot express that — it averages
+# per-batch values with equal weight, which silently assumes every batch
+# contributed the same number of rows. That holds for the whole-batch losses
+# (their denominator is `net_mask`, ~constant) and does NOT hold for the sf_p0
+# terms, whose eligible count swings batch to batch.
+_RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
+    "m_sf_own": ("sf_own_ce_sum", "sf_own_rows"),
+    "m_sf_own_regret": ("sf_own_regret_sum", "sf_own_regret_rows"),
+    "has_sf_p0_frac": ("sf_own_rows", "net_rows"),
+    "has_sf_p0_regret_frac": ("sf_own_regret_rows", "net_rows"),
+}
 
 
 # Param-group keys the CHECKPOINT legitimately owns on resume: the schedule's
@@ -990,12 +1020,32 @@ def _loss_sums_to_metric_kwargs(sums: dict[str, float], n: float) -> dict[str, f
 
     Keys that don't map to a TrainMetrics field are dropped silently so
     compute_loss can add experimental scalars before TrainMetrics catches up.
+    That drop also disposes of the raw numerator/denominator pairs consumed by
+    ``_ratio_metric_kwargs``: they are sums over the whole iteration and would
+    be meaningless divided by the step count.
     """
     out: dict[str, float] = {}
     for k, v in sums.items():
         field = _LOSS_KEY_TO_METRIC_FIELD.get(k, k)
         if field in _TRAIN_METRICS_FIELDS:
             out[field] = v / n
+    out.update(_ratio_metric_kwargs(sums))
+    return out
+
+
+def _ratio_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
+    """Row-weighted ratio metrics from accumulated numerator/denominator sums.
+
+    A zero denominator reports 0.0 rather than raising or emitting NaN: for the
+    sf_p0 terms that is the no-eligible-rows case, and the companion `_frac`
+    column is what says so unambiguously.
+    """
+    out: dict[str, float] = {}
+    for field, (num_key, den_key) in _RATIO_METRIC_FIELDS.items():
+        if num_key not in sums or den_key not in sums:
+            continue
+        den = float(sums[den_key])
+        out[field] = float(sums[num_key]) / den if den > 0.0 else 0.0
     return out
 
 
