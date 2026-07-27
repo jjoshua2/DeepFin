@@ -768,6 +768,81 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### DEPLOY (pre-registered, not yet live) — control-surface + observability bundle: I13/I9/I11/I19 (PR #260, 2026-07-26)
+
+**PROTOCOL NOTE — not an experiment, and deliberately numerics-neutral.**
+Three `rl_loop_audit` defects, all about being able to SEE or SET something,
+none about changing what the optimizer does today:
+
+- **I13.** `Trainer.load()` now re-applies the construction-time snapshot of
+  every config-derived optimizer param-group key. torch's
+  `Optimizer.load_state_dict` replaces group dicts wholesale, so any
+  construction-time key was inherited from the checkpoint forever; `lr` and the
+  `aurora_*` polar knobs survived only because something else re-pushed them.
+  Exception list = what the checkpoint legitimately owns: `lr`, `initial_lr`,
+  `soda_k`. Fixes `aurora_uw_floor` and the SODA markers alongside
+  `weight_decay`.
+- **I9.** Eight per-iteration grad-norm/clip columns
+  (`grad_norm_{mean,median,p95,max}`, `grad_{clip,adaptive_clip,hard_clip}_rate`,
+  `grad_norm_samples`) in `result.json`/`progress.csv`, aggregated over EVERY
+  optimizer step instead of the 1-in-10 TensorBoard sample that died at each
+  Ray session boundary.
+- **I11.** The `zclip_max_norm` yaml comment carries the 2026-07-26 measurement
+  (median 4.244, p95 4.941, max 5.538, 3.43% above 5.0, clip rate 5.15%,
+  drifting +20% within the window) and the pre-committed threshold, mirrored in
+  code as `GRAD_NORM_MEDIAN_WATCH = 4.75`, which now logs a warning per
+  iteration when the windowed median trips it.
+- **I19.** `opt_lr` → `opt_lr_final` (it was the trough of the `sqrt_release`
+  ramp, ~9x below the matrix group's mean), plus honest `opt_lr_mean` /
+  `opt_lr_max`. `status.csv`'s `lr` column → `lr_mean`.
+
+**The one thing that COULD have changed numerics, and did not.** Applying the
+yaml's `matrix_weight_decay: 0` would have removed a decoupled decay of
+~6e-8/step that has run for weeks (~0.35% total shrink over 58k steps). So the
+yaml is set to **`matrix_weight_decay: 0.0001` = what has actually been
+running**. Realized value after this PR is unchanged. **Changing it is now a
+real experiment** and needs its own entry with a pre-committed yardstick.
+
+**Hypothesis.** Zero effect on every learning and throughput metric. The only
+visible changes are new/renamed report columns.
+
+**ONE deciding yardstick (exact command), read at +5 iterations:**
+
+```
+T=runs/pbt2_small/tune/train_trial_4c17c_00000_0_lr=0.0003_2026-07-11_13-16-47/result.json
+python3 -c "
+import json
+rows=[json.loads(l) for l in open('\$T') if l.strip()]
+post=rows[-5:]
+for k in ('grad_norm_median','grad_hard_clip_rate','opt_lr_mean','opt_lr_final','train_loss','train_time_s'):
+    print(k, [r.get(k) for r in post])
+"
+python3 -c "
+import torch
+ck=torch.load('<newest checkpoint>/trainer.pt', map_location='cpu', weights_only=False)
+print([(i, g['lr'], g['weight_decay']) for i,g in enumerate(ck['opt']['param_groups'])])
+"
+```
+
+**SUCCESS (all four, pre-committed):**
+1. `grad_norm_median` / `grad_hard_clip_rate` / `opt_lr_mean` are present and
+   non-zero on every post-restart row (I9/I19 land in the metric stream).
+2. `opt_lr_mean` is 5-15x `opt_lr_final` — the measured duty cycle, not the
+   trough.
+3. The first post-restart checkpoint still reads `grp0 weight_decay=0.0001`
+   (the control surface is on AND the realized value is unchanged).
+4. `train_loss` and `train_time_s` within 5% of the pre-stop 5-iteration mean.
+
+**KILL:** (3) false → the yaml/re-application disagree; stop and re-read before
+another iteration. (4) breached for 5 consecutive iterations → revert the PR
+(no salvage needed; nothing here touches weights or optimizer state).
+
+**Confounds.** None internal. The `_STATUS_COLS` rename and the new
+report-dict keys change the progress.csv key SET: Ray's CSV logger fixes the
+header from the first row of a file and appends without re-heading on resume,
+so the columns only line up in a progress.csv that starts fresh with this code.
+`result.json` (JSON lines) is unaffected and is the file the yardstick reads.
+
 ### DEPLOY (pre-registered) — tune-state correctness bundle, 9 PRs in one restart (2026-07-26, from iter 346)
 
 **PROTOCOL NOTE — not an experiment.** Nine correctness fixes deployed in a

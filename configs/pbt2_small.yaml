@@ -359,7 +359,16 @@ train:
   optimizer: aurora
   matrix_optimizer_scope: mlp_out  # Aurora on FFN + attention output; Q/K/V stay AdamW.
   matrix_lr_multiplier: 20
-  matrix_weight_decay: 0
+  # 2026-07-26: was `0`, but the live Aurora matrix group has been running at
+  # 0.0001 since ~early June — Optimizer.load_state_dict overwrites every group
+  # hyperparameter from the checkpoint on resume, and weight_decay had no
+  # re-application path, so the yaml value was a permanent silent no-op
+  # (docs/rl_loop_audit.md I13). The re-application now exists, which makes the
+  # yaml authoritative. Set to 0.0001 = WHAT ACTUALLY RAN, so turning the
+  # control surface back on changes nothing today. Changing this value is now a
+  # REAL training change (~6e-8/step decoupled decay at the matrix group's LR)
+  # and needs a ledger entry with a pre-committed yardstick before it goes live.
+  matrix_weight_decay: 0.0001
   aux_weight_decay: 0.0001
   aurora_uw_floor: 0.0
   aurora_pp_iterations: 3
@@ -379,10 +388,23 @@ train:
   feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
   resid_channel_dropout: 0.0  # Keep channel spreading on the explicit balance regularizer; dropout cost more eval loss offline.
   resid_channel_balance_weight: 0.0  # Disabled: offline sidecar .001/.003 did not improve loss or WDL.
-  zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). Last-100 median grad norm 1.81, max 3.65 — hard cap 5.0 inert, z-clip ~1% → ~5-8% of steps at 2.0.
+  zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). The "median grad norm 1.81, max 3.65" that used to be quoted here is stale by 2.3x — see zclip_max_norm below for the current measurement.
   zclip_alpha: 0.97
   zclip_clip_factor: 1.0
-  zclip_max_norm: 5.0  # was 1.0; raised because raw grad norms median ~2.2 meant every step was hard-clipped, dampening effective LR by ~55%. Z-score clipping still handles outliers.
+  # was 1.0; raised because raw grad norms median ~2.2 meant every step was
+  # hard-clipped, dampening effective LR by ~55%. Z-score clipping still
+  # handles outliers.
+  # RE-MEASURED 2026-07-26 (233 TB samples, steps 56000-58320): median 4.244,
+  # p95 4.941, p99 5.213, max 5.538, 3.43% of samples ABOVE 5.0. Clip rate
+  # 5.15% (adaptive 4.29%, hard 1.29%), mean applied shrink 0.9969. Still a
+  # tail guard, but DRIFTING UP: 250-step bucket means went 3.996 -> 4.816 over
+  # 2320 steps (~11h). The old "hard cap 5.0 inert" claim is false.
+  # PRE-COMMITTED WATCH (rl_loop_audit I11, mirrored as GRAD_NORM_MEDIAN_WATCH
+  # in train/trainer.py): if the windowed MEDIAN grad norm exceeds 4.75
+  # (hard-clip rate ~10%), this cap has stopped being a tail guard and must be
+  # re-set. Watch the per-iteration `grad_norm_median` / `grad_hard_clip_rate`
+  # columns in progress.csv; the trainer also logs a warning when it trips.
+  zclip_max_norm: 5.0
 
   w_policy: 1.0             # Pinned: anchor for all other weights
   w_soft: 1.0               # Conservative soft-policy auxiliary weight while testing plateau behavior.
