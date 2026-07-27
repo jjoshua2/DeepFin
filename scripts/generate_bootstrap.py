@@ -7,6 +7,12 @@ Both sides play random legal moves with a 1-ply checkmate check
 Each worker processes a small batch (~100 games), writes a shard to disk,
 then frees memory. This keeps peak memory under control.
 
+Positions are encoded in the PRODUCTION input encoding by default (read from
+``--config``), not the encoder's legacy v1 default. Bootstrap shards are the
+one live producer of legacy-encoded replay rows, and a legacy row entering an
+``lc0_root_legacy_meta`` window is exactly the case
+``select_input_history_arrays`` now refuses (docs/rl_loop_audit.md M11/M12).
+
 Usage:
     PYTHONPATH=. python3 scripts/generate_bootstrap.py --games 100000 --out data/bootstrap
     PYTHONPATH=. python3 scripts/generate_bootstrap.py --games 100000 --out data/bootstrap --workers 8
@@ -15,22 +21,36 @@ from __future__ import annotations
 
 import argparse
 import time
+from dataclasses import dataclass
 from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
 import chess
 import numpy as np
 
+from chess_anti_engine.encoding import rep_fix
 from chess_anti_engine.encoding.encode import encode_position
+from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 from chess_anti_engine.moves.encode import legal_move_mask
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.shard import ShardMeta, save_npz
+from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
 MAX_PLIES = 300  # Hard cap per game
 GAMES_PER_BATCH = 100  # Small batches to limit per-worker memory
+DEFAULT_CONFIG = "configs/pbt2_small.yaml"
 
 
-def play_one_random_game(seed: int) -> list[ReplaySample]:
+@dataclass(frozen=True)
+class EncodingSpec:
+    """The input encoding the generated shards are written in."""
+
+    input_history_encoding: str
+    input_extra_features: str
+    history_rep_fix: bool
+
+
+def play_one_random_game(seed: int, enc: EncodingSpec) -> list[ReplaySample]:
     """Play a single random game, return list of ReplaySamples."""
     rng = np.random.default_rng(seed)
     board = chess.Board()
@@ -47,7 +67,13 @@ def play_one_random_game(seed: int) -> list[ReplaySample]:
             break
 
         # Encode position before the move
-        x = encode_position(board, add_features=True, feature_dropout_p=0.0)
+        x = encode_position(
+            board,
+            add_features=True,
+            feature_dropout_p=0.0,
+            input_history_encoding=enc.input_history_encoding,
+            input_extra_features=enc.input_extra_features,
+        )
 
         # Uniform policy over legal moves
         lm = legal_move_mask(board)
@@ -100,19 +126,22 @@ def play_one_random_game(seed: int) -> list[ReplaySample]:
             legal_mask=lm,
             moves_left=float(total_plies - ply) / MAX_PLIES if total_plies > 0 else 0.0,
             is_network_turn=True,  # Both sides are "network" in bootstrap
+            input_history_encoding=enc.input_history_encoding,
         )
         samples.append(s)
 
     return samples
 
 
-def _worker_batch(args: tuple[int, int, str]) -> tuple[str, int, int, int, int, int]:
+def _worker_batch(args: tuple[int, int, str, EncodingSpec]) -> tuple[str, int, int, int, int, int]:
     """Play a batch of games, write shard to disk, return (path, n_positions, wins, draws, losses, n_games)."""
-    start_seed, count, out_path = args
+    start_seed, count, out_path, enc = args
+    # Process-global encoder switch; each Pool worker is its own process.
+    rep_fix.apply(enc.history_rep_fix)
     all_samples: list[ReplaySample] = []
     wins = draws = losses = 0
     for i in range(count):
-        samples = play_one_random_game(start_seed + i)
+        samples = play_one_random_game(start_seed + i, enc)
         if samples:
             wdl_first = samples[0].wdl_target  # From white's perspective (first move is white)
             if wdl_first == 0:
@@ -130,9 +159,33 @@ def _worker_batch(args: tuple[int, int, str]) -> tuple[str, int, int, int, int, 
         wins=wins,
         draws=draws,
         losses=losses,
+        input_history_encoding=enc.input_history_encoding,
+        history_rep_fix=enc.history_rep_fix,
     )
     save_npz(out_path, samples=all_samples, meta=meta)
     return out_path, len(all_samples), wins, draws, losses, count
+
+
+def _encoding_spec(args: argparse.Namespace) -> EncodingSpec:
+    """Resolve the shard encoding: config values unless explicitly overridden.
+
+    Defaulting to the production config (rather than to the encoder's legacy
+    v1 fallback) is the point: bootstrap shards must be readable by the model
+    that will train on them.
+    """
+    cfg = flatten_run_config_defaults(load_yaml_file(args.config))
+    history = args.input_history_encoding or cfg.get("input_history_encoding")
+    extra = args.input_extra_features or cfg.get("input_extra_features")
+    if not history or not extra:
+        raise SystemExit(
+            f"{args.config} does not define input_history_encoding / "
+            "input_extra_features; pass them explicitly"
+        )
+    return EncodingSpec(
+        input_history_encoding=normalize_lc0_history_encoding(str(history)),
+        input_extra_features=str(extra),
+        history_rep_fix=bool(cfg.get("history_rep_fix", False)),
+    )
 
 
 def main() -> None:
@@ -144,6 +197,12 @@ def main() -> None:
                         help="Games per worker batch/shard (controls peak memory)")
     parser.add_argument("--seed", type=int, default=42, help="Base random seed")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing bootstrap_*.npz shards in --out")
+    parser.add_argument("--config", type=str, default=DEFAULT_CONFIG,
+                        help="Config the input encoding defaults are read from")
+    parser.add_argument("--input-history-encoding", type=str, default=None,
+                        help="Override the config's input_history_encoding")
+    parser.add_argument("--input-extra-features", type=str, default=None,
+                        help="Override the config's input_extra_features")
     args = parser.parse_args()
 
     if args.games <= 0:
@@ -165,19 +224,26 @@ def main() -> None:
         for path in existing:
             path.unlink()
 
+    enc = _encoding_spec(args)
+    rep_fix.apply(enc.history_rep_fix)
+    print(
+        f"Encoding: history={enc.input_history_encoding} "
+        f"extra_features={enc.input_extra_features} rep_fix={enc.history_rep_fix}"
+    )
+
     workers = args.workers or min(cpu_count(), 8)  # Cap at 8 to limit memory
     games = args.games
     batch_games = args.batch_games
 
     # Split games into small batches (each becomes one shard on disk)
-    batches: list[tuple[int, int, str]] = []
+    batches: list[tuple[int, int, str, EncodingSpec]] = []
     remaining = games
     seed = args.seed
     shard_idx = 0
     while remaining > 0:
         n = min(batch_games, remaining)
         shard_path = str(out_dir / f"bootstrap_{shard_idx:04d}.npz")
-        batches.append((seed, n, shard_path))
+        batches.append((seed, n, shard_path, enc))
         seed += n
         remaining -= n
         shard_idx += 1

@@ -259,6 +259,9 @@ def test_select_input_history_arrays_uses_recorded_lc0_root_and_legacy_meta() ->
             "has_x_lc0_root": np.array([1, 0], dtype=np.uint8),
         },
         input_history_encoding="lc0_root_legacy_meta",
+        # Row 1 has no recorded root tensor, so it goes through the POV-lossy
+        # synthetic remap (M12) — this test is about the remap machinery.
+        allow_lossy_legacy_remap=True,
     )
 
     assert np.all(out["x"][0, 3] == 7.0)
@@ -273,10 +276,12 @@ def test_select_input_history_arrays_is_idempotent() -> None:
     once = select_input_history_arrays(
         {"x": legacy},
         input_history_encoding="lc0_root",
+        allow_lossy_legacy_remap=True,
     )
     twice = select_input_history_arrays(
         once,
         input_history_encoding="lc0_root",
+        allow_lossy_legacy_remap=True,
     )
 
     assert twice is once
@@ -313,6 +318,7 @@ def test_select_input_history_arrays_handles_mixed_legacy_and_root_rows() -> Non
             "_input_history_encoding": np.asarray(["", "lc0_root"], dtype=object),
         },
         input_history_encoding="lc0_root",
+        allow_lossy_legacy_remap=True,
     )
 
     assert np.all(out["x"][0, 0] == 1.0)

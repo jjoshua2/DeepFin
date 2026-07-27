@@ -33,6 +33,25 @@ Implementation details:
   presence flags, so value-only rows must have those targets cleared at
   finalize (they are — see `_build_replay_samples`).
 
+## Reported value-loss names (read before quoting one)
+
+Three names, two quantities. `losses.py` returns:
+
+| key | metric column | what it is |
+|---|---|---|
+| `wdl_ce` | `wdl_loss`, `test_wdl_loss`, `wdl_loss_{selfplay,curriculum,open,mid,end}` | **the trained loss** — soft CE against the three-way blend, the term `w_wdl` multiplies in `total` |
+| `blended_wdl_ce` | `blended_wdl_loss` | the same tensor under its explicit name, kept for existing readers |
+| `wdl_onehot_ce` | `wdl_onehot_loss`, `test_wdl_onehot_loss` | **diagnostic only** — hard one-hot CE against the recorded game result. No gradient reaches the update through it |
+
+Until 2026-07-26 the `wdl_loss` family reported the one-hot diagnostic, so the
+holdout's value column tracked a number no gradient came from (they differ:
+0.7599 vs 0.7859 at iter 42). The columns therefore have a **one-time step at
+that deploy** — a change of quantity, not of the net. Anything computing a
+gradient share, a head weight, or a value verdict must use the trained loss;
+`wdl_onehot_loss` belongs only in "how does the head score against raw results"
+readings, and never in a denominator of gradient contribution
+(docs/rl_loop_audit.md I3/I7).
+
 ## The WDL blend note (load-bearing)
 
 **The blend's SF component must not be zeroed.** The main `value_wdl` head
