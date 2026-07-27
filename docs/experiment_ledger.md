@@ -2410,6 +2410,28 @@ them to a key the worker does not read.
 key-set-neutral so the all-or-nothing live validator still accepts the file.
 This is config honesty, not a change.
 
+**MEASURED, not inferred (2026-07-26, added after the pin).** The pin was first
+justified by a code read plus H2's priority CV, which is weaker evidence than
+this file should accept for a config claim — so the realized values were solved
+for directly out of the shards, the same way `soft_policy_temp` was. The
+recorded quantities make it a two-unknown solve with no free parameters:
+`network_turn.py:562` computes `priority = |q_delta| * q_weight + kl *
+pol_scale`, and the shards store `priority`, `priority_q_delta` and
+`priority_policy_kl` per row. Least squares over 6000 live rows:
+
+| | fitted | code default | yaml said |
+|---|---|---|---|
+| `diff_focus_q_weight` | **5.9997** | 6.0 | 4.8 |
+| `diff_focus_pol_scale` | **3.5000** | 3.5 | 3.8 |
+
+Residual against the code defaults: median 7.0e-4, max 2.2e-2 — float16 storage
+of `kl`/`q_delta`, not a model error. Residual against the yaml values: median
+**0.36**, max 5.6, every row above 1e-4. The code defaults are what ran; the
+yaml values are excluded by a factor of ~500. Method rule 12 satisfied for
+`q_weight` and `pol_scale`. (`slope` and `min_keep` govern the keep/drop
+decision rather than the stored `priority`, so they are not identified by this
+fit — they remain a code read.)
+
 **Why pin rather than leave it.** This is the same trap `soft_policy_temp` just
 walked us into: a dead key holding a value nobody validated, which becomes a
 live unregistered experiment the moment someone plumbs it. #257 plumbed
