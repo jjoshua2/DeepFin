@@ -1994,6 +1994,91 @@ edit). Note a yaml revert alone is NOT a rollback — the window will hold sf_p0
 data — but here the loss terms are **masked to `has_sf_p0` rows**, so zeroing the weights
 is a genuine and complete disable.
 
+**DEPLOY VERIFIED, both paths, 2026-07-27 14:12.**
+- *Recording (empirical):* `has_sf_p0` now present in newly written shards at **8/2000 =
+  0.4%** and climbing — a key that existed in **no** live shard an hour earlier. The
+  automatic worker-session restart fired as designed; no operator restart was used.
+- *Trainer weights (code-path only):* `_reload_yaml_into_config` writes `config[k] = v`
+  unconditionally for non-topology keys (so an ABSENT key is ADDED, not skipped), then
+  `trainable_config_ops.py:578` does `for wk in _TRAINER_WEIGHT_KEYS: if wk in config:
+  setattr(trainer, wk, float(config[wk]))`. Both keys confirmed members of
+  `TRAINER_WEIGHT_KEYS`. **NOT empirically confirmed — see the metric gap below.**
+- *False alarm, recorded so it is not re-raised:* `result.json`'s `config` block shows
+  these keys as absent. That is Ray's **registered trial config**, which does not reflect
+  in-memory live overlays; `zclip_max_norm 6.5` / `views 5.0` appear there only because
+  they arrived via the 12:22 **restart**. Not evidence of a failed reload.
+- *Also checked, because it is the exact failure mode that caused this bug:* the FEN
+  monitor rewrites this yaml every iteration. It does a surgical `sed` on
+  `opening_fen_list_path` only — all four restored keys survive its rewrite. **And the
+  change is COMMITTED this time (`3b4ca4737`).**
+
+**⚑ THE METRIC GAP — this is why a proven feature could die unnoticed for a month.**
+There is **no observable metric for the sf_p0 teacher at all**: `progress.csv` has zero
+columns matching `sf_own`, and `train/losses.py` exposes no metric name for either term.
+**Nothing in the progress row would have gone to zero when the teacher died.** It also
+blocked empirical verification of this very restore. Fix queued (task #39): report
+`m_sf_own` / `m_sf_own_regret` **and** the ELIGIBLE FRACTION `has_sf_p0_frac` — the
+fraction is the one that catches an outage, because it goes to exactly 0.0 when recording
+stops regardless of the weights. A masked mean alone is ambiguous between "no eligible
+rows" and "eligible rows with zero loss".
+
+**FRESH 63M BASELINE (`checkpoint_000129`, the pre-registered command, 2000 positions):**
+
+| leg | E[regret] / top-1 |
+|---|---|
+| a) net raw policy | 85.3 / 62.4 |
+| **b) net + Gumbel search (PLAY)** | **50.2 / 49.1** |
+| c) SF MultiPV soft target | 51.5 / 33.7 |
+| **d) production training target (full sims)** | **54.2 / 48.3** |
+| e) fast-ply search (not a production target) | 57.9 / 46.3 |
+
+**Ruler continuity checked, not assumed:** leg (c) is a pure-SF leg whose value cannot
+depend on the net, and its top-1 is **33.7 against June's 33.7** — identical. The audit set
+and scorer are the same instrument. So the 46M-era numbers can be *compared* even though
+they are not a valid *baseline*.
+
+**⚠ THIS TEMPERS THE EXPECTATION, and it is recorded BEFORE the readout.** June moved the
+46M net 56.7 → 49.6. **The 63M net already sits at 50.2 with the teacher OFF** — essentially
+at the June post-experiment level, presumably bought by the capacity increase. So the
+pre-committed bar (≥3cp below 50.2, i.e. **≤47.2**) asks for ground the June result never
+covered. **Restoring a lost proven setting is still correct on its own terms, but framing it
+as "another ~7cp is waiting" would be overselling it, and that framing was in the air.**
+
+---
+
+### ⚑ NEW, FROM THE SAME BASELINE — the production training target is measurably WORSE than the net's own play search (2026-07-27, NOT yet pre-registered)
+
+**On the same ruler, same 2000 positions, same checkpoint: production training target
+(leg d) = 54.2 cp E[regret]; net + PLAY search (leg b) = 50.2 cp.** The target the policy
+head is trained to imitate is **~4cp worse** than the configuration the net actually plays
+with.
+
+The two legs differ only in search config:
+- **PLAY (b):** `sims=32, topk=32, c_scale=0.025, root=log`
+- **TRAINING TARGET (d):** `sims=256, topk=16, c_scale=0.1, root=linear`
+
+The training target spends **8× the simulations** and lands 4cp worse. The ledger already
+records `c_scale 0.025` as **+301 Elo @8000 sims** in match play with *"RL-side effect
+unverified"* — this is the first direct measurement of that gap **on the target-generation
+path**, and it says the tuned constant was never carried across.
+
+**Why this is a candidate for the flywheel stall, independent of everything else today:**
+a self-imitation loop is bounded by the quality of the target it imitates. `w_policy 1.0` +
+`w_soft 1.0` both train on leg (d). If (d) is worse than what the net can already play,
+**more gradient buys convergence toward a worse policy** — which is exactly the observed
+pattern (more views improved raw policy E[regret] 98.9 → 89.55 while search policy did NOT
+move).
+
+**DO NOT ACT ON THIS YET, for two reasons that are both about not repeating today's
+mistakes.**
+1. **C17 lives in this same 256-sim path** (29–76% duplicate leaves at 256 sims, −34% tree
+   nodes, and `max_visit` — inflated by those duplicates — feeds the `q_scale` that sharpens
+   this very target). **The 4cp gap and C17 may be one defect seen twice, not two levers.**
+   Measuring (d) at `target_batch=1` separates them and is cheap.
+2. It is data-affecting (it changes every policy target written) and needs its own ledger
+   entry with a pre-committed rule. **Ranked ahead of an LR change; ranked alongside C17,
+   which it may be identical to.**
+
 ---
 
 ### ⚑ READOUT + DELIBERATE MULTI-CHANGE BUNDLE (2026-07-27 12:2x) — 122 iterations produced no measurable strength, so the one-change-per-window rule is suspended ON PURPOSE
