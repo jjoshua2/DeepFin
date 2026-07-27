@@ -187,6 +187,7 @@ from `main` by design. As of 2026-07-26 the deltas are:
 | `opening_fen_dole_per_iter` | **0** | 1 | keep live until the no-seed readout closes; restoring costs a session restart (see C6) |
 | `opening_fen_list_path` | `retire_32` | `retire_250` | **KEEP LIVE.** The monitor rewrites this every iteration; main's value is always stale |
 | `gumbel_c_scale` | *absent* | **0.1** | **TAKE MAIN'S.** PR #249; value-identical to the resolved default so it is a no-op now, but the live yaml should gain the pin |
+| `diff_focus_*` | 4.8/3.8/4.0/0.09 → **6.0/3.5/3.0/0.025** | 4.8/3.8/4.0/0.09 | **TAKE LIVE'S.** The live values are the ones selfplay has always run (the worker never builds a `DiffFocusConfig` from the reco); main still holds the Run-4 sweep winners that were never applied. Same landmine as `soft_policy_temp`: plumbing the key with main's values in place would silently start a data-affecting experiment |
 | `soft_policy_temp` | 3.0 → **2.0** | 2.0 | **CLOSED 2026-07-26 — do not reopen.** Was the one delta this table did not list, and the only one that would have re-targeted training. See below |
 
 **Rule: reconcile key-by-key, never by wholesale copy in either direction.**
@@ -218,6 +219,14 @@ still carries `3.0`.
 
 **Adopting 3.0 is a real experiment** and needs its own ledger entry, not a
 config-reconciliation decision.
+
+**The same treatment was applied to `diff_focus_*` on 2026-07-26**, pre-emptively
+rather than in response to a near-miss: those four keys were also dead (never
+built from the reco) and also held values nobody had validated on this net. The
+live yaml now stores what actually runs. **Generalised rule: when a config key
+turns out to be dead, pin it to the realized value the same day.** Leaving the
+aspirational value in place is what turns a harmless documentation bug into a
+live unregistered experiment the moment somebody plumbs the key.
 
 **Generalisation.** When a PR makes a previously-dead key live, the live value of
 that key is a **deployment step, not a merge detail**. A behaviour-preserving PR
