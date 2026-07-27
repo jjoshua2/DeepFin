@@ -1683,10 +1683,25 @@ against a net that had been crippled at step 0 and never given a fair run.
 `optimizer s/step` = **0.483** — that is the 5090 actually computing gradients on the
 63.08M-param net. `total s/step` = **2.920**. **The loader overhead factor is 6.05×.**
 
-**Consequence, and this is the headline.** The same 129s training budget, if the loader
-kept the GPU fed, would buy **267 optimizer steps per iteration instead of 44** — 6× the
-gradient for the same wall clock, the same selfplay, the same GPU, and zero change to any
-training target. Time to 100k optimizer steps: **18.7 days → 3.1 days.**
+**CORRECTION (same session, before anything was applied): the step count is VIEWS-capped,
+not loader-capped, so this does NOT by itself buy more gradient.** Measured on every row:
+`trainer_steps_done x 512 / replay_positions_ingested` = **2.502-2.552**, i.e. exactly
+`train_views_per_ingested_position: 2.5`. The loop asks for 2.5 views and stops. The
+"267 steps/iter" figure is what the LOADER COULD FEED (`129000 / mean_ms`), not what the
+loop will take — a capacity, quoted as if it were a throughput. **Same error shape as
+reading a clip RATE as a clip EFFECT (I21): a number that bounds something is not a
+number that causes it.**
+
+**What the loader fix actually buys on its own:** `train_time_s` 129s -> ~43s at 3x,
+iteration 713s -> ~627s, i.e. **~12% faster iterations**, plus the elimination of the
+read waste below. **Steps per iteration: UNCHANGED at 44.**
+
+**What it ENABLES.** `train_views_per_ingested_position` is the knob that converts loader
+speed into gradient. At 3x cheaper steps, views 2.5 -> 7.5 costs the same 129s and triples
+the optimizer steps. Crucially that key **is** live-tunable (unlike the shuffle keys
+below), so the two changes sequence for free: fix the loader at a restart, confirm the
+step cost dropped, then raise views by yaml edit as its own pre-registered window. Do NOT
+bundle them — if the holdout moves it must be attributable to one or the other.
 
 **Scale context that reframes every "we are not learning" reading.** The whole trial —
 123 iterations, 29 hours — is **6,253 optimizer steps / 3.2M samples**, i.e. **0.53% of a
@@ -1712,6 +1727,49 @@ change, no data-mix change, nothing to pre-register a kill rule against, because
 cannot make the net worse. **This is the candidate mechanism for the "several hundred Elo
 sitting unclaimed" hypothesis:** not that the loop is unstable, but that it has taken
 6,253 steps when it should have taken ~38,000 in the same 29 hours.
+
+**LOCALISED (2026-07-27 12:0x, measured against the live 832-shard / 1,499,822-position
+window, CPU+disk only).** The cost is entirely one call, and entirely the disk refresh:
+
+```
+sample_batch_arrays   1566 ms/batch      <- all of it
+select_history           0.1 ms/batch
+mirror                   0.0 ms/batch
+```
+
+Sweeping `shuffle_refresh_interval` against the pool size separates refresh from assembly:
+
+| shuffle_cap | refresh_interval | read amp | mean ms | **median ms** |
+|---|---|---|---|---|
+| 25,000 | **1 (LIVE)** | 19.5x | 1200 | **1073** |
+| 25,000 | 4 | 4.9x | 381 | 17 |
+| 100,000 | 4 | 4.9x | 404 | 13 |
+| 200,000 | 8 | 2.4x | 190 | 11 |
+| 200,000 | 16 | 1.2x | 75 | 10 |
+
+**A pure in-memory batch costs 10 ms; the live config pays 1073 ms for the same batch.**
+`shuffle_cap` barely affects speed (25k vs 200k at interval 4: 381 vs 404 ms) — the
+INTERVAL is the whole story. Live values: `shuffle_buffer_size: 25000`,
+`shuffle_refresh_interval: 1`, `shuffle_refresh_shards: 5`, `shard_size: 2000`, so every
+batch reads 5 x 2000 = **10,000 positions off disk to serve 512** = **19.5x read
+amplification**, ~437 MB per batch.
+
+**The waste is worse than the latency.** At 10,000 refreshed per batch into a 25,000 pool,
+a position's residence is ~2.5 batches while only 512 are drawn per batch — **~95% of
+everything read from disk is evicted before it is ever sampled.** Raising the interval
+means the data we pay to read actually gets trained on. Memory measured by RSS:
+**65.6 kB/position** (1.64 GB for the live 25,000), so 100,000 = 6.6 GB and 200,000 =
+13.1 GB against 69 GB free.
+
+**⚑ SIXTH INSTANCE OF THE DEAD-KEY CLASS, and it gates this fix.**
+`shuffle_buffer_size` / `shuffle_refresh_interval` / `shuffle_refresh_shards` are all
+**NOT restart-required**, so `_reload_yaml_into_config` overlays them every iteration with
+no warning — but `DiskReplayBuffer` reads them once into `self._shuffle_cap` /
+`self._refresh_interval` / `self._refresh_shards` in its constructor, and `trainable.py`
+pushes only FOUR attributes to the live buffer (`sf_gap_priority_weight`,
+`fast_low_surprise_priority`, `diff_focus_pol_scale`, `diff_focus_q_weight`). **A live
+yaml edit to any of them does nothing.** None has ever appeared in the audit or the reco
+coverage table. Changing them requires a restart — which is why they ride this one.
 
 **NOT yet established, and must be measured before any fix:** *where* in the loader the
 107.5s goes. Candidates, none confirmed — zarr decompression, the disk-backed replay
