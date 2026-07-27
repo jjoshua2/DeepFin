@@ -45,7 +45,11 @@ see `docs/operations.md` for that and for salvage, blind-spot seeding, and lint 
   blocks), so the count is not reproducible by assuming a flat multiplier.
   Related: only 28.6% of trainable params are in the Aurora matrix group
   (`matrix_optimizer_scope: mlp_out`) — see `docs/rl_loop_audit.md` I12.
-- `configs/default.yaml` — reference BT3-scale model (768-dim, 15-layer, ~105M), unused.
+  `tests/test_param_count.py` rebuilds both configs and fails if any number in
+  this section drifts from the measurement.
+- `configs/default.yaml` — reference BT3-scale model (768-dim × 15-layer × 24-head,
+  **73,700,885 params**), unused. The "~105M" this line used to claim was never
+  measured; the config has no tied tensors, so its `state_dict` sum agrees.
 - `configs/exp_*.yaml` — flag-gated research bets, ALL default off. A flag enters the
   production config only once promoted; promotion status lives in the ledger, not here.
 
