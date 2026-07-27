@@ -164,6 +164,24 @@ selfplay:
   # Prior: 0.35 from 2026-07-23 targeted-SF retry (65% full SF + 90%x3 refutes).
   selfplay_fraction: 0.50
   record_fast_ply_value: false  # 2026-07-02: REVERTED true->false (throughput-triple leg 2 killed). Evidence: raw policy top-1 51.5->61.7 never recovered (trunk dilution from 75% value-only rows) + value 72.4->76.6 across the leg's window; ledger entry + revert pool data/salvage/prechange_20260702_ckpt479. LIVE-propagated (~30 min): it is a _RECO_RESTART_KEY, so a change triggers an AUTOMATIC worker-session restart — NOT an operator `train.sh restart` (a live YAML flip DOES take effect; the 07-02 branch-switch incident re-propagated it live). 2026-07-01 (PR #91) history: value-only fast rows, ~4x rows/game.
+  # 2026-07-27 RESTORED — these were ON in June (PR #78, "the June policy win",
+  # net+search E[regret] 56.7 -> 49.6 cp) but ONLY as UNCOMMITTED working-tree
+  # edits, so they were silently reverted and have been OFF ever since. Verified
+  # 2026-07-27: `git log --all -S record_sf_p0_policy -- configs/` finds them in
+  # NO commit on ANY branch, and no live shard carries a has_sf_p0 key.
+  # They record SF's analysis of the net's OWN position, obtained free via a
+  # within-game one-record shift: when two consecutive plies are both stored
+  # 256-sim records, ply (t-1)'s sf_policy IS SF's read of ply t's position.
+  # This is the ONLY move-teacher; policy_sf (w_sf_move) is the OPPONENT's reply
+  # distribution at P1 and explicitly not one. Coverage ~24% of selfplay rows
+  # (needs consecutive full-sim plies). Both are _SELFPLAY_KEYS + _RECO_RESTART_KEYS,
+  # so a live yaml flip propagates via an AUTOMATIC worker-session restart at the
+  # next iteration boundary — no operator restart. Affects NEWLY recorded data
+  # only, phasing in as the ~1.5M window refills (~a day).
+  # PIN THE REALIZED VALUE: code defaults are False (tune/trial_config.py:246-247),
+  # so an absent key here means OFF, not "unchanged".
+  record_sf_p0_policy: true
+  record_sf_p0_regret: true
   selfplay_batch: 384   # 2026-07-02 arrival-stream POC: 256->384 (fatten ready-pool so broker batches grow; RAM headroom 71G). Revert to 256 if pos/s flat or RAM/latency degrades.
   slot_oversubscribe: 2.0  # 2026-07-12 activation (PR #151, ledger entry): 2x continuous slots so selfplay work stays runnable while curriculum SF moves fly. _RECO_RESTART_KEY (worker-session restart on change). KILL: games/h < 641/h (iter-7 fresh baseline) 2 iters sustained, worker RSS +4G, or broker p95 +20% -> revert to 1.0.
   max_plies: 450
@@ -223,7 +241,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_115.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_129.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -545,6 +563,28 @@ train:
   w_future: 0.01            # Keep a tiny auxiliary weight; low-risk compared with full disable.
   w_wdl: 1.0                # Keep WDL pressure balanced with main policy during target-mix test.
   w_sf_move: 0.02           # Slightly strengthen SF-policy auxiliary signal without dominating policy.
+  # 2026-07-27 RESTORED, with selfplay.record_sf_p0_{policy,regret} above.
+  # Both were live in June at these values (PR #78) and both lived ONLY as
+  # uncommitted working-tree edits, so both reverted to their code defaults of
+  # 0.0 (train/trainer.py:1033-1034) and the teacher has been OFF since.
+  # Sweep 2026-07-27: of every w_* weight and every record_* flag the code reads,
+  # these four were the ONLY ones absent from this file. Not drift — one feature.
+  # w_sf_own      soft-CE teacher: SF's move distribution for the net's OWN
+  #               position, into policy_own (the head MCTS actually reads).
+  #               Teaches everywhere uniformly. June value 0.1 (~10% grad share).
+  # w_sf_own_regret  minimises E_p[normalized cp-loss vs SF best] under the net's
+  #               own prior, so it AUTO-WEIGHTS by position importance (flat
+  #               positions -> tiny regret -> tiny gradient). June value 0.7,
+  #               chosen for a ~7% grad share = on par with w_sf_own, i.e. a
+  #               decisive test rather than a timid one.
+  # BOTH are masked to has_sf_p0 / has_sf_p0_regret rows, so they are inert
+  # until the recording above phases into the window — safe to set now.
+  # 0.7 was calibrated on the OLD 46M net (m_sf_own_regret ~= 0.079 @ ckpt233);
+  # the 63M net's realized share is unmeasured. RECALIBRATE once coverage >=20%
+  # (task #38). Both are TRAINER_WEIGHT_KEYS => live-reloadable; the KILL is a
+  # yaml edit to 0.0 with no restart.
+  w_sf_own: 0.1
+  w_sf_own_regret: 0.7
   w_sf_eval: 0.10           # Pinned: top-5 median from Run 4
   w_categorical: 0.30       # Run 26 default.
   w_volatility: 0.10        # Pinned: top-5 median from Run 4

@@ -1885,6 +1885,117 @@ change that only a review caught. Deploys at the next restart, which the daily r
 cadence implies anyway.
 
 
+### ⚑⚑ THE JUNE POLICY WIN HAS BEEN SILENTLY OFF FOR A MONTH — sf_p0 teacher RESTORED 2026-07-27 ~14:0x (pre-registered)
+
+**This is not a new experiment. It is the restoration of a WORKED entry that reverted
+itself, and it is the best current answer to "why is the loop not gaining."**
+
+**WHAT WAS FOUND.** All FOUR config keys of the sf_p0 teacher — `record_sf_p0_policy`,
+`record_sf_p0_regret`, `w_sf_own`, `w_sf_own_regret` — are **absent from
+`configs/pbt2_small.yaml`**, so all four sat at their code defaults (`False`, `False`,
+`0.0`, `0.0`). The feature has been fully OFF: not merely unweighted, but **not recorded**,
+so the labels do not exist in any live shard.
+
+**Evidence it was ever on, and that it worked:**
+- Ledger WORKED table: *"2026-06-23/24 | sf_p0 policy teacher + regret-weighted SF teacher
+  (PR #78) | **the June policy win**: net+search E[regret] **56.7 → 49.6 cp**"*, and the
+  revert-points table says *"sf_p0 + regret teacher weights | June | proven (see WORKED);
+  **leave alone**"*.
+- Memory `sf_p0_policy_experiment_live`: *"Live config (pbt2_small.yaml):
+  `record_sf_p0_policy: true` + `w_sf_own: 0.1`… Recording verified live: shard_026157 =
+  **24.6% of selfplay rows carry has_sf_p0**"*.
+- Memory `regret_loss_experiment_live`: *"Live config (configs/pbt2_small.yaml,
+  **uncommitted live edits**): `record_sf_p0_regret: true`, `w_sf_own_regret: 0.7`"*.
+
+**HOW IT WAS LOST — the mechanism, which is the transferable part.** Both memories say the
+keys were **uncommitted working-tree edits**. Confirmed 2026-07-27: `git log --all -S
+"record_sf_p0_policy" -- configs/` and the same for `w_sf_own` return **NOTHING — the keys
+appear in no commit, on any branch, ever.** A June 2026-06-25 commit of the file does not
+contain them. So a proven, ledger-recorded win existed only as an uncommitted edit to the
+live yaml and was wiped by a checkout or file rewrite. **This is exactly
+[[live_yaml_branch_checkout_trap]] — except the 2026-07-02 instance was caught after 3
+iterations and this one was never caught at all, costing ~a month.**
+
+**IT IS ONE FEATURE, NOT DRIFT.** Sweep of every `w_*` weight the trainer reads and every
+`record_*` flag `TrialConfig` defines, comparing code default vs live yaml: **every single
+one is explicitly set in the yaml EXCEPT these four.** Nothing else is missing from either
+category. That rules out gradual drift and identifies a single lost feature.
+
+**WHY IT MATTERS MECHANISTICALLY.** `policy_own` — *the head MCTS actually reads* — was
+training on `w_policy 1.0` + `w_soft 1.0` of **its own Gumbel improved policy**, i.e. pure
+self-imitation, which by construction **cannot exceed its own search**. The only other SF
+policy head, `policy_sf` (`w_sf_move 0.02`), is documented in `docs/model_heads.md` as the
+**opponent's reply distribution at P1**, *"NOT a move-teacher for the sample's own
+position"*. So the position-level move teacher carried weight **0.0**.
+
+**⚠ SCOPE CORRECTION, recorded because the first framing was wrong.** This was initially
+written up as "the strong teacher was never wired to play." **That is false.** SF's main
+pathway to play is the **value** head: `wdl` is the only value head MCTS reads and it
+trains on a blend (live `sf_wdl_frac 0.45`, `search_wdl_frac 0.2`, ~0.35 on Z), which is
+intact, load-bearing, and working as designed. The correct, narrower claim: **the design
+calls for a small SF influence in the POLICY, and that component was at exactly zero.**
+The proven "small" was 0.1.
+
+**THE CHANGE (live yaml edit, NO restart — all four keys are live-propagating):**
+
+| key | was (code default) | now | path |
+|---|---|---|---|
+| `selfplay.record_sf_p0_policy` | `False` | `true` | `_SELFPLAY_KEYS` + `_RECO_RESTART_KEYS` → automatic worker-session restart |
+| `selfplay.record_sf_p0_regret` | `False` | `true` | same |
+| `train.w_sf_own` | `0.0` | `0.1` | `TRAINER_WEIGHT_KEYS` → live |
+| `train.w_sf_own_regret` | `0.0` | `0.7` | `TRAINER_WEIGHT_KEYS` → live |
+
+Validator pre-checked before the edit (an unknown key rejects the WHOLE reload and silently
+freezes every future reload): all four confirmed members of their key sets, and the edited
+file re-parsed through `flatten_run_config_defaults` → `TrialConfig` →
+`trainer_kwargs_from_config` with the intended values.
+
+**DECIDING YARDSTICK — ONE, as an exact command:**
+```
+PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint <trial>/checkpoint_NNN/trainer.pt \
+    --sims 32 --max-positions 2000 --sf-soft-nodes 50000 --nice 19
+```
+Metric: **net+search E[regret] (cp)** — the same yardstick the June experiment was judged
+on, and the one with a historical anchor.
+
+**⚠ THE 56.7 → 49.6 ANCHORS ARE NOT A VALID BASELINE HERE.** They were measured on the
+**46M** architecture; production is now 512×16 / 63M. A fresh baseline MUST be measured on
+the current net **before coverage builds**, and the verdict read against that. Reusing the
+46M numbers would be a cross-architecture comparison of exactly the kind that produced the
+−252 Elo false alarm ([[cross_era_512_vs_46m_not_caught_up]]).
+
+**SUCCESS:** net+search E[regret] **down ≥3cp** from the freshly-measured 63M baseline,
+sustained across **≥2 reads** taken after `has_sf_p0` coverage reaches ≥20% of selfplay
+rows, paired CI excluding 0.
+**KILL:** flat or worse after a full window refill ⇒ set both weights `0.0` (live edit, no
+restart). Recording can stay on; it is cheap and additive.
+
+**COVERAGE INSTRUMENT (check this BEFORE reading the yardstick — a verdict read before the
+labels exist is not a verdict):** fraction of rows in the newest shards carrying
+`has_sf_p0`. Expect ~24% of selfplay rows once phased in; expect **0%** for the first
+iterations because only NEWLY recorded data carries it, and the ~1.5M window refills over
+~a day.
+
+**CONFOUNDS (deliberate, under the suspension recorded in the entry below):** the views 5.0
++ loader + zclip 6.5 bundle went live at iter 124; this lands ~iter 130. Both are in flight
+simultaneously. Bisection order if the ratchet moves: **sf_p0 first** — it is the only one
+of the two with a mechanism that raises the *ceiling* rather than the *rate*, and the views
+bundle's own caveat already predicts that more gradient alone improves raw policy without
+reaching the played move.
+
+**RECALIBRATION OWED (task #38):** `0.7` was calibrated on the 46M net (measured
+`m_sf_own_regret ≈ 0.079` @ ckpt233, regret gradient ≈9.7% of policy-CE unweighted, so 0.7
+≈ a 7% share deliberately matching `w_sf_own`). The 63M net's realized share is
+**unmeasured**; deployed at the June value on purpose, to be re-measured once coverage
+allows. Live-reloadable, so this costs no restart.
+
+**Revert point:** `data/salvage/pre_sfp0_restore_20260727` (salvage-export, taken at the
+edit). Note a yaml revert alone is NOT a rollback — the window will hold sf_p0-labelled
+data — but here the loss terms are **masked to `has_sf_p0` rows**, so zeroing the weights
+is a genuine and complete disable.
+
+---
+
 ### ⚑ READOUT + DELIBERATE MULTI-CHANGE BUNDLE (2026-07-27 12:2x) — 122 iterations produced no measurable strength, so the one-change-per-window rule is suspended ON PURPOSE
 
 **THE RATCHET, judged by the rule pre-committed before the numbers landed.**
@@ -1992,14 +2103,216 @@ should be re-measured alongside the next ratchet row so the two hypotheses separ
 `train_views_actual` ≈ 5.0, `trainer_steps_done` ≈ 88.
 
 **KILL (views is live-tunable — revert is a yaml edit, no restart):** train/holdout policy
-gap past ~0.30 (live 0.13–0.18); frozen `test_wdl_loss` +>0.026 (4σ) over 3 consecutive
-iterations; or `train_views_actual` not tracking 5.0.
+gap past ~0.30 (live 0.13–0.18); ~~frozen `test_wdl_loss` +>0.026 (4σ) over 3 consecutive
+iterations~~ **— WITHDRAWN, see below**; or `train_views_actual` not tracking 5.0.
+
+**⚑ THE `test_wdl_loss` KILL LEG IS WITHDRAWN — IT CANNOT FIRE, AND "4σ" WAS ARITHMETIC I
+NEVER CHECKED (found 2026-07-27 while writing the G14 spec).** The measured noise floor of
+this ruler on a FROZEN set is **sd 0.0522 nats** (audit G14, iters 48–61, mean |Δ| 0.0708).
+**+0.026 is not 4σ; it is 0.5σ.** A threshold at half a standard deviation of pure
+resampling noise fires on noise, not on damage — and demanding "3 consecutive iterations"
+does not rescue it, because the floor comes from 2560 draws WITH REPLACEMENT re-rolled
+every iteration, so consecutive rows are independent re-rolls rather than a persistent
+signal. **Third instance today of a bar written without checking it against the instrument**
+(the others: the +20 Elo success bar, corrected in this entry; the `train_time_s` < 90s
+plumbing bar, withdrawn in the readout above). The pattern is not carelessness about
+thresholds — it is quoting a number without asking what it was capable of showing, which
+is the same error the ledger already logs against `grad_hard_clip_rate` and the loader
+"267 steps/iter" reading.
+
+**Replacement, usable with today's instrument:** the surviving KILL legs are the
+train/holdout **policy** gap (>0.30) and `train_views_actual` not tracking 5.0. For the
+value head, **no `test_wdl_loss` kill leg is available until G14 lands** — a deterministic
+full pass takes the floor from sd 0.052 to ~0 and makes a threshold of this size
+resolvable for the first time. **Recorded as a known GAP in the live pre-registration
+rather than papered over with a bigger number**: inflating the bar to 4×0.052 ≈ 0.21 nats
+would be a "safe" edit that also guarantees nothing short of catastrophic damage trips it.
+G14 is the fix; until then this bundle is watched on the policy gap and the ratchet slope.
 
 **Revert point:** `data/salvage/pre_zclip65_20260727` (verified iter=121, 3.8G).
 
 **Bisection order if the bundle wins**, so attribution is recoverable: views is the only
 one with a plausible strength effect — drop it to 2.5 first and re-read; the loader keys
-change mixing but not volume; zclip is I21-inert.
+change mixing but not volume; ~~zclip is I21-inert~~ **— see the correction in the readout
+below: zclip is NOT inert and moves to second place in the bisection order.**
+
+---
+
+#### PLUMBING READOUT (2026-07-27, iters 124–125) — the throughput half PASSES; the stability half is NOT YET READABLE
+
+**Scored on the pre-registered "≥2 of the first 3 iterations" rule. 2 of 2 clear it.**
+
+| | baseline (iters 110–123, n=14) | iter 124 | iter 125 |
+|---|---|---|---|
+| s/step | 2.883 (sd 0.099) | 1.494 | **1.122** |
+| `trainer_steps_done` | 43.9 | 101 | 85 |
+| `train_views_actual` | 2.529 | 5.000 | 5.046 |
+| `train_time_s` | 126.4 | 150.9 | 95.3 |
+| `time_this_iter_s` | 706.3 | 1061.3 | **616.6** |
+| optimizer steps/hour | **224** | — | **496** |
+| `grad_norm_median` | 5.405 | 5.384 | 5.477 |
+| `grad_hard_clip_rate` | 0.872 | 0.089 | 0.024 |
+
+**Steady-state optimizer steps/hour 224 → 496 (2.2×), and iteration wall clock went DOWN
+(706s → 617s) while doing 2× the optimizer steps.** Views landed at 5.000/5.046 against a
+5.0 target, so the views-capping path is exact. The cold-buffer prediction held: 124 ran
+the first fill of the now-6.6 GB shuffle buffer and cost 1.494 s/step; 125 ran it warm and
+cost 1.122. **The improvement BETWEEN the two post rows is the confirmation — a
+contention explanation predicts noise, a cold-fill explanation predicts exactly this.**
+
+**The `train_time_s` < 90s bar was mis-specified and is withdrawn, not failed.** It was
+written while simultaneously tripling the step count: total training time cannot fall when
+the work per iteration doubles, so the bar measured the wrong quantity. **The right
+quantity is cost per step, and the substitution is recorded here rather than applied
+silently.** (Same error shape as the +20 Elo bar this entry already corrected — a bar
+whose arithmetic was never checked against what it was measuring.)
+
+**⚑ CORRECTION — "zclip is I21-inert; rides along" was WRONG, and the live data says so.**
+`grad_hard_clip_rate` went **0.872 → 0.024**, a 36× change. The cap at 5.0 was binding on
+**87% of all steps** against a median norm of 5.405; at 6.5 it binds on ~2–9%. Combined
+with the I21 amendment (AdamW carries **91.7%** of global norm² on 71.4% of params, so the
+scale-invariant Aurora group contributes only 8.3%), the honest reading is: **the cap was
+an active, near-permanent ~8% shrink on the AdamW group's effective step size, and raising
+it removed that shrink.** That is a real effective-LR increase on 71% of the net,
+bundled in on the strength of a claim that it did nothing.
+
+*Bound on the estimate, stated because the number is soft:* `grad_norm_median` + clip rate
+give the median shrink (5.0/5.405 = 0.925) but not the distribution, so "~8%" is an
+order-of-magnitude figure, not a measurement. `grad_norm_aurora`/`grad_norm_adamw`
+(the pending AdamW-only clip PR) is what makes this directly readable next time — which is
+precisely the argument that PR's spec makes for shipping the metric alongside the fix.
+
+**Consequences, both recorded now rather than discovered later:**
+1. **Revised bisection order: views first, then ZCLIP, then the loader keys.** zclip moves
+   from last to second because it is now known to have changed the effective step size on
+   the majority of steps, which is a strength-plausible mechanism. The original ordering
+   rested on the pre-amendment I21 reading.
+2. **This is a confound on the bundle, and it belongs on the Confounds line.** If the
+   ratchet moves, "more gradient" and "~8% larger AdamW steps" are not separated by this
+   design.
+
+**`grad_norm_median` is unchanged (5.405 → 5.430) across the cap change.** Consistent with
+the cap having been cosmetic rather than load-bearing — but **NOT scored as such.** The
+metric is measured pre-clip, so it would read identically under either hypothesis, and the
+protocol wants ~5 iterations spanning ≥2 cadence periods for a stability class. **Two rows
+answer the throughput question and cannot answer the stability question.** The user's
+thesis — that stability depends on zclip and raising it will destabilise — remains open and
+is the thing iters 126–130 are for.
+
+**`test_wdl_loss` = nan at 124, 0.845 at 125.** The known restart artifact
+([[holdout_ruler_dies_at_every_restart]]), not a new signal. The frozen-ruler KILL
+threshold cannot be evaluated until the series re-establishes a post-restart baseline.
+
+**Still pending, unchanged by this readout:** the deciding yardstick is the ratchet SLOPE
+over ≥4 daily `vs_boot512` rows. **Throughput passing is not the experiment passing.** The
+bet was that gradient volume is the binding constraint; all this readout establishes is
+that the gradient volume was actually delivered.
+
+---
+
+#### STABILITY INTERIM (iters 124–127, 4 of the 5 the protocol wants) — raising the cap did NOT remove spike protection, because zclip has TWO arms
+
+**The hypothesis under test was the user's:** *"training being stable is only because of
+zclip; if we raise it there will be more instability."* Worth taking seriously — and the
+cap is now not merely raised but **entirely inactive** (`grad_hard_clip_rate` **0.000** at
+iters 126 and 127). If removing the fixed cap destabilises, this is the regime.
+
+| | baseline (118–123) | post (124–127) |
+|---|---|---|
+| `grad_norm_median` | 5.47 | 5.47 |
+| `grad_norm_p95` | 6.33 | 6.68 |
+| `grad_norm_max` | 6.89 | 7.21 |
+| `grad_hard_clip_rate` | 0.917 | **0.022** |
+| `grad_adaptive_clip_rate` | 0.087 | **0.087** |
+| `grad_clip_rate` (either arm) | 0.917 | 0.084 |
+
+**The mechanism, verified in the installed source rather than inferred from the columns**
+(`~/.local/lib/python3.10/site-packages/zclip/zclip.py:17, 117–135`): ZClip runs
+`mode="zscore"`, `z_thresh=2.5`, `alpha=0.97` — an EMA of the gradient-norm mean and
+variance that clips **statistical outliers** — and this is **independent of
+`max_grad_norm`**, which is a separate fixed cap. **Raising the cap switched the fixed arm
+off and the adaptive arm carried on unchanged (0.087 both before and after).** Spike
+protection was never the fixed cap's job; it is the z-score arm's job, and that arm is
+untouched.
+
+This also retires the "`grad_hard_clip_rate` is bit-identical to `grad_clip_rate`" note
+recorded earlier today. That identity held only because the hard arm was firing on 92% of
+steps and masking the union. Post-change the two separate cleanly (iter 125: hard 0.0235,
+adaptive 0.0235, union 0.0353 — so they are not even the same *events*). **The earlier
+"these are one indicator, not two" reading was an artifact of the regime it was measured
+in, not a property of the metrics.**
+
+**The tail moved slightly and predictably, not chaotically:** p95 +5.5%, max +4.6%, median
+exactly flat. That is the arithmetic consequence of removing an ~8% shrink that had been
+applied to 92% of steps — the clip was compressing the tail and now isn't. **Predicted
+before it was looked up; not a surprise and not instability.**
+
+**⚑ THE CAVEAT, which cuts AGAINST the change and belongs here rather than in a footnote.**
+The adaptive arm's threshold is an EMA over recent history, so it fires on *spikes relative
+to recent norms* and **cannot see slow drift — it adapts to it.** The fixed cap was the
+only guard against a gradual ramp, and the ramp is real and already measured:
+**+0.0079/iter (t=+6.63, n=41), accelerating to +0.0120/iter over the last 17.** So the
+change traded away slow-drift protection while keeping spike protection. Partial mitigation
+by arithmetic: at the current median 5.53 and +0.008/iter, the 6.5 cap starts binding again
+in ~120 iterations (~1 day), so it re-arms itself as a backstop rather than being gone for
+good. **Watch item, not a kill trigger.**
+
+**NOT YET A VERDICT — 4 iterations, and the protocol wants ~5 spanning ≥2 of the failure's
+cadence periods.** Recorded as interim precisely because judging a stability class on 4
+rows is the error this ledger has logged repeatedly today. The `test_wdl_loss` leg is
+independently unreadable until G14 (see the withdrawn kill leg above): its swings across
+125–127 (0.8455 → 0.8199 → 0.8446) are ±0.026, i.e. exactly the 0.052-nat resampling floor,
+carrying no information about damage either way.
+
+---
+
+#### ⚑ STABILITY VERDICT (iters 124–129, 6 post-change rows) — NO instability from raising the cap. The drift is real, PREDATES the change, and its per-STEP rate did not move.
+
+**The trap this readout nearly fell into, recorded first because it is the day's recurring
+error and it very nearly produced the opposite verdict.** `grad_norm_median`'s
+per-ITERATION slope went **+0.0216 → +0.0391/iter (t=+6.42)** — read naively, "removing the
+fixed cap almost doubled the gradient drift", which is exactly the alarming story the
+hypothesis predicted. **It is an artifact of the denominator.** The same change doubled
+steps/iteration 43.9 → 89.0. Normalised to the scale-free quantity:
+
+| window | steps/iter | slope/iter | **slope/STEP** |
+|---|---|---|---|
+| baseline 110–123 | 43.9 | +0.02158 | **+0.000491** |
+| post 125–129 | 89.0 | +0.03910 | **+0.000439** |
+
+**+0.000491 → +0.000439 per optimizer step, each ~±0.00016 — statistically identical, and
+the point estimate is LOWER.** Removing the fixed cap did not accelerate the drift by any
+amount this data can detect. *A gradient norm measured per iteration is not a rate; it
+became one only after the steps-per-iteration was held fixed, and that stopped being true
+at iter 124.*
+
+**Tail, the place instability would actually show:**
+
+| | baseline 118–123 | post 124–129 |
+|---|---|---|
+| `grad_norm_p95` | 6.330 (sd 0.247) | 6.624 (sd 0.245) |
+| `grad_norm_max` | 6.886 (sd 0.466) | 7.223 (sd 0.291) |
+
+Both move ~+4.6%, roughly one baseline sd, with the max's *dispersion narrowing* (sd 0.466
+→ 0.291) — the opposite of what a destabilising change looks like. Consistent with the
+mechanical prediction: the cap had been shaving ~8% off 92% of steps and no longer is.
+
+**VERDICT on the user's hypothesis ("training is stable only because of zclip; raising it
+will destabilise"): NOT SUPPORTED over 6 iterations / ~530 optimizer steps.** The reason it
+was a reasonable hypothesis and still came out wrong is structural, and is the finding
+worth keeping: **the fixed cap and the adaptive z-score arm are separate mechanisms, and
+the stability work was being done by the arm that never changed.** The hypothesis attributed
+the stability to the knob that was visible in the yaml.
+
+**What is NOT resolved, and is now the live watch item.** The drift itself is real and
+long-standing — `grad_norm_median` slope **+0.00861/iter over iters 88–123 (n=36,
+t=+5.76)**, entirely predating this change. At +0.00044/step it adds ~+4.4 over 10,000
+steps, and the loop now runs ~500 steps/hour. **The adaptive arm cannot catch this by
+construction (its threshold is an EMA that follows the drift), and the fixed cap is the
+only mechanism that can — which is precisely the protection this change gave up.** Mitigating
+arithmetic: the 6.5 cap re-arms on its own in ~120 iterations at the current rate. **Track
+`grad_norm_median` per STEP, not per iteration, and revisit if it passes 6.5 without the
+hard-clip rate coming back off the floor.**
 
 
 ### PRE-REGISTERED READING RULE (2026-07-27 11:35, written BEFORE the numbers land) — the strength ratchet at iter 122
