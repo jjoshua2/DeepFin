@@ -144,6 +144,7 @@ def load_model_from_checkpoint(
     *,
     device: str = "cpu",
     model_config: ModelConfig | None = None,
+    require_complete: bool | None = None,
 ) -> torch.nn.Module:
     """Load a trained ChessNet in eval mode.
 
@@ -159,6 +160,18 @@ def load_model_from_checkpoint(
     Raises if neither is available. ``load_state_dict_tolerant`` will
     otherwise accept shape-mismatched tensors silently, so we fail loud
     here rather than start a partly-random model.
+
+    ``require_complete`` defaults to *auto*: True exactly when the architecture
+    came from the checkpoint's own embedded ``arch``, which is the case
+    ``load_state_dict_tolerant``'s docstring reserves it for — the model then
+    claims to match the file exactly, so any dropped key is a partially
+    fresh-initialised net rather than tolerable architecture drift. This is
+    the eval/serving loader that both sides of ``scripts/arena_standard.py``
+    go through, and up to 50% of keys could previously vanish behind a single
+    stdout line before the catastrophic-load guard fired (audit invariant
+    L12). Pass ``require_complete=False`` to deliberately load a checkpoint
+    into a different architecture; pass True to demand an exact load even off
+    the ``params.json`` path.
     """
     trainer_pt = _resolve_trainer_pt(Path(path))
   # weights_only=True blocks arbitrary pickle execution — our trainer only
@@ -186,9 +199,11 @@ def load_model_from_checkpoint(
             or input_history_encoding
         )
 
+    arch_from_checkpoint = False
     if model_config is None:
         if isinstance(ckpt, dict) and isinstance(ckpt.get("arch"), dict):
             model_config = model_config_from_arch(ckpt["arch"])
+            arch_from_checkpoint = True
         else:
             if params_path is None:
                 raise FileNotFoundError(
@@ -211,7 +226,12 @@ def load_model_from_checkpoint(
 
     model = build_model(model_config)
     state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
-    load_state_dict_tolerant(model, state, label="uci-load")
+    load_state_dict_tolerant(
+        model,
+        state,
+        label="uci-load",
+        require_complete=arch_from_checkpoint if require_complete is None else require_complete,
+    )
     setattr(
         model,
         "input_history_encoding",

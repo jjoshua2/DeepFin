@@ -784,6 +784,20 @@ def _loss_sums_to_metric_kwargs(sums: dict[str, float], n: float) -> dict[str, f
     return out
 
 
+def strip_compile_prefix(sd: dict[str, Any]) -> dict[str, Any]:
+    """Drop torch.compile's ``_orig_mod.`` prefix from state-dict keys.
+
+    Every artifact this module writes — the resume checkpoint (``save``) and
+    the published model (``export_swa``) — must use the unwrapped key
+    convention, so a consumer that calls plain ``load_state_dict`` gets the
+    right tensors instead of a silently fresh-initialised model. The two
+    paths diverged once (audit invariant J9: the published file carried the
+    prefix on 496/496 keys while the checkpoint carried it on 0/496); they
+    share this helper so they cannot diverge again.
+    """
+    return {k.removeprefix("_orig_mod."): v for k, v in sd.items()}
+
+
 def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> dict:
     """Extract Trainer constructor kwargs from a flat config dict.
 
@@ -2149,11 +2163,10 @@ class Trainer:
         # which a later load into an unwrapped trainer will silently drop
         # (every key looks "unexpected"), leaving the trainer fresh-init.
         # That's the failure mode that destroyed the model on 2026-04-27.
-        def _strip_compile_prefix(sd: dict) -> dict:
-            return {k.removeprefix("_orig_mod."): v for k, v in sd.items()}
-
+        # Shared with `export_swa` (the publish path) so the two artifacts
+        # cannot drift apart on key convention again -- see J9.
         state: dict[str, Any] = {
-            "model": _strip_compile_prefix(self.model.state_dict()),
+            "model": strip_compile_prefix(self.model.state_dict()),
             "opt": self.opt.state_dict(),
             "scheduler": self._scheduler.state_dict(),
             "step": self.step,
@@ -2165,7 +2178,7 @@ class Trainer:
                 **dataclasses.asdict(self._model_config),
             }
         if self._swa_model is not None:
-            state["swa_model"] = _strip_compile_prefix(self._swa_model.state_dict())
+            state["swa_model"] = strip_compile_prefix(self._swa_model.state_dict())
   # Atomic write so workers polling for new checkpoints never see a partial
   # file (matches the export_swa path; previously diverged).
         atomic_write(path, lambda tmp: torch.save(state, str(tmp)))
@@ -2297,13 +2310,26 @@ class Trainer:
         self.step = int(ckpt.get("step", 0))
 
     def export_swa(self, path: Path, dataloader: Any = None) -> None:
-        """Export the SWA-averaged model weights.
+        """Export the SWA-averaged model weights — this is the PUBLISH path.
 
         If a dataloader is provided, batch normalization statistics are updated
         using ``torch.optim.swa_utils.update_bn``.
 
         Written atomically to avoid races with workers downloading the file
         while the learner is writing it.
+
+        Keys go out stripped of torch.compile's ``_orig_mod.`` prefix, the same
+        convention ``save`` uses. They did not always: audit invariant J9 measured
+        the published file carrying the prefix on 496/496 keys against 0/496 in
+        the checkpoint, which a consumer calling plain ``load_state_dict`` would
+        have taken as a clean load of zero correct tensors.
+
+        WHEN SWA IS ON, THIS FILE IS NOT THE FILE THE ARENA MEASURES. ``save``
+        writes the raw model under ``"model"`` (resume must continue the real
+        training trajectory, not an average), and the ratchet arena reads exactly
+        that key out of ``checkpoint_*/trainer.pt`` — so the strength ruler would
+        be scoring a different net than the workers play. See J10; the warning
+        below fires on every publish while SWA is enabled.
         """
         if self._swa_model is not None and dataloader is not None:
             torch.optim.swa_utils.update_bn(
@@ -2311,12 +2337,20 @@ class Trainer:
                 self._swa_model,
                 device=torch.device(self.device),
             )
-        state_dict = (
-            self.model.state_dict()
-            if self._swa_model is None
-            else self._swa_model.module.state_dict()
-        )
-        export: dict[str, Any] = {"model": state_dict}
+        if self._swa_model is None:
+            state_dict = self.model.state_dict()
+        else:
+            state_dict = self._swa_model.module.state_dict()
+            logging.getLogger(__name__).warning(
+                "export_swa: SWA is ENABLED, so %s carries the SWA average while "
+                "checkpoint trainer.pt['model'] carries the raw model. Every "
+                "consumer that reads the checkpoint -- the ratchet arena, "
+                "value_regret, audit_targets -- is measuring a DIFFERENT net "
+                "than the selfplay workers play. Point those tools at the "
+                "published file, or keep swa_start negative. (audit J10)",
+                path,
+            )
+        export: dict[str, Any] = {"model": strip_compile_prefix(state_dict)}
         if self._model_config is not None:
             export["arch"] = {
                 "_schema_version": ARCH_SCHEMA_VERSION,

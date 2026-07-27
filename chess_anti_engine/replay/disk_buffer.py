@@ -163,7 +163,17 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
 
 
 class DiskReplayBuffer:
-    """Disk-backed replay buffer with array-backed hot shuffle storage."""
+    """Disk-backed replay buffer with array-backed hot shuffle storage.
+
+    **Constructing this against a live shard directory DELETES SHARDS.**
+    ``__init__`` scans the directory and immediately calls ``_enforce_window``,
+    so a tool that opens the live window "just to read it" with a capacity that
+    differs from the live one evicts the excess off disk before returning
+    (audit hazard G12). Pass ``read_only=True`` for any probe, audit or
+    offline read: it refuses every write and turns window enforcement into a
+    no-op, making the constructor safe to point at production data. Reading
+    zarr groups directly, without this class, remains the lightest option.
+    """
 
     def __init__(
         self,
@@ -171,6 +181,7 @@ class DiskReplayBuffer:
         *,
         shard_dir: Path,
         rng: np.random.Generator,
+        read_only: bool = False,
         shuffle_cap: int = 20_000,
         shard_size: int = 1000,
         refresh_interval: int = 5,
@@ -187,6 +198,10 @@ class DiskReplayBuffer:
     ):
         self.capacity = int(capacity)
         self.rng = rng
+  # Set BEFORE the resume scan at the end of __init__: that scan enforces the
+  # window, i.e. deletes shards, which is exactly what a read-only opener must
+  # not do (audit G12).
+        self._read_only = bool(read_only)
   # When set, shards stored with FEWER x planes (e.g. v1 146-plane shards
   # in a v2_threats 175-plane run) are normalized on load — never
   # re-encoded. With upgrade_v1_planes the 29 threat planes are
@@ -956,11 +971,20 @@ class DiskReplayBuffer:
         """Total positions on disk + in write buffer."""
         return self._tracked_shard_positions() + self._write_buf_rows
 
+    def _reject_if_read_only(self, op: str) -> None:
+        if self._read_only:
+            raise RuntimeError(
+                f"DiskReplayBuffer({self._shard_dir}) was opened read_only=True; "
+                f"{op} would mutate the shard window. Open it writable, or use a "
+                f"copy of the directory."
+            )
+
     def add(self, sample: ReplaySample) -> None:
         self.add_many([sample])
 
     def add_many(self, samples: list[ReplaySample]) -> None:
         """Add samples: into shuffle buffer immediately, flush to disk when full."""
+        self._reject_if_read_only("add_many")
         if not samples:
             return
         arrs = prune_storage_arrays(samples_to_arrays(samples))
@@ -977,6 +1001,7 @@ class DiskReplayBuffer:
 
     def add_many_arrays(self, arrs: dict[str, np.ndarray]) -> None:
         """Add array-backed samples without materializing ReplaySample objects."""
+        self._reject_if_read_only("add_many_arrays")
   # Pad before the write buffer too — a stale narrower chunk landing in
   # the same write accumulator as current-width chunks would otherwise
   # fail at shard-flush concatenation.
@@ -996,16 +1021,19 @@ class DiskReplayBuffer:
 
     def flush(self) -> None:
         """Force-write any remaining samples in write buffer to disk."""
+        self._reject_if_read_only("flush")
         if self._write_buf_rows > 0:
             self._flush_shard_arrays(self._take_write_prefix(self._write_buf_rows))
             self._enforce_window()
 
     def enforce_window(self) -> None:
         """Apply the current capacity limit immediately."""
+        self._reject_if_read_only("enforce_window")
         self._enforce_window()
 
     def _flush_shard_arrays(self, arrs: dict[str, np.ndarray]) -> None:
         """Write a shard to disk."""
+        self._reject_if_read_only("_flush_shard_arrays")
         path = local_shard_path(self._shard_dir, self._shard_index)
         saved_path = save_local_shard_arrays(path, arrs=arrs)
         n = int(arrs["x"].shape[0])
@@ -1013,7 +1041,15 @@ class DiskReplayBuffer:
         self._shard_index += 1
 
     def _enforce_window(self) -> None:
-        """Delete oldest shards when total exceeds capacity."""
+        """Delete oldest shards when total exceeds capacity.
+
+        A no-op under ``read_only=True``. This is the one deleter, and
+        ``__init__`` reaches it through ``_scan_existing_shards`` before the
+        caller ever gets the object back, so the flag has to be honoured here
+        for a read-only open to be safe (audit G12).
+        """
+        if self._read_only:
+            return
         current_total = self._tracked_shard_positions()
         if current_total > self.capacity and not self._snapshot_shards():
             print(
@@ -1251,6 +1287,7 @@ class DiskReplayBuffer:
 
     def clear(self) -> None:
         """Remove all data (disk and memory)."""
+        self._reject_if_read_only("clear")
         self.close()
         self._shuffle_buf = deque()
         self._shuffle_sizes = deque()

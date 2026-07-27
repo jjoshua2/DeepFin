@@ -819,6 +819,11 @@ def run_arena(
     if mode == "matched_sims":
         from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
+  # Both sides load with require_complete auto-on (the loader's default when
+  # the arch came from the checkpoint's own `arch` payload), so a partially
+  # fresh-initialised net raises here instead of quietly producing a lopsided
+  # Elo. That is audit method rule 7 -- verify identity before believing a
+  # lopsided arena -- enforced in code rather than by habit.
         print(f"[arena] loading candidate: {candidate}")
         model_candidate = load_model_from_checkpoint(candidate, device=device)
         print(f"[arena] loading reference: {reference}")

@@ -21,7 +21,8 @@ Inputs: two JSONL per-position dumps. Supported sources:
     carries search-seed noise on top of position pairing)
 
 Rows missing from either side or with null values are dropped (counted in the
-report). ``phase`` (int index or string) groups the per-phase breakdown.
+report). Duplicate join keys are refused outright — see ``load_dump``.
+``phase`` (int index or string) groups the per-phase breakdown.
 
 Sign convention: delta = A - B per position. For regret-style metrics (lower
 is better), a NEGATIVE mean delta means A is better.
@@ -67,7 +68,20 @@ def phase_label(p: object) -> str:
 def load_dump(
     path: str, *, join_key: str = "fen", field: str = "value",
 ) -> dict[str, tuple[float, str]]:
+    """Index one per-position dump by its join key.
+
+    Refuses duplicate join keys. A dump is one deterministic read of one
+    checkpoint over a frozen position set, so a repeated key means the file is
+    not what the join assumes — two runs concatenated, a re-run appended, or
+    the wrong ``--join-key``. Before this check the dict build made duplicates
+    last-win, and the losers were invisible: they were not in ``common`` and
+    not in the reported ``dropped`` either, so the caller read a clean join
+    over a silently smaller and silently biased sample (audit invariant L14).
+    There is no correct way to pick a winner here, so the tool stops instead
+    of guessing; de-duplicate the dump and re-run.
+    """
     out: dict[str, tuple[float, str]] = {}
+    duplicates: list[str] = []
     with open(path, encoding="utf-8") as f:
         for line in f:
             r = json.loads(line)
@@ -75,7 +89,20 @@ def load_dump(
             v = get_field(r, field)
             if k is None or not isinstance(v, (int, float)):
                 continue
-            out[str(k)] = (float(v), phase_label(r.get("phase", "?")))
+            key = str(k)
+            if key in out:
+                duplicates.append(key)
+                continue
+            out[key] = (float(v), phase_label(r.get("phase", "?")))
+    if duplicates:
+        unique_dupes = sorted(set(duplicates))
+        raise SystemExit(
+            f"{path}: {len(duplicates)} duplicate rows across "
+            f"{len(unique_dupes)} repeated '{join_key}' values, e.g. "
+            f"{unique_dupes[:3]}. A paired comparison cannot join an ambiguous "
+            f"key -- de-duplicate the dump (or pass the right --join-key) and "
+            f"re-run. Refusing rather than silently dropping them."
+        )
     return out
 
 
