@@ -4810,6 +4810,58 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### ⚑ CORRECTION (2026-07-27 ~22:4x) — VIRTUAL_MEAN is DOMINATED. Deploy LEGACY. My earlier "deploy VIRTUAL_MEAN" call was wrong.
+
+**I read a two-column table on one column again.** The deploy decision recorded
+earlier today picked VIRTUAL_MEAN on a top-1 quality comparison, and never looked
+at the batch-count column sitting beside it in my own validation output.
+
+Measured, 3 seeds x 6 arms, 8 boards / 256 sims, exact hashing:
+
+| arm | GPU calls | real rows | rows/call | dup |
+|---|---|---|---|---|
+| `target_batch=0` (today) | 9 | 2048 | 227.6 | **0.778** |
+| `target_batch=1` | 75 | 1925 | 25.7 | 0.000 |
+| **`vloss=1` LEGACY** | **8** | **1864** | **233.0** | **0.000** |
+| `vloss=1` VIRTUAL_MEAN | 75 | 1924 | 25.7 | 0.000 |
+| `vloss=3` LEGACY | 8 | 1905 | 238.1 | 0.000 |
+| `vloss=3` VIRTUAL_MEAN | 74 | 1925 | 26.0 | 0.000 |
+
+**LEGACY is strictly better than doing nothing**: same batch size (233 vs 228
+rows/call), FEWER total rows (1864 vs 2048, the duplicates are gone), zero
+duplication. **VIRTUAL_MEAN is dominated**: it buys the identical 8x batch
+collapse as `target_batch=1` and gives nothing back for it.
+
+**Mechanism, and it is the interesting part.** The Gumbel descent selects
+`argmax(p - eff_n * inv_total)` (`tree_gumbel_select_child`). VIRTUAL_MEAN is NOT
+inert — it raises `eff_n`, which does enter that argmax negatively — but that is
+its ONLY lever, worth `1/(1+total_visits)`. LEGACY additionally drags `cqs` down,
+which moves `p` itself through the softmax scaled by `q_scale`. That is a far
+stronger push, and raising the weight does not close the gap (`vloss=3`
+VIRTUAL_MEAN still collapses).
+
+**So the pessimism IS the spreading mechanism.** You cannot have both "no value
+bias" and "spreads walkers onto distinct leaves" from this knob — VIRTUAL_MEAN's
+entire selling point, that it leaves Q untouched, is precisely why it cannot fill
+a batch. The theoretically-cleaner construct is the operationally useless one.
+
+**This does not retract PR #279.** VIRTUAL_MEAN stays in as a selectable mode and
+earns its place as the CONTROL that proves the above: it isolates "bump the visit
+count" from "bias the value", and shows the batch filling comes entirely from the
+second. Production default stays `vloss_mode=0`.
+
+**What LEGACY's Q distortion costs is already measured, and it is negative-cost:**
+PR #278's C17 result (**-7.4 cp on the training target, 54.2 -> 46.8, at no
+throughput cost**) was measured with LEGACY vloss. The pessimism's value bias is
+transient — it is removed on backprop when the real value lands — so it perturbs
+only *which* leaves get collected inside one batch, not what is learned from them.
+
+**Still NOT established, and this is the whole caveat:** every number above is
+offline, CPU, 8 boards, a hash evaluator. Production runs 200-512 boards/call
+through a broker averaging 220 pos/batch at **1% of its 19040 cap**. A batch-count
+argument in a regime where the batch is already 1% full may not transfer at all.
+That is what task #43 reads.
+
 ### C17 duplicate-rate telemetry — BUILT AND VALIDATED, live number still UNMEASURED (2026-07-27 ~22:0x)
 
 `gumbel_c.duplicate_rate()` / `pad_rate()` (PR #279, opt-in via `CAE_DUP_STATS`,
