@@ -1968,11 +1968,36 @@ useful control — the instrument reproduces a number measured independently.
 **This connects the day's two biggest findings into one mechanism.** C17 measured that
 duplicate leaves inflate `max_visit` → inflate root `q_scale` → **sharpen** the improved
 policy. That sharpening lands on a distribution already near-degenerate on a quarter of its
-rows. And the only force pushing the other way — a teacher 2.3× softer — was **exactly zero
-from 07-11 19:42 to 07-27 14:12**. For 15.8 days `policy_own`, the head MCTS reads, trained
-on `w_policy 1.0` + `w_soft 1.0` of its own over-confident search output with no softer
-external signal at all. Two independent defects, same direction: collapse onto an
-over-sharp self-imitation target.
+rows.
+
+**⚠ SELF-CORRECTION (same session, ~16:2x) — the first version of this paragraph said "the
+only force pushing the other way was exactly zero for 15.8 days". That is WRONG, and it is
+worth stating why.** Extending the paired measurement to every policy target on the same
+2,811 rows:
+
+| target | weight | entropy | top-1 | ≥0.99 |
+|---|---|---|---|---|
+| `policy_target` (own Gumbel) | **1.0** | **0.598** | 0.783 | 26.5% |
+| `policy_soft_target` (own, `soft_policy_temp 2.0`) | **1.0** | **1.255** | 0.608 | 5.9% |
+| `sf_p0_policy_target` (SF, this position) | **0.1** | 1.313 | 0.539 | 14.2% |
+| `sf_policy_target` (SF, opponent's reply) | 0.02 | 1.277 | 0.549 | 15.6% |
+
+`policy_soft_target` is **as soft as the SF teacher** (1.255 vs 1.313) and carries **10×
+its weight**, and it was never off. So SOFTNESS was not missing. The original sentence
+conflated *soft* with *external* — the house error of asserting a number past what it can
+show, committed while documenting that very error class.
+
+**The corrected claim is narrower and stronger.** What went to zero for 15.8 days was every
+**EXTERNAL position-level move signal**. `policy_target` and `policy_soft_target` are both
+functions of the net's own search — a softened copy of your own opinion is still your own
+opinion, and cannot import information the search did not have. The only surviving external
+policy term was `w_sf_move 0.02` on the **opponent's reply**, documented as NOT a
+move-teacher. So the policy head carried **2.0 of weight entirely on self-generated targets
+and 0.0 on any external read of the position it was playing.** That is the defect: not a
+missing regulariser, a missing *teacher*.
+
+Two independent defects, same direction: a self-imitation loop, its target sharpened by
+C17's duplicate leaves, with its one external corrective removed.
 
 **⚠ THIS REFRAMES THE C17 FIX DECISION — and the reframing is NOT a licence to assume.**
 The C17 entry records that removing duplicates *flattens* the target as a side effect, and
