@@ -1668,6 +1668,60 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### ⚑ FINDING (2026-07-27 11:45) — the GPU computes gradients for 3.0% of wall clock; the replay loader is a 6.05× tax on every optimizer step
+
+**Measured over the last 30 live iterations** (`result.json`, trial 13a9f):
+
+| | seconds | % of iteration |
+|---|---|---|
+| iteration wall clock | 713.8 | 100.0 |
+|  · selfplay + SF labelling + ingest | 585.0 | 82.0 |
+|  · training | 128.8 | 18.0 |
+|     — **data loading** | **107.5** | **15.1** (83% of training) |
+|     — **optimizer** | **21.3** | **3.0** (17% of training) |
+
+`optimizer s/step` = **0.483** — that is the 5090 actually computing gradients on the
+63.08M-param net. `total s/step` = **2.920**. **The loader overhead factor is 6.05×.**
+
+**Consequence, and this is the headline.** The same 129s training budget, if the loader
+kept the GPU fed, would buy **267 optimizer steps per iteration instead of 44** — 6× the
+gradient for the same wall clock, the same selfplay, the same GPU, and zero change to any
+training target. Time to 100k optimizer steps: **18.7 days → 3.1 days.**
+
+**Scale context that reframes every "we are not learning" reading.** The whole trial —
+123 iterations, 29 hours — is **6,253 optimizer steps / 3.2M samples**, i.e. **0.53% of a
+600M-sample AlphaZero-scale budget**. The `vs_prev` ratchet window (iter 70 → 122) is
+~2,650 steps / 1.4M samples. **Expecting a ±50 Elo ruler to move on 2,650 steps of a 63M
+net is not reasonable**, so a null there says nothing about loop health — it says the
+window is too small. Any future strength readout must quote the optimizer steps inside
+its window, not just the iteration count.
+
+**This was predicted and then dropped.** The `train_views_per_position` entry wrote, in
+its own early-gate clause: *"if step time balloons instead, the binding constraint is the
+loader (`trainer_samples_per_s` ~190 = 2.7s/step at batch 512 on a 5090, mostly NOT
+optimizer time), not the GPU, and the answer is to profile the zarr loader rather than
+raise views further."* Live now: `trainer_samples_per_s` **187.6**, `total s/step`
+**2.92**. The prediction was exactly right, the gate fired, and **nobody profiled the
+loader** — the readout went to views instead. Filed as the standing lesson: an early-gate
+clause that names a follow-up is not done when the primary readout lands.
+
+**Why this outranks the zclip thread.** I21 established `zclip_max_norm` cannot reach
+28.6% of the net (Aurora's polar factor is scale-invariant) and is second-order on the
+rest. This is a **6× gradient-throughput** lever that is pure engineering — no target
+change, no data-mix change, nothing to pre-register a kill rule against, because it
+cannot make the net worse. **This is the candidate mechanism for the "several hundred Elo
+sitting unclaimed" hypothesis:** not that the loop is unstable, but that it has taken
+6,253 steps when it should have taken ~38,000 in the same 29 hours.
+
+**NOT yet established, and must be measured before any fix:** *where* in the loader the
+107.5s goes. Candidates, none confirmed — zarr decompression, the disk-backed replay
+window's random-access pattern, per-sample target building
+(`train/target_builder.py`), host→device transfer, or single-threaded collation.
+**Next action: profile one training phase** (`train_time_s` breakdown by stage) before
+proposing anything. Do not "fix" a bottleneck that has not been localised — that is how
+the diff_focus and soft_policy_temp fixes ended up measuring nothing.
+
+
 ### PRE-REGISTERED READING RULE (2026-07-27 11:35, written BEFORE the numbers land) — the strength ratchet at iter 122
 
 **Why this is written first.** Three times today I read a moving series and got it wrong
