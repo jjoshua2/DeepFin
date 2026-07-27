@@ -299,10 +299,14 @@ def test_gumbel_cross_impl_matches_under_a_real_evaluator(simulations: int) -> N
 @pytest.mark.skipif(run_gumbel_root_many_c is None, reason="gumbel_c extension not available")
 @pytest.mark.xfail(
     strict=True,
-    reason="C27: unexplained C-vs-Python policy residual from 96 sims up, even "
-           "at per-rep flush. Pinned deliberately — see docs/rl_loop_audit.md C27. "
-           "A strict xfail means this FAILS if the residual ever disappears, so "
-           "the day someone fixes it we are told instead of silently drifting.",
+    reason="C27: C and Python break EXACT TIES in a different order, and this "
+           "fixture is all ties -- `_root_logits` is zeros (uniform root prior) "
+           "and add_noise=False (no Gumbel tie-break), so root ranking is decided "
+           "entirely by iteration order. Give the root any non-degenerate prior "
+           "and the residual is exactly 0 at every budget: see "
+           "test_gumbel_cross_impl_matches_with_a_non_degenerate_root_prior. "
+           "Kept as a strict xfail because the tie-break order genuinely differs "
+           "and this pins it -- see docs/rl_loop_audit.md C27.",
 )
 @pytest.mark.parametrize("simulations", [96, 128, 256])
 def test_gumbel_cross_impl_residual_above_64_sims(simulations: int) -> None:
@@ -344,6 +348,52 @@ def test_gumbel_cross_impl_residual_above_64_sims(simulations: int) -> None:
         target_batch=1,
     )[:4]
 
+    for py_prob, c_prob in zip(py_probs, c_probs, strict=True):
+        np.testing.assert_allclose(py_prob, c_prob, atol=0.0)
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="gumbel_c extension not available")
+@pytest.mark.parametrize("simulations", [96, 128, 256])
+def test_gumbel_cross_impl_matches_with_a_non_degenerate_root_prior(
+    simulations: int,
+) -> None:
+    """The same budgets C27 pins, with the ties removed: parity is EXACT.
+
+    The xfail above runs on a uniform root prior (`_root_logits` is all zeros)
+    with `add_noise=False`, so every root candidate scores identically and the
+    ranking is pure iteration order. That is the entire residual: give the root
+    a real prior and C and Python agree bit-for-bit at 96, 128 and 256 sims --
+    the production budget included.
+
+    This matters for how C27 is read. Production roots come from a network, so
+    exact ties are measure-zero there, and the residual pinned above is a
+    property of the FIXTURE, not of the search. Localised 2026-07-27 by
+    disabling each C-only feature in turn (transposition table, forced-move
+    chain collapse, solved-state propagation, 2-fold/3-fold/50-move draw
+    claims): every one left the divergence bit-identical, and only removing the
+    ties removed it.
+    """
+    boards = _edge_case_boards()
+    rng = np.random.default_rng(7)
+    pre_pol = rng.standard_normal((len(boards), POLICY_SIZE)).astype(np.float32)
+    pre_wdl = rng.standard_normal((len(boards), 3)).astype(np.float32)
+    cfg = GumbelConfig(
+        simulations=simulations, topk=8, temperature=0.0, add_noise=False,
+    )
+    run_c = run_gumbel_root_many_c
+    assert run_c is not None
+
+    py_probs, py_actions, _, _ = run_gumbel_root_many(
+        None, boards, device="cpu", rng=np.random.default_rng(11), cfg=cfg,
+        evaluator=_HashEvaluator(), pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+    )
+    c_probs, c_actions, _, _ = run_c(
+        None, boards, device="cpu", rng=np.random.default_rng(11), cfg=cfg,
+        evaluator=_HashEvaluator(), pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+        target_batch=1,
+    )[:4]
+
+    assert py_actions == c_actions
     for py_prob, c_prob in zip(py_probs, c_probs, strict=True):
         np.testing.assert_allclose(py_prob, c_prob, atol=0.0)
 

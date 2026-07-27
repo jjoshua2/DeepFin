@@ -160,6 +160,7 @@ def run_gumbel_root_many_c(
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
+    vloss_weight: int = 0,
     return_diagnostics: Literal[False] = False,
 ) -> GumbelManyCResult: ...
 
@@ -186,6 +187,7 @@ def run_gumbel_root_many_c(
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
+    vloss_weight: int = 0,
     return_diagnostics: Literal[True],
 ) -> GumbelManyCDiagnosticsResult: ...
 
@@ -211,11 +213,32 @@ def run_gumbel_root_many_c(
     tb_probe=None,
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
+    vloss_weight: int = 0,
     return_diagnostics: bool = False,
 ) -> GumbelManyCResult | GumbelManyCDiagnosticsResult:
     """Gumbel root search with MCTSTree C tree + CBoard.
 
-    Same API as ``run_gumbel_root_many`` -- drop-in replacement.
+    Same API as ``run_gumbel_root_many`` -- drop-in replacement, plus two
+    batching controls the Python reference has no equivalent for:
+
+    ``target_batch``
+        Leaves to accumulate before handing a batch to the evaluator. 0 (the
+        production default) means ``GSS_GPU_BATCH`` = 1024, which spans several
+        sequential-halving reps. 1 flushes once per rep, exactly what the
+        Python reference does.
+
+    ``vloss_weight``
+        Virtual loss applied to a leaf's path while it awaits evaluation. 0
+        (the production default) is bit-identical to the pre-virtual-loss code
+        path -- and is the C17 defect: with no penalty a later rep re-walks an
+        unchanged tree straight back to a leaf already in the batch and
+        back-propagates the same value again. At the production shape that is
+        38% of evaluated rows and a 37% deficit in distinct nodes. >0 removes
+        the duplication while KEEPING the large cross-rep batches, which is
+        what ``target_batch=1`` has to give up (~6x the GPU round trips).
+        Flipping the default is data-affecting -- it changes every stored
+        policy target -- so it needs its own ledger entry; see
+        ``docs/rl_loop_audit.md`` C17.
     """
   # Fail fast on a stale compiled extension at the shared C-path entry, so EVERY
   # consumer (selfplay/training + eval call this directly, not just UCI) gets a clear
@@ -653,7 +676,7 @@ def run_gumbel_root_many_c(
                 _cb_g, _rid_g, _rem_g, _gum_g, _pri_g, _bud_g, _rqs_g,
                 _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
                 cast(_EncodeBuffer, _enc_bufs[g]),
-                0, int(target_batch),
+                int(vloss_weight), int(target_batch),
                 c_input_history_mode(cfg.input_history_encoding),
                 None, float(cfg.q_visit_exp),
                 1 if cfg.q_global_scale else 0,
@@ -896,7 +919,7 @@ def run_gumbel_root_many_c(
             cast("list[np.ndarray]", root_pri),
             _budget_arr, _root_qs_arr,
             _c_scale, _c_visit, _c_puct, _fpu_reduction, _full_tree,
-            cast(np.ndarray, _enc_buf), 0, int(target_batch),
+            cast(np.ndarray, _enc_buf), int(vloss_weight), int(target_batch),
             c_input_history_mode(cfg.input_history_encoding),
             _rel_buf,
             float(cfg.q_visit_exp),
