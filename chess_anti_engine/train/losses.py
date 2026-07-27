@@ -257,6 +257,11 @@ def compute_loss(
     gathered log-probs (train/sparse_sf_ce.py) for rows carrying sparse
     MultiPV labels; rows without them keep the dense soft CE. None (the
     default) leaves the dense path untouched.
+
+    Value-loss reporting: ``wdl_ce`` and ``blended_wdl_ce`` are the same
+    tensor — the blended soft CE that ``total`` (and therefore every
+    gradient) is built from. The hard one-hot CE against the recorded game
+    result is a diagnostic and is reported separately as ``wdl_onehot_ce``.
     """
     net_mask = _get_mask(batch, "is_network_turn", default=1.0).to(torch.float32)
 
@@ -343,7 +348,11 @@ def compute_loss(
     else:
         sf_own_regret = zero_loss
 
-    wdl_ce = F.cross_entropy(outputs["wdl"], batch["wdl_t"], reduction="none")
+  # DIAGNOSTIC ONLY — hard one-hot CE against the recorded game result. The
+  # optimizer never sees this term (see ``blended_wdl_ce`` below, which is the
+  # value loss in ``total``). Reported as ``wdl_onehot_ce`` so nothing can
+  # mistake it for the trained loss again; see docs/rl_loop_audit.md I7.
+    wdl_onehot_ce = F.cross_entropy(outputs["wdl"], batch["wdl_t"], reduction="none")
 
   # SF move prediction: target and legal mask are in the t+1 move space (opp POV).
     has_sf_move = _get_mask(batch, "has_sf_move")
@@ -526,7 +535,7 @@ def compute_loss(
     m_future = masked_mean(future_ce, net_mask * has_future)
     m_sf_own = masked_mean(sf_p0_ce, net_mask * has_sf_p0)
     m_sf_own_regret = masked_mean(sf_own_regret, net_mask * has_sf_p0_regret)
-    m_wdl = masked_mean(wdl_ce, net_mask)
+    m_wdl_onehot = masked_mean(wdl_onehot_ce, net_mask)
     m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
     m_sf_move = masked_mean(sf_move_ce, net_mask * has_sf_policy)
     m_sf_eval = masked_mean(sf_eval_ce, m_sf_wdl_mask)
@@ -544,10 +553,14 @@ def compute_loss(
         has_moves_left=has_moves_left,
         moves_left_val=_get_mask(batch, "moves_left", default=1.0).to(torch.float32),
     )
+  # Split reductions use the TRAINED per-sample value loss (blended soft CE),
+  # not the one-hot diagnostic — before 2026-07-26 these were the diagnostic,
+  # which made `wdl_loss_selfplay` / `_open` / ... track a term no gradient
+  # ever came from.
     split_losses: dict[str, torch.Tensor] = {}
     for suffix, m in split_masks:
         split_losses[f"policy_loss_{suffix}"] = masked_mean(pol_ce, pol_base * m)
-        split_losses[f"wdl_loss_{suffix}"] = masked_mean(wdl_ce, net_mask * m)
+        split_losses[f"wdl_loss_{suffix}"] = masked_mean(blended_wdl_ce, net_mask * m)
 
     total = (
         float(w_policy) * m_policy
@@ -564,11 +577,17 @@ def compute_loss(
         + float(w_moves_left) * m_ml
     )
 
+  # Reported value-loss names (docs/rl_loop_audit.md I7):
+  #   wdl_ce / blended_wdl_ce -> the SAME tensor, the loss the optimizer sees.
+  #     `wdl_ce` is the name people reach for (it becomes the `wdl_loss`
+  #     column), `blended_wdl_ce` is kept because existing readers use it.
+  #   wdl_onehot_ce -> the hard one-hot diagnostic, never in `total`.
     return {
         "total": total,
         "policy_ce": m_policy,
-        "wdl_ce": m_wdl,
+        "wdl_ce": m_blended_wdl,
         "blended_wdl_ce": m_blended_wdl,
+        "wdl_onehot_ce": m_wdl_onehot,
         "soft_policy_ce": m_soft,
         "soft_mask_kept_frac": soft_mask_kept_frac,
         "future_policy_ce": m_future,

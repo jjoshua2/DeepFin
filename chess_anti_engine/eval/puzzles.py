@@ -23,7 +23,7 @@ import chess
 import numpy as np
 import torch
 
-from chess_anti_engine.encoding import encode_position
+from chess_anti_engine.encoding import encode_position_for_model
 from chess_anti_engine.mcts import MCTSConfig, run_mcts_many
 from chess_anti_engine.mcts.gumbel import GumbelConfig
 from chess_anti_engine.moves.encode import index_to_move, move_to_index_for_encoding
@@ -491,13 +491,7 @@ def run_policy_sequence_eval(
         picks: list[chess.Move] = []
         for start in range(0, len(boards), batch_size):
             chunk = boards[start:start + batch_size]
-            xs = np.stack([
-                encode_position(
-                    b,
-                    input_extra_features=getattr(model, "input_extra_features", None),
-                )
-                for b in chunk
-            ])
+            xs = np.stack([encode_position_for_model(model, b) for b in chunk])
             x = torch.from_numpy(xs).to(device, non_blocking=True)
             out = model(x)
             pol_logits = (out["policy_own"] if isinstance(out, dict) and "policy_own" in out
@@ -567,8 +561,6 @@ def run_value_head_puzzle_eval(
     This is independent of the policy head; results test value-head
     correctness only.
     """
-    from chess_anti_engine.encoding import encode_position  # local import; slow
-
     model.eval()
     total = len(suite)
     correct_flags = [False] * total
@@ -585,10 +577,7 @@ def run_value_head_puzzle_eval(
         legal_per_puzzle.append(legal)
         for mv in legal:
             puzzle.board.push(mv)
-            flat_x.append(encode_position(
-                puzzle.board,
-                input_extra_features=getattr(model, "input_extra_features", None),
-            ))
+            flat_x.append(encode_position_for_model(model, puzzle.board))
             puzzle.board.pop()
             flat_moves.append(mv)
         flat_groups.append((len(flat_idx), len(legal)))

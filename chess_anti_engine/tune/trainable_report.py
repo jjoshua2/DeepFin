@@ -19,7 +19,9 @@ from chess_anti_engine.tune._utils import (
     SIDECAR_PID_STATE,
     SIDECAR_RNG_STATE,
     SIDECAR_TRIAL_META,
+    load_optional_json,
 )
+from chess_anti_engine.tune.holdout_state import save_holdout_rows
 from chess_anti_engine.tune.trial_config import (
     DriftMetrics,
     PidResult,
@@ -158,7 +160,10 @@ def _guard_checkpoint_index(*, trial_dir: Path) -> int | None:
 _STATUS_COLS = (
     "iter", "global_iter", "opp", "opp_ema", "sf_nodes", "regret",
     "ingest_s", "train_s", "iter_s", "steps", "replay", "pos_added",
-    "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr", "startup",
+    # `lr_mean` (was `lr`): the iteration-mean LR of the matrix/trunk group.
+    # The old column sampled the optimizer after the train phase, i.e. at the
+    # trough of the sqrt_release ramp (docs/rl_loop_audit.md I19).
+    "stale", "train_loss", "best_loss", "win", "draw", "loss", "lr_mean", "startup",
 )
 
 
@@ -195,7 +200,7 @@ def _write_status_csv_row(
     total_w: int,
     total_d: int,
     total_l: int,
-    opt_lr: float,
+    opt_lr_mean: float,
     startup_source: str,
 ) -> None:
     """Append a compact status CSV row (best-effort)."""
@@ -220,7 +225,7 @@ def _write_status_csv_row(
                 int(total_w),
                 int(total_d),
                 int(total_l),
-                f"{float(opt_lr):.2e}",
+                f"{float(opt_lr_mean):.2e}",
                 str(startup_source),
             ])
     except Exception:
@@ -251,12 +256,22 @@ def _save_trial_checkpoint(
     restore: RestoreResult,
     iteration_idx: int,
     current_window: int,
+    holdout_buf,
+    holdout_frozen: bool,
+    holdout_generation: int,
     Checkpoint,
 ):
-    """Flush replay buffer and save a lightweight checkpoint."""
+    """Flush replay buffer and save a lightweight checkpoint.
+
+    The holdout rides along: its rows as a sidecar npz, its two scalars in
+    trial_meta.json. That is what makes `test_loss` comparable across a
+    restart instead of being re-measured against whatever the next few
+    iterations of ingest happen to donate. See ``tune/holdout_state``.
+    """
     buf.flush()
     trainer.save(ckpt_dir / "trainer.pt")
     _write_rng_state_sidecar(ckpt_dir=ckpt_dir, rng=rng)
+    save_holdout_rows(ckpt_dir=ckpt_dir, holdout_buf=holdout_buf)
     try:
         atomic_write_text(
             ckpt_dir / SIDECAR_TRIAL_META,
@@ -273,6 +288,8 @@ def _save_trial_checkpoint(
                 "salvage_origin_dir": str(restore.salvage_origin_dir),
                 "global_iter": int(iteration_idx),
                 "current_window": int(current_window),
+                "holdout_frozen": bool(holdout_frozen),
+                "holdout_generation": int(holdout_generation),
             }, sort_keys=True, indent=2),
         )
     except (OSError, TypeError, ValueError) as exc:
@@ -324,6 +341,19 @@ def _reset_best_on_cross_trial_restore(
     return float("inf"), "train_loss"
 
 
+def _best_record_generation(best_state_path: Path) -> int | None:
+    """Which holdout generation the loss in `best.json` was measured on.
+
+    ``None`` when there is no record, or one written before the field existed
+    -- unknown, not zero. Zero is a real generation (every run starts there),
+    so defaulting to it would claim a match with the current holdout and
+    suppress the handover exactly when the record is oldest.
+    """
+    d = load_optional_json(best_state_path) or {}
+    gen = d.get("holdout_generation")
+    return int(gen) if isinstance(gen, (int, float)) and not isinstance(gen, bool) else None
+
+
 def _update_best_model(
     *,
     trainer,
@@ -369,15 +399,23 @@ def _update_best_model(
     permanently, across restarts -- the record would be unbeatable by any
     finite loss.
 
-    `holdout_generation` is recorded but deliberately NOT compared on.
-    A drift reset (`_maybe_reset_holdout_on_drift`) rebuilds the holdout from a
-    distribution that changed on purpose, so in principle two `test_loss`
-    values from different generations are different rulers too. The counter
-    cannot serve as a ruler identity yet: it is in-memory only, reset to 0 at
-    every process start and never restored, so comparing on it would force a
-    handover on every restart -- reintroducing exactly the per-restart reset
-    that PR #245 removes. Recording it makes the ambiguity auditable now and
-    is what a durable counter would key off later.
+    `holdout_generation` IS now compared on, as a ruler identity. Two
+    `test_loss` values from different generations are different rulers for the
+    same reason train and holdout loss are: a drift reset
+    (`_maybe_reset_holdout_on_drift`) rebuilds the holdout from a distribution
+    that changed on purpose, and a restart that could not restore the sidecar
+    starts from a different sample. A generation change therefore triggers the
+    same handover as a train->holdout change: adopt, don't compare.
+
+    This only became safe once the counter was durable. While it was
+    in-memory-only -- reset to 0 at every process start -- comparing on it
+    would have forced a handover on every restart. It now rides in the
+    checkpoint's trial_meta.json next to the rows themselves
+    (``tune/holdout_state``), so an ordinary resume keeps both the ruler and
+    its identity, and the handover fires only when the ruler really changed.
+    An older `best.json` with no recorded generation reads as unknown and is
+    left to the ordinary rules -- the conservative direction, matching how a
+    missing `source` is treated.
 
     `eval_source_iter` records WHICH model the holdout number describes. With
     `distributed_async_test_eval` (production), the holdout result collected
@@ -404,7 +442,23 @@ def _update_best_model(
         )
         return best_loss, best_source
 
-    if cur_source == best_source:
+    record_generation = _best_record_generation(best_state_path)
+    stale_ruler = (
+        cur_source == "test_loss"
+        and best_source == "test_loss"
+        and record_generation is not None
+        and record_generation != int(holdout_generation)
+    )
+    if stale_ruler:
+        adopt = True
+        print(
+            f"[trial] best-model ruler handover: the record {best_loss:.4f} was "
+            f"measured on holdout generation {record_generation}, the current "
+            f"holdout is generation {holdout_generation}; adopting "
+            f"{cur_loss:.4f} rather than comparing across rulers",
+            flush=True,
+        )
+    elif cur_source == best_source:
         adopt = cur_loss < best_loss - 1e-12
     elif cur_source == "test_loss":
         adopt = True
@@ -752,7 +806,10 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "trainer_steps_done": 0, "train_samples_seen": 0,
     "trainer_steps_per_s": 0.0, "trainer_samples_per_s": 0.0, "optimizer_steps_per_s": 0.0,
     "policy_loss": 0.0, "soft_policy_loss": 0.0, "future_policy_loss": 0.0,
-    "wdl_loss": 0.0, "blended_wdl_loss": 0.0, "sf_move_loss": 0.0, "sf_move_acc": 0.0, "sf_eval_loss": 0.0,
+  # `wdl_loss` == `blended_wdl_loss` == the trained value loss;
+  # `wdl_onehot_loss` is the hard-label diagnostic (no gradient).
+    "wdl_loss": 0.0, "blended_wdl_loss": 0.0, "wdl_onehot_loss": 0.0,
+    "sf_move_loss": 0.0, "sf_move_acc": 0.0, "sf_eval_loss": 0.0,
     "sf_search_agree_frac": 0.0,
     "sf_search_disagree_sf_low_frac": 0.0,
     "sf_search_disagree_sf_high_frac": 0.0,
@@ -763,6 +820,10 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "frac_is_selfplay_batch": 0.0, "frac_tagged_batch": 0.0,
     "policy_loss_open": 0.0, "policy_loss_mid": 0.0, "policy_loss_end": 0.0,
     "wdl_loss_open": 0.0, "wdl_loss_mid": 0.0, "wdl_loss_end": 0.0,
+    "grad_norm_mean": 0.0, "grad_norm_median": 0.0, "grad_norm_p95": 0.0,
+    "grad_norm_max": 0.0, "grad_clip_rate": 0.0, "grad_adaptive_clip_rate": 0.0,
+    "grad_hard_clip_rate": 0.0, "grad_norm_samples": 0,
+    "opt_lr_mean": 0.0, "opt_lr_max": 0.0,
 }
 
 
@@ -786,6 +847,7 @@ def _train_metrics_dict(metrics) -> dict:
         "future_policy_loss": float(metrics.future_policy_loss),
         "wdl_loss": float(metrics.wdl_loss),
         "blended_wdl_loss": float(metrics.blended_wdl_loss),
+        "wdl_onehot_loss": float(metrics.wdl_onehot_loss),
         "sf_search_agree_frac": float(metrics.sf_search_agree_frac),
         "sf_search_disagree_sf_low_frac": float(metrics.sf_search_disagree_sf_low_frac),
         "sf_search_disagree_sf_high_frac": float(metrics.sf_search_disagree_sf_high_frac),
@@ -808,6 +870,23 @@ def _train_metrics_dict(metrics) -> dict:
         "wdl_loss_open": float(metrics.wdl_loss_open),
         "wdl_loss_mid": float(metrics.wdl_loss_mid),
         "wdl_loss_end": float(metrics.wdl_loss_end),
+        # Grad-norm / clipping, aggregated over every step of the iteration.
+        # Previously TensorBoard-only, at a 1-in-10 subsample, in event files
+        # that rotate per Ray session — so no ledger yardstick could cite them
+        # and audit_realized_config.py could not gate on them (I9).
+        "grad_norm_mean": float(metrics.grad_norm_mean),
+        "grad_norm_median": float(metrics.grad_norm_median),
+        "grad_norm_p95": float(metrics.grad_norm_p95),
+        "grad_norm_max": float(metrics.grad_norm_max),
+        "grad_clip_rate": float(metrics.grad_clip_rate),
+        "grad_adaptive_clip_rate": float(metrics.grad_adaptive_clip_rate),
+        "grad_hard_clip_rate": float(metrics.grad_hard_clip_rate),
+        "grad_norm_samples": int(metrics.grad_norm_samples),
+        # Iteration mean/max of the matrix (trunk) group's LR — the LR the
+        # trunk actually trains at. `opt_lr_final` below is the trough of the
+        # sqrt_release ramp and is ~9x smaller (I19).
+        "opt_lr_mean": float(metrics.opt_lr_mean),
+        "opt_lr_max": float(metrics.opt_lr_max),
     }
 
 
@@ -821,7 +900,8 @@ def _mean_std(n: int, total: float, sq_total: float) -> tuple[float, float]:
 
 _TEST_METRIC_KEYS: tuple[str, ...] = (
     "test_loss", "test_policy_loss", "test_soft_policy_loss", "test_future_policy_loss",
-    "test_wdl_loss", "test_sf_move_loss", "test_sf_move_acc", "test_sf_eval_loss",
+    "test_wdl_loss", "test_wdl_onehot_loss",
+    "test_sf_move_loss", "test_sf_move_acc", "test_sf_eval_loss",
     "test_categorical_loss", "test_volatility_loss", "test_sf_volatility_loss",
     "test_moves_left_loss", "test_wdl_brier", "test_wdl_ece",
     "test_policy_loss_selfplay", "test_policy_loss_curriculum",
@@ -830,11 +910,23 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
 
 
 def _test_and_drift_dict(
-    *, tr: TrainingResult, drift: DriftMetrics,
-    holdout_buf_size: int, holdout_frozen: bool, holdout_generation: int,
+    *, tc: TrialConfig, tr: TrainingResult, drift: DriftMetrics,
+    holdout_frozen: bool, holdout_generation: int,
 ) -> dict:
     """Holdout-eval metrics + data-drift telemetry. Pre-seed test_iter so Ray
-    Tune locks the column on row 1 (else CSV consumers find it missing)."""
+    Tune locks the column on row 1 (else CSV consumers find it missing).
+
+    `test_size` is the number of rows the eval actually DREW --
+    ``test_steps * batch_size``, sampled WITH REPLACEMENT. It used to be the
+    holdout buffer's size, which reads like an evaluated-row count and is not
+    one: production draws 5 x 512 = 2560 rows from a buffer capped at 2000, so
+    the name promised a set size and delivered a different, smaller number.
+    The buffer size is still emitted, under the name that means it --
+    `test_replay`, which is what `audit_realized_config.py` already reads. No
+    column is added or removed: Ray's CSV logger fixes the header on row 1 and
+    a resume appends without re-heading, so a schema change here would
+    misalign every post-restart segment.
+    """
     test_dict: dict = {
         "holdout_frozen": int(holdout_frozen),
         "holdout_generation": int(holdout_generation),
@@ -853,13 +945,14 @@ def _test_and_drift_dict(
     if tr.test_metrics is not None:
         tm = tr.test_metrics
         test_dict.update({
-            "test_size": int(holdout_buf_size),
+            "test_size": max(0, int(tc.test_steps)) * max(0, int(tc.batch_size)),
             "test_iter": int(tr.test_metrics_source_iter),
             "test_loss": tm.loss,
             "test_policy_loss": tm.policy_loss,
             "test_soft_policy_loss": tm.soft_policy_loss,
             "test_future_policy_loss": tm.future_policy_loss,
             "test_wdl_loss": tm.wdl_loss,
+            "test_wdl_onehot_loss": float(tm.wdl_onehot_loss),
             "test_sf_move_loss": tm.sf_move_loss,
             "test_sf_move_acc": tm.sf_move_acc,
             "test_sf_eval_loss": tm.sf_eval_loss,
@@ -903,7 +996,7 @@ def _build_report_dict(
 ) -> dict:
     """Assemble the per-iteration report dict for Ray Tune."""
     test_dict = _test_and_drift_dict(
-        tr=tr, drift=drift, holdout_buf_size=holdout_buf_size,
+        tc=tc, tr=tr, drift=drift,
         holdout_frozen=holdout_frozen, holdout_generation=holdout_generation,
     )
     train_metrics_dict = _train_metrics_dict(tr.metrics)
@@ -1132,7 +1225,12 @@ def _build_report_dict(
         "wdl_regret_next": float(pr.wdl_regret_next),
         "opponent_strength": float(pr.opp_strength),
         "opponent_strength_ema": float(pr.opp_strength_ema),
-        "opt_lr": float(trainer.opt.param_groups[0]["lr"]),
+        # Renamed from `opt_lr`, which read as "the learning rate" but is
+        # sampled after the train phase, i.e. at the END of the sqrt_release
+        # ramp — the TROUGH, ~9x below the mean the matrix group sees. The
+        # honest per-iteration numbers are opt_lr_mean / opt_lr_max, spliced
+        # in from train_metrics_dict below (docs/rl_loop_audit.md I19).
+        "opt_lr_final": float(trainer.opt.param_groups[0]["lr"]),
         "peak_lr": float(getattr(trainer, "_peak_lr", 0.0)),
         "w_wdl": float(trainer.w_wdl),
         "w_soft": float(trainer.w_soft),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import threading
 from dataclasses import dataclass
 from typing import Any
@@ -198,8 +199,153 @@ def test_gumbel_cross_impl_root_outputs_match_edge_case_oracles() -> None:
         assert np.array_equal(py_mask, expected_mask)
         assert np.array_equal(c_mask, expected_mask)
         assert np.array_equal(py_mask, c_mask)
+  # The PUCT sibling above compares the distributions themselves; this test
+  # asserted masks only, so it could not fail on a policy divergence at all.
+        np.testing.assert_allclose(py_prob, c_prob, atol=0.0)
         assert np.count_nonzero(py_prob[~py_mask]) == 0
         assert np.count_nonzero(c_prob[~c_mask]) == 0
+
+
+class _HashEvaluator:
+    """Deterministic, position-dependent, non-degenerate.
+
+    `_ZeroEvaluator` returns the same value for every position, which makes the
+    tree degenerate: every leaf is worth the same, so a search that revisits a
+    leaf reaches the same answer as one that does not. Parity measured against
+    it is therefore blind to anything the search does with *differences*
+    between positions -- which is all of the interesting behaviour.
+    """
+
+    def evaluate_encoded(
+        self, x: np.ndarray, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        del relations  # interface conformance for BatchEvaluator
+        batch = int(x.shape[0])
+        flat = np.asarray(x, dtype=np.float32).reshape(batch, -1)
+        pol = np.empty((batch, POLICY_SIZE), dtype=np.float32)
+        wdl = np.empty((batch, 3), dtype=np.float32)
+        for i in range(batch):
+            digest = hashlib.sha256(flat[i].tobytes()).digest()[:8]
+            rng = np.random.default_rng(int.from_bytes(digest, "little"))
+            pol[i] = rng.standard_normal(POLICY_SIZE, dtype=np.float32)
+            wdl[i] = rng.standard_normal(3, dtype=np.float32)
+        return pol, wdl
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="gumbel_c extension not available")
+@pytest.mark.parametrize("simulations", [1, 16, 64])
+def test_gumbel_cross_impl_matches_under_a_real_evaluator(simulations: int) -> None:
+    """C and Python must agree on the policy, not just on the legal mask.
+
+    Two things make this a gate rather than a restatement of the test above:
+
+    * a **non-degenerate** evaluator, so the search has real value differences
+      to act on; and
+    * `target_batch=1`, which flushes leaves once per sequential-halving rep --
+      the semantics the Python reference implements.
+
+    At the production `target_batch` (0 -> `GSS_GPU_BATCH`) the C path
+    accumulates leaves across *several* reps before flushing, and because
+    `vloss_weight` is 0 a later rep re-walks an unchanged tree and lands on the
+    same leaf. That is a genuine algorithmic difference, not a formula bug, so
+    it is deliberately NOT asserted here -- see the C17 entry in
+    `docs/rl_loop_audit.md`. Measured with this evaluator, production batching
+    diverges enough to pick a *different move* (L1 up to 1.90 at 256 sims).
+
+    Capped at 64 simulations because a residual divergence appears from 96 up.
+    That residual is not papered over with a tolerance — it is pinned by
+    `test_gumbel_cross_impl_residual_above_64_sims` below and recorded as C27
+    in `docs/rl_loop_audit.md`.
+    """
+    boards = _edge_case_boards()
+    pre_pol, pre_wdl = _root_logits(len(boards))
+    cfg = GumbelConfig(
+        simulations=simulations, topk=8, temperature=0.0, add_noise=False,
+    )
+
+    py_probs, py_actions, py_values, py_masks = run_gumbel_root_many(
+        None,
+        boards,
+        device="cpu",
+        rng=np.random.default_rng(11),
+        cfg=cfg,
+        evaluator=_HashEvaluator(),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+    )
+    run_c = run_gumbel_root_many_c
+    assert run_c is not None
+    c_probs, c_actions, c_values, c_masks = run_c(
+        None,
+        boards,
+        device="cpu",
+        rng=np.random.default_rng(11),
+        cfg=cfg,
+        evaluator=_HashEvaluator(),
+        pre_pol_logits=pre_pol,
+        pre_wdl_logits=pre_wdl,
+        target_batch=1,
+    )[:4]
+
+    assert py_actions == c_actions
+    np.testing.assert_allclose(py_values, c_values, atol=0.0)
+    for py_prob, c_prob, py_mask, c_mask in zip(
+        py_probs, c_probs, py_masks, c_masks, strict=True,
+    ):
+        assert np.array_equal(py_mask, c_mask)
+        np.testing.assert_allclose(py_prob, c_prob, atol=0.0)
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="gumbel_c extension not available")
+@pytest.mark.xfail(
+    strict=True,
+    reason="C27: unexplained C-vs-Python policy residual from 96 sims up, even "
+           "at per-rep flush. Pinned deliberately — see docs/rl_loop_audit.md C27. "
+           "A strict xfail means this FAILS if the residual ever disappears, so "
+           "the day someone fixes it we are told instead of silently drifting.",
+)
+@pytest.mark.parametrize("simulations", [96, 128, 256])
+def test_gumbel_cross_impl_residual_above_64_sims(simulations: int) -> None:
+    """Pin the residual C-vs-Python divergence that survives matched batching.
+
+    Same setup as the gate above, only with a larger budget. Production runs
+    256 simulations, so this is the regime the training targets are actually
+    built in.
+
+    Measured on these six boards (1 of 6 diverges at every budget):
+
+        sims=64   L1 0        rel 0
+        sims=96   L1 0.00384  rel 0.0064
+        sims=128  L1 0.0575   rel 0.097
+        sims=192  L1 0.0974   rel 0.130
+        sims=256  L1 0.0317   rel 0.135
+
+    The selected MOVE agrees at every budget, so this is a distribution-shape
+    difference rather than a different decision — which is why it is recorded
+    and pinned rather than treated as a release blocker. It is NOT explained by
+    C16/C17: those are artifacts of cross-rep leaf accumulation, and this
+    persists with `target_batch=1`.
+    """
+    boards = _edge_case_boards()
+    pre_pol, pre_wdl = _root_logits(len(boards))
+    cfg = GumbelConfig(
+        simulations=simulations, topk=8, temperature=0.0, add_noise=False,
+    )
+    run_c = run_gumbel_root_many_c
+    assert run_c is not None
+
+    py_probs, _, _, _ = run_gumbel_root_many(
+        None, boards, device="cpu", rng=np.random.default_rng(11), cfg=cfg,
+        evaluator=_HashEvaluator(), pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+    )
+    c_probs, _, _, _ = run_c(
+        None, boards, device="cpu", rng=np.random.default_rng(11), cfg=cfg,
+        evaluator=_HashEvaluator(), pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+        target_batch=1,
+    )[:4]
+
+    for py_prob, c_prob in zip(py_probs, c_probs, strict=True):
+        np.testing.assert_allclose(py_prob, c_prob, atol=0.0)
 
 
 def test_uci_tb_solved_root_shortcuts_without_evaluating(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -7,7 +7,9 @@ thousands of ``ReplaySample`` Python objects.
 """
 from __future__ import annotations
 
+import fcntl
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -56,6 +58,16 @@ _REFRESH_EMPTY_STREAK_ALARM = 50
 # Throttle for the tracked-shard load-failure line. Generous because the
 # failure it reports is per-shard and can arrive in bursts.
 _SHARD_LOAD_WARN_INTERVAL_S = 60.0
+
+# Advisory lock naming the one process allowed to write shards into a window
+# dir. Two writers is not hypothetical: on 2026-07-11 two of them interleaved
+# index streams into one dir for 87 minutes and left 20.5k byte-identical
+# duplicate rows (1.37% of the window), which then rode into the salvage pool
+# `swap_512x16_20260711` and is still in the live window 15 days later. Nothing
+# noticed at the time; audit G7 found it. The lock is a DETECTOR, not a guard --
+# it logs and continues, because refusing to write would turn a data-quality
+# defect into a production outage.
+_WRITER_LOCK_NAME = ".writer.lock"
 
 _ARRAY_FIELD_ORDER = _SHARD_FIELDS
 _SCALAR_METADATA_FIELDS = (
@@ -199,6 +211,11 @@ class DiskReplayBuffer:
         self._upgrade_failures = 0
         self._shard_dir = Path(shard_dir)
         self._shard_dir.mkdir(parents=True, exist_ok=True)
+  # Taken lazily on the first shard write, not here: a read-only or
+  # short-lived buffer should not claim the dir, and `clear()` routes
+  # through `close()` and then keeps writing.
+        self._writer_lock_fd: int | None = None
+        self._writer_lock_reported = False
 
         self._shuffle_cap = int(shuffle_cap)
         self._shard_size = int(shard_size)
@@ -1004,9 +1021,86 @@ class DiskReplayBuffer:
         """Apply the current capacity limit immediately."""
         self._enforce_window()
 
+    def _claim_writer(self) -> None:
+        """Take the shard dir's advisory writer lock, or say who already has it.
+
+        Detection only: a second writer keeps writing. What it produces is
+        silent duplication rather than a crash -- two buffers allocate shard
+        indices from their own counters, so the streams interleave instead of
+        colliding, and every row written while both are live lands in the
+        window twice. The lock is released when the process exits (or in
+        ``close()``), so a crash cannot leave a stale one behind.
+        """
+        if self._writer_lock_fd is not None:
+            return
+        lock_path = self._shard_dir / _WRITER_LOCK_NAME
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+        except OSError as exc:
+            log.warning("[disk_buf] cannot open writer lock %s: %s", lock_path, exc)
+            self._writer_lock_reported = True
+            return
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            if not self._writer_lock_reported:
+                holder = ""
+                with contextlib.suppress(Exception):
+                    holder = os.pread(fd, 64, 0).decode("utf-8", "replace").strip()
+                log.error(
+                    "[disk_buf] CONCURRENT WRITER: %s is already being written by pid %s; "
+                    "this process (pid %d) is writing into it too. Every row ingested from "
+                    "here on lands in the window TWICE, and each writer draws its own "
+                    "holdout split, so a duplicated row can sit in one holdout and the "
+                    "other's training set (audit G7).",
+                    self._shard_dir, holder or "unknown", os.getpid(),
+                )
+                self._writer_lock_reported = True
+            os.close(fd)
+            return
+        with contextlib.suppress(Exception):
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, f"{os.getpid()}\n".encode(), 0)
+        self._writer_lock_fd = fd
+
+    def _release_writer(self) -> None:
+        fd = self._writer_lock_fd
+        self._writer_lock_fd = None
+        if fd is None:
+            return
+        with contextlib.suppress(Exception):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        with contextlib.suppress(Exception):
+            os.close(fd)
+
+    def _next_free_shard_path(self) -> Path:
+        """Shard path for the next index, skipping any that already exists.
+
+        A path that exists at the index this buffer thinks is free means
+        something else wrote it. Overwriting would silently destroy the other
+        writer's rows on top of duplicating our own, so step over it instead.
+        """
+        path = local_shard_path(self._shard_dir, self._shard_index)
+        skipped = 0
+  # `is_symlink` too: a seeded salvage link at this index is occupied even
+  # when its target has since been removed, and writing through a dangling
+  # link would land the shard in the salvage pool.
+        while path.exists() or path.is_symlink():
+            skipped += 1
+            self._shard_index += 1
+            path = local_shard_path(self._shard_dir, self._shard_index)
+        if skipped:
+            log.error(
+                "[disk_buf] shard index collision in %s: skipped %d existing shard(s) to "
+                "reach %s. Another writer owns those indices (audit G7).",
+                self._shard_dir, skipped, path.name,
+            )
+        return path
+
     def _flush_shard_arrays(self, arrs: dict[str, np.ndarray]) -> None:
         """Write a shard to disk."""
-        path = local_shard_path(self._shard_dir, self._shard_index)
+        self._claim_writer()
+        path = self._next_free_shard_path()
         saved_path = save_local_shard_arrays(path, arrs=arrs)
         n = int(arrs["x"].shape[0])
         self._append_shard_record(saved_path, n)
@@ -1267,6 +1361,8 @@ class DiskReplayBuffer:
                 delete_shard_path(p)
 
     def close(self) -> None:
+        self._release_writer()
+        self._writer_lock_reported = False
         t = self._prefetch_thread
         stop_event = self._prefetch_stop
         request_event = self._prefetch_request

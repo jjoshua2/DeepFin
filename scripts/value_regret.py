@@ -25,6 +25,7 @@ import chess
 import numpy as np
 import torch
 
+from chess_anti_engine.encoding import model_encoding_kwargs
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.eval.audit import PHASE_NAMES, load_audit_set, move_regrets
 from chess_anti_engine.inference import LocalModelEvaluator
@@ -59,8 +60,7 @@ def value_1ply_regret(
     """
     model = load_model_from_checkpoint(checkpoint, device=device)
     model.eval()
-    hist = str(getattr(model, "input_history_encoding", "legacy"))
-    extra = str(getattr(model, "input_extra_features", "v1"))
+    enc_kwargs = model_encoding_kwargs(model)
     # Dynamic-relation checkpoints apply their attention bias only when the
     # relation tensor is passed; without it we'd silently score a relation-less
     # model. Carry relations exactly like scripts/audit_targets.py does.
@@ -89,8 +89,7 @@ def value_1ply_regret(
                     pv[mi] = 0.0                    # stalemate / draw
                 else:
                     cb = CBoard.from_board(board)
-                    encs.append(encode_cboard(
-                        cb, input_history_encoding=hist, input_extra_features=extra))
+                    encs.append(encode_cboard(cb, **enc_kwargs))
                     if use_rel:
                         rels.append(cb.compute_relations())
                     owner.append((lpi, mi))

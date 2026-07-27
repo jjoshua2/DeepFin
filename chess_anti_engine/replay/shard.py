@@ -24,6 +24,7 @@ from chess_anti_engine.moves import (
     policy_size_for_encoding,
 )
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
+from chess_anti_engine.utils.atomic import atomic_write
 
 from .sample import ReplaySample
 
@@ -1264,6 +1265,37 @@ def arrays_to_samples(arrs: dict[str, np.ndarray]) -> list[ReplaySample]:
     return out
 
 
+def save_npz_arrays(
+    path: str | Path,
+    *,
+    arrs: dict[str, np.ndarray],
+    meta: ShardMeta | dict[str, Any] | None = None,
+    compress: bool = True,
+) -> Path:
+    """Write dense *arrs* as a single-file ``.npz`` shard, atomically.
+
+    The zarr writer (``save_local_shard_arrays``) is the production shard
+    path and should stay that way; this exists for the callers that need
+    ONE file rather than a directory — the bootstrap tooling and the holdout
+    sidecar, which is copied by name alongside ``trainer.pt`` into salvage
+    pools. ``load_shard_arrays`` reads both formats.
+
+    ``preserve_suffix`` matters: ``numpy.savez`` appends ``.npz`` when the
+    path does not already end in it, so the tmp name has to keep the suffix
+    or the rename would chase a file that does not exist.
+    """
+    p = Path(path)
+    stored = prune_storage_arrays(arrs)
+    meta_json = json.dumps(_meta_with_policy(meta, arrs=stored), sort_keys=True)
+    saver: Callable[..., Any] = np.savez_compressed if compress else np.savez
+    atomic_write(
+        p,
+        lambda tmp: saver(str(tmp), **stored, meta_json=np.array(meta_json)),
+        preserve_suffix=True,
+    )
+    return p
+
+
 def save_npz(
     path: str | Path,
     *,
@@ -1277,13 +1309,9 @@ def save_npz(
     ``scripts/train_bootstrap.py``) only. The production pipeline writes
     zarr via ``save_local_shard_arrays``.
     """
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    stored = prune_storage_arrays(samples_to_arrays(samples))
-    meta_json = json.dumps(_meta_with_policy(meta, arrs=stored), sort_keys=True)
-    saver: Callable[..., Any] = np.savez_compressed if compress else np.savez
-    saver(str(p), **stored, meta_json=np.array(meta_json))
-    return p
+    return save_npz_arrays(
+        path, arrs=samples_to_arrays(samples), meta=meta, compress=compress,
+    )
 
 
 def _local_chunks(arr: np.ndarray) -> tuple[int, ...]:

@@ -12,7 +12,12 @@ the encoding stored in the checkpoint itself.
    frozen holdout replay set at a matched training-step count, and record the
    deltas for at least `test_policy_loss` and `test_wdl_loss`. The holdout
    must be frozen — never the live (still-growing) replay window, which shifts
-   under PID difficulty and window growth.
+   under PID difficulty and window growth. **`test_wdl_loss` changed meaning
+   on 2026-07-26**: it now reports the blended loss the optimizer sees rather
+   than a hard one-hot diagnostic (docs/rl_loop_audit.md I7), so it steps by
+   ~+0.026 at that boundary. Candidate and reference must be measured with the
+   same code; never compare a delta across it. The old quantity survives as
+   `test_wdl_onehot_loss`.
 
 2. **1000-game paired arena, BOTH modes.**
 

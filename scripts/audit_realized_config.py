@@ -14,6 +14,15 @@ two agree. Four of them shipped to production undetected:
     selfplay reached 100%, crowding normal openings to zero.
   - Workers frozen on a stale `model_sha` so ~80% of games were discarded as
     stale while both counters looked individually sane (fixed PR #228).
+  - `soft_policy_temp` 3.0 in the yaml against a realized 2.0 for five months,
+    because the key was published by nobody and consumed by nobody. The
+    reco-vs-yaml diff that should have caught it compared only the keys the two
+    sides SHARE, so an absent key was structurally invisible (rl_loop_audit
+    E13/A7). `--reco-diff` now runs that comparison over the UNION.
+  - `params.json` read as though it were the realized config. It is the trial's
+    LAUNCH config, and Ray rewrites it on every checkpoint, so the mtime tracks
+    the run while the contents never move (rl_loop_audit J5). The provenance
+    section names the authoritative source per key and lists what is stale.
 
 This is a point-in-time audit, NOT a loop guard — `loop_health.py` owns the
 per-iteration alerting. Run it after a deploy, before trusting a throughput
@@ -24,19 +33,23 @@ Usage:
   PYTHONPATH=. python3 scripts/audit_realized_config.py
   PYTHONPATH=. python3 scripts/audit_realized_config.py --last 20
   PYTHONPATH=. python3 scripts/audit_realized_config.py --result-json PATH
+  PYTHONPATH=. python3 scripts/audit_realized_config.py --reco-diff
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import statistics
 import sys
+import time
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 
 from chess_anti_engine.tune.result_keys import row_counter, row_counter_opt
+from chess_anti_engine.utils.config_yaml import SELFPLAY_CONFIG_KEYS
 from scripts.loop_health import load_rows, parse_outcome_stats
-from scripts.trial_paths import latest_result_path
+from scripts.trial_paths import default_run_dir, latest_result_path
 
 # Relative tolerance before a knob is called divergent. Generous on purpose:
 # these are ratios of small per-iteration counts, so Poisson noise alone moves
@@ -368,6 +381,17 @@ def audit_wall_clock(rows: list[dict]) -> list[str]:
     return findings
 
 
+def flatten_yaml_config(raw: Mapping[str, object]) -> dict[str, object]:
+    """Flatten one level: the production yaml groups knobs under sections."""
+    flat: dict[str, object] = {}
+    for key, val in raw.items():
+        if isinstance(val, dict):
+            flat.update(val)
+        else:
+            flat[key] = val
+    return flat
+
+
 def audit_live_yaml(rows: list[dict], yaml_path: Path | None) -> list[str]:
     """Effective config vs the yaml on disk.
 
@@ -391,13 +415,7 @@ def audit_live_yaml(rows: list[dict], yaml_path: Path | None) -> list[str]:
         print(f"  SKIP  could not parse {path}: {exc}")
         return findings
 
-    # Flatten one level: the production yaml groups knobs under sections.
-    flat: dict[str, object] = {}
-    for key, val in raw.items():
-        if isinstance(val, dict):
-            flat.update(val)
-        else:
-            flat[key] = val
+    flat = flatten_yaml_config(raw)
 
     checked = 0
     for knob in _KNOBS:
@@ -429,6 +447,411 @@ def audit_live_yaml(rows: list[dict], yaml_path: Path | None) -> list[str]:
     return findings
 
 
+# ---------------------------------------------------------------------------
+# J5: is the source you read a "realized" config from actually realized?
+#
+# Three files claim to describe the running trial's config and only one of them
+# does:
+#
+#   params.json                Ray's snapshot of the config the trial was
+#                              CONSTRUCTED with. Rewritten on every checkpoint,
+#                              so its mtime tracks the run and it looks current;
+#                              the contents never move. Authoritative only for
+#                              keys a live reload refuses to apply.
+#   configs/*.yaml (live)      re-read every iteration; wins for every key the
+#                              reloader will apply, but it is an INPUT — a
+#                              rejected reload leaves it disagreeing with what
+#                              runs, which is the failure this section detects.
+#   result.json row["config"]  the trial's own config dict AFTER the reload, one
+#                              snapshot per iteration. The realized source.
+#
+# Measured on the live trial 2026-07-26: params.json read
+# opening_fen_dole_per_iter=1 and .../retire_307.txt while the yaml and the
+# realized row both read 0 and retire_59. Nothing in the file says so.
+# ---------------------------------------------------------------------------
+
+# Keys whose yaml value moves on its own between iterations, so a yaml-vs-row
+# difference is the healthy state rather than a rejected reload. Each entry must
+# say what rewrites it — an unexplained entry silences a real finding.
+_PROVENANCE_ROTATING_KEYS: dict[str, str] = {
+    "opening_fen_list_path": (
+        "the blind-spot retire loop rewrites the yaml with a new retire_N file "
+        "between iterations, so the newest row legitimately lags by one rotation"
+    ),
+}
+
+
+def classify_config_provenance(
+    params: Mapping[str, object],
+    flat_yaml: Mapping[str, object],
+    realized: Mapping[str, object],
+    *,
+    restart_keys: Iterable[str],
+    searched_keys: Iterable[str] = (),
+    yaml_is_newer_than_row: bool = False,
+) -> tuple[list[str], list[str]]:
+    """Label every shared config key by which source is authoritative for it.
+
+    Returns ``(report_lines, findings)``. Three outcomes per key:
+
+      * restart-required and yaml != realized — the yaml was edited and the
+        running trial has not taken it. A FINDING: this is the
+        "my change may not be in effect" trap, and it is silent.
+      * live-reloadable and yaml != realized — the reload did not land. A
+        FINDING: the live-yaml validator is all-or-nothing, so one unknown key
+        rejects every other key's change too.
+      * live-reloadable and params.json != realized — expected and benign, but
+        reported by count and by name, because reading that file is how the
+        trap fires.
+
+    Compared against ``realized`` rather than against each other on purpose: a
+    ``params.json``-vs-yaml diff cannot distinguish "the reload landed" from
+    "the reload was rejected and both sources are wrong".
+
+    ``restart_keys`` is injected rather than imported so this stays a pure
+    function testable without a built C extension; the caller supplies
+    ``trainable_config_ops.restart_required_config_keys()``.
+
+    ``yaml_is_newer_than_row`` downgrades every yaml-vs-realized difference to a
+    printed note. The realized row is minutes old by construction, so a yaml
+    edited after it has simply not been read yet — reporting that as a rejected
+    reload would make "edit the yaml, then audit" fire a false alarm every time,
+    and a monitor that cries wolf is a monitor nobody reads.
+    """
+    restart = set(restart_keys)
+    searched = set(searched_keys)
+    stale: list[str] = []
+    report: list[str] = []
+    findings: list[str] = []
+
+    def _diverged(kind: str, key: str, on_disk: object, live: object, why: str) -> None:
+        if yaml_is_newer_than_row:
+            report.append(
+                f"  {kind}-UNRESOLVED {key}: yaml={on_disk!r} running={live!r} "
+                "(yaml edited after the newest row — re-run after the next iteration)"
+            )
+            return
+        if key in _PROVENANCE_ROTATING_KEYS:
+            report.append(
+                f"  {kind}-EXPECTED {key}: yaml={on_disk!r} running={live!r} "
+                f"({_PROVENANCE_ROTATING_KEYS[key]})"
+            )
+            return
+        report.append(f"  {kind} {key}: yaml={on_disk!r} running={live!r}")
+        findings.append(why)
+
+    for key in sorted(set(flat_yaml) & set(realized)):
+        if key in searched or key.startswith("pb2_bounds_"):
+            continue
+        on_disk = flat_yaml[key]
+        live = realized[key]
+        if key in restart:
+            if not _same_value(on_disk, live):
+                _diverged(
+                    "PENDING-RESTART", key, on_disk, live,
+                    f"{key}: the yaml says {on_disk!r} but the trial is running "
+                    f"{live!r} and a live reload will never apply it — restart "
+                    "required, or the experiment is not the one you think",
+                )
+            continue
+        if not _same_value(on_disk, live):
+            _diverged(
+                "RELOAD-NOT-APPLIED", key, on_disk, live,
+                f"{key}: live-reloadable, but the yaml value {on_disk!r} has not "
+                f"reached the running trial ({live!r}) — one unknown key rejects "
+                "the WHOLE yaml reload",
+            )
+        elif key in params and not _same_value(params[key], live):
+            stale.append(f"      {key}: params.json={params[key]!r} running={live!r}")
+    if stale:
+        report.append(
+            f"  STALE-IN-PARAMS-JSON  {len(stale)} live-reloadable key(s) where "
+            "params.json holds the LAUNCH value (the running value is correct):"
+        )
+        report.extend(stale)
+    return report, findings
+
+
+def audit_config_provenance(
+    rows: list[dict], yaml_path: Path | None, params_path: Path | None,
+) -> list[str]:
+    """Name the authoritative source per key, and check the yaml actually landed."""
+    # Imported here, not at module scope: trainable_config_ops pulls in the
+    # selfplay package (and its C extension), and this script must stay
+    # importable wherever the extension is not built.
+    from chess_anti_engine.tune.trainable_config_ops import restart_required_config_keys
+
+    print()
+    print("=== config provenance: params.json vs live yaml vs realized row ===")
+    cfg = rows[-1].get("config") or {}
+    path = yaml_path or Path(str(cfg.get("_yaml_config_path") or ""))
+    if not cfg:
+        print("  SKIP  the newest result row carries no config block")
+        return []
+    if not path or not path.exists():
+        print(f"  SKIP  yaml not found ({path})")
+        return []
+    try:
+        import yaml as _yaml
+
+        raw = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # yaml.YAMLError is not an OSError/ValueError
+        print(f"  SKIP  could not parse {path}: {exc}")
+        return []
+
+    params: dict[str, object] = {}
+    params_stamp = ""
+    if params_path is not None and params_path.exists():
+        try:
+            params = json.loads(params_path.read_text(encoding="utf-8"))
+            params_stamp = time.strftime(
+                "%Y-%m-%d %H:%M", time.localtime(params_path.stat().st_mtime)
+            )
+        except (OSError, ValueError) as exc:
+            print(f"  WARN  could not read {params_path}: {exc}")
+    # The realized row is by construction one iteration old, so a yaml edited
+    # since then has not been read yet and every difference it introduces is
+    # unresolved rather than rejected.
+    row_ts = rows[-1].get("timestamp")
+    yaml_mtime = path.stat().st_mtime
+    yaml_is_newer = row_ts is not None and yaml_mtime > float(row_ts)
+
+    print(f"  realized:    iter {rows[-1].get('training_iteration', '?')} "
+          "(result.json row config — the only per-iteration source)")
+    print(f"  live yaml:   {path}  (authoritative for live-reloadable keys"
+          + (", EDITED SINCE THE NEWEST ROW" if yaml_is_newer else "") + ")")
+    if params:
+        print(f"  params.json: {params_path}  (LAUNCH config; rewritten "
+              f"{params_stamp}, so the mtime tracks the run and the CONTENTS DO NOT)")
+    else:
+        print("  params.json: not read — the launch-vs-live staleness list is skipped")
+
+    searched = {k.removeprefix("pb2_bounds_") for k in cfg if k.startswith("pb2_bounds_")}
+    report, findings = classify_config_provenance(
+        params, flatten_yaml_config(raw), cfg,
+        restart_keys=restart_required_config_keys(),
+        searched_keys=searched,
+        yaml_is_newer_than_row=yaml_is_newer,
+    )
+    for line in report:
+        print(line)
+    if not findings:
+        print("  ok   every shared yaml key has reached the running trial")
+    return findings
+
+
+# ---------------------------------------------------------------------------
+# A4 / A7: does every worker-affecting yaml key actually reach the worker?
+#
+# A4 used to diff the published `recommended_worker` against the yaml over the
+# INTERSECTION of the two key sets and report "63 of 64 exact". A key that is
+# absent from the reco entirely never enters that comparison, so the check was
+# structurally incapable of seeing the largest live config defect in the loop:
+# `soft_policy_temp` read 3.0 in the yaml for five months while every worker
+# built the target at GameConfig's default of 2.0, because nobody published it
+# and nobody consumed it (rl_loop_audit E13/A7). The diff below runs over the
+# UNION, so "absent" is a reportable state rather than an invisible one.
+# ---------------------------------------------------------------------------
+
+# Worker-affecting yaml keys the server deliberately does not publish under
+# their own name. Each entry must say WHY, because "it isn't published" is the
+# defect this section exists to find — an unexplained entry here is a bug in
+# disguise.
+_RECO_SERVER_RESOLVED: dict[str, str] = {
+    "games_per_iter": "server-only game budget; workers are handed games_per_batch",
+    "games_per_iter_start": "server-only ramp input to games_per_iter",
+    "games_per_iter_ramp_iters": "server-only ramp input to games_per_iter",
+    "selfplay_batch": "published under the name games_per_batch",
+    "mcts_start_simulations": "server resolves the ramp into mcts_simulations",
+    "mcts_ramp_steps": "server resolves the ramp into mcts_simulations",
+    "mcts_ramp_exponent": "server resolves the ramp into mcts_simulations",
+    "opening_fen_dole_max_fraction": (
+        "server resolves it against games_per_iter into opening_fen_dole_max_games"
+    ),
+    "opening_book_path": "served as a manifest download endpoint, not a reco value",
+    "opening_fen_list_path": "served as a manifest download endpoint, not a reco value",
+}
+
+# Keys the worker intentionally leaves at its own dataclass default, mapped to
+# the default it must equal. Deliberately self-invalidating: the moment the
+# yaml moves OFF the default the allowlist stops covering the key and it
+# becomes a finding, because at that point the yaml is asking for something the
+# worker will never do. `test_reco_worker_defaults_match_dataclasses` pins
+# these numbers to the real dataclass fields so the table cannot rot.
+_RECO_WORKER_DEFAULT: dict[str, object] = {
+    "fpu_reduction": 1.2,          # SearchConfig.fpu_reduction
+    "fpu_at_root": 1.0,            # SearchConfig.fpu_at_root
+    "temperature_drop_plies": 0,   # TemperatureConfig.drop_plies
+    "temperature_after": 0.0,      # TemperatureConfig.after
+    "categorical_bins": 32,        # GameConfig.categorical_bins
+    "hlgauss_sigma": 0.04,         # GameConfig.hlgauss_sigma
+}
+
+# Keys whose reco value is EXPECTED to differ from the yaml value, with why.
+_RECO_INTENTIONAL_VALUE_DIVERGENCE: dict[str, str] = {
+    "sf_nodes": (
+        "the yaml key is the PID FLOOR; the published value is the live "
+        "base_nodes the controller has ramped to"
+    ),
+}
+
+
+def _same_value(a: object, b: object) -> bool:
+    """Value equality that survives the yaml->json round trip (1 vs 1.0)."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return bool(a) == bool(b)
+    if a is None or b is None:
+        return a is None and b is None
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) <= 1e-9 * max(1.0, abs(float(a)))
+    return str(a) == str(b)
+
+
+def diff_reco_coverage(
+    reco: Mapping[str, object],
+    flat_cfg: Mapping[str, object],
+    *,
+    selfplay_keys: Iterable[str] = SELFPLAY_CONFIG_KEYS,
+) -> tuple[list[str], list[str]]:
+    """Diff the published reco against the yaml over the UNION of key sets.
+
+    Returns ``(report_lines, findings)``. Four outcomes per key:
+
+      both sides      -> values compared (see _RECO_INTENTIONAL_VALUE_DIVERGENCE)
+      yaml only       -> FINDING unless allowlisted; this is the E13 class
+      reco only       -> context: the worker runs the server's default for it
+      neither side    -> context: nobody configures it, worker default stands
+
+    ``selfplay_keys`` is the canonical enumeration of worker-affecting yaml
+    keys, so a key that no yaml currently sets is still in the basis — a knob
+    that is unpublished AND unset is one yaml edit away from being the next
+    silent no-op, and it should be visible before that edit, not after.
+    """
+    report: list[str] = []
+    findings: list[str] = []
+    basis = set(selfplay_keys) | set(reco)
+    unset: list[str] = []
+
+    for key in sorted(basis):
+        in_reco = key in reco
+        in_yaml = key in flat_cfg
+        if in_reco and in_yaml:
+            why = _RECO_INTENTIONAL_VALUE_DIVERGENCE.get(key)
+            if _same_value(reco[key], flat_cfg[key]):
+                continue
+            if why is not None:
+                report.append(
+                    f"  ok(intent) {key}: reco={reco[key]!r} yaml={flat_cfg[key]!r} — {why}"
+                )
+                continue
+            report.append(f"  DIVERGENT {key}: reco={reco[key]!r} yaml={flat_cfg[key]!r}")
+            findings.append(
+                f"{key}: published reco says {reco[key]!r} but the yaml says "
+                f"{flat_cfg[key]!r} — workers are running the published value"
+            )
+        elif in_yaml:
+            if key in _RECO_SERVER_RESOLVED:
+                report.append(f"  ok(server) {key}: {_RECO_SERVER_RESOLVED[key]}")
+            elif key in _RECO_WORKER_DEFAULT:
+                default = _RECO_WORKER_DEFAULT[key]
+                if _same_value(flat_cfg[key], default):
+                    report.append(
+                        f"  ok(default) {key}={flat_cfg[key]!r}: unpublished on purpose, "
+                        f"and equal to the worker default"
+                    )
+                else:
+                    report.append(
+                        f"  ABSENT    {key}: yaml={flat_cfg[key]!r} but the worker "
+                        f"default is {default!r} and the key is not published"
+                    )
+                    findings.append(
+                        f"{key}: yaml asks for {flat_cfg[key]!r} but the key is absent "
+                        f"from recommended_worker, so every worker uses {default!r}. "
+                        "Either publish+consume it or put the yaml back on the default"
+                    )
+            else:
+                report.append(f"  ABSENT    {key}={flat_cfg[key]!r}: never published")
+                findings.append(
+                    f"{key}: set in the yaml but absent from recommended_worker — "
+                    "no worker can ever see it, and the selfplay dataclass silently "
+                    "keeps its own default (this is the soft_policy_temp/E13 class)"
+                )
+        elif in_reco:
+            report.append(
+                f"  ok(unset)  {key}={reco[key]!r}: published, but no yaml key sets it"
+            )
+        else:
+            unset.append(key)
+
+    if unset:
+        report.append(
+            f"  ok(inert)  {len(unset)} selfplay key(s) neither published nor set in "
+            f"the yaml: {', '.join(unset)}"
+        )
+    return report, findings
+
+
+def _find_live_manifest(rows: list[dict], explicit: Path | None) -> Path | None:
+    """Newest publish/manifest.json for this run, or None."""
+    if explicit is not None:
+        return explicit if explicit.exists() else None
+    cfg = rows[-1].get("config") or {}
+    roots: list[Path] = []
+    work_dir = str(cfg.get("work_dir") or "").strip()
+    if work_dir:
+        roots.append(Path(work_dir) / "server")
+    roots.append(default_run_dir() / "server")
+    for root in roots:
+        found = sorted(
+            root.glob("trials/*/publish/manifest.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if found:
+            return found[0]
+    return None
+
+
+def audit_reco_coverage(
+    rows: list[dict], yaml_path: Path | None, manifest_path: Path | None,
+) -> list[str]:
+    """Published reco vs the yaml, over the UNION of their key sets (A4/A7)."""
+    print()
+    print("=== published reco vs yaml (UNION of key sets) ===")
+    cfg = rows[-1].get("config") or {}
+    path = yaml_path or Path(str(cfg.get("_yaml_config_path") or ""))
+    if not path or not path.exists():
+        print(f"  SKIP  yaml not found ({path})")
+        return []
+    manifest = _find_live_manifest(rows, manifest_path)
+    if manifest is None:
+        print("  SKIP  no publish/manifest.json found — this check needs a "
+              "distributed run's published manifest")
+        return []
+    try:
+        import yaml as _yaml
+
+        raw = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        published = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception as exc:  # yaml.YAMLError is not an OSError/ValueError
+        print(f"  SKIP  could not read {path} / {manifest}: {exc}")
+        return []
+    reco = published.get("recommended_worker")
+    if not isinstance(reco, dict):
+        print(f"  SKIP  {manifest} has no recommended_worker block")
+        return []
+
+    flat = flatten_yaml_config(raw)
+    report, findings = diff_reco_coverage(reco, flat)
+    print(f"  manifest: {manifest} ({len(reco)} published keys)")
+    print(f"  yaml:     {path}")
+    for line in report:
+        print(line)
+    if not findings:
+        print("  ok   every worker-affecting yaml key is published or explained")
+    return findings
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -441,6 +864,17 @@ def main() -> None:
     ap.add_argument("--yaml", type=Path, default=None,
                     help="config yaml to compare against (default: the trial's own "
                          "_yaml_config_path)")
+    ap.add_argument("--reco-diff", action="store_true",
+                    help="also diff the published recommended_worker against the yaml "
+                         "over the UNION of key sets (rl_loop_audit A4/A7). Off by "
+                         "default because it needs a distributed run's manifest")
+    ap.add_argument("--manifest", type=Path, default=None,
+                    help="publish/manifest.json for --reco-diff (default: newest under "
+                         "the run's server/trials)")
+    ap.add_argument("--params-json", type=Path, default=None,
+                    help="the trial's params.json for the provenance section (default: "
+                         "sibling of the result.json). It is the LAUNCH config, never a "
+                         "realized one — the section exists to say so per key")
     args = ap.parse_args()
     if args.last < 2:
         sys.exit("--last must be >= 2")
@@ -463,6 +897,11 @@ def main() -> None:
     findings += audit_counters(rows)
     findings += audit_wall_clock(rows)
     findings += audit_live_yaml(rows, args.yaml)
+    findings += audit_config_provenance(
+        rows, args.yaml, args.params_json or path.parent / "params.json",
+    )
+    if args.reco_diff:
+        findings += audit_reco_coverage(rows, args.yaml, args.manifest)
 
     print()
     if not findings:

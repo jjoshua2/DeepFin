@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -275,3 +276,113 @@ def test_window_smaller_than_two_iters_is_rejected(monkeypatch) -> None:
     with pytest.raises(SystemExit) as exc:
         ar.main()
     assert exc.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# J5: params.json is the LAUNCH config, and nothing in it says so.
+# ---------------------------------------------------------------------------
+
+_RESTART_KEYS = frozenset({"embed_dim", "opening_book_path"})
+
+
+def _classify(params, yaml_cfg, realized, **kw):
+    return ar.classify_config_provenance(
+        params, yaml_cfg, realized, restart_keys=_RESTART_KEYS, **kw
+    )
+
+
+def test_stale_params_json_is_reported_by_name_and_is_not_a_finding() -> None:
+    """The launch value differing from the running one is normal -- and invisible.
+
+    It has to be listed rather than merely counted: the whole failure mode is
+    someone reading one specific key out of that file.
+    """
+    report, findings = _classify(
+        {"opening_fen_dole_per_iter": 1, "w_wdl": 4.0},
+        {"opening_fen_dole_per_iter": 0, "w_wdl": 4.0},
+        {"opening_fen_dole_per_iter": 0, "w_wdl": 4.0},
+    )
+    assert findings == []
+    assert any("STALE-IN-PARAMS-JSON  1 live-reloadable" in line for line in report)
+    assert any("opening_fen_dole_per_iter: params.json=1 running=0" in line
+               for line in report)
+    assert not any("w_wdl" in line for line in report)
+
+
+def test_a_rejected_live_reload_is_a_finding() -> None:
+    """yaml != running on a live-reloadable key means the whole reload bounced."""
+    report, findings = _classify({}, {"w_wdl": 6.0}, {"w_wdl": 4.0})
+    assert any("RELOAD-NOT-APPLIED w_wdl" in line for line in report)
+    assert any("rejects the WHOLE yaml reload" in f for f in findings)
+
+
+def test_a_restart_required_key_the_yaml_moved_is_a_finding() -> None:
+    """Here params.json IS the authority, and the yaml is the misleading source."""
+    _, findings = _classify({"embed_dim": 512}, {"embed_dim": 768}, {"embed_dim": 512})
+    assert any("restart required" in f and "embed_dim" in f for f in findings)
+
+
+def test_a_yaml_edited_after_the_newest_row_is_unresolved_not_a_finding() -> None:
+    """The realized row is always minutes old; a newer yaml has not been read yet."""
+    report, findings = _classify(
+        {}, {"w_wdl": 6.0}, {"w_wdl": 4.0}, yaml_is_newer_than_row=True,
+    )
+    assert findings == []
+    assert any("UNRESOLVED" in line and "next iteration" in line for line in report)
+
+
+def test_a_rotating_key_is_expected_not_a_finding() -> None:
+    """opening_fen_list_path is rewritten between iterations by the retire loop."""
+    key = "opening_fen_list_path"
+    assert key in ar._PROVENANCE_ROTATING_KEYS
+    report, findings = _classify({}, {key: "retire_61.txt"}, {key: "retire_60.txt"})
+    assert findings == []
+    assert any("EXPECTED" in line and key in line for line in report)
+
+
+def test_pb2_searched_keys_are_not_compared_against_the_yaml() -> None:
+    """A searched key is SUPPOSED to diverge from the yaml -- that is what PB2 does."""
+    _, findings = _classify({}, {"lr": 0.0003}, {"lr": 0.0001}, searched_keys={"lr"})
+    assert findings == []
+
+
+def test_provenance_needs_all_three_sources_before_it_says_anything(
+    tmp_path: Path, capsys
+) -> None:
+    """No yaml -> SKIP, not a silent green. Absence of a check is not a pass."""
+    rows = [_row(), _row(it=101, timestamp=1_001_200.0)]
+    assert ar.audit_config_provenance(rows, tmp_path / "missing.yaml", None) == []
+    assert "SKIP" in capsys.readouterr().out
+
+
+def test_provenance_section_names_params_json_as_the_launch_config(
+    tmp_path: Path, capsys
+) -> None:
+    """End to end through the real restart-key set, on a synthetic trial.
+
+    The row timestamp is deliberately AHEAD of the yaml's mtime. With a 1970
+    timestamp every difference is downgraded to UNRESOLVED and the section can
+    no longer report anything, so this test would pass without exercising the
+    comparison at all.
+    """
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text(
+        "selfplay:\n  opening_fen_dole_max_fraction: 0.25\n", encoding="utf-8"
+    )
+    params = tmp_path / "params.json"
+    params.write_text(json.dumps({"opening_fen_dole_max_fraction": 0.9}), encoding="utf-8")
+    later = time.time() + 3600.0
+    rows = [_row(timestamp=later - 1200.0), _row(it=101, timestamp=later)]
+    findings = ar.audit_config_provenance(rows, yaml_path, params)
+    out = capsys.readouterr().out
+    assert findings == []
+    assert "UNRESOLVED" not in out, "the yaml must look older than the row here"
+    assert "LAUNCH config" in out
+    assert "opening_fen_dole_max_fraction: params.json=0.9 running=0.25" in out
+
+    # Same trial, yaml moved: now it must speak up rather than stay green.
+    yaml_path.write_text(
+        "selfplay:\n  opening_fen_dole_max_fraction: 0.9\n", encoding="utf-8"
+    )
+    findings = ar.audit_config_provenance(rows, yaml_path, params)
+    assert any("opening_fen_dole_max_fraction" in f for f in findings)

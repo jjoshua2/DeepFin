@@ -229,6 +229,19 @@ class ArrayReplayBuffer:
     def _sample_raw_indices(self, batch_size: int) -> np.ndarray:
         return self._sample_all_indices(batch_size)
 
+    def export_arrays(self) -> dict[str, np.ndarray]:
+        """Every row currently held, densified, oldest first.
+
+        The inverse of :meth:`add_many_arrays`: the result is shard-shaped, so
+        it round-trips through the shard writer/reader and can be fed straight
+        back into a fresh buffer to reconstitute this one. Returns ``{}`` when
+        the buffer is empty — an empty buffer has no plane count or policy
+        width to describe, so there is nothing meaningful to write.
+        """
+        if self._size <= 0:
+            return {}
+        return self._gather_rows(np.arange(self._size, dtype=np.int64))
+
     def sample_batch_arrays(self, batch_size: int, *, wdl_balance: bool = True) -> dict[str, np.ndarray]:
         if self._size <= 0:
             raise ValueError("ArrayReplayBuffer is empty")

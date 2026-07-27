@@ -688,7 +688,14 @@ def _select_configured_input_history(
     upgrade_v1_planes: bool = False,
 ) -> dict[str, np.ndarray]:
     if uses_lc0_root_history(input_history_encoding):
-        out = select_input_history_arrays(arrs, input_history_encoding=input_history_encoding)
+        # ``synthetic_lc0_root_history`` is this harness's existing "I accept a
+        # synthesized root history" switch, so it is also the opt-in for the
+        # POV-lossy legacy remap (docs/rl_loop_audit.md M12).
+        out = select_input_history_arrays(
+            arrs,
+            input_history_encoding=input_history_encoding,
+            allow_lossy_legacy_remap=synthetic_lc0_root_history,
+        )
     else:
         recorded = _select_recorded_input_history(
             arrs,

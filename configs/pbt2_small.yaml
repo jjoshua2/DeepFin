@@ -315,12 +315,16 @@ selfplay:
   sf_wdl_use_cp_logistic: true   # Replace SF's UCI_ShowWDL (72% one-hot) with own logistic on cp score.
   sf_wdl_cp_slope: 0.0060        # 2026-05-23: move toward replay-fit slope (~0.0045-0.0055) while staying conservative.
   sf_wdl_cp_draw_width: 120.0    # Half-width of draw zone in cp; moved toward current-regret replay fit (~130-145).
-  # p^(1/soft_policy_temp). 2026-07-26: set to the REALIZED value. This key was
-  # never published to the worker, so selfplay ran the 2.0 dataclass default while
-  # this line read 3.0 (measured T=2.0000 on 1005 live rows). PR #257 makes the key
-  # real, so leaving 3.0 here would silently re-target soft_policy_ce (~41% of
-  # weighted trunk gradient, +48.6% target entropy) at the next restart.
-  # Adopting 3.0 is a data-affecting experiment and needs its own ledger entry.
+  # Exponent of the policy_soft target: p^(1/soft_policy_temp).
+  # 2026-07-26: WAS 3.0 since 2026-03-02, and 3.0 WAS NEVER IN EFFECT. The key
+  # was published by nobody and consumed by nobody in distributed mode, so every
+  # worker built the target at GameConfig's dataclass default of 2.0 — measured
+  # on live shards as a fitted exponent of 0.50000 (rl_loop_audit.md E13). The
+  # plumbing is fixed in this same change, so the yaml value is now real; it is
+  # set to 2.0 because 2.0 is what five months of this net actually trained on
+  # and the point of this change is to make the config honest, not to move the
+  # target. 2.0 -> 3.0 is a separate, data-affecting ledger experiment: it needs
+  # its own entry, yardstick and kill rule before anyone edits this line.
   soft_policy_temp: 2.0
 
   syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6
@@ -376,15 +380,15 @@ train:
   optimizer: aurora
   matrix_optimizer_scope: mlp_out  # Aurora on FFN + attention output; Q/K/V stay AdamW.
   matrix_lr_multiplier: 20
-  # 2026-07-26: 0 -> 1e-4, set to the REALIZED value ahead of deploying PR #260.
-  # This key was decorative: torch's Optimizer.load_state_dict overwrites every
-  # group hyperparameter on resume, and weight_decay was the one with no
-  # re-application path, so the live Aurora group has carried 1e-4 (stamped by
-  # an offline recovery run) regardless of what this line said. #260 adds
-  # _reapply_configured_param_group_hparams, which makes the key real -- so
-  # leaving 0 here would ZERO the matrix group's decay at the restart. That is a
-  # training change, not a config fix. Same trap as soft_policy_temp and
-  # diff_focus. Moving it to 0 deliberately is a separate experiment.
+  # 2026-07-26: was `0`, but the live Aurora matrix group has been running at
+  # 0.0001 since ~early June — Optimizer.load_state_dict overwrites every group
+  # hyperparameter from the checkpoint on resume, and weight_decay had no
+  # re-application path, so the yaml value was a permanent silent no-op
+  # (docs/rl_loop_audit.md I13). The re-application now exists, which makes the
+  # yaml authoritative. Set to 0.0001 = WHAT ACTUALLY RAN, so turning the
+  # control surface back on changes nothing today. Changing this value is now a
+  # REAL training change (~6e-8/step decoupled decay at the matrix group's LR)
+  # and needs a ledger entry with a pre-committed yardstick before it goes live.
   matrix_weight_decay: 0.0001
   aux_weight_decay: 0.0001
   aurora_uw_floor: 0.0
@@ -414,10 +418,23 @@ train:
   feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
   resid_channel_dropout: 0.0  # Keep channel spreading on the explicit balance regularizer; dropout cost more eval loss offline.
   resid_channel_balance_weight: 0.0  # Disabled: offline sidecar .001/.003 did not improve loss or WDL.
-  zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). Last-100 median grad norm 1.81, max 3.65 — hard cap 5.0 inert, z-clip ~1% → ~5-8% of steps at 2.0.
+  zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). The "median grad norm 1.81, max 3.65" that used to be quoted here is stale by 2.3x — see zclip_max_norm below for the current measurement.
   zclip_alpha: 0.97
   zclip_clip_factor: 1.0
-  zclip_max_norm: 5.0  # was 1.0; raised because raw grad norms median ~2.2 meant every step was hard-clipped, dampening effective LR by ~55%. Z-score clipping still handles outliers.
+  # was 1.0; raised because raw grad norms median ~2.2 meant every step was
+  # hard-clipped, dampening effective LR by ~55%. Z-score clipping still
+  # handles outliers.
+  # RE-MEASURED 2026-07-26 (233 TB samples, steps 56000-58320): median 4.244,
+  # p95 4.941, p99 5.213, max 5.538, 3.43% of samples ABOVE 5.0. Clip rate
+  # 5.15% (adaptive 4.29%, hard 1.29%), mean applied shrink 0.9969. Still a
+  # tail guard, but DRIFTING UP: 250-step bucket means went 3.996 -> 4.816 over
+  # 2320 steps (~11h). The old "hard cap 5.0 inert" claim is false.
+  # PRE-COMMITTED WATCH (rl_loop_audit I11, mirrored as GRAD_NORM_MEDIAN_WATCH
+  # in train/trainer.py): if the windowed MEDIAN grad norm exceeds 4.75
+  # (hard-clip rate ~10%), this cap has stopped being a tail guard and must be
+  # re-set. Watch the per-iteration `grad_norm_median` / `grad_hard_clip_rate`
+  # columns in progress.csv; the trainer also logs a warning when it trips.
+  zclip_max_norm: 5.0
 
   w_policy: 1.0             # Pinned: anchor for all other weights
   w_soft: 1.0               # Conservative soft-policy auxiliary weight while testing plateau behavior.

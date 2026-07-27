@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from chess_anti_engine.tune.trainable_config_ops import (
     _OPTIMIZER_CONSTRUCTION_KEYS,
     _apply_lr_gamma_weights,
@@ -555,3 +557,96 @@ train:
     _reload_yaml_into_config(config, str(yaml_path))
 
     assert config["lr_schedule"] == "sqrt_release"
+
+
+def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
+    """Re-derive the provenance answer by RUNNING the reloader, not by restating it.
+
+    ``restart_required_config_keys`` is composed from the same frozensets
+    ``_reload_yaml_into_config`` branches on, so a test that compared it to
+    those sets would agree by construction and prove nothing. This drives every
+    key in the production yaml through an actual live reload with a changed
+    value and asks which ones came back unchanged.
+
+    That answer is what tells a reader whether ``params.json`` (the launch
+    config) or the live yaml is authoritative for a given key -- rl_loop_audit
+    J5. A key that silently moves between the two sides shows up here as a
+    mismatch rather than as a wrong number in someone's audit six weeks later.
+
+    The edited yaml keeps the production file's NESTED shape: the validator
+    rejects unknown root-level keys, and a rejected reload leaves every value
+    untouched -- which would make every key look restart-required and the
+    assertion below pass for the wrong reason.
+    """
+    import copy
+
+    import yaml as _yaml
+
+    from chess_anti_engine.tune.trainable_config_ops import restart_required_config_keys
+    from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+
+    production = Path(__file__).resolve().parents[1] / "configs" / "pbt2_small.yaml"
+    raw = load_yaml_file(str(production))
+    flat = flatten_run_config_defaults(raw)
+    # Where each key lives in the nested document, so the edit round-trips
+    # through the validator instead of being rejected wholesale.
+    section_of: dict[str, str | None] = {}
+    for key, value in raw.items():
+        if isinstance(value, dict):
+            for sub in value:
+                section_of[sub] = key
+        else:
+            section_of[key] = None
+    # PB2-searched keys are preserved for a reason that belongs to the trial's
+    # own bounds, not to the key, so they are the caller's job to exclude.
+    searched = {k.removeprefix("pb2_bounds_") for k in flat if k.startswith("pb2_bounds_")}
+
+    def _mutate(value: object) -> object:
+        if isinstance(value, bool):
+            return not value
+        if isinstance(value, (int, float)):
+            return type(value)(value + 1)
+        if isinstance(value, str):
+            return value + "_CHANGED"
+        if isinstance(value, list) and value:
+            return [*value, value[-1]]
+        return value
+
+    edited = tmp_path / "cfg.yaml"
+    observed_restart_required: set[str] = set()
+    exercised: set[str] = set()
+    for key in sorted(section_of):
+        if key.startswith("pb2_bounds_") or key in searched or key not in flat:
+            continue
+        value = flat[key]
+        changed = _mutate(value)
+        if changed == value:  # None / dict / empty list: nothing to observe
+            continue
+        doc = copy.deepcopy(raw)
+        section = section_of[key]
+        if section is None:
+            doc[key] = changed
+        else:
+            doc[section][key] = changed
+        edited.write_text(_yaml.safe_dump(doc), encoding="utf-8")
+        config = dict(flat)
+        _reload_yaml_into_config(config, str(edited), live_reload=True)
+        exercised.add(key)
+        if config[key] == value:
+            observed_restart_required.add(key)
+
+    # Only keys with a value that can be perturbed are observable; the yaml
+    # carries a few keys declared with no value at all (`kind:`), and those say
+    # nothing either way.
+    declared = restart_required_config_keys() & exercised
+    assert observed_restart_required == declared, (
+        "restart_required_config_keys() disagrees with what the reloader does; "
+        f"reloader-only={sorted(observed_restart_required - declared)} "
+        f"declared-only={sorted(declared - observed_restart_required)}"
+    )
+    # Guard against the degenerate pass where the validator rejected every
+    # reload (which reads as "nothing is live-reloadable") or nothing ran.
+    assert len(exercised) > 100, sorted(exercised)
+    assert len(observed_restart_required) < len(exercised) // 2
+    assert "opening_fen_dole_per_iter" not in declared, \
+        "the key that made params.json look stale must be live-reloadable"
