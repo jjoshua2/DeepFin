@@ -160,9 +160,34 @@ run_arena () {   # $1=reference  $2=series-label
     score=$(grep -E "^\[arena\] score:" "$out" | tail -1 | sed -E 's/.*score: *([0-9.]+).*/\1/')
     # Reject anything non-numeric rather than writing it: a passthrough line
     # would silently corrupt the CSV for every later reader.
-    case "${elo:-}" in
-        ''|*[!0-9.+-]*) echo "[ratchet] $series: unparseable Elo '${elo:-}' — see $out"; return ;;
-    esac
+    #
+    # 2026-07-26, SECOND ROUND: the first version of this guard checked `elo`
+    # ONLY, and that was not enough. A one-sided `n/a` CI bound — which the
+    # arena prints whenever the pentanomial is degenerate — passes the elo
+    # check and then `hi` falls through as the WHOLE log line, writing a
+    # 9-field row into an 8-field CSV. Reproduced exactly:
+    #   [arena] Elo: +470.4  95% CI: [+311.5, n/a]
+    #     -> elo=470.4  lo=311.5  hi=<the entire line, commas and all>
+    # This is NOT exotic. PR #252 made capped runs routine, and with
+    # REPORT_EVERY=16 the first RUNNING block lands at 8 pairs, where counts
+    # like (6,2,0,0,0) produce exactly that line. Making the instrument cheaper
+    # made its unhappy path common — the guard has to cover every field the
+    # row is built from, not the one that failed first.
+    local f
+    for f in "${elo:-}" "${lo:-}" "${hi:-}"; do
+        case "$f" in
+            ''|*[!0-9.+-]*)
+                echo "[ratchet] $series: unparseable Elo/CI (elo='${elo:-}' lo='${lo:-}' hi='${hi:-}') — see $out"
+                return ;;
+        esac
+    done
+    # A degenerate pentanomial (e.g. all draw-draw) gives se exactly 0, so the
+    # arena prints a zero-width CI like [+0.0, +0.0]. That is arithmetically
+    # correct and epistemically worthless — a row claiming perfect certainty
+    # from a handful of pairs. Record it, but never silently.
+    if [ "$lo" = "$hi" ]; then
+        echo "[ratchet] $series: WARNING zero-width CI [$lo, $hi] — degenerate pentanomial, treat as no reading"
+    fi
     # The games column must be what was PLAYED, not what was requested. Under a
     # wall-clock cap those differ, and a row claiming 200 games behind a 96-game
     # CI is exactly the class of bug this whole audit is about: a number that

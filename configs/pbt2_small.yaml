@@ -5,12 +5,15 @@
 #   bug fixed (search Q now returned instead of stale root Q), enabling real diff-focus.
 #   New plateau: os≈278-280 (rmp≈0.27) vs old 222-224. Both weights hit upper bounds.
 #
-# What PB2 searches now:
-#   lr, w_wdl, w_soft, w_sf_move, sf_wdl_frac, diff_focus_q_weight
+# What PB2 searches now (2026-07-26: CORRECTED — the old list here named six
+# keys including diff_focus_q_weight, and also listed diff_focus_* under
+# "pinned" two lines later, contradicting itself. Only keys with a pb2_bounds_*
+# entry are searched, and there is exactly one):
+#   lr
 #
-# What is pinned:
-#   diff_focus_* (medians of top-5), temperature, playout_cap_fraction,
-#   sf_policy_temp, sf_policy_label_smooth, feature_dropout_p, w_future, soft_policy_temp
+# What is pinned: everything else, including diff_focus_*, temperature,
+#   playout_cap_fraction, sf_policy_temp, sf_policy_label_smooth,
+#   feature_dropout_p, w_future, soft_policy_temp
 #
 # Data flow per iteration:
 #   150 games × ~20-30 pos = ~3k-5k new samples → up to 15 training steps (256 batch)
@@ -220,7 +223,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_250.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_115.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -231,7 +234,17 @@ selfplay:
   # selfplay seeded games/iter. Threaded-path delivery wired+verified. Live-reloadable.
   # KILL: set 0 + opening_fen_prob 0.05. Ledger LIVE-UNREAD row (readout ~iter 725); baseline
   # ckpt686 (v1 16/35, value 74.3), revert trunk data/salvage/pre_dole_ckpt686_20260708.
-  opening_fen_dole_per_iter: 1
+  opening_fen_dole_per_iter: 0   # 2026-07-26: SEEDING OFF for the boot512 restart readout.
+  # This is the documented KILL above (dose 0). Rationale: (a) one data-affecting
+  # change per readout window and the LR change owns this one; (b) the pool is
+  # measurably contaminated — of 26 long-stuck seeds, SF rates them median 0.500
+  # at EVERY rung from 300k to 5M nodes (vs 0.35 for seeds the net actually
+  # learned), i.e. they were never blind spots and were consuming dole budget.
+  # See the 2026-07-26 FINDING in docs/experiment_ledger.md.
+  # NOTE do NOT try to disable seeding via opening_fen_dole_max_fraction: on that
+  # key 0 means UNCAPPED, which would cause the dole runaway, not stop it.
+  # opening_fen_prob is already 0.0; opening_fen_sf_refute_frac becomes inert
+  # with no seeded games. Live-reloadable — restore by setting this back to 1.
   # 2026-07-24 (PR #223, NEW KEY — requires the restart onto that code; adding it
   # to a running older build makes the strict validator reject the WHOLE reload).
   # Upper bound on seeded games/iter as a fraction of games_per_iter. The dole
@@ -345,11 +358,19 @@ selfplay:
   # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.
   timeout_adjudication_threshold: 0.99
 
+  # 2026-07-26: set to the REALIZED values. The worker never builds a
+  # DiffFocusConfig from the published reco, so selfplay has always run the
+  # dataclass defaults in selfplay/config.py while these lines read the Run-4
+  # sweep winners (4.8 / 3.8 / 4.0 / 0.09) that nobody ever applied. Pinned to
+  # the truth for the same reason as soft_policy_temp above: the day someone
+  # plumbs this key, the old values would have silently become a live,
+  # unregistered data-affecting experiment at the next restart.
+  # Adopting the sweep values is a real experiment — see the ledger entry.
   diff_focus_enabled: true
-  diff_focus_q_weight: 4.8   # Pinned: top-5 median from Run 4
-  diff_focus_pol_scale: 3.8   # Pinned: top-5 median from Run 4
-  diff_focus_slope: 4.0       # Pinned: top-5 median from Run 4
-  diff_focus_min: 0.09        # Pinned: top-5 median from Run 4
+  diff_focus_q_weight: 6.0
+  diff_focus_pol_scale: 3.5
+  diff_focus_slope: 3.0
+  diff_focus_min: 0.025
 
   categorical_bins: 32
   hlgauss_sigma: 0.04
@@ -377,11 +398,46 @@ train:
   aurora_polar_method: polar_express
   aurora_polar_dtype: fp16
   aurora_polar_safety: 1.01
-  lr: 0.0003        # 2026-07-02: REVERTED 0.0001→0.0003 — flat-lower-LR verdict: UNREADABLE (throughput triple landed the same day, perfect confound) and the known-good anchors (49.6/51.5/72.4 @ckpt457) were earned at 0.0003 sqrt_release; return-to-known-good bundle. PB2-pinned: changing needs the experiment_state JSON edit + restart (see memory/ledger). Base LR; Aurora matrix params use matrix_lr_multiplier.
+  # 2026-07-26: 0.0003 -> 0.00003 for the boot512 restart. THE ROOT CAUSE of the
+  # 512x16 collapse: boot512 was converged at peak_lr 3e-5, and set_peak_lr
+  # rescales EVERY base LR by new/old, so lr 0.0003 started the matrix group
+  # (matrix_lr_multiplier 20) at 6e-3 -- double the 0.003 recorded as
+  # model-destroying. Measured -494 Elo by iter 74. 3e-5 is not merely the
+  # donor's regime, it is the LR under which this net demonstrably GAINED +303
+  # Elo (iters 74->148). PB2-pinned: this yaml edit alone is NOT enough --
+  # experiment_state JSON (newest by FILENAME) must be edited too, then restart.
+  # Guarded by warm_start_lr_max_ratio (PR #247) from here on.
+  lr: 0.00003       # PRIOR 0.0003 — 2026-07-02: REVERTED 0.0001→0.0003 — flat-lower-LR verdict: UNREADABLE (throughput triple landed the same day, perfect confound) and the known-good anchors (49.6/51.5/72.4 @ckpt457) were earned at 0.0003 sqrt_release; return-to-known-good bundle. PB2-pinned: changing needs the experiment_state JSON edit + restart (see memory/ledger). Base LR; Aurora matrix params use matrix_lr_multiplier.
   batch_size: 512   # Aurora/arc-split run matches offline probe batch size; fits VRAM on 5090.
   train_steps: 800  # Raised for 2M buffer; window_fraction gives ~781 steps at full size.
   train_window_fraction: 0.04  # Train on 4% of active replay cap; slow replay growth limits extra reuse while refilling.
-  train_views_per_ingested_position: 2.5  # 2026-07-24 (renamed + denominator FIXED): trained-samples per position ACTUALLY INGESTED into the replay buffer (AZ ~1, KataGo ~4). Was train_views_per_position, which divided by matching_positions (current-model games only) while 4.5-6.5x more positions were ingested -- so 2.5 there produced only ~0.46 TRUE views and over half of all data was never trained on. Verify with the train_views_actual metric. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable.
+  # 2026-07-27: 2.5 -> 5.0, PAIRED with the replay-loader fix below. THE BET:
+  # the loop is gradient-STARVED, not unstable. Whole trial to iter 123 =
+  # 6,253 optimizer steps / 3.2M samples = 0.53% of a 600M AlphaZero-scale
+  # budget, and the GPU computed gradients for 3.0% of wall clock. Steps are
+  # EXACTLY views-capped (trainer_steps_done x 512 / replay_positions_ingested
+  # = 2.502-2.552 on every row), so this key, not the loader, is what sets
+  # gradient volume -- the loader fix only makes each step ~3.9x cheaper
+  # (2920 -> ~756 ms) so this raise costs LESS wall clock than 2.5 did:
+  # ~88 steps/iter in ~66s, vs 44 steps in 129s. DOUBLE the gradient at HALF
+  # the training wall clock.
+  # WHY 5.0 AND NOT HIGHER. The loader could now feed ~15 views, and an earlier
+  # draft of this line set 7.5 on the argument that our value/policy targets are
+  # GROUND TRUTH from a fixed external SF (never stale, so the reuse ceiling is
+  # OVERFITTING rather than target staleness). That argument is right about the
+  # mechanism and wrong about the conclusion: it identifies overfitting as the
+  # binding constraint and then ignores it. AlphaZero ~1, KataGo ~4 -- those are
+  # empirical ceilings from loops that demonstrably work. Going 2x past KataGo
+  # on the FIRST attempt, on a loop already believed broken, would add a failure
+  # mode we would then have to disentangle from the one we are chasing.
+  # 5.0 is a FLOOR, not a target: this key is live-tunable, so it can be raised
+  # by yaml edit with no restart once the train/holdout gap has been watched for
+  # a day. The loader keys below get only this one shot -- they are
+  # construction-time.
+  # KILL: train/holdout policy gap widens past ~0.30 (live 0.13-0.18), or the
+  # frozen test_wdl_loss rises >0.026 (4 sigma) over 3 consecutive iterations.
+  # LIVE-TUNABLE -- revert is a yaml edit, no restart.
+  train_views_per_ingested_position: 5.0  # 2026-07-24 (renamed + denominator FIXED): trained-samples per position ACTUALLY INGESTED into the replay buffer (AZ ~1, KataGo ~4). Was train_views_per_position, which divided by matching_positions (current-model games only) while 4.5-6.5x more positions were ingested -- so 2.5 there produced only ~0.46 TRUE views and over half of all data was never trained on. Verify with the train_views_actual metric. Makes train_window_fraction INERT except as the ingest-drought floor. Live-tunable.
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
@@ -405,40 +461,84 @@ train:
   # re-set. Watch the per-iteration `grad_norm_median` / `grad_hard_clip_rate`
   # columns in progress.csv; the trainer also logs a warning when it trips.
   #
-  # THE WATCH HAS FIRED (2026-07-27, iters 81-99, measured from progress.csv,
-  # a different code path from the TB reading above): median 5.15-5.47, mean
-  # 5.247, p95 ~6.0, HARD-clip rate 0.65-0.84. The adaptive z-score clipper
-  # fires on only ~5% of steps -- correct outlier behaviour -- so this fixed
-  # cap, not zclip's adaptive logic, is doing essentially all the clipping.
-  # The watch threshold is breached at EVERY iteration 81-99.
+  # THE WATCH FIRED, AND THE CAP WAS RAISED 5.0 -> 6.5 (2026-07-27 ~08:00,
+  # graceful restart at iter ~122). Ledger: "PRE-REGISTERED (2026-07-27) --
+  # raise zclip_max_norm 5.0 -> 6.5". Pre-change baseline at iter 121:
+  # grad_norm_median 5.536, p95 6.78, HARD-clip rate 0.953. NOTE 6.5 is BELOW
+  # that p95 -- it was chosen when p95 read 6.17, four hours earlier -- so
+  # expect ~5-10% hard-clip on the first row, not ~5%, and a re-bind horizon of
+  # ~16h at the measured +0.012/iter, not two days. Kept at 6.5 anyway: with
+  # #272 live the next move is a yaml edit, so a too-small first step is cheap. The adaptive
+  # z-score clipper was firing on only ~5% of steps -- correct outlier
+  # behaviour -- so this FIXED cap, not zclip's adaptive logic, was doing
+  # essentially all of the clipping. A cap that binds on 89% of steps is a
+  # step-size controller, not a tail guard.
   #
-  # SHAPE: a STEP, not a drift. An earlier revision of this comment claimed a
-  # linear +0.0086/iter rise; that was a line fitted through a level shift and
-  # is WITHDRAWN. Measured: iters 81-95 are FLAT (slope -0.0020/iter, p=0.54,
-  # mean 5.204), then a discrete jump at iter 96 to mean 5.410 (Welch t=10.8,
-  # p=1.7e-6, changepoint scan picks 96 as the global optimum). The pooled
-  # +0.0099/iter is the artifact. Cause of the step is NOT in the 276 logged
-  # columns: every train head moved <0.5% across it (|d|<=0.34) while the grad
-  # norm moved +4.0% (d=4.04).
-  # Also note `grad_hard_clip_rate` is bit-identical to `grad_clip_rate` here,
-  # so they are ONE observation, not two -- and because the median sits just
-  # above the cap, the clip rate is a hypersensitive readout of small location
-  # shifts (+4% in location -> +17 points of clip rate). Do not read a moving
-  # clip rate as independent evidence.
-  # NOT parameter growth: ||theta|| moved +0.09% over 2824 steps.
-  # NOT a replay-window drain: the window is pinned at its 1.5M cap every
-  # iteration (`replay_window_before/after` constant), so the drain that was
-  # pre-registered as the suspected cause DOES NOT EXIST.
-  # DO NOT re-set this value without a ledger entry. Two readings remain open
-  # and they imply OPPOSITE moves: (a) the cap is stale and should rise, or
-  # (b) the drift is suppressed instability and the cap is the only brake --
-  # note that adaptive z-score clipping structurally CANNOT catch a slow drift,
-  # because its EMA mean tracks the rise. As of this comment the value is
-  # deliberately UNCHANGED at 5.0 pending that decision.
-  # This key is now LIVE-RELOADABLE (Trainer.set_grad_clip_max_norm, pushed
-  # each iteration from trainable.py), so changing it is a yaml edit that takes
-  # effect on the next optimizer step and reverts just as fast -- no restart.
-  zclip_max_norm: 5.0
+  # WHY 6.5: it sits just above the measured p95 (6.17-6.20), so it clips ~5%
+  # of steps -- the rate the adaptive clipper is tuned for, and the smallest
+  # change that restores the intended division of labour. The historically
+  # inert ratio was cap/median ~2.1 (the 384x12 net ran cap 5.0 at median 2.4
+  # with a 0.000 hard-clip rate), which would put the cap near 11 today. 6.5 is
+  # deliberately the conservative end. KNOWN COST: at the measured +0.012/iter
+  # (iters 105-121, t=+3.86) 6.5 re-binds in ~16h -- which is now a yaml edit,
+  # not a restart.
+  #
+  # SHAPE -- read this before fitting anything to this series. Two earlier
+  # revisions of this comment were BOTH wrong, in opposite directions:
+  #   (1) "linear drift +0.0086/iter" -- one line fitted across a level shift.
+  #   (2) "a STEP at iter 96, not a drift" -- right about iters 81-99, WRONG
+  #       about the trial. That window is a plateau partway up a longer ramp.
+  # Full TB reconstruction across all three surviving lineages:
+  #   384x12 @3e-4  06-21..07-11  median 2.36-2.50  FLAT for 20 days
+  #   512x16 @3e-4  07-11..07-25  median 3.12-3.70  flat-with-a-U
+  #   512x16 @3e-5  07-26..now    median 4.08->5.54 RAMP, +0.0079/iter t=6.6
+  # and the ramp is ACCELERATING: +0.0120/iter (t=3.86) over iters 105-121.
+  # This series needs >=40 rows before any slope claim -- a plateau inside a
+  # ramp is the default appearance of a noisy rising series, and reading one as
+  # evidence against the ramp is the mistake that was made here twice.
+  # Today's value is a SUM: +1.3 instantaneous at the 512x16 swap, +0.4
+  # instantaneous at the boot512 restart, +1.25 continuous inside this trial.
+  # The "~2.2" this comment used to quote is a 384x12 number -- stale by
+  # LINEAGE, not by drift; that net never drifted at all.
+  # TB step counters RESET at every lineage change (5fac4 ended at 132810;
+  # both 512x16 trials restart at exactly 56000). Do NOT splice the series.
+  #
+  # LIKELY CAUSE, correlational and NOT established: the 10x LR cut. The one
+  # clean natural experiment in the record is the flat-lower-LR run
+  # (07-01..07-03) where matrix LR moved 6e-3 -> 2e-3 and back with nothing
+  # else changing: median grad norm went 2.49 -> 4.64 -> 2.75, tracking LR
+  # INVERSELY and recovering fully on revert. This trial runs at 10x lower base
+  # LR (3e-5) than either predecessor. So a high clip rate reads as "LR too
+  # high" but every measurement here points the other way. This does NOT
+  # explain the ramp, since LR has been constant throughout it.
+  #
+  # RULED OUT as causes: parameter growth (||theta|| +0.09% over 2824 steps);
+  # any single loss head (across the iter-96 shift every train head moved
+  # <0.5%, |d|<=0.34, while grad norm moved +4.0%, d=4.04); restarts (the two
+  # inside this trial, including the six-PR deploy, each move the median <0.08
+  # across the gap); and a replay-window drain -- the window is pinned at its
+  # 1.5M cap every iteration, so the drain pre-registered as the suspected
+  # cause DOES NOT EXIST.
+  #
+  # NO MEASURABLE DAMAGE so far, and the ruler is sensitive enough for that to
+  # mean something: across a grad-norm shift of +1.74 sd (iters 89-95 vs
+  # 96-101) the FROZEN holdout's test_wdl_loss moved +0.0000 (0.8401 both
+  # sides, sd 0.0079, n=13).
+  #
+  # `grad_hard_clip_rate` is bit-identical to `grad_clip_rate` -- ONE
+  # observation, not two -- and while the median sits near the cap it is a
+  # hypersensitive readout of small location shifts (+4% in location -> +17
+  # points of clip rate). Do not read a moving clip rate as independent
+  # evidence.
+  #
+  # This key is LIVE-RELOADABLE as of PR #272 (Trainer.set_grad_clip_max_norm,
+  # pushed each iteration from trainable.py), so further changes are a yaml
+  # edit that takes effect on the next optimizer step and reverts just as fast.
+  # The 5.0 -> 6.5 change itself still needed a restart: the process predated
+  # #272. REVERT to 5.0 by yaml edit if the ledger's kill rule fires (frozen
+  # test_wdl_loss +>0.032 over 3 consecutive iters, any NaN, or
+  # grad_norm_median >10). The ramp CONTINUING is a pre-committed NON-kill.
+  zclip_max_norm: 6.5
 
   w_policy: 1.0             # Pinned: anchor for all other weights
   w_soft: 1.0               # Conservative soft-policy auxiliary weight while testing plateau behavior.
@@ -465,6 +565,10 @@ train:
   sf_search_dampen_sf_high: 0.0  # Damping (0..1) on SF target when SF says STM winning but search says STM losing. Live-tunable.
 
   accum_steps: 1    # More gradient steps per iteration; effective batch = 256.
+  # 2026-07-26 (PR #247): refuse a warm start whose configured lr exceeds the
+  # donor checkpoint's stored peak_lr by more than this. 0 disables. Requires
+  # code from #247 -- an unknown key rejects the WHOLE live reload.
+  warm_start_lr_max_ratio: 2.0
   warmup_steps: 72   # Run 26 default.
   lr_eta_min: 0.00001
   lr_T0: 999999        # Ignored while lr_schedule=sqrt_release; kept for cosine fallback.
@@ -564,8 +668,33 @@ tune:
   tune_replay_root_override: /home/josh/projects/chess/runs/pbt2_small/replay
 
   # Disk-backed replay buffer: keeps ~1 GB per trial instead of ~10 GB
-  shuffle_buffer_size: 25000  # In-memory shuffle buffer (run26 value)
-  shuffle_refresh_interval: 1
+  # 2026-07-27: 25000 -> 100000 and refresh_interval 1 -> 4. MEASURED against
+  # the live 832-shard window: the ENTIRE training data-loading cost is the
+  # per-batch disk refresh. A pure in-memory batch costs 10 ms; the old config
+  # paid a 1073 ms MEDIAN for the same batch, because refresh_interval: 1 made
+  # every single batch reload 5 x 2000 = 10,000 positions to serve 512 --
+  # 19.5x read amplification, ~437 MB per batch. Worse than the latency: at
+  # that churn a position lived ~2.5 batches in a 25,000 pool while only 512
+  # were drawn per batch, so ~95% of everything read from disk was evicted
+  # BEFORE IT WAS EVER SAMPLED. New values: amplification 4.9x, residence ~40
+  # batches (~0.9 iterations). Memory is 65.6 kB/position measured by RSS, so
+  # 100,000 = 6.6 GB (was 1.6 GB) against ~69 GB free.
+  # THE INTERVAL IS THE LEVER, NOT THE POOL SIZE: at interval 4, cap 25k vs
+  # 200k measured 381 vs 404 ms. The larger pool is here for MIXING (residence),
+  # not speed.
+  # This does NOT by itself buy more gradient. Steps/iteration are VIEWS-capped
+  # (trainer_steps_done x 512 / replay_positions_ingested = 2.502-2.552 on every
+  # row = train_views_per_ingested_position exactly). It makes each step ~3x
+  # cheaper, which is what makes a later views raise affordable -- that key IS
+  # live-tunable, so it is deliberately a SEPARATE change in its own window.
+  # ⚑ THESE THREE KEYS ARE CONSTRUCTION-TIME ONLY. They are not in any
+  # restart-required set, so the validator overlays them every iteration with no
+  # warning, but DiskReplayBuffer reads them once in __init__ and trainable.py
+  # pushes only sf_gap_priority_weight / fast_low_surprise_priority /
+  # diff_focus_{pol_scale,q_weight} to the live buffer. A live edit here does
+  # NOTHING. Sixth instance of the dead-key class. Change them at a RESTART.
+  shuffle_buffer_size: 100000
+  shuffle_refresh_interval: 4
   shuffle_refresh_shards: 5
   shard_size: 2000            # Samples per on-disk shard (~1 MB compressed)
   # On PB2 exploit (cross-trial restore), replace most recent local bad data and
@@ -608,7 +737,23 @@ tune:
   holdout_capacity: 2000
   test_steps: 5
 
-  freeze_holdout_at: 0
+  # 2026-07-26: 0 -> 2000. The holdout was a conveyor belt, not a ruler:
+  # holdout_capacity 2000 with ~159 new rows/iter turns the set over COMPLETELY
+  # every ~13 iterations, so any test_* comparison spanning longer compares two
+  # different measuring sticks. That is the mechanism behind audit G4/J2 and
+  # behind best-model tracking being dead since iter 286 (it adopted the worse
+  # of two rulers ~0.3 nats apart). Freezing at 2000 makes successive test_*
+  # readings comparable to each other.
+  #
+  # KNOWN COST: a frozen holdout AGES. The replay window turns over ~daily, so
+  # the frozen rows drift out of distribution and the train/holdout gap widens
+  # for reasons that are not overfitting. Accepted trade — the gap's TREND stays
+  # useful even though its ABSOLUTE value stops being interpretable. Kill rule
+  # (ledger): gap widening >0.5 nats within 30 iters means re-freeze
+  # periodically instead. Read at trial construction, so a revert needs a
+  # restart. NOT yet persisted across restarts — each restart re-freezes a new
+  # set, which is still far better than every 13 iterations.
+  freeze_holdout_at: 2000
   reset_holdout_on_drift: false
   drift_threshold: 0.0
   drift_sample_size: 128
@@ -623,4 +768,13 @@ tune:
   # with only lr + w_wdl searched. Open up more dimensions to break plateau.
   #
   # Only pb2_bounds_* keys present here are searched; everything else is pinned.
-  pb2_bounds_lr: [0.0003, 0.0003]  # 2026-07-02: re-pinned at 0.0003 (flat-LR revert; scheduler bounds hotpatch on resume)
+  pb2_bounds_lr: [0.00003, 0.00003]  # 2026-07-26: repinned 0.0003 -> 3e-5 with train.lr for the boot512 restart.
+  # WARNING — THIS KEY OVERRIDES `train.lr`, IT DOES NOT BOUND IT.
+  # _build_mutation_param_space (tune/harness.py) does
+  #     param_space = {**base_config}; param_space[name] = tune.uniform(*bounds)
+  # so a degenerate [x, x] range REPLACES the flattened train.lr with x for
+  # every new trial. On 2026-07-26 the boot512 restart was launched with
+  # train.lr 3e-5 and the trial still came up at lr=0.0003 from this line;
+  # only the warm-start guard (trainable_init.guard_warm_start_lr) caught it.
+  # Change both together, always. Prior: 2026-07-02 re-pinned at 0.0003
+  # (flat-LR revert; scheduler bounds hotpatch on resume).
