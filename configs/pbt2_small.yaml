@@ -5,12 +5,15 @@
 #   bug fixed (search Q now returned instead of stale root Q), enabling real diff-focus.
 #   New plateau: os≈278-280 (rmp≈0.27) vs old 222-224. Both weights hit upper bounds.
 #
-# What PB2 searches now:
-#   lr, w_wdl, w_soft, w_sf_move, sf_wdl_frac, diff_focus_q_weight
+# What PB2 searches now (2026-07-26: CORRECTED — the old list here named six
+# keys including diff_focus_q_weight, and also listed diff_focus_* under
+# "pinned" two lines later, contradicting itself. Only keys with a pb2_bounds_*
+# entry are searched, and there is exactly one):
+#   lr
 #
-# What is pinned:
-#   diff_focus_* (medians of top-5), temperature, playout_cap_fraction,
-#   sf_policy_temp, sf_policy_label_smooth, feature_dropout_p, w_future, soft_policy_temp
+# What is pinned: everything else, including diff_focus_*, temperature,
+#   playout_cap_fraction, sf_policy_temp, sf_policy_label_smooth,
+#   feature_dropout_p, w_future, soft_policy_temp
 #
 # Data flow per iteration:
 #   150 games × ~20-30 pos = ~3k-5k new samples → up to 15 training steps (256 batch)
@@ -220,7 +223,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_48.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_60.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -351,11 +354,19 @@ selfplay:
   # Stockfish WDL confidence required to adjudicate max_plies timeouts as decisive.
   timeout_adjudication_threshold: 0.99
 
+  # 2026-07-26: set to the REALIZED values. The worker never builds a
+  # DiffFocusConfig from the published reco, so selfplay has always run the
+  # dataclass defaults in selfplay/config.py while these lines read the Run-4
+  # sweep winners (4.8 / 3.8 / 4.0 / 0.09) that nobody ever applied. Pinned to
+  # the truth for the same reason as soft_policy_temp above: the day someone
+  # plumbs this key, the old values would have silently become a live,
+  # unregistered data-affecting experiment at the next restart.
+  # Adopting the sweep values is a real experiment — see the ledger entry.
   diff_focus_enabled: true
-  diff_focus_q_weight: 4.8   # Pinned: top-5 median from Run 4
-  diff_focus_pol_scale: 3.8   # Pinned: top-5 median from Run 4
-  diff_focus_slope: 4.0       # Pinned: top-5 median from Run 4
-  diff_focus_min: 0.09        # Pinned: top-5 median from Run 4
+  diff_focus_q_weight: 6.0
+  diff_focus_pol_scale: 3.5
+  diff_focus_slope: 3.0
+  diff_focus_min: 0.025
 
   categorical_bins: 32
   hlgauss_sigma: 0.04

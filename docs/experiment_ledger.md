@@ -2352,6 +2352,64 @@ silent garbage. Fixed by rotating `progress.csv` on a schema change instead of
 freezing the report schema forever. A comment asking future authors not to add
 columns is not a mechanism.
 
+**diff_focus — CONFIG PINNED TO THE REALIZED VALUES; adopting the sweep winners
+is STAGED / NOT LAUNCHED (2026-07-26).**
+
+**What was true.** The worker never builds a `DiffFocusConfig` from the published
+reco, so selfplay has always run the `selfplay/config.py` dataclass defaults
+while the yaml read the Run-4 sweep winners:
+
+| key | yaml said | actually ran |
+|---|---|---|
+| `diff_focus_q_weight` | 4.8 | **6.0** |
+| `diff_focus_pol_scale` | 3.8 | **3.5** |
+| `diff_focus_slope` | 4.0 | **3.0** |
+| `diff_focus_min` | 0.09 | **0.025** |
+
+`diff_focus` is consumed **on the worker** (`selfplay/network_turn.py:429`,
+`:503-507`), where it decides which positions get recorded and with what
+`priority`. Audit H2 measured priority CV 0.94, so it **is** shaping the
+training corpus — at values nobody chose. A sweep ran, picked winners, and wrote
+them to a key the worker does not read.
+
+**Action taken: the live yaml is pinned to the realized values (6.0 / 3.5 / 3.0
+/ 0.025).** Provably inert — the worker reads none of these keys — and verified
+key-set-neutral so the all-or-nothing live validator still accepts the file.
+This is config honesty, not a change.
+
+**Why pin rather than leave it.** This is the same trap `soft_policy_temp` just
+walked us into: a dead key holding a value nobody validated, which becomes a
+live unregistered experiment the moment someone plumbs it. #257 plumbed
+`soft_policy_temp` and the live yaml's stale 3.0 would have re-targeted 41% of
+trunk gradient at the next restart. Pinning to the realized value costs nothing
+today and removes the landmine. **When a key is dead, the safe value to store in
+it is the one that is actually running.**
+
+**Also corrected: the yaml's own header was lying about PB2.** It listed
+`diff_focus_q_weight` under "What PB2 searches now" *and* listed `diff_focus_*`
+under "What is pinned" two lines later. Only keys with a `pb2_bounds_*` entry
+are searched and there is exactly one (`lr`), so the header contradicted itself
+and both halves were wrong about diff_focus.
+
+**Adopting 4.8 / 3.8 / 4.0 / 0.09 — STAGED, and NOT recommended.** If it is ever
+run it needs plumbing (publish in the reco + consume in `worker.py`) plus:
+- Hypothesis: the Run-4 optimum improves the recorded-position mix over the code
+  defaults.
+- **Prior against it, stated up front so a null result is not a surprise:** Run 4
+  swept on the **46M** net, the whole reweighting family was declared EXHAUSTED
+  on 2026-07-07 (`gap_priority_104_killed`), and the one live measurement of
+  diff_focus on 512×16 found a ~1.6% keep-rate change — which we now know was
+  the *code defaults'* effect, not the yaml's.
+- Deciding yardstick: `scripts/value_regret.py` paired against the pre-change
+  window, day-plus window, paired CI. NOT a keep-rate statistic — keep-rate is
+  a mechanism check, not an outcome.
+- Kill: CI includes 0 ⇒ revert to the defaults and close the family for good.
+- Confound: one data-affecting change per readout window; do not overlap with
+  PRE-REG A/B or the C17 arena.
+
+Pinned by name in `tests/test_reco_coverage.py::_KNOWN_UNPUBLISHED`, so an
+eighth unpublished key cannot hide behind this one.
+
 **C17 duplicate-leaf batching (`target_batch`) — STAGED / NOT LAUNCHED
 (2026-07-26).** Pre-registered so that flipping it later is an experiment and not
 a cleanup. **Nothing has been changed; do not launch without the operator.**
