@@ -140,6 +140,33 @@ These are written from mistakes made *while doing this audit*, not hypotheticals
     could not see that `play_batch` takes a whole `diff_focus` group the worker
     never builds, because that gap is not a field of anything it was reading.
 
+15. **This audit's FAILURE DISTRIBUTION measures where we LOOKED, not where the
+    defects are. Never summarise it as a finding about the pipeline.**
+    On 2026-07-27 the totals (157 invariants, 39 FAILED) were summarised as
+    "the defects cluster in measurement" — stage G failing 9 of 15, the ruler
+    stages worst. That is a **selection effect**, and the user rejected it
+    correctly. Measurement defects are cheap: read a metric's definition,
+    compare it to what the code computes, done offline in minutes with no
+    training compute and **no working ruler required**. A defect that weakens
+    PLAY needs a strength measurement, which needs a sound ruler and days of
+    arena time. So the cheap class is over-represented in every count here by
+    construction, and the expensive class is under-found — not absent.
+    **The evidence against the summary was already on the page:** the two
+    largest findings of that same day were C17 (duplicate leaves corrupting the
+    policy target the net trains on, −4.5 cp) and the sf_p0 teacher being off
+    for 15.8 days (removing every external position-level move signal). Neither
+    is a measurement defect; both change what is learned and played.
+    **Two corollaries.** (a) The same trap as "a high verified-fraction on a low
+    invariant count means unexamined, not clean" — applied to stages F and K in
+    the same session, then not applied to the aggregate. (b) It compounds:
+    M10 shows the three frozen policy/value rulers score the net on
+    history-free inputs it never plays in, so the instruments we would use to
+    hunt play-affecting defects are themselves compromised. **Prefer
+    ruler-free differential tests** — C-vs-Python move disagreement (C16, C27)
+    is a play-strength statement needing no arena, because a reference
+    implementation is its own oracle. Rank candidate work by *does this change
+    what gets played or learned*, not by which stage has the most red.
+
 ---
 
 ## 3. The loop, as stages
