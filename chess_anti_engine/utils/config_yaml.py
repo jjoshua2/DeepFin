@@ -161,6 +161,12 @@ _SELFPLAY_KEYS = (
     "blindspot_harvest_out_path",
 )
 
+# Public alias. This tuple is the canonical enumeration of "yaml keys that
+# describe selfplay", so it is also the right basis for auditing whether each
+# one actually REACHES a distributed worker — see
+# ``scripts/audit_realized_config.py --reco-diff`` (rl_loop_audit A4/A7).
+SELFPLAY_CONFIG_KEYS: tuple[str, ...] = _SELFPLAY_KEYS
+
 # model section: mostly 1:1 except kind→model and use_smolgen→no_smolgen (inverted).
 _MODEL_PASSTHROUGH = (
     "embed_dim", "num_layers", "num_heads", "embed_dim_by_layer", "ffn_mult", "ffn_mult_by_layer",
