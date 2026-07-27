@@ -405,15 +405,30 @@ train:
   # re-set. Watch the per-iteration `grad_norm_median` / `grad_hard_clip_rate`
   # columns in progress.csv; the trainer also logs a warning when it trips.
   #
-  # THE WATCH HAS FIRED (2026-07-27, iters 81-97, measured from progress.csv,
-  # a different code path from the TB reading above): median 5.18-5.42, mean
-  # 5.227, p95 ~6.0, max ~6.6, HARD-clip rate 0.663 and rising +0.0062/iter.
-  # The adaptive z-score clipper fires on only 5.3% of steps -- correct outlier
-  # behaviour -- so this fixed cap, not zclip's adaptive logic, is now doing
-  # 66% of the clipping. The drift is remarkably LINEAR at ~3.5e-4/step and has
-  # been for >=5000 steps across a restart (4.244 median @ step 58320 -> ~5.2 @
-  # step 61000, matching the earlier 3.996 -> 4.816 over 2320 steps).
-  # NOT explained by parameter growth: ||theta|| moved +0.09% over 2824 steps.
+  # THE WATCH HAS FIRED (2026-07-27, iters 81-99, measured from progress.csv,
+  # a different code path from the TB reading above): median 5.15-5.47, mean
+  # 5.247, p95 ~6.0, HARD-clip rate 0.65-0.84. The adaptive z-score clipper
+  # fires on only ~5% of steps -- correct outlier behaviour -- so this fixed
+  # cap, not zclip's adaptive logic, is doing essentially all the clipping.
+  # The watch threshold is breached at EVERY iteration 81-99.
+  #
+  # SHAPE: a STEP, not a drift. An earlier revision of this comment claimed a
+  # linear +0.0086/iter rise; that was a line fitted through a level shift and
+  # is WITHDRAWN. Measured: iters 81-95 are FLAT (slope -0.0020/iter, p=0.54,
+  # mean 5.204), then a discrete jump at iter 96 to mean 5.410 (Welch t=10.8,
+  # p=1.7e-6, changepoint scan picks 96 as the global optimum). The pooled
+  # +0.0099/iter is the artifact. Cause of the step is NOT in the 276 logged
+  # columns: every train head moved <0.5% across it (|d|<=0.34) while the grad
+  # norm moved +4.0% (d=4.04).
+  # Also note `grad_hard_clip_rate` is bit-identical to `grad_clip_rate` here,
+  # so they are ONE observation, not two -- and because the median sits just
+  # above the cap, the clip rate is a hypersensitive readout of small location
+  # shifts (+4% in location -> +17 points of clip rate). Do not read a moving
+  # clip rate as independent evidence.
+  # NOT parameter growth: ||theta|| moved +0.09% over 2824 steps.
+  # NOT a replay-window drain: the window is pinned at its 1.5M cap every
+  # iteration (`replay_window_before/after` constant), so the drain that was
+  # pre-registered as the suspected cause DOES NOT EXIST.
   # DO NOT re-set this value without a ledger entry. Two readings remain open
   # and they imply OPPOSITE moves: (a) the cap is stale and should rise, or
   # (b) the drift is suppressed instability and the cap is the only brake --
