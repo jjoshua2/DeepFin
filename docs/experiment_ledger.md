@@ -2478,6 +2478,57 @@ figure of 1.352 from the other side) and closes only **7.3%** of the gap. The no
 control moves sharpness the *opposite* way (0.5925 nats, 28.7% ≥0.99), so "more sims" and
 "this fix" are **opposed** on sharpness.
 
+**⚠⚠ TWO OBJECTIONS RAISED 2026-07-27 ~21:0x THAT THE MEASUREMENT DOES NOT ANSWER. THE
+"STRICTLY BETTER ON EVERY AXIS" CONCLUSION IS WITHDRAWN; the 7.4 cp measurement STANDS.**
+
+**(1) Virtual loss is a PUCT construct, and the Gumbel path uses its pessimistic form.**
+`tree_gumbel_select_child` computes
+```c
+int32_t eff_n = N[cid] + vloss_weight * vl;
+cqs[i]        = -(W[cid] + vloss_weight * vl) / eff_n;
+```
+— adding the weight to **both N and W**, so an in-flight walker makes a child look *worse*
+to its parent. That is the classic parallel-PUCT exploration hack. Gumbel's non-root rule
+is already trying to match visits to the improved policy, so a virtual **VISIT** (N only)
+is exactly what the rule would have done had the sim completed and needs no justification;
+a virtual **LOSS** additionally imports a pessimism bias that nothing in the Gumbel scheme
+asks for. **The principled variant already exists — `VLOSS_MODE_VIRTUAL_MEAN`
+(`_mcts_tree.c:205`) counts pending visits in N but values them at the child's existing
+mean `child_w/child_visits`, i.e. no value bias — and it is UNREACHABLE from the Gumbel
+path**: `tree_gumbel_select_child` takes no `vloss_mode` argument, `tree_select_leaf` is
+called with `VLOSS_MODE_LEGACY` hardcoded, and `vloss_mode` is not exposed in
+`gumbel_c.py` at all. **So the entire 7.4 cp was measured on the mode that is theoretically
+the wrong one for this search, and the better-motivated mode has never been run.**
+
+**(2) The throughput comparison was made in the WRONG HARNESS, and it is the axis the
+recommendation turned on.** `target_batch=1` was rejected for costing **3.5× wall clock** —
+measured inside `scripts/audit_targets.py`, a single-process harness with **no broker**,
+where cutting per-board accumulation directly multiplies the number of small GPU calls.
+Production does not look like that:
+
+| | production selfplay | the audit harness |
+|---|---|---|
+| games in flight | **`selfplay_batch: 384`**, `slot_oversubscribe: 2.0` | one process, 2000 positions |
+| batching | **broker batches ACROSS games**, `distributed_worker_{min,max}_games_per_batch: 200 / 512` | per-call only |
+
+With 384 boards in flight, **one leaf per board already yields a ~384-row batch — inside
+the broker's own 200–512 target band.** The duplicate-generating cross-rep accumulation may
+simply be unnecessary in production: GPU efficiency can come from concurrency across games
+rather than from stacking sims within a tree. **The 3.5× penalty has never been measured in
+the production architecture and may not exist there.**
+
+**Revised position: THREE candidates, none yet compared on production's cost model.**
+(a) `vloss_weight=1` LEGACY — measured, 7.4 cp, theoretically the wrong construct;
+(b) `VLOSS_MODE_VIRTUAL_MEAN` for Gumbel — better motivated, **not reachable, unmeasured**,
+    needs a small C change to plumb the mode into `tree_gumbel_select_child`;
+(c) `target_batch=1` relying on cross-game broker batching — **0% duplicates with no value
+    bias and no new mechanism at all**, cost unknown in production and plausibly ~zero.
+**(c) is the cheapest correct thing if its throughput holds up, because it removes the
+duplication without adding any bias to the search.** Deciding this needs a
+production-harness throughput measurement (games/h at matched sims), not another
+`audit_targets` run — and per [[broker_gather_regime_solved]] batching must never be swept
+live, so it belongs in a pause window or an offline replica.
+
 **DEPLOY IS GATED — PR #278 is behaviour-neutral and changes nothing yet.** `vloss_weight`
 defaults to 0 and every C read/write site is guarded by `> 0` (pinned by
 `test_the_default_weight_never_touches_the_virtual_loss_array`, added in review). Three
