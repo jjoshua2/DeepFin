@@ -220,7 +220,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_39.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_48.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -312,7 +312,13 @@ selfplay:
   sf_wdl_use_cp_logistic: true   # Replace SF's UCI_ShowWDL (72% one-hot) with own logistic on cp score.
   sf_wdl_cp_slope: 0.0060        # 2026-05-23: move toward replay-fit slope (~0.0045-0.0055) while staying conservative.
   sf_wdl_cp_draw_width: 120.0    # Half-width of draw zone in cp; moved toward current-regret replay fit (~130-145).
-  soft_policy_temp: 3.0     # Temperature for soft policy target (LC0 uses 3, was hardcoded 2)
+  # p^(1/soft_policy_temp). 2026-07-26: set to the REALIZED value. This key was
+  # never published to the worker, so selfplay ran the 2.0 dataclass default while
+  # this line read 3.0 (measured T=2.0000 on 1005 live rows). PR #257 makes the key
+  # real, so leaving 3.0 here would silently re-target soft_policy_ce (~41% of
+  # weighted trunk gradient, +48.6% target entropy) at the next restart.
+  # Adopting 3.0 is a data-affecting experiment and needs its own ledger entry.
+  soft_policy_temp: 2.0
 
   syzygy_path: /home/josh/projects/chess/data/syzygy_3-4-5:/home/josh/projects/chess/data/syzygy_6
   # Ordinary high-volume Stockfish curriculum searches stay on local SSD TBs.

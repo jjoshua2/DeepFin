@@ -155,8 +155,35 @@ from `main` by design. As of 2026-07-26 the deltas are:
 | `opening_fen_dole_per_iter` | **0** | 1 | keep live until the no-seed readout closes; restoring costs a session restart (see C6) |
 | `opening_fen_list_path` | `retire_32` | `retire_250` | **KEEP LIVE.** The monitor rewrites this every iteration; main's value is always stale |
 | `gumbel_c_scale` | *absent* | **0.1** | **TAKE MAIN'S.** PR #249; value-identical to the resolved default so it is a no-op now, but the live yaml should gain the pin |
+| `soft_policy_temp` | 3.0 → **2.0** | 2.0 | **CLOSED 2026-07-26 — do not reopen.** Was the one delta this table did not list, and the only one that would have re-targeted training. See below |
 
 **Rule: reconcile key-by-key, never by wholesale copy in either direction.**
+
+**`soft_policy_temp` — why this row exists.** Until 2026-07-26 the live yaml said
+`3.0` while selfplay ran the `2.0` dataclass default, because the key was never
+published to the worker (E13). PR #257 makes the key real, so the *next* restart
+would have adopted the live `3.0` — a first-magnitude change to
+`soft_policy_ce` (~41% of weighted trunk gradient) arriving through a PR whose
+stated purpose was to preserve behaviour, with no ledger entry and no yardstick.
+The key was absent from this table, so an operator reconciling key-by-key would
+have kept the live value and shipped the change.
+
+Realized temperature measured directly from the stored targets rather than read
+off any config, by regressing `log(soft_i/soft_j)` on `log(p_i/p_j)` across 1005
+rows of three live shards: slope `0.5000`, i.e. **T = 2.0000 on 100% of rows**.
+The live yaml is now pinned to that measured value.
+
+Verified the pin actually survives a resume, which is not automatic
+(`config_change_may_not_be_in_effect`): `setup()` overlays the yaml over the
+restored trial config for every key that is neither PB2-searched nor in
+`_TOPOLOGY_KEYS` / `_RESUME_CONSTRUCTION_BOUND_KEYS` /
+`_LAUNCH_FIXED_ASSET_PATH_KEYS`. `soft_policy_temp` is in none of them, and the
+only searched key is `pb2_bounds_lr`. So the overlay applies 2.0 before the
+trainer and the first reco are built, and no `experiment_state` patch is needed
+— even though `experiment_state` still carries `3.0`.
+
+**Adopting 3.0 is a real experiment** (+48.6% target entropy, KL(T2‖T3) ≈ 0.117
+nats) and needs its own ledger entry, not a config-reconciliation decision.
 
 ## B. Opening / seed selection
 

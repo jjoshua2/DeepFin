@@ -2227,6 +2227,62 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+**NEAR-MISS, CLOSED — the live yaml would have re-targeted the policy loss at the
+next restart (2026-07-26).** Caught by a pre-deployment adversarial review of the
+merged-but-not-yet-deployed PRs #257/#259/#261, before any restart.
+
+`soft_policy_temp` has never been published to the worker (E13), so selfplay has
+run the `2.0` dataclass default while the live yaml said `3.0`. PR #257 makes the
+key real. The live yaml is what the restart reads, and `soft_policy_temp` was
+**absent from the A5 reconciliation table** — so an operator following the
+mandated key-by-key procedure would have kept the live `3.0` and shipped a
+first-magnitude change to `soft_policy_ce` (~41% of weighted trunk gradient)
+inside a PR whose stated purpose was to preserve behaviour. No entry, no
+yardstick, no kill rule.
+
+Realized temperature measured from the stored targets rather than read off any
+config — regress `log(soft_i/soft_j)` on `log(p_i/p_j)`, slope = 1/T — across
+1005 rows of three live shards: slope **0.5000**, i.e. **T = 2.0000 on 100% of
+rows**. (Method rule 12: a realized value comes from the stage that resolves it.)
+
+Blast radius had it shipped, on 2000 real rows: mean top-1 target mass
+0.5803 → 0.4219, mean target entropy 1.3631 → 2.0258 nats (**+48.6%**),
+mean KL(T2‖T3) 0.117 nats.
+
+**Action taken:** live yaml pinned to the measured `2.0`, with the reason in the
+comment. Provably inert on the running process — the live reco never carries the
+key and measured T is already 2.0 — so this is a config-honesty fix, not a change.
+Verified the pin survives a resume, which is not automatic: `setup()` overlays the
+yaml for every key that is neither PB2-searched nor in `_TOPOLOGY_KEYS` /
+`_RESUME_CONSTRUCTION_BOUND_KEYS` / `_LAUNCH_FIXED_ASSET_PATH_KEYS`;
+`soft_policy_temp` is in none of them and the only searched key is
+`pb2_bounds_lr`, so no `experiment_state` patch is needed even though
+`experiment_state` still carries `3.0`. A5 row added so it cannot silently
+reopen.
+
+**Adopting 3.0 is a real experiment and is NOT authorized by this entry.** It
+needs its own hypothesis, yardstick and kill rule.
+
+**Lesson, and the reason this is filed rather than just fixed:** the danger was
+not the wrong value, it was that a *behaviour-preserving* PR's safety argument
+lived in a file the deployment procedure does not touch. #257 set `main`'s yaml
+to 2.0 and was correct to; but `main`'s yaml is not what restarts. When a PR
+makes a previously-dead key live, the live config for that key is a deployment
+step, not a merge detail — and it belongs in A5 the same day.
+
+**REVIEW FINDING, FIXED — `progress.csv` would have been corrupted at the next
+restart (PR #262, 2026-07-26).** Same review. Ray's `CSVLoggerCallback` writes the
+header once and, on resume, appends without re-heading while taking its
+fieldnames from the current result dict. #259 added `wdl_onehot_loss` and
+`test_wdl_onehot_loss` to the middle of the report dict — 32 minutes after #261's
+docstring recorded the invariant that forbids exactly that. Replaying main's
+266-key result against the real live 264-column file puts `training_iteration` at
+`'True'` and `timestamp` at `'0.0'`; `scripts/monitor_pbt.sh` and
+`scripts/pbt_hourly_audit.py` resolve columns by header name and would have read
+silent garbage. Fixed by rotating `progress.csv` on a schema change instead of
+freezing the report schema forever. A comment asking future authors not to add
+columns is not a mechanism.
+
 **SF-refute opp-row recording — STAGED / TOOLING-READY (2026-07-19).**
 Hypothesis: the SF-refute channel is selfplay-tagged and the SF-played refute
 plies generate NO training rows today, so the net never trains its MAIN policy
