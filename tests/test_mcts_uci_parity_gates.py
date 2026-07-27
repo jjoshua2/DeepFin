@@ -252,9 +252,10 @@ def test_gumbel_cross_impl_matches_under_a_real_evaluator(simulations: int) -> N
     `docs/rl_loop_audit.md`. Measured with this evaluator, production batching
     diverges enough to pick a *different move* (L1 up to 1.90 at 256 sims).
 
-    Capped at 64 simulations: at 256 the two drift by ~0.03 L1 on one of these
-    six boards even at per-rep flush, which is a real residual worth its own
-    investigation rather than a tolerance to paper over.
+    Capped at 64 simulations because a residual divergence appears from 96 up.
+    That residual is not papered over with a tolerance — it is pinned by
+    `test_gumbel_cross_impl_residual_above_64_sims` below and recorded as C27
+    in `docs/rl_loop_audit.md`.
     """
     boards = _edge_case_boards()
     pre_pol, pre_wdl = _root_logits(len(boards))
@@ -292,6 +293,58 @@ def test_gumbel_cross_impl_matches_under_a_real_evaluator(simulations: int) -> N
         py_probs, c_probs, py_masks, c_masks, strict=True,
     ):
         assert np.array_equal(py_mask, c_mask)
+        np.testing.assert_allclose(py_prob, c_prob, atol=0.0)
+
+
+@pytest.mark.skipif(run_gumbel_root_many_c is None, reason="gumbel_c extension not available")
+@pytest.mark.xfail(
+    strict=True,
+    reason="C27: unexplained C-vs-Python policy residual from 96 sims up, even "
+           "at per-rep flush. Pinned deliberately — see docs/rl_loop_audit.md C27. "
+           "A strict xfail means this FAILS if the residual ever disappears, so "
+           "the day someone fixes it we are told instead of silently drifting.",
+)
+@pytest.mark.parametrize("simulations", [96, 128, 256])
+def test_gumbel_cross_impl_residual_above_64_sims(simulations: int) -> None:
+    """Pin the residual C-vs-Python divergence that survives matched batching.
+
+    Same setup as the gate above, only with a larger budget. Production runs
+    256 simulations, so this is the regime the training targets are actually
+    built in.
+
+    Measured on these six boards (1 of 6 diverges at every budget):
+
+        sims=64   L1 0        rel 0
+        sims=96   L1 0.00384  rel 0.0064
+        sims=128  L1 0.0575   rel 0.097
+        sims=192  L1 0.0974   rel 0.130
+        sims=256  L1 0.0317   rel 0.135
+
+    The selected MOVE agrees at every budget, so this is a distribution-shape
+    difference rather than a different decision — which is why it is recorded
+    and pinned rather than treated as a release blocker. It is NOT explained by
+    C16/C17: those are artifacts of cross-rep leaf accumulation, and this
+    persists with `target_batch=1`.
+    """
+    boards = _edge_case_boards()
+    pre_pol, pre_wdl = _root_logits(len(boards))
+    cfg = GumbelConfig(
+        simulations=simulations, topk=8, temperature=0.0, add_noise=False,
+    )
+    run_c = run_gumbel_root_many_c
+    assert run_c is not None
+
+    py_probs, _, _, _ = run_gumbel_root_many(
+        None, boards, device="cpu", rng=np.random.default_rng(11), cfg=cfg,
+        evaluator=_HashEvaluator(), pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+    )
+    c_probs, _, _, _ = run_c(
+        None, boards, device="cpu", rng=np.random.default_rng(11), cfg=cfg,
+        evaluator=_HashEvaluator(), pre_pol_logits=pre_pol, pre_wdl_logits=pre_wdl,
+        target_batch=1,
+    )[:4]
+
+    for py_prob, c_prob in zip(py_probs, c_probs, strict=True):
         np.testing.assert_allclose(py_prob, c_prob, atol=0.0)
 
 
