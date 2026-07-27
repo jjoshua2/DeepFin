@@ -722,10 +722,23 @@ def _rotate_progress_csv_if_schema_changed(callback, trial, result: dict) -> Non
         n += 1
         rotated = path.with_suffix(f".{int(time.time())}.{n}.csv")
 
-    callback._trial_files[trial].close()
+  # Rename BEFORE closing anything: if it raises, no state has changed and the
+  # open handle is still the right one, so Ray's append proceeds untouched.
+  # (The old handle follows the inode to the rotated file, so it must still be
+  # replaced afterwards -- but only once the risky step has succeeded.)
     path.rename(rotated)
-    callback._trial_files[trial] = path.open("at")
-    callback._trial_continue[trial] = False
+  # Drop the trial and let Ray's own _setup_trial reopen it. That re-derives
+  # `_trial_continue` from the now-absent file, so Ray writes the new header
+  # itself, and it is also the path Ray retries if the reopen fails: its
+  # `if trial not in self._trial_files` guard runs again on the next result.
+  # Doing it this way means no partially-mutated state can survive an error --
+  # the previous version closed the handle first, so a failed rename left Ray
+  # writing to a closed file.
+    stale = callback._trial_files.pop(trial)
+    callback._trial_csv.pop(trial, None)
+    callback._trial_continue.pop(trial, None)
+    stale.close()
+    callback._setup_trial(trial)
     added = [k for k in incoming if k not in set(on_disk)]
     removed = [k for k in on_disk if k not in set(incoming)]
     print(

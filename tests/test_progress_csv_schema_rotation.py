@@ -45,6 +45,14 @@ def _make_callback(monkeypatch: pytest.MonkeyPatch):
     return cb
 
 
+@pytest.fixture(autouse=True)
+def _restore_ray_logger():
+    """Undo the class-level patch so it cannot leak into other test modules."""
+    original = ray_csv.CSVLoggerCallback.log_trial_result
+    yield
+    ray_csv.CSVLoggerCallback.log_trial_result = original
+
+
 def _unpatched(monkeypatch: pytest.MonkeyPatch) -> None:
     """Restore Ray's own log_trial_result, whatever ran before this test."""
     fn = ray_csv.CSVLoggerCallback.log_trial_result
@@ -139,6 +147,41 @@ def test_patch_is_inert_when_the_schema_is_unchanged(
     rows = _rows(progress)
     assert rows[0] == list(OLD)
     assert len(rows) == 3, "both rows must remain in the same file"
+    assert not list(tmp_path.glob("progress.*.csv"))
+
+
+def test_a_failed_rotation_is_non_fatal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rotation that cannot complete must not take the training loop with it.
+
+    The docstring promises best-effort behaviour, and this runs inside Ray's
+    result loop: `CallbackList.on_trial_result` and
+    `TuneController._process_trial_save` have no try/except, so an exception
+    here propagates into the driver.
+    """
+    _make_csv_logger_schema_safe()
+
+    trial = _FakeTrial(tmp_path)
+    progress = tmp_path / "progress.csv"
+
+    cb = _make_callback(monkeypatch)
+    cb.log_trial_result(0, trial, dict(OLD))
+    cb.log_trial_end(trial)
+
+    def boom(_self: Path, _target: Path) -> None:
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(Path, "rename", boom)
+
+    cb = _make_callback(monkeypatch)
+  # Must not raise, and must still write the row somewhere valid.
+    cb.log_trial_result(1, trial, dict(NEW))
+    cb.log_trial_end(trial)
+
+    rows = _rows(progress)
+    assert rows[0] == list(OLD), "the original header must survive a failed rotation"
+    assert len(rows) == 3, "the row must still be appended, not lost"
     assert not list(tmp_path.glob("progress.*.csv"))
 
 
