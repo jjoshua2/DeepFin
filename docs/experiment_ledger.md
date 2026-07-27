@@ -784,6 +784,39 @@ a candidate list; seeding is OFF (see the RESTART amendment below), so the
 decision of whether the survivors come back is deferred to the no-seed readout
 rather than made now.
 
+**DECIDED 2026-07-26 (evening) — the 78 survivors do NOT come back at the
+upcoming deploy restart.** "Deferred" is not a verdict, so here is the call and
+its reasoning.
+
+The tempting argument is that restoring the dole is restart-gated (C6) and a
+restart is imminent for PR #262, so the ~5-iteration mix distortion is free.
+**That is exactly the trap.** The cost that matters is not the restart, it is
+the readout window: turning seeds back on inside the deploy restart would end
+the no-seed window early AND confound it with everything else in that restart
+(#260's optimizer control surfaces, #262/#265/#266/#267). One data-affecting
+change per readout window — and the deploy already spends that budget.
+
+Two further reasons to wait rather than act:
+
+1. **The pool is mostly phantoms.** Only 78/202 survive the gate's own bar at 2M
+   nodes; 124 fail and 23 were *winning* for the side to move, i.e. actively
+   teaching the value head that a won position is lost. The upside of the
+   survivors is unproven, and the v1 WORKED verdict was earned by a pool that
+   included the phantoms — so it does not transfer to the 78 unchanged.
+2. **The no-seed window is already partly confounded, and pretending otherwise
+   would compound it.** This block's own RESTART amendment says to hold
+   `freeze_holdout_at` until the no-seed readout closes, because freezing
+   changes which rows train. It was armed at iter 48 anyway. So iters 33–47 are
+   clean no-seed and 48+ carry the freeze. Adding seeds now would give the
+   window three regimes and no clean comparison at all.
+
+**What has to happen before this is revisited, in order:** close the no-seed
+readout on iters 33–47 (stating the freeze confound for anything after 48);
+then, if seeds are wanted back, re-register them as their own experiment against
+the **78-survivor list specifically**, with the Cheese catastrophic-value tail as
+the objective rather than a generic arena, and its own restart. Do not fold it
+into a deploy.
+
 ### FINDING (2026-07-26) — the holdout is a ROLLING ring, so `test_loss` has no stable ruler; a durable `holdout_generation` would make it look stable when it is not
 
 Investigating "make `holdout_generation` durable so it can serve as ruler
