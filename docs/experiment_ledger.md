@@ -2403,6 +2403,71 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+**⚑ I11 THRESHOLD FIRED — `zclip_max_norm: 5.0` has stopped being a tail guard
+and is now clipping the majority of steps (2026-07-26 23:5x). LIVE CONDITION,
+not a config-honesty item.** Verified by hand from the live TB scalars (trial
+13a9f, `zclip/total_norm` + `zclip/hard_clipped`, 376 samples, steps
+56000–59750):
+
+| window | median grad norm | HARD-clip rate |
+|---|---|---|
+| full (376) | 4.468 | 13.0% |
+| last 100 | 4.901 | 40.0% |
+| **last 50** | **5.055** | **54.0%** |
+
+250-step bucket medians rise near-monotonically over ~3.7k steps:
+3.956 → 4.134 → 4.065 → 4.109 → 4.159 → 4.332 → 4.275 → 4.393 → 4.613 → 4.654
+→ 4.616 → 4.761 → 4.832 → 4.898 → **5.094**. The newest bucket median now
+**exceeds the cap itself**, and `zclip/effective_clip` is pinned at 5.000 over
+the last 50.
+
+**This is a recurrence of the exact failure the current value was chosen to
+escape.** The yaml comment at `configs/pbt2_small.yaml:411` reads: *"was 1.0;
+raised because raw grad norms median ~2.2 meant every step was hard-clipped,
+dampening effective LR by ~55%."* The cap is now in precisely that regime again
+— median above the cap, >50% of steps hard-clipped — so the same effective-LR
+damping is back, just at a different absolute scale. The comment's stated
+justification is stale by ~2.3× and its conclusion ("z-score clipping still
+handles outliers", implying the hard cap is inert) is false.
+
+**Why this matters more than a stale comment:** a hard clip on the majority of
+steps silently rescales the gradient, so the *realized* learning rate is no
+longer the configured one — on a run whose entire current purpose is reading out
+whether the loop gains at 3e-5 ([[warm_start_lr_regime_destroys_net]] is the
+cautionary tale about exactly this class of mismatch). Any LR conclusion drawn
+across this window is confounded by an unmeasured, time-varying LR damper.
+
+**Candidate cause, NOT established:** the trend's timescale (~17h, monotone)
+matches the G8 window drain almost exactly — the replay window is going from 54%
+fifteen-day-old salvage data to 0% by 2026-07-27 ~16:50, so the training
+distribution is shifting continuously underneath the optimizer. Rising gradient
+norm is what a hardening/shifting data distribution looks like. **That is a
+hypothesis with a matching timescale, not a mechanism I have demonstrated.** The
+competing explanation is ordinary loss-landscape change as the net trains. They
+are separable: if the drain is the cause, grad norm should plateau after the
+salvage block finishes evicting.
+
+**PRE-REGISTERED, NOT APPLIED — the knob is training-affecting and I have not
+touched it.**
+- **Do nothing until the drain completes** (~2026-07-27 17:00) and re-read.
+  Changing the cap while the suspected cause is still running would confound
+  both. This is the cheap, correct first move and it costs only a re-read.
+- If the median **plateaus below ~4.5** post-drain: the drain was the cause,
+  no config change, record and close.
+- If the median **stays ≥ 5.0** post-drain: raise `zclip_max_norm` so the cap is
+  a tail guard again. Yardstick: hard-clip rate over 200 consecutive steps.
+  Success = **< 5%** (the cap is a guard, not a damper), and `value_regret`
+  paired CI vs the pre-change dump not worse by >2cp. Kill = value guardrail
+  trips ⇒ revert to 5.0.
+- **Do NOT lower it** and do not treat the clipping as protective: `zclip`'s
+  z-score arm (`zclip/clipped` 54% vs `hard_clipped` 54% over the last 50 — the
+  two coincide) shows the adaptive arm is not what is firing. The hard cap is.
+
+**Instrumentation note:** none of this is visible in `progress.csv` — grad norm
+and clip rate are TB-only today, which is exactly what PR #260 (I9) adds. That
+is why a majority-clipping condition ran for hours unnoticed. #260 should be
+read as a prerequisite for ever catching this on cadence rather than by audit.
+
 **NEAR-MISS, CLOSED — the live yaml would have re-targeted the policy loss at the
 next restart (2026-07-26).** Caught by a pre-deployment adversarial review of the
 merged-but-not-yet-deployed PRs #257/#259/#261, before any restart.
