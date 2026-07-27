@@ -2437,7 +2437,65 @@ as "another ~7cp is waiting" would be overselling it, and that framing was in th
 
 ---
 
-### ⚑⚑ C17 RESULT — THE DUPLICATE LEAVES ARE CORRUPTING THE POLICY TARGET, −4.5 cp (2026-07-27 ~16:0x)
+### ⚑⚑ C17 SOLVED — VIRTUAL LOSS RECOVERS 7.4 cp AT NO THROUGHPUT COST (2026-07-27 ~20:3x, PR #278 merged)
+
+**The root cause was ONE MISSING CALL.** `gss_prepare_batch` never called
+`tree_apply_vloss_path`. `tree_select_child` and `tree_gumbel_select_child` both honour
+`virtual_loss[]`, and `start_gumbel_sims` had long accepted a `vloss_weight` argument —
+but nothing ever **incremented** it, so passing a weight was a **no-op**. That is why C17
+read as "unfixable without giving up batching": the alternative had never actually run.
+A parameter that is accepted and silently does nothing is the house bug class exactly.
+
+| arm | GPU batches | duplicate rows | distinct nodes | leg (d) | wall clock |
+|---|---|---|---|---|---|
+| `target_batch=0` (production) | 46 | 38.7% | 735,325 | 54.2 | 285.8 s |
+| `target_batch=1` | 275 | 0.0% | 1,161,270 | 49.7 | **987.6 s (3.5×)** |
+| **`vloss_weight=1`** | **45** | **0.0%** | 1,183,687 | **46.8** | **302.4 s** |
+| tb=0 @ 426 sims (NODE-MATCHED control) | — | — | 1.18M | 49.6 | 379.2 s |
+
+Controls (a) raw policy and (c) SF soft target **bit-identical across all arms**.
+
+**The node-matched control is what makes this conclusive.** Running tb=0 at 426 sims —
+calibrated to build the same 1.18M distinct nodes vloss builds at 256 — scores **49.6**,
+indistinguishable from `target_batch=1`'s 49.7. So **`target_batch=1` buys nothing beyond
+more search**, while virtual loss is **2.8 cp beyond node-matched**: that residual is the
+in-flight penalty steering descent apart, not the absence of duplicates.
+
+**⚠⚠ SELF-CORRECTION — THE `max_visit → q_scale` MECHANISM THIS ENTRY ASSERTED IS WRONG.**
+It claimed duplicates inflate `max_visit`, so removing them lowers `q_scale` and flattens
+the target, and therefore that `c_scale 0.1` would need re-tuning. **Refuted by
+measurement:** root `max_visit` is **69.22 and total root visits 256.00 in ALL arms,
+identical to the digit**. Gumbel **sequential halving fixes the root visit schedule** — a
+duplicate wastes an NN eval *inside the tree* but still counts as one root visit. Since
+`q_scale = c_scale * (c_visit + max_visit)` (`gumbel.py:275`), **`q_scale` does not move at
+all** and **no `c_scale` re-tuning is implied**. The mechanism was inferred from plausible
+reasoning and never measured — the same error this ledger logged five times today.
+
+**The flattening is real, small, and in the right direction:** entropy **+0.0442 nats
+[+0.0285, +0.0600]** paired, top-1 −0.0164, softer on 57.1% of rows. It moves **toward**
+the SF teacher (1.3086 nats on the same rows — independently reproducing the live sf_p0
+figure of 1.352 from the other side) and closes only **7.3%** of the gap. The node-matched
+control moves sharpness the *opposite* way (0.5925 nats, 28.7% ≥0.99), so "more sims" and
+"this fix" are **opposed** on sharpness.
+
+**DEPLOY IS GATED — PR #278 is behaviour-neutral and changes nothing yet.** `vloss_weight`
+defaults to 0 and every C read/write site is guarded by `> 0` (pinned by
+`test_the_default_weight_never_touches_the_virtual_loss_array`, added in review). Three
+conditions before the default flips: (1) **the sf_p0 readout completes first** — both move
+the policy target and the sf_p0 yardstick scores leg (d), which is what this moves;
+(2) its own pre-registered entry with a revert point; (3) `gumbel_vloss_weight` plumbing in
+a follow-up PR **deployed by restart**, since a new yaml key rejects the whole live reload.
+**Also required at that restart (audit A6 exception):** #278 touched `_mcts_tree.c`, so the
+live branch is held behind `main` until the pre-restart window, where reconcile +
+`build_production_extensions.py` happen as ONE operation.
+
+**Not established:** Elo (no arena concurrent with training — 7.4 cp of audit regret is not
+an Elo claim), whether the flattening helps LEARNING (needs a live A/B), whether
+`vloss_weight > 1` is better (probed at mechanism level only).
+
+---
+
+### C17 RESULT (superseded by the entry above) — the duplicate leaves corrupt the policy target, −4.5 cp (2026-07-27 ~16:0x)
 
 **Scored against the rule pre-registered below, before any number existed. The 2 cp bar was
 cleared by 2.25×.**
