@@ -2226,7 +2226,26 @@ of +20 is a bar that cannot fire — the mirror image of the gate-that-cannot-fa
 **Corrected yardstick: the ratchet SLOPE across ≥4 daily `vs_boot512` rows**, fitted with
 its CI, not any single row. **SUCCESS = slope > 0 with the CI excluding 0 over ≥4 rows
 (~4 days).** **KILL/PIVOT = slope ≤ 0 over ≥4 rows**, which would say gradient volume is
-not the binding constraint. Interim single rows are logged and explicitly NOT verdicts.
+not the binding constraint.
+
+**⚑ SECOND CORRECTION TO THIS YARDSTICK, 2026-07-27 ~15:0x — FIT AGAINST CUMULATIVE
+OPTIMIZER STEPS, NOT CALENDAR DAYS. Written before the data lands.** The rows are collected
+daily, but **steps/day DOUBLED at iter 124** (224 → ~500 optimizer steps/hour, measured).
+The two rows already banked — `2026-07-26 iter 25` and `2026-07-27 iter 122` — were both
+earned in the OLD regime; every row from tomorrow on is earned in the new one. **A slope
+fitted against dates therefore mixes two throughput regimes and would credit a throughput
+change as learning** (or, if flat, would hide a real per-step gain behind a halved
+cost-per-Elo). The independent variable must be **cumulative `trainer_steps_done`** (or
+equivalently iteration index weighted by steps/iter), which `ratchet.csv`'s `iter` column
+plus `progress.csv` makes reconstructible for every row including the two historical ones.
+
+**This is the same error the day has now made five times** — a rate whose denominator moved
+underneath it (per-iteration grad-norm drift that vanished when normalised per step;
+`train_time_s` against a tripled step count; a clip RATE read as a clip EFFECT; loader
+CAPACITY as throughput; an 8000-sim Elo result cited against a 256-sim target). **Caught
+here BEFORE the readout rather than after, which is the only version of this that is
+worth anything.** The Elo/CI math itself is VERIFIED sound (audit 07-26); this is purely
+about what goes on the x-axis. Interim single rows are logged and explicitly NOT verdicts.
 This also fixes the instrument problem the pre-registered reading rule already named: a
 two-point series cannot resolve a day of training, and the answer is more frequent points
 rather than more games per point. `scripts/ratchet_loop.sh` runs one per calendar day and
