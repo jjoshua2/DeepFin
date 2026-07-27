@@ -554,6 +554,38 @@ executed live, so D14's clean result says nothing about whether it works.
 | K7 | publish is atomic (no torn read) | `atomic_write` usage | **VERIFIED-BY-CODE 2026-07-26, with one bounded in-process gap** — both `save` and `export_swa` write `<name>.tmp.<pid>.<uuid>` then `os.replace`. No `fsync` before rename, so crash-atomicity leans on FS ordering. The gap: `SharedSlotBroker._load_trial_weights` (`inference.py:2929`) records the *manifest's* sha but `torch.load`s the file, so a publish landing between those two lines makes the broker serve weights whose sha ≠ its recorded `model_sha` for one poll. Self-corrects at the next manifest change; bounded to one iteration |
 | K8 | the published model reconstructs into a COMPLETE production net | build from manifest `model_config`, load with `require_complete=True` | **VERIFIED 2026-07-26** — passes from *both* the manifest's `model_config` and the checkpoint's own `arch`: 0 keys skipped, missing or unexpected. The two agree on all 40 `ModelConfig` fields; only `use_gradient_checkpointing` is not carried, deliberately forced `False` for inference |
 
+### The concurrent arena EXISTS but cannot exercise the search knobs (added 2026-07-27)
+
+Recorded because the question "can we measure this as Elo rather than cp?" turned out to
+have a two-part answer, and the second part is a real gap.
+
+**The good half.** `scripts/arena_standard.py` is genuinely a concurrent-selfplay-style
+arena, not a UCI match loop: `--max-concurrent-games` (default **128**) keeps a rolling
+pool of games active, `split_active_by_side_to_move` groups the active boards, and
+`pick_moves_for_boards(model, sub_boards, ...)` runs the search on a **LIST of boards**.
+So leaf evaluation batches **across games**, which is the same regime production selfplay
+runs in. `match_vs_uci.py` and the UCI path do NOT do this — they are single-game, which is
+why they cannot stand in for it.
+
+**The gap.** `pick_moves_for_boards` (`selfplay/match.py:80`) calls
+`_run_gumbel_root_many_c(model, sub_boards, device=..., rng=..., cfg=gumbel_cfg,
+allow_terminal_root_shortcuts=True)` — with **no `target_batch` and no `vloss_weight`**, so
+both take their defaults of 0. **The arena therefore always plays the CURRENT, defective
+configuration, and there is no way to A/B the C17 fix through it.** Every number we have on
+duplicate leaves is consequently audit-set cp, on history-free inputs (M10), and none of it
+is an Elo claim — not because an arena is impossible, but because the arena cannot be told
+to use the fix.
+
+**What closing it buys.** Threading `target_batch` / `vloss_weight` / `vloss_mode` through
+`pick_moves_for_boards` and out to arena CLI flags makes the decisive experiment available:
+**same net, same paired openings, candidate = fix, reference = today**, scored as
+pentanomial Elo with a CI. That is a strength measurement of a search change in the batching
+regime it actually ships in — the one thing the whole C17 line has been missing.
+
+**Cost of the gap staying open:** every C17/vloss decision rests on `audit_targets` cp,
+which M10 shows scores the net on inputs with all 7 history slots zeroed, in a regime it
+never plays. Paired comparisons survive that; absolute claims about strength do not.
+
 ## L. Evaluation / rulers
 
 | # | invariant | instrument | status |
