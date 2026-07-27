@@ -82,6 +82,8 @@ and 2026-07-02):
 
 | snapshot | state captured | restore |
 |---|---|---|
+| `data/salvage/pre_audit_deploy_20260726` | 2026-07-26 ~23:00, trial 13a9f **iter 65** (ckpt_000064, 821 shards, 3.6G) — banked immediately before the deploy restart that merges PRs **#260/#262/#263/#264/#265/#266/#267**. Export guard verified: printed `iter=65` matched live iter 65, and `newest on disk: checkpoint_000064` matched the exported ckpt, so the `result.json`-is-a-sync-copy gotcha is ruled out by the guard rather than assumed. State at bank time: boot512 lineage at 3e-5, seeding OFF (`opening_fen_dole_per_iter: 0`), `holdout_frozen: 1` / `test_replay: 2000`, and the live yaml already pinned to the REALIZED `soft_policy_temp: 2.0` and `diff_focus 6.0/3.5/3.0/0.025`. **This is the one to restore if the six-PR deploy goes wrong** — note #260 changes per-group `weight_decay` re-application, so the optimizer state, not just the weights, is what this preserves. | `./scripts/train.sh salvage-restart data/salvage/pre_audit_deploy_20260726` |
+| `data/salvage/pre_audit_window_20260726` | 2026-07-26 ~16:40, trial 13a9f **iter 41** (ckpt_000040, 820 shards, 2.3G) — banked immediately before the audit restart that merges `origin/main` (PRs #249–#253) and sets `freeze_holdout_at: 2000`. Export guard verified: printed iter 41 == live iter 41 (`result.json` row 4.1 min old), and `newest on disk: checkpoint_000040` matched the exported ckpt. This is the boot512-restart lineage at the donor's own LR (3e-5), seeding off. | `./scripts/train.sh salvage-restart data/salvage/pre_audit_window_20260726` |
 | `data/salvage/pre_durable_deploy_20260726` | 2026-07-26 02:33, trial 4c17c **iter 346** (ckpt_000307, 809 shards) — banked immediately before the stop that deployed PRs #237/#238/#239/#241/#242/#243/#244/#245. Export guard verified: printed iter 346 == live iter 346 (`result.json` ts 7 min old). Also the last state under the DEAD best-model tracker (`best_loss` 4.8934 frozen since iter 286). | `./scripts/train.sh salvage-restart data/salvage/pre_durable_deploy_20260726` |
 | `data/salvage/pre_aot_deploy_20260714` | 2026-07-14, pre-AOT-broker deploy (trial 4c17c ~iter 74, wedge-recovered). NOTE: AOT is an inference-path perf change — weights/optimizer/replay are UNCHANGED, so the real revert is just blanking `distributed_inference_aot_dir` + restart; this pool is belt-and-suspenders. | `./scripts/train.sh salvage-restart data/salvage/pre_aot_deploy_20260714` |
 | `data/salvage/prechange_20260702_ckpt479` | iter 479, 2026-07-02 evening: post-uncap, rung-1 live ~2 iters, PRE fast-ply-revert / PRE LR-decision / PRE #104. 686 shards | `./scripts/train.sh salvage-restart data/salvage/prechange_20260702_ckpt479` |
@@ -497,6 +499,87 @@ measured. **Do NOT run that arena concurrent with training** — 512×16 search 
 ~700MB/game and the 400-game run OOM'd twice; it needs a training pause or a
 strict low-concurrency/low-sims configuration.
 
+> **RAN 2026-07-25 23:02 / 23:09 — and the sims LADDER is the finding, not the
+> verdict.** Candidate `data/salvage/pre_durable_deploy_20260726` (the DAMAGED
+> 512 net, ~iter 346, pre-restart); reference `data/salvage/recover_ckpt751_20260711`
+> (banked 46M). Paired openings, 400 games each, seed 42, identical settings
+> except the sim budget:
+>
+> | matched sims | Elo (512 vs 46M) | 95% CI | score | pentanomial WW/WD/DD/LD/LL |
+> |---|---|---|---|---|
+> | **1** | **−91.5** | [−125.9, −58.8] | 0.3713 | 22/6/89/13/70 |
+> | **32** | **−251.9** | [−292.4, −216.5] | 0.1900 | 2/4/50/32/112 |
+>
+> **The gap WIDENS by ~160 Elo from 1 to 32 sims, with non-overlapping CIs.**
+> This is the ladder [[rl_loop_is_degrading_play_strength]] prescribed ("run
+> sims-1 AND sims-32 vs a FIXED banked ref; one budget hides which half moved").
+>
+> **BOTH HALVES MOVED — and against the swap-time baseline this is the honest
+> decomposition.** At the 07-11 swap the same ladder read sims-1 **+9.6 NS
+> (parity)** and sims-32 **−66**:
+>
+> | rung | at swap (07-11) | now (iter 346) | change |
+> |---|---|---|---|
+> | sims-1 (raw net) | +9.6 (parity) | −91.5 | **−101 Elo** |
+> | sims-32 | −66 | −251.9 | **−186 Elo** |
+> | search-conversion gap | 76 | 160 | **−84 Elo** |
+>
+> So roughly **half** the −252 is a genuinely weaker raw network (parity → −91.5
+> at 1 sim) and half is a widened search-conversion deficit (76 → 160). Do NOT
+> read this row as "the raw net is fine and only search is broken" — an earlier
+> draft of this entry said that and it is wrong. The memory
+> [[cross_era_512_vs_46m_not_caught_up]] pre-committed the test as "if sims-1 is
+> again near parity while sims-32 is −252, the whole deficit is search
+> integration"; **sims-1 is NOT near parity, so that antecedent is false** and
+> the single-cause reading it would have licensed does not apply.
+>
+> This is the measured form of the operator's standing observation that "more
+> search doesn't help as much as it should", and it is consistent with
+> [[value_head_calibrated_not_broken]]: in Gumbel MCTS the value head's RANKING
+> is what turns sims into strength, so a calibrated-but-poorly-ranked value head
+> yields exactly this signature — competitive at 1 sim, falling behind as the
+> budget grows. It also explains the views-row finding directly above (raw
+> policy gained 9.4cp while SEARCH policy moved −1.14cp NS): gains that do not
+> survive search are the same phenomenon seen through a different ruler.
+>
+> **CONFOUND — do not over-read:** this was measured on the LR-damaged net, so
+> the deficit may be damage rather than an architectural property of 512×16.
+> **DECIDING FOLLOW-UP (owed):** run the SAME two-rung ladder with `boot512` as
+> candidate against the same banked 46M reference. If boot512 shows the same
+> widening, the deficit is a property of the 512 net/its data and the restart
+> will NOT fix it — and the value head's ranking becomes the priority target. If
+> boot512 scales normally, the deficit was LR damage and the restart already
+> addresses it. Must NOT run concurrently with another arena; sims 1/32 at
+> `--max-concurrent-games 4` is safe alongside training.
+
+> **ANSWERED 2026-07-26 — THE DEFICIT WAS LR DAMAGE, NOT THE 512 ARCHITECTURE.**
+> Ladder run with `boot512` (the undamaged donor) as candidate against the same
+> banked 46M `recover_ckpt751`, 200 paired games per rung, seed 42, conc 32, run
+> with **training stopped** so neither rung was contaminated by contention:
+>
+> | net | sims 1 | sims 32 | widening |
+> |---|---|---|---|
+> | **boot512** (undamaged) | **−41.9** [−95.3, +9.6] | **−43.7** [−88.1, −0.6] | **~2 Elo** |
+> | damaged 512 (~iter 346) | −91.5 [−125.9, −58.8] | −251.9 [−292.4, −216.5] | **~160 Elo** |
+>
+> **boot512 does not widen.** −41.9 → −43.7 is flat within heavily overlapping
+> CIs, against ~160 Elo of widening on the damaged net. Search converts sims to
+> strength normally on this architecture; what did not convert was a net whose
+> matrix group had been run at 6e-3. This CLOSES audit C5's deciding follow-up on
+> the favourable branch and **retires the alternative** — the value head's
+> ranking does NOT become the emergency priority target. It remains a real
+> ceiling ([[value_ceiling_bt4_distill_direction]]) but not an emergency.
+>
+> **What it does NOT say.** boot512 still sits ~43 Elo below the banked 46M net
+> at both budgets, so the donor was behind its predecessor when it was adopted;
+> the restart's job is to climb from there, not to declare parity. Judge that on
+> the `vs_boot512` ratchet series, not on this ladder.
+>
+> **Cost note:** at full GPU with training stopped, 200 games at 32 sims took
+> **~7 minutes** (conc 32). The same measurement concurrent at conc 4 would have
+> taken ~4.5h and cost ~23 iterations (L6). Stopping training to measure is
+> cheaper than measuring alongside it — see method rule 11.
+
 ### PRE-REGISTERED (not yet live) — revive dead broker/workers inside the ingest wait loop (PR TBD, 2026-07-25)
 
 **Class: availability plumbing. NOT an experiment — it changes no training
@@ -631,13 +714,830 @@ confounded; the availability yardsticks are read independently.
 `test_slot_broker_zeroes_outputs_when_model_unavailable`, which asserted the
 buggy behaviour with no stated rationale and was deliberately removed.
 
-### RESTART (pre-registered, STAGED — not yet launched) — boot512 at the donor's own LR (2026-07-26)
+### FINDING (2026-07-26) — ~63% of the blind-spot seed pool are PHANTOMS, not blind spots
+
+Tracked the ckpt48 pool (120 FENs, 07-13) to the live ckpt307 pool 259
+checkpoints later: 44 SOLVED (retired, stayed retired), 76 STUCK (never
+resolved under continuous 2x dosing). The STUCK ones are **dead-equal
+positions**, and 16× more search does not change that:
+
+| nodes | STUCK mean / med / lost(≤0.25) | SOLVED |
+|---|---|---|
+| 300k | 0.516 / **0.500** / 15% | 0.398 / 0.356 / 46% |
+| 700k | 0.520 / 0.499 / 15% | 0.387 / 0.348 / 42% |
+| 2M | 0.526 / **0.500** / 12% | — |
+| 5M | 0.531 / **0.500** / 15% | — |
+
+(`scratchpad/seed_pattern/vet_depth_ladder.py`, STM-POV expected score.) STUCK
+median is exactly 0.500 at every rung and the mean drifts slightly TOWARD the
+side to move; SOLVED are losing at every depth and get worse with depth, which
+is what a real refutation looks like. Corroborated in-buffer: `sf_wdl` **at the
+seed position** (labels attach to the first row of every seeded game — verified
+offset 0 for 100% of 669 cohort games) reads 0.485 for STUCK with **0 of 26
+labelled lost**, vs 0.397 / 20% lost for SOLVED.
+
+**Cause: they predate the vetting gate.** `harvest_gate` first appears in
+`monitor.log` at ckpt78 (07-16); the cohort is from retire_48 (07-13) — legacy
+v1/v2/cheese entries never vetted by anything. The gate now rejects 70-90% of
+candidates (`vetted_kept` 4/26, 0/9, 3/14); the pre-existing pool was never
+re-run through it.
+
+**Depth was NOT the discriminator** — 300k already separates the groups
+cleanly. `harvest_gate_step.py --sf-nodes` was changed 300k → 2M (so the vet
+ruler is no longer shallower than the ~698k training-label budget) but that is
+hygiene, not the fix, and would not have caught these.
+
+**ACTION:** re-vet the live 227-seed pool (`scratchpad/revet_active_pool.py`)
+and drop what fails; phantoms consume dole budget under the 25% cap and
+displace real seeds. **Also retires a question:** "why won't the value head
+learn its blind spots" was the wrong question for most of the pool — the net
+rating these equal is the net being correct, and the value-ceiling framing does
+not apply to them.
+
+**RE-VET DONE (2026-07-26) — the estimate holds on an independent cohort.**
+`scratchpad/revet_active_pool.py` re-scored all 202 seeds of the LIVE active
+pool (`blindspot_fens_auto_ck163_20260723T140431Z.txt`) at 2M nodes / MultiPV 1
+/ 6-man TB, using the gate's own scoring function and its own admission bar
+(`_make_sf_score`, expected score ∈ [-1,1], keep if ≤ −0.80). Only the depth
+differs from the live gate, so this is the gate's verdict at 2M, not a new
+ruler. 1160s, 0 errors.
+
+| verdict at 2M | seeds | share |
+|---|---|---|
+| still lost (≤ −0.80) — **survivors** | 78 | 38.6% |
+| −0.80 … −0.40 (bad, not lost) | 53 | 26.8% |
+| −0.40 … 0 (mild tilt) | 44 | 22.2% |
+| **> 0 — side to move is WINNING** | 23 | 11.6% |
+
+**61.4% (124/202) fail the gate's own bar.** That independently reproduces the
+~63% phantom estimate above on a different cohort (live active pool vs the
+retire_48 tranche) by a different method (gate re-score vs depth ladder). The
+23 winning-for-STM seeds are worse than inert: they were teaching the value head
+that a won position is lost.
+
+Caveat: 4 of the 202 returned no score (SF gave neither cp, mate, nor wdl) and
+the script counts them as failures, whereas the live gate *re-queues* that case
+rather than rejecting it — the honest failure count is 120–124, which does not
+move the conclusion.
+
+Not applied. `scratchpad/revet_active_pool_clean.txt` holds the 78 survivors as
+a candidate list; seeding is OFF (see the RESTART amendment below), so the
+decision of whether the survivors come back is deferred to the no-seed readout
+rather than made now.
+
+**THE boot512 / no-seed READOUT CANNOT CLOSE TODAY — one data point exists, and
+that is a cadence fact, not a missing decision (2026-07-26 ~23:00).**
+`data/ratchet/ratchet.csv` holds exactly one row:
+
+```
+2026-07-26, iter 25, vs_boot512, Elo -12.2 [-61.5, +36.7], score 0.4825, 200 games
+```
+
+CI spans 0 — parity with the donor at iter 25, which is the reading the RESTART
+block already records. The second series legitimately did not run: `[ratchet]
+no earlier snapshot yet — vs_prev starts tomorrow`. `last_run_date` is today and
+the driver is once-per-calendar-day, so there is no second point until tomorrow,
+and we are now at iter 65. **A one-point series cannot answer "does the loop
+gain at 3e-5".**
+
+**Decided NOT to force a second point before the deploy restart, and the reason
+is L6.** Today's single 200-game series ran **10:49 → 15:21 — 4.5 hours** of
+degraded training throughput, at `CONC=16` and 32 matched sims, i.e. *after* the
+4→16 concurrency raise that was supposed to make this affordable. That is direct
+evidence for L6 (an observer must cost less training than the signal it buys)
+still FAILING. Spending another 4.5h to de-confound a readout that will get its
+next point tomorrow anyway is the wrong trade.
+
+**Consequence to record now rather than discover later:** tomorrow's `vs_prev`
+compares against `data/ratchet/snapshots/ck_2026-07-26_iter25.pt`, so its window
+spans the deploy restart and everything merged into it (#260/#262/#263/#264/
+#265/#266/#267). That is unavoidable given the cadence. Read tomorrow's
+`vs_boot512` as the cleaner of the two — it is an absolute reference and does
+not depend on where the previous snapshot sat.
+
+**DECIDED 2026-07-26 (evening) — the 78 survivors do NOT come back at the
+upcoming deploy restart.** "Deferred" is not a verdict, so here is the call and
+its reasoning.
+
+The tempting argument is that restoring the dole is restart-gated (C6) and a
+restart is imminent for PR #262, so the ~5-iteration mix distortion is free.
+**That is exactly the trap.** The cost that matters is not the restart, it is
+the readout window: turning seeds back on inside the deploy restart would end
+the no-seed window early AND confound it with everything else in that restart
+(#260's optimizer control surfaces, #262/#265/#266/#267). One data-affecting
+change per readout window — and the deploy already spends that budget.
+
+Two further reasons to wait rather than act:
+
+1. **The pool is mostly phantoms.** Only 78/202 survive the gate's own bar at 2M
+   nodes; 124 fail and 23 were *winning* for the side to move, i.e. actively
+   teaching the value head that a won position is lost. The upside of the
+   survivors is unproven, and the v1 WORKED verdict was earned by a pool that
+   included the phantoms — so it does not transfer to the 78 unchanged.
+2. **The no-seed window is already partly confounded, and pretending otherwise
+   would compound it.** This block's own RESTART amendment says to hold
+   `freeze_holdout_at` until the no-seed readout closes, because freezing
+   changes which rows train. It was armed at iter 48 anyway. So iters 33–47 are
+   clean no-seed and 48+ carry the freeze. Adding seeds now would give the
+   window three regimes and no clean comparison at all.
+
+**What has to happen before this is revisited, in order:** close the no-seed
+readout on iters 33–47 (stating the freeze confound for anything after 48);
+then, if seeds are wanted back, re-register them as their own experiment against
+the **78-survivor list specifically**, with the Cheese catastrophic-value tail as
+the objective rather than a generic arena, and its own restart. Do not fold it
+into a deploy.
+
+### FINDING (2026-07-26) — the holdout is a ROLLING ring, so `test_loss` has no stable ruler; a durable `holdout_generation` would make it look stable when it is not
+
+Investigating "make `holdout_generation` durable so it can serve as ruler
+identity" (the open item left by PR #244/#245). **The premise is backwards.**
+
+**1. The counter is INERT in production, not merely ephemeral.**
+`_maybe_reset_holdout_on_drift` is gated on
+`tc.reset_holdout_on_drift and tc.drift_threshold > 0.0`; the live yaml has
+`reset_holdout_on_drift: false` and `drift_threshold: 0.0`. Confirmed on the
+live trial: `holdout_generation` = **0 on every one of 26 rows**. Persisting a
+value that can only ever be 0 accomplishes nothing.
+
+**2. The real instability is the holdout BUFFER, which the counter does not
+track.** `ArrayReplayBuffer._enforce_capacity` → `_drop_oldest` is a FIFO ring.
+Live numbers: `holdout_capacity: 2000`, `holdout_fraction: 0.02`,
+`replay_positions_ingested` 7,168–8,353/iter ⇒ ~159 new holdout rows/iter, and
+`test_size` is pinned at **2000 = already at capacity**, so eviction is active
+now. **The holdout set turns over completely about every 13 iterations.**
+
+**3. Therefore a durable counter would be actively MISLEADING** — it would
+assert "same ruler" across restarts and across an entire run while the
+underlying position set is fully replaced every ~13 iterations. That is worse
+than the current honest state, where the counter is recorded but explicitly NOT
+compared on.
+
+**4. Consequence for `best_loss`.** Best-model selection compares `test_loss`
+values measured on *different position sets*, so it partly selects on which
+positions happened to be in the window. Live `test_loss` over the last 5 iters:
+5.066 / 5.054 / 5.009 / 4.935 / 5.027 — ~0.13 nats of spread, an unknown share
+of which is the ruler moving rather than the model. This is the same family as
+[[best_model_ruler_mixing]] (train-vs-holdout scale mixing, fixed by PR #244);
+that fix stopped comparing two *different rulers*, but the holdout ruler is
+itself non-stationary.
+
+**THE FIX ALREADY EXISTS IN CODE AND IS SWITCHED OFF.** `freeze_holdout_at`
+(`trainable.py:739`: `if (not holdout_frozen) and tc.freeze_holdout_at > 0 and
+len(holdout_buf) >= tc.freeze_holdout_at: holdout_frozen = True`) stops holdout
+intake once the buffer reaches N. The live yaml has `freeze_holdout_at: 0`, so
+it never fires. Setting it to 2000 would give a stable within-run ruler.
+
+**NOT APPLIED, deliberately.** Freezing flips `holdout_mask` to all-false, which
+returns the 2% currently diverted to holdout back into training — a real (if
+small) data-pipeline change, and the no-seed restart is mid-readout. **One
+data-affecting change per readout window.** Queue it as its own entry after the
+no-seed readout, with: `freeze_holdout_at: 2000`, and note it still resets per
+restart (the buffer is rebuilt empty), so a truly fixed cross-restart ruler
+additionally needs the frozen set persisted to the durable trial dir
+(`_durable_trial_dir`, PR #245) — at 2000 rows that is cheap.
+
+### CLOCK STARTED (2026-07-26 20:35) — the holdout freeze is ARMED at iter 48; read at iter 78
+
+`holdout_frozen` first read **1 on iteration 48** and has held through 52, with
+`test_replay` pinned at 2000. That is the step-5 verification the freeze
+pre-registration owes: the change is in effect on the data, not just in the
+banner. **The 30-iteration clock starts at iter 48, so the readout is iter 78.**
+
+Refill after the 17:05 restart went 194 → 847 → … → 2000, arming at 48 rather
+than the 45–46 I projected. The projection was from one iteration's refill rate;
+the rate is not constant because it tracks ingested rows.
+
+**Early numbers, explicitly NOT a verdict** (n=4, the rule says 30): post-freeze
+mean absolute iter-to-iter change in `test_loss` is **0.039** over iters 48–52
+against a pre-change baseline of **0.043**. Directionally right, nowhere near
+decidable, and recorded here only so it cannot later be presented as if it had
+been the plan.
+
+**Decision on the drain confound, made before the readout rather than after.**
+Audit G8 found the replay window is draining from 63% fifteen-day-old salvage
+data toward 0% at ~23.6 shards/h. Over iters 48–78 (~6h at the current ~715s
+cadence) the stale share falls roughly **63% → 42%**. So the window does not
+span the drain's *completion* (~2026-07-27 17:00), but it does sit inside the
+continuous shift.
+
+**Read it anyway, at iter 78, and here is why that is defensible rather than
+lazy:** the yardstick measures *iter-to-iter variability of `test_loss` on a
+fixed ruler*. A training distribution that is still moving adds genuine model
+drift on top of ruler noise, which **inflates** the measured variability. The
+confound therefore biases **against** the hypothesis. If the freeze still shows
+reduced variability while the window is drifting underneath it, that is a
+stronger result than a clean read, not a weaker one. If it shows no
+improvement, the drain is a live alternative explanation and the readout must be
+repeated on a settled window before FAILED is recorded.
+
+**Pre-committed, restated so the rule is fixed now:** WORKED if mean absolute
+iter-to-iter `test_loss` change over iters 48–78 is below the 0.043 baseline;
+FAILED if it is at or above it AND the window was settled; INCONCLUSIVE-REPEAT
+if it is at or above it while the drain is still running.
+
+**CALLED EARLY, 2026-07-26 ~22:15, BEFORE iter 78 — the freeze is heading to
+FAILED, and the reason is that the experiment was mis-specified.** Recorded now
+rather than at the readout so that none of it can be read as post-hoc.
+
+Audit G14 (new, this session) establishes that **freezing the SET does not
+freeze the MEASUREMENT.** `_run_holdout_evaluation` calls
+`eval_steps(holdout_buf, batch_size=512, steps=5)` — **2560 draws WITH
+REPLACEMENT from a ≤2000-row set** — and `ArrayReplayBuffer.sample_batch_arrays`
+additionally WDL-**rebalances** each batch (`draw_cap_frac 0.90`,
+`wl_max_ratio 1.5`) and draws **half of every batch ∝ `priority`**, because
+`holdout_buf.surprise_mix` is never assigned and keeps the class default 0.5.
+Measured effective sample size of that weighted draw: **1051/2000 = 52.6%**.
+
+So the yardstick — iter-to-iter variability of `test_loss` on a fixed ruler —
+was measuring a resampling noise floor that the freeze does not touch.
+
+The numbers, recomputed by hand from `progress.csv`:
+
+| span | n | mean abs iter-to-iter Δ`test_loss` | sd |
+|---|---|---|---|
+| pre-freeze, iters 4–47 | 42 | **0.0560** | 0.0545 |
+| frozen, iters 48–52 (the early n=4 note above) | 5 | 0.0390 | 0.0232 |
+| **frozen, iters 48–61** | 14 | **0.0708** | 0.0503 |
+
+**The 0.0390 in the "early numbers" note above was a small-sample fluke and
+should not be cited.** It is the first five points of a series whose fourteen-point
+value is 0.0708. This is method rule 5's cousin: a number read off a window
+chosen because it was available.
+
+**Verdict by the pre-committed rule: FAILED.** 0.0708 is above the 0.043
+baseline. It is also above the 0.0560 that the full pre-freeze span actually
+gives — worth flagging that the pre-committed 0.043 does not reproduce on iters
+4–47, so the baseline in the rule was itself derived on a narrower window. The
+verdict is robust to that ambiguity: the frozen span is worse than **either**
+baseline, so the rule fires the same way whichever is used.
+
+**But FAILED here means "the freeze alone cannot deliver a stable ruler", not
+"a stable ruler is unreachable".** Do not let this entry retire the goal.
+Per G4's re-read the freeze delivers exactly one of the four things stability
+requires: composition frozen between readouts (MET); survives a restart (NOT MET
+live — #261 merged 19:52:36, this process started 17:04:53, and
+`checkpoint_000058` has no `holdout.npz`, so **the current frozen ruler still
+dies at the next restart**); the eval is a pass over the set (NOT MET — G14);
+representative of the training window (NOT MET — G13/G8).
+
+**Follow-up is pre-registered, not implied:** PRE-REG B (deterministic,
+unweighted full pass over the 2000 frozen rows — 4 batches instead of 5, and it
+removes all three sampling effects) with kill/success on the sd of `test_loss`
+over 10 consecutive post-deploy iterations: adopt at **≤ 0.015 nats** against
+the measured 0.0522 baseline, reject above 0.030. `test_loss`/`best_loss` are
+**not comparable across that change** — reset `best_loss` at deployment rather
+than carrying it, the same way a restart boundary is handled.
+
+**AUDIT-FIRST SCREEN RUN 2026-07-26 ~23:40 — and it says PRE-REG B's threshold
+was mis-set by me. Do not deploy it as written.** The screen holds the model and
+the rows FIXED and re-runs the production eval, so the only thing varying is the
+sampler; anything it produces is pure sampler noise with model drift removed by
+construction. Twelve repeats, checkpoint_000065, a 2000-row buffer rebuilt from
+70 live shards at the production 2% rate:
+
+| quantity | sd |
+|---|---|
+| `test_wdl_loss` across iterations, frozen span (n=20) | **0.0118** |
+| **sampler-only**, fixed model + fixed rows (n=12) | **0.0086** |
+
+The sampler is ~**53% of the variance** — the largest single term, and real. But
+the residual is √(0.0118² − 0.0086²) ≈ **0.0081**, essentially equal to it. So
+model drift is the other half, and **removing the sampler cannot take `sd` below
+roughly 70% of its current value.** Extrapolating that ratio to the total,
+`test_loss` would land near 0.035, which **fails PRE-REG B's own "adopt at
+≤ 0.015" bar and lands in its "reject above 0.030" band.**
+
+**This corrects an overstatement of mine above.** The entry says the yardstick
+"was measuring a resampling noise floor that the freeze does not touch". That is
+half right: the resampling floor is about half the variance, not all of it. The
+freeze FAILED verdict stands — 0.0708 is worse than either baseline regardless —
+but G14 is a partial explanation, not a complete one.
+
+**Consequences, decided now:**
+1. **PRE-REG B is withdrawn as written** and must be re-registered with a
+   threshold derived from this screen rather than from optimism. A defensible
+   rule: adopt if `test_loss` sd falls **below 0.040** AND the deterministic
+   estimator is cheaper (4 batches vs 5, which it is by construction).
+2. **The deterministic pass is still worth doing** — it is strictly the better
+   estimator (no replacement draws, no WDL rebalancing, no priority weighting)
+   and strictly cheaper. It just must not be sold as fixing the ruler.
+3. **The remaining ~0.008 is model drift on a frozen set across ~1 iteration.**
+   That is the real floor on this yardstick, and no eval change touches it.
+
+**Caveats, stated because they bound the conclusion:** `total` came back NaN in
+this run (instrument limitation — the screen only produced a clean number for
+the WDL head), so the extrapolation to `test_loss` is a ratio argument, not a
+measurement. The 2000-row buffer is a faithful reconstruction of the holdout's
+construction, not the actual frozen set, which no checkpoint persists. And the
+sd of an sd at n=12 is ≈ ±0.0018.
+
+**Reconciling the two drain-confound directions, because they look
+contradictory and are not.** This entry argued above that the drain *inflates*
+variability and so biases **against** the hypothesis. Audit G8 now argues the
+drain **fakes a positive**. Both hold, because they are about different
+quantities: G8's mechanism is about the *level* of `test_loss` (the frozen
+holdout was filled at iters 42–46 entirely from fresh local ingest, so as the
+54% salvage block drains by 2026-07-27 ~16:50 the training distribution
+converges onto the holdout's and `test_loss` falls for compositional reasons),
+whereas this yardstick is the *absolute iter-to-iter change*. The measured trend
+is −0.00115 nats/iter, which contributes ~0.001 to a 0.0708 mean |Δ| — three
+percent. **The level-based confound is real and large for anything judged on
+`test_loss`, `best_loss` or the train/test gap; it is negligible for this
+variability yardstick.** Do not carry G8's "fakes a positive" over to a
+variability readout, and do not carry this entry's "biases against" over to a
+level readout.
+
+**One thing the readout must NOT be used for:** `best_loss` still reads 4.8982,
+carried across the 17:05 restart and defended against a ruler that no longer
+existed at that point (G5). PR #261 fixes that going forward — a lost holdout
+now bumps `holdout_generation` and forces a handover — but it is **not deployed
+yet**, so `holdout_generation` reads 0 on every current row and the pre-restart
+`best_loss` remains incomparable to anything after it.
+
+---
+
+### CONFOUND NOTICE (2026-07-26 evening) — do not read iters 42–48 as a training signal
+
+Two independent contaminations overlap this stretch. Both are ours. Recording
+them now so nobody later reads a throughput or loss regression off these rows.
+
+**1. The audit itself is the load (method rule 11, on ourselves).** Six analysis
+subagents ran concurrently against a box that is already CPU-saturated by the SF
+teacher (D5: Stockfish holds ~27 of 32 cores). Measured at 18:54: **load average
+66** against the ~48 that D5 records as normal, with three probe processes at
+348% / 156% / 131% CPU. Iteration wall time over the same window:
+
+| iter | wall delta | matching+stale games | games/h |
+|---|---|---|---|
+| 41 (clean) | 532s | 454 | ~3070 |
+| 43 | 776s | 1675 (backlog drain) | — |
+| 44 | **2261s** | 551 | **~877** |
+
+That is a ~3.5x throughput drop, and the honest attribution is **the audit
+probes, not the loop**. I priced the daily ratchet's observer cost in L6 and then
+did exactly the same thing at larger scale a few hours later. The cost is bounded
+(agents are short-lived, ~2 iterations) and far below the ratchet's 23, but it is
+the same mistake and it belongs in the record.
+
+**Do not attribute iter 44's slowdown to the C13 thread-death finding without
+re-measuring on a quiet box.** C13 is a real mechanism (28–29 of 32 selfplay
+threads die in a startup race and never respawn) and it is a *candidate*
+explanation, but it was equally present in the fast iterations 40–41, so the
+timing does not fit it on its own. Re-measure games/h after the agents are done.
+
+**2. The replay window is continuously changing composition (audit G8).** 520 of
+820 shards are symlinks into the 07-11 salvage pool, content 15.5–18.6 days old,
+draining at ~23.6 shards/h. **This is not a step change at the end — the mix
+shifts continuously over ~22h**, from 63% stale toward 0%. Any readout taken in
+this period sits on a moving training distribution.
+
+**Consequence for the freeze-holdout yardstick pre-registered above.** At the
+current cadence 30 iterations is ~19–21h, so its readout window **spans most of
+the drain**. That is a real confound on a yardstick pre-registered the same day.
+Options, to be chosen before the clock starts: (a) start the count after the
+drain completes (~2026-07-27 17:00) and accept the delay, or (b) start it when
+`holdout_frozen` first reads 1 and record the drain crossing explicitly in the
+verdict. **(a) is the better science and (b) is the honest fallback — but
+whichever is picked must be written down before the readout, not after.**
+
+---
+
+### PRE-REGISTERED (not yet live) — feature dropout has no `1/(1-p)` rescale, so train and play see different feature magnitudes (audit M8, 2026-07-26)
+
+**What was found.** `trainer._apply_feature_group_dropout` zeroes each of 6
+classical-feature groups with p=0.10 and **never scales the survivors back up**:
+`x[:, base+off : base+off+len] *= (1.0 - drop)`. So `1 − 0.9⁶ = 46.9%` of training
+rows have at least one feature group zeroed, while **0% of inference rows do**. In
+expectation every extra plane arrives at 0.9× at train time and 1.0× at play,
+and the 112 LC0 planes are never dropped — so this is a systematic shift in the
+**LC0-vs-features balance** between training and play, not just regularisation
+noise. It is applied in `_run_optimizer_step` only, so the holdout eval also sees
+undropped inputs.
+
+**Framing, and this is the important part: this is NOT a bug fix.** The behaviour
+has been in place for the whole life of this net, which has trained against it
+and adapted to it. Removing or compensating it *changes the training
+distribution*. So it is an experiment with a yardstick, not a correctness patch,
+and it must not be smuggled into a cleanup PR.
+
+**Hypothesis.** Compensating the dropout (inverted dropout: scale survivors by
+`1/(1-p)`) removes a systematic train/serve magnitude gap on the 63 feature
+planes, and should help slightly or be neutral. The competing hypothesis is that
+the uncompensated form is doing useful work — teaching the net not to lean on any
+single feature group — in which case compensating it costs robustness.
+
+**Arms.** Rung 1 only, decided before any live window:
+- **A (control):** `feature_dropout_p: 0.10`, no rescale — today's behaviour.
+- **B:** `feature_dropout_p: 0.10` with `1/(1-p)` rescale (inverted dropout).
+- **C (only if B is neutral-or-worse):** `feature_dropout_p: 0.0`. If the
+  regulariser is not earning its keep either way, the honest end state is to
+  delete it rather than keep a knob nobody can reason about.
+
+**Offline gate FIRST — ledger rule 6 applies.** This reshapes what the trainer
+sees, so before any live window it must show **≥ neutral broad `value_regret`** on
+a 2-seed offline `retarget_retrain` arm vs a same-seed control. Live windows are
+the scarce resource; this screen is GPU-cheap and would settle B vs A without
+touching the run.
+
+**Deciding yardstick (if it earns a live window).** Paired arena, new-vs-old,
+`matched_sims` at sims-32, 200 games under the 30-min budget — because this is a
+change to what the net *sees*, and only a paired arena decides strength (method
+rule 6).
+
+**Pre-committed thresholds.**
+- **Kill B** if offline broad `value_regret` is worse than control by more than
+  the 2-seed noise floor, or if the live paired arena CI upper bound is below 0.
+- **Adopt B** only on a positive paired CI that excludes 0.
+- **Neutral** ⇒ take arm C and delete the knob, because a regulariser that
+  measurably does nothing is a maintenance liability and a source of exactly this
+  kind of confusion.
+
+**Confounds.** Must NOT share a readout window with the holdout-persistence fix
+(audit G5) or with any `soft_policy_temp` value change — both alter what the
+rulers or the targets mean. Sequence them.
+
+**Revert.** Single boolean/knob in the trainer plus `feature_dropout_p` in the
+yaml; no state migration. But note the standing rule: a yaml revert is not a
+rollback, the replay window holds ~a day of data made under the changed setting.
+
+---
+
+### FINDING (2026-07-26) — the `diff_focus` tuning sweep's winning values have never reached the worker
+
+Found by the **fixed** A7 instrument within minutes of it shipping (PR #257),
+which is the point of fixing instruments.
+
+**What.** The worker never constructs a `DiffFocusConfig` from the published
+reco at all. `diff_focus` is consumed on the worker, in
+`selfplay/network_turn.py:429` and `:503-507`, where it decides which positions
+get recorded and with what `priority`. So it runs on the **dataclass defaults**,
+not the yaml:
+
+| key | yaml (live) | dataclass default actually used |
+|---|---|---|
+| `diff_focus_q_weight` | **4.8** | 6.0 |
+| `diff_focus_pol_scale` | **3.8** | 3.5 |
+| `diff_focus_slope` | **4.0** | 3.0 |
+| `diff_focus_min` / `min_keep` | **0.09** | 0.025 |
+| `diff_focus_enabled` | true | True (agrees) |
+
+**Why this one stings.** Those yaml values are commented *"Pinned: top-5 median
+from Run 4"* — they are the output of a sidecar tuning sweep. **The sweep ran,
+picked winners, and the winners were written to a key the worker does not
+read.** Any conclusion drawn from that pinning describes a configuration that
+never existed in production.
+
+**It also re-frames [[diff_focus_noop_on_512x16]].** That note records diff_focus
+as near-inert ("drops ~1.6%, not 91%") with "params stale from the 46M net". The
+truth is different and worse: the measurement was of the **code defaults**, and
+the yaml's parameters were never stale-but-applied — they were never applied.
+Note H2 measured priority CV 0.94 with the spread attributed to diff_focus, so
+diff_focus **is** shaping sampling; it is doing so at 6.0/3.5/3.0/0.025, values
+nobody chose.
+
+**This is the eighth instance of the house bug class found today**, and the
+third where the *instrument* was the thing at fault (A4 diffing only shared
+keys) rather than the code.
+
+**Action — plumbing and value are SEPARATE, same rule as E13.**
+
+1. Plumbing it is **data-affecting**, unlike `soft_policy_temp`: these five
+   values genuinely diverge, so publishing them changes which positions are
+   recorded and how they are weighted, from the next restart. It therefore needs
+   its own pre-registered entry with a yardstick and a kill rule.
+2. **Do not assume the yaml values are the right target.** Run 4's sweep chose
+   them on the 46M net, and the whole family of reweighting knobs was declared
+   EXHAUSTED on 2026-07-07 ([[gap_priority_104_killed]]). The honest options are
+   (a) plumb and adopt 4.8/3.8/4.0/0.09, (b) plumb and pin the yaml to the code
+   defaults 6.0/3.5/3.0/0.025 so the config finally tells the truth about what
+   runs, or (c) delete the knob. **(b) is the cheapest correct step** and is
+   behaviour-preserving; (a) is a real experiment; (c) needs an argument that
+   the 1.6% drop buys nothing.
+3. Pinned meanwhile in `tests/test_reco_coverage.py::_KNOWN_UNPUBLISHED` so a
+   ninth gap cannot hide behind this one, and `--reco-diff` exits 1 today —
+   that is the instrument working, not a regression.
+
+---
+
+### FINDING (2026-07-26) — `soft_policy_temp` has been 2.0, not the configured 3.0, for five months
+
+**What.** `configs/pbt2_small.yaml` has read `soft_policy_temp: 3.0` since commit
+`6862c5151` (2026-03-02), with the comment "LC0 uses 3, was hardcoded 2". It was
+never un-hardcoded. The workers have built every soft policy target at **T = 2.0**.
+
+**Chain, verified end to end.**
+
+- `distributed_runtime.py` builds `recommended_worker` naming `sf_policy_temp` and
+  `sf_policy_label_smooth` but **omits `soft_policy_temp`**. Confirmed against the
+  live `publish/manifest.json`: 83 keys, not among them.
+- `worker.py::_build_selfplay_configs` never reads it either.
+- `GameConfig` therefore takes its dataclass default 2.0 (`selfplay/config.py:141`).
+- `finalize.py:936` is the only producer of `policy_soft_target`, and it runs on
+  the worker.
+
+**Measurement.** Fit the exponent from `log(policy_soft_target)` vs
+`log(policy_target)` on live shards: `1/T = 0.50000` (median; p1 0.49986, p99
+0.50023, n=944 row-fits, re-measured independently). Not a rounding artifact.
+
+**Why it matters.** `w_soft: 1.0`, and the trunk-gradient probe puts
+`soft_policy_ce` at ~41% of weighted trunk gradient — the second-largest term in
+the loss, built at the wrong sharpness for five months.
+`configs/exp_soft_policy_ablation.yaml` would have been a silent no-op in
+distributed mode.
+
+**Nothing is retroactively invalidated.** No ledger verdict has ever cited this
+key. Every past readout was taken at T=2.0 consistently, so comparisons among
+them remain valid; only the *description* of the setting was wrong.
+
+**Action, in two separate steps — do not merge them.**
+
+1. **Plumb the key** (publish in `distributed_runtime.py`, consume in
+   `worker.py`), and in the SAME change set `soft_policy_temp: 2.0` in the yaml so
+   realized behaviour is unchanged. This is a correctness fix with no data effect
+   and needs no yardstick.
+2. **Then, separately, decide the value.** 2.0 → 3.0 is a real data-affecting
+   experiment: five months of this net trained at 2.0, the replay window holds
+   ~a day of it, and 3.0 is an untested preference inherited from LC0. It needs
+   its own entry, yardstick and kill rule. **Do not fold it into the plumbing PR.**
+
+**Instrument gap that hid it (audit A7).** The reco-vs-yaml check diffs the
+**intersection** of key sets, so a key absent from the reco is structurally
+invisible to it. 7 worker-affecting fields are never published; six are harmless
+only because they equal their dataclass defaults. The diff is being changed to
+compare the union.
+
+---
+
+### FINDING (2026-07-26) — a restart destroys the holdout ruler, which is why the freeze could not arm
+
+**What.** `trainable_init.py:630` constructs `holdout_buf =
+ArrayReplayBuffer(tc.holdout_capacity, rng=rng)` unconditionally on every start
+and resume. Nothing restores it. Measured across both of today's restarts:
+
+| iter | test_replay | test_size | test_loss |
+|---|---|---|---|
+| 1 (after 06:02 restart) | 210 | 0 | NaN |
+| 4 | 659 | 659 | 5.1044 |
+| 7 | 1150 | 1150 | 4.9215 |
+| 14 | 2000 | 2000 | — |
+| 42 (after 17:05 restart) | 194 | 0 | NaN |
+| 43 | 847 | — | — |
+
+**Three consequences.** (a) ~3 iterations run with **no holdout eval at all** —
+eval is gated on `len(holdout_buf) >= batch_size` (512). (b) ~10 more are judged
+against a **growing** set, so `test_loss` is not comparable row-to-row there.
+(c) `best_loss` carries across the boundary unchanged (4.8982 at iter 41 → 4.8982
+at 42), defending a value measured against a ruler that no longer exists.
+
+**Candidate artifact, flagged not claimed:** `best_loss` fell 5.1044 → 4.9215 over
+iters 4–7 — exactly the fill window, i.e. precisely when the denominator was
+changing. This is a concrete mechanism for the long-standing "best_loss rises
+across restarts" puzzle, but the ruler change and real learning are not separated
+here and this entry does not claim they are.
+
+**Consequence for the freeze entry below:** `freeze_holdout_at: 2000` deployed
+correctly (banner verified) but **could not arm**, because the freeze fires at
+`len(holdout_buf) >= 2000` and the restart had emptied it. Refill measured at +653
+rows on iter 43, so it arms around **iter 45–46**. The pre-committed 30-iteration
+clock starts when `holdout_frozen` first reads 1, NOT at iter 42 — verify that row
+before starting the count.
+
+**Persisting the holdout is therefore the whole fix, not a follow-up.** Without it
+the cycle repeats at every restart: ruler destroyed → 3 blind iterations → 10
+iterations on a moving ruler → freeze a fresh sample → repeat.
+
+**Standing rule until it lands: do not compare `test_loss` or `best_loss` across a
+restart boundary,** including today's 06:02 and 17:05 boundaries.
+
+---
+
+### PRE-REGISTERED — freeze the holdout ruler (`freeze_holdout_at: 0 → 2000`, 2026-07-26)
+
+**Hypothesis.** The holdout is not a ruler, it is a conveyor belt.
+`holdout_capacity: 2000` with ~159 new rows/iter and `test_size` pinned at 2000
+means the set turns over COMPLETELY every ~13 iterations, so `test_*` losses
+compared across any longer span compare two different measuring sticks. This is
+the mechanism behind both G4 and J2 in `docs/rl_loop_audit.md`, and behind
+best-model tracking being dead since iter 286 — it adopted the worse of two
+rulers ~0.3 nats apart. Freezing the set at 2000 rows makes successive `test_*`
+readings comparable to each other.
+
+**The cost, stated up front.** A frozen holdout AGES. The replay window turns
+over roughly daily, so the frozen rows drift out of the current data
+distribution and the train/holdout gap will widen for reasons that are not
+overfitting. That is an acceptable trade — a stable ruler that drifts slowly and
+visibly beats one that is silently reshuffled every 13 iterations — but it means
+the gap's ABSOLUTE value stops being interpretable while its TREND stays useful.
+
+**ONE deciding yardstick.** `result.json` already emits **`holdout_frozen`** and
+**`holdout_generation`** per iteration — a direct read of the thing this entry
+changes, better than the row-count proxy first written here. `test_size` was
+already pinned at 2000 BEFORE the change (capacity, not identity), so **row
+count alone cannot distinguish a frozen set from a churning one** — it read 2000
+throughout the broken era. Use the flag:
+
+`PYTHONPATH=. python3 -c "import json; rows=[json.loads(l) for l in
+open('runs/pbt2_small/tune/<trial>/result.json') if l.strip()];
+print([(r['training_iteration'], r.get('holdout_frozen'),
+r.get('holdout_generation')) for r in rows[-30:]])"`
+
+plus `train_policy_loss_selfplay` vs `test_policy_loss_selfplay`.
+
+Pre-change baseline for the comparison (iters 36–41, all `holdout_frozen=0`,
+`holdout_generation=0`): `test_policy_loss_selfplay` 1.601, 1.581, 1.640, 1.580,
+1.667, 1.602 — mean absolute iter-to-iter change **0.043**.
+
+**SUCCESS:** `holdout_frozen == 1` and `holdout_generation` unchanged across all
+30 iters, AND the mean absolute iter-to-iter change in
+`test_policy_loss_selfplay` drops below the **0.043** pre-freeze baseline above
+(the sawtooth was ruler churn, not learning).
+
+**KILL:** the train/holdout gap widens by >0.5 nats within 30 iters — that is the
+frozen set going stale faster than expected, and the answer is a periodic
+re-freeze with a durable generation counter rather than a permanent freeze.
+
+**Not included, deliberately.** Persisting the frozen set ACROSS restarts is a
+code change and is not in this deploy. Until it lands, every restart re-freezes
+a new set, so the ruler still changes identity at each restart — far better than
+every 13 iterations, and restarts are logged. `holdout_generation` remains
+in-memory; making it durable only becomes meaningful once the set is frozen
+(this entry supersedes the earlier "make holdout_generation durable" item, which
+was backwards: a durable counter over a churning set would have asserted a
+stability that did not exist).
+
+**Confounds.** Deployed in the same restart as the `origin/main` merge (PRs
+#249/#250/#251/#252/#253 — all tooling, docs and observer changes; the only
+runtime key among them is `gumbel_c_scale: 0.1`, which is value-identical to
+every code default and therefore a no-op). No other training-affecting change
+rides along. The restart itself re-imposes the C6 worker transient, so the
+no-seed readout clock restarts here.
+
+**Revert.** `freeze_holdout_at: 0` — but note it is read at trial construction,
+so a revert needs a restart. Weight/optimizer/PID/replay revert point banked as
+`data/salvage/pre_audit_window_20260726` (see Revert points).
+
+### RESTART (pre-registered) — boot512 at the donor's own LR (2026-07-26)
+
+> **FIRST STRENGTH READING (2026-07-26, iter 25): PARITY WITH THE DONOR.**
+> `scripts/daily_gate_ratchet.sh`, 200 paired games @32 matched sims vs the
+> frozen `boot512` anchor: **−12.2 Elo, 95% CI [−61.5, +36.7]**, score 0.4825.
+> The CI spans zero, so this is statistical parity — against the damaged net's
+> **−193.2 [−292.4, −216.5]** on the same ruler. The LR hypothesis predicted the
+> restart would stop the net falling below boot512, and at iter 25 it has.
+>
+> **Do NOT read this as "the restart worked" yet.** Parity with the donor is the
+> floor the restart was supposed to restore, not progress past it; iter 25 is
+> ~25 iterations of training, and the ledger's own rule is that learning-quality
+> claims need day-plus windows and paired CIs. It is also inside the C6 window
+> (`docs/rl_loop_audit.md`) — iters 27–32 carry a restart-induced mix transient,
+> so the trend read starts at iter 33. What this DOES retire is the worry that
+> the restart reproduced the collapse: it did not.
+>
+> Logged to `data/ratchet/ratchet.csv`; the `vs_prev` day-over-day series begins
+> tomorrow once a second snapshot exists.
+>
+> **COST WARNING — that reading was NOT free.** The run took 4h32m at `CONC=4`
+> and cost ~23 iterations of training (82% throughput loss; invariant L6 in
+> `docs/rl_loop_audit.md`). `CONC=16` shipped in PR #250 and cuts the same 200
+> games to ~12 minutes. Do not read a pre-#250 ratchet row without accounting
+> for the hole it left in that day's training.
+
+> **NEXT-DEPLOY PREP (2026-07-26, verified — do this at the next restart, not
+> before).** PRs #250 and #251 are merged, and the live tree's uncommitted
+> versions of `scripts/train.sh` and `scripts/harvest_gate_step.py` are now
+> **byte-identical to `origin/main`**, as are the untracked
+> `scripts/ratchet_loop.sh` and `scripts/daily_gate_ratchet.sh`. So the merge is
+> content-neutral for all four — but git still refuses to overwrite untracked
+> files, so with training DOWN the sequence is: delete the two untracked script
+> copies, then `git merge origin/main`, then restart. Do NOT delete them while
+> the ratchet loop is running off them.
+>
+> The merge also brings PR #249, which pins `gumbel_c_scale: 0.1` in the yaml.
+> **This is a no-op at runtime** — every production path already resolves to 0.1
+> (`worker.py`, `trial_config.py` ×2, `distributed_runtime.py`); #249 adds a
+> named constant and a test that fails if anyone unifies it with the play-side
+> 0.025. Bundle `freeze_holdout_at: 2000` (audit G4/J2) in the same restart.
+>
+> **`freeze_holdout_at` is NOT a free rider — hold it until the no-seed readout
+> closes.** It is already a known key (live yaml value `0`,
+> `trial_config.py:313`, consumed at `trainable.py:739`), so it carries no
+> unknown-key reload hazard and may even be live-reloadable. Do it anyway at the
+> restart, and only after iters 33+ have been read: freezing the holdout changes
+> which rows are held OUT, and therefore which rows train. That is a
+> data-affecting change, however small, and the ledger's one-change-per-window
+> rule applies to it. Correcting an earlier note in this block that called it
+> non-data-affecting.
+
+
+
+> **CONTROLLED PRE-TEST — CONFIRMED CAUSAL (2026-07-26).** Before launching,
+> the LR hypothesis was tested directly with a two-arm offline screen
+> (`scratchpad/lr_screen/`): identical init (boot512), identical window, seed
+> and step count (1500), production optimizer (`aurora_mlp_out`,
+> `matrix_lr_multiplier 20`, verified `param_group_lrs
+> [6e-3, 3e-4, 3e-4, 3e-4]` — the live trial's exact `base_lrs`). ONLY `lr`
+> differs. Both arms then arena'd vs boot512 with the ladder's own command
+> (32 matched sims, 200 games, paired):
+>
+> | arm | `lr` | Elo vs boot512 | score | pentanomial WW/WD/DD/LD/LL |
+> |---|---|---|---|---|
+> | A (positive control) | 3e-4 | **−193.2** [−248.7, −145.4] | 0.2475 | 3/3/34/10/**50** |
+> | B (proposed restart) | 3e-5 | **−3.5** [−41.5, +34.4] | 0.4950 | 13/6/62/4/15 |
+>
+> Offline metrics agreed on every head before the arenas ran (A vs B —
+> eval_loss 5.189/**4.755**, policy_loss 1.655/**1.413**, policy top-1
+> 0.488/**0.579**, wdl_loss 0.806/**0.772**, ECE 0.0400/**0.0239**), so this is
+> not a search or arena artifact.
+>
+> **1500 steps at 3e-4 reproduce the ENTIRE live deficit.** Arm A's −193.2 is
+> the live run's iter-346 plateau (−193.2 [−232.2, −158.1]) — the precision is
+> coincidence (both ±50) but the magnitude is not. The plateau is the LR
+> damage FLOOR, not a training ceiling. Arm B holding at parity confirms the
+> donor LR is safe for these weights.
+>
+> Pre-committed rule (A crashes AND B holds ⇒ launch) is MET. This does NOT
+> establish that the loop GAINS at 3e-5 — B gained nothing either (−3.5, CI
+> spans 0) — but 1500 offline steps on a fixed window is not the RL loop, so
+> that question is open and is what the restart reads out.
+
+> **AMENDMENT (2026-07-26, applied live at ckpt≈25) — SEEDING IS OFF for this
+> readout.** `opening_fen_dole_per_iter: 1 → 0` (the documented KILL). The
+> pre-registration above assumed the live `retire_*` seed stream carried
+> forward; it does not. Two reasons: (a) one data-affecting change per readout
+> window, and the LR change owns this one — a seed stream is a second; (b) the
+> pool is measurably contaminated (see the PHANTOMS finding above: 26 long-stuck
+> seeds sit at median 0.500 from 300k to 5M nodes).
+>
+> `opening_fen_prob` was already 0.0 and `opening_fen_sf_refute_frac` is a
+> fraction OF seeded games, so it goes inert — this single key disables every
+> seeding channel. **Do NOT use `opening_fen_dole_max_fraction` for this: on
+> that key 0 means UNCAPPED** and would cause the dole runaway, not stop it.
+> Config validated, live reload accepted with no validator error, training
+> continued through ckpt 25 with zero tracebacks.
+>
+> **What this makes the restart measure:** no-seed RL at the donor's LR vs
+> boot512 — the cleanest available control, and the first time the loop has been
+> read without a seed stream. Re-vet of the 202 active seeds at 2M nodes is
+> running separately and read-only (`scratchpad/revet_active_pool.py`); its
+> result decides what, if anything, comes back.
+>
+> **CORRECTION (2026-07-26) — this toggle is NOT free, and iters 27-32 are
+> CONTAMINATED.** The amendment above called the restore "live-reloadable,
+> instant". Wrong: `opening_fen_dole_per_iter` is in `worker._RECO_RESTART_KEYS`,
+> so writing it **restarts every worker's selfplay session**, and a session
+> restart abandons every in-flight game (`worker.py:1390`). Curriculum games are
+> the long ones (they run against 698k-node SF), so they are abandoned
+> preferentially. Measured on the live trial — worker logs show
+> `restarting selfplay session [restart_keys=opening_fen_dole_per_iter]` on all
+> workers at 10:20:20:
+>
+> | iters | realized selfplay share (configured 0.50) | curriculum games |
+> |---|---|---|
+> | 21-26 (before) | 0.46-0.53 | 213-268 |
+> | **27-31** | **0.83 -> 1.00** | **80 -> 0** |
+> | 32-34 (recovering) | 0.85 -> 0.41 | 68 -> 268 |
+>
+> For four iterations the loop produced essentially NO curriculum games, and
+> `pid_curriculum_{w,d,l}` collapsed to 0/0/1/3 with `pid_regret_reason
+> not_active` — the PID was blind. Recovered by iter 33 as the abandoned
+> curriculum backlog refilled.
+>
+> **Consequences.** (1) **Start the no-seed readout at iter 33, not 28** — the
+> first six iterations are a mix transient, not no-seed steady state.
+> (2) Restoring seeds costs the SAME restart and the same ~5-iteration
+> distortion; budget for it rather than treating it as a free A/B.
+> (3) `audit_realized_config.py` scored the selfplay mix `ok` at 0.5137 because
+> it medians over the window — the per-iteration rows are what show this. See
+> `docs/rl_loop_audit.md` method rule 4.
+>
+> Note this is NOT the PR #224 regression returning: #224 stopped *FEN-list
+> rewrites* from triggering restarts, and those still log
+> `live-applied ... no session restart`. Toggling the dole itself was always
+> restart-gated and correctly declares its trigger.
 
 **Hypothesis.** The 512×16 collapse was caused by the warm-start LR jump, not
 by the RL loop. Restarting from **boot512** (the undamaged donor) at **`lr`
 3e-5** (the donor's converged regime, and the LR under which this net
 demonstrably GAINED +303 Elo in iters 74→148) should produce a net that
 improves on boot512 rather than falling below it.
+
+**Anchor validity — boot512 is CLEAN for this purpose (resolved 2026-07-26).**
+Raised and dismissed: "the run is now seed-free, so does the anchor differ by
+more than LR?" boot512 was produced by an OFFLINE pass over a whole replay
+window, not by the RL selfplay loop, so it had no seed *stream* (operator
+confirmation, consistent with the 512×16 offline-recovery playbook). The seeded
+share of the window it consumed is NOT measurable — dole was live on the 46M
+trial from 07-08, but the 5fac4-era shards spanning boot512's 07-11 04:04
+snapshot carry no `seed_id` / `seed_family_id` / `opening_source_code` fields;
+seed provenance was added to the shard format later. **This does not matter for
+the ratchet.** An arena scores head-to-head strength, so the training-data
+provenance of either side is not a confound; it would only bite if the
+`vs_boot512` series were being used to isolate the LR effect, and it is not —
+LR causality was settled by the two-arm offline screen above (identical init,
+window, seed and step count; only `lr` differed). The series is a cumulative-
+drift tracker against a frozen opponent, which is what a fixed anchor is for.
+Do not re-open this.
 
 **Why boot512 and not iter 346.** The ladder shows recovery STALLED: −494
 (iter 74) → −190.8 (iter 148) → −193.2 (iter 346), the last two with fully
@@ -768,7 +1668,1576 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### PRE-REGISTERED (2026-07-27 12:1x) — replay loader: `shuffle_buffer_size` 25000 → 100000, `shuffle_refresh_interval` 1 → 4
+
+**Hypothesis.** The per-batch disk refresh is the entire training data-loading cost
+(measured: `sample_batch_arrays` is 100% of it; a pure in-memory batch is 10 ms against a
+1073 ms live median). Cutting the refresh to every 4th batch takes read amplification
+**19.5× → 4.9×** and should take `train_time_s` from ~129s to ~43s. The larger pool is for
+MIXING, not speed — it raises position residence from ~2.5 batches to ~40 (~0.9
+iterations), so a smaller share of what we read off disk is evicted unsampled (~95% → ~80%).
+
+**Explicitly NOT claimed: more optimizer steps.** Steps are views-capped and will stay at
+~44/iteration. This buys cheaper steps, not more of them. Anyone reading this row later:
+do not score it on `trainer_steps_done`.
+
+**ONE deciding yardstick** — `train_time_s` on the first 3 post-restart iterations:
+
+```
+python3 -c "import json;f='runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/result.json';rows=[]
+for l in open(f):
+    l=l.strip()
+    if l:
+        try: rows.append(json.loads(l))
+        except Exception: pass
+[print(r['training_iteration'], round(r.get('train_time_s',0),1), round(r.get('trainer_samples_per_s',0),1), round(r.get('train_views_actual',0),3)) for r in rows[-5:]]"
+```
+
+**SUCCESS = `train_time_s` < 70s** (from a 30-iteration mean of 128.8s) on ≥2 of the first
+3 iterations, **AND** `trainer_samples_per_s` above 400 (from 187.6). Predicted ~43s /
+~560. **A plumbing readout by design** — the sampling-quality question is separate and
+slower.
+
+**KILL (revert to 25000/1; requires a restart, so this is a real cost — do not fire it on
+one row):**
+1. Frozen `test_wdl_loss` rises **> 0.026** (4σ; frozen-window sd **0.0066**, n=33,
+   mean 0.8384) sustained over **3 consecutive** iterations.
+2. `train_views_actual` departs 2.5 by more than 5% — would mean the change perturbed the
+   step budget, which it must not.
+3. Host RAM pressure: RSS growth beyond ~10 GB for the trainer, or any OOM.
+
+**Pre-committed NON-kill:** iteration wall clock failing to drop much. Training is 18% of
+the iteration, so even a perfect fix is bounded at ~12% end-to-end; the point is the cost
+PER STEP, which is what a later views raise spends.
+
+**Confounds in this restart, both argued small:** (1) `zclip_max_norm` 5.0 → 6.5, which
+I21 established is a no-op on 28.6% of the net and second-order on the rest; (2) PR #272,
+which adds a per-iteration push of an otherwise-unchanged value plus a validation guard.
+Neither touches the data path. (3) The FEN pool rotated `retire_65` → `retire_115`
+(monitor-driven) since the last restart.
+
+**Revert point:** `data/salvage/pre_zclip65_20260727` (banked 11:1x, verified iter=121).
+
+**Follow-up already identified, deliberately NOT bundled:**
+`train_views_per_ingested_position` 2.5 → higher, once the step cost is confirmed. That
+key is live-tunable, so it needs no restart and gets its own window and its own CI.
+
+
+### ⚑ FINDING (2026-07-27 11:45) — the GPU computes gradients for 3.0% of wall clock; the replay loader is a 6.05× tax on every optimizer step
+
+**Measured over the last 30 live iterations** (`result.json`, trial 13a9f):
+
+| | seconds | % of iteration |
+|---|---|---|
+| iteration wall clock | 713.8 | 100.0 |
+|  · selfplay + SF labelling + ingest | 585.0 | 82.0 |
+|  · training | 128.8 | 18.0 |
+|     — **data loading** | **107.5** | **15.1** (83% of training) |
+|     — **optimizer** | **21.3** | **3.0** (17% of training) |
+
+`optimizer s/step` = **0.483** — that is the 5090 actually computing gradients on the
+63.08M-param net. `total s/step` = **2.920**. **The loader overhead factor is 6.05×.**
+
+**CORRECTION (same session, before anything was applied): the step count is VIEWS-capped,
+not loader-capped, so this does NOT by itself buy more gradient.** Measured on every row:
+`trainer_steps_done x 512 / replay_positions_ingested` = **2.502-2.552**, i.e. exactly
+`train_views_per_ingested_position: 2.5`. The loop asks for 2.5 views and stops. The
+"267 steps/iter" figure is what the LOADER COULD FEED (`129000 / mean_ms`), not what the
+loop will take — a capacity, quoted as if it were a throughput. **Same error shape as
+reading a clip RATE as a clip EFFECT (I21): a number that bounds something is not a
+number that causes it.**
+
+**What the loader fix actually buys on its own:** `train_time_s` 129s -> ~43s at 3x,
+iteration 713s -> ~627s, i.e. **~12% faster iterations**, plus the elimination of the
+read waste below. **Steps per iteration: UNCHANGED at 44.**
+
+**What it ENABLES.** `train_views_per_ingested_position` is the knob that converts loader
+speed into gradient. At 3x cheaper steps, views 2.5 -> 7.5 costs the same 129s and triples
+the optimizer steps. Crucially that key **is** live-tunable (unlike the shuffle keys
+below), so the two changes sequence for free: fix the loader at a restart, confirm the
+step cost dropped, then raise views by yaml edit as its own pre-registered window. Do NOT
+bundle them — if the holdout moves it must be attributable to one or the other.
+
+**Scale context that reframes every "we are not learning" reading.** The whole trial —
+123 iterations, 29 hours — is **6,253 optimizer steps / 3.2M samples**, i.e. **0.53% of a
+600M-sample AlphaZero-scale budget**. The `vs_prev` ratchet window (iter 70 → 122) is
+~2,650 steps / 1.4M samples. **Expecting a ±50 Elo ruler to move on 2,650 steps of a 63M
+net is not reasonable**, so a null there says nothing about loop health — it says the
+window is too small. Any future strength readout must quote the optimizer steps inside
+its window, not just the iteration count.
+
+**This was predicted and then dropped.** The `train_views_per_position` entry wrote, in
+its own early-gate clause: *"if step time balloons instead, the binding constraint is the
+loader (`trainer_samples_per_s` ~190 = 2.7s/step at batch 512 on a 5090, mostly NOT
+optimizer time), not the GPU, and the answer is to profile the zarr loader rather than
+raise views further."* Live now: `trainer_samples_per_s` **187.6**, `total s/step`
+**2.92**. The prediction was exactly right, the gate fired, and **nobody profiled the
+loader** — the readout went to views instead. Filed as the standing lesson: an early-gate
+clause that names a follow-up is not done when the primary readout lands.
+
+**Why this outranks the zclip thread.** I21 established `zclip_max_norm` cannot reach
+28.6% of the net (Aurora's polar factor is scale-invariant) and is second-order on the
+rest. This is a **6× gradient-throughput** lever that is pure engineering — no target
+change, no data-mix change, nothing to pre-register a kill rule against, because it
+cannot make the net worse. **This is the candidate mechanism for the "several hundred Elo
+sitting unclaimed" hypothesis:** not that the loop is unstable, but that it has taken
+6,253 steps when it should have taken ~38,000 in the same 29 hours.
+
+**LOCALISED (2026-07-27 12:0x, measured against the live 832-shard / 1,499,822-position
+window, CPU+disk only).** The cost is entirely one call, and entirely the disk refresh:
+
+```
+sample_batch_arrays   1566 ms/batch      <- all of it
+select_history           0.1 ms/batch
+mirror                   0.0 ms/batch
+```
+
+Sweeping `shuffle_refresh_interval` against the pool size separates refresh from assembly:
+
+| shuffle_cap | refresh_interval | read amp | mean ms | **median ms** |
+|---|---|---|---|---|
+| 25,000 | **1 (LIVE)** | 19.5x | 1200 | **1073** |
+| 25,000 | 4 | 4.9x | 381 | 17 |
+| 100,000 | 4 | 4.9x | 404 | 13 |
+| 200,000 | 8 | 2.4x | 190 | 11 |
+| 200,000 | 16 | 1.2x | 75 | 10 |
+
+**A pure in-memory batch costs 10 ms; the live config pays 1073 ms for the same batch.**
+`shuffle_cap` barely affects speed (25k vs 200k at interval 4: 381 vs 404 ms) — the
+INTERVAL is the whole story. Live values: `shuffle_buffer_size: 25000`,
+`shuffle_refresh_interval: 1`, `shuffle_refresh_shards: 5`, `shard_size: 2000`, so every
+batch reads 5 x 2000 = **10,000 positions off disk to serve 512** = **19.5x read
+amplification**, ~437 MB per batch.
+
+**The waste is worse than the latency.** At 10,000 refreshed per batch into a 25,000 pool,
+a position's residence is ~2.5 batches while only 512 are drawn per batch — **~95% of
+everything read from disk is evicted before it is ever sampled.** Raising the interval
+means the data we pay to read actually gets trained on. Memory measured by RSS:
+**65.6 kB/position** (1.64 GB for the live 25,000), so 100,000 = 6.6 GB and 200,000 =
+13.1 GB against 69 GB free.
+
+**⚑ SIXTH INSTANCE OF THE DEAD-KEY CLASS, and it gates this fix.**
+`shuffle_buffer_size` / `shuffle_refresh_interval` / `shuffle_refresh_shards` are all
+**NOT restart-required**, so `_reload_yaml_into_config` overlays them every iteration with
+no warning — but `DiskReplayBuffer` reads them once into `self._shuffle_cap` /
+`self._refresh_interval` / `self._refresh_shards` in its constructor, and `trainable.py`
+pushes only FOUR attributes to the live buffer (`sf_gap_priority_weight`,
+`fast_low_surprise_priority`, `diff_focus_pol_scale`, `diff_focus_q_weight`). **A live
+yaml edit to any of them does nothing.** None has ever appeared in the audit or the reco
+coverage table. Changing them requires a restart — which is why they ride this one.
+
+**NOT yet established, and must be measured before any fix:** *where* in the loader the
+107.5s goes. Candidates, none confirmed — zarr decompression, the disk-backed replay
+window's random-access pattern, per-sample target building
+(`train/target_builder.py`), host→device transfer, or single-threaded collation.
+**Next action: profile one training phase** (`train_time_s` breakdown by stage) before
+proposing anything. Do not "fix" a bottleneck that has not been localised — that is how
+the diff_focus and soft_policy_temp fixes ended up measuring nothing.
+
+
+### SPEC, NOT YET BUILT (2026-07-27 12:4x) — compute the clip norm over the AdamW params ONLY
+
+**Why.** Measured on `checkpoint_000122`: `||g||` aurora **3.648**, adamw **12.137**,
+global **12.673** — **AdamW carries 91.7% of the global norm² on 71.4% of the params**
+(audit I21 amendment). The Aurora/Muon group is EXACTLY scale-invariant (polar factor), so
+its 8.3% contribution enters the clip decision while being a quantity the clip provably
+cannot affect. Today that inflates the norm by 4.4% (`global = adamw × 1.044`) — small,
+but wrong in principle and free to drift. **The norm should be taken over precisely the
+parameters the clip can act on, for BOTH the fixed cap and the adaptive z-score EMA.**
+
+**Contract with the installed zclip** (`~/.local/lib/python3.10/site-packages/zclip/zclip.py`,
+read, not assumed). It touches the model through exactly two surfaces:
+`model.parameters()` — in `_compute_grad_norm` (:88), `apply_in_place_clipping` (:153),
+and the warmup `torch.nn.utils.clip_grad_norm_` (:200) — and `model.modules()`, in
+`is_fsdp_model` (:14). So a scope object exposing those two is sufficient AND complete:
+a `_ClipScope` holding a param list, with `parameters()` returning an iterator over it and
+`modules()` returning an empty iterator (never FSDP, which forces the local path).
+
+Built from `_matrix_optimizer_filter(scope, include_embed_default=...)` — the same
+predicate the optimizer uses to form its groups, so the two cannot silently disagree.
+Never a hand-maintained tensor list.
+
+**Ship it WITH the per-group metric, which is the more valuable half.** `grad_norm_aurora`
+/ `grad_norm_adamw` logged every iteration (I9-style). Today there is ONE aggregate
+number, and establishing that 92% of it is AdamW required a bespoke probe against a
+stopped trainer. Every claim made about zclip today, in both directions, was inference
+from a single scalar. **The metric is what makes the next cap decision readable; the clip
+restriction is what makes `grad_hard_clip_rate` mean what its name says.**
+
+**Expected behaviour change: almost none, and that is the point.** An AdamW-only cap at
+the same numeric 5.0 yields effective norm 5.0 against the current global-cap effect of
+4.79. It is a SEMANTICS fix. **Do not pre-register it as a strength experiment** — there
+is nothing for a kill rule to fire on. Verify it as plumbing: `grad_norm_adamw` should
+equal the old `grad_norm` divided by ~1.044, and `grad_norm_aurora` should be ~28% of it.
+
+**Design caveat to resolve in the PR, NOT hand-waved:** dropping Aurora from the clip also
+drops its only non-finite guard. A genuinely divergent (inf/nan) Aurora gradient would
+reach `_polar_factor` unchecked. Scale-invariance means a *finite* rescale is a no-op, but
+inf/nan is not a rescale. Add an explicit finite-check on the Aurora group rather than
+relying on a norm clip that was never doing that job on purpose.
+
+**Sequencing decision, recorded with its reasoning.** NOT bundled into the 2026-07-27
+restart, reversing an in-session call to do it immediately. "It saves a restart" was true
+and incomplete: the change is near-behaviour-neutral, so landing it a day later costs
+nothing measurable, while writing a gradient-path change against the clock on a stopped
+run is precisely how the #272 value-resolution defect got in — and that was a simpler
+change that only a review caught. Deploys at the next restart, which the daily ratchet
+cadence implies anyway.
+
+
+### ⚑⚑ THE JUNE POLICY WIN HAS BEEN SILENTLY OFF FOR A MONTH — sf_p0 teacher RESTORED 2026-07-27 ~14:0x (pre-registered)
+
+**This is not a new experiment. It is the restoration of a WORKED entry that reverted
+itself, and it is the best current answer to "why is the loop not gaining."**
+
+**WHAT WAS FOUND.** All FOUR config keys of the sf_p0 teacher — `record_sf_p0_policy`,
+`record_sf_p0_regret`, `w_sf_own`, `w_sf_own_regret` — are **absent from
+`configs/pbt2_small.yaml`**, so all four sat at their code defaults (`False`, `False`,
+`0.0`, `0.0`). The feature has been fully OFF: not merely unweighted, but **not recorded**,
+so the labels do not exist in any live shard.
+
+**Evidence it was ever on, and that it worked:**
+- Ledger WORKED table: *"2026-06-23/24 | sf_p0 policy teacher + regret-weighted SF teacher
+  (PR #78) | **the June policy win**: net+search E[regret] **56.7 → 49.6 cp**"*, and the
+  revert-points table says *"sf_p0 + regret teacher weights | June | proven (see WORKED);
+  **leave alone**"*.
+- Memory `sf_p0_policy_experiment_live`: *"Live config (pbt2_small.yaml):
+  `record_sf_p0_policy: true` + `w_sf_own: 0.1`… Recording verified live: shard_026157 =
+  **24.6% of selfplay rows carry has_sf_p0**"*.
+- Memory `regret_loss_experiment_live`: *"Live config (configs/pbt2_small.yaml,
+  **uncommitted live edits**): `record_sf_p0_regret: true`, `w_sf_own_regret: 0.7`"*.
+
+**HOW IT WAS LOST — the mechanism, which is the transferable part.** Both memories say the
+keys were **uncommitted working-tree edits**. Confirmed 2026-07-27: `git log --all -S
+"record_sf_p0_policy" -- configs/` and the same for `w_sf_own` return **NOTHING — the keys
+appear in no commit, on any branch, ever.** A June 2026-06-25 commit of the file does not
+contain them. So a proven, ledger-recorded win existed only as an uncommitted edit to the
+live yaml and was wiped by a checkout or file rewrite. **This is exactly
+[[live_yaml_branch_checkout_trap]] — except the 2026-07-02 instance was caught after 3
+iterations and this one was never caught at all, costing ~a month.**
+
+**IT IS ONE FEATURE, NOT DRIFT.** Sweep of every `w_*` weight the trainer reads and every
+`record_*` flag `TrialConfig` defines, comparing code default vs live yaml: **every single
+one is explicitly set in the yaml EXCEPT these four.** Nothing else is missing from either
+category. That rules out gradual drift and identifies a single lost feature.
+
+**WHY IT MATTERS MECHANISTICALLY.** `policy_own` — *the head MCTS actually reads* — was
+training on `w_policy 1.0` + `w_soft 1.0` of **its own Gumbel improved policy**, i.e. pure
+self-imitation, which by construction **cannot exceed its own search**. The only other SF
+policy head, `policy_sf` (`w_sf_move 0.02`), is documented in `docs/model_heads.md` as the
+**opponent's reply distribution at P1**, *"NOT a move-teacher for the sample's own
+position"*. So the position-level move teacher carried weight **0.0**.
+
+**⚠ SCOPE CORRECTION, recorded because the first framing was wrong.** This was initially
+written up as "the strong teacher was never wired to play." **That is false.** SF's main
+pathway to play is the **value** head: `wdl` is the only value head MCTS reads and it
+trains on a blend (live `sf_wdl_frac 0.45`, `search_wdl_frac 0.2`, ~0.35 on Z), which is
+intact, load-bearing, and working as designed. The correct, narrower claim: **the design
+calls for a small SF influence in the POLICY, and that component was at exactly zero.**
+The proven "small" was 0.1.
+
+**THE CHANGE (live yaml edit, NO restart — all four keys are live-propagating):**
+
+| key | was (code default) | now | path |
+|---|---|---|---|
+| `selfplay.record_sf_p0_policy` | `False` | `true` | `_SELFPLAY_KEYS` + `_RECO_RESTART_KEYS` → automatic worker-session restart |
+| `selfplay.record_sf_p0_regret` | `False` | `true` | same |
+| `train.w_sf_own` | `0.0` | `0.1` | `TRAINER_WEIGHT_KEYS` → live |
+| `train.w_sf_own_regret` | `0.0` | `0.7` | `TRAINER_WEIGHT_KEYS` → live |
+
+Validator pre-checked before the edit (an unknown key rejects the WHOLE reload and silently
+freezes every future reload): all four confirmed members of their key sets, and the edited
+file re-parsed through `flatten_run_config_defaults` → `TrialConfig` →
+`trainer_kwargs_from_config` with the intended values.
+
+**DECIDING YARDSTICK — ONE, as an exact command:**
+```
+PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint <trial>/checkpoint_NNN/trainer.pt \
+    --sims 32 --max-positions 2000 --sf-soft-nodes 50000 --nice 19
+```
+Metric: **net+search E[regret] (cp)** — the same yardstick the June experiment was judged
+on, and the one with a historical anchor.
+
+**⚠ THE 56.7 → 49.6 ANCHORS ARE NOT A VALID BASELINE HERE.** They were measured on the
+**46M** architecture; production is now 512×16 / 63M. A fresh baseline MUST be measured on
+the current net **before coverage builds**, and the verdict read against that. Reusing the
+46M numbers would be a cross-architecture comparison of exactly the kind that produced the
+−252 Elo false alarm ([[cross_era_512_vs_46m_not_caught_up]]).
+
+**SUCCESS:** net+search E[regret] **down ≥3cp** from the freshly-measured 63M baseline,
+sustained across **≥2 reads** taken after `has_sf_p0` coverage reaches ≥20% of selfplay
+rows, paired CI excluding 0.
+**KILL:** flat or worse after a full window refill ⇒ set both weights `0.0` (live edit, no
+restart). Recording can stay on; it is cheap and additive.
+
+**COVERAGE INSTRUMENT (check this BEFORE reading the yardstick — a verdict read before the
+labels exist is not a verdict):** fraction of rows in the newest shards carrying
+`has_sf_p0`. Expect ~24% of selfplay rows once phased in; expect **0%** for the first
+iterations because only NEWLY recorded data carries it, and the ~1.5M window refills over
+~a day.
+
+**CONFOUNDS (deliberate, under the suspension recorded in the entry below):** the views 5.0
++ loader + zclip 6.5 bundle went live at iter 124; this lands ~iter 130. Both are in flight
+simultaneously. Bisection order if the ratchet moves: **sf_p0 first** — it is the only one
+of the two with a mechanism that raises the *ceiling* rather than the *rate*, and the views
+bundle's own caveat already predicts that more gradient alone improves raw policy without
+reaching the played move.
+
+**RECALIBRATION OWED (task #38):** `0.7` was calibrated on the 46M net (measured
+`m_sf_own_regret ≈ 0.079` @ ckpt233, regret gradient ≈9.7% of policy-CE unweighted, so 0.7
+≈ a 7% share deliberately matching `w_sf_own`). The 63M net's realized share is
+**unmeasured**; deployed at the June value on purpose, to be re-measured once coverage
+allows. Live-reloadable, so this costs no restart.
+
+**Revert point:** `data/salvage/pre_sfp0_restore_20260727` (salvage-export, taken at the
+edit). Note a yaml revert alone is NOT a rollback — the window will hold sf_p0-labelled
+data — but here the loss terms are **masked to `has_sf_p0` rows**, so zeroing the weights
+is a genuine and complete disable.
+
+**⚑ GRADIENT TAIL SPIKED AT ITERS 132–133 — DIAGNOSED AS A LOW-COVERAGE ARTIFACT, NOT A
+MIS-SCALED WEIGHT. Prediction recorded BEFORE it resolves.**
+
+| | 131 (pre) | 132 | 133 |
+|---|---|---|---|
+| `grad_norm_median` | 5.547 | 6.885 | 6.255 |
+| `grad_norm_p95` | 6.230 | 12.714 | **13.197** |
+| `grad_norm_max` | 6.774 | 18.390 | **24.758** |
+| `grad_adaptive_clip_rate` | 0.024 | 0.618 | 0.245 |
+| `time_this_iter_s` | 651 | 1862 | **266** |
+
+The 3× iteration slowdown at 132 was **transient** (the worker-session restart plus first
+writes of two new dense policy-shaped arrays); 133 came back at 266s. **The gradient tail
+did not revert** — p95 ~2.1× baseline and max still climbing at 3.7×.
+
+**MY FIRST READING WAS WRONG AND WOULD HAVE CAUSED A BAD INTERVENTION.** I inferred
+"`w_sf_own_regret: 0.7` is mis-scaled for the 63M net and will get ~20× worse as coverage
+grows from ~1% to ~24%", and was close to cutting the weight. **Checking the code first
+reversed it.** `train/losses.py:536-537`:
+```python
+m_sf_own        = masked_mean(sf_p0_ce,      net_mask * has_sf_p0)
+m_sf_own_regret = masked_mean(sf_own_regret, net_mask * has_sf_p0_regret)
+```
+A **masked MEAN — normalised by the eligible-row count, not batch size.** The term's
+contribution to `total` is therefore **coverage-INDEPENDENT**; it does not scale up as more
+rows become eligible.
+
+**The mechanism runs the OPPOSITE way.** `masked_mean` weights each eligible row's gradient
+by `1/n_eligible`. Window coverage is ~1% today, so a 512-row batch holds ≈**5** eligible
+rows at ≈1/5 each; at the steady-state ~24% it holds ≈**123** at ≈1/123. **Per-eligible-row
+gradient is ~25× larger now than it will be once the window fills**, and a mean over ~5
+rows is a very high-variance estimator — which is exactly a spiky TAIL with a
+only-moderately-raised MEDIAN, i.e. what the table shows.
+
+**PRE-COMMITTED PREDICTION:** `grad_norm_p95` and `grad_norm_max` **DECLINE toward baseline
+as `has_sf_p0` window coverage rises**, without any weight change. If instead they hold or
+grow while coverage passes ~10%, the low-coverage explanation is FALSIFIED and
+`w_sf_own_regret` really is mis-scaled — recalibrate then (task #38), not now.
+
+**✅ PREDICTION CONFIRMED AT ITER 134, no weight change made:**
+
+| | 131 (pre) | 132 | 133 | **134** |
+|---|---|---|---|---|
+| `grad_norm_p95` | 6.230 | 12.714 | 13.197 | **8.444** |
+| `grad_norm_max` | 6.774 | 18.390 | 24.758 | **14.631** |
+| `grad_adaptive_clip_rate` | 0.024 | 0.618 | 0.245 | **0.160** |
+| `test_wdl_loss` | 0.835 | 0.841 | 0.863 | **0.836** |
+| `policy_loss` | 1.446 | 1.438 | 1.427 | 1.436 |
+
+**p95 −36%, max −41% in one iteration, both heading back toward baseline while eligible
+coverage roughly doubled (~1% → ~2.6% of window rows, i.e. ~5 → ~13 eligible rows per
+512-batch).** `test_wdl_loss` returned to 0.836. `policy_loss` never moved at any point.
+Still above baseline (p95 8.4 vs 6.3), consistent with coverage continuing toward ~24%.
+
+**THE COUNTERFACTUAL IS THE POINT.** Had `w_sf_own_regret` been cut at iter 133 — which is
+what the first reading called for — this decline would have arrived anyway and been
+recorded as "the cut worked." The weight would have been left wrong, the real mechanism
+never found, and a false causal claim entered the ledger as a WORKED verdict. **The
+pre-committed prediction is the only thing that made those two futures distinguishable,
+and it cost one iteration of waiting.**
+
+Generalisable rule, earned here: **when a metric moves right after a change, ask what the
+metric would do if the change were irrelevant.** A masked-mean loss term over a growing
+eligible set has a mechanically decaying variance; ANY statistic of its gradient falls over
+the first hours regardless of the weight. That decay is not evidence about the weight.
+`trainer_steps_done` 102 → 244 at iter 134 is likewise not a new effect — it is the ingest
+backlog from the 1862s iteration draining (24,986 positions at 5.0 views).
+
+**Why this is recorded rather than quietly acted on:** cutting the weight today would have
+been "confirmed" by the tail falling as coverage grew, which happens either way. That is an
+unfalsifiable intervention, and the whole point of writing the prediction first is to make
+the two hypotheses distinguishable. The adaptive z-score arm is catching the spikes
+(24.5% of steps at 133) so the net is protected meanwhile, and `policy_loss` (1.427) is
+flat. `test_wdl_loss` 0.835 → 0.863 is **0.54σ against the 0.052-nat floor — unreadable**,
+exactly as the withdrawn kill leg predicted.
+
+**⚑ COVERAGE AT DESIGN RATE, 2026-07-27 ~14:4x — the restore is confirmed working.**
+`shard_032166`: **has_sf_p0 461/2000 = 23.1% of selfplay rows.** June's verified figure was
+**24.6%** (`shard_026157`) against a "~23% consecutive-256 prediction" — so recording is
+back at its designed rate, not merely switched on. The two shards before it show the
+ramp exactly as expected: `032165` at 0.4% (the worker session restarting mid-shard) and
+everything older with **no `has_sf_p0` key at all**.
+
+**PHASE-IN, measured not guessed:** ingest **9,080 positions/iter** into a window pinned at
+**1,500,000** (`replay_window_growth_positions` 0, `frac_used` 1.0 — incidentally the third
+independent confirmation that the pre-registered "window drain" does not exist). So:
+- full window turnover **165 iterations ≈ 30.5 h** at the current 666 s/iter
+- 50% turnover ~83 iterations ≈ **15.3 h**
+- the pre-committed **≥20%-of-selfplay-rows** gate needs ~87% turnover ≈ **143 iterations ≈
+  26 h**, i.e. **the first legitimate readout is tomorrow.**
+
+**This is consistent with how June was read** (its memory: *"Don't expect signal before
+~iter 250+ (window refill)"*), and it is recorded here so that an early flat read is not
+mistaken for a verdict. **It also means the sf_p0 window and the views-bundle 4-day ratchet
+overlap almost entirely** — already on the Confounds line, restated because the overlap is
+now known to be near-total rather than partial.
+
+**DEPLOY VERIFIED, both paths, 2026-07-27 14:12.**
+- *Recording (empirical):* `has_sf_p0` now present in newly written shards at **8/2000 =
+  0.4%** and climbing — a key that existed in **no** live shard an hour earlier. The
+  automatic worker-session restart fired as designed; no operator restart was used.
+- *Trainer weights (code-path only):* `_reload_yaml_into_config` writes `config[k] = v`
+  unconditionally for non-topology keys (so an ABSENT key is ADDED, not skipped), then
+  `trainable_config_ops.py:578` does `for wk in _TRAINER_WEIGHT_KEYS: if wk in config:
+  setattr(trainer, wk, float(config[wk]))`. Both keys confirmed members of
+  `TRAINER_WEIGHT_KEYS`. **NOT empirically confirmed — see the metric gap below.**
+- *False alarm, recorded so it is not re-raised:* `result.json`'s `config` block shows
+  these keys as absent. That is Ray's **registered trial config**, which does not reflect
+  in-memory live overlays; `zclip_max_norm 6.5` / `views 5.0` appear there only because
+  they arrived via the 12:22 **restart**. Not evidence of a failed reload.
+- *Also checked, because it is the exact failure mode that caused this bug:* the FEN
+  monitor rewrites this yaml every iteration. It does a surgical `sed` on
+  `opening_fen_list_path` only — all four restored keys survive its rewrite. **And the
+  change is COMMITTED this time (`3b4ca4737`).**
+
+**⚑ THE METRIC GAP — this is why a proven feature could die unnoticed for a month.**
+There is **no observable metric for the sf_p0 teacher at all**: `progress.csv` has zero
+columns matching `sf_own`, and `train/losses.py` exposes no metric name for either term.
+**Nothing in the progress row would have gone to zero when the teacher died.** It also
+blocked empirical verification of this very restore. Fix queued (task #39): report
+`m_sf_own` / `m_sf_own_regret` **and** the ELIGIBLE FRACTION `has_sf_p0_frac` — the
+fraction is the one that catches an outage, because it goes to exactly 0.0 when recording
+stops regardless of the weights. A masked mean alone is ambiguous between "no eligible
+rows" and "eligible rows with zero loss".
+
+**FRESH 63M BASELINE (`checkpoint_000129`, the pre-registered command, 2000 positions):**
+
+| leg | E[regret] / top-1 |
+|---|---|
+| a) net raw policy | 85.3 / 62.4 |
+| **b) net + Gumbel search (PLAY)** | **50.2 / 49.1** |
+| c) SF MultiPV soft target | 51.5 / 33.7 |
+| **d) production training target (full sims)** | **54.2 / 48.3** |
+| e) fast-ply search (not a production target) | 57.9 / 46.3 |
+
+**Ruler continuity checked, not assumed:** leg (c) is a pure-SF leg whose value cannot
+depend on the net, and its top-1 is **33.7 against June's 33.7** — identical. The audit set
+and scorer are the same instrument. So the 46M-era numbers can be *compared* even though
+they are not a valid *baseline*.
+
+**⚠ THIS TEMPERS THE EXPECTATION, and it is recorded BEFORE the readout.** June moved the
+46M net 56.7 → 49.6. **The 63M net already sits at 50.2 with the teacher OFF** — essentially
+at the June post-experiment level, presumably bought by the capacity increase. So the
+pre-committed bar (≥3cp below 50.2, i.e. **≤47.2**) asks for ground the June result never
+covered. **Restoring a lost proven setting is still correct on its own terms, but framing it
+as "another ~7cp is waiting" would be overselling it, and that framing was in the air.**
+
+---
+
+### ⚑⚑ C17 RESULT — THE DUPLICATE LEAVES ARE CORRUPTING THE POLICY TARGET, −4.5 cp (2026-07-27 ~16:0x)
+
+**Scored against the rule pre-registered below, before any number existed. The 2 cp bar was
+cleared by 2.25×.**
+
+| leg | `--target-batch 0` (production) | `--target-batch 1` | Δ |
+|---|---|---|---|
+| a) net raw policy | 85.3 / 62.4 | 85.3 / 62.4 | **0.0** (control) |
+| b) net + Gumbel search (PLAY, 32 sims) | 50.2 / 49.1 | 51.1 / 49.8 | +0.9 |
+| c) SF MultiPV soft target | 51.5 / 33.7 | 51.5 / 33.7 | **0.0** (control) |
+| **d) production training target (256 sims)** | **54.2 / 48.3** | **49.7 / 44.1** | **−4.5 / −4.2** |
+
+**VERDICT by the pre-committed rule: C17 is a TARGET-QUALITY defect, not a compute defect.**
+
+**CONTROLS HELD, and they are what make this readable.** Legs (a) and (c) are
+**bit-identical** across the arms — (c) is pure Stockfish and (a) involves no search, so
+`target_batch` cannot reach either. The value table corroborates from the other side: the
+pure-SF value candidates (i) 0.2450/0.1723 and (ii) 0.0348/0.0069 are **identical**, while
+only the search-dependent ones moved ((iii) 0.0484→0.0481, (iv) 0.2567→0.2521). Nothing but
+leaf-duplication changed.
+
+**THE ORDERING FLIPS, and this retires an earlier claim in this ledger.** At tb=0 the
+training target (54.2) was the WORST of the three search/teacher candidates. At tb=1 it is
+the BEST — 49.7 against PLAY 51.1 and the SF soft target 51.5. **The "production training
+target is 4 cp worse than the net's own play search" finding recorded earlier today is not
+a search-config mismatch. It is this bug**, and the c_scale attribution already retracted
+for that entry was doubly wrong.
+
+**ON THE PRE-COMMITTED BIAS — partly answered by dose-response, without new runs.** The
+pre-registration warned that (d) improving is expected in part BY CONSTRUCTION, since tb=1
+buys ~34% more distinct nodes per nominal sim. The data separates it: C17's own
+measurements are **6–8% duplicates at 32 sims vs 29–76% at 256**. Leg (b) runs 32 sims,
+gained ~7% more nodes at tb=1, and got **slightly WORSE** (+0.9, noise). Leg (d) runs 256
+sims with 29–76% duplication and gained 4.5 cp. **The effect tracks the DUPLICATION RATE,
+not the node count** — if extra nodes were the mechanism, (b) would have improved too.
+Residual node-count contribution is not zero and is not separately measured; a
+node-matched arm (tb=0 at ~388 sims) would pin it and needs the RL sim count exposed on the
+CLI, which it currently is not.
+
+**WHY THIS IS PLAUSIBLY THE FLYWHEEL STALL.** `w_policy 1.0` + `w_soft 1.0` train
+`policy_own` — the head MCTS reads — on this exact distribution. A self-imitation loop is
+bounded by the quality of what it imitates, and the target has been **4.5 cp worse than the
+same search produces when the bug is removed**. It also explains the long-standing pattern
+that more gradient improves raw policy (E[regret] 98.9 → 89.55) while search policy does
+not move: the extra gradient was being spent converging harder onto a corrupted target.
+**Corrupted, not merely noisy** — duplicates land on the path that was already winning, so
+they sharpen the visit distribution, and `max_visit` (inflated by them) sets the root
+`q_scale` that sharpens the improved policy further. Consistent with the measured
+`policy_target` entropy of **0.63 nats** with 24% of rows at top-1 ≥ 0.99.
+
+**FIXING IT IS DATA-AFFECTING AND NEEDS ITS OWN PRE-REGISTRATION — NOT DONE HERE.** It
+changes every policy target written. The audit's own C17 note flags the hazard: removing
+duplicates lowers `max_visit`, which lowers `q_scale`, which FLATTENS the target as a side
+effect — so the fix is not purely a subtraction of noise, and the flattening interacts with
+whatever sharpness the current `c_scale 0.1` was tuned against. **This entry classifies
+C17; it does not authorise a change.** Next step is a ledger entry with a revert point and
+a strength yardstick, not a config edit.
+
+**Reproduce:**
+```
+PYTHONPATH=. python3 scripts/audit_targets.py \
+  --checkpoint data/salvage/pre_sfp0_restore_20260727/seeds/slot_000/trainer.pt \
+  --sims 32 --max-positions 2000 --sf-soft-nodes 50000 --nice 19 \
+  --gpu-mem-fraction 0.20 --target-batch {0,1}
+```
+`--target-batch` was plumbed into the script today; it had always existed on
+`run_gumbel_root_many_c` and was simply never exposed, which is why C17 sat untested since
+2026-07-26.
+
+---
+
+### PRE-REGISTERED READING RULE — the C17 separating test (2026-07-27 ~15:3x, written while the run is in flight, BEFORE any number)
+
+**What is running.** `scripts/audit_targets.py` at `--target-batch 1` against the identical
+checkpoint (`data/salvage/pre_sfp0_restore_20260727/seeds/slot_000/trainer.pt`), identical
+2000 audit positions, identical flags — **only leaf-duplication differs.** The
+`--target-batch 0` arm is this morning's baseline. `--target-batch` was plumbed into this
+script today (it had always existed on `run_gumbel_root_many_c`, just never exposed), which
+is why C17 had been untestable here.
+
+**The quantity: leg (d) "production training target (full sims)" E[regret]. Baseline
+54.2 cp** (top-1 48.3). Legs (a)/(b)/(c) are controls — (c) is pure SF and MUST NOT move;
+if it does, something other than `target_batch` changed and the comparison is void.
+
+**PRE-COMMITTED READINGS — all three, including the awkward one:**
+- **(d) improves ≥2 cp** ⇒ **C17 is a TARGET-QUALITY defect, not a compute defect.** The
+  duplicate leaves are degrading the distribution the policy head is trained on. Fixing it
+  is then data-affecting (it changes every policy target written), needs its own ledger
+  entry with a revert point, and ranks at the top.
+- **(d) within ±1 cp** ⇒ **compute waste only.** Fix it for throughput whenever convenient;
+  it is NOT the flywheel stall and should stop being cited as a candidate for it.
+- **(d) gets WORSE** ⇒ **the duplicates are LOAD-BEARING.** Do not "fix" C17. The inflated
+  `max_visit` raises the root `q_scale`, which sharpens the improved-policy target; if that
+  sharpening is helping, then removing the duplicates flattens the target as a side effect
+  — precisely the hazard the audit's own C17 note warns about ("removing them would flatten
+  the training targets as a side effect"). This outcome is recorded in advance because it
+  is the one most likely to be explained away.
+
+**⚠ A BIAS TO STATE UP FRONT: (d) improving is partly expected BY CONSTRUCTION and is not
+by itself evidence of a defect.** At `target_batch=1` the same nominal 256 sims buy ~34%
+more DISTINCT nodes, so the search is simply given more real information per sim. **The
+question is not "is tb=1 better" — it is "is it better by enough to matter for target
+quality".** Hence the 2 cp bar rather than "any improvement". For scale: the whole gap
+between the training target (54.2) and the net's own PLAY search (50.2) is 4 cp.
+
+**NOT a strength experiment and no kill rule** — it is a measurement that decides how C17
+gets classified. Read-only, no config change, nothing deploys off it.
+
+---
+
+### ⚑ NEW, FROM THE SAME BASELINE — the production training target is measurably WORSE than the net's own play search (2026-07-27, NOT yet pre-registered)
+
+**On the same ruler, same 2000 positions, same checkpoint: production training target
+(leg d) = 54.2 cp E[regret]; net + PLAY search (leg b) = 50.2 cp.** The target the policy
+head is trained to imitate is **~4cp worse** than the configuration the net actually plays
+with.
+
+The two legs differ only in search config:
+- **PLAY (b):** `sims=32, topk=32, c_scale=0.025, root=log`
+- **TRAINING TARGET (d):** `sims=256, topk=16, c_scale=0.1, root=linear`
+
+The training target spends **8× the simulations** and lands 4cp worse.
+
+**⚑ RETRACTION, SAME SESSION — the c_scale attribution above was WRONG and is withdrawn.**
+The original text read: *"the ledger already records `c_scale 0.025` as +301 Elo @8000 sims…
+this says the tuned constant was never carried across."* **That is backwards.** Memory
+`gumbel_cscale_miscalibrated` records a direct test in exactly this regime:
+
+> **RL/selfplay: KEEP 0.1 — do NOT lower (TESTED 2026-06-16, NEGATIVE).** Selfplay runs 256
+> sims (topk 16). A 256-sim puzzle screen (1000 puzzles, the selfplay regime) shows 0.1 is
+> the OPTIMUM there: **0.1 → 0.688 vs 0.05 → 0.652 vs 0.025 → 0.598.** At low sims
+> `max_visit` is small so `q_scale` never explodes → 0.1 doesn't over-trust → lowering
+> HURTS selfplay.
+
+**c_scale 0.025 was already tested at 256 sims and is markedly worse.** The optimum RISES
+as sims fall (0.025 @ 2k–16k, ~0.1 @ 256), and the same memory carries a proof that
+**sim-invariance is impossible via any `max_visit`-based formula** — optimal `q_scale` keys
+off the TOTAL BUDGET, so the per-deployment split (UCI 0.025 / RL 0.1) is *"not a
+compromise; given the impossibility it's the right answer."* The +301 Elo figure was
+measured **@8000 sims** and bears on UCI play, not on a 256-sim target.
+
+**Fifth instance today of quoting a number without checking what it was capable of showing**
+(after: clip RATE as clip EFFECT; loader CAPACITY as throughput; a diff STAT as diff
+content; +301 Elo across a 30× sim-count gap here). This one is worse than the others
+because the refuting measurement was already written down in a memory that the citation
+walked straight past.
+
+**WHAT SURVIVES, and it is much weaker than the original entry claimed.** The 4cp number is
+a real measurement, but it is **not attributable and not obviously actionable**:
+- The legs differ in **four** settings *plus* the sim count (32 vs 256), and each is tuned
+  for a **different regime** — so this is not a like-for-like comparison of one knob. It is
+  a bundle-vs-bundle difference with no identified cause.
+- The genuinely odd residue: leg (b) runs a config tuned for 8k–16k sims **at only 32 sims**
+  and still beats the 256-sim RL config on this ruler. That is worth understanding, but
+  "the training target is misconfigured" does **not** follow from it, and no c_scale change
+  is indicated.
+- **Do not re-derive single-formula sim-invariance** — three families were tried and all
+  failed; the memory says explicitly not to re-investigate.
+
+**The one claim from this entry that stands unchanged** is the C17 link, which rests on
+independent evidence: duplicate leaves inflate `max_visit`, which sets the `q_scale` that
+sharpens this target, in the same 256-sim path. **That, not c_scale, is the thread to
+pull** — and measuring leg (d) at `target_batch=1` remains the cheap separating test.
+
+**Why this is a candidate for the flywheel stall, independent of everything else today:**
+a self-imitation loop is bounded by the quality of the target it imitates. `w_policy 1.0` +
+`w_soft 1.0` both train on leg (d). If (d) is worse than what the net can already play,
+**more gradient buys convergence toward a worse policy** — which is exactly the observed
+pattern (more views improved raw policy E[regret] 98.9 → 89.55 while search policy did NOT
+move).
+
+**DO NOT ACT ON THIS YET, for two reasons that are both about not repeating today's
+mistakes.**
+1. **C17 lives in this same 256-sim path** (29–76% duplicate leaves at 256 sims, −34% tree
+   nodes, and `max_visit` — inflated by those duplicates — feeds the `q_scale` that sharpens
+   this very target). **The 4cp gap and C17 may be one defect seen twice, not two levers.**
+   Measuring (d) at `target_batch=1` separates them and is cheap.
+2. It is data-affecting (it changes every policy target written) and needs its own ledger
+   entry with a pre-committed rule. **Ranked ahead of an LR change; ranked alongside C17,
+   which it may be identical to.**
+
+---
+
+### ⚑ READOUT + DELIBERATE MULTI-CHANGE BUNDLE (2026-07-27 12:2x) — 122 iterations produced no measurable strength, so the one-change-per-window rule is suspended ON PURPOSE
+
+**THE RATCHET, judged by the rule pre-committed before the numbers landed.**
+
+| series | candidate | reference | Elo | 95% CI | games |
+|---|---|---|---|---|---|
+| `vs_prev` | iter 122 | iter 70 (~52 iters, ~10h) | **−26.7** | [−63.3, +9.3] | 300 |
+| `vs_boot512` | iter 122 | boot512 anchor | **−11.1** | [−44.8, +22.5] | 314 |
+| *(prior row)* | *iter 25* | *boot512 anchor* | *−12.2* | *[−61.5, +36.7]* | *200* |
+
+*(FINAL numbers; an in-session note quoted the 206-game interim −8.4. The arena ran to its
+wall-clock cap at 314 games.)*
+
+**In 97 iterations (iter 25 → 122) — ~5,000 optimizer steps, ~24h — the net moved −12.2 →
+−11.1 Elo against its own bootstrap weights. That is +1.1 Elo.** Pentanomial score 0.4825
+→ 0.4841. Both points sit statistically on top of the bootstrap weights the trial started
+from, and on top of each other. **This is not a wide-CI null that happens to lean
+negative; it is a point estimate of essentially zero movement over a day of training,
+measured twice against a frozen anchor.** By the pre-committed rule both series are formal
+nulls (CIs include 0; the two `vs_boot512` rows overlap almost entirely). But three
+independent readings point the same way — `vs_prev` negative, `vs_boot512` flat, frozen
+`test_wdl_loss` slope −0.0000 (t=−0.10, n=33) — and **a working loop should produce
+positive point estimates even when they are not significant.** Recorded as: *no evidence
+of improvement, and the burden has shifted.*
+
+**I withdraw my own "the window is too small" defence, and the reason it was wrong is
+worth keeping.** I argued a ±36 Elo ruler cannot resolve 2,650 steps. True in isolation,
+but it ignores that this is a WARM START ONTO A NEW DATA DISTRIBUTION — the regime where
+the improvement rate should be steepest, not shallowest. A null there is more damning than
+a null late in training, not less. **Sample-size scepticism is not a free pass; it has to
+argue against the specific prior, and mine did not.**
+
+**METHODOLOGY CHANGE, adopted deliberately and recorded so it is not mistaken for drift.**
+The "one data-affecting change per readout window" rule (CLAUDE.md, protocol item 4)
+exists to stop an unattributable regression from contaminating a KNOWN-GOOD state. **There
+is no known-good state here.** Against a system that is not producing gains, the rule
+inverts: it makes each diagnostic cycle a day long while protecting a baseline nobody
+wants to keep. The correct discipline for a broken system is to change several things at
+once, record exactly what changed, keep the revert point, and BISECT once something works.
+**This suspension is scoped: it ends the moment a bundle produces a positive ratchet row.
+From that point the rule is back in force, because there will finally be something worth
+protecting.**
+
+**THE BUNDLE (all live at the next restart).** One bet, three keys:
+
+| change | from → to | why |
+|---|---|---|
+| `train_views_per_ingested_position` | **2.5 → 5.0** | the actual bet: ~88 steps/iter instead of 44 |
+| `shuffle_buffer_size` | 25,000 → 100,000 | makes those steps affordable |
+| `shuffle_refresh_interval` | 1 → 4 | 19.5× → 4.9× read amplification |
+| `zclip_max_norm` | 5.0 → 6.5 | inert per I21; rides along |
+
+**Net effect: gradient DOUBLES while training wall clock HALVES** — ~88 steps × ~756 ms
+≈ 66s, against 44 steps × 2920 ms ≈ 129s today.
+
+**Why 5.0, revised down from 7.5 before deploy.** The first draft set 7.5, justified by
+our targets being ground truth from a FIXED external SF — never stale, so the reuse
+ceiling is set by OVERFITTING rather than target staleness. **That argument is right about
+the mechanism and wrong about the conclusion: it identifies overfitting as the binding
+constraint and then proceeds as though nothing binds.** AlphaZero ~1 and KataGo ~4 are
+empirical ceilings from loops that demonstrably work; going 2× past KataGo on the first
+attempt, on a loop already believed broken, adds a failure mode that would then have to be
+disentangled from the one under investigation. **5.0 is a FLOOR, not a target** — the key
+is live-tunable, so it rises by yaml edit with no restart once the train/holdout gap has
+been watched. The loader keys get only this one shot; they are construction-time. Asymmetric
+costs deserve asymmetric caution, and they point in opposite directions here.
+
+**NOT changed, and this is a reasoned exception rather than caution: the learning rate.**
+The warm-start disaster was precisely raising LR on THIS donor — a 3e-5 net run at 3e-4,
+**−494 Elo by iter 74**. 3e-5 is the donor's regime and the fix for that bug. "More steps
+at the correct LR" and "fewer steps at a wrong LR" are different bets and the second has
+already been run here and lost badly. **If tripled gradient does not move the ratchet, LR
+is the next lever** — with that history in front of us.
+
+**DECIDING YARDSTICK — CORRECTED THE SAME SESSION, BEFORE ANY DATA, BECAUSE THE FIRST ONE
+COULD NOT FIRE.** The original bar was "next `vs_boot512` row ≥200 games, SUCCESS = point
+estimate above +20 Elo, CI excluding 0". **That bar is unreachable in a day even if the
+thesis is exactly right,** and writing it would have manufactured a guaranteed failure.
+Arithmetic: 97 iterations / ~5,000 steps bought **+1.1 Elo**. Doubling to ~10,600
+steps/day buys ~**+2 Elo**, against a ratchet half-width of ~±35. **A one-day success bar
+of +20 is a bar that cannot fire — the mirror image of the gate-that-cannot-fail defect
+(memory: [[a_gate_that_cannot_fail]]).**
+
+**Corrected yardstick: the ratchet SLOPE across ≥4 daily `vs_boot512` rows**, fitted with
+its CI, not any single row. **SUCCESS = slope > 0 with the CI excluding 0 over ≥4 rows
+(~4 days).** **KILL/PIVOT = slope ≤ 0 over ≥4 rows**, which would say gradient volume is
+not the binding constraint.
+
+**⚑ SECOND CORRECTION TO THIS YARDSTICK, 2026-07-27 ~15:0x — FIT AGAINST CUMULATIVE
+OPTIMIZER STEPS, NOT CALENDAR DAYS. Written before the data lands.** The rows are collected
+daily, but **steps/day DOUBLED at iter 124** (224 → ~500 optimizer steps/hour, measured).
+The two rows already banked — `2026-07-26 iter 25` and `2026-07-27 iter 122` — were both
+earned in the OLD regime; every row from tomorrow on is earned in the new one. **A slope
+fitted against dates therefore mixes two throughput regimes and would credit a throughput
+change as learning** (or, if flat, would hide a real per-step gain behind a halved
+cost-per-Elo). The independent variable must be **cumulative `trainer_steps_done`** (or
+equivalently iteration index weighted by steps/iter), which `ratchet.csv`'s `iter` column
+plus `progress.csv` makes reconstructible for every row including the two historical ones.
+
+**This is the same error the day has now made five times** — a rate whose denominator moved
+underneath it (per-iteration grad-norm drift that vanished when normalised per step;
+`train_time_s` against a tripled step count; a clip RATE read as a clip EFFECT; loader
+CAPACITY as throughput; an 8000-sim Elo result cited against a 256-sim target). **Caught
+here BEFORE the readout rather than after, which is the only version of this that is
+worth anything.** The Elo/CI math itself is VERIFIED sound (audit 07-26); this is purely
+about what goes on the x-axis. Interim single rows are logged and explicitly NOT verdicts.
+This also fixes the instrument problem the pre-registered reading rule already named: a
+two-point series cannot resolve a day of training, and the answer is more frequent points
+rather than more games per point. `scripts/ratchet_loop.sh` runs one per calendar day and
+starts with training.
+
+**A CAVEAT THAT MAY MATTER MORE THAN THIS ENTRY.** The strongest evidence against the
+gradient thesis is already in the ledger and predates it: the views 2.5 experiment DID
+significantly improve the raw policy head (E[regret] 98.9 → 89.55, paired CI excluding 0)
+and **search policy did NOT move** (51.28 → 52.42, NS). More gradient demonstrably
+improves the raw net and demonstrably fails to reach the moves that get played. **If that
+pattern repeats at 5.0 views — raw policy improves again, ratchet stays flat — the
+bottleneck is between the raw net and the played move, i.e. SEARCH, not training volume.**
+That points at **C17** (the C kernel duplicates leaves: −34% tree nodes and a DIFFERENT
+selected move than the Python reference, 29–76% duplication at 256 sims), which sits in
+the one component that both builds the training targets and plays the games. **Ranked
+ahead of an LR change as the next investigation**, and the raw-policy-vs-search split
+should be re-measured alongside the next ratchet row so the two hypotheses separate. Plumbing pre-check on the first 3 iterations: `train_time_s` < 90s,
+`train_views_actual` ≈ 5.0, `trainer_steps_done` ≈ 88.
+
+**KILL (views is live-tunable — revert is a yaml edit, no restart):** train/holdout policy
+gap past ~0.30 (live 0.13–0.18); ~~frozen `test_wdl_loss` +>0.026 (4σ) over 3 consecutive
+iterations~~ **— WITHDRAWN, see below**; or `train_views_actual` not tracking 5.0.
+
+**⚑ THE `test_wdl_loss` KILL LEG IS WITHDRAWN — IT CANNOT FIRE, AND "4σ" WAS ARITHMETIC I
+NEVER CHECKED (found 2026-07-27 while writing the G14 spec).** The measured noise floor of
+this ruler on a FROZEN set is **sd 0.0522 nats** (audit G14, iters 48–61, mean |Δ| 0.0708).
+**+0.026 is not 4σ; it is 0.5σ.** A threshold at half a standard deviation of pure
+resampling noise fires on noise, not on damage — and demanding "3 consecutive iterations"
+does not rescue it, because the floor comes from 2560 draws WITH REPLACEMENT re-rolled
+every iteration, so consecutive rows are independent re-rolls rather than a persistent
+signal. **Third instance today of a bar written without checking it against the instrument**
+(the others: the +20 Elo success bar, corrected in this entry; the `train_time_s` < 90s
+plumbing bar, withdrawn in the readout above). The pattern is not carelessness about
+thresholds — it is quoting a number without asking what it was capable of showing, which
+is the same error the ledger already logs against `grad_hard_clip_rate` and the loader
+"267 steps/iter" reading.
+
+**Replacement, usable with today's instrument:** the surviving KILL legs are the
+train/holdout **policy** gap (>0.30) and `train_views_actual` not tracking 5.0. For the
+value head, **no `test_wdl_loss` kill leg is available until G14 lands** — a deterministic
+full pass takes the floor from sd 0.052 to ~0 and makes a threshold of this size
+resolvable for the first time. **Recorded as a known GAP in the live pre-registration
+rather than papered over with a bigger number**: inflating the bar to 4×0.052 ≈ 0.21 nats
+would be a "safe" edit that also guarantees nothing short of catastrophic damage trips it.
+G14 is the fix; until then this bundle is watched on the policy gap and the ratchet slope.
+
+**Revert point:** `data/salvage/pre_zclip65_20260727` (verified iter=121, 3.8G).
+
+**Bisection order if the bundle wins**, so attribution is recoverable: views is the only
+one with a plausible strength effect — drop it to 2.5 first and re-read; the loader keys
+change mixing but not volume; ~~zclip is I21-inert~~ **— see the correction in the readout
+below: zclip is NOT inert and moves to second place in the bisection order.**
+
+---
+
+#### PLUMBING READOUT (2026-07-27, iters 124–125) — the throughput half PASSES; the stability half is NOT YET READABLE
+
+**Scored on the pre-registered "≥2 of the first 3 iterations" rule. 2 of 2 clear it.**
+
+| | baseline (iters 110–123, n=14) | iter 124 | iter 125 |
+|---|---|---|---|
+| s/step | 2.883 (sd 0.099) | 1.494 | **1.122** |
+| `trainer_steps_done` | 43.9 | 101 | 85 |
+| `train_views_actual` | 2.529 | 5.000 | 5.046 |
+| `train_time_s` | 126.4 | 150.9 | 95.3 |
+| `time_this_iter_s` | 706.3 | 1061.3 | **616.6** |
+| optimizer steps/hour | **224** | — | **496** |
+| `grad_norm_median` | 5.405 | 5.384 | 5.477 |
+| `grad_hard_clip_rate` | 0.872 | 0.089 | 0.024 |
+
+**Steady-state optimizer steps/hour 224 → 496 (2.2×), and iteration wall clock went DOWN
+(706s → 617s) while doing 2× the optimizer steps.** Views landed at 5.000/5.046 against a
+5.0 target, so the views-capping path is exact. The cold-buffer prediction held: 124 ran
+the first fill of the now-6.6 GB shuffle buffer and cost 1.494 s/step; 125 ran it warm and
+cost 1.122. **The improvement BETWEEN the two post rows is the confirmation — a
+contention explanation predicts noise, a cold-fill explanation predicts exactly this.**
+
+**The `train_time_s` < 90s bar was mis-specified and is withdrawn, not failed.** It was
+written while simultaneously tripling the step count: total training time cannot fall when
+the work per iteration doubles, so the bar measured the wrong quantity. **The right
+quantity is cost per step, and the substitution is recorded here rather than applied
+silently.** (Same error shape as the +20 Elo bar this entry already corrected — a bar
+whose arithmetic was never checked against what it was measuring.)
+
+**⚑ CORRECTION — "zclip is I21-inert; rides along" was WRONG, and the live data says so.**
+`grad_hard_clip_rate` went **0.872 → 0.024**, a 36× change. The cap at 5.0 was binding on
+**87% of all steps** against a median norm of 5.405; at 6.5 it binds on ~2–9%. Combined
+with the I21 amendment (AdamW carries **91.7%** of global norm² on 71.4% of params, so the
+scale-invariant Aurora group contributes only 8.3%), the honest reading is: **the cap was
+an active, near-permanent ~8% shrink on the AdamW group's effective step size, and raising
+it removed that shrink.** That is a real effective-LR increase on 71% of the net,
+bundled in on the strength of a claim that it did nothing.
+
+*Bound on the estimate, stated because the number is soft:* `grad_norm_median` + clip rate
+give the median shrink (5.0/5.405 = 0.925) but not the distribution, so "~8%" is an
+order-of-magnitude figure, not a measurement. `grad_norm_aurora`/`grad_norm_adamw`
+(the pending AdamW-only clip PR) is what makes this directly readable next time — which is
+precisely the argument that PR's spec makes for shipping the metric alongside the fix.
+
+**Consequences, both recorded now rather than discovered later:**
+1. **Revised bisection order: views first, then ZCLIP, then the loader keys.** zclip moves
+   from last to second because it is now known to have changed the effective step size on
+   the majority of steps, which is a strength-plausible mechanism. The original ordering
+   rested on the pre-amendment I21 reading.
+2. **This is a confound on the bundle, and it belongs on the Confounds line.** If the
+   ratchet moves, "more gradient" and "~8% larger AdamW steps" are not separated by this
+   design.
+
+**`grad_norm_median` is unchanged (5.405 → 5.430) across the cap change.** Consistent with
+the cap having been cosmetic rather than load-bearing — but **NOT scored as such.** The
+metric is measured pre-clip, so it would read identically under either hypothesis, and the
+protocol wants ~5 iterations spanning ≥2 cadence periods for a stability class. **Two rows
+answer the throughput question and cannot answer the stability question.** The user's
+thesis — that stability depends on zclip and raising it will destabilise — remains open and
+is the thing iters 126–130 are for.
+
+**`test_wdl_loss` = nan at 124, 0.845 at 125.** The known restart artifact
+([[holdout_ruler_dies_at_every_restart]]), not a new signal. The frozen-ruler KILL
+threshold cannot be evaluated until the series re-establishes a post-restart baseline.
+
+**Still pending, unchanged by this readout:** the deciding yardstick is the ratchet SLOPE
+over ≥4 daily `vs_boot512` rows. **Throughput passing is not the experiment passing.** The
+bet was that gradient volume is the binding constraint; all this readout establishes is
+that the gradient volume was actually delivered.
+
+---
+
+#### STABILITY INTERIM (iters 124–127, 4 of the 5 the protocol wants) — raising the cap did NOT remove spike protection, because zclip has TWO arms
+
+**The hypothesis under test was the user's:** *"training being stable is only because of
+zclip; if we raise it there will be more instability."* Worth taking seriously — and the
+cap is now not merely raised but **entirely inactive** (`grad_hard_clip_rate` **0.000** at
+iters 126 and 127). If removing the fixed cap destabilises, this is the regime.
+
+| | baseline (118–123) | post (124–127) |
+|---|---|---|
+| `grad_norm_median` | 5.47 | 5.47 |
+| `grad_norm_p95` | 6.33 | 6.68 |
+| `grad_norm_max` | 6.89 | 7.21 |
+| `grad_hard_clip_rate` | 0.917 | **0.022** |
+| `grad_adaptive_clip_rate` | 0.087 | **0.087** |
+| `grad_clip_rate` (either arm) | 0.917 | 0.084 |
+
+**The mechanism, verified in the installed source rather than inferred from the columns**
+(`~/.local/lib/python3.10/site-packages/zclip/zclip.py:17, 117–135`): ZClip runs
+`mode="zscore"`, `z_thresh=2.5`, `alpha=0.97` — an EMA of the gradient-norm mean and
+variance that clips **statistical outliers** — and this is **independent of
+`max_grad_norm`**, which is a separate fixed cap. **Raising the cap switched the fixed arm
+off and the adaptive arm carried on unchanged (0.087 both before and after).** Spike
+protection was never the fixed cap's job; it is the z-score arm's job, and that arm is
+untouched.
+
+This also retires the "`grad_hard_clip_rate` is bit-identical to `grad_clip_rate`" note
+recorded earlier today. That identity held only because the hard arm was firing on 92% of
+steps and masking the union. Post-change the two separate cleanly (iter 125: hard 0.0235,
+adaptive 0.0235, union 0.0353 — so they are not even the same *events*). **The earlier
+"these are one indicator, not two" reading was an artifact of the regime it was measured
+in, not a property of the metrics.**
+
+**The tail moved slightly and predictably, not chaotically:** p95 +5.5%, max +4.6%, median
+exactly flat. That is the arithmetic consequence of removing an ~8% shrink that had been
+applied to 92% of steps — the clip was compressing the tail and now isn't. **Predicted
+before it was looked up; not a surprise and not instability.**
+
+**⚑ THE CAVEAT, which cuts AGAINST the change and belongs here rather than in a footnote.**
+The adaptive arm's threshold is an EMA over recent history, so it fires on *spikes relative
+to recent norms* and **cannot see slow drift — it adapts to it.** The fixed cap was the
+only guard against a gradual ramp, and the ramp is real and already measured:
+**+0.0079/iter (t=+6.63, n=41), accelerating to +0.0120/iter over the last 17.** So the
+change traded away slow-drift protection while keeping spike protection. Partial mitigation
+by arithmetic: at the current median 5.53 and +0.008/iter, the 6.5 cap starts binding again
+in ~120 iterations (~1 day), so it re-arms itself as a backstop rather than being gone for
+good. **Watch item, not a kill trigger.**
+
+**NOT YET A VERDICT — 4 iterations, and the protocol wants ~5 spanning ≥2 of the failure's
+cadence periods.** Recorded as interim precisely because judging a stability class on 4
+rows is the error this ledger has logged repeatedly today. The `test_wdl_loss` leg is
+independently unreadable until G14 (see the withdrawn kill leg above): its swings across
+125–127 (0.8455 → 0.8199 → 0.8446) are ±0.026, i.e. exactly the 0.052-nat resampling floor,
+carrying no information about damage either way.
+
+---
+
+#### ⚑ STABILITY VERDICT (iters 124–129, 6 post-change rows) — NO instability from raising the cap. The drift is real, PREDATES the change, and its per-STEP rate did not move.
+
+**The trap this readout nearly fell into, recorded first because it is the day's recurring
+error and it very nearly produced the opposite verdict.** `grad_norm_median`'s
+per-ITERATION slope went **+0.0216 → +0.0391/iter (t=+6.42)** — read naively, "removing the
+fixed cap almost doubled the gradient drift", which is exactly the alarming story the
+hypothesis predicted. **It is an artifact of the denominator.** The same change doubled
+steps/iteration 43.9 → 89.0. Normalised to the scale-free quantity:
+
+| window | steps/iter | slope/iter | **slope/STEP** |
+|---|---|---|---|
+| baseline 110–123 | 43.9 | +0.02158 | **+0.000491** |
+| post 125–129 | 89.0 | +0.03910 | **+0.000439** |
+
+**+0.000491 → +0.000439 per optimizer step, each ~±0.00016 — statistically identical, and
+the point estimate is LOWER.** Removing the fixed cap did not accelerate the drift by any
+amount this data can detect. *A gradient norm measured per iteration is not a rate; it
+became one only after the steps-per-iteration was held fixed, and that stopped being true
+at iter 124.*
+
+**Tail, the place instability would actually show:**
+
+| | baseline 118–123 | post 124–129 |
+|---|---|---|
+| `grad_norm_p95` | 6.330 (sd 0.247) | 6.624 (sd 0.245) |
+| `grad_norm_max` | 6.886 (sd 0.466) | 7.223 (sd 0.291) |
+
+Both move ~+4.6%, roughly one baseline sd, with the max's *dispersion narrowing* (sd 0.466
+→ 0.291) — the opposite of what a destabilising change looks like. Consistent with the
+mechanical prediction: the cap had been shaving ~8% off 92% of steps and no longer is.
+
+**VERDICT on the user's hypothesis ("training is stable only because of zclip; raising it
+will destabilise"): NOT SUPPORTED over 6 iterations / ~530 optimizer steps.** The reason it
+was a reasonable hypothesis and still came out wrong is structural, and is the finding
+worth keeping: **the fixed cap and the adaptive z-score arm are separate mechanisms, and
+the stability work was being done by the arm that never changed.** The hypothesis attributed
+the stability to the knob that was visible in the yaml.
+
+**What is NOT resolved, and is now the live watch item.** The drift itself is real and
+long-standing — `grad_norm_median` slope **+0.00861/iter over iters 88–123 (n=36,
+t=+5.76)**, entirely predating this change. At +0.00044/step it adds ~+4.4 over 10,000
+steps, and the loop now runs ~500 steps/hour. **The adaptive arm cannot catch this by
+construction (its threshold is an EMA that follows the drift), and the fixed cap is the
+only mechanism that can — which is precisely the protection this change gave up.** Mitigating
+arithmetic: the 6.5 cap re-arms on its own in ~120 iterations at the current rate. **Track
+`grad_norm_median` per STEP, not per iteration, and revisit if it passes 6.5 without the
+hard-clip rate coming back off the floor.**
+
+
+### PRE-REGISTERED READING RULE (2026-07-27 11:35, written BEFORE the numbers land) — the strength ratchet at iter 122
+
+**Why this is written first.** Three times today I read a moving series and got it wrong
+(linear-drift, then step-not-drift, then no-drift-at-all), each time because the rule was
+formed after seeing the data. This entry fixes the interpretation before the arena
+finishes. It is an OBSERVATION, not an experiment — there is no knob and no kill switch —
+but the reading rule is pre-committed all the same.
+
+**What is running.** `./scripts/daily_gate_ratchet.sh --games 600 --max-minutes 40
+--max-concurrent-games 16`, launched 11:24 with training DOWN and the GPU otherwise idle
+(post-reboot). 600 requested, ~370/series expected inside the 1200s/series budget at the
+measured 0.31 games/s. Two paired series at matched 32 sims, candidate =
+`ck_2026-07-27_iter122.pt`:
+
+| series | reference | span |
+|---|---|---|
+| `vs_prev` | `ck_2026-07-27_iter70.pt` | ~52 iterations, ~10h |
+| `vs_boot512` | `boot_snap_recheck_0711_0404.pt` | the frozen 07-11 anchor, 16 days |
+
+**Reading rule — `vs_prev` (short horizon).**
+- CI excludes 0 and NEGATIVE ⇒ **the loop is actively regressing**, and it is doing so
+  inside a single day. That is a stop-and-diagnose finding, not a tuning signal.
+- CI includes 0 ⇒ **no detectable change in 10 hours.** At ~370 games the half-width is
+  ~±50 Elo, so this does NOT mean "nothing happened" — it means any true effect is
+  smaller than ±50 Elo. **Do not report a null here as "stable".** 52 iterations that
+  cannot move a ±50 Elo ruler is itself the answer to "are we learning fast enough".
+- CI excludes 0 and POSITIVE ⇒ learning, at a measurable rate.
+
+**Reading rule — `vs_boot512` (the series that matters).** This is the one that exposed
+the warm-start crash, because that damage arrived as many small daily steps that
+day-over-day comparison could never see. The single prior row is **2026-07-26, iter 25,
+−12.2 [−61.5, +36.7]**. Judge today's row AGAINST THAT ROW, not against zero:
+- today's point estimate materially BELOW −12.2 with non-overlapping CIs ⇒ cumulative
+  regression since yesterday.
+- materially ABOVE ⇒ genuine cumulative progress.
+- overlapping CIs ⇒ **the two-point series cannot resolve a day of training**, which is a
+  verdict about the INSTRUMENT's cadence, not about the net. The fix is more frequent
+  points, not more games per point.
+
+**Pre-committed confound, and it is not small.** The `vs_prev` window (iter 70 → 122)
+straddles the **01:59 ten-PR deploy**, which included I13 — `matrix_weight_decay` going
+from a decorative `0` to an actually-applied `1e-4`. That is a real change to the update
+rule, live inside the comparison window. So a negative `vs_prev` has at least two
+readings (the loop regresses / the weight-decay fix costs strength) and this arena cannot
+separate them. `vs_boot512` is not affected in the same way, since it spans both regimes
+anyway.
+
+**Second confound:** iters 70→122 also carry the FEN pool rotation `retire_65` →
+`retire_115`, i.e. a different seed mix. Judged on panels/Cheese normally, but a strength
+arena inherits it.
+
+**What this reading CANNOT do.** It cannot detect the ~400 Elo recovery hypothesis on its
+own, because that hypothesis is about the trajectory from here, not about a 10-hour
+window. What it CAN do is say whether the loop is currently moving in the right direction
+at all — which has been unmeasured since iter 25.
+
+
+### DEPLOY HELD (2026-07-27 11:00) — the zclip restart is staged but NOT executed: a monitor GPU observer has the dxg bridge wedged, with a kernel-level fingerprint this time
+
+**Everything is staged and nothing is deployed.** The live yaml reads
+`zclip_max_norm: 6.5`, PR #272 is merged and on the live branch, and the revert pool
+`data/salvage/pre_zclip65_20260727` is banked (3.8G, verified `iter=121`,
+`ckpt=checkpoint_000120`, newest on disk — the salvage stale-state check passed). **The
+restart itself is HELD.**
+
+**Why.** The pre-committed GPU gate — run BEFORE `train.sh stop`, per the near-miss
+earlier today — failed in a way that is worse than the 07-26 variant:
+
+```
+timeout 25 nvidia-smi -L      # hung; `timeout` could NOT kill it (D-state ignores signals)
+PID 2028547  STAT DNl  elapsed 54min  wchan = dxgvmb_send_sync_msg
+  python3 scripts/blindspot_panel.py --checkpoint scratchpad/live_read/monitor/ck_116.pt ...
+  parent: bash scripts/monitor_fen.sh    started 10:06:59
+```
+
+**This is the second time a monitor GPU observer has wedged the bridge, and the first
+time it has been caught with a kernel fingerprint rather than inferred.** Earlier today I
+blamed `monitor_fen.sh`'s GPU job for a wedge, was told the overseers have historically
+been safe, and RETRACTED the claim — correctly, because at the time the evidence was
+circumstantial. That retraction stands as a description of what was knowable then. The
+mechanism is now *demonstrated*: `wchan` names `dxgvmb_send_sync_msg` and the parent is
+`monitor_fen.sh`. **Both things are true: the retraction was right on the evidence, and
+the hypothesis it retracted was right on the facts.**
+
+**Training is HEALTHY and must be left alone.** Iter 121 landed 10:49:48, `result.json`
+was written 9s before the check, and the last five iteration periods are 765/656/754/757/674s
+— entirely normal. The wedge is in **new-device creation**, not in the existing CUDA
+context: `dxgkio_create_device`/`dxgvmb_send_sync_msg` is the path a *fresh process* takes.
+So the running trainer is fine and **a restart is precisely the operation that would
+hang.** Stopping training now is how this becomes an unrecoverable outage rather than a
+stalled side-job.
+
+**The monitor is self-limiting, so nothing needs killing.** `monitor_fen.sh` runs
+`blindspot_panel.py` in the FOREGROUND (`monitor_fen.sh:87`), so the loop is blocked on
+its own wedged child and cannot spawn further GPU work; the FEN retire step sits after it
+and is also stalled. The D-state process cannot be killed anyway — uninterruptible sleep
+ignores SIGKILL. Correct action is to wait, exactly as at 01:52 when the previous wedge
+drained on its own.
+
+**UPDATE 11:12 — it did NOT drain, and the resolution was a REBOOT.** At 66 minutes the
+process was still `D-state`/`dxgvmb_send_sync_msg` and `nvidia-smi -L` still timed out, so
+unlike the 01:52 wedge this one did not clear on its own. **Do not plan on waiting it
+out**; the 01:52 precedent is one sample, not a rule.
+
+*Two false readings I made while diagnosing this, both worth the warning.* (1) I reported
+the wedge as drained on the strength of a shell chain
+`cd X && python3 -c ... && ... || echo GONE` — the python leg failed on a partially-written
+`result.json` line, the whole `&&` chain went false, and `|| echo GONE` fired. **The
+fallback reported the failure of an unrelated command as the absence of the process.**
+Test process existence with `[ -d /proc/PID ]` on its own line, never as the tail of an
+`&&` chain. (2) From that I concluded the host bridge itself had degraded, since the
+holder was gone. It had not; the holder was still there. **A wrong premise produced a
+plausible-sounding escalation.** (3) Related: `result.json` is appended live, so the last
+line is routinely a partial write — always parse it line-by-line with a `try/except`, not
+`json.loads` over every line.
+
+**Original hold condition, kept for the next occurrence:** the D-state process
+clears AND `nvidia-smi -L` answers within 30s AND — per the 01:52 precedent — a
+fresh-process CUDA context shows *converging* init times rather than merely succeeding
+once.
+
+**Consequence for the experiment, and it is not a problem.** Training continues at cap
+**5.0** while held: `zclip_max_norm` is a construction-time key and the running process
+predates #272, so the yaml's 6.5 is inert until the restart. The grad-norm ramp therefore
+keeps running under the old cap and the pre-registered baseline simply extends. Re-read
+the baseline at restart time rather than reusing the iter-121 numbers — this series has
+already moved twice under me today.
+
+**Standing rule this vindicates, now with a mechanism:** batch GPU side-work into
+deliberate pause windows; a "cheap read-only observer" and "a process that creates a CUDA
+context" are the same thing to the dxg bridge. The queued G13 probe and C17 A/B are
+correctly still queued.
+
+
+### PRE-REGISTERED (2026-07-27 ~07:3x) — raise `zclip_max_norm` 5.0 → 6.5, by graceful restart, together with PR #272
+
+**Why this needs a RESTART and not a yaml edit.** PR #272 makes the key live-editable,
+but the running process started **01:59:21**, before #272 existed, so
+`Trainer.set_grad_clip_max_norm` is not in its address space. *A merged PR is not a
+deployed PR* applies to the fix for "this knob needs a restart" as much as to anything
+else — the first change of this cap costs a restart no matter what; #272 only makes the
+**second and later** ones free. This is the whole reason the value is worth choosing
+carefully now rather than iterating on it.
+
+**Hypothesis.** `zclip_max_norm: 5.0` has stopped being a tail guard and become the
+step-size controller: median grad norm 5.38 against a cap of 5.0 means **88.9% of
+optimizer steps are hard-clipped to exactly 5.0** (iter 101), while the adaptive
+z-score clipper — the mechanism that is supposed to do this job — handles only ~5%. At
+that rate the update direction is preserved but its magnitude is discarded on nearly
+every step, which is a LARS-like normalized-step regime nobody chose. Raising the cap
+to **6.5** returns outlier duty to the adaptive clipper and restores the intended
+division of labour.
+
+**Why 6.5 and not 11.** 6.5 sits just above the measured `grad_norm_p95` (6.17–6.20 over
+iters 96–101), so it clips ~5% of steps *today* — the rate the adaptive clipper was
+tuned for, and the smallest change that fixes the semantics. It is deliberately the
+CONSERVATIVE end: the historically-inert ratio (cap/median ≈ 2.1 on the 384×12 net,
+which ran cap 5.0 at median 2.4 with a 0.000 hard-clip rate) would put the cap near 11
+at today's median. **Known cost of the conservative choice: if the ramp continues at its
+current ~+0.01/iter, 6.5 re-binds in roughly two days and we are back here.** That is
+accepted, because with #272 deployed the next move is a yaml edit rather than a restart —
+and because a smaller step is a cleaner read on whether the ramp is cap-driven.
+
+**The two causal stories this discriminates between.** (a) *LR-driven (better supported):*
+grad norm tracks LR inversely — the one clean natural experiment, `5fac4` 07-01→07-03,
+moved matrix LR 6e-3 → 2e-3 and back with nothing else changing and took median grad norm
+2.49 → 4.64 → 2.75, recovering fully on revert — and this trial runs at 10× lower base LR
+(3e-5) than either predecessor. Prediction: the ramp continues after the cap moves,
+because the cap was never its cause. (b) *Cap-self-reinforcing:* clipping 89% of steps
+lowers the effective step, which per (a) raises the grad norm, which clips more.
+Prediction: the ramp flattens or reverses once the cap stops binding. **Either outcome is
+informative and neither is a kill.**
+
+**ONE deciding yardstick — did the change take effect at all** (this is the pre-committed
+readout; it is deliberately a *plumbing* check, because the learning-quality question
+cannot be answered in the ~5-iteration window a stability change reads out in):
+
+```
+python3 -c "import csv;rows=list(csv.DictReader(open('runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/progress.csv')));[print(r['training_iteration'],r['grad_norm_median'],r['grad_hard_clip_rate']) for r in rows[-5:]]"
+```
+
+**SUCCESS = `grad_hard_clip_rate` < 0.15 on the first post-restart iteration** (from
+**0.889**). This is a near-deterministic consequence of the cap moving above p95, so it is
+a test of *deployment*, not of the hypothesis — and that is exactly what it is for: this
+key is a construction-time key, and the config-may-not-be-in-effect trap has bitten this
+project before. **If the rate stays ≥0.80, the yaml edit did NOT reach the trainer** —
+patch the newest-BY-FILENAME `experiment_state` file and restart again; do not interpret
+anything else until this passes.
+
+**KILL (revert to 5.0 — now a live yaml edit, no restart, thanks to #272):**
+1. Frozen-holdout `test_wdl_loss` rises **> 0.032** (4σ; the frozen window sd is **0.0079**,
+   n=13, mean 0.8401) sustained over **3 consecutive** iterations.
+2. Any NaN/inf in `train_loss`, or `grad_norm_median` exceeding **10.0** on any iteration.
+3. `games_generated` per iteration drops >20% (would mean the restart, not the cap, broke
+   something).
+
+**Pre-committed NON-kill:** the grad-norm ramp continuing. That is prediction (a), it is
+the better-supported story, and treating it as a failure would be reading the outcome
+after the fact.
+
+**Baseline to beat — RE-MEASURED at iter 121 (pre-change), and the re-measurement
+changes two things in this entry.** `grad_norm_median` **5.536**, `grad_norm_p95`
+**6.78**, `grad_hard_clip_rate` **0.953**, frozen `test_wdl_loss` **0.8384 ± 0.0066**
+(iters 89–121, n=33).
+
+*What the extra 20 rows change.* (1) **The ramp is now unambiguous and ACCELERATING.**
+Over iters 81–121 (n=41) `grad_norm_median` rises **+0.0079/iter (t=+6.63)** and
+`grad_hard_clip_rate` **+0.0074/iter (t=+8.09)**; over the last 17 rows alone the grad
+slope is **+0.0120/iter (t=+3.86)**. The original "+0.0086/iter" reading was right all
+along — the 19-row window I withdrew it on simply lacked the power to resolve it, and the
+withdrawal was the error. This is the fifth pass over the same series; **the standing
+lesson is that this quantity needs ≥40 rows before any slope claim, and that a plateau
+inside a ramp is the default appearance of a noisy rising series, not evidence against
+one.** (2) **6.5 is no longer "just above p95"** — p95 moved 6.17 → 6.78 during the four
+hours this decision took. Expected first-row hard-clip is therefore ~5–10%, not ~5%, and
+the re-bind horizon is **~16h at +0.012/iter, not the "roughly two days" claimed above**.
+The value is kept at 6.5 as chosen, because with #272 deployed the next move is a yaml
+edit and the cost of a too-small first step is now near zero — which is exactly what the
+restart is buying.
+
+*What has NOT changed, and it is the load-bearing control:* the frozen holdout is flat
+across the whole ramp — `test_wdl_loss` slope **−0.0000/iter (t=−0.10)** over iters
+89–121. A grad norm rising with t=+6.6 alongside a value ruler that does not move at all
+is the central fact of this entry. **The control that makes the "no damage" claim non-vacuous:
+across a grad-norm shift of +1.74 sd (iters 89–95 → 96–101), `test_wdl_loss` moved
++0.0000** — so the ruler is sensitive enough to be worth watching and has, so far, seen
+nothing.
+
+**Confounds — three, all noted deliberately:**
+1. **PR #272 deploys in the same restart.** It adds a per-iteration push of an unchanged
+   value plus a validation guard; it touches no loss, target, or data path. Not a
+   confound for the yardstick, which reads the cap's effect.
+2. **The replay window carries ~a day of data generated under cap 5.0.** A yaml revert
+   would not undo that; this is the standing "a yaml revert is NOT a rollback" caveat.
+3. **The live yaml's `opening_fen_list_path` has rotated `retire_65` → `retire_115`**
+   since the last restart (monitor-driven, not mine). Seed-pool composition therefore
+   differs across the boundary. It is judged on panels/Cheese, not on grad norm — disjoint
+   metrics — but any games/h or winrate read across this restart inherits it.
+
+**Revert point.** `data/salvage/pre_zclip65_20260727` via
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out data/salvage/pre_zclip65_20260727`
+(`--metric training_iteration` is REQUIRED — the default picks the best-metric row, not
+current state; VERIFY the printed iteration against the live one, `result.json` is a Ray
+sync copy and goes stale).
+
+**Also in this pause window (GPU work, batched deliberately while training is DOWN):**
+G13 holdout split-leak probe (`scripts/probe_holdout_split_leak.py`) and the C17
+`target_batch` A/B. Both were queued for exactly this window rather than run concurrently.
+
+
+### READOUT (2026-07-27 03:1x, iters 81–97) — the holdout ruler is now AT its noise floor, and I11 is drifting the WRONG way
+
+**The ruler works now, and this reframes yesterday's freeze verdict without
+overturning it.** The holdout refilled from 0 and **froze at iter 89**
+(`test_replay` 2000, `holdout_frozen: 1`, `holdout_generation: 1` stable).
+Split the window accordingly — iters 84–88 were still FILLING (846 → 1806 rows),
+so the apparent `test_wdl_loss` decline there is set-composition change and must
+not be read as learning.
+
+On the **frozen** window (iters 89–97, n=9): `test_wdl_loss` mean **0.8395**,
+**sd 0.0079**, range [0.8263, 0.8510].
+
+- The G14 screen put the **sampler-noise floor at sd 0.0086** (fixed model,
+  fixed rows, 2000 rows). The live frozen ruler is now at **0.0079 — at, and
+  fractionally below, that floor.** There is no excess within-session variance
+  left to remove.
+- Yesterday's freeze readout was sd **0.0708** over 14 points. **The FAILED
+  verdict stands as recorded** — it was judged by the pre-committed rule on the
+  data then available, and post-hoc rescue is exactly what the protocol
+  forbids. But the *mechanism* is now clear: that measurement spanned restarts
+  while G5 (holdout destroyed at every restart) was still unfixed, so the freeze
+  was being defeated by the restart rather than failing on its own terms. **The
+  precondition was missing, not the idea.**
+- Caveat, and it is load-bearing: 0.0708 spanned restarts, 0.0079 does not.
+  These are not the same measurement, and the comparison is indicative only.
+  **What settles it is the NEXT restart** — that is precisely what G5 tests, and
+  `checkpoint_000080/holdout.npz` now exists to be restored from.
+- The G13 per-row leak still biases the level (each holdout row has ~23
+  same-game rows in training). On a FROZEN set that is a constant offset, so
+  trends remain readable; absolute values do not.
+
+**Learning signal over the frozen window: none detectable, and the window is far
+too short to expect one.** OLS slope **−0.00014 nats/iter** (−0.0011 total over
+9 iterations) against a noise floor of 0.0079 — detection needs roughly 2σ ≈
+0.016. This is "no reading yet", NOT "no learning".
+
+**I11 — CORRECTED CHARACTERISATION (2026-07-27, iters 81–99).** My first reading
+of this was wrong and is withdrawn.
+
+*What I claimed:* a linear drift, `grad_norm_median` +0.0086/iter and
+`grad_hard_clip_rate` +0.0062/iter, "the drift is getting worse".
+
+*What is actually there:* **a STEP, not a drift.** Iters 81–95 are flat —
+`grad_norm_mean` slope **−0.0020/iter (p=0.54)**, mean 5.204 — and then a
+discrete jump at **iter 96** to mean 5.410 (Welch t=10.8, **p=1.7e-6**; a
+changepoint scan over every split picks 96 as the global optimum for
+`grad_norm_mean`, `grad_norm_median` and `grad_hard_clip_rate` alike). The
+pooled +0.0099/iter I reported is the artifact of fitting one line across the
+level shift. Verified independently from `progress.csv` after the finding was
+raised. **Method rule: with n≈19 and a suspected regime change, fit the
+changepoint before quoting a slope.**
+
+*Second correction:* `grad_hard_clip_rate` is **bit-identical** to
+`grad_clip_rate` (checked to 1e-12 on every row), and because the median sits
+just above the cap the clip rate is a hypersensitive readout of the same
+location shift (+4% in location → +17 points of clip rate). I presented them as
+two rising indicators; they are **one observation**.
+
+*Third, and it voids the pre-registration:* **the G8 replay-window drain that I
+pre-registered as the suspected cause DOES NOT EXIST.** The window is pinned at
+its 1.5M cap on every iteration (`replay`, `replay_window_before/after`,
+`train_window_target_samples` all flat/constant; `enforce_window` deletes 1–2
+shards per pass at total_pos ≈ 1.499M). So "wait for the drain to complete at
+~17:00, then re-read" is waiting for something that is not happening, and the
+decision is not gated on it.
+
+**What survives all three corrections, and it is the part that matters:** the
+watch threshold is breached at **every** iteration 81–99, and 65–84% of
+optimizer steps are hard-clipped by the FIXED cap while the adaptive z-score
+clipper handles only ~5%. `zclip_max_norm: 5.0` is setting the step size rather
+than bounding outliers, and that is true independently of whether anything is
+drifting.
+
+**Ruled out as causes (both MEASURED):** parameter growth (‖θ‖ +0.09% over 2824
+steps) and any single loss head (across the iter-96 step every train head moved
+&lt;0.5%, |d| ≤ 0.34, while `grad_norm_mean` moved +4.0% at d=4.04). The cause of
+the step is not present in the 276 logged columns.
+
+**Fourth correction (2026-07-27 07:0x), and it partly un-does the first: my
+"there is no slow drift" was itself over-broad.** The step-not-drift reading is
+right *about iters 81–99* and wrong *about the trial*. Reconstructing the full
+TB history across all three surviving lineages settles it:
+
+| era | net / base LR | median grad norm | shape |
+|---|---|---|---|
+| `5fac4` 06-21 → 07-11 | 384×12 @ 3e-4 | **2.36 – 2.50** | **flat for the entire 20 days measurable** (+0.035 over 48,190 steps, excluding the LR excursion) |
+| `4c17c` 07-11 → 07-25 | 512×16 @ 3e-4 | 3.12 – 3.70 | flat-with-a-U (+0.141 over 21,420 steps) |
+| `13a9f` 07-26 → now | 512×16 @ **3e-5** | **4.08 → 5.30** | **monotone ramp, +1.25 in 24h** |
+
+Today's 5.4 is a **sum of three things, only one of which is a drift**: +1.3
+*instantaneous* at the 512×16 swap (07-11), +0.4 *instantaneous* at the boot512
+restart (07-26), and +1.25 *continuous* inside the live trial. Decile medians on
+the live trial climb 4.08 → 5.30 monotonically over 525 logged points and **the
+last third is still rising** (+0.181/1000 steps, t=+2.7). The iters-81–95
+plateau I fitted was a real pause partway up a longer ramp, and iter 96 is the
+ramp resuming — which is why "fit the changepoint" found a step and "fit the
+trial" finds a slope. Both fits are correct on their own window; the 19-row
+window was simply too short to see what it was a piece of.
+
+*Confirmed with 5 post-96 rows (96–100): mean 5.424 vs 5.204 pre. Not an
+excursion.*
+
+**Two further method rules, both paid for here.** (1) `train/grad_norm` and
+`zclip/total_norm` are **byte-identical** — one quantity logged twice, as with
+`grad_clip_rate`/`grad_hard_clip_rate`. This table has now double-counted the
+same number as two agreeing indicators twice in one day. (2) **TB step counters
+RESET at every lineage change** (`5fac4` ended at 132,810; both 512×16 trials
+restart at exactly 56,000). Splicing them produces a smooth-looking history that
+never happened.
+
+**Best-supported cause — correlational, NOT established: the 10× LR cut.** The
+one clean natural experiment in the whole record is `5fac4` 07-01 → 07-03, the
+flat-lower-LR experiment, where matrix LR moved 6e-3 → 2e-3 and back with
+nothing else changing: median grad norm went **2.49 → 4.64 → 2.75**, tracking LR
+*inversely* and recovering *fully* on revert. The live trial runs at 10× lower
+base LR than either predecessor (3e-5, deliberately — it matches the donor's
+regime per the warm-start finding). **This inverts the intuition the whole
+question started from:** a high clip rate reads as "LR too high", but every
+measurement here points the other way. It does not explain the monotone ramp,
+since LR has been constant at 3e-5 throughout it.
+
+**Not restart-driven.** The two restarts inside `13a9f` — including the six-PR
+deploy at 01:58 — each move the median by <0.08 across the gap, and the ramp
+predates both. Across all three lineages, no restart in any gap >40 min produced
+a persistent level change.
+
+**Where the instability question lands.** The drift is real, which is the thing
+worth being uneasy about, and it has not stopped. But every downstream indicator
+is flat: ‖θ‖ +0.09%, all train heads <0.5% across the shift, the frozen holdout
+at its noise floor. So the evidence for *damage* is weak while the evidence that
+*the knob is mis-set* is strong and independent of the drift: at median 5.4
+against a cap of 5.0, the fixed cap binds on 88% of steps, which makes it the
+step-size controller rather than the airbag it was raised to 5.0 to be. The
+historically-inert ratio was cap/median ≈ 2.1 (384×12: median 2.4, cap 5.0,
+hard-clip 0.000) — which at today's median would be a cap near 11, squarely in
+the 10–15 range proposed independently.
+
+**The knob was NOT touched.** PR #272 makes `zclip_max_norm` live-reloadable
+(audit I20) — it was decorative on a running trainer — so the eventual change is
+a yaml edit that reverts as fast as it applies.
+
+### DEPLOY DONE (2026-07-27 01:58) — the ten-PR restart executed after the GPU gate cleared; the three dead-key pins VERIFIED on the wire
+
+**Outcome of the HELD entry below.** The wedge drained on its own at 01:52 (the
+backlog cleared; the layer did not "recover" so much as finish). The
+pre-committed gate was then re-run and passed on its own terms: `nvidia-smi -L`
+returned the 5090, and a fresh-process CUDA context went 113s → 84s → 12.3s →
+5.6s → 3.7s, i.e. converging to normal rather than merely succeeding once. Only
+then was training stopped, at **iter 80**.
+
+**Sequence:** `train.sh stop` (clean) → fast-forward the live tree to
+`9b78edad6` → `train.sh start`. The fast-forward was blocked by an untracked
+`scripts/probe_head_grad_share.py`; the local copy turned out to be the OLDER
+pre-PR version (main's carries the corrected I3/I7 grouping that fixed the
+80.62%-not-100% denominator), so it was preserved to
+`scratchpad/pre_ff_untracked/` rather than dropped. Post-deploy the yaml
+re-verified as identical in VALUES to the pre-stop live yaml — 313 keys, zero
+diffs, none added or removed — and no `.c`/`.h` changed, so no extension rebuild.
+
+**THE STARTUP BANNER LIES, AND IT LIES EXACTLY WHERE IT MATTERS.** The banner
+printed `soft_policy_temp 3.0`, `matrix_weight_decay 0`, `diff_focus 4.8/0.09`,
+`opening_fen_dole_per_iter 1`, `opening_fen_list_path ...retire_307` — every one
+of them the STALE `experiment_state` value, i.e. precisely the five keys this
+session pinned. It is printed by the Ray driver at trial setup, BEFORE
+`train_trial` runs `_reload_yaml_into_config` (`trainable.py:473`, the first
+statement in the function). **J6 says verify the deployed value, and the banner
+is not that verification** — anyone reading it would have concluded the deploy
+had silently reverted all five pins and might well have "fixed" it.
+
+**What the wire says (this is the verification).** Fetched the live manifest the
+workers actually consume, with the protocol/version headers the server requires:
+
+- `soft_policy_temp` = **2.0** — the pin took; the five-month near-miss is closed
+  and now measured, not argued.
+- `opening_fen_dole_per_iter` = **0** — seeding stays off per decision #18.
+- reco key count = **84**, up from the 83 recorded when E13 was diagnosed, which
+  is the +1 for `soft_policy_temp` that PR #257 added. The count corroborates the
+  value.
+- `diff_focus_*` = **ABSENT**, as it must be: those keys are still unpublished,
+  so the worker builds `DiffFocusConfig` from its dataclass defaults. That is the
+  whole reason pinning the yaml to the REALIZED 6.0/3.5/3.0/0.025 was the safe
+  move rather than a change.
+
+**Health at +20 min:** broker ~17,000 pos/s steady, all four workers generating
+(broker requests 6151 → 9144), zero tracebacks, buffer restored at 1,498,872
+rows / 826 shards. `holdout init: restored_rows=0 len=0 capacity=2000
+generation=1` — G5's persistence path running for the first time; 0 restored is
+EXPECTED because no retained checkpoint carries `holdout.npz`, so this restart
+*creates* the first durable ruler and the NEXT restart is the one that proves
+G5. Do not read this restart's `test_loss` as continuous with the last one.
+
+**FIRST NEW ROW READ (iter 81, 02:43:30, `time_this_iter_s` 2638s — restart-
+inflated, cf. iter 42's 2839s). All three deploy checks PASS:**
+
+- **#262 rotation WORKED, and it was load-bearing, not theoretical.** The schema
+  really did change (264 → **276** columns), so without it Ray would have
+  appended a 276-field row under a 264-field header. `progress.csv` rotated to
+  `progress.1785134613.csv` at its exact pre-restart size (317,768 B) and a
+  fresh 276-column file was opened. **`timestamp` = 1785134610 → 02:43:30, i.e.
+  it still parses as a timestamp** — the specific corruption #262 exists to
+  prevent did not occur. Note the durable dir briefly holds the rotated file
+  with NO `progress.csv`: that is the staging→durable sync lag, not a loss.
+- **I7 handover is exactly as predicted, and continuity confirms it.**
+  `wdl_loss` **0.8103** (the trained, blended loss) vs `wdl_onehot_loss`
+  **0.7849** (the diagnostic). The pre-restart `wdl_loss` read 0.7866 — that was
+  the ONE-HOT quantity under the old name, and it lands at 0.7849 under the new
+  name, continuous across the restart. The +0.0254 step in the column named
+  `wdl_loss` is **a change of quantity, not of the net**, and the one-hot series
+  is the one to splice for anything spanning 2026-07-27 02:43.
+- **I9 metrics are live in `progress.csv`** — `grad_norm_mean` 5.219,
+  `grad_norm_median` 5.102, `grad_norm_p95` 6.016, `grad_clip_rate` =
+  `grad_hard_clip_rate` **0.6545**, `grad_norm_samples` 55.
+
+**I11 is independently REPRODUCED by the new instrument, and it reads worse.**
+The TB-derived finding was last-50 median 5.055 / 54% hard-clip. The first
+post-restart iteration, measured by a completely different code path, gives
+median **5.102** and **65.5%** hard-clip against `zclip_max_norm: 5.0` — and
+`grad_norm_mean` 5.219 now exceeds the cap outright. Two instruments, same
+verdict, so this is not a TB artifact. **The pre-registered rule still stands:
+do NOT touch the knob** — wait for the G8 drain, re-read, then decide. n=55
+steps on a restart-perturbed iteration is not the readout.
+
+`test_wdl_loss` = **nan**, expected: the holdout is empty and refilling toward
+2000 (G5, `restored_rows=0`).
+
+**`matrix_weight_decay` VERIFIED from the resolving stage (method rule 12), and
+the deploy is numerics-neutral.** Read from `checkpoint_000080/trainer.pt` →
+`opt.param_groups`, not from config: `grp0 n=48 lr=6e-05 weight_decay=0.0001`
+(the matrix group — lr is 3e-5 × the ×20 multiplier), `grp2 n=143 wd=0.0001`
+(aux), `grp3 n=290 wd=0.0`. **Byte-identical to the pre-deploy reading off
+`checkpoint_000042`** recorded in I13, so #260 turned the control surface back
+on without moving the number — exactly the design goal. Had the yaml been left
+at its written `0`, this group would now read `0.0`; that was the trap, and it
+is closed. All five pinned keys are now verified live: three on the wire
+(`soft_policy_temp`, dole, reco count), one in the optimizer state, and
+`diff_focus_*` by confirmed absence from the reco.
+
+**G5 produced its first artifact:** `checkpoint_000080/holdout.npz` (247 KB)
+exists. The NEXT restart is the one that proves restoration.
+
+**`scripts/monitor_fen.sh` is left SIGSTOPped** (PIDs 9314, 1778213). It was the
+proximate trigger of the wedge and its GPU job would resume on the next
+checkpoint; `kill -CONT` both to restore it once someone is watching.
+
+### DEPLOY HELD (2026-07-27 00:5x) — the ten-PR restart is ready and was NOT executed: the GPU cannot create a new CUDA context
+
+**Status: everything except the restart itself is done.** All ten PRs are merged
+to `origin/main`, the merge into the live branch is committed (`db9499e38`, a
+fast-forward for the live tree), lint is clean, and the live yaml is reconciled.
+The stop/start was aborted at the last step on evidence gathered *before*
+stopping, and **training was never interrupted** — it is still advancing
+normally at iter 75, 655–753s/iter.
+
+**Why held.** `nvidia-smi -L`, a fresh-process torch CUDA probe, and the test
+suite were all stuck in **D state** (uninterruptible; SIGKILL does not take) with
+`WCHAN` `dxgkio_create_device` / `dxgvmb_send_sync_msg`. `dmesg`:
+`dxgkio_create_context_virtual: invalid host handle` / `Ioctl failed: -22`
+(00:53:13) and `dxgkio_query_adapter_info: Ioctl failed: -512` (from 00:24:14).
+**Existing CUDA contexts are fine — new ones cannot be created.** So the run is
+healthy precisely because it never has to ask for a device again, and
+`train.sh stop` would have been a one-way door: nothing would have come back up.
+
+**CAUSE NOT ESTABLISHED — and my first attribution was wrong to state as fact.**
+I initially wrote that the trigger was an observer, `scripts/monitor_fen.sh`'s
+per-checkpoint `blindspot_retire_step.py --gpu-mem-fraction 0.15`, because it
+was the oldest process stuck in D state (~23:10). That is weak evidence and I
+over-claimed it. Against it: the job has run on every checkpoint for weeks
+without incident; the **daily ratchet arena was doing GPU work in the same
+window and died in it too** (00:39, hit its 880s cap, produced no row); and the
+historical record for these wedges is host-side power/vmbus events, not
+application behaviour. A process found blocked in the ioctl is as likely a
+victim as a cause. The loops were SIGSTOPped as a precaution and **resumed
+2026-07-27 ~03:0x** on the better prior that they have been safe historically.
+
+**What IS established, and it is the part that matters:** a GPU side-job can
+leave the dxg layer in a state where training keeps running but **cannot be
+restarted**, and *no training metric can see it* — not `progress.csv`, not the
+watchdog, not any ledger yardstick. That exposure is real regardless of what
+triggered this instance, and it is the reason to batch GPU side-work into
+deliberate pause windows rather than trickle it alongside a live run.
+
+**Pre-committed restart gate — do not stop training until this passes.** The
+stuck `nvidia-smi` (PID 1808360) already carries a pending SIGKILL, so it dies
+the instant its ioctl returns; poll for its PID disappearing rather than
+spawning fresh probes (every new probe wedges too and is unkillable). When it
+clears: `nvidia-smi -L` AND a fresh-process `torch.randn(64,64,device='cuda')`
+must BOTH return, and only then run the stop/start. If it has not cleared by the
+time the G8 drain readout is due, the drain readout still happens on the
+CURRENT process — it does not need a restart.
+
+**Generalised, and it belongs in the deploy procedure:** *check GPU
+restartability BEFORE `train.sh stop`, not after.* Every existing wedge note in
+this repo is written from the position of already being down. This is the first
+time the check ran while there was still something to protect, and it is the
+only reason the run is still up. See [[wsl2_gpu_vmbus_wedge_signature]].
 ### DEPLOY (pre-registered, not yet live) — the grad-norm clip is computed over the params it can move (PR TBD, 2026-07-27)
+
+**⚠ AMENDMENT (2026-07-27 ~19:0x, added while merging this entry onto the live
+branch) — THE "IN PRACTICE NEAR-ZERO EFFECT TODAY" ARGUMENT NO LONGER HOLDS.**
+This entry (and the yaml SCOPE comment shipped with it) argued the deploy was
+effectively inert because `grad_hard_clip_rate` "has been 0.000 since iter 126,
+so the fixed arm is not binding at all". That was true when written and was
+falsified the same day by the *other* change deployed that afternoon:
+
+| iter | 126–131 | 132 | 133 | 134 | 135 | 136 | 137 |
+|---|---|---|---|---|---|---|---|
+| `grad_hard_clip_rate` | 0.000 | 0.176 | 0.255 | 0.385 | 0.430 | 0.261 | 0.259 |
+
+The sf_p0 restore landed at iter 132 and lifted the gradient tail, so the fixed
+arm went from not binding at all to binding on ~26% of steps. A ~4.4% looser
+effective cap applied to a ~26%-binding arm is a real change to the update, not
+a measurement-only one. **The pre-registered SUCCESS/KILL bars are unaffected**
+(they are stated on the metrics, not on this argument) — what is retracted is
+the claim that nothing can happen.
+
+It is probably transient: the elevated tail is the low-coverage masked-mean
+artifact, and p95 has already decayed 13.20 → 7.42 across iters 133–137 as
+sf_p0 coverage grows, so the rate should return toward 0.000 on its own.
+
+**RULE AT DEPLOY:** re-measure `grad_hard_clip_rate` over the 3 iterations
+immediately before the restart and state the number in the readout. Do not
+carry forward either the old 0.000 or today's 0.26 — both are era-specific.
+This is the same failure mode the ledger already logs twice today: a number
+quoted after the thing it described had moved.
 
 **PROTOCOL NOTE — a semantics fix, not a strength experiment.** Entered here
 because it is training-affecting by the letter of the rule (the effective cap
@@ -1652,6 +4121,277 @@ training state; the −42.8 arena is a single 32-sim run (wide CI) — treat as
 directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
+
+**⚑ I11 THRESHOLD FIRED — `zclip_max_norm: 5.0` has stopped being a tail guard
+and is now clipping the majority of steps (2026-07-26 23:5x). LIVE CONDITION,
+not a config-honesty item.** Verified by hand from the live TB scalars (trial
+13a9f, `zclip/total_norm` + `zclip/hard_clipped`, 376 samples, steps
+56000–59750):
+
+| window | median grad norm | HARD-clip rate |
+|---|---|---|
+| full (376) | 4.468 | 13.0% |
+| last 100 | 4.901 | 40.0% |
+| **last 50** | **5.055** | **54.0%** |
+
+250-step bucket medians rise near-monotonically over ~3.7k steps:
+3.956 → 4.134 → 4.065 → 4.109 → 4.159 → 4.332 → 4.275 → 4.393 → 4.613 → 4.654
+→ 4.616 → 4.761 → 4.832 → 4.898 → **5.094**. The newest bucket median now
+**exceeds the cap itself**, and `zclip/effective_clip` is pinned at 5.000 over
+the last 50.
+
+**This is a recurrence of the exact failure the current value was chosen to
+escape.** The yaml comment at `configs/pbt2_small.yaml:411` reads: *"was 1.0;
+raised because raw grad norms median ~2.2 meant every step was hard-clipped,
+dampening effective LR by ~55%."* The cap is now in precisely that regime again
+— median above the cap, >50% of steps hard-clipped — so the same effective-LR
+damping is back, just at a different absolute scale. The comment's stated
+justification is stale by ~2.3× and its conclusion ("z-score clipping still
+handles outliers", implying the hard cap is inert) is false.
+
+**Why this matters more than a stale comment:** a hard clip on the majority of
+steps silently rescales the gradient, so the *realized* learning rate is no
+longer the configured one — on a run whose entire current purpose is reading out
+whether the loop gains at 3e-5 ([[warm_start_lr_regime_destroys_net]] is the
+cautionary tale about exactly this class of mismatch). Any LR conclusion drawn
+across this window is confounded by an unmeasured, time-varying LR damper.
+
+**Candidate cause, NOT established:** the trend's timescale (~17h, monotone)
+matches the G8 window drain almost exactly — the replay window is going from 54%
+fifteen-day-old salvage data to 0% by 2026-07-27 ~16:50, so the training
+distribution is shifting continuously underneath the optimizer. Rising gradient
+norm is what a hardening/shifting data distribution looks like. **That is a
+hypothesis with a matching timescale, not a mechanism I have demonstrated.** The
+competing explanation is ordinary loss-landscape change as the net trains. They
+are separable: if the drain is the cause, grad norm should plateau after the
+salvage block finishes evicting.
+
+**PRE-REGISTERED, NOT APPLIED — the knob is training-affecting and I have not
+touched it.**
+- **Do nothing until the drain completes** (~2026-07-27 17:00) and re-read.
+  Changing the cap while the suspected cause is still running would confound
+  both. This is the cheap, correct first move and it costs only a re-read.
+- If the median **plateaus below ~4.5** post-drain: the drain was the cause,
+  no config change, record and close.
+- If the median **stays ≥ 5.0** post-drain: raise `zclip_max_norm` so the cap is
+  a tail guard again. Yardstick: hard-clip rate over 200 consecutive steps.
+  Success = **< 5%** (the cap is a guard, not a damper), and `value_regret`
+  paired CI vs the pre-change dump not worse by >2cp. Kill = value guardrail
+  trips ⇒ revert to 5.0.
+- **Do NOT lower it** and do not treat the clipping as protective: `zclip`'s
+  z-score arm (`zclip/clipped` 54% vs `hard_clipped` 54% over the last 50 — the
+  two coincide) shows the adaptive arm is not what is firing. The hard cap is.
+
+**Instrumentation note:** none of this is visible in `progress.csv` — grad norm
+and clip rate are TB-only today, which is exactly what PR #260 (I9) adds. That
+is why a majority-clipping condition ran for hours unnoticed. #260 should be
+read as a prerequisite for ever catching this on cadence rather than by audit.
+
+**NEAR-MISS, CLOSED — the live yaml would have re-targeted the policy loss at the
+next restart (2026-07-26).** Caught by a pre-deployment adversarial review of the
+merged-but-not-yet-deployed PRs #257/#259/#261, before any restart.
+
+`soft_policy_temp` has never been published to the worker (E13), so selfplay has
+run the `2.0` dataclass default while the live yaml said `3.0`. PR #257 makes the
+key real. The live yaml is what the restart reads, and `soft_policy_temp` was
+**absent from the A5 reconciliation table** — so an operator following the
+mandated key-by-key procedure would have kept the live `3.0` and shipped a
+first-magnitude change to `soft_policy_ce` (~41% of weighted trunk gradient)
+inside a PR whose stated purpose was to preserve behaviour. No entry, no
+yardstick, no kill rule.
+
+Realized temperature measured from the stored targets rather than read off any
+config — regress `log(soft_i/soft_j)` on `log(p_i/p_j)`, slope = 1/T — across
+1005 rows of three live shards: slope **0.5000**, i.e. **T = 2.0000 on 100% of
+rows**. (Method rule 12: a realized value comes from the stage that resolves it.)
+
+Blast radius had it shipped, on 2000 real rows: mean top-1 target mass
+0.5803 → 0.4219, mean target entropy 1.3631 → 2.0258 nats (**+48.6%**),
+mean KL(T2‖T3) 0.117 nats.
+
+**Action taken:** live yaml pinned to the measured `2.0`, with the reason in the
+comment. Provably inert on the running process — the live reco never carries the
+key and measured T is already 2.0 — so this is a config-honesty fix, not a change.
+Verified the pin survives a resume, which is not automatic: `setup()` overlays the
+yaml for every key that is neither PB2-searched nor in `_TOPOLOGY_KEYS` /
+`_RESUME_CONSTRUCTION_BOUND_KEYS` / `_LAUNCH_FIXED_ASSET_PATH_KEYS`;
+`soft_policy_temp` is in none of them and the only searched key is
+`pb2_bounds_lr`, so no `experiment_state` patch is needed even though
+`experiment_state` still carries `3.0`. A5 row added so it cannot silently
+reopen.
+
+**Adopting 3.0 is a real experiment and is NOT authorized by this entry.** It
+needs its own hypothesis, yardstick and kill rule.
+
+**Lesson, and the reason this is filed rather than just fixed:** the danger was
+not the wrong value, it was that a *behaviour-preserving* PR's safety argument
+lived in a file the deployment procedure does not touch. #257 set `main`'s yaml
+to 2.0 and was correct to; but `main`'s yaml is not what restarts. When a PR
+makes a previously-dead key live, the live config for that key is a deployment
+step, not a merge detail — and it belongs in A5 the same day.
+
+**REVIEW FINDING, FIXED — `progress.csv` would have been corrupted at the next
+restart (PR #262, 2026-07-26).** Same review. Ray's `CSVLoggerCallback` writes the
+header once and, on resume, appends without re-heading while taking its
+fieldnames from the current result dict. #259 added `wdl_onehot_loss` and
+`test_wdl_onehot_loss` to the middle of the report dict — 32 minutes after #261's
+docstring recorded the invariant that forbids exactly that. Replaying main's
+266-key result against the real live 264-column file puts `training_iteration` at
+`'True'` and `timestamp` at `'0.0'`; `scripts/monitor_pbt.sh` and
+`scripts/pbt_hourly_audit.py` resolve columns by header name and would have read
+silent garbage. Fixed by rotating `progress.csv` on a schema change instead of
+freezing the report schema forever. A comment asking future authors not to add
+columns is not a mechanism.
+
+**diff_focus — CONFIG PINNED TO THE REALIZED VALUES; adopting the sweep winners
+is STAGED / NOT LAUNCHED (2026-07-26).**
+
+**What was true.** The worker never builds a `DiffFocusConfig` from the published
+reco, so selfplay has always run the `selfplay/config.py` dataclass defaults
+while the yaml read the Run-4 sweep winners:
+
+| key | yaml said | actually ran |
+|---|---|---|
+| `diff_focus_q_weight` | 4.8 | **6.0** |
+| `diff_focus_pol_scale` | 3.8 | **3.5** |
+| `diff_focus_slope` | 4.0 | **3.0** |
+| `diff_focus_min` | 0.09 | **0.025** |
+
+`diff_focus` is consumed **on the worker** (`selfplay/network_turn.py:429`,
+`:503-507`), where it decides which positions get recorded and with what
+`priority`. Audit H2 measured priority CV 0.94, so it **is** shaping the
+training corpus — at values nobody chose. A sweep ran, picked winners, and wrote
+them to a key the worker does not read.
+
+**Action taken: the live yaml is pinned to the realized values (6.0 / 3.5 / 3.0
+/ 0.025).** Provably inert — the worker reads none of these keys — and verified
+key-set-neutral so the all-or-nothing live validator still accepts the file.
+This is config honesty, not a change.
+
+**MEASURED, not inferred (2026-07-26, added after the pin).** The pin was first
+justified by a code read plus H2's priority CV, which is weaker evidence than
+this file should accept for a config claim — so the realized values were solved
+for directly out of the shards, the same way `soft_policy_temp` was. The
+recorded quantities make it a two-unknown solve with no free parameters:
+`network_turn.py:562` computes `priority = |q_delta| * q_weight + kl *
+pol_scale`, and the shards store `priority`, `priority_q_delta` and
+`priority_policy_kl` per row. Least squares over 6000 live rows:
+
+| | fitted | code default | yaml said |
+|---|---|---|---|
+| `diff_focus_q_weight` | **5.9997** | 6.0 | 4.8 |
+| `diff_focus_pol_scale` | **3.5000** | 3.5 | 3.8 |
+
+Residual against the code defaults: median 7.0e-4, max 2.2e-2 — float16 storage
+of `kl`/`q_delta`, not a model error. Residual against the yaml values: median
+**0.36**, max 5.6, every row above 1e-4. The code defaults are what ran; the
+yaml values are excluded by a factor of ~500. Method rule 12 satisfied for
+`q_weight` and `pol_scale`. (`slope` and `min_keep` govern the keep/drop
+decision rather than the stored `priority`, so they are not identified by this
+fit — they remain a code read.)
+
+**Why pin rather than leave it.** This is the same trap `soft_policy_temp` just
+walked us into: a dead key holding a value nobody validated, which becomes a
+live unregistered experiment the moment someone plumbs it. #257 plumbed
+`soft_policy_temp` and the live yaml's stale 3.0 would have re-targeted 41% of
+trunk gradient at the next restart. Pinning to the realized value costs nothing
+today and removes the landmine. **When a key is dead, the safe value to store in
+it is the one that is actually running.**
+
+**Also corrected: the yaml's own header was lying about PB2.** It listed
+`diff_focus_q_weight` under "What PB2 searches now" *and* listed `diff_focus_*`
+under "What is pinned" two lines later. Only keys with a `pb2_bounds_*` entry
+are searched and there is exactly one (`lr`), so the header contradicted itself
+and both halves were wrong about diff_focus.
+
+**Adopting 4.8 / 3.8 / 4.0 / 0.09 — STAGED, and NOT recommended.** If it is ever
+run it needs plumbing (publish in the reco + consume in `worker.py`) plus:
+- Hypothesis: the Run-4 optimum improves the recorded-position mix over the code
+  defaults.
+- **Prior against it, stated up front so a null result is not a surprise:** Run 4
+  swept on the **46M** net, the whole reweighting family was declared EXHAUSTED
+  on 2026-07-07 (`gap_priority_104_killed`), and the one live measurement of
+  diff_focus on 512×16 found a ~1.6% keep-rate change — which we now know was
+  the *code defaults'* effect, not the yaml's.
+- Deciding yardstick: `scripts/value_regret.py` paired against the pre-change
+  window, day-plus window, paired CI. NOT a keep-rate statistic — keep-rate is
+  a mechanism check, not an outcome.
+- Kill: CI includes 0 ⇒ revert to the defaults and close the family for good.
+- Confound: one data-affecting change per readout window; do not overlap with
+  PRE-REG A/B or the C17 arena.
+
+Pinned by name in `tests/test_reco_coverage.py::_KNOWN_UNPUBLISHED`, so an
+eighth unpublished key cannot hide behind this one.
+
+**C17 duplicate-leaf batching (`target_batch`) — STAGED / NOT LAUNCHED
+(2026-07-26).** Pre-registered so that flipping it later is an experiment and not
+a cleanup. **Nothing has been changed; do not launch without the operator.**
+
+**Mechanism (measured, not argued).** `gss_step` accumulates leaves across
+several sequential-halving reps to fill `GSS_GPU_BATCH = 1024`, while
+`gumbel_c.py` passes `vloss_weight = 0`. With no virtual loss a later rep
+re-walks an **unchanged** tree, reaches the **same** leaf, and back-propagates
+the **same** value. The `gss_step` comment calls this "slightly staler tree
+state"; the walks are not staler, they are *identical*, so they carry zero
+information. Production shape builds **677,801 tree nodes vs 1,030,737** at
+per-rep flush (−34%) for the same nominal sim budget. Duplicate leaf fraction is
+29–76% at 256 sims depending on how many boards are in the batch, but only 6–8%
+at 32 sims — so essentially the whole deficit lands on the **full-sim plies**,
+which are exactly the rows that become policy targets (E1 excludes
+playout-capped rows).
+
+**Hypothesis.** Flushing once per halving rep (`target_batch = 1`) makes every
+simulation add information, and the resulting deeper/wider tree produces a
+better policy target and a stronger net at equal nominal sims.
+
+**Why this is data-affecting and NOT a throughput tweak.** The duplicate visits
+still increment `N`, which raises `max_visit`, which enters the root
+`q_scale = c_scale·(c_visit + max_visit)` used to build the final training
+policy target. Removing the duplicates therefore **flattens the targets** as a
+side effect. Any readout must not confuse "the targets changed shape" with "the
+search got better". It will also cost wall-clock: per-rep flushing means many
+more, much smaller GPU batches.
+
+**ONE deciding yardstick** (paired, fixed reference, run with training STOPPED so
+neither arm is contention-contaminated):
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --a <live-ckpt> --b <live-ckpt> --a-gumbel target_batch=1 \
+  --matched-sims 32 --games 400 --concurrency 16 --paired-openings
+```
+
+Same checkpoint both sides, so the ONLY difference is the batching. That
+isolates the search change from every model difference — and note the arena is a
+**play-shape** consumer, so this measures search strength, not target quality.
+
+**Pre-committed thresholds.**
+- **WORKED** if the `target_batch=1` arm is ≥ +15 Elo with a 95% CI excluding 0.
+- **KILLED** if the CI includes 0, or if the arm is negative at any point in the
+  CI. A −34% node deficit that buys no measurable strength means the duplicate
+  visits are not costing what the node count suggests, and the C file should be
+  left alone.
+- **INCONCLUSIVE → do not proceed** on anything narrower than that. A search
+  change that cannot clear a same-checkpoint paired arena has no business
+  touching the training-target path.
+
+**Second gate before any live deploy, even on a WORKED verdict:** the target
+flattening must be priced separately, because the arena above cannot see it.
+Compare `policy_target` entropy and top-1 mass between arms on recorded rows;
+current live entropy is **0.63 nats** and that is the number to beat or match,
+not a free variable.
+
+**Confounds.** `arena_standard.py` at 256 sims and concurrency 16 sits in the
+~76%-duplicate regime while the sims-32 rung sits at 6–8%, so the two rungs are
+NOT measuring the same amount of the effect — run sims-32 as specified and do
+not average the rungs.
+
+**Do NOT cite C17 as a demonstrated strength loss.** C5's control refutes that
+reading: boot512, the undamaged donor, does not widen across the sims-1/sims-32
+rungs (−41.9 vs −43.7 Elo, overlapping CIs) *while C17 is live*. Search converts
+sims into strength normally on this architecture today, which **bounds** C17's
+Elo cost rather than implicating it. C17 is a node-economy inefficiency until
+this arena says otherwise.
 
 **SF-refute opp-row recording — STAGED / TOOLING-READY (2026-07-19).**
 Hypothesis: the SF-refute channel is selfplay-tagged and the SF-played refute

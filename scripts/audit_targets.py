@@ -46,6 +46,28 @@ full-strength game outcomes on the positions that have them):
        _search_wdl_like_selfplay). Not `1 - |Q|`, which is a different
        distribution and a different target.
 
+  !! THIS VALUE TABLE IS A CALIBRATION RULER, NOT A TARGET-QUALITY RULER. It
+  ranks candidates by AGREEMENT WITH DEEP SF, and (ii) shallow SF native WDL
+  will normally win it for a reason that has nothing to do with being a good
+  teacher: it is the SAME KIND OF OBJECT as the reference. Both are Stockfish,
+  so wherever SF is decisive they go one-hot together and the ECE collapses.
+  Measured 2026-07-27 on 2000 audit positions: (ii) Brier 0.0348 / ECE 0.0069
+  vs the production blend (iii) 0.0484 / 0.0868 — a 12x ECE gap that reads as
+  "switch to native WDL" and is NOT that.
+
+  Production deliberately does the opposite (`sf_wdl_use_cp_logistic: true`)
+  because SF's UCI_ShowWDL is **~72% one-hot**, and a one-hot value target
+  teaches over-confidence — the failure actually observed in play (2026-06-28
+  loss: the net evaluated +557 while the position was lost by ~300, an ~860cp
+  sign error). The cp-logistic's high ECE **against a deep-SF ruler IS the
+  deliberate softness**, not a defect; see CLAUDE.md ("the cp-logistic label is
+  deliberately soft; don't chase value sharpness against a deep-SF ruler") and
+  the WDL blend section of docs/model_heads.md.
+
+  So: use this table to detect a candidate that has DRIFTED or BROKEN, never to
+  pick the value target. Reading it as a target ranking was attempted and
+  retracted on 2026-07-27.
+
 as Brier score and expected calibration error.
 
 Shallow SF results are cached to <audit>.shallow_sf.jsonl (append-only,
@@ -265,6 +287,7 @@ def _net_candidates(
     profiles: dict[str, _SearchProfile],
     policy_temp: float = 1.0,
     syzygy_path: str | None = None,
+    target_batch: int = 0,
 ) -> tuple[list[np.ndarray], dict[str, list[np.ndarray]], dict[str, list[float]], list[np.ndarray]]:
     """(raw-policy probs, {profile: search visit probs}, {profile: root Q}).
 
@@ -360,6 +383,18 @@ def _net_candidates(
         else:
             runners[name] = run_gumbel_root_many_c
             tb_kwargs[name] = {"tb_probe": tb_probe} if tb_probe is not None else {}
+            # C17 separating test: production accumulates leaves across halving
+            # reps to fill GSS_GPU_BATCH, and with vloss_weight=0 a later rep
+            # re-walks an UNCHANGED tree and re-evaluates the SAME leaf --
+            # 29-76% duplicates at 256 sims, -34% tree nodes. Those duplicate
+            # visits still increment N, which inflates max_visit, which sets the
+            # root q_scale that sharpens the improved-policy TRAINING TARGET.
+            # `--target-batch 1` flushes per rep, removing the duplication, so
+            # running this audit at 0 vs 1 separates "C17 wastes compute" from
+            # "C17 corrupts the target". The Python reference path takes no such
+            # argument, hence C-runner only.
+            if target_batch > 0:
+                tb_kwargs[name]["target_batch"] = int(target_batch)
 
     raw_out: list[np.ndarray] = []
     search_out: dict[str, list[np.ndarray]] = {name: [] for name in profiles}
@@ -643,6 +678,14 @@ def main() -> None:
     ap.add_argument("--sf-soft-multipv", type=int, default=40)
     ap.add_argument("--sf-workers", type=int, default=4)
     ap.add_argument("--nice", type=int, default=15)
+    ap.add_argument("--target-batch", type=int, default=0,
+                    help="C-search leaf-accumulation batch. 0 = production (accumulate across "
+                         "halving reps to fill GSS_GPU_BATCH). 1 = flush per rep, which removes "
+                         "C17's duplicate leaves (29-76%% at 256 sims, -34%% tree nodes). Run the "
+                         "audit at 0 and at 1 to separate 'C17 wastes compute' from 'C17 corrupts "
+                         "the training target': duplicate visits still increment N, inflating "
+                         "max_visit and hence the root q_scale that sharpens the improved-policy "
+                         "target. C-runner only; the Python reference path takes no such argument.")
     ap.add_argument("--max-positions", type=int, default=0,
                     help=">0 limits positions (smoke runs)")
     ap.add_argument("--dump-per-position", type=Path, default=None,
@@ -713,6 +756,7 @@ def main() -> None:
         batch_size=int(args.batch_size), seed=int(args.seed),
         profiles=profiles, policy_temp=float(args.policy_temp),
         syzygy_path=sz_path or None,
+        target_batch=int(args.target_batch),
     )
     search_probs = search_by_profile["search"]
   # The production WDL blend's search component comes from the RL search, so
