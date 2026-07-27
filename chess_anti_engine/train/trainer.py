@@ -4,7 +4,7 @@ import dataclasses
 import logging
 import math
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
@@ -872,6 +872,48 @@ def _loss_sums_to_metric_kwargs(sums: dict[str, float], n: float) -> dict[str, f
         if field in _TRAIN_METRICS_FIELDS:
             out[field] = v / n
     return out
+
+
+def strip_compile_prefix(sd: Mapping[str, Any]) -> dict[str, Any]:
+    """Drop ``torch.compile``'s ``_orig_mod.`` wrapper segment from state_dict keys.
+
+    Every tensor this project writes to disk must be wrap-agnostic: whether the
+    producing trainer ran under ``use_compile`` is an implementation detail of
+    the producer, and a consumer that rebuilds an unwrapped model must not have
+    to know. Without this, a save under ``use_compile: true`` emits keys like
+    ``_orig_mod.embed.weight``; a plain ``load_state_dict(..., strict=False)``
+    then reports every key as unexpected and leaves a fresh-init model behind
+    with no error — the failure mode that destroyed the model on 2026-04-27.
+
+    ``replace(..., 1)`` rather than ``removeprefix`` because the segment is not
+    always leading: ``AveragedModel`` (SWA) nests the compiled module, so its
+    keys read ``module._orig_mod.embed.weight``. ``removeprefix`` left those
+    untouched, so ``save()``'s ``swa_model`` entry was never actually made
+    wrap-agnostic despite the comment claiming it was. No real submodule is
+    named ``_orig_mod``, so removing the first occurrence anywhere is safe.
+    """
+    return {k.replace("_orig_mod.", "", 1): v for k, v in sd.items()}
+
+
+def align_compile_prefix(
+    sd: Mapping[str, Any], *, reference: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Re-key *sd* into whatever ``_orig_mod.`` convention *reference* uses.
+
+    The load-side counterpart of :func:`strip_compile_prefix`. Checkpoints are
+    written wrap-agnostic, but the live module may be compiled, so a stored key
+    ``module.embed.weight`` has to become ``module._orig_mod.embed.weight``
+    before it will load. Matching on the *stripped* key handles both directions
+    and both nesting depths (bare model, and ``AveragedModel``'s extra
+    ``module.``) without hard-coding where the segment sits. Keys the reference
+    does not know are passed through unchanged so the caller's own
+    missing/unexpected reporting still sees them.
+    """
+    ref_by_stripped = {k.replace("_orig_mod.", "", 1): k for k in reference}
+    return {
+        ref_by_stripped.get(k.replace("_orig_mod.", "", 1), k): v
+        for k, v in sd.items()
+    }
 
 
 def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> dict:
@@ -2282,17 +2324,10 @@ class Trainer:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Strip torch.compile's `_orig_mod.` prefix before saving so the
-        # checkpoint is wrap-agnostic. Without this, a save under
-        # `use_compile=true` produces keys like `_orig_mod.embed.weight`,
-        # which a later load into an unwrapped trainer will silently drop
-        # (every key looks "unexpected"), leaving the trainer fresh-init.
-        # That's the failure mode that destroyed the model on 2026-04-27.
-        def _strip_compile_prefix(sd: dict) -> dict:
-            return {k.removeprefix("_orig_mod."): v for k, v in sd.items()}
-
+        # Strip torch.compile's `_orig_mod.` segment before saving so the
+        # checkpoint is wrap-agnostic; see strip_compile_prefix for why.
         state: dict[str, Any] = {
-            "model": _strip_compile_prefix(self.model.state_dict()),
+            "model": strip_compile_prefix(self.model.state_dict()),
             "opt": self.opt.state_dict(),
             "scheduler": self._scheduler.state_dict(),
             "step": self.step,
@@ -2304,7 +2339,7 @@ class Trainer:
                 **dataclasses.asdict(self._model_config),
             }
         if self._swa_model is not None:
-            state["swa_model"] = _strip_compile_prefix(self._swa_model.state_dict())
+            state["swa_model"] = strip_compile_prefix(self._swa_model.state_dict())
   # Atomic write so workers polling for new checkpoints never see a partial
   # file (matches the export_swa path; previously diverged).
         atomic_write(path, lambda tmp: torch.save(state, str(tmp)))
@@ -2489,7 +2524,16 @@ class Trainer:
             self._peak_lr = self._reference_lr_from_bases()
         if "swa_model" in ckpt and self._swa_model is not None:
             try:
-                self._swa_model.load_state_dict(ckpt["swa_model"])
+                # Checkpoints store SWA weights wrap-agnostic (module.*), but a
+                # compiled trainer's AveragedModel expects module._orig_mod.*.
+                # Without the realignment a compile-on resume would silently
+                # discard the running average and restart it from the current
+                # weights via the reinit below.
+                self._swa_model.load_state_dict(
+                    align_compile_prefix(
+                        ckpt["swa_model"], reference=self._swa_model.state_dict(),
+                    )
+                )
             except (RuntimeError, KeyError) as exc:
                 logging.getLogger(__name__).warning(
                     "SWA model state incompatible, reinitialising: %s", exc,
@@ -2504,6 +2548,17 @@ class Trainer:
 
         Written atomically to avoid races with workers downloading the file
         while the learner is writing it.
+
+        Keys go through ``strip_compile_prefix`` for the same reason
+        ``save()`` does. This path used not to, so with ``use_compile: true``
+        (production since 2026-04-27) every published ``latest_model.pt``
+        carried ``_orig_mod.`` on all 496 keys while the sibling checkpoint
+        carried it on none — two conventions for the same weights. Nothing
+        broke only because every in-tree consumer routes through
+        ``load_state_dict_tolerant``, which normalizes; a plain
+        ``load_state_dict(..., strict=False)`` on the published file returns
+        missing=86/unexpected=86 and a fresh-init model, with no exception
+        (rl_loop_audit J9).
         """
         if self._swa_model is not None and dataloader is not None:
             torch.optim.swa_utils.update_bn(
@@ -2511,7 +2566,7 @@ class Trainer:
                 self._swa_model,
                 device=torch.device(self.device),
             )
-        state_dict = (
+        state_dict = strip_compile_prefix(
             self.model.state_dict()
             if self._swa_model is None
             else self._swa_model.module.state_dict()
