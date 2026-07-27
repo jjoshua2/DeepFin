@@ -2057,10 +2057,48 @@ The two legs differ only in search config:
 - **PLAY (b):** `sims=32, topk=32, c_scale=0.025, root=log`
 - **TRAINING TARGET (d):** `sims=256, topk=16, c_scale=0.1, root=linear`
 
-The training target spends **8× the simulations** and lands 4cp worse. The ledger already
-records `c_scale 0.025` as **+301 Elo @8000 sims** in match play with *"RL-side effect
-unverified"* — this is the first direct measurement of that gap **on the target-generation
-path**, and it says the tuned constant was never carried across.
+The training target spends **8× the simulations** and lands 4cp worse.
+
+**⚑ RETRACTION, SAME SESSION — the c_scale attribution above was WRONG and is withdrawn.**
+The original text read: *"the ledger already records `c_scale 0.025` as +301 Elo @8000 sims…
+this says the tuned constant was never carried across."* **That is backwards.** Memory
+`gumbel_cscale_miscalibrated` records a direct test in exactly this regime:
+
+> **RL/selfplay: KEEP 0.1 — do NOT lower (TESTED 2026-06-16, NEGATIVE).** Selfplay runs 256
+> sims (topk 16). A 256-sim puzzle screen (1000 puzzles, the selfplay regime) shows 0.1 is
+> the OPTIMUM there: **0.1 → 0.688 vs 0.05 → 0.652 vs 0.025 → 0.598.** At low sims
+> `max_visit` is small so `q_scale` never explodes → 0.1 doesn't over-trust → lowering
+> HURTS selfplay.
+
+**c_scale 0.025 was already tested at 256 sims and is markedly worse.** The optimum RISES
+as sims fall (0.025 @ 2k–16k, ~0.1 @ 256), and the same memory carries a proof that
+**sim-invariance is impossible via any `max_visit`-based formula** — optimal `q_scale` keys
+off the TOTAL BUDGET, so the per-deployment split (UCI 0.025 / RL 0.1) is *"not a
+compromise; given the impossibility it's the right answer."* The +301 Elo figure was
+measured **@8000 sims** and bears on UCI play, not on a 256-sim target.
+
+**Fifth instance today of quoting a number without checking what it was capable of showing**
+(after: clip RATE as clip EFFECT; loader CAPACITY as throughput; a diff STAT as diff
+content; +301 Elo across a 30× sim-count gap here). This one is worse than the others
+because the refuting measurement was already written down in a memory that the citation
+walked straight past.
+
+**WHAT SURVIVES, and it is much weaker than the original entry claimed.** The 4cp number is
+a real measurement, but it is **not attributable and not obviously actionable**:
+- The legs differ in **four** settings *plus* the sim count (32 vs 256), and each is tuned
+  for a **different regime** — so this is not a like-for-like comparison of one knob. It is
+  a bundle-vs-bundle difference with no identified cause.
+- The genuinely odd residue: leg (b) runs a config tuned for 8k–16k sims **at only 32 sims**
+  and still beats the 256-sim RL config on this ruler. That is worth understanding, but
+  "the training target is misconfigured" does **not** follow from it, and no c_scale change
+  is indicated.
+- **Do not re-derive single-formula sim-invariance** — three families were tried and all
+  failed; the memory says explicitly not to re-investigate.
+
+**The one claim from this entry that stands unchanged** is the C17 link, which rests on
+independent evidence: duplicate leaves inflate `max_visit`, which sets the `q_scale` that
+sharpens this target, in the same 256-sim path. **That, not c_scale, is the thread to
+pull** — and measuring leg (d) at `target_batch=1` remains the cheap separating test.
 
 **Why this is a candidate for the flywheel stall, independent of everything else today:**
 a self-imitation loop is bounded by the quality of the target it imitates. `w_policy 1.0` +
