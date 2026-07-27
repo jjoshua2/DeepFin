@@ -1994,6 +1994,53 @@ edit). Note a yaml revert alone is NOT a rollback — the window will hold sf_p0
 data — but here the loss terms are **masked to `has_sf_p0` rows**, so zeroing the weights
 is a genuine and complete disable.
 
+**⚑ GRADIENT TAIL SPIKED AT ITERS 132–133 — DIAGNOSED AS A LOW-COVERAGE ARTIFACT, NOT A
+MIS-SCALED WEIGHT. Prediction recorded BEFORE it resolves.**
+
+| | 131 (pre) | 132 | 133 |
+|---|---|---|---|
+| `grad_norm_median` | 5.547 | 6.885 | 6.255 |
+| `grad_norm_p95` | 6.230 | 12.714 | **13.197** |
+| `grad_norm_max` | 6.774 | 18.390 | **24.758** |
+| `grad_adaptive_clip_rate` | 0.024 | 0.618 | 0.245 |
+| `time_this_iter_s` | 651 | 1862 | **266** |
+
+The 3× iteration slowdown at 132 was **transient** (the worker-session restart plus first
+writes of two new dense policy-shaped arrays); 133 came back at 266s. **The gradient tail
+did not revert** — p95 ~2.1× baseline and max still climbing at 3.7×.
+
+**MY FIRST READING WAS WRONG AND WOULD HAVE CAUSED A BAD INTERVENTION.** I inferred
+"`w_sf_own_regret: 0.7` is mis-scaled for the 63M net and will get ~20× worse as coverage
+grows from ~1% to ~24%", and was close to cutting the weight. **Checking the code first
+reversed it.** `train/losses.py:536-537`:
+```python
+m_sf_own        = masked_mean(sf_p0_ce,      net_mask * has_sf_p0)
+m_sf_own_regret = masked_mean(sf_own_regret, net_mask * has_sf_p0_regret)
+```
+A **masked MEAN — normalised by the eligible-row count, not batch size.** The term's
+contribution to `total` is therefore **coverage-INDEPENDENT**; it does not scale up as more
+rows become eligible.
+
+**The mechanism runs the OPPOSITE way.** `masked_mean` weights each eligible row's gradient
+by `1/n_eligible`. Window coverage is ~1% today, so a 512-row batch holds ≈**5** eligible
+rows at ≈1/5 each; at the steady-state ~24% it holds ≈**123** at ≈1/123. **Per-eligible-row
+gradient is ~25× larger now than it will be once the window fills**, and a mean over ~5
+rows is a very high-variance estimator — which is exactly a spiky TAIL with a
+only-moderately-raised MEDIAN, i.e. what the table shows.
+
+**PRE-COMMITTED PREDICTION:** `grad_norm_p95` and `grad_norm_max` **DECLINE toward baseline
+as `has_sf_p0` window coverage rises**, without any weight change. If instead they hold or
+grow while coverage passes ~10%, the low-coverage explanation is FALSIFIED and
+`w_sf_own_regret` really is mis-scaled — recalibrate then (task #38), not now.
+
+**Why this is recorded rather than quietly acted on:** cutting the weight today would have
+been "confirmed" by the tail falling as coverage grew, which happens either way. That is an
+unfalsifiable intervention, and the whole point of writing the prediction first is to make
+the two hypotheses distinguishable. The adaptive z-score arm is catching the spikes
+(24.5% of steps at 133) so the net is protected meanwhile, and `policy_loss` (1.427) is
+flat. `test_wdl_loss` 0.835 → 0.863 is **0.54σ against the 0.052-nat floor — unreadable**,
+exactly as the withdrawn kill leg predicted.
+
 **⚑ COVERAGE AT DESIGN RATE, 2026-07-27 ~14:4x — the restore is confirmed working.**
 `shard_032166`: **has_sf_p0 461/2000 = 23.1% of selfplay rows.** June's verified figure was
 **24.6%** (`shard_026157`) against a "~23% consecutive-256 prediction" — so recording is
