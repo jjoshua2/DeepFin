@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import socket
@@ -686,6 +687,175 @@ def _make_checkpoint_eviction_idempotent() -> None:
     print("[run_tune] Patched Ray checkpoint eviction to tolerate an absent target.")
 
 
+def _rotate_progress_csv_if_schema_changed(callback, trial, result: dict) -> None:
+    """Move progress.csv aside when the report keys no longer match its header.
+
+    Runs immediately before Ray's own append, inside the callback that owns the
+    file handle, so the rotation cannot race the writer.
+    """
+    from ray.air.constants import EXPR_PROGRESS_FILE
+    from ray.tune.utils import flatten_dict
+
+    if trial not in callback._trial_files:
+        callback._setup_trial(trial)
+  # A DictWriter already exists => the header was reconciled earlier in this
+  # process and Ray is writing rows that match it.
+    if callback._trial_csv.get(trial) is not None:
+        return
+  # A fresh (or empty) file: Ray writes the correct header itself.
+    if not callback._trial_continue.get(trial):
+        return
+
+    path = Path(trial.local_path, EXPR_PROGRESS_FILE)
+    with path.open("r", newline="") as fh:
+        on_disk = next(csv.reader(fh), None)
+
+    tmp = dict(result)
+    tmp.pop("config", None)
+    incoming = list(flatten_dict(tmp, delimiter="/").keys())
+    if on_disk is None or on_disk == incoming:
+        return
+
+    rotated = path.with_suffix(f".{int(time.time())}.csv")
+    n = 0
+    while rotated.exists():
+        n += 1
+        rotated = path.with_suffix(f".{int(time.time())}.{n}.csv")
+
+  # THE DURABLE COPY MUST GO FIRST, and rotating only the local one is the
+  # trap this function fell into originally. `trial.local_path` is the
+  # per-Ray-session STAGING dir (`/tmp/ray/session_*/.../driver_artifacts/`),
+  # not the durable trial dir -- the distinction PR #245 documents. Ray's
+  # `_setup_trial` calls `_restore_from_remote`, which unconditionally copies
+  # the durable `progress.csv` back down into staging whenever the trial has a
+  # checkpoint. Rotate staging alone and that re-download restores the OLD
+  # header, `_trial_continue` comes back True, and Ray appends the misaligned
+  # row anyway -- while this function prints a success message.
+  #
+  # Rotating the durable file first makes the re-download a no-op:
+  # `_restore_from_remote` catches FileNotFoundError and only warns, so
+  # `_trial_continue` is then derived from an absent staging file and Ray
+  # writes a fresh header itself. It also puts the preserved rows where the
+  # consumers actually read (`monitor_pbt.sh`, `pbt_hourly_audit.py`), rather
+  # than in a session tmpdir that is discarded.
+    _rotate_durable_progress_csv(trial, rotated.name)
+
+  # Then staging. Rename BEFORE closing anything: if it raises, no state has
+  # changed and the open handle is still the right one.
+    if path.exists():
+        path.rename(rotated)
+  # Drop the trial and let Ray's own _setup_trial reopen it. That re-derives
+  # `_trial_continue` from the now-absent file, so Ray writes the new header
+  # itself, and it is also the path Ray retries if the reopen fails: its
+  # `if trial not in self._trial_files` guard runs again on the next result.
+    stale = callback._trial_files.pop(trial)
+    callback._trial_csv.pop(trial, None)
+    callback._trial_continue.pop(trial, None)
+    stale.close()
+    callback._setup_trial(trial)
+    added = [k for k in incoming if k not in set(on_disk)]
+    removed = [k for k in on_disk if k not in set(incoming)]
+    print(
+        f"[run_tune] progress.csv schema changed "
+        f"({len(on_disk)} -> {len(incoming)} columns; "
+        f"added={added[:8]} removed={removed[:8]}); "
+        f"rotated previous rows to {rotated.name} and started a fresh header."
+    )
+
+
+def _rotate_durable_progress_csv(trial, rotated_name: str) -> None:
+    """Move the DURABLE progress.csv aside, on whatever filesystem it lives on.
+
+    Best-effort and non-fatal on its own: if the durable copy cannot be moved
+    we still rotate staging, which at worst reproduces the old (broken)
+    behaviour rather than adding a new failure mode.
+    """
+    from ray.air.constants import EXPR_PROGRESS_FILE
+
+    storage = getattr(trial, "storage", None)
+    fs_dir = getattr(storage, "trial_fs_path", None)
+    fs = getattr(storage, "storage_filesystem", None)
+    if storage is None or not fs_dir:
+        print("[run_tune] progress.csv rotation: no durable trial path on this trial")
+        return
+
+    src = f"{str(fs_dir).rstrip('/')}/{EXPR_PROGRESS_FILE}"
+    dst = f"{str(fs_dir).rstrip('/')}/{rotated_name}"
+    try:
+        if fs is not None:
+            fs.move(src, dst)
+        else:
+  # No explicit filesystem => local storage; trial_fs_path is a real path.
+            Path(src).rename(dst)
+        print(f"[run_tune] rotated durable {src} -> {rotated_name}")
+    except FileNotFoundError:
+  # Nothing durable to preserve (fresh trial, or already rotated).
+        pass
+    except Exception as exc:  # never block a training row on the durable move
+        print(f"[run_tune] could not rotate the durable progress.csv ({exc})")
+
+
+def _make_csv_logger_schema_safe() -> None:
+    """Rotate progress.csv on a schema change instead of misaligning every row.
+
+    Ray's `CSVLoggerCallback` writes the header exactly once, from the first
+    result it sees. On resume it reopens the file in append mode with
+    `_trial_continue=True`, so `writeheader()` is skipped -- while the
+    `csv.DictWriter` still takes its fieldnames from the CURRENT result dict.
+    If the trainable has gained or lost a reported key since the file was
+    created, the appended rows are written positionally against a header that
+    no longer describes them.
+
+    This is not hypothetical. PR #259 added `wdl_onehot_loss` and
+    `test_wdl_onehot_loss` into the middle of the report dict, against a live
+    progress.csv whose 264-column header was fixed on 2026-07-26 and which had
+    already survived one resume at iteration 42. The next restart would have
+    appended 266 fields under those 264 names, shifting `timestamp`,
+    `training_iteration` and `time_this_iter_s` two columns to the right --
+    silently wrong for `scripts/monitor_pbt.sh` and `scripts/pbt_hourly_audit.py`,
+    which resolve columns by header name, and loudly wrong for pandas readers.
+
+    Freezing the report schema forever is too high a price for that, and a
+    comment asking future authors not to add columns is not a mechanism. So we
+    detect the mismatch at the first append and rotate the old file aside,
+    letting Ray write a fresh, correct header. History is preserved next to the
+    new file rather than corrupted in place.
+
+    Best-effort and non-fatal, like the checkpoint patch: a Ray upgrade that
+    moves these private attributes must not stop training from starting.
+    """
+  # Deferred like run_tune's own ray imports: importing ray at module scope
+  # would pull it into every consumer of this module.
+    try:
+        from ray.tune.logger.csv import CSVLoggerCallback
+    except ImportError as exc:
+        print(f"[run_tune] Could not patch the CSV logger (non-fatal): {exc}")
+        return
+
+    inner = getattr(CSVLoggerCallback, "log_trial_result", None)
+    if inner is None:
+        print(
+            "[run_tune] Could not patch the CSV logger (non-fatal): "
+            "CSVLoggerCallback.log_trial_result is gone"
+        )
+        return
+    if getattr(inner, "_cae_schema_safe", False):
+        return
+
+    def log_trial_result(self, iteration: int, trial, result: dict) -> None:
+        try:
+            _rotate_progress_csv_if_schema_changed(self, trial, result)
+        except Exception as exc:  # never block a training row on the schema check
+            print(f"[run_tune] progress.csv schema check failed (non-fatal): {exc}")
+        inner(self, iteration, trial, result)
+
+    log_trial_result._cae_schema_safe = True  # pyright: ignore[reportFunctionMemberAccess]
+  # Kept so tests can recover Ray's own behaviour to characterize it against.
+    log_trial_result._cae_inner = inner  # pyright: ignore[reportFunctionMemberAccess]
+    CSVLoggerCallback.log_trial_result = log_trial_result
+    print("[run_tune] Patched Ray's CSV logger to rotate progress.csv on schema change.")
+
+
 def run_tune(
     *,
     base_config: dict,
@@ -831,6 +1001,10 @@ def run_tune(
   # `_prune_trial_checkpoints`, which runs on a fresh experiment too. The
   # manager itself lives in this (driver) process, so this is the right place.
     _make_checkpoint_eviction_idempotent()
+  # Same rationale as above: the CSV logger callback also lives in this
+  # (driver) process, so this is the only place that can patch it before the
+  # first result row is appended.
+    _make_csv_logger_schema_safe()
 
     try:
         return tuner.fit()
