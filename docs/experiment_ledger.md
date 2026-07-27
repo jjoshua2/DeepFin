@@ -1668,6 +1668,48 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### DEPLOY HELD (2026-07-27 00:5x) — the ten-PR restart is ready and was NOT executed: the GPU cannot create a new CUDA context
+
+**Status: everything except the restart itself is done.** All ten PRs are merged
+to `origin/main`, the merge into the live branch is committed (`db9499e38`, a
+fast-forward for the live tree), lint is clean, and the live yaml is reconciled.
+The stop/start was aborted at the last step on evidence gathered *before*
+stopping, and **training was never interrupted** — it is still advancing
+normally at iter 75, 655–753s/iter.
+
+**Why held.** `nvidia-smi -L`, a fresh-process torch CUDA probe, and the test
+suite were all stuck in **D state** (uninterruptible; SIGKILL does not take) with
+`WCHAN` `dxgkio_create_device` / `dxgvmb_send_sync_msg`. `dmesg`:
+`dxgkio_create_context_virtual: invalid host handle` / `Ioctl failed: -22`
+(00:53:13) and `dxgkio_query_adapter_info: Ioctl failed: -512` (from 00:24:14).
+**Existing CUDA contexts are fine — new ones cannot be created.** So the run is
+healthy precisely because it never has to ask for a device again, and
+`train.sh stop` would have been a one-way door: nothing would have come back up.
+
+**The trigger was an observer, not the trainer.** `scripts/monitor_fen.sh` runs
+`blindspot_retire_step.py --gpu-mem-fraction 0.15` on every new checkpoint; the
+instance launched ~23:10 wedged and blocked every device-create after it. **A
+monitoring job can make training un-restartable while every training metric
+stays green** — no training signal moved, and nothing in `progress.csv`,
+the watchdog, or the ledger's yardsticks can see this. The monitor loop is
+SIGSTOPped (PIDs 9314, 1778213) so it stops adding one unkillable D-state
+process per iteration; `kill -CONT` both to resume it.
+
+**Pre-committed restart gate — do not stop training until this passes.** The
+stuck `nvidia-smi` (PID 1808360) already carries a pending SIGKILL, so it dies
+the instant its ioctl returns; poll for its PID disappearing rather than
+spawning fresh probes (every new probe wedges too and is unkillable). When it
+clears: `nvidia-smi -L` AND a fresh-process `torch.randn(64,64,device='cuda')`
+must BOTH return, and only then run the stop/start. If it has not cleared by the
+time the G8 drain readout is due, the drain readout still happens on the
+CURRENT process — it does not need a restart.
+
+**Generalised, and it belongs in the deploy procedure:** *check GPU
+restartability BEFORE `train.sh stop`, not after.* Every existing wedge note in
+this repo is written from the position of already being down. This is the first
+time the check ran while there was still something to protect, and it is the
+only reason the run is still up. See [[wsl2_gpu_vmbus_wedge_signature]].
+
 ### DEPLOY (pre-registered, not yet live) — control-surface + observability bundle: I13/I9/I11/I19 (PR #260, 2026-07-26)
 
 **PROTOCOL NOTE — not an experiment, and deliberately numerics-neutral.**
