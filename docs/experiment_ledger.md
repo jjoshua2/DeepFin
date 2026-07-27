@@ -1994,6 +1994,27 @@ edit). Note a yaml revert alone is NOT a rollback — the window will hold sf_p0
 data — but here the loss terms are **masked to `has_sf_p0` rows**, so zeroing the weights
 is a genuine and complete disable.
 
+**⚑ COVERAGE AT DESIGN RATE, 2026-07-27 ~14:4x — the restore is confirmed working.**
+`shard_032166`: **has_sf_p0 461/2000 = 23.1% of selfplay rows.** June's verified figure was
+**24.6%** (`shard_026157`) against a "~23% consecutive-256 prediction" — so recording is
+back at its designed rate, not merely switched on. The two shards before it show the
+ramp exactly as expected: `032165` at 0.4% (the worker session restarting mid-shard) and
+everything older with **no `has_sf_p0` key at all**.
+
+**PHASE-IN, measured not guessed:** ingest **9,080 positions/iter** into a window pinned at
+**1,500,000** (`replay_window_growth_positions` 0, `frac_used` 1.0 — incidentally the third
+independent confirmation that the pre-registered "window drain" does not exist). So:
+- full window turnover **165 iterations ≈ 30.5 h** at the current 666 s/iter
+- 50% turnover ~83 iterations ≈ **15.3 h**
+- the pre-committed **≥20%-of-selfplay-rows** gate needs ~87% turnover ≈ **143 iterations ≈
+  26 h**, i.e. **the first legitimate readout is tomorrow.**
+
+**This is consistent with how June was read** (its memory: *"Don't expect signal before
+~iter 250+ (window refill)"*), and it is recorded here so that an early flat read is not
+mistaken for a verdict. **It also means the sf_p0 window and the views-bundle 4-day ratchet
+overlap almost entirely** — already on the Confounds line, restated because the overlap is
+now known to be near-total rather than partial.
+
 **DEPLOY VERIFIED, both paths, 2026-07-27 14:12.**
 - *Recording (empirical):* `has_sf_p0` now present in newly written shards at **8/2000 =
   0.4%** and climbing — a key that existed in **no** live shard an hour earlier. The
