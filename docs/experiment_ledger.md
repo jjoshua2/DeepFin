@@ -1752,9 +1752,20 @@ steps on a restart-perturbed iteration is not the readout.
 `test_wdl_loss` = **nan**, expected: the holdout is empty and refilling toward
 2000 (G5, `restored_rows=0`).
 
-**Still owed:** `matrix_weight_decay` = 1e-4 read from the next checkpoint's
-`opt.param_groups` rather than from config — the one pin not yet verified from
-the resolving stage (method rule 12).
+**`matrix_weight_decay` VERIFIED from the resolving stage (method rule 12), and
+the deploy is numerics-neutral.** Read from `checkpoint_000080/trainer.pt` →
+`opt.param_groups`, not from config: `grp0 n=48 lr=6e-05 weight_decay=0.0001`
+(the matrix group — lr is 3e-5 × the ×20 multiplier), `grp2 n=143 wd=0.0001`
+(aux), `grp3 n=290 wd=0.0`. **Byte-identical to the pre-deploy reading off
+`checkpoint_000042`** recorded in I13, so #260 turned the control surface back
+on without moving the number — exactly the design goal. Had the yaml been left
+at its written `0`, this group would now read `0.0`; that was the trap, and it
+is closed. All five pinned keys are now verified live: three on the wire
+(`soft_policy_temp`, dole, reco count), one in the optimizer state, and
+`diff_focus_*` by confirmed absence from the reco.
+
+**G5 produced its first artifact:** `checkpoint_000080/holdout.npz` (247 KB)
+exists. The NEXT restart is the one that proves restoration.
 
 **`scripts/monitor_fen.sh` is left SIGSTOPped** (PIDs 9314, 1778213). It was the
 proximate trigger of the wedge and its GPU job would resume on the next
