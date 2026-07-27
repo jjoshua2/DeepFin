@@ -1885,6 +1885,51 @@ change that only a review caught. Deploys at the next restart, which the daily r
 cadence implies anyway.
 
 
+### ⚑ FINDING (2026-07-27 ~15:5x) — the SF teacher is 2.3× SOFTER than the target it counterweights, measured paired on live rows
+
+**Why this was measured.** Coverage checks prove a feature is *present*; nothing had checked
+that the restored sf_p0 labels are *sound*. A restored-but-corrupt teacher is worse than an
+absent one and would void tomorrow's readout. Label validation passed on the 3 newest live
+shards — width **1858** (lc0_1858), row sums 0.9995–1.0000 (float16), no negatives, no NaN,
+`has_sf_p0_regret ⊆ has_sf_p0`, regret in [0,1], and **unflagged rows exactly zero** so no
+stale payload can leak into a masked term.
+
+**Then the interesting part.** Both policy targets exist on the SAME rows, so they can be
+compared paired rather than by summary statistics. 3,366 eligible rows, 8 newest shards:
+
+| | own (Gumbel improved policy) | sf_p0 (SF MultiPV) |
+|---|---|---|
+| entropy, nats | **0.595** | **1.352** |
+| top-1 mass | 0.784 | 0.525 |
+| share top-1 ≥ 0.99 | **27.4%** | 14.1% |
+
+**Paired entropy difference +0.757 nats, 95% CI [+0.725, +0.789]**; sf_p0 is softer on
+**75.1%** of rows. The 0.595 agrees with the 0.63 nats recorded in CLAUDE.md, which is a
+useful control — the instrument reproduces a number measured independently.
+
+**This connects the day's two biggest findings into one mechanism.** C17 measured that
+duplicate leaves inflate `max_visit` → inflate root `q_scale` → **sharpen** the improved
+policy. That sharpening lands on a distribution already near-degenerate on a quarter of its
+rows. And the only force pushing the other way — a teacher 2.3× softer — was **exactly zero
+from 07-11 19:42 to 07-27 14:12**. For 15.8 days `policy_own`, the head MCTS reads, trained
+on `w_policy 1.0` + `w_soft 1.0` of its own over-confident search output with no softer
+external signal at all. Two independent defects, same direction: collapse onto an
+over-sharp self-imitation target.
+
+**⚠ THIS REFRAMES THE C17 FIX DECISION — and the reframing is NOT a licence to assume.**
+The C17 entry records that removing duplicates *flattens* the target as a side effect, and
+treats that as a cost to weigh because `c_scale 0.1` was tuned against the sharpened
+distribution. On this evidence flattening may instead be the therapeutic part. **Neither
+reading is established.** What is now required of the C17 pre-registration: report the
+paired entropy and top-1 mass of the produced target at `tb=0` vs the fix on the SAME
+positions, state whether it moves toward or past 1.352 nats, and treat "does `c_scale` need
+re-tuning" as a SEPARATE pre-registrable question rather than folding it into the C17
+verdict. Do not prefer whichever fix flattens less on the strength of this entry.
+
+**Method note worth keeping.** Two targets on the same rows admit a paired comparison with a
+CI ~20× tighter than comparing separately-collected summaries. Prefer the paired form
+whenever two quantities are stored side by side.
+
 ### ⚑⚑ THE JUNE POLICY WIN WAS SILENTLY OFF FOR 15.8 DAYS — sf_p0 teacher RESTORED 2026-07-27 ~14:0x (pre-registered)
 
 **This is not a new experiment. It is the restoration of a WORKED entry that reverted
