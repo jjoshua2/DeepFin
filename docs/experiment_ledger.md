@@ -2143,6 +2143,77 @@ as "another ~7cp is waiting" would be overselling it, and that framing was in th
 
 ---
 
+### ⚑⚑ C17 RESULT — THE DUPLICATE LEAVES ARE CORRUPTING THE POLICY TARGET, −4.5 cp (2026-07-27 ~16:0x)
+
+**Scored against the rule pre-registered below, before any number existed. The 2 cp bar was
+cleared by 2.25×.**
+
+| leg | `--target-batch 0` (production) | `--target-batch 1` | Δ |
+|---|---|---|---|
+| a) net raw policy | 85.3 / 62.4 | 85.3 / 62.4 | **0.0** (control) |
+| b) net + Gumbel search (PLAY, 32 sims) | 50.2 / 49.1 | 51.1 / 49.8 | +0.9 |
+| c) SF MultiPV soft target | 51.5 / 33.7 | 51.5 / 33.7 | **0.0** (control) |
+| **d) production training target (256 sims)** | **54.2 / 48.3** | **49.7 / 44.1** | **−4.5 / −4.2** |
+
+**VERDICT by the pre-committed rule: C17 is a TARGET-QUALITY defect, not a compute defect.**
+
+**CONTROLS HELD, and they are what make this readable.** Legs (a) and (c) are
+**bit-identical** across the arms — (c) is pure Stockfish and (a) involves no search, so
+`target_batch` cannot reach either. The value table corroborates from the other side: the
+pure-SF value candidates (i) 0.2450/0.1723 and (ii) 0.0348/0.0069 are **identical**, while
+only the search-dependent ones moved ((iii) 0.0484→0.0481, (iv) 0.2567→0.2521). Nothing but
+leaf-duplication changed.
+
+**THE ORDERING FLIPS, and this retires an earlier claim in this ledger.** At tb=0 the
+training target (54.2) was the WORST of the three search/teacher candidates. At tb=1 it is
+the BEST — 49.7 against PLAY 51.1 and the SF soft target 51.5. **The "production training
+target is 4 cp worse than the net's own play search" finding recorded earlier today is not
+a search-config mismatch. It is this bug**, and the c_scale attribution already retracted
+for that entry was doubly wrong.
+
+**ON THE PRE-COMMITTED BIAS — partly answered by dose-response, without new runs.** The
+pre-registration warned that (d) improving is expected in part BY CONSTRUCTION, since tb=1
+buys ~34% more distinct nodes per nominal sim. The data separates it: C17's own
+measurements are **6–8% duplicates at 32 sims vs 29–76% at 256**. Leg (b) runs 32 sims,
+gained ~7% more nodes at tb=1, and got **slightly WORSE** (+0.9, noise). Leg (d) runs 256
+sims with 29–76% duplication and gained 4.5 cp. **The effect tracks the DUPLICATION RATE,
+not the node count** — if extra nodes were the mechanism, (b) would have improved too.
+Residual node-count contribution is not zero and is not separately measured; a
+node-matched arm (tb=0 at ~388 sims) would pin it and needs the RL sim count exposed on the
+CLI, which it currently is not.
+
+**WHY THIS IS PLAUSIBLY THE FLYWHEEL STALL.** `w_policy 1.0` + `w_soft 1.0` train
+`policy_own` — the head MCTS reads — on this exact distribution. A self-imitation loop is
+bounded by the quality of what it imitates, and the target has been **4.5 cp worse than the
+same search produces when the bug is removed**. It also explains the long-standing pattern
+that more gradient improves raw policy (E[regret] 98.9 → 89.55) while search policy does
+not move: the extra gradient was being spent converging harder onto a corrupted target.
+**Corrupted, not merely noisy** — duplicates land on the path that was already winning, so
+they sharpen the visit distribution, and `max_visit` (inflated by them) sets the root
+`q_scale` that sharpens the improved policy further. Consistent with the measured
+`policy_target` entropy of **0.63 nats** with 24% of rows at top-1 ≥ 0.99.
+
+**FIXING IT IS DATA-AFFECTING AND NEEDS ITS OWN PRE-REGISTRATION — NOT DONE HERE.** It
+changes every policy target written. The audit's own C17 note flags the hazard: removing
+duplicates lowers `max_visit`, which lowers `q_scale`, which FLATTENS the target as a side
+effect — so the fix is not purely a subtraction of noise, and the flattening interacts with
+whatever sharpness the current `c_scale 0.1` was tuned against. **This entry classifies
+C17; it does not authorise a change.** Next step is a ledger entry with a revert point and
+a strength yardstick, not a config edit.
+
+**Reproduce:**
+```
+PYTHONPATH=. python3 scripts/audit_targets.py \
+  --checkpoint data/salvage/pre_sfp0_restore_20260727/seeds/slot_000/trainer.pt \
+  --sims 32 --max-positions 2000 --sf-soft-nodes 50000 --nice 19 \
+  --gpu-mem-fraction 0.20 --target-batch {0,1}
+```
+`--target-batch` was plumbed into the script today; it had always existed on
+`run_gumbel_root_many_c` and was simply never exposed, which is why C17 sat untested since
+2026-07-26.
+
+---
+
 ### PRE-REGISTERED READING RULE — the C17 separating test (2026-07-27 ~15:3x, written while the run is in flight, BEFORE any number)
 
 **What is running.** `scripts/audit_targets.py` at `--target-batch 1` against the identical
