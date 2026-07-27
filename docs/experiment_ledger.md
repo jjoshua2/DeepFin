@@ -4810,6 +4810,66 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### PRE-REGISTERED (2026-07-27 ~23:0x, written BEFORE any production number) — selfplay batching optimum: Gumbel LEGACY virtual loss
+
+**Written before the pause, before the harness runs, before any live measurement.**
+The offline numbers in the CORRECTION above are the motivation; none of them come
+from production.
+
+**Ground truth established first (code, not inference):**
+`chess_anti_engine/selfplay/match.py:129` calls `_run_gumbel_root_many_c(...)` with
+**neither `target_batch` nor `vloss_weight`**, so both take their defaults of 0.
+Production selfplay is therefore exactly the arm measured at **77.8% duplicate
+rows**. Grepping `vloss_weight` across `chess_anti_engine/` finds it only in the
+UCI/PUCV path (`uci/search.py`, `uci/walker_pool.py`, `mcts/puct_vl.py`, default
+3) — **there is no config key reaching the Gumbel selfplay path at all.**
+Deployment is therefore a CODE CHANGE plus a new yaml key, not a yaml edit, and a
+new key cannot enter a live reload (validator is all-or-nothing) — it needs a
+restart, bundled with the A6 `.c` merge + rebuild.
+
+**Hypothesis.** Production selfplay spends ~3/4 of its NN forwards re-evaluating
+leaves it has already sent in the same batch. LEGACY virtual loss removes the
+duplication *at equal batch size* (233 vs 228 rows/call offline), so it should
+raise USEFUL positions/s without lowering games/h. `target_batch=1` also removes
+it but costs an 8x batch collapse, and VIRTUAL_MEAN pays that cost for nothing.
+
+**ONE deciding yardstick: games/h from a standalone production-regime selfplay
+harness with the GPU FREE**, two arms, `vloss_weight` 0 vs 1 LEGACY, everything
+else fixed. Throughput is the deciding axis because target quality is ALREADY
+measured — PR #278 read **-7.4 cp on the training target (54.2 -> 46.8)** with
+LEGACY vloss — and because the offline duplicate result predicts throughput, not
+quality. (Exact command pinned in the run log when the harness is confirmed; it
+must drive production concurrency, not the ~64-board arena regime, and must NOT
+write into the live shard dir.)
+
+**Pre-committed decision rule:**
+- **DEPLOY LEGACY** iff games/h is **>= baseline - 2%** AND the harness duplicate
+  rate falls **below 0.10** (from an expected ~0.6-0.8).
+- **KILL / do not deploy** if games/h drops **>5%** against the vloss=0 arm.
+- **NO DECISION** — and this is a real outcome, not a fudge — if the harness
+  duplicate rate at `vloss_weight=0` comes back **below 0.25**. That would mean
+  production's batching regime is NOT the offline regime, the 77.8% does not
+  transfer, and the whole premise is void. **The broker averaging 220 pos/batch at
+  1% of its 19040 cap is live evidence this is a live possibility**, so it is
+  named as an outcome in advance rather than explained away afterwards.
+
+**Confounds, stated in advance:**
+1. The harness is not the trainer. It measures selfplay in isolation; production
+   interleaves training on the same GPU (`distributed_pause_selfplay_during_training:
+   true` means they alternate rather than overlap, which HELPS transfer, but the
+   memory-pressure regime still differs).
+2. Deploying this changes the policy target, which is what the **sf_p0 readout due
+   ~16:00 on 07-28** scores. Deploying before that readout confounds a 15.8-day-old
+   defect's verdict. Sequencing decision recorded at deploy time, not now.
+3. `playout_cap_fraction: 0.25` means 75% of plies run at 32 sims and 25% at 256.
+   Duplicate rate is a function of leaves-per-board and will differ between the two;
+   the harness must report them separately or run the production mix.
+
+**Revert point.** `data/salvage/pre_batching_20260727` — **verified** iter 158,
+`checkpoint_000157`, matching the live row at export time (656M; replay shards not
+copied, which is fine — the window lives at the durable
+`tune_replay_root_override`).
+
 ### ⚑ CORRECTION (2026-07-27 ~22:4x) — VIRTUAL_MEAN is DOMINATED. Deploy LEGACY. My earlier "deploy VIRTUAL_MEAN" call was wrong.
 
 **I read a two-column table on one column again.** The deploy decision recorded
