@@ -1885,6 +1885,43 @@ change that only a review caught. Deploys at the next restart, which the daily r
 cadence implies anyway.
 
 
+### OBSERVATION (2026-07-27 ~16:4x) — the base LR has a COMPUTABLE ceiling, and we are 5× under it (NOT pre-registered)
+
+Verified while auditing realized-vs-configured on the optimizer, and it is **healthy** —
+recorded because the arithmetic names a lever with a hard, known bound rather than a
+guess.
+
+**Realized LRs are not the configured 3e-5, by design.** `progress.csv` at iter 140:
+`peak_lr` **3e-5** (the config), `opt_lr_max` **6e-4**, `opt_lr_mean` 5.29e-4,
+`opt_lr_final` 6e-5. The 6e-4 is exactly `lr × matrix_lr_multiplier (20)` — the Aurora
+matrix group. So "our LR is 3e-5" is true only of the base key; the group carrying the
+matrix update runs 20× higher. Not a defect, and the config documents it.
+
+**The ceiling is arithmetic, not opinion.** The destruction threshold on record is
+**0.003** for the matrix group (and the 512×16 collapse is the proof: `lr 0.0003` × 20 =
+**6e-3**, double that line, measured **−494 Elo by iter 74**). With the multiplier at 20:
+
+```
+max safe base lr  =  0.003 / 20  =  1.5e-4
+current base lr   =  3e-5        =  1/5 of that ceiling
+```
+
+**So there is ~5× of headroom on the base LR before the matrix group reaches the line
+that demonstrably destroys this net** — and 3e-5 is not merely safe, it is the regime in
+which this net gained **+303 Elo over iters 74→148**.
+
+**Why this is an observation and not a proposal.** (a) The one prior LR move in this
+architecture cost −494 Elo, so the prior is strongly asymmetric. (b) `lr` is **PB2-pinned**
+— a yaml edit alone does NOT take; the `experiment_state` JSON (newest BY FILENAME) must
+be edited too, then a restart, and `pb2_bounds_lr` OVERRIDES `train.lr` rather than
+bounding it. (c) It is data-affecting and the queue already has three changes against one
+readout window. (d) The measured strength slope is **+0.21 Elo/1000 steps with a CI
+spanning zero**, so we currently have no instrument sensitive enough to score an LR change
+— fixing the ruler (G14, merged) comes first.
+
+Recorded so the ceiling is on file with its derivation. Anyone proposing an LR move must
+state the resulting matrix-group LR (`lr × 20`) explicitly against the 0.003 line.
+
 ### ⚑ THE SF TEACHER'S SHARPNESS IS A REAL, ISOLATED, LIVE-RELOADABLE LEVER — and the audit set CANNOT calibrate it (2026-07-27 ~16:0x)
 
 **Three knobs, and they are not interchangeable.**
