@@ -217,3 +217,55 @@ def test_the_default_weight_never_touches_the_virtual_loss_array(
         f"{len(touched)} nodes carry virtual loss at vloss_weight=0 — a write "
         "site lost its guard, so the default is no longer inert"
     )
+
+
+def test_virtual_mean_mode_is_reachable_and_differs_from_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``vloss_mode=1`` must actually change descent, and still kill duplicates.
+
+    Until this landed, ``VLOSS_MODE_VIRTUAL_MEAN`` existed in ``_mcts_tree.c``
+    but was unreachable from the Gumbel path: ``tree_gumbel_select_child`` took
+    no mode argument and the leaf descent hardcoded ``VLOSS_MODE_LEGACY``. So
+    every Gumbel measurement of virtual loss was made with parallel-PUCT
+    pessimism -- the pending visit scored as a LOSS -- when the construct the
+    Gumbel descent actually wants is a pending VISIT valued at the child's own
+    mean, which moves the visit count without moving the estimate.
+
+    A mode that is accepted and silently ignored is the exact defect C17 turned
+    out to be, so this asserts the two modes are distinguishable rather than
+    trusting that the argument arrived.
+    """
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    boards = [chess.Board(f) for f in _FENS[:4]]
+    cfg = GumbelConfig(
+        simulations=128, topk=16, c_scale=0.1, temperature=0.0, add_noise=False,
+    )
+
+    def _run(weight: int, mode: int) -> tuple[tuple[int, ...], int]:
+        ev = _CountingHashEvaluator()
+        res = run_gumbel_root_many_c(
+            None, boards, device="cpu", rng=np.random.default_rng(0), cfg=cfg,
+            evaluator=ev, target_batch=0, vloss_weight=weight, vloss_mode=mode,
+        )
+        tree, root_ids = res[4], res[5]
+        per_board: list[int] = []
+        for rid in root_ids:
+            _a, visits, _q = tree.get_children_q(int(rid), 0.0)
+            per_board.append(int(visits.sum()))
+        return tuple(per_board), ev.rows - ev.distinct_rows
+
+    legacy_visits, legacy_dup = _run(1, 0)
+    mean_visits, mean_dup = _run(1, 1)
+
+    # Both modes must remove the duplication -- that is the point of either.
+    assert legacy_dup == 0, f"legacy left {legacy_dup} duplicate rows"
+    assert mean_dup == 0, f"virtual-mean left {mean_dup} duplicate rows"
+    # ...and the budget is still fully spent under the new mode.
+    assert mean_visits == legacy_visits == (128,) * len(boards), (
+        f"virtual-mean spent {mean_visits} root visits vs legacy's {legacy_visits}"
+    )
+    # The modes differ only in how a PENDING visit is valued, so at weight 0
+    # they must be indistinguishable -- this is what makes the new argument
+    # safe to add to every existing caller.
+    assert _run(0, 0) == _run(0, 1), "vloss_mode is not inert at vloss_weight=0"

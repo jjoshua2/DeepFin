@@ -161,6 +161,7 @@ def run_gumbel_root_many_c(
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
     vloss_weight: int = 0,
+    vloss_mode: int = 0,
     return_diagnostics: Literal[False] = False,
 ) -> GumbelManyCResult: ...
 
@@ -188,6 +189,7 @@ def run_gumbel_root_many_c(
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
     vloss_weight: int = 0,
+    vloss_mode: int = 0,
     return_diagnostics: Literal[True],
 ) -> GumbelManyCDiagnosticsResult: ...
 
@@ -214,6 +216,7 @@ def run_gumbel_root_many_c(
     pre_wdl_logits_tb_probed: bool = False,
     target_batch: int = 0,
     vloss_weight: int = 0,
+    vloss_mode: int = 0,
     return_diagnostics: bool = False,
 ) -> GumbelManyCResult | GumbelManyCDiagnosticsResult:
     """Gumbel root search with MCTSTree C tree + CBoard.
@@ -685,6 +688,7 @@ def run_gumbel_root_many_c(
                 float(cfg.c_visit_root),
                 float(cfg.c_scale_root),
                 float(cfg.q_visit_exp_root),
+                int(vloss_mode),
             )
         _t_prepare += _time.perf_counter() - _tp0
 
@@ -929,6 +933,7 @@ def run_gumbel_root_many_c(
             float(cfg.c_visit_root),
             float(cfg.c_scale_root),
             float(cfg.q_visit_exp_root),
+            int(vloss_mode),
         )
         _t_prepare += _time.perf_counter() - _tp0
 
