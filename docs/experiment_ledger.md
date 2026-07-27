@@ -872,6 +872,75 @@ iter-to-iter `test_loss` change over iters 48–78 is below the 0.043 baseline;
 FAILED if it is at or above it AND the window was settled; INCONCLUSIVE-REPEAT
 if it is at or above it while the drain is still running.
 
+**CALLED EARLY, 2026-07-26 ~22:15, BEFORE iter 78 — the freeze is heading to
+FAILED, and the reason is that the experiment was mis-specified.** Recorded now
+rather than at the readout so that none of it can be read as post-hoc.
+
+Audit G14 (new, this session) establishes that **freezing the SET does not
+freeze the MEASUREMENT.** `_run_holdout_evaluation` calls
+`eval_steps(holdout_buf, batch_size=512, steps=5)` — **2560 draws WITH
+REPLACEMENT from a ≤2000-row set** — and `ArrayReplayBuffer.sample_batch_arrays`
+additionally WDL-**rebalances** each batch (`draw_cap_frac 0.90`,
+`wl_max_ratio 1.5`) and draws **half of every batch ∝ `priority`**, because
+`holdout_buf.surprise_mix` is never assigned and keeps the class default 0.5.
+Measured effective sample size of that weighted draw: **1051/2000 = 52.6%**.
+
+So the yardstick — iter-to-iter variability of `test_loss` on a fixed ruler —
+was measuring a resampling noise floor that the freeze does not touch.
+
+The numbers, recomputed by hand from `progress.csv`:
+
+| span | n | mean abs iter-to-iter Δ`test_loss` | sd |
+|---|---|---|---|
+| pre-freeze, iters 4–47 | 42 | **0.0560** | 0.0545 |
+| frozen, iters 48–52 (the early n=4 note above) | 5 | 0.0390 | 0.0232 |
+| **frozen, iters 48–61** | 14 | **0.0708** | 0.0503 |
+
+**The 0.0390 in the "early numbers" note above was a small-sample fluke and
+should not be cited.** It is the first five points of a series whose fourteen-point
+value is 0.0708. This is method rule 5's cousin: a number read off a window
+chosen because it was available.
+
+**Verdict by the pre-committed rule: FAILED.** 0.0708 is above the 0.043
+baseline. It is also above the 0.0560 that the full pre-freeze span actually
+gives — worth flagging that the pre-committed 0.043 does not reproduce on iters
+4–47, so the baseline in the rule was itself derived on a narrower window. The
+verdict is robust to that ambiguity: the frozen span is worse than **either**
+baseline, so the rule fires the same way whichever is used.
+
+**But FAILED here means "the freeze alone cannot deliver a stable ruler", not
+"a stable ruler is unreachable".** Do not let this entry retire the goal.
+Per G4's re-read the freeze delivers exactly one of the four things stability
+requires: composition frozen between readouts (MET); survives a restart (NOT MET
+live — #261 merged 19:52:36, this process started 17:04:53, and
+`checkpoint_000058` has no `holdout.npz`, so **the current frozen ruler still
+dies at the next restart**); the eval is a pass over the set (NOT MET — G14);
+representative of the training window (NOT MET — G13/G8).
+
+**Follow-up is pre-registered, not implied:** PRE-REG B (deterministic,
+unweighted full pass over the 2000 frozen rows — 4 batches instead of 5, and it
+removes all three sampling effects) with kill/success on the sd of `test_loss`
+over 10 consecutive post-deploy iterations: adopt at **≤ 0.015 nats** against
+the measured 0.0522 baseline, reject above 0.030. `test_loss`/`best_loss` are
+**not comparable across that change** — reset `best_loss` at deployment rather
+than carrying it, the same way a restart boundary is handled.
+
+**Reconciling the two drain-confound directions, because they look
+contradictory and are not.** This entry argued above that the drain *inflates*
+variability and so biases **against** the hypothesis. Audit G8 now argues the
+drain **fakes a positive**. Both hold, because they are about different
+quantities: G8's mechanism is about the *level* of `test_loss` (the frozen
+holdout was filled at iters 42–46 entirely from fresh local ingest, so as the
+54% salvage block drains by 2026-07-27 ~16:50 the training distribution
+converges onto the holdout's and `test_loss` falls for compositional reasons),
+whereas this yardstick is the *absolute iter-to-iter change*. The measured trend
+is −0.00115 nats/iter, which contributes ~0.001 to a 0.0708 mean |Δ| — three
+percent. **The level-based confound is real and large for anything judged on
+`test_loss`, `best_loss` or the train/test gap; it is negligible for this
+variability yardstick.** Do not carry G8's "fakes a positive" over to a
+variability readout, and do not carry this entry's "biases against" over to a
+level readout.
+
 **One thing the readout must NOT be used for:** `best_loss` still reads 4.8982,
 carried across the 17:05 restart and defended against a ruler that no longer
 existed at that point (G5). PR #261 fixes that going forward — a lost holdout
