@@ -1835,6 +1835,56 @@ proposing anything. Do not "fix" a bottleneck that has not been localised — th
 the diff_focus and soft_policy_temp fixes ended up measuring nothing.
 
 
+### SPEC, NOT YET BUILT (2026-07-27 12:4x) — compute the clip norm over the AdamW params ONLY
+
+**Why.** Measured on `checkpoint_000122`: `||g||` aurora **3.648**, adamw **12.137**,
+global **12.673** — **AdamW carries 91.7% of the global norm² on 71.4% of the params**
+(audit I21 amendment). The Aurora/Muon group is EXACTLY scale-invariant (polar factor), so
+its 8.3% contribution enters the clip decision while being a quantity the clip provably
+cannot affect. Today that inflates the norm by 4.4% (`global = adamw × 1.044`) — small,
+but wrong in principle and free to drift. **The norm should be taken over precisely the
+parameters the clip can act on, for BOTH the fixed cap and the adaptive z-score EMA.**
+
+**Contract with the installed zclip** (`~/.local/lib/python3.10/site-packages/zclip/zclip.py`,
+read, not assumed). It touches the model through exactly two surfaces:
+`model.parameters()` — in `_compute_grad_norm` (:88), `apply_in_place_clipping` (:153),
+and the warmup `torch.nn.utils.clip_grad_norm_` (:200) — and `model.modules()`, in
+`is_fsdp_model` (:14). So a scope object exposing those two is sufficient AND complete:
+a `_ClipScope` holding a param list, with `parameters()` returning an iterator over it and
+`modules()` returning an empty iterator (never FSDP, which forces the local path).
+
+Built from `_matrix_optimizer_filter(scope, include_embed_default=...)` — the same
+predicate the optimizer uses to form its groups, so the two cannot silently disagree.
+Never a hand-maintained tensor list.
+
+**Ship it WITH the per-group metric, which is the more valuable half.** `grad_norm_aurora`
+/ `grad_norm_adamw` logged every iteration (I9-style). Today there is ONE aggregate
+number, and establishing that 92% of it is AdamW required a bespoke probe against a
+stopped trainer. Every claim made about zclip today, in both directions, was inference
+from a single scalar. **The metric is what makes the next cap decision readable; the clip
+restriction is what makes `grad_hard_clip_rate` mean what its name says.**
+
+**Expected behaviour change: almost none, and that is the point.** An AdamW-only cap at
+the same numeric 5.0 yields effective norm 5.0 against the current global-cap effect of
+4.79. It is a SEMANTICS fix. **Do not pre-register it as a strength experiment** — there
+is nothing for a kill rule to fire on. Verify it as plumbing: `grad_norm_adamw` should
+equal the old `grad_norm` divided by ~1.044, and `grad_norm_aurora` should be ~28% of it.
+
+**Design caveat to resolve in the PR, NOT hand-waved:** dropping Aurora from the clip also
+drops its only non-finite guard. A genuinely divergent (inf/nan) Aurora gradient would
+reach `_polar_factor` unchecked. Scale-invariance means a *finite* rescale is a no-op, but
+inf/nan is not a rescale. Add an explicit finite-check on the Aurora group rather than
+relying on a norm clip that was never doing that job on purpose.
+
+**Sequencing decision, recorded with its reasoning.** NOT bundled into the 2026-07-27
+restart, reversing an in-session call to do it immediately. "It saves a restart" was true
+and incomplete: the change is near-behaviour-neutral, so landing it a day later costs
+nothing measurable, while writing a gradient-path change against the clock on a stopped
+run is precisely how the #272 value-resolution defect got in — and that was a simpler
+change that only a review caught. Deploys at the next restart, which the daily ratchet
+cadence implies anyway.
+
+
 ### ⚑ READOUT + DELIBERATE MULTI-CHANGE BUNDLE (2026-07-27 12:2x) — 122 iterations produced no measurable strength, so the one-change-per-window rule is suspended ON PURPOSE
 
 **THE RATCHET, judged by the rule pre-committed before the numbers landed.**
