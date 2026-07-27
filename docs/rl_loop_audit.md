@@ -299,6 +299,34 @@ because it compares configs, and the configs agree.
    `git checkout`; the branch-switch prohibition does not apply, and no file the
    trainer reads changes value.
 
+**⛔ EXCEPTION — DO NOT RECONCILE WHILE A `.c`/`.h` CHANGE IS THE DELTA (added 2026-07-27).**
+A6 says empty output is the only safe state before a restart. There is one case where
+*reaching* empty is more dangerous than staying non-empty: when the merge would bring
+`.c`/`.h` changes into the live tree.
+
+`train.sh` gates startup on C-extension freshness. If the live tree's `.c` is newer than
+its built `.so`, the gate **refuses to start** — and on 2026-07-24 that turned a routine
+deploy into an **18-minute outage**, because `graceful_restart` had already SIGTERM'd the
+tuner before the gate fired (PR #226 now preflights the resume, but the freshness
+requirement itself is unchanged). Merging the `.c` and deferring the rebuild therefore
+converts **any UNPLANNED restart** — a WSL2 GPU wedge, a crash, an auto-resume — into an
+outage that a human must notice and repair.
+
+Rebuilding immediately is not the answer either: `scripts/build_production_extensions.py`
+does a forced rebuild whose output files are **mapped by the running trainer and every
+worker**, and replacing a mapped `.so` in place is not a safe operation to perform casually
+on a live run.
+
+**Rule: when `git diff --name-only HEAD...origin/main` contains a `.c` or `.h` file, HOLD
+the reconciliation and do it in the pre-restart window, paired with
+`python3 scripts/build_production_extensions.py` as ONE operation** (NOT `pip install -e .`
+— the .venv setuptools lacks PEP 660). Until then the live branch is deliberately behind,
+and that is the safe state.
+
+First applied 2026-07-27 to PR #278 (virtual loss, `_mcts_tree.c`). Cost of holding: zero —
+the PR is behaviour-neutral at the default `vloss_weight=0` and delivers nothing until a
+config key lands at a restart regardless.
+
 **Conflicts that recur, resolved by truth rather than by side:**
 - `opening_fen_list_path` — keep the LIVE side always. `monitor_fen.sh` rotates
   it in the live tree, so main is stale by however many rotations have occurred
