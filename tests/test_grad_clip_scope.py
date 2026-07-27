@@ -32,6 +32,7 @@ import pytest
 import torch
 import torch.nn as nn
 import zclip.zclip as zclip_mod
+from zclip import ZClip
 
 from chess_anti_engine.model import build_model, model_config_from_flat_config
 from chess_anti_engine.train import trainer as trainer_mod
@@ -320,6 +321,23 @@ def test_grad_clip_metric_kwargs_reports_both_groups() -> None:
     assert trainer_mod._grad_clip_metric_kwargs([1.0], {}, None)["grad_norm_aurora"] == 0.0
 
 
+def test_a_discarded_step_does_not_corrupt_the_order_statistics() -> None:
+    # `sorted()` does not order nan, so before the filter one discarded step
+    # took the mean, the median AND the max of the whole iteration with it --
+    # this exact list reported max 11.9, the SMALLEST value in it.
+    kwargs = trainer_mod._grad_clip_metric_kwargs(
+        [12.0, 12.1, float("nan"), 11.9], {"nonfinite_grad": 1}, [3.0, 3.0, float("inf"), 3.0],
+    )
+
+    assert kwargs["grad_norm_mean"] == pytest.approx(12.0)
+    assert kwargs["grad_norm_median"] == pytest.approx(12.0)
+    assert kwargs["grad_norm_max"] == pytest.approx(12.1)
+    assert kwargs["grad_norm_aurora"] == pytest.approx(3.0)
+    # The rates keep the full denominator: a discarded step still happened.
+    assert kwargs["grad_norm_samples"] == 4
+    assert kwargs["grad_nonfinite_skip_rate"] == pytest.approx(0.25)
+
+
 def _drive_one_step(
     trainer: Trainer,
     monkeypatch: pytest.MonkeyPatch,
@@ -409,6 +427,57 @@ def test_polar_factor_is_scale_invariant_but_not_nan_invariant() -> None:
     assert torch.allclose(aurora._aurora_update(grad * 0.5), aurora._aurora_update(grad), atol=1e-5)
     with pytest.raises(RuntimeError, match="non-finite"):
         aurora._aurora_update(grad * float("nan"))
+
+
+def test_one_nan_would_permanently_disable_zclips_adaptive_clipper() -> None:
+    # Why the rollback below exists, measured on the real ZClip: `step` folds
+    # whatever norm it computed into the EMA unconditionally, and a single nan
+    # makes `mean` nan forever. Every later z-score is then nan, `nan > thresh`
+    # is False, and `_compute_clip_val` returns None for the rest of the run --
+    # the adaptive clipper is off, silently, while the fixed cap keeps
+    # reporting normally.
+    zclip = ZClip(mode="zscore", alpha=0.97, z_thresh=2.5, max_grad_norm=5.0)
+    zclip.initialized = True
+    zclip.mean = 12.0
+    zclip.var = 1.0
+
+    assert zclip._compute_clip_val(20.0) is not None  # a real outlier clips
+
+    zclip._update_ema(float("nan"))
+
+    assert math.isnan(zclip.mean)
+    assert zclip._compute_clip_val(20.0) is None  # ...and now nothing ever does
+
+
+@pytest.mark.parametrize("on_matrix", [True, False])
+def test_a_non_finite_step_never_enters_the_zclip_ema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, on_matrix: bool,
+) -> None:
+    trainer = _make_trainer(tmp_path, zclip_max_norm=5.0)
+    trainer.zclip.initialized = True
+    trainer.zclip.mean = 12.0
+    trainer.zclip.var = 1.0
+
+    _drive_one_step(trainer, monkeypatch, scale=float("inf"), on_matrix=on_matrix)
+
+    assert trainer.zclip.mean == pytest.approx(12.0)
+    assert trainer.zclip.var == pytest.approx(1.0)
+    assert trainer.zclip.initialized is True
+
+
+def test_a_non_finite_step_does_not_consume_a_warmup_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Same defect one phase earlier: during warmup the norm is appended to
+    # `buffer`, and `_initialize_ema` averages it -- so a nan seeds the EMA nan
+    # from the very first step instead of merely poisoning it later.
+    trainer = _make_trainer(tmp_path, zclip_max_norm=5.0)
+    trainer.zclip.buffer = [11.0, 12.0]
+
+    _drive_one_step(trainer, monkeypatch, scale=float("inf"), on_matrix=False)
+
+    assert trainer.zclip.buffer == [11.0, 12.0]
+    assert trainer.zclip.initialized is False
 
 
 @pytest.mark.parametrize("on_matrix", [True, False])

@@ -927,6 +927,11 @@ def _nearest_rank_quantile(sorted_values: list[float], q: float) -> float:
     return float(sorted_values[min(len(sorted_values) - 1, max(0, rank))])
 
 
+def _mean(values: list[float]) -> float:
+    """Arithmetic mean, 0.0 when empty (matches the other aggregators here)."""
+    return float(sum(values) / len(values)) if values else 0.0
+
+
 def _median(sorted_values: list[float]) -> float:
     n = len(sorted_values)
     if n == 0:
@@ -951,25 +956,32 @@ def _grad_clip_metric_kwargs(
     `grad_norms` is the CLIPPED group's norm (see `Trainer._grad_clip_target`);
     `aurora_grad_norms` is the scale-invariant matrix group's, empty when the
     optimizer has no such group.
+
+    A DISCARDED step (non-finite norm, see `Trainer._run_optimizer_step`) still
+    counts toward the RATES — it is a step that happened — but is kept out of
+    the order statistics. `sorted()` does not order nan, so one of them takes
+    the mean, the median AND the max with it: `[12.0, 12.1, nan, 11.9]` reports
+    a max of 11.9, the smallest value in the list.
     """
     n = len(grad_norms)
     if n == 0:
         return {}
-    ordered = sorted(grad_norms)
+    ordered = sorted(v for v in grad_norms if math.isfinite(v))
     out: dict[str, float | int] = {
-        "grad_norm_mean": float(sum(grad_norms) / n),
+        "grad_norm_mean": _mean(ordered),
         "grad_norm_median": _median(ordered),
         "grad_norm_p95": _nearest_rank_quantile(ordered, 0.95),
-        "grad_norm_max": float(ordered[-1]),
+        "grad_norm_max": float(ordered[-1]) if ordered else 0.0,
         "grad_clip_rate": float(clip_counts.get("clipped", 0)) / n,
         "grad_adaptive_clip_rate": float(clip_counts.get("adaptive_clip", 0)) / n,
         "grad_hard_clip_rate": float(clip_counts.get("hard_clip", 0)) / n,
         "grad_nonfinite_skip_rate": float(clip_counts.get("nonfinite_grad", 0)) / n,
+  # Steps, not finite readings: the rates above are over this denominator.
+  # The two agree unless `grad_nonfinite_skip_rate` is non-zero.
         "grad_norm_samples": n,
-        "grad_norm_adamw": float(sum(grad_norms) / n),
+        "grad_norm_adamw": _mean(ordered),
     }
-    aurora = aurora_grad_norms or []
-    out["grad_norm_aurora"] = float(sum(aurora) / len(aurora)) if aurora else 0.0
+    out["grad_norm_aurora"] = _mean([v for v in (aurora_grad_norms or []) if math.isfinite(v)])
     return out
 
 
@@ -1776,6 +1788,31 @@ class Trainer:
             return 0.0
         return float(torch.linalg.vector_norm(torch.stack(norms)))
 
+    def _zclip_stats_snapshot(self) -> tuple[bool, Any, Any, list[float]]:
+        """zclip's whole adaptive state: (initialized, mean, var, warmup buffer)."""
+        return (
+            bool(getattr(self.zclip, "initialized", False)),
+            getattr(self.zclip, "mean", None),
+            getattr(self.zclip, "var", None),
+            list(getattr(self.zclip, "buffer", None) or []),
+        )
+
+    def _restore_zclip_stats(self, snapshot: tuple[bool, Any, Any, list[float]]) -> None:
+        """Roll zclip's adaptive state back to a snapshot.
+
+        `_run_optimizer_step` uses this when it discards a step, because
+        `ZClip.step` folds whatever norm it computed into the EMA
+        unconditionally and a single nan there is PERMANENT: `mean` becomes
+        nan, every later `z = (norm - nan) / std` is nan, `nan > z_thresh` is
+        False, so `_compute_clip_val` returns None for the rest of the run and
+        the adaptive clipper is silently switched off while the fixed cap goes
+        on reporting normally. During warmup the same value lands in `buffer`
+        and `_initialize_ema` averages it, seeding the EMA nan from the start.
+        A discarded step is not a gradient magnitude and must not shape the
+        statistics.
+        """
+        self.zclip.initialized, self.zclip.mean, self.zclip.var, self.zclip.buffer = snapshot
+
     def _zclip_step(self, *, collect_stats: bool) -> tuple[float, dict[str, float] | None]:
         if not collect_stats:
             return float(self.zclip.step(self._grad_clip_target)), None
@@ -2414,6 +2451,7 @@ class Trainer:
   # Measured BEFORE the clip, which is a distinction without a difference
   # while the matrix group is outside the clip scope, and the honest
   # pre-clip reading if it ever is not.
+        zclip_stats_before = self._zclip_stats_snapshot()
         matrix_grad_norm = self._matrix_grad_norm()
         grad_norm, zclip_stats = self._zclip_step(collect_stats=True)
         if zclip_stats is not None:
@@ -2432,6 +2470,11 @@ class Trainer:
                 "||g||=%r): skipping the optimizer step",
                 self.step, matrix_grad_norm, grad_norm,
             )
+  # zclip has already folded this step's norm into its EMA. The step is
+  # being discarded, so un-fold it — see _restore_zclip_stats for why a
+  # single nan there would be permanent, and why even a finite reading
+  # from a discarded step should not shape the clipper's statistics.
+            self._restore_zclip_stats(zclip_stats_before)
             step_opt_stats["nonfinite_grad"] = 1.0
             step_opt_stats["lr"] = float(self.opt.param_groups[0]["lr"])
             self.opt.zero_grad(set_to_none=True)
