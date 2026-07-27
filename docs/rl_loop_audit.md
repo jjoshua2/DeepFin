@@ -554,6 +554,47 @@ executed live, so D14's clean result says nothing about whether it works.
 | K7 | publish is atomic (no torn read) | `atomic_write` usage | **VERIFIED-BY-CODE 2026-07-26, with one bounded in-process gap** — both `save` and `export_swa` write `<name>.tmp.<pid>.<uuid>` then `os.replace`. No `fsync` before rename, so crash-atomicity leans on FS ordering. The gap: `SharedSlotBroker._load_trial_weights` (`inference.py:2929`) records the *manifest's* sha but `torch.load`s the file, so a publish landing between those two lines makes the broker serve weights whose sha ≠ its recorded `model_sha` for one poll. Self-corrects at the next manifest change; bounded to one iteration |
 | K8 | the published model reconstructs into a COMPLETE production net | build from manifest `model_config`, load with `require_complete=True` | **VERIFIED 2026-07-26** — passes from *both* the manifest's `model_config` and the checkpoint's own `arch`: 0 keys skipped, missing or unexpected. The two agree on all 40 `ModelConfig` fields; only `use_gradient_checkpointing` is not carried, deliberately forced `False` for inference |
 
+### C17's mechanism, finally seen directly: sequential-halving rounds re-evaluate the SAME leaf once per allocated visit (added 2026-07-27)
+
+Logging rows and distinct positions per evaluator call (8 boards, 256 sims,
+`target_batch=0`, bucket padding disabled) shows the structure exactly:
+
+| eval call | rows sent | distinct positions | redundancy |
+|---|---|---|---|
+| 1 | 357 | **119** | 3.0× |
+| 3 | 420 | **60** | 7.0× |
+| 5 | 465 | **31** | 15.0× |
+| 7 | 496 | **16** | **31.0×** |
+
+**The distinct counts are 119 → 60 → 31 → 16: sequential halving of the candidate set.**
+Rows GROW as candidates shrink, because each survivor is allocated more visits. So in the
+final round **16 distinct positions are evaluated 496 times**.
+
+**Why: within one halving round the tree cannot update.** Every visit allocated to a
+candidate descends the same unchanged tree and therefore reaches the SAME leaf. With
+`vloss_weight=0` nothing marks the in-flight path, so all of a candidate's visits in that
+round produce byte-identical encoder rows, identical policy/WDL, and identical backprop.
+
+**This is the cleanest statement of C17 and it predicts the scaling we measured.** Redundancy
+per round ≈ visits-per-candidate, which rises as the candidate set halves and as
+boards-per-batch falls. Hence 77.5% overall at 8 boards versus 38.7% at 256 — the
+duplicate rate is a function of how many visits each surviving candidate must absorb, not
+of anything position-specific.
+
+**Two consequences for the deploy, both testable:**
+1. **Virtual loss should bite hardest in the LATE rounds** (31× redundancy), which is
+   exactly where the improved policy's visit distribution is decided — consistent with the
+   target-quality gain being larger than the play-strength gain.
+2. **`target_batch=1` attacks the same thing by flushing per rep**, so the tree updates
+   between visits. That it scores the same as a node-matched control (49.6 vs 49.7) says
+   its benefit is entirely "more distinct nodes", whereas virtual loss additionally steers
+   descent apart within a round.
+
+**⚠ The naive counter cannot see this.** A per-prepare-call duplicate counter reads ~0
+because the redundancy is spread across the reps that accumulate into one GPU batch. The
+correct instrument counts distinct position hashes over the ACCUMULATED buffer between GPU
+flushes. Confirmed by building the wrong one first — see below.
+
 ### Duplicate leaves live BETWEEN reps, not within one — and the rate scales with leaves-per-board (added 2026-07-27)
 
 Attempted a live duplicate-rate counter, got it wrong, and the failure localised the
