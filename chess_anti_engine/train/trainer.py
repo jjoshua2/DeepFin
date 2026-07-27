@@ -845,6 +845,12 @@ class TrainMetrics:
   # Value-head calibration (populated on holdout eval).
     wdl_brier: float = 0.0
     wdl_ece: float = 0.0
+  # Rows the evaluation actually scored, and the denominator every loss above
+  # was divided by on the eval path. Reported rather than reconstructed from
+  # steps x batch_size because a full pass ends on a RAGGED batch, so that
+  # product is not the row count (docs/rl_loop_audit.md G6, G14). Zero on the
+  # training path, which reports `train_samples_seen` instead.
+    eval_rows: int = 0
   # Gradient-norm / clipping, aggregated over EVERY optimizer step of the
   # iteration (not the tb_log_interval subsample). These used to exist only as
   # TensorBoard scalars, whose event files rotate per Ray session — so the
@@ -914,6 +920,16 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
     "has_sf_p0_frac": ("sf_own_rows", "net_rows"),
     "has_sf_p0_regret_frac": ("sf_own_regret_rows", "net_rows"),
 }
+
+# The compute_loss scalars consumed by ``_ratio_metric_kwargs``. They are
+# already SUMS over the batch's rows, so they accumulate unweighted; every
+# other scalar is a per-batch MEAN and must be weighted by the batch's row
+# count before it can be pooled across ragged batches (see
+# ``Trainer._compute_metrics``). Weighting these would scale numerator and
+# denominator by the same factor per batch and so silently change the ratio.
+_RAW_SUM_LOSS_KEYS: frozenset[str] = frozenset(
+    key for pair in _RATIO_METRIC_FIELDS.values() for key in pair
+)
 
 
 # Param-group keys the CHECKPOINT legitimately owns on resume: the schedule's
@@ -2000,6 +2016,45 @@ class Trainer:
             **extras,
         )
 
+    def _prepare_host_arrays(
+        self,
+        arrs: dict[str, np.ndarray],
+        *,
+        rng: np.random.Generator,
+        mirror_prob: float,
+    ) -> dict[str, np.ndarray]:
+        """Target rebuilds, payload pruning, history selection and mirroring.
+
+        Everything the host-side batch pipeline does AFTER the rows have been
+        chosen. Shared by the sampling path and the deterministic full-pass
+        path so the two cannot drift into scoring differently-shaped batches.
+        Every step here is a pure function of ``arrs`` except the mirror, which
+        is a no-op at ``mirror_prob <= 0`` and does not touch ``rng`` there.
+        """
+        if self.rebuild_sf_targets:
+            arrs = rebuild_sf_targets_in_arrays(arrs, params=self.sf_target_params)
+        if self.rebuild_categorical_target:
+            arrs = rebuild_categorical_target_in_arrays(
+                arrs, params=self.categorical_target_params,
+            )
+        if not self.sf_policy_sparse_ce:
+            # Keep the default H2D payload identical to the pre-sparse-CE
+            # pipeline: the int rows only ride to the GPU when the sparse
+            # loss consumes them. (Dropped AFTER the rebuild hook, which
+            # also reads them.)
+            arrs.pop("sf_multipv_raw", None)
+            arrs.pop("has_sf_multipv_raw", None)
+        arrs = select_input_history_arrays(
+            arrs,
+            input_history_encoding=self._input_history_encoding,
+        )
+        return maybe_mirror_batch_arrays(
+            arrs,
+            rng=rng,
+            prob=mirror_prob,
+            input_history_encoding=self._input_history_encoding,
+        )
+
     def _sample_batch_host(
         self,
         buf: ReplayBuffer,
@@ -2008,29 +2063,10 @@ class Trainer:
         mirror_prob: float,
     ) -> dict[str, np.ndarray] | list:
         if hasattr(buf, "sample_batch_arrays"):
-            arrs = buf.sample_batch_arrays(batch_size)
-            if self.rebuild_sf_targets:
-                arrs = rebuild_sf_targets_in_arrays(arrs, params=self.sf_target_params)
-            if self.rebuild_categorical_target:
-                arrs = rebuild_categorical_target_in_arrays(
-                    arrs, params=self.categorical_target_params,
-                )
-            if not self.sf_policy_sparse_ce:
-                # Keep the default H2D payload identical to the pre-sparse-CE
-                # pipeline: the int rows only ride to the GPU when the sparse
-                # loss consumes them. (Dropped AFTER the rebuild hook, which
-                # also reads them.)
-                arrs.pop("sf_multipv_raw", None)
-                arrs.pop("has_sf_multipv_raw", None)
-            arrs = select_input_history_arrays(
-                arrs,
-                input_history_encoding=self._input_history_encoding,
-            )
-            return maybe_mirror_batch_arrays(
-                arrs,
+            return self._prepare_host_arrays(
+                buf.sample_batch_arrays(batch_size),
                 rng=buf.rng,
-                prob=mirror_prob,
-                input_history_encoding=self._input_history_encoding,
+                mirror_prob=mirror_prob,
             )
 
         samples = buf.sample_batch(batch_size)
@@ -2083,6 +2119,69 @@ class Trainer:
                         batch_size=batch_size,
                         mirror_prob=mirror_prob,
                     )
+                yield self._host_batch_to_tensors(host_batch)
+
+    def _full_pass_host_batch(
+        self, buf: ReplayBuffer, *, start: int, stop: int,
+    ) -> dict[str, np.ndarray]:
+        """One deterministic chunk of rows, host-side, ready to collate.
+
+        ``mirror_prob=0.0``: mirroring is a random augmentation, and a ruler
+        that flips a random half of its positions is not a fixed ruler. The
+        eval path already passed 0.0 here; it is pinned rather than plumbed so
+        the full pass cannot acquire an rng dependency by configuration.
+        """
+        return self._prepare_host_arrays(
+            buf.rows_slice_arrays(start, stop), rng=buf.rng, mirror_prob=0.0,
+        )
+
+    def _iter_full_pass_batches(
+        self, buf: ReplayBuffer, *, batch_size: int,
+    ) -> Iterator[dict[str, torch.Tensor]]:
+        """Every row of ``buf`` exactly once, oldest first, in fixed order.
+
+        Deliberately does NOT go through ``buf.sample_batch_arrays`` -- that
+        method draws with replacement, WDL-rebalances and priority-weights, and
+        those are precisely the three things a frozen ruler must not do
+        (docs/rl_loop_audit.md G14).
+
+        The final batch is ragged unless the row count divides evenly; the
+        consumer weights by ``x.shape[0]``. Under ``torch.compile`` that second
+        shape costs one extra graph on the first pass and is cached after.
+
+        The bounds are computed once, up front. On the async holdout path this
+        generator runs while the next iteration ingests, so a buffer that is
+        still GROWING can shift underneath it -- the same exposure the sampler
+        had, and inert in production because a frozen holdout takes no new rows
+        (`_ingest_train_arrays` skips it). ``rows_slice_arrays`` clamps, so the
+        worst case is a short last batch rather than an IndexError.
+        """
+        bs = int(batch_size)
+        if len(buf) <= 0 or bs <= 0:
+            return
+        if not hasattr(buf, "batch_row_bounds"):
+  # Loud rather than a silent fall back to sampling: a ruler that quietly
+  # stops being a full pass is the failure this method exists to remove.
+            raise TypeError(
+                f"{type(buf).__name__} cannot be read in a fixed row order "
+                "(no batch_row_bounds); a full-pass eval needs one that can",
+            )
+        bounds = buf.batch_row_bounds(bs)
+
+        if not self._prefetch_batches or len(bounds) == 1:
+            for start, stop in bounds:
+                yield self._host_batch_to_tensors(
+                    self._full_pass_host_batch(buf, start=start, stop=stop),
+                )
+            return
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(self._full_pass_host_batch, buf, start=bounds[0][0], stop=bounds[0][1])
+            for idx in range(len(bounds)):
+                host_batch = future.result()
+                if idx + 1 < len(bounds):
+                    nxt = bounds[idx + 1]
+                    future = pool.submit(self._full_pass_host_batch, buf, start=nxt[0], stop=nxt[1])
                 yield self._host_batch_to_tensors(host_batch)
 
     def reset_optimizer_reference_weights(self) -> None:
@@ -2382,12 +2481,26 @@ class Trainer:
     def _compute_metrics(
         self, *, buf: ReplayBuffer, batch_size: int, steps: int, tag: str,
         model_override: torch.nn.Module | None = None,
+        full_pass: bool = False,
     ) -> TrainMetrics:
+        """Score ``buf`` and pool the per-batch results into one TrainMetrics.
+
+        ``full_pass`` walks every row of ``buf`` exactly once in a fixed order
+        and ignores ``steps``; otherwise ``steps`` batches are SAMPLED from it.
+
+        Pooling is ROW-WEIGHTED in both modes: each per-batch mean is scaled by
+        that batch's row count and the total is divided by the rows scored.
+        Sampled batches are all ``batch_size`` rows, so this is numerically
+        identical to the old ``sum(mean_i) / steps`` there. A full pass is not
+        -- its last batch is ragged (2000 rows at 512 = 3 x 512 + 464), and
+        unweighted averaging would count each of those 464 rows 1.10x.
+        """
         sums: dict[str, float] = {}
         acc_sums: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
   # Accumulate on-device so each eval batch adds ~0 host syncs; one .item()
   # at the end produces the global Brier + ECE.
         calib_accum: dict[str, torch.Tensor] = {}
+        total_rows = 0
 
         mirror_p = self.mirror_prob if str(tag).startswith("train") else 0.0
 
@@ -2397,9 +2510,17 @@ class Trainer:
   # _policy_accuracy_stats — but that takes ``out`` already, not ``self.model``).
         eval_model = model_override if model_override is not None else self.model
 
-        for batch in self._iter_prefetched_batches(
-            buf, batch_size=batch_size, mirror_prob=mirror_p, count=int(steps),
-        ):
+        batches = (
+            self._iter_full_pass_batches(buf, batch_size=batch_size)
+            if full_pass else
+            self._iter_prefetched_batches(
+                buf, batch_size=batch_size, mirror_prob=mirror_p, count=int(steps),
+            )
+        )
+        for batch in batches:
+            n_rows = int(batch["x"].shape[0])
+            if n_rows <= 0:
+                continue
             with self._amp_context():
                 _rel = batch.get("relations")
                 out = eval_model(batch["x"], relations=_rel) if _rel is not None else eval_model(batch["x"])
@@ -2407,7 +2528,9 @@ class Trainer:
 
             scalars = self._extract_loss_scalars(losses)
             for k, v in scalars.items():
-                sums[k] = sums.get(k, 0.0) + v
+  # `_RAW_SUM_LOSS_KEYS` are already row sums; the rest are row means.
+                sums[k] = sums.get(k, 0.0) + (v if k in _RAW_SUM_LOSS_KEYS else v * n_rows)
+            total_rows += n_rows
 
             for name, (n_, d_) in self._policy_accuracy_stats(out, batch).items():
                 prev = acc_sums.get(name)
@@ -2422,8 +2545,8 @@ class Trainer:
 
         wdl_brier, wdl_ece = wdl_brier_ece_from_stats(calib_accum) if calib_accum else (0.0, 0.0)
         metrics = self._build_metrics(
-            sums, acc_sums, float(max(1, steps)),
-            wdl_brier=wdl_brier, wdl_ece=wdl_ece,
+            sums, acc_sums, float(max(1, total_rows)),
+            wdl_brier=wdl_brier, wdl_ece=wdl_ece, eval_rows=int(total_rows),
         )
         self._log_metrics(metrics, tag)
         return metrics
@@ -2684,8 +2807,26 @@ class Trainer:
 
     @torch.no_grad()
     def eval_steps(self, buf: ReplayBuffer, *, batch_size: int, steps: int) -> TrainMetrics:
+        """``steps`` SAMPLED batches. Not a ruler -- see :meth:`eval_full_pass`."""
         self.model.eval()
         return self._compute_metrics(buf=buf, batch_size=batch_size, steps=steps, tag="eval")
+
+    @torch.no_grad()
+    def eval_full_pass(self, buf: ReplayBuffer, *, batch_size: int) -> TrainMetrics:
+        """Deterministic single pass over ``buf``: every row scored exactly once.
+
+        Two evaluations of the same weights over the same rows return the same
+        number, which ``eval_steps`` does not -- it resamples with replacement
+        through the training sampler's rebalancing and priority weighting, and
+        on the live 2000-row frozen holdout that gave `test_loss` a floor of
+        sd 0.0522 nats with nothing to do with the model (docs/rl_loop_audit.md
+        G14). ``steps`` has no counterpart here on purpose: the row count is
+        the set's, not a budget.
+        """
+        self.model.eval()
+        return self._compute_metrics(
+            buf=buf, batch_size=batch_size, steps=0, tag="eval", full_pass=True,
+        )
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
