@@ -1885,10 +1885,37 @@ change that only a review caught. Deploys at the next restart, which the daily r
 cadence implies anyway.
 
 
-### ⚑⚑ THE JUNE POLICY WIN HAS BEEN SILENTLY OFF FOR A MONTH — sf_p0 teacher RESTORED 2026-07-27 ~14:0x (pre-registered)
+### ⚑⚑ THE JUNE POLICY WIN WAS SILENTLY OFF FOR 15.8 DAYS — sf_p0 teacher RESTORED 2026-07-27 ~14:0x (pre-registered)
 
 **This is not a new experiment. It is the restoration of a WORKED entry that reverted
 itself, and it is the best current answer to "why is the loop not gaining."**
+
+**⚠ AMENDMENT (2026-07-27 ~19:5x) — THE OUTAGE IS NOW DATED TO THE MINUTE, AND IT IS
+NOT "A MONTH".** This entry originally said ~a month throughout, which was an estimate,
+never a measurement. The archived shard pool `data/scaleup_pool_512x16/replay_shards`
+(4,428 shards spanning 07-04 → 07-19) is a durable record of which features were
+recording, because `has_sf_p0` is only written as an array when the feature is on.
+Bisecting it by mtime gives the transition exactly:
+
+```
+2026-07-11 19:42  has_sf_p0=True   shard_031416   <- last WITH
+2026-07-11 19:42  has_sf_p0=False  shard_031417   <- first WITHOUT
+```
+
+**Off from 2026-07-11 19:42 to 2026-07-27 14:12 = 15.8 days**, not ~30. Every "a month"
+in this entry and in the PR bodies that quote it should be read as 15.8 days.
+
+**And it names the restart that did it.** 07-11 is the 512×16 swap day (swap ~13:15),
+which had a **bundled restart the same day** — PR #147 plus seed reinstatement, merged
+in one window. 19:42 is that restart. The uncommitted live-yaml sf_p0 edits died there,
+which is exactly the failure mode the entry describes, now with a named cause rather
+than an inferred one.
+
+**Two reusable things fall out.** (1) *Shard arrays are a durable, bisectable record of
+what was actually recording* — better evidence than config history, because they show
+what the worker DID, not what the yaml said. (2) *A bundled restart is when uncommitted
+live edits die*, so the config-vs-code sweep belongs in the restart checklist, not in
+the post-mortem.
 
 **WHAT WAS FOUND.** All FOUR config keys of the sf_p0 teacher — `record_sf_p0_policy`,
 `record_sf_p0_regret`, `w_sf_own`, `w_sf_own_regret` — are **absent from
@@ -1914,7 +1941,8 @@ appear in no commit, on any branch, ever.** A June 2026-06-25 commit of the file
 contain them. So a proven, ledger-recorded win existed only as an uncommitted edit to the
 live yaml and was wiped by a checkout or file rewrite. **This is exactly
 [[live_yaml_branch_checkout_trap]] — except the 2026-07-02 instance was caught after 3
-iterations and this one was never caught at all, costing ~a month.**
+iterations and this one was never caught at all, costing 15.8 days (measured; see the
+amendment at the top of this entry).**
 
 **IT IS ONE FEATURE, NOT DRIFT.** Sweep of every `w_*` weight the trainer reads and every
 `record_*` flag `TrialConfig` defines, comparing code default vs live yaml: **every single
@@ -2109,7 +2137,7 @@ now known to be near-total rather than partial.
   `opening_fen_list_path` only — all four restored keys survive its rewrite. **And the
   change is COMMITTED this time (`3b4ca4737`).**
 
-**⚑ THE METRIC GAP — this is why a proven feature could die unnoticed for a month.**
+**⚑ THE METRIC GAP — this is why a proven feature could die unnoticed for 15.8 days.**
 There is **no observable metric for the sf_p0 teacher at all**: `progress.csv` has zero
 columns matching `sf_own`, and `train/losses.py` exposes no metric name for either term.
 **Nothing in the progress row would have gone to zero when the teacher died.** It also
