@@ -233,6 +233,57 @@ that key is a **deployment step, not a merge detail**. A behaviour-preserving PR
 whose safety argument lives in a file the deploy procedure never touches is not
 behaviour-preserving. Add it to this table the same day.
 
+### A6 code parity — the live branch may be missing MERGED code (added 2026-07-27)
+
+A5 reconciles config. It says nothing about **source**, and on 2026-07-27 that
+was the larger hole: PRs #274 (AdamW-only grad clip) and #275 (sf_p0 teacher
+metrics) were merged, reviewed and green, and their code was **absent from
+`ops/live-20260725`**. A restart would have deployed neither, while `main`
+looked perfect.
+
+**Instrument — run IN the live tree, before any restart:**
+```
+git diff --name-status HEAD...origin/main
+```
+**Empty output is the only passing state.** Anything listed is merged-but-not-
+deployed. On 07-27 it was 3 source files and 2 test files.
+
+**Status: VERIFIED 2026-07-27 19:3x** (`origin/main` merged into the live branch
+at `8d4cde9c6`; live and main now share ancestry, PR #276).
+
+**Why it hides, and why A5 does not catch it.** Docs and config reach the live
+branch by hand — the live yaml is edited in place and ledger entries are written
+on the live branch — so every artifact a human inspects is present. Only the
+source files are missing. The ledger says DEPLOYED, the yaml holds the key, the
+PR is merged, and the code is not there. A5's key-by-key table cannot see this
+because it compares configs, and the configs agree.
+
+**Reconciling is safe while live, but only in this order:**
+1. Merge `origin/main` into the live branch **in a scratch worktree**, never the
+   live tree. It conflicts on `configs/pbt2_small.yaml`, and conflict markers in
+   a file re-read every iteration are unacceptable. (The all-or-nothing
+   validator would reject the reload and keep the old config, so it is a soft
+   failure — do not rely on that.)
+2. Resolve, then **prove the config cannot change**: parse both yaml revisions,
+   flatten to key paths, require 0 added / 0 removed / 0 changed. On 07-27:
+   **317 keys each side, all three counts zero** — a 294-line yaml diff that was
+   entirely comments. Line-diff size is not evidence either way.
+3. Advance the live tree with `git merge --ff-only <resolved>`. This is **not** a
+   `git checkout`; the branch-switch prohibition does not apply, and no file the
+   trainer reads changes value.
+
+**Conflicts that recur, resolved by truth rather than by side:**
+- `opening_fen_list_path` — keep the LIVE side always. `monitor_fen.sh` rotates
+  it in the live tree, so main is stale by however many rotations have occurred
+  (it was two behind: `retire_115` vs `retire_136`).
+- `docs/experiment_ledger.md` — keep BOTH sides. Both branches append at the same
+  insertion point; the entries are complementary, not competing.
+
+**Root cause of the drift.** Sync PRs were squash-merged from a separate
+`chore/sync-*` branch, which lands the content on `main` with no shared
+ancestry, so the next merge re-encounters all of it and the two diverge further
+each time. When the head IS the live branch, merge with a real merge commit.
+
 ## B. Opening / seed selection
 
 | # | invariant | instrument | status |
