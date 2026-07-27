@@ -756,6 +756,11 @@ tune:
 
   holdout_fraction: 0.02
   holdout_capacity: 2000
+  # INERT since the deterministic holdout eval (audit G14): the eval is a full
+  # pass over the frozen set, so the batch count is holdout rows / batch_size
+  # (2000 / 512 = 4, the last one ragged at 464) and nothing reads this value.
+  # Kept because removing a key from the live yaml is a reload risk for no gain;
+  # the realized number of eval batches is 4, not 5.
   test_steps: 5
 
   # 2026-07-26: 0 -> 2000. The holdout was a conveyor belt, not a ruler:

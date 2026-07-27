@@ -55,7 +55,7 @@ log = logging.getLogger(__name__)
 class _Work:
     """Per-iter work item handed to the eval thread."""
 
-    __slots__ = ("batch_size", "buf", "snap_state", "source_iter", "steps", "trainer")
+    __slots__ = ("batch_size", "buf", "full_pass", "snap_state", "source_iter", "steps", "trainer")
 
     def __init__(
         self,
@@ -66,6 +66,7 @@ class _Work:
         batch_size: int,
         steps: int,
         source_iter: int,
+        full_pass: bool = False,
     ) -> None:
         self.snap_state = snap_state
         self.trainer = trainer
@@ -73,6 +74,7 @@ class _Work:
         self.batch_size = batch_size
         self.steps = steps
         self.source_iter = source_iter
+        self.full_pass = full_pass
 
 
 class AsyncTestEval:
@@ -106,8 +108,16 @@ class AsyncTestEval:
         device: str,
         source_iter: int,
         compile_mode: str = "off",
+        full_pass: bool = False,
     ) -> None:
-        """Snapshot weights to CPU and hand them to the eval thread."""
+        """Snapshot weights to CPU and hand them to the eval thread.
+
+        ``full_pass`` scores every row of ``holdout_buf`` exactly once and
+        ignores ``steps``; the holdout ruler uses it (docs/rl_loop_audit.md
+        G14). It has to be plumbed through here rather than decided inside the
+        thread because this path calls ``_compute_metrics`` directly, so the
+        sync and async holdout evals would otherwise measure different things.
+        """
   # torch.compile prefixes parameter keys with `_orig_mod.`; strip so
   # the snapshot (uncompiled before apply_compile wraps it) loads them.
         snap_state: dict[str, torch.Tensor] = {
@@ -117,6 +127,7 @@ class AsyncTestEval:
         work = _Work(
             snap_state=snap_state, trainer=trainer, buf=holdout_buf,
             batch_size=batch_size, steps=steps, source_iter=int(source_iter),
+            full_pass=bool(full_pass),
         )
 
         with self._lock:
@@ -204,6 +215,7 @@ class AsyncTestEval:
                     steps=work.steps,
                     tag="eval",
                     model_override=snap,
+                    full_pass=work.full_pass,
                 )
                 with self._lock:
                     self._result = metrics

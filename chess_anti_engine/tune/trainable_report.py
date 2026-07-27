@@ -934,22 +934,25 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
 
 
 def _test_and_drift_dict(
-    *, tc: TrialConfig, tr: TrainingResult, drift: DriftMetrics,
+    *, tr: TrainingResult, drift: DriftMetrics,
     holdout_frozen: bool, holdout_generation: int,
 ) -> dict:
     """Holdout-eval metrics + data-drift telemetry. Pre-seed test_iter so Ray
     Tune locks the column on row 1 (else CSV consumers find it missing).
 
-    `test_size` is the number of rows the eval actually DREW --
-    ``test_steps * batch_size``, sampled WITH REPLACEMENT. It used to be the
-    holdout buffer's size, which reads like an evaluated-row count and is not
-    one: production draws 5 x 512 = 2560 rows from a buffer capped at 2000, so
-    the name promised a set size and delivered a different, smaller number.
-    The buffer size is still emitted, under the name that means it --
-    `test_replay`, which is what `audit_realized_config.py` already reads. No
-    column is added or removed: Ray's CSV logger fixes the header on row 1 and
-    a resume appends without re-heading, so a schema change here would
-    misalign every post-restart segment.
+    `test_size` is the number of rows the eval actually SCORED, reported by
+    the eval itself (`TrainMetrics.eval_rows`). It has meant three things in
+    turn, and only the third is the row count: the holdout BUFFER's size
+    (wrong -- reads like an evaluated-row count and is not one), then
+    ``test_steps * batch_size`` = 5 x 512 = 2560 draws WITH REPLACEMENT from a
+    2000-row set, and now the set itself, because the eval is a deterministic
+    full pass (docs/rl_loop_audit.md G14). It is no longer reconstructible
+    from config: the last batch of a pass is ragged, so no product of two
+    knobs equals it. The buffer size is still emitted under the name that
+    means it -- `test_replay`, which is what `audit_realized_config.py`
+    already reads. No column is added or removed: Ray's CSV logger fixes the
+    header on row 1 and a resume appends without re-heading, so a schema
+    change here would misalign every post-restart segment.
     """
     test_dict: dict = {
         "holdout_frozen": int(holdout_frozen),
@@ -969,7 +972,7 @@ def _test_and_drift_dict(
     if tr.test_metrics is not None:
         tm = tr.test_metrics
         test_dict.update({
-            "test_size": max(0, int(tc.test_steps)) * max(0, int(tc.batch_size)),
+            "test_size": max(0, int(tm.eval_rows)),
             "test_iter": int(tr.test_metrics_source_iter),
             "test_loss": tm.loss,
             "test_policy_loss": tm.policy_loss,
@@ -1020,7 +1023,7 @@ def _build_report_dict(
 ) -> dict:
     """Assemble the per-iteration report dict for Ray Tune."""
     test_dict = _test_and_drift_dict(
-        tc=tc, tr=tr, drift=drift,
+        tr=tr, drift=drift,
         holdout_frozen=holdout_frozen, holdout_generation=holdout_generation,
     )
     train_metrics_dict = _train_metrics_dict(tr.metrics)

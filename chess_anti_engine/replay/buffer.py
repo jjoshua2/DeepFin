@@ -242,6 +242,48 @@ class ArrayReplayBuffer:
             return {}
         return self._gather_rows(np.arange(self._size, dtype=np.int64))
 
+    def rows_slice_arrays(self, start: int, stop: int) -> dict[str, np.ndarray]:
+        """Densified rows ``[start, stop)`` in buffer order, oldest first.
+
+        The deterministic read path: no rng, no reweighting, no class
+        rebalance. Out-of-range bounds are clamped rather than raising, so a
+        caller that computed its own chunk boundaries cannot walk off the end
+        when the buffer changed size underneath it.
+        """
+        n = int(self._size)
+        lo = max(0, min(int(start), n))
+        hi = max(lo, min(int(stop), n))
+        return self._gather_rows(np.arange(lo, hi, dtype=np.int64))
+
+    def batch_row_bounds(self, batch_size: int) -> list[tuple[int, int]]:
+        """``[start, stop)`` pairs covering EVERY row exactly once, in order.
+
+        The chunking of a deterministic full pass, defined once here so the
+        consumer that prefetches and the consumer that does not cannot disagree
+        about which rows land in which batch.
+
+        The deterministic counterpart to :meth:`sample_batch_arrays`, and the
+        reason that method cannot serve: all three of its behaviours make an
+        evaluation a function of the rng state instead of a function of the set
+        (docs/rl_loop_audit.md G14) -- it draws WITH REPLACEMENT, it
+        WDL-rebalances every batch away from the set's own class mix, and it
+        draws ``surprise_mix`` of each batch proportional to ``priority``.
+        Measured on the live 2000-row frozen holdout that made it an effective
+        sample of 1051 rows (ESS 52.6%) and gave `test_loss` a noise floor of
+        sd 0.0522 nats -- larger than every effect any yardstick reading it was
+        pre-registered to detect.
+
+        The LAST pair is RAGGED whenever the row count is not a multiple of
+        ``batch_size`` (production: 2000 rows at 512 = 3 x 512 + 464). A
+        consumer that averages per-batch means without weighting by row count
+        overweights that tail -- 1.10x at the production shape.
+        """
+        n = int(self._size)
+        bs = int(batch_size)
+        if n <= 0 or bs <= 0:
+            return []
+        return [(s, min(s + bs, n)) for s in range(0, n, bs)]
+
     def sample_batch_arrays(self, batch_size: int, *, wdl_balance: bool = True) -> dict[str, np.ndarray]:
         if self._size <= 0:
             raise ValueError("ArrayReplayBuffer is empty")
