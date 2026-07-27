@@ -1668,6 +1668,66 @@ regression, and it generalizes to every future topology swap.
 **Probable collateral:** the "512×16 has capacity limits" impression was formed
 against a net that had been crippled at step 0 and never given a fair run.
 
+### DEPLOY HELD (2026-07-27 11:00) — the zclip restart is staged but NOT executed: a monitor GPU observer has the dxg bridge wedged, with a kernel-level fingerprint this time
+
+**Everything is staged and nothing is deployed.** The live yaml reads
+`zclip_max_norm: 6.5`, PR #272 is merged and on the live branch, and the revert pool
+`data/salvage/pre_zclip65_20260727` is banked (3.8G, verified `iter=121`,
+`ckpt=checkpoint_000120`, newest on disk — the salvage stale-state check passed). **The
+restart itself is HELD.**
+
+**Why.** The pre-committed GPU gate — run BEFORE `train.sh stop`, per the near-miss
+earlier today — failed in a way that is worse than the 07-26 variant:
+
+```
+timeout 25 nvidia-smi -L      # hung; `timeout` could NOT kill it (D-state ignores signals)
+PID 2028547  STAT DNl  elapsed 54min  wchan = dxgvmb_send_sync_msg
+  python3 scripts/blindspot_panel.py --checkpoint scratchpad/live_read/monitor/ck_116.pt ...
+  parent: bash scripts/monitor_fen.sh    started 10:06:59
+```
+
+**This is the second time a monitor GPU observer has wedged the bridge, and the first
+time it has been caught with a kernel fingerprint rather than inferred.** Earlier today I
+blamed `monitor_fen.sh`'s GPU job for a wedge, was told the overseers have historically
+been safe, and RETRACTED the claim — correctly, because at the time the evidence was
+circumstantial. That retraction stands as a description of what was knowable then. The
+mechanism is now *demonstrated*: `wchan` names `dxgvmb_send_sync_msg` and the parent is
+`monitor_fen.sh`. **Both things are true: the retraction was right on the evidence, and
+the hypothesis it retracted was right on the facts.**
+
+**Training is HEALTHY and must be left alone.** Iter 121 landed 10:49:48, `result.json`
+was written 9s before the check, and the last five iteration periods are 765/656/754/757/674s
+— entirely normal. The wedge is in **new-device creation**, not in the existing CUDA
+context: `dxgkio_create_device`/`dxgvmb_send_sync_msg` is the path a *fresh process* takes.
+So the running trainer is fine and **a restart is precisely the operation that would
+hang.** Stopping training now is how this becomes an unrecoverable outage rather than a
+stalled side-job.
+
+**The monitor is self-limiting, so nothing needs killing.** `monitor_fen.sh` runs
+`blindspot_panel.py` in the FOREGROUND (`monitor_fen.sh:87`), so the loop is blocked on
+its own wedged child and cannot spawn further GPU work; the FEN retire step sits after it
+and is also stalled. The D-state process cannot be killed anyway — uninterruptible sleep
+ignores SIGKILL. Correct action is to wait, exactly as at 01:52 when the previous wedge
+drained on its own.
+
+**Held until the gate passes on its own terms** (watcher running): the D-state process
+clears AND `nvidia-smi -L` answers within 30s AND — per the 01:52 precedent — a
+fresh-process CUDA context shows *converging* init times rather than merely succeeding
+once.
+
+**Consequence for the experiment, and it is not a problem.** Training continues at cap
+**5.0** while held: `zclip_max_norm` is a construction-time key and the running process
+predates #272, so the yaml's 6.5 is inert until the restart. The grad-norm ramp therefore
+keeps running under the old cap and the pre-registered baseline simply extends. Re-read
+the baseline at restart time rather than reusing the iter-121 numbers — this series has
+already moved twice under me today.
+
+**Standing rule this vindicates, now with a mechanism:** batch GPU side-work into
+deliberate pause windows; a "cheap read-only observer" and "a process that creates a CUDA
+context" are the same thing to the dxg bridge. The queued G13 probe and C17 A/B are
+correctly still queued.
+
+
 ### PRE-REGISTERED (2026-07-27 ~07:3x) — raise `zclip_max_norm` 5.0 → 6.5, by graceful restart, together with PR #272
 
 **Why this needs a RESTART and not a yaml edit.** PR #272 makes the key live-editable,
