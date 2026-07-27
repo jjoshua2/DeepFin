@@ -1718,10 +1718,43 @@ EXPECTED because no retained checkpoint carries `holdout.npz`, so this restart
 *creates* the first durable ruler and the NEXT restart is the one that proves
 G5. Do not read this restart's `test_loss` as continuous with the last one.
 
-**Still owed on the first new rows:** the #262 rotation (schema goes 264 cols →
-+`wdl_onehot_loss`/`grad_norm_*`, so `progress.csv` must ROTATE, not append —
-`timestamp` must still parse as a timestamp), and `matrix_weight_decay` = 1e-4
-read from the next checkpoint's `opt.param_groups` rather than from config.
+**FIRST NEW ROW READ (iter 81, 02:43:30, `time_this_iter_s` 2638s — restart-
+inflated, cf. iter 42's 2839s). All three deploy checks PASS:**
+
+- **#262 rotation WORKED, and it was load-bearing, not theoretical.** The schema
+  really did change (264 → **276** columns), so without it Ray would have
+  appended a 276-field row under a 264-field header. `progress.csv` rotated to
+  `progress.1785134613.csv` at its exact pre-restart size (317,768 B) and a
+  fresh 276-column file was opened. **`timestamp` = 1785134610 → 02:43:30, i.e.
+  it still parses as a timestamp** — the specific corruption #262 exists to
+  prevent did not occur. Note the durable dir briefly holds the rotated file
+  with NO `progress.csv`: that is the staging→durable sync lag, not a loss.
+- **I7 handover is exactly as predicted, and continuity confirms it.**
+  `wdl_loss` **0.8103** (the trained, blended loss) vs `wdl_onehot_loss`
+  **0.7849** (the diagnostic). The pre-restart `wdl_loss` read 0.7866 — that was
+  the ONE-HOT quantity under the old name, and it lands at 0.7849 under the new
+  name, continuous across the restart. The +0.0254 step in the column named
+  `wdl_loss` is **a change of quantity, not of the net**, and the one-hot series
+  is the one to splice for anything spanning 2026-07-27 02:43.
+- **I9 metrics are live in `progress.csv`** — `grad_norm_mean` 5.219,
+  `grad_norm_median` 5.102, `grad_norm_p95` 6.016, `grad_clip_rate` =
+  `grad_hard_clip_rate` **0.6545**, `grad_norm_samples` 55.
+
+**I11 is independently REPRODUCED by the new instrument, and it reads worse.**
+The TB-derived finding was last-50 median 5.055 / 54% hard-clip. The first
+post-restart iteration, measured by a completely different code path, gives
+median **5.102** and **65.5%** hard-clip against `zclip_max_norm: 5.0` — and
+`grad_norm_mean` 5.219 now exceeds the cap outright. Two instruments, same
+verdict, so this is not a TB artifact. **The pre-registered rule still stands:
+do NOT touch the knob** — wait for the G8 drain, re-read, then decide. n=55
+steps on a restart-perturbed iteration is not the readout.
+
+`test_wdl_loss` = **nan**, expected: the holdout is empty and refilling toward
+2000 (G5, `restored_rows=0`).
+
+**Still owed:** `matrix_weight_decay` = 1e-4 read from the next checkpoint's
+`opt.param_groups` rather than from config — the one pin not yet verified from
+the resolving stage (method rule 12).
 
 **`scripts/monitor_fen.sh` is left SIGSTOPped** (PIDs 9314, 1778213). It was the
 proximate trigger of the wedge and its GPU job would resume on the next
