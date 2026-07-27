@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["Trainer", "trainer_kwargs_from_config"]
+__all__ = ["Trainer", "resolve_zclip_max_norm", "trainer_kwargs_from_config"]
 
 
 def __getattr__(name: str) -> Any:
@@ -15,6 +15,10 @@ def __getattr__(name: str) -> Any:
         from .trainer import Trainer
 
         return Trainer
+    if name == "resolve_zclip_max_norm":
+        from .trainer import resolve_zclip_max_norm
+
+        return resolve_zclip_max_norm
     if name == "trainer_kwargs_from_config":
         from .trainer import trainer_kwargs_from_config
 

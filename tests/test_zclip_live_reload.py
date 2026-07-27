@@ -9,10 +9,18 @@ shape as the `weight_decay` defect (rl_loop_audit I13).
 
 from __future__ import annotations
 
+import inspect
+import math
+
+import pytest
 import torch
 import torch.nn as nn
 
-from chess_anti_engine.train.trainer import Trainer
+from chess_anti_engine.train.trainer import (
+    Trainer,
+    resolve_zclip_max_norm,
+    trainer_kwargs_from_config,
+)
 from chess_anti_engine.tune.trainable_config_ops import (
     _reload_yaml_into_config,
     restart_required_config_keys,
@@ -46,6 +54,7 @@ class _TrainerShim:
         self.zclip = _FakeZClip(max_grad_norm)
 
     set_grad_clip_max_norm = Trainer.set_grad_clip_max_norm
+    grad_clip_max_norm = Trainer.grad_clip_max_norm
 
 
 def _make_shim(max_grad_norm: float | None) -> _TrainerShim:
@@ -120,3 +129,107 @@ def test_the_cap_actually_binds_after_a_live_change() -> None:
     assert effective(total, t.zclip.max_grad_norm) == 5.0
     t.set_grad_clip_max_norm(10.0)
     assert effective(total, t.zclip.max_grad_norm) == 10.0
+
+
+# --------------------------------------------------------------------------
+# The call site. The setter above was never the risky half: a live push that
+# resolves the config differently from the constructor changes the cap on a
+# trial nobody asked to change. Deleting the push in trainable.py passed every
+# test above, so these bind the two ends together.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({"zclip_max_norm": 5.0}, 5.0),
+        ({"zclip_max_norm": 5.0, "grad_clip": 10.0}, 5.0),  # explicit key wins
+        ({"grad_clip": 10.0}, 10.0),  # argparse alias, no zclip_max_norm
+        ({}, 1.0),  # neither: the constructor's documented default
+        ({"zclip_max_norm": None}, None),  # explicit disable round-trips
+    ],
+)
+def test_resolver_agrees_with_the_constructor_on_every_spelling(
+    config: dict, expected: float | None
+) -> None:
+    """`config.get("zclip_max_norm")` gets three of these five wrong.
+
+    It reads an ABSENT key as None -- "no hard cap" -- for the alias-only and
+    empty configs, which is how `configs/default.yaml` (grad_clip: 10.0, no
+    zclip_max_norm) would have had its cap switched off at iteration 1.
+    """
+    assert resolve_zclip_max_norm(config) == expected
+
+
+def test_the_live_push_and_the_constructor_read_the_same_config_the_same_way() -> None:
+    """Both real code paths, on a config that exercises the alias."""
+    config = {"grad_clip": 10.0, "device": "cpu"}
+    constructed = trainer_kwargs_from_config(config)["zclip_max_norm"]
+
+    t = _make_shim(constructed)
+    assert t.set_grad_clip_max_norm(resolve_zclip_max_norm(config)) is False, (
+        "the first live push must be a no-op against a freshly constructed "
+        "trainer; a True here means the two paths disagree"
+    )
+    assert t.grad_clip_max_norm == 10.0, "the alias must not resolve to a disabled cap"
+
+
+def test_trainable_pushes_through_the_shared_resolver() -> None:
+    """Source-level guard: the call site must not regrow a bare config.get().
+
+    Nothing else can catch this -- importing trainable.py needs Ray, and the
+    defect is invisible on the production config, where the key is present.
+    """
+    from chess_anti_engine.tune import trainable
+
+    src = inspect.getsource(trainable)
+    assert "set_grad_clip_max_norm(resolve_zclip_max_norm(config))" in src, (
+        "the live zclip push must resolve via resolve_zclip_max_norm so it "
+        "agrees with trainer_kwargs_from_config"
+    )
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, -5.0, float("nan"), float("inf")])
+def test_corrupting_caps_are_refused_and_the_current_one_survives(bad: float) -> None:
+    """zclip has no clamp on clip_coef = cap / (norm + 1e-6).
+
+    cap 0 zeroes every gradient; a negative cap flips their sign into gradient
+    ASCENT; NaN compares unequal to itself so the setter would report a
+    transition and log every iteration forever. A live yaml typo must not do
+    any of that to a running trial.
+    """
+    t = _make_shim(5.0)
+    assert t.set_grad_clip_max_norm(bad) is False, "a corrupting value is not a transition"
+    assert t.grad_clip_max_norm == 5.0, "the working cap must survive a bad edit"
+
+    # And it must stay refused -- not latch after a second attempt.
+    assert t.set_grad_clip_max_norm(bad) is False
+    assert t.grad_clip_max_norm == 5.0
+
+
+def test_a_refused_cap_never_reaches_the_gradients() -> None:
+    """Behavioural counterpart: prove the sign flip is what we are preventing."""
+    total_norm = 40.0
+
+    def zclip_coef(cap: float) -> float:
+        # zclip.py: clip_coef = max_global_norm / (global_norm + 1e-6), unclamped
+        return cap / (total_norm + 1e-6)
+
+    assert zclip_coef(-1.0) < 0.0, "fixture assumption: a negative cap inverts the gradient"
+    assert zclip_coef(0.0) == 0.0, "fixture assumption: a zero cap erases the gradient"
+
+    t = _make_shim(5.0)
+    for bad in (-1.0, 0.0):
+        t.set_grad_clip_max_norm(bad)
+        cap = t.grad_clip_max_norm
+        assert cap is not None
+        assert cap > 0.0
+        assert 0.0 < zclip_coef(cap) < 1.0, "the applied coefficient must still shrink, not flip"
+
+
+def test_nan_does_not_produce_an_endless_transition_log() -> None:
+    """`nan != nan`, so an unguarded setter reports a change on every call."""
+    t = _make_shim(5.0)
+    assert math.isnan(float("nan"))
+    for _ in range(3):
+        assert t.set_grad_clip_max_norm(float("nan")) is False
