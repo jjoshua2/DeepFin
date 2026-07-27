@@ -1909,10 +1909,36 @@ at the correct LR" and "fewer steps at a wrong LR" are different bets and the se
 already been run here and lost badly. **If tripled gradient does not move the ratchet, LR
 is the next lever** — with that history in front of us.
 
-**DECIDING YARDSTICK — the ratchet, not a loss column.** Next `vs_boot512` row at ≥200
-games. **SUCCESS = point estimate above +20 Elo with the CI excluding 0.** Anything less
-and the gradient-starvation thesis is wrong and we move to LR / data / the C17 search
-defect. Plumbing pre-check on the first 3 iterations: `train_time_s` < 90s,
+**DECIDING YARDSTICK — CORRECTED THE SAME SESSION, BEFORE ANY DATA, BECAUSE THE FIRST ONE
+COULD NOT FIRE.** The original bar was "next `vs_boot512` row ≥200 games, SUCCESS = point
+estimate above +20 Elo, CI excluding 0". **That bar is unreachable in a day even if the
+thesis is exactly right,** and writing it would have manufactured a guaranteed failure.
+Arithmetic: 97 iterations / ~5,000 steps bought **+1.1 Elo**. Doubling to ~10,600
+steps/day buys ~**+2 Elo**, against a ratchet half-width of ~±35. **A one-day success bar
+of +20 is a bar that cannot fire — the mirror image of the gate-that-cannot-fail defect
+(memory: [[a_gate_that_cannot_fail]]).**
+
+**Corrected yardstick: the ratchet SLOPE across ≥4 daily `vs_boot512` rows**, fitted with
+its CI, not any single row. **SUCCESS = slope > 0 with the CI excluding 0 over ≥4 rows
+(~4 days).** **KILL/PIVOT = slope ≤ 0 over ≥4 rows**, which would say gradient volume is
+not the binding constraint. Interim single rows are logged and explicitly NOT verdicts.
+This also fixes the instrument problem the pre-registered reading rule already named: a
+two-point series cannot resolve a day of training, and the answer is more frequent points
+rather than more games per point. `scripts/ratchet_loop.sh` runs one per calendar day and
+starts with training.
+
+**A CAVEAT THAT MAY MATTER MORE THAN THIS ENTRY.** The strongest evidence against the
+gradient thesis is already in the ledger and predates it: the views 2.5 experiment DID
+significantly improve the raw policy head (E[regret] 98.9 → 89.55, paired CI excluding 0)
+and **search policy did NOT move** (51.28 → 52.42, NS). More gradient demonstrably
+improves the raw net and demonstrably fails to reach the moves that get played. **If that
+pattern repeats at 5.0 views — raw policy improves again, ratchet stays flat — the
+bottleneck is between the raw net and the played move, i.e. SEARCH, not training volume.**
+That points at **C17** (the C kernel duplicates leaves: −34% tree nodes and a DIFFERENT
+selected move than the Python reference, 29–76% duplication at 256 sims), which sits in
+the one component that both builds the training targets and plays the games. **Ranked
+ahead of an LR change as the next investigation**, and the raw-policy-vs-search split
+should be re-measured alongside the next ratchet row so the two hypotheses separate. Plumbing pre-check on the first 3 iterations: `train_time_s` < 90s,
 `train_views_actual` ≈ 5.0, `trainer_steps_done` ≈ 88.
 
 **KILL (views is live-tunable — revert is a yaml edit, no restart):** train/holdout policy
