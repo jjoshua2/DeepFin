@@ -2523,6 +2523,27 @@ the production architecture and may not exist there.**
     needs a small C change to plumb the mode into `tree_gumbel_select_child`;
 (c) `target_batch=1` relying on cross-game broker batching — **0% duplicates with no value
     bias and no new mechanism at all**, cost unknown in production and plausibly ~zero.
+**Concurrency is TUNABLE, and that strengthens (c) — but both knobs cost a restart.**
+If one-leaf-per-board under-fills the GPU, batch size can be bought back directly:
+`selfplay_batch` (384) and `slot_oversubscribe` (2.0). **Both are `_RECO_RESTART_KEYS`** —
+`slot_oversubscribe` literally (`worker.py:2877`), and `selfplay_batch` because it is
+published as `games_per_batch` (`distributed_runtime.py:285`), which is also on that list.
+So either one restarts every selfplay session and therefore pays the **C14** cost measured
+today: the PID starves for ~6 iterations, is then misled by the completion-order recovery
+burst, and carries a ~14-iteration EMA tail.
+
+**That is an argument for BUNDLING, not for avoiding it.** The C17 deploy already requires
+a restart — a new yaml key cannot enter a live reload, and `_mcts_tree.c` needs the paired
+rebuild (A6 exception). Changing concurrency in that same restart is therefore **free at
+the margin**: one contamination event rather than two, and the window is already known to
+be unreadable for mix- and winrate-dependent metrics, so it should be annotated as such in
+advance rather than discovered afterwards.
+
+RAM headroom as of 2026-07-27 ~21:1x: **98 G total, ~44 G available**, python3 RSS 56.9 G
+in aggregate. The `selfplay_batch: 384` comment was written against "RAM headroom 71G", so
+headroom has roughly halved since — measure before raising either knob, and note
+`slot_oversubscribe`'s own pre-committed KILL (worker RSS +4 G).
+
 **(c) is the cheapest correct thing if its throughput holds up, because it removes the
 duplication without adding any bias to the search.** Deciding this needs a
 production-harness throughput measurement (games/h at matched sims), not another
