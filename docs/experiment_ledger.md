@@ -4810,6 +4810,62 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### READOUT 1 of 2 (2026-07-27 ~23:2x) — the 77.8% was an 8-BOARD ARTEFACT. Production condition is 39.5%, and LEGACY still wins decisively.
+
+**The headline number I have been quoting all day does not describe production.**
+Duplicate rate is governed by leaves-per-board = `GSS_GPU_BATCH`(1024) / boards-per-call,
+and every earlier measurement used **8 boards** = 128 leaves/board. Production puts
+EVERY on-turn game in ONE call (`network_turn.py:864`, `_run_mcts_group(all_idxs, ...)`),
+so boards-per-call is in the hundreds at `selfplay_batch: 384`.
+
+*Correction to the pre-registration's ground truth:* the production selfplay call site is
+**`selfplay/network_turn.py:747`**, not `match.py:129` (that is the arena/match path).
+The finding is unchanged — it passes neither `target_batch` nor `vloss_weight`, so both
+default to 0.
+
+**Sweep, `vloss=0`, exact hashing, CPU, distinct FENs from the live seed pool:**
+
+| sims | 8 bd | 32 bd | 64 bd | 128 bd | 256 bd | 344 bd |
+|---|---|---|---|---|---|---|
+| 32 (75% of plies) | 0.062 | 0.062 | 0.062 | 0.082 | 0.116 | 0.111 |
+| 256 (25% of plies) | 0.771 | 0.585 | 0.562 | 0.486 | 0.332 | **0.183** |
+
+**At 32 sims — three quarters of all production plies — duplication is 6-12% at every
+board count. C17 barely touches them.**
+
+**THE PRODUCTION CONDITION (344 boards, real `playout_cap_fraction: 0.25` mix, 25% at
+256 sims and 75% at 32 in the SAME call, which is how selfplay actually runs):**
+
+| arm | GPU calls | rows | rows/call | dup | DISTINCT rows |
+|---|---|---|---|---|---|
+| `vloss=0` (production today) | 24 | 29805 | 1242 | **0.395** | 18032 |
+| **`vloss=1` LEGACY** | **24** | 26670 | 1111 | **0.000** | **26670** |
+| `target_batch=1` | 187 | 30908 | 165 | 0.000 | 30908 |
+
+**LEGACY does 48% MORE DISTINCT POSITIONS for 10.5% FEWER total forwards at an
+IDENTICAL call count.** That is the mechanism behind PR #278's measured -7.4 cp, seen
+from the throughput side.
+
+**The mix reads HIGHER than either pure arm (0.395 vs 0.183 and 0.111), and the reason
+matters.** The 32-sim games finish early and drop out of the call, so late calls carry
+few boards at high leaves-per-board. **Duplication concentrates in the TAIL of a
+mixed-budget call** — which is invisible to any single-sim-count benchmark, and is why
+both the 8-board test (too high) and a naive 344-board single-budget test (too low)
+mislead.
+
+**Against the pre-committed rule:** duplicate rate **0.000 < 0.10** PASSES. The
+`< 0.25` void condition did NOT fire (0.395). **games/h is NOT yet measured** — and the
+rule named games/h, so the decision is not final. Calls are identical and rows are lower,
+so throughput cannot plausibly fall; but substituting a structural proxy for the
+pre-committed ruler *precisely when the proxy looks favourable* is the laundering this
+project's own protocol forbids. Readout 2 measures games/h on the GPU.
+
+**Standing caveat on all of the above:** CPU, hash evaluator. These are SEARCH-STRUCTURE
+counts (calls, rows, distinctness), which transfer; they are not GPU timings, which do
+not. With bucket padding active, 1242 vs 1111 rows/call may fall in the SAME compiled
+bucket and cost identical GPU time — in which case the win is entirely target quality,
+not throughput. Either way it is not a loss.
+
 ### PRE-REGISTERED (2026-07-27 ~23:0x, written BEFORE any production number) — selfplay batching optimum: Gumbel LEGACY virtual loss
 
 **Written before the pause, before the harness runs, before any live measurement.**
