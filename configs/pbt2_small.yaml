@@ -223,7 +223,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_60.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_65.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -376,7 +376,16 @@ train:
   optimizer: aurora
   matrix_optimizer_scope: mlp_out  # Aurora on FFN + attention output; Q/K/V stay AdamW.
   matrix_lr_multiplier: 20
-  matrix_weight_decay: 0
+  # 2026-07-26: 0 -> 1e-4, set to the REALIZED value ahead of deploying PR #260.
+  # This key was decorative: torch's Optimizer.load_state_dict overwrites every
+  # group hyperparameter on resume, and weight_decay was the one with no
+  # re-application path, so the live Aurora group has carried 1e-4 (stamped by
+  # an offline recovery run) regardless of what this line said. #260 adds
+  # _reapply_configured_param_group_hparams, which makes the key real -- so
+  # leaving 0 here would ZERO the matrix group's decay at the restart. That is a
+  # training change, not a config fix. Same trap as soft_policy_temp and
+  # diff_focus. Moving it to 0 deliberately is a separate experiment.
+  matrix_weight_decay: 0.0001
   aux_weight_decay: 0.0001
   aurora_uw_floor: 0.0
   aurora_pp_iterations: 3
