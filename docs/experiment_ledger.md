@@ -987,6 +987,63 @@ rollback, the replay window holds ~a day of data made under the changed setting.
 
 ---
 
+### FINDING (2026-07-26) — the `diff_focus` tuning sweep's winning values have never reached the worker
+
+Found by the **fixed** A7 instrument within minutes of it shipping (PR #257),
+which is the point of fixing instruments.
+
+**What.** The worker never constructs a `DiffFocusConfig` from the published
+reco at all. `diff_focus` is consumed on the worker, in
+`selfplay/network_turn.py:429` and `:503-507`, where it decides which positions
+get recorded and with what `priority`. So it runs on the **dataclass defaults**,
+not the yaml:
+
+| key | yaml (live) | dataclass default actually used |
+|---|---|---|
+| `diff_focus_q_weight` | **4.8** | 6.0 |
+| `diff_focus_pol_scale` | **3.8** | 3.5 |
+| `diff_focus_slope` | **4.0** | 3.0 |
+| `diff_focus_min` / `min_keep` | **0.09** | 0.025 |
+| `diff_focus_enabled` | true | True (agrees) |
+
+**Why this one stings.** Those yaml values are commented *"Pinned: top-5 median
+from Run 4"* — they are the output of a sidecar tuning sweep. **The sweep ran,
+picked winners, and the winners were written to a key the worker does not
+read.** Any conclusion drawn from that pinning describes a configuration that
+never existed in production.
+
+**It also re-frames [[diff_focus_noop_on_512x16]].** That note records diff_focus
+as near-inert ("drops ~1.6%, not 91%") with "params stale from the 46M net". The
+truth is different and worse: the measurement was of the **code defaults**, and
+the yaml's parameters were never stale-but-applied — they were never applied.
+Note H2 measured priority CV 0.94 with the spread attributed to diff_focus, so
+diff_focus **is** shaping sampling; it is doing so at 6.0/3.5/3.0/0.025, values
+nobody chose.
+
+**This is the eighth instance of the house bug class found today**, and the
+third where the *instrument* was the thing at fault (A4 diffing only shared
+keys) rather than the code.
+
+**Action — plumbing and value are SEPARATE, same rule as E13.**
+
+1. Plumbing it is **data-affecting**, unlike `soft_policy_temp`: these five
+   values genuinely diverge, so publishing them changes which positions are
+   recorded and how they are weighted, from the next restart. It therefore needs
+   its own pre-registered entry with a yardstick and a kill rule.
+2. **Do not assume the yaml values are the right target.** Run 4's sweep chose
+   them on the 46M net, and the whole family of reweighting knobs was declared
+   EXHAUSTED on 2026-07-07 ([[gap_priority_104_killed]]). The honest options are
+   (a) plumb and adopt 4.8/3.8/4.0/0.09, (b) plumb and pin the yaml to the code
+   defaults 6.0/3.5/3.0/0.025 so the config finally tells the truth about what
+   runs, or (c) delete the knob. **(b) is the cheapest correct step** and is
+   behaviour-preserving; (a) is a real experiment; (c) needs an argument that
+   the 1.6% drop buys nothing.
+3. Pinned meanwhile in `tests/test_reco_coverage.py::_KNOWN_UNPUBLISHED` so a
+   ninth gap cannot hide behind this one, and `--reco-diff` exits 1 today —
+   that is the instrument working, not a regression.
+
+---
+
 ### FINDING (2026-07-26) — `soft_policy_temp` has been 2.0, not the configured 3.0, for five months
 
 **What.** `configs/pbt2_small.yaml` has read `soft_policy_temp: 3.0` since commit
