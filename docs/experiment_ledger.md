@@ -1885,6 +1885,64 @@ change that only a review caught. Deploys at the next restart, which the daily r
 cadence implies anyway.
 
 
+### ⚑ THE SF TEACHER'S SHARPNESS IS A REAL, ISOLATED, LIVE-RELOADABLE LEVER — and the audit set CANNOT calibrate it (2026-07-27 ~16:0x)
+
+**Three knobs, and they are not interchangeable.**
+
+| knob | live | policy target | value target (`sf_wdl`) |
+|---|---|---|---|
+| `sf_policy_temp` | **0.012** | softmax temperature over the row scores | **untouched** |
+| `sf_wdl_cp_slope` / `sf_wdl_cp_draw_width` | 0.006 / 120.0 | shapes the scores fed to that softmax | **yes** — `target_builder.py:145` |
+| SF's native `UCI_ShowWDL` | **off** | — | — (~72% one-hot; `sf_wdl_use_cp_logistic: true` replaces it) |
+
+**Measured control authority, offline from stored `sf_multipv_raw` (400 rows, no
+training compute, no live risk).** `rebuild_sf_policy_target` reproduces the live
+construction: at the live params it gives 1.242 nats against the 1.352 measured on live
+shards, the gap being the 400-row subset — so the instrument is reading the real thing.
+
+| `sf_policy_temp` | 0.006 | **0.012 LIVE** | 0.02 | 0.04 | 0.08 | 0.15 | 0.25 | 0.5 |
+|---|---|---|---|---|---|---|---|---|
+| entropy, nats | 0.942 | **1.242** | 1.533 | 1.970 | 2.375 | 2.714 | 2.891 | 2.992 |
+| top-1 mass | 0.639 | **0.545** | 0.462 | 0.346 | 0.245 | 0.168 | 0.127 | 0.100 |
+
+**The two knobs are nearly ORTHOGONAL in effect, which is the actionable part.** Holding
+`sf_policy_temp` at 0.012 and moving the cp mapping over slope 0.003→0.020 moves policy
+entropy only 1.24→1.52 (and non-monotonically), while moving the value target's `w+0.5d`
+range 0.411→0.991 and the draw fraction at 0cp 0.178→0.537. **So the cp mapping is
+effectively a VALUE knob**, and the WDL blend's SF component is load-bearing (zeroing it
+crashed winrate 0.64 → 0.40). **`sf_policy_temp` is the clean policy-only lever**: ~3×
+entropy range, no value coupling, and live-reloadable — it is in the worker's
+server-managed key list (`worker.py:781`), so it propagates without a restart.
+
+**⚠⚠ THE FROZEN AUDIT SET IS STRUCTURALLY INCAPABLE OF CHOOSING THIS KNOB. DO NOT SCREEN
+TEMPERATURE ON IT.** Both of `audit_targets`' policy columns are degenerate in temperature:
+
+- **top-1 is exactly invariant.** Softmax is monotone, so the argmax cannot move. Measured
+  on 400 rows across temps 0.006→0.5: **100.0% identical argmax at every temperature.**
+- **E[regret] is monotone in temperature by construction.** As T→0 the mass concentrates on
+  the lowest-regret move, so regret falls. The sweep would report "sharper is always
+  better" at every point.
+
+A temperature sweep against the audit set therefore returns an **artifact of the metric**,
+not a finding, and would enter the ledger as a WORKED verdict for "make the teacher as
+sharp as possible". **This is the same trap as the value table** (native WDL wins the ECE
+only because it IS the reference object) recorded earlier today, and the same trap as the
+four figures retracted today. Temperature trades target ACCURACY against the diversity a
+learner needs; accuracy rulers can only see the first term.
+
+**What CAN decide it** — one of, and it must be pre-registered before the numbers land:
+(a) an offline retrain at candidate temps (`scripts/retarget_retrain.py`) judged on POLICY
+only, never value — see the offline-distillation value trap; (b) a live A/B on a day-plus
+window with paired CIs; (c) the Cheese catastrophic-tail objective. Not the audit set.
+
+**Why this is worth doing now rather than filed.** The teacher sits at 1.242–1.352 nats
+against the own-target's 0.595, i.e. already 2.3× softer, and it was absent entirely for
+15.8 days. Its correct sharpness has never been chosen against a measured entropy
+relationship — the live 0.012 was set on 2026-05-23 to *preserve prior sharpness* after
+the cp→WDL mapping was softened, which is a compensation, not a calibration. NOT
+pre-registered here; this entry establishes the lever, its isolation, and the ruler that
+must not be used.
+
 ### ⚑ FINDING (2026-07-27 ~15:5x) — the SF teacher is 2.3× SOFTER than the target it counterweights, measured paired on live rows
 
 **Why this was measured.** Coverage checks prove a feature is *present*; nothing had checked
