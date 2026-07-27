@@ -1734,9 +1734,30 @@ anything else until this passes.
 the better-supported story, and treating it as a failure would be reading the outcome
 after the fact.
 
-**Baseline to beat, measured at iter 101 (pre-change):** `grad_norm_median` 5.378,
-`grad_hard_clip_rate` 0.889, frozen `test_wdl_loss` 0.8401 ± 0.0079 (iters 89–101),
-`test_loss` 5.0085 ± 0.0246. **The control that makes the "no damage" claim non-vacuous:
+**Baseline to beat — RE-MEASURED at iter 121 (pre-change), and the re-measurement
+changes two things in this entry.** `grad_norm_median` **5.536**, `grad_norm_p95`
+**6.78**, `grad_hard_clip_rate` **0.953**, frozen `test_wdl_loss` **0.8384 ± 0.0066**
+(iters 89–121, n=33).
+
+*What the extra 20 rows change.* (1) **The ramp is now unambiguous and ACCELERATING.**
+Over iters 81–121 (n=41) `grad_norm_median` rises **+0.0079/iter (t=+6.63)** and
+`grad_hard_clip_rate` **+0.0074/iter (t=+8.09)**; over the last 17 rows alone the grad
+slope is **+0.0120/iter (t=+3.86)**. The original "+0.0086/iter" reading was right all
+along — the 19-row window I withdrew it on simply lacked the power to resolve it, and the
+withdrawal was the error. This is the fifth pass over the same series; **the standing
+lesson is that this quantity needs ≥40 rows before any slope claim, and that a plateau
+inside a ramp is the default appearance of a noisy rising series, not evidence against
+one.** (2) **6.5 is no longer "just above p95"** — p95 moved 6.17 → 6.78 during the four
+hours this decision took. Expected first-row hard-clip is therefore ~5–10%, not ~5%, and
+the re-bind horizon is **~16h at +0.012/iter, not the "roughly two days" claimed above**.
+The value is kept at 6.5 as chosen, because with #272 deployed the next move is a yaml
+edit and the cost of a too-small first step is now near zero — which is exactly what the
+restart is buying.
+
+*What has NOT changed, and it is the load-bearing control:* the frozen holdout is flat
+across the whole ramp — `test_wdl_loss` slope **−0.0000/iter (t=−0.10)** over iters
+89–121. A grad norm rising with t=+6.6 alongside a value ruler that does not move at all
+is the central fact of this entry. **The control that makes the "no damage" claim non-vacuous:
 across a grad-norm shift of +1.74 sd (iters 89–95 → 96–101), `test_wdl_loss` moved
 +0.0000** — so the ruler is sensitive enough to be worth watching and has, so far, seen
 nothing.

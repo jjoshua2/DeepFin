@@ -435,40 +435,84 @@ train:
   # re-set. Watch the per-iteration `grad_norm_median` / `grad_hard_clip_rate`
   # columns in progress.csv; the trainer also logs a warning when it trips.
   #
-  # THE WATCH HAS FIRED (2026-07-27, iters 81-99, measured from progress.csv,
-  # a different code path from the TB reading above): median 5.15-5.47, mean
-  # 5.247, p95 ~6.0, HARD-clip rate 0.65-0.84. The adaptive z-score clipper
-  # fires on only ~5% of steps -- correct outlier behaviour -- so this fixed
-  # cap, not zclip's adaptive logic, is doing essentially all the clipping.
-  # The watch threshold is breached at EVERY iteration 81-99.
+  # THE WATCH FIRED, AND THE CAP WAS RAISED 5.0 -> 6.5 (2026-07-27 ~08:00,
+  # graceful restart at iter ~122). Ledger: "PRE-REGISTERED (2026-07-27) --
+  # raise zclip_max_norm 5.0 -> 6.5". Pre-change baseline at iter 121:
+  # grad_norm_median 5.536, p95 6.78, HARD-clip rate 0.953. NOTE 6.5 is BELOW
+  # that p95 -- it was chosen when p95 read 6.17, four hours earlier -- so
+  # expect ~5-10% hard-clip on the first row, not ~5%, and a re-bind horizon of
+  # ~16h at the measured +0.012/iter, not two days. Kept at 6.5 anyway: with
+  # #272 live the next move is a yaml edit, so a too-small first step is cheap. The adaptive
+  # z-score clipper was firing on only ~5% of steps -- correct outlier
+  # behaviour -- so this FIXED cap, not zclip's adaptive logic, was doing
+  # essentially all of the clipping. A cap that binds on 89% of steps is a
+  # step-size controller, not a tail guard.
   #
-  # SHAPE: a STEP, not a drift. An earlier revision of this comment claimed a
-  # linear +0.0086/iter rise; that was a line fitted through a level shift and
-  # is WITHDRAWN. Measured: iters 81-95 are FLAT (slope -0.0020/iter, p=0.54,
-  # mean 5.204), then a discrete jump at iter 96 to mean 5.410 (Welch t=10.8,
-  # p=1.7e-6, changepoint scan picks 96 as the global optimum). The pooled
-  # +0.0099/iter is the artifact. Cause of the step is NOT in the 276 logged
-  # columns: every train head moved <0.5% across it (|d|<=0.34) while the grad
-  # norm moved +4.0% (d=4.04).
-  # Also note `grad_hard_clip_rate` is bit-identical to `grad_clip_rate` here,
-  # so they are ONE observation, not two -- and because the median sits just
-  # above the cap, the clip rate is a hypersensitive readout of small location
-  # shifts (+4% in location -> +17 points of clip rate). Do not read a moving
-  # clip rate as independent evidence.
-  # NOT parameter growth: ||theta|| moved +0.09% over 2824 steps.
-  # NOT a replay-window drain: the window is pinned at its 1.5M cap every
-  # iteration (`replay_window_before/after` constant), so the drain that was
-  # pre-registered as the suspected cause DOES NOT EXIST.
-  # DO NOT re-set this value without a ledger entry. Two readings remain open
-  # and they imply OPPOSITE moves: (a) the cap is stale and should rise, or
-  # (b) the drift is suppressed instability and the cap is the only brake --
-  # note that adaptive z-score clipping structurally CANNOT catch a slow drift,
-  # because its EMA mean tracks the rise. As of this comment the value is
-  # deliberately UNCHANGED at 5.0 pending that decision.
-  # This key is now LIVE-RELOADABLE (Trainer.set_grad_clip_max_norm, pushed
-  # each iteration from trainable.py), so changing it is a yaml edit that takes
-  # effect on the next optimizer step and reverts just as fast -- no restart.
-  zclip_max_norm: 5.0
+  # WHY 6.5: it sits just above the measured p95 (6.17-6.20), so it clips ~5%
+  # of steps -- the rate the adaptive clipper is tuned for, and the smallest
+  # change that restores the intended division of labour. The historically
+  # inert ratio was cap/median ~2.1 (the 384x12 net ran cap 5.0 at median 2.4
+  # with a 0.000 hard-clip rate), which would put the cap near 11 today. 6.5 is
+  # deliberately the conservative end. KNOWN COST: at the measured +0.012/iter
+  # (iters 105-121, t=+3.86) 6.5 re-binds in ~16h -- which is now a yaml edit,
+  # not a restart.
+  #
+  # SHAPE -- read this before fitting anything to this series. Two earlier
+  # revisions of this comment were BOTH wrong, in opposite directions:
+  #   (1) "linear drift +0.0086/iter" -- one line fitted across a level shift.
+  #   (2) "a STEP at iter 96, not a drift" -- right about iters 81-99, WRONG
+  #       about the trial. That window is a plateau partway up a longer ramp.
+  # Full TB reconstruction across all three surviving lineages:
+  #   384x12 @3e-4  06-21..07-11  median 2.36-2.50  FLAT for 20 days
+  #   512x16 @3e-4  07-11..07-25  median 3.12-3.70  flat-with-a-U
+  #   512x16 @3e-5  07-26..now    median 4.08->5.54 RAMP, +0.0079/iter t=6.6
+  # and the ramp is ACCELERATING: +0.0120/iter (t=3.86) over iters 105-121.
+  # This series needs >=40 rows before any slope claim -- a plateau inside a
+  # ramp is the default appearance of a noisy rising series, and reading one as
+  # evidence against the ramp is the mistake that was made here twice.
+  # Today's value is a SUM: +1.3 instantaneous at the 512x16 swap, +0.4
+  # instantaneous at the boot512 restart, +1.25 continuous inside this trial.
+  # The "~2.2" this comment used to quote is a 384x12 number -- stale by
+  # LINEAGE, not by drift; that net never drifted at all.
+  # TB step counters RESET at every lineage change (5fac4 ended at 132810;
+  # both 512x16 trials restart at exactly 56000). Do NOT splice the series.
+  #
+  # LIKELY CAUSE, correlational and NOT established: the 10x LR cut. The one
+  # clean natural experiment in the record is the flat-lower-LR run
+  # (07-01..07-03) where matrix LR moved 6e-3 -> 2e-3 and back with nothing
+  # else changing: median grad norm went 2.49 -> 4.64 -> 2.75, tracking LR
+  # INVERSELY and recovering fully on revert. This trial runs at 10x lower base
+  # LR (3e-5) than either predecessor. So a high clip rate reads as "LR too
+  # high" but every measurement here points the other way. This does NOT
+  # explain the ramp, since LR has been constant throughout it.
+  #
+  # RULED OUT as causes: parameter growth (||theta|| +0.09% over 2824 steps);
+  # any single loss head (across the iter-96 shift every train head moved
+  # <0.5%, |d|<=0.34, while grad norm moved +4.0%, d=4.04); restarts (the two
+  # inside this trial, including the six-PR deploy, each move the median <0.08
+  # across the gap); and a replay-window drain -- the window is pinned at its
+  # 1.5M cap every iteration, so the drain pre-registered as the suspected
+  # cause DOES NOT EXIST.
+  #
+  # NO MEASURABLE DAMAGE so far, and the ruler is sensitive enough for that to
+  # mean something: across a grad-norm shift of +1.74 sd (iters 89-95 vs
+  # 96-101) the FROZEN holdout's test_wdl_loss moved +0.0000 (0.8401 both
+  # sides, sd 0.0079, n=13).
+  #
+  # `grad_hard_clip_rate` is bit-identical to `grad_clip_rate` -- ONE
+  # observation, not two -- and while the median sits near the cap it is a
+  # hypersensitive readout of small location shifts (+4% in location -> +17
+  # points of clip rate). Do not read a moving clip rate as independent
+  # evidence.
+  #
+  # This key is LIVE-RELOADABLE as of PR #272 (Trainer.set_grad_clip_max_norm,
+  # pushed each iteration from trainable.py), so further changes are a yaml
+  # edit that takes effect on the next optimizer step and reverts just as fast.
+  # The 5.0 -> 6.5 change itself still needed a restart: the process predated
+  # #272. REVERT to 5.0 by yaml edit if the ledger's kill rule fires (frozen
+  # test_wdl_loss +>0.032 over 3 consecutive iters, any NaN, or
+  # grad_norm_median >10). The ramp CONTINUING is a pre-committed NON-kill.
+  zclip_max_norm: 6.5
 
   w_policy: 1.0             # Pinned: anchor for all other weights
   w_soft: 1.0               # Conservative soft-policy auxiliary weight while testing plateau behavior.
