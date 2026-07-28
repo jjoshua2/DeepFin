@@ -93,6 +93,32 @@ def _padded_batch_size(bsz: int) -> int:
     return bsz
 
 
+def _root_submit_size(eval_impl: Any, bsz: int, *, use_inplace: bool) -> int:
+    """Row count to submit for one root evaluation.
+
+    In-process evaluators run the caller's exact shape: ``DirectGPUEvaluator``
+    forwards ``bsz`` straight into the compiled graph, and the AOT packages key
+    on an exact bucket. Handing them a raw ``bsz`` costs a recompile (or an AOT
+    miss) per distinct size, so those paths must keep the ``_ROOT_BUCKETS``
+    floor.
+
+    Broker clients are the opposite case. They own no graph, and the broker
+    re-pads the *coalesced* total across all slots (``_compiled_padded_batch_size``
+    in ``inference.py``) before it forwards, so client-side padding buys no
+    shape stability at all — it only inflates the shared-memory write, the H2D
+    copy and the rows in the forward. Such evaluators declare
+    ``pads_batches_internally`` and get exactly ``bsz`` rows.
+
+    This matters because production selfplay is Stockfish-bound: with ~1
+    runnable game per network turn, the 32-row floor was 26.9% of every row the
+    clients submitted in that regime (7.6% row-weighted across a full window
+    that also covers the high-concurrency ramp; measured 2026-07-27).
+    """
+    if not use_inplace and bool(getattr(eval_impl, "pads_batches_internally", False)):
+        return bsz
+    return _padded_batch_size(bsz)
+
+
 def _resample_actions_with_temperature(
     probs_list: list[np.ndarray],
     actions: list[int],
@@ -298,12 +324,12 @@ def _evaluate_root_batch(
     """
     eval_impl = state.evaluator
     bsz = len(net_idxs)
-    padded_bsz = _padded_batch_size(bsz)
     cb_encode_list = [state.cboards[idx] for idx in net_idxs]
     hist_enc = normalize_lc0_history_encoding(state.game.input_history_encoding)
     batch_enc, batch_enc_bf16 = _batch_encoder_pair(state)
 
     use_inplace = batch_enc is not None and hasattr(eval_impl, "get_input_buffer")
+    padded_bsz = _root_submit_size(eval_impl, bsz, use_inplace=use_inplace)
     use_bf16_input = (
         state.has_c_ply
         and batch_enc_bf16 is not None

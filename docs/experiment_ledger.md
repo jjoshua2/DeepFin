@@ -580,6 +580,88 @@ strict low-concurrency/low-sims configuration.
 > taken ~4.5h and cost ~23 iterations (L6). Stopping training to measure is
 > cheaper than measuring alongside it — see method rule 11.
 
+### PRE-REGISTERED (not yet live) — selfplay clients stop zero-padding root evals to 32 rows (PR #280, 2026-07-27)
+
+**Class: efficiency plumbing. NOT an experiment, and NOT a throughput lever.**
+It changes no training target, loss, data mix, or search behaviour — only how
+many rows a selfplay client ships per root evaluation. Pre-registered before
+deploy per protocol because it touches the selfplay path.
+
+**Measurement (live, iter ~161, trial 13a9f, 4 workers × 4 broker slots).**
+`network_turn._evaluate_root_batch` rounds every root evaluation up to
+`_ROOT_BUCKETS = (32, 64, 128, 256, 512)` and submits it dense. Derived from
+88 `broker client stats` windows, dense rows per dense request =
+`(1 − legal_pos) × rows_per_req / (1 − legal_req)` = **32.02 (p5 31.7, p95
+32.4)** — every root request sits exactly on the floor bucket, in *both* the
+high-concurrency ramp and the steady state. The real batch size is recoverable
+from the leaf side: leaf rows per network turn = `legal_pos × rows_per_req /
+(1 − legal_req)`, and at 0.25 × 256 + 0.75 × 32 = 88 expected sims/turn this
+gives **n_boards ≈ 12 during the post-restart ramp, falling to ≈ 0.9–1.1 in
+steady state**, where `sf_block_starved` is 3143% of 3199% thread-time. So the
+steady state pads ~1 real position to 32 rows.
+
+**Padding share of all client-submitted rows: 26.9% in the Stockfish-bound
+steady state, but only 7.6% row-weighted over a full 25-minute window** that
+includes the ramp (during the ramp, leaf rows are 97% of traffic and the root
+padding barely registers). Quote 7.6%, not 27%, as the fleet-level number.
+
+**Why it buys nothing on the broker path.** The client holds no compiled
+graph, and `SlotBroker` re-pads the *coalesced* total
+(`_compiled_padded_batch_size`, `inference.py`) before its forward. The floor
+is load-bearing only for the in-process DirectGPU/AOT path, which forwards the
+caller's exact shape and keys AOT packages on an exact bucket.
+
+**Change.** Broker clients declare `pads_batches_internally`;
+`_root_submit_size` skips the bucket floor for them and keeps it everywhere
+else (including the pinned-slot path unconditionally). Both halves pinned by
+`tests/test_root_batch_padding.py`.
+
+**YARDSTICK (efficiency class, ~5 iterations) — exact command:**
+```
+python3 - <<'PY'
+import re, glob, statistics
+v=[]
+for f in glob.glob('runs/pbt2_small/tune/train_trial_*/distributed_workers/worker_*/worker.log'):
+    for line in open(f, errors='ignore'):
+        if 'broker client stats' not in line: continue
+        m=dict(re.findall(r'(\w+)=([\d.]+)', line))
+        lr=float(m['legal_req'])/100
+        if lr>=0.999: continue
+        v.append((1-float(m['legal_pos'])/100)*float(m['rows_per_req'])/(1-lr))
+print(len(v), statistics.median(v))
+PY
+```
+**SUCCESS = the median drops from 32.0 to < 4.0** over ≥20 post-deploy
+windows (it should land near the true `n_boards`, ~1 in steady state).
+**KILL = the median stays at 32.0** ⇒ the evaluator in the worker is not the
+declaring class (a dispatcher wrapper would need a forwarder), OR the run is
+on a code path that never reaches `_evaluate_root_batch`.
+
+**PAYOFF IS EXPECTED TO BE SMALL, AND IS NOT A THROUGHPUT CLAIM.** Broker
+forward time is latency/overhead-bound, not row-bound: from 171 `[broker]`
+report lines this session, mean forward is 15.1 ms at 29 rows/batch, 22.8 ms
+at 97, 23.8 ms at 153, and 26.8 ms at 529 — an 18× row increase costs 1.8× the
+time, i.e. ~160× above the FLOP-implied time for a 63M model on a 5090.
+Regressed over the 50 steady-state windows, `fwd_ms ≈ 14.7 + 0.0583 × rows`
+(R² = 0.47), so cutting 27% of rows predicts **−7% forward time (19.7 → 18.3
+ms)** in that regime and ~0 during the ramp. That regression is cross-sectional
+over time windows where row count and GPU contention co-vary, so −7% is an
+UPPER bound. **Selfplay is 98% blocked on Stockfish, so this cannot raise
+games/s; the only real gain is GPU/PCIe work not done, which the trainer may
+absorb.** Do not judge it on `pos_s` or games/h.
+**Better instrument, not yet run:** `CAE_BUCKET_HIST=/path/hist.json` on the
+broker records the exact pre-pad `total` distribution (bucket-of-mean ≠
+mean-of-bucket, so the 220→256 estimate is not reliable). It is read at module
+import, so **it requires a broker restart to enable** — queue it for the next
+planned restart rather than treating it as a live probe.
+**Confounds:** none on learning metrics. Numerically the model sees the same
+real rows; only the batch dimension changes, so bf16 kernel tiling may differ
+in the last bits.
+**Revert:** revert the PR. With `pads_batches_internally` absent the helper
+falls back to `_padded_batch_size`, i.e. byte-identical to today.
+**Deploy note:** worker-side + broker-side Python; takes effect at the next
+worker restart. No config key added, so the live-yaml validator is unaffected.
+
 ### PRE-REGISTERED (not yet live) — revive dead broker/workers inside the ingest wait loop (PR TBD, 2026-07-25)
 
 **Class: availability plumbing. NOT an experiment — it changes no training
