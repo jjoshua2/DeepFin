@@ -4810,6 +4810,58 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### DEPLOYED (2026-07-28 ~00:4x) — C17 LEGACY virtual loss is LIVE. Verification pending on the first new row.
+
+**What went out, as one operation** (audit A6: merging `_mcts_tree.c` without the
+rebuild makes any unplanned restart an outage):
+1. `origin/main` merged into `ops/live-20260725` — PR #278 (the C17 fix) and #279
+   (VIRTUAL_MEAN reachable + validated duplicate telemetry + the selfplay plumbing).
+2. `python3 scripts/build_production_extensions.py` — the live `.so` was dated
+   **07-24, i.e. PRE-#278**, so `vloss_weight > 0` would have been silently inert
+   against the old binary. Rebuilt 07-27 20:39; the C tests pass against it.
+3. `gumbel_vloss_weight: 1` added to the live yaml (a NEW key, so it could not
+   enter via live reload — the validator is all-or-nothing).
+4. Restart under `setsid`; resumed from `checkpoint_000161`.
+
+**Verified BEFORE the restart, not assumed:** yaml resolves the key to 1, and
+`build_recommended_worker` publishes it as 1. The worker-side resolve into
+`SearchConfig` and the pass into the search call are covered by
+`tests/test_selfplay_gumbel_batching_plumbing.py`, written against this
+project's actual recurring defect — a knob accepted and silently ignored.
+
+**⚠ TWO THINGS TO VERIFY ON THE FIRST NEW ROW, both falsifiable, neither yet read.**
+
+*(a) Did zclip survive the resume?* The startup banner printed
+`zclip_max_norm 5.` while the yaml says **6.5**, and the resumed
+`experiment_state` contains BOTH values. This is the standing
+"a resume restores the trial config for ANY construction-time key" trap.
+**Discriminator: `grad_hard_clip_rate` on the first new row.** `grad_norm_median`
+is ~6.4, so a cap of 5.0 clips >90% of steps while 6.5 clips ~40-50%. A reading
+near 0.9 means the resume silently reverted a deployed change and it must be
+re-patched in the newest-BY-FILENAME `experiment_state`.
+
+*(b) Did vloss actually reach the workers?* **Discriminator: `rows_per_req` in
+the worker logs.** At n_boards~=1 the mix-weighted prediction is
+0.25 x 48 + 0.75 x 8 = **~18 rows/request, down from the measured 22.4-28.7**.
+If it does not move, the knob did not arrive and every conclusion below is void.
+
+**Do NOT read these for ~6 iterations plus a ~14-iteration EMA tail:** winrate,
+`wdl_regret`, and anything mix-dependent. C14 — the restart starves the PID, then
+the completion-order burst misleads it. Also expect `test_*` to step to a new
+level by DEFINITION, not by learning: PR #277's deterministic holdout makes
+`test_size` 2560 -> 2000, so pre/post are not comparable.
+
+**Accepted cost, recorded rather than glossed:** this confounds the sf_p0 readout
+that was due ~16:00 on 07-28. Deliberate. The operator's call, and the reasoning
+is worth keeping: *the pipeline is not yet proven to work, so restart risk is
+cheap now and expensive later.* C17 corrupts every training target on the
+target-producing plies and has done so for the life of this run; sf_p0 stays ON
+and its readout can be re-based later.
+
+**Revert:** `data/salvage/pre_batching_20260727` (iter 158, `checkpoint_000157`,
+verified against the live row at export). A yaml revert alone is NOT a rollback —
+the replay window holds ~a day of data made under vloss=0.
+
 ### ⚑⚑ READOUT 2 — SETTLED, AND THE QUESTION WAS THE WRONG ONE. Selfplay is STOCKFISH-BOUND; C17 is a pure TARGET-QUALITY defect worth 8.1x (2026-07-28 ~00:1x)
 
 **The batching question is answered, and the answer is that batching is nearly
