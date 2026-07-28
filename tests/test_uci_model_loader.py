@@ -4,6 +4,7 @@ import dataclasses
 import json
 from pathlib import Path
 
+import pytest
 import torch
 
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig, build_model
@@ -177,3 +178,95 @@ def test_uci_loader_embedded_arch_wins_over_stale_params_json(tmp_path: Path) ->
     model = load_model_from_checkpoint(ckpt, device="cpu")
 
     assert getattr(model, "input_history_encoding") == "lc0_root"
+
+
+# ---------------------------------------------------------------------------
+# rl_loop_audit L12: the arena loads both sides COMPLETELY.
+#
+# Both sides of scripts/arena_standard.py come through this loader. When the
+# model was rebuilt from the checkpoint's OWN `arch` payload there is no
+# legitimate reason for a key to drop -- and up to 50% of them could vanish
+# behind a single stdout line before the catastrophic-load guard fired, which
+# is exactly how a lopsided Elo gets believed. Method rule 7 ("verify identity
+# before believing a lopsided arena") was a human habit; these pin it as code.
+# ---------------------------------------------------------------------------
+
+def _drop_a_key(ckpt_dir: Path) -> str:
+    """Remove one tensor from a saved checkpoint; return the key removed."""
+    trainer_pt = ckpt_dir / "trainer.pt"
+    payload = torch.load(trainer_pt, map_location="cpu", weights_only=True)
+    dropped = sorted(payload["model"])[0]
+    del payload["model"][dropped]
+    torch.save(payload, trainer_pt)
+    return dropped
+
+
+def test_uci_loader_requires_complete_load_for_embedded_arch(tmp_path: Path) -> None:
+    """An arch-bearing checkpoint must load exactly or raise."""
+    ckpt = _write_tiny_checkpoint(tmp_path, params=None, include_arch=True)
+    dropped = _drop_a_key(ckpt)
+
+    with pytest.raises(RuntimeError) as exc:
+        load_model_from_checkpoint(ckpt, device="cpu")
+
+    message = str(exc.value)
+    assert "require_complete=True" in message
+    assert dropped in message
+
+
+def test_uci_loader_complete_embedded_arch_load_still_succeeds(tmp_path: Path) -> None:
+    """The new default strictness must not disturb an ordinary, exact load.
+
+    This is the case every live tool is actually in, so a regression here would
+    take the arena, value_regret and audit_targets down together.
+    """
+    ckpt = _write_tiny_checkpoint(tmp_path, params=None, include_arch=True)
+    saved = torch.load(ckpt / "trainer.pt", map_location="cpu", weights_only=True)["model"]
+
+    model = load_model_from_checkpoint(ckpt, device="cpu")
+
+    loaded = model.state_dict()
+    assert set(loaded) == set(saved)
+    for key, value in loaded.items():
+        assert torch.equal(value, saved[key])
+
+
+def test_uci_loader_require_complete_false_restores_tolerance(tmp_path: Path) -> None:
+    """The escape hatch for deliberately loading into a different architecture."""
+    ckpt = _write_tiny_checkpoint(tmp_path, params=None, include_arch=True)
+    _drop_a_key(ckpt)
+
+    assert load_model_from_checkpoint(ckpt, device="cpu", require_complete=False) is not None
+
+
+def test_uci_loader_params_json_path_stays_tolerant(tmp_path: Path) -> None:
+    """No embedded arch means the arch is a guess, so drops stay survivable.
+
+    ``params.json`` describes the trial, not the tensor file; demanding an
+    exact load off it would break legitimate reads of pre-``arch`` checkpoints.
+    """
+    ckpt = _write_tiny_checkpoint(tmp_path, params={"model": "tiny"}, include_arch=False)
+    _drop_a_key(ckpt)
+
+    assert load_model_from_checkpoint(ckpt, device="cpu") is not None
+
+
+def test_uci_loader_explicit_model_config_stays_tolerant(tmp_path: Path) -> None:
+    """An explicitly passed config is the caller's claim, not the file's."""
+    ckpt = _write_tiny_checkpoint(tmp_path, params=None, include_arch=True)
+    _drop_a_key(ckpt)
+
+    model = load_model_from_checkpoint(
+        ckpt, device="cpu", model_config=ModelConfig(kind="tiny"),
+    )
+
+    assert model is not None
+
+
+def test_uci_loader_require_complete_true_overrides_the_params_json_path(tmp_path: Path) -> None:
+    """Strictness is still available where it is not the default."""
+    ckpt = _write_tiny_checkpoint(tmp_path, params={"model": "tiny"}, include_arch=False)
+    _drop_a_key(ckpt)
+
+    with pytest.raises(RuntimeError, match="require_complete=True"):
+        load_model_from_checkpoint(ckpt, device="cpu", require_complete=True)

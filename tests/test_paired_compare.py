@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+
 import numpy as np
+import pytest
 
 from scripts.paired_compare import paired_bootstrap_ci
 
@@ -39,9 +42,163 @@ def test_load_dump_audit_shape(tmp_path) -> None:
             f.write(__import__("json").dumps(r) + "\n")
 
     d = load_dump(str(p), join_key="key", field="cand.search.exp")
-    assert set(d) == {"k1", "k2"}
-    assert d["k1"] == (12.5, "middlegame")
-    assert d["k2"] == (0.0, "middlegame")  # int phase index mapped to name
+    assert set(d.rows) == {"k1", "k2"}
+    assert d.rows["k1"] == (12.5, "middlegame")
+    assert d.rows["k2"] == (0.0, "middlegame")  # int phase index mapped to name
+    assert d.unusable == 2  # k3 null, k4 missing path
 
     top1 = load_dump(str(p), join_key="key", field="cand.search.top1")
-    assert top1["k1"] == (30.0, "middlegame")
+    assert top1.rows["k1"] == (30.0, "middlegame")
+
+
+def _write_jsonl(path, rows: list[dict]) -> str:
+    with path.open("w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+    return str(path)
+
+
+# ---------------------------------------------------------------------------
+# Two ways this tool used to print a confident answer that was not the answer.
+# Both matter more than an ordinary bug because every kill/hold decision in
+# docs/experiment_ledger.md is read off this output: a comparison that launders
+# a KILL into a HOLD is the worst defect class here.
+# ---------------------------------------------------------------------------
+
+def test_report_counts_null_rows_that_never_entered_the_join(tmp_path, capsys) -> None:
+    """The reported drop count used to exclude nulls entirely.
+
+    ``dropped`` was computed from the two INDEXES, so a row the scorer failed
+    on -- absent from both -- was invisible. Demonstrated on main: eight rows
+    per side, three of them null on both sides, printed "dropped 0". A dump the
+    scorer had largely failed on read as a complete join.
+    """
+    from scripts.paired_compare import load_dump, report
+
+    rows_a: list[dict[str, object]] = [{"fen": f"p{i}", "value": 10.0} for i in range(5)]
+    rows_b: list[dict[str, object]] = [{"fen": f"p{i}", "value": 12.0} for i in range(5)]
+    for i in range(3):  # measured on neither side -> in neither index
+        rows_a.append({"fen": f"n{i}", "value": None})
+        rows_b.append({"fen": f"n{i}", "value": None})
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", rows_a))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", rows_b))
+    assert (a.unusable, b.unusable) == (3, 3)
+
+    report(a, b, label_a="A", label_b="B", n_boot=200)
+
+    out = capsys.readouterr().out
+    assert "paired positions: 5\n" in out
+    assert "A: 8 rows, 3 unusable, 0 unmatched   B: 8 rows, 3 unusable, 0 unmatched" in out
+
+
+def test_report_counts_unmatched_and_unusable_separately(tmp_path, capsys) -> None:
+    """The two losses are different problems and must not be summed away."""
+    from scripts.paired_compare import load_dump, report
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        {"fen": "p1", "value": 10.0}, {"fen": "p2", "value": 20.0},
+        {"fen": "only_a", "value": 5.0}, {"fen": "bad_a", "value": None},
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        {"fen": "p1", "value": 13.0}, {"fen": "p2", "value": 23.0},
+    ]))
+
+    report(a, b, label_a="A", label_b="B", n_boot=200)
+
+    out = capsys.readouterr().out
+    assert "paired positions: 2\n" in out
+    assert "A: 4 rows, 1 unusable, 1 unmatched   B: 2 rows, 0 unusable, 0 unmatched" in out
+    assert "paired delta (A-B): -3.00" in out
+
+
+def test_one_nan_row_cannot_launder_a_kill_into_a_hold(tmp_path, capsys) -> None:
+    """``isinstance(v, (int, float))`` admits NaN, and one NaN poisons everything.
+
+    numpy's ``mean`` and ``percentile`` propagate NaN, so the delta and both CI
+    bounds print as ``nan``; ``nan < 0`` and ``nan > 0`` are both False, so the
+    verdict falls through to "NOT significant". Measured on main with exactly
+    this input: a clean -5.0 delta over 50 rows became "verdict at 95%: NOT
+    significant" -- a KILL silently reported as a HOLD.
+    """
+    from scripts.paired_compare import load_dump, report
+
+    rows_a = [{"fen": f"q{i}", "value": 100.0} for i in range(50)]
+    rows_b = [{"fen": f"q{i}", "value": 105.0} for i in range(50)]
+    rows_b[7]["value"] = float("nan")
+    assert json.loads(json.dumps(rows_b[7]))["value"] != rows_b[7]["value"], \
+        "NaN must survive the JSON round-trip or this test proves nothing"
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", rows_a))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", rows_b))
+    assert b.unusable == 1
+
+    report(a, b, label_a="A", label_b="B", n_boot=500)
+
+    out = capsys.readouterr().out
+    assert "nan" not in out.lower()
+    assert "paired positions: 49\n" in out
+  # The one lost position is visible on BOTH sides and counted once on each:
+  # B could not measure it, so A has it unpartnered. Summing the two into a
+  # single "dropped 2" would claim two positions were lost.
+    assert "A: 50 rows, 0 unusable, 1 unmatched   B: 50 rows, 1 unusable, 0 unmatched" in out
+    assert "paired delta (A-B): -5.00" in out
+    assert "verdict at 95%: A better" in out
+
+
+def test_infinite_metric_is_dropped_like_a_null(tmp_path) -> None:
+    """``inf`` is numeric and finite-looking to ``isinstance`` too."""
+    from scripts.paired_compare import load_dump
+
+    d = load_dump(_write_jsonl(tmp_path / "inf.jsonl", [
+        {"fen": "a", "value": 1.0},
+        {"fen": "b", "value": float("inf")},
+        {"fen": "c", "value": float("-inf")},
+    ]))
+
+    assert set(d.rows) == {"a"}
+    assert d.unusable == 2
+
+
+def test_load_dump_refuses_duplicate_join_keys(tmp_path) -> None:
+    """Audit L14: duplicates used to last-win and stay out of ``dropped``.
+
+    The caller then read a clean-looking join over a silently smaller and
+    silently biased sample. Refusing is the only honest answer -- there is no
+    principled winner between two rows claiming the same position.
+    """
+    from scripts.paired_compare import load_dump
+
+    p = tmp_path / "dupes.jsonl"
+    _write_jsonl(p, [
+        {"fen": "a", "value": 1.0},
+        {"fen": "b", "value": 2.0},
+        {"fen": "a", "value": 99.0},
+    ])
+
+    with pytest.raises(SystemExit) as exc:
+        load_dump(str(p))
+
+    message = str(exc.value)
+    assert "duplicate" in message
+    assert "'fen'" in message
+    assert "'a'" in message
+
+
+def test_duplicate_detection_ignores_rows_that_never_entered_the_index(tmp_path) -> None:
+    """A repeated key on unusable rows leaves the join unambiguous.
+
+    Null/non-finite metrics are skipped before indexing, so two unusable rows
+    sharing a key must not trip the refusal -- otherwise a dump with a couple of
+    failed positions becomes unreadable.
+    """
+    from scripts.paired_compare import load_dump
+
+    d = load_dump(_write_jsonl(tmp_path / "nulls.jsonl", [
+        {"fen": "a", "value": 1.0},
+        {"fen": "b", "value": None},
+        {"fen": "b"},
+    ]))
+
+    assert set(d.rows) == {"a"}
+    assert d.unusable == 2
