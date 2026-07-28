@@ -55,6 +55,19 @@ off; next section), so a non-zero value there is itself the alarm that the ruler
 moved. The SAMPLED `Trainer.eval` is explicitly *not* a ruler and does rebuild,
 mirroring the training distribution; it has no production caller.
 
+**Each measurement owns its own counter.** `drain()` read-and-RESETS, so a
+single trainer-wide accumulator would not merely blur the train and eval rows —
+it would move counts between them. The async holdout eval calls
+`_compute_metrics` on the *same* `Trainer` from its own thread while the next
+iteration is training (`distributed_async_test_eval: true` in the production
+config), so its drain would publish the TRAINING path's counts on the `eval`
+row and leave the `train` row short by an unknowable amount: the proof-of-effect
+becomes an undercount and the ruler alarm above fires every iteration on
+nothing. `_compute_metrics` therefore builds a fresh accumulator per eval and
+threads it down through `coverage=`. Note that reasoning about which paths
+*accumulate* does not catch this — the full pass accumulates nothing and still
+drains. Pinned by `test_an_eval_does_not_drain_the_training_coverage_counters`.
+
 ## The frozen holdout ruler is NOT rebuilt
 
 `_full_pass_host_batch` — the deterministic holdout pass that produces

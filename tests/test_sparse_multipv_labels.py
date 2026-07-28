@@ -21,6 +21,7 @@ from chess_anti_engine.replay.shard import (
     validate_array_declarations,
 )
 from chess_anti_engine.train.target_builder import (
+    SfRebuildCoverage,
     SfTargetParams,
     mask_cross_ply_sf_targets,
     rebuild_sf_policy_target,
@@ -1237,6 +1238,64 @@ def test_full_pass_contributes_nothing_to_the_coverage_metric():
     t.set_sf_target_rebuild(enabled=True, params=SfTargetParams(sf_policy_temp=0.012))
     t._full_pass_host_batch(cast(Any, _SliceBuf(arrs, 4)), start=0, stop=4)
     assert t._sf_rebuild_coverage.drain()["sf_rebuild_policy_frac"] == 0.0
+
+
+def test_an_eval_does_not_drain_the_training_coverage_counters(monkeypatch):
+    """`drain()` RESETS, so a shared accumulator is not merely imprecise.
+
+    The async holdout eval calls `_compute_metrics` on the SAME Trainer from
+    its own thread while the next iteration trains
+    (`distributed_async_test_eval: true`), so a shared sink would have it
+    publish the TRAINING path's counts on the `eval` row and leave the `train`
+    row short by an unknowable amount -- breaking both the proof-of-effect and
+    the "non-zero on the ruler's row means the ruler rebuilt" rule.
+
+    Reasoning about which paths ACCUMULATE does not catch this: the full pass
+    accumulates nothing and still drains.
+    """
+    t = _tiny_trainer()
+    arrs = _cross_ply_arrs()
+    arrs["x"] = np.zeros((4, 146, 8, 8), np.float16)
+    t.set_sf_target_rebuild(enabled=True, params=SfTargetParams(sf_policy_temp=0.012))
+
+    # Training accumulates into the trainer-wide sink.
+    t._prepare_host_arrays(
+        {k: np.array(v, copy=True) for k, v in arrs.items()},
+        rng=np.random.default_rng(0), mirror_prob=0.0,
+    )
+
+    # A full-pass eval runs on the SAME trainer. The batch iterator is stubbed
+    # to yield nothing (the tiny fixture rows cannot be collated) but to record
+    # the sink it was handed and add its own counts to it -- so this pins the
+    # THREADING and the drain site, not the forward pass.
+    seen: list[Any] = []
+
+    def _fake_iter(_buf, *, coverage=None, **_kw):
+        seen.append(coverage)
+        if coverage is not None:
+            coverage.add(SfRebuildCoverage(rows=8, policy_rebuilt=2))
+        return iter(())
+
+    published: dict[str, Any] = {}
+
+    def _fake_build(*_a, **kw):
+        published.update(kw)
+        return "metrics"
+
+    monkeypatch.setattr(t, "_iter_full_pass_batches", _fake_iter)
+    monkeypatch.setattr(t, "_build_metrics", _fake_build)
+    monkeypatch.setattr(t, "_log_metrics", lambda *_a, **_k: None)
+    t._compute_metrics(buf=cast(Any, _SliceBuf(arrs, 4)), batch_size=4,
+                       steps=0, tag="eval", full_pass=True)
+
+    # The eval got a sink of its own, and publishes ITS counts -- so "non-zero
+    # on the ruler's row" stays a statement that can fail.
+    assert len(seen) == 1
+    assert seen[0] is not t._sf_rebuild_coverage
+    assert published["sf_rebuild_policy_frac"] == pytest.approx(2 / 8)
+
+    # ...and the training counts it must not have consumed are still there.
+    assert t._sf_rebuild_coverage.drain()["sf_rebuild_policy_frac"] == pytest.approx(1.0)
 
 
 def test_sf_target_params_are_not_written_when_no_consumer_reads_them():

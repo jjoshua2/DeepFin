@@ -1154,10 +1154,16 @@ class _SfRebuildCoverageAccumulator:
     never ran drains to all-zero rather than to nothing, so "the rebuild
     stopped happening" is visible as 0.0 instead of as an absent column.
 
-    The totals are process-wide, so a SAMPLED eval running concurrently with
-    training would blend into the training window's numbers. In production the
-    concurrent path is the frozen full pass, which never rebuilds (it pins
-    ``rebuild_sf_targets=False``), so that blend is empty.
+    ONE INSTANCE PER MEASUREMENT, not one per process. The trainer holds the
+    training one; ``_compute_metrics`` makes a fresh one for each eval and
+    passes it down through ``coverage=``. A shared instance is wrong because
+    ``drain()`` RESETS: the async holdout eval calls ``_compute_metrics`` on
+    the same Trainer from its own thread while the next iteration is training
+    (``distributed_async_test_eval: true`` in the production config), so its
+    drain would take counts the training path had accumulated, publish them on
+    the ``eval`` row, and leave the ``train`` row short by an unknowable
+    amount. Reasoning about which paths ACCUMULATE is not sufficient — the
+    full pass accumulates nothing yet still drains.
     """
 
     def __init__(self) -> None:
@@ -2088,6 +2094,7 @@ class Trainer:
         rng: np.random.Generator,
         mirror_prob: float,
         rebuild_sf_targets: bool = True,
+        coverage: _SfRebuildCoverageAccumulator | None = None,
     ) -> dict[str, np.ndarray]:
         """Target rebuilds, payload pruning, history selection and mirroring.
 
@@ -2101,10 +2108,26 @@ class Trainer:
         ``self.rebuild_sf_targets`` is on. The full-pass ruler passes False —
         same reasoning, and the same mechanism, as ``mirror_prob=0.0`` there:
         a ruler must not acquire a dependency on a training-side config knob.
+
+        ``coverage`` is the sink the rebuild's row counts land in, defaulting
+        to the trainer-wide one that the TRAINING metrics drain. It has to be
+        selectable per measurement, not per thread: an eval reaches this method
+        on its own thread AND on a prefetch thread it owns, while training is
+        doing the same, and `_compute_metrics` drains at the end. Sharing one
+        sink would let the async holdout eval — which in production runs
+        concurrently with the next iteration's training (`async_eval.py`, and
+        `distributed_async_test_eval: true`) — drain counts the training path
+        produced, reporting them on the `eval` row and under-reporting the
+        `train` row by an unknowable amount. That would break both things the
+        metric exists for: the training row's proof-of-effect, and the rule
+        that a non-zero value on the ruler's row means the RULER rebuilt.
         """
+        sink = coverage if coverage is not None else self._sf_rebuild_coverage
         if rebuild_sf_targets and self.rebuild_sf_targets:
-            arrs, coverage = rebuild_sf_targets_in_arrays(arrs, params=self.sf_target_params)
-            self._sf_rebuild_coverage.add(coverage)
+            arrs, rebuilt_coverage = rebuild_sf_targets_in_arrays(
+                arrs, params=self.sf_target_params,
+            )
+            sink.add(rebuilt_coverage)
         if self.rebuild_categorical_target:
             arrs = rebuild_categorical_target_in_arrays(
                 arrs, params=self.categorical_target_params,
@@ -2133,12 +2156,14 @@ class Trainer:
         *,
         batch_size: int,
         mirror_prob: float,
+        coverage: _SfRebuildCoverageAccumulator | None = None,
     ) -> dict[str, np.ndarray] | list:
         if hasattr(buf, "sample_batch_arrays"):
             return self._prepare_host_arrays(
                 buf.sample_batch_arrays(batch_size),
                 rng=buf.rng,
                 mirror_prob=mirror_prob,
+                coverage=coverage,
             )
 
         samples = buf.sample_batch(batch_size)
@@ -2165,13 +2190,16 @@ class Trainer:
         batch_size: int,
         mirror_prob: float,
         count: int,
+        coverage: _SfRebuildCoverageAccumulator | None = None,
     ) -> Iterator[dict[str, torch.Tensor]]:
         n = int(count)
         if n <= 0:
             return
         if not self._prefetch_batches or n == 1:
             for _ in range(n):
-                host_batch = self._sample_batch_host(buf, batch_size=batch_size, mirror_prob=mirror_prob)
+                host_batch = self._sample_batch_host(
+                    buf, batch_size=batch_size, mirror_prob=mirror_prob, coverage=coverage,
+                )
                 yield self._host_batch_to_tensors(host_batch)
             return
 
@@ -2181,6 +2209,7 @@ class Trainer:
                 buf,
                 batch_size=batch_size,
                 mirror_prob=mirror_prob,
+                coverage=coverage,
             )
             for idx in range(n):
                 host_batch = future.result()
@@ -2190,11 +2219,13 @@ class Trainer:
                         buf,
                         batch_size=batch_size,
                         mirror_prob=mirror_prob,
+                        coverage=coverage,
                     )
                 yield self._host_batch_to_tensors(host_batch)
 
     def _full_pass_host_batch(
         self, buf: ReplayBuffer, *, start: int, stop: int,
+        coverage: _SfRebuildCoverageAccumulator | None = None,
     ) -> dict[str, np.ndarray]:
         """One deterministic chunk of rows, host-side, ready to collate.
 
@@ -2221,14 +2252,23 @@ class Trainer:
         training uses rebuilt ones — is stated in
         docs/target_rebuildability.md; those legs are contaminated FOR THE
         DURATION and the experiment's yardstick must be an external one.
+
+        ``coverage`` is still forwarded even though the pin above means nothing
+        can ever be added to it here. That is deliberate: it is what keeps
+        "``sf_rebuild_*`` non-zero on the `eval` row ⇒ the ruler rebuilt" a
+        statement that can actually FAIL. If a later edit removes the pin, the
+        counts land on the eval's OWN sink and the alarm fires on the eval row;
+        wired to the trainer-wide sink instead, the same edit would have shown
+        up as training-row counts going missing, which reads as nothing at all.
         """
         return self._prepare_host_arrays(
             buf.rows_slice_arrays(start, stop), rng=buf.rng, mirror_prob=0.0,
-            rebuild_sf_targets=False,
+            rebuild_sf_targets=False, coverage=coverage,
         )
 
     def _iter_full_pass_batches(
         self, buf: ReplayBuffer, *, batch_size: int,
+        coverage: _SfRebuildCoverageAccumulator | None = None,
     ) -> Iterator[dict[str, torch.Tensor]]:
         """Every row of ``buf`` exactly once, oldest first, in fixed order.
 
@@ -2263,17 +2303,23 @@ class Trainer:
         if not self._prefetch_batches or len(bounds) == 1:
             for start, stop in bounds:
                 yield self._host_batch_to_tensors(
-                    self._full_pass_host_batch(buf, start=start, stop=stop),
+                    self._full_pass_host_batch(buf, start=start, stop=stop, coverage=coverage),
                 )
             return
 
         with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(self._full_pass_host_batch, buf, start=bounds[0][0], stop=bounds[0][1])
+            future = pool.submit(
+                self._full_pass_host_batch,
+                buf, start=bounds[0][0], stop=bounds[0][1], coverage=coverage,
+            )
             for idx in range(len(bounds)):
                 host_batch = future.result()
                 if idx + 1 < len(bounds):
                     nxt = bounds[idx + 1]
-                    future = pool.submit(self._full_pass_host_batch, buf, start=nxt[0], stop=nxt[1])
+                    future = pool.submit(
+                        self._full_pass_host_batch,
+                        buf, start=nxt[0], stop=nxt[1], coverage=coverage,
+                    )
                 yield self._host_batch_to_tensors(host_batch)
 
     def reset_optimizer_reference_weights(self) -> None:
@@ -2641,11 +2687,20 @@ class Trainer:
   # _policy_accuracy_stats — but that takes ``out`` already, not ``self.model``).
         eval_model = model_override if model_override is not None else self.model
 
+  # This eval's OWN rebuild-coverage sink, never the trainer-wide one. The
+  # async holdout eval runs on its own thread while the next iteration
+  # trains (`distributed_async_test_eval: true`), so draining the shared
+  # accumulator here would move counts the TRAINING path produced onto this
+  # `eval` row and silently under-report the train row.
+        eval_coverage = _SfRebuildCoverageAccumulator()
         batches = (
-            self._iter_full_pass_batches(buf, batch_size=batch_size)
+            self._iter_full_pass_batches(
+                buf, batch_size=batch_size, coverage=eval_coverage,
+            )
             if full_pass else
             self._iter_prefetched_batches(
                 buf, batch_size=batch_size, mirror_prob=mirror_p, count=int(steps),
+                coverage=eval_coverage,
             )
         )
         for batch in batches:
@@ -2678,7 +2733,7 @@ class Trainer:
         metrics = self._build_metrics(
             sums, acc_sums, float(max(1, total_rows)),
             wdl_brier=wdl_brier, wdl_ece=wdl_ece, eval_rows=int(total_rows),
-            **self._sf_rebuild_coverage.drain(),
+            **eval_coverage.drain(),
         )
         self._log_metrics(metrics, tag)
         return metrics
