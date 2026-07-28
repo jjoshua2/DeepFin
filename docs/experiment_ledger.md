@@ -4830,6 +4830,37 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### DESIGNATED STRENGTH ANCHOR banked (2026-07-28)
+
+`data/salvage/ANCHOR_20260727_preC17_step65475_lr3e-5/` — copied from
+`pre_batching_20260727`, which was banked **19:47 on 07-27, one hour before the
+20:47 C17 restart**, so it is the exact pre-C17 / pre-`gumbel_vloss_weight` state.
+656M. Carries `ANCHOR.md` with its identity and the rules.
+
+**Identity (the fields that decide comparability):** step **65,475**, `peak_lr`
+**3e-5**, 512x16 / 63,084,128 params, `v2_threats` 175 planes, `lc0_1858`,
+`checkpoint_000157`.
+
+**`peak_lr` is on that list because it is the field that silently invalidated the
+earlier references** — `data/salvage` holds two non-comparable 512x16 lineages and
+nothing in the directory names says so.
+
+**Why now:** an anchor's whole value is being older than the change under test,
+and it cannot be created retroactively. Every other bank is incidental, named for
+whatever change prompted it. This one is named for its role so it is never
+mistaken for a revert point and never pruned.
+
+**What it is for:** a day-scale arena against it is a **10x pass/fail detector**
+for the stated objective — at 10x, one day is +12.3 Elo and ~660 games resolve it.
+It is NOT a baseline meter, and a null excludes 10x without distinguishing 1x
+from 2x.
+
+**First use, once the C14 window clears (~iter 169):** current vs this anchor
+reads out C17 + the sf_p0 restore together. They are confounded with each other
+by the bundled deploy and that is accepted and recorded — the question being asked
+is "did this bundle deliver 10x", not "which of the two did it".
+
+
 ### ⚑⚑ WHY "IS THE RL LOOP WORKING?" HAS NO ARENA ANSWER ON A ONE-DAY HORIZON (2026-07-28)
 
 Prepared the paired arena against a banked reference and found it **should not be
