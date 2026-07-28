@@ -4894,7 +4894,41 @@ resets this month were ours.
    `audit_targets` leg (d) all resolve smaller effects per unit of compute — with
    the standing caveat that a target-quality gain is not an Elo gain.
 
-**Not run, deliberately. Recorded so the next session does not re-derive it.**
+**⚑ CORRECTION, same session — I over-concluded. The stated GOAL is 10-100x the
+slope, and that makes the arena the RIGHT instrument, not the wrong one.**
+
+Everything above assumes the +0.21 Elo/1000 steps baseline persists. But the
+objective is to *break* that number by fixing bugs, and an arena that cannot
+measure +1.2 Elo is perfectly able to detect +12:
+
+| slope | 1 day | games to resolve | 2 days | games |
+|---|---|---|---|---|
+| current (x1) | 1.2 Elo | ~66,000 | 2.5 | ~17,000 |
+| **10x goal** | **12.3 Elo** | **~660** | **24.6** | **~165** |
+| **100x goal** | 123 Elo | ~7 | 246 | ~2 |
+
+**So a day-scale arena is a 10x DETECTOR.** It cannot meter the baseline, and it
+does not need to. Reframed:
+- **A ~660-game arena after one day is a clean pass/fail on "did this fix deliver
+  10x".** That is affordable (arena CONCURRENCY is the cost lever — conc 4->16 is
+  14x faster) and it is the right shape for the goal.
+- **A null result is now INFORMATIVE**, which it was not under the old framing: it
+  says the fix did not deliver 10x. It still cannot distinguish 1x from 2x, and
+  that limit must be stated whenever the result is quoted.
+- **This makes the designated long-baseline anchor urgent rather than tidy.** Its
+  whole value is being older than the change under test, and it cannot be created
+  retroactively.
+
+**Two plausible large-multiplier fixes went live in the last day and are
+un-read**: C17 (8.1x more distinct search information on exactly the plies that
+produce every training target) and the sf_p0 teacher coming back after 15.8 days
+dead (the loop's only external move-teacher). Whether either is a 10x lever is
+exactly what a ~660-game arena would answer once the C14 window clears.
+
+**Superseded above:** "stop planning day-scale arena readouts". Wrong under the
+actual objective. What stands is that a day-scale arena cannot measure the
+BASELINE slope, and that a small arena's null must never be reported as "no
+progress" when it can only exclude a large one.
 
 
 ### ⚑ G16 — the iter-165 "new best model" is a RULER CHANGE, not an improvement. Do not cite 4.8533 as progress. (2026-07-28)
