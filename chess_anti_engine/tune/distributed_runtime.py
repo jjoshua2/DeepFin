@@ -17,7 +17,10 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.encoding import input_plane_count
-from chess_anti_engine.mcts.gumbel import SELFPLAY_GUMBEL_C_SCALE
+from chess_anti_engine.mcts.gumbel import (
+    DEFAULT_VOLATILITY_ANCHOR,
+    SELFPLAY_GUMBEL_C_SCALE,
+)
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
@@ -290,7 +293,20 @@ def build_recommended_worker(
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
         "fast_simulations": int(config.get("fast_simulations", 8)),
         "gumbel_topk": int(config.get("gumbel_topk", 16)),
+        "gumbel_target_batch": int(config.get("gumbel_target_batch", 0)),
         "gumbel_vloss_weight": int(config.get("gumbel_vloss_weight", 0)),
+  # The worker already resolves these three out of the reco, and the live-yaml
+  # validator already accepts them -- but nothing ever put them IN the reco, so
+  # every distributed selfplay session ran them at the hardcoded 0.0/0.0/0.05
+  # while a yaml edit was silently swallowed. Publishing them makes realized ==
+  # configured. Note what turning them on costs: volatility_search_enabled()
+  # forces the PYTHON search path (network_turn.py), so a non-zero value here is
+  # a large throughput regression, not just a search-behaviour change.
+        "volatility_q_scale": float(config.get("volatility_q_scale", 0.0)),
+        "volatility_fpu": float(config.get("volatility_fpu", 0.0)),
+        "volatility_anchor": float(
+            config.get("volatility_anchor", DEFAULT_VOLATILITY_ANCHOR),
+        ),
         "gumbel_c_scale": float(config.get("gumbel_c_scale", SELFPLAY_GUMBEL_C_SCALE)),
         "gumbel_scale": float(config.get("gumbel_scale", 1.0)),
         "gumbel_scale_after": float(config.get("gumbel_scale_after", 0.0)),

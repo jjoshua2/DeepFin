@@ -14,6 +14,7 @@ production ran the 56%-duplicate arm with no way to change it from config.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import inspect
 from pathlib import Path
 
@@ -89,6 +90,120 @@ def test_virtual_mean_is_not_reachable_from_selfplay_config() -> None:
     can select it here by reading the C enum and assuming higher is better.
     """
     assert not hasattr(SearchConfig(), "gumbel_vloss_mode")
+
+
+_REPO = Path(__file__).resolve().parents[1]
+
+# SearchConfig fields the worker deliberately leaves on their dataclass default.
+# Entry here is a claim that the field is not meant to be settable from the
+# production yaml. Anything NOT listed must be reachable end to end, so this
+# list is self-invalidating: deleting a field's plumbing forces someone to write
+# the reason down here rather than let the knob quietly go dead.
+_INTENTIONALLY_NOT_CONFIGURABLE: dict[str, str] = {
+    # PUCT-only. network_turn.py builds a GumbelConfig for the production search
+    # and never forwards either one, so publishing them would create a knob that
+    # is reachable and still unread -- strictly worse than a documented gap. The
+    # yaml carries both (configs/pbt2_small.yaml) and they are inert there; the
+    # yaml comment says so.
+    "fpu_reduction": "PUCT path only; the Gumbel production search never reads it",
+    "fpu_at_root": "PUCT path only; Gumbel uses gumbel_scale root noise instead",
+}
+
+
+def _search_config_ctor_kwargs() -> dict[str, str | None]:
+    """Map SearchConfig kwarg -> the reco key the worker resolves it from.
+
+    Value is None when the kwarg is not a plain `_resolve_reco(reco, "key", ...)`
+    (e.g. computed locally), which the reachability test treats as "set, but not
+    a config key" rather than as a failure.
+    """
+    src = (_REPO / "chess_anti_engine" / "worker.py").read_text()
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        if node.func.id != "SearchConfig":
+            continue
+        out: dict[str, str | None] = {}
+        for kw in node.keywords:
+            if kw.arg is None:
+                continue
+            key: str | None = None
+            for sub in ast.walk(kw.value):
+                if (
+                    isinstance(sub, ast.Call)
+                    and isinstance(sub.func, ast.Attribute)
+                    and sub.func.attr == "_resolve_reco"
+                    and len(sub.args) >= 2
+                    and isinstance(sub.args[1], ast.Constant)
+                    and isinstance(sub.args[1].value, str)
+                ):
+                    key = sub.args[1].value
+                    break
+            out[kw.arg] = key
+        return out
+    raise AssertionError(
+        "no SearchConfig(...) construction found in worker.py -- the selfplay "
+        "config builder moved; re-point this test, do not delete it",
+    )
+
+
+def test_every_search_config_field_is_reachable_from_config() -> None:
+    """The general form of the C17 defect, not just the two knobs it hit.
+
+    `gumbel_target_batch` shipped as a field on SearchConfig that the search
+    call site duly forwarded -- and that NOTHING could ever set. It was absent
+    from the reco publisher, from the worker's resolver and from the live-yaml
+    allowlist, so it was pinned at 0 forever while looking configurable in three
+    places. Harmless only because 0 was the wanted value.
+
+    Pinning the two knobs by name would not have caught it (the by-name tests
+    above all passed). What catches it is asking the question the other way
+    round: for every field the production search reads, can any configuration
+    reach it?
+    """
+    fields = set(_search_config_ctor_kwargs())
+    declared = {f.name for f in dataclasses.fields(SearchConfig)}
+    unreachable = declared - fields - set(_INTENTIONALLY_NOT_CONFIGURABLE)
+    assert not unreachable, (
+        f"SearchConfig fields nothing can set: {sorted(unreachable)}. Wire them "
+        f"through distributed_runtime + worker + config_yaml, or record why "
+        f"they are fixed in _INTENTIONALLY_NOT_CONFIGURABLE."
+    )
+
+
+def test_every_resolved_reco_key_is_published_and_allowlisted() -> None:
+    """A resolver alone is not plumbing.
+
+    `_resolve_reco(reco, "k", default)` silently yields `default` when the
+    trainer never puts "k" in the reco -- the knob then reads as wired at the
+    consumer and is dead at the source. Separately, a key missing from the
+    live-yaml allowlist makes the ALL-OR-NOTHING validator reject the entire
+    reload, so a half-wired knob can take every other live experiment down with
+    it.
+    """
+    publisher = (
+        _REPO / "chess_anti_engine" / "tune" / "distributed_runtime.py"
+    ).read_text()
+    allowlist = (_REPO / "chess_anti_engine" / "utils" / "config_yaml.py").read_text()
+
+    unpublished: list[str] = []
+    unallowlisted: list[str] = []
+    for field, key in _search_config_ctor_kwargs().items():
+        if key is None:
+            continue
+        if f'"{key}":' not in publisher:
+            unpublished.append(f"{field} <- {key}")
+        if f'"{key}"' not in allowlist:
+            unallowlisted.append(f"{field} <- {key}")
+
+    assert not unpublished, (
+        f"resolved from the reco but never published into it: {sorted(unpublished)}"
+    )
+    assert not unallowlisted, (
+        f"not in the live-yaml allowlist, so setting them rejects the WHOLE "
+        f"reload: {sorted(unallowlisted)}"
+    )
 
 
 def test_the_recurring_defect_is_documented_where_someone_will_look() -> None:
