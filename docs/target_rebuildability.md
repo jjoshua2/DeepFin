@@ -10,14 +10,98 @@ rows the live pipeline built its SF targets from, so those targets can be
 recomputed from scratch at sample time under new parameters —
 `train.rebuild_sf_targets` (default OFF), implemented in
 `chess_anti_engine/train/target_builder.py`. When it is on, an
-`SfTargetParams` change applies to **the entire existing window on the next
-iteration**.
+`SfTargetParams` change applies to **most of the existing window on the next
+iteration** — not all of it: see "Coverage is not total" below.
 
 Most targets do not escape it. This file says exactly which, why, and what
 extra storage would move a row from the second table to the first. Every claim
 below was verified against 10 live shards (18 307 rows) from the iter-168
 window on 2026-07-27; the "verified" column gives rows checked and the worst
 disagreement observed, which for the rebuildable ones is fp16 storage noise.
+
+## Coverage is not total — 94.6 %, and it is reported
+
+Measured on the same shards: 18 307 rows, 17 778 SF-labelled (97.1 %), 16 822
+carrying `sf_multipv_raw` (91.9 % of all rows, **94.62 % of SF-labelled rows**).
+The remaining **956 rows — 5.38 % of the labelled rows** — have a stored
+`sf_policy_target` that the `w_sf_move` leg trains on and the rebuild cannot
+touch, so they keep capture-time targets. A `sf_policy_temp` 0.012 → 0.05
+experiment is therefore a ~95/5 **mixture of two target regimes**, not a clean
+swap. Probably tolerable; it is not "the entire window", and a verdict that
+assumes a clean swap is overstating its own treatment.
+
+Three `progress.csv` columns report what actually happened, per iteration:
+
+| column | meaning |
+|---|---|
+| `sf_rebuild_policy_frac` | rows whose `sf_policy_target` was rebuilt / rows in the batch |
+| `sf_rebuild_wdl_frac` | rows whose `sf_wdl` was rebuilt / rows in the batch |
+| `sf_rebuild_masked_frac` | cross-ply presence flags cleared / rows in the batch |
+
+All three read **0.0** with the flag off, so a non-zero value *is* the proof
+the flip reached the batch pipeline. The transition log line proves only the
+config push — it fires from the setter, before any batch is built. Do not use
+`has_sf_p0_frac → 0` as the proof either: on a window with no p0 rows it
+already reads 0 and proves nothing.
+
+On the row produced by `eval_full_pass` — the frozen ruler, and the only eval
+production runs — all three stay 0.0 **by construction** (it pins the rebuild
+off; next section), so a non-zero value there is itself the alarm that the ruler
+moved. The SAMPLED `Trainer.eval` is explicitly *not* a ruler and does rebuild,
+mirroring the training distribution; it has no production caller.
+
+## The frozen holdout ruler is NOT rebuilt
+
+`_full_pass_host_batch` — the deterministic holdout pass that produces
+`test_loss` — pins `rebuild_sf_targets=False`, the same way and for the same
+reason it already pins `mirror_prob=0.0`: *a ruler must not acquire a
+dependency on a training-side config knob.*
+
+Without the pin, flipping the flag would have:
+
+* scored the model against **rebuilt** `sf_policy_target` / `sf_wdl` instead of
+  the stored ones, and
+* dropped `w_sf_own` (0.1) and `w_sf_volatility` (0.05) out of `total`, because
+  the rebuild masks the two cross-ply targets it cannot move — measured at
+  **12.6 % of live rows** losing the first and **22.6 %** losing the second,
+  with `sf_own_ce` going to exactly 0.0 purely from the flip.
+
+Both change what `test_loss` MEANS with no `holdout_generation` bump, and the
+second moves it **down** — a definitional fall that reads as improvement and
+that `_update_best_model` would promote across. That is the G16 / PR #277 shape
+recorded in `docs/rl_loop_audit.md`: *freezing the SET does not freeze the
+MEASUREMENT.*
+
+The alternative — let the rebuild through and bump `holdout_generation` — was
+rejected on the merits, not on cost. A ruler that re-parameterises itself with
+the training target **cannot measure that target's effect**: the bump would
+fire exactly when the experiment starts, so every arm would sit on a fresh
+instrument and the holdout could never read the experiment at all. The bump
+makes the corruption visible; the pin keeps the measurement usable.
+
+### What the pin does NOT cover
+
+* **The SF-derived legs of `test_loss` are contaminated for the duration of a
+  rebuild experiment.** `sf_move_ce` scores the model against capture-time
+  targets while it trains against rebuilt ones, so that column moves for a
+  definitional reason (a softer target has a higher CE floor) in the *opposite*
+  direction — it reads as degradation. The `wdl` leg is affected too whenever
+  the `sf_wdl_cp_*` knobs move, since the WDL target blends `sf_wdl` at
+  `sf_wdl_frac`. The `policy`, `policy_own`, `soft` and `value` legs are
+  untouched.
+* **So the holdout is not a valid yardstick FOR a rebuild experiment.** Use an
+  external one per `docs/eval_protocol.md` — `arena_standard` matched_sims,
+  `value_regret`, or `audit_targets`. The pin exists so the holdout keeps
+  measuring *drift in everything else* across the experiment, not so it can
+  judge the experiment.
+* It does not touch the pre-existing hole that editing a **loss weight** moves
+  `test_loss` definitionally with no generation bump either. Out of scope here.
+* It is independent of PR #282 (`holdout_generation` tracks the ruler, not the
+  set) and does not conflict with it: #282 derives the ruler id from the
+  full-pass batch producers, and this pin makes those producers *invariant* to
+  `rebuild_sf_targets`, which is the property #282 wants to be able to assert.
+  Note #282 would **not** have caught this on its own — the flag changes a
+  runtime value, not the descriptor or the source digest.
 
 ## Rebuildable from the row itself
 
@@ -101,6 +185,17 @@ Two rejected alternatives, for the record:
 
 Both only help data generated *after* they ship, so they do not shorten the
 first readout — they shorten every readout after it.
+
+## Before flipping the flag live
+
+Flipping `train.rebuild_sf_targets` to `true` is a **training-affecting
+change**: it re-points the SF targets for ~95 % of the replay window in one
+iteration and takes the `w_sf_own` / `w_sf_volatility` legs out of training.
+Per the experiment protocol it needs a `docs/experiment_ledger.md` entry with
+ONE deciding yardstick as an exact command and a pre-committed kill threshold
+**before** launch, and the yardstick has to be an external one (see "What the
+pin does NOT cover"). Proof it took effect: `sf_rebuild_policy_frac` > 0 on the
+first new row of `progress.csv`.
 
 ## What this does and does not buy
 

@@ -232,10 +232,11 @@ def rebuild_sf_policy_targets_batch(
     function returns None (no scoreable rows) and those target rows are zero
     — the caller keeps the stored target there.
 
-    Bitwise-equal to the scalar path on real shard rows
-    (tests/test_sparse_multipv_labels.py::test_batch_rebuild_matches_scalar*).
-    The arithmetic order is kept identical on purpose: softmax in float64,
-    cast to float32, then every subsequent step in float32.
+    Bitwise-equal to the scalar path, including on repeated move indices
+    (tests/test_sparse_multipv_labels.py::test_batch_rebuild_*). The arithmetic
+    order is kept identical on purpose: softmax in float64, cast to float32,
+    then every subsequent step in float32, with the label-smoothing scale
+    applied AFTER the scatter because the scatter accumulates.
     """
     raw = np.asarray(multipv_raw)
     n = int(raw.shape[0])
@@ -261,26 +262,32 @@ def rebuild_sf_policy_targets_batch(
     row_sum = e.sum(axis=1, keepdims=True)
     p_top = (e / np.where(row_sum > 0.0, row_sum, 1.0)).astype(np.float32, copy=False)
 
-    # Candidate indices, flattened to positions in `out`. MultiPV move indices
-    # are distinct within a row (distinct legal moves, and the full→compact
-    # remap is injective on legal moves), so the scatter below is an
-    # assignment, not an accumulation — pinned by a test on real shard rows.
+    # Candidate (row, col) pairs. Scattered on the 2-D array, NOT on a
+    # flattened `rows * width + cols`: a move index >= policy_size would make
+    # the flat form silently write into the NEXT row's target, whereas the 2-D
+    # index raises IndexError exactly like the scalar path's `p_sf[a] += p`.
+    # No live row does this today, but a policy-encoding mismatch (legacy
+    # 4672-space raw against an 1858-wide target, or a future width change)
+    # would otherwise turn a crash into wrong training targets that nothing
+    # reports. Pinned by test_batch_rebuild_raises_on_out_of_range_move_index.
     keep = scoreable.reshape(-1)
     rows = np.repeat(np.arange(n, dtype=np.int64), raw.shape[1])[keep]
     cols = raw[..., 0].astype(np.int64, copy=False).reshape(-1)[keep]
-    flat = rows * width + cols
 
     smooth = float(params.sf_policy_label_smooth)
     legal = None
     apply = np.zeros((n,), dtype=bool)
     share = np.zeros((n,), dtype=np.float32)
+
+    np.add.at(out, (rows, cols), p_top.reshape(-1)[keep])
+
     if smooth > 0.0 and legal_dense is not None:
         legal = np.asarray(legal_dense) != 0
         legal_n = legal.sum(axis=1)
-        # `covered` holds the scored moves; & legal in place so no temporary
+        # `covered` holds the scored moves; &= legal in place so no temporary
         # of the full (B, policy_size) width is materialised.
         covered = np.zeros((n, width), dtype=bool)
-        covered.reshape(-1)[flat] = True
+        covered[rows, cols] = True
         covered &= legal
         apply = ok & (legal_n > 0) & (covered.sum(axis=1) < legal_n)
         # float64 divide then one cast to float32, mirroring the scalar path's
@@ -290,22 +297,28 @@ def rebuild_sf_policy_targets_batch(
         np.divide(smooth, legal_n.astype(np.float64), out=share64, where=apply)
         share = share64.astype(np.float32)
 
-    # `p_sf *= 1 - smooth` folded into the (B, K) candidate vector before the
-    # scatter: the scatter is an assignment and 0 * s == 0, so scaling before
-    # and after are bitwise identical, and this pass costs K columns not
-    # policy_size.
-    if bool(apply.any()):
-        p_top = p_top * np.where(apply, np.float32(1.0 - smooth), np.float32(1.0))[:, None]
-    np.add.at(out.reshape(-1), flat, p_top.reshape(-1)[keep])
-
     if legal is not None and bool(apply.any()):
         # Only ~25% of rows smooth (SF's 40 PVs cover every legal move in the
-        # rest), so gather those rows rather than paying a full-width add.
+        # rest), so gather those rows once and do both smoothing steps on the
+        # gather rather than paying two full-width passes.
+        #
+        # The `1 - smooth` scale runs AFTER the scatter, as in the scalar path.
+        # Folding it into the (B, K) candidate vector beforehand looks free but
+        # is not order-neutral: `np.add.at` is an ACCUMULATION, so a repeated
+        # move index would compute p1*s + p2*s where the scalar path computes
+        # (p1 + p2)*s. Real MultiPV rows never repeat a move, but "never in
+        # practice" is not the same as bitwise-equal, and doing it here costs
+        # nothing extra — the gather/scatter of these rows was already needed
+        # for the smoothing add.
+        #
         # legal is 0/1, so the multiply reproduces the scalar path's "add
         # `share` at legal indices, leave the rest" exactly (1 * s == s,
         # 0 * s == +0.0, and every entry of `out` is non-negative).
         sel = np.flatnonzero(apply)
-        out[sel] += legal[sel] * share[sel, None]
+        block = out[sel]
+        block *= np.float32(1.0 - smooth)
+        block += legal[sel] * share[sel, None]
+        out[sel] = block
 
     # Divide by 1.0 instead of masking off empty rows: exact, and it keeps the
     # divide on numpy's fast unmasked loop.
@@ -362,14 +375,56 @@ def rebuild_sf_wdl_batch(
     return out, np.asarray(use_log | native_ok)
 
 
+@dataclass(frozen=True)
+class SfRebuildCoverage:
+    """What one call to `rebuild_sf_targets_in_arrays` actually touched.
+
+    Returned rather than discarded because a rebuild whose coverage cannot be
+    observed is unfalsifiable: the transition log proves the config PUSH, not
+    the effect, and `has_sf_p0_frac -> 0` only proves it on a window that has
+    p0 rows at all. `sf_rebuild_policy_frac` is the number that both shows the
+    flip took effect and quantifies the rows it could not reach.
+    """
+
+    rows: int = 0
+    policy_rebuilt: int = 0
+    wdl_rebuilt: int = 0
+    cross_ply_masked: int = 0
+
+    def __add__(self, other: SfRebuildCoverage) -> SfRebuildCoverage:
+        return SfRebuildCoverage(
+            rows=self.rows + other.rows,
+            policy_rebuilt=self.policy_rebuilt + other.policy_rebuilt,
+            wdl_rebuilt=self.wdl_rebuilt + other.wdl_rebuilt,
+            cross_ply_masked=self.cross_ply_masked + other.cross_ply_masked,
+        )
+
+    def metric_kwargs(self) -> dict[str, float]:
+        """The reported columns. All zero (not absent) when nothing ran, so a
+        rebuild that silently stopped happening reads as 0.0 rather than as a
+        missing column that a consumer would skip."""
+        denom = float(max(1, self.rows))
+        return {
+            "sf_rebuild_policy_frac": float(self.policy_rebuilt) / denom,
+            "sf_rebuild_wdl_frac": float(self.wdl_rebuilt) / denom,
+            "sf_rebuild_masked_frac": float(self.cross_ply_masked) / denom,
+        }
+
+
 def rebuild_sf_targets_in_arrays(
     arrs: dict[str, np.ndarray], *, params: SfTargetParams,
-) -> dict[str, np.ndarray]:
+) -> tuple[dict[str, np.ndarray], SfRebuildCoverage]:
     """Recompute ``sf_policy_target`` / ``sf_wdl`` in a sampled batch dict.
 
-    Only rows carrying sparse labels are rebuilt; rows without them (old
-    shards) keep their stored targets. Returns ``arrs`` (mutated in place on
-    fresh copies of the touched fields).
+    Only rows carrying sparse labels are rebuilt; rows without them keep their
+    stored targets. Returns ``(arrs, coverage)`` — ``arrs`` mutated in place on
+    fresh copies of the touched fields.
+
+    Coverage is NOT total, and the caller is expected to report it. On the live
+    window 91.9 % of all rows and 94.6 % of SF-LABELLED rows carry
+    ``sf_multipv_raw``; the remaining 5.4 % of labelled rows keep capture-time
+    targets, so a params change is a ~95/5 mixture of two target regimes rather
+    than a clean swap.
 
     Fully vectorized: ~13 ms per 512-row batch at policy width 1858 on the
     host prefetch thread, against a ~90 ms/step training budget (was ~275 ms
@@ -388,6 +443,15 @@ def rebuild_sf_targets_in_arrays(
     params) and a treatment run mask exactly the same rows and the comparison
     stays paired.
     """
+    n_rows = 0
+    for probe in ("has_sf_multipv_raw", "sf_policy_target", "has_sf_label_meta", "sf_wdl"):
+        cand = arrs.get(probe)
+        if cand is not None and np.asarray(cand).ndim >= 1:
+            n_rows = int(np.asarray(cand).shape[0])
+            break
+    n_policy = 0
+    n_wdl = 0
+
     has_raw = np.asarray(arrs.get("has_sf_multipv_raw", ()), dtype=bool)
     if has_raw.size and has_raw.any() and "sf_multipv_raw" in arrs and "sf_policy_target" in arrs:
         pol = np.array(arrs["sf_policy_target"], copy=True)
@@ -408,6 +472,7 @@ def rebuild_sf_targets_in_arrays(
         else:
             pol[rows_idx[ok]] = rebuilt[ok].astype(pol.dtype, copy=False)
         arrs["sf_policy_target"] = pol
+        n_policy = int(np.count_nonzero(ok))
 
     has_meta = np.asarray(arrs.get("has_sf_label_meta", ()), dtype=bool)
     if has_meta.size and has_meta.any() and "sf_label_meta" in arrs and "sf_wdl" in arrs:
@@ -418,9 +483,15 @@ def rebuild_sf_targets_in_arrays(
         write = np.flatnonzero(has_meta)[ok_wdl]
         wdl[write] = rebuilt_wdl[ok_wdl].astype(wdl.dtype, copy=False)
         arrs["sf_wdl"] = wdl
+        n_wdl = int(write.size)
 
-    mask_cross_ply_sf_targets(arrs)
-    return arrs
+    masked = mask_cross_ply_sf_targets(arrs)
+    return arrs, SfRebuildCoverage(
+        rows=n_rows,
+        policy_rebuilt=n_policy,
+        wdl_rebuilt=n_wdl,
+        cross_ply_masked=masked,
+    )
 
 
 # Presence flags of targets that are a function of `sf_policy_target` /

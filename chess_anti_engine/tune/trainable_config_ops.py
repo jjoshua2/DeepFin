@@ -621,17 +621,19 @@ def _sync_trainer_weights(
     want_rebuild = bool(config.get("rebuild_sf_targets", False))
     was_rebuild = trainer.rebuild_sf_targets
     want_params = resolve_sf_target_params(config)
-    changed = trainer.set_sf_target_rebuild(enabled=want_rebuild, params=want_params)
-    # Only speak up when the rebuild is (or just stopped being) in effect: with
-    # the flag off, `sf_policy_temp` edits move sf_target_params every time the
-    # worker's capture params are retuned and that is not news.
-    if changed and (want_rebuild or was_rebuild):
+    # `set_sf_target_rebuild` returns True only when something a live consumer
+    # reads actually moved -- the flag itself, or the params while the rebuild
+    # or sf_policy_sparse_ce is on. With both consumers off, `sf_policy_temp`
+    # edits retune the worker's capture params and touch nothing here.
+    if trainer.set_sf_target_rebuild(enabled=want_rebuild, params=want_params):
         log.warning(
-            "rebuild_sf_targets now %s (params=%s) — SF targets are rebuilt from "
-            "sf_multipv_raw for the WHOLE replay window. While ON, "
-            "sf_p0_policy_target and sf_volatility_target are MASKED (their "
-            "sources live on other shard rows), so has_sf_p0_frac reads 0.",
-            "ON" if want_rebuild else "OFF", want_params,
+            "SF target rebuild: enabled=%s (was %s) params=%s. While ON, SF "
+            "targets are rebuilt from sf_multipv_raw for the WHOLE replay "
+            "window, and sf_p0_policy_target / sf_volatility_target are MASKED "
+            "(their sources live on other shard rows) so has_sf_p0_frac reads "
+            "0. The frozen full-pass holdout is NOT rebuilt. Proof of effect "
+            "is sf_rebuild_policy_frac in progress.csv, not this line.",
+            want_rebuild, was_rebuild, want_params,
         )
 
     cur_sf_frac = _dynamic_sf_wdl_weight(

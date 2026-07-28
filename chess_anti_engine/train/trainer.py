@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import math
+import threading
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +46,7 @@ from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
 from chess_anti_engine.train.target_builder import (
     DEFAULT_CATEGORICAL_BINS,
     CategoricalTargetParams,
+    SfRebuildCoverage,
     SfTargetParams,
     rebuild_categorical_target_in_arrays,
     rebuild_sf_targets_in_arrays,
@@ -835,6 +837,22 @@ class TrainMetrics:
     m_sf_own_regret: float = 0.0
     has_sf_p0_frac: float = 0.0
     has_sf_p0_regret_frac: float = 0.0
+  # SF target rebuild coverage (train.rebuild_sf_targets). All 0.0 when the
+  # flag is off, so a non-zero value IS the proof the flip reached the batch
+  # pipeline — the transition log only proves the config push, and
+  # has_sf_p0_frac -> 0 only proves it on a window that has p0 rows at all.
+  # `policy_frac` < the SF-labelled fraction is the real coverage gap: rows
+  # with a stored sf_policy_target but no sf_multipv_raw keep capture-time
+  # targets (5.4% of labelled rows on the live window), so a params change is
+  # a mixture of two regimes, not a clean swap.
+  # `eval_full_pass` — the frozen ruler, and the only eval production runs
+  # (tune/trainable_phases.py) — pins the rebuild off, so these stay 0.0 on
+  # its `eval` row by construction and a non-zero value there means the ruler
+  # moved. The SAMPLED `Trainer.eval` is explicitly not a ruler and does
+  # rebuild, mirroring the training distribution; it has no production caller.
+    sf_rebuild_policy_frac: float = 0.0
+    sf_rebuild_wdl_frac: float = 0.0
+    sf_rebuild_masked_frac: float = 0.0
   # Per-game-phase loss split (bucketed by moves_left).
     policy_loss_open: float = 0.0
     policy_loss_mid: float = 0.0
@@ -1125,6 +1143,36 @@ def resolve_zclip_max_norm(config: dict) -> float | None:
     """
     raw = config.get("zclip_max_norm", config.get("grad_clip", 1.0))
     return None if raw is None else float(raw)
+
+
+class _SfRebuildCoverageAccumulator:
+    """Thread-safe running total of what the SF target rebuild touched.
+
+    The rebuild runs on the host PREFETCH thread and the metrics are built on
+    the thread that consumes the batches, so the counters need a lock. Drained
+    (read-and-reset) at each metrics boundary; a window in which the rebuild
+    never ran drains to all-zero rather than to nothing, so "the rebuild
+    stopped happening" is visible as 0.0 instead of as an absent column.
+
+    The totals are process-wide, so a SAMPLED eval running concurrently with
+    training would blend into the training window's numbers. In production the
+    concurrent path is the frozen full pass, which never rebuilds (it pins
+    ``rebuild_sf_targets=False``), so that blend is empty.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._total = SfRebuildCoverage()
+
+    def add(self, coverage: SfRebuildCoverage) -> None:
+        with self._lock:
+            self._total = self._total + coverage
+
+    def drain(self) -> dict[str, float]:
+        with self._lock:
+            total = self._total
+            self._total = SfRebuildCoverage()
+        return total.metric_kwargs()
 
 
 def resolve_sf_target_params(config: dict) -> SfTargetParams:
@@ -1697,6 +1745,8 @@ class Trainer:
         self.rebuild_sf_targets = bool(rebuild_sf_targets)
         self.sf_policy_sparse_ce = bool(sf_policy_sparse_ce)
         self.sf_target_params = sf_target_params or SfTargetParams()
+  # Proof-of-effect for the rebuild: reported as sf_rebuild_*_frac.
+        self._sf_rebuild_coverage = _SfRebuildCoverageAccumulator()
   # Offline-only: recompute categorical_target from stored outcome + sf_wdl so
   # categorical_blend_frac can be screened on existing shards (sidecar). Default
   # off = stored targets used unchanged.
@@ -2033,6 +2083,7 @@ class Trainer:
         *,
         rng: np.random.Generator,
         mirror_prob: float,
+        rebuild_sf_targets: bool = True,
     ) -> dict[str, np.ndarray]:
         """Target rebuilds, payload pruning, history selection and mirroring.
 
@@ -2041,9 +2092,15 @@ class Trainer:
         path so the two cannot drift into scoring differently-shaped batches.
         Every step here is a pure function of ``arrs`` except the mirror, which
         is a no-op at ``mirror_prob <= 0`` and does not touch ``rng`` there.
+
+        ``rebuild_sf_targets=False`` suppresses the SF target rebuild even when
+        ``self.rebuild_sf_targets`` is on. The full-pass ruler passes False —
+        same reasoning, and the same mechanism, as ``mirror_prob=0.0`` there:
+        a ruler must not acquire a dependency on a training-side config knob.
         """
-        if self.rebuild_sf_targets:
-            arrs = rebuild_sf_targets_in_arrays(arrs, params=self.sf_target_params)
+        if rebuild_sf_targets and self.rebuild_sf_targets:
+            arrs, coverage = rebuild_sf_targets_in_arrays(arrs, params=self.sf_target_params)
+            self._sf_rebuild_coverage.add(coverage)
         if self.rebuild_categorical_target:
             arrs = rebuild_categorical_target_in_arrays(
                 arrs, params=self.categorical_target_params,
@@ -2141,9 +2198,29 @@ class Trainer:
         that flips a random half of its positions is not a fixed ruler. The
         eval path already passed 0.0 here; it is pinned rather than plumbed so
         the full pass cannot acquire an rng dependency by configuration.
+
+        ``rebuild_sf_targets=False`` is pinned for the same reason and by the
+        same mechanism. With the rebuild on, this path would (a) score the
+        model against REBUILT `sf_policy_target` / `sf_wdl` and (b) drop
+        `w_sf_own` and `w_sf_volatility` from `total`, because the rebuild
+        masks the two cross-ply targets it cannot move. Both change what
+        `test_loss` MEANS with no `holdout_generation` bump, and the second
+        moves it DOWN — a definitional fall that reads as improvement and that
+        `_update_best_model` would happily promote across (the G16 / PR #277
+        shape, docs/rl_loop_audit.md).
+
+        A ruler that re-parameterises itself with the training target also
+        cannot measure that target's effect: the bump would fire exactly when
+        the experiment starts, so the holdout could never read it. Pinning
+        keeps the pre-flip and post-flip numbers on one instrument. The cost —
+        the SF-derived legs then score against capture-time targets while
+        training uses rebuilt ones — is stated in
+        docs/target_rebuildability.md; those legs are contaminated FOR THE
+        DURATION and the experiment's yardstick must be an external one.
         """
         return self._prepare_host_arrays(
             buf.rows_slice_arrays(start, stop), rng=buf.rng, mirror_prob=0.0,
+            rebuild_sf_targets=False,
         )
 
     def _iter_full_pass_batches(
@@ -2367,12 +2444,25 @@ class Trainer:
         iteration, instead of only to data generated after the edit (~18h for
         a 1.5M-row window to turn over at the current ingest rate).
 
+        ``sf_target_params`` is written only when a CONSUMER is active — this
+        rebuild, or ``sf_policy_sparse_ce``, which reads the same field as
+        ``sf_sparse_params`` in `_loss_kwargs`. Writing it unconditionally
+        would mean that the day `sf_policy_sparse_ce` is switched on, a live
+        `sf_policy_temp` edit silently retargets the sparse-CE `w_sf_move`
+        loss; that it is inert today rests only on a key being absent from the
+        yaml, which is not a guarantee. With both consumers off the field keeps
+        its construction-time value and nothing reads it.
+
         Returns True when something actually changed, so the caller logs the
         transition rather than every iteration.
         """
-        changed = bool(enabled) != self.rebuild_sf_targets or params != self.sf_target_params
+        consumer_active = bool(enabled) or self.sf_policy_sparse_ce
+        changed = bool(enabled) != self.rebuild_sf_targets or (
+            consumer_active and params != self.sf_target_params
+        )
         self.rebuild_sf_targets = bool(enabled)
-        self.sf_target_params = params
+        if consumer_active:
+            self.sf_target_params = params
         return changed
 
     @property
@@ -2584,6 +2674,7 @@ class Trainer:
         metrics = self._build_metrics(
             sums, acc_sums, float(max(1, total_rows)),
             wdl_brier=wdl_brier, wdl_ece=wdl_ece, eval_rows=int(total_rows),
+            **self._sf_rebuild_coverage.drain(),
         )
         self._log_metrics(metrics, tag)
         return metrics
@@ -2823,6 +2914,7 @@ class Trainer:
             opt_lr_mean=float(sum(lr_samples) / len(lr_samples)) if lr_samples else 0.0,
             opt_lr_max=float(max(lr_samples)) if lr_samples else 0.0,
             **_grad_clip_metric_kwargs(grad_norms, clip_counts, aurora_grad_norms),
+            **self._sf_rebuild_coverage.drain(),
             **getattr(self.opt, "last_uw_stats", {}),
         )
         self._warn_if_grad_norm_median_past_watch(metrics)
