@@ -148,6 +148,11 @@ def report(a: Dump, b: Dump, *, label_a: str, label_b: str, n_boot: int) -> None
   # null/NaN. The count is already sitting in `Dump.unusable`; withholding it
   # from the one message the operator sees is how a data failure gets read as
   # a config typo.
+  # Name the side that indexed nothing rather than saying "a side": the
+  # accounting printed immediately before it already labels A and B, so an
+  # unlabelled "A side indexed nothing" reads as the literal side A and
+  # contradicts the numbers on the same line.
+        empty = [name for name, d in (("A", a), ("B", b)) if not d.rows]
         raise SystemExit(
             "no joinable rows — "
             f"A: {len(a.rows) + a.unusable} rows, {a.unusable} unusable, "
@@ -155,13 +160,13 @@ def report(a: Dump, b: Dump, *, label_a: str, label_b: str, n_boot: int) -> None
             f"   B: {len(b.rows) + b.unusable} rows, {b.unusable} unusable, "
             f"{len(b.rows)} indexed. "
             + (
-                "Every indexed key is unique to one side — check "
+                "Both sides indexed rows but share no key — check "
                 "--join-key/--field against the dump schema."
-                if a.rows and b.rows
-                else "A side indexed nothing: with rows read but unusable the "
-                "scorer failed on them (non-finite or null --field); with no "
-                "rows at all the dump is empty. Otherwise check "
-                "--join-key/--field against the dump schema."
+                if not empty
+                else f"{' and '.join(empty)} indexed nothing: with rows read but "
+                "unusable the scorer failed on them (non-finite or null "
+                "--field); with no rows at all the dump is empty. Otherwise "
+                "check --join-key/--field against the dump schema."
             ),
         )
     va = np.array([a.rows[k][0] for k in common])

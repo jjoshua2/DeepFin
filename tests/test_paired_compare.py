@@ -191,6 +191,11 @@ def test_total_scorer_failure_is_not_reported_as_a_schema_mismatch(tmp_path) -> 
     assert "A: 50 rows, 0 unusable, 50 indexed" in message
     assert "B: 50 rows, 50 unusable, 0 indexed" in message
     assert "scorer failed" in message
+    # Name the side that indexed nothing. It is B here, and A indexed all 50 --
+    # a message reading "A ... indexed nothing" would contradict the accounting
+    # printed immediately before it on the same line.
+    assert "B indexed nothing" in message
+    assert "A indexed nothing" not in message
 
 
 def test_empty_join_over_two_healthy_dumps_still_blames_the_join_key(tmp_path) -> None:
@@ -214,6 +219,27 @@ def test_empty_join_over_two_healthy_dumps_still_blames_the_join_key(tmp_path) -
     assert "B: 2 rows, 0 unusable, 2 indexed" in message
     assert "--join-key/--field" in message
     assert "scorer failed" not in message
+    assert "indexed nothing" not in message
+
+
+def test_both_sides_all_unusable_names_both_sides(tmp_path) -> None:
+    """When neither side indexed anything, say so for both rather than one."""
+    from scripts.paired_compare import load_dump, report
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        {"fen": "p1", "value": None}, {"fen": "p2", "value": None},
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        {"fen": "p1", "value": float("nan")}, {"fen": "p2", "value": float("nan")},
+    ]))
+
+    with pytest.raises(SystemExit) as exc:
+        report(a, b, label_a="A", label_b="B", n_boot=200)
+
+    message = str(exc.value)
+    assert "A: 2 rows, 2 unusable, 0 indexed" in message
+    assert "B: 2 rows, 2 unusable, 0 indexed" in message
+    assert "A and B indexed nothing" in message
 
 
 def test_load_dump_refuses_duplicate_join_keys(tmp_path) -> None:
