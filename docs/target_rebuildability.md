@@ -52,8 +52,12 @@ already reads 0 and proves nothing.
 On the row produced by `eval_full_pass` — the frozen ruler, and the only eval
 production runs — all three stay 0.0 **by construction** (it pins the rebuild
 off; next section), so a non-zero value there is itself the alarm that the ruler
-moved. The SAMPLED `Trainer.eval` is explicitly *not* a ruler and does rebuild,
-mirroring the training distribution; it has no production caller.
+moved. That alarm is readable as the `progress.csv` columns
+**`test_sf_rebuild_policy_frac` / `_wdl_frac` / `_masked_frac`**, not only as a
+TensorBoard scalar: TB event files rotate per Ray session, and an alarm whose
+only reading lives in a rotating sink is not an alarm. The SAMPLED
+`Trainer.eval` is explicitly *not* a ruler and does rebuild, mirroring the
+training distribution; it has no production caller.
 
 **Each measurement owns its own counter.** `drain()` read-and-RESETS, so a
 single trainer-wide accumulator would not merely blur the train and eval rows —
@@ -132,14 +136,42 @@ makes the corruption visible; the pin keeps the measurement usable.
   cannot reach the measurement, and reaching the unpinned runtime value would
   have required plumbing config into a descriptor #282 deliberately built out
   of arguments and source only.
-* **Expect one `holdout_generation` bump when this lands alongside #282.**
-  #282's `measured_by` hashes the AST of `_prepare_host_arrays` and
-  `_full_pass_host_batch`, and this PR edits both. The bump therefore fires on
-  the first restart after both are deployed even though the ruler's output is
-  byte-identical across the change. That is #282's declared direction of error
-  (a false positive costs ONE best-model handover; a false negative is G16), so
-  it is expected, not a defect — but do not read that bump as evidence the
-  ruler moved. Nothing else should bump afterwards.
+* **The pin is GUARDED by #282, which is the observation that makes (b) safe
+  against future drift** — and it beats the argument above, because it can be
+  executed. The pin lives *inside* `_full_pass_host_batch`, and that function
+  is one of the frames #282's `measured_by` hashes. So an edit that un-pins the
+  ruler moves the ruler id and fires the handover. Measured on a merge of both
+  branches: pin intact `v1:full_pass:c11ec56b40f212b7`, pin removed
+  `v1:full_pass:9dc17ccad5b21ea4`. The argument from #282's descriptor
+  explains why (a) was unavailable; this is why (b) stays true.
+* **The `holdout_generation` bump when this lands alongside #282 is
+  ORDER-DEPENDENT, and the operator must record which order was used.** #282's
+  `measured_by` hashes four frames this PR edits — `_prepare_host_arrays`,
+  `_full_pass_host_batch`, `_compute_metrics` and `_iter_full_pass_batches` —
+  so the merged ruler id differs from #282's alone, even though the number does
+  not: merged id `v1:full_pass:c11ec56b40f212b7`, full-pass loss
+  `10.196143524169923` over the same 2000-row buffer, identical to #282 alone.
+  Measured by running `_maybe_bump_generation_on_ruler_change` in both orders:
+  * **both at the SAME restart** — today's live checkpoints carry no
+    `holdout_ruler`, so an absent id reads as *no evidence* and is adopted:
+    **ZERO bumps**, generation stays **1**. This is what #282's pre-registered
+    PASS condition ("`holdout_generation` is still 1") expects.
+  * **#282 first, this PR at a later restart** — **ONE bump**, 1 → 2, and
+    `best/` hands over.
+
+  Neither is harmful and zero is strictly safer, but the PASS/KILL criterion is
+  written in terms of the generation, so a verdict read without knowing the
+  order is not a verdict. Either way the bump is a FALSE positive — #282's
+  declared direction of error, one handover — and must not be read as the ruler
+  moving.
+* **Merging these two produces a real CONFLICT**, one hunk, in
+  `_compute_metrics`'s `_build_metrics(...)` call: `eval_ruler=ruler` (#282) vs
+  `**eval_coverage.drain()` (this PR). **Both lines must be kept.** GitHub
+  reports each PR individually mergeable because neither is on `main` yet, so
+  the conflict only surfaces at the second merge. Whoever merges second must
+  also update #282's `PRODUCTION_FULL_PASS_RULER` / `PRODUCTION_SAMPLED_RULER`
+  pins and the ledger's quoted hex **in the same commit**, or `main` goes red on
+  #282's own golden-id test.
 
 ## Rebuildable from the row itself
 
@@ -227,13 +259,30 @@ first readout — they shorten every readout after it.
 ## Before flipping the flag live
 
 Flipping `train.rebuild_sf_targets` to `true` is a **training-affecting
-change**: it re-points the SF targets for ~95 % of the replay window in one
-iteration and takes the `w_sf_own` / `w_sf_volatility` legs out of training.
-Per the experiment protocol it needs a `docs/experiment_ledger.md` entry with
-ONE deciding yardstick as an exact command and a pre-committed kill threshold
-**before** launch, and the yardstick has to be an external one (see "What the
-pin does NOT cover"). Proof it took effect: `sf_rebuild_policy_frac` > 0 on the
-first new row of `progress.csv`.
+change**: it re-points the SF targets for ~95 % of the SF-**labelled** rows in
+the replay window in one iteration and takes the `w_sf_own` /
+`w_sf_volatility` legs out of training. Per the experiment protocol it needs a
+`docs/experiment_ledger.md` entry with ONE deciding yardstick as an exact
+command and a pre-committed kill threshold **before** launch, and the yardstick
+has to be an external one (see "What the pin does NOT cover"). Proof it took
+effect: `sf_rebuild_policy_frac` > 0 on the first new row of `progress.csv`.
+
+**Expect `sf_rebuild_policy_frac` ≈ 0.92, not 0.95.** The column's denominator
+is **all rows in the batch**, not SF-labelled rows: 16,822 / 18,307 = **0.919**
+on the measured window, where the 94.6 % figure quoted everywhere else is
+16,822 / 17,778 SF-**labelled** rows. Both numbers are correct and they measure
+different things. The gap is definitional, so do not read 0.92 against the
+prose's "~95 %" as a coverage regression. The denominator is all batch rows on
+purpose — it makes the column a fraction of the training batch, which is what
+"how much of what I trained on was re-pointed" actually asks.
+
+**The deploying restart will ROTATE `progress.csv`.** This PR adds three report
+keys (`sf_rebuild_policy_frac` / `_wdl_frac` / `_masked_frac`, plus their
+`test_` twins), which changes the report schema, so
+`_rotate_progress_csv_if_schema_changed` (`tune/harness.py`, PR #262) moves the
+existing file aside and starts a new one. That is correct behaviour and
+`scripts/ratchet_slope.py` and `scripts/train_watchdog.py` already follow
+rotations — but it is visible at the restart and must not be read as data loss.
 
 ## What this does and does not buy
 

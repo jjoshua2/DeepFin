@@ -2490,9 +2490,12 @@ class Trainer:
         batch the prefetch thread builds.
 
         Turning it ON is the whole point of the flag: an ``SfTargetParams``
-        change then applies to the ENTIRE existing replay window on the next
-        iteration, instead of only to data generated after the edit (~18h for
-        a 1.5M-row window to turn over at the current ingest rate).
+        change then applies to ~95 % of the SF-LABELLED rows already in the
+        replay window on the next iteration, instead of only to data generated
+        after the edit (~18h for a 1.5M-row window to turn over at the current
+        ingest rate). Not the entire window — rows without ``sf_multipv_raw``
+        keep capture-time targets, so the window becomes a mixture of two
+        target regimes; ``sf_rebuild_policy_frac`` reports the realized rate.
 
         ``sf_target_params`` is written only when a CONSUMER is active — this
         rebuild, or ``sf_policy_sparse_ce``, which reads the same field as

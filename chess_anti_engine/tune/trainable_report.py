@@ -941,6 +941,16 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
     "test_moves_left_loss", "test_wdl_brier", "test_wdl_ece",
     "test_policy_loss_selfplay", "test_policy_loss_curriculum",
     "test_policy_loss_open", "test_policy_loss_mid", "test_policy_loss_end",
+  # The RULER-side rebuild coverage. `eval_full_pass` pins the SF target
+  # rebuild off, so these are 0.0 by construction and a non-zero value means
+  # the frozen holdout rebuilt its own targets -- the alarm that
+  # `_full_pass_host_batch` forwards its `coverage` sink to keep fail-able.
+  # They belong HERE and not only in TensorBoard: TB event files rotate per
+  # Ray session (see the grad-norm metrics, promoted to TrainMetrics for
+  # exactly this reason), and an alarm whose only reading is in a rotating
+  # sink is not an alarm. The train-side twins are in _TRAIN_METRIC_DEFAULTS.
+    "test_sf_rebuild_policy_frac", "test_sf_rebuild_wdl_frac",
+    "test_sf_rebuild_masked_frac",
 )
 
 
@@ -1005,6 +1015,12 @@ def _test_and_drift_dict(
             "test_policy_loss_open": float(tm.policy_loss_open),
             "test_policy_loss_mid": float(tm.policy_loss_mid),
             "test_policy_loss_end": float(tm.policy_loss_end),
+            # Ruler alarm: 0.0 by construction (the full pass pins the SF
+            # target rebuild off), so non-zero means the frozen holdout
+            # rebuilt its own targets and `test_loss` changed meaning.
+            "test_sf_rebuild_policy_frac": float(tm.sf_rebuild_policy_frac),
+            "test_sf_rebuild_wdl_frac": float(tm.sf_rebuild_wdl_frac),
+            "test_sf_rebuild_masked_frac": float(tm.sf_rebuild_masked_frac),
         })
     return test_dict
 

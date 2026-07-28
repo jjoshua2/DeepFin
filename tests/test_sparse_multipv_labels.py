@@ -1298,6 +1298,57 @@ def test_an_eval_does_not_drain_the_training_coverage_counters(monkeypatch):
     assert t._sf_rebuild_coverage.drain()["sf_rebuild_policy_frac"] == pytest.approx(1.0)
 
 
+def test_the_ruler_alarm_reaches_progress_csv_not_only_tensorboard():
+    """The eval-row coverage is the alarm that the frozen ruler rebuilt its own
+    targets, and `_full_pass_host_batch` forwards its `coverage` sink purely to
+    keep that alarm fail-able. An alarm has to be readable where the doc sends
+    the operator: `_TEST_METRIC_KEYS` / `_test_and_drift_dict` are an
+    ENUMERATED whitelist, so a key absent from them reaches only TensorBoard --
+    whose event files rotate per Ray session, which is why the grad-norm
+    metrics were promoted to TrainMetrics in the first place.
+    """
+    from chess_anti_engine.train.trainer import TrainMetrics
+    from chess_anti_engine.tune.trainable_report import (
+        _TEST_METRIC_KEYS,
+        _test_and_drift_dict,
+    )
+    from chess_anti_engine.tune.trial_config import DriftMetrics, TrainingResult
+
+    want = (
+        "test_sf_rebuild_policy_frac",
+        "test_sf_rebuild_wdl_frac",
+        "test_sf_rebuild_masked_frac",
+    )
+    for key in want:
+        assert key in _TEST_METRIC_KEYS, f"{key} would never reach progress.csv"
+
+    # Present (as NaN) even when no eval ran, so Ray locks the column on row 1.
+    empty = _test_and_drift_dict(
+        tr=TrainingResult(), drift=DriftMetrics(),
+        holdout_frozen=False, holdout_generation=0,
+    )
+    for key in want:
+        assert key in empty
+
+    # ...and carries the eval's OWN value when one did.
+    tr = TrainingResult()
+    tr.test_metrics = TrainMetrics(
+        loss=0.5, policy_loss=0.5, soft_policy_loss=0.5, future_policy_loss=0.5,
+        wdl_loss=0.5, sf_move_loss=0.5, sf_move_acc=0.5, sf_eval_loss=0.5,
+        categorical_loss=0.5, volatility_loss=0.5, sf_volatility_loss=0.5,
+        moves_left_loss=0.5, eval_rows=8,
+        sf_rebuild_policy_frac=0.25,
+    )
+    tr.test_metrics_source_iter = 41
+    row = _test_and_drift_dict(
+        tr=tr, drift=DriftMetrics(),
+        holdout_frozen=False, holdout_generation=0,
+    )
+    # A non-zero value here IS the alarm -- it must survive to the row.
+    assert row["test_sf_rebuild_policy_frac"] == pytest.approx(0.25)
+    assert row["test_sf_rebuild_wdl_frac"] == 0.0
+
+
 def test_sf_target_params_are_not_written_when_no_consumer_reads_them():
     """`sf_target_params` also feeds `sf_sparse_params` in `_loss_kwargs`. An
     unconditional live write would mean that the day `sf_policy_sparse_ce` is
