@@ -241,7 +241,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_160.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_161.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -309,6 +309,27 @@ selfplay:
   playout_cap_fraction: 0.25  # 25% get full sims, 75% get fast
   fast_simulations: 32
   gumbel_topk: 16
+  # 2026-07-28 C17 DEPLOY (ledger: "READOUT 2 — SETTLED"). LEGACY virtual loss
+  # in the selfplay Gumbel descent. Within one sequential-halving round the tree
+  # cannot update, so every visit allocated to a candidate descends to the SAME
+  # leaf. At the realized live shape -- n_boards ~= 1, because 23.5 of every 24
+  # games per thread are blocked on a pending Stockfish move -- 88.3% of rows at
+  # 256 sims are byte-identical duplicates; 65.9% mix-weighted, and 97% of that
+  # waste is on full plies.
+  #
+  # A 256-sim ply spends 256 forwards to visit 30 distinct positions. At
+  # vloss=1 it visits 242: 8.1x more distinct search information on exactly the
+  # 25% of plies that produce every training target. Measured -7.4 cp on the
+  # target (PR #278). Costs ~26% more GPU calls, which are FREE here because
+  # selfplay is Stockfish-bound, not GPU-bound (sf_block_starved 2699-2986% of
+  # 3200% thread-time).
+  #
+  # LEGACY (the only mode selfplay can select) values the pending visit as a
+  # loss. That pessimism IS the spreading mechanism -- VLOSS_MODE_VIRTUAL_MEAN
+  # is theoretically cleaner but cannot fill a batch, so it is deliberately not
+  # reachable from here. 0 restores the pre-2026-07-28 behaviour.
+  # _RECO_RESTART_KEY: read into SearchConfig once at worker-session start.
+  gumbel_vloss_weight: 1
   # Gumbel value-transform scale for SELFPLAY/RL. Was never written here — it came
   # from code defaults only, and UCI/match uses a DIFFERENT measured value (0.025,
   # +301 Elo @8000 sims, mcts/gumbel.py PLAY_SEARCH_DEFAULTS). Do not unify them:
