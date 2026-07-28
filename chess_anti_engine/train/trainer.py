@@ -1127,6 +1127,22 @@ def resolve_zclip_max_norm(config: dict) -> float | None:
     return None if raw is None else float(raw)
 
 
+def resolve_sf_target_params(config: dict) -> SfTargetParams:
+    """SfTargetParams from a flat config dict.
+
+    Shared by `trainer_kwargs_from_config` (construction) and the per-iteration
+    live push, so the two cannot read the same yaml keys differently — the
+    defect shape where a live edit lands in a value the constructor never saw.
+    """
+    return SfTargetParams(
+        sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
+        sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
+        sf_wdl_use_cp_logistic=bool(config.get("sf_wdl_use_cp_logistic", False)),
+        sf_wdl_cp_slope=float(config.get("sf_wdl_cp_slope", 0.010)),
+        sf_wdl_cp_draw_width=float(config.get("sf_wdl_cp_draw_width", 60.0)),
+    )
+
+
 def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> dict:
     """Extract Trainer constructor kwargs from a flat config dict.
 
@@ -1158,13 +1174,7 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "feature_dropout_p": _f("feature_dropout_p", 0.3),
         "rebuild_sf_targets": bool(config.get("rebuild_sf_targets", False)),
         "sf_policy_sparse_ce": bool(config.get("sf_policy_sparse_ce", False)),
-        "sf_target_params": SfTargetParams(
-            sf_policy_temp=_f("sf_policy_temp", 0.25),
-            sf_policy_label_smooth=_f("sf_policy_label_smooth", 0.05),
-            sf_wdl_use_cp_logistic=bool(config.get("sf_wdl_use_cp_logistic", False)),
-            sf_wdl_cp_slope=_f("sf_wdl_cp_slope", 0.010),
-            sf_wdl_cp_draw_width=_f("sf_wdl_cp_draw_width", 60.0),
-        ),
+        "sf_target_params": resolve_sf_target_params(config),
         "rebuild_categorical_target": bool(config.get("rebuild_categorical_target", False)),
         "categorical_target_params": CategoricalTargetParams(
             blend_frac=_f("categorical_blend_frac", 0.0),
@@ -1680,9 +1690,10 @@ class Trainer:
         self._amp_dtype = torch.bfloat16 if device.startswith("cuda") else None
 
         self.feature_dropout_p = float(feature_dropout_p)
-  # Rebuild SF targets from sparse MultiPV labels at sample time (offline
-  # target-retuning experiments). False = use stored targets, bitwise
-  # identical to the pre-flag pipeline.
+  # Rebuild SF targets from sparse MultiPV labels at sample time, so an
+  # SfTargetParams change applies to the WHOLE existing replay window instead
+  # of waiting ~18h for it to turn over. False = use stored targets, bitwise
+  # identical to the pre-flag pipeline. `set_rebuild_sf_targets` flips it live.
         self.rebuild_sf_targets = bool(rebuild_sf_targets)
         self.sf_policy_sparse_ce = bool(sf_policy_sparse_ce)
         self.sf_target_params = sf_target_params or SfTargetParams()
@@ -2337,6 +2348,32 @@ class Trainer:
             return False
         self.zclip.max_grad_norm = new  # pyright: ignore[reportAttributeAccessIssue]
         return True
+
+    def set_sf_target_rebuild(
+        self, *, enabled: bool, params: SfTargetParams,
+    ) -> bool:
+        """Re-point the SF target rebuild on a RUNNING trainer.
+
+        ``rebuild_sf_targets`` and every ``SfTargetParams`` knob are read at
+        Trainer construction, so without this a live yaml edit would sit in
+        ``config`` doing nothing until the next restart — the
+        "config_change_may_not_be_in_effect" shape. The rebuild is a pure
+        function of the sampled batch with no optimizer or model state behind
+        it, so re-pointing it mid-run is safe and takes effect on the next
+        batch the prefetch thread builds.
+
+        Turning it ON is the whole point of the flag: an ``SfTargetParams``
+        change then applies to the ENTIRE existing replay window on the next
+        iteration, instead of only to data generated after the edit (~18h for
+        a 1.5M-row window to turn over at the current ingest rate).
+
+        Returns True when something actually changed, so the caller logs the
+        transition rather than every iteration.
+        """
+        changed = bool(enabled) != self.rebuild_sf_targets or params != self.sf_target_params
+        self.rebuild_sf_targets = bool(enabled)
+        self.sf_target_params = params
+        return changed
 
     @property
     def grad_clip_max_norm(self) -> float | None:

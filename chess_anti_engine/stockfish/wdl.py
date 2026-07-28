@@ -55,3 +55,43 @@ def cp_to_wdl(
     p_draw = max(0.0, 1.0 - p_win - p_loss)
     total = p_win + p_loss + p_draw
     return np.array([p_win, p_draw, p_loss], dtype=np.float32) / float(total)
+
+
+def mate_to_effective_cp_array(mate_in: np.ndarray) -> np.ndarray:
+    """Vectorised twin of `mate_to_effective_cp` (elementwise, float64 out).
+
+    Same arithmetic, same constants; `tests/test_wdl_vectorised.py` pins the
+    two to bitwise agreement so the scalar version stays the definition.
+    """
+    m = np.asarray(mate_in)
+    sign = np.where(m >= 0, 1.0, -1.0)
+    plies = np.abs(m).astype(np.float64, copy=False)
+    bonus = np.maximum(0.0, 50.0 - plies) * _MATE_DEPTH_BONUS_CP
+    return sign * (_MATE_BASE_CP + bonus)
+
+
+def cp_to_wdl_array(
+    eff_cp: np.ndarray,
+    *,
+    slope: float,
+    draw_width_cp: float,
+) -> np.ndarray:
+    """Vectorised twin of `cp_to_wdl`, over an array of EFFECTIVE cp.
+
+    Takes effective cp (mate already folded in by `mate_to_effective_cp_array`)
+    because batch callers resolve the mate/cp precedence themselves, with a
+    mask, rather than per element. Returns ``(..., 3)`` float32 (W, D, L),
+    reproducing the scalar function's exact dtype sequence: the triple is cast
+    to float32 and only then divided by the float64 total, matching NumPy's
+    weak-scalar rule in `cp_to_wdl`. `tests/test_wdl_vectorised.py` pins the
+    two to bitwise agreement.
+    """
+    if slope <= 0.0 or draw_width_cp < 0.0:
+        raise ValueError(f"cp_to_wdl requires slope>0 and draw_width_cp>=0, got {slope=} {draw_width_cp=}")
+    eff = np.asarray(eff_cp, dtype=np.float64)
+    p_win = 1.0 / (1.0 + np.exp(-slope * (eff - draw_width_cp)))
+    p_loss = 1.0 / (1.0 + np.exp(-slope * (-eff - draw_width_cp)))
+    p_draw = np.maximum(0.0, 1.0 - p_win - p_loss)
+    total = p_win + p_loss + p_draw
+    stacked = np.stack([p_win, p_draw, p_loss], axis=-1).astype(np.float32, copy=False)
+    return stacked / total[..., None].astype(np.float32, copy=False)

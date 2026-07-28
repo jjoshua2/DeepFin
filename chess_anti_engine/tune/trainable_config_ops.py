@@ -23,6 +23,7 @@ from chess_anti_engine.selfplay.config import (
 )
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.train import Trainer
+from chess_anti_engine.train.trainer import resolve_sf_target_params
 from chess_anti_engine.tune.trainable_metrics import _dynamic_sf_wdl_weight
 from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
 import contextlib
@@ -612,6 +613,26 @@ def _sync_trainer_weights(
     take effect immediately.
     """
     _apply_lr_gamma_weights(trainer, config, rescale_current_lr=True)
+
+    # SF target rebuild: construction-time on the Trainer, so it needs an
+    # explicit push or a live yaml edit silently waits for the next restart.
+    # This is what lets an SfTargetParams change hit the WHOLE existing replay
+    # window at the next iteration instead of only newly generated data.
+    want_rebuild = bool(config.get("rebuild_sf_targets", False))
+    was_rebuild = trainer.rebuild_sf_targets
+    want_params = resolve_sf_target_params(config)
+    changed = trainer.set_sf_target_rebuild(enabled=want_rebuild, params=want_params)
+    # Only speak up when the rebuild is (or just stopped being) in effect: with
+    # the flag off, `sf_policy_temp` edits move sf_target_params every time the
+    # worker's capture params are retuned and that is not news.
+    if changed and (want_rebuild or was_rebuild):
+        log.warning(
+            "rebuild_sf_targets now %s (params=%s) — SF targets are rebuilt from "
+            "sf_multipv_raw for the WHOLE replay window. While ON, "
+            "sf_p0_policy_target and sf_volatility_target are MASKED (their "
+            "sources live on other shard rows), so has_sf_p0_frac reads 0.",
+            "ON" if want_rebuild else "OFF", want_params,
+        )
 
     cur_sf_frac = _dynamic_sf_wdl_weight(
         sf_wdl_start=tc.sf_wdl_frac,

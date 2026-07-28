@@ -5,12 +5,19 @@ built its targets from (``sf_multipv_raw``/``sf_label_meta``; layout in
 replay/shard.py). These pure functions replay the exact live construction
 (selfplay/stockfish_turn.py) with arbitrary parameters, so target questions —
 ``sf_policy_temp``, ``sf_policy_label_smooth``, cp→logistic ``slope`` /
-``draw_width``, logistic-vs-native WDL — become offline retrains
-(scripts/retarget_retrain.py) instead of fresh live runs.
+``draw_width``, logistic-vs-native WDL — can be re-answered against data that
+already exists, instead of waiting ~18 h for a 1.5M-row replay window to turn
+over. `train.rebuild_sf_targets` (default OFF) applies the rebuild to every
+sampled batch of LIVE training; scripts/retarget_retrain.py drives the offline
+variant sweep.
 
 With params equal to the capture-time config, the rebuilt targets match the
 stored ones to float precision (parity-tested in
-tests/test_sparse_multipv_labels.py).
+tests/test_sparse_multipv_labels.py; measured TV 7.3e-5 mean over 16.8k live
+shard rows on 2026-07-27).
+
+WHAT THIS CANNOT REBUILD, and what happens instead, is in
+docs/target_rebuildability.md — read it before assuming a target moved.
 """
 from __future__ import annotations
 
@@ -19,7 +26,11 @@ from dataclasses import dataclass
 import numpy as np
 
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL
-from chess_anti_engine.stockfish.wdl import cp_to_wdl
+from chess_anti_engine.stockfish.wdl import (
+    cp_to_wdl,
+    cp_to_wdl_array,
+    mate_to_effective_cp_array,
+)
 from chess_anti_engine.train.targets import (
     DEFAULT_CATEGORICAL_BINS,
     categorical_target_value,
@@ -160,6 +171,197 @@ def rebuild_sf_wdl(label_meta: np.ndarray, params: SfTargetParams) -> np.ndarray
     return wdl_stm[::-1].copy()
 
 
+def _batch_row_scores(
+    raw: np.ndarray, params: SfTargetParams,
+) -> tuple[np.ndarray, np.ndarray]:
+    """(B, K, 5) raw rows → (scores float64 (B, K), scoreable bool (B, K)).
+
+    Batched `_row_score` + the `move_idx >= 0` padding filter, in one pass.
+    ``scores`` is meaningless where ``scoreable`` is False.
+    """
+    move = raw[..., 0]
+    cp = raw[..., 1].astype(np.int64, copy=False)
+    mate = raw[..., 2].astype(np.int64, copy=False)
+    wdl_w = raw[..., 3]
+    wdl_d = raw[..., 4]
+
+    valid = move >= 0
+    native_ok = (wdl_w >= 0) & (wdl_d >= 0)
+    scores = (wdl_w.astype(np.float64) + 0.5 * wdl_d.astype(np.float64)) / 1000.0
+
+    if not params.sf_wdl_use_cp_logistic:
+        return scores, np.asarray(valid & native_ok)
+
+    has_cp = cp != SF_CP_SENTINEL
+    has_mate = mate != 0
+    use_log = has_cp | has_mate
+    # Evaluate the logistic only on the entries that take it (padding rows are
+    # ~half the (B, K) grid at production multipv), so the two exp() calls —
+    # the dominant cost here — run over the compressed set.
+    sel = valid & use_log
+    if bool(sel.any()):
+        m_sel = mate[sel]
+        # cp_to_wdl gives mate precedence over cp; mirror that with a select.
+        eff_cp = np.where(
+            m_sel != 0, mate_to_effective_cp_array(m_sel), cp[sel].astype(np.float64),
+        )
+        logistic = cp_to_wdl_array(
+            eff_cp,
+            slope=params.sf_wdl_cp_slope,
+            draw_width_cp=params.sf_wdl_cp_draw_width,
+        )
+        scores[sel] = (
+            logistic[:, 0].astype(np.float64) + 0.5 * logistic[:, 1].astype(np.float64)
+        )
+    return scores, np.asarray(valid & (use_log | native_ok))
+
+
+def rebuild_sf_policy_targets_batch(
+    multipv_raw: np.ndarray,
+    *,
+    legal_dense: np.ndarray | None,
+    policy_size: int,
+    params: SfTargetParams,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized `rebuild_sf_policy_target` over a whole batch.
+
+    ``multipv_raw`` is (B, K, 5); ``legal_dense`` the (B, policy_size)
+    ``sf_legal_mask`` (None ⇒ no smoothing, matching the scalar function's
+    empty-``legal_indices`` path). Returns ``(targets (B, policy_size)
+    float32, ok (B,) bool)``; ``ok`` is False exactly where the scalar
+    function returns None (no scoreable rows) and those target rows are zero
+    — the caller keeps the stored target there.
+
+    Bitwise-equal to the scalar path on real shard rows
+    (tests/test_sparse_multipv_labels.py::test_batch_rebuild_matches_scalar*).
+    The arithmetic order is kept identical on purpose: softmax in float64,
+    cast to float32, then every subsequent step in float32.
+    """
+    raw = np.asarray(multipv_raw)
+    n = int(raw.shape[0])
+    width = int(policy_size)
+    out = np.zeros((n, width), dtype=np.float32)
+    if n == 0:
+        return out, np.zeros((0,), dtype=bool)
+
+    scores, scoreable = _batch_row_scores(raw, params)
+    ok = np.asarray(scoreable.any(axis=1))
+    if not bool(ok.any()):
+        return out, ok
+
+    # Masked row-wise softmax over the (B, K) grid. Non-scoreable slots get
+    # -inf so exp() yields an exact 0.0, which is additively neutral in the
+    # row sum — the same value the scalar path gets by compacting first.
+    z = scores / max(1e-6, float(params.sf_policy_temp))
+    z = np.where(scoreable, z, -np.inf)
+    zmax = np.max(z, axis=1, keepdims=True)
+    zmax = np.where(np.isfinite(zmax), zmax, 0.0)  # all-masked rows: keep exp finite
+    e = np.exp(z - zmax)
+    e[~scoreable] = 0.0
+    row_sum = e.sum(axis=1, keepdims=True)
+    p_top = (e / np.where(row_sum > 0.0, row_sum, 1.0)).astype(np.float32, copy=False)
+
+    # Candidate indices, flattened to positions in `out`. MultiPV move indices
+    # are distinct within a row (distinct legal moves, and the full→compact
+    # remap is injective on legal moves), so the scatter below is an
+    # assignment, not an accumulation — pinned by a test on real shard rows.
+    keep = scoreable.reshape(-1)
+    rows = np.repeat(np.arange(n, dtype=np.int64), raw.shape[1])[keep]
+    cols = raw[..., 0].astype(np.int64, copy=False).reshape(-1)[keep]
+    flat = rows * width + cols
+
+    smooth = float(params.sf_policy_label_smooth)
+    legal = None
+    apply = np.zeros((n,), dtype=bool)
+    share = np.zeros((n,), dtype=np.float32)
+    if smooth > 0.0 and legal_dense is not None:
+        legal = np.asarray(legal_dense) != 0
+        legal_n = legal.sum(axis=1)
+        # `covered` holds the scored moves; & legal in place so no temporary
+        # of the full (B, policy_size) width is materialised.
+        covered = np.zeros((n, width), dtype=bool)
+        covered.reshape(-1)[flat] = True
+        covered &= legal
+        apply = ok & (legal_n > 0) & (covered.sum(axis=1) < legal_n)
+        # float64 divide then one cast to float32, mirroring the scalar path's
+        # `p_sf[legal] += smooth / float(legal.size)` (NumPy's weak-scalar
+        # rule rounds the float64 scalar exactly once, at the add).
+        share64 = np.zeros((n,), dtype=np.float64)
+        np.divide(smooth, legal_n.astype(np.float64), out=share64, where=apply)
+        share = share64.astype(np.float32)
+
+    # `p_sf *= 1 - smooth` folded into the (B, K) candidate vector before the
+    # scatter: the scatter is an assignment and 0 * s == 0, so scaling before
+    # and after are bitwise identical, and this pass costs K columns not
+    # policy_size.
+    if bool(apply.any()):
+        p_top = p_top * np.where(apply, np.float32(1.0 - smooth), np.float32(1.0))[:, None]
+    np.add.at(out.reshape(-1), flat, p_top.reshape(-1)[keep])
+
+    if legal is not None and bool(apply.any()):
+        # Only ~25% of rows smooth (SF's 40 PVs cover every legal move in the
+        # rest), so gather those rows rather than paying a full-width add.
+        # legal is 0/1, so the multiply reproduces the scalar path's "add
+        # `share` at legal indices, leave the rest" exactly (1 * s == s,
+        # 0 * s == +0.0, and every entry of `out` is non-negative).
+        sel = np.flatnonzero(apply)
+        out[sel] += legal[sel] * share[sel, None]
+
+    # Divide by 1.0 instead of masking off empty rows: exact, and it keeps the
+    # divide on numpy's fast unmasked loop.
+    total = out.sum(axis=1)
+    out /= np.where(total > 0.0, total, np.float32(1.0))[:, None]
+    return out, ok
+
+
+def rebuild_sf_wdl_batch(
+    label_meta: np.ndarray, params: SfTargetParams,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized `rebuild_sf_wdl`. (B, 6) meta → ((B, 3) float32, ok (B,))."""
+    meta = np.asarray(label_meta)
+    n = int(meta.shape[0])
+    out = np.zeros((n, 3), dtype=np.float32)
+    if n == 0:
+        return out, np.zeros((0,), dtype=bool)
+    cp = meta[:, 2].astype(np.int64, copy=False)
+    mate = meta[:, 3].astype(np.int64, copy=False)
+    wdl_w = meta[:, 4].astype(np.int64, copy=False)
+    wdl_d = meta[:, 5].astype(np.int64, copy=False)
+
+    use_log = (
+        (cp != SF_CP_SENTINEL) | (mate != 0)
+        if params.sf_wdl_use_cp_logistic
+        else np.zeros((n,), dtype=bool)
+    )
+    has_mate = mate != 0
+    native_ok = (wdl_w >= 0) & (wdl_d >= 0)
+
+    if bool(use_log.any()):
+        eff_cp = np.where(has_mate, mate_to_effective_cp_array(mate), cp.astype(np.float64))
+        logistic = cp_to_wdl_array(
+            eff_cp,
+            slope=params.sf_wdl_cp_slope,
+            draw_width_cp=params.sf_wdl_cp_draw_width,
+        )
+        out[use_log] = logistic[use_log][:, ::-1]  # flip_wdl_pov
+
+    native_rows = native_ok & ~use_log
+    if bool(native_rows.any()):
+        # float64 divides then one cast, as in the scalar path's
+        # `np.array([w/1000.0, ...], dtype=np.float32)`.
+        stm = np.stack(
+            [
+                wdl_w / 1000.0,
+                wdl_d / 1000.0,
+                (1000 - wdl_w - wdl_d) / 1000.0,
+            ],
+            axis=1,
+        ).astype(np.float32)
+        out[native_rows] = stm[native_rows][:, ::-1]
+
+    return out, np.asarray(use_log | native_ok)
+
+
 def rebuild_sf_targets_in_arrays(
     arrs: dict[str, np.ndarray], *, params: SfTargetParams,
 ) -> dict[str, np.ndarray]:
@@ -169,41 +371,88 @@ def rebuild_sf_targets_in_arrays(
     shards) keep their stored targets. Returns ``arrs`` (mutated in place on
     fresh copies of the touched fields).
 
-    Cost boundary: this is a per-row Python loop (~16.6 ms per 256-row batch
-    at policy width 1858). Acceptable for the stated offline use — flag-gated
-    and overlapped by the host-side prefetch thread — but it must be
-    vectorized before ``rebuild_sf_targets`` could ever become a live-training
-    default.
+    Fully vectorized: ~13 ms per 512-row batch at policy width 1858 on the
+    host prefetch thread, against a ~90 ms/step training budget (was ~275 ms
+    as a per-row loop, i.e. 3x the whole step). That is what makes
+    ``rebuild_sf_targets`` usable live and not only in the offline retarget
+    driver.
+
+    Two stored targets are DERIVED from what this rebuilds but live on a
+    DIFFERENT shard row, so a sampled batch cannot rebuild them —
+    ``sf_p0_policy_target`` (ply t-1's ``sf_policy_target``) and
+    ``sf_volatility_target`` (|sf_wdl[t+6] - sf_wdl[t]|). Their presence flags
+    are cleared here rather than left pointing at capture-time values; see
+    ``docs/target_rebuildability.md`` for the full table and the storage that
+    would make them rebuildable. Masking is UNCONDITIONAL — not "only when the
+    params actually moved" — so that a control run (flag on, capture-identical
+    params) and a treatment run mask exactly the same rows and the comparison
+    stays paired.
     """
     has_raw = np.asarray(arrs.get("has_sf_multipv_raw", ()), dtype=bool)
     if has_raw.size and has_raw.any() and "sf_multipv_raw" in arrs and "sf_policy_target" in arrs:
         pol = np.array(arrs["sf_policy_target"], copy=True)
         policy_size = int(pol.shape[1])
         legal_dense = arrs.get("sf_legal_mask")
-        for i in np.flatnonzero(has_raw):
-            if legal_dense is not None and i < len(legal_dense):
-                legal_idx = np.flatnonzero(np.asarray(legal_dense[i]))
-            else:
-                legal_idx = np.zeros((0,), dtype=np.int64)
-            rebuilt = rebuild_sf_policy_target(
-                np.asarray(arrs["sf_multipv_raw"][i]),
-                legal_indices=legal_idx,
-                policy_size=policy_size,
-                params=params,
-            )
-            if rebuilt is not None:
-                pol[i] = rebuilt.astype(pol.dtype, copy=False)
+        legal_rows = None if legal_dense is None else np.asarray(legal_dense)[has_raw]
+        rebuilt, ok = rebuild_sf_policy_targets_batch(
+            np.asarray(arrs["sf_multipv_raw"])[has_raw],
+            legal_dense=legal_rows,
+            policy_size=policy_size,
+            params=params,
+        )
+        rows_idx = np.flatnonzero(has_raw)
+        if bool(ok.all()):
+            # Common case: every labelled row rebuilt. Skip the `[ok]` gather,
+            # which at policy width 1858 is a full copy of the output.
+            pol[rows_idx] = rebuilt.astype(pol.dtype, copy=False)
+        else:
+            pol[rows_idx[ok]] = rebuilt[ok].astype(pol.dtype, copy=False)
         arrs["sf_policy_target"] = pol
 
     has_meta = np.asarray(arrs.get("has_sf_label_meta", ()), dtype=bool)
     if has_meta.size and has_meta.any() and "sf_label_meta" in arrs and "sf_wdl" in arrs:
         wdl = np.array(arrs["sf_wdl"], copy=True)
-        for i in np.flatnonzero(has_meta):
-            rebuilt_wdl = rebuild_sf_wdl(np.asarray(arrs["sf_label_meta"][i]), params)
-            if rebuilt_wdl is not None:
-                wdl[i] = rebuilt_wdl.astype(wdl.dtype, copy=False)
+        rebuilt_wdl, ok_wdl = rebuild_sf_wdl_batch(
+            np.asarray(arrs["sf_label_meta"])[has_meta], params,
+        )
+        write = np.flatnonzero(has_meta)[ok_wdl]
+        wdl[write] = rebuilt_wdl[ok_wdl].astype(wdl.dtype, copy=False)
         arrs["sf_wdl"] = wdl
+
+    mask_cross_ply_sf_targets(arrs)
     return arrs
+
+
+# Presence flags of targets that are a function of `sf_policy_target` /
+# `sf_wdl` on a DIFFERENT row than the one that carries them, so no in-batch
+# rebuild can move them with their source.
+CROSS_PLY_SF_FLAGS: tuple[str, ...] = ("has_sf_p0", "has_sf_volatility")
+
+
+def mask_cross_ply_sf_targets(arrs: dict[str, np.ndarray]) -> int:
+    """Zero the presence flags of the cross-ply SF targets. Returns rows masked.
+
+    ``sf_p0_policy_target[t]`` IS ``sf_policy_target[t-1]`` (verified exactly
+    on live shards) and ``sf_volatility_target[t]`` IS
+    ``abs(sf_wdl[t+6] - sf_wdl[t])``; neither source row is in a randomly sampled
+    batch. Training the sf_p0 own-move teacher on capture-time targets while
+    ``sf_policy_target`` moves underneath it is the failure this prevents.
+
+    ``sf_p0_regret`` is deliberately NOT masked: it is a normalized cp-regret
+    over the same raw rows and carries no `SfTargetParams` dependence at all,
+    so it stays valid under any rebuild.
+    """
+    masked = 0
+    for flag in CROSS_PLY_SF_FLAGS:
+        cur = arrs.get(flag)
+        if cur is None:
+            continue
+        arr = np.asarray(cur)
+        if arr.size == 0:
+            continue
+        masked += int(np.count_nonzero(arr))
+        arrs[flag] = np.zeros_like(arr)
+    return masked
 
 
 def rebuild_categorical_target_in_arrays(

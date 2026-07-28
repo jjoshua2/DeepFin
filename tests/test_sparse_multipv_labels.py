@@ -22,9 +22,12 @@ from chess_anti_engine.replay.shard import (
 )
 from chess_anti_engine.train.target_builder import (
     SfTargetParams,
+    mask_cross_ply_sf_targets,
     rebuild_sf_policy_target,
+    rebuild_sf_policy_targets_batch,
     rebuild_sf_targets_in_arrays,
     rebuild_sf_wdl,
+    rebuild_sf_wdl_batch,
 )
 
 from tests.stockfish_binary import find_stockfish
@@ -765,3 +768,299 @@ def test_sparse_ce_native_wdl_fallback_matches_dense_at_fraction_scale():
     )
     assert ok.tolist() == [1.0]
     torch.testing.assert_close(sparse_ce, dense_ce, atol=1e-5, rtol=1e-5)
+
+
+# --------------------------------------------------------------------------
+# Vectorized batch rebuild: bitwise parity with the per-row reference, and the
+# cross-ply masking that keeps sf_p0 from going stale under it.
+# --------------------------------------------------------------------------
+
+def _adversarial_batch(
+    rng: np.random.Generator, *, n: int, width: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """(raw, legal_dense) covering every branch the scalar rebuild can take.
+
+    Mixes: variable candidate counts (including 0 and the full 48), cp-only /
+    mate-only / native-wdl-only / entirely unscorable rows, legal sets that are
+    fully covered and partially covered, and empty legal masks.
+    """
+    raw = np.full((n, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[:, :, 2] = 0
+    legal = np.zeros((n, width), np.uint8)
+    for i in range(n):
+        k = int(rng.integers(0, SF_MULTIPV_RAW_MAX + 1))
+        moves = rng.choice(width, size=max(k, 1), replace=False)[:k]
+        for j, mv in enumerate(moves):
+            kind = int(rng.integers(0, 4))
+            if kind == 0:                                  # cp only
+                raw[i, j] = (mv, int(rng.integers(-3000, 3000)), 0, -1, -1)
+            elif kind == 1:                                # mate only
+                raw[i, j] = (mv, SF_CP_SENTINEL, int(rng.integers(-60, 61)) or 3, -1, -1)
+            elif kind == 2:                                # native permille wdl
+                w = int(rng.integers(0, 1001))
+                raw[i, j] = (mv, SF_CP_SENTINEL, 0, w, int(rng.integers(0, 1001 - w)))
+            else:                                          # unscorable
+                raw[i, j] = (mv, SF_CP_SENTINEL, 0, -1, -1)
+        mode = int(rng.integers(0, 3))
+        if mode == 0 and k:                    # legal set == candidates (covered)
+            legal[i, moves] = 1
+        elif mode == 1:                        # candidates + extra legal moves
+            extra = rng.choice(width, size=int(rng.integers(1, 12)), replace=False)
+            legal[i, moves.astype(np.int64)] = 1
+            legal[i, extra] = 1
+        # mode == 2: empty legal mask
+    return raw, legal
+
+
+def _scalar_reference(
+    raw: np.ndarray, legal: np.ndarray, width: int, params: SfTargetParams,
+) -> tuple[np.ndarray, np.ndarray]:
+    out = np.zeros((raw.shape[0], width), np.float32)
+    ok = np.zeros((raw.shape[0],), bool)
+    for i in range(raw.shape[0]):
+        r = rebuild_sf_policy_target(
+            raw[i], legal_indices=np.flatnonzero(legal[i]),
+            policy_size=width, params=params,
+        )
+        if r is not None:
+            out[i], ok[i] = r, True
+    return out, ok
+
+
+@pytest.mark.parametrize("use_logistic", [False, True])
+@pytest.mark.parametrize("smooth", [0.0, 0.01, 0.05])
+def test_batch_rebuild_is_bitwise_equal_to_scalar(use_logistic: bool, smooth: float):
+    """The vectorized path must be BITWISE equal, not merely close: it is the
+    live target, and a last-ulp drift would make every parity assertion
+    elsewhere in this file a tolerance question instead of an identity."""
+    width = 1858
+    rng = np.random.default_rng(7)
+    raw, legal = _adversarial_batch(rng, n=64, width=width)
+    params = SfTargetParams(
+        sf_policy_temp=0.012, sf_policy_label_smooth=smooth,
+        sf_wdl_use_cp_logistic=use_logistic,
+        sf_wdl_cp_slope=0.0060, sf_wdl_cp_draw_width=120.0,
+    )
+    want, want_ok = _scalar_reference(raw, legal, width, params)
+    got, got_ok = rebuild_sf_policy_targets_batch(
+        raw, legal_dense=legal, policy_size=width, params=params,
+    )
+    np.testing.assert_array_equal(got_ok, want_ok)
+    np.testing.assert_array_equal(got[want_ok], want[want_ok])
+
+
+def test_batch_rebuild_handles_no_legal_mask_and_empty_batch():
+    width = 64
+    rng = np.random.default_rng(3)
+    raw, legal = _adversarial_batch(rng, n=16, width=width)
+    params = SfTargetParams(sf_policy_temp=0.05, sf_policy_label_smooth=0.05)
+    # legal_dense=None must behave exactly like an all-zero legal mask (the
+    # scalar path's empty legal_indices: smoothing is skipped).
+    got_none, ok_none = rebuild_sf_policy_targets_batch(
+        raw, legal_dense=None, policy_size=width, params=params,
+    )
+    want, want_ok = _scalar_reference(raw, np.zeros_like(legal), width, params)
+    np.testing.assert_array_equal(ok_none, want_ok)
+    np.testing.assert_array_equal(got_none[want_ok], want[want_ok])
+
+    empty, empty_ok = rebuild_sf_policy_targets_batch(
+        raw[:0], legal_dense=legal[:0], policy_size=width, params=params,
+    )
+    assert empty.shape == (0, width)
+    assert empty_ok.shape == (0,)
+
+
+def test_batch_rebuild_all_rows_unscorable_returns_not_ok():
+    width = 32
+    raw = np.full((3, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    got, ok = rebuild_sf_policy_targets_batch(
+        raw, legal_dense=np.ones((3, width), np.uint8), policy_size=width,
+        params=SfTargetParams(sf_policy_temp=0.012),
+    )
+    assert not ok.any()
+    assert not got.any()
+
+
+def test_batch_rebuild_matches_scalar_with_duplicate_move_indices():
+    """The scatter is an ACCUMULATION in the scalar path. Real MultiPV rows
+    never repeat a move, but nothing in the storage format forbids it, so pin
+    the two paths together on a batch that does repeat one."""
+    width = 32
+    raw = np.full((2, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[0, 0] = (5, 40, 0, 700, 200)
+    raw[0, 1] = (5, 10, 0, 600, 250)      # same move index twice
+    raw[0, 2] = (9, -30, 0, 300, 350)
+    raw[1, 0] = (1, 0, 0, 500, 400)
+    legal = np.zeros((2, width), np.uint8)
+    legal[:, [1, 5, 9, 11]] = 1
+    params = SfTargetParams(
+        sf_policy_temp=0.05, sf_policy_label_smooth=0.01,
+        sf_wdl_use_cp_logistic=True, sf_wdl_cp_slope=0.0060,
+        sf_wdl_cp_draw_width=120.0,
+    )
+    want, want_ok = _scalar_reference(raw, legal, width, params)
+    got, got_ok = rebuild_sf_policy_targets_batch(
+        raw, legal_dense=legal, policy_size=width, params=params,
+    )
+    np.testing.assert_array_equal(got_ok, want_ok)
+    np.testing.assert_array_equal(got[want_ok], want[want_ok])
+
+
+@pytest.mark.parametrize("use_logistic", [False, True])
+def test_batch_sf_wdl_is_bitwise_equal_to_scalar(use_logistic: bool):
+    rng = np.random.default_rng(11)
+    meta = np.zeros((32, 6), np.int32)
+    meta[:, 2] = rng.integers(-2000, 2000, size=32)
+    meta[:, 3] = rng.integers(-5, 6, size=32)
+    meta[:, 4] = rng.integers(-1, 1001, size=32)
+    meta[:, 5] = rng.integers(-1, 400, size=32)
+    meta[0, 2] = SF_CP_SENTINEL           # no cp, no mate, no native -> None
+    meta[0, 3] = 0
+    meta[0, 4] = meta[0, 5] = -1
+    params = SfTargetParams(
+        sf_wdl_use_cp_logistic=use_logistic,
+        sf_wdl_cp_slope=0.0060, sf_wdl_cp_draw_width=120.0,
+    )
+    want = np.zeros((32, 3), np.float32)
+    want_ok = np.zeros((32,), bool)
+    for i in range(32):
+        r = rebuild_sf_wdl(meta[i], params)
+        if r is not None:
+            want[i], want_ok[i] = r, True
+    got, got_ok = rebuild_sf_wdl_batch(meta, params)
+    np.testing.assert_array_equal(got_ok, want_ok)
+    np.testing.assert_array_equal(got[want_ok], want[want_ok])
+
+
+def _cross_ply_arrs(n: int = 4, width: int = 64) -> dict[str, np.ndarray]:
+    raw = np.full((n, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
+    raw[:, :, 1] = SF_CP_SENTINEL
+    raw[:, 0] = (3, 40, 0, 700, 200)
+    raw[:, 1] = (5, -20, 0, 400, 300)
+    legal = np.zeros((n, width), np.uint8)
+    legal[:, [3, 5, 9]] = 1
+    return {
+        "sf_policy_target": np.zeros((n, width), np.float16),
+        "sf_legal_mask": legal,
+        "sf_multipv_raw": raw,
+        "has_sf_multipv_raw": np.ones((n,), np.uint8),
+        "sf_wdl": np.zeros((n, 3), np.float16),
+        "sf_label_meta": np.zeros((n, 6), np.int32),
+        "has_sf_label_meta": np.ones((n,), np.uint8),
+        "sf_p0_policy_target": np.zeros((n, width), np.float16),
+        "has_sf_p0": np.ones((n,), np.uint8),
+        "sf_p0_regret": np.zeros((n, width), np.float16),
+        "has_sf_p0_regret": np.ones((n,), np.uint8),
+        "sf_volatility_target": np.zeros((n, 3), np.float16),
+        "has_sf_volatility": np.ones((n,), np.uint8),
+    }
+
+
+def test_rebuild_masks_cross_ply_targets_and_spares_p0_regret():
+    """sf_p0_policy_target is ply t-1's sf_policy_target and
+    sf_volatility_target is |sf_wdl[t+6] - sf_wdl[t]|: both sources live on
+    OTHER shard rows, so a sampled batch cannot move them with their source.
+    They must be masked, not left on capture-time values. sf_p0_regret carries
+    no SfTargetParams dependence at all, so it must survive."""
+    arrs = _cross_ply_arrs()
+    out = rebuild_sf_targets_in_arrays(arrs, params=SfTargetParams(sf_policy_temp=0.012))
+    assert not out["has_sf_p0"].any()
+    assert not out["has_sf_volatility"].any()
+    assert out["has_sf_p0_regret"].all()
+
+
+def test_masking_is_unconditional_so_control_and_treatment_pair():
+    """Masking must NOT be conditional on the params having moved: a control
+    run (flag on, capture-identical params) and a treatment run have to mask
+    the same rows or the paired comparison is confounded by the own-move
+    teacher switching on and off."""
+    sharp = rebuild_sf_targets_in_arrays(
+        _cross_ply_arrs(), params=SfTargetParams(sf_policy_temp=0.012),
+    )
+    soft = rebuild_sf_targets_in_arrays(
+        _cross_ply_arrs(), params=SfTargetParams(sf_policy_temp=0.5),
+    )
+    np.testing.assert_array_equal(sharp["has_sf_p0"], soft["has_sf_p0"])
+    np.testing.assert_array_equal(sharp["has_sf_volatility"], soft["has_sf_volatility"])
+    # ...and the thing under test actually moved.
+    assert not np.array_equal(sharp["sf_policy_target"], soft["sf_policy_target"])
+
+
+def test_mask_cross_ply_is_a_noop_without_those_fields():
+    arrs = {"sf_policy_target": np.zeros((2, 8), np.float16)}
+    assert mask_cross_ply_sf_targets(arrs) == 0
+    assert set(arrs) == {"sf_policy_target"}
+
+
+def test_disabled_rebuild_leaves_cross_ply_flags_alone():
+    """The masking is a consequence of the rebuild, so it must not happen when
+    the flag is off — otherwise the default pipeline changes."""
+    from chess_anti_engine.model import ModelConfig, build_model
+    from chess_anti_engine.train import trainer as trainer_mod
+
+    torch.manual_seed(0)
+    model = build_model(ModelConfig(embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False))
+    t = trainer_mod.Trainer(model, device="cpu", lr=1e-3)
+    assert t.rebuild_sf_targets is False
+    arrs = _cross_ply_arrs()
+    arrs["x"] = np.zeros((4, 146, 8, 8), np.float16)
+    out = t._prepare_host_arrays(arrs, rng=np.random.default_rng(0), mirror_prob=0.0)
+    assert out["has_sf_p0"].all()
+    assert out["has_sf_volatility"].all()
+
+    t.set_sf_target_rebuild(enabled=True, params=t.sf_target_params)
+    arrs2 = _cross_ply_arrs()
+    arrs2["x"] = np.zeros((4, 146, 8, 8), np.float16)
+    out2 = t._prepare_host_arrays(arrs2, rng=np.random.default_rng(0), mirror_prob=0.0)
+    assert not out2["has_sf_p0"].any()
+    assert not out2["has_sf_volatility"].any()
+
+
+def test_set_sf_target_rebuild_is_a_live_surface():
+    """rebuild_sf_targets + every SfTargetParams knob are construction-time on
+    the Trainer; without this setter a live yaml edit is a silent no-op until
+    the next restart."""
+    from chess_anti_engine.model import ModelConfig, build_model
+    from chess_anti_engine.train import trainer as trainer_mod
+
+    torch.manual_seed(0)
+    model = build_model(ModelConfig(embed_dim=32, num_layers=1, num_heads=2, use_smolgen=False))
+    t = trainer_mod.Trainer(model, device="cpu", lr=1e-3)
+    base = t.sf_target_params
+
+    assert t.set_sf_target_rebuild(enabled=True, params=base) is True
+    assert t.rebuild_sf_targets is True
+    assert t.set_sf_target_rebuild(enabled=True, params=base) is False  # idempotent
+    moved = SfTargetParams(sf_policy_temp=base.sf_policy_temp + 0.1)
+    assert t.set_sf_target_rebuild(enabled=True, params=moved) is True
+    assert t.sf_target_params == moved
+    assert t.set_sf_target_rebuild(enabled=False, params=moved) is True
+    assert t.rebuild_sf_targets is False
+
+
+def test_resolve_sf_target_params_is_shared_by_construction_and_live_push():
+    """One reader for the yaml keys, so the constructor and the per-iteration
+    push cannot disagree about what the config says."""
+    from chess_anti_engine.train.trainer import (
+        resolve_sf_target_params,
+        trainer_kwargs_from_config,
+    )
+
+    cfg = {
+        "sf_policy_temp": 0.012, "sf_policy_label_smooth": 0.01,
+        "sf_wdl_use_cp_logistic": True, "sf_wdl_cp_slope": 0.0060,
+        "sf_wdl_cp_draw_width": 120.0,
+    }
+    assert trainer_kwargs_from_config(cfg)["sf_target_params"] == resolve_sf_target_params(cfg)
+    assert resolve_sf_target_params({}) == SfTargetParams()
+
+
+def test_rebuild_sf_targets_is_a_live_yaml_key_and_defaults_off():
+    from chess_anti_engine.utils import flatten_run_config_defaults
+
+    flat = flatten_run_config_defaults({"train": {"rebuild_sf_targets": True}})
+    assert flat["rebuild_sf_targets"] is True
+    assert flatten_run_config_defaults({}).get("rebuild_sf_targets", False) is False

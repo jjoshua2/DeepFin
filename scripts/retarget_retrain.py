@@ -16,6 +16,13 @@ param. Pass ``--no-rebuild-sf-targets`` to train on the shards' stored
 targets exactly as live training does — required when the A/B is a *sampling*
 knob (e.g. replay_sf_gap_priority_weight), not a target param.
 
+With the rebuild ON, ``sf_p0_policy_target`` and ``sf_volatility_target`` are
+MASKED in every arm (their sources live on other shard rows and no sampled
+batch can move them with their source — docs/target_rebuildability.md). The
+masking is identical across arms, so variant deltas stay paired; it does mean
+the ``w_sf_own`` own-move-teacher leg is absent from ALL arms of a rebuilt
+sweep, and the sweep therefore says nothing about that leg.
+
 Overridable param keys: sf_policy_temp, sf_policy_label_smooth,
 sf_wdl_use_cp_logistic, sf_wdl_cp_slope, sf_wdl_cp_draw_width, and any
 replay_* sampling knob (anything else in the flat config also works, e.g. lr).
