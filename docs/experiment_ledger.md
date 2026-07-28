@@ -4830,6 +4830,73 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### ⚑⚑ WHY "IS THE RL LOOP WORKING?" HAS NO ARENA ANSWER ON A ONE-DAY HORIZON (2026-07-28)
+
+Prepared the paired arena against a banked reference and found it **should not be
+run**. The blocker is not cost or scheduling — the effect is below the
+instrument's floor, and saying so is more useful than producing a null.
+
+**There are TWO lineages in `data/salvage/`, both 512x16, and they are not
+comparable.** Read from each bank's `trainer.pt` (`step`, `peak_lr`, `arch`):
+
+| bank | date | step | `peak_lr` |
+|---|---|---|---|
+| pre_aot_deploy | 07-14 | 59,652 | **3e-4** |
+| pre_sf_reallocation | 07-22 | 67,313 | **3e-4** |
+| pre_views5 | 07-24 | 72,524 | **3e-4** |
+| pre_audit_deploy | 07-26 | 59,619 | **3e-5** |
+| pre_sfp0_restore | 07-27 | 62,889 | 3e-5 |
+| pre_zclip65 | 07-27 | 62,168 | 3e-5 |
+| pre_bundle | 07-27 | 64,329 | 3e-5 |
+| pre_batching | 07-27 | 65,475 | 3e-5 |
+
+**The step count going BACKWARDS 72,524 -> 59,619 is not a defect** — it is the
+recovery from [[warm_start_lr_regime_destroys_net]] (a 3e-5 net run at 3e-4,
+-494 Elo). But it means **the current lineage's entire history is
+65,475 - 59,619 = 5,856 steps**, about 21 hours.
+
+**At the measured +0.21 Elo/1000 steps (`scripts/ratchet_slope.py`) that is +1.23
+Elo of expected progress.** Against this project's working resolution of roughly
++-10 Elo at ~1000 pentanomial games:
+
+| target | games needed |
+|---|---|
+| 1.2 Elo | **~69,000** |
+| 5 Elo | ~4,000 |
+| 10 Elo | ~1,000 |
+| 20 Elo | ~250 |
+
+**So a current-vs-07-26 arena is unrunnable, and a null result from a smaller one
+would be meaningless** — it would measure the arena, not the loop. This is the
+same shape as the frozen-holdout "flat by design" trap: an instrument reporting
+no change because it cannot see the change.
+
+**What this actually explains.** "Does the loop gain Elo" has stayed unanswered
+not through neglect but because **per-day progress is structurally below arena
+resolution, and every lineage reset restarts the baseline.** Two of the three
+resets this month were ours.
+
+**Consequences, and they are strategic:**
+1. **Stop planning day-scale arena readouts.** The minimum useful comparison is
+   ~5 Elo => ~4,000 games => ~24 days of the current slope. Any arena worth
+   running is a WEEKS-apart comparison, which requires a banked reference that
+   survives lineage changes.
+2. **Bank a designated LONG-BASELINE reference now and do not touch it.** The
+   current banks are all incidental (named for whatever change prompted them) and
+   the lineage keeps breaking underneath them. Nothing in `data/salvage/` is
+   currently designated as the strength anchor.
+3. **The slope itself is the thing to attack.** +0.21 Elo/1000 steps while ~500
+   Elo below Cheese is the anomaly — that regime should yield large, cheap gains.
+   Chasing a measurement of +1.2 Elo is the wrong problem; the right one is why
+   the per-step gain is so small.
+4. **Prefer instruments with a real floor over the arena at this timescale**: the
+   frozen holdout (now a deterministic pass, G14), `value_regret`, and
+   `audit_targets` leg (d) all resolve smaller effects per unit of compute — with
+   the standing caveat that a target-quality gain is not an Elo gain.
+
+**Not run, deliberately. Recorded so the next session does not re-derive it.**
+
+
 ### ⚑ G16 — the iter-165 "new best model" is a RULER CHANGE, not an improvement. Do not cite 4.8533 as progress. (2026-07-28)
 
 **Caused by tonight's own PR #277 deploy**, found by the audit re-read, verified
