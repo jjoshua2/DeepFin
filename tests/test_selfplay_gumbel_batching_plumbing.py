@@ -29,6 +29,7 @@ from chess_anti_engine.utils.config_yaml import (
     SELFPLAY_CONFIG_KEYS,
     flatten_run_config_defaults,
 )
+from chess_anti_engine.worker import WorkerSession
 from tests.test_reco_coverage import _bare_session, _reco_from
 
 
@@ -385,6 +386,50 @@ def test_every_worker_reco_key_is_in_the_selfplay_allowlist() -> None:
             f"{field} <- {key!r} is not in SELFPLAY_CONFIG_KEYS, so setting it "
             f"under `selfplay:` rejects the ENTIRE live reload"
         )
+
+
+def test_every_search_config_key_forces_a_worker_restart() -> None:
+    """A SearchConfig knob that does not force a restart is silently frozen.
+
+    `_build_selfplay_configs` runs ONCE at session start, so a running
+    `SelfplayState` keeps the `SearchConfig` it was built with. A mid-flight
+    change to any key feeding it is therefore accepted, published, seen by the
+    worker -- and ignored, while the ledger records a verdict for an experiment
+    that never ran. Membership in `_RECO_RESTART_KEYS` is the ONLY thing that
+    turns such a change into a restart.
+
+    This is the exact bypass the rest of this file could not see. Verified by
+    negative control 2026-07-28: deleting `"gumbel_target_batch"` from
+    `_RECO_RESTART_KEYS` left all 16 other tests GREEN -- it was the sole
+    escape of seven mutations, the other six each being caught by
+    `test_a_yaml_value_actually_reaches_the_worker_search_config` (publisher
+    drops the key / reads a wrong key / line commented out / emitted under
+    another name / resolver replaced by a literal) or by
+    `test_publisher_and_worker_agree_on_every_default` (default disagreement).
+
+    Note the asymmetry with the allowlist test above: `SELFPLAY_CONFIG_KEYS`
+    governs whether the yaml is ACCEPTED, `_RECO_RESTART_KEYS` governs whether
+    it TAKES EFFECT. Passing the first and failing the second is precisely the
+    "accepted and then silently ignored" shape.
+    """
+    restart_keys = set(WorkerSession._RECO_RESTART_KEYS)
+    live_keys = set(WorkerSession._RECO_LIVE_KEYS)
+    offenders: list[str] = []
+    for field, key in sorted(_worker_reco_keys().items()):
+        if key is None or field in _INTENTIONALLY_NOT_CONFIGURABLE:
+            continue
+        if key == "mcts_simulations":
+            continue  # publisher parameter, not a per-worker SearchConfig knob
+        if key in restart_keys:
+            continue
+        where = "_RECO_LIVE_KEYS" if key in live_keys else "NEITHER tuple"
+        offenders.append(f"{field} <- {key!r} (in {where})")
+    assert not offenders, (
+        "SearchConfig keys that do not force a worker restart, so a live-yaml "
+        "change to them is accepted and then silently ignored by every running "
+        f"SelfplayState: {offenders}. Add them to _RECO_RESTART_KEYS, or make "
+        "SearchConfig genuinely rebuildable mid-session and say so here."
+    )
 
 
 def test_no_worker_kwarg_is_silently_not_a_reco_key() -> None:
