@@ -3904,12 +3904,30 @@ grad-norm level has since settled at ~6.2–6.4, i.e. a new plateau, not a runaw
    change per readout window" rule broken by me. It does not damage the sf_p0
    readout — that is judged on `audit_targets` leg (d) against a banked dump, not
    on grad norm — but any *grad-norm* claim after iter 132 must carry both.
-3. **I11 has re-fired.** Clip rate is climbing again inside the new plateau: 0.26
-   (136) → 0.34 (145) → 0.48 (157). 6.5 is binding on roughly half of steps. Per
-   #272 this is now a **free live yaml edit**, which is precisely what that PR was
-   bought for. **NOT actioned here** — a cap move is a training-affecting change
-   and needs its own pre-registration, and stacking a third change into an
-   already-confounded window is the mistake in (2) repeated.
+3. **⚑ I11 — CORRECTED 2026-07-28 ~02:0x. I wrote that the clip rate was CLIMBING.
+   It is NOT. It is a PLATEAU at an elevated level, and the error was mine.**
+   Over iters 134–162 (n=29, the single post-step measurement scope)
+   `grad_norm_median` slope is **+0.0003/iter, t=+0.10** and `grad_hard_clip_rate`
+   **+0.00015/iter, t=+0.08** — both flat — while `grad_norm_p95` is **DECLINING at
+   −0.0334/iter, t=−3.72**. Half-over-half: 6.288 → 6.302 and 0.341 → 0.339.
+   The **+0.0203/iter (t=+5.34)** I cited spans iters 122–162 and is **entirely the
+   iter-132 level shift**.
+   **The methodological error, stated plainly: I invoked method rule 16 to explain
+   that step, then computed the slope over a window that STILL CONTAINED it, and
+   read the residual as the ramp I had just explained away.** Excluding row 132
+   alone does not remove a shift that persists on every row after it — the correct
+   exclusion is the whole pre-step segment, 122–131. And my "0.26 (136) → 0.34
+   (145) → 0.48 (157)" was three points selected from a flat series with **sd
+   0.085** that also contains 0.613 at iter 140 and 0.289 at iter 167.
+   **WHAT STANDS:** the LEVEL is elevated — clip-rate mean 0.365 over that span,
+   cap/median **1.04** against the historically-inert 2.1 — so 6.5 binds on about a
+   third of steps, which is a real condition and now carries its own
+   pre-registered move (6.5 → 13.0, ledger ~line 1317).
+   **WHAT IS WITHDRAWN:** that it is getting worse over time. Per #272 the move is
+   a free live yaml edit; still **NOT actioned here**, because stacking a third
+   change into an already-confounded window is the mistake in (2) repeated.
+   *Rule 16 needs the corollary it was missing: when you identify a step, exclude
+   the entire pre-step SEGMENT before fitting, not the stepping row.*
 
 **What is genuinely settled:** the frozen holdout still has not moved. Across the
 whole sequence — cap 5.0 clipping 95% of steps, cap 6.5 clipping 0%, and a new
