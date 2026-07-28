@@ -16,9 +16,10 @@ changes when the measurement changes. It is deliberately built from two
 different kinds of evidence, because the two failure modes are different:
 
   * a **declared descriptor** -- mode, batch size, sampled-batch count,
-    mirror probability, pooling. This is what catches PR #277's actual shape:
-    the call site chose a different measurement while the code implementing
-    both stayed identical.
+    mirror probability. This is what catches PR #277's actual shape: the call
+    site chose a different measurement while the code implementing both stayed
+    identical. It does NOT name pooling, or any other property of the code;
+    see below.
   * a **semantic source digest** of the functions that actually turn buffer
     rows into the pooled number. This catches the opposite shape: the call
     site is unchanged but the measurement itself is rewritten (an order
@@ -44,9 +45,18 @@ ledger's not-covered list, which names the ones that bite). A descriptor field
 naming a property the digest does not reach would be the same unbacked claim
 this module exists to remove -- which is why there is no `pooling` field.
 
-The digest is taken over the AST with docstrings removed, so comments,
-docstrings, blank lines and reformatting do not move it; a change to what the
-function DOES does. It is memoized per process (see ``_digest_cache``) because
+The digest is taken over a normalised TOKEN STREAM with comments, blank lines
+and docstrings removed, so prose and reformatting do not move it; a change to
+what the function DOES does. It is not taken over an ``ast.unparse``
+round-trip, which was the first implementation and was interpreter-dependent:
+unparse RENDERS an AST, and its rendering of f-strings and ``**`` splats
+changed between CPython 3.10 and 3.11, so 9 of the 19 covered frames digested
+differently on the two. A production interpreter upgrade would then have fired
+a handover reporting a measurement change that never happened -- this module's
+own failure mode, triggered by an unrelated bump. The token stream carries no
+rendering decisions and is verified identical on 3.10, 3.11 and 3.12.
+
+The digest is memoized per process (see ``_digest_cache``) because
 ``inspect.getsource`` re-reads the file when its mtime changes, and this repo
 edits the live tree while a run is up -- an unloaded edit must not look like a
 ruler change to a process still running the old bytes.
@@ -62,8 +72,10 @@ from __future__ import annotations
 import ast
 import hashlib
 import inspect
+import io
 import json
 import sys
+import tokenize
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
@@ -77,21 +89,95 @@ _digest_cache: dict[tuple[str, str], str] = {}
 _closure_cache: dict[tuple[str, str, tuple[str, ...]], tuple[Callable[..., Any], ...]] = {}
 
 
-def _strip_docstrings(tree: ast.AST) -> None:
-    """Drop docstring expressions in place from every body that can hold one."""
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+_STRUCTURAL = {tokenize.NEWLINE: "NEWLINE", tokenize.INDENT: "IN", tokenize.DEDENT: "DE"}
+_IGNORED = {tokenize.COMMENT, tokenize.NL, tokenize.ENCODING, tokenize.ENDMARKER}
+  # 3.12 (PEP 701) splits an f-string into FSTRING_START / MIDDLE / END with the
+  # embedded expressions tokenized in between, where 3.10/3.11 emit ONE STRING
+  # token holding the raw text. Absent before 3.12, hence the getattr.
+_FSTRING_START = getattr(tokenize, "FSTRING_START", None)
+_FSTRING_END = getattr(tokenize, "FSTRING_END", None)
+
+
+def _slice_source(lines: list[str], start: tuple[int, int], end: tuple[int, int]) -> str:
+    """The raw source between two (row, col) token positions, rows 1-based."""
+    if start[0] == end[0]:
+        return lines[start[0] - 1][start[1]:end[1]]
+    first = lines[start[0] - 1][start[1]:]
+    middle = lines[start[0]:end[0] - 1]
+    return "".join([first, *middle, lines[end[0] - 1][:end[1]]])
+
+
+def _canonical_tokens(src: str) -> list[tuple[str, str]]:
+    """The token stream that decides the digest, normalised across versions.
+
+    Kept: every token that carries meaning, plus NEWLINE/INDENT/DEDENT as
+    markers WITHOUT their whitespace -- nesting is semantic in Python, the
+    number of spaces is not.
+
+    Dropped: comments, blank lines, and docstrings (a STRING alone on its own
+    logical line). This repo annotates heavily and reformats often; prose must
+    not move a ruler.
+
+    Normalised: an f-string is emitted as one ``STRING`` token holding its raw
+    source text on EVERY version, by slicing the original lines between
+    FSTRING_START and the matching FSTRING_END on 3.12+. That is exactly what
+    3.10 and 3.11 already put in the single STRING token, so the stream matches
+    across the split.
+    """
+    lines = src.splitlines(keepends=True)
+    out: list[tuple[str, str]] = []
+    depth = 0
+    pending: tuple[int, int] | None = None
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if _FSTRING_START is not None and tok.type == _FSTRING_START:
+            if depth == 0:
+                pending = tok.start
+            depth += 1
             continue
-        body = node.body
-        if (
-            body
-            and isinstance(body[0], ast.Expr)
-            and isinstance(body[0].value, ast.Constant)
-            and isinstance(body[0].value.value, str)
-        ):
-            del body[0]
-            if not body:
-                body.append(ast.Pass())
+        if _FSTRING_END is not None and tok.type == _FSTRING_END:
+            depth -= 1
+            if depth == 0 and pending is not None:
+                out.append(("STRING", _slice_source(lines, pending, tok.end)))
+                pending = None
+            continue
+        if depth > 0:
+            continue
+        if tok.type in _IGNORED:
+            continue
+        marker = _STRUCTURAL.get(tok.type)
+        if marker is not None:
+            out.append((marker, ""))
+            continue
+        out.append((tokenize.tok_name[tok.type], tok.string))
+    return out
+
+
+def _drop_docstrings(items: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Remove the whole logical line of any STRING that stands alone on one.
+
+    The trailing NEWLINE goes with it. Dropping only the STRING would leave a
+    bare line terminator behind, so a function that gained a docstring would
+    digest differently from the same function without one -- exactly the
+    prose-moves-the-ruler behaviour this normalisation exists to stop, and
+    caught by ``test_comments_docstrings_and_layout_do_not_change_the_digest``.
+    """
+    kept: list[tuple[str, str]] = []
+    skip_next_newline = False
+    for idx, item in enumerate(items):
+        if skip_next_newline and item[0] == "NEWLINE":
+            skip_next_newline = False
+            continue
+        skip_next_newline = False
+        if item[0] != "STRING":
+            kept.append(item)
+            continue
+        prev = kept[-1][0] if kept else "NEWLINE"
+        nxt = items[idx + 1][0] if idx + 1 < len(items) else "NEWLINE"
+        if prev in ("NEWLINE", "IN", "DE") and nxt == "NEWLINE":
+            skip_next_newline = True
+            continue
+        kept.append(item)
+    return kept
 
 
 def _dedent_definition(src: str) -> str:
@@ -121,18 +207,30 @@ def _dedent_definition(src: str) -> str:
 def digest_source(src: str) -> str:
     """Digest one definition's source, blind to comments, docstrings and layout.
 
-    ``_UNAVAILABLE`` when the text cannot be parsed. The caller degrades to
+    Built on ``tokenize`` rather than an ``ast.unparse`` round-trip, and that
+    is a correctness requirement, not a style choice. Unparse RENDERS an AST,
+    and its rendering of f-strings and ``**`` splats changed between CPython
+    3.10 and 3.11: 9 of the 19 covered frames digested differently on the two
+    interpreters. The consequence was not merely a red CI on a 3.11 runner --
+    a production Python upgrade would have moved the id and fired the handover,
+    logging "the measurement was X and is now Y" when the measurement had not
+    changed. A false ruler-change alarm inside the ruler-change detector is the
+    exact failure this module exists to prevent.
+
+    The token stream carries no rendering decisions, so the same source gives
+    the same digest on 3.10, 3.11 and 3.12 (all three verified).
+
+    ``_UNAVAILABLE`` when the text cannot be tokenized. The caller degrades to
     "the declared descriptor is the whole identity" -- the behaviour this
     module would have had without the digest at all -- rather than raising on
     the eval path.
     """
     try:
-        tree = ast.parse(_dedent_definition(src))
-        _strip_docstrings(tree)
-        normalized = ast.unparse(tree)
-    except (SyntaxError, ValueError):
+        items = _drop_docstrings(_canonical_tokens(_dedent_definition(src)))
+    except (SyntaxError, ValueError, tokenize.TokenError):
         return _UNAVAILABLE
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    payload = "\n".join(f"{kind}\x00{text}" for kind, text in items)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def semantic_source_digest(fn: Callable[..., Any]) -> str:
@@ -233,8 +331,8 @@ def call_closure(
     * **same module only.** Recursion stops at any function defined outside
       *root*'s module. That is a real edge (for the trainer it means
       `compute_loss`, the encoders and torch are excluded) and it is what
-      keeps the closure small enough to reason about -- 23 frames rather than
-      the whole dependency graph. It is stated in the ledger, not implied.
+      keeps the closure small enough to reason about -- 19 frames for the
+      full pass rather than the whole dependency graph. It is stated in the ledger, not implied.
     * **the branch not taken is skipped.** ``skip`` prunes the other eval
       mode's entry point, so a change to the sampled path cannot move the
       full-pass ruler. Without it the two modes would share one closure and

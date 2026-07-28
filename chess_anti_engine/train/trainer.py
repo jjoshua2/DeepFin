@@ -2223,7 +2223,7 @@ class Trainer:
 
         **Covered: derived, not listed.** ``call_closure`` walks the call
         graph from `_compute_metrics` and returns every frame defined in this
-        module that the taken branch can reach -- currently 23, from row
+        module that the taken branch can reach -- 19 for the full pass, from row
         selection through host-array prep, target rebuilds, history selection
         and tensor collation to the metric-assembly tail
         (`_extract_loss_scalars`, `_build_metrics`,

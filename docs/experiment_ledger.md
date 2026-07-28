@@ -685,7 +685,7 @@ grep -c 'eval_ruler. DEGRADED' /tmp/chess_training.log
 **PASS**, all four:
 1. the newest checkpoint's `trial_meta.json` carries `holdout_ruler` equal to
    the id **recomputed from the deployed tree** (printed above). At the code
-   reviewed in the PR that value is **`v1:full_pass:1480cc57fd4530b1`** at
+   reviewed in the PR that value is **`v1:full_pass:c8fb48a79e804bb4`** at
    `batch_size: 512`, verified byte-identical across `PYTHONHASHSEED`
    0/1/2/random and pinned by `test_the_production_ruler_id_is_pinned`, so a
    later change to the measurement fails a test rather than passing quietly.
@@ -704,7 +704,9 @@ grep -c 'eval_ruler. DEGRADED' /tmp/chess_training.log
    root, an untracked stale Cheese engine log from 07-19, so the condition that
    exists to catch this mechanism's own silent failure could not itself fail;
 3. `holdout_generation` is still **1** — the migration did not spuriously
-   bump the valid iter-165 record;
+   bump the valid iter-165 record. **This assumes #282 and #283 land in the
+   SAME restart; if #283 lands later, expect 1 after the first restart and 2
+   after the second — see the merge-order note below;**
 4. the same id appears unchanged in the NEXT checkpoint.
 
 **KILL = MISMATCH, or an empty/absent field** ⇒ the id never reached the
@@ -727,9 +729,23 @@ were wrong within a day, which is why the boundary is a rule now and not a
 list. The rule's edge, and everything still outside it — each of these can
 move `test_loss` on a frozen holdout without moving the id:
 
-1. **anything defined outside `train/trainer.py`**: `compute_loss`'s body
-   (`train/losses.py`), the encoders in `chess_anti_engine/encoding/`, torch
-   and numpy. The closure stops at the module edge by construction;
+1. **anything defined outside `train/trainer.py`** — the closure stops at the
+   module edge by construction. Naming the ones that actually decide the
+   number, because an earlier draft of this list named only the obviously
+   unrelated ones and so read as if these were covered (all four verified by
+   mutation: the number moves, the id does not):
+   * **`ReplayBuffer.batch_row_bounds` / `rows_slice_arrays`**
+     (`replay/buffer.py`) — these DEFINE the deterministic pass. Dropping the
+     ragged tail took the eval from 2000 rows to 1536 and `test_loss` 10.196 →
+     9.701 with the id unchanged. The `_iter_full_pass_batches` docstring
+     ("every row of ``buf`` exactly once, oldest first") is the G14 argument,
+     and the code backing that sentence is in another module;
+   * **`collate_arrays`** (`replay/dataset.py`) — the body behind the very
+     `_host_batch_to_tensors` frame that was added "because it is the
+     collation frame". Scaling `x` there gave 9.188, id unchanged;
+   * **`compute_loss`'s body** (`train/losses.py`) — doubling `total` gave
+     20.392, id unchanged;
+   * the encoders in `chess_anti_engine/encoding/`, torch and numpy;
 2. **the loss weights — the one gap that is a KNOWN, REALIZED instance of this
    defect, not a hypothetical.** `_loss_kwargs` carries `sf_wdl_frac`, so
    `test_loss` is computed under whatever blend weight is in force, and a
@@ -767,7 +783,8 @@ move `test_loss` on a frozen holdout without moving the id:
    has converted into nats.)*
 3. **module-level CONSTANTS referenced by covered frames.** `_RAW_SUM_LOSS_KEYS`
    (`trainer.py:941`) decides which loss keys are row-summed rather than
-   row-meaned, and editing it changes the number with the id still. Excluded
+   row-meaned; adding `'loss'` to it took `test_loss` 10.196 → 0.0205 with the
+   id unchanged (verified). Excluded
    deliberately, not overlooked: the constants on this path also include
    `_TRAIN_METRICS_FIELDS`, which is derived from the `TrainMetrics` dataclass,
    so hashing constants would bump the ruler every time an unrelated diagnostic
@@ -798,6 +815,40 @@ row 1 and a resume appends without re-heading.
 then ignored by the reader and the counter returns to set-identity only.
 **Deploy note:** trainer + tune Python; takes effect at the next restart. No
 config key added, so the live-yaml validator is unaffected.
+
+**⚑ MERGE ORDER WITH #283 — read before merging either.** The two PRs touch
+one hunk in `_compute_metrics` (`eval_ruler=ruler` vs `**eval_coverage.drain()`
+in the same `_build_metrics(...)` call). **Both lines must survive the
+conflict.** GitHub reports each PR MERGEABLE on its own, so the conflict only
+appears at the SECOND merge. Consequences, all of which change what this
+entry's PASS condition 3 should read:
+
+* #283 edits frames inside the covered closure, so the merge MOVES the ruler
+  id. Four frame digests move, not the two the diff obviously touches:
+  `_compute_metrics`, `_prepare_host_arrays`, `_full_pass_host_batch`,
+  `_iter_full_pass_batches`.
+* **Both landing in the same restart ⇒ ZERO bumps.** The checkpoint has no
+  recorded ruler, so the migration adopts whatever id the deployed code
+  produces and `holdout_generation` stays **1** — which is what PASS condition
+  3 above expects. **This is the intended order.**
+* **#282 first, #283 at a later restart ⇒ exactly ONE bump**, 1 → 2, and
+  `best/` is handed over once. Not harmful — it is a true positive, the
+  measurement really did change — but then PASS condition 3 must read
+  "generation is 1 after the first restart and 2 after the second", and the
+  handover line will be in the log.
+* **Whoever merges second must update `PRODUCTION_FULL_PASS_RULER` /
+  `PRODUCTION_SAMPLED_RULER` in `tests/test_holdout_ruler_identity.py` and the
+  hex in this entry IN THE SAME COMMIT**, or `main` goes red on the golden
+  pin. That failure is the pin working: it is how a ruler change announces
+  itself instead of landing silently.
+
+**Interpreter note (why the hex is quotable at all).** `digest_source` is
+tokenize-based, not an `ast.unparse` round-trip. The first implementation was
+interpreter-dependent — 9 of the 19 covered frames digested differently on
+CPython 3.10 vs 3.11, which turned CI red on the 3.11 runner and, worse, meant
+a production Python upgrade would have fired a handover for a measurement that
+never changed. `v1:full_pass:c8fb48a79e804bb4` is verified byte-identical on
+**3.10.12, 3.11.14 and 3.12.12**.
 
 ### PRE-REGISTERED (not yet live) — selfplay clients stop zero-padding root evals to 32 rows (PR #280, 2026-07-27)
 

@@ -411,8 +411,8 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 
 # --- the pin that makes a ruler change announce itself --------------------
 
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:1480cc57fd4530b1"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:7f2e12e40cf19a7d"
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:c8fb48a79e804bb4"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:e3cc3241626a581f"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
@@ -435,9 +435,12 @@ def test_the_production_ruler_id_is_pinned() -> None:
     If you did not: you have just changed what `test_loss` means, and the
     holdout is a frozen ruler.
 
-    (The value depends on the source of the 19 covered frames and on
-    `ast.unparse`, so a Python upgrade moves it too -- also worth a deliberate
-    look rather than a silent pass.)
+    The value depends on the source of the 19 covered frames and NOT on the
+    interpreter: `digest_source` is tokenize-based precisely so that a Python
+    upgrade cannot move it. Verified equal on CPython 3.10.12, 3.11.14 and
+    3.12.12 -- the earlier `ast.unparse` version disagreed on 9 of the 19
+    frames between 3.10 and 3.11, which is what made CI red and would have
+    fired a handover on a production interpreter bump.
     """
     assert Trainer.eval_ruler_id_for(
         batch_size=512, steps=0, mirror_prob=0.0, full_pass=True,
