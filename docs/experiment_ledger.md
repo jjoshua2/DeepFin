@@ -4962,11 +4962,31 @@ network=178-419%   sf_block_starved=2699-2986%   total_thread=3200%
 in_flight_avg=24.0   pending_excluded_avg=23.4-23.7   runnable_avg=0.0-0.1
 ```
 
-**23.5 of every 24 in-flight games are excluded each step waiting on a pending
-async Stockfish move, and 85-93% of all selfplay thread-time sits in
-`_wait_for_starved_sf`** (`selfplay/manager.py:409-444`). So `net_idxs` averages
-**~1 game** and the real production shape is **n_boards ~= 1** — not the 344 of
-Readout 1, not the 24 of Readout 1b.
+**Selfplay thread-time is overwhelmingly spent blocked on Stockfish**
+(`selfplay/manager.py:409-444`), so `net_idxs` averages **~1 game** and the real
+production shape is **n_boards ~= 1** — not the 344 of Readout 1, not the 24 of
+Readout 1b.
+
+**⚑ CORRECTION 2026-07-28 — quote the TIME, not the instantaneous count.** I
+originally wrote "23.5 of every 24 in-flight games are excluded each step" and
+repeated it as if it were universal. **It is regime-dependent and I sampled one
+regime.** Measured `pending_excluded_avg` against `in_flight_avg = 24.0`:
+
+| window | pending_excluded | share |
+|---|---|---|
+| pre-restart steady state | 23.4-23.7 | ~98% |
+| post-restart ramp | ~12.2 | ~51% |
+| post-restart steady state (live now) | 18.8-19.6 | ~79% |
+
+**The robust quantity is `sf_block_starved`: 2933-3096% of 3200% total
+thread-time = 92-97%, stable across all three windows.** Use that. The
+instantaneous pending-game count moves with concurrency and makes a bad quote.
+
+**The n_boards ~= 1 conclusion is UNAFFECTED and was independently confirmed from
+the leaf side**, which does not depend on the pending count at all: leaf rows per
+network turn = `legal_pos * rows_per_req / (1 - legal_req)`, and against the
+expected 0.25x256 + 0.75x32 = 88 sims/turn this gives n_boards 0.9-1.1 in steady
+state. Two derivations, one shared conclusion.
 
 **This is now CONFIRMED against live logs rather than assumed.** Measured at
 n_boards=1, mix-weighted, predicts **22.0 rows/request**; the live workers report
