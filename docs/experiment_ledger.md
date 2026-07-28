@@ -10875,3 +10875,47 @@ because `sf_move_nodes: 0` it moves opponent strength at the same time. If ever
 revisited it is audit-first: paired re-query of ~2000 frozen audit-set positions
 at 349k vs 698k, killed before launch at < 90% top-1 agreement or > 5 cp median
 |cp(best_349k) - cp(best_698k)| evaluated at 698k.
+
+**C17 THROUGHPUT LEG — NO EVIDENCE OF A COST, BUT THE WINDOW IS CONFOUNDED BY
+OUR OWN AGENT LOAD (2026-07-28).** The `gumbel_vloss_weight: 1` deploy (20:52
+on 07-27) was argued to be free on the grounds that selfplay is Stockfish-bound,
+so the extra GPU round trips fall into slack. Re-read now that the ~1.5 h
+curriculum drain is long past.
+
+Measured from the compacted ingest stream
+(`processed/_compacted`, filenames encode `<epoch>_<sha>_<N>g_<P>p`):
+
+| window | games/h | rows/game |
+|---|---|---|
+| post-C17, first 4 h past the drain | 2064 | 17.50 |
+| post-C17, most recent 4 h | **2628** | 18.53 |
+| pre-C17 baselines from earlier reads | 2537 / 2561 | 24.69 sp / 12.04 cur |
+
+Post-C17 steady state (2628) sits **at or slightly above** the 2537-2561
+pre-change baselines, so **there is no evidence of a throughput cost** and the
+"SF-bound, therefore free" argument survives its first real test.
+
+**But this is deliberately NOT recorded as a clean verdict, for two reasons.**
+
+1. **Our own subagent load confounds the window.** Box load ranged from 44 to 93
+   on 32 cores across this period as 3-4 review/analysis agents started and
+   finished. The 2064 -> 2628 rise between the two post-C17 windows is almost
+   certainly agent load receding, not C17 improving — which is proof that the
+   series is sensitive to something other than the treatment. **Selfplay workers
+   run at `nice 15`, so any default-priority side work preempts them**; a
+   throughput readout taken while running agents measures the agents.
+2. **The pre-C17 arm has aged out.** Compacted retention is ~12 h, so only 10
+   shards over 0.53 h of pre-restart data survive, and that slice sits
+   immediately before a restart where throughput is already winding down. It
+   reads 1468 games/h and is **not usable** — quoted here only so nobody
+   rediscovers it and treats it as the baseline. The 2537/2561 figures come from
+   earlier reads taken when the window was intact.
+
+**What would settle it:** a games/h window with NO agents running, compared
+against a banked no-agent baseline. Until then the honest statement is "no
+throughput cost detected, comparison confounded", not "C17 is free".
+
+Cross-reference: the C17 *quality* leg is entangled with audit **L16** — the
+policy-only holdout drift may be C17 moving the model off the stale pre-C17
+policy targets the frozen holdout still encodes. That is the subject of the
+paired discriminator and must not be read off this throughput number.
