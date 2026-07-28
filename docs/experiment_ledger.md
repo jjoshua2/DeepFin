@@ -290,6 +290,308 @@ always re-dump and pair.
 | **2026-07-20→21** | **value head-weight rebalance family** (offline warm-start ck118==live iter-118: `w_wdl`↑, z→SF blend shift `sf_wdl_frac` 0.50→0.65, aux-`categorical`+policy-cut combo, `use_adjusted_wdl_target` credit-assign rescore + 2× dose, and all stacked) | **multi-seed NULL — single-seed s0 wins were noise.** `scratchpad/wwdl_overnight_20260720`, ruler = `value_regret` ≥8-man paired. w_wdl=2.5 vs ctrl over **4 paired seeds** = +12.5 SIG(s0) / +1.2 / +5.0 / −2.4 → pooled **~+4±3cp NS**. Blend z→SF +2.1/−3.0 dead; stacking (w2.5+ca, w2.5+blend) SIG vs ctrl but **NS vs pure w2.5** (no add); ca_infl +7.6/−5.0/+2.9 NS (2× dose +13.7 SIG but **only @s0**). **Seed-0 confound: at s0 EVERY value-pressure lever won; off-s0 none replicate** → s0 is a lucky data-shuffle, wins were not lever-specific. Policy stayed neutral throughout (s2/s3 NS). Head-weight / target-rescore / blend are marginal-to-dead value-ceiling movers at 63M. LESSON: single-seed offline `value_regret` has ~11cp/seed noise (identical config swung 78.9↔89.9) — never verdict on one seed. Corrects the premature "STARVED wins" memory. See [[value_head_trunk_gradient_share]]. |
 | **2026-07-21** | **offline continuation "beat live RL faster than RL"** (4-epoch warm-start fine-tune of live iter-118, `promo_ctrl_e4`, plain — no lever) | **RULER MIRAGE — arena-refuted.** On the frozen audit set `promo_ctrl_e4` scored `value_regret` **−12.4cp SIG** (89.7→77.3, ≥8-man) + policy +9 NS vs raw live iter-118 (anchor) — looked like a promotable step up. But the matched-sims gate (`scripts/arena_standard.py`, 64 sims, paired openings, pool 16 / compile-on-no-cudagraphs; the pool must stay ≤16 or the fixed eval batch OOMs 32GB) = **Elo −83.8, 95% CI [−134.0, −36.8] → significantly WEAKER in real play.** Textbook [[offline_distillation_value_trap]]: better 1-ply SF-regret RANKING, worse STRENGTH — the frozen ruler cannot see MCTS/selfplay behavior. RULE (durable): do NOT promote an offline-fine-tuned checkpoint on ruler wins; the arena vs the incumbent is the gate. Live **iter-118 remains the best state**; resumed RL from it UNCHANGED (blind-spot FEN seeds stay valid — same net, same holes, no retest). |
 
+### ⚑⚑ FINDING (2026-07-28) — `scripts/arena_standard.py` SILENTLY MEASURES THE UCI/PLAY SEARCH, NOT THE TRAINING SEARCH — every arena verdict in this ledger is for a config selfplay never runs
+
+**This is the load-bearing finding of the session, and it invalidates my own first
+result before it invalidates anything else.**
+
+`scripts/arena_standard.py:_parse_gumbel_overrides` (line ~1167) returns the ENTIRE
+`PLAY_SEARCH_DEFAULTS` dict **even when no `--cand-gumbel` / `--ref-gumbel` flag is
+given** (`if not spec: return out`, where `out` is already seeded from
+`PLAY_SEARCH_DEFAULTS`). That dict is then applied via `dataclasses.replace` onto
+the `GumbelConfig` that `selfplay/match.py` builds. Realized config, printed from
+the object the arena actually constructs:
+
+| key | ARENA realizes (no flags) | PRODUCTION SELFPLAY (`network_turn.py:751`) |
+|---|---|---|
+| `c_scale` | **0.025** | **0.1** (`gumbel_c_scale`) |
+| `topk` | **32** | **16** (`gumbel_topk`) |
+| `c_visit_root` | **900.0** | −1.0 (sentinel, inert) |
+| `c_scale_root` | **7.0** | −1.0 (sentinel ⇒ use `c_scale`) |
+| `q_visit_exp_root` | **−1.0** (LOG root) | 99.0 (sentinel ⇒ **LINEAR** root) |
+| `c_puct` | 1.75 | 2.5 |
+| `fpu_reduction` | 0.33 | 1.2 |
+| `cpuct_factor` | 3.89 | 0.0 |
+
+Production selfplay sets only `simulations / topk / temperature / c_scale /
+add_noise / gumbel_scale` and leaves every other field at the `GumbelConfig`
+dataclass default — which is the LINEAR root with `c_scale` 0.1. `gumbel.py:61-81`
+records that these are deliberately different regimes and gives the measurement:
+**at 256 sims, c_scale 0.1 → 0.688 puzzle accuracy, 0.05 → 0.652, 0.025 → 0.598.**
+The arena has been running the worst of the three at the selfplay budget.
+
+**Consequence: every same-checkpoint and cross-checkpoint arena Elo in this ledger
+was measured on the UCI/play search.** For cross-checkpoint A/B verdicts (both sides
+share the config) this is a *relevance* problem, not an arithmetic one — it ranks
+nets under a search selfplay does not use. For anything that varies the SIM COUNT it
+is fatal, as below.
+
+**MY OWN LADDER, RUN BEFORE I CHECKED THIS, IS CONFOUNDED — do not cite these rungs
+as "search does not scale".** Checkpoint
+`data/salvage/pre_offline_pause_20260728/seeds/slot_000/trainer.pt` (iter 219),
+same checkpoint both sides, paired book openings, syzygy adjudication, temp 0.1,
+eager, training down. Records in `runs/arena_results.jsonl`:
+
+| rung | games / pairs | pentanomial | score | Elo | 95% CI | status |
+|---|---|---|---|---|---|---|
+| 32 v 1 | 60 / 30 | 30/0/0/0/0 | 1.0000 | saturated | ≥ +392 (1-sided) | CONFOUNDED (play shape) |
+| 256 v 1 | 60 / 30 | 30/0/0/0/0 | 1.0000 | saturated | ≥ +392 (1-sided) | CONFOUNDED (play shape) |
+| 256 v 32 | 120 / 60 | 5/5/31/5/14 | 0.4250 ± 0.0377 | −52.5 | [−106.7, −0.7] | **CONFOUNDED — two ways** |
+
+**Confound 1 — `c_scale` is held fixed across a sims ladder, which `gumbel.py`
+states cannot be controlled:** *"the optimal q_scale keys off the TOTAL sim budget,
+so no single value is sim-invariant"*. A fixed `c_scale` ladder measures
+"c_scale=0.025 is better tuned for 32 than for 256" as if it were "search does not
+scale". Worse, the play shape's LOG root (`c_scale_root 7.0`,
+`q_visit_exp_root −1`) exists specifically to change how added sims translate into
+root behaviour — it is the very quantity a sims ladder is trying to measure.
+
+**Confound 2 — ROOT BREADTH IS NOT CONSTANT ACROSS THE RUNGS, and my earlier
+"confounds ruled out" claim that it was is WRONG.** `gumbel_c.py` picks
+`m = min(topk, n_legal, max(2, (sims+1)//2))` (and `m=1` at budget ≤1). Over the 120
+book openings actually used (mean 37.1 legal moves, median 37):
+
+| sims | PLAY shape (topk 32): m / visits-per-candidate | TRAINING shape (topk 16): m / visits |
+|---|---|---|
+| 1 | 1 / 1 | 1 / 1 |
+| 32 | 16 / **2.0** | 16 / **2.0** |
+| 64 | 32 / **2.0** | 16 / 4.0 |
+| 128 | 32 / 4.0 | 16 / 8.0 |
+| 256 | 32 / 8.0 | 16 / **16.0** |
+| 1024 | 32 / 32.0 | 16 / 64.0 |
+
+In the play shape the root candidate set **doubles from 16 to 32** between the 32-
+and 256-sim rungs, so that rung varied breadth AND depth together. And at 2.0
+visits per candidate the 32-sim rung is a policy readout with one value probe
+attached — it is not a search, and must not be read as "32 sims of search beats 256".
+In the play shape 64 sims *also* sits at 2.0 visits/candidate (breadth grows to 32
+and eats the whole increment), which predicts a flat 32→64 and a real 32→256 gain
+purely from Sequential-Halving quantisation.
+
+**Correction in flight.** The ladder is being re-run in the TRAINING shape, where
+breadth is pinned at 16 and only depth moves (2 → 4 → 8 → 16 visits/candidate), with
+64 and 128 rungs added so the SHAPE is the diagnostic — smooth-and-flat means search
+genuinely is not paying; flat-then-jump means SH quantisation and the original rungs
+were mis-chosen. Both sides carry:
+
+```
+--cand-gumbel/--ref-gumbel \
+ c_scale=0.1,c_visit=50,c_visit_root=-1,c_scale_root=-1,q_visit_exp_root=99,\
+ topk=16,c_puct=2.5,cpuct_factor=0.0,cpuct_base=38739.0,fpu_reduction=1.2
+```
+
+(that string restores all ten `PLAY_SEARCH_DEFAULTS` keys to the selfplay value;
+`scratchpad/ladder_train_shape.sh`, labels `tshape_*`). **A fixed-`c_scale` ladder
+is still not fully controlled even in the training shape** — per `gumbel.py` the
+optimum moves with the budget — so the training-shape result is "does search pay in
+the regime that generates training data, at the c_scale that regime actually uses",
+which is the operationally meaningful question, and `c_scale` fixed across rungs
+stays a NAMED CONFOUND, not a solved one.
+
+**What survives the confound, because it was measured in the training shape.**
+These CPU probes built `GumbelConfig` directly with `c_scale=0.1, topk=16` and the
+dataclass (linear-root) defaults, so they are production-shaped:
+- Search actively changes the move (60 book positions, temp 0, noise off,
+  `scratchpad/check_sims1.py`): sims=32 differs from the raw policy argmax **25.0%**
+  of the time, sims=256 differs **41.7%**, and 256 differs from 32 on **36.7%**.
+  Search is not inert. Whether the changes are improvements is NOT settled here.
+- `sims=1` with root Gumbel noise ON (the arena default) is **not** the raw policy:
+  `gumbel_c.py` sets `m=1` at budget ≤1 and takes `argmax(gumbel_noise + log_prior)`,
+  a Gumbel-max SAMPLE. It plays the argmax only **58.3%** of the time and two seeds
+  agree only 45.0%. With `--no-gumbel-noise` it is exactly the argmax (100% seed
+  agreement). Any `X v 1` rung with noise on overstates what search buys over a
+  greedy-policy player.
+
+**Fix for the ruler itself (code, out of scope for this docs-only session).**
+`_parse_gumbel_overrides` returning `PLAY_SEARCH_DEFAULTS` on an ABSENT flag is the
+defect — a default that silently substitutes a different experiment. The arena needs
+an explicit `--search-shape {play,selfplay}` (or to read the live yaml the way the
+trainer does), and it must print the realized config in its header so a reader can
+see which search produced the number. Until then, **every arena invocation in this
+repo must pass an explicit `--cand-gumbel`/`--ref-gumbel`**, and any past entry that
+does not say which shape it used was the play shape.
+
+---
+
+### ⚑ ABSOLUTE STRENGTH FLOOR (2026-07-28) — the net at 256 sims is ≈ Stockfish at **300 nodes**, and −269 Elo at 1000 nodes
+
+The first absolute-strength measurement against a named, reproducible reference.
+Nobody had ever established the floor; the ledger's only external anchor was
+"0 wins / 35 real losses vs full Cheese (Jun 21)", which is a saturated result and
+bounds nothing.
+
+**Reference:** `Stockfish dev-20260420-ed651aab`, `Threads=1`, `Hash=16`, hard node
+cap via native `go nodes N`. **Candidate:** the same iter-219 checkpoint driven
+through the shipped UCI engine, `--walkers 1` (classic Gumbel, not the PUCT walker
+pool), `--c-scale 0.1 --topk 16 --chunk-sims 256`, capped at `go nodes 256`. 40
+games per level, 20 paired openings (colours swapped), syzygy-5 adjudication.
+Elo/CI below are the PAIRED pentanomial (`scratchpad/pair_ci.py`, same estimator as
+`arena_standard.py`), not the trinomial the match driver prints.
+
+| opponent | net W-D-L | net score | pentanomial (WW/WD/DD/LD/LL) | **Elo (net − SF)** | 95% CI |
+|---|---|---|---|---|---|
+| SF @ **300** nodes | 20-5-15 | **0.5625** | 4/4/8/1/3 | **+43.7** | **[−55.5, +150.6]** |
+| SF @ **1000** nodes | 5-4-31 | **0.1750** | 0/0/5/4/11 | **−269.4** | **[−423.6, −173.0]** |
+
+So the net at its production sim budget sits **statistically level with Stockfish
+given 300 nodes** (CI spans zero) and is **crushed by Stockfish given 1000 nodes**.
+Between 300 and 1000 nodes — a factor of 3.3 in SF's budget — the net goes from +44
+to −269. That is a ~310 Elo swing across half a doubling-and-a-bit of opponent
+strength, which is what "we are deep in the large-easy-gains regime" looks like from
+the outside.
+
+**What these numbers can and cannot resolve.** 20 pairs is small: the SF@300 CI is
+±~100 Elo, so it establishes "roughly level", not a point estimate. The SF@1000 CI
+is wide because the result is near-saturated (11 of 20 pairs are LL). Both are
+nevertheless decisive for the question asked — one bracket is level, the other is a
+rout, and the bracket is what was missing. **Converting "SF at N nodes" into an
+absolute FIDE-style rating needs an external calibration this session did not run;
+I am deliberately not asserting one.** The reference is fully reproducible, which is
+what makes the number usable.
+
+**Instrument verification (this is the check that matters).** The per-move log
+(`--move-log-out`) confirms the node budgets actually reached both engines: over 167
+net moves **min=max=median=256 nodes**, and SF median 1000 (min 985 / max 1041,
+normal SF node-check granularity). So `go nodes` is honoured and neither side was
+silently under- or over-searching. Median wall clock 0.351 s/move for the net,
+0.005 s for SF@1000.
+
+**Caveat on the candidate's search shape.** The UCI engine was pinned to the
+selfplay `c_scale 0.1 / topk 16`, but its `c_scale_root 7.0 / q_visit_exp_root −1`
+(LOG root) UCI defaults were left in place, so this is a hybrid, not the pure
+training shape. That is the right choice for an "how strong is the shipped engine"
+question and the wrong one for "how strong is the training-data generator"; both
+levels would need re-running in the pure training shape to answer the latter.
+
+**Also worth knowing: the shipped UCI default is `--walkers 2`,** which routes to
+the PUCT walker pool and prints `c-scale/c-visit are Gumbel-only and ignored at
+walkers=2`. Every `c_scale` tuning result in this ledger is for the classic Gumbel
+path (`--walkers 1` / `Threads=1`). Nothing here measures the walker pool.
+
+---
+
+### CLEAN BILL (2026-07-28) — terminal handling, tablebase adjudication and mate-in-1 are all sound
+
+Run alongside the ladder above, on the same checkpoint. These eliminate the whole
+"the search is fundamentally broken" class, which makes the 32→256 turnover a
+*tuning* defect, not a correctness one.
+
+**Mate-in-1: 51/51 at every sims level.** Suite = 51 mate-in-1 positions mined from
+the solution lines of `data/puzzles/lichess_2200_2800_n3000.csv`
+(`scratchpad/mine_m1.py`, pure python-chess, ≥5 pieces; the CSV's own `mateIn1`
+theme has only 1 row, which is why the theme filter is useless here). Production RL
+search knobs, CPU, `scratchpad/check_mate1.py`:
+
+| sims | 1 | 8 | 32 | 128 | 256 |
+|---|---|---|---|---|---|
+| mate found | 51/51 | 51/51 | 51/51 | 51/51 | 51/51 |
+
+100% already at sims=1 (= policy argmax), so this says the POLICY sees mate-in-1;
+it does not certify deeper tactics. But value/backup-sign, terminal scoring and
+visit selection cannot be grossly broken or this would not be 100% at 256.
+
+**Tablebase: 4000/4000 agreement, ZERO sign inversions.** `scratchpad/
+check_tb_agreement.py` samples random legal ≤5-man positions and compares the
+in-search probe (`SyzygyProbe`, `syzygy_in_search: true`) against the game-loop
+adjudicator (`tb_adjudicate_result`, `syzygy_adjudicate: true`), converted to a
+common side-to-move sign: 4000 compared, 4000 agree, 0 cursed/blessed
+disagreements, 0 probe misses. The two DO use different cursed-win conventions
+(search = draw, correct for the 50-move rule; training labels = decisive) but that
+is documented and deliberate in `chess_anti_engine/tablebase.py`, and it never
+produced a sign flip in the sample. `probe_wdl()` returning 0/1/2 rather than
+python-chess's −2..2 is the documented training-label flavour, **not** a bug —
+checked, because it looks like one.
+
+**Terminal detection** agrees with python-chess on checkmate / stalemate /
+insufficient material, and the game loop never searches a position that is already
+over (`scratchpad/check_terminal.py`).
+
+**RETRACTED, same session — "the UCI engine does zero search".** An early probe of
+`python -m chess_anti_engine.uci` fed `go movetime 5000` and `quit` down a PIPE and
+saw `nodes 0 ... bestmove b1c3` in 38 ms, with `_should_stop_search` returning
+`'external'` at `remaining_ms=4934`. That is an ARTIFACT of piped stdin: the next
+command arrives while the search thread is running and `_handle_quit` /
+`_handle_position` call `_wait_for_search()`, which sets the stop event. Under a
+driver that waits for `bestmove` (and in `match_vs_uci.py`, which does) the engine
+searches normally — the smoke match played full 135-ply games at ~0.4 s/move. **Do
+not cite the zero-search reading.** Lesson for anyone probing a UCI engine by hand:
+piped stdin is not a valid test harness.
+
+**Note for whoever runs the arena next — `--max-concurrent-games 16` at 256 sims
+OOMs a 32GB card on its own**, with no other GPU tenant (32149 / 32607 MiB, then
+`cudaErrorMemoryAllocation`). The ≈700 MB/game rule of thumb holds at 64 sims, not
+at 256. Use 6 at 256 sims and 4 at 1024. Two rungs were lost to this before the
+concurrency came down.
+
+---
+
+### ⚑ FINDING (2026-07-28) — SECOND, INDEPENDENT arena/production divergence: `gumbel_vloss_weight` never reaches the matched_sims path
+
+This is a *different* mechanism from the `PLAY_SEARCH_DEFAULTS` substitution in the
+entry above, and it survives fixing that one: the shape mismatch is a config dict
+applied to `GumbelConfig`, whereas this is two **function arguments** that are never
+passed at all — so `--cand-gumbel` cannot reach them either.
+
+`scripts/arena_standard.py --mode matched_sims` goes through
+`chess_anti_engine/selfplay/match.py::choose_actions_for_side`, which calls:
+
+```python
+result = _run_gumbel_root_many_c(
+    model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
+    allow_terminal_root_shortcuts=True,
+)
+```
+
+It passes neither `vloss_weight=` nor `target_batch=`, so both take the function
+defaults of **0**. Production selfplay (`selfplay/network_turn.py:791-792`) passes
+`target_batch=int(search.gumbel_target_batch)` and
+`vloss_weight=int(search.gumbel_vloss_weight)`, and the live yaml sets
+`gumbel_vloss_weight: 1` — the C17 virtual-loss fix (PR #278). **The arena has
+therefore always measured `vloss_weight=0`, the pre-C17 search.**
+
+It is not cosmetic, **and the divergence GROWS WITH SIMS — so it is itself a
+confound for any sims ladder run through the arena.** Measured on 40 book positions
+(CPU, temp 0, noise off, topk 16, c_scale 0.1 — i.e. the training shape;
+`scratchpad/check_vloss.py`), move agreement against the arena's `vloss=0` config:
+
+| sims | vloss=1, tbatch=0 (production) | vloss=1, tbatch=8 |
+|---|---|---|
+| 32 | **90.0%** agree | 95.0% |
+| 128 | **77.5%** agree | 70.0% |
+| 256 | **72.5%** agree | 65.0% |
+
+Production's search plays a different move from the arena's search on **10% of
+positions at 32 sims, rising to 27.5% at 256 sims** — production's own budget. Every
+arena Elo in this ledger is an Elo for a search configuration selfplay does not run,
+and the mismatch is worst precisely where production operates.
+
+**This also contaminates the training-shape ladder below**, which matches production
+on all 14 `GumbelConfig` keys but still runs `vloss_weight=0` on both sides, because
+the flag cannot be reached from the CLI. Both rungs share the same value so it is
+not an A/B asymmetry, but "how much does the 32→256 increment buy" is being asked of
+a search that diverges from production more and more as the rung rises. Closing this
+needs the code fix.
+
+**Not established, do NOT cite as cause:** the `duplicate_stats()` /
+`duplicate_rate()` counters read `(0,0,0,0)` / `None` on every row above, which
+could mean "no duplicate leaves on this path" OR "the counter is not wired into this
+path". They cannot be distinguished from outside, so nothing here says whether
+C17's duplicate-leaf mechanism is active in the arena — only that turning `vloss` on
+changes a quarter of the moves at 256 sims.
+
+**Both sides of every arena rung shared `vloss_weight=0`**, so this is not an A/B
+asymmetry within a rung and cannot by itself produce a spurious Elo difference
+between candidate and reference.
+
+**Fix is a code change (out of scope for this docs-only session):** thread the
+production `gumbel_vloss_weight` / `gumbel_target_batch` through `match.py`, or at
+minimum add them to the `--cand-gumbel` / `--ref-gumbel` override surface. They
+cannot be set from the CLI today because they are function arguments, **not**
+`GumbelConfig` fields, and `--cand-gumbel` works by `dataclasses.replace` on
+`GumbelConfig`.
+
+---
+
 ### SHELVED — NULL — value-redundancy data-selection screen (2026-07-21)
 
 **VERDICT (2026-07-21, judged by the pre-committed table below): NULL — does not
@@ -5492,6 +5794,91 @@ from 2x.
 reads out C17 + the sf_p0 restore together. They are confounded with each other
 by the bundled deploy and that is accepted and recorded — the question being asked
 is "did this bundle deliver 10x", not "which of the two did it".
+
+
+### PRE-REGISTERED (2026-07-28) — `feature_dropout_p: 0.10 -> 0.0`, judged on ABLATION SENSITIVITY, not Elo
+
+**Status: PRE-REGISTERED, NOT DEPLOYED.** Training is deliberately down; this
+takes effect only at a future restart, and only if the restart is authorised
+separately.
+
+**What is changing.** `feature_dropout_p: 0.10 -> 0.0` in
+`configs/pbt2_small.yaml`. Today `trainer._apply_feature_group_dropout`
+(`trainer.py:2554`) zeroes each of six classical-feature groups independently at
+p=0.10 with **no `1/(1-p)` rescale**, so `1 − 0.9⁶ = 46.9%` of training rows have
+at least one group zeroed while **0% of inference rows** do, and the 112 LC0
+planes are never dropped (audit M8, FAILED).
+
+**Why, honestly stated.** This is a **cleanup that removes an unjustified
+train/serve asymmetry with no demonstrated benefit. It is NOT expected to be
+worth measurable Elo, and must never later be cited as an Elo win.** The
+measured train-time perturbation is small: on 1,032 on-distribution positions a
+train-like mask moves the legal-masked top-1 in only ~2% of positions and
+`|ΔQ|` by ~0.007 — roughly **20× smaller** than the M35 ruler defect (0.141).
+Per the measurability rule (loop gains ~0.02 Elo/iteration; best instrument
+resolves ~2.74 Elo/day) an Elo A/B on this is **unreadable by construction** and
+will not be run.
+
+**The measured ablation table that motivates it** (`scratchpad/m8_dropout_impact.py`,
+net `pre_offline_pause_20260728`, each group zeroed at inference):
+
+| group | planes | top-1 agreement | `\|ΔQ\|` |
+|---|---|---|---|
+| king_safety | 10 | 98.0% | 0.009 |
+| pins | 6 | 98.2% | 0.007 |
+| pawns | 8 | 98.4% | 0.006 |
+| mobility | 6 | 98.8% | 0.007 |
+| outposts | 4 | 97.7% | 0.009 |
+| **v2_threats** | **29** | **84.8%** | **0.049** |
+| all 63 extra | 63 | 85.4% | 0.058 |
+
+**34 of the 63 extra planes are near-inert**; `v2_threats` alone reproduces 85.4%
+of the effect of zeroing all 63.
+
+**HYPOTHESIS UNDER TEST (the user's, and it is the actual reason to run this).**
+*The five classical groups may be inert BECAUSE dropout taught the net not to
+rely on them; with the features always present it may learn to use them.*
+
+**Prior: against.** All six groups are dropped at the **same** p=0.10, yet
+`v2_threats` is the most-relied-on block by a wide margin. Same treatment,
+opposite outcomes ⇒ the cause is feature content, not dropout. The competing
+explanation is redundancy — king safety / pins / pawn structure / mobility /
+outposts are derivable from the piece planes a 16-layer net already sees, which
+also predicts the ledger's existing result that every v3 feature add failed.
+**The prior being against is exactly why this is worth pre-registering rather
+than assuming.**
+
+**THE ONE DECIDING YARDSTICK — ablation sensitivity, not Elo.** Re-run the
+identical probe on the new checkpoint and compare the five inert groups'
+sensitivity against the table above:
+
+```bash
+PYTHONPATH=. python3 scratchpad/m8_dropout_impact.py
+```
+
+- **CONFIRMED (user's hypothesis)** if the five classical groups' mean `|ΔQ|`
+  rises above **0.020** (from ~0.008), i.e. >2.5×, or their mean top-1
+  agreement falls below **95%** (from ~98.2%).
+- **REFUTED** if after the readout window both stay inside
+  `|ΔQ| < 0.012` and top-1 agreement `> 97%`. Then the planes are **redundant,
+  not suppressed**, and the follow-up is a capacity/feature question — deleting
+  34 near-inert channels — not a regularisation one.
+- **INCONCLUSIVE** between those bands.
+
+**Readout window.** This is a learning-quality change, so ≥1 day of training
+(≈127 iterations) before reading, per rule 3. Read on the SAME checkpoint family
+and state the iteration in the verdict.
+
+**Confounds.** Must not share a readout window with any other
+data-or-target-affecting change (rule 4). It is safe to bundle with pure-ops
+changes. Note it is a **no-op in the C encoders** — `feature_dropout_p` is
+honoured only on the python `encode_position*` paths and never touches recorded
+`x`, so it is purely a train-time input transform and needs no shard migration.
+
+**Revert.** Single yaml key back to `0.10`. No replay-window contamination
+concern beyond the usual: the window holds ~a day of data trained under the old
+setting, but the DATA is unchanged either way — only the train-time transform
+differs.
 
 
 ### ⚑⚑ WHY "IS THE RL LOOP WORKING?" HAS NO ARENA ANSWER ON A ONE-DAY HORIZON (2026-07-28)
