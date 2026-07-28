@@ -10876,6 +10876,155 @@ revisited it is audit-first: paired re-query of ~2000 frozen audit-set positions
 at 349k vs 698k, killed before launch at < 90% top-1 agreement or > 5 cp median
 |cp(best_349k) - cp(best_698k)| evaluated at 698k.
 
+> **PRE-SCREEN RUN 2026-07-28 -- KILLED BEFORE LAUNCH.** The screen above was
+> executed. No training compute, no GPU, no config or code touched; live
+> training was down for offline work and stayed down. Judged against the rule
+> exactly as pre-committed above.
+>
+> | pre-committed clause | threshold | measured (n=4000, paired) | |
+> |---|---|---|---|
+> | top-1 move agreement 349k vs 698k | >= 90% | **74.52%**, 95% CI [73.17, 75.85] | **KILL** |
+> | median \|cp(best_349k) - cp(best_698k)\| at 698k | <= 5 cp | **0.00 cp**, CI [0.00, 0.00] | PASS |
+>
+> **VERDICT: KILL.** The rule is disjunctive; the agreement clause fires by
+> 15.5 pp with a CI nowhere near the bar. `sf_nodes` halving is CLOSED as a
+> throughput lever on pre-screen evidence. The first-2000 slice (the
+> `audit_targets.py --max-positions 2000` convention) reads 72.70%
+> [70.75, 74.60] -- same verdict.
+>
+> **Method.** All 4000 frozen `data/audit_set_v1.jsonl` positions (not 2000 --
+> see the stratification warning below), re-queried at 698,289 and 349,144
+> nodes, MultiPV 40, under the REALIZED production label settings from the live
+> manifest (`sf_hash_mb: 16`, `stockfish_syzygy_path: syzygy_3-4-5`, Threads 1,
+> the production SF binary `dev-20260420-ed651aab`). Paired per position. The
+> two arms ran as two SEPARATE engine-process generations, and every search was
+> additionally `fresh=True`, so no TT/history could leak from the deep arm into
+> the shallow one (Codex #125). 12 engines at `nice 19`; the concurrent 1000-game
+> arena held 166 -> 169% CPU throughout, i.e. unstarved. ~7 min of wall clock.
+>
+> **The node budget was realized -- verified four independent ways**, not
+> trusted from the flag. (a) Engine-reported nodes: median 698,530 / 349,315,
+> p5 exactly the budget. (b) Realized shallow/deep node ratio median **0.5001**.
+> (c) Wall clock 288 s vs 146 s = **0.507**, matching the 07-27 probe's linear
+> 1.00 / 0.51. (d) Realized depth median **12** (p25 11, p75 13) on the deep
+> arm -- reproduces the live `sf_label_meta` shard reading (p25 11 / median 12 /
+> p75 14), and 0.85% of deep queries finish under half budget against 0.88% in
+> the live shards. Shallow depth median 11: **halving costs exactly 1 ply**, as
+> predicted.
+>
+> **The instrument has ZERO noise.** A 1000-position 698k-vs-698k replicate
+> across separate engine generations agreed **100.00%** with bit-identical node
+> counts (max |delta| = 0). Single-thread fixed-node SF is deterministic, so the
+> 25.5% disagreement is entirely signal -- there is no measurement-noise
+> explanation available.
+>
+> **Distribution and tail -- "usually free, occasionally expensive", not
+> uniformly slightly worse.** 77.33% of positions cost exactly 0 cp; p75 = 0,
+> p90 = 14 cp, p95 = 27 cp, p99 = 96 cp. Tail: >5 cp on 15.95%, >20 cp on
+> 6.65%, >50 cp on 2.23%, >100 cp on 0.90%, >200 cp on 0.30%. Mean is 8.33 cp
+> with tablebase scores clipped to +/-2500 (raw mean 38.93 cp is meaningless --
+> syzygy makes SF report proven results as |cp| ~ 19,990, which is real signal
+> but not an eval). **Result-class flips -- the 349k top-1 throws away a
+> theoretically decided result -- 7/4000 = 0.18%** (5 draw->loss, 2 win->draw),
+> **all 7 in the endgame**. Among the 1019 disagreements the median cost is
+> 10 cp and 73.9% cost <= 20 cp, but 8.7% cost > 50 cp.
+>
+> **Where it concentrates.** By criticality (best-vs-2nd gap at 698k),
+> agreement is 60.97% quiet(<20) / 85.07% soft / 93.88% sharp / **97.26%
+> decisive(>=100)**: the shallow search picks the right move precisely when the
+> choice matters, and disagrees where the moves are near-equal. That is why the
+> two clauses split -- the cp clause passes because most disagreement is free.
+> By phase, agreement is flat (72.8 / 75.4 / 75.3) but **cost is
+> endgame-concentrated**: >50 cp on 3.83% endgame vs 2.10% middlegame vs 0.75%
+> opening, plus all 7 result-class flips. By source, selfplay 73.21% /
+> curriculum 75.84% -- flat.
+>
+> **Third, independent ruler.** Scored against the frozen 1M-node/MultiPV-10
+> label -- which NEITHER arm produced -- the paired mean-regret delta
+> (349k - 698k) is **+0.76 cp, 95% CI [-0.51, +2.28]: not significant**. So the
+> cp-cost clause is robust across rulers; it is top-1 identity, and only top-1
+> identity, that fails.
+>
+> **Relation to the 2026-07-02 `sf_label_nodes_cap` 400k kill (line 287) -- it
+> is NOT the same measurement, and this screen does not overturn or confirm
+> it.** 07-02 measured the MODEL after training on capped labels (net+search cp
+> regret and raw top-1 vs the frozen audit set, live multi-day window, paired
+> retro-CI: raw top-1 +10.95 [+1.49, +21.18]). This screen measures the LABEL,
+> with no training, no checkpoint and no model-facing ruler -- a ruler-free
+> differential test in the sense of `rl_loop_audit.md` Method rule 15. It is a
+> NECESSARY-condition screen placed in front of the expensive one, so a PASS
+> would not have proven safety; only the KILL is decisive. Two further
+> distinctions: the 400k cap capped LABELS only and left curriculum moves at
+> 698k, whereas halving `sf_nodes` moves both (`sf_move_nodes: 0`), so the
+> proposed change is the strictly LARGER intervention; and the newer
+> deterministic holdout ruler is irrelevant to both -- 07-02 was decided on an
+> audit-set/cp rule, as was this, so the 0.052 -> 0.00736 nats noise-floor
+> improvement does not rehabilitate the 400k cap. **What the two DO share is the
+> substantive detail: 07-02's kill signal was endgame-driven (+17.9
+> [+6.8, +31.3]) and this screen's cp cost and 100% of its result-class flips
+> are endgame. Two independent instruments landing on the same phase is real
+> corroboration of the 07-02 mechanism, and is the main thing this screen adds.**
+>
+> **Threshold post-mortem -- recorded, NOT applied.** The 698k arm matches the
+> frozen 1M/mpv10 label's top-1 only **68.58%** of the time (349k: 67.35%), i.e.
+> the production label at its own budget would also fail a 90% top-1 bar against
+> a deeper reference. Top-1 identity is intrinsically brittle on a position set
+> that is 75% low-criticality. **This does not soften the verdict** -- the rule
+> was pre-committed and is judged as written, and re-specifying a threshold
+> after seeing the data is exactly what the protocol forbids. It is logged so
+> that if this lever is ever revisited the rule is rewritten BEFORE new data
+> (candidate: a criticality-weighted or cp-tolerant agreement statistic, plus a
+> clean 1M/mpv40 arm to separate the nodes effect from the MultiPV effect --
+> the 68.58% figure confounds the two).
+>
+> **Banked (pairable, reusable):**
+> `data/audit_analysis/sf_nodes_halving_prescreen_20260728/` --
+> `paired_349k_vs_698k_mpv40.jsonl` (4000 rows, BOTH arms' full MultiPV + the
+> frozen label, so any future re-analysis is paired without repaying the CPU),
+> `.meta.json`, `replicate_698k_vs_698k_mpv40.jsonl` (noise floor),
+> `requery_sf_nodes.py` + `analyze_prescreen.py` (the exact scripts),
+> `result_all4000.txt` / `result_first2000.txt` / `result_tail_clipped.txt` /
+> `result_replicate_noisefloor.txt`.
+>
+> **Could not establish.** (1) Whether 74.52% label agreement would actually
+> harm training -- this is a label-fidelity measurement, not a learning one;
+> that gap is inherent to putting the screen before training compute. (2)
+> Whether 90% was reachable by ANY budget: the 68.58% self-comparison suggests
+> not, but it confounds nodes with MultiPV, and a clean 1M/mpv40 arm was
+> deliberately not run (it would be re-specifying the rule after seeing data).
+> (3) Production runs labels on a WARM TT (`StockfishPool.submit` defaults
+> `fresh=False`); this screen used cold searches on both arms. Cold is the
+> documented hygiene for paired budget comparisons and a warm TT only inflates
+> agreement, so the choice is conservative in the KILL's direction, but it is
+> not a bit-exact replica of the production query. (4) The audit set was built
+> from a 2026-06-02 replay snapshot WITHOUT syzygy at 1M/mpv10, while both arms
+> here ran production settings WITH syzygy -- so the third-ruler comparison
+> mixes TB-informed arms against a TB-free reference, and the position
+> distribution has drifted since June.
+>
+> **INSTRUMENT WARNING FOUND WHILE DOING THIS (applies to every
+> `audit_targets.py --max-positions 2000` reading ever taken).**
+> `data/audit_set_v1.jsonl` is written **stratum-BLOCKED, not interleaved**, and
+> `audit_targets.py` slices `positions[:max_positions]`. The first 2000 rows are
+> 666 endgame/selfplay + 666 endgame/curriculum + 666 middlegame/selfplay + 2
+> middlegame/curriculum -- **1332 endgames, 668 middlegames, and ZERO opening
+> positions**, against a full set that is an even 6-way split. So the standing
+> `--max-positions 2000` convention has always scored an endgame-heavy,
+> opening-free half of the frozen set. That is why this screen re-queried all
+> 4000. Belongs in `rl_loop_audit.md` as its own invariant; not filed there by
+> this pass.
+>
+> **A second, smaller scoring hazard, noted not fixed.** `go nodes N` truncates
+> the final iteration, so the retained MultiPV lines are not all from one depth:
+> in **5.5%** of positions `max(cp)` over the retained lines is a DIFFERENT move
+> than the engine's own rank-1 `bestmove` (rank 1 and `bestmove` agreed 100% of
+> the time -- it is the lower ranks that carry stale cp). Anchoring "best cp" on
+> `max()` therefore reports nonzero regret on positions where the two arms
+> AGREE. The numbers above are anchored on rank 1 instead. **`eval/audit.py`
+> `parse_audit_record` uses `best_cp = max(move_cp.values())`**, i.e. it has this
+> construction -- it inflates regret slightly and symmetrically for every
+> candidate, so it does not reorder a comparison, but it is not zero.
+
 **C17 THROUGHPUT LEG — NO EVIDENCE OF A COST, BUT THE WINDOW IS CONFOUNDED BY
 OUR OWN AGENT LOAD (2026-07-28).** The `gumbel_vloss_weight: 1` deploy (20:52
 on 07-27) was argued to be free on the grounds that selfplay is Stockfish-bound,
