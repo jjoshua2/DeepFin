@@ -368,11 +368,38 @@ In the play shape 64 sims *also* sits at 2.0 visits/candidate (breadth grows to 
 and eats the whole increment), which predicts a flat 32→64 and a real 32→256 gain
 purely from Sequential-Halving quantisation.
 
-**Correction in flight.** The ladder is being re-run in the TRAINING shape, where
-breadth is pinned at 16 and only depth moves (2 → 4 → 8 → 16 visits/candidate), with
-64 and 128 rungs added so the SHAPE is the diagnostic — smooth-and-flat means search
-genuinely is not paying; flat-then-jump means SH quantisation and the original rungs
-were mis-chosen. Both sides carry:
+**CORRECTED RESULT — the training-shape ladder, and it RETRACTS the −52.5.**
+Re-run with breadth pinned at 16 so only depth moves (2 → 16 visits/candidate),
+same checkpoint both sides, 120 games / 60 pairs, conc 6, eager
+(`scratchpad/ladder_train_shape.sh`, labels `tshape_*`):
+
+| rung | shape | games/pairs | pentanomial | score | **Elo** | 95% CI |
+|---|---|---|---|---|---|---|
+| 256 v 32 | PLAY (confounded) | 120/60 | 5/5/31/5/14 | 0.4250 | −52.5 | [−106.7, −0.7] |
+| **256 v 32** | **TRAINING** | **120/60** | **14/5/22/7/12** | **0.5083** | **+5.8** | **[−56.3, +68.3]** |
+
+**The −52.5 does not survive the shape correction — it was an artifact of running
+`c_scale=0.025` + `topk 32` + LOG root at a 256-sim budget those values are not
+tuned for. Do not cite "256 sims is weaker than 32 sims".** In the shape production
+actually trains under, 256 v 32 is dead flat.
+
+**What replaces it is a bound, and the bound is still bad.** 8× the search budget
+(three doublings, 2 → 16 visits per root candidate) buys **+5.8 Elo with a 95% upper
+bound of +68.3**. A healthy engine gains roughly 50-70 Elo per doubling in this
+range, i.e. ~150-200 Elo over three doublings; the CI **excludes** that. So the
+honest statement is: *the 32→256 increment is worth at most ~68 Elo, i.e. at most
+~23 Elo per doubling, and the point estimate is indistinguishable from zero.* This
+is NOT "search does not work" — the 32-v-1 rungs show the first steps of search buy
+enormously — it is "search stops paying somewhere at or below 32 sims, and
+production spends 8× the per-move compute past that point."
+
+Note the CI cannot resolve a genuine gain below ~60 Elo; ruling out "small but real"
+would need several hundred more pairs. What it does rule out is the gain search is
+supposed to deliver.
+
+Rungs at 64 and 128 are running so the SHAPE is the diagnostic — smooth-and-flat
+means search genuinely stops paying; flat-then-jump would mean Sequential-Halving
+quantisation and mis-chosen rungs. Both sides carry:
 
 ```
 --cand-gumbel/--ref-gumbel \
@@ -6099,6 +6126,77 @@ from 2x.
 reads out C17 + the sf_p0 restore together. They are confounded with each other
 by the bundled deploy and that is accepted and recorded — the question being asked
 is "did this bundle deliver 10x", not "which of the two did it".
+
+
+### ⚑⚑ ROOT CAUSE (2026-07-28) — the curriculum opponent's regret filter is in WDL, which SATURATES: at regret 0.0075 the moves SF may play span >300cp in 27.4% of positions
+
+**This resolves the contradiction between the curriculum record and the absolute
+strength bracket, and it is a defect in the OPPONENT, not the net.**
+
+The contradiction: the run's own history has the PID at `wdl_regret_limit`
+**0.0075** with `opponent_sf_nodes` **5000**, holding its ~0.5 target winrate —
+which reads as "level with near-full-strength SF@5000". The absolute bracket
+measured the same lineage at **≈SF@300 nodes** and **−269 Elo vs SF@1000**. A
+~16× node gap. Both are in fact correct.
+
+**Mechanism.** `selfplay/stockfish_turn.py:128-149` picks uniformly among moves
+within `wdl_regret_limit` of best, scored `w + 0.5*d` per-mille (`sf_multipv_raw`
+cols `(action_idx, cp, mate, w, d)`). **WDL saturates**: a +5-pawn move and a
++9-pawn move are both `w=1000`, identical score, so **both pass ANY threshold
+however tight.**
+
+**Measured, 10,988 live shard positions (`data/c17_ab/pre`):**
+
+| regret | mean candidate moves | forced-to-best |
+|---|---|---|
+| 0.0815 (production 2026-07-28) | **10.42** | 20.5% |
+| 0.0075 (early-run value) | **8.35** | 39.5% |
+| 0.0010 | 7.40 | 51.6% |
+
+Gap best→2nd: **p10 = p25 = 0.0000**, median 0.0010 — WDL ties constantly.
+
+**⚑ THE LEVER IS PERVERSE — tightening it makes the leaked blunders BIGGER:**
+
+| cp spread among moves that PASS the filter | regret 0.0815 | regret 0.0075 |
+|---|---|---|
+| median | 67 | 67 |
+| p75 | 278 | **330** |
+| p90 | 539 | **569** |
+| mean | 880 | **1123** |
+| >100cp | 40.0% | **45.2%** |
+| >300cp | 23.7% | **27.4%** |
+| mean in WINNING positions (score>0.90) | 1232 | **1378** |
+
+A tighter WDL threshold selects exactly the positions where WDL is tied and cp
+diverges, so "lower regret to raise difficulty" partly does the opposite.
+
+**Consequences.**
+1. **"The net keeps pace with SF at N nodes" is VOID as a strength claim** at
+   every regret setting in this run's history. The opponent discarded ~12 pawns
+   on average in won positions while scoring as if it played best.
+2. **Curriculum winrate carries no strength signal** — the PID holds it at target
+   by construction. The handicap is the odometer, but only if the handicap axis
+   is real, and this one largely is not.
+3. The net has never had to convert a won position against real resistance,
+   which matches the Cheese blunder profile (80% of losses = one collapse).
+4. It is NOT evidence the net regressed. The early "regret 0.0075 @ 5000 nodes"
+   era was a weak opponent, not a strong net.
+
+**Fix direction (NOT yet pre-registered as a change).** `cp` is already stored
+per MultiPV row, so a cp-aware or cp-capped regret filter needs no new SF work.
+Before changing it, note this is a **data-affecting change to every curriculum
+game** and needs its own entry, a revert point, and an explicit statement that
+it makes the opponent harder — the PID will respond, and the winrate/regret
+series will not be comparable across the change.
+
+**The number still owed, and it is the one that sizes this:** SF@698k with the
+production WDL filter at 0.0815 vs SF@698k unfiltered, same harness — the Elo
+the opponent loses to the filter itself. Requested from the strength agent.
+
+**Method note.** Found by asking what the difficulty lever *physically does*
+rather than trusting its name — the same rule that caught M35 and the arena's
+PLAY-shape substitution. `wdl_regret` sounds like a strength dial; measuring its
+realized candidate set showed it moves 10.4→8.4 moves across its whole range.
 
 
 ### PRE-REGISTERED (2026-07-28) — `feature_dropout_p: 0.10 -> 0.0`, judged on ABLATION SENSITIVITY, not Elo
