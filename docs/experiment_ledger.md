@@ -11123,3 +11123,57 @@ as a circuit breaker and an honest metric rather than as a ratchet.
 holdout, audit L16) does NOT rescue this, because the holdout's policy leg is a
 DECAYING ruler and the gap to close is ~1500x, not ~7x. Instrument work is worth
 doing to stop us being WRONG; it is not a path to being able to see 1x progress.
+
+**STRENGTH READOUT — iter 219 vs the pre-C17 anchor (iter 158), QUIET BOX
+(2026-07-28). VERDICT: NULL, and the optimistic end is dead.** The first arena
+this project has run with live training STOPPED, so it is the only strength
+number not competing with the thing it measures (contrast the 07-28 ratchet run,
+which got 46 games at load 44-93 where 07-27 got 314).
+
+Command: `arena_standard.py --candidate
+data/salvage/pre_offline_pause_20260728/seeds/slot_000/trainer.pt --reference
+data/salvage/ANCHOR_20260727_preC17_step65475_lr3e-5/seeds/slot_000/trainer.pt
+--mode matched_sims --sims 32 --games 1000 --max-concurrent-games 16 --seed 0`.
+Arch verified identical on both sides before the run: 512x16x16, **63,084,128**
+unique-storage params. Steps **65,475 -> 71,042** = 5,567 optimizer steps, 61
+iterations, same `peak_lr` 3e-5 lineage.
+
+```
+1000 games (500 opening pairs)
+pentanomial (candidate POV): WW 94 · WD_DW 51 · DD_WL 202 · LD_DL 55 · LL 98
+score 0.4940 +/- 0.0148 (SE)
+Elo -4.2   95% CI [-24.4, +16.0]
+```
+
+**Pre-committed read, written before the run:** CI wholly above +12 => >=10x the
+measured slope; CI containing 0 and excluding +12 => 10x excluded; a null does
+NOT distinguish 1x from 2x and must not be reported as "no progress".
+
+**Judged by that rule:**
+- **5 Elo/iteration (the operator's expectation) = +305 Elo — EXCLUDED, ~15 sigma
+  above the upper bound.** This is the one firm conclusion.
+- **10x (+11.7 Elo) is NOT excluded** — it lies inside the CI.
+- **1x (+1.17 Elo), zero, and mild regression are all inside too.**
+
+So: **NULL between 1x and ~14x.** The arena kills the optimistic end and settles
+nothing else.
+
+**The resolution estimate in the pre-registration was WRONG, and by 2x.** I
+predicted +/-10 Elo at 1000 games; achieved +/-20. Cause is legible in the
+pentanomial: **202 of 500 pairs are `DD_WL`**, i.e. the paired-opening set is
+drawish at 32 sims, so each pair carries much less information than a
+games-count rule of thumb implies. **Derive arena sample size from the expected
+DRAW RATE, not from a games count** — this was billed as a 10x detector and was
+really a ~14x detector.
+
+**Do not chain this with the `ratchet.csv` series.** Those rows (-12.2, -11.1,
+-7.6) are vs `boot512`; this is vs the iter-158 anchor. Different references, not
+a time series, and reading them as one would be the cross-era error that has
+already produced a spurious -252 Elo here.
+
+**Consequence.** This is the cleanest strength measurement available to this
+project, on a fully quiet box, at the full daily GPU budget, and it still cannot
+see 1x progress. That is the standing decision rule (same date) demonstrated
+rather than argued: improvement per iteration is ~1500x below measurement noise,
+so only changes plausibly worth >=5-8 Elo/day, or offline-screenable ones, are
+worth running at all.
