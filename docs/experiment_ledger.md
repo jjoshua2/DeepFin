@@ -1103,6 +1103,420 @@ whichever is picked must be written down before the readout, not after.**
 
 ---
 
+### PRE-REGISTERED, ARMED-BUT-NOT-DEPLOYED (2026-07-28 ~02:1x) — `w_sf_own_regret` 0.7 → 1.2 is the ARITHMETIC answer to task #38, and it must NOT be deployed yet
+
+**Nothing was changed. This entry exists so that the change, when it happens, is
+judged by a rule written before the numbers.** It also records three reasons the
+change is not ready, one of which moves the proposed number.
+
+**What was measured.** Tonight, as a side effect of the `sf_policy_temp` sweep, a
+single CPU forward/backward on `checkpoint_000161` (n=240 rows) gave the realized
+gradient share of the `sf_own_regret` term on the 63M net:
+
+| | 46M calibration (ckpt233) | 63M (ckpt161, tonight) |
+|---|---|---|
+| unweighted share of policy-CE gradient | **9.7%** | **5.9%** |
+| weighted share at `w_sf_own_regret 0.7` | ~**7%** | **4.1%** |
+
+Weighted share is linear in the weight, so restoring the 46M intent needs
+`0.07 / 0.059 ≈` **1.2**. That is the whole of the arithmetic.
+
+**THE CHANGE (not made):** `train.w_sf_own_regret: 0.7 → 1.2`. It is in
+`TRAINER_WEIGHT_KEYS`, so it is a live yaml edit with no restart, and the key is
+already present in the file — no new key, therefore no all-or-nothing validator
+risk. `w_sf_own` stays at 0.1; this moves ONE of the two sf_p0 legs.
+
+#### Is 1.2 the right target, or only the arithmetic one? Only the arithmetic one — say so plainly
+
+1. **The 7% target was never validated as optimal, even on the 46M net.** The
+   yaml's own comment says 0.7 was "chosen for a ~7% grad share = on par with
+   `w_sf_own`, i.e. a decisive test rather than a timid one" — a dose picked for
+   statistical POWER, not a tuned optimum. No dose ladder was ever run on either
+   architecture, so no point on this curve is known to beat any other.
+2. **The June win it inherits from was a BUNDLE.** 56.7 → 49.6 cp (PR #78) moved
+   the sf_p0 CE teacher and the regret teacher together. The regret leg's own
+   contribution at any dose has never been isolated.
+3. **"Match the 46M intent" is an assumption inherited from a different
+   architecture and has never been tested on this one.** This is the class that
+   produced the −252 Elo false alarm ([[cross_era_512_vs_46m_not_caught_up]]).
+4. **The honest argument FOR 1.2, stated as plausibility and not as evidence:** a
+   loss coefficient is meaningless without the loss geometry it multiplies, so if
+   anything transfers across architectures it is the realized gradient SHARE, not
+   the scalar. Preserving the share is the closest available reconstruction of the
+   only condition ever observed to work.
+
+**Recorded conclusion: 1.2 is a REPLICATION target, not an optimum. This
+pre-registration is for "restore the proven condition's gradient share", NOT for
+"1.2 is better than 0.7". A null does not retire the lever, it retires this dose.**
+
+#### Does the `w_sf_move` trap apply here? Checked in code, not assumed. NO — and the reason is structural
+
+The trap on record: upweighting `w_sf_move` made PLAY worse because `policy_sf`
+trains on `sf_policy_target`, SF's MultiPV at **P1 = the opponent's reply**, which
+is not a move-teacher for the sample's own position.
+
+- **Different head, different target.** `sf_own_regret` is
+  `(po_probs * reg_vec).sum(-1)` (`train/losses.py:363`) on the **`policy_own`**
+  head — the head MCTS actually reads — and `reg_vec` is `sf_p0_regret`, built in
+  `selfplay/finalize.py:1004-1018` by the one-ply shift: *the previous full ply's
+  raw MultiPV is SF's read of THIS position*. The label is SF's evaluation of the
+  sample's OWN position and its OWN move list. The trap's premise is absent.
+- **And the term is not imitation at all.** `_build_sf_p0_regret_vector`
+  (`finalize.py:1258`) emits `clamp(best − score, 0, CAP) / CAP` per move, in
+  [0,1], **explicitly NOT renormalized into a distribution**. The loss is
+  `E_p[regret]`, so every move SF scores as equal-best carries exactly 0.0 and the
+  term is **indifferent among them**. It penalises putting mass on moves SF says
+  lose evaluation; it does not push mass onto SF's chosen move. In an anti-engine
+  project that distinction is the whole point: this constrains blunders without
+  importing SF's preferences, which makes it the LESS imitative of the two sf_p0
+  legs. Upweighting it is not the same act as upweighting `w_sf_move`.
+- **The residual risk that IS real, named now so a failure is explicable**
+  (ledger rule 7): the **uncovered-move default**. Legal moves SF surfaced no PV
+  for are assigned the midpoint between the worst scored regret and 1.0 — a
+  fabricated label, and its influence scales linearly with this weight. If the
+  change fails, the first thing to measure is the share of eligible rows where
+  `legal_count > multipv` and how much target mass sits on defaulted entries.
+
+**Temperature independence — confirmed, and it matters for scheduling.**
+`sf_p0_regret` is a linear cp difference over a fixed cap and never passes through
+the `sf_policy_temp` softmax, so this lever is orthogonal in MECHANISM to the
+teacher-sharpness question. It is **not** orthogonal in READOUT: both land on
+`policy_own`, so they must never be moved in the same window.
+
+#### ⚑ Why this must not deploy now — three reasons, and the third changes the number
+
+1. **The head it feeds is mid-experiment.** `w_sf_own_regret` shares `policy_own`
+   with the `w_sf_own` CE teacher, which came back online only at **iter 132 on
+   07-27** after 15.8 days dead. That restoration's own pre-registration set
+   SUCCESS = net+search E[regret] down ≥3 cp from a freshly-measured 63M baseline,
+   across ≥2 reads taken AFTER coverage ≥20%. **That verdict has not been taken.**
+   Moving the dose first makes both unreadable: we would learn neither "does the
+   teacher work" nor "is 1.2 better than 0.7".
+2. **Coverage has not reached the arming condition task #38 itself set.** From the
+   live trial's `result.json`, `has_sf_p0_frac` at iters 163–167 =
+   **0.100, 0.071, 0.093, 0.097, 0.101** — 7–10%, against the ≥20% precondition and
+   the ~24% steady state the June shards showed. The window is still refilling.
+3. **⚑ The 5.9% is itself biased HIGH by that low coverage, so 1.2 is a FLOOR, not
+   an answer.** `m_sf_own_regret` is a masked MEAN over eligible rows, so its
+   VALUE is coverage-independent — and it replicates the 46M anchor almost
+   exactly (**0.0788–0.0842** at iters 163–167 vs `m_sf_own_regret ≈ 0.079` @ 46M
+   ckpt233), which is a genuine control: the level transferred across
+   architectures even though the share did not, so the discrepancy lives in the
+   policy-CE denominator, not in the teacher signal. But the term's GRADIENT NORM
+   is **not** coverage-independent: an average of n eligible rows retains an
+   O(1/√n) non-cancelling component, so at ~10% coverage (~50 eligible rows in a
+   512 batch) the term's gradient is inflated relative to its ~24% steady state.
+   This is the documented masked-mean low-coverage artifact — the same mechanism
+   that produced the iter 132–134 `grad_norm_p95` spike, and **it is still
+   decaying**: `grad_norm_p95` over iters 134–162 slopes **−0.033/iter (t=−3.72)**.
+   A share measured at 10% coverage OVERSTATES the steady-state share, so the true
+   correction is **≥ 1.2** and re-measuring at ≥20% is not a formality.
+
+   Two further weaknesses of the measurement, recorded rather than hidden: it is a
+   **single point estimate** from one checkpoint and one 240-row batch with **no
+   CI** — and so was the 9.7% it is compared against. This is two uncertainty-free
+   point estimates from two architectures.
+
+#### ARMING CONDITIONS — all four, before any edit
+
+- **(a)** `has_sf_p0_frac` ≥ 0.20 on ≥3 consecutive iterations.
+- **(b)** The sf_p0 restore's own verdict is RECORDED in this ledger **at the
+  deployed dose 0.7** (WORKED / FAILED / MIXED; "deferred" is not a verdict).
+- **(c)** The share is RE-MEASURED at that coverage — ≥3 checkpoints × ≥1024 rows,
+  with a CI — and the target weight recomputed from THAT number. 1.2 is tonight's
+  arithmetic, not a commitment.
+- **(d)** The C17 window has cleared and the `zclip_max_norm` entry below has
+  either deployed and read out or been declined. See its SEQUENCING block: this is
+  step **D**, and it must follow the cap change for a mechanical reason, not just
+  a scheduling one.
+
+#### What must be OBSERVED to conclude the change took effect at all
+
+Two independent checks, **both required**, because this project's history is
+verdicts on experiments that never ran.
+
+1. **The reload landed** — `config/w_sf_own_regret` in the live trial's
+   `result.json` reads the new value on the first row after the edit:
+   ```
+   PYTHONPATH=. python3 -c "import json;p='runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/result.json';rows=[json.loads(l) for l in open(p)];[print(r['training_iteration'], r['config'].get('w_sf_own_regret'), r.get('has_sf_p0_regret_frac'), r.get('m_sf_own_regret'), round(r['grad_norm_median'],3)) for r in rows[-6:]]"
+   ```
+   The same command carries the coverage instrument (`has_sf_p0_regret_frac`, the
+   arming condition (a) above) and the unweighted level, so one read answers "did
+   it land / is it eligible / did the level move".
+   **This field is PROVEN to track live reloads rather than the launch config**:
+   `config/w_sf_own_regret` is absent through iter 131 and reads **0.7 from iter
+   132** — the live-reload iteration — with no restart in between. That is a
+   stronger provenance claim than `params.json`, which is the launch config and is
+   stale the moment a reload lands.
+2. **The trainer used it** — `grad_norm_median` steps UP within one iteration. At a
+   4.1% weighted share, 0.7→1.2 adds ~2.9 points of share, so against a median of
+   ~6.2 expect a step of order **+0.1 to +0.2**, appearing in ONE iteration. Read
+   it with audit method rule 16: a step is the signature, a ramp is something else.
+   If (1) passes and (2) shows nothing, check `has_sf_p0_regret_frac > 0` on the
+   same rows — the weight reached the config but the term may be eligible on
+   nothing. (`sf_own_regret_rows` exists in the loss aux dict at
+   `train/losses.py:566` but is NOT reported to `result.json`; do not write a
+   yardstick against it without checking the row first.)
+
+**NOT a deployment proof: `m_sf_own_regret`.** It is the UNWEIGHTED masked mean
+(`train/losses.py:564`) and is invariant to `w_sf_own_regret` by construction.
+Reading it as confirmation would be the house error in its purest form.
+
+#### ONE deciding yardstick, as an exact command
+
+```
+PYTHONPATH=. python3 scripts/audit_targets.py --checkpoint data/audit_ckpts/<label>/trainer.pt --sims 32 --batch-size 64 --gpu-mem-fraction 0.15 --max-positions 2000 --seed 0 --sf-effort low --vloss-weight 1 --dump-per-position scratchpad/wsfownregret_<label>.jsonl
+```
+judged PAIRED against the identically-invoked pre-change dump:
+```
+PYTHONPATH=. python3 scripts/paired_compare.py scratchpad/wsfownregret_pre.jsonl scratchpad/wsfownregret_post.jsonl --join-key key --field cand.search.exp
+```
+Metric: **net+search E[regret] (cp)** — the same yardstick the June experiment and
+the sf_p0 restore are judged on.
+
+Three things about that command that are not decoration:
+- **`--vloss-weight 1` matches production as of 20:47 on 07-27** (`gumbel_vloss_weight: 1`).
+  The script's default is 0 and its help text still calls 0 "production" — that
+  help string is now stale. Both arms must use the same value; using the default
+  would score the training target under a search the loop no longer runs.
+- **`--max-positions 2000`** is mandatory (protocol gotcha: the set grew to 4000).
+- **Copy the checkpoint OUT of the tune dir first and bank the dump beside the
+  number** — Ray prunes live checkpoints, and an unpaired baseline is not a
+  baseline ([[bank_the_dump_not_just_the_number]]).
+
+**SUCCESS (pre-committed):** the paired 95% CI on net+search E[regret] excludes 0
+in the improving direction, on **≥2 reads taken ≥1 full window refill (~24h)
+apart** after the edit. Point deltas smaller than the measured paired half-width
+for this field (**±6.6 cp** at n=2000) are not verdicts.
+
+**KILL (pre-committed):** either (i) the paired 95% CI excludes 0 in the WORSE
+direction on any single read, or (ii) the CI still includes 0 after two full
+window refills. Either ⇒ revert `w_sf_own_regret` to **0.7** by yaml edit, no
+restart, and record the verdict as **FAILED-AT-DOSE** — not "the teacher failed".
+The CE leg is a separate weight and stays at 0.1.
+
+**NO ARENA.** The effect under test is a ~3-point shift in one term's gradient
+share. Nobody believes that is ≥50 Elo, so per tonight's operating rule the arena
+is both the expensive instrument and the uninformative one here.
+
+**Revert point.** Bank at the edit:
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out data/salvage/pre_wsfownregret_20260728`
+(`--metric training_iteration` is REQUIRED; VERIFY the printed iteration against
+the live one). `data/salvage/pre_sfp0_restore_20260727` remains the deeper
+pre-teacher rollback. Note the usual caveat is WEAKER than usual here: both sf_p0
+terms are masked to `has_sf_p0*` rows, so zeroing or lowering the weight is a
+genuine and complete change of dose — but it does not undo the steps already taken.
+
+**Confounds to carry into the verdict:** sf_p0 coverage still ramping 7–10% → ~24%;
+C17 target quality entering the window from 07-27 20:48; PR #277 (holdout ruler —
+`test_*` not comparable across 20:47); PR #273 (grad-norm scope — `grad_norm_*` not
+comparable across iter 163).
+
+---
+
+### PRE-REGISTERED, HELD FOR SEQUENCING (2026-07-28 ~02:1x) — `zclip_max_norm` 6.5 → 13.0, and the "re-fire" is a PLATEAU, not a ramp
+
+**Nothing was changed.** The cap move is specified, armed and deliberately not
+executed; the sequencing block says when.
+
+**The premise, from the live rows.** At iters 163–167: `grad_norm_median`
+**6.07–6.24**, `grad_hard_clip_rate` **0.289–0.353**, `grad_norm_p95` **7.17–7.57**
+(still above the cap), `grad_norm_max` 7.88–11.48. **cap/median = 1.05** against the
+historically-inert **2.1**. The fixed arm binds on roughly a third of steps: it is
+the step-size controller, not a tail guard. **I11 fails, and that part of the
+re-read stands.**
+
+#### ⚑ But the SHAPE in the existing record is wrong, and this entry corrects it
+
+The audit's I11 re-read concludes "the continuous rise is real and continues at the
+new cap", and the zclip VERDICT entry above reports the clip rate "climbing again:
+0.26 (136) → 0.34 (145) → 0.48 (157)". Re-measured over the whole era, that is not
+what the series does.
+
+| series (iters 134–162, post-step, single measurement scope, n=29) | slope/iter | t |
+|---|---|---|
+| `grad_norm_median` | **+0.0003** | **+0.10** |
+| `grad_hard_clip_rate` | **+0.00015** | **+0.08** |
+| `grad_norm_p95` | **−0.0334** | **−3.72** |
+
+Half-over-half medians: `grad_norm_median` 6.288 → 6.302, `grad_hard_clip_rate`
+0.341 → 0.339. **Flat on both, on 29 rows.** The p95 is *declining*, which is the
+sf_p0 low-coverage masked-mean artifact decaying exactly as pre-committed at iter
+133 and first confirmed at 134.
+
+**Where the "ramp" came from.** Over iters 122–162 the median slopes +0.0203/iter
+(t=+5.34) — and that is entirely the iter-132 level shift. **Excluding the single
+row 132 does not remove it:** rows 122–131 sit at 5.38–5.63 and rows 134–162 at
+6.02–6.64, so any regression spanning both segments reports a ramp whose whole
+content is the step. **This is method rule 16 applied one row too narrowly — the
+rule says find the step, and the correct exclusion is the pre-step SEGMENT, not the
+stepping ROW.** The rule caught the right mechanism (a loss term was added at 132)
+and was then used to justify a slope it had just explained away.
+
+The cited 0.26 → 0.34 → 0.48 climb is three points selected from a series with
+sd 0.085 that also contains **0.613 at iter 140**, 0.318 at 158 and 0.289 at 167.
+
+**One more splice to avoid:** iters ≥163 are a DIFFERENT measurement. PR #273 made
+the clip norm AdamW-only, a documented ~4.4% step down (at iter 167,
+`grad_norm_adamw` 6.23 against `grad_norm_aurora` 1.84). 6.18 in AdamW scope ≈ 6.45
+global-equivalent. Do not compare across iter 163 without the correction.
+
+**Consequence for this pre-registration, and it is the reason the value changes:
+there is no ramp to outrun.** The 5.0 → 6.5 move was sized against a p95 that was
+itself mid-ramp, and re-bound in ~8 iterations — not because 6.5 was too small for
+the trend, but because the **sf_p0 teacher landed at iter 132 and added loss terms**
+(`grad_norm_median` 5.547 → 6.885 in ONE iteration). The right move now is a
+one-time RE-LEVEL that holds until the next loss-term change — and the next
+loss-term change is exactly what the entry above proposes.
+
+#### THE CHANGE
+
+`train.zclip_max_norm: 6.5 → 13.0`. **A live yaml edit, no restart** — PR #272
+merged **10:54:22 on 07-27** and the live trainer (PID 281892) started
+**20:47:16** the same day, so `Trainer.set_grad_clip_max_norm` (pushed each
+iteration from `trainable.py:711`) IS in its address space. Verified from
+`ps -eo pid,lstart` against the commit timestamp, not assumed. Existing key ⇒ no
+all-or-nothing validator risk. All other zclip keys unchanged.
+
+**Why 13.0 rather than another conservative half-step.** 13.0 = **2.1 × the current
+median 6.18**, the ratio at which the fixed arm was inert on the 384×12 net (median
+2.4, cap 5.0, hard-clip 0.000, flat for 20 days). The 5.0 → 6.5 entry named ~11 as
+the semantically correct value and *chose* the conservative end; that choice cost a
+restart and a readout window and bought seven iterations of inertness. Every
+condition that justified conservatism has since changed: the edit is now free and
+revertible within one optimizer step, the series is flat rather than ramping, and
+the adaptive z-score arm — the mechanism actually designed for outliers — is
+untouched and currently firing on 4–13% of steps. **What 13.0 buys that ~8.0 would
+not is the invariant itself:** the fixed arm stops participating in normal steps at
+all, rather than moving the binding rate from 33% to 5%.
+
+**The honest cost, stated before the fact.** On roughly a third of steps the update
+magnitude will roughly double relative to today. Direction is unchanged (a norm
+clip is a scalar rescale) and the Aurora group is unaffected (its update is the
+polar factor of the gradient, scale-invariant — audit I21), but this is a real
+change to the effective step size on the AdamW group and **this project's
+instruments have never resolved a learning effect from a step-regime change**: the
+last one moved the binding rate from 95% to 0% and the frozen holdout did not move.
+Do not expect this readout to answer whether it helped.
+
+#### ONE deciding yardstick, as an exact command — a DEPLOYMENT/STABILITY check, deliberately
+
+A learning-quality question cannot be answered inside the ~5 iterations a stability
+change reads out in, and pretending otherwise is how the last three entries got
+into trouble.
+
+```
+PYTHONPATH=. python3 -c "import json;p='runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/result.json';rows=[json.loads(l) for l in open(p)];[print(r['training_iteration'], r['config']['zclip_max_norm'], round(r['grad_norm_median'],3), round(r['grad_norm_p95'],3), round(r['grad_norm_max'],3), round(r['grad_hard_clip_rate'],3), round(r['grad_adaptive_clip_rate'],3), r.get('grad_nonfinite_skip_rate')) for r in rows[-6:]]"
+```
+
+**SUCCESS = BOTH, on the FIRST post-edit row:**
+1. `config/zclip_max_norm` reads **13.0** — the reload landed. (Same provenance
+   argument as the entry above: this field tracks live reloads, proven by
+   `w_sf_own_regret` appearing at 0.7 exactly at iter 132 with no restart.)
+2. `grad_hard_clip_rate` **< 0.05**, from 0.289–0.353 — the trainer took it.
+
+This is near-deterministic once the cap sits above the observed max, which is the
+point: it tests **deployment**, not the hypothesis, and this key has a history of
+not being in effect.
+
+**⚑ The three failure modes, and what each one means** (write them down now so the
+diagnosis is not invented later):
+- Config reads 13.0 but the rate stays ≥0.20 ⇒ the yaml reload landed and
+  `Trainer.set_grad_clip_max_norm` did not take. Check its return value at
+  `trainable.py:711`.
+- Config still reads 6.5 ⇒ **the reload was REJECTED**. The validator is
+  all-or-nothing, so confirm nothing else changed in the same edit — and check
+  every LATER reload too, because one rejection silently freezes all of them.
+- Both pass but `grad_adaptive_clip_rate` also collapses to ~0 ⇒ the adaptive arm
+  is not picking up outlier duty and the run has effectively no clipping. That is
+  kill 3.
+
+#### KILL rules (revert to 6.5 by yaml edit, effective on the next optimizer step)
+
+1. `grad_norm_median` > **10.0** on any iteration, **or** `grad_norm_max` > **40.0**
+   on two consecutive iterations (from a settled max of 7.9–11.5, and above the
+   18.4/24.8 transient the sf_p0 landing produced at iters 132–133).
+2. Any non-finite `train_loss`, or `grad_nonfinite_skip_rate` > 0 on any iteration
+   (it is 0.0 on every row of the current era).
+3. `grad_adaptive_clip_rate` < 0.01 on **3 consecutive** iterations — the fixed arm
+   is out and the adaptive arm is not covering. No clipping at all is not the
+   intended state. (One isolated 0.000 is normal: iter 163 read exactly that.)
+
+**⚑ NO holdout-based kill rule is stated, and the omission is deliberate.** The
+obvious leg — "frozen `test_wdl_loss` rises > 4σ" — **cannot be written tonight.
+The 0.052-nat noise floor was measured on the OLD resampling ruler and does NOT
+carry over** after PR #277 (audit G4/G14; ledger G16). Iters ≥165 are one
+unweighted deterministic pass over 2000 rows; the definitional step alone was
+−0.156 nats on `test_loss`. There are **three** post-#277 rows —
+
+| iter | 165 | 166 | 167 |
+|---|---|---|---|
+| `test_loss` | 4.8533 | 4.8768 | 4.8556 |
+| `test_wdl_loss` | 0.84645 | 0.84906 | 0.85021 |
+
+— enough to notice, nowhere near enough to estimate an sd. **The holdout kill leg
+is therefore DEFERRED with an explicit arming condition: once ≥14 post-iter-165
+rows exist (~3h, the count G14 itself states it needs), compute the new sd and
+AMEND this entry with a 4σ bar BEFORE the cap is moved.** Deploying with a bar
+quoted in old-ruler units would be a kill rule that cannot fire — the defect
+[[a_gate_that_cannot_fail]] already names — and restating a stale floor to look
+rigorous is worse than declaring the leg unarmed.
+
+**Pre-committed NON-kills:** (i) `grad_hard_clip_rate` returning to non-zero later —
+the next loss-term change will step the norm again and that is expected, not a
+failure of this change; (ii) `grad_norm_median` drifting inside its current band;
+(iii) the frozen holdout staying flat, which is the base rate for every step-regime
+change this project has made and is evidence of nothing.
+
+#### SEQUENCING — explicit, because this would be the THIRD data-affecting change in one window
+
+The window already carries: **(1)** the sf_p0 teacher from iter 132, coverage still
+ramping 7–10% toward ~24%; **(2)** the 20:47 07-27 restart bundle — C17
+`gumbel_vloss_weight 0 → 1` (target quality, entering only through NEW shards, so
+its window closes ~20:47 on 07-28), PR #277 (holdout ruler), PR #273 (grad-norm
+measurement scope). Adding a cap move now makes all of them unreadable and repeats
+precisely the mistake the zclip VERDICT entry recorded against itself at
+consequence (2).
+
+**Order, and the reason for each position:**
+
+- **A. C17's window clears first (~iter 200, ≥1 full replay refill after 20:48 on
+  07-27).** Nothing else moves until then. It is the largest suspected effect in
+  flight and the only one anyone has argued might be a large multiplier.
+- **B. THEN this cap change**, because it is the fast one: a scalar on the
+  optimizer, touching no target and no data, whose yardstick resolves on the FIRST
+  row and whose stability legs resolve in ~5 iterations (~1h at the current
+  ~11-minute cadence). Putting the 1-hour change ahead of the day-plus change costs
+  the day-plus change an hour; the reverse costs the fast change a day.
+- **C. THEN the sf_p0 restore's verdict at dose 0.7** — it needs coverage ≥20%,
+  which is on the same clock as A in any case.
+- **D. ONLY THEN `w_sf_own_regret` 0.7 → recomputed** (entry above).
+
+**B must precede D for a mechanical reason, not merely a scheduling one.** Raising
+`w_sf_own_regret` adds gradient and will step `grad_norm_median` again — that is
+literally what iter 132 did — which would corrupt this entry's readout. And
+symmetrically: **while the fixed cap binds on a third of steps, part of any dose
+increase is clipped away, so the dose that is set is not the dose that lands.**
+Fixing the cap first is what makes the weight experiment measure what it claims to.
+
+#### Revert point
+
+The cap reverts in one yaml edit and takes effect on the next optimizer step, so
+the salvage pool is belt-and-braces rather than the primary path — bank it anyway,
+because a step-regime change acts on the optimizer state and not only on the
+weights:
+`./scripts/train.sh salvage-export --top-n 1 --metric training_iteration --out data/salvage/pre_zclip13_20260728`
+(VERIFY the printed iteration against the live one; `result.json` is a Ray sync
+copy and goes stale). **Known-good = `train.zclip_max_norm: 6.5`** with
+`zclip_z_thresh 2.0`, `zclip_alpha 0.97`, `zclip_clip_factor 1.0` unchanged.
+`data/salvage/pre_zclip65_20260727` remains the pre-6.5 state for a deeper rollback.
+
+**NO ARENA.** Nobody believes a clip-cap change is ≥50 Elo; the previous one moved
+the binding rate from 95% to 0% and the value ruler did not move at all. Per
+tonight's operating rule that makes the arena the wrong instrument twice over.
+
+---
+
 ### PRE-REGISTERED (not yet live) — feature dropout has no `1/(1-p)` rescale, so train and play see different feature magnitudes (audit M8, 2026-07-26)
 
 **What was found.** `trainer._apply_feature_group_dropout` zeroes each of 6
