@@ -186,6 +186,14 @@ class DiskReplayBuffer:
     enforcement into a no-op, making the constructor safe to point at
     production data. Reading zarr groups directly, without this class, remains
     the lightest option.
+
+    ``read_only`` is a REQUIRED keyword with no default, deliberately. A
+    default of False documents the hazard instead of closing it: the next probe
+    someone writes gets the shard-deleting behaviour by forgetting a kwarg,
+    which is exactly the shape G12 records. With no default, every construction
+    site has to state its intent and a new one that does not is a type error
+    before it is a deleted production window. The cost is a kwarg on the few
+    writers, which is the cheaper side of that trade.
     """
 
     def __init__(
@@ -194,7 +202,7 @@ class DiskReplayBuffer:
         *,
         shard_dir: Path,
         rng: np.random.Generator,
-        read_only: bool = False,
+        read_only: bool,
         shuffle_cap: int = 20_000,
         shard_size: int = 1000,
         refresh_interval: int = 5,

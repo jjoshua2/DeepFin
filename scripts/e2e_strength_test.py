@@ -194,8 +194,12 @@ def main():
                       warmup_steps=args.warmup_steps, warmup_lr_start=1e-5,
                       swa_start=0, swa_freq=50)
 
+    # read_only=False: this harness generates its own selfplay and adds it to
+    # the buffer, into a fresh `work_dir/replay` it owns. Never points at the
+    # live window.
     buf = DiskReplayBuffer(100_000, shard_dir=work_dir / "replay",
-                           rng=rng, shuffle_cap=20_000, shard_size=500)
+                           rng=rng, read_only=False,
+                           shuffle_cap=20_000, shard_size=500)
 
     # Baseline
     bl = _eval_model(model, eval_set, device)

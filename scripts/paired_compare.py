@@ -140,9 +140,29 @@ def load_dump(
 def report(a: Dump, b: Dump, *, label_a: str, label_b: str, n_boot: int) -> None:
     common = sorted(set(a.rows) & set(b.rows))
     if not common:
+  # Report `unusable` here too, in the same per-side shape as the success
+  # path. Total scorer failure on one side is the EXTREME of the defect the
+  # rest of this function fixes: "A has 50, B has 0" alone is indistinguishable
+  # from an empty file or a wrong --field, so the operator goes hunting for a
+  # schema bug when in fact every position scored and every score was
+  # null/NaN. The count is already sitting in `Dump.unusable`; withholding it
+  # from the one message the operator sees is how a data failure gets read as
+  # a config typo.
         raise SystemExit(
-            f"no joinable rows (A has {len(a.rows)}, B has {len(b.rows)}) — "
-            "check --join-key/--field against the dump schema",
+            "no joinable rows — "
+            f"A: {len(a.rows) + a.unusable} rows, {a.unusable} unusable, "
+            f"{len(a.rows)} indexed"
+            f"   B: {len(b.rows) + b.unusable} rows, {b.unusable} unusable, "
+            f"{len(b.rows)} indexed. "
+            + (
+                "Every indexed key is unique to one side — check "
+                "--join-key/--field against the dump schema."
+                if a.rows and b.rows
+                else "A side indexed nothing: with rows read but unusable the "
+                "scorer failed on them (non-finite or null --field); with no "
+                "rows at all the dump is empty. Otherwise check "
+                "--join-key/--field against the dump schema."
+            ),
         )
     va = np.array([a.rows[k][0] for k in common])
     vb = np.array([b.rows[k][0] for k in common])

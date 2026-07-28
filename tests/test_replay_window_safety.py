@@ -125,7 +125,7 @@ def test_window_eviction_of_symlinks_leaves_the_salvage_pool_intact(tmp_path: Pa
     buf = DiskReplayBuffer(
         ROWS_PER_SHARD,
         shard_dir=window,
-        rng=np.random.default_rng(0),
+        rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=ROWS_PER_SHARD,
         shard_size=ROWS_PER_SHARD,
     )
@@ -152,7 +152,7 @@ def test_constructing_a_writable_buffer_evicts_shards(tmp_path: Path) -> None:
     buf = DiskReplayBuffer(
         2 * ROWS_PER_SHARD,
         shard_dir=window,
-        rng=np.random.default_rng(0),
+        rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=ROWS_PER_SHARD,
         shard_size=ROWS_PER_SHARD,
     )
@@ -244,3 +244,21 @@ def test_read_only_open_does_not_create_a_missing_directory(tmp_path: Path) -> N
         assert len(buf) == 0
     finally:
         buf.close()
+
+
+def test_read_only_has_no_default_so_a_new_caller_cannot_forget_it(tmp_path: Path) -> None:
+    """G12 is closed by the SIGNATURE, not by the docstring.
+
+    ``read_only: bool = False`` would leave the shard-deleting behaviour as
+    what you get for forgetting a kwarg -- exactly the hazard G12 records. With
+    no default, a new construction site is a type error (basedpyright:
+    ``Argument missing for parameter "read_only"``) and a TypeError at runtime,
+    so it cannot reach production as a silently-deleting probe. This test pins
+    the absence of the default: restoring one makes it fail.
+    """
+    with pytest.raises(TypeError, match="read_only"):
+        DiskReplayBuffer(  # pyright: ignore[reportCallIssue]
+            10,
+            shard_dir=tmp_path / "window",
+            rng=np.random.default_rng(0),
+        )

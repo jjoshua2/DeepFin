@@ -160,6 +160,62 @@ def test_infinite_metric_is_dropped_like_a_null(tmp_path) -> None:
     assert d.unusable == 2
 
 
+def test_total_scorer_failure_is_not_reported_as_a_schema_mismatch(tmp_path) -> None:
+    """The empty-join message used to hide ``unusable`` entirely.
+
+    Total scorer failure on one side is the extreme of the same defect the rest
+    of this file pins: 50 rows on A, all 50 non-finite on B printed only "no
+    joinable rows (A has 50, B has 0) -- check --join-key/--field against the
+    dump schema". That is indistinguishable from an empty file or a wrong
+    ``--field``, so it sends the operator after a config typo when in fact
+    every position was scored and every score came back NaN.
+    """
+    from scripts.paired_compare import load_dump, report
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        {"fen": f"p{i}", "value": float(i)} for i in range(50)
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        {"fen": f"p{i}", "value": float("nan")} for i in range(50)
+    ]))
+    assert (len(a.rows), a.unusable) == (50, 0)
+    assert (len(b.rows), b.unusable) == (0, 50)
+
+    with pytest.raises(SystemExit) as exc:
+        report(a, b, label_a="A", label_b="B", n_boot=200)
+
+    message = str(exc.value)
+    assert "no joinable rows" in message
+    # The number the operator needs, in the same per-side shape as the success
+    # path. Without it the message reads as a schema problem.
+    assert "A: 50 rows, 0 unusable, 50 indexed" in message
+    assert "B: 50 rows, 50 unusable, 0 indexed" in message
+    assert "scorer failed" in message
+
+
+def test_empty_join_over_two_healthy_dumps_still_blames_the_join_key(tmp_path) -> None:
+    """Both sides indexed fine and simply share no key -- that IS a schema/key
+    problem, and the message must keep saying so rather than blaming the scorer.
+    """
+    from scripts.paired_compare import load_dump, report
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        {"fen": "a1", "value": 1.0}, {"fen": "a2", "value": 2.0},
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        {"fen": "b1", "value": 1.0}, {"fen": "b2", "value": 2.0},
+    ]))
+
+    with pytest.raises(SystemExit) as exc:
+        report(a, b, label_a="A", label_b="B", n_boot=200)
+
+    message = str(exc.value)
+    assert "A: 2 rows, 0 unusable, 2 indexed" in message
+    assert "B: 2 rows, 0 unusable, 2 indexed" in message
+    assert "--join-key/--field" in message
+    assert "scorer failed" not in message
+
+
 def test_load_dump_refuses_duplicate_join_keys(tmp_path) -> None:
     """Audit L14: duplicates used to last-win and stay out of ``dropped``.
 

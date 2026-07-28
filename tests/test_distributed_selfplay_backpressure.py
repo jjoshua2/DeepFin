@@ -446,7 +446,7 @@ def test_distributed_ingest_counts_stale_and_matching_positions_separately(
     buf = DiskReplayBuffer(
         256,
         shard_dir=tmp_path / "replay",
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=64,
         shard_size=8,
     )
@@ -586,7 +586,7 @@ def test_distributed_ingest_timeout_does_not_wait_for_empty_inbox_after_prev_cap
         buf=DiskReplayBuffer(
             256,
             shard_dir=tmp_path / "replay",
-            rng=rng,
+            rng=rng, read_only=False,
             shuffle_cap=64,
             shard_size=8,
         ),
@@ -632,7 +632,7 @@ def test_prefetched_shard_missing_from_inbox_is_not_reingested(tmp_path: Path) -
         buf=DiskReplayBuffer(
             256,
             shard_dir=tmp_path / "replay",
-            rng=np.random.default_rng(0),
+            rng=np.random.default_rng(0), read_only=False,
             shuffle_cap=64,
             shard_size=8,
         ),
