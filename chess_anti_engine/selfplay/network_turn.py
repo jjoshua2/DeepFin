@@ -762,6 +762,8 @@ def run_network_turn(state: SelfplayState, net_idxs: list[int]) -> None:
                     tb_probe=state.tb_probe if state.game.syzygy_in_search else None,
                     allow_terminal_root_shortcuts=True,
                     return_diagnostics=True,
+                    target_batch=int(search.gumbel_target_batch),
+                    vloss_weight=int(search.gumbel_vloss_weight),
                 )
             else:
                 sub_boards = [state.replay_board(net_idxs[j]) for j in group]

@@ -297,6 +297,7 @@ def _net_candidates(
     syzygy_path: str | None = None,
     target_batch: int = 0,
     vloss_weight: int = 0,
+    vloss_mode: int = 0,
 ) -> tuple[list[np.ndarray], dict[str, list[np.ndarray]], dict[str, list[float]], list[np.ndarray]]:
     """(raw-policy probs, {profile: search visit probs}, {profile: root Q}).
 
@@ -412,6 +413,9 @@ def _net_candidates(
             # it. Score both against the tb=0/vloss=0 baseline.
             if vloss_weight > 0:
                 tb_kwargs[name]["vloss_weight"] = int(vloss_weight)
+                # Mode only means anything when a weight is applied, so it
+                # rides along with it rather than being set independently.
+                tb_kwargs[name]["vloss_mode"] = int(vloss_mode)
 
     raw_out: list[np.ndarray] = []
     search_out: dict[str, list[np.ndarray]] = {name: [] for name in profiles}
@@ -733,6 +737,15 @@ def main() -> None:
                          "the training target': duplicate visits still increment N, inflating "
                          "max_visit and hence the root q_scale that sharpens the improved-policy "
                          "target. C-runner only; the Python reference path takes no such argument.")
+    ap.add_argument("--vloss-mode", type=int, default=0, choices=(0, 1),
+                    help="How an in-flight walker is VALUED when --vloss-weight > 0. "
+                         "0 = LEGACY, the parallel-PUCT construct: the pending visit is "
+                         "scored as a LOSS, biasing the child down. 1 = VIRTUAL_MEAN: it "
+                         "is valued at the child's existing mean, so the visit count "
+                         "moves and the estimate does not. Gumbel's descent is already "
+                         "matching visits to the improved policy, so 1 is the "
+                         "better-motivated construct here; 0 is what every prior C17 "
+                         "measurement used.")
     ap.add_argument("--vloss-weight", type=int, default=0,
                     help="C-search virtual-loss weight. 0 = production (none), so a leaf "
                          "already awaiting eval in the current batch carries no penalty and "
@@ -820,6 +833,7 @@ def main() -> None:
         syzygy_path=sz_path or None,
         target_batch=int(args.target_batch),
         vloss_weight=int(args.vloss_weight),
+        vloss_mode=int(args.vloss_mode),
     )
     search_probs = search_by_profile["search"]
   # The production WDL blend's search component comes from the RL search, so

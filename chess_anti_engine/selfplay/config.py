@@ -64,6 +64,29 @@ class SearchConfig:
     volatility_q_scale: float = 0.0
     volatility_fpu: float = 0.0
     volatility_anchor: float = DEFAULT_VOLATILITY_ANCHOR
+  # C-search batching (audit C17). Both default 0 = byte-identical to the
+  # behaviour before they existed, which is also what production runs today:
+  # selfplay passed NEITHER of these, so the C runner fell back to
+  # GSS_GPU_BATCH=1024 leaves per batch with no virtual loss.
+  #
+  # Within one sequential-halving round the tree cannot update, so every visit
+  # allocated to a candidate descends to the SAME leaf. Measured at the realized
+  # per-thread shape (~24 concurrent games, production 25/75 sim mix): 56.4% of
+  # rows sent to the GPU are byte-identical duplicates. The rate is a function of
+  # leaves-per-board = 1024/boards-per-call, so it is only meaningful quoted with
+  # a board count -- 0.565 @12, 0.564 @24, 0.608 @48.
+  #
+  # gumbel_vloss_weight > 0 makes an in-flight leaf unattractive to the next
+  # walker, so a batch fills with DISTINCT leaves instead: 2.2-2.4x more distinct
+  # positions for ~4% fewer rows at the same batch size. LEGACY (the only mode
+  # selfplay uses) values the pending visit as a loss; that pessimism IS the
+  # spreading mechanism, which is why VLOSS_MODE_VIRTUAL_MEAN -- theoretically
+  # cleaner, no value bias -- cannot fill a batch and is not offered here.
+  #
+  # gumbel_target_batch = 1 also removes the duplicates, by flushing every rep,
+  # but costs ~8x the GPU round trips. Kept only as a control arm.
+    gumbel_target_batch: int = 0
+    gumbel_vloss_weight: int = 0
 
 
 @dataclass(frozen=True)

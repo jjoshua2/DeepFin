@@ -1154,6 +1154,12 @@ typedef struct {
      * concurrent walkers from collapsing onto the same PUCT-best leaf. At 0
      * descent is bit-identical to the pre-vloss implementation. */
     int vloss_weight;
+    /* How an in-flight walker is VALUED (the count is the same either way):
+     * VLOSS_MODE_LEGACY scores it as a loss (parallel-PUCT pessimism),
+     * VLOSS_MODE_VIRTUAL_MEAN at the child's existing mean (no value bias).
+     * See tree_gumbel_select_child. 0 = LEGACY keeps every caller
+     * bit-identical to the pre-mode implementation. */
+    int vloss_mode;
 } GumbelSelectParams;
 
 /* Forward declarations for functions used by GumbelSimState helpers */
@@ -2899,7 +2905,8 @@ static void softmax_inplace(double *arr, int n) {
 static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
                                          double c_scale, double c_visit,
                                          double q_visit_exp, int32_t global_max_visit,
-                                         double q_visit_floor, int vloss_weight) {
+                                         double q_visit_floor, int vloss_weight,
+                                         int vloss_mode) {
     int32_t n_ch = t->num_children[node_id];
     int32_t off = t->children_offset[node_id];
     if (n_ch <= 0) return 0;
@@ -2958,18 +2965,50 @@ static int32_t tree_gumbel_select_child(const TreeData *t, int32_t node_id,
         if (!exclude[i] && eff_n > max_visit) max_visit = eff_n;
         if (!exclude[i]) total_visits += eff_n;
         log_priors[i] = log(t->prior[cid] > 1e-12 ? t->prior[cid] : 1e-12);
-        /* Virtual loss adds vloss_weight per in-flight walker to both N and
-         * W from the child's parent perspective; child-perspective Q inverts
-         * the sign on W (parent and child alternate sides).
+        /* Two ways to account for an in-flight walker, and they differ ONLY in
+         * the value assigned to the pending visit — `eff_n` above is the same
+         * integer either way.
+         *
+         *   LEGACY        W += vloss_weight*vl, i.e. the pending visit is
+         *                 scored as a LOSS. This is the parallel-PUCT
+         *                 construct: it deliberately biases the child down so
+         *                 concurrent walkers spread out.
+         *   VIRTUAL_MEAN  the pending visit is valued at the child's EXISTING
+         *                 MEAN, so N moves and Q does not.
+         *
+         * Gumbel's descent is already matching visits to the improved policy,
+         * so counting an in-flight sim as a visit is exactly what the rule
+         * would do once it completed — VIRTUAL_MEAN expresses that and adds no
+         * value bias. LEGACY additionally imports PUCT's pessimism, which
+         * nothing in the Gumbel scheme asks for. Mirrors tree_select_child.
          *
          * For SOLVED_DRAW children the proven Q from parent's frame is 0
          * (drawing line); use that instead of the noisy averaged W/N. */
         if (cs == SOLVED_DRAW) {
             cqs[i] = 0.0;
+        } else if (eff_n <= 0) {
+            cqs[i] = parent_Q;
+        } else if (vloss_weight > 0 && vloss_mode == VLOSS_MODE_VIRTUAL_MEAN) {
+            double pending = (double)(vloss_weight * vl);
+            int32_t child_visits = atomic_load_i32(&t->N[cid]);
+            double child_w = atomic_load_double(&t->W[cid]);
+            double w;
+            if (pending > 0.0) {
+                /* Value the pending visit at the child's own mean, so it moves
+                 * the visit count without moving the estimate. An unvisited
+                 * child has no mean of its own; -parent_Q is its frame-flipped
+                 * prior expectation, matching tree_select_child. */
+                double child_ref = (child_visits > 0)
+                    ? (child_w / (double)child_visits)
+                    : -parent_Q;
+                w = child_w + pending * child_ref;
+            } else {
+                w = child_w;
+            }
+            cqs[i] = -w / (double)eff_n;
         } else {
-            cqs[i] = (eff_n > 0)
-                ? (-(atomic_load_double(&t->W[cid]) + (double)(vloss_weight * vl)) / (double)eff_n)
-                : parent_Q;
+            cqs[i] = -(atomic_load_double(&t->W[cid]) + (double)(vloss_weight * vl))
+                     / (double)eff_n;
         }
         if (!exclude[i] && eff_n > 0) {
             double pr = t->prior[cid] > DBL_MIN ? t->prior[cid] : DBL_MIN;
@@ -3122,7 +3161,8 @@ static int32_t tree_gumbel_collect_leaf(const TreeData *t, int32_t root_id,
             slot = tree_gumbel_select_child(t, node, sel->c_scale, sel->c_visit,
                                             sel->q_visit_exp,
                                             sel->q_global_scale ? root_max_visit : 0,
-                                            sel->q_visit_floor, sel->vloss_weight);
+                                            sel->q_visit_floor, sel->vloss_weight,
+                                            sel->vloss_mode);
         } else {
             slot = tree_select_child(t, node, sel->c_puct, sel->fpu_reduction,
                                      sel->vloss_weight, VLOSS_MODE_LEGACY);
@@ -3715,15 +3755,25 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     double c_visit_root = -1.0;  /* optional; >=0 = root-halving c_visit override (see GumbelSelectParams) */
     double c_scale_root = -1.0;     /* optional; >=0 = root-only c_scale (else use c_scale) */
     double q_visit_exp_root = 99.0; /* optional; <90 = root-only exponent (else use q_visit_exp) */
+    /* optional; how an in-flight walker is VALUED. 0 = LEGACY (parallel-PUCT
+     * pessimism) keeps every existing caller bit-identical. */
+    int vloss_mode = VLOSS_MODE_LEGACY;
 
-    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|iiiOdididdd",
+    if (!PyArg_ParseTuple(args, "OOOOOOOddddpO|iiiOdididddi",
                           &root_cbs_list, &root_ids_obj, &remaining_list,
                           &gumbels_list, &priors_list, &budget_obj, &root_qs_obj,
                           &c_scale, &c_visit, &c_puct, &fpu_reduction, &full_tree,
                           &enc_buf_obj, &vloss_weight, &target_batch, &input_history_lc0_root,
                           &rel_buf_obj, &q_visit_exp, &q_global_scale, &q_visit_floor,
-                          &halving_div, &c_visit_root, &c_scale_root, &q_visit_exp_root))
+                          &halving_div, &c_visit_root, &c_scale_root, &q_visit_exp_root,
+                          &vloss_mode))
         return NULL;
+
+    if (vloss_mode != VLOSS_MODE_LEGACY && vloss_mode != VLOSS_MODE_VIRTUAL_MEAN) {
+        PyErr_SetString(PyExc_ValueError,
+                        "vloss_mode must be 0 (legacy) or 1 (virtual-mean)");
+        return NULL;
+    }
 
     /* Validate list args before any indexing — PyList_GET_ITEM has no
      * bounds check, and a mismatched companion list would silently read
@@ -3828,6 +3878,7 @@ static PyObject *MCTSTree_start_gumbel_sims(MCTSTreeObject *self, PyObject *args
     g->sel.q_visit_exp_root = (q_visit_exp_root < 90.0) ? q_visit_exp_root : q_visit_exp;
     g->sel.full_tree = full_tree;
     g->sel.vloss_weight = (vloss_weight > 0) ? vloss_weight : 0;
+    g->sel.vloss_mode = vloss_mode;
     g->halving_div = (halving_div >= 2) ? halving_div : 2;
     g->allocated = 1;
 
