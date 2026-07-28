@@ -685,8 +685,12 @@ grep -c 'eval_ruler. DEGRADED' /tmp/chess_training.log
 **PASS**, all four:
 1. the newest checkpoint's `trial_meta.json` carries `holdout_ruler` equal to
    the id **recomputed from the deployed tree** (printed above). At the code
-   reviewed in the PR that value is **`v1:full_pass:c8fb48a79e804bb4`** at
-   `batch_size: 512`, verified byte-identical across `PYTHONHASHSEED`
+   reviewed in the PR that value was **`v1:full_pass:c8fb48a79e804bb4`**;
+   **PR #283 then merged into this one and moved it to
+   `v1:full_pass:2efe658b4e778870`** (sampled: `e3cc3241626a581f` →
+   `d6f7cabecd8e6f67`), which is what will actually be deployed — see the
+   "#283 interaction" note below. Both at `batch_size: 512`, verified
+   byte-identical across `PYTHONHASHSEED`
    0/1/2/random and pinned by `test_the_production_ruler_id_is_pinned`, so a
    later change to the measurement fails a test rather than passing quietly.
    The recompute is what makes this fail-able: a bare "non-empty
@@ -848,7 +852,38 @@ interpreter-dependent — 9 of the 19 covered frames digested differently on
 CPython 3.10 vs 3.11, which turned CI red on the 3.11 runner and, worse, meant
 a production Python upgrade would have fired a handover for a measurement that
 never changed. `v1:full_pass:c8fb48a79e804bb4` is verified byte-identical on
-**3.10.12, 3.11.14 and 3.12.12**.
+**3.10.12, 3.11.14 and 3.12.12**, and so is its successor after the #283 merge:
+the seven covered frames of the merged tree digest identically on all three
+(re-verified 2026-07-28 by loading `eval_ruler.py` directly and digesting the
+frame sources, since 3.11/3.12 on this box have no numpy and cannot import the
+trainer).
+
+### #283 interaction — the ruler id moved, the MEASUREMENT did not
+
+PR #283 (live SF target rebuild) merged into this one on 2026-07-28 and moved
+**both** pins, because it edits frames in both `measured_by` lists —
+`_prepare_host_arrays` and `_compute_metrics` are shared, `_sample_batch_host`
+and `_iter_prefetched_batches` are the sampled branch's:
+
+| constant | #282 alone | deployed (with #283) |
+|---|---|---|
+| `PRODUCTION_FULL_PASS_RULER` | `v1:full_pass:c8fb48a79e804bb4` | **`v1:full_pass:2efe658b4e778870`** |
+| `PRODUCTION_SAMPLED_RULER` | `v1:sampled:e3cc3241626a581f` | **`v1:sampled:d6f7cabecd8e6f67`** |
+
+This is a **declared false positive**, not a ruler change: #283 pins
+`rebuild_sf_targets=False` inside `_full_pass_host_batch`, so the full pass is
+byte-identical across it (measured: full-pass loss unchanged over the same
+2000-row buffer). The id moves because the covered SOURCE moved, which is the
+pin working as designed — a human then decides whether the meaning moved with
+it. Here it did not.
+
+**Consequence for PASS condition 3 (`holdout_generation` still 1): it holds,
+and ZERO bumps are expected.** Both #282 and #283 are in `main` before the
+single pending restart, and today's live checkpoints carry no `holdout_ruler`
+at all — an absent id reads as *no evidence* and is adopted without bumping.
+The "one bump" case only arises if the two deploy at different restarts, which
+will not happen here. **If a bump IS observed at that restart, that is a KILL
+signal for this entry's condition 3**, not a shrug.
 
 ### PRE-REGISTERED (not yet live) — selfplay clients stop zero-padding root evals to 32 rows (PR #280, 2026-07-27)
 

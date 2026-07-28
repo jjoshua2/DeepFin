@@ -411,8 +411,21 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 
 # --- the pin that makes a ruler change announce itself --------------------
 
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:c8fb48a79e804bb4"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:e3cc3241626a581f"
+# Moved 2026-07-28 when PR #283 (live SF target rebuild) merged into this one.
+# BOTH ids move, not just the full pass: #283 edits `_prepare_host_arrays` and
+# `_compute_metrics`, which are in BOTH `measured_by` lists, plus
+# `_sample_batch_host` / `_iter_prefetched_batches` in the sampled branch.
+# Updating only the full-pass constant leaves main red.
+#
+# The MEASUREMENT did not change -- #283 pins `rebuild_sf_targets=False` in
+# `_full_pass_host_batch`, so the full pass is byte-identical across it. This
+# is the declared false positive (a moved id costs ONE best-model handover),
+# and it is why the pin exists: the id moves whenever the covered source moves,
+# and a human decides whether the meaning moved with it. Here it did not.
+#   full_pass  c8fb48a79e804bb4 -> 2efe658b4e778870
+#   sampled    e3cc3241626a581f -> d6f7cabecd8e6f67
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:2efe658b4e778870"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:d6f7cabecd8e6f67"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
