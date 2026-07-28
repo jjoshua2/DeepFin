@@ -2367,6 +2367,18 @@ class SlotInferenceClient:
         """Roots may reuse the compact legal-policy broker protocol."""
         return True
 
+    @property
+    def pads_batches_internally(self) -> bool:
+        """Callers must submit real rows only — the broker pads the total.
+
+        ``SlotBroker`` coalesces every requesting slot and rounds the *summed*
+        row count up to ``_COMPILED_BATCH_BUCKETS`` before the forward, so a
+        client that pre-pads to its own bucket ladder gains no shape stability
+        (it holds no compiled graph) and pays for the padding rows twice: once
+        in the shared-memory write, once in the broker's H2D + forward.
+        """
+        return True
+
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -2585,6 +2597,11 @@ class MultiSlotInferenceClient:
 
     @property
     def supports_compact_root_policy(self) -> bool:
+        return True
+
+    @property
+    def pads_batches_internally(self) -> bool:
+        """See ``SlotInferenceClient.pads_batches_internally``."""
         return True
 
     def evaluate_legal_bf16(
