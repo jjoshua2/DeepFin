@@ -10773,3 +10773,105 @@ environment and could not import `scripts.match_vs_uci`; the corrected launch
 initialized both nets, Syzygy, and the rolling pool successfully. Scientific
 status remains UNREAD; rerun the registered command from the beginning when
 requested.
+
+**ANALYSIS — where the Stockfish CPU actually goes (2026-07-27; MEASURED, no
+live change).** The box is Stockfish-bound (`sf_block_starved` 92-97% of thread
+time; real SF CPU 2253% of the 3200% box, from `ps`), but no measurement existed
+of which SF queries were consuming it, so every throughput proposal was pricing
+a bucket nobody had sized. Node-weighted split (+/- 5 pp), validated against
+supply (demand 1.18e7 nodes/s vs 32 engines x 290-370k measured nps =
+0.93-1.18e7, agreeing within 0-27%):
+
+| bucket | share of SF CPU | yields a training row? |
+|---|---|---|
+| Selfplay P1 label queries (698k) | 50.4% | yes |
+| Curriculum full-ply (698k) | 25.5% | yes -- the same query is the played move |
+| Curriculum fast-ply (0.25x = 175k) | 24.1% | **no** |
+| Terminal-eval (5x) | 0.0% -- `adjudicated_games: 0`, never fires | |
+| Label escalation | 0.0% -- `sf_label_escalate_q_gap: 0.0`, off | |
+
+By workload, labels 50.4% / curriculum moves 49.6%. **By yield, 75.9% of SF CPU
+produces a training row and 24.1% does not.**
+
+Three structural findings that close off previously-assumed levers:
+
+1. **In curriculum games the label is FREE.** `sf_move_nodes: 0`, and
+   `submit_async_sf_labels_from_curriculum_moves`
+   (`chess_anti_engine/selfplay/stockfish_turn.py:334`) reuses the curriculum
+   MOVE future as the label. On full plies that single query is both the played
+   move and the training label. There is no separate curriculum label cost to
+   cut, so "shift the mix toward selfplay to save label CPU" is not a real lever.
+2. **`sf_multipv` is not a CPU lever at all.** The budget is `go nodes N`, a
+   total node count. On a `nice -19` probe at 698,289 nodes, wall time is flat
+   across MultiPV 40/16/8/1 -- the mpv-40 re-run was the *slowest* sample.
+   Cutting width saves nothing; it converts width into depth at constant cost.
+   Any `sf_multipv` experiment must be justified as a label-quality bet, never
+   on throughput.
+3. **`sf_block_starved` cannot attribute the wait and is the wrong meter
+   anyway.** It wraps `_wait_for_starved_sf`, which branches
+   `if pending_sf_moves ... elif pending_sf_labels`, with one counter and no
+   per-branch instrumentation. It also counts 32 Python threads *sleeping*, not
+   SF work. `pending_excluded_avg 23.6 / in_flight_avg 24.0` says the move
+   branch nearly always wins the wait, but labels share the same 8-engine pool,
+   so blocked-on != paid-for. Two counters at `manager.py:442` would close this.
+
+Realized budget confirmed from the manifest and 57,037 live label rows:
+`sf_nodes` **698,289**, `sf_multipv` **40**, nodes median 698,520 (only 0.88%
+under half budget), depth p25 11 / median 12 / p75 14 -- confirming the
+depth-~13 teacher. Effective width 25.98 PVs; `multipv=40` binds on only 16.1%
+of positions. Incidental: `sf_policy_temp: 0.012` is **not** as sharp as
+assumed -- mean top-1 target mass is only 0.59.
+
+Report: `docs/sf_cpu_cost_split.md`.
+
+**PRE-REGISTERED, HELD -- `sf_fast_ply_node_scale` 0.25 -> 0.10 (2026-07-27).**
+Follows directly from the split above: 24.1% of SF CPU, ~17% of the entire
+machine, is spent on curriculum FAST-PLY move queries that produce no training
+row. `_eff_sf_nodes` (`stockfish_turn.py:191`) says so in its own docstring --
+SF labels attach only to full plies, so the fast-ply scale "only makes the
+opponent play cheaply on the ~75% of fast plies that are not training targets."
+Hypothesis: 0.25 -> 0.10 cuts that bucket 60% = -14.5% of total SF CPU, worth
+~+17% games/h, with **exactly zero change to any label** (every label still runs
+at the full 698,289 nodes). This is the only throughput lever available that is
+label-neutral by construction.
+
+Plumbing verified before pre-registration rather than assumed: the key is in
+`worker.py`'s `_RECO_LIVE_KEYS` (NOT `_RECO_RESTART_KEYS`), is published in the
+reco by `tune/distributed_runtime.py:334`, resolved by `worker.py:3058`, and is
+already in the `config_yaml.py` allowlist. So it is live-reloadable with no
+restart and no all-or-nothing-validator risk.
+
+ONE deciding yardstick: games/h from the compacted-shard filename counter
+(`ls runs/pbt2_small/server/trials/13a9f_00000/processed/_compacted`, parsing
+`<epoch>_<sha>_<N>g_<P>p`) over a 5-iteration window, paired against the
+pre-change 5-iteration window. Baseline measured 2026-07-27: **2561 games/h**.
+SUCCESS: >= +12% games/h sustained over 5 iterations (~3 h) **with label
+rows/game unchanged** -- selfplay 24.69 +/- 0.5, curriculum 12.04 +/- 0.5. That
+second clause is not decoration: it is the invariant that proves the change did
+not reach the labels, and a games/h win without it is not a pass.
+KILL: PID `opponent_wdl_regret_limit` fails to stabilize within 5 iterations, or
+raw curriculum winrate moves > 0.08 and the airbag fires twice.
+
+HELD, not launched. Confound: the C17 `gumbel_vloss_weight: 1` deploy landed
+2026-07-27 20:52 and its readout window is still open -- protocol rule 4, one
+data-affecting change per readout window. Deploy only after C17 reads out.
+
+Judgement call to make explicitly rather than by default: this makes the
+anti-engine curriculum opponent play at 70k nodes on ~79% of its moves, roughly
+-1.5 ply. Whether "SF that plays cheaply between training targets" is still the
+opponent this project wants to learn to exploit is a preference, not a
+measurement. Audit D17 is relevant context -- at `wdl_regret = 0.0896` the
+opponent already discards >100 cp on 8.4% of its moves, so it is not a clean
+full-strength ruler today either.
+
+**NOT TAKEN -- `sf_nodes` / `sf_pid_max_nodes` reduction (2026-07-27).** Halving
+the label budget is a clean -50% of SF CPU (probe wall time is linear in nodes:
+1.00 / 0.51 / 0.23 at 698k / 349k / 175k) worth ~+70-90% games/h, at a cost of
+exactly 1 ply of teacher depth. **Do not take it on throughput grounds.** A
+gentler version already FAILED: `sf_label_nodes_cap` 400k, a 43% cut, fired its
+kill on 2026-07-02 -- "the policy teacher needs full ~700k-node labels" (ledger
+line 287). `sf_nodes` is also PID-owned and re-clamped every iteration, and
+because `sf_move_nodes: 0` it moves opponent strength at the same time. If ever
+revisited it is audit-first: paired re-query of ~2000 frozen audit-set positions
+at 349k vs 698k, killed before launch at < 90% top-1 agreement or > 5 cp median
+|cp(best_349k) - cp(best_698k)| evaluated at 698k.
