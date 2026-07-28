@@ -4810,6 +4810,60 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### VERIFICATION (2026-07-28 ~01:3x) — zclip HELD; the vloss discriminator was UNDERPOWERED and is WITHDRAWN, not read
+
+**(a) zclip survived the resume — PASS, and the banner was a red herring.**
+First post-deploy row, iter 163: `grad_hard_clip_rate = 0.3288` at
+`grad_norm_median = 6.243`. A cap of 5.0 against that median would clip >90% of
+steps; 0.33 is only consistent with 6.5. **The startup banner's
+`zclip_max_norm 5.` is the trial param dict, NOT the effective value** — worth
+remembering, because that banner is exactly what would make someone "fix" a
+setting that was never broken.
+
+**(b) The `rows_per_req` discriminator CANNOT resolve the effect. Withdrawn.**
+I pre-committed "~18, down from 22.4-28.7". **That number came from bad
+arithmetic** — I conflated rows-per-CALL with a per-ply average. Redone per 100
+plies at the 25/75 mix, using the offline per-board measurements:
+
+| arm | calls | rows | rows/call |
+|---|---|---|---|
+| `vloss=0` | 25x4 + 75x4 = 400 | 25x256 + 75x32 = 8800 | **22.0** |
+| `vloss=1` | 25x5.05 + 75x4 = 426 | 25x242 + 75x32 = 8450 | **19.8** |
+
+The true predicted effect is **10%**, and the pre-restart observation spread was
+**22.4-28.7** across workers. A 10% shift is invisible inside that spread.
+Observed post-deploy: mean 25.5, median 23.4 — which is consistent with the
+prediction AND with no change, i.e. it discriminates nothing.
+
+**This is NOT evidence the deploy failed, and it is NOT evidence it worked.**
+Recording it as inconclusive rather than reading the ambiguity in the direction I
+want is the whole point of pre-committing. The instrument was mine and it was
+the wrong one; the fault is in the yardstick, not the result.
+
+**Plumbing IS verified, at every link reachable without attaching to a worker:**
+
+| link | evidence |
+|---|---|
+| yaml | `flatten_yaml_config` -> `gumbel_vloss_weight == 1` |
+| reco build | `build_recommended_worker(...)` -> `1` |
+| **published manifest** | `runs/.../publish/manifest.json` `recommended_worker.gumbel_vloss_weight == 1` — the file workers actually read |
+| worker consume | `_resolve_reco(reco, "gumbel_vloss_weight", 0, int)`; `tests/test_reco_coverage.py` green with the key |
+| search call | `network_turn.py` passes `vloss_weight=int(search.gumbel_vloss_weight)`; pinned by `tests/test_selfplay_gumbel_batching_plumbing.py` |
+| C behaviour | `vloss=1` measured at **0.000** duplicates by exact hashing, vs 0.883 at 256 sims |
+
+**The right instrument exists and is deployed but not armed:** `CAE_DUP_STATS=1`
+reads the duplicate rate directly. It is read at import, so it needs the worker
+env set at start. **Arm it at the next restart** — there is no need to force one
+for this alone, since the plumbing chain above is stronger evidence than
+`rows_per_req` would have been even if it had moved.
+
+**⚠ NEW, unexplained, do not gloss:** iter 163 reports **`test_size = 0` and
+`test_wdl_loss = nan`**. Expected was 2000 (PR #277's deterministic holdout).
+Zero rows evaluated means the holdout ruler is empty on the first post-restart
+iteration — which is the [[holdout_ruler_dies_at_every_restart]] signature that
+G5 was supposed to have fixed. Check iter 164: if it is still 0, G5's persistence
+did not survive a real restart and the frozen-holdout series is dead again.
+
 ### DEPLOYED (2026-07-28 ~00:4x) — C17 LEGACY virtual loss is LIVE. Verification pending on the first new row.
 
 **What went out, as one operation** (audit A6: merging `_mcts_tree.c` without the
