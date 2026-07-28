@@ -96,6 +96,11 @@ makes the corruption visible; the pin keeps the measurement usable.
   judge the experiment.
 * It does not touch the pre-existing hole that editing a **loss weight** moves
   `test_loss` definitionally with no generation bump either. Out of scope here.
+* The pin lives on `_full_pass_host_batch`. Both production holdout call sites
+  reach it (`tune/trainable_phases.py:286` passes `full_pass=True` to the async
+  eval, `:290` calls `eval_full_pass` directly), but a future caller routing the
+  holdout through the SAMPLED path would rebuild again. That is exactly the
+  ruler-identity shape PR #282 exists to catch, and it is not re-solved here.
 * It is independent of PR #282 (`holdout_generation` tracks the ruler, not the
   set) and does not conflict with it: #282 derives the ruler id from the
   full-pass batch producers, and this pin makes those producers *invariant* to
