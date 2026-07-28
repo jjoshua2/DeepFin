@@ -259,14 +259,21 @@ def _save_trial_checkpoint(
     holdout_buf,
     holdout_frozen: bool,
     holdout_generation: int,
+    holdout_ruler: str,
     Checkpoint,
 ):
     """Flush replay buffer and save a lightweight checkpoint.
 
-    The holdout rides along: its rows as a sidecar npz, its two scalars in
+    The holdout rides along: its rows as a sidecar npz, its scalars in
     trial_meta.json. That is what makes `test_loss` comparable across a
     restart instead of being re-measured against whatever the next few
     iterations of ingest happen to donate. See ``tune/holdout_state``.
+
+    `holdout_ruler` is the other half of that comparability: the set can come
+    back unchanged and still be read by a different instrument, which is how a
+    promotion across two rulers happened at iter 165. Storing it here — beside
+    the generation and the rows, in the file both restore paths already read —
+    is what lets the next restart notice.
     """
     buf.flush()
     trainer.save(ckpt_dir / "trainer.pt")
@@ -290,6 +297,7 @@ def _save_trial_checkpoint(
                 "current_window": int(current_window),
                 "holdout_frozen": bool(holdout_frozen),
                 "holdout_generation": int(holdout_generation),
+                "holdout_ruler": str(holdout_ruler),
             }, sort_keys=True, indent=2),
         )
     except (OSError, TypeError, ValueError) as exc:
@@ -361,6 +369,7 @@ def _update_best_model(
     train_metrics,
     test_metrics_source_iter: int,
     holdout_generation: int,
+    holdout_ruler: str = "",
     best_loss: float,
     best_source: str,
     best_dir: Path,
@@ -416,6 +425,15 @@ def _update_best_model(
     An older `best.json` with no recorded generation reads as unknown and is
     left to the ordinary rules -- the conservative direction, matching how a
     missing `source` is treated.
+
+    A generation now moves for a change of MEASUREMENT as well as a change of
+    SET (``trainable._maybe_bump_generation_on_ruler_change``), which is what
+    the comparison always meant by "ruler" and never enforced: iter 165's
+    4.85326 beat iter 162's 4.90535 with both sides at generation 1 and a
+    different instrument on each. `holdout_ruler` is written into the record
+    for the audit trail only -- the generation remains the single compared
+    identity, because it is derived from the ruler and two comparison keys
+    would need a rule for what to do when they disagree.
 
     `eval_source_iter` records WHICH model the holdout number describes. With
     `distributed_async_test_eval` (production), the holdout result collected
@@ -488,6 +506,7 @@ def _update_best_model(
                 else int(iteration_idx)
             ),
             "holdout_generation": int(holdout_generation),
+            "holdout_ruler": str(holdout_ruler),
             "opp_strength_ema": float(opp_strength_ema),
         }, indent=2, sort_keys=True),
     )

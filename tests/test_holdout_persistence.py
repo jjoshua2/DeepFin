@@ -440,6 +440,7 @@ def test_a_real_checkpoint_write_carries_rows_and_flags(tmp_path: Path) -> None:
         holdout_buf=saved,
         holdout_frozen=True,
         holdout_generation=2,
+        holdout_ruler="v1:full_pass:0123456789abcdef",
         Checkpoint=SimpleNamespace(from_directory=lambda d: d),
     )
 
@@ -452,6 +453,9 @@ def test_a_real_checkpoint_write_carries_rows_and_flags(tmp_path: Path) -> None:
 
     assert _row_ids(buf) == _row_ids(saved)
     assert (rr.holdout_frozen, rr.holdout_generation) == (True, 2)
+  # The set's identity is only half the ruler's; the measurement applied to it
+  # rides in the same file so a restart can see it change.
+    assert rr.holdout_ruler == "v1:full_pass:0123456789abcdef"
 
 
 def test_salvage_export_carries_the_holdout_sidecar() -> None:

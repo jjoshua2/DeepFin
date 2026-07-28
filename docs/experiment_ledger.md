@@ -580,6 +580,107 @@ strict low-concurrency/low-sims configuration.
 > taken ~4.5h and cost ~23 iterations (L6). Stopping training to measure is
 > cheaper than measuring alongside it — see method rule 11.
 
+### BUG FIX (pre-registered, not yet live) — `holdout_generation` tracked the SET but not the RULER, so iter 165 was promoted across two instruments (audit G16, PR TBD, 2026-07-27)
+
+**Class: measurement correctness. NOT an experiment and NOT training-affecting.**
+No config key, no loss weight, no target, no data-path change. It changes only
+which `test_loss` numbers the best-model record is allowed to be compared
+against. Pre-registered per protocol because it changes a decision rule that
+the ledger's own yardsticks read.
+
+**The defect.** `holdout_generation` is the identity `_update_best_model` keys
+on to decide "same ruler → compare" vs "different ruler → hand over". It moved
+only when the holdout SET moved: a drift reset, or a restart that could not
+restore the sidecar rows (PR #261). The MEASUREMENT applied to the set was
+never part of it. PR #277 changed the measurement — from 2560 draws WITH
+replacement, WDL-rebalanced and half priority-weighted, to one unweighted
+deterministic pass over the same 2000 rows (`trainer.eval_full_pass`) — and
+the generation stayed at 1 across the change:
+
+```
+iter 160-162: best_loss 4.90535   test_loss 4.94-5.02   test_size 2560   holdout_generation 1
+iter 165:     best_loss 4.85326 = test_loss 4.85326     test_size 2000   holdout_generation 1
+```
+
+So the comparison took its SAME-RULER branch and promoted a new best. The
+−0.156-nat step is definitional, not learning: **−5.70 sd on policy, +0.27 sd
+(flat) on WDL** — the fingerprint of dropping priority weighting. `test_size`
+had already recorded that two different instruments were in play; nothing read
+it.
+
+**Not being undone.** The iter-165 promotion stands. The ongoing state is
+self-consistent (record and current eval are both the full pass), and
+un-promoting carries its own risk. This entry is about the mechanism only.
+
+**Mechanism.** The eval now names itself. `Trainer._compute_metrics` stamps
+`TrainMetrics.eval_ruler` — `v1:<mode>:<16 hex>` over (schema, mode,
+batch_size, sampled-step count, mirror_prob, pooling, AST digest of the batch
+producers actually used). Two routes to a ruler change are therefore both
+covered: a different CALL (PR #277's shape — the code was identical, the call
+site chose differently) and a rewritten PASS (the call site is identical and
+the semantics moved). The id travels ON the metrics, so the async holdout
+path — which calls `_compute_metrics` directly on its own thread with its own
+`full_pass` argument, and whose result arrives an iteration late — cannot
+report a number under a ruler it did not use. `trainable` compares the
+observed id against the one the checkpoint carries and, on a difference,
+bumps `holdout_generation` before `_update_best_model` reads it. Nothing about
+the comparison itself changed; the counter now moves for the reason it always
+claimed to.
+
+The AST digest ignores comments, docstrings and layout, and is memoized per
+process (this repo edits the live tree while a run is up; an unloaded edit
+must not read as a ruler change). Direction of error is deliberate: a false
+positive costs ONE handover — adopt the current number rather than compare —
+and a false negative is this defect.
+
+**Migration (the part that could go wrong at the restart).** Every live
+checkpoint carries `holdout_generation: 1` and NO recorded ruler. An absent
+ruler reads as "no evidence" and is adopted WITHOUT bumping, so the first
+restart does not invalidate the iter-165 record — which is correct, because
+that record was measured on the full pass that is still running. The
+alternative (bump on unknown) would fire once per unknown rather than once per
+change and would teach the operator to ignore the handover line.
+
+**OBSERVATION THAT PROVES IT TOOK EFFECT (run after the first restart onto
+this code; no GPU, no arena):**
+```
+python3 - <<'PY'
+import json, glob, os
+d = max(glob.glob('runs/pbt2_small/tune/train_trial_*/checkpoint_*'), key=os.path.getmtime)
+print(d, json.load(open(f'{d}/trial_meta.json'))['holdout_ruler'])
+print(json.load(open(glob.glob('runs/pbt2_small/tune/train_trial_*/best.json')[0])))
+PY
+```
+**PASS = `holdout_ruler` is a non-empty `v1:full_pass:<hex>`** in the newest
+checkpoint's `trial_meta.json`, AND `holdout_generation` is still 1 (the
+migration did not spuriously bump), AND the same id appears unchanged in the
+NEXT checkpoint. **KILL = the field is empty or absent** ⇒ the id never
+reached the persisted state and the mechanism is inert — the "a gate that
+cannot fail" trap, and the reason this observation is written down before
+deploy rather than assumed. **ALSO KILL = `holdout_generation` climbing every
+iteration** ⇒ something in the descriptor is not stable across calls; revert
+the PR, which restores the set-only counter exactly.
+
+`best.json` additionally records `holdout_ruler` from the next best-model
+write onward. It is documentation, not a second comparison key: the generation
+is derived from the ruler, and two comparison keys would need a rule for what
+to do when they disagree.
+
+**What this does NOT cover.** Loss weights are not in the ruler id. A change
+to `w_policy` (etc.) also moves `test_loss` definitionally, and this mechanism
+will not catch it — the counter would then fire on every live loss-weight
+experiment, which is a different trade with a different failure mode. Recorded
+here so the gap is known rather than assumed shut.
+
+**Confounds:** none on learning metrics — no training-affecting key changes.
+`eval_ruler` is skipped by the TensorBoard field loop (it is a string), so no
+scalar is added or lost. No Ray CSV column is added: Ray fixes the header on
+row 1 and a resume appends without re-heading.
+**Revert:** revert the PR. `holdout_ruler` in an existing `trial_meta.json` is
+then ignored by the reader and the counter returns to set-identity only.
+**Deploy note:** trainer + tune Python; takes effect at the next restart. No
+config key added, so the live-yaml validator is unaffected.
+
 ### PRE-REGISTERED (not yet live) — selfplay clients stop zero-padding root evals to 32 rows (PR #280, 2026-07-27)
 
 **Class: efficiency plumbing. NOT an experiment, and NOT a throughput lever.**

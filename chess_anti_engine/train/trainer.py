@@ -42,6 +42,7 @@ from chess_anti_engine.encoding.lc0 import (
     uses_lc0_root_legacy_meta,
 )
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
+from chess_anti_engine.train.eval_ruler import eval_ruler_id
 from chess_anti_engine.train.target_builder import (
     DEFAULT_CATEGORICAL_BINS,
     CategoricalTargetParams,
@@ -851,6 +852,16 @@ class TrainMetrics:
   # product is not the row count (docs/rl_loop_audit.md G6, G14). Zero on the
   # training path, which reports `train_samples_seen` instead.
     eval_rows: int = 0
+  # Identity of the MEASUREMENT that produced the numbers above, set by
+  # `_compute_metrics` from what actually ran (see train/eval_ruler). Empty on
+  # the training path, which is not a ruler. It travels on the metrics rather
+  # than being re-derived by the consumer so that the async holdout path --
+  # which calls `_compute_metrics` directly, on its own thread, with its own
+  # `full_pass` argument -- cannot report a number under a ruler it did not
+  # use. `tune.trainable` turns a change in this string into a
+  # `holdout_generation` bump, which is what stops a best-model promotion
+  # across two different instruments.
+    eval_ruler: str = ""
   # Gradient-norm / clipping, aggregated over EVERY optimizer step of the
   # iteration (not the tb_log_interval subsample). These used to exist only as
   # TensorBoard scalars, whose event files rotate per Ray session — so the
@@ -1978,8 +1989,18 @@ class Trainer:
         }
 
     def _log_metrics(self, metrics: TrainMetrics, tag: str) -> None:
-        """Log all TrainMetrics fields to TensorBoard under the given tag."""
+        """Log every SCALAR TrainMetrics field to TensorBoard under ``tag``.
+
+        `eval_ruler` is an identity, not a measurement: it names the
+        instrument the rest of these numbers came off. TensorBoard takes
+        floats, and the loop used to assume every field was one, so the
+        non-numeric field is skipped here rather than left to raise
+        mid-evaluation. It reaches an operator through the checkpoint's
+        trial_meta.json, `best.json` and the handover log line instead.
+        """
         for field_name, value in dataclasses.asdict(metrics).items():
+            if isinstance(value, str):
+                continue
             self.writer.add_scalar(f"{tag}/{field_name}", float(value), self.step)
 
     @staticmethod
@@ -2183,6 +2204,39 @@ class Trainer:
                     nxt = bounds[idx + 1]
                     future = pool.submit(self._full_pass_host_batch, buf, start=nxt[0], stop=nxt[1])
                 yield self._host_batch_to_tensors(host_batch)
+
+    def _eval_ruler_id(
+        self, *, batch_size: int, steps: int, mirror_prob: float, full_pass: bool,
+    ) -> str:
+        """Identity of the measurement `_compute_metrics` is about to perform.
+
+        Derived from the arguments that were actually used and from the source
+        of the batch producers actually selected -- not from config, and not
+        from a constant. A ruler change that goes through either route (a
+        different call, or a rewritten pass) therefore lands in the string,
+        and `tune.trainable` turns that into a new `holdout_generation`.
+
+        Bound methods are handed over rather than plain functions so a
+        subclass that overrides the pass is fingerprinted as itself.
+
+        Two arguments are PINNED in the full-pass branch rather than passed
+        through, because neither reaches that measurement: ``steps`` is a
+        sampled-batch budget the pass ignores, and ``_full_pass_host_batch``
+        hard-codes ``mirror_prob=0.0`` so a fixed ruler cannot flip a random
+        half of its positions. A knob that cannot move the number must not be
+        able to move its identity, or the handover fires on nothing.
+        """
+        if full_pass:
+            return eval_ruler_id(
+                mode="full_pass", batch_size=int(batch_size), steps=0,
+                mirror_prob=0.0, pooling="row_weighted",
+                batch_fns=(self._iter_full_pass_batches, self._full_pass_host_batch),
+            )
+        return eval_ruler_id(
+            mode="sampled", batch_size=int(batch_size), steps=int(steps),
+            mirror_prob=float(mirror_prob), pooling="row_weighted",
+            batch_fns=(self._iter_prefetched_batches, self._sample_batch_host),
+        )
 
     def reset_optimizer_reference_weights(self) -> None:
         """Refresh optimizer reference weights after model-only loads."""
@@ -2517,6 +2571,10 @@ class Trainer:
                 buf, batch_size=batch_size, mirror_prob=mirror_p, count=int(steps),
             )
         )
+        ruler = self._eval_ruler_id(
+            batch_size=int(batch_size), steps=int(steps),
+            mirror_prob=float(mirror_p), full_pass=bool(full_pass),
+        )
         for batch in batches:
             n_rows = int(batch["x"].shape[0])
             if n_rows <= 0:
@@ -2547,6 +2605,7 @@ class Trainer:
         metrics = self._build_metrics(
             sums, acc_sums, float(max(1, total_rows)),
             wdl_brier=wdl_brier, wdl_ece=wdl_ece, eval_rows=int(total_rows),
+            eval_ruler=ruler,
         )
         self._log_metrics(metrics, tag)
         return metrics
