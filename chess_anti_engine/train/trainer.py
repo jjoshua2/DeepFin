@@ -43,6 +43,7 @@ from chess_anti_engine.encoding.lc0 import (
     uses_lc0_root_legacy_meta,
 )
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
+from chess_anti_engine.train.eval_ruler import call_closure, eval_ruler_id
 from chess_anti_engine.train.target_builder import (
     DEFAULT_CATEGORICAL_BINS,
     CategoricalTargetParams,
@@ -869,6 +870,16 @@ class TrainMetrics:
   # product is not the row count (docs/rl_loop_audit.md G6, G14). Zero on the
   # training path, which reports `train_samples_seen` instead.
     eval_rows: int = 0
+  # Identity of the MEASUREMENT that produced the numbers above, set by
+  # `_compute_metrics` from what actually ran (see train/eval_ruler). Empty on
+  # the training path, which is not a ruler. It travels on the metrics rather
+  # than being re-derived by the consumer so that the async holdout path --
+  # which calls `_compute_metrics` directly, on its own thread, with its own
+  # `full_pass` argument -- cannot report a number under a ruler it did not
+  # use. `tune.trainable` turns a change in this string into a
+  # `holdout_generation` bump, which is what stops a best-model promotion
+  # across two different instruments.
+    eval_ruler: str = ""
   # Gradient-norm / clipping, aggregated over EVERY optimizer step of the
   # iteration (not the tb_log_interval subsample). These used to exist only as
   # TensorBoard scalars, whose event files rotate per Ray session — so the
@@ -2049,8 +2060,18 @@ class Trainer:
         }
 
     def _log_metrics(self, metrics: TrainMetrics, tag: str) -> None:
-        """Log all TrainMetrics fields to TensorBoard under the given tag."""
+        """Log every SCALAR TrainMetrics field to TensorBoard under ``tag``.
+
+        `eval_ruler` is an identity, not a measurement: it names the
+        instrument the rest of these numbers came off. TensorBoard takes
+        floats, and the loop used to assume every field was one, so the
+        non-numeric field is skipped here rather than left to raise
+        mid-evaluation. It reaches an operator through the checkpoint's
+        trial_meta.json, `best.json` and the handover log line instead.
+        """
         for field_name, value in dataclasses.asdict(metrics).items():
+            if isinstance(value, str):
+                continue
             self.writer.add_scalar(f"{tag}/{field_name}", float(value), self.step)
 
     @staticmethod
@@ -2321,6 +2342,74 @@ class Trainer:
                         buf, start=nxt[0], stop=nxt[1], coverage=coverage,
                     )
                 yield self._host_batch_to_tensors(host_batch)
+
+    @classmethod
+    def eval_ruler_id_for(
+        cls, *, batch_size: int, steps: int, mirror_prob: float, full_pass: bool,
+    ) -> str:
+        """Identity of the measurement `_compute_metrics` performs.
+
+        A CLASSMETHOD, and that is load-bearing rather than tidiness: the id
+        depends on nothing but code and the four arguments, so an operator's
+        deploy check (and every test here) can ask for it without building a
+        Trainer, a model or a device. The earlier instance form forced callers
+        to assemble a stand-in object whose attributes had to be kept in step
+        with the covered set BY HAND -- the same class of hand-maintained list
+        this method exists to stop relying on. `type(self)` at the call site
+        keeps a subclass that overrides part of the measurement fingerprinted
+        as itself.
+
+        **Covered: derived, not listed.** ``call_closure`` walks the call
+        graph from `_compute_metrics` and returns every frame defined in this
+        module that the taken branch can reach -- 19 for the full pass, from row
+        selection through host-array prep, target rebuilds, history selection
+        and tensor collation to the metric-assembly tail
+        (`_extract_loss_scalars`, `_build_metrics`,
+        `_loss_sums_to_metric_kwargs`) where the pooling denominator is
+        actually APPLIED. Two hand-written lists were wrong here before: the
+        first let a pooling change through, the second let `test_loss` be
+        DOUBLED with every test in the suite green. A list is a claim about
+        the call graph; this reads the call graph.
+
+        **NOT covered -- the module edge, and it is real.** Recursion stops at
+        anything defined outside this module: `compute_loss`'s body, the
+        encoders, torch/numpy. Module-level CONSTANTS are not hashed either
+        (`_RAW_SUM_LOSS_KEYS` decides which loss keys are row-summed at all),
+        because the ones on this path include `_TRAIN_METRICS_FIELDS`, derived
+        from the `TrainMetrics` dataclass -- hashing it would bump the ruler
+        every time an unrelated diagnostic FIELD is added, which provably
+        cannot change `loss`. And the loss WEIGHTS are excluded for the reason
+        in docs/rl_loop_audit.md L15: `_loss_kwargs` carries the PID's
+        realized `sf_wdl_frac`, so hashing it cannot tell a 0.006 controller
+        excursion from a 0.10 config step. All of these are named in the
+        ledger's not-covered list; none of them is implied to be covered here.
+
+        Two arguments are PINNED in the full-pass branch rather than passed
+        through, because neither reaches that measurement: ``steps`` is a
+        sampled-batch budget the pass ignores, and ``_full_pass_host_batch``
+        hard-codes ``mirror_prob=0.0`` so a fixed ruler cannot flip a random
+        half of its positions. A knob that cannot move the number must not be
+        able to move its identity, or the handover fires on nothing.
+        """
+        measured_by = call_closure(
+            cls._compute_metrics, owner=cls,
+  # Prune the branch not taken, so the sampled path cannot move the
+  # full-pass ruler (and vice versa). This is the only name the closure
+  # is told about, and it is the one the `mode` field already declares.
+            skip=(
+                (cls._iter_prefetched_batches,) if full_pass
+                else (cls._iter_full_pass_batches,)
+            ),
+        )
+        if full_pass:
+            return eval_ruler_id(
+                mode="full_pass", batch_size=int(batch_size), steps=0,
+                mirror_prob=0.0, measured_by=measured_by,
+            )
+        return eval_ruler_id(
+            mode="sampled", batch_size=int(batch_size), steps=int(steps),
+            mirror_prob=float(mirror_prob), measured_by=measured_by,
+        )
 
     def reset_optimizer_reference_weights(self) -> None:
         """Refresh optimizer reference weights after model-only loads."""
@@ -2706,6 +2795,10 @@ class Trainer:
                 coverage=eval_coverage,
             )
         )
+        ruler = type(self).eval_ruler_id_for(
+            batch_size=int(batch_size), steps=int(steps),
+            mirror_prob=float(mirror_p), full_pass=bool(full_pass),
+        )
         for batch in batches:
             n_rows = int(batch["x"].shape[0])
             if n_rows <= 0:
@@ -2736,6 +2829,7 @@ class Trainer:
         metrics = self._build_metrics(
             sums, acc_sums, float(max(1, total_rows)),
             wdl_brier=wdl_brier, wdl_ece=wdl_ece, eval_rows=int(total_rows),
+            eval_ruler=ruler,
             **eval_coverage.drain(),
         )
         self._log_metrics(metrics, tag)
@@ -3256,6 +3350,17 @@ class Trainer:
         ``load_state_dict(..., strict=False)`` on the published file returns
         missing=86/unexpected=86 and a fresh-init model, with no exception
         (rl_loop_audit J9).
+
+        WHEN SWA IS ON, THIS FILE IS NOT THE FILE THE ARENA MEASURES. ``save``
+        writes the raw model under ``"model"`` — resume must continue the real
+        training trajectory, not an average — and the ratchet arena reads
+        exactly that key out of ``checkpoint_*/trainer.pt``, so the strength
+        ruler would be scoring a different net than the workers play (measured
+        in repro: all 86/86 tensors differ). The two artifacts genuinely cannot
+        be reconciled; what is available is refusing to let the divergence be
+        quiet, so the warning below fires on every publish while SWA is
+        enabled. Production runs ``swa_start: -1``, so it never fires today
+        (rl_loop_audit J10).
         """
         if self._swa_model is not None and dataloader is not None:
             torch.optim.swa_utils.update_bn(
@@ -3263,11 +3368,20 @@ class Trainer:
                 self._swa_model,
                 device=torch.device(self.device),
             )
-        state_dict = strip_compile_prefix(
-            self.model.state_dict()
-            if self._swa_model is None
-            else self._swa_model.module.state_dict()
-        )
+        if self._swa_model is None:
+            raw_state = self.model.state_dict()
+        else:
+            raw_state = self._swa_model.module.state_dict()
+            logging.getLogger(__name__).warning(
+                "export_swa: SWA is ENABLED, so %s carries the SWA average while "
+                "checkpoint trainer.pt['model'] carries the raw model. Every "
+                "consumer that reads the checkpoint -- the ratchet arena, "
+                "value_regret, audit_targets -- is measuring a DIFFERENT net "
+                "than the selfplay workers play. Point those tools at the "
+                "published file, or keep swa_start negative. (audit J10)",
+                path,
+            )
+        state_dict = strip_compile_prefix(raw_state)
         export: dict[str, Any] = {"model": state_dict}
         if self._model_config is not None:
             export["arch"] = {

@@ -64,6 +64,7 @@ def _update(tmp_path: Path, **kw):
         iteration_idx=kw.pop("iteration_idx", 1871),
         test_metrics_source_iter=kw.pop("test_metrics_source_iter", 1871),
         holdout_generation=kw.pop("holdout_generation", 0),
+        holdout_ruler=kw.pop("holdout_ruler", "v1:full_pass:0123456789abcdef"),
         opp_strength_ema=313.9,
         **kw,
     )
@@ -431,7 +432,14 @@ def test_best_json_records_the_holdout_generation(tmp_path: Path) -> None:
         best_loss=float("inf"), best_source="test_loss", holdout_generation=3,
     )
 
-    assert json.loads((tmp_path / "best.json").read_text())["holdout_generation"] == 3
+    record = json.loads((tmp_path / "best.json").read_text())
+
+    assert record["holdout_generation"] == 3
+  # The measurement half, recorded beside it. Documentation rather than a
+  # second comparison key -- but a record that does not carry it cannot be
+  # audited after the fact, which is how G16 stayed invisible for five
+  # iterations.
+    assert record["holdout_ruler"] == "v1:full_pass:0123456789abcdef"
 
 
 def _record(tmp_path: Path, **fields) -> None:

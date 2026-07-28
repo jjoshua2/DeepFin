@@ -140,56 +140,50 @@ makes the corruption visible; the pin keeps the measurement usable.
   against future drift** — and it beats the argument above, because it can be
   executed. The pin lives *inside* `_full_pass_host_batch`, and that function
   is one of the frames #282's `measured_by` hashes. So an edit that un-pins the
-  ruler moves the ruler id and fires the handover. Measured on a merge of both
-  branches: pin intact `v1:full_pass:c11ec56b40f212b7`, pin removed
-  `v1:full_pass:9dc17ccad5b21ea4`. The argument from #282's descriptor
+  ruler moves the ruler id and fires the handover. Measured on the actual
+  merged tree (2026-07-28, #282 in `main`): pin intact
+  `v1:full_pass:2efe658b4e778870`, pin removed
+  `v1:full_pass:277d0421e7ff0ea5`. The argument from #282's descriptor
   explains why (a) was unavailable; this is why (b) stays true.
-* **The `holdout_generation` bump when this lands alongside #282 is
-  ORDER-DEPENDENT, and the operator must record which order was used.** #282's
+* **SETTLED: the deploy produces ZERO `holdout_generation` bumps.** #282's
   `measured_by` hashes four frames this PR edits — `_prepare_host_arrays`,
   `_full_pass_host_batch`, `_compute_metrics` and `_iter_full_pass_batches` —
-  so the merged ruler id differs from #282's alone, even though the number does
-  not: merged id `v1:full_pass:c11ec56b40f212b7`, full-pass loss
-  `10.196143524169923` over the same 2000-row buffer, identical to #282 alone.
-  Measured by running `_maybe_bump_generation_on_ruler_change` in both orders:
-  * **both at the SAME restart** — today's live checkpoints carry no
-    `holdout_ruler`, so an absent id reads as *no evidence* and is adopted:
-    **ZERO bumps**, generation stays **1**. This is what #282's pre-registered
-    PASS condition ("`holdout_generation` is still 1") expects.
-  * **#282 first, this PR at a later restart** — **ONE bump**, 1 → 2, and
-    `best/` hands over.
+  so the merged ruler id differs from #282's alone even though the number does
+  not. But **both landed in `main` before the single pending restart**, and
+  today's live checkpoints carry no `holdout_ruler` at all: an absent id reads
+  as *no evidence* and is adopted without bumping. Generation stays **1**,
+  which is what #282's pre-registered PASS condition expects.
 
-  Neither is harmful and zero is strictly safer, but the PASS/KILL criterion is
-  written in terms of the generation, so a verdict read without knowing the
-  order is not a verdict. Either way the bump is a FALSE positive — #282's
-  declared direction of error, one handover — and must not be read as the ruler
-  moving.
-* **Merging these two produces a real CONFLICT**, one hunk, in
-  `_compute_metrics`'s `_build_metrics(...)` call: `eval_ruler=ruler` (#282) vs
-  `**eval_coverage.drain()` (this PR). **Both lines must be kept.** GitHub
-  reports each PR individually mergeable because neither is on `main` yet, so
-  the conflict only surfaces at the second merge. Verified by an actual
-  `git merge` of #282 `1fbabcac7` into this branch: exactly that one hunk,
-  `trainable_report.py` auto-merges clean.
-* **Whoever merges second must update BOTH golden ruler pins — not just the
-  full-pass one — in the same commit, or `main` goes red** on #282's
-  `test_the_production_ruler_id_is_pinned`. This PR edits frames in *both*
-  `measured_by` lists (`_prepare_host_arrays` and `_compute_metrics` are shared;
-  `_sample_batch_host` and `_iter_prefetched_batches` are the sampled branch's),
-  so the sampled id moves too. Measured on the merge described above, against
-  #282's **current** tokenize-based digest (its earlier `ast.unparse` digest was
-  interpreter-dependent and produced different values — do not reuse hexes
-  quoted before that change):
+  The other case — #282 deploying at one restart and this PR at a later one —
+  would have produced ONE bump (1 → 2) and handed `best/` over. It does not
+  arise here. Either way it is a FALSE positive, #282's declared direction of
+  error, and must not be read as the ruler moving. **If a bump IS observed at
+  the deploying restart, that is a KILL signal for #282's condition 3, not a
+  shrug.**
+* **DONE — the merge of `main` (carrying #282) into this branch.** It conflicts
+  in exactly one hunk, `_compute_metrics`'s `_build_metrics(...)` call:
+  `eval_ruler=ruler` (#282) vs `**eval_coverage.drain()` (this PR). **Both
+  lines are kept.** GitHub reported each PR individually mergeable because
+  neither was on `main` yet, so the conflict only surfaced at the second merge;
+  `trainable_report.py` auto-merged clean even with the new `test_` keys.
+* **BOTH golden ruler pins moved — not just the full-pass one.** This PR edits
+  frames in *both* `measured_by` lists (`_prepare_host_arrays` and
+  `_compute_metrics` are shared; `_sample_batch_host` and
+  `_iter_prefetched_batches` are the sampled branch's), so updating only the
+  full-pass constant would still leave `main` red on
+  `test_the_production_ruler_id_is_pinned`. Recomputed against the **actual
+  merged tree**, not predicted:
 
-  | constant | #282 alone | merged with this PR |
+  | constant | #282 alone | deployed (merged) |
   |---|---|---|
   | `PRODUCTION_FULL_PASS_RULER` | `v1:full_pass:c8fb48a79e804bb4` | **`v1:full_pass:2efe658b4e778870`** |
   | `PRODUCTION_SAMPLED_RULER` | `v1:sampled:e3cc3241626a581f` | **`v1:sampled:d6f7cabecd8e6f67`** |
 
-  With both updated, the merged tree is green (103 passed across
-  `test_holdout_ruler_identity.py`, `test_best_model_ruler.py` and
-  `test_sparse_multipv_labels.py`). The ledger's quoted hex needs the same
-  update.
+  Both are interpreter-independent, re-verified on the merged tree: the seven
+  covered frames digest identically on CPython **3.10.12, 3.11.14 and
+  3.12.12**. (#282's earlier `ast.unparse` digest was interpreter-dependent —
+  do not reuse any hex quoted before that change.) The ledger's quoted hex is
+  updated to match in the same commit.
 
 ## Rebuildable from the row itself
 

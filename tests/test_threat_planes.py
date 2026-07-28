@@ -276,7 +276,7 @@ def test_old_shards_zero_padded_into_v2_buffer(tmp_path):
 
     rng = np.random.default_rng(0)
     buf = DiskReplayBuffer(
-        1000, shard_dir=tmp_path, rng=rng, input_planes=175, shuffle_cap=100,
+        1000, shard_dir=tmp_path, rng=rng, read_only=False, input_planes=175, shuffle_cap=100,
     )
     try:
         n = 8
@@ -303,7 +303,7 @@ def test_v2_shards_into_v1_buffer_rejected(tmp_path):
 
     rng = np.random.default_rng(0)
     buf = DiskReplayBuffer(
-        1000, shard_dir=tmp_path, rng=rng, input_planes=146, shuffle_cap=100,
+        1000, shard_dir=tmp_path, rng=rng, read_only=False, input_planes=146, shuffle_cap=100,
     )
     try:
         n = 2
@@ -485,7 +485,7 @@ def test_write_buffer_accepts_mixed_width_chunks(tmp_path):
 
     rng = np.random.default_rng(0)
     buf = DiskReplayBuffer(
-        1000, shard_dir=tmp_path, rng=rng, input_planes=175,
+        1000, shard_dir=tmp_path, rng=rng, read_only=False, input_planes=175,
         shuffle_cap=100, shard_size=8,
     )
     try:

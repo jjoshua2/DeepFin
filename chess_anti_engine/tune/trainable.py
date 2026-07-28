@@ -365,6 +365,59 @@ def _maybe_reset_holdout_on_drift(
     return False, holdout_generation + 1
 
 
+def _maybe_bump_generation_on_ruler_change(
+    *, observed_ruler: str, known_ruler: str, holdout_generation: int,
+) -> tuple[str, int]:
+    """Bump the generation when the MEASUREMENT changed, not just the set.
+
+    `holdout_generation` is the ruler identity the best-model comparison keys
+    on, but until now only the holdout SET could move it: a drift reset, or a
+    restart that could not restore the rows. The measurement applied to the
+    set was outside the counter entirely, so PR #277's swap from 2560
+    priority-weighted draws to a deterministic 2000-row pass kept generation
+    1 on both sides, `_update_best_model` took its same-ruler branch, and
+    4.85326 was promoted over 4.90535 across two different instruments -- a
+    -0.156-nat step that was -5.70 sd on policy and flat on WDL, which is what
+    dropping priority weighting looks like, not what learning looks like.
+
+    ``observed_ruler`` is `TrainMetrics.eval_ruler`: the identity of the eval
+    that produced THIS iteration's `test_loss`, carried on the metrics from
+    the code that ran them. On the async path those metrics were computed one
+    iteration ago, and that is the point -- the number and its ruler stay
+    together no matter how late the number arrives.
+
+    Three rules, all about never claiming to know more than we do:
+
+    * an empty ``observed_ruler`` changes nothing. No holdout eval ran this
+      iteration (the G5 refill window, an async cold start, a timed-out
+      collect), or the source digest was unavailable; either way there is no
+      evidence of a new ruler and inventing a bump would hand the best model
+      over for nothing.
+    * an empty ``known_ruler`` adopts without bumping. This is the migration
+      path: every checkpoint written before this existed carries no ruler, and
+      the record it defends was measured on the ruler that is running right
+      now. Bumping there would invalidate a valid best model on the first
+      restart, and -- because it happens once per unknown, not once per change
+      -- would teach the operator to ignore the handover line.
+    * a different non-empty ruler bumps by one and says so. Monotone, so a
+      revert to a previous measurement reads as a third generation rather
+      than aliasing back onto the first; the cost is one extra handover and
+      the alternative is a comparison that can silently become valid again.
+    """
+    if not observed_ruler or observed_ruler == known_ruler:
+        return known_ruler or observed_ruler, int(holdout_generation)
+    if not known_ruler:
+        return observed_ruler, int(holdout_generation)
+    print(
+        f"[trial] holdout RULER changed: the measurement was {known_ruler} and "
+        f"is now {observed_ruler}; generation {holdout_generation} -> "
+        f"{holdout_generation + 1} so the best-model record is handed over "
+        f"instead of compared across instruments",
+        flush=True,
+    )
+    return observed_ruler, int(holdout_generation) + 1
+
+
 def _maybe_freeze_holdout(
     *, holdout_buf, tc: TrialConfig, holdout_frozen: bool,
 ) -> bool:
@@ -585,6 +638,10 @@ def train_trial(config: dict):
   # restart silently swap the ruler `test_loss` is read against.
     holdout_frozen = bool(restore.holdout_frozen)
     holdout_generation = int(restore.holdout_generation)
+  # The measurement half of the ruler's identity, restored alongside the set's
+  # (see _maybe_bump_generation_on_ruler_change). Empty on a checkpoint written
+  # before the ruler was identified at all, and on a fresh start.
+    holdout_ruler = str(restore.holdout_ruler)
 
     _assert_distributed_configured(tc)
     sf = _init_local_stockfish(tc)
@@ -808,6 +865,16 @@ def train_trial(config: dict):
             )
             t_train_secs = time.monotonic() - t_train_start
             gate_match_idx = tr.gate_match_idx
+  # Before the checkpoint is written and before the best-model comparison
+  # reads the generation: the number that arrived in `tr.test_metrics` has to
+  # be judged against the generation of the ruler that produced IT.
+            holdout_ruler, holdout_generation = _maybe_bump_generation_on_ruler_change(
+                observed_ruler=(
+                    tr.test_metrics.eval_ruler if tr.test_metrics is not None else ""
+                ),
+                known_ruler=holdout_ruler,
+                holdout_generation=holdout_generation,
+            )
             _log_iter_phase_split(
                 trainer=trainer, iteration_idx=iteration_idx,
                 distributed_dirs=distributed_dirs,
@@ -837,6 +904,7 @@ def train_trial(config: dict):
                 holdout_buf=holdout_buf,
                 holdout_frozen=holdout_frozen,
                 holdout_generation=holdout_generation,
+                holdout_ruler=holdout_ruler,
                 Checkpoint=Checkpoint,
             )
 
@@ -846,6 +914,7 @@ def train_trial(config: dict):
                 trainer=trainer, test_metrics=tr.test_metrics, train_metrics=tr.metrics,
                 test_metrics_source_iter=tr.test_metrics_source_iter,
                 holdout_generation=holdout_generation,
+                holdout_ruler=holdout_ruler,
                 best_loss=best_loss, best_source=best_source,
                 best_dir=best_dir, best_state_path=best_state_path,
                 iteration_idx=iteration_idx, opp_strength_ema=opp_strength_ema,

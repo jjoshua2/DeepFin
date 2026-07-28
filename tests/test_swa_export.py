@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import torch
 
@@ -240,3 +242,60 @@ def test_swa_average_survives_a_compile_toggle_across_restart(tmp_path):
         for key, value in donor_swa.items():
             assert torch.equal(restored[key], value), \
                 f"compiled={compiled}: SWA entry {key} was not restored"
+
+
+# ---------------------------------------------------------------------------
+# rl_loop_audit J10: the published model is the trained model, not an average.
+#
+# With SWA on, `export_swa` ships `_swa_model.module` to the workers while
+# `save` keeps the RAW model under "model" -- resume has to continue the real
+# training trajectory, not an average. The ratchet arena reads that checkpoint
+# key, so enabling SWA silently points the strength ruler at a net nobody
+# plays (measured in repro: all 86/86 tensors differ).
+#
+# Deliberately NOT "fixed" by aligning the two: there is no version of aligning
+# them that does not break either resume or publish. The rejected alternative
+# -- making `load_model_from_checkpoint` prefer `ckpt["swa_model"]` -- would
+# silently change which weights EVERY eval tool reads, on a code path with zero
+# live coverage. What was available is refusing to let the divergence be quiet.
+# ---------------------------------------------------------------------------
+
+def test_export_swa_warns_when_swa_diverges_from_the_checkpoint(tmp_path, caplog):
+    """The publish path must say so, loudly, on every publish while SWA is on."""
+    trainer = _trained_trainer(tmp_path, swa=True)
+    _wrap_in_compile(trainer)
+
+    ckpt_path = tmp_path / "ckpt.pt"
+    pub_path = tmp_path / "published.pt"
+    trainer.save(ckpt_path)
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.train.trainer"):
+        trainer.export_swa(pub_path)
+
+    assert any("J10" in r.getMessage() for r in caplog.records), \
+        f"expected a loud SWA divergence warning, got {[r.getMessage() for r in caplog.records]}"
+
+    ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)["model"]
+    pub = torch.load(str(pub_path), map_location="cpu", weights_only=False)["model"]
+    assert set(ckpt) == set(pub)
+    differing = [k for k in ckpt if not torch.equal(ckpt[k], pub[k])]
+    assert differing, "the warning must only fire where the nets really can differ"
+
+
+def test_export_swa_is_quiet_when_swa_is_off(tmp_path, caplog):
+    """Production runs ``swa_start: -1`` -- no warning, no behaviour change."""
+    trainer = _trained_trainer(tmp_path, swa=False, steps=4)
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.train.trainer"):
+        trainer.export_swa(tmp_path / "published.pt")
+
+    assert [r.getMessage() for r in caplog.records if "J10" in r.getMessage()] == []
+
+
+def test_export_swa_still_strips_the_compile_prefix_under_swa(tmp_path):
+    """The warning must not have displaced the J9 strip on the SWA branch."""
+    trainer = _trained_trainer(tmp_path, swa=True)
+    _wrap_in_compile(trainer)
+
+    trainer.export_swa(tmp_path / "published.pt")
+    pub = torch.load(str(tmp_path / "published.pt"), map_location="cpu", weights_only=False)
+
+    assert not [k for k in pub["model"] if "_orig_mod." in k]

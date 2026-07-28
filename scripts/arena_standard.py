@@ -819,6 +819,15 @@ def run_arena(
     if mode == "matched_sims":
         from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
+  # `require_complete` is left at its auto default, which is per-side, not
+  # blanket: a side whose checkpoint embeds its own `arch` must load exactly
+  # or raise here, so a partially fresh-initialised net cannot quietly produce
+  # a lopsided Elo. A side WITHOUT embedded arch (older checkpoints, resolved
+  # via params.json) still loads tolerantly -- the arch is a guess there, and
+  # demanding exactness would break legitimate reads of the pre-`arch` era. So
+  # this enforces audit method rule 7 in code for arch-bearing checkpoints and
+  # leaves it a human habit for the rest; check for a `Tolerant load` line on
+  # the console before believing a lopsided result off an old checkpoint.
         print(f"[arena] loading candidate: {candidate}")
         model_candidate = load_model_from_checkpoint(candidate, device=device)
         print(f"[arena] loading reference: {reference}")

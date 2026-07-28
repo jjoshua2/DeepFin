@@ -580,6 +580,311 @@ strict low-concurrency/low-sims configuration.
 > taken ~4.5h and cost ~23 iterations (L6). Stopping training to measure is
 > cheaper than measuring alongside it — see method rule 11.
 
+### BUG FIX (pre-registered, not yet live) — `holdout_generation` tracked the SET but not the RULER, so iter 165 was promoted across two instruments (audit G16, PR TBD, 2026-07-27)
+
+**Class: measurement correctness. NOT an experiment and NOT training-affecting.**
+No config key, no loss weight, no target, no data-path change. It changes only
+which `test_loss` numbers the best-model record is allowed to be compared
+against. Pre-registered per protocol because it changes a decision rule that
+the ledger's own yardsticks read.
+
+**The defect.** `holdout_generation` is the identity `_update_best_model` keys
+on to decide "same ruler → compare" vs "different ruler → hand over". It moved
+only when the holdout SET moved: a drift reset, or a restart that could not
+restore the sidecar rows (PR #261). The MEASUREMENT applied to the set was
+never part of it. PR #277 changed the measurement — from 2560 draws WITH
+replacement, WDL-rebalanced and half priority-weighted, to one unweighted
+deterministic pass over the same 2000 rows (`trainer.eval_full_pass`) — and
+the generation stayed at 1 across the change:
+
+```
+iter 160-162: best_loss 4.90535   test_loss 4.94-5.02   test_size 2560   holdout_generation 1
+iter 165:     best_loss 4.85326 = test_loss 4.85326     test_size 2000   holdout_generation 1
+```
+
+So the comparison took its SAME-RULER branch and promoted a new best. The
+−0.156-nat step is definitional, not learning: **−5.70 sd on policy, +0.27 sd
+(flat) on WDL** — the fingerprint of dropping priority weighting. `test_size`
+had already recorded that two different instruments were in play; nothing read
+it.
+
+**Not being undone.** The iter-165 promotion stands. The ongoing state is
+self-consistent (record and current eval are both the full pass), and
+un-promoting carries its own risk. This entry is about the mechanism only.
+
+**Mechanism.** The eval now names itself. `Trainer._compute_metrics` stamps
+`TrainMetrics.eval_ruler` — `v1:<mode>:<16 hex>` over (schema, mode,
+batch_size, sampled-step count, mirror_prob) plus an AST digest of every frame
+that turns buffer rows into the pooled number. **That set is DERIVED, not
+listed**: `call_closure` walks the call graph statically from
+`_compute_metrics` and returns each frame defined in `train/trainer.py` that
+the taken branch reaches — 19 for the full pass, from row selection through
+host-array prep, target rebuilds, history selection and tensor collation to
+`_extract_loss_scalars` / `_build_metrics` / `_loss_sums_to_metric_kwargs`,
+where the pooling denominator is actually APPLIED. Two routes to a ruler
+change are therefore both covered: a different CALL (PR #277's shape — the
+code was identical, the call site chose differently) and a rewritten
+MEASUREMENT (the call site is identical and the semantics moved).
+
+Deriving it is the third answer to the same question and the first one that
+holds. There is no `pooling` descriptor field: it was the literal
+`"row_weighted"`, an unbacked claim (mutation: the denominator changed and the
+id sat still at `4d61cbcad672b9f0`). Naming three more frames by hand did not
+fix it either — `test_loss` could still be DOUBLED via `_build_metrics` with
+every test in the suite green. Hash the code that computes the number, and
+find that code by reading the call graph rather than by remembering it. A
+golden pin (`test_the_production_ruler_id_is_pinned`) now fails whenever the
+id moves, so a ruler change cannot land silently. The id travels ON the metrics, so the async holdout
+path — which calls `_compute_metrics` directly on its own thread with its own
+`full_pass` argument, and whose result arrives an iteration late — cannot
+report a number under a ruler it did not use. `trainable` compares the
+observed id against the one the checkpoint carries and, on a difference,
+bumps `holdout_generation` before `_update_best_model` reads it. Nothing about
+the comparison itself changed; the counter now moves for the reason it always
+claimed to.
+
+The AST digest ignores comments, docstrings and layout, and is memoized per
+process (this repo edits the live tree while a run is up; an unloaded edit
+must not read as a ruler change). Direction of error is deliberate: a false
+positive costs ONE handover — adopt the current number rather than compare —
+and a false negative is this defect.
+
+**Migration (the part that could go wrong at the restart).** Every live
+checkpoint carries `holdout_generation: 1` and NO recorded ruler. An absent
+ruler reads as "no evidence" and is adopted WITHOUT bumping, so the first
+restart does not invalidate the iter-165 record — which is correct, because
+that record was measured on the full pass that is still running. The
+alternative (bump on unknown) would fire once per unknown rather than once per
+change and would teach the operator to ignore the handover line.
+
+**OBSERVATION THAT PROVES IT TOOK EFFECT (run after the first restart onto
+this code; no GPU, no arena):**
+```
+cd /home/josh/projects/chess && PYTHONPATH=. python3 - <<'PY'
+import json, glob, os
+from chess_anti_engine.train.trainer import Trainer
+newest = lambda pat: max(glob.glob(pat), key=os.path.getmtime)
+d = newest('runs/pbt2_small/tune/train_trial_*/checkpoint_*')
+meta = json.load(open(f'{d}/trial_meta.json'))
+best = json.load(open(newest('runs/pbt2_small/tune/train_trial_*/best.json')))
+# No Trainer, no model, no device, and no list of method names to keep in step
+# with the code -- `eval_ruler_id_for` is a classmethod and derives its own
+# covered set. An earlier draft of this command assembled a stand-in object
+# from a hand-written name list, which is the same hazard the mechanism exists
+# to remove: the list can go stale while the command still prints MATCH.
+expect = Trainer.eval_ruler_id_for(
+    batch_size=512, steps=0, mirror_prob=0.0, full_pass=True)
+got = meta.get('holdout_ruler', '')   # .get, so an absent field reports MISMATCH
+print('checkpoint', os.path.basename(d), repr(got), 'gen', meta.get('holdout_generation'))
+print('best.json ', best.get('holdout_ruler'), 'gen', best.get('holdout_generation'))
+print('expected  ', expect, '<- recomputed from the DEPLOYED code')
+print('MATCH' if got == expect else 'MISMATCH')
+PY
+grep -c 'eval_ruler. DEGRADED' /tmp/chess_training.log
+```
+**PASS**, all four:
+1. the newest checkpoint's `trial_meta.json` carries `holdout_ruler` equal to
+   the id **recomputed from the deployed tree** (printed above). At the code
+   reviewed in the PR that value was **`v1:full_pass:c8fb48a79e804bb4`**;
+   **PR #283 then merged into this one and moved it to
+   `v1:full_pass:2efe658b4e778870`** (sampled: `e3cc3241626a581f` →
+   `d6f7cabecd8e6f67`), which is what will actually be deployed — see the
+   "#283 interaction" note below. Both at `batch_size: 512`, verified
+   byte-identical across `PYTHONHASHSEED`
+   0/1/2/random and pinned by `test_the_production_ruler_id_is_pinned`, so a
+   later change to the measurement fails a test rather than passing quietly.
+   The recompute is what makes this fail-able: a bare "non-empty
+   `v1:full_pass:<hex>`" is satisfied by a `nosource`-degraded digest, i.e. a
+   gate that cannot fail inside the fix for a gate that cannot fail. It is
+   also why the hex alone is not the criterion — the measurement functions are
+   shared with the training path and another agent may legitimately edit them
+   before the restart, which moves the expected value and must read as
+   "recompute", not as failure;
+2. `grep -c` for the degraded line in **`/tmp/chess_training.log`** returns
+   **0** — a non-zero count means `inspect.getsource` failed and the digest
+   half is inert while the id still looks well-formed. That path is the trial
+   stdout `scripts/train.sh:27` captures and is what every other grep in this
+   file uses; an earlier draft of this entry grepped `logfile.txt` in the repo
+   root, an untracked stale Cheese engine log from 07-19, so the condition that
+   exists to catch this mechanism's own silent failure could not itself fail;
+3. `holdout_generation` is still **1** — the migration did not spuriously
+   bump the valid iter-165 record. **This assumes #282 and #283 land in the
+   SAME restart; if #283 lands later, expect 1 after the first restart and 2
+   after the second — see the merge-order note below;**
+4. the same id appears unchanged in the NEXT checkpoint.
+
+**KILL = MISMATCH, or an empty/absent field** ⇒ the id never reached the
+persisted state, or the deployed measurement is not the one pre-registered.
+**ALSO KILL = `holdout_generation` climbing every iteration** ⇒ something in
+the descriptor is not stable across calls; revert the PR, which restores the
+set-only counter exactly.
+
+`best.json` additionally records `holdout_ruler` from the next best-model
+write onward. It is documentation, not a second comparison key: the generation
+is derived from the ruler, and two comparison keys would need a rule for what
+to do when they disagree.
+
+**What this does NOT cover.** Coverage is now DERIVED (`call_closure`): every
+frame defined in `train/trainer.py` that the taken branch can statically reach
+from `_compute_metrics` — 19 for the full pass, including the metric-assembly
+tail where the pooling denominator is actually applied. Two earlier drafts of
+this entry named a hand-written list here and called it exhaustive; both lists
+were wrong within a day, which is why the boundary is a rule now and not a
+list. The rule's edge, and everything still outside it — each of these can
+move `test_loss` on a frozen holdout without moving the id:
+
+1. **anything defined outside `train/trainer.py`** — the closure stops at the
+   module edge by construction. Naming the ones that actually decide the
+   number, because an earlier draft of this list named only the obviously
+   unrelated ones and so read as if these were covered (all four verified by
+   mutation: the number moves, the id does not):
+   * **`ReplayBuffer.batch_row_bounds` / `rows_slice_arrays`**
+     (`replay/buffer.py`) — these DEFINE the deterministic pass. Dropping the
+     ragged tail took the eval from 2000 rows to 1536 and `test_loss` 10.196 →
+     9.701 with the id unchanged. The `_iter_full_pass_batches` docstring
+     ("every row of ``buf`` exactly once, oldest first") is the G14 argument,
+     and the code backing that sentence is in another module;
+   * **`collate_arrays`** (`replay/dataset.py`) — the body behind the very
+     `_host_batch_to_tensors` frame that was added "because it is the
+     collation frame". Scaling `x` there gave 9.188, id unchanged;
+   * **`compute_loss`'s body** (`train/losses.py`) — doubling `total` gave
+     20.392, id unchanged;
+   * the encoders in `chess_anti_engine/encoding/`, torch and numpy;
+2. **the loss weights — the one gap that is a KNOWN, REALIZED instance of this
+   defect, not a hypothetical.** `_loss_kwargs` carries `sf_wdl_frac`, so
+   `test_loss` is computed under whatever blend weight is in force, and a
+   CONFIG change to it redefines the ruler across a window exactly as PR #277
+   did: the 2026-07-02 floor raise `sf_wdl_frac_floor` 0.35 → 0.45 sits in 131
+   rows of history (plus 8 at 0.15). This id does not see it.
+   **Decision: excluded from this PR, and here is why rather than a promise to
+   revisit.** Hashing `_loss_kwargs` as it stands is the wrong instrument:
+   `_sync_trainer_weights` (`trainable_config_ops.py:616`) writes the PID's
+   *realized* `sf_wdl_frac` into it, and per audit L15 that moves within its
+   configured band on **15.3% of 646 historical iterations**, a total
+   excursion of **0.450 → 0.456** = 0.006 in blend weight. Two precisions
+   matter here and both were wrong in an earlier draft. (i) 15.3% is the
+   fraction of iterations INSIDE the band; a hash bumps on every *change* of
+   value, so inside an excursion nearly every iteration bumps and the return
+   to the floor bumps again — **the bump rate is ≥15.3%, a lower bound, up to
+   ~2× that if excursions are isolated**. (ii) The excursion is 0.006 of BLEND
+   WEIGHT, which is not 0.006 nats: converting needs
+   `d(test_loss)/d(sf_wdl_frac) = w_wdl · (L_sf − L_outcome)`, which has not
+   been measured, so no ratio against the 0.052-nat floor is quoted here. The
+   argument rests on the **bump rate**, not on the effect size: a raw hash
+   cannot tell a controller excursion from the 0.10 config step, so it would
+   hand the best-model record over — overwriting `best/` with the current
+   model — on at least one iteration in seven. The correct instrument is to
+   hash the **band**
+   (`sf_wdl_frac`, `_floor`, `_floor_at_regret`, `sf_pid_wdl_regret_max` as
+   CONFIGURED) rather than the controller's position within it: that catches
+   the 07-02 step, is immune to the PID leg, and needs trial config plumbed to
+   where the id is computed — a different change with its own review surface,
+   not a line to bolt onto this one. Until it exists, **a loss-weight config
+   change is an uncovered G16.**
+   *(An earlier draft of this entry said hashing the weights "would bump every
+   iteration". Measured: false — see L15. The corrected argument is the one
+   above, and it turns on the bump RATE rather than on an effect size nobody
+   has converted into nats.)*
+3. **module-level CONSTANTS referenced by covered frames.** `_RAW_SUM_LOSS_KEYS`
+   (`trainer.py:941`) decides which loss keys are row-summed rather than
+   row-meaned; adding `'loss'` to it took `test_loss` 10.196 → 0.0205 with the
+   id unchanged (verified). Excluded
+   deliberately, not overlooked: the constants on this path also include
+   `_TRAIN_METRICS_FIELDS`, which is derived from the `TrainMetrics` dataclass,
+   so hashing constants would bump the ruler every time an unrelated diagnostic
+   FIELD is added — a change that provably cannot move `loss`. A frame edit is
+   evidence the measurement may have changed; a new dataclass field is not;
+4. **dynamic dispatch** — a call through a variable, a table or `getattr` is
+   invisible to a static walk. None is on the eval path today;
+5. the holdout SET's contents — that is `holdout_generation`'s original job
+   and is unchanged.
+
+**⚑ COROLLARY (corrected — the drift is real in mechanism and negligible in
+size, and the hazard runs the other way).** It is tempting to read (2) as
+"`test_loss` carries a slowly-moving definitional component from PID-driven
+`sf_wdl_frac`". Audit L15 quantified it over 646 rows: the entire PID-driven
+excursion is **0.006** of blend weight — L15 judges that negligible; the
+conversion into nats is not derived there and is not restated here — and on
+this run's current segment it is not moving at all
+(`wdl_regret` 0.089 and falling, clamped at the 0.45 floor; iters 167–170
+confirm 0.45 flat). **No engineering is owed to the controller leg.** The
+large moves in the `sf_wdl_frac` series are CONFIG changes — which is an
+argument FOR hashing the configured band, and is recorded as such in (2).
+
+**Confounds:** none on learning metrics — no training-affecting key changes.
+`eval_ruler` is skipped by the TensorBoard field loop (it is a string), so no
+scalar is added or lost. No Ray CSV column is added: Ray fixes the header on
+row 1 and a resume appends without re-heading.
+**Revert:** revert the PR. `holdout_ruler` in an existing `trial_meta.json` is
+then ignored by the reader and the counter returns to set-identity only.
+**Deploy note:** trainer + tune Python; takes effect at the next restart. No
+config key added, so the live-yaml validator is unaffected.
+
+**⚑ MERGE ORDER WITH #283 — read before merging either.** The two PRs touch
+one hunk in `_compute_metrics` (`eval_ruler=ruler` vs `**eval_coverage.drain()`
+in the same `_build_metrics(...)` call). **Both lines must survive the
+conflict.** GitHub reports each PR MERGEABLE on its own, so the conflict only
+appears at the SECOND merge. Consequences, all of which change what this
+entry's PASS condition 3 should read:
+
+* #283 edits frames inside the covered closure, so the merge MOVES the ruler
+  id. Four frame digests move, not the two the diff obviously touches:
+  `_compute_metrics`, `_prepare_host_arrays`, `_full_pass_host_batch`,
+  `_iter_full_pass_batches`.
+* **Both landing in the same restart ⇒ ZERO bumps.** The checkpoint has no
+  recorded ruler, so the migration adopts whatever id the deployed code
+  produces and `holdout_generation` stays **1** — which is what PASS condition
+  3 above expects. **This is the intended order.**
+* **#282 first, #283 at a later restart ⇒ exactly ONE bump**, 1 → 2, and
+  `best/` is handed over once. Not harmful — it is a true positive, the
+  measurement really did change — but then PASS condition 3 must read
+  "generation is 1 after the first restart and 2 after the second", and the
+  handover line will be in the log.
+* **Whoever merges second must update `PRODUCTION_FULL_PASS_RULER` /
+  `PRODUCTION_SAMPLED_RULER` in `tests/test_holdout_ruler_identity.py` and the
+  hex in this entry IN THE SAME COMMIT**, or `main` goes red on the golden
+  pin. That failure is the pin working: it is how a ruler change announces
+  itself instead of landing silently.
+
+**Interpreter note (why the hex is quotable at all).** `digest_source` is
+tokenize-based, not an `ast.unparse` round-trip. The first implementation was
+interpreter-dependent — 9 of the 19 covered frames digested differently on
+CPython 3.10 vs 3.11, which turned CI red on the 3.11 runner and, worse, meant
+a production Python upgrade would have fired a handover for a measurement that
+never changed. `v1:full_pass:c8fb48a79e804bb4` is verified byte-identical on
+**3.10.12, 3.11.14 and 3.12.12**, and so is its successor after the #283 merge:
+the seven covered frames of the merged tree digest identically on all three
+(re-verified 2026-07-28 by loading `eval_ruler.py` directly and digesting the
+frame sources, since 3.11/3.12 on this box have no numpy and cannot import the
+trainer).
+
+### #283 interaction — the ruler id moved, the MEASUREMENT did not
+
+PR #283 (live SF target rebuild) merged into this one on 2026-07-28 and moved
+**both** pins, because it edits frames in both `measured_by` lists —
+`_prepare_host_arrays` and `_compute_metrics` are shared, `_sample_batch_host`
+and `_iter_prefetched_batches` are the sampled branch's:
+
+| constant | #282 alone | deployed (with #283) |
+|---|---|---|
+| `PRODUCTION_FULL_PASS_RULER` | `v1:full_pass:c8fb48a79e804bb4` | **`v1:full_pass:2efe658b4e778870`** |
+| `PRODUCTION_SAMPLED_RULER` | `v1:sampled:e3cc3241626a581f` | **`v1:sampled:d6f7cabecd8e6f67`** |
+
+This is a **declared false positive**, not a ruler change: #283 pins
+`rebuild_sf_targets=False` inside `_full_pass_host_batch`, so the full pass is
+byte-identical across it (measured: full-pass loss unchanged over the same
+2000-row buffer). The id moves because the covered SOURCE moved, which is the
+pin working as designed — a human then decides whether the meaning moved with
+it. Here it did not.
+
+**Consequence for PASS condition 3 (`holdout_generation` still 1): it holds,
+and ZERO bumps are expected.** Both #282 and #283 are in `main` before the
+single pending restart, and today's live checkpoints carry no `holdout_ruler`
+at all — an absent id reads as *no evidence* and is adopted without bumping.
+The "one bump" case only arises if the two deploy at different restarts, which
+will not happen here. **If a bump IS observed at that restart, that is a KILL
+signal for this entry's condition 3**, not a shrug.
+
 ### PRE-REGISTERED (not yet live) — selfplay clients stop zero-padding root evals to 32 rows (PR #280, 2026-07-27)
 
 **Class: efficiency plumbing. NOT an experiment, and NOT a throughput lever.**
