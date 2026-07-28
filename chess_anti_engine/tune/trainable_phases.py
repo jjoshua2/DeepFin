@@ -85,6 +85,94 @@ import contextlib
 log = logging.getLogger(__name__)
 
 
+def _publish_iteration_model(
+    *,
+    trainer,
+    config: dict,
+    model_cfg,
+    server_root: Path,
+    publish_dir: Path,
+    trial_id: str,
+    iteration_idx: int,
+    ds: DifficultyState,
+    sims: int,
+    reuse_existing_model_for_same_step: bool,
+    gate_hold_model_path: Path | None,
+    gate_promoted_model_path: Path | None,
+) -> str:
+    """Publish this iteration's model to the fleet, honouring a gate hold.
+
+    Split out of ``_run_selfplay_phase`` so the ACTUATOR is reachable by a test.
+    The gate's whole effect on production is these two branches: a demote must
+    reach ``override_model_path``, and the promoted anchor must NOT be
+    refreshed while the hold is on -- otherwise the fallback is overwritten
+    with the very weights being held back and the brake releases itself
+    silently on the next iteration. ``_publish_distributed_trial_state``
+    honouring the argument is necessary and not sufficient; nothing downstream
+    of a dropped argument here would ever complain.
+
+    Returns the published model sha.
+    """
+    published_model_sha = _publish_distributed_trial_state(
+        trainer=trainer,
+        config=config,
+        model_cfg=model_cfg,
+        server_root=server_root,
+        trial_id=trial_id,
+        training_iteration=int(iteration_idx),
+        trainer_step=int(getattr(trainer, "step", 0)),
+        sf_nodes=int(ds.sf_nodes),
+        mcts_simulations=int(sims),
+        wdl_regret=float(ds.wdl_regret),
+        pause_selfplay=False,
+        pause_reason="",
+        reuse_existing_model_for_same_step=bool(reuse_existing_model_for_same_step),
+        override_model_path=gate_hold_model_path,
+    )
+  # ``gate_promoted_model_path`` is None whenever the gate is off, so a
+  # disabled feature copies nothing: the export is ~252 MB and this runs every
+  # iteration.
+    if gate_hold_model_path is None and gate_promoted_model_path is not None:
+        with contextlib.suppress(OSError):
+            _tmp = gate_promoted_model_path.with_suffix(
+                gate_promoted_model_path.suffix + ".tmp",
+            )
+            gate_promoted_model_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(publish_dir / "latest_model.pt", _tmp)
+            _tmp.replace(gate_promoted_model_path)
+    return published_model_sha
+
+
+def resolve_gate_hold_path(
+    decision: GateDecision, *, gate_promoted_model_path: Path | None,
+) -> Path | None:
+    """Turn a verdict into the path the NEXT publish must serve, or None.
+
+    Extracted from the trial loop so the "does the decision reach the
+    actuator" step is testable on its own. A demote with no fallback on disk
+    (the first iterations after a fresh start) must publish normally and say
+    so rather than crash the trial.
+    """
+    if not decision.acted:
+        return None
+    hold = (
+        gate_promoted_model_path
+        if gate_promoted_model_path is not None and gate_promoted_model_path.is_file()
+        else None
+    )
+    print(
+        "[gate] HOLD publish on the promoted export: "
+        f"reason={decision.reason} delta_elo={decision.delta_elo:.1f} "
+        f"ci=[{decision.elo_lo:.1f},{decision.elo_hi:.1f}] "
+        f"iters={decision.iters} "
+        f"games={decision.games_cur}/{decision.games_prev} "
+        f"holds={decision.holds} "
+        f"fallback={'present' if hold else 'MISSING (publishing anyway)'}",
+        flush=True,
+    )
+    return hold
+
+
 def _run_puzzle_eval_if_due(
     model: torch.nn.Module,
     puzzle_suite,
@@ -705,34 +793,20 @@ def _run_selfplay_phase(
         trial_id=trial_id,
         procs=distributed_worker_procs,
     )
-    published_model_sha = _publish_distributed_trial_state(
+    published_model_sha = _publish_iteration_model(
         trainer=trainer,
         config=config,
         model_cfg=model_cfg,
         server_root=distributed_server_root,
+        publish_dir=distributed_dirs["publish_dir"],
         trial_id=trial_id,
-        training_iteration=int(iteration_idx),
-        trainer_step=int(getattr(trainer, "step", 0)),
-        sf_nodes=int(ds.sf_nodes),
-        mcts_simulations=int(sims),
-        wdl_regret=float(ds.wdl_regret),
-        pause_selfplay=False,
-        pause_reason="",
+        iteration_idx=int(iteration_idx),
+        ds=ds,
+        sims=int(sims),
         reuse_existing_model_for_same_step=bool(reuse_existing_model_for_same_step),
-        override_model_path=gate_hold_model_path,
+        gate_hold_model_path=gate_hold_model_path,
+        gate_promoted_model_path=gate_promoted_model_path,
     )
-  # Snapshot what the fleet is now playing, but ONLY when it is the trainer's
-  # own export. Refreshing the promoted snapshot during a hold would overwrite
-  # the fallback with the very weights being held back -- the brake would
-  # release itself on the next iteration and nothing would report that it had.
-    if gate_hold_model_path is None and gate_promoted_model_path is not None:
-        with contextlib.suppress(OSError):
-            _tmp = gate_promoted_model_path.with_suffix(
-                gate_promoted_model_path.suffix + ".tmp",
-            )
-            gate_promoted_model_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(distributed_dirs["publish_dir"] / "latest_model.pt", _tmp)
-            _tmp.replace(gate_promoted_model_path)
     broker_proc_box[0] = _ensure_inference_broker(
         config=config,
         trial_id=trial_id,

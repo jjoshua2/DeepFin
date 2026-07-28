@@ -50,7 +50,11 @@ from chess_anti_engine.tune.trainable_init import (
     _restore_checkpoint_or_salvage,
     peek_checkpoint_arch,
 )
-from chess_anti_engine.tune.promotion_gate import PromotionGate, gate_config_from_dict
+from chess_anti_engine.tune.promotion_gate import (
+    MODE_OFF,
+    PromotionGate,
+    gate_config_from_dict,
+)
 from chess_anti_engine.tune.trainable_metrics import _compute_drift_metrics
 from chess_anti_engine.tune.trainable_phases import (
     _finalize_iteration,
@@ -58,6 +62,7 @@ from chess_anti_engine.tune.trainable_phases import (
     _run_pid_and_eval,
     _run_selfplay_phase,
     _run_training_and_gating,
+    resolve_gate_hold_path,
 )
 from chess_anti_engine.tune.trainable_report import (
     _guard_checkpoint_index,
@@ -541,8 +546,30 @@ def train_trial(config: dict):
     gate.load_state_dict(_gate_state)
   # The fallback the fleet is held on when the gate demotes. Lives in the
   # durable dir, not the per-session staging dir, so a restart does not lose it.
-    gate_promoted_model_path = durable_dir / "gate_promoted_model.pt"
-    gate_hold_model_path: Path | None = None
+  # None while the gate is off: the copy below is ~252 MB and would otherwise
+  # run every iteration to serve a feature nobody enabled.
+    gate_promoted_model_path = (
+        durable_dir / "gate_promoted_model.pt" if gate.cfg.mode != MODE_OFF else None
+    )
+  # Restored, not reset. An unpersisted hold means a restart mid-hold publishes
+  # the held-back weights AND overwrites the anchor with them while ``holds``
+  # still reads "N deep" -- so the brake would be bounded by restart cadence
+  # rather than by gate_max_hold_iters, and nothing would report the release.
+    gate_hold_model_path: Path | None = (
+        gate_promoted_model_path
+        if (gate.hold_active
+            and gate_promoted_model_path is not None
+            and gate_promoted_model_path.is_file())
+        else None
+    )
+    if gate.hold_active:
+        print(
+            f"[gate] resuming with the fleet HELD: holds={gate.holds} "
+            f"fallback={'present' if gate_hold_model_path else 'MISSING (releasing)'}",
+            flush=True,
+        )
+        if gate_hold_model_path is None:
+            gate.hold_active = False
 
     best_state_path = durable_dir / "best.json"
     best_dir = durable_dir / "best"
@@ -777,6 +804,12 @@ def train_trial(config: dict):
             distributed_pause_active = False
             distributed_pause_started_at = None
             if sp.should_retry:
+  # No games ingested, so the gate never observes or decides this
+  # iteration -- but the fleet is still held. Age the hold anyway, or
+  # a run stuck in retry during a hold holds forever with the release
+  # counter frozen.
+                if not gate.advance_hold_without_decision():
+                    gate_hold_model_path = None
                 continue
 
             holdout_frozen = _maybe_freeze_holdout(
@@ -817,26 +850,9 @@ def train_trial(config: dict):
             t_train_secs = time.monotonic() - t_train_start
             gate_match_idx = tr.gate_match_idx
   # The verdict acts on the NEXT publish, not on the weights just trained.
-  # A hold requires the fallback to exist: if it does not (first iterations
-  # after a fresh start), there is nothing to hold onto and the gate must let
-  # the model through rather than crash the trial.
-            gate_hold_model_path = (
-                gate_promoted_model_path
-                if tr.gate_decision.acted and gate_promoted_model_path.is_file()
-                else None
+            gate_hold_model_path = resolve_gate_hold_path(
+                tr.gate_decision, gate_promoted_model_path=gate_promoted_model_path,
             )
-            if tr.gate_decision.acted:
-                print(
-                    "[gate] HOLD publish on the promoted export: "
-                    f"iter={iteration_idx} reason={tr.gate_decision.reason} "
-                    f"delta_elo={tr.gate_decision.delta_elo:.1f} "
-                    f"ci=[{tr.gate_decision.elo_lo:.1f},{tr.gate_decision.elo_hi:.1f}] "
-                    f"iters={tr.gate_decision.iters} "
-                    f"games={tr.gate_decision.games_cur}/{tr.gate_decision.games_prev} "
-                    f"holds={tr.gate_decision.holds} "
-                    f"fallback={'present' if gate_hold_model_path else 'MISSING (publishing anyway)'}",
-                    flush=True,
-                )
             _log_iter_phase_split(
                 trainer=trainer, iteration_idx=iteration_idx,
                 distributed_dirs=distributed_dirs,
