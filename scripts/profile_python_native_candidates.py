@@ -250,6 +250,9 @@ def _bench_replay(rows: int, batch_size: int, repeats: int) -> dict[str, Any]:
             capacity=rows,
             shard_dir=Path(tmp),
             rng=np.random.default_rng(1),
+            # Writes synthetic chunks (`add_many_arrays` below) into a
+            # TemporaryDirectory this function owns.
+            read_only=False,
             shuffle_cap=rows,
             shard_size=rows + 1,
             refresh_interval=0,

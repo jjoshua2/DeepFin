@@ -617,6 +617,11 @@ def _init_replay_buffers(
         current_window,
         shard_dir=replay_shard_dir,
         rng=rng,
+  # The production writer: this is the buffer live training ingests shards
+  # into and enforces the sliding window with, so it must be writable. It is
+  # also the one buffer that is SUPPOSED to evict -- the window trim above is
+  # deliberate, not the G12 hazard.
+        read_only=False,
         input_planes=input_plane_count(tc.input_extra_features),
         upgrade_v1_planes=tc.replay_upgrade_v1_planes,
         shuffle_cap=tc.shuffle_buffer_size,

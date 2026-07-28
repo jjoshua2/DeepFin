@@ -203,7 +203,7 @@ def test_disk_buffer_repairs_zero_padded_v2_shard(tmp_path):
         meta={"input_history_encoding": enc},
     )
     buf = DiskReplayBuffer(
-        10_000, shard_dir=tmp_path, rng=np.random.default_rng(0),
+        10_000, shard_dir=tmp_path, rng=np.random.default_rng(0), read_only=False,
         input_planes=V2_INPUT_PLANES, upgrade_v1_planes=True,
         refresh_interval=0, refresh_shards=1,
     )
@@ -273,7 +273,7 @@ def test_disk_buffer_upgrades_v1_shards_on_load(tmp_path):
     by_upgrade: dict[bool, np.ndarray] = {}
     for upgrade in (False, True):
         buf = DiskReplayBuffer(
-            10_000, shard_dir=tmp_path, rng=np.random.default_rng(0),
+            10_000, shard_dir=tmp_path, rng=np.random.default_rng(0), read_only=False,
             input_planes=V2_INPUT_PLANES, upgrade_v1_planes=upgrade,
             refresh_interval=0, refresh_shards=1,
         )

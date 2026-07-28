@@ -3065,6 +3065,17 @@ class Trainer:
         ``load_state_dict(..., strict=False)`` on the published file returns
         missing=86/unexpected=86 and a fresh-init model, with no exception
         (rl_loop_audit J9).
+
+        WHEN SWA IS ON, THIS FILE IS NOT THE FILE THE ARENA MEASURES. ``save``
+        writes the raw model under ``"model"`` — resume must continue the real
+        training trajectory, not an average — and the ratchet arena reads
+        exactly that key out of ``checkpoint_*/trainer.pt``, so the strength
+        ruler would be scoring a different net than the workers play (measured
+        in repro: all 86/86 tensors differ). The two artifacts genuinely cannot
+        be reconciled; what is available is refusing to let the divergence be
+        quiet, so the warning below fires on every publish while SWA is
+        enabled. Production runs ``swa_start: -1``, so it never fires today
+        (rl_loop_audit J10).
         """
         if self._swa_model is not None and dataloader is not None:
             torch.optim.swa_utils.update_bn(
@@ -3072,11 +3083,20 @@ class Trainer:
                 self._swa_model,
                 device=torch.device(self.device),
             )
-        state_dict = strip_compile_prefix(
-            self.model.state_dict()
-            if self._swa_model is None
-            else self._swa_model.module.state_dict()
-        )
+        if self._swa_model is None:
+            raw_state = self.model.state_dict()
+        else:
+            raw_state = self._swa_model.module.state_dict()
+            logging.getLogger(__name__).warning(
+                "export_swa: SWA is ENABLED, so %s carries the SWA average while "
+                "checkpoint trainer.pt['model'] carries the raw model. Every "
+                "consumer that reads the checkpoint -- the ratchet arena, "
+                "value_regret, audit_targets -- is measuring a DIFFERENT net "
+                "than the selfplay workers play. Point those tools at the "
+                "published file, or keep swa_start negative. (audit J10)",
+                path,
+            )
+        state_dict = strip_compile_prefix(raw_state)
         export: dict[str, Any] = {"model": state_dict}
         if self._model_config is not None:
             export["arch"] = {

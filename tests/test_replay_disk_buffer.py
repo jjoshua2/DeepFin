@@ -51,7 +51,7 @@ def test_take_write_prefix_preserves_scalar_chunk_fields(tmp_path) -> None:
     buf = DiskReplayBuffer(
         10,
         shard_dir=tmp_path / "replay",
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=10,
         shard_size=10,
     )
@@ -115,7 +115,7 @@ def test_shuffle_buffer_capped_by_capacity(tmp_path) -> None:
     buf = DiskReplayBuffer(
         20,
         shard_dir=tmp_path / "replay",
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=70,
         shard_size=10,
     )
@@ -130,7 +130,7 @@ def test_shuffle_buffer_retrimmed_after_capacity_shrink(tmp_path) -> None:
     buf = DiskReplayBuffer(
         50,
         shard_dir=tmp_path / "replay",
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=70,
         shard_size=10,
     )
@@ -150,7 +150,7 @@ def test_sample_batch_arrays_shapes(tmp_path) -> None:
     buf = DiskReplayBuffer(
         50,
         shard_dir=tmp_path / "replay",
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=20,
         shard_size=10,
     )
@@ -169,7 +169,7 @@ def test_sample_batch_arrays_accepts_compact_policy(tmp_path) -> None:
     buf = DiskReplayBuffer(
         50,
         shard_dir=tmp_path / "replay",
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=20,
         shard_size=10,
     )
@@ -186,7 +186,7 @@ def test_resumed_buffer_samples_from_pruned_optional_shards(tmp_path) -> None:
     buf = DiskReplayBuffer(
         50,
         shard_dir=shard_dir,
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=20,
         shard_size=4,
     )
@@ -197,7 +197,7 @@ def test_resumed_buffer_samples_from_pruned_optional_shards(tmp_path) -> None:
     resumed = DiskReplayBuffer(
         50,
         shard_dir=shard_dir,
-        rng=np.random.default_rng(1),
+        rng=np.random.default_rng(1), read_only=False,
         shuffle_cap=20,
         shard_size=4,
     )
@@ -218,7 +218,7 @@ def test_window_enforcement_deletes_directory_backed_local_shards(tmp_path) -> N
     buf = DiskReplayBuffer(
         2,
         shard_dir=shard_dir,
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=2,
         shard_size=1,
     )
@@ -241,7 +241,7 @@ def test_resumed_shuffle_cache_survives_deleted_shard_directories(tmp_path) -> N
     buf = DiskReplayBuffer(
         12,
         shard_dir=shard_dir,
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=12,
         shard_size=2,
     )
@@ -252,7 +252,7 @@ def test_resumed_shuffle_cache_survives_deleted_shard_directories(tmp_path) -> N
     resumed = DiskReplayBuffer(
         12,
         shard_dir=shard_dir,
-        rng=np.random.default_rng(1),
+        rng=np.random.default_rng(1), read_only=False,
         shuffle_cap=12,
         shard_size=2,
         refresh_shards=3,
@@ -283,7 +283,7 @@ def test_resume_enforces_capacity_before_seeding_shuffle(tmp_path) -> None:
     buf = DiskReplayBuffer(
         6,
         shard_dir=shard_dir,
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=6,
         shard_size=2,
         refresh_shards=1,
@@ -296,7 +296,7 @@ def test_resume_enforces_capacity_before_seeding_shuffle(tmp_path) -> None:
     resumed = DiskReplayBuffer(
         6,
         shard_dir=shard_dir,
-        rng=np.random.default_rng(1),
+        rng=np.random.default_rng(1), read_only=False,
         shuffle_cap=6,
         shard_size=2,
         refresh_shards=1,
@@ -326,7 +326,7 @@ def test_refresh_interval_controls_shuffle_refresh(monkeypatch, tmp_path) -> Non
     buf = DiskReplayBuffer(
         12,
         shard_dir=tmp_path / "replay",
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=12,
         shard_size=2,
         refresh_interval=1,
@@ -353,7 +353,7 @@ def test_prefetched_refresh_is_consumed_before_sync_refresh(tmp_path) -> None:
     buf = DiskReplayBuffer(
         12,
         shard_dir=shard_dir,
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=12,
         shard_size=2,
         refresh_interval=1,
@@ -390,7 +390,7 @@ def test_background_prefetch_populates_ready_chunk(tmp_path) -> None:
     buf = DiskReplayBuffer(
         12,
         shard_dir=shard_dir,
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=12,
         shard_size=2,
         refresh_interval=2,
@@ -416,7 +416,7 @@ def test_close_allows_prefetch_thread_restart(tmp_path) -> None:
     buf = DiskReplayBuffer(
         12,
         shard_dir=shard_dir,
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=12,
         shard_size=2,
         refresh_interval=2,
@@ -444,7 +444,7 @@ def test_close_discards_late_prefetch_results(tmp_path) -> None:
     buf = DiskReplayBuffer(
         12,
         shard_dir=shard_dir,
-        rng=rng,
+        rng=rng, read_only=False,
         shuffle_cap=12,
         shard_size=2,
         refresh_interval=2,
@@ -519,7 +519,7 @@ def _shaping_arrays(n_full: int, n_fast: int) -> dict[str, np.ndarray]:
 
 def test_shape_shuffle_priority_defaults_are_noop(tmp_path) -> None:
     buf = DiskReplayBuffer(
-        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=100, shard_size=100,
     )
     buf.add_many_arrays(_shaping_arrays(n_full=3, n_fast=4))
@@ -530,7 +530,7 @@ def test_shape_shuffle_priority_defaults_are_noop(tmp_path) -> None:
 
 def test_shape_shuffle_priority_boosts_full_rows_by_sf_gap(tmp_path) -> None:
     buf = DiskReplayBuffer(
-        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=100, shard_size=100,
     )
     buf.sf_gap_priority_weight = 10.0
@@ -544,7 +544,7 @@ def test_shape_shuffle_priority_boosts_full_rows_by_sf_gap(tmp_path) -> None:
 
 def test_shape_shuffle_priority_demotes_low_surprise_fast_rows(tmp_path) -> None:
     buf = DiskReplayBuffer(
-        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=100, shard_size=100,
     )
     buf.fast_low_surprise_priority = 0.2
@@ -558,7 +558,7 @@ def test_shape_shuffle_priority_demotes_low_surprise_fast_rows(tmp_path) -> None
 
 def test_shape_shuffle_priority_skips_chunks_missing_fields(tmp_path) -> None:
     buf = DiskReplayBuffer(
-        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=100, shard_size=100,
     )
     buf.sf_gap_priority_weight = 10.0
@@ -574,7 +574,7 @@ def test_constructor_shaping_applies_to_resume_seeded_shuffle(tmp_path) -> None:
     must already shape those seeded priorities."""
     d = tmp_path / "replay"
     buf1 = DiskReplayBuffer(
-        100, shard_dir=d, rng=np.random.default_rng(0),
+        100, shard_dir=d, rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=100, shard_size=100,
     )
     buf1.add_many_arrays(_shaping_arrays(n_full=3, n_fast=4))
@@ -582,7 +582,7 @@ def test_constructor_shaping_applies_to_resume_seeded_shuffle(tmp_path) -> None:
     buf1.close()
 
     buf2 = DiskReplayBuffer(
-        100, shard_dir=d, rng=np.random.default_rng(1),
+        100, shard_dir=d, rng=np.random.default_rng(1), read_only=False,
         shuffle_cap=100, shard_size=100,
         sf_gap_priority_weight=10.0,
         fast_low_surprise_priority=0.2,
@@ -596,7 +596,7 @@ def test_constructor_shaping_applies_to_resume_seeded_shuffle(tmp_path) -> None:
 
 def test_priority_mass_stats_decompose_and_reset(tmp_path) -> None:
     buf = DiskReplayBuffer(
-        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=100, shard_size=100,
         sf_gap_priority_weight=10.0, fast_low_surprise_priority=0.2,
         diff_focus_pol_scale=2.0, diff_focus_q_weight=4.0,
@@ -633,7 +633,7 @@ def test_priority_mass_stats_decompose_and_reset(tmp_path) -> None:
 
 def test_priority_mass_stats_tolerate_missing_fields(tmp_path) -> None:
     buf = DiskReplayBuffer(
-        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0),
+        100, shard_dir=tmp_path / "replay", rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=100, shard_size=100,
         diff_focus_pol_scale=2.0, diff_focus_q_weight=4.0,
     )
@@ -647,7 +647,7 @@ def test_priority_mass_stats_tolerate_missing_fields(tmp_path) -> None:
 def test_priority_mass_excludes_fast_row_kl_and_seed_scan(tmp_path) -> None:
     d = tmp_path / "replay"
     buf = DiskReplayBuffer(
-        100, shard_dir=d, rng=np.random.default_rng(0),
+        100, shard_dir=d, rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=100, shard_size=7,
         diff_focus_pol_scale=2.0, diff_focus_q_weight=4.0,
     )
@@ -666,7 +666,7 @@ def test_priority_mass_excludes_fast_row_kl_and_seed_scan(tmp_path) -> None:
     # Resume over the same shards: the constructor seed scan must NOT leak
     # into the first pop.
     buf2 = DiskReplayBuffer(
-        100, shard_dir=d, rng=np.random.default_rng(1),
+        100, shard_dir=d, rng=np.random.default_rng(1), read_only=False,
         shuffle_cap=100, shard_size=7,
         diff_focus_pol_scale=2.0, diff_focus_q_weight=4.0,
     )
@@ -691,7 +691,7 @@ def test_second_writer_into_one_shard_dir_is_reported(tmp_path, caplog) -> None:
     os.pwrite(fd, b"424242\n", 0)
     try:
         buf = DiskReplayBuffer(
-            100, shard_dir=shard_dir, rng=np.random.default_rng(0),
+            100, shard_dir=shard_dir, rng=np.random.default_rng(0), read_only=False,
             shuffle_cap=100, shard_size=2,
         )
         with caplog.at_level(logging.ERROR, logger="chess_anti_engine.replay.disk_buffer"):
@@ -714,7 +714,7 @@ def test_sole_writer_is_silent_and_releases_the_lock_on_close(tmp_path, caplog) 
     shard_dir = tmp_path / "replay"
     with caplog.at_level(logging.ERROR, logger="chess_anti_engine.replay.disk_buffer"):
         buf = DiskReplayBuffer(
-            100, shard_dir=shard_dir, rng=np.random.default_rng(0),
+            100, shard_dir=shard_dir, rng=np.random.default_rng(0), read_only=False,
             shuffle_cap=100, shard_size=2,
         )
         buf.add_many([_sample() for _ in range(2)])
@@ -722,7 +722,7 @@ def test_sole_writer_is_silent_and_releases_the_lock_on_close(tmp_path, caplog) 
         buf.close()
         # A resume in the same process must not inherit a stale complaint.
         resumed = DiskReplayBuffer(
-            100, shard_dir=shard_dir, rng=np.random.default_rng(1),
+            100, shard_dir=shard_dir, rng=np.random.default_rng(1), read_only=False,
             shuffle_cap=100, shard_size=2,
         )
         resumed.add_many([_sample() for _ in range(2)])
@@ -736,7 +736,7 @@ def test_shard_write_steps_over_an_index_another_writer_owns(tmp_path, caplog) -
     """The overwrite variant of G7: same index, one shard silently destroyed."""
     shard_dir = tmp_path / "replay"
     buf = DiskReplayBuffer(
-        100, shard_dir=shard_dir, rng=np.random.default_rng(0),
+        100, shard_dir=shard_dir, rng=np.random.default_rng(0), read_only=False,
         shuffle_cap=100, shard_size=2,
     )
     # Somebody else already owns index 0.
