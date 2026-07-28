@@ -290,6 +290,7 @@ def build_recommended_worker(
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
         "fast_simulations": int(config.get("fast_simulations", 8)),
         "gumbel_topk": int(config.get("gumbel_topk", 16)),
+        "gumbel_vloss_weight": int(config.get("gumbel_vloss_weight", 0)),
         "gumbel_c_scale": float(config.get("gumbel_c_scale", SELFPLAY_GUMBEL_C_SCALE)),
         "gumbel_scale": float(config.get("gumbel_scale", 1.0)),
         "gumbel_scale_after": float(config.get("gumbel_scale_after", 0.0)),

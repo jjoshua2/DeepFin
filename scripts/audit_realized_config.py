@@ -685,6 +685,19 @@ _RECO_WORKER_DEFAULT: dict[str, object] = {
     "temperature_after": 0.0,      # TemperatureConfig.after
     "categorical_bins": 32,        # GameConfig.categorical_bins
     "hlgauss_sigma": 0.04,         # GameConfig.hlgauss_sigma
+  # diff_focus moved here 2026-07-28. The worker never builds a DiffFocusConfig
+  # from the reco, so these five have always run the dataclass defaults. Until
+  # 2026-07-26 the yaml asked for the Run-4 sweep winners instead, which made
+  # them a live DIVERGENCE tracked separately; that entry pinned the yaml to the
+  # realized values as config honesty, and a divergence that no longer diverges
+  # belongs in this table. Self-invalidating is the point: if anyone "tunes"
+  # diff_focus in the yaml it stops matching and becomes a finding again,
+  # instead of silently doing nothing.
+    "diff_focus_enabled": True,    # DiffFocusConfig.enabled
+    "diff_focus_q_weight": 6.0,    # DiffFocusConfig.q_weight
+    "diff_focus_pol_scale": 3.5,   # DiffFocusConfig.pol_scale
+    "diff_focus_slope": 3.0,       # DiffFocusConfig.slope
+    "diff_focus_min": 0.025,       # DiffFocusConfig.min_keep
 }
 
 # Keys whose reco value is EXPECTED to differ from the yaml value, with why.

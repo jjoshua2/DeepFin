@@ -2875,6 +2875,11 @@ class WorkerSession:
   # must restart.
         "games_per_batch",
         "slot_oversubscribe",
+  # gumbel_vloss_weight is read into SearchConfig by _build_selfplay_configs,
+  # which runs once at session start — a running SelfplayState keeps its old
+  # frozen SearchConfig, so a mid-flight change would be silently ignored and
+  # the ledger would carry a verdict for an experiment that never ran.
+        "gumbel_vloss_weight",
   # sf_move_nodes gates the curriculum SF query path: lowering it to 0 mid-flight
   # would make pending move-futures (submitted at the old positive budget) get
   # reused as full-strength label futures, writing low-node SF targets to replay.
@@ -2978,6 +2983,9 @@ class WorkerSession:
                 ),
                 fast_simulations=self._resolve_reco(reco, "fast_simulations", 8, int),
                 gumbel_topk=self._resolve_reco(reco, "gumbel_topk", 16, int),
+                gumbel_vloss_weight=self._resolve_reco(
+                    reco, "gumbel_vloss_weight", 0, int,
+                ),
                 volatility_q_scale=self._resolve_reco(reco, "volatility_q_scale", 0.0),
                 volatility_fpu=self._resolve_reco(reco, "volatility_fpu", 0.0),
                 volatility_anchor=self._resolve_reco(reco, "volatility_anchor", DEFAULT_VOLATILITY_ANCHOR),
