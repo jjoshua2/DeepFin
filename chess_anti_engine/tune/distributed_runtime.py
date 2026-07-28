@@ -410,12 +410,28 @@ def _publish_distributed_trial_state(
     backpressure: dict[str, object] | None = None,
     export_model: bool = True,
     reuse_existing_model_for_same_step: bool = False,
+    override_model_path: Path | None = None,
 ) -> str:
     dirs = _trial_server_dirs(server_root=server_root, trial_id=trial_id)
     publish_dir = dirs["publish_dir"]
     publish_dir.mkdir(parents=True, exist_ok=True)
 
     model_path = publish_dir / "latest_model.pt"
+  # Promotion-gate hold: publish a previously promoted export instead of the
+  # trainer's current weights. Training is untouched -- only what the selfplay
+  # fleet plays with is held back. Copied through a temp + atomic rename so a
+  # worker polling mid-write can never fetch a truncated model.
+    if override_model_path is not None:
+        src = Path(override_model_path)
+        if not src.is_file():
+            raise FileNotFoundError(
+                f"promotion-gate hold requested but {src} does not exist; "
+                "refusing to publish an unheld model under a hold decision"
+            )
+        tmp = model_path.with_suffix(model_path.suffix + ".gatehold.tmp")
+        shutil.copyfile(src, tmp)
+        tmp.replace(model_path)
+        export_model = False
     if export_model and reuse_existing_model_for_same_step and model_path.exists():
         manifest_path = publish_dir / "manifest.json"
         try:
@@ -1233,6 +1249,18 @@ def _empty_ingest_summary() -> dict[str, Any]:
         "stale_positions": 0,
         "matching_shards": 0,
         "stale_shards": 0,
+  # Anchored promotion-gate split of the SAME accepted games. ``matching_w/d/l``
+  # pools the current and previous published models; the gate needs them apart,
+  # because both faced the same handicapped Stockfish and their difference is a
+  # free A/B of one training iteration (chess_anti_engine/tune/promotion_gate).
+  # These are vs-SF (curriculum) outcomes only -- selfplay games are
+  # model-vs-itself and already excluded from w/d/l upstream.
+        "gate_cur_w": 0,
+        "gate_cur_d": 0,
+        "gate_cur_l": 0,
+        "gate_prev_w": 0,
+        "gate_prev_d": 0,
+        "gate_prev_l": 0,
   # Per-sample source counters (is_selfplay tag): sum of tagged samples
   # and the selfplay-true subset, across ingested shards.  Used to
   # compute ingest_frac_selfplay = selfplay / tagged.
@@ -1486,6 +1514,7 @@ def _process_shard(
     rng: np.random.Generator,
     summary: dict[str, Any],
     preloaded: tuple[dict, dict] | None = None,
+    prev_model_sha: str | None = None,
 ) -> str:
     """Load one shard from inbox, ingest into replay buffer, update summary.
 
@@ -1546,6 +1575,14 @@ def _process_shard(
             incoming_max=float(m.get("diff_focus_priority_max", 0.0) or 0.0),
         )
         summary["matching_shards"] += 1
+  # Anchored gate split. ``prev_model_sha`` is only ever the sha the trainer
+  # published LAST iteration, so "not prev" is unambiguously the current one:
+  # any other sha would not be in ``accepted_model_shas`` at all and would have
+  # taken the stale branch below.
+        side = "prev" if (prev_model_sha and model_sha == prev_model_sha) else "cur"
+        summary[f"gate_{side}_w"] += m["w"]
+        summary[f"gate_{side}_d"] += m["d"]
+        summary[f"gate_{side}_l"] += m["l"]
     else:
         summary["stale_games"] += m["games"]
         summary["stale_positions"] += m["positions"]
@@ -1595,6 +1632,7 @@ def _process_shard_with_prev_cap(
         rng=rng,
         summary=summary,
         preloaded=preloaded,
+        prev_model_sha=prev_model_sha,
     )
     if not cap_prev or prev_model_sha not in effective_accepted or shard_sha != prev_model_sha:
         return

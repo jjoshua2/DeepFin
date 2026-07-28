@@ -1,9 +1,9 @@
 """Per-iteration phase orchestrators for the Ray Tune trainable.
 
 Each function represents one phase of the main trial loop:
-  * _gate_check            — play gate games to measure winrate
   * _run_puzzle_eval_if_due — puzzle-suite evaluation on a schedule
   * _run_eval_games        — fixed-strength eval games
+  * _run_net_gating        — anchored promotion-gate verdict (plays no games)
   * _run_training_and_gating — step budget, training, gating, holdout eval
   * _run_pid_and_eval      — PID observe + opponent-strength compute
   * _run_selfplay_phase    — selfplay (dist. or local) + ingest + export
@@ -46,6 +46,12 @@ from chess_anti_engine.tune.distributed_runtime import (
     _prune_processed_shards,
     _publish_distributed_trial_state,
 )
+from chess_anti_engine.tune.promotion_gate import (
+    AnchoredSample,
+    GateDecision,
+    PromotionGate,
+    gate_metrics,
+)
 from chess_anti_engine.tune.replay_exchange import _share_top_replay_each_iteration
 from chess_anti_engine.tune.trainable_config_ops import _play_batch_kwargs
 from chess_anti_engine.tune.trainable_metrics import (
@@ -77,35 +83,6 @@ from chess_anti_engine.utils.atomic import atomic_write_text
 import contextlib
 
 log = logging.getLogger(__name__)
-
-
-def _gate_check(
-    model: torch.nn.Module,
-    *,
-    device: str,
-    rng: np.random.Generator,
-    sf: StockfishUCI | StockfishPool,
-    gate_games: int,
-    tc: TrialConfig,
-    ds: DifficultyState,
-) -> tuple[float, int, int, int]:
-    """Play gate games to measure winrate. Returns (winrate, W, D, L).
-
-    Uses the current PID regret setting so the acceptance gate measures against
-    the same opponent strength the trainer actually trained against; otherwise
-    gate can admit regressions by testing against an unrestricted opponent.
-    """
-    kw = _play_batch_kwargs(tc, ds=ds)
-  # Gate: exploit mode — low temperature, no playout cap, minimal search.
-    kw["temp"] = TemperatureConfig(temperature=0.3, drop_plies=0, after=0.0, decay_start_move=10, decay_moves=30, endgame=0.1)
-    kw["search"] = dataclasses.replace(kw["search"], simulations=tc.gate_mcts_sims, playout_cap_fraction=1.0, fast_simulations=0)
-    kw["diff_focus"] = dataclasses.replace(kw["diff_focus"], enabled=False)
-    kw["game"] = dataclasses.replace(kw["game"], selfplay_fraction=0.0)
-    _gate_samples, gate_stats = play_batch(model, device=device, rng=rng, stockfish=sf, games=gate_games, **kw)
-    w, d, l = gate_stats.w, gate_stats.d, gate_stats.l
-    total = max(1, w + d + l)
-    winrate = (w + 0.5 * d) / total
-    return winrate, w, d, l
 
 
 def _run_puzzle_eval_if_due(
@@ -197,40 +174,46 @@ def _apply_salvage_step_caps(
 
 def _run_net_gating(
     trainer, *,
-    pre_train_state: dict | None,
-    tc: TrialConfig, ds: DifficultyState, sf, device: str, rng: np.random.Generator,
+    gate: PromotionGate,
+    sp: SelfplayResult,
     gate_match_idx: int, gate_state_path: Path,
-) -> tuple[bool, int]:
-    """Play gate_games matches; on winrate < threshold restore pre_train_state.
-    Persists gate_match_idx counter + per-match TB scalars. Returns (gate_passed, new_idx)."""
-    if pre_train_state is None or tc.gate_games <= 0:
-        return True, gate_match_idx
+    iteration_idx: int,
+) -> tuple[GateDecision, int]:
+    """Judge this iteration's anchored current-vs-previous-model A/B.
 
-    gate_wr, gate_w, gate_d, gate_l = _gate_check(
-        trainer.model, device=device, rng=rng, sf=sf,
-        gate_games=tc.gate_games, tc=tc, ds=ds,
-    )
+    Plays NO games: it reads the vs-Stockfish outcomes the selfplay phase
+    already ingested, split by which published model produced them. The
+    decision applies to the NEXT publish (see ``_run_selfplay_phase``'s
+    ``gate_hold_model_path``); the training weights are never touched, which is
+    the difference between this and the gate that froze the run in 2026-03.
+
+    Note the self-limiting property of a hold: while the fleet is held on the
+    promoted export, every accepted shard carries that one sha, so no new
+    anchored sample can be formed and the window stops growing. That is why
+    ``gate_max_hold_iters`` exists -- it is the only thing that releases a
+    brake the gate can no longer re-measure.
+    """
+    gate.observe(AnchoredSample(
+        iteration=int(iteration_idx),
+        cur_w=int(sp.gate_cur_w), cur_d=int(sp.gate_cur_d), cur_l=int(sp.gate_cur_l),
+        prev_w=int(sp.gate_prev_w), prev_d=int(sp.gate_prev_d), prev_l=int(sp.gate_prev_l),
+    ))
+    decision = gate.apply(gate.decide())
     gate_match_idx += 1
     with contextlib.suppress(Exception):
         atomic_write_text(
             gate_state_path,
-            json.dumps({"matches": int(gate_match_idx)}, indent=2, sort_keys=True),
+            json.dumps(
+                {"matches": int(gate_match_idx), **gate.state_dict()},
+                indent=2, sort_keys=True,
+            ),
         )
-    try:
-        trainer.writer.add_scalar("gate/winrate", float(gate_wr), int(gate_match_idx))
-        trainer.writer.add_scalar("gate/win", float(gate_w), int(gate_match_idx))
-        trainer.writer.add_scalar("gate/draw", float(gate_d), int(gate_match_idx))
-        trainer.writer.add_scalar("gate/loss", float(gate_l), int(gate_match_idx))
-        trainer.writer.add_scalar(
-            "gate/passed", float(1.0 if gate_wr >= tc.gate_threshold else 0.0), int(gate_match_idx),
-        )
-    except Exception:
-        pass
-
-    if gate_wr < tc.gate_threshold:
-        trainer.model.load_state_dict(pre_train_state)
-        return False, gate_match_idx
-    return True, gate_match_idx
+    with contextlib.suppress(Exception):
+        for name, val in gate_metrics(decision).items():
+            trainer.writer.add_scalar(
+                f"gate/{name.removeprefix('gate_')}", float(val), int(iteration_idx),
+            )
+    return decision, gate_match_idx
 
 
 def _run_holdout_evaluation(
@@ -300,12 +283,12 @@ def _run_training_and_gating(
     config: dict,
     model_cfg,
     device: str,
-    rng: np.random.Generator,
-    sf,
     ds: DifficultyState,
     sims: int,
+    sp: SelfplayResult,
     positions_ingested: int,
     imported_samples_this_iter: int,
+    gate: PromotionGate,
     gate_match_idx: int,
     gate_state_path: Path,
     distributed_server_root: Path,
@@ -323,8 +306,17 @@ def _run_training_and_gating(
     steps = 0
     target_sample_budget = 0
     window_target_samples = 0
-    gate_passed = True
     metrics = None
+
+  # The gate judges the anchored A/B the selfplay phase already produced, so it
+  # runs whether or not this iteration trained: an iteration that skipped
+  # training still played games with the published model, and dropping that
+  # sample would silently shorten the window.
+    gate_decision, gate_match_idx = _run_net_gating(
+        trainer, gate=gate, sp=sp,
+        gate_match_idx=gate_match_idx, gate_state_path=gate_state_path,
+        iteration_idx=int(iteration_idx),
+    )
 
     if not skip_train:
         train_budget = _compute_train_step_budget(
@@ -350,11 +342,6 @@ def _run_training_and_gating(
             steps, tc=tc, restore=restore, iteration_zero_based=iteration_zero_based,
         )
 
-  # Save model state for potential rollback (net gating).
-        pre_train_state = None
-        if tc.gate_games > 0 and (iteration_zero_based % tc.gate_interval == 0):
-            pre_train_state = {k: v.clone() for k, v in trainer.model.state_dict().items()}
-
         if tc.distributed_pause_selfplay_during_training:
             _publish_distributed_trial_state(
                 trainer=trainer, config=config, model_cfg=model_cfg,
@@ -370,11 +357,6 @@ def _run_training_and_gating(
             )
 
         metrics = trainer.train_steps(buf, batch_size=batch_size, steps=steps)
-        gate_passed, gate_match_idx = _run_net_gating(
-            trainer, pre_train_state=pre_train_state,
-            tc=tc, ds=ds, sf=sf, device=device, rng=rng,
-            gate_match_idx=gate_match_idx, gate_state_path=gate_state_path,
-        )
 
     test_metrics, test_metrics_source_iter = _run_holdout_evaluation(
         trainer=trainer, holdout_buf=holdout_buf,
@@ -385,7 +367,7 @@ def _run_training_and_gating(
     return TrainingResult(
         metrics=metrics,
         test_metrics=test_metrics,
-        gate_passed=gate_passed,
+        gate_decision=gate_decision,
         steps=steps,
         target_sample_budget=target_sample_budget,
         window_target_samples=window_target_samples,
@@ -699,6 +681,8 @@ def _run_selfplay_phase(
     in_salvage_startup_grace: bool,
     prefetcher=None,
     reuse_existing_model_for_same_step: bool = False,
+    gate_hold_model_path: Path | None = None,
+    gate_promoted_model_path: Path | None = None,
 ) -> tuple[SelfplayResult, str, int]:
     """Run distributed selfplay, ingest, export shards, grow window, cross-trial share.
 
@@ -735,7 +719,20 @@ def _run_selfplay_phase(
         pause_selfplay=False,
         pause_reason="",
         reuse_existing_model_for_same_step=bool(reuse_existing_model_for_same_step),
+        override_model_path=gate_hold_model_path,
     )
+  # Snapshot what the fleet is now playing, but ONLY when it is the trainer's
+  # own export. Refreshing the promoted snapshot during a hold would overwrite
+  # the fallback with the very weights being held back -- the brake would
+  # release itself on the next iteration and nothing would report that it had.
+    if gate_hold_model_path is None and gate_promoted_model_path is not None:
+        with contextlib.suppress(OSError):
+            _tmp = gate_promoted_model_path.with_suffix(
+                gate_promoted_model_path.suffix + ".tmp",
+            )
+            gate_promoted_model_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(distributed_dirs["publish_dir"] / "latest_model.pt", _tmp)
+            _tmp.replace(gate_promoted_model_path)
     broker_proc_box[0] = _ensure_inference_broker(
         config=config,
         trial_id=trial_id,
@@ -923,6 +920,12 @@ def _run_selfplay_phase(
         replay_window_growth_frac_used=float(replay_window_growth_frac_used),
         ingest_is_selfplay_tagged=ingest_is_selfplay_tagged,
         ingest_is_selfplay_true=ingest_is_selfplay_true,
+        gate_cur_w=int(ingest_summary.get("gate_cur_w", 0)),
+        gate_cur_d=int(ingest_summary.get("gate_cur_d", 0)),
+        gate_cur_l=int(ingest_summary.get("gate_cur_l", 0)),
+        gate_prev_w=int(ingest_summary.get("gate_prev_w", 0)),
+        gate_prev_d=int(ingest_summary.get("gate_prev_d", 0)),
+        gate_prev_l=int(ingest_summary.get("gate_prev_l", 0)),
         **_selfplay_diagnostic_fields_from_ingest(ingest_summary),
         total_sf_d6=total_sf_d6,
         total_sf_d6_n=total_sf_d6_n,

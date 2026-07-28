@@ -790,15 +790,34 @@ tune:
   tune_metric: opponent_strength_ema
   tune_mode: max
 
-  # Net gating: DISABLED — gate was using 1-sim (raw policy) while selfplay
-  # uses 64-sim MCTS, causing systematic rejection of every training step.
-  # The model was frozen at iter 2-3 weights with no learning happening.
-  # TODO: re-enable once gate uses same sim count as selfplay, or compare
-  # new model vs old model instead of new model vs Stockfish.
-  gate_games: 0           # 0 = disabled
-  gate_threshold: 0.50
-  gate_interval: 1
-  gate_mcts_sims: 1
+  # Net gating. The 1-sim vs-Stockfish gate these three keys configured is
+  # REMOVED, not disabled: it scored raw policy against a PID-controlled
+  # opponent whose 0.50 setpoint equals gate_threshold (so the statistic was
+  # pinned to the bar by the controller, not by the model), and rejection
+  # restored the weights while the optimizer kept stepping. That is what froze
+  # the model at iter 2-3 in 2026-03. gate_games at anything but 0 now RAISES
+  # at startup -- "just turn it back on" is not reachable.
+  #
+  # The replacement is chess_anti_engine/tune/promotion_gate.py: an ANCHORED
+  # comparison of the current published net against the previous one, using the
+  # vs-SF games the loop already ingests (up to
+  # distributed_prev_model_max_fraction of every iteration), acting on what is
+  # PUBLISHED to the fleet rather than on the training weights. Its knobs are
+  # gate_mode / gate_window_iters / gate_min_iters / gate_min_games_per_side /
+  # gate_demote_delta_elo / gate_alpha / gate_max_hold_iters, all defaulted OFF
+  # in code. They are deliberately NOT listed here yet: adding a key to the
+  # live yaml before the running process is on code that defines it makes the
+  # validator reject the WHOLE reload. Add them at the next restart, starting
+  # at gate_mode: shadow.
+  #
+  # What it can resolve, so nobody reads it as a ratchet: ~31 Elo of standard
+  # error per iteration at the live game shape (238 vs-SF games/iter), against
+  # a loop that gains ~0.02 Elo/iteration. It is a regression alarm, not a
+  # selection step; no affordable measurement can select on 0.02 Elo.
+  gate_games: 0           # DEAD KEY: must stay 0
+  gate_threshold: 0.50    # DEAD KEY: inert
+  gate_interval: 1        # DEAD KEY: inert
+  gate_mcts_sims: 1       # DEAD KEY: inert
 
   # For eval: run fixed-strength eval games to get a cleaner metric than train_loss.
   # Disabled by default to keep the small-model run fast.

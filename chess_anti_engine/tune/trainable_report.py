@@ -22,6 +22,7 @@ from chess_anti_engine.tune._utils import (
     load_optional_json,
 )
 from chess_anti_engine.tune.holdout_state import save_holdout_rows
+from chess_anti_engine.tune.promotion_gate import gate_metrics
 from chess_anti_engine.tune.trial_config import (
     DriftMetrics,
     PidResult,
@@ -1284,7 +1285,12 @@ def _build_report_dict(
         "sf_wdl_temperature": float(trainer.sf_wdl_temperature),
         "best_loss": float(best_loss),
         **train_metrics_dict,
-        "gate_passed": (1 if tr.gate_passed else 0),
+  # ``gate_passed`` is GONE, not renamed. It was a constant 1 emitted while
+  # ``gate_games: 0`` -- a pass indistinguishable from a gate that never ran.
+  # ``gate_decision`` is -1/0/1 (not-run / demote / promote) and travels with
+  # the games it was computed from; ``gate_metrics`` refuses to emit a promote
+  # with zero anchored games at all.
+        **gate_metrics(tr.gate_decision),
         "ingest_ms": float(sp.ingest_ms),
         "train_ms": float(tr.train_ms),
         "total_iter_ms": float((time.monotonic() - iter_t0) * 1000.0),

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
+from chess_anti_engine.tune.promotion_gate import GateDecision
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.utils.architecture import (
     normalize_embed_dim_by_layer,
@@ -321,10 +322,23 @@ class TrialConfig:
     eval_max_plies: int = 0  # 0 means fallback to max_plies
 
   # --- Gate ---
+  # gate_games / gate_threshold / gate_mcts_sims are DEAD KEYS kept only so a
+  # live yaml carrying them still validates. The 1-sim vs-Stockfish gate they
+  # configured is gone; ``gate_games`` at anything but 0 now raises at startup
+  # rather than silently doing nothing (chess_anti_engine/tune/promotion_gate).
     gate_games: int = 0
     gate_interval: int = 1
     gate_threshold: float = 0.50
     gate_mcts_sims: int = 1
+  # Anchored promotion gate. off = do not compute; shadow = compute and report,
+  # never act; enforce = hold the published model on a proven regression.
+    gate_mode: str = "off"
+    gate_window_iters: int = 24
+    gate_min_iters: int = 8
+    gate_min_games_per_side: int = 40
+    gate_demote_delta_elo: float = -50.0
+    gate_alpha: float = 0.05
+    gate_max_hold_iters: int = 12
 
   # --- Puzzle ---
     puzzle_epd: str | None = None
@@ -697,6 +711,13 @@ class TrialConfig:
             gate_interval=int(config.get("gate_interval", 1)),
             gate_threshold=float(config.get("gate_threshold", 0.50)),
             gate_mcts_sims=int(config.get("gate_mcts_sims", 1)),
+            gate_mode=str(config.get("gate_mode", "off")),
+            gate_window_iters=int(config.get("gate_window_iters", 24)),
+            gate_min_iters=int(config.get("gate_min_iters", 8)),
+            gate_min_games_per_side=int(config.get("gate_min_games_per_side", 40)),
+            gate_demote_delta_elo=float(config.get("gate_demote_delta_elo", -50.0)),
+            gate_alpha=float(config.get("gate_alpha", 0.05)),
+            gate_max_hold_iters=int(config.get("gate_max_hold_iters", 12)),
 
   # --- Puzzle ---
             puzzle_epd=_get("puzzle_epd", None),
@@ -775,6 +796,17 @@ class SelfplayResult:
     total_adjudicated_games: int = 0
     total_tb_adjudicated_games: int = 0
     total_draw_games: int = 0
+
+  # Anchored promotion-gate split of the vs-SF (curriculum) outcomes above, by
+  # which published model played them: "cur" = the model published this
+  # iteration, "prev" = last iteration's. Both faced the same handicapped
+  # Stockfish, so their difference is a free A/B of one training iteration.
+    gate_cur_w: int = 0
+    gate_cur_d: int = 0
+    gate_cur_l: int = 0
+    gate_prev_w: int = 0
+    gate_prev_d: int = 0
+    gate_prev_l: int = 0
 
   # Selfplay-only subset
     total_selfplay_games: int = 0
@@ -883,7 +915,10 @@ class TrainingResult:
 
     metrics: TrainMetrics | None = None
     test_metrics: TrainMetrics | None = None
-    gate_passed: bool = True
+  # NOT a bool. The reported metric must distinguish "the gate did not run"
+  # from "the gate passed"; the old bool defaulted to True and emitted
+  # ``gate_passed: 1`` for 200+ iterations with zero games played.
+    gate_decision: GateDecision = field(default_factory=GateDecision)
     steps: int = 0
     target_sample_budget: int = 0
     window_target_samples: int = 0
