@@ -4890,6 +4890,38 @@ defect and NOT a G5 regression.** I flagged it as a possible
   eval to collect, so it returns `(None, -1)` and every `test_*` field is nan by
   construction.
 
+**RESOLVED at iter 165 — the ruler is back and G14 is confirmed live.** Full
+post-restart series:
+
+| iter | test_size | test_iter | test_wdl_loss |
+|---|---|---|---|
+| 163 | 0 | -1 | nan — async cold start |
+| 164 | 0 | -1 | nan — compile timeout (see below) |
+| **165** | **2000** | — | **0.84645** |
+
+`test_size = 2000` is exactly `holdout_capacity`: a deterministic single pass over
+the frozen set. The pre-#277 series read **2560** — 2560 draws WITH REPLACEMENT
+from <=2000 rows. **PR #277 is deployed and doing what it claimed; G14 passes.**
+
+**⚠ The `test_*` series is NOT comparable across this boundary.** The definition
+changed, so 0.84645 cannot be read against the 0.834-0.844 of the 2560-draw era,
+and **the 0.052-nat noise floor was measured on the OLD resampling ruler and does
+not carry over.** The frozen-holdout history restarts at iter 165.
+
+**iter 164's zero has its own root cause, and it is NOT the cold start.** Exactly
+one `async test eval did not finish within 120.0s` plus one `abandoning prior
+result`. Cause: **PR #277's ragged tail batch.** `_iter_full_pass_batches`
+(`train/trainer.py:2138`) documents it — *"the final batch is ragged ... under
+`torch.compile` that second shape costs one extra graph on the first pass"* — and
+2000/512 gives shapes **512 and 464**, so a fresh process must compile BOTH before
+its first result. That exceeds the 120s budget. The extra graph was anticipated;
+its collision with the timeout on a cold process was not. Ruled out: cold inductor
+cache (`TORCHINDUCTOR_CACHE_DIR=/tmp/torchinductor_josh` persists).
+**Self-healing** — Python cannot kill the thread, so the abandoned eval keeps
+compiling and warms the cache. **Standing cost: exactly 2 holdout readings per
+restart.** Fix ranked in the task list; pre-warming both shapes at init is the
+only option that removes the cost rather than hiding it.
+
 **Recorded as a positive, because it is one:** the code emits `test_iter = -1`
 and `nan` rather than `0.0`-as-a-measurement. That is exactly the
 no-observation-is-not-a-zero discipline behind `duplicate_rate() -> None`, and it
