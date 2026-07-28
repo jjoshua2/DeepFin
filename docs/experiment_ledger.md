@@ -4830,6 +4830,58 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### ⚑ G16 — the iter-165 "new best model" is a RULER CHANGE, not an improvement. Do not cite 4.8533 as progress. (2026-07-28)
+
+**Caused by tonight's own PR #277 deploy**, found by the audit re-read, verified
+independently from `result.json`:
+
+| iter | `best_loss` | `test_loss` | `test_size` | `holdout_generation` |
+|---|---|---|---|---|
+| 160-162 | 4.90535 | 4.94-5.02 | 2560 | 1 |
+| **165** | **4.85326** | **4.85326** | **2000** | **1** |
+
+The iter-165 model was promoted to best because 4.8533 < 4.9054 — **but those two
+numbers come from different instruments.** Pre-#277 is 2560 draws WITH
+REPLACEMENT, WDL-rebalanced and half priority-weighted; post-#277 is ONE
+unweighted deterministic pass over the same 2000 rows. `holdout_generation`
+stayed at 1 across the change because **it tracks the SET, not the MEASUREMENT**,
+so the same-ruler branch ran and the comparison was made across a definitional
+step.
+
+**The step is definitional and the decomposition proves it:** -0.156 nats on
+`test_loss` (-4.24 sd), of which **-0.115 is policy (-5.70 sd)** while **WDL is
+flat at +0.002 (+0.27 sd)**. A real improvement would not be that asymmetric.
+Dropping priority weighting is exactly what would move policy and leave WDL
+alone — which independently corroborates H4.
+
+This is [[best_model_ruler_mixing]] recurring, and it recurred because the guard
+was built against the wrong invariant.
+
+**DECISION — stated, not silently accepted:**
+1. **The ongoing state is self-consistent.** From iter 165 every candidate is
+   scored on the new ruler against a new-ruler baseline of 4.8533. No further
+   cross-instrument comparison occurs.
+2. **NOT un-promoting the iter-165 model.** The previous best was one iteration
+   older, the true quality difference is almost certainly inside the noise, and
+   the promotion gate is separately known-disabled (`gate_games: 0`). Reverting
+   carries its own risk for no measurable gain.
+3. **But the promotion is NOT evidence of improvement and must not be cited as
+   such** — including in any future "best_loss improved" narrative that spans
+   2026-07-27 20:47.
+4. **The mechanism fix is the real work**, because every future ruler change
+   repeats this: bump the generation on a hash of (set identity, eval mode,
+   batch semantics), not set identity alone. A one-off bump is not acceptable.
+   PR in flight.
+
+**⚑ Standing rule this generalises to: a ruler change must invalidate the
+records set under the old ruler, and the invalidation must be automatic.** Any
+"best" tracked across a measurement change is a comparison of two different
+questions. The audit's own G4 note carries the companion consequence — the
+0.052-nat noise floor was measured on the OLD resampling ruler and does not carry
+over, so kill rules and "flat by design" claims stated in units of it are void
+after 20:47.
+
+
 ### VERIFICATION (2026-07-28 ~01:3x) — zclip HELD; the vloss discriminator was UNDERPOWERED and is WITHDRAWN, not read
 
 **(a) zclip survived the resume — PASS, and the banner was a red herring.**
