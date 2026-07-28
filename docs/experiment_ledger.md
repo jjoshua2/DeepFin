@@ -1948,8 +1948,28 @@ entropy only 1.24→1.52 (and non-monotonically), while moving the value target'
 range 0.411→0.991 and the draw fraction at 0cp 0.178→0.537. **So the cp mapping is
 effectively a VALUE knob**, and the WDL blend's SF component is load-bearing (zeroing it
 crashed winrate 0.64 → 0.40). **`sf_policy_temp` is the clean policy-only lever**: ~3×
-entropy range, no value coupling, and live-reloadable — it is in the worker's
-server-managed key list (`worker.py:781`), so it propagates without a restart.
+entropy range and no value coupling.
+
+**⚠ CORRECTION 2026-07-28 — "live-reloadable, propagates without a restart" WAS WRONG,
+and wrong in the expensive direction.** The cited `worker.py:781` is the **CLI-override
+guard**, not a live-reload path. `sf_policy_temp` is in **`_RECO_RESTART_KEYS`**
+(`worker.py:2867/2918`, verified by reading the tuple), so changing it **abandons every
+in-flight game on all four workers**. Two further corrections to this entry:
+1. **It shapes THREE targets, not one.** Beyond `sf_policy_target` → `policy_sf`
+   (`w_sf_move` 0.02, the opponent-reply target that is not a teacher), it also builds
+   **`sf_p0_policy_target` → `policy_own` (`w_sf_own` 0.1)** — `finalize.py:983-997`
+   constructs it as the PREVIOUS ply's `sf_policy_target`. **That is the only external
+   move-teacher in the loop, and it went live today at 14:12.** The SF-refute opp rows are
+   inert (`sf_refute_record_opp_rows: false`). `w_sf_own_regret` (a cp vector) and
+   `sf_wdl` are temperature-INVARIANT.
+2. **Only NEW rows change.** The replay window takes ~a day to turn over, so a
+   temperature change is not readable before then.
+
+*Parity proof that the knob is in effect:* rebuilding from stored `sf_multipv_raw` at
+T=0.012 reproduces the stored `sf_policy_target` to TV **7e-5** and `sf_p0_policy_target`
+to TV **8e-5** on tonight's shards; every other temperature is ≥0.07 off. The trainer
+builds its own `SfTargetParams` from the same key but that path is **inert** — gated on
+`rebuild_sf_targets` / `sf_policy_sparse_ce`, neither present in the yaml.
 
 **⚠⚠ THE FROZEN AUDIT SET IS STRUCTURALLY INCAPABLE OF CHOOSING THIS KNOB. DO NOT SCREEN
 TEMPERATURE ON IT.** Both of `audit_targets`' policy columns are degenerate in temperature:
