@@ -4830,6 +4830,54 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### ⚑ OPERATING RULE — arenas are a CONFIRMATION tool, not a progress check (2026-07-28)
+
+**Do not run an arena unless you already believe the effect is >=50 Elo, or
+something structurally major just landed. Then it is nearly free.**
+
+Games needed at ~95%, against the working floor of +-10 Elo at ~1000 pentanomial
+games:
+
+| effect | games |
+|---|---|
+| 100 Elo | ~10 |
+| **50 Elo** | **~40** |
+| 30 Elo | ~111 |
+| 20 Elo | ~250 |
+| 10 Elo | ~1,000 |
+| 5 Elo | ~4,000 |
+
+**The cost curve is the whole argument.** An arena gated on "I think this is
+major" costs ~40 games. An arena run speculatively — to see whether anything
+happened — is the expensive case AND the uninformative one, because at the
+baseline +0.21 Elo/1000 steps a day of training is +1.2 Elo and needs ~66,000
+games. The two uses are not the same activity at different sizes; they are
+different activities.
+
+**Consequences, and they supersede the plan written earlier tonight:**
+1. **The "~660-game 10x detector" is the wrong default.** Reserve arena time for
+   >=50 Elo suspicions, where ~40-200 games settles it. If a change is only worth
+   a 660-game arena, it is not yet worth an arena.
+2. **The C17 + sf_p0 readout at iter 169 is NOT scheduled.** We do not currently
+   believe that bundle is >=50 Elo — the evidence is -7.4 cp on the training
+   target, which has no established Elo mapping. **Do not run it just because the
+   anchor is ready.**
+3. **Detect with cheap instruments; CONFIRM with the arena.** The frozen holdout
+   (now a deterministic pass, G14), `value_regret`, and `audit_targets` leg (d)
+   all resolve far smaller effects per unit of compute. Their job is to say
+   "something big may have happened"; the arena's job is to say "yes, and it is
+   worth N Elo".
+4. **This does not devalue the anchor** — it costs nothing to hold, and its value
+   is being old. It just means the trigger is a suspicion of >=50 Elo, not a
+   calendar.
+
+**Ranking implication.** Time is better spent finding the next unwired-feature
+class defect than measuring the last one. Every large multiplier this project has
+found came from that class — sf_p0 dead 15.8 days, `soft_policy_temp` never
+published, `diff_focus` never reaching the worker, C17's duplicate leaves — and
+none of them needed an arena to be identified, only to be priced.
+
+
 ### DESIGNATED STRENGTH ANCHOR banked (2026-07-28)
 
 `data/salvage/ANCHOR_20260727_preC17_step65475_lr3e-5/` — copied from
