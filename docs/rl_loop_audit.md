@@ -207,6 +207,22 @@ These are written from mistakes made *while doing this audit*, not hypotheticals
     that also contained 0.613 and 0.289. **Quote a slope with its t, or quote the
     sd alongside the points.**
 
+17. **An equivalence check cannot see a bug that both sides share.** Comparing
+    the training encoder to the serving encoder proves they agree; it says
+    nothing about whether either is *right*. A plane mirrored, an en-passant
+    square written on the wrong rank, or a move index mis-mapped — identically
+    in both paths — produces a diff of exactly zero, and the net simply learns a
+    corrupted board. Self-consistency is not correctness, and it is the failure
+    mode this whole document is most exposed to, because nearly every instrument
+    here compares one part of the pipeline to another. **When the question is
+    semantics rather than agreement, the referee must be EXTERNAL** —
+    python-chess for board features, or a hand-built position whose correct
+    value is unambiguous. This is also why "four implementations agree
+    bit-for-bit" (M1) is weaker than it sounds: implementations derived from one
+    another inherit each other's mistakes. M28–M34 were added on 2026-07-28
+    specifically to put an external referee behind M1's agreement, and only then
+    could the train/serve hypothesis honestly be called dead.
+
 ---
 
 ## 3. The loop, as stages
@@ -809,8 +825,85 @@ regime it never otherwise sees.
 | M12 | the legacy→lc0_root fallback remap preserves side-to-move | read `trainer._legacy_x_to_synthetic_lc0_root` against the measured layout | **FAILED-THEN-FIXED 2026-07-26 — it never can, so it now refuses.** The remap sets plane 108 (side-to-move) to **0 unconditionally**: the legacy layout has no absolute colour to recover (its plane 101 is a constant 1.0 for every position), so this is unfixable in place. *Decision:* `select_input_history_arrays` / `select_input_history_samples` now **raise** when a row needs the synthetic remap — legacy-stored, no recorded `x_lc0_root` — unless the caller passes `allow_lossy_legacy_remap=True`. The training path never passes it, so a salvage restore from a pre-switch pool now stops with an actionable error instead of training a whole window as white-to-move. Offline tooling opts in through the harness's existing `synthetic_lc0_root_history` switch. Rows carrying a recorded root tensor are lossless and unaffected; 0 live rows are affected either way (M6) |
 | M13 | `history_rep_fix` cannot differ between two models sharing a process | `encoding/rep_fix.py` is a process-global setter; `build_model` is the single chokepoint | **CODE-ONLY** — last-writer-wins if two checkpoints with different flags are built in one process, mitigated by each arena side running as its own subprocess and by `ARCH_SCHEMA_VERSION = 17` rejecting checkpoints that would default the key. Separately: the yaml's claim that the fix "affects ~0.2% of positions" **could not be reproduced** — on/off differed on 0 of 312 boards (`probe_repfix_delta.py`), all built via `from_board`. Not a contradiction (the fix targets `hash_stack` truncation, which that probe does not exercise) but the 0.2% figure is unverified |
 
+### M14–M34 — the train/serve representation hunt (added 2026-07-28)
+
+**Why these exist.** The run is ~500 Elo below Cheese improving at ~0.02 Elo/iter,
+which is a broken-system profile, and improvement is ~1500× below measurement
+noise — so only a LARGE defect is findable, and only by EXACT checks. The
+hypothesis under test was the classic catastrophic one: **the net is trained on
+one representation and played on another** (transposed board, flipped
+side-to-move, mis-mapped move index, inverted value sign). Every row below is a
+bitwise or identity assertion; not one is statistical.
+
+**Result: the hypothesis is dead. All 21 rows PASS.** The class is eliminated.
+
+**⚑ THE METHOD RULE THIS PASS ADDS (method rule 16): an equivalence check
+cannot see a bug that both sides share.** Comparing the training encoder to the
+serving encoder is blind to a plane that is mirrored, an EP square written on
+the wrong rank, or an index mis-mapped — *identically in both*. Self-consistency
+is not correctness. M28–M34 therefore check against **python-chess as an
+external referee**, not against the other path. M1 (four encoders agree
+bit-for-bit) was necessary but on its own proves only that the four were derived
+from one another.
+
+| # | invariant | instrument | status |
+|---|---|---|---|
+| M14 | every legal move round-trips through the 4672 action space | `scratchpad/hunt_move_roundtrip.py` — `move_to_index` → `index_to_move` over every legal move of 102 varied positions (random walks, blindspot FENs, castling/EP/promotion specials, both colours) | **VERIFIED 2026-07-28** — 3,065 legal moves, 0 round-trip failures, 0 within-position index collisions. `uci_to_policy_index` agrees with `move_to_index` on all 3,065 |
+| M15 | the 1858 ↔ 4672 correspondence is a bijection on legal moves, both directions | same probe: `compact_policy_index` → `full_policy_index` → `index_to_move` | **VERIFIED 2026-07-28** — `f2c(c2f(i)) == i` over the whole compact space; exactly 1,858 of 4,672 full indices map to compact; every legal move has a compact index; 0 collisions. The torch device tensors in `moves/torch_maps.py` are `array_equal` to the numpy tables on **both cpu and cuda** — the shared-lookup rule holds, no private copy has drifted |
+| M16 | promotions and castling survive the round trip exhaustively, not incidentally | `scratchpad/hunt_promo_exhaustive.py` — one position per (colour × from-file × capture-direction), plus 6 castling positions | **VERIFIED 2026-07-28** — 50 positions, 556 moves, **280 promotions (70 each of Q/R/B/N)**, 12 castles. Zero round-trip failures and zero index collisions in either space. The first pass had only 8 promotions, which is why this row exists separately: **the usual failure site was the thinnest-covered part of the earlier check** |
+| M17 | the policy head's OWN gather tables reproduce the canonical move layout | `scratchpad/hunt_serve_orientation.py::check_p1` — `build_policy_gather_tables()` (what `AttentionPolicyHead` registers as buffers) vs `_MOVE_INDEX_LUT` / `_is_geometrically_valid_policy_index` | **VERIFIED 2026-07-28** — 1,792 valid (from,plane) cells all map to the LUT's to-square, and all 4,096 validity bits match the geometric predicate the compact map is built from. This is the highest-risk row in the section: the head is an **independent reimplementation** of the plane layout, so a permutation here would silently mislabel every logit while every loss stayed self-consistent |
+| M18 | the 1858 training path and the 4672 search path read the same logit for the same move | same probe — `model(x)["policy_own"]` vs `model.forward_legal_policy_rows(x, legal_flat_4672, rows)` on the live checkpoint | **VERIFIED 2026-07-28** — 755 legal-move logits over 26 boards, `max|Δ| = 1.14e-5` (fp reassociation: matmul-then-gather vs elementwise dot) and the **argmax agrees on 26/26 boards**. Training reads compact, MCTS reads full 4672; they are the same numbers |
+| M19 | the served policy is geometrically oriented, for BOTH colours | same probe — 60 unique mate-in-1 positions (30 White to move, 30 Black, the Black set being the exact colour mirror of the White set), argmax decoded through the production path | **VERIFIED 2026-07-28** — mate is the argmax in **24/30 for White and 24/30 for Black**, mean normalised rank of the mating move **0.040 for both colours**. Exact colour symmetry is the diagnostic: a POV or transpose error on one side only would split the two numbers, and a scrambled index space would put both at chance |
+| M20 | the served argmax is invariant under the colour mirror, at the index level | same probe — `serve_policy(b)` vs `serve_policy(b.mirror())`, 120 random positions | **VERIFIED 2026-07-28** — the argmax **policy index is literally identical** on 117/120, and the 3 differences are near-ties (the two inputs differ only in plane 108, so the logits differ only by that perturbation). Both boards encode into the same side-to-move-oriented index space, which is what makes index identity — not move identity — the right assertion |
+| M21 | the served `wdl` is side-to-move POV with class 0 = WIN | same probe — positions two queens / two rooks + queen up for the side to move, and their exact colour mirrors | **VERIFIED 2026-07-28** — W/D/L `0.901/0.073/0.025` (White to move) and `0.879/0.090/0.031` on the colour mirror; second pair `0.968/…` and `0.970/…`, `|ΔW| = 0.0014`. Argmax is class 0 in all four. `wdl` is the only value head MCTS uses, so this is the row a sign error would hide in |
+| M22 | the TRAINING `wdl_target` is side-to-move POV — measured, not assumed | `scratchpad/hunt_targets_vs_x.py::T4` — within one `game_id`, rows whose `ply_index` differ by an ODD number must have SWAPPED wdl (0↔2, 1↔1); by an EVEN number, EQUAL | **VERIFIED 2026-07-28** — **29,797 of 29,797 pairs correct, of which 14,728 are odd-gap.** Zero violations. This needs no external ground truth: a white-POV target would make every row of a game equal and would fail every odd-gap pair. Serving (M21) and training (M22) are therefore the same convention |
+| M23 | `wdl_target` class 0 means WIN and not LOSS | same probe, T5 — material balance (us − them) decoded from the row's own piece planes, bucketed by `wdl_target` | **VERIFIED 2026-07-28** — wdl 0 mean `+2.470`, wdl 1 mean `−0.257`, wdl 2 mean `−2.262`. The sign separation is unambiguous; an inverted mapping would reverse it. Together with M21/M22 this closes the value-sign question end to end |
+| M24 | the stored input planes and the 1858 index space agree on the position | same probe, T1 — decode `x`'s piece planes, regenerate the legal-move mask, compare to the shard's own stored `legal_mask` | **VERIFIED 2026-07-28** — over 2,400 rows: **2,247 bitwise-exact, 153 differing only in castling moves, 0 real mismatches.** Castling rights are not recoverable from the planes (`plane_decode` sets `castling_rights = 0`), so those 153 are an instrument limit, not data. This is the row that ties `x` to the policy index space |
+| M25 | every policy target puts mass only on legal moves | same probe, T2 — support of `policy_target` and `policy_soft_target` against the stored `legal_mask` | **VERIFIED 2026-07-28** — 2,400/2,400 rows clean for both. `sf_p0_policy_target` (SF's teacher for THIS position) is also clean: 515 present, 0 illegal |
+| M26 | the SF targets really are one POV-flipped ply ahead, as CLAUDE.md claims | `scratchpad/hunt_sf_target_frame.py` + `hunt_sf_frame_refine.py` — support of `sf_policy_target` against `sf_legal_mask`, then: does SOME legal move from `decode(x)` reproduce `sf_legal_mask` exactly? | **VERIFIED-WITH-RESIDUAL 2026-07-28** — `sf_policy_target` support is inside `sf_legal_mask` on **2,394/2,394** rows, and **2,379 of those are NOT inside the P0 mask** — so the P1 frame is real and the POV flip genuinely happens, rather than being a comment. Frame reconstruction: **1,193/1,196** rows have a legal move from `decode(x)` whose resulting position reproduces `sf_legal_mask` (castling-blind). 3 residual rows, all consecutive plies of one late-game position, unexplained at 0.25% — recorded, not chased, and far too small to be a strength defect. **Do not re-derive this against `legal_mask`:** the first pass "found" 2,379 illegal SF-policy indices that way, which is the documented P1 semantics, not a bug |
+| M27 | search improves on the raw policy rather than inverting it | `scratchpad/hunt_search_value_sign.py` — production `run_gumbel_root_many_c` on 64 mate-in-1 positions (32 White, 32 Black) vs raw policy argmax | **VERIFIED 2026-07-28** — raw policy top-1 **0.781**; Gumbel search top-1 **1.000 at 8, 32 and 128 sims**. A wrong per-ply negation in the WDL→Q backprop would make search systematically *worse* than its own prior and would get worse with more sims. `wdl_logits_to_q` in `_mcts_tree.c:43` is `(e^w − e^l)/Σ`, the correct sign given M23 |
+| M28 | no input plane is dead, constant, or degenerate | `scratchpad/hunt_plane_semantics.py::check_a` — per-plane mean/std/min/max over 3,000 REAL replay rows | **VERIFIED 2026-07-28** — exactly **one** plane has zero variance: plane **111**, constant 1.0, which is lc0's intentional all-ones border. No all-zero plane, no near-constant plane (`0 < std < 1e-3` is empty). The whole 63-plane extra block is live, `std` from 0.014 (extra[12], a rare pin family) to 0.4996 (attacks-us) |
+| M29 | EVERY plane is colour-mirror invariant except the intentional flag | same probe, check_b — encode P (White to move) vs the rank-mirrored colour-flipped P′ (Black to move), per-plane, 300 boards | **VERIFIED 2026-07-28** — the set of planes differing across the mirror is **exactly {108}**, the side-to-move flag. All other 174 planes match bitwise on all 300 boards. A plane that survived the mirror un-mirrored would be backwards for half the corpus and would cancel learning across colours; none does. Stronger than M5, which was history-free and reported the count rather than the per-plane identity |
+| M30 | en passant is represented, on the right file, only when it applies | same probe, check_c — plane 110 vs python-chess `ep_square` / `is_en_passant` | **VERIFIED 2026-07-28** — there IS an EP plane (110, the `lc0_root_legacy_meta` ep-file plane). Set to the correct file on all 3 EP positions (f, f, c), empty on both non-EP positions, and the file is unchanged under the colour mirror — correct, since a colour mirror flips ranks and never files |
+| M31 | the four castling rights are on the right planes and not K/Q swapped | same probe, check_d — drop ONE right at a time from `r3k2r/pppppppp/…/R3K2R` and see which plane moves | **VERIFIED 2026-07-28** — dropping White-K moves **only** plane 105, White-Q only 104, Black-K only 107, Black-Q only 106. Layout is **104=us-Q, 105=us-K, 106=them-Q, 107=them-K**, confirming M9's measured layout by an independent method. us/them rebind correctly with the side to move: with only White holding rights, White to move gives `us=(1,1) them=(0,0)` and Black to move gives `us=(0,0) them=(1,1)` |
+| M32 | the v2_threats planes mean what the docstring says | same probe, check_e — 18 planes rebuilt independently from python-chess `attacks_mask` / `is_attacked_by` on 300 boards | **VERIFIED 2026-07-28** — **0/300 mismatches on all 18**: attacks-us-all (146), attacks-them-all (147), the twelve per-piece-type attack planes (148–159), hanging ours/theirs (162/163) and pawn-tension ours/theirs (171/172). No attacker/defender pair is swapped. Not every extra plane is covered — see "could not check" below |
+| M33 | the C encoders inherit the external-referee verdict | `scratchpad/hunt_encoder_diff_and_promo.py::check_f` — `CBoard.from_board` + `encode_cboard` and `encode_positions_batch` vs python `encode_position`, 120 boards | **VERIFIED 2026-07-28 (re-measured, not cited)** — `max|Δ| = 0.000e+00`, 0 planes differing, for both. This is the load-bearing link: M32 proves the *python* encoder matches python-chess, and that only transfers to the production C path because this row re-establishes bit-equality rather than trusting M1's status cell |
+| M34 | the queen-promotion index alias is safe | same probe, check_g | **VERIFIED-BY-DESIGN 2026-07-28** — (a) in all 16 promotion positions the four promotion pieces get four **distinct** indices (queen on the queen-move plane, N/B/R on underpromotion planes). (b) The alias is real and intentional: `index(e7e8q with a pawn on e7) == index(e7e8 with a rook on e7) == 3796`. It is unresolvable only if a pawn and a non-pawn could occupy e7 simultaneously, which one-piece-per-square forbids; `index_to_move_fast` resolves it from the piece actually on the from-square and decodes both correctly. **Caution for future probes:** the first draft put the black king on e8, making the promotion illegal, and misread the decoder's illegal-index fallback as a decode bug |
+
+**What this section can now say plainly: the classic catastrophic bug is NOT
+present.** Input planes, side-to-move canonicalisation, the 1858↔4672 move
+mapping, policy orientation, value sign, and the SF target frame are all
+correct, and correct *against python-chess*, not merely self-consistent. The
+~500-Elo gap is not a representation bug. **Redirect the search** — the
+remaining M-stage defects are the train-only transforms around the encoder
+(M8 feature dropout, uncompensated at inference; M10 rulers scoring the net on
+FEN-only inputs with 91 of 175 planes zeroed), and those are skews, not
+catastrophes.
+
+**Not checked, and why** — so nobody reads this as broader than it is:
+extra planes 112–145 (the v1 king-zone / pin / pawn-structure / mobility /
+outpost families) and 166–169 (v2 safe-checks), 170 (control), 173–174 (pawn
+storm) were covered only by M28's variance sweep and M29's mirror identity, not
+by a python-chess reconstruction — M32 rebuilt the 18 planes whose ground truth
+is unambiguous in one line of python-chess. `sf_played_move_index` was audited
+and found to be **diagnostic only** (the trainer never reads it; `shard.py:1206`
+gates on `has_sf_played_move`, and when the flag is clear the stored value is 0
+rather than −1 — inert, but do not start reading that field without a sentinel
+fix). History-plane filling at game start / after a repetition / mid-game was
+NOT re-measured here; it rests on M2 and M4, which are VERIFIED but were
+measured on 2026-07-26.
+
 
 ---
+
+**Tally as of 2026-07-28 — 181 invariants** (160 on 07-27 evening; 58 on the
+morning of 07-26). The 21 new rows are M14–M34, all VERIFIED, all in stage M.
+**Read that block the way method rule 15 requires: a stage that gains 21 rows
+and 0 failures has been examined, not blessed** — what it buys is the
+*elimination of a hypothesis* (train/serve representation mismatch), which is
+worth recording precisely because the hypothesis was the leading candidate for
+a several-hundred-Elo defect. The FAILED count is unchanged at 29; M8 and M10
+remain the stage's open defects and are unaffected by this pass.
 
 **Tally as of 2026-07-27 21:5x — 160 invariants** (58 on the morning of 07-26).
 Stage M is new; stages A, C, D, E, G, H, I, J, K and L were all extended. The
