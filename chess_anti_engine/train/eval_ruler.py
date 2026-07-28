@@ -19,11 +19,22 @@ different kinds of evidence, because the two failure modes are different:
     mirror probability, pooling. This is what catches PR #277's actual shape:
     the call site chose a different measurement while the code implementing
     both stayed identical.
-  * a **semantic source digest** of the functions that actually produce the
-    eval batches. This catches the opposite shape: the call site is unchanged
-    but the pass itself is rewritten (an order change, a re-introduced
-    augmentation, a switch back to sampling). A descriptor alone cannot see
-    that, because a descriptor is a claim about the code and this is the code.
+  * a **semantic source digest** of the functions that actually turn buffer
+    rows into the pooled number. This catches the opposite shape: the call
+    site is unchanged but the measurement itself is rewritten (an order
+    change, a re-introduced augmentation, a different pooling denominator, a
+    switch back to sampling). A descriptor alone cannot see that, because a
+    descriptor is a claim about the code and this is the code.
+
+**The digest is not transitive** and the boundary is a deliberate choice, not
+an oversight. Hashing a function does NOT hash what it calls, so the covered
+set is exactly the functions handed to ``measured_by`` — see
+``Trainer._eval_ruler_id``, which lists them and states what is left out.
+Anything one frame deeper (the loss function's body, the encoders) can still
+move `test_loss` on a frozen holdout without moving this id. That gap is
+recorded in the ledger rather than implied away: a descriptor field naming
+something the digest does not reach would be the same unbacked claim this
+module exists to remove.
 
 The digest is taken over the AST with docstrings removed, so comments,
 docstrings, blank lines and reformatting do not move it; a change to what the
@@ -124,7 +135,13 @@ def semantic_source_digest(fn: Callable[..., Any]) -> str:
     change can only take effect at the restart that loads it.
 
     ``_UNAVAILABLE`` when there is no source to read -- a frozen or zipped
-    install, or a function defined in an interactive session.
+    install, or a function defined in an interactive session. That is logged
+    once per function, loudly, because a degraded digest still yields a
+    perfectly well-formed id: the deploy check would pass and the handover
+    line would still fire, with nothing to tell an operator that half the
+    mechanism is inert. `print` rather than `logging` for the reason
+    ``tune/holdout_state`` gives -- this runs inside a Ray actor whose stdout
+    is what train.sh captures.
     """
     key = (getattr(fn, "__module__", "?"), getattr(fn, "__qualname__", repr(fn)))
     cached = _digest_cache.get(key)
@@ -136,6 +153,13 @@ def semantic_source_digest(fn: Callable[..., Any]) -> str:
         digest = _UNAVAILABLE
     else:
         digest = digest_source(src)
+    if digest == _UNAVAILABLE:
+        print(
+            f"[eval_ruler] DEGRADED: no readable source for {key[0]}.{key[1]}, "
+            f"so the holdout ruler id cannot see changes to it; the id is now "
+            f"the declared descriptor alone",
+            flush=True,
+        )
     _digest_cache[key] = digest
     return digest
 
@@ -146,8 +170,7 @@ def eval_ruler_id(
     batch_size: int,
     steps: int,
     mirror_prob: float,
-    pooling: str,
-    batch_fns: Sequence[Callable[..., Any]],
+    measured_by: Sequence[Callable[..., Any]],
 ) -> str:
     """The identity of one holdout measurement, e.g. ``v1:full_pass:a1b2c3d4``.
 
@@ -158,6 +181,13 @@ def eval_ruler_id(
     ``steps`` is the SAMPLED batch count and is meaningless under a full pass;
     callers pass 0 there so that retuning ``test_steps`` -- which no longer
     reaches the eval -- cannot invent a ruler change.
+
+    There is deliberately no ``pooling`` field. It was one, as the literal
+    ``"row_weighted"``, and a literal is exactly the unbacked claim this
+    module argues against: row-weighting lives in ``_compute_metrics``, and
+    with that function unhashed the denominator could be changed with the id
+    sitting still. The fix is to hash the function, not to name it -- so
+    pooling is covered by ``measured_by`` now, and asserted nowhere.
     """
     descriptor = {
         "schema": int(EVAL_RULER_SCHEMA),
@@ -165,8 +195,7 @@ def eval_ruler_id(
         "batch_size": int(batch_size),
         "steps": int(steps),
         "mirror_prob": float(mirror_prob),
-        "pooling": str(pooling),
-        "batch_fns": [semantic_source_digest(fn) for fn in batch_fns],
+        "measured_by": [semantic_source_digest(fn) for fn in measured_by],
     }
     payload = json.dumps(descriptor, sort_keys=True, separators=(",", ":"))
     return f"v{EVAL_RULER_SCHEMA}:{mode}:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"

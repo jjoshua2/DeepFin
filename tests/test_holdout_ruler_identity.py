@@ -40,30 +40,58 @@ from chess_anti_engine.tune.trainable import _maybe_bump_generation_on_ruler_cha
 from chess_anti_engine.tune.trainable_init import _apply_restored_holdout_scalars
 from chess_anti_engine.tune.trial_config import RestoreResult
 
+  # Everything the eval does to turn buffer rows into a pooled number. The
+  # shared frames are the ones a descriptor field could only ever CLAIM to
+  # cover: `_compute_metrics` owns the row-weighted denominator and
+  # `_prepare_host_arrays` owns target rebuilds and history selection, both
+  # shared with the training path and therefore actively edited.
+SHARED_FNS: tuple[Callable[..., Any], ...] = (
+    Trainer._compute_metrics, Trainer._prepare_host_arrays,
+    Trainer._host_batch_to_tensors,
+)
 FULL_PASS_FNS: tuple[Callable[..., Any], ...] = (
-    Trainer._iter_full_pass_batches, Trainer._full_pass_host_batch,
+    *SHARED_FNS, Trainer._iter_full_pass_batches, Trainer._full_pass_host_batch,
 )
 SAMPLED_FNS: tuple[Callable[..., Any], ...] = (
-    Trainer._iter_prefetched_batches, Trainer._sample_batch_host,
+    *SHARED_FNS, Trainer._iter_prefetched_batches, Trainer._sample_batch_host,
 )
 
 
 def full_pass(
     *, batch_size: int = 512, steps: int = 0,
-    batch_fns: Sequence[Callable[..., Any]] = FULL_PASS_FNS,
+    measured_by: Sequence[Callable[..., Any]] = FULL_PASS_FNS,
 ) -> str:
     """The production ruler: a deterministic pass at the production batch size."""
     return eval_ruler_id(
         mode="full_pass", batch_size=batch_size, steps=steps, mirror_prob=0.0,
-        pooling="row_weighted", batch_fns=batch_fns,
+        measured_by=measured_by,
     )
+
+
+def _production_ruler_fn():
+    """`Trainer._eval_ruler_id` bound to the real methods, no Trainer built.
+
+    Instantiating a Trainer needs a model and a device; the id depends on
+    nothing but the methods' source, so the methods alone are the honest
+    fixture. Anything the production method reaches for that is not listed
+    here is an AttributeError, which is the point.
+    """
+    fake = SimpleNamespace(**{
+        name: getattr(Trainer, name)
+        for name in (
+            "_compute_metrics", "_prepare_host_arrays", "_host_batch_to_tensors",
+            "_iter_full_pass_batches", "_full_pass_host_batch",
+            "_iter_prefetched_batches", "_sample_batch_host",
+        )
+    })
+    return Trainer._eval_ruler_id.__get__(fake)
 
 
 def sampled(*, batch_size: int = 512, steps: int = 5) -> str:
     """The pre-PR-277 ruler: `steps` x `batch_size` draws with replacement."""
     return eval_ruler_id(
         mode="sampled", batch_size=batch_size, steps=steps, mirror_prob=0.0,
-        pooling="row_weighted", batch_fns=SAMPLED_FNS,
+        measured_by=SAMPLED_FNS,
     )
 
 
@@ -83,14 +111,52 @@ def test_the_same_measurement_produces_the_same_ruler_id() -> None:
     assert full_pass(batch_size=512, steps=0) == full_pass()
 
 
-def test_the_production_batch_functions_have_readable_source() -> None:
+def test_the_production_measurement_functions_have_readable_source() -> None:
     """The digest degrades to a constant when `inspect.getsource` fails, and a
     constant cannot detect anything. Pin that the real production functions
-    are not silently on that path."""
+    are not silently on that path -- otherwise the deploy check still sees a
+    well-formed id while half the mechanism is inert."""
     for fn in (*FULL_PASS_FNS, *SAMPLED_FNS):
         assert semantic_source_digest(fn) != _UNAVAILABLE
 
     assert full_pass().startswith("v1:full_pass:")
+
+
+def test_the_trainer_covers_exactly_the_documented_measurement_set() -> None:
+    """The production method must hash the frames this module says it does.
+    Drop one there and this fails, rather than the coverage quietly shrinking
+    while the docstring still promises it."""
+    ruler = _production_ruler_fn()
+
+    assert ruler(batch_size=512, steps=0, mirror_prob=0.0, full_pass=True) == full_pass()
+    assert ruler(batch_size=512, steps=5, mirror_prob=0.0, full_pass=False) == sampled()
+
+
+def test_every_covered_function_is_load_bearing() -> None:
+    """Each frame must actually reach the id. A frame that does not is a
+    claim, not a check -- which is what the `pooling="row_weighted"` string
+    literal was: the row-weighted denominator lives in `_compute_metrics`, and
+    with that function unhashed the denominator could be changed with the id
+    sitting still (verified against the real code: the pooling mutation moved
+    `v1:full_pass:e0a17086400b76dc` to `...d2c40c8cb2d95c83` only after
+    `_compute_metrics` joined the set)."""
+    for fn in FULL_PASS_FNS:
+        reduced = tuple(f for f in FULL_PASS_FNS if f is not fn)
+
+        assert full_pass(measured_by=reduced) != full_pass(), (
+            f"{fn.__qualname__} is in the covered set but does not reach the id"
+        )
+
+
+def test_pooling_and_row_prep_are_covered_by_code_not_by_a_label() -> None:
+    """G16 one call frame deeper. `_compute_metrics` owns the pooling
+    denominator and `_prepare_host_arrays` owns target rebuilds and history
+    selection -- both shared with the training path, so both are edited for
+    reasons that have nothing to do with the holdout."""
+    assert Trainer._compute_metrics in FULL_PASS_FNS
+    assert Trainer._prepare_host_arrays in FULL_PASS_FNS
+    assert Trainer._compute_metrics in SAMPLED_FNS
+    assert Trainer._prepare_host_arrays in SAMPLED_FNS
 
 
 def test_batch_size_is_part_of_the_ruler() -> None:
@@ -112,13 +178,7 @@ def test_knobs_that_cannot_reach_the_full_pass_cannot_move_its_ruler() -> None:
     assert full_pass(steps=99) != full_pass(), (
         "both are in the descriptor; the pin belongs at the call site"
     )
-    trainer = SimpleNamespace(
-        _iter_full_pass_batches=Trainer._iter_full_pass_batches,
-        _full_pass_host_batch=Trainer._full_pass_host_batch,
-        _iter_prefetched_batches=Trainer._iter_prefetched_batches,
-        _sample_batch_host=Trainer._sample_batch_host,
-    )
-    ruler = Trainer._eval_ruler_id.__get__(trainer)
+    ruler = _production_ruler_fn()
     baseline = ruler(batch_size=512, steps=5, mirror_prob=0.0, full_pass=True)
 
     assert ruler(batch_size=512, steps=99, mirror_prob=0.0, full_pass=True) == baseline
@@ -177,10 +237,10 @@ def test_a_rewritten_pass_changes_the_digest() -> None:
 def test_a_rewritten_pass_changes_the_ruler_id() -> None:
     def _stub() -> None: ...
 
-    unchanged = full_pass(batch_fns=(_stub,))
+    unchanged = full_pass(measured_by=(_stub,))
 
     assert unchanged != full_pass(), (
-        "the batch functions' digests must reach the id"
+        "the measurement functions' digests must reach the id"
     )
 
 
@@ -191,7 +251,7 @@ def test_an_unreadable_source_degrades_instead_of_raising() -> None:
     fn = eval(compile("lambda: None", "<nofile>", "eval"))
 
     assert semantic_source_digest(fn) == _UNAVAILABLE
-    assert full_pass(batch_fns=(fn,)).startswith("v1:full_pass:")
+    assert full_pass(measured_by=(fn,)).startswith("v1:full_pass:")
 
 
 # --- the generation bump --------------------------------------------------

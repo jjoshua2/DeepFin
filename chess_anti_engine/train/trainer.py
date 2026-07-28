@@ -2211,13 +2211,38 @@ class Trainer:
         """Identity of the measurement `_compute_metrics` is about to perform.
 
         Derived from the arguments that were actually used and from the source
-        of the batch producers actually selected -- not from config, and not
-        from a constant. A ruler change that goes through either route (a
-        different call, or a rewritten pass) therefore lands in the string,
-        and `tune.trainable` turns that into a new `holdout_generation`.
+        of the functions actually selected -- not from config, and not from a
+        constant. A ruler change that goes through either route (a different
+        call, or a rewritten measurement) therefore lands in the string, and
+        `tune.trainable` turns that into a new `holdout_generation`.
+
+        **Covered**, in the order rows travel: which rows and in what order
+        (`_iter_*`), how a chunk becomes host arrays including target rebuilds
+        and history selection (`_*_host_batch` -> `_prepare_host_arrays`), how
+        those become device tensors (`_host_batch_to_tensors`), and how the
+        per-batch results are pooled into one number (`_compute_metrics`,
+        which owns the row-weighted denominator). Pooling used to be a
+        `pooling="row_weighted"` string in the descriptor; that was a claim
+        with no code behind it -- the denominator could be changed with the id
+        sitting still -- so the function is hashed instead.
+
+        **NOT covered**, because the digest does not follow calls: the loss
+        function's body (`compute_loss`), its WEIGHTS, and the encoders under
+        `_prepare_host_arrays`. The weights are a real gap, not a dismissed
+        one -- a config change to `sf_wdl_frac` redefines `test_loss` exactly
+        the way G16 did (the 2026-07-02 floor raise 0.35 -> 0.45 sits in 131
+        rows of history) and this id does not see it. Hashing `_loss_kwargs`
+        as it stands is not the fix: `_sync_trainer_weights` writes the PID's
+        realized `sf_wdl_frac` there, which moves within its configured band
+        on ~15% of iterations, so the hash cannot tell a 0.006 controller
+        excursion from a 0.10 config step and would hand the best-model record
+        over for the former. The fix is to hash the BAND (the configured
+        endpoints) rather than the PID's position in it, which needs config
+        plumbed to here; see docs/rl_loop_audit.md L15 and the ledger entry.
 
         Bound methods are handed over rather than plain functions so a
-        subclass that overrides the pass is fingerprinted as itself.
+        subclass that overrides part of the measurement is fingerprinted as
+        itself.
 
         Two arguments are PINNED in the full-pass branch rather than passed
         through, because neither reaches that measurement: ``steps`` is a
@@ -2226,16 +2251,24 @@ class Trainer:
         half of its positions. A knob that cannot move the number must not be
         able to move its identity, or the handover fires on nothing.
         """
+        shared = (
+            self._compute_metrics, self._prepare_host_arrays,
+            self._host_batch_to_tensors,
+        )
         if full_pass:
             return eval_ruler_id(
                 mode="full_pass", batch_size=int(batch_size), steps=0,
-                mirror_prob=0.0, pooling="row_weighted",
-                batch_fns=(self._iter_full_pass_batches, self._full_pass_host_batch),
+                mirror_prob=0.0,
+                measured_by=(
+                    *shared, self._iter_full_pass_batches, self._full_pass_host_batch,
+                ),
             )
         return eval_ruler_id(
             mode="sampled", batch_size=int(batch_size), steps=int(steps),
-            mirror_prob=float(mirror_prob), pooling="row_weighted",
-            batch_fns=(self._iter_prefetched_batches, self._sample_batch_host),
+            mirror_prob=float(mirror_prob),
+            measured_by=(
+                *shared, self._iter_prefetched_batches, self._sample_batch_host,
+            ),
         )
 
     def reset_optimizer_reference_weights(self) -> None:

@@ -369,7 +369,7 @@ def _update_best_model(
     train_metrics,
     test_metrics_source_iter: int,
     holdout_generation: int,
-    holdout_ruler: str = "",
+    holdout_ruler: str,
     best_loss: float,
     best_source: str,
     best_dir: Path,
