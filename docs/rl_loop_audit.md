@@ -191,6 +191,21 @@ These are written from mistakes made *while doing this audit*, not hypotheticals
     the PID), and the standing "one data-affecting change per readout window"
     rule, which this violated by deploying two of my own changes 8 iterations
     apart.
+    **⚑ COROLLARY, added 2026-07-28 after the rule was misapplied by its own
+    author: once you identify a step, exclude the ENTIRE PRE-STEP SEGMENT before
+    fitting anything — not the stepping row.** A level shift persists on every row
+    *after* it, so dropping the single row where it occurred leaves the shift
+    inside the window and the regression cheerfully reports it as a slope. That is
+    exactly what happened to I11: rule 16 was invoked to explain the iter-132 jump,
+    then a slope fitted over iters 122–162 — which still spans the jump — was read
+    as a continuing ramp. Refitting on the post-step scope alone (134–162, n=29)
+    gives **t=+0.10** on `grad_norm_median` and **t=+0.08** on
+    `grad_hard_clip_rate` — flat — with `grad_norm_p95` actually *declining* at
+    **t=−3.72**. **Explaining a step does not remove it from your data.**
+    Second habit worth the same suspicion: quoting three widely-spaced points as a
+    trend. The "0.26 → 0.34 → 0.48" cited for I11 came from a series with sd 0.085
+    that also contained 0.613 and 0.289. **Quote a slope with its t, or quote the
+    sd alongside the points.**
 
 ---
 
