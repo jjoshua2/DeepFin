@@ -36,7 +36,12 @@ Three `progress.csv` columns report what actually happened, per iteration:
 |---|---|
 | `sf_rebuild_policy_frac` | rows whose `sf_policy_target` was rebuilt / rows in the batch |
 | `sf_rebuild_wdl_frac` | rows whose `sf_wdl` was rebuilt / rows in the batch |
-| `sf_rebuild_masked_frac` | cross-ply presence flags cleared / rows in the batch |
+| `sf_rebuild_masked_frac` | **rows** that lost ≥1 cross-ply target / rows in the batch |
+
+`sf_rebuild_masked_frac` counts ROWS, not flags. Counting flags made it read
+**2.0** on a window where every masked row carried both `has_sf_p0` and
+`has_sf_volatility` — a column named `_frac` that exceeds 1.0 is not a coverage
+number, and it hid the real per-row rate behind the number of flags per row.
 
 All three read **0.0** with the flag off, so a non-zero value *is* the proof
 the flip reached the batch pipeline. The transition log line proves only the
@@ -106,7 +111,22 @@ makes the corruption visible; the pin keeps the measurement usable.
   full-pass batch producers, and this pin makes those producers *invariant* to
   `rebuild_sf_targets`, which is the property #282 wants to be able to assert.
   Note #282 would **not** have caught this on its own — the flag changes a
-  runtime value, not the descriptor or the source digest.
+  runtime value, not the descriptor or the source digest. The pin is the same
+  move #282 already makes for `steps` and `mirror_prob`, under the same stated
+  rule: *a knob that cannot move the number must not be able to move its
+  identity.* Adding the flag to the ruler id instead would have broken that
+  rule in both directions — the id would move on a knob that (once pinned)
+  cannot reach the measurement, and reaching the unpinned runtime value would
+  have required plumbing config into a descriptor #282 deliberately built out
+  of arguments and source only.
+* **Expect one `holdout_generation` bump when this lands alongside #282.**
+  #282's `measured_by` hashes the AST of `_prepare_host_arrays` and
+  `_full_pass_host_batch`, and this PR edits both. The bump therefore fires on
+  the first restart after both are deployed even though the ruler's output is
+  byte-identical across the change. That is #282's declared direction of error
+  (a false positive costs ONE best-model handover; a false negative is G16), so
+  it is expected, not a defect — but do not read that bump as evidence the
+  ruler moved. Nothing else should bump afterwards.
 
 ## Rebuildable from the row itself
 
@@ -208,12 +228,21 @@ first new row of `progress.csv`.
 `sf_policy_temp`, `sf_policy_label_smooth`, `sf_wdl_use_cp_logistic`,
 `sf_wdl_cp_slope`, `sf_wdl_cp_draw_width` — plus the categorical-blend family
 under its own flag. Those move from "wait ~18 h for window turnover" to
-"applies to the entire existing window at the next iteration".
+"applies to **~95 % of the SF-labelled window** at the next iteration" — the
+other ~5 % keep capture-time targets, per "Coverage is not total" above. It is
+not the entire window and a verdict must not be written as if it were.
 
-Note the useful interaction: the SF param keys are also worker reco keys, so one
-yaml edit retunes the capture params for new data *and* re-points the rebuild
-for the old data. The window stays homogeneous instead of spending 18 h as a
-mixture of two target regimes.
+Note the interaction, and its price: the SF param keys are also **worker reco
+keys** — all five of them (`WorkerSession._RECO_RESTART_KEYS`,
+`worker.py:2897,2918`) — so one yaml edit retunes the capture params for new
+data *and* re-points the rebuild for the old data; the window stays homogeneous
+instead of spending 18 h as a mixture of two target regimes. But being a restart
+reco key means that edit forces a full worker session rebuild, which in
+`worker.py`'s own words "abandons the 256 in-flight games and collapses
+curriculum throughput for ~2 iters". That cost is pre-existing and not
+introduced by the rebuild; it is written down here because the interaction reads
+as free and is not. `rebuild_sf_targets` itself is trainer-side only and
+deliberately not a reco key, so flipping the flag alone costs no games.
 
 **Does not**: anything search-derived. `policy_target`, `policy_soft_target`,
 `search_wdl`, `volatility_target` and every `priority_*` come from the search

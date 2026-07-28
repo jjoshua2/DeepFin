@@ -1739,9 +1739,13 @@ class Trainer:
 
         self.feature_dropout_p = float(feature_dropout_p)
   # Rebuild SF targets from sparse MultiPV labels at sample time, so an
-  # SfTargetParams change applies to the WHOLE existing replay window instead
-  # of waiting ~18h for it to turn over. False = use stored targets, bitwise
-  # identical to the pre-flag pipeline. `set_rebuild_sf_targets` flips it live.
+  # SfTargetParams change applies to ~95% of the SF-labelled rows already in
+  # the replay window instead of waiting ~18h for it to turn over. NOT the
+  # whole window: rows without sf_multipv_raw (5.4% of labelled rows measured
+  # on the live window) keep capture-time targets, so the window is a mixture
+  # of two target regimes -- sf_rebuild_policy_frac reports the real rate.
+  # False = use stored targets, bitwise identical to the pre-flag pipeline.
+  # `set_sf_target_rebuild` flips it live.
         self.rebuild_sf_targets = bool(rebuild_sf_targets)
         self.sf_policy_sparse_ce = bool(sf_policy_sparse_ce)
         self.sf_target_params = sf_target_params or SfTargetParams()
