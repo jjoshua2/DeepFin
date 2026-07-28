@@ -389,7 +389,7 @@ class SfRebuildCoverage:
     rows: int = 0
     policy_rebuilt: int = 0
     wdl_rebuilt: int = 0
-    cross_ply_masked: int = 0
+    cross_ply_masked: int = 0   # ROWS that lost >=1 cross-ply target, not flags
 
     def __add__(self, other: SfRebuildCoverage) -> SfRebuildCoverage:
         return SfRebuildCoverage(
@@ -501,7 +501,11 @@ CROSS_PLY_SF_FLAGS: tuple[str, ...] = ("has_sf_p0", "has_sf_volatility")
 
 
 def mask_cross_ply_sf_targets(arrs: dict[str, np.ndarray]) -> int:
-    """Zero the presence flags of the cross-ply SF targets. Returns rows masked.
+    """Zero the presence flags of the cross-ply SF targets.
+
+    Returns the number of ROWS that lost at least one cross-ply target — not
+    the number of flags cleared, which would exceed the row count whenever a
+    row carried both and make a column named ``_frac`` report > 1.0.
 
     ``sf_p0_policy_target[t]`` IS ``sf_policy_target[t-1]`` (verified exactly
     on live shards) and ``sf_volatility_target[t]`` IS
@@ -513,7 +517,7 @@ def mask_cross_ply_sf_targets(arrs: dict[str, np.ndarray]) -> int:
     over the same raw rows and carries no `SfTargetParams` dependence at all,
     so it stays valid under any rebuild.
     """
-    masked = 0
+    touched: np.ndarray | None = None
     for flag in CROSS_PLY_SF_FLAGS:
         cur = arrs.get(flag)
         if cur is None:
@@ -521,9 +525,10 @@ def mask_cross_ply_sf_targets(arrs: dict[str, np.ndarray]) -> int:
         arr = np.asarray(cur)
         if arr.size == 0:
             continue
-        masked += int(np.count_nonzero(arr))
+        nonzero = arr != 0
+        touched = nonzero if touched is None else (touched | nonzero)
         arrs[flag] = np.zeros_like(arr)
-    return masked
+    return 0 if touched is None else int(np.count_nonzero(touched))
 
 
 def rebuild_categorical_target_in_arrays(

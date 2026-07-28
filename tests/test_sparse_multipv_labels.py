@@ -1013,7 +1013,7 @@ def test_rebuild_masks_cross_ply_targets_and_spares_p0_regret():
     no SfTargetParams dependence at all, so it must survive."""
     arrs = _cross_ply_arrs()
     out, cov = rebuild_sf_targets_in_arrays(arrs, params=SfTargetParams(sf_policy_temp=0.012))
-    assert cov.cross_ply_masked == 8      # 4 rows x 2 flags
+    assert cov.cross_ply_masked == 4      # ROWS masked, not flags cleared (8)
     assert cov.policy_rebuilt == 4
     assert not out["has_sf_p0"].any()
     assert not out["has_sf_volatility"].any()
@@ -1221,7 +1221,9 @@ def test_rebuild_coverage_is_reported_and_is_not_total():
     got = t._sf_rebuild_coverage.drain()
     assert got["sf_rebuild_policy_frac"] == pytest.approx(3 / 4)   # NOT 1.0
     assert got["sf_rebuild_wdl_frac"] == pytest.approx(1.0)
-    assert got["sf_rebuild_masked_frac"] == pytest.approx(2.0)     # 4 rows x 2 flags
+    # ROWS that lost a cross-ply target / rows — a real fraction, never > 1.0
+    # even though each row here carried BOTH has_sf_p0 and has_sf_volatility.
+    assert got["sf_rebuild_masked_frac"] == pytest.approx(1.0)
     # Drained, not accumulated forever.
     assert t._sf_rebuild_coverage.drain()["sf_rebuild_policy_frac"] == 0.0
 
