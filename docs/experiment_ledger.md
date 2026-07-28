@@ -4877,12 +4877,27 @@ env set at start. **Arm it at the next restart** — there is no need to force o
 for this alone, since the plumbing chain above is stronger evidence than
 `rows_per_req` would have been even if it had moved.
 
-**⚠ NEW, unexplained, do not gloss:** iter 163 reports **`test_size = 0` and
-`test_wdl_loss = nan`**. Expected was 2000 (PR #277's deterministic holdout).
-Zero rows evaluated means the holdout ruler is empty on the first post-restart
-iteration — which is the [[holdout_ruler_dies_at_every_restart]] signature that
-G5 was supposed to have fixed. Check iter 164: if it is still 0, G5's persistence
-did not survive a real restart and the frozen-holdout series is dead again.
+**⚠ FLAGGED THEN RESOLVED — `test_size = 0` at iter 163 is async COLD START, not a
+defect and NOT a G5 regression.** I flagged it as a possible
+[[holdout_ruler_dies_at_every_restart]] recurrence. It is not:
+
+- **`test_replay = 2000` on the same row** — the holdout BUFFER survived the
+  restart intact. **G5 HELD.** Only the EVAL produced nothing.
+- **`test_iter = -1`** is the explicit signal. With
+  `distributed_async_test_eval: true` (yaml:733), `_run_holdout_evaluation`
+  (`tune/trainable_phases.py:236`) collects the PREVIOUS iteration's result and
+  then starts the next. The first iteration of a NEW PROCESS has no in-flight
+  eval to collect, so it returns `(None, -1)` and every `test_*` field is nan by
+  construction.
+
+**Recorded as a positive, because it is one:** the code emits `test_iter = -1`
+and `nan` rather than `0.0`-as-a-measurement. That is exactly the
+no-observation-is-not-a-zero discipline behind `duplicate_rate() -> None`, and it
+is why this cost ten minutes instead of becoming a phantom finding. **Standing
+consequence: a restart costs exactly one holdout reading. Treat the first
+post-restart row's `test_*` as ABSENT, not as data** — and note the same row's
+`test_replay` still tells you whether the buffer survived, which is the part G5
+actually asserts.
 
 ### DEPLOYED (2026-07-28 ~00:4x) — C17 LEGACY virtual loss is LIVE. Verification pending on the first new row.
 
