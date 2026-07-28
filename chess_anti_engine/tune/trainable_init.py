@@ -297,16 +297,25 @@ def _apply_donor_config_overlay(config: dict, donor_cfg: dict, trainer) -> None:
 
 
 def _apply_restored_holdout_scalars(rr: RestoreResult, restored_trial_meta: dict) -> None:
-    """Pull the holdout's two scalars out of a checkpoint's trial_meta.json.
+    """Pull the holdout's scalars out of a checkpoint's trial_meta.json.
 
     They live here rather than in their own sidecar because ``ShardMeta`` --
     the npz's metadata carrier -- is a closed dataclass that rejects unknown
     keys, and because trial_meta.json is already read on BOTH restore paths
     and already copied into salvage pools. Whether they are honoured depends
     on the rows actually loading; see ``restored_holdout_scalars``.
+
+    ``holdout_ruler`` defaults to "" for every checkpoint written before it
+    existed, which the loop reads as "no evidence" and adopts without bumping
+    the generation -- the migration, spelled out in
+    ``trainable._maybe_bump_generation_on_ruler_change``. It is deliberately
+    NOT reconciled by ``restored_holdout_scalars``: losing the rows changes
+    the SET, and the measurement that would be applied to them is the same
+    either way.
     """
     rr.holdout_frozen = bool(restored_trial_meta.get("holdout_frozen", False))
     rr.holdout_generation = int(restored_trial_meta.get("holdout_generation", 0))
+    rr.holdout_ruler = str(restored_trial_meta.get("holdout_ruler", "") or "")
 
 
 def _apply_restored_trial_meta(rr: RestoreResult, restored_trial_meta: dict | None) -> tuple[str, str]:
@@ -705,6 +714,7 @@ def _restore_holdout_buffer(
         f"[trial] holdout init: restored_rows={rows} len={len(holdout_buf)} "
         f"capacity={holdout_buf.capacity} frozen={restore.holdout_frozen} "
         f"generation={restore.holdout_generation} "
+        f"ruler={restore.holdout_ruler or 'unrecorded'} "
         f"source={restore.holdout_state_dir if restore.holdout_state_dir is not None else 'fresh'}",
         flush=True,
     )
