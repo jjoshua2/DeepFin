@@ -459,13 +459,73 @@ Elo/CI below are the PAIRED pentanomial (`scratchpad/pair_ci.py`, same estimator
 |---|---|---|---|---|---|
 | SF @ **300** nodes | 20-5-15 | **0.5625** | 4/4/8/1/3 | **+43.7** | **[−55.5, +150.6]** |
 | SF @ **1000** nodes | 5-4-31 | **0.1750** | 0/0/5/4/11 | **−269.4** | **[−423.6, −173.0]** |
+| SF @ **5000** nodes | 0-4-36 | **0.0500** | 0/0/1/2/17 | **−511.5** | **[−, −368.0]** |
 
 So the net at its production sim budget sits **statistically level with Stockfish
-given 300 nodes** (CI spans zero) and is **crushed by Stockfish given 1000 nodes**.
-Between 300 and 1000 nodes — a factor of 3.3 in SF's budget — the net goes from +44
-to −269. That is a ~310 Elo swing across half a doubling-and-a-bit of opponent
-strength, which is what "we are deep in the large-easy-gains regime" looks like from
-the outside.
+given 300 nodes** (CI spans zero), is **crushed at 1000**, and is **annihilated at
+5000 — zero wins in 40 games.** Between 300 and 5000 nodes the net goes from +44 to
+−512.
+
+**The SF@5000 rung was run to settle a contradiction, and it settles it against the
+curriculum record.** The PID snapshot at iter 219
+(`data/salvage/pre_offline_pause_20260728/seeds/slot_000/pid_state.json`) reads
+`nodes: 698289`, `wdl_regret: 0.0812`, `ema_winrate: 0.5086`, and its
+`nodes_history` holds rows at regret 0.0100 with 108k-126k nodes and winrate
+0.49-0.53. Taken at face value that says "the net holds ~50% against Stockfish at
+100k-700k nodes". The bracket says the net scores **0.050 against Stockfish at 5000
+nodes** — a 20-140× node gap in the opposite direction. **Both cannot be true, and
+the bracket is the one measured in real games under a verified instrument.**
+
+**Therefore: the selfplay winrate has never been a strength measurement.** The
+curriculum opponent at `wdl_regret_limit` > 0 is not Stockfish-at-N-nodes; it is
+Stockfish-at-N-nodes forced to pick uniformly at random among every move a saturating
+WDL score cannot tell apart. See the root-cause entry
+("the curriculum regret filter is in WDL, which saturates") and the independent
+corroboration below. **Do not read this bracket as a regression** — nothing got
+worse; the ladder was measuring a phantom axis all along.
+
+**Independent corroboration of the saturation mechanism, from the production
+scoring function itself.** `_pv_wdl_score` scores each MultiPV candidate as
+`w + 0.5*d` where the WDL comes from the production cp-logistic
+(`sf_wdl_use_cp_logistic: true`, `sf_wdl_cp_slope: 0.0060`,
+`sf_wdl_cp_draw_width: 120.0`). Evaluating that function directly:
+
+| cp advantage | 0 | 300 | 500 | 900 | 2000 | forced mate |
+|---|---|---|---|---|---|---|
+| `w + 0.5d` | 0.5000 | 0.8360 | 0.9418 | 0.9943 | 0.99999 | 1.0000 |
+
+The gap between **+900cp and forced mate is 0.0057** — *smaller than the early-era
+`regret_limit` of 0.0075*, so a move worth +900cp was interchangeable with mate. The
+gap between **+500cp and mate is 0.058**, comfortably inside today's **0.0815**. In
+a won position the filter is indifferent across a five-to-nine-pawn range.
+
+Counted on the frozen deep-SF audit set (4000 positions, ~1M nodes, MultiPV stored
+≤10 so these are **lower bounds** — production runs `sf_multipv: 40`;
+`scratchpad/regret_handicap.py`):
+
+| `regret_limit` | mean moves accepted | median | % positions with >1 accepted |
+|---|---|---|---|
+| **0.0** | 4.25 | 1.0 | 46.7% |
+| 0.0075 | 5.50 | 5.0 | 67.0% |
+| 0.0100 | 5.62 | 5.0 | 69.3% |
+| 0.0815 | 6.86 | 10.0 | 86.2% |
+
+**Even at `regret_limit` = 0 the filter accepts 4.25 moves on average**, because
+distinct moves collide on an identical quantised score. So "regret 0.0075 ≈
+full-strength Stockfish" is false by construction: there is no setting of this lever
+that yields best-move play, and the lever's floor is not "unhandicapped".
+
+**Second, independent way the opponent is weaker than advertised: fast plies.**
+`stockfish_turn.py:235` gives the curriculum opponent full nodes only when
+`state.last_net_full[idx]` is true, otherwise `sf_fast_ply_node_scale` = **0.25**.
+`last_net_full` tracks the NET's playout-cap draw, and `playout_cap_fraction: 0.25`
+means **25% full / 75% fast** (yaml line 309). So ~75% of the opponent's moves are
+searched at a quarter of the advertised budget; the mean effective budget is
+`0.25·1 + 0.75·0.25` = **0.4375×** the stated `opponent_sf_nodes`. This is derived
+from the code path, **not observed live** — training is stopped, so the realized
+per-move distribution could not be sampled this session, and it should be logged and
+histogrammed when the run restarts rather than taken from this arithmetic. It
+compounds with the regret filter; it is not an alternative to it.
 
 **What these numbers can and cannot resolve.** 20 pairs is small: the SF@300 CI is
 ±~100 Elo, so it establishes "roughly level", not a point estimate. The SF@1000 CI
@@ -482,6 +542,21 @@ net moves **min=max=median=256 nodes**, and SF median 1000 (min 985 / max 1041,
 normal SF node-check granularity). So `go nodes` is honoured and neither side was
 silently under- or over-searching. Median wall clock 0.351 s/move for the net,
 0.005 s for SF@1000.
+
+**Caveat — the candidate ran the duplicate-leaf search, which suppresses ITS side
+specifically.** `chess_anti_engine/uci/search.py:_run_gumbel_chunk` (~line 1823)
+passes `target_batch` to `run_gumbel_root_many_c` but **not `vloss_weight`**, so the
+classic-Gumbel path defaults to 0. All four PUCT/walker call sites (lines 385, 483,
+608, 742) DO pass `self._vloss_weight`. The bracket was run with `--walkers 1`, i.e.
+exactly the path that drops it — so the net played every game with C17's
+duplicate-leaf defect active while Stockfish had no equivalent handicap. This biases
+the bracket AGAINST the net by an unmeasured amount, and the waste grows with sim
+count. It does not change the qualitative conclusion (a fix worth even 100 Elo
+leaves the net far below SF@5000), but the point estimates should be read as
+pessimistic. Sizing this is a cheap, independently valuable follow-up: re-run one
+rung with `vloss_weight` plumbed into `_run_gumbel_chunk`. **This is the same class
+of defect as the arena's missing `vloss_weight` — a search knob that reaches four
+call sites and silently misses the fifth.**
 
 **Caveat on the candidate's search shape.** The UCI engine was pinned to the
 selfplay `c_scale 0.1 / topk 16`, but its `c_scale_root 7.0 / q_visit_exp_root −1`
@@ -6128,7 +6203,69 @@ by the bundled deploy and that is accepted and recorded — the question being a
 is "did this bundle deliver 10x", not "which of the two did it".
 
 
-### ⚑⚑ ROOT CAUSE (2026-07-28) — the curriculum opponent's regret filter is in WDL, which SATURATES: at regret 0.0075 the moves SF may play span >300cp in 27.4% of positions
+### ⚑⚑ CORRECTION (2026-07-28, same session) — THE ENTRY BELOW IS WRONG ON ITS CENTRAL CLAIM. The filter is fine; the POLICY TARGET is the defect.
+
+**Retracted from the entry below:** "the lever is nearly inert", "the lever is
+perverse", "the opponent discards ~12 pawns on average", and the whole
+"opponent was never near-full-strength" conclusion. **The error:** I scored the
+MultiPV candidates from the stored NATIVE per-mille `w`/`d` columns, but
+production scores them with the **cp-logistic** — `sf_wdl_use_cp_logistic: true`,
+slope 0.0060, draw width 120 (`configs/pbt2_small.yaml:354-356`), applied in
+`_pv_wdl_score` (`stockfish_turn.py:455-473`) which is what
+`_collect_regret_candidates` actually calls. **Measuring a filter with a
+different scoring function than the filter uses tells you nothing about the
+filter.**
+
+**Re-measured with the production scorer, same 10,988 positions:**
+
+| | regret 0.0815 | regret 0.0075 |
+|---|---|---|
+| mean candidate moves | 9.18 | **3.60** |
+| forced-to-best | 17.2% | **57.5%** |
+| median cp spread among passers | 59 | **5** |
+| p75 cp spread | 96 | 16 |
+| >300cp | 12.4% | 10.1% |
+
+**The lever works.** 9.18 → 3.60 candidates, 17% → 58% forced-best, and at
+0.0075 the typical opponent move is within **5 cp** of best. The early-run
+opponent WAS close to full strength in the typical position.
+
+**What survives, and it is a TARGET defect rather than an opponent one.** The
+cp→WDL logistic saturates in decisive positions, and the SF **policy target** is
+a softmax over those same saturating scores (`sf_policy_temp: 0.012`). Measured
+on the same rows:
+
+| position type | n | target entropy | top-1 mass | cp gap 1st→2nd |
+|---|---|---|---|---|
+| **won** (score>0.90) | 1856 | **1.907** | **0.379** | 10.0 |
+| balanced (0.35-0.65) | 4473 | 0.945 | 0.648 | 11.0 |
+| **lost** (score<0.10) | 1180 | **2.168** | **0.232** | 4.0 |
+
+**The cp gap between best and second is the SAME in won and balanced positions
+(10 vs 11 cp), yet the won-position target carries 2.0x the entropy and 0.58x
+the top-1 mass.** A 10cp edge at +900cp is invisible to the logistic; the same
+10cp edge at 0cp is decisive. So in exactly the positions where conversion
+technique matters, the teacher supplies a near-uniform target over winning
+moves — the net is taught that winning moves are interchangeable, and learns to
+shuffle rather than convert. This matches the Cheese profile (80% of losses are
+one collapse) and is consistent with the value head being calibrated-but-not-
+discriminating in won positions.
+
+**Fix direction (NOT pre-registered).** Rank the SF policy target by something
+that does not saturate — cp directly, or a per-position normalisation against
+the local cp spread — rather than by a logistic tuned for the balanced regime.
+`cp` is already stored per MultiPV row and `target_builder.py` can rebuild
+targets offline, so this is **screenable without training compute**, which per
+the measurability rule makes it one of the few things worth running at all.
+
+**Method note, and the reason this correction exists at all:** the original
+analysis was published with a confident "ROOT CAUSE" heading after checking the
+mechanism in the source but NOT checking which scoring function production
+passes in. Verify the instrument against the production call path, not against
+the stored columns that merely look like the same quantity.
+
+
+### ⚑⚑ SUPERSEDED — SEE THE CORRECTION ABOVE (2026-07-28) — the curriculum opponent's regret filter is in WDL, which SATURATES: at regret 0.0075 the moves SF may play span >300cp in 27.4% of positions
 
 **This resolves the contradiction between the curriculum record and the absolute
 strength bracket, and it is a defect in the OPPONENT, not the net.**
