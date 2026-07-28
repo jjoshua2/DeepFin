@@ -10919,3 +10919,58 @@ Cross-reference: the C17 *quality* leg is entangled with audit **L16** — the
 policy-only holdout drift may be C17 moving the model off the stale pre-C17
 policy targets the frozen holdout still encodes. That is the subject of the
 paired discriminator and must not be read off this throughput number.
+
+**STANDING DECISION RULE — WHAT IS EVEN MEASURABLE HERE (2026-07-28).** Three
+independent measurements taken today converge on one conclusion, and it should
+gate which experiments get run at all.
+
+**The improvement rate.** Two independent estimates agree to within 2x:
+`ratchet_slope.py` gives **+0.21 Elo / 1000 optimizer steps**, and the box does
+**73-88 optimizer steps per iteration** (`train_steps_used`, views-targeted at
+5.03 views/position), so **~0.017 Elo/iteration**. The ratchet's own record
+gives the same order independently: vs the fixed `boot512` anchor,
+-12.2 -> -11.1 -> -7.6 Elo across **147 iterations** = **~0.031 Elo/iteration**,
+with every CI containing zero and containing every other point estimate.
+
+**The best instruments available.** From PR #285's derivation: per-iteration
+standard error on the free vs-SF games is **31.1 Elo**; a 200-game sims-32
+arena — the ENTIRE ~30 min/day GPU budget (audit L6) — is **24.9 Elo**; a full
+day of the free games is **2.74 Elo**, which is 82x better in games-equivalent
+than the arena we pay for. The daily ratchet arenas have run at CIs of
+**+/-50 to +/-83 Elo**.
+
+**Therefore.** At ~127 iterations/day the loop gains **~2.5 Elo/day**, while the
+best instrument that exists resolves **~2.74 Elo/day at 1 sigma**. A full day of
+the cheapest honest measurement barely resolves a full day of progress at ONE
+sigma. Improvement per iteration is roughly **1500x below the per-iteration
+standard error** of any measurement we can make.
+
+**The rule this implies, and it is a real constraint, not a mood:**
+
+> An experiment is worth running only if its expected effect is at least **2-3x
+> the loop's current total improvement rate** — i.e. it must plausibly move
+> **>= 5-8 Elo/day** — or it must be screenable OFFLINE against a frozen ruler
+> with no training compute. Anything else is unfalsifiable at this scale and
+> will produce a verdict that is noise dressed as a reading.
+
+This retroactively explains a great deal of this ledger. It is why so many
+"LIVE, UNREAD" entries never resolved, why day-scale holdout comparisons kept
+being tempting and kept being wrong, and why the honest verdict on most knob
+tuning is not "it failed" but "it was never measurable".
+
+**What passes the rule** (large, or offline-screenable, or both): the SF label
+economics — `sf_nodes` is ~95% of the loop at 698,289 nodes/label and halving it
+is worth **+70-90% games/h**, and it is offline-screenable against the frozen
+audit set; `sf_fast_ply_node_scale` 0.25 -> 0.10 at **+17% games/h** with labels
+untouched; data volume and model capacity generally.
+
+**What does NOT pass** (and should be stopped rather than run and misread): loss
+weight nudges, search-knob tuning, target-temperature tweaks — anything whose
+honest prior is a few Elo. Also **any gate**: PR #285 derives that no selection
+mechanism can ratchet at 0.02 Elo/iteration at any budget, which is why it ships
+as a circuit breaker and an honest metric rather than as a ratchet.
+
+**Corollary for measurement work.** Making rulers 7x tighter (the deterministic
+holdout, audit L16) does NOT rescue this, because the holdout's policy leg is a
+DECAYING ruler and the gap to close is ~1500x, not ~7x. Instrument work is worth
+doing to stop us being WRONG; it is not a path to being able to see 1x progress.
