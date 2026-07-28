@@ -26,11 +26,11 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 from chess_anti_engine.train.eval_ruler import (
     _UNAVAILABLE,
+    call_closure,
     digest_source,
     eval_ruler_id,
     semantic_source_digest,
@@ -40,20 +40,15 @@ from chess_anti_engine.tune.trainable import _maybe_bump_generation_on_ruler_cha
 from chess_anti_engine.tune.trainable_init import _apply_restored_holdout_scalars
 from chess_anti_engine.tune.trial_config import RestoreResult
 
-  # Everything the eval does to turn buffer rows into a pooled number. The
-  # shared frames are the ones a descriptor field could only ever CLAIM to
-  # cover: `_compute_metrics` owns the row-weighted denominator and
-  # `_prepare_host_arrays` owns target rebuilds and history selection, both
-  # shared with the training path and therefore actively edited.
-SHARED_FNS: tuple[Callable[..., Any], ...] = (
-    Trainer._compute_metrics, Trainer._prepare_host_arrays,
-    Trainer._host_batch_to_tensors,
+  # The covered set is DERIVED from the call graph, not listed here -- listing
+  # it is what failed twice. These names exist so the tests can say WHICH
+  # frames must be in the derived set, which is a different (and checkable)
+  # claim from "here is the set".
+FULL_PASS_FNS: tuple[Callable[..., Any], ...] = call_closure(
+    Trainer._compute_metrics, owner=Trainer, skip=(Trainer._iter_prefetched_batches,),
 )
-FULL_PASS_FNS: tuple[Callable[..., Any], ...] = (
-    *SHARED_FNS, Trainer._iter_full_pass_batches, Trainer._full_pass_host_batch,
-)
-SAMPLED_FNS: tuple[Callable[..., Any], ...] = (
-    *SHARED_FNS, Trainer._iter_prefetched_batches, Trainer._sample_batch_host,
+SAMPLED_FNS: tuple[Callable[..., Any], ...] = call_closure(
+    Trainer._compute_metrics, owner=Trainer, skip=(Trainer._iter_full_pass_batches,),
 )
 
 
@@ -66,25 +61,6 @@ def full_pass(
         mode="full_pass", batch_size=batch_size, steps=steps, mirror_prob=0.0,
         measured_by=measured_by,
     )
-
-
-def _production_ruler_fn():
-    """`Trainer._eval_ruler_id` bound to the real methods, no Trainer built.
-
-    Instantiating a Trainer needs a model and a device; the id depends on
-    nothing but the methods' source, so the methods alone are the honest
-    fixture. Anything the production method reaches for that is not listed
-    here is an AttributeError, which is the point.
-    """
-    fake = SimpleNamespace(**{
-        name: getattr(Trainer, name)
-        for name in (
-            "_compute_metrics", "_prepare_host_arrays", "_host_batch_to_tensors",
-            "_iter_full_pass_batches", "_full_pass_host_batch",
-            "_iter_prefetched_batches", "_sample_batch_host",
-        )
-    })
-    return Trainer._eval_ruler_id.__get__(fake)
 
 
 def sampled(*, batch_size: int = 512, steps: int = 5) -> str:
@@ -126,7 +102,7 @@ def test_the_trainer_covers_exactly_the_documented_measurement_set() -> None:
     """The production method must hash the frames this module says it does.
     Drop one there and this fails, rather than the coverage quietly shrinking
     while the docstring still promises it."""
-    ruler = _production_ruler_fn()
+    ruler = Trainer.eval_ruler_id_for
 
     assert ruler(batch_size=512, steps=0, mirror_prob=0.0, full_pass=True) == full_pass()
     assert ruler(batch_size=512, steps=5, mirror_prob=0.0, full_pass=False) == sampled()
@@ -148,15 +124,74 @@ def test_every_covered_function_is_load_bearing() -> None:
         )
 
 
-def test_pooling_and_row_prep_are_covered_by_code_not_by_a_label() -> None:
-    """G16 one call frame deeper. `_compute_metrics` owns the pooling
-    denominator and `_prepare_host_arrays` owns target rebuilds and history
-    selection -- both shared with the training path, so both are edited for
-    reasons that have nothing to do with the holdout."""
-    assert Trainer._compute_metrics in FULL_PASS_FNS
-    assert Trainer._prepare_host_arrays in FULL_PASS_FNS
-    assert Trainer._compute_metrics in SAMPLED_FNS
-    assert Trainer._prepare_host_arrays in SAMPLED_FNS
+def test_the_metric_assembly_tail_is_covered() -> None:
+    """The regression pin for the second wrong boundary. `_compute_metrics`
+    computes the pooling denominator but does NOT apply it: the division is
+    `_loss_sums_to_metric_kwargs`, reached through `_build_metrics`, and the
+    scalar extraction is `_extract_loss_scalars`. With those three outside the
+    covered set `test_loss` could be DOUBLED with this whole file green, which
+    is how the second hand-written list failed. They are named here because
+    the derived closure must not silently stop reaching them."""
+    from chess_anti_engine.train import trainer as trainer_mod
+
+    covered = {fn.__qualname__ for fn in FULL_PASS_FNS}
+
+    assert "Trainer._build_metrics" in covered
+    assert "Trainer._extract_loss_scalars" in covered
+    assert "_loss_sums_to_metric_kwargs" in covered
+  # ...and the frames the first wrong boundary missed, still covered.
+    assert "Trainer._compute_metrics" in covered
+    assert "Trainer._prepare_host_arrays" in covered
+    assert "Trainer._host_batch_to_tensors" in covered
+  # ...and one nobody enumerated in either round: the autocast context is
+  # part of the measurement, and the closure found it without being told.
+    assert "Trainer._amp_context" in covered
+    assert trainer_mod._loss_sums_to_metric_kwargs in FULL_PASS_FNS
+
+
+def test_the_closure_is_derived_rather_than_enumerated() -> None:
+    """The property that makes the boundary hold as the code moves: a call
+    added on the path is covered without anyone updating a list."""
+
+    class _Fake:
+        def entry(self) -> None:
+            self.middle()
+
+        def middle(self) -> None:
+            self.leaf()
+
+        def leaf(self) -> None: ...
+
+        def unrelated(self) -> None: ...
+
+    covered = {fn.__qualname__.split(".")[-1] for fn in call_closure(_Fake.entry, owner=_Fake)}
+
+    assert covered == {"entry", "middle", "leaf"}, (
+        "the closure must follow calls transitively and stop at what is not called"
+    )
+
+
+def test_the_closure_stops_at_the_module_boundary() -> None:
+    """The stated edge. A frame from another module is not followed, which is
+    why `compute_loss` and the encoders are declared uncovered rather than
+    quietly half-covered."""
+    covered_modules = {fn.__module__ for fn in FULL_PASS_FNS}
+
+    assert covered_modules == {"chess_anti_engine.train.trainer"}
+
+
+def test_the_untaken_branch_is_pruned_so_the_modes_stay_isolated() -> None:
+    """A change to the legacy sampled path must not hand the best model over
+    on the full-pass ruler. Verified against the real code by mutation:
+    `_sample_batch_host` moves the sampled id and leaves the full-pass id
+    byte-identical."""
+    full = {fn.__qualname__ for fn in FULL_PASS_FNS}
+    samp = {fn.__qualname__ for fn in SAMPLED_FNS}
+
+    assert "Trainer._sample_batch_host" not in full
+    assert "Trainer._iter_prefetched_batches" not in full
+    assert "Trainer._full_pass_host_batch" not in samp
+    assert "Trainer._iter_full_pass_batches" not in samp
 
 
 def test_batch_size_is_part_of_the_ruler() -> None:
@@ -178,7 +213,7 @@ def test_knobs_that_cannot_reach_the_full_pass_cannot_move_its_ruler() -> None:
     assert full_pass(steps=99) != full_pass(), (
         "both are in the descriptor; the pin belongs at the call site"
     )
-    ruler = _production_ruler_fn()
+    ruler = Trainer.eval_ruler_id_for
     baseline = ruler(batch_size=512, steps=5, mirror_prob=0.0, full_pass=True)
 
     assert ruler(batch_size=512, steps=99, mirror_prob=0.0, full_pass=True) == baseline
@@ -356,7 +391,7 @@ def test_the_eval_path_stamps_the_ruler_onto_the_metrics_it_returns() -> None:
     consumer-side guess would not notice the two diverging."""
     body = inspect.getsource(Trainer._compute_metrics)
 
-    assert "ruler = self._eval_ruler_id(" in body
+    assert "ruler = type(self).eval_ruler_id_for(" in body
     assert "full_pass=bool(full_pass)" in body
     assert "eval_ruler=ruler," in body
 
@@ -372,3 +407,41 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
         "best_loss, best_source = _update_best_model(",
     )
     assert "holdout_ruler = str(restore.holdout_ruler)" in src
+
+
+# --- the pin that makes a ruler change announce itself --------------------
+
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:1480cc57fd4530b1"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:7f2e12e40cf19a7d"
+
+
+def test_the_production_ruler_id_is_pinned() -> None:
+    """A golden value, and the maintenance contract is the point of it.
+
+    Every other test here checks STRUCTURE -- that a frame is covered, that a
+    covered frame reaches the id. Structure cannot notice that the id MOVED,
+    which is how the second boundary failed review: `test_loss` was doubled by
+    a one-line edit to `_build_metrics` and all 22 tests stayed green.
+
+    So this pins the value. It is expected to fail whenever the measurement
+    changes, and that failure is the mechanism working:
+
+        the id moved => `holdout_generation` will bump at the next restart
+        => the running trial HANDS OVER its best-model record, adopting the
+           current loss instead of comparing to it.
+
+    If you meant to change the measurement: update both constants and add a
+    line to the ledger entry, because an operator is going to see a handover.
+    If you did not: you have just changed what `test_loss` means, and the
+    holdout is a frozen ruler.
+
+    (The value depends on the source of the 19 covered frames and on
+    `ast.unparse`, so a Python upgrade moves it too -- also worth a deliberate
+    look rather than a silent pass.)
+    """
+    assert Trainer.eval_ruler_id_for(
+        batch_size=512, steps=0, mirror_prob=0.0, full_pass=True,
+    ) == PRODUCTION_FULL_PASS_RULER
+    assert Trainer.eval_ruler_id_for(
+        batch_size=512, steps=5, mirror_prob=0.0, full_pass=False,
+    ) == PRODUCTION_SAMPLED_RULER

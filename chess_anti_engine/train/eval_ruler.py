@@ -26,15 +26,23 @@ different kinds of evidence, because the two failure modes are different:
     switch back to sampling). A descriptor alone cannot see that, because a
     descriptor is a claim about the code and this is the code.
 
-**The digest is not transitive** and the boundary is a deliberate choice, not
-an oversight. Hashing a function does NOT hash what it calls, so the covered
-set is exactly the functions handed to ``measured_by`` — see
-``Trainer._eval_ruler_id``, which lists them and states what is left out.
-Anything one frame deeper (the loss function's body, the encoders) can still
-move `test_loss` on a frozen holdout without moving this id. That gap is
-recorded in the ledger rather than implied away: a descriptor field naming
-something the digest does not reach would be the same unbacked claim this
-module exists to remove.
+**The covered set is DERIVED, not enumerated** (``call_closure``). Hashing one
+function does not hash what it calls, so a hand-written list of frames is a
+boundary that has to be re-drawn every time the code moves -- and it was
+re-drawn wrongly twice: first the pass alone (the pooling denominator escaped),
+then the pass plus three named frames (the metric-assembly tail escaped, and
+`test_loss` could be DOUBLED with every test in this module's suite green).
+The third answer is not a longer list. ``call_closure`` walks the call graph
+statically from the eval's entry point and returns every frame it can reach
+*that is defined in the same module*, so a new call on the path is covered the
+day it is written.
+
+That module boundary is the honest edge of the mechanism, and it is stated
+rather than implied: `compute_loss`, the encoders, torch and numpy are outside
+it, as are module-level CONSTANTS referenced by covered frames (see the
+ledger's not-covered list, which names the ones that bite). A descriptor field
+naming a property the digest does not reach would be the same unbacked claim
+this module exists to remove -- which is why there is no `pooling` field.
 
 The digest is taken over the AST with docstrings removed, so comments,
 docstrings, blank lines and reformatting do not move it; a change to what the
@@ -55,7 +63,8 @@ import ast
 import hashlib
 import inspect
 import json
-from collections.abc import Callable, Sequence
+import sys
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 # Bump when the descriptor's own shape changes in a way that should be read as
@@ -65,6 +74,7 @@ EVAL_RULER_SCHEMA = 1
 _UNAVAILABLE = "nosource"
 
 _digest_cache: dict[tuple[str, str], str] = {}
+_closure_cache: dict[tuple[str, str, tuple[str, ...]], tuple[Callable[..., Any], ...]] = {}
 
 
 def _strip_docstrings(tree: ast.AST) -> None:
@@ -162,6 +172,113 @@ def semantic_source_digest(fn: Callable[..., Any]) -> str:
         )
     _digest_cache[key] = digest
     return digest
+
+
+def _underlying(fn: Any) -> Any:
+    """The plain function behind a bound method, staticmethod or decorator."""
+    fn = getattr(fn, "__func__", fn)
+    return inspect.unwrap(fn)
+
+
+def _fn_key(fn: Any) -> tuple[str, str]:
+    return (str(getattr(fn, "__module__", "?")), str(getattr(fn, "__qualname__", repr(fn))))
+
+
+def _resolve(node: ast.AST, *, owner: type, module: Any) -> Any:
+    """The function a call/attribute node refers to, or None.
+
+    Two shapes are resolved, both against the CLASS rather than an instance:
+    ``self.thing(...)`` and a bare module-level ``thing(...)``. Resolving
+    against the class is what lets a property be seen as the code it is
+    (``fget``) instead of being evaluated, and is why the ruler can be computed
+    without building a Trainer at all.
+    """
+    target: Any = None
+    if isinstance(node, ast.Call):
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "self"
+        ):
+            target = getattr(owner, func.attr, None)
+        elif isinstance(func, ast.Name):
+            target = getattr(module, func.id, None)
+    elif (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    ):
+  # Not a call: `self._loss_kwargs` is a property, and the dict it builds
+  # decides what `compute_loss` is even given. The VALUES are out of scope
+  # (see the ledger); the code that assembles them is not.
+        target = getattr(owner, node.attr, None)
+    if isinstance(target, property):
+        target = target.fget
+    return target
+
+
+def call_closure(
+    root: Callable[..., Any], *, owner: type,
+    skip: Iterable[Callable[..., Any]] = (),
+) -> tuple[Callable[..., Any], ...]:
+    """Every same-module frame statically reachable from *root*, sorted.
+
+    This is the answer to "which functions define this measurement", derived
+    instead of enumerated. Two hand-written lists were wrong before it existed;
+    a list is a claim about the call graph, and this reads the call graph.
+
+    Scope rules, all three deliberate:
+
+    * **same module only.** Recursion stops at any function defined outside
+      *root*'s module. That is a real edge (for the trainer it means
+      `compute_loss`, the encoders and torch are excluded) and it is what
+      keeps the closure small enough to reason about -- 23 frames rather than
+      the whole dependency graph. It is stated in the ledger, not implied.
+    * **the branch not taken is skipped.** ``skip`` prunes the other eval
+      mode's entry point, so a change to the sampled path cannot move the
+      full-pass ruler. Without it the two modes would share one closure and
+      lose that isolation.
+    * **static, not dynamic.** A call made through a variable, a dispatch
+      table or `getattr` is invisible here. The mechanism sees the code as
+      written, which is the same thing the digest sees.
+
+    Never raises: an unparseable frame is recorded (its digest degrades and
+    says so) and its callees are simply not explored.
+    """
+    fn_root = _underlying(root)
+    skip_keys = {_fn_key(_underlying(s)) for s in skip}
+    cache_key = (*_fn_key(fn_root), tuple(sorted(f"{m}.{q}" for m, q in skip_keys)))
+    cached = _closure_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    seen: set[tuple[str, str]] = set()
+    found: list[Any] = []
+    stack: list[Any] = [fn_root]
+    while stack:
+        fn = stack.pop()
+        key = _fn_key(fn)
+        if key in seen or key in skip_keys:
+            continue
+        seen.add(key)
+        found.append(fn)
+        module = sys.modules.get(str(getattr(fn, "__module__", "")))
+        try:
+            tree = ast.parse(_dedent_definition(inspect.getsource(fn)))
+        except (OSError, TypeError, SyntaxError, ValueError):
+            continue
+        for node in ast.walk(tree):
+            target = _resolve(node, owner=owner, module=module)
+            if target is None or not (inspect.isfunction(target) or inspect.ismethod(target)):
+                continue
+            nxt = _underlying(target)
+            if getattr(nxt, "__module__", None) == getattr(fn, "__module__", None):
+                stack.append(nxt)
+
+    out = tuple(sorted(found, key=_fn_key))
+    _closure_cache[cache_key] = out
+    return out
 
 
 def eval_ruler_id(

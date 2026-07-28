@@ -42,7 +42,7 @@ from chess_anti_engine.encoding.lc0 import (
     uses_lc0_root_legacy_meta,
 )
 from chess_anti_engine.model import ARCH_SCHEMA_VERSION, ModelConfig
-from chess_anti_engine.train.eval_ruler import eval_ruler_id
+from chess_anti_engine.train.eval_ruler import call_closure, eval_ruler_id
 from chess_anti_engine.train.target_builder import (
     DEFAULT_CATEGORICAL_BINS,
     CategoricalTargetParams,
@@ -2205,44 +2205,46 @@ class Trainer:
                     future = pool.submit(self._full_pass_host_batch, buf, start=nxt[0], stop=nxt[1])
                 yield self._host_batch_to_tensors(host_batch)
 
-    def _eval_ruler_id(
-        self, *, batch_size: int, steps: int, mirror_prob: float, full_pass: bool,
+    @classmethod
+    def eval_ruler_id_for(
+        cls, *, batch_size: int, steps: int, mirror_prob: float, full_pass: bool,
     ) -> str:
-        """Identity of the measurement `_compute_metrics` is about to perform.
+        """Identity of the measurement `_compute_metrics` performs.
 
-        Derived from the arguments that were actually used and from the source
-        of the functions actually selected -- not from config, and not from a
-        constant. A ruler change that goes through either route (a different
-        call, or a rewritten measurement) therefore lands in the string, and
-        `tune.trainable` turns that into a new `holdout_generation`.
+        A CLASSMETHOD, and that is load-bearing rather than tidiness: the id
+        depends on nothing but code and the four arguments, so an operator's
+        deploy check (and every test here) can ask for it without building a
+        Trainer, a model or a device. The earlier instance form forced callers
+        to assemble a stand-in object whose attributes had to be kept in step
+        with the covered set BY HAND -- the same class of hand-maintained list
+        this method exists to stop relying on. `type(self)` at the call site
+        keeps a subclass that overrides part of the measurement fingerprinted
+        as itself.
 
-        **Covered**, in the order rows travel: which rows and in what order
-        (`_iter_*`), how a chunk becomes host arrays including target rebuilds
-        and history selection (`_*_host_batch` -> `_prepare_host_arrays`), how
-        those become device tensors (`_host_batch_to_tensors`), and how the
-        per-batch results are pooled into one number (`_compute_metrics`,
-        which owns the row-weighted denominator). Pooling used to be a
-        `pooling="row_weighted"` string in the descriptor; that was a claim
-        with no code behind it -- the denominator could be changed with the id
-        sitting still -- so the function is hashed instead.
+        **Covered: derived, not listed.** ``call_closure`` walks the call
+        graph from `_compute_metrics` and returns every frame defined in this
+        module that the taken branch can reach -- currently 23, from row
+        selection through host-array prep, target rebuilds, history selection
+        and tensor collation to the metric-assembly tail
+        (`_extract_loss_scalars`, `_build_metrics`,
+        `_loss_sums_to_metric_kwargs`) where the pooling denominator is
+        actually APPLIED. Two hand-written lists were wrong here before: the
+        first let a pooling change through, the second let `test_loss` be
+        DOUBLED with every test in the suite green. A list is a claim about
+        the call graph; this reads the call graph.
 
-        **NOT covered**, because the digest does not follow calls: the loss
-        function's body (`compute_loss`), its WEIGHTS, and the encoders under
-        `_prepare_host_arrays`. The weights are a real gap, not a dismissed
-        one -- a config change to `sf_wdl_frac` redefines `test_loss` exactly
-        the way G16 did (the 2026-07-02 floor raise 0.35 -> 0.45 sits in 131
-        rows of history) and this id does not see it. Hashing `_loss_kwargs`
-        as it stands is not the fix: `_sync_trainer_weights` writes the PID's
-        realized `sf_wdl_frac` there, which moves within its configured band
-        on ~15% of iterations, so the hash cannot tell a 0.006 controller
-        excursion from a 0.10 config step and would hand the best-model record
-        over for the former. The fix is to hash the BAND (the configured
-        endpoints) rather than the PID's position in it, which needs config
-        plumbed to here; see docs/rl_loop_audit.md L15 and the ledger entry.
-
-        Bound methods are handed over rather than plain functions so a
-        subclass that overrides part of the measurement is fingerprinted as
-        itself.
+        **NOT covered -- the module edge, and it is real.** Recursion stops at
+        anything defined outside this module: `compute_loss`'s body, the
+        encoders, torch/numpy. Module-level CONSTANTS are not hashed either
+        (`_RAW_SUM_LOSS_KEYS` decides which loss keys are row-summed at all),
+        because the ones on this path include `_TRAIN_METRICS_FIELDS`, derived
+        from the `TrainMetrics` dataclass -- hashing it would bump the ruler
+        every time an unrelated diagnostic FIELD is added, which provably
+        cannot change `loss`. And the loss WEIGHTS are excluded for the reason
+        in docs/rl_loop_audit.md L15: `_loss_kwargs` carries the PID's
+        realized `sf_wdl_frac`, so hashing it cannot tell a 0.006 controller
+        excursion from a 0.10 config step. All of these are named in the
+        ledger's not-covered list; none of them is implied to be covered here.
 
         Two arguments are PINNED in the full-pass branch rather than passed
         through, because neither reaches that measurement: ``steps`` is a
@@ -2251,24 +2253,24 @@ class Trainer:
         half of its positions. A knob that cannot move the number must not be
         able to move its identity, or the handover fires on nothing.
         """
-        shared = (
-            self._compute_metrics, self._prepare_host_arrays,
-            self._host_batch_to_tensors,
+        measured_by = call_closure(
+            cls._compute_metrics, owner=cls,
+  # Prune the branch not taken, so the sampled path cannot move the
+  # full-pass ruler (and vice versa). This is the only name the closure
+  # is told about, and it is the one the `mode` field already declares.
+            skip=(
+                (cls._iter_prefetched_batches,) if full_pass
+                else (cls._iter_full_pass_batches,)
+            ),
         )
         if full_pass:
             return eval_ruler_id(
                 mode="full_pass", batch_size=int(batch_size), steps=0,
-                mirror_prob=0.0,
-                measured_by=(
-                    *shared, self._iter_full_pass_batches, self._full_pass_host_batch,
-                ),
+                mirror_prob=0.0, measured_by=measured_by,
             )
         return eval_ruler_id(
             mode="sampled", batch_size=int(batch_size), steps=int(steps),
-            mirror_prob=float(mirror_prob),
-            measured_by=(
-                *shared, self._iter_prefetched_batches, self._sample_batch_host,
-            ),
+            mirror_prob=float(mirror_prob), measured_by=measured_by,
         )
 
     def reset_optimizer_reference_weights(self) -> None:
@@ -2604,7 +2606,7 @@ class Trainer:
                 buf, batch_size=batch_size, mirror_prob=mirror_p, count=int(steps),
             )
         )
-        ruler = self._eval_ruler_id(
+        ruler = type(self).eval_ruler_id_for(
             batch_size=int(batch_size), steps=int(steps),
             mirror_prob=float(mirror_p), full_pass=bool(full_pass),
         )
