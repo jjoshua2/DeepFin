@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Copy every Nth live checkpoint somewhere Ray cannot prune it.
+#
+# WHY THIS EXISTS: Ray prunes live checkpoints on a rolling basis, so the OLDEST
+# points of any series are the first to go. That is backwards from what analysis
+# needs. Audit L16 found a policy-only holdout drift over iters 165-192 -- and by
+# the time the trend was significant enough to notice, checkpoints 165-186 were
+# already gone. The flat first segment can never be re-scored against a different
+# holdout, so "was it always rising?" is permanently unanswerable.
+#
+# A single readout has an obvious artefact to bank. A TREND accumulates silently
+# and is only recognised once enough points exist to fit a slope -- by which time
+# its early checkpoints are the oldest and therefore already deleted. So bank
+# continuously and cheaply, rather than at the moment someone realises they care.
+#
+# Safe by construction: cp only, nice 19, never writes to the trial dir, never
+# constructs a DiskReplayBuffer (that deletes shards -- audit G12).
+set -uo pipefail
+
+TUNE_GLOB='/home/josh/projects/chess/runs/pbt2_small/tune/train_trial_*'
+DST=/home/josh/projects/chess/data/salvage/rolling
+EVERY=${EVERY:-5}        # keep checkpoints whose index is a multiple of this
+KEEP=${KEEP:-24}         # cap on retained dirs (~656M each)
+SLEEP=${SLEEP:-900}
+
+mkdir -p "$DST"
+
+while :; do
+    for trial in $TUNE_GLOB; do
+        [ -d "$trial" ] || continue
+        for ck in "$trial"/checkpoint_0*; do
+            [ -d "$ck" ] || continue
+            name=$(basename "$ck")
+            idx=$((10#${name#checkpoint_}))
+            [ $((idx % EVERY)) -eq 0 ] || continue
+            [ -e "$DST/$name" ] && continue
+            # Copy to a temp name first so a prune mid-copy cannot leave a
+            # half-written dir that later reads as a complete banked checkpoint.
+            if nice -n 19 cp -r "$ck" "$DST/.tmp_$name" 2>/dev/null; then
+                mv "$DST/.tmp_$name" "$DST/$name"
+                echo "[bank] $(date '+%F %T') banked $name"
+            else
+                rm -rf "$DST/.tmp_$name"
+            fi
+        done
+    done
+
+    # Trim oldest by checkpoint index, not mtime -- mtime is the COPY time and
+    # would evict in arbitrary order.
+    mapfile -t have < <(ls "$DST" 2>/dev/null | grep '^checkpoint_' | sort -t_ -k2 -n)
+    n=${#have[@]}
+    if [ "$n" -gt "$KEEP" ]; then
+        for ((i=0; i<n-KEEP; i++)); do
+            echo "[bank] trimming ${have[$i]}"
+            rm -rf "${DST:?}/${have[$i]}"
+        done
+    fi
+
+    sleep "$SLEEP"
+done
