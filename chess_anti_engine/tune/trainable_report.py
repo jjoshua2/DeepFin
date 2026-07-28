@@ -259,14 +259,21 @@ def _save_trial_checkpoint(
     holdout_buf,
     holdout_frozen: bool,
     holdout_generation: int,
+    holdout_ruler: str,
     Checkpoint,
 ):
     """Flush replay buffer and save a lightweight checkpoint.
 
-    The holdout rides along: its rows as a sidecar npz, its two scalars in
+    The holdout rides along: its rows as a sidecar npz, its scalars in
     trial_meta.json. That is what makes `test_loss` comparable across a
     restart instead of being re-measured against whatever the next few
     iterations of ingest happen to donate. See ``tune/holdout_state``.
+
+    `holdout_ruler` is the other half of that comparability: the set can come
+    back unchanged and still be read by a different instrument, which is how a
+    promotion across two rulers happened at iter 165. Storing it here — beside
+    the generation and the rows, in the file both restore paths already read —
+    is what lets the next restart notice.
     """
     buf.flush()
     trainer.save(ckpt_dir / "trainer.pt")
@@ -290,6 +297,7 @@ def _save_trial_checkpoint(
                 "current_window": int(current_window),
                 "holdout_frozen": bool(holdout_frozen),
                 "holdout_generation": int(holdout_generation),
+                "holdout_ruler": str(holdout_ruler),
             }, sort_keys=True, indent=2),
         )
     except (OSError, TypeError, ValueError) as exc:
@@ -361,6 +369,7 @@ def _update_best_model(
     train_metrics,
     test_metrics_source_iter: int,
     holdout_generation: int,
+    holdout_ruler: str,
     best_loss: float,
     best_source: str,
     best_dir: Path,
@@ -416,6 +425,15 @@ def _update_best_model(
     An older `best.json` with no recorded generation reads as unknown and is
     left to the ordinary rules -- the conservative direction, matching how a
     missing `source` is treated.
+
+    A generation now moves for a change of MEASUREMENT as well as a change of
+    SET (``trainable._maybe_bump_generation_on_ruler_change``), which is what
+    the comparison always meant by "ruler" and never enforced: iter 165's
+    4.85326 beat iter 162's 4.90535 with both sides at generation 1 and a
+    different instrument on each. `holdout_ruler` is written into the record
+    for the audit trail only -- the generation remains the single compared
+    identity, because it is derived from the ruler and two comparison keys
+    would need a rule for what to do when they disagree.
 
     `eval_source_iter` records WHICH model the holdout number describes. With
     `distributed_async_test_eval` (production), the holdout result collected
@@ -488,6 +506,7 @@ def _update_best_model(
                 else int(iteration_idx)
             ),
             "holdout_generation": int(holdout_generation),
+            "holdout_ruler": str(holdout_ruler),
             "opp_strength_ema": float(opp_strength_ema),
         }, indent=2, sort_keys=True),
     )
@@ -819,6 +838,10 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # fractions. The fractions are the outage detector (see TrainMetrics).
     "m_sf_own": 0.0, "m_sf_own_regret": 0.0,
     "has_sf_p0_frac": 0.0, "has_sf_p0_regret_frac": 0.0,
+  # SF target rebuild coverage (train.rebuild_sf_targets). 0.0 with the flag
+  # off; non-zero is the proof the flip reached the batch pipeline.
+    "sf_rebuild_policy_frac": 0.0, "sf_rebuild_wdl_frac": 0.0,
+    "sf_rebuild_masked_frac": 0.0,
     "policy_loss_selfplay": 0.0, "policy_loss_curriculum": 0.0,
     "wdl_loss_selfplay": 0.0, "wdl_loss_curriculum": 0.0,
     "frac_is_selfplay_batch": 0.0, "frac_tagged_batch": 0.0,
@@ -872,6 +895,13 @@ def _train_metrics_dict(metrics) -> dict:
         "m_sf_own_regret": float(metrics.m_sf_own_regret),
         "has_sf_p0_frac": float(metrics.has_sf_p0_frac),
         "has_sf_p0_regret_frac": float(metrics.has_sf_p0_regret_frac),
+        # Rebuild coverage. `sf_rebuild_policy_frac` below the SF-labelled row
+        # fraction is the rows the rebuild could NOT reach (no sf_multipv_raw),
+        # which stay at capture-time targets; `sf_rebuild_masked_frac` counts
+        # the cross-ply targets it masked instead of leaving stale.
+        "sf_rebuild_policy_frac": float(metrics.sf_rebuild_policy_frac),
+        "sf_rebuild_wdl_frac": float(metrics.sf_rebuild_wdl_frac),
+        "sf_rebuild_masked_frac": float(metrics.sf_rebuild_masked_frac),
         "policy_loss_selfplay": float(metrics.policy_loss_selfplay),
         "policy_loss_curriculum": float(metrics.policy_loss_curriculum),
         "wdl_loss_selfplay": float(metrics.wdl_loss_selfplay),
@@ -930,6 +960,16 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
     "test_moves_left_loss", "test_wdl_brier", "test_wdl_ece",
     "test_policy_loss_selfplay", "test_policy_loss_curriculum",
     "test_policy_loss_open", "test_policy_loss_mid", "test_policy_loss_end",
+  # The RULER-side rebuild coverage. `eval_full_pass` pins the SF target
+  # rebuild off, so these are 0.0 by construction and a non-zero value means
+  # the frozen holdout rebuilt its own targets -- the alarm that
+  # `_full_pass_host_batch` forwards its `coverage` sink to keep fail-able.
+  # They belong HERE and not only in TensorBoard: TB event files rotate per
+  # Ray session (see the grad-norm metrics, promoted to TrainMetrics for
+  # exactly this reason), and an alarm whose only reading is in a rotating
+  # sink is not an alarm. The train-side twins are in _TRAIN_METRIC_DEFAULTS.
+    "test_sf_rebuild_policy_frac", "test_sf_rebuild_wdl_frac",
+    "test_sf_rebuild_masked_frac",
 )
 
 
@@ -994,6 +1034,12 @@ def _test_and_drift_dict(
             "test_policy_loss_open": float(tm.policy_loss_open),
             "test_policy_loss_mid": float(tm.policy_loss_mid),
             "test_policy_loss_end": float(tm.policy_loss_end),
+            # Ruler alarm: 0.0 by construction (the full pass pins the SF
+            # target rebuild off), so non-zero means the frozen holdout
+            # rebuilt its own targets and `test_loss` changed meaning.
+            "test_sf_rebuild_policy_frac": float(tm.sf_rebuild_policy_frac),
+            "test_sf_rebuild_wdl_frac": float(tm.sf_rebuild_wdl_frac),
+            "test_sf_rebuild_masked_frac": float(tm.sf_rebuild_masked_frac),
         })
     return test_dict
 

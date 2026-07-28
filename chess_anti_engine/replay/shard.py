@@ -672,6 +672,18 @@ def copy_or_link_shard(src: str | Path, dst: str | Path) -> Path:
 
 
 def delete_shard_path(path: str | Path) -> None:
+    """Evict one shard from a window directory.
+
+    The ``is_symlink()`` branch is load-bearing, not a tidiness detail.
+    ``copy_or_link_shard`` seeds windows with relative symlinks into salvage
+    pools, so a window eviction routinely targets a link whose target is a
+    designated revert point the live run may still need. ``shutil.rmtree`` on a
+    symlinked directory follows it and empties the pool; unlinking removes only
+    the link. Measured 2026-07-26 (audit G10): 280 links already evicted from
+    the live window, and ``swap_512x16_20260711`` still held all 815 shards.
+    Collapsing this to a plain ``rmtree`` destroys a revert point mid-run —
+    ``tests/test_replay_window_safety.py`` pins it.
+    """
     p = Path(path)
     if p.is_symlink():
         p.unlink(missing_ok=True)

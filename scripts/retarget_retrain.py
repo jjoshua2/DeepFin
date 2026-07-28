@@ -16,6 +16,13 @@ param. Pass ``--no-rebuild-sf-targets`` to train on the shards' stored
 targets exactly as live training does — required when the A/B is a *sampling*
 knob (e.g. replay_sf_gap_priority_weight), not a target param.
 
+With the rebuild ON, ``sf_p0_policy_target`` and ``sf_volatility_target`` are
+MASKED in every arm (their sources live on other shard rows and no sampled
+batch can move them with their source — docs/target_rebuildability.md). The
+masking is identical across arms, so variant deltas stay paired; it does mean
+the ``w_sf_own`` own-move-teacher leg is absent from ALL arms of a rebuilt
+sweep, and the sweep therefore says nothing about that leg.
+
 Overridable param keys: sf_policy_temp, sf_policy_label_smooth,
 sf_wdl_use_cp_logistic, sf_wdl_cp_slope, sf_wdl_cp_draw_width, and any
 replay_* sampling knob (anything else in the flat config also works, e.g. lr).
@@ -229,8 +236,16 @@ def _run_variant(
     _assert_replay_planes_match(
         replay_dir, target_planes, upgrade_v1=tc.replay_upgrade_v1_planes,
     )
+    # read_only: this script only samples (`train_steps` never adds, flushes or
+    # clears), and it is routinely pointed at a directory that is either the
+    # live window or a designated salvage pool. Until now the only thing
+    # standing between an offline A/B and an evicted production window was the
+    # `capacity=10**9` below being large enough -- safety by magic number. The
+    # capacity stays as it is because it also sets the effective shuffle cap,
+    # but it is no longer what keeps the shards alive (audit G12).
     buf = DiskReplayBuffer(
         10**9, shard_dir=replay_dir, rng=rng,
+        read_only=True,
         input_planes=target_planes,
         upgrade_v1_planes=tc.replay_upgrade_v1_planes,
         shuffle_cap=tc.shuffle_buffer_size,

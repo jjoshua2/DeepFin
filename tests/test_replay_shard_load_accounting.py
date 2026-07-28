@@ -44,7 +44,7 @@ def _buffer(tmp_path: Path) -> DiskReplayBuffer:
     return DiskReplayBuffer(
         capacity=10_000,
         shard_dir=tmp_path / "shards",
-        rng=np.random.default_rng(0),
+        rng=np.random.default_rng(0), read_only=False,
         refresh_interval=0,  # no background prefetch thread during the test
         refresh_shards=4,
     )
