@@ -5262,6 +5262,77 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### ⚑⚑ THE LOSS IS FAR LESS DIVERSE THAN ASSUMED — 75% of the trunk gradient is two terms pointing 89% the same way (2026-07-28)
+
+Measured on **2,875,793 trunk coordinates**:
+
+| pair | cos | shares |
+|---|---|---|
+| `policy_ce` vs `soft_policy_ce` | **0.892** | 41.8% + 33.4% = **75.2%** |
+| `wdl_ce` vs `categorical_ce` | 0.642 | — |
+| `future_policy_ce` vs everything | **&#124;cos&#124; <= 0.11** | **0.28%** |
+
+**`policy_soft_target` is the SAME distribution re-tempered, not a second opinion.**
+Independently verified from shards: TV **0.2146**, **argmax agreement 0.9998**,
+entropy 0.638 -> 1.391 nats — exactly a T=2.0 tempering. Its head appears in no
+search, eval or UCI module. **To first order `w_soft: 1.0` is a 1.66x multiplier
+on the main policy loss, not an additional signal.**
+
+**⚑ This reframes "reweighting is EXHAUSTED"** ([[gap_priority_104_killed]]).
+Every past sweep reweighted terms *without knowing which were duplicates of each
+other*. A sweep over two near-collinear terms explores one direction and reports
+that reweighting does nothing — which is what happened.
+
+**The actionable asymmetry: the ONLY genuinely orthogonal term in the entire loss
+carries the SMALLEST weight.** `future_policy_ce` is |cos| <= 0.11 against
+everything and holds `w=0.01`, 0.28% of the trunk gradient. If there is a cheap
+10x-class lever anywhere in the loss, that is the shape of it. **Not proposed
+here** — it needs its own pre-registration, and "orthogonal" is not "useful".
+
+### Four more from the same hunt
+
+1. **`diff_focus` is saturated 60x past its selection regime.** `keep_prob =
+   clip(difficulty x slope, ...)` with realized difficulty mean **7.52** against
+   `slope: 3.0` ⇒ `keep_prob == 1.0` on **98.07%** of rows; the floor binds on
+   0.0056%. **And the STAGED Run-4 winners (4.8/3.8/4.0/0.09) are MORE inert
+   (98.81%) — so that sweep was unidentifiable by construction.** Selecting
+   anything needs `slope ~ 0.05-0.1`, i.e. ~50x lower.
+2. **`selfplay_fraction: 0.5` realizes 0.687 of training ROWS.** Selfplay games
+   record **24.83 rows**, curriculum **12.07** (grouped by `game_id`). Game share
+   is 0.5163 and **invariant C1 PASSES — because C1 counts GAMES and the trainer
+   trains on ROWS.** A true 50/50 of rows needs ~0.327. **Mix deliberately NOT
+   changed** (operator decision 2026-07-28: curriculum carries the anti-engine
+   signal and is already only 31.3% of rows).
+3. **The `categorical` head trains on the raw game outcome with none of the 0.45
+   SF blend the `wdl` head gets** — argmax only ever lands in bins 0/15/31. So
+   **38% of the value-side gradient carries zero SF signal**, while the WDL blend's
+   SF component is documented as load-bearing.
+4. **LIVE: curriculum data was ZERO for iters 163-166** — verified:
+   `pid_curriculum_w/d/l` 0/0/0 with `pid_ema_winrate` frozen at 0.5173, then
+   6/2/0 at 167 and 160/14/6 at 168 with the EMA jumping 0.5173 -> 0.5352 ->
+   0.5548. Textbook C14 starve-then-burst, **4th occurrence, and C14's own
+   pre-committed guard was never implemented.** **Every readout spanning iters
+   163-169 is VOID**, including the C17 holdout series.
+
+### Negatives worth banking (so the next hunt skips them)
+
+Optimizer covers **100.0000%** of parameters (481 tensors, 63,084,128, zero
+orphans, zero cross-group duplicates — independently reconfirms A6 and I12). All
+12 `w_*` reach `compute_loss`. All 10 heads exist. Only **3** live yaml keys are
+unreferenced anywhere and all 3 are false positives. Trainer-side A7 — never run
+before tonight — found only `mirror_prob`, hardcoded 0.5 with no yaml key.
+
+**One hypothesis refuted, recorded because it looked strong:** the C ply path was
+suspected of dropping `abs()` on `q_delta` (41.3% of stored values are negative,
+which would have systematically discarded exactly the overconfidence positions
+this project targets). Residual against the abs form: **0.00125** — fp16 storage
+precision. Refuted.
+
+**⚠ Trap found: `runs/pbt2_small/pid_state.json` is dated APRIL 14** and reads
+`wdl_regret: 0.435` against a live 0.0918. It is stale by three months and reads
+like current state. Do not source PID values from it.
+
+
 ### ⚑ OPERATING RULE — arenas are a CONFIRMATION tool, not a progress check (2026-07-28)
 
 **Do not run an arena unless you already believe the effect is >=50 Elo, or
