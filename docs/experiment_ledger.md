@@ -440,7 +440,7 @@ does not say which shape it used was the play shape.
 
 ---
 
-### ⚑ ABSOLUTE STRENGTH FLOOR (2026-07-28) — the net at 256 sims is ≈ Stockfish at **300 nodes**, and −269 Elo at 1000 nodes
+### ⚑ ABSOLUTE STRENGTH FLOOR (2026-07-28) — the net at 256 sims is ≈ Stockfish at **300 nodes**, −269 at 1000, **−512 at 5000**; and the curriculum filter costs the OPPONENT ≥219 Elo at today's regret
 
 The first absolute-strength measurement against a named, reproducible reference.
 Nobody had ever established the floor; the ledger's only external anchor was
@@ -459,6 +459,7 @@ Elo/CI below are the PAIRED pentanomial (`scratchpad/pair_ci.py`, same estimator
 |---|---|---|---|---|---|
 | SF @ **300** nodes | 20-5-15 | **0.5625** | 4/4/8/1/3 | **+43.7** | **[−55.5, +150.6]** |
 | SF @ **1000** nodes | 5-4-31 | **0.1750** | 0/0/5/4/11 | **−269.4** | **[−423.6, −173.0]** |
+| SF @ **2000** nodes | 1-5-34 | **0.0875** | 0/1/0/4/15 | **−407.3** | **[−891.9, −276.5]** |
 | SF @ **5000** nodes | 0-4-36 | **0.0500** | 0/0/1/2/17 | **−511.5** | **[−, −368.0]** |
 
 So the net at its production sim budget sits **statistically level with Stockfish
@@ -499,21 +500,85 @@ The gap between **+900cp and forced mate is 0.0057** — *smaller than the early
 gap between **+500cp and mate is 0.058**, comfortably inside today's **0.0815**. In
 a won position the filter is indifferent across a five-to-nine-pawn range.
 
-Counted on the frozen deep-SF audit set (4000 positions, ~1M nodes, MultiPV stored
-≤10 so these are **lower bounds** — production runs `sf_multipv: 40`;
-`scratchpad/regret_handicap.py`):
+**⚠ RETRACTED, SAME SESSION — my audit-set candidate-count table.** I published a
+table here (4.25 / 5.50 / 5.62 / 6.86 mean moves accepted at regret 0 / 0.0075 /
+0.01 / 0.0815) from `scratchpad/regret_handicap.py`. **It scored candidates with the
+audit set's stored NATIVE per-move `wdl`, not the production cp-logistic** — exactly
+the defect the companion entry retracts for its own shard measurement. Measuring a
+filter with a different scoring function than the filter uses tells you nothing
+about the filter. **Do not cite those counts.** The corrected scorer-matched counts
+are in the companion entry (9.18 → 3.60 candidates as regret goes 0.0815 → 0.0075).
 
-| `regret_limit` | mean moves accepted | median | % positions with >1 accepted |
-|---|---|---|---|
-| **0.0** | 4.25 | 1.0 | 46.7% |
-| 0.0075 | 5.50 | 5.0 | 67.0% |
-| 0.0100 | 5.62 | 5.0 | 69.3% |
-| 0.0815 | 6.86 | 10.0 | 86.2% |
+What survives from my side is the arithmetic above, which used the production
+`_cp_to_wdl` directly, and it is narrower than I first claimed: **the saturation
+bites in DECISIVE positions, not in typical ones.** At +900cp a 0.0057 gap to mate
+means the early-era 0.0075 could not tell a large winning edge from forced mate;
+but in balanced positions the same logistic is at its steepest and 0.0075 is a tight
+filter. Both statements are true and they are about different parts of the
+distribution.
 
-**Even at `regret_limit` = 0 the filter accepts 4.25 moves on average**, because
-distinct moves collide on an identical quantised score. So "regret 0.0075 ≈
-full-strength Stockfish" is false by construction: there is no setting of this lever
-that yields best-move play, and the lever's floor is not "unhandicapped".
+**⚑⚑ THE FILTER'S COST, MEASURED IN ELO: Stockfish beats itself 24-0.** The
+mechanism above says the opponent is handicapped; this sizes it. Both sides are
+`Stockfish dev-20260420` at **698,289 nodes** (the live PID value), Threads=1,
+Hash=16, MultiPV 40, driven through **one and the same proxy**
+(`scratchpad/sf_regret_proxy.py`, which imports the production `_cp_to_wdl` and
+reimplements `_choose_curriculum_opponent_move` verbatim) so the ONLY difference is
+whether the regret filter is applied. Candidate = `--regret 0.0815` (production
+today); reference = `--regret inf` (take SF's top choice verbatim). 24 games, 12
+paired openings, same harness and syzygy adjudication as the bracket:
+
+| filter setting | W-D-L | score | pentanomial | **Elo vs unfiltered** | 95% CI |
+|---|---|---|---|---|---|
+| `regret = 0.0075` (early era) | 3-17-4 | 0.4792 | 0/2/7/3/0 | **−14.5** | **[−81.7, +51.6]** |
+| `regret = 0.0815` (**production today**) | **0-0-24** | **0.0000** | **0/0/0/0/12** | **≤ −219** | 95% one-sided |
+
+**The lever is not broken — it is catastrophically MIS-SET.** At the early-era
+0.0075 the filter is free: −14.5 Elo, CI straddling zero, and 17 of 24 games drawn,
+i.e. the filtered engine plays essentially the same chess. At today's 0.0815 the
+same code, same nodes, same proxy loses **every single game**, mean length **38
+plies** — it is not grinding out losses, it is getting mated in the early
+middlegame. With 12/12 pairs lost the point estimate is unbounded below;
+`1 − 0.05^(1/12)` on the pair score gives **≥219 Elo, plausibly far more.**
+
+So the handicap is wildly nonlinear in `regret_limit`: **free at 0.0075, ≥219 Elo at
+0.0815.** The PID moved this lever across that cliff while reading a winrate that,
+by construction, stayed near 0.5 the whole way — the controller cannot see the
+difference between "the net got stronger" and "I made the opponent worse", and
+nothing in the loop was watching the units.
+
+`opponent_sf_nodes: 698289` describes a Stockfish the net has never played. The
+curriculum opponent AT TODAY'S REGRET is that Stockfish minus ≥219 Elo, and the net
+holding ~0.51 against it is consistent with the net being ≈ SF@300 nodes — exactly
+where the bracket puts it. **At regret 0.0815, "the net is keeping up with SF at
+698k nodes" is void, and the PID is regulating a difficulty axis whose units do not
+mean what they say.**
+
+**⚑ AN OPEN CONTRADICTION THIS SESSION DID NOT RESOLVE — flagged, not explained.**
+Because the filter is FREE at 0.0075/0.01 (−14.5 Elo, measured above), the early
+`nodes_history` rows — regret **0.01**, nodes **108k-126k**, winrate **0.49-0.53** —
+cannot be explained away by the filter. Taken at face value they say the net was
+holding ~51% against a near-full-strength Stockfish at ~108k nodes. Today's bracket
+says the net scores 0.050 against Stockfish at **5000** nodes. Those two are
+irreconcilable by a factor of ~20× in opponent budget, and **the filter explanation
+covers only the LATER, high-regret era.** Candidate explanations, none tested:
+1. **Fast plies** — the 0.4375× mean effective budget below (108k → ~47k), which
+   narrows the gap but nowhere near closes it.
+2. **A real strength regression since the early era.** Consistent with
+   [[warm_start_lr_regime_destroys_net]] and the cross-era arena
+   ("the 512×16 net has not caught the 46M net it replaced", −252 Elo).
+3. **`ema_winrate` may not mean "score".** How draws and adjudicated games enter it
+   was not audited this session; a draw-heavy 0.51 against a stronger opponent is a
+   different claim from a win-heavy one.
+4. **Seeded openings.** `opening_fen_*` blind-spot seeding starts games from
+   positions selected because SF struggles, which inflates winrate against any
+   opponent without inflating strength.
+
+**Pre-registered test, cheapest first:** replay the early-era configuration exactly
+— net at 256 sims vs `sf_regret_proxy.py --regret 0.01 --nodes 108000`, same 40-game
+paired harness as the bracket. If the net scores ≈0.5, the early record is sound and
+the regression hypothesis (2) becomes the live one. If it scores ≈0.05 like the
+SF@5000 rung, then `ema_winrate` never measured what the ladder assumed and
+explanations (3)/(4) take over. **Kill/success: CI on that score excluding 0.35.**
 
 **Second, independent way the opponent is weaker than advertised: fast plies.**
 `stockfish_turn.py:235` gives the curriculum opponent full nodes only when
