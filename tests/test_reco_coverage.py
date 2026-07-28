@@ -44,23 +44,25 @@ from scripts.audit_realized_config import (
 
 _PRODUCTION_YAML = Path(__file__).resolve().parents[1] / "configs" / "pbt2_small.yaml"
 
-# diff_focus is a whole play_batch config group that the distributed worker
-# never builds: ``build_recommended_worker`` publishes none of the five keys and
-# ``_build_selfplay_configs`` returns no ``diff_focus`` entry, so workers run
-# ``DiffFocusConfig()`` while the yaml pins different values. Found by the union
-# diff added alongside this file, and deliberately NOT fixed here: unlike the
-# keys in ``_RECO_WORKER_DEFAULT`` the yaml values differ from the dataclass
-# defaults, so plumbing it would change the selfplay keep-probability and row
-# priority — a data-affecting change that needs its own ledger entry, yardstick
-# and kill rule. Recorded here so it stays visible and so a SEVENTH unpublished
-# key cannot slip in behind it.
-_KNOWN_UNPUBLISHED: frozenset[str] = frozenset({
-    "diff_focus_enabled",
-    "diff_focus_q_weight",
-    "diff_focus_pol_scale",
-    "diff_focus_slope",
-    "diff_focus_min",
-})
+# EMPTY on purpose, and the name is kept rather than deleted.
+#
+# diff_focus used to be the one entry here: the distributed worker never builds
+# a ``DiffFocusConfig`` from the reco, so it runs the dataclass defaults, and the
+# yaml used to ask for the Run-4 sweep winners instead. That made it a live
+# DIVERGENCE rather than a cosmetic gap, which is why it was tracked separately
+# from ``_RECO_WORKER_DEFAULT``.
+#
+# The 2026-07-26 ledger entry pinned the yaml to the realized values as config
+# honesty, which closed the divergence — so on 2026-07-28 the group moved into
+# ``_RECO_WORKER_DEFAULT``, where the allowlist is SELF-INVALIDATING: if anyone
+# edits a diff_focus value off the default it stops being covered and becomes a
+# finding again, instead of silently doing nothing. That is a strictly stronger
+# guard than this set provided.
+#
+# The name stays because ``test_production_config_publishes_every_worker_affecting_key``
+# compares against it, so a NEWLY unpublished key still fails loudly instead of
+# quietly widening an allowlist that no longer exists.
+_KNOWN_UNPUBLISHED: frozenset[str] = frozenset()
 
 
 def _bare_session() -> WorkerSession:
@@ -251,6 +253,11 @@ def test_reco_worker_defaults_match_the_real_dataclasses() -> None:
         "temperature_after": (TemperatureConfig, "after"),
         "categorical_bins": (GameConfig, "categorical_bins"),
         "hlgauss_sigma": (GameConfig, "hlgauss_sigma"),
+        "diff_focus_enabled": (DiffFocusConfig, "enabled"),
+        "diff_focus_q_weight": (DiffFocusConfig, "q_weight"),
+        "diff_focus_pol_scale": (DiffFocusConfig, "pol_scale"),
+        "diff_focus_slope": (DiffFocusConfig, "slope"),
+        "diff_focus_min": (DiffFocusConfig, "min_keep"),
     }
     assert set(yaml_to_field) == set(_RECO_WORKER_DEFAULT)
 
@@ -295,43 +302,58 @@ def _diff_focus_field(yaml_key: str) -> str:
     return "min_keep" if suffix == "min" else suffix
 
 
-def test_the_known_gap_is_a_real_config_group_not_a_typo() -> None:
-    """Guard the pin itself: every _KNOWN_UNPUBLISHED name must be a live knob.
-
-    A stale name in that set silently widens the allowlist.
-    """
-    raw = yaml.safe_load(_PRODUCTION_YAML.read_text(encoding="utf-8"))
-    flat = flatten_yaml_config(raw)
-    df_fields = {f.name for f in fields(DiffFocusConfig)}
-
-    for key in _KNOWN_UNPUBLISHED:
-        assert key in flat, f"{key} is allowlisted but not in the production yaml"
-        assert key in SELFPLAY_CONFIG_KEYS, f"{key} is not a declared selfplay key"
-        assert _diff_focus_field(key) in df_fields, (
-            f"{key} does not map onto a DiffFocusConfig field"
-        )
+_DIFF_FOCUS_KEYS = (
+    "diff_focus_enabled", "diff_focus_q_weight",
+    "diff_focus_pol_scale", "diff_focus_slope", "diff_focus_min",
+)
 
 
-def test_the_known_gap_really_is_a_divergence() -> None:
-    """Not merely unpublished — unpublished AND different from what runs.
+def test_diff_focus_yaml_still_equals_what_the_worker_actually_runs() -> None:
+    """Replaces the old divergence test, and is a stronger guard than it was.
 
-    ``diff_focus_enabled`` happens to agree with the dataclass (both True); the
-    four tuned parameters do not, which is what makes this a live divergence
-    rather than a cosmetic one. If someone parks the whole group on the
-    ``DiffFocusConfig`` defaults it becomes harmless and belongs in
-    ``_RECO_WORKER_DEFAULT`` instead — this fails then, on purpose.
+    The worker never reads these keys — it constructs ``DiffFocusConfig()``. So
+    a yaml value differing from the dataclass default is not a tuning knob, it
+    is a lie: someone edits it, the keep-probability and row priority do not
+    move, and the null result gets read as a verdict.
+
+    The test that used to live here asserted the four tuned keys DIVERGED, which
+    was true until the 2026-07-26 ledger entry pinned the yaml to the realized
+    values as config honesty. It then failed exactly as its own docstring said it
+    should ("parks the whole group on the defaults … this fails then, on
+    purpose"), and the group moved into ``_RECO_WORKER_DEFAULT``. This asserts
+    the pin HOLDS.
     """
     raw = yaml.safe_load(_PRODUCTION_YAML.read_text(encoding="utf-8"))
     flat = flatten_yaml_config(raw)
     running = DiffFocusConfig()
 
     diverging = {
-        key
-        for key in _KNOWN_UNPUBLISHED
+        key: (flat[key], getattr(running, _diff_focus_field(key)))
+        for key in _DIFF_FOCUS_KEYS
         if flat[key] != getattr(running, _diff_focus_field(key))
     }
 
-    assert diverging == {
-        "diff_focus_q_weight", "diff_focus_pol_scale",
-        "diff_focus_slope", "diff_focus_min",
-    }
+    assert not diverging, (
+        "the yaml asks for diff_focus values the worker will never read: "
+        + ", ".join(f"{k} yaml={y!r} running={r!r}" for k, (y, r) in diverging.items())
+        + ". Either pin the yaml back to the running value, or plumb the group "
+        "through the reco — but plumbing changes the selfplay keep-probability "
+        "and row priority, so it needs its own ledger entry and kill rule."
+    )
+
+
+def test_every_diff_focus_key_is_a_real_knob_not_a_typo() -> None:
+    """A stale name here would make the guard above vacuously pass."""
+    raw = yaml.safe_load(_PRODUCTION_YAML.read_text(encoding="utf-8"))
+    flat = flatten_yaml_config(raw)
+    df_fields = {f.name for f in fields(DiffFocusConfig)}
+
+    for key in _DIFF_FOCUS_KEYS:
+        assert key in flat, f"{key} is guarded but not in the production yaml"
+        assert key in SELFPLAY_CONFIG_KEYS, f"{key} is not a declared selfplay key"
+        assert _diff_focus_field(key) in df_fields, (
+            f"{key} does not map onto a DiffFocusConfig field"
+        )
+    assert {f.name for f in fields(DiffFocusConfig)} == {
+        _diff_focus_field(k) for k in _DIFF_FOCUS_KEYS
+    }, "a DiffFocusConfig field exists with no yaml key guarding it"
