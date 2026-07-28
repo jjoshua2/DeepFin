@@ -168,10 +168,28 @@ makes the corruption visible; the pin keeps the measurement usable.
   `_compute_metrics`'s `_build_metrics(...)` call: `eval_ruler=ruler` (#282) vs
   `**eval_coverage.drain()` (this PR). **Both lines must be kept.** GitHub
   reports each PR individually mergeable because neither is on `main` yet, so
-  the conflict only surfaces at the second merge. Whoever merges second must
-  also update #282's `PRODUCTION_FULL_PASS_RULER` / `PRODUCTION_SAMPLED_RULER`
-  pins and the ledger's quoted hex **in the same commit**, or `main` goes red on
-  #282's own golden-id test.
+  the conflict only surfaces at the second merge. Verified by an actual
+  `git merge` of #282 `1fbabcac7` into this branch: exactly that one hunk,
+  `trainable_report.py` auto-merges clean.
+* **Whoever merges second must update BOTH golden ruler pins — not just the
+  full-pass one — in the same commit, or `main` goes red** on #282's
+  `test_the_production_ruler_id_is_pinned`. This PR edits frames in *both*
+  `measured_by` lists (`_prepare_host_arrays` and `_compute_metrics` are shared;
+  `_sample_batch_host` and `_iter_prefetched_batches` are the sampled branch's),
+  so the sampled id moves too. Measured on the merge described above, against
+  #282's **current** tokenize-based digest (its earlier `ast.unparse` digest was
+  interpreter-dependent and produced different values — do not reuse hexes
+  quoted before that change):
+
+  | constant | #282 alone | merged with this PR |
+  |---|---|---|
+  | `PRODUCTION_FULL_PASS_RULER` | `v1:full_pass:c8fb48a79e804bb4` | **`v1:full_pass:2efe658b4e778870`** |
+  | `PRODUCTION_SAMPLED_RULER` | `v1:sampled:e3cc3241626a581f` | **`v1:sampled:d6f7cabecd8e6f67`** |
+
+  With both updated, the merged tree is green (103 passed across
+  `test_holdout_ruler_identity.py`, `test_best_model_ruler.py` and
+  `test_sparse_multipv_labels.py`). The ledger's quoted hex needs the same
+  update.
 
 ## Rebuildable from the row itself
 
