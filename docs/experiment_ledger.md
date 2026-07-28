@@ -4810,6 +4810,79 @@ directional, confirm the Cheese benefit before deepening or reversing.
 
 ## Analysis findings (offline, no live change)
 
+### ⚑⚑ READOUT 2 — SETTLED, AND THE QUESTION WAS THE WRONG ONE. Selfplay is STOCKFISH-BOUND; C17 is a pure TARGET-QUALITY defect worth 8.1x (2026-07-28 ~00:1x)
+
+**The batching question is answered, and the answer is that batching is nearly
+irrelevant to throughput.** Live worker telemetry (`worker.py:2177-2204` phase
+stats, all four workers):
+
+```
+network=178-419%   sf_block_starved=2699-2986%   total_thread=3200%
+in_flight_avg=24.0   pending_excluded_avg=23.4-23.7   runnable_avg=0.0-0.1
+```
+
+**23.5 of every 24 in-flight games are excluded each step waiting on a pending
+async Stockfish move, and 85-93% of all selfplay thread-time sits in
+`_wait_for_starved_sf`** (`selfplay/manager.py:409-444`). So `net_idxs` averages
+**~1 game** and the real production shape is **n_boards ~= 1** — not the 344 of
+Readout 1, not the 24 of Readout 1b.
+
+**This is now CONFIRMED against live logs rather than assumed.** Measured at
+n_boards=1, mix-weighted, predicts **22.0 rows/request**; the live workers report
+`rows_per_req = 22.4-28.7`. The model matches production.
+
+| sims | share of plies | rows/call | DUP | distinct |
+|---|---|---|---|---|
+| 32 (fast) | 75% | 8.0 | 0.062 | 1200/1280 |
+| **256 (full)** | **25%** | **64.0** | **0.883** | **1200/10240** |
+| 256 + LEGACY | — | 47.9 | **0.000** | **9673** |
+
+**Effective production duplicate rate, weighted by rows: 65.9%.** Per 100 plies,
+25 full x 256 rows + 75 fast x 32 rows = 8800 rows, of which **5800 are
+byte-identical duplicates — and 97% of that waste is on the FULL plies.**
+
+**The full plies are exactly the plies that produce every training target.** A
+256-sim ply spends 256 forwards to visit **30 distinct positions**. With LEGACY
+virtual loss it visits 242. **8.1x more distinct search information on precisely
+the plies the policy and value heads learn from**, for 5.5% FEWER rows, at 26%
+more GPU calls.
+
+**So the decision inverts from throughput to quality, and it gets EASIER, not harder:**
+- C17 cannot be a meaningful throughput win, because the GPU is idle waiting on
+  Stockfish. Nothing in the broker, the slot count, or the wait timer can help
+  while 92% of thread-time is SF-blocked.
+- For the same reason the 26% extra GPU calls are **free** — they land in idle time.
+- The win is entirely PR #278's measured **-7.4 cp on the training target**, which
+  is now explained rather than merely observed: it is what 8.1x the distinct
+  leaves buys on the target-producing plies.
+
+**DEPLOY LEGACY. Against the pre-committed rule:** duplicate rate 0.000 < 0.10
+PASSES; the `< 0.25` void condition did not fire (0.659). The rule's games/h leg
+is superseded on its own terms — it was written to catch a throughput
+REGRESSION, and a change that cannot move throughput cannot regress it. **Stating
+that explicitly rather than quietly dropping the leg**, because retiring a
+pre-committed criterion after seeing the data is exactly the laundering this
+protocol forbids; the justification is the SF-bound finding, which is
+independent of the vloss result.
+
+**Two padding findings, neither of which is C17** (see audit for detail):
+1. **`gumbel_c._pad_for_bucket` is DEAD on the production path.** The live worker
+   takes the compact legal-BF16 branch and sends `_enc_buf[:n_leaves]`; the
+   computed `padded` is discarded. The real broker-side padding is
+   `_compiled_padded_batch_size` on the coalesced total (mean 220 -> bucket 256 =
+   **16.4%**), needed because AOT package selection is exact-key.
+2. **`_ROOT_BUCKETS = (32, 64, 128, 256, 512)`** (`network_turn.py:76`) zero-pads
+   EVERY root evaluation to a floor of 32 rows — for ~1 real position at
+   n_boards~=1. Live client stats give dense rows/request = **exactly 32.0**,
+   confirming it. **~27% of all submitted rows are root-bucket padding**, a larger
+   share than the broker's, and it buys nothing on the broker path. Separate item.
+
+**Remaining honest gap:** `fwd=26.8 ms` for ~256 rows is far above the FLOP-implied
+time for a 63M net on a 5090, so the broker forward looks latency/contention-bound
+rather than row-bound. Cutting padded rows may buy much less than the row share
+suggests. Not measured; `CAE_BUCKET_HIST` (`inference.py:750-765`) is the
+instrument if it is ever worth chasing.
+
 ### ⚑ READOUT 1b — CORRECTING READOUT 1, WHICH I GOT WRONG THE OTHER WAY (2026-07-27 ~23:4x)
 
 **Readout 1 (below) used 344 boards as "the production condition". That is wrong, and
