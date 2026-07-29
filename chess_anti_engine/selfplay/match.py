@@ -162,7 +162,11 @@ def pick_moves_for_boards(
                     f"target_batch={int(gumbel_target_batch)} on the Python path "
                     f"(_HAS_GUMBEL_C={_HAS_GUMBEL_C}, volatility="
                     f"{volatility_search_enabled(gumbel_cfg)}). Pass 0 for both, "
-                    "or run the C path."
+                    "or run the C path. In an arena, zero them on BOTH sides "
+                    "(--cand-vloss-weight 0 AND --ref-vloss-weight 0): zeroing "
+                    "only the candidate leaves the reference on the C path at "
+                    "the shape's vloss_weight, so the volatility A/B is "
+                    "confounded by virtual loss."
                 )
             result = run_gumbel_root_many(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,

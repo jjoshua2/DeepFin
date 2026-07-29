@@ -145,3 +145,101 @@ def test_smoke_arena_matched_sims_cpu(tmp_path):
     assert set(loaded["pentanomial"]) == {"WW", "WD_DW", "DD_WL", "LD_DL", "LL"}
     for key in ("ts", "git_sha", "config_hash", "score", "elo", "elo_ci95", "seed"):
         assert key in loaded
+
+
+@pytest.mark.parametrize("play_fn_name", [
+    "play_paired_games_matched_sims",
+    "play_paired_games_matched_sims_rolling",
+])
+def test_both_arena_paths_pass_each_side_its_own_vloss_and_target_batch(
+    monkeypatch, play_fn_name: str,
+) -> None:
+    """Both arena loops must hand each side ITS OWN vloss_weight/target_batch.
+
+    The rolling loop is the DEFAULT (``run_arena(rolling=True)``) and is what
+    ``daily_gate_ratchet.sh`` runs, but every other test here drives the chunked
+    loop. A review of #286 mutated the rolling loop to drop both kwargs and the
+    whole suite stayed green -- the guard covered the path that does not run.
+
+    Asserting per-side (play on one side, training on the other, which differ in
+    vloss_weight 3 vs 1) also catches the subtler bug where both sides are fed
+    one side's value.
+    """
+    import scripts.arena_standard as arena
+
+    cand = resolve_search_shape("play")       # vloss_weight 3
+    ref = resolve_search_shape("training")    # vloss_weight 1
+    assert cand.vloss_weight != ref.vloss_weight, "shapes must differ or the test is vacuous"
+
+    # (vloss_weight, target_batch_present, target_batch, topk) per call.
+    seen: list[tuple[int, bool, int, float]] = []
+
+    def _recording_pick(_model, boards, **kw):
+        missing = [
+            k for k in ("gumbel_vloss_weight", "gumbel_target_batch")
+            if k not in kw
+        ]
+        # Report the DROPPED kwarg by name rather than dying on a KeyError --
+        # this assertion is the whole point of the test, so it must say what
+        # broke rather than leaving the next reader a traceback to decode.
+        assert not missing, (
+            f"{play_fn_name} did not pass {missing} to pick_moves_for_boards; "
+            "the side's search shape is silently not reaching the search"
+        )
+        seen.append((
+            int(kw["gumbel_vloss_weight"]),
+            True,
+            int(kw["gumbel_target_batch"]),
+            float((kw.get("gumbel_overrides") or {})["topk"]),
+        ))
+        # apply_actions_to_boards falls back to the first legal move when the
+        # action is illegal, so a constant is a valid stand-in for a search.
+        return [0] * len(boards)
+
+    monkeypatch.setattr(
+        "chess_anti_engine.selfplay.match.pick_moves_for_boards", _recording_pick,
+    )
+
+    e4 = chess.Board()
+    e4.push_uci("e2e4")
+    d4 = chess.Board()
+    d4.push_uci("d2d4")
+
+    play_fn = getattr(arena, play_fn_name)
+    kwargs: dict[str, object] = {
+        "device": "cpu",
+        "rng": np.random.default_rng(0),
+        "sims_candidate": 2,
+        "sims_reference": 2,
+        "max_plies": 6,
+        "temperature": 1.0,
+        "gumbel_add_noise": False,
+        "search_candidate": cand,
+        "search_reference": ref,
+    }
+    if play_fn_name.endswith("_rolling"):
+        kwargs["pool_size"] = 4
+        kwargs["report_every"] = 1000
+    play_fn(None, None, [e4, d4], **kwargs)
+
+    assert seen, f"{play_fn_name} never called pick_moves_for_boards"
+    by_vloss = sorted({row[0] for row in seen})
+    expected_vloss = sorted({int(cand.vloss_weight), int(ref.vloss_weight)})
+    assert by_vloss == expected_vloss, (
+        f"{play_fn_name}: each side must get its OWN vloss_weight; "
+        f"saw {by_vloss}, expected {expected_vloss}"
+    )
+    # target_batch must be threaded too. Both shapes use 0 today, so assert the
+    # kwarg is PRESENT -- an omitted kwarg would also read as 0 downstream.
+    assert all(row[1] for row in seen), (
+        f"{play_fn_name}: gumbel_target_batch was not passed at all"
+    )
+    assert all(row[2] == 0 for row in seen)
+    # each call's vloss must pair with the topk of the shape it came from, which
+    # catches feeding one side's vloss to both.
+    for vloss, _present, _tb, topk in seen:
+        expect = cand if vloss == int(cand.vloss_weight) else ref
+        assert topk == float(expect.gumbel["topk"]), (
+            f"{play_fn_name}: side mismatch -- vloss {vloss} came with "
+            f"topk {topk}, expected {expect.gumbel['topk']}"
+        )

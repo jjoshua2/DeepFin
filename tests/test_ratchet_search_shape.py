@@ -185,3 +185,59 @@ def test_mixing_rulers_is_possible_but_never_silent(capsys: pytest.CaptureFixtur
 
     assert kept == rows
     assert "FITTING ACROSS 2 RULERS" in capsys.readouterr().out
+
+
+# Every repo entry point that now hard-requires --search-shape. Keyed by script
+# name so adding a third is one line rather than a new test.
+_SHAPE_REQUIRING_SCRIPTS = ("arena_standard.py", "elo_vs_sims.py")
+
+# Docs that RECORD commands already run, rather than instructing anyone to run
+# them. The ledger's arena invocations were executed before --search-shape
+# existed; rewriting them to satisfy this test would falsify the record of what
+# was actually measured. Instruction docs (eval_protocol, operations) are in
+# scope precisely because someone will copy-paste from them.
+_HISTORICAL_DOCS = frozenset({"experiment_ledger.md", "rl_loop_audit.md"})
+
+
+def _shape_requiring_invocations(text: str) -> list[tuple[str, str]]:
+    """Every invocation of a script that hard-requires --search-shape."""
+    out: list[tuple[str, str]] = []
+    for name in _SHAPE_REQUIRING_SCRIPTS:
+        pattern = rf"scripts/{re.escape(name)}((?:[^\n]*\\\n)*[^\n]*)"
+        out.extend((name, m.group(0)) for m in re.finditer(pattern, text))
+    return out
+
+
+def test_no_doc_or_script_invocation_omits_a_required_search_shape() -> None:
+    """Docs must not print a command that exits 1.
+
+    ``test_no_repo_script_arenas_without_naming_a_shape`` scans only
+    ``scripts/*.sh`` and only ``arena_standard.py``. The #286 review found
+    ``docs/eval_protocol.md`` still printing an ``elo_vs_sims.py`` command
+    without ``--search-shape`` -- a documented yardstick that cannot run, which
+    is the same defect class as an arena measuring the wrong search: the
+    instrument is inert and the page still reads authoritative.
+    """
+    offenders: list[str] = []
+    scanned = 0
+    targets = [
+        p for p in sorted((ROOT / "docs").glob("*.md"))
+        if p.name not in _HISTORICAL_DOCS and not p.name.startswith("AUDIT_")
+    ] + sorted((ROOT / "scripts").glob("*.sh"))
+    for path in targets:
+        text = path.read_text(encoding="utf-8")
+        for name, call in _shape_requiring_invocations(text):
+            # matched_time legitimately rejects --search-shape.
+            if "matched_time" in call:
+                continue
+            # arena_standard only requires it for matched_sims; elo_vs_sims always.
+            if name == "arena_standard.py" and "matched_sims" not in call:
+                continue
+            scanned += 1
+            if "--search-shape" not in call:
+                offenders.append(f"{path.relative_to(ROOT)}: {call.splitlines()[0].strip()}")
+
+    assert scanned, "no shape-requiring invocation found in docs/*.md or scripts/*.sh at all"
+    assert not offenders, (
+        f"{offenders} omit --search-shape; these commands exit 1 as written"
+    )

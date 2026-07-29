@@ -72,7 +72,7 @@ the encoding stored in the checkpoint itself.
 
   ```bash
   PYTHONPATH=. python3 scripts/elo_vs_sims.py \
-      --checkpoint <ckpt> --games-per-rung 400
+      --checkpoint <ckpt> --games-per-rung 400 --search-shape training
   ```
 
   Arenas the checkpoint against itself at sims {32, 64, 128, 256, 512},
