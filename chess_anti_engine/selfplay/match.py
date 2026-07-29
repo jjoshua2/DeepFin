@@ -86,6 +86,8 @@ def pick_moves_for_boards(
     volatility_fpu: float = 0.0,
     volatility_anchor: float | None = None,
     gumbel_overrides: dict[str, float] | None = None,
+    gumbel_vloss_weight: int = 0,
+    gumbel_target_batch: int = 0,
 ) -> list[int]:
     """Run gumbel- or PUCT-MCTS for one model on a list of boards.
 
@@ -93,6 +95,22 @@ def pick_moves_for_boards(
     volatility-aware Gumbel search, which forces the Python search path
     (logged once). ``volatility_anchor`` overrides the GumbelConfig default
     dataset-mean anchor when given.
+
+    ``gumbel_vloss_weight`` / ``gumbel_target_batch`` are the two C-path search
+    controls that are NOT ``GumbelConfig`` fields, so ``gumbel_overrides``
+    cannot carry them. Until they were added here this function passed neither,
+    both took the C defaults of 0, and the whole arena path (arena_standard
+    matched_sims) ran the pre-C17 duplicate-leaf search while production
+    selfplay ran ``gumbel_vloss_weight: 1`` — production played a different move
+    from the arena on 10% of positions at 32 sims and 27.5% at 256
+    (docs/experiment_ledger.md 2026-07-28). The defaults stay 0 so no existing
+    caller changes behaviour; callers that must match production pass the
+    values from the production ``SearchConfig``.
+
+    They apply to the C path only. The Python reference search
+    (``run_gumbel_root_many``, used when the extension is missing or volatility
+    search is on) has no equivalent, so a non-zero value there is a request the
+    search cannot honour and is rejected rather than dropped.
     """
     input_history_encoding = str(getattr(model, "input_history_encoding", "legacy"))
     input_extra_features = str(getattr(model, "input_extra_features", "v1"))
@@ -129,8 +147,23 @@ def pick_moves_for_boards(
             result = _run_gumbel_root_many_c(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
                 allow_terminal_root_shortcuts=True,
+                vloss_weight=int(gumbel_vloss_weight),
+                target_batch=int(gumbel_target_batch),
             )
         else:
+            if int(gumbel_vloss_weight) or int(gumbel_target_batch):
+                # Fail loud instead of quietly searching without them: silently
+                # dropping these is the exact defect this plumbing fixes, and a
+                # dropped vloss_weight changes a quarter of the moves at 256 sims.
+                raise ValueError(
+                    "gumbel_vloss_weight/gumbel_target_batch are C-path only "
+                    "(run_gumbel_root_many has no equivalent); got "
+                    f"vloss_weight={int(gumbel_vloss_weight)} "
+                    f"target_batch={int(gumbel_target_batch)} on the Python path "
+                    f"(_HAS_GUMBEL_C={_HAS_GUMBEL_C}, volatility="
+                    f"{volatility_search_enabled(gumbel_cfg)}). Pass 0 for both, "
+                    "or run the C path."
+                )
             result = run_gumbel_root_many(
                 model, sub_boards, device=device, rng=rng, cfg=gumbel_cfg,
             )

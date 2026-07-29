@@ -63,6 +63,224 @@ PAIR_LABELS = ("WW", "WD_DW", "DD_WL", "LD_DL", "LL")
 
 
 # ---------------------------------------------------------------------------
+# Search shape — WHICH search this arena measures
+# ---------------------------------------------------------------------------
+#
+# There are two real search shapes in this repo and they are deliberately
+# different (mcts/gumbel.py, tests/test_selfplay_gumbel_c_scale.py):
+#
+#   play      the tuned UCI/match shape — c_scale 0.025, topk 32, LOG root
+#             (c_scale_root 7 / q_visit_exp_root -1), vloss_weight 3.
+#   training  what production selfplay actually runs — c_scale 0.1, topk 16,
+#             LINEAR root, vloss_weight/target_batch from the production yaml.
+#
+# Until 2026-07-29 this script picked `play` for every run and never said so:
+# `_parse_gumbel_overrides` seeded itself from PLAY_SEARCH_DEFAULTS even with no
+# flag, and vloss_weight/target_batch were passed nowhere at all so both sat at
+# 0 (the pre-C17 duplicate-leaf search) with no way to reach them from the CLI.
+# So every Elo in docs/experiment_ledger.md was measured on a search selfplay
+# does not run, and a sims ladder run that way was invalidated outright (ledger
+# 2026-07-28: the "-52.5 Elo, 256 v 32" rung became +5.8 under the training
+# shape). The shape is now an explicit REQUIRED choice, realized values are
+# printed at startup and stored in the JSONL record, and there is no default.
+
+SEARCH_SHAPES = ("play", "training")
+
+_GUMBEL_INT_KEYS = {"topk", "halving_div", "simulations"}
+
+
+@dataclass(frozen=True)
+class SideSearch:
+    """The complete realized search configuration for ONE side of the arena.
+
+    ``gumbel`` are GumbelConfig field overrides (applied by
+    ``dataclasses.replace``); ``vloss_weight`` / ``target_batch`` are the two
+    C-path controls that are function arguments rather than GumbelConfig
+    fields, which is exactly why an override surface built on
+    ``dataclasses.replace`` could never reach them.
+    """
+
+    shape: str
+    source: str
+    gumbel: dict[str, float]
+    vloss_weight: int
+    target_batch: int
+
+    def realized_gumbel(self) -> dict[str, float | int]:
+        """Every shape-defining knob's REALIZED value, overrides or not.
+
+        Keys not overridden fall back to the GumbelConfig dataclass default,
+        which is the selfplay/training shape by construction. Printing this
+        rather than the sparse override dict is the point: a `training` run
+        must be able to show that it is NOT running c_scale 0.025.
+        """
+        from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
+
+        base = GumbelConfig()
+        out: dict[str, float | int] = {}
+        for key in sorted(set(PLAY_SEARCH_DEFAULTS) | set(self.gumbel)):
+            value = self.gumbel[key] if key in self.gumbel else getattr(base, key, None)
+            if not isinstance(value, (int, float)):
+                raise SystemExit(
+                    f"gumbel knob {key!r} is not a numeric GumbelConfig field "
+                    f"(got {value!r}); --*-gumbel keys must be replaceable fields"
+                )
+            out[key] = value
+        return out
+
+    def as_record(self) -> dict:
+        return {
+            "shape": self.shape,
+            "source": self.source,
+            "gumbel": dict(self.realized_gumbel()),
+            "vloss_weight": self.vloss_weight,
+            "target_batch": self.target_batch,
+        }
+
+    def describe(self) -> str:
+        knobs = " ".join(f"{k}={v}" for k, v in self.realized_gumbel().items())
+        return (
+            f"shape={self.shape} vloss_weight={self.vloss_weight} "
+            f"target_batch={self.target_batch} {knobs} [{self.source}]"
+        )
+
+
+def production_selfplay_search_config():
+    """The selfplay ``SearchConfig`` a distributed worker actually builds.
+
+    Runs the whole real channel — yaml -> live-yaml validator ->
+    ``build_recommended_worker`` (the ONLY way a knob reaches a worker) ->
+    ``WorkerSession._build_selfplay_configs`` — instead of reading yaml keys
+    directly, so the arena's training shape cannot drift from the search
+    production runs. A knob the reco does not publish resolves to the worker's
+    own default HERE TOO, which is the honest answer: an unpublished knob is
+    not what production runs, whatever the yaml says.
+
+    Reads the config in THIS tree; run the arena from the live tree to price
+    the live run. NOT the ``TrialConfig``/``_play_batch_kwargs`` path: that one
+    silently drops ``gumbel_vloss_weight`` (no such TrialConfig field), which
+    is the in-process-selfplay half of the same defect family.
+    """
+    import logging
+    import threading
+    from types import SimpleNamespace
+
+    from chess_anti_engine.model import ModelConfig
+    from chess_anti_engine.tune.distributed_runtime import build_recommended_worker
+    from chess_anti_engine.utils.config_yaml import (
+        flatten_run_config_defaults,
+        load_yaml_file,
+    )
+    from chess_anti_engine.worker import WorkerSession
+
+    flat = flatten_run_config_defaults(load_yaml_file(str(PRODUCTION_CONFIG)))
+    # sf_nodes / mcts_simulations are supplied by the publisher (PID budget and
+    # sim ramp), not read from the config; mirror the config's own values so
+    # nothing here depends on the live controller state.
+    reco = build_recommended_worker(
+        config=flat,
+        model_cfg=ModelConfig(),
+        sf_nodes=int(flat.get("sf_nodes", 5000) or 5000),
+        mcts_simulations=int(flat.get("mcts_simulations", 32) or 32),
+    )
+    # `_build_selfplay_configs` reads only these session fields (see
+    # tests/test_selfplay_gumbel_c_scale.py); a full session would need a
+    # broker, a model and a Stockfish binary.
+    session = object.__new__(WorkerSession)
+    session.log = logging.getLogger("arena.production_search_config")
+    session.args = SimpleNamespace()
+    session.opening_book_path = None
+    session.opening_book_path_2 = None
+    session.opening_fen_list_path = None
+    session._dole_lock = threading.Lock()
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(session, reco)
+    return cfgs["search"]
+
+
+def resolve_search_shape(shape: str) -> SideSearch:
+    """Turn ``play``/``training`` into the concrete knobs each one means."""
+    from chess_anti_engine.mcts.gumbel import (
+        PLAY_SEARCH_DEFAULTS,
+        PLAY_SEARCH_TARGET_BATCH,
+        PLAY_SEARCH_VLOSS_WEIGHT,
+    )
+
+    if shape == "play":
+        return SideSearch(
+            shape="play",
+            source="mcts.gumbel PLAY_SEARCH_DEFAULTS + PLAY_SEARCH_VLOSS_WEIGHT",
+            gumbel={
+                k: (int(v) if k in _GUMBEL_INT_KEYS else float(v))
+                for k, v in PLAY_SEARCH_DEFAULTS.items()
+            },
+            vloss_weight=int(PLAY_SEARCH_VLOSS_WEIGHT),
+            target_batch=int(PLAY_SEARCH_TARGET_BATCH),
+        )
+    if shape == "training":
+        search = production_selfplay_search_config()
+        # Only the knobs production actually sets from config. Everything else
+        # is left at the GumbelConfig default, which IS the selfplay shape —
+        # seeding from PLAY_SEARCH_DEFAULTS here is the original defect.
+        return SideSearch(
+            shape="training",
+            source=f"{PRODUCTION_CONFIG.name} -> reco -> worker SearchConfig",
+            gumbel={
+                "c_scale": float(search.gumbel_c_scale),
+                "topk": int(search.gumbel_topk),
+            },
+            vloss_weight=int(search.gumbel_vloss_weight),
+            target_batch=int(search.gumbel_target_batch),
+        )
+    raise SystemExit(f"--search-shape must be one of {SEARCH_SHAPES}, got {shape!r}")
+
+
+def apply_search_overrides(
+    base: SideSearch,
+    *,
+    spec: str | None = None,
+    vloss_weight: int | None = None,
+    target_batch: int | None = None,
+) -> SideSearch:
+    """Layer per-side CLI overrides on top of a resolved shape."""
+    import dataclasses
+
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+
+    fields = {f.name for f in dataclasses.fields(GumbelConfig)}
+    gumbel = dict(base.gumbel)
+    extra: list[str] = []
+    for part in (spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise SystemExit(f"--*-gumbel: expected k=v pairs, got {part!r}")
+        k, v = part.split("=", 1)
+        k = k.strip()
+        if k not in fields:
+            # Caught here rather than by `dataclasses.replace` several minutes
+            # into the run, after both checkpoints have loaded and compiled.
+            raise SystemExit(
+                f"--*-gumbel: {k!r} is not a GumbelConfig field. Valid keys: "
+                f"{', '.join(sorted(fields))}"
+            )
+        gumbel[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
+        extra.append(part)
+    if vloss_weight is not None:
+        extra.append(f"vloss_weight={int(vloss_weight)}")
+    if target_batch is not None:
+        extra.append(f"target_batch={int(target_batch)}")
+    source = base.source if not extra else f"{base.source} + CLI({','.join(extra)})"
+    return SideSearch(
+        shape=base.shape,
+        source=source,
+        gumbel=gumbel,
+        vloss_weight=base.vloss_weight if vloss_weight is None else int(vloss_weight),
+        target_batch=base.target_batch if target_batch is None else int(target_batch),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Pentanomial bookkeeping + Elo math
 # ---------------------------------------------------------------------------
 
@@ -360,13 +578,18 @@ def play_paired_games_matched_sims(
     max_plies: int,
     temperature: float,
     gumbel_add_noise: bool,
+    search_candidate: SideSearch,
+    search_reference: SideSearch,
     volatility_candidate: dict[str, float] | None = None,
     syzygy_tablebase: object | None = None,
     tb_max_pieces: int = 6,
-    gumbel_candidate: dict[str, float] | None = None,
-    gumbel_reference: dict[str, float] | None = None,
 ) -> list[float]:
     """Play each opening twice (colors swapped) and return per-pair scores.
+
+    ``search_candidate`` / ``search_reference`` are REQUIRED and carry the full
+    realized search shape per side (see ``SideSearch``). There is deliberately
+    no default: a silent default is what made every arena in the ledger measure
+    the UCI/play search instead of the training search.
 
     ``volatility_candidate`` (volatility_q_scale / volatility_fpu /
     volatility_anchor) applies volatility-aware Gumbel search to the
@@ -425,9 +648,9 @@ def play_paired_games_matched_sims(
             active, boards, a_plays_white,
         )
         vol_kwargs = dict(volatility_candidate or {})
-        for model, idxs, sims, extra, gov in (
-            (model_candidate, a_to_move, sims_candidate, vol_kwargs, gumbel_candidate),
-            (model_reference, b_to_move, sims_reference, {}, gumbel_reference),
+        for model, idxs, sims, extra, side in (
+            (model_candidate, a_to_move, sims_candidate, vol_kwargs, search_candidate),
+            (model_reference, b_to_move, sims_reference, {}, search_reference),
         ):
             if not idxs:
                 continue
@@ -437,7 +660,9 @@ def play_paired_games_matched_sims(
                 mcts_type="gumbel", mcts_simulations=int(sims),
                 temperature=float(temperature), c_puct=2.5,
                 gumbel_add_noise=bool(gumbel_add_noise),
-                gumbel_overrides=gov,
+                gumbel_overrides=side.gumbel,
+                gumbel_vloss_weight=side.vloss_weight,
+                gumbel_target_batch=side.target_batch,
                 **extra,
             )
             apply_actions_to_boards(boards, idxs, actions)
@@ -466,12 +691,12 @@ def play_paired_games_matched_sims_rolling(
     max_plies: int,
     temperature: float,
     gumbel_add_noise: bool,
+    search_candidate: SideSearch,
+    search_reference: SideSearch,
     volatility_candidate: dict[str, float] | None = None,
     syzygy_tablebase: object | None = None,
     tb_max_pieces: int = 6,
     pool_size: int = 256,
-    gumbel_candidate: dict[str, float] | None = None,
-    gumbel_reference: dict[str, float] | None = None,
     report_every: int = 64,
 ) -> list[float]:
     """Rolling-pool variant: keep ``pool_size`` games active at all times, starting
@@ -575,9 +800,10 @@ def play_paired_games_matched_sims_rolling(
             last_report = done
         active = list(range(len(boards)))
         a_to_move, b_to_move = split_active_by_side_to_move(active, boards, awhite)
-        for model, idxs, sims, extra, gov in (
-            (model_candidate, a_to_move, sims_candidate, dict(volatility_candidate or {}), gumbel_candidate),
-            (model_reference, b_to_move, sims_reference, {}, gumbel_reference),
+        for model, idxs, sims, extra, side in (
+            (model_candidate, a_to_move, sims_candidate,
+             dict(volatility_candidate or {}), search_candidate),
+            (model_reference, b_to_move, sims_reference, {}, search_reference),
         ):
             if not idxs:
                 continue
@@ -587,7 +813,9 @@ def play_paired_games_matched_sims_rolling(
                 mcts_type="gumbel", mcts_simulations=int(sims),
                 temperature=float(temperature), c_puct=2.5,
                 gumbel_add_noise=bool(gumbel_add_noise),
-                gumbel_overrides=gov,
+                gumbel_overrides=side.gumbel,
+                gumbel_vloss_weight=side.vloss_weight,
+                gumbel_target_batch=side.target_batch,
                 **extra,
             )
             apply_actions_to_boards(boards, idxs, actions)
@@ -706,9 +934,16 @@ def build_result_record(
     openings_kind: str = "book",
     label: str | None = None,
     volatility_candidate: dict[str, float] | None = None,
+    search_candidate: SideSearch | None = None,
+    search_reference: SideSearch | None = None,
 ) -> dict:
     elo_lo, elo_hi = summary.elo_ci95
     return {
+        # WHICH search produced this Elo. Rows without these keys predate
+        # 2026-07-29 and were all measured on the play shape at vloss_weight=0
+        # regardless of what their argv suggests.
+        "search_candidate": None if search_candidate is None else search_candidate.as_record(),
+        "search_reference": None if search_reference is None else search_reference.as_record(),
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "git_sha": git_sha(),
         "config_hash": production_config_hash(),
@@ -794,12 +1029,35 @@ def run_arena(
     tb_max_pieces: int = 6,
     compile_models: bool = True,
     rolling: bool = True,
-    gumbel_candidate: dict[str, float] | None = None,
-    gumbel_reference: dict[str, float] | None = None,
+    search_candidate: SideSearch | None = None,
+    search_reference: SideSearch | None = None,
 ) -> dict:
-    """Run one standardized arena and return (and optionally log) the record."""
+    """Run one standardized arena and return (and optionally log) the record.
+
+    ``search_candidate`` / ``search_reference`` are mandatory for
+    ``matched_sims`` — this is the single funnel every arena entry point goes
+    through (arena_standard, elo_vs_sims, anything future), so refusing to run
+    without an explicit shape here is what makes "which search did I measure?"
+    unanswerable-by-omission impossible. ``matched_time`` runs real UCI
+    subprocesses, which carry their own play shape; pass search knobs there via
+    ``--uci-args`` instead.
+    """
     if games < 2 or games % 2 != 0:
         raise SystemExit("--games must be even and >= 2 (paired openings)")
+    if mode == "matched_sims" and (search_candidate is None or search_reference is None):
+        raise SystemExit(
+            "matched_sims needs an explicit search shape: pass --search-shape "
+            f"{{{'|'.join(SEARCH_SHAPES)}}}. 'training' is what production selfplay "
+            "runs (c_scale 0.1, topk 16, linear root, yaml vloss_weight); 'play' is "
+            "the tuned UCI/match shape (c_scale 0.025, topk 32, log root, "
+            "vloss_weight 3). There is no default because the silent one was wrong "
+            "for every arena in docs/experiment_ledger.md."
+        )
+    if mode == "matched_time" and (search_candidate is not None or search_reference is not None):
+        raise SystemExit(
+            "matched_time plays through UCI engine subprocesses, which use their "
+            "own play shape; --search-shape cannot apply. Use --uci-args."
+        )
     n_pairs = games // 2
     rng = np.random.default_rng(seed)
 
@@ -846,6 +1104,10 @@ def run_arena(
             f"reference={sims_reference} sims/move, temp={temperature}, "
             f"noise={gumbel_add_noise}"
         )
+        assert search_candidate is not None
+        assert search_reference is not None
+        print(f"[arena] SEARCH candidate: {search_candidate.describe()}", flush=True)
+        print(f"[arena] SEARCH reference: {search_reference.describe()}", flush=True)
         # Syzygy adjudication: end each game the instant it reaches a covered
         # (<=N-man) position, so long endgame tails don't dominate the wall clock
         # (reuses match_vs_uci's WDL probe). Opened once, shared across chunks.
@@ -880,7 +1142,7 @@ def run_arena(
                 volatility_candidate=volatility_candidate,
                 syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
                 pool_size=int(max_concurrent_games),
-                gumbel_candidate=gumbel_candidate, gumbel_reference=gumbel_reference,
+                search_candidate=search_candidate, search_reference=search_reference,
                 report_every=int(report_every),
             )
         else:
@@ -904,7 +1166,8 @@ def run_arena(
                     gumbel_add_noise=gumbel_add_noise,
                     volatility_candidate=volatility_candidate,
                     syzygy_tablebase=syzygy_tb, tb_max_pieces=tb_max_pieces,
-                    gumbel_candidate=gumbel_candidate, gumbel_reference=gumbel_reference,
+                    search_candidate=search_candidate,
+                    search_reference=search_reference,
                 ))
                 print(f"[arena] RUNNING Elo after {2 * len(pair_scores)} games:", flush=True)
                 print_summary(summarize_pentanomial(pentanomial_counts(pair_scores)))
@@ -947,6 +1210,8 @@ def run_arena(
         duration_s=duration_s,
         label=label,
         volatility_candidate=volatility_candidate,
+        search_candidate=search_candidate,
+        search_reference=search_reference,
     )
     if out_path is not None:
         append_result(record, out_path)
@@ -956,6 +1221,16 @@ def run_arena(
 
 def add_common_args(p: argparse.ArgumentParser) -> None:
     """Arena knobs shared with scripts/elo_vs_sims.py."""
+    # No default, on purpose. The silent default (`play`) is what made every
+    # arena Elo in the ledger a measurement of a search selfplay never runs;
+    # run_arena refuses matched_sims without it.
+    p.add_argument("--search-shape", choices=SEARCH_SHAPES, default=None,
+                   help="REQUIRED for matched_sims: which search to measure. "
+                        "'training' = what production selfplay runs (c_scale 0.1, "
+                        "topk 16, linear root, vloss_weight/target_batch from "
+                        f"{PRODUCTION_CONFIG.name}); 'play' = the tuned UCI/match "
+                        "shape (c_scale 0.025, topk 32, log root, vloss_weight 3). "
+                        "Use 'training' to judge anything about the training loop.")
     p.add_argument("--games", type=int, default=1000,
                    help="total games; must be even — games/2 opening pairs (default: 1000)")
     p.add_argument("--openings", type=Path, default=None,
@@ -1069,6 +1344,17 @@ def main() -> None:
                         "gumbel here = a pure search-config Swiss (matched_sims).")
     p.add_argument("--ref-gumbel", default=None,
                    help="reference gumbel knob overrides (same k=v,k=v format as --cand-gumbel)")
+    p.add_argument("--cand-vloss-weight", type=int, default=None,
+                   help="candidate virtual-loss weight override (C path). NOT a "
+                        "GumbelConfig field, so --cand-gumbel cannot carry it; "
+                        "defaults to the --search-shape value.")
+    p.add_argument("--ref-vloss-weight", type=int, default=None,
+                   help="reference virtual-loss weight override (see --cand-vloss-weight)")
+    p.add_argument("--cand-target-batch", type=int, default=None,
+                   help="candidate leaf-accumulation target override (C path); "
+                        "defaults to the --search-shape value")
+    p.add_argument("--ref-target-batch", type=int, default=None,
+                   help="reference leaf-accumulation target override (see --cand-target-batch)")
     add_common_args(p)
     args = p.parse_args()
 
@@ -1139,6 +1425,35 @@ def main() -> None:
         )
         _configure_shared_compile_cache(cache_dir)
 
+    # Resolve the search shape BEFORE any model load, so a missing/bad
+    # --search-shape fails in a second rather than after a 4-minute compile.
+    # matched_time carries no in-process search: leave both sides None and let
+    # run_arena reject the combination.
+    side_candidate = side_reference = None
+    if args.mode == "matched_sims":
+        if args.search_shape is None:
+            raise SystemExit(
+                "--search-shape is required for matched_sims "
+                f"({'|'.join(SEARCH_SHAPES)}); see the flag help. Use 'training' "
+                "for anything judging the training loop."
+            )
+        base = resolve_search_shape(args.search_shape)
+        side_candidate = apply_search_overrides(
+            base, spec=args.cand_gumbel,
+            vloss_weight=args.cand_vloss_weight,
+            target_batch=args.cand_target_batch,
+        )
+        side_reference = apply_search_overrides(
+            base, spec=args.ref_gumbel,
+            vloss_weight=args.ref_vloss_weight,
+            target_batch=args.ref_target_batch,
+        )
+    elif args.search_shape is not None:
+        raise SystemExit(
+            "--search-shape applies to matched_sims only; matched_time runs UCI "
+            "engine subprocesses with their own play shape (use --uci-args)."
+        )
+
     run_arena(
         candidate=args.candidate,
         reference=args.reference,
@@ -1165,40 +1480,9 @@ def main() -> None:
         uci_args=args.uci_args,
         label=args.label,
         volatility_candidate=_volatility_kwargs_from_args(args),
-        gumbel_candidate=_parse_gumbel_overrides(args.cand_gumbel),
-        gumbel_reference=_parse_gumbel_overrides(args.ref_gumbel),
+        search_candidate=side_candidate,
+        search_reference=side_reference,
     )
-
-
-_GUMBEL_INT_KEYS = {"topk", "halving_div", "simulations"}
-
-
-def _parse_gumbel_overrides(spec: str | None) -> dict[str, float]:
-    """Parse 'c_scale=0.025,c_visit=50,c_visit_root=900,topk=32' -> dict.
-
-    Starts from the production PLAY_SEARCH_DEFAULTS optimum so that omitting a
-    flag (or the whole spec) still plays the tuned settings instead of the stale
-    GumbelConfig defaults; any parsed user keys override on top. int-coerces
-    topk/halving_div/simulations; everything else is a float. Keys must be
-    GumbelConfig fields (applied via dataclasses.replace downstream)."""
-    from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS
-
-    out: dict[str, float] = {
-        k: (int(v) if k in _GUMBEL_INT_KEYS else float(v))
-        for k, v in PLAY_SEARCH_DEFAULTS.items()
-    }
-    if not spec:
-        return out
-    for part in spec.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if "=" not in part:
-            raise SystemExit(f"--*-gumbel: expected k=v pairs, got {part!r}")
-        k, v = part.split("=", 1)
-        k = k.strip()
-        out[k] = int(v) if k in _GUMBEL_INT_KEYS else float(v)
-    return out
 
 
 if __name__ == "__main__":

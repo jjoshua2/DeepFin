@@ -15,6 +15,7 @@ from scripts.arena_standard import (
     game_scores_to_pair_scores,
     pentanomial_counts,
     play_paired_games_matched_sims,
+    resolve_search_shape,
     summarize_pentanomial,
 )
 
@@ -91,11 +92,13 @@ def test_smoke_arena_matched_sims_cpu(tmp_path):
     d4.push_uci("d2d4")
     openings = [e4, d4]
 
+    side = resolve_search_shape("play")
     pair_scores = play_paired_games_matched_sims(
         model_a, model_b, openings,
         device="cpu", rng=np.random.default_rng(0),
         sims_candidate=2, sims_reference=2,
         max_plies=10, temperature=1.0, gumbel_add_noise=True,
+        search_candidate=side, search_reference=side,
     )
     assert len(pair_scores) == 2
     assert all(s in (0.0, 0.5, 1.0, 1.5, 2.0) for s in pair_scores)
