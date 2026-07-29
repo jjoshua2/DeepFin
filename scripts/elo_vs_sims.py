@@ -21,7 +21,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from scripts.arena_standard import add_common_args, default_openings_path, run_arena
+from scripts.arena_standard import (
+    SEARCH_SHAPES,
+    add_common_args,
+    apply_search_overrides,
+    default_openings_path,
+    resolve_search_shape,
+    run_arena,
+)
 import itertools
 
 
@@ -48,6 +55,16 @@ def main() -> None:
     args = p.parse_args()
 
     sims = _parse_sims(args.sims)
+    if args.search_shape is None:
+        # A sims ladder is the run the silent shape hurt most: the play shape's
+        # topk 32 doubles root breadth between the 32- and 256-sim rungs, so the
+        # ladder varies breadth AND depth and cannot be read as a search-scaling
+        # curve at all (docs/experiment_ledger.md 2026-07-28).
+        raise SystemExit(
+            f"--search-shape is required ({'|'.join(SEARCH_SHAPES)}); a sims "
+            "ladder is only interpretable at a pinned shape."
+        )
+    side = apply_search_overrides(resolve_search_shape(args.search_shape))
     openings_path: Path = (
         args.openings if args.openings is not None else default_openings_path()
     )
@@ -72,6 +89,8 @@ def main() -> None:
             seed=args.seed,
             out_path=args.out,
             label=f"elo_vs_sims:{hi}v{lo}",
+            search_candidate=side,
+            search_reference=side,
         )
         rows.append((hi, record))
 

@@ -260,6 +260,71 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## ⚑ INSTRUMENT BREAK + PRE-REGISTERED ENGINE CHANGE (2026-07-29, PR #286) — the arena, the daily ratchet and the shipped UCI engine all change search on this commit
+
+Three plumbing defects fixed at once (details in PR #286). Two are pure
+measurement, one changes the engine we ship. **Nothing here changes distributed
+selfplay behaviour** — `play_match_batch` still does not pass the new arguments,
+so the in-loop gate, the worker arena task and `match_checkpoints.py` are
+byte-identical.
+
+**1. Every arena Elo recorded before this commit is on a ruler neither flag can
+now reproduce.** `scripts/arena_standard.py` seeded itself from
+`PLAY_SEARCH_DEFAULTS` with no flag AND passed no `vloss_weight`/`target_batch`
+at all, so it ran the play shape at `vloss_weight=0`. `--search-shape
+{play,training}` is now REQUIRED with no default; realized knobs are stored per
+JSONL row under `search_candidate`/`search_reference`. Rows without those keys
+predate the break. This closes the two 2026-07-28 findings above.
+
+**2. `data/ratchet/ratchet.csv` breaks here — do not fit a slope across it.**
+`daily_gate_ratchet.sh` now runs `--search-shape training` (the series feeds
+`ratchet_slope.py`, which is a claim about the RL LOOP, so it must rank nets
+under the search selfplay runs). The CSV gains a `search_shape` column; the
+one-time migration stamps every pre-2026-07-29 row `legacy_play_vloss0`, and
+`ratchet_slope.py` refuses to fit across two labels (`--allow-mixed-rulers` to
+override, `--search-shape` to pick one). **The vs_boot512 slope restarts from
+zero rows on the new ruler** — expect no verdict from it for ~4 days.
+
+**3. `gumbel_vloss_weight: 1` is now in `configs/pbt2_small.yaml` on main.** It
+was committed on `ops/live-20260725` on 2026-07-28 and absent from main, so a
+restart or an arena from any main-based worktree — which is where CLAUDE.md
+requires branch work to happen — silently got `0`, the pre-C17 search. This is a
+SYNC of the already-deployed live value, not a new experiment: live has been
+running `1` since 2026-07-28. Revert = delete the key (worker falls back to
+`SearchConfig` default 0).
+
+**4. PRE-REGISTERED, UNREAD — the shipped UCI engine gets virtual loss on the
+classic-Gumbel path.** `uci/search.py::_run_gumbel_chunk` never passed
+`vloss_weight`, so every game run with `--walkers 1` — the documented TCEC
+command (`docs/TCEC_SETUP.md`), and what `scripts/match_multi_gpu.py` and
+`scripts/gumbel_selfmatch.sh` launch — ran at `0` while its four sibling call
+sites ran at `3`. The fix flips that path from 0 to 3 at UCI's much larger
+`chunk_sims`. It is very likely an improvement (C17: virtual loss removes
+duplicate leaves at no throughput cost) but it is UNREAD.
+
+- **Hypothesis:** virtual loss on the UCI Gumbel path is worth ≥0 Elo at the
+  play budget; the C17 duplicate-leaf mechanism should make it positive.
+- **ONE deciding yardstick** (runnable only because of this same PR):
+
+  ```bash
+  PYTHONPATH=. python3 scripts/arena_standard.py \
+      --candidate <ckpt> --reference <ckpt> \
+      --mode matched_sims --search-shape play \
+      --ref-vloss-weight 0 --sims 256 --games 400 --label uci_vloss_3_vs_0
+  ```
+
+  Same checkpoint both sides; the ONLY difference is the candidate's
+  `vloss_weight=3` against the reference's `0`.
+- **Pre-committed rule:** KEEP if the pentanomial Elo 95% CI excludes −15 (i.e.
+  not a meaningful regression). REVERT the UCI half (restore `vloss_weight=0`
+  on that call site only) if the point estimate is below −15 with a CI
+  excluding 0. A null result KEEPS it: the four sibling paths already run 3 and
+  consistency across the engine's own search backends is the tie-breaker.
+- **Confounds:** none in the arena itself (same net, same book, same sims); note
+  the arena's `play` shape reproduces the engine's search shape but not its
+  chunked time management, so this prices the search change, not the engine.
+
+
 ## Verdicts: WORKED (in production)
 
 | date | change | evidence |

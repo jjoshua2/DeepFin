@@ -24,7 +24,11 @@ from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.inference import BatchEvaluator
 from chess_anti_engine.mcts import _mcts_tree as _mcts_tree_ext
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
-from chess_anti_engine.mcts.gumbel import GumbelConfig
+from chess_anti_engine.mcts.gumbel import (
+    PLAY_SEARCH_TARGET_BATCH,
+    PLAY_SEARCH_VLOSS_WEIGHT,
+    GumbelConfig,
+)
 from chess_anti_engine.mcts.gumbel_c import _REQUIRED_MCTS_ABI, run_gumbel_root_many_c
 from chess_anti_engine.mcts.root_tactics import immediate_mate_move
 from chess_anti_engine.mcts.puct import _value_scalar_from_wdl_logits
@@ -254,7 +258,7 @@ class SearchWorker:
         gumbel_cfg: GumbelConfig | None = None,
         chunk_sims: int = _DEFAULT_CHUNK_SIMS,
         n_walkers: int = 1,
-        vloss_weight: int = 3,
+        vloss_weight: int = PLAY_SEARCH_VLOSS_WEIGHT,
         walker_gather: int = 1,
         pucv_vloss_mode: int = 0,
         eval_cache_entries: int = 0,
@@ -348,7 +352,7 @@ class SearchWorker:
   # C-side GSS_GPU_BATCH default. Higher = better GPU util on large
   # batches; lower = faster stop latency + fresher tree state on
   # each leaf. Set via UCI `MinibatchSize`.
-        self._minibatch_size: int = 0
+        self._minibatch_size: int = PLAY_SEARCH_TARGET_BATCH
   # Clock-margin width in std-devs of measured chunk wall-time (see
   # `_BATCH_MARGIN_SIGMAS`). Set via UCI `ClockBatchMarginSigmas`; 0 disables.
         self._batch_margin_sigmas: float = _BATCH_MARGIN_SIGMAS
@@ -1841,6 +1845,13 @@ class SearchWorker:
             tb_probe=tb_probe,
             pre_wdl_logits_tb_probed=True,
             target_batch=self._minibatch_size,
+  # C17: without this the classic-Gumbel UCI path (`--walkers 1`) runs the
+  # PRE-virtual-loss search --- a later halving rep re-walks an unchanged tree
+  # back onto a leaf already in the batch and back-propagates the same value
+  # again. The four PUCT/walker/pool sibling call sites above all pass
+  # `self._vloss_weight`; this one silently did not, so the knob (and its UCI
+  # `--vloss-weight` flag) was dead on the only path that uses Gumbel.
+            vloss_weight=self._vloss_weight,
         )
         _, actions, values, _, tree, root_ids = gumbel_result[:6]
         self._tree = tree

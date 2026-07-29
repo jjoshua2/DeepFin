@@ -30,7 +30,11 @@ from chess_anti_engine.inference_dispatcher import (
     ThreadSafeGPUDispatcher,
     bootstrap_cudagraph_tls,
 )
-from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
+from chess_anti_engine.mcts.gumbel import (
+    PLAY_SEARCH_DEFAULTS,
+    PLAY_SEARCH_VLOSS_WEIGHT,
+    GumbelConfig,
+)
 
 from .engine import Engine, EngineOptions, _emit_info_string, _println, emit_handshake
 from .model_loader import load_model_from_checkpoint
@@ -782,8 +786,9 @@ def main() -> int:
   # ship path gets the win. --walkers 1 opts into the classic Gumbel path.
     p.add_argument("--walkers", type=int, default=2,
                    help="PUCT walker threads (default: 2; 1 = classic Gumbel; >2 = noisy scaling)")
-    p.add_argument("--vloss-weight", type=int, default=3,
-                   help="virtual-loss weight in walker mode (default: 3, lc0 default)")
+    p.add_argument("--vloss-weight", type=int, default=PLAY_SEARCH_VLOSS_WEIGHT,
+                   help="virtual-loss weight, walker AND classic-Gumbel modes "
+                        f"(default: {PLAY_SEARCH_VLOSS_WEIGHT}, lc0 default)")
   # Per-walker leaf gather: each walker does G descents → one NN batch.
   # Default 1 = current behavior. Increase (4-8) to amplify effective
   # submit batch size without more walker threads. Matches lc0's
