@@ -12795,3 +12795,110 @@ promoted to live.
 **If PROMOTED, this is a target change, not a config tweak:** the replay window
 holds ~a day of data built under the old ranking, so a yaml flip is not a
 rollback. Snapshot first per protocol step 2.
+
+---
+
+## PRE-REGISTRATION (2026-07-29) — PR #285, the promotion gate as a publish-side circuit breaker
+
+**Required by protocol #1 and missing until now.** The independent review of #285
+flagged its absence: the PR shipped with `promotion_gate.py:783` citing a worked
+example ("51/53 vs 51/57 against a 0.85 kill line") that exists nowhere in the
+repo, and `shadow_readout_from_csv` documented as "the ledger's ONE deciding
+command, as a function" with no command to run it. Both are being fixed.
+
+**What it is, and what it is NOT.** This is a **circuit breaker**, not a ratchet
+and not an experiment. The old gate was broken three ways — `gate_games: 0` meant
+no gate ever ran while `gate_passed: 1` was reported. The replacement holds the
+published model when the candidate is *clearly worse* than an anchor; it does not
+select for improvement, and it must not be read as one.
+
+**Hypothesis.** A publish-side hold on a clearly-regressed model costs nothing
+when the loop is healthy and prevents a warm-start-class collapse (the −494 Elo
+by iter 74 event) from propagating to every worker for hours.
+
+**Measured capability, from 400 runs x 60 iterations at the live shape**
+(n_cur 197 / n_prev 38, 52% draws), driving the real `PromotionGate`:
+
+| true delta (Elo/iter) | demotes | first fire |
+|---|---|---|
+| 0.0 | **0.0%** (24,000 null iterations, 0 fires) | — |
+| −10.0 | 1.5% | iter 22.0 |
+| −25.0 | 36.2% | iter 27.3 |
+| −50.0 | 100.0% | iter 11.3 |
+| −100.0 / −200.0 | 100.0% | iter 7.0 |
+
+So it **can** fail, does **not** fire on noise, and is **blind to the −6.7
+Elo/iter warm-start class** — that blindness is documented, not fixed.
+
+**ONE deciding yardstick**, once the CLI added in review round 2 exists:
+
+```
+PYTHONPATH=. nice -n 19 python3 scripts/gate_shadow_readout.py \
+  --progress runs/pbt2_small/tune/<trial>/progress.csv
+```
+
+**Pre-committed rule, written before the readout:**
+- **PROMOTE shadow → enforce** if, over a full window in shadow mode, the readout
+  reports **zero** `kill` legs on a loop that is otherwise healthy. Healthy is
+  defined by the run being at steady state, NOT by the gate agreeing with itself.
+- **KILL the gate** (back to `gate_mode: off`) if any leg reports `kill` on a
+  loop with no independent evidence of regression — that is a false-alarm rate
+  the loop cannot afford on the publish path.
+- **INCONCLUSIVE ⇒ stay in shadow.** Shadow costs nothing.
+
+**⚠ MUST BE READ IN SHADOW MODE FIRST.** `gate_mode` defaults to off and the
+production yaml ships no gate keys, so enabling it is an operator action at a
+restart. Do not go straight to `enforce`.
+
+**⚑ THE OBSERVATION THAT PROVES IT TOOK EFFECT** — an exact identity by
+construction, worth more than any statistic here:
+
+```
+gate_sample_games_cur + gate_sample_games_prev
+    == pid_curriculum_w + pid_curriculum_d + pid_curriculum_l
+```
+
+Both sides are already `progress.csv` columns and the right-hand side is the
+pooled quantity the gate splits. It catches shard loss and unrecognised-sha
+bucketing exactly, with no statistics. Being added as an assertion in round 2.
+The first post-restart row must also carry `gate_decision = -1`,
+`gate_reason_code = 0`, `gate_sample_games_cur ~ 200`, `gate_sample_games_prev ~ 38`.
+
+---
+
+## RULER CHANGE (2026-07-29) — the daily ratchet moves to `--search-shape training`
+
+**This is a ruler change and it invalidates its own records. Recording that
+explicitly, per the standing rule.**
+
+**Both options were a break, which is what decided it.** The pre-2026-07-29
+ratchet rows were measured at the play shape with `vloss_weight=0`. After PR
+#286, `--search-shape play` carries `vloss_weight=3`. **Neither flag reproduces
+the old ruler**, so continuity was never available and the only real choice was
+which question to answer.
+
+**Chose `training`**, for three reasons that survived independent review:
+1. `ratchet_slope.py` fits Elo against cumulative OPTIMIZER STEPS — it is a claim
+   about the RL loop, so it must rank nets under the search selfplay actually
+   runs. Ranking under a search selfplay never uses is the 2026-07-28 finding.
+2. At `SIMS=32` the play shape's `topk=32` gives ~1 visit per root candidate — a
+   policy readout, not a search. Training's `topk=16` gives 2.
+3. The break is RECORDED rather than silent: a `search_shape` column, a
+   `legacy_play_vloss0` stamp on historical rows, and `ratchet_slope.py` refusing
+   to fit across labels without an explicit `--allow-mixed-rulers`.
+
+**⚠ Say the quiet part: the ratchet's dominant instrument problem is `SIMS=32`,
+not the shape.** This fix does not rescue it. Per the 07-28 arena the best
+instrument available resolves ~2.74 Elo/day against a ~0.02 Elo/iteration signal.
+
+**DECISION on the 4-row blackout (review recommendation, decided rather than
+deferred): BACK-FILL, and it is a GPU-window item.** The `vs_boot512` series
+compares snapshots in `data/ratchet/snapshots/` against a frozen anchor, and both
+still exist — so the 4 historical rows can be re-measured under
+`--search-shape training` and back-filled, turning a ruler break into a ruler
+MIGRATION with no blackout on the only long-run instrument. Not doing it would
+cost ~4 days of no verdict for no reason. **It needs GPU that live training is
+using**, so it is queued for the next pause window alongside the #69 screen — not
+skipped, and not run against live training. If a pause does not come before the
+next ratchet run, the blackout is real and must be stated in that row rather than
+left implicit.
