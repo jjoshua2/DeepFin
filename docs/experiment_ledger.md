@@ -6401,6 +6401,47 @@ PLAY-shape substitution. `wdl_regret` sounds like a strength dial; measuring its
 realized candidate set showed it moves 10.4→8.4 moves across its whole range.
 
 
+### ⚑⚑ ROOT CAUSE (2026-07-29) — the whole regret rise in this trial is ONE airbag firing at iteration 2
+
+Reason-code totals over the full 235-iteration series (`result.json`):
+
+| reason | n | summed Δregret |
+|---|---|---|
+| **airbag** | **1** | **+0.05000** |
+| fit_capped | 38 | −0.01473 |
+| fit | 155 | +0.00614 |
+| degenerate | 22 | −0.00290 |
+
+Regret 0.03932 (iter 1) → 0.08963 (iter 3), and 200+ iterations of clawback
+since to 0.0766. **The trial minimum is its FIRST value.**
+
+**Firing conditions at iter 2:** `pid_raw_winrate` **0.364** against
+`pid_ema_winrate` **0.5508** — raw and EMA disagreeing sharply, the signature of
+games finishing from BEFORE the trial. Emergency ease applied the full +0.05.
+
+**The guard is not broken — it has a different hole.** `stockfish/pid.py:238`
+tests `raw_wr + 1.5*se < safety_floor`, and its docstring claims that "subsumes a
+hard min-games cutoff and the curriculum-starvation airbag misfire". Inverting:
+firing at raw 0.364 vs a 0.45 floor requires `1.5*se < 0.086` ⇒ `se < 0.0573` ⇒
+**n > 76 games**. So this was NOT a small-sample misfire. **The guard covers
+sample SIZE; nothing covers sample PROVENANCE**, and drain-transient games are
+both numerous and stale.
+
+**The 2026-07-29 restart escaped by luck, not by design:** `raw_wr` hit **0.000**
+at iter 221 — which fires at any n ≥ 30 — but the PID was `not_active` across the
+drain window (iters 220-224), so nothing moved.
+
+**Cost.** regret 0.0075 is a FREE handicap while 0.0815 is worth **≥219 Elo** to
+the opponent (measured 2026-07-28), so +0.05 in one iteration removed a large
+fraction of the whole training signal, against a clawback rate of ~0.06%/iter.
+**This is the largest single identified loss in the trial**, and it dwarfs every
+label/target lever investigated this session.
+
+**ACTION (open task): tag and exclude — or resume — in-flight selfplay games
+across a restart.** Until that lands, check `pid_regret_reason` for `airbag` in
+the first ~10 iterations after EVERY restart and be prepared to revert regret by
+hand.
+
 ### ⚑⚑ READOUT (2026-07-29) — the loop was NOT improving before C17; it is now. Regret slope +0.0086%/iter -> -0.0631%/iter, t=-2.11
 
 **Source: `result.json`, the full 235-iteration series (07-26 06:22 -> 07-29 09:54),
