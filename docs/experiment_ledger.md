@@ -12648,3 +12648,55 @@ Preference is (a). **It must ship with a negative control** (per the standing
 rule): synthesise a truncated batch and require the gate to FIRE, and require it
 NOT to fire on a genuine winrate shift at steady-state game lengths. A gate that
 cannot fail is the exact defect this entry is about.
+
+### Follow-up (2026-07-29): three gate designs evaluated, ALL REJECTED as the primary fix
+
+Before building the composition gate proposed above, I measured what each
+candidate detector would actually have caught on the 237-row trial. None is good
+enough. Recording this so the gate is not built twice.
+
+**(1) Statistical ply gate** — hold the lever while `avg_plies_draw` is below its
+steady-state EMA (123.3 ± 13.1). ROC against the 57 post-restart iterations where
+the PID actually stepped, vs 161 steady iterations:
+
+| rule | fires on damage | false-fires at steady state |
+|---|---|---|
+| draw < EMA − 0.5sd | 47.4% | 7.5% |
+| draw < EMA − 1.0sd | 36.8% | 5.6% |
+| draw < EMA − 2.0sd | 28.1% | 3.7% |
+| BOTH draw & win < EMA − 1.0sd | 24.6% | 3.1% |
+
+**A weak detector.** Best case catches under half the damage while freezing the
+controller on 7.5% of healthy iterations. Requiring both ply series to drop —
+the discriminator that correctly identifies the *mechanism* — makes coverage
+worse, not better, because by the time both have recovered past threshold the
+sample is still composition-biased.
+
+**(2) Curriculum-game-count collapse** — trigger on the count falling below a
+fraction of its trailing median (238). **Detects only 2 of 10 restarts.**
+Restarts 33-36, 42, 44, 81 and 124 all kept normal counts (188-268 games) and
+still produced the full transient — restart 81 held 62/187/150/149 games while
+its draw rate read 0.032 / 0.000 / 0.013 and the PID tightened −0.0107. **Games
+keep flowing at normal COUNT with truncated LENGTH composition.** Count is not
+the signal.
+
+**(3) Deterministic settle window** — hold the regret lever for N iterations
+after a restart. This is by far the best *if the trigger exists*: at N=10 it
+suppresses **−0.03224** of spurious tightening (32 tightenings vs 18 easings)
+against a whole-trial net regret change of **+0.04417**, with zero false
+positives by construction. N=12 and N=14 suppress slightly less, because they
+start eating the genuine easing that follows recovery.
+
+**⚑ The blocker is that the trainer has no restart signal.** A
+`_RECO_RESTART_KEYS` change restarts worker selfplay sessions without any trial
+resume, and (2) shows the trainer cannot infer it from its own counters. Making
+(3) work needs the event plumbed worker → shard metadata → trainer, which is
+more machinery than the fix it enables.
+
+**DECISION: do not build a gate. Fix the source.** Resuming in-flight games
+across a restart (task #63, delegated 2026-07-29) removes the truncation itself —
+no truncated sample, no draw-rate collapse, no biased winrate, no detector
+needed, and it additionally stops discarding ~256 games' worth of Stockfish
+labels per restart at ~698k nodes each. **If and only if the resume fix proves
+impractical**, revisit (3) with the restart event plumbed through; do not revisit
+(1) or (2), which are measured dead ends.
