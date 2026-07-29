@@ -6401,6 +6401,73 @@ PLAY-shape substitution. `wdl_regret` sounds like a strength dial; measuring its
 realized candidate set showed it moves 10.4→8.4 moves across its whole range.
 
 
+### ⚑⚑ TWO SEPARABLE TARGET/LABEL FINDINGS, both MEASURED and offline-screenable (2026-07-28)
+
+**These were initially claimed to be one root cause. They are NOT — that claim is
+retracted below. Each stands on its own evidence.**
+
+---
+**A. The SF policy target is ranked by a COMPRESSIVE function, distorting its
+shape in decisive positions. FIX VALIDATED.**
+
+The target is a softmax (`sf_policy_temp: 0.012`) over `w + 0.5*d` from the
+cp->WDL logistic (slope 0.0060, draw 120). That logistic compresses differences
+at its extremes, so an equal cp edge carries far less target signal in a decisive
+position than in a balanced one. Measured on 10,988 live shard rows:
+
+| bucket | n | WDL ent | WDL top-1 | **cp ent** | **cp top-1** | cp gap 1->2 |
+|---|---|---|---|---|---|---|
+| won (>0.90) | 1856 | 1.906 | 0.379 | 1.280 | **0.554** | 13.0 |
+| balanced | 4473 | 0.945 | 0.647 | 1.283 | 0.545 | 11.0 |
+| lost (<0.10) | 1180 | 2.168 | 0.232 | 1.313 | **0.472** | 5.0 |
+
+**won/balanced entropy ratio 2.02x -> 1.00x** when re-ranked by cp at matched
+overall top-1 mass (T=16.4cp). **The cp gaps are similar across all three buckets
+(13/11/5), so the 2x entropy difference was never a property of the positions —
+it is purely a ranking artifact.** Won-position top-1 mass +46%, lost +103%.
+
+Consequence today: in exactly the positions where conversion technique lives, the
+teacher supplies a near-uniform target over winning moves. Lost positions are
+worse still (top-1 mass 0.232), i.e. no incentive to maximise resistance.
+
+**Screenable with NO training compute** — `cp` is stored per MultiPV row and
+`train/target_builder.py` rebuilds targets offline.
+
+**RETRACTED, and worth recording as an error:** (i) "WDL exact ties are why the
+target is diffuse" — positions with >=2 EXACTLY tied WDL scores differing >50cp
+are **0.0%**; the mechanism is compression, not ties. (ii) "the saturating target
+is why we need MultiPV 40" — **wrong**: at matched top-1, cp-ranking concentrates
+mass by only ~2pp (top-16 0.9850 vs 0.9728). Both rankings need ~16-20 PVs for
+99% mass. A and B below are INDEPENDENT.
+
+---
+**B. MultiPV 40 buys width by paying depth, and the price is ~7x.**
+
+`sf_multipv` is not a cost lever at fixed `go nodes N` — both settings spend N
+nodes; width is traded against depth. Production labels measured from
+`sf_label_meta` col1 (11,090 rows): **median depth 12** at median 698,530 nodes.
+
+Depth vs width at constant 698k nodes (14 positions): MultiPV 40 -> **9**,
+20 -> 10, 10 -> 10, 3 -> **12**, 1 -> **14**.
+
+**Nodes to match production depth:** MultiPV 3 ~**100,000** (**7x cheaper**);
+MultiPV 1 ~**50,000** (**14x cheaper**). Better than break-even: MultiPV 1 @100k
+is depth **12**, i.e. 3 ply DEEPER, at 7x cheaper.
+
+SF labels are ~95% of loop cost, so a 7x cut there is roughly **5x overall
+throughput** — a DATA lever, one of only two survivors per the measurability
+rule, and far above the noise floor.
+
+**The cost, measured not assumed:** policy-target mass by top-K is 83.3% (top-4),
+93.5% (10), 97.3% (16), 98.5% (20). MultiPV 3 keeps ~80%; MultiPV 1 drops the
+policy teacher entirely.
+
+**Caveats.** Depth figures come from 14 tactically complex positions — the RATIO
+is the robust part, not the absolute depths. A real screen must regenerate labels
+at the candidate setting and compare training quality, not just depth. Both A and
+B are data-affecting on every labelled position and need their own entry, revert
+point, and an explicit note that the PID will respond.
+
 ### PRE-REGISTERED (2026-07-28) — `feature_dropout_p: 0.10 -> 0.0`, judged on ABLATION SENSITIVITY, not Elo
 
 **Status: PRE-REGISTERED, NOT DEPLOYED.** Training is deliberately down; this
