@@ -12834,8 +12834,26 @@ Elo/iter warm-start class** — that blindness is documented, not fixed.
 
 ```
 PYTHONPATH=. nice -n 19 python3 scripts/gate_shadow_readout.py \
-  --progress runs/pbt2_small/tune/<trial>/progress.csv
+  runs/pbt2_small/tune/<trial>/progress.csv
 ```
+
+**VERIFIED TO RUN, 2026-07-29** against the live trial's `progress.csv`
+(read-only, CPU only): exits **3** with an explanatory line, i.e. *the gate never
+ran on this csv* — correct, since the live run predates it. Exit codes are
+**0 promote / 1 hold / 2 kill / 3 never ran**.
+
+**⚠ I pre-registered `--progress <path>` and that form ERRORS OUT** — the CLI
+takes a POSITIONAL `progress_csv`. Second invented yardstick command in one day
+(see the #69 correction above). *Run the command before committing it as a
+yardstick; a plausible flag is not a flag.* Also note `$?` after a pipe is the
+LAST stage's status — reading `... | tail -3; echo $?` reports tail's exit, not
+the tool's, which is how the exit-3 behaviour nearly went unnoticed here.
+
+**⚑ Exit code 3 exists because "did not run" was being reported as `kill`.** A
+pre-gate csv has no `gate_sample_*` columns, and the readout scored that as a
+verdict. A yardstick that returns a verdict when its input is absent is the same
+inert-instrument defect as an arena measuring the wrong search — it is confidently
+wrong rather than silent.
 
 **Pre-committed rule, written before the readout:**
 - **PROMOTE shadow → enforce** if, over a full window in shadow mode, the readout
