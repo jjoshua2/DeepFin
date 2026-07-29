@@ -13086,3 +13086,51 @@ of the readout.
 **Revert:** `sf_fast_ply_node_scale` back to 0.25. **A yaml revert is not a
 rollback** — the replay window holds ~a day of games played against the weakened
 fast-ply opponent, so snapshot per protocol step 2 before deploying.
+
+---
+
+## READOUT (2026-07-29) — regret after the iter-220 restart, and a false attribution refused
+
+**The iter-220 restart (2026-07-29 06:55) bundled NO strength-affecting change.**
+Checked rather than assumed. The live branch merge landed 06:14, 40 min before
+the restart, carrying PRs #281/#282/#283/#284:
+
+| PR | what | realized training change |
+|---|---|---|
+| #284 | four unreachable search knobs made reachable | **NONE** — `gumbel_target_batch` defaults to 0, the live yaml does not set it, and the PR's own message says it was "harmless only because 0 happened to be the wanted value" |
+| #283 | vectorized SF target rebuild | none live — `rebuild_sf_targets` has never been flipped on |
+| #282 | holdout generation tracks the ruler | instrument only |
+| #281 | audit salvage J10/L12/G10/G12 + paired_compare | instrument only |
+
+**Regret since the restart, with the C14b truncation window excluded** — the
+phases are legible directly off `avg_plies_draw` (steady ~118.8):
+
+| iters | `avg_plies_draw` | regret | phase |
+|---|---|---|---|
+| 225-230 | 50 → 104 (TRUNCATED) | 0.0812 → 0.0719 | spurious tighten on biased data |
+| 231-239 | recovered to ~120 | 0.0723 → 0.0835 | the PID unwinding it |
+| 239-251 | steady ~124 | 0.0835 → **0.0789** | genuine tightening, **slope −0.000310/iter, t=−6.33** |
+
+Net across the whole excursion: **0.08174 (iters 217-219) → 0.07906 (248-251) =
+−0.00267, i.e. harder.** The restart cost nothing in the end.
+
+**⚑ THE RATE IS NOT A RESULT, AND MUST NOT BE CITED AS ONE.** −0.000310/iter is
+2.71x the post-C17 baseline of −0.000114/iter — but **nothing deployed at the
+restart could have caused a rate change.** The only live strength claim is C17,
+deployed ~iter 121. With no mechanism, the prior on a 13-point window is
+sampling noise around the existing C17-driven process, and the rate should be
+expected to regress toward baseline as the slack from the excursion is used up.
+Recording this *now*, before the number is available to be pointed at later:
+"moved as predicted" is not confirmation, and here nothing changed and it moved
+anyway ([[a_step_is_not_a_ramp]]).
+
+**⚠ AND THE WINDOW CHOICE FLIPS THE SIGN.** Fitting all 21 "clean" rows from
+iter 231 — a defensible-looking choice — gives **+0.000292/iter, t=+2.94**, i.e.
+a *worsening* loop, purely because the window straddles the unwind. Same data,
+opposite conclusion, from one arbitrary start point. **Cut the window on the
+mechanism (`avg_plies_draw` recovered AND the unwind complete), not on
+"iterations since restart".**
+
+**What stands:** direction is real and significant; the restart ended net-harder;
+C14b's mechanism is now confirmed end-to-end on live data. **What does not:** the
+2.7x rate, and any attribution of it to the restart.
