@@ -147,9 +147,14 @@ from sd 45.56 by ``test_documented_power_at_the_shipped_line_reproduces``:
 An earlier revision of this PR published **14% / 37%** for the -45 rows. Those
 do not reproduce. A later one published 10.0% / 48.3%, computed with the OLD
 ``_t_quantile``, which was anti-conservative and therefore OVERSTATED power;
-against the corrected quantile the numbers are 9.4% / 47.1% and now agree with
-``scipy.stats.t`` to two decimals. Both corrections move the retired -45 line
-further from the headline it was quoted with, not closer.
+against the corrected quantile the numbers are 9.4% / 47.1% and agree with
+``scipy.stats.t`` to within 0.01 of a percentage point. Both corrections move
+the retired -45 line further from the headline it was quoted with, not closer.
+
+Every copy of these four numbers -- this table, the prose above, the comment
+next to the shipped ``demote_delta_elo`` and the production yaml -- is pinned
+against the source text by
+``test_the_documented_power_numbers_are_quoted_consistently_everywhere``.
 
 The line ships at -25 because 0 spurious holds occurred in 8000 simulated null
 iterations at EITHER line (95% upper bound 0.04%), so the tighter line costs
@@ -468,9 +473,13 @@ class GateConfig:
     #     line -45:  K=8 ->  9.4%   K=24 -> 23.9%   (PR round 1 said 14% / 37%)
     #     line -25:  K=8 -> 47.1%   K=24 -> 92.5%
     #
-    # Exactly: 9.42 / 23.86 / 47.06 / 92.50. An earlier revision of THIS
-    # comment carried 10.0% / 48.3% for the K=8 rows -- those came from the
-    # RETIRED anti-conservative ``_t_quantile`` and OVERSTATE power. The module
+    # Exactly, against ``scipy.stats.t``: 9.42 / 23.87 / 47.06 / 92.51. The
+    # shipped ``_t_quantile`` rounds its exact small-df table UP and widens the
+    # large-df asymptote, so it is deliberately conservative and returns
+    # 9.42 / 23.86 / 47.06 / 92.50 -- within 0.01 point, and never on the
+    # optimistic side. An earlier revision of THIS comment carried
+    # 10.0% / 48.3% for the K=8 rows -- those came from the RETIRED
+    # anti-conservative ``_t_quantile`` and OVERSTATE power. The module
     # docstring said so while this copy, the one sitting next to the shipped
     # constant, still quoted them.
     #
@@ -821,7 +830,26 @@ class OfflineReference:
     decoration.
 
     ``mean_iter_seconds`` is the cadence the other fields were measured at, and
-    it is load-bearing rather than decorative: see ``refresh_lag_seconds``.
+    it is load-bearing rather than decorative: see ``refresh_lag_seconds``. It
+    was re-derived independently from the rotated ``progress.1785322501.csv``
+    (iters 163-219, 51 usable rows) at **721.1 s**, and
+    ``corr(time_this_iter_s, prev_share) = -0.332`` reproduces exactly.
+
+    ONE CAVEAT ON THE PER-ROW NUMBERS, because the aggregates are much better
+    than the rows they are made of. The offline reconstruction does NOT satisfy
+    the pooled-count identity row by row: cross-joined against the same
+    iterations' ``pid_curriculum_*``, only **6 of 51** rows have
+    ``cur + prev == w + d + l`` (the residuals range -45..+49), while the
+    aggregate agrees to **0.13%** (240.3 reconstructed vs 240.0 pooled). That
+    is a timestamp-binning artefact of the RECONSTRUCTION -- shards are binned
+    by ``generated_at_unix`` against iteration boundaries, so a shard straddling
+    a boundary lands in the neighbouring row -- and NOT a loop defect; the
+    in-loop split increments an arm and the pool in the same branch of
+    ``_process_shard`` and cannot disagree. But it means ``mean_games_cur =
+    196.8`` is a 0.1%-accurate aggregate of per-row values that are +/-45 off,
+    so nothing here licenses a per-row claim about the reconstruction. The
+    ``anchored_games_vs_pooled`` leg is checked against LIVE rows, where the
+    identity is exact, never against this table.
     """
 
     mean_games_cur: float = 196.8
@@ -905,30 +933,91 @@ OFFLINE = OfflineReference()
 #
 # The cause is NOT the reference's 4.6% inconsistency (fixing that leaves the
 # band unchanged -- the failing leg is `prev_share`, which never read
-# `games_per_second`). It is that below ~0.5x the two defensible pictures of "a
+# `games_per_second`). It is that below ~0.5x the defensible pictures of "a
 # healthy loop at k x cadence" stop agreeing, by more than the leg's ENTIRE
-# 0.06 tolerance:
+# 0.06 tolerance. THERE ARE THREE OF THEM, not the two an earlier revision of
+# this comment named as "the two defensible pictures":
 #
-#   (A) total ingest scales with cadence and the refresh lag is constant in
-#       seconds, so cur = rate*T - rate*L: the model's own picture, under which
-#       expected = refresh_lag/T is exact at every k by construction.
-#   (B) cur alone scales with cadence and prev is pinned at its absolute count
-#       (the sweep's construction, and the shipped test's): expected is then
+#   (A) `pinned_rate`: total ingest scales with cadence and the refresh lag is
+#       constant in seconds, so cur = rate*T - rate*L. Its SHARE prediction,
+#       expected = refresh_lag/T, is exact at every k by construction, and it
+#       survives `rate` itself moving with cadence, because the rate cancels
+#       in the ratio.
+#   (B) `pinned_prev`: cur alone scales with cadence and prev is pinned at its
+#       absolute count (the shipped sweep's construction). expected is then
 #       prev/(prev + cur*k), which is 1/k only to first order in prev_share.
+#   (C) `pinned_counts`: cadence moves because the TRAINING phase changes
+#       length, and `distributed_pause_selfplay_during_training` stops selfplay
+#       for the duration, so NEITHER anchored count moves. prev_share is then
+#       flat at 0.1629 while the leg expects 0.1629/k, and a healthy loop is
+#       killed on the ATTRIBUTION leg at 0.60x-0.70x and again at 1.65x-3.00x
+#       -- INSIDE the declared band, at both ends of it.
 #
-# Their gap is 0.0000 at 1.0x, 0.0079 at 0.8x, 0.0265 at 0.6x, 0.0455 at 0.5x
-# and 0.0800 at 0.4x, against a 0.06 tolerance -- and on the high side it never
-# exceeds 0.0072 out to 3.0x, which is why only the floor moves. The
-# calibration window itself only spans 0.94x-1.40x (675-1012 s/iter), so
-# everything below 0.6x is extrapolation of a model whose two readings already
-# disagree by half the budget. 0.5x is the lowest ratio that merely passes;
-# 0.6x is the lowest that passes with the model ambiguity under half the
-# tolerance, leaving the rest for actual noise. Production runs 620-750 s/iter
-# against a 721 s reference, so a 0.6 floor (433 s/iter) excludes nothing that
-# has ever been observed. ``test_benign_cadence_change_is_not_reported_as_an_
-# attribution_bug`` sweeps BOTH constructions across the whole band.
+# WHICH ONE THE DATA PICKS: (A). (C) predicts corr(time_this_iter_s,
+# prev_share) = 0, and the 51 reference rows give **-0.332**; that correlation
+# is the entire reason the leg is keyed to refresh_lag/cadence rather than to a
+# fixed share. (C)'s mechanism is also OFF in production --
+# `distributed_pause_selfplay_during_training: false` in pbt2_small.yaml, so
+# selfplay overlaps the training phase and the counts are not frozen by it. If
+# that key is ever flipped to true, re-read this: (C) becomes the live picture
+# and the band stops being safe at BOTH ends. (C) is fail-safe as it stands --
+# it can only produce a kill, never a false promote -- so it is named here and
+# pinned by the sweep rather than widened for.
+#
+# WHAT THE DATA DOES NOT SUPPORT is the COUNT half of (A) and (B): total ingest
+# is nowhere near proportional to cadence. corr(time_this_iter_s, cur + prev)
+# over the reference rows is **-0.053** on the 53 rows the delta leg uses and
+# **+0.321** on the 51 the cadence leg uses -- the sign is not even stable, let
+# alone the ~+1 that proportionality would need. So the floor must NOT be
+# justified by "the A/B gap is under half the tolerance at 0.6x": that is an
+# argument about count constructions the counts themselves refute. The gap
+# numbers are kept (0.0000 at 1.0x, 0.0079 at 0.8x, 0.0265 at 0.6x, 0.0455 at
+# 0.5x, 0.0800 at 0.4x, and never above 0.0072 out to 3.0x, which is why only
+# the floor moved) because the sweep still runs both, but the reason 0.6 is
+# safe does not depend on which picture is right:
+#
+#     raising the floor can only convert a kill-with-the-wrong-name
+#     (`prev_share`, which an operator reads as "your split is broken") into a
+#     kill-with-the-right-name (`cadence`, "your cadence moved"). It can never
+#     convert a kill into a promote, because outside the band the share leg is
+#     not evaluated AND the cadence leg fires unconditionally. The floor is a
+#     LABELLING choice on the failing side, so the conservative direction is up.
+#
+# HOW MUCH HEADROOM 0.6x LEAVES, stated PER ROW because an earlier revision of
+# this comment stated it wrong. "Production runs 620-750 s/iter, so a 0.6 floor
+# (433 s/iter) excludes nothing that has ever been observed" is FALSE row by
+# row: the live progress.csv holds a 355 s iteration (0.49x) and a 2364 s one
+# (3.28x), and rotated files reach 266 s (0.37x) and 3234 s (4.49x). What the
+# leg reads is the MEAN over the window's usable rows, and THAT stays in band:
+# rolling-8 means span 0.893x-1.377x on the current file and 0.747x-2.909x on
+# the oldest rotated one. The band covers the statistic the leg computes, not
+# every iteration feeding it -- and a window short enough for one 355 s row to
+# dominate its mean is one the `window_too_short` hold leg will not promote on
+# anyway. A 0.9 floor, which the suite used to permit, would already false-kill
+# an observed live window at 0.893x.
+# ``test_benign_cadence_change_is_not_reported_as_an_attribution_bug`` sweeps
+# (A) and (B) across the whole band and pins (C)'s false-kill range.
 _CADENCE_RATIO_MIN = 0.6
 _CADENCE_RATIO_MAX = 3.0
+
+# The shadow window's pre-registered length, IN CODE rather than in prose.
+# The ledger pre-registers this readout as "run it after >=40 iterations
+# carrying the ``gate_sample_*`` columns", and until this constant existed that
+# precondition lived ONLY in the ledger: ``shadow_readout_verdict`` happily
+# returned ``promote_to_enforce`` off two rows, and every leg it checks passes
+# trivially on a window that short.
+#
+# The failure is not hypothetical. ``harness._rotate_progress_csv_if_schema_
+# changed`` starts a FRESH ``progress.csv`` whenever the reported key set
+# changes -- three rotations in four days in this repo -- so an operator who
+# runs the pre-committed command a few iterations after a rotation reads a
+# 3-row window. Without this leg that reads ``promote_to_enforce``, and the
+# deciding action is to set ``gate_mode: enforce``.
+#
+# A short window is NOT a kill: nothing is broken, the window is simply not
+# finished. It reports ``hold_in_shadow`` with a named hold leg, so the
+# operator sees WHY rather than an unexplained non-promotion.
+_READOUT_MIN_ROWS = 40
 
 
 @dataclass(frozen=True)
@@ -950,18 +1039,25 @@ class ShadowReadout:
     mean_iter_seconds: float = float("nan")
     expected_prev_share: float = float("nan")
     failed_legs: tuple[str, ...] = ()
+    # Why a window that broke no leg still did not promote. Named for the same
+    # reason ``failed_legs`` is: "not promoted" with no reason attached is how
+    # an operator ends up re-running the command until it says what they want.
+    hold_legs: tuple[str, ...] = ()
 
     def __str__(self) -> str:
         cad = (f"  cadence={self.mean_iter_seconds:.0f}s "
                f"expected_prev_share={self.expected_prev_share:.4f}"
                if not math.isnan(self.mean_iter_seconds) else "  cadence=unknown")
+        why = (f"  FAILED: {', '.join(self.failed_legs)}" if self.failed_legs
+               else f"  HOLD: {', '.join(self.hold_legs)}" if self.hold_legs
+               else "")
         return (
             f"{self.verdict}  rows={self.n_rows} usable={self.n_usable} "
             f"({self.usable_frac:.3f})  games_cur={self.mean_games_cur:.1f} "
             f"games_prev={self.mean_games_prev:.1f} "
             f"prev_share={self.prev_share:.4f}{cad}  "
             f"delta mean={self.mean_delta_elo:.2f} sd={self.sd_delta_elo:.2f}"
-            + (f"  FAILED: {', '.join(self.failed_legs)}" if self.failed_legs else "")
+            + why
         )
 
 
@@ -978,6 +1074,13 @@ def shadow_readout_verdict(
     gate_sample_delta_elo)`` -- the PER-ITERATION columns. Never the window
     aggregates: consecutive windows overlap ~95%, so the sd of a window column
     understates the per-iteration sd ~10x and a rule keyed to it cannot fail.
+
+    THE WINDOW LENGTH IS A LEG, NOT A PRECONDITION IN PROSE. Fewer than
+    ``_READOUT_MIN_ROWS`` rows returns ``hold_in_shadow`` with a named
+    ``window_too_short`` hold leg and can never return ``promote_to_enforce``:
+    every leg below passes trivially on a 3-row window, and a fresh
+    ``progress.csv`` after a report-schema rotation is exactly how an operator
+    gets one. See ``_READOUT_MIN_ROWS``.
 
     WHY THE DECIDING LEGS ARE COUNTS AND NOT THE DELTA
     --------------------------------------------------
@@ -1179,9 +1282,25 @@ def shadow_readout_verdict(
     if abs(mean_d) > 25.0:
         failed.append(f"|mean_delta_elo| {abs(mean_d):.2f} > 25")
 
+    # -- hold legs: nothing is broken, but this window cannot promote ------
+    holds: list[str] = []
+    if n_rows < _READOUT_MIN_ROWS:
+        holds.append(
+            f"window_too_short: {n_rows} rows < the pre-registered "
+            f"{_READOUT_MIN_ROWS}. Every leg above passes trivially on a "
+            "window this short, and progress.csv is rotated whenever the "
+            "report schema changes, so a short window means 'keep watching', "
+            "never 'promote'"
+        )
+    if abs(mean_d) > 15.0:
+        holds.append(
+            f"|mean_delta_elo| {abs(mean_d):.2f} > 15 -- the anchored offset is "
+            "larger than expected; extend the window"
+        )
+
     if failed:
         verdict = READOUT_KILL
-    elif abs(mean_d) > 15.0:
+    elif holds:
         verdict = READOUT_HOLD  # extend the window rather than promote or kill
     else:
         verdict = READOUT_PROMOTE
@@ -1190,7 +1309,7 @@ def shadow_readout_verdict(
         mean_games_cur=mean_cur, mean_games_prev=mean_prev,
         prev_share=prev_share, mean_delta_elo=mean_d, sd_delta_elo=sd_d,
         mean_iter_seconds=mean_secs, expected_prev_share=expected_share,
-        failed_legs=tuple(failed),
+        failed_legs=tuple(failed), hold_legs=tuple(holds),
     )
 
 

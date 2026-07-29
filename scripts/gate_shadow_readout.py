@@ -26,8 +26,10 @@ WHAT THE VERDICT MEANS (and the exit code)
                             a verdict about the INSTRUMENT, never about
                             whether the model improved -- the loop moves
                             ~0.02 Elo/iteration and no window here can see it.
-    hold_in_shadow     (1)  every leg passed but the anchored offset is
-                            larger than expected; extend the window.
+    hold_in_shadow     (1)  every leg passed but the window cannot promote
+                            yet. Read ``HOLD:`` -- either it is shorter than
+                            the pre-registered 40 iterations, or the anchored
+                            offset is larger than expected. Extend the window.
     kill               (2)  at least one leg failed. Read ``FAILED:`` -- a
                             cadence leg means "your cadence moved", NOT "your
                             attribution is broken".
@@ -35,6 +37,11 @@ WHAT THE VERDICT MEANS (and the exit code)
                             the window never ran. Reported separately because
                             "did not run" reading as "kill" is the exact
                             confusion this whole module exists to remove.
+    no such file       (4)  the path does not exist. Distinct from 3 for the
+                            same reason 3 is distinct from 2: it used to share
+                            ``kill``'s exit code, which re-created the very
+                            did-not-run/verdict confusion 3 was added to fix,
+                            for anything branching on the exit status.
 
     PYTHONPATH=. python3 scripts/gate_shadow_readout.py runs/pbt2_small/<trial>/progress.csv
 """
@@ -84,7 +91,7 @@ def main() -> int:
         print(f"no such file: {path}\n"
               "  (a git worktree has no runs/; point this at the live checkout, "
               "e.g. /home/josh/projects/chess/runs/pbt2_small/<trial>/progress.csv)")
-        return 2
+        return 4
 
     # "The gate never ran" must not print as "kill". A csv written before this
     # module shipped has no gate_sample_* columns at all, which the readout

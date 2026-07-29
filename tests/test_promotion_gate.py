@@ -42,8 +42,10 @@ from chess_anti_engine.tune.promotion_gate import (
     MODE_OFF,
     MODE_SHADOW,
     OFFLINE,
+    READOUT_HOLD,
     READOUT_KILL,
     READOUT_PROMOTE,
+    _READOUT_MIN_ROWS,
     AnchoredSample,
     GateConfig,
     GateDecision,
@@ -1390,10 +1392,28 @@ def test_benign_cadence_change_is_not_reported_as_an_attribution_bug() -> None:
         prev = round(OFFLINE.mean_games_prev)
         if construction == "pinned_prev":
             cur = round(OFFLINE.mean_games_cur * mult)
+        elif construction == "pinned_counts":
+            cur = round(OFFLINE.mean_games_cur)
         else:
             total = (OFFLINE.mean_games_cur + OFFLINE.mean_games_prev) * mult
             cur = round(total - OFFLINE.mean_games_prev)
         return [(cur, prev, 8.0 * (1 if i % 2 else -1) * 5.5, secs) for i in range(40)]
+
+    # THE BAND IS CONSTRAINED FROM BOTH SIDES. Round 5 mutated the two
+    # constants and found only 0.4 caught: a 0.9 floor or a 1.5 ceiling passed
+    # the whole suite, because this sweep is generated FROM the constants and
+    # therefore shrinks with them. A 0.9 floor would already false-kill an
+    # observed live window -- the current progress.csv's rolling-8 mean cadence
+    # bottoms out at 0.893x -- so the band is asserted against the live data,
+    # not just swept over itself.
+    assert _CADENCE_RATIO_MIN <= 0.7, (
+        "the floor must sit below the observed live rolling-8 minimum of "
+        "0.893x with margin; 0.9 false-kills a window that has happened"
+    )
+    assert _CADENCE_RATIO_MAX >= 2.0, (
+        "the ceiling must clear the observed live rolling-8 maximum "
+        "(1.377x current, 2.909x on the oldest rotated file)"
+    )
 
     steps = round((_CADENCE_RATIO_MAX - _CADENCE_RATIO_MIN) / 0.05)
     mults = [round(_CADENCE_RATIO_MIN + 0.05 * i, 10) for i in range(steps + 1)]
@@ -1417,6 +1437,78 @@ def test_benign_cadence_change_is_not_reported_as_an_attribution_bug() -> None:
         assert len(r.failed_legs) == 1, f"x{mult}: {r.failed_legs}"
         assert r.failed_legs[0].startswith("cadence"), r
         assert "CADENCE finding" in r.failed_legs[0]
+
+    # THE THIRD CONSTRUCTION, which the comment used to call "the two
+    # defensible pictures". `pinned_counts`: cadence moves because the TRAINING
+    # phase changes length and selfplay is paused for it, so neither anchored
+    # count moves. prev_share is then flat while the leg expects
+    # refresh_lag/cadence, and a healthy loop IS false-killed inside the band.
+    # It is not widened for -- it is fail-safe (kill only, never a false
+    # promote), its mechanism is off in production
+    # (`distributed_pause_selfplay_during_training: false`), and the reference
+    # data disfavours it: it predicts corr(time, prev_share) = 0 where the 51
+    # reference rows give -0.332. It is PINNED, so that if the band or the
+    # tolerance moves, the documented range has to move with it.
+    killed = [m for m in mults
+              if shadow_readout_verdict(rows_for(m, "pinned_counts"),
+                                        last_n=40).verdict != READOUT_PROMOTE]
+    assert killed, "pinned_counts false-kills inside the band; say so if it stops"
+    assert min(killed) == pytest.approx(0.60), killed
+    assert max(killed) == pytest.approx(_CADENCE_RATIO_MAX), killed
+    # ...and the range is contiguous at each end, 0.60-0.70 and 1.65-3.00.
+    low = [m for m in killed if m < 1.0]
+    high = [m for m in killed if m > 1.0]
+    assert (min(low), max(low)) == pytest.approx((0.60, 0.70)), low
+    assert (min(high), max(high)) == pytest.approx((1.65, 3.00)), high
+    assert len(low) + len(high) == len(killed), killed
+
+
+def test_a_window_shorter_than_the_preregistered_length_can_never_promote() -> None:
+    """MUTATION: delete the ``window_too_short`` hold leg.
+
+    The ledger pre-registers this readout as "run it after >=40 iterations
+    carrying the ``gate_sample_*`` columns". Until ``_READOUT_MIN_ROWS``
+    existed that precondition lived ONLY in that sentence: the rule returned
+    ``promote_to_enforce`` off as few as TWO rows, and the deciding action of a
+    promote is to set ``gate_mode: enforce`` on the live run.
+
+    That is not hypothetical. ``harness._rotate_progress_csv_if_schema_
+    changed`` starts a FRESH ``progress.csv`` whenever the reported key set
+    changes -- three rotations in four days in this repo -- so an operator
+    running the pre-committed command a few iterations after a rotation reads a
+    3-row window.
+
+    Every row below is the reference shape, so EVERY OTHER LEG PASSES: the only
+    thing between these windows and a promote is the length leg, which is the
+    whole point. A short window is a hold, not a kill -- nothing is broken, the
+    window is simply not finished -- and it says so by name.
+    """
+    def rows(n: int) -> list[tuple[int, int, float, float]]:
+        return [(round(OFFLINE.mean_games_cur), round(OFFLINE.mean_games_prev),
+                 44.0 * (1 if i % 2 else -1), OFFLINE.mean_iter_seconds)
+                for i in range(n)]
+
+    for n in (2, 3, 5, 8, 12, 24, _READOUT_MIN_ROWS - 1):
+        r = shadow_readout_verdict(rows(n), last_n=n)
+        assert r.failed_legs == (), f"n={n} must break no leg: {r}"
+        assert r.verdict == READOUT_HOLD, f"n={n} promoted on a short window: {r}"
+        assert any(leg.startswith("window_too_short") for leg in r.hold_legs), r
+        # The operator has to be able to see WHY, not just "not promoted".
+        assert "HOLD: window_too_short" in str(r), str(r)
+
+    # At the pre-registered length, and only there, the same shape promotes.
+    r = shadow_readout_verdict(rows(_READOUT_MIN_ROWS), last_n=_READOUT_MIN_ROWS)
+    assert r.verdict == READOUT_PROMOTE, r
+    assert r.hold_legs == (), r
+    assert _READOUT_MIN_ROWS == 40, "the ledger pre-registered 40; move both"
+
+    # The other hold leg still works and is still named, so `hold_in_shadow`
+    # never means "we did not say".
+    offset = [(c, p, d + 24.0, s) for c, p, d, s in rows(_READOUT_MIN_ROWS)]
+    r = shadow_readout_verdict(offset, last_n=_READOUT_MIN_ROWS)
+    assert r.verdict == READOUT_HOLD, r
+    assert r.failed_legs == (), r
+    assert any(leg.startswith("|mean_delta_elo|") for leg in r.hold_legs), r
 
 
 def test_partial_attribution_leak_sensitivity_floor() -> None:
@@ -1682,26 +1774,45 @@ def test_the_documented_yardstick_is_actually_runnable(
 
     Driven through ``main()`` rather than by reading the file, so this fails if
     the script stops working, not merely if it stops existing.
+
+    EVERY DOCUMENTED EXIT CODE IS DRIVEN, because round 5 found exit 1 was not.
+    Mutating ``_EXIT`` so that ``hold_in_shadow`` reported as 0 escaped all 73
+    tests, which silently converts "extend the window, do not promote" into the
+    deciding action of the whole readout.
     """
-    from scripts.gate_shadow_readout import main
+    from scripts import gate_shadow_readout
+    from scripts.gate_shadow_readout import _EXIT, main
+
+    assert sorted(_EXIT.values()) == [0, 1, 2], _EXIT
+    # --help IS the module docstring, so every code an operator can branch on
+    # has to be named there.
+    help_text = gate_shadow_readout.__doc__ or ""
+    for documented in ("promote_to_enforce (0)", "hold_in_shadow     (1)",
+                       "kill               (2)", "not run            (3)",
+                       "no such file       (4)"):
+        assert documented in help_text, documented
+
+    def write(p: Path, samples: list[AnchoredSample], *, shift: float = 0.0) -> None:
+        with p.open("w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=[
+                "training_iteration", "gate_delta_elo", "gate_sample_games_cur",
+                "gate_sample_games_prev", "gate_sample_delta_elo",
+                "time_this_iter_s"])
+            w.writeheader()
+            for s in samples:
+                w.writerow({
+                    "training_iteration": s.iteration,
+                    "gate_delta_elo": 3.42,      # the window column: a decoy
+                    "gate_sample_games_cur": s.cur_games,
+                    "gate_sample_games_prev": s.prev_games,
+                    "gate_sample_delta_elo": (
+                        s.delta * ELO_PER_SCORE_AT_HALF + shift
+                        if (s.cur_games and s.prev_games) else float("nan")),
+                    "time_this_iter_s": OFFLINE.mean_iter_seconds,
+                })
 
     path = tmp_path / "progress.csv"
-    with path.open("w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=[
-            "training_iteration", "gate_delta_elo", "gate_sample_games_cur",
-            "gate_sample_games_prev", "gate_sample_delta_elo", "time_this_iter_s"])
-        w.writeheader()
-        for s in _live_samples():
-            w.writerow({
-                "training_iteration": s.iteration,
-                "gate_delta_elo": 3.42,          # the window column: a decoy
-                "gate_sample_games_cur": s.cur_games,
-                "gate_sample_games_prev": s.prev_games,
-                "gate_sample_delta_elo": (
-                    s.delta * ELO_PER_SCORE_AT_HALF
-                    if (s.cur_games and s.prev_games) else float("nan")),
-                "time_this_iter_s": OFFLINE.mean_iter_seconds,
-            })
+    write(path, _live_samples())
 
     monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py", str(path),
                                      "--last-n", str(_N_LIVE), "--verbose"])
@@ -1709,6 +1820,47 @@ def test_the_documented_yardstick_is_actually_runnable(
     out = capsys.readouterr().out
     assert READOUT_PROMOTE in out
     assert "prev_share=0.16" in out, out
+
+    # EXIT 1 = hold_in_shadow, documented since the script shipped and never
+    # driven. Mutating `_EXIT` to report a hold as a promote escaped the whole
+    # suite, which turns "extend the window, do not promote" into the deciding
+    # action. Reached two ways, because there are two hold legs:
+    #
+    #   (a) every leg passes but the anchored offset is larger than expected
+    hold = tmp_path / "hold.csv"
+    write(hold, _live_samples(), shift=24.0)
+    monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py", str(hold),
+                                     "--last-n", str(_N_LIVE)])
+    assert main() == 1, "hold_in_shadow must not share an exit code with promote"
+    out = capsys.readouterr().out
+    assert out.startswith(READOUT_HOLD), out
+    assert "FAILED:" not in out, out
+    assert "HOLD: |mean_delta_elo|" in out, out
+
+    #   (b) the window is shorter than the pre-registered 40 iterations. A
+    #       fresh progress.csv after a report-schema rotation is exactly this,
+    #       and it must never read as "promote to enforce".
+    #       The three rows are the REFERENCE SHAPE, so every other leg passes
+    #       and the length is the only thing standing between this file and
+    #       exit 0.
+    short = tmp_path / "short.csv"
+    with short.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=[
+            "gate_sample_games_cur", "gate_sample_games_prev",
+            "gate_sample_delta_elo", "time_this_iter_s"])
+        w.writeheader()
+        for i in range(3):
+            w.writerow({
+                "gate_sample_games_cur": round(OFFLINE.mean_games_cur),
+                "gate_sample_games_prev": round(OFFLINE.mean_games_prev),
+                "gate_sample_delta_elo": 44.0 * (1 if i % 2 else -1),
+                "time_this_iter_s": OFFLINE.mean_iter_seconds,
+            })
+    monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py", str(short)])
+    assert main() == 1, "a 3-row window must hold, never promote"
+    out = capsys.readouterr().out
+    assert out.startswith(READOUT_HOLD), out
+    assert "HOLD: window_too_short" in out, out
 
     # A destroyed attribution must exit NON-ZERO, or the command cannot be a
     # kill rule regardless of what it prints.
@@ -1732,12 +1884,15 @@ def test_the_documented_yardstick_is_actually_runnable(
     assert main() == 2
     assert "FAILED:" in capsys.readouterr().out
 
-    # A missing file exits non-zero and says where to look, rather than
-    # traceback-ing out of a command the ledger pre-committed to.
+    # A missing file exits 4 and says where to look, rather than traceback-ing
+    # out of a command the ledger pre-committed to. FOUR, not 2: it used to
+    # share `kill`'s code, which re-created for anything branching on the exit
+    # status the exact did-not-run/verdict confusion exit 3 was added to fix.
     monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py",
                                      str(tmp_path / "nope.csv")])
-    assert main() == 2
+    assert main() == 4
     assert "no such file" in capsys.readouterr().out
+    assert 4 not in _EXIT.values(), "4 must stay reserved for did-not-run paths"
 
     # ...and a csv with NO gate columns -- every progress.csv written before
     # this module shipped -- reports NOT RUN, not `kill`. An empty window looks
@@ -1862,18 +2017,51 @@ def test_documented_power_at_the_shipped_line_reproduces() -> None:
 
 
 def test_the_documented_power_numbers_are_quoted_consistently_everywhere() -> None:
-    """MUTATION: leave a stale power number in ANY of the three copies.
+    """MUTATION: leave a stale power number in ANY of the ELEVEN copies.
 
-    These numbers live in four places -- the module docstring, the comment
-    sitting next to the shipped ``demote_delta_elo`` constant, the production
-    yaml, and the test above. Review round 4 found the GateConfig comment still
-    carrying ``10.0%`` / ``48.3%``, computed with the RETIRED anti-conservative
-    ``_t_quantile``, while the module docstring three hundred lines up
-    explicitly said those two numbers were wrong. The copy nobody recomputes is
-    the one that gets cited; that is why "63M not 78.8M" is in this repo's
-    memory index. So the copies are pinned against the source text.
+    These numbers live in four places -- the module docstring (a table AND the
+    prose under it), the comment sitting next to the shipped
+    ``demote_delta_elo`` constant (a table AND its ``Exactly:`` line), the
+    production yaml, and the test above. Review round 4 found the GateConfig
+    comment still carrying ``10.0%`` / ``48.3%``, computed with the RETIRED
+    anti-conservative ``_t_quantile``, while the module docstring three hundred
+    lines up explicitly said those two numbers were wrong. The copy nobody
+    recomputes is the one that gets cited; that is why "63M not 78.8M" is in
+    this repo's memory index.
+
+    Round 5 then found that THIS test's first revision pinned only 5 of the 11
+    copies: it inspected the GateConfig comment's two table lines and two
+    warm-start percentages, and nothing at all in ``promotion_gate.__doc__``'s
+    own table -- the copy the PR body quotes and the first thing any reader
+    hits -- nor the yaml's ``92.5%`` / ``23.9%``. Six mutations escaped the
+    whole suite. Every copy is now pinned against the source text.
+
+    The values are ``scipy.stats.t``-exact: 9.42 / 23.87 / 47.06 / 92.51, and
+    every copy agrees to the precision it displays. The shipped ``_t_quantile``
+    is deliberately conservative and returns 9.42 / 23.86 / 47.06 / 92.50 --
+    within 0.01 point, and never optimistic -- which is why the ``Exactly:``
+    line quotes both.
     """
     src = inspect.getsource(promotion_gate)
+    doc = promotion_gate.__doc__ or ""
+    yaml_src = (Path(__file__).resolve().parents[1]
+                / "configs" / "pbt2_small.yaml").read_text()
+
+    # -- copy 1: the MODULE DOCSTRING's table (the one the PR body quotes) ---
+    doc_table = [ln.strip() for ln in doc.splitlines() if "demote line" in ln]
+    assert len(doc_table) == 2, doc_table
+    for quoted in ("K=8 -> **47.1%**", "K=24 -> **92.5%**"):
+        assert quoted in doc_table[0], doc_table[0]
+    for quoted in ("K=8 ->  9.4%", "K=24 -> 23.9%"):
+        assert quoted in doc_table[1], doc_table[1]
+
+    # -- copy 2: the prose under it, which repeats two of the four ----------
+    assert "the numbers are 9.4% / 47.1% and agree with" in doc
+    for retired in ("10.0%", "48.3%", "14% / 37%"):
+        # Named on purpose as retired; they must stay OUT of the tables above.
+        assert not [ln for ln in doc_table if retired in ln], doc_table
+
+    # -- copy 3: the GateConfig comment's table -----------------------------
     cfg_comment = src.split("demote_delta_elo: float")[0].split(
         "# -25, and the derivation is a FALSE-BRAKE BUDGET")[1]
     # The TABLE rows only: the prose below them names the retired numbers on
@@ -1889,13 +2077,21 @@ def test_the_documented_power_numbers_are_quoted_consistently_everywhere() -> No
         assert not [ln for ln in table if retired in ln], (
             f"{retired} came from the retired anti-conservative _t_quantile"
         )
-    # The warm-start worst case is 0.287%, asserted as 0.0029 above and rounded
-    # to 0.29% in the yaml. The docstring used to round it UP to 0.32%.
-    doc = promotion_gate.__doc__ or ""
+
+    # -- copy 4: the GateConfig comment's two-decimal `Exactly:` line -------
+    exact = "".join(cfg_comment.split("# Exactly, against")[1].splitlines()[:4])
+    assert "9.42 / 23.87 / 47.06 / 92.51" in exact, exact
+    assert "9.42 / 23.86 / 47.06 / 92.50" in exact, exact
+
+    # -- copy 5: the warm-start worst case, 0.287% -------------------------
+    # asserted as 0.0029 by the test above and rounded to 0.29% in the yaml.
+    # The docstring used to round it UP to 0.32%.
     assert "0.287%" in doc
     assert "0.32%" not in doc
-    yaml_src = (Path(__file__).resolve().parents[1]
-                / "configs" / "pbt2_small.yaml").read_text()
+
+    # -- copy 6: the PRODUCTION YAML, all three of its quoted percentages ---
+    assert "caught at 92.5% power" in yaml_src
+    assert "only 23.9% at -45" in yaml_src
     assert "worst-case power 0.29%" in yaml_src
 
 

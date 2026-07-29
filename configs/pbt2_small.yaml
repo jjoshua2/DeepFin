@@ -816,7 +816,9 @@ tune:
   # a ~252 MB export copy every iteration. So the readout runs with no yaml
   # key, no restart-required key, no copy and nothing to revert. Run it with
   #   PYTHONPATH=. python3 scripts/gate_shadow_readout.py <trial>/progress.csv
-  # (exit 0 promote / 1 hold / 2 kill / 3 the gate never ran) -- that script is
+  # (exit 0 promote / 1 hold / 2 kill / 3 the gate never ran / 4 no such file;
+  # a window shorter than the pre-registered 40 iterations holds, never
+  # promotes) -- that script is
   # the ledger's deciding rule and the code under test, not a second copy.
   #
   # NOTE distributed_prev_model_max_fraction: 0.60 below is a CEILING THAT
