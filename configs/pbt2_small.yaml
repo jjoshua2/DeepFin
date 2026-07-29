@@ -346,7 +346,20 @@ selfplay:
   curriculum_gumbel_scale_after: 0.0
   curriculum_gumbel_scale_decay_start_move: 12
   curriculum_gumbel_scale_decay_moves: 3
-  fpu_reduction: 1.2    # LC0/KataGo FPU for non-root nodes
+  # INERT on the distributed path — verified 2026-07-27, not merely believed.
+  # worker.py builds the selfplay SearchConfig and never resolves either field
+  # from the reco, and network_turn.py only reads them on the PUCT branch, which
+  # `mcts: gumbel` above makes unreachable. Both keys are in the live-yaml
+  # allowlist, so editing them here is ACCEPTED and does nothing. Values below
+  # match the SearchConfig defaults, so nothing is currently mis-set.
+  # Switching to `mcts: puct` does NOT make these editable: the worker still
+  # never resolves them, so the PUCT branch would read the dataclass defaults
+  # and a yaml edit would still be swallowed — wire them through
+  # build_recommended_worker first. They DO reach the in-trainer gate/eval
+  # matches (trainable_config_ops._play_batch_kwargs reads them off TrialConfig),
+  # which are disabled today at gate_games: 0 / eval_games: 0.
+  # Pinned by tests/test_selfplay_gumbel_batching_plumbing.py.
+  fpu_reduction: 1.2    # LC0/KataGo FPU for non-root nodes (PUCT only)
   fpu_at_root: 1.0      # FPU for legacy PUCT root; current Gumbel path uses gumbel_scale root noise.
 
   sf_policy_temp: 0.012      # 2026-05-23: keep SF-policy sharpness after softening the underlying cp->WDL scores.

@@ -168,6 +168,12 @@ class TrialConfig:
     fpu_reduction: float = 1.2
     fpu_at_root: float = 1.0
     gumbel_topk: int = 16
+  # C17 batching knobs. Carried here so the gate/eval matches built by
+  # _play_batch_kwargs search the SAME way distributed selfplay does; without
+  # them those matches silently ran the 56%-duplicate vloss_weight=0 arm while
+  # the live yaml asked for 1.
+    gumbel_target_batch: int = 0
+    gumbel_vloss_weight: int = 0
     volatility_q_scale: float = 0.0
     volatility_fpu: float = 0.0
     volatility_anchor: float = DEFAULT_VOLATILITY_ANCHOR
@@ -499,6 +505,8 @@ class TrialConfig:
             fpu_reduction=float(config.get("fpu_reduction", 1.2)),
             fpu_at_root=float(config.get("fpu_at_root", 1.0)),
             gumbel_topk=max(1, int(config.get("gumbel_topk", 16))),
+            gumbel_target_batch=max(0, int(config.get("gumbel_target_batch", 0))),
+            gumbel_vloss_weight=max(0, int(config.get("gumbel_vloss_weight", 0))),
             volatility_q_scale=float(config.get("volatility_q_scale", 0.0)),
             volatility_fpu=float(config.get("volatility_fpu", 0.0)),
             volatility_anchor=float(config.get("volatility_anchor", DEFAULT_VOLATILITY_ANCHOR)),

@@ -290,7 +290,23 @@ def build_recommended_worker(
         "full_ply_pair_fraction": float(config.get("full_ply_pair_fraction", 0.0)),
         "fast_simulations": int(config.get("fast_simulations", 8)),
         "gumbel_topk": int(config.get("gumbel_topk", 16)),
+        "gumbel_target_batch": int(config.get("gumbel_target_batch", 0)),
         "gumbel_vloss_weight": int(config.get("gumbel_vloss_weight", 0)),
+  # volatility_q_scale / volatility_fpu / volatility_anchor are DELIBERATELY not
+  # published. The worker resolves all three out of the reco and the live-yaml
+  # validator accepts them, so publishing looks like it would close a
+  # silent-ignore gap -- but a non-zero volatility_q_scale/volatility_fpu makes
+  # volatility_search_enabled() true, which drops network_turn.py off the C path
+  # onto run_gumbel_root_many, which RAISES ValueError unless the evaluator
+  # exposes evaluate_encoded_with_volatility. None of the four evaluators a
+  # distributed worker can hold does: MultiSlotInferenceClient, ThreadedDispatcher,
+  # SlotInferenceClient, AOTEvaluator (only LocalModelEvaluator/DirectGPUEvaluator,
+  # which are in-trainer). The ValueError is caught nowhere, so the worker process
+  # exits -- and every worker reads the same manifest, so they die together.
+  # Publishing would therefore turn an inert yaml key into a fleet crash switch.
+  # config_yaml._check_volatility_search_unsupported now rejects a non-zero value
+  # at load time instead, so the knob is loud rather than either silently ignored
+  # or fatal. Pinned by tests/test_selfplay_gumbel_batching_plumbing.py.
         "gumbel_c_scale": float(config.get("gumbel_c_scale", SELFPLAY_GUMBEL_C_SCALE)),
         "gumbel_scale": float(config.get("gumbel_scale", 1.0)),
         "gumbel_scale_after": float(config.get("gumbel_scale_after", 0.0)),

@@ -1,4 +1,16 @@
 # EXPERIMENTAL: volatility-aware Gumbel search (Python path, search-only).
+#
+# ⚠ THE YAML KNOBS BELOW CANNOT BE TURNED ON — a non-zero volatility_q_scale or
+# volatility_fpu is a HARD ValueError in flatten_run_config_defaults (see
+# utils/config_yaml._check_volatility_search_unsupported). Reason: a non-zero
+# value forces the Python search, which requires an evaluator with
+# evaluate_encoded_with_volatility, and NO evaluator a distributed selfplay
+# worker can hold has it (MultiSlotInferenceClient / ThreadedDispatcher /
+# SlotInferenceClient / AOTEvaluator) -- the ValueError is caught nowhere, so
+# every worker process would exit together. Run the sweep through
+# scripts/arena_standard.py --volatility-q-scale instead: the arena uses an
+# in-process LocalModelEvaluator, which does implement the method. A TRAINING
+# run on this config needs the method on the worker-side evaluators first.
 # Copy of pbt2_small.yaml + selfplay.volatility_* flags. NO training change:
 # the volatility heads are already trained (w_volatility / w_sf_volatility);
 # this experiment makes Gumbel search CONSUME them. See mcts/gumbel.py for
