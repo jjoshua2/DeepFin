@@ -2702,6 +2702,41 @@ rulers or the targets mean. Sequence them.
 yaml; no state migration. But note the standing rule: a yaml revert is not a
 rollback, the replay window holds ~a day of data made under the changed setting.
 
+**⚑⚑ 2026-07-29 — PULLED FROM THE PENDING RESTART BUNDLE. The queued action
+violated this entry three ways, and this entry's own warning named the mechanism.**
+Session task #68 read *"Deploy `feature_dropout_p` 0.10 → 0.0 at the next
+authorised restart"* — that is **arm C**, and it was queued to ride along with
+#284/#286/#287. Checked against what this entry actually pre-registered:
+
+1. **Arm C is conditional and its precondition never ran.** C is specified
+   *"only if B is neutral-or-worse"*. **Arm B has never been run** — no verdict
+   exists anywhere in this entry, and the only artifact on disk is a scratch
+   analysis script (`scratchpad/m8_dropout_impact.py`). Taking C without B skips
+   the comparison that decides between "compensate it" and "delete it".
+2. **The MANDATORY offline gate never ran.** This entry requires, before any live
+   window, *"≥ neutral broad `value_regret` on a 2-seed offline `retarget_retrain`
+   arm vs a same-seed control"*. No such result exists. `docs/rl_loop_audit.md`
+   M8 says of both fixes: **"Do not ship either."**
+3. **Bundling is the specific thing this entry forbids.** It states the change is
+   *"an experiment with a yardstick, not a correctness patch, **and it must not be
+   smuggled into a cleanup PR**"* — and a batched restart is a bundle by
+   definition. It would also break rule 4 (one data-affecting change per readout
+   window): the restart already carries #284/#286/#287, so a training-DISTRIBUTION
+   change lands in the same window as plumbing changes and neither reads cleanly.
+   Its deciding yardstick — paired arena, `matched_sims` sims-32, 200 games — was
+   not scheduled either.
+
+**DECISION: the restart carries CODE ONLY.** #284/#286 (merged) and #287
+(flag-off) are plumbing and measurement; none alters the training distribution.
+`feature_dropout_p` stays at **0.10** through the restart and this entry stays
+PRE-REGISTERED / not-live until the offline screen actually runs.
+
+**The generalisable trap:** a pre-registration with *conditional arms* decays into
+"deploy the last-mentioned value" once it sits in a task list long enough — the
+task text carried arm C's value with none of its preconditions. **When queueing a
+pre-registered change for deploy, re-read the entry rather than the task; if the
+entry has arms, the task must name which arm and why its precondition is met.**
+
 ---
 
 ### FINDING (2026-07-26) — the `diff_focus` tuning sweep's winning values have never reached the worker
