@@ -2737,6 +2737,55 @@ task text carried arm C's value with none of its preconditions. **When queueing 
 pre-registered change for deploy, re-read the entry rather than the task; if the
 entry has arms, the task must name which arm and why its precondition is met.**
 
+**⚑ SUPERSEDED SAME DAY — OPERATOR DECISION 2026-07-29: TAKE ARM C, SKIP ARM B.**
+The operator's call: *"stop using feature dropout as a simplification, because we
+never proved that it worked."* This is a legitimate and deliberate deviation, and
+it is recorded as one rather than quietly folded in. **Arm B (the `1/(1-p)`
+rescale) will NOT be run** — the decision is not "compensate the regulariser" but
+"delete a knob that was never shown to earn its keep", which is the end state this
+entry's own arm C already contemplated (*"a regulariser that measurably does
+nothing is a maintenance liability"*). Skipping B costs us the ability to say
+whether compensating it would have helped; we are accepting that.
+
+**⚑⚑ THIS KEY IS NOT LIVE-RELOADABLE, AND IT LOOKS LIKE IT IS.**
+`feature_dropout_p` IS in `config_yaml.py:198`'s allowlist, so a live edit is
+**accepted** and does not reject the reload — but it is **NOT** in
+`TRAINER_WEIGHT_KEYS`, and `self.feature_dropout_p` is assigned **only** in
+`Trainer.__init__` (`trainer.py:1757`); there is no live-update path. A live edit
+is therefore **accepted and silently ignored** — the exact signature defect this
+repo keeps producing. It is construction-time, so it needs a RESTART, and per
+[[config_change_may_not_be_in_effect]] a `--resume` restores the trial config for
+construction-time keys, so **the restart alone is not proof either.**
+
+**MANDATORY VERIFICATION — the observation that proves it took effect.**
+`trainable_report.py:1317` reports `feature_dropout_p` (from `tc.feature_dropout_p`)
+into `progress.csv`. **On the FIRST new row after the restart, that column must
+read 0.0.** If it reads 0.10, the change did not land and every subsequent readout
+is measuring the old setting. Do not proceed on the assumption that editing the
+yaml was sufficient.
+
+**SEQUENCING — this becomes the restart's ONE data-affecting change.** The bundle
+otherwise carries #284/#286 (merged) and #287 (flag-off), which are plumbing and
+measurement. That keeps ledger rule 4 satisfied *provided* nothing else in the
+bundle moves the training distribution — **re-confirm that at deploy time**, since
+"it's only plumbing" is a claim, not a fact.
+
+**GUARDRAIL, NOT A SUCCESS CRITERION.** The intent here is removal of an
+unjustified knob, not a bet on a gain, so there is deliberately no success
+threshold — claiming one would invite reading noise as vindication.
+**KILL/REVERT:** `value_regret --max-positions 0` paired vs a pre-restart dump,
+worse by >2cp with the CI excluding 0 on the worse side ⇒ restore
+`feature_dropout_p: 0.10`. **Note the revert is not instant** (construction-time
+key ⇒ another restart), which is itself a reason to bank the salvage snapshot
+before deploying.
+
+**⚠ WHAT WE ARE ACCEPTING.** Uncompensated dropout has been in place for this
+net's whole life, so the net has adapted to it: removal is a **training-
+distribution change on an adapted net**, and a transient cost is possible even if
+the regulariser was earning nothing. That is separable from whether the knob was
+ever justified — "never proved it worked" argues against KEEPING it, not that
+removing it is free. The guardrail above is what catches the difference.
+
 ---
 
 ### FINDING (2026-07-26) — the `diff_focus` tuning sweep's winning values have never reached the worker
