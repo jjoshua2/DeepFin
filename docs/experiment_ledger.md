@@ -12933,6 +12933,26 @@ wrong rather than silent.
 production yaml ships no gate keys, so enabling it is an operator action at a
 restart. Do not go straight to `enforce`.
 
+**⚑ CORRECTION 2026-07-29 — THE WINDOW PRECONDITION ABOVE WAS UNENFORCEABLE
+PROSE, AND THAT IS THE DEFECT.** I wrote "over a full window" as a condition in
+this entry. Independent review measured that `shadow_readout_verdict` returns
+**`promote_to_enforce` off as few as 2 rows** (n=2,3,5,8,12 all promote at the
+live shape). The precondition existed nowhere in code — exactly the
+"a rule stated twice is a rule stated inconsistently" failure that
+`promotion_gate.py:791-803` says the one-implementation design exists to prevent.
+I reproduced that failure in the very entry that cites the principle.
+
+**It is not hypothetical.** `harness._rotate_progress_csv_if_schema_changed`
+starts a FRESH `progress.csv` whenever the report key set changes — **three
+rotations in four days** in this repo. Run the command above a few iterations
+after a rotation and it returns `promote_to_enforce` on a 3-row window.
+
+**Being fixed as a NAMED leg** (`n_rows < 40` ⇒ `hold_in_shadow`, never
+`promote`), so the operator sees WHY rather than getting a silent early return.
+**Until that leg is merged and mutation-verified, this yardstick must not be
+acted on.** Do not substitute "I'll remember to check the row count" — that is
+the same unenforceable prose one level down.
+
 **⚑ THE OBSERVATION THAT PROVES IT TOOK EFFECT** — an exact identity by
 construction, worth more than any statistic here:
 
