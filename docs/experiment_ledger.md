@@ -6401,7 +6401,52 @@ PLAY-shape substitution. `wdl_regret` sounds like a strength dial; measuring its
 realized candidate set showed it moves 10.4→8.4 moves across its whole range.
 
 
-### PRE-REGISTERED, NOT EXECUTED (2026-07-29) — manually reclaim part of the airbag's spurious +0.05 regret
+### ⚑⚑ WITHDRAWN + CORRECTION (2026-07-29) — the iter-2 airbag was NOT spurious, and the "reclaim the +0.05" proposal below is DEAD
+
+**Both the root-cause entry and the reclaim proposal below rest on a wrong
+premise. Neither was executed. Nothing was changed.**
+
+**What I missed: `nodes_history` inside the live checkpoint's `pid_state.json`.**
+
+```
+[108499 nodes, wr 0.527, regret 0.01]
+[126097 nodes, wr 0.487, regret 0.01]
+[500000 nodes, wr 0.575, regret 0.0216]
+[665036 nodes, wr 0.711, regret 0.0366]
+```
+
+**The NODES lever ratcheted the curriculum opponent ~108k → 698k (6x), and regret
+rose 0.01 → 0.039 as the compensating easement.** That is the designed two-stage
+controller: regret descends in stage 1, nodes take over in stage 2. The 07-26
+trial resumed at **698k nodes while carrying regret 0.0393** — the value earned
+at ~665k — which was genuinely too tight. The net really was scoring 0.36-0.41.
+**The airbag was correct.**
+
+**Three consequences.**
+1. "The opponent got ~2x easier over the trial" (root-cause entry below) is
+   **WRONG**. Regret rose because NODES rose. Net difficulty went UP.
+2. The reclaim proposal below — step regret 0.0766 → 0.060 to recover a
+   "spurious" +0.05 — is **WITHDRAWN**. There is nothing spurious to recover;
+   forcing regret down would simply outrun what the net can hold, and the PID is
+   already tightening it as fast as the net improves (0.090 → 0.0773 across the
+   trial).
+3. It **resolves the strength bracket's unexplained residual**: early rows at
+   `regret 0.01, 108k nodes, ~0.51 winrate` versus today's −512 Elo at SF@5000
+   are not contradictory — at 108k the opponent is far weaker than at 698k.
+
+**⚑ THE STANDING RULE THIS ESTABLISHES: difficulty is `regret + NODES`. Reading
+regret alone is meaningless** — a rise can mean the net weakened OR the node
+lever hardened, which are opposite conclusions. Always pull `opponent_sf_nodes`
+alongside `opponent_wdl_regret_limit`.
+
+**⚠ INSTRUMENT NOTE:** `nodes_history` / `regret_history` live ONLY in the
+checkpoint's `pid_state.json` — not in `progress.csv` or `result.json`. And
+`runs/pbt2_small/pid_state.json` is **STALE** (mtime 2026-04-14, `wdl_regret`
+0.435, `nodes` 5000); reading it returns an April-era answer.
+
+---
+
+### WITHDRAWN — PRE-REGISTERED, NOT EXECUTED (2026-07-29) — manually reclaim part of the airbag's spurious +0.05 regret
 
 **Status: written, NOT applied. Needs explicit authorisation** — it is a
 training-affecting live change to the difficulty controller.
@@ -6455,7 +6500,7 @@ and costs +0.05 — i.e. the downside is exactly the status quo ante, plus one
 wasted window. The sensitivity figure is a local, noisy estimate from blocks
 where regret barely varied; treat 0.060 as the aggressive end of the safe range.
 
-### ⚑⚑ ROOT CAUSE (2026-07-29) — the whole regret rise in this trial is ONE airbag firing at iteration 2
+### ⚑ SUPERSEDED (see the CORRECTION above) — ROOT CAUSE (2026-07-29): the whole regret rise in this trial is ONE airbag firing at iteration 2
 
 Reason-code totals over the full 235-iteration series (`result.json`):
 
