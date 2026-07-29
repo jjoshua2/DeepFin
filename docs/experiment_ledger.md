@@ -885,6 +885,78 @@ The "one bump" case only arises if the two deploy at different restarts, which
 will not happen here. **If a bump IS observed at that restart, that is a KILL
 signal for this entry's condition 3**, not a shrug.
 
+### PRE-REGISTERED (not yet live, flag default OFF) — selfplay sessions RESUME their in-flight games across a restart instead of abandoning them (`selfplay_resume_inflight_games`, 2026-07-29)
+
+**Class: waste correction + removal of a known PID sample bias. Not a target,
+loss, or search change.** Pre-registered before deploy because it touches the
+selfplay path and adds a config key.
+
+**Mechanism it removes (audit C14/C14b).** A `_RECO_RESTART_KEYS` change sets
+`_stop_selfplay`; `play_batch` returns and every in-flight game is dropped —
+including the ~698k-node SF label each recorded ply already paid for. The
+survivors are LENGTH-TRUNCATED: `avg_plies_win`/`avg_plies_draw` ramp
+monotonically from ~0 back to 78.8/118.8 over ~9 iterations, draws (the
+longest games) arrive last so `curriculum_draw_rate` starts near 0 against a
+steady 0.486 ± 0.130, and `pid_raw_winrate` reads **+0.110 too high (t =
++2.94)**. The controller acts on that and tightens regret by −0.0086 to
+−0.0107 per restart ≈ **88 iterations of genuine progress** at the measured
+−0.000114/iter. **30% of all iterations (71/237 on trial 13a9f) sit in such a
+window, and the PID stepped the lever on 58 of them.**
+
+**Change.** At a teardown the worker writes each in-flight game to
+`<work_dir>/selfplay_resume/` (durable, next to `pending/`) and the next
+session restores them into its fresh slots. The encoded planes are NOT
+persisted (44.8 KB/ply, ~665 MB/table): the root FEN + opening move stack +
+played action ids are, and `x`/`x_lc0_root`/`relations`/`legal_mask` are
+re-encoded by replaying the identical `CBoard.from_board` + `push_index`
+sequence. Everything not recomputable IS persisted, above all the `sf_*`
+labels. A game is discarded (counted, logged) on version mismatch, a change in
+any record-shaping config key, or any validation failure — including a
+position-hash check per record, which is what makes the gate able to fail.
+
+**MECHANISM INSTRUMENT FIRST** (protocol lesson from PR #224: do not pick a
+yardstick whose measurement only exists when the bug fires). In `result.json`:
+```
+python3 -c "import json;d=json.load(open('runs/pbt2_small/tune/train_trial_*/result.json'.replace('*','<id>')));print(d['outcome_stats'])"
+```
+`resumed_inflight_games` must be > 0 in the iterations after the first restart
+that runs with the flag ON. **If it is 0 or absent, nothing was resumed and
+the yardstick below is measuring nothing** — check the worker log for
+`selfplay resume: resumed games=… discarded=… [reasons]`.
+
+**YARDSTICK (stability class, ~9 iterations after the first flag-ON restart) —
+exact command:**
+```
+python3 - <<'PY'
+import json, glob
+rows=[json.loads(l) for f in glob.glob('runs/pbt2_small/tune/train_trial_*/result.json') for l in open(f)]
+rows.sort(key=lambda r: r.get('training_iteration', 0))
+for r in rows[-14:]:
+    print(r['training_iteration'], round(r.get('avg_plies_win',0),1),
+          round(r.get('avg_plies_draw',0),1), round(r.get('curriculum_draw_rate',0),3))
+PY
+```
+**SUCCESS = across the 9 iterations after the restart, `min(avg_plies_win)` ≥
+0.6 × its pre-restart mean AND `min(curriculum_draw_rate)` ≥ 0.30** (today
+both start near 0 and take ~9 iterations to recover).
+**KILL = the monotone ramp from ~0 is still there** with
+`resumed_inflight_games` > 0 ⇒ resumption works but does not fix the
+truncation, so the length bias has a second source and C14b's mechanism claim
+is wrong.
+
+**Confounds.** The deploy restart ITSELF runs on old code and still abandons
+its games, so iteration 0 of the window is a normal post-restart transient;
+score from the FIRST flag-ON teardown, not from the deploy. A game suspended
+with an SF label still in flight resumes with that ply unlabelled (counted as
+`label_futures_lost` in the suspend log) — a small target-density dip, not a
+correctness issue.
+**Revert.** `selfplay_resume_inflight_games: false` (restart-keyed, so it
+applies at the next session restart), or revert the PR. With the flag off the
+code path is unreachable and behaviour is byte-identical to today.
+**Deploy note.** The key must NOT be added to `configs/pbt2_small.yaml` until
+the workers are restarted onto code that defines it — the live-yaml validator
+is all-or-nothing and one unknown key rejects the WHOLE reload.
+
 ### PRE-REGISTERED (not yet live) — selfplay clients stop zero-padding root evals to 32 rows (PR #280, 2026-07-27)
 
 **Class: efficiency plumbing. NOT an experiment, and NOT a throughput lever.**

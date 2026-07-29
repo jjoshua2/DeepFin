@@ -478,6 +478,13 @@ def _update_aggregate_stats(
     assert c.outcome_stats is not None
     outcome_stats = c.outcome_stats
     _inc_outcome(outcome_stats, f"opening_{source}_games")
+    # The observable half of in-flight resume (selfplay/resume.py): a game that
+    # was suspended at a session teardown and then actually reached a shard.
+    # Without this the feature could only be argued for from a log line; with
+    # it, `resumed_inflight_games` in result.json's outcome_stats is the proof.
+    resumed = getattr(state, "resumed_from_disk", ())
+    if i < len(resumed) and resumed[i]:
+        _inc_outcome(outcome_stats, "resumed_inflight_games")
     if source.startswith("fenlist"):
         # Blind-spot FEN seeds are otherwise invisible in result.json (the
         # per-source outcome_stats aren't plumbed through the ingest-time

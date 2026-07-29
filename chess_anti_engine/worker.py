@@ -4,6 +4,7 @@ import argparse
 from collections import deque
 import dataclasses
 import getpass
+import hashlib
 import json
 import logging
 import os
@@ -62,6 +63,10 @@ from chess_anti_engine.selfplay.config import (
 )
 from chess_anti_engine.selfplay.manager import BatchStats
 from chess_anti_engine.selfplay.match import play_match_batch
+from chess_anti_engine.selfplay.resume import (
+    resume_inflight_games,
+    suspend_inflight_games,
+)
 from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
     _load_fen_list,
@@ -706,6 +711,13 @@ def main() -> None:
 class WorkerSession:
     """Manages a worker's lifecycle: poll manifest -> sync assets -> play -> upload."""
 
+  # In-flight selfplay resume, off unless a manifest turns it on. Class-level
+  # so the OFF path is the default for any session — including the ones tests
+  # build with object.__new__ — rather than an AttributeError at the hook.
+  # _run_selfplay sets both per session; they are session-fixed by design.
+    _resume_inflight_enabled: bool = False
+    _resume_compat_fingerprint_active: str = ""
+
     def __init__(
         self,
         args,
@@ -739,12 +751,20 @@ class WorkerSession:
         self.pending_dir = shard_dir / "pending"
         self.uploaded_dir = shard_dir / "uploaded"
 
+  # In-flight selfplay state (selfplay/resume.py). Deliberately NOT the Ray
+  # session/trial dir: state left there is already known to be lost at a
+  # restart, which is the exact event this survives. work_dir is the worker's
+  # own durable root — the same place pending shards wait out a restart — so a
+  # suspended game outlives the process that wrote it.
+        self.resume_dir = work_dir / "selfplay_resume"
+
         arena_dir = work_dir / "arena"
         self.arena_pending_dir = arena_dir / "pending"
         self.arena_uploaded_dir = arena_dir / "uploaded"
 
         self.pending_dir.mkdir(parents=True, exist_ok=True)
         self.uploaded_dir.mkdir(parents=True, exist_ok=True)
+        self.resume_dir.mkdir(parents=True, exist_ok=True)
         self.arena_pending_dir.mkdir(parents=True, exist_ok=True)
         self.arena_uploaded_dir.mkdir(parents=True, exist_ok=True)
 
@@ -871,6 +891,12 @@ class WorkerSession:
         )
         self._last_broker_client_stats_log_s: float = time.time()
         self._last_broker_client_stats_snapshot: dict[str, Any] = {}
+  # In-flight resume counters (the flag + fingerprint are class-level defaults;
+  # see _resume_inflight_enabled).
+        self._resume_counts_lock = threading.Lock()
+        self._resume_counts: dict[str, int] = {
+            "suspended": 0, "suspend_skipped": 0, "resumed": 0, "discarded": 0,
+        }
         self._completion_telemetry_lock = threading.Lock()
         self._completion_games = 0
         self._completion_positions = 0
@@ -1413,6 +1439,11 @@ class WorkerSession:
             self._live_states.append(state)
             if self._pending_live_override is not None:
                 self._transplant_live_fields(state, *self._pending_live_override)
+        # Every slot is a fresh game at this point, so each is a valid target
+        # for a persisted one. Files are claimed by rename, so the threaded
+        # path's N registrations divide the backlog instead of racing for it.
+        if self._resume_inflight_enabled:
+            self._resume_inflight_games(state)
 
     def _clear_live_states(self) -> None:
         """Drop all registered states (and the session's pending live override)
@@ -2930,10 +2961,135 @@ class WorkerSession:
         "sf_refute_full_node_moves", "sf_refute_record_opp_rows",
         "sf_refute_opp_policy_net_blend",
         "volatility_q_scale", "volatility_fpu", "volatility_anchor",
+  # Read once at session start (_run_selfplay) to decide whether this session
+  # persists its in-flight games at teardown and resumes persisted ones at
+  # start. Session-fixed, hence restart-keyed; toggling it costs exactly one
+  # more abandonment, after which restarts stop abandoning.
+        "selfplay_resume_inflight_games",
     )
 
   # Every reco key worth tracking for change detection (restart + live).
     _RECO_WATCH_KEYS = _RECO_LIVE_KEYS + _RECO_RESTART_KEYS
+
+  # ── In-flight resume compatibility ───────────────────────────────────────
+  # A resumed game carries plies recorded by the OLD session into a shard
+  # written by the NEW one. That is only sound while the knobs that decide what
+  # a stored ply MEANS are unchanged; a mismatch discards the game (counted,
+  # never silently mixed). Only two classes qualify:
+  #   * the input encoding the net read when it produced those targets, and
+  #   * label knobs stamped onto the record AT LABEL TIME (stockfish_turn),
+  #     which a later finalize cannot re-derive.
+  # Knobs applied uniformly at FINALIZE time (soft_policy_temp, categorical_*,
+  # syzygy_rescore_policy, record_dense_sf_policy, record_sf_p0_*, policy
+  # encoding) are exempt: finalize applies the new value to every row of the
+  # game, resumed or not. So are the recomputed inputs (record_relations,
+  # record_lc0_root_input) — resume re-encodes every restored ply under the new
+  # config, so the game stays internally consistent either way.
+    _RESUME_COMPAT_KEYS = (
+        "input_history_encoding", "input_extra_features", "history_rep_fix",
+        "sf_multipv", "sf_policy_temp", "sf_policy_label_smooth",
+        "sf_wdl_use_cp_logistic", "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
+        "sf_refute_record_opp_rows", "sf_refute_opp_policy_net_blend",
+    )
+
+  # Restart keys deliberately NOT part of the resume fingerprint. Listed rather
+  # than defaulted so a new restart key must be classified into one bucket or
+  # the other (test_every_restart_key_is_resume_classified) — an unclassified
+  # record-shaping key would silently mix two schemas inside one game.
+    _RESUME_COMPAT_EXEMPT_KEYS = (
+  # Engine/session plumbing — no bearing on a stored ply.
+        "sf_hash_mb", "games_per_batch", "slot_oversubscribe", "sf_move_nodes",
+        "selfplay_resume_inflight_games",
+  # Search shape. Changes the target's provenance the same way a mid-game model
+  # swap does (which already happens every iteration); each ply keeps a valid
+  # target for its own position.
+        "gumbel_target_batch", "gumbel_vloss_weight",
+        "mcts_simulations", "fast_simulations", "mcts", "playout_cap_fraction",
+        "full_ply_pair_fraction",
+        "gumbel_topk", "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
+        "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
+        "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
+        "curriculum_gumbel_scale_decay_start_move", "curriculum_gumbel_scale_decay_moves",
+        "volatility_q_scale", "volatility_fpu", "volatility_anchor",
+        "temperature", "temperature_decay_start_move", "temperature_decay_moves",
+        "temperature_endgame", "selfplay_temperature",
+        "selfplay_temperature_decay_start_move", "selfplay_temperature_decay_moves",
+        "selfplay_temperature_endgame",
+  # Applied at finalize to every row of the game at once.
+        "soft_policy_temp", "record_dense_sf_policy", "record_sf_p0_policy",
+        "record_sf_p0_regret", "record_fast_ply_value", "policy_encoding",
+        "categorical_blend_frac", "categorical_search_blend_frac",
+        "syzygy_path", "stockfish_syzygy_path", "syzygy_rescore_policy",
+        "syzygy_adjudicate", "syzygy_adjudicate_fraction", "syzygy_in_search",
+        "timeout_adjudication_threshold", "max_plies",
+        "blindspot_harvest_out_path",
+  # Recomputed from the board at resume, so consistent under either value.
+        "record_relations", "use_dynamic_relations", "record_lc0_root_input",
+  # Opening selection — decided when a game STARTS; a resumed game already has
+  # its opening and a fresh one uses the new setting.
+        "random_start_plies",
+        "opening_book_prob", "opening_book_max_plies", "opening_book_max_games",
+        "opening_book_max_plies_2", "opening_book_max_games_2", "opening_book_mix_prob_2",
+        "opening_fen_prob", "opening_fen_net_side_to_move", "opening_fen_selfplay_only",
+        "opening_fen_dole_per_iter",
+        "opening_fen_sf_refute_frac", "opening_fen_sf_refute_plies",
+        "sf_refute_full_node_moves",
+    )
+
+    def _resume_compat_fingerprint(self, reco: dict) -> str:
+        """Stable digest of the reco knobs a resumed game must be matched on."""
+        payload = json.dumps(
+            {k: reco.get(k) for k in sorted(self._RESUME_COMPAT_KEYS)},
+            sort_keys=True, default=str,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+
+    def _suspend_inflight_games(self, state: Any) -> None:
+        """play_batch on_suspend hook: persist this session's in-flight games."""
+        # _PendingSfLabel.slot; a label still in flight here dies with the
+        # session, so its ply resumes UNLABELLED. Counted, not hidden.
+        pending = [int(getattr(p, "slot", -1)) for p in state.pending_sf_labels]
+        try:
+            report = suspend_inflight_games(
+                state,
+                out_dir=self.resume_dir,
+                compat_fingerprint=str(self._resume_compat_fingerprint_active),
+                model_sha=str(self.model_sha),
+                model_step=int(self.model_step),
+                pending_label_slots=[i for i in pending if i >= 0],
+            )
+        except Exception:
+            # A failed suspend must never take the worker down: the old
+            # behaviour (abandon everything) is exactly the fallback.
+            self.log.exception("selfplay resume: suspend failed; games abandoned")
+            return
+        with self._resume_counts_lock:
+            self._resume_counts["suspended"] += int(report.persisted)
+            self._resume_counts["suspend_skipped"] += int(report.skipped)
+
+    def _resume_inflight_games(self, state: Any) -> None:
+        """on_state_ready hook: refill fresh slots with persisted games."""
+        try:
+            report = resume_inflight_games(
+                state,
+                in_dir=self.resume_dir,
+                compat_fingerprint=str(self._resume_compat_fingerprint_active),
+                model_sha=str(self.model_sha),
+                model_step=int(self.model_step),
+            )
+        except Exception:
+            self.log.exception("selfplay resume: restore failed; starting fresh games")
+            return
+        with self._resume_counts_lock:
+            self._resume_counts["resumed"] += int(report.resumed)
+            self._resume_counts["discarded"] += int(report.discarded)
+        if report.resumed or report.discarded:
+            self.log.info(
+                "selfplay resume totals: suspended=%d resumed=%d discarded=%d",
+                self._resume_counts["suspended"],
+                self._resume_counts["resumed"],
+                self._resume_counts["discarded"],
+            )
 
     def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:
         """Unpack manifest.recommended_worker into the 5 frozen config dataclasses.
@@ -3230,6 +3386,10 @@ class WorkerSession:
                 # model-watch thread is the liveness floor if it does not.
                 on_step=self._check_model_update if tid == 0 else None,
                 on_state_ready=self._register_live_state,
+                on_suspend=(
+                    self._suspend_inflight_games
+                    if self._resume_inflight_enabled else None
+                ),
                 stop_fn=self._stop_fn,
                 pause_fn=self._pause_fn,
                 fen_dole_queue=fen_dole_queue,  # shared across threads (drained once total)
@@ -3281,6 +3441,10 @@ class WorkerSession:
                     on_timing=self._record_selfplay_phase_timing,
                     on_step=self._check_model_update,
                     on_state_ready=self._register_live_state,
+                    on_suspend=(
+                        self._suspend_inflight_games
+                        if self._resume_inflight_enabled else None
+                    ),
                     stop_fn=self._stop_fn,
                     pause_fn=self._pause_fn,
                     fen_dole_queue=fen_dole_queue,
@@ -3378,6 +3542,13 @@ class WorkerSession:
             if self.games_per_batch_local is not None
             else int(reco.get("games_per_batch", 8))
         )
+
+  # Session-fixed: a session either does in-flight resume for its whole life or
+  # not at all, so the suspend hook and the restore hook can never disagree.
+        self._resume_inflight_enabled = bool(
+            reco.get("selfplay_resume_inflight_games", False)
+        )
+        self._resume_compat_fingerprint_active = self._resume_compat_fingerprint(reco)
 
         cfgs, (sf_nodes, sf_multipv, sf_hash_mb, syzygy_path) = self._build_selfplay_configs(reco)
         warm_opening_book_cache(cfgs["opening"])

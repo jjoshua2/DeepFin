@@ -449,6 +449,10 @@ def _append_records_via_c(
             input_extra_features=state.game.input_extra_features,
         )
     _want_rel = bool(state.game.record_relations)
+    # BEFORE c_process_ply, which pushes the move on these very CBoards: this
+    # is the identity of the position the record is about (selfplay/resume.py
+    # verifies its replay against it). One attribute read per board per turn.
+    pos_hashes = [int(cb.zobrist_hash) for cb in cb_encode_list[:n]]
     c_result = state.c_process_ply(
         cb_encode_list, pol_logits_full[:n], wdl_logits_raw[:n],
         actions_arr, values_arr, probs_arr,
@@ -505,6 +509,11 @@ def _append_records_via_c(
                 priority_policy_kl=c_priority_policy_kl_list[j],
                 priority_q_delta=c_priority_q_delta_list[j],
                 gumbel_policy_diag=gumbel_diags[j],
+                # The move was appended just above, so the recorded position is
+                # the one BEFORE it: len-1 moves preceded it. selfplay/resume.py
+                # re-encodes x at exactly this offset.
+                move_offset=len(state.move_idx_history[idx]) - 1,
+                pos_hash=pos_hashes[j],
             ),
         )
 
@@ -548,6 +557,8 @@ def _append_records_via_python(
         board_before = state.boards[idx]
         ply_index = len(board_before.move_stack)
         pov_color = board_before.turn
+        # Read before the push below (mirrors the C path's snapshot).
+        pos_hash = int(state.cboards[idx].zobrist_hash)
         x_lc0_root = (
             encode_position(
                 board_before, add_features=True,
@@ -629,6 +640,9 @@ def _append_records_via_python(
                 priority_policy_kl=float(kl),
                 priority_q_delta=float(q_delta),
                 gumbel_policy_diag=gumbel_diags[j],
+                # Move already pushed above — see the C path's note.
+                move_offset=len(state.move_idx_history[idx]) - 1,
+                pos_hash=pos_hash,
             ),
         )
 
