@@ -666,6 +666,15 @@ class SelfplayState:
     # reaches a shard is a number in result.json, not an assumption. Reset by
     # recycle_slot, so it only ever marks the resumed game itself.
     resumed_from_disk: list[bool] = field(default_factory=list)
+    # outcome_stats counts produced OUTSIDE any single game's finalize — today
+    # only the in-flight resume's DISCARD count, which is a session-start event
+    # with no game to hang it on. `resumed_inflight_games` (the success) already
+    # reaches result.json through the per-game counters; a failure that is
+    # visible only in a worker log is not observable where the success is, so
+    # the next finalized game drains this into its own outcome_stats and the
+    # count rides the ordinary CompletedGameBatch -> shard meta -> result.json
+    # path. A session that finalizes no game at all reports it in the log only.
+    pending_outcome_stats: dict[str, int] = field(default_factory=dict)
 
     # ── Shared caches (None when C tree unavailable) ─────────────────────────
     mcts_tree: Any = None

@@ -66,6 +66,7 @@ from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.resume import (
     resume_inflight_games,
     suspend_inflight_games,
+    sweep_orphan_state_files,
 )
 from chess_anti_engine.selfplay.opening import (
     OpeningConfig,
@@ -714,9 +715,19 @@ class WorkerSession:
   # In-flight selfplay resume, off unless a manifest turns it on. Class-level
   # so the OFF path is the default for any session — including the ones tests
   # build with object.__new__ — rather than an AttributeError at the hook.
-  # _run_selfplay sets both per session; they are session-fixed by design.
+  # _begin_resume_session sets all three per session; session-fixed by design.
     _resume_inflight_enabled: bool = False
     _resume_compat_fingerprint_active: str = ""
+  # Trial this session's games belong to, SNAPSHOT at session start. Not read
+  # live: _negotiate_lease assigns self.leased_trial_id BEFORE the caller
+  # notices the change and sets _stop_selfplay, so by the time the suspend hook
+  # runs the live value is already the trial we were reassigned TO. Stamping
+  # that on games played entirely under the old trial would let them sail
+  # through the trial guard and be uploaded as the NEW trial's data — which is
+  # the one thing the guard exists to stop, and config_mismatch cannot catch it
+  # (sibling GPBT trials differ on LR and loss weights, not on the 11
+  # record-shaping keys).
+    _resume_trial_id_active: str = ""
 
     def __init__(
         self,
@@ -897,6 +908,7 @@ class WorkerSession:
         self._resume_counts: dict[str, int] = {
             "suspended": 0, "suspend_skipped": 0, "resumed": 0, "discarded": 0,
         }
+        self._resume_skip_reasons: dict[str, int] = {}
         self._completion_telemetry_lock = threading.Lock()
         self._completion_games = 0
         self._completion_positions = 0
@@ -3044,10 +3056,53 @@ class WorkerSession:
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
+    def _begin_resume_session(self, reco: dict) -> None:
+        """Fix this session's in-flight-resume state, and sweep the state dir.
+
+        Called once by ``_run_selfplay`` before the session starts. All three
+        values are session-FIXED by design: a session either does in-flight
+        resume for its whole life or not at all, so the suspend hook and the
+        restore hook can never disagree about the flag, the compat fingerprint,
+        or the trial.
+        """
+  # Session-fixed: toggling mid-session would let the suspend and restore hooks
+  # disagree about whether this session's games are resumable.
+        self._resume_inflight_enabled = bool(
+            reco.get("selfplay_resume_inflight_games", False),
+        )
+        self._resume_compat_fingerprint_active = self._resume_compat_fingerprint(reco)
+  # A SNAPSHOT, not a live read — see _resume_trial_id for why reading it at
+  # suspend time stamps the wrong trial on the games it is guarding.
+        self._resume_trial_id_active = self._current_trial_id()
+  # Unconditional, flag or no flag. Turning the flag OFF is the documented
+  # revert, and it disables the drain (resume_inflight_games runs only under the
+  # flag) along with the suspend — so sweeping only under the flag would leave
+  # the last teardown's 400-1024 files in selfplay_resume/ forever, in exactly
+  # the case the backstop is named for. Never fatal: this is housekeeping.
+        try:
+            sweep_orphan_state_files(self.resume_dir)
+        except Exception:
+            self.log.exception("selfplay resume: orphan sweep failed (ignored)")
+
     def _resume_trial_id(self) -> str:
-        """Trial a suspended game belongs to. A trial reassignment also tears
-        the session down, and a game played under another trial's
-        hyperparameters must not be finished and uploaded under this one."""
+        """Trial a suspended game belongs to, AS OF SESSION START.
+
+        A trial reassignment also tears the session down, and a game played
+        under another trial's hyperparameters must not be finished and uploaded
+        under this one. That guard only works on a snapshot: the reassignment
+        that triggers the teardown mutates ``leased_trial_id`` first
+        (``_negotiate_lease``) and sets ``_stop_selfplay`` second, so reading it
+        live inside the suspend hook returns the NEW trial's id and stamps it on
+        the OLD trial's games. ``_run_selfplay`` captures
+        ``_resume_trial_id_active`` before the session starts; both the suspend
+        and the resume side read that.
+        """
+        return str(self._resume_trial_id_active or "")
+
+    def _current_trial_id(self) -> str:
+        """The trial this worker is leased to RIGHT NOW. Only
+        ``_begin_resume_session`` may read this for resume purposes; every other
+        resume caller must go through the ``_resume_trial_id`` snapshot."""
         return str(self.leased_trial_id or self.fixed_trial_id or "")
 
     def _suspend_inflight_games(self, state: Any) -> None:
@@ -3072,7 +3127,15 @@ class WorkerSession:
             return
         with self._resume_counts_lock:
             self._resume_counts["suspended"] += int(report.persisted)
+            # report.skipped no longer counts freshly-recycled empty slots (see
+            # SuspendReport), so a nonzero value here is always a real loss.
             self._resume_counts["suspend_skipped"] += int(report.skipped)
+            for reason, n in report.reasons.items():
+                if reason == "empty_slot":
+                    continue
+                self._resume_skip_reasons[reason] = (
+                    self._resume_skip_reasons.get(reason, 0) + int(n)
+                )
 
     def _resume_inflight_games(self, state: Any) -> None:
         """on_state_ready hook: refill fresh slots with persisted games."""
@@ -3092,11 +3155,21 @@ class WorkerSession:
             self._resume_counts["resumed"] += int(report.resumed)
             self._resume_counts["discarded"] += int(report.discarded)
         if report.resumed or report.discarded:
+            with self._resume_counts_lock:
+                skipped = int(self._resume_counts["suspend_skipped"])
+                skip_reasons = ",".join(
+                    f"{k}={v}" for k, v in sorted(self._resume_skip_reasons.items())
+                ) or "-"
+            # suspend_skipped is a LOSS count (games we meant to persist and
+            # could not); printing it next to the successes is the only place
+            # it is ever read.
             self.log.info(
-                "selfplay resume totals: suspended=%d resumed=%d discarded=%d",
+                "selfplay resume totals: suspended=%d resumed=%d discarded=%d "
+                "suspend_skipped=%d [%s]",
                 self._resume_counts["suspended"],
                 self._resume_counts["resumed"],
                 self._resume_counts["discarded"],
+                skipped, skip_reasons,
             )
 
     def _build_selfplay_configs(self, reco: dict) -> tuple[dict, tuple]:
@@ -3551,12 +3624,7 @@ class WorkerSession:
             else int(reco.get("games_per_batch", 8))
         )
 
-  # Session-fixed: a session either does in-flight resume for its whole life or
-  # not at all, so the suspend hook and the restore hook can never disagree.
-        self._resume_inflight_enabled = bool(
-            reco.get("selfplay_resume_inflight_games", False)
-        )
-        self._resume_compat_fingerprint_active = self._resume_compat_fingerprint(reco)
+        self._begin_resume_session(reco)
 
         cfgs, (sf_nodes, sf_multipv, sf_hash_mb, syzygy_path) = self._build_selfplay_configs(reco)
         warm_opening_book_cache(cfgs["opening"])

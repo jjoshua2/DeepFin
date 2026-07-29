@@ -100,6 +100,21 @@ _SEARCH = SearchConfig(
 _OPENING = OpeningConfig(random_start_plies=0)
 _DIFF_FOCUS = DiffFocusConfig(min_keep=1.0)
 
+# Production plays `opening_book_prob: 1.0` / `opening_book_max_plies: 4`, so a
+# real game NEVER starts from a bare startpos with an empty move stack — it
+# starts from a board that already carries moves, and the LC0 history planes at
+# the early plies are filled from them. A byte-exactness proof run only at
+# random_start_plies=0 therefore proves it for the one construction production
+# does not use, and "a board without a real move stack" is precisely the shape
+# that has produced two retracted findings in this repo. random_start_plies is
+# the cheap way to get the same property (_random_playout_from_start pushes real
+# moves, so the board has a real _stack); 4 is production's book depth.
+_START_PLIES_IDS = {0: "startpos-empty-stack", 4: "prior-moves-depth-4"}
+
+
+def _opening_cfg(random_start_plies: int) -> OpeningConfig:
+    return OpeningConfig(random_start_plies=int(random_start_plies))
+
 
 def _tiny_model() -> Any:
     from chess_anti_engine.model import ModelConfig, build_model
@@ -120,6 +135,7 @@ def _play_session(
     on_suspend: Any = None,
     on_game_complete: Any = None,
     seed: int = 0,
+    opening: OpeningConfig | None = None,
 ) -> SelfplayState:
     """Run a continuous session for ``max_steps`` loop steps; return its state."""
     captured: list[SelfplayState] = []
@@ -146,7 +162,7 @@ def _play_session(
         opponent=OpponentConfig(),
         temp=TemperatureConfig(temperature=1.0),
         search=_SEARCH,
-        opening=_OPENING,
+        opening=(_OPENING if opening is None else opening),
         diff_focus=_DIFF_FOCUS,
         game=game,
     )
@@ -168,7 +184,10 @@ def _inflight_records(state: SelfplayState) -> dict[tuple[int, ...], list[Any]]:
     return out
 
 
-def _fresh_state(game: GameConfig, *, batch_size: int, seed: int = 5) -> SelfplayState:
+def _fresh_state(
+    game: GameConfig, *, batch_size: int, seed: int = 5,
+    opening: OpeningConfig | None = None,
+) -> SelfplayState:
     """A state shaped like the one play_batch builds, without playing.
 
     ``rep_fix.apply`` is process-global and normally called by play_batch;
@@ -182,7 +201,8 @@ def _fresh_state(game: GameConfig, *, batch_size: int, seed: int = 5) -> Selfpla
         evaluator=cast("Any", _NullEvaluator()),
         batch_size=batch_size, continuous=True, target=batch_size,
         opponent=OpponentConfig(), temp=TemperatureConfig(), search=_SEARCH,
-        opening=_OPENING, diff_focus=_DIFF_FOCUS, game=game,
+        opening=(_OPENING if opening is None else opening),
+        diff_focus=_DIFF_FOCUS, game=game,
     )
 
 
@@ -240,10 +260,14 @@ def _state_files(out_dir: Path) -> list[Path]:
     return sorted(out_dir.glob(f"*{RESUME_FILE_SUFFIX}"))
 
 
+def _load_arrays(path: Path) -> dict[str, Any]:
+    with np.load(path, allow_pickle=False) as npz:
+        return {k: np.array(npz[k]) for k in npz.files}
+
+
 def _rewrite(path: Path, mutate: Any) -> None:
     """Load an npz state file, let ``mutate`` edit the dict, write it back."""
-    with np.load(path, allow_pickle=False) as npz:
-        arrays: dict[str, Any] = {k: np.array(npz[k]) for k in npz.files}
+    arrays = _load_arrays(path)
     mutate(arrays)
     with path.open("wb") as fh:
         np.savez(fh, **arrays)
@@ -280,16 +304,38 @@ def _set_meta(arrays: dict[str, Any], meta: dict[str, Any]) -> None:
         ),
     ],
 )
+@pytest.mark.parametrize(
+    "random_start_plies",
+    [pytest.param(n, id=_START_PLIES_IDS[n]) for n in (0, 4)],
+)
 def test_resume_reencodes_every_inflight_ply_byte_exactly(
-    tmp_path: Path, encoding_overrides: dict[str, Any],
+    tmp_path: Path, encoding_overrides: dict[str, Any], random_start_plies: int,
 ) -> None:
-    """Replay + re-encode must reproduce the live C path's inputs bit for bit."""
+    """Replay + re-encode must reproduce the live C path's inputs bit for bit.
+
+    Run at BOTH an empty starting move stack and one carrying prior moves:
+    production's `opening_book_prob: 1.0` / `opening_book_max_plies: 4` means
+    every real game is the second shape, and the history planes at the early
+    plies are the whole hazard the replay exists to get right.
+    """
     assert SF_PATH is not None
     game = _game_config(**encoding_overrides)
+    opening = _opening_cfg(random_start_plies)
     out_dir = tmp_path / "resume"
     sf = StockfishUCI(SF_PATH, nodes=80, multipv=4)
     try:
-        state = _play_session(sf=sf, game=game, games=3, max_steps=10)
+        state = _play_session(
+            sf=sf, game=game, games=3, max_steps=10, opening=opening,
+        )
+        if random_start_plies:
+            # The arm is only meaningful if the games really do start from a
+            # board with prior moves — a silently-ignored opening config would
+            # otherwise make this arm a duplicate of the startpos one.
+            assert state.starting_boards is not None
+            assert all(
+                len(state.starting_boards[i].move_stack) == random_start_plies
+                for i in range(state.batch_size)
+            )
         # The claim under test is about the PRODUCTION C path
         # (batch_process_ply). Without the extension the records would come
         # from the Python fallback, which encodes through the same helper the
@@ -306,7 +352,7 @@ def test_resume_reencodes_every_inflight_ply_byte_exactly(
 
         assert _suspend_all(state, out_dir) == len(before)
 
-        target = _fresh_state(game, batch_size=state.batch_size)
+        target = _fresh_state(game, batch_size=state.batch_size, opening=opening)
         report = resume_inflight_games(
             target, in_dir=out_dir, compat_fingerprint=FINGERPRINT,
             trial_id=TRIAL_ID,
@@ -403,34 +449,85 @@ def test_resume_restores_slot_state_and_counts_completed_games(
     assert not _state_files(out_dir)
 
 
+@pytest.mark.skipif(SF_PATH is None, reason="Stockfish not found")
+def test_discarded_games_reach_outcome_stats_on_the_production_path(
+    tmp_path: Path,
+) -> None:
+    """The failure counter must ride the SAME plumbing as the success.
+
+    `resume_discarded_games` is parked on the state at session start and has to
+    survive finalize -> CompletedGameBatch -> shard meta -> result.json. Parking
+    it is easy to get right and easy to have no effect; this asserts it actually
+    comes out of a completed game batch.
+    """
+    assert SF_PATH is not None
+    out_dir = tmp_path / "resume"
+    sf = StockfishUCI(SF_PATH, nodes=80, multipv=4)
+    completed: list[CompletedGameBatch] = []
+    try:
+        first = _play_session(
+            sf=sf, game=_game_config(max_plies=200), games=2, max_steps=8,
+            on_suspend=lambda st: _suspend_all(st, out_dir),
+        )
+        assert _inflight_records(first)
+        files = _state_files(out_dir)
+        assert files
+        for path in files:  # every one unreadable => every one discarded
+            raw = path.read_bytes()
+            path.write_bytes(raw[: len(raw) // 2])
+
+        def _resume(state: SelfplayState) -> None:
+            resume_inflight_games(
+                state, in_dir=out_dir, compat_fingerprint=FINGERPRINT,
+                trial_id=TRIAL_ID,
+            )
+
+        # Short games so fresh slots actually finalize inside the step budget.
+        _play_session(
+            sf=sf, game=_game_config(max_plies=6), games=2, max_steps=60,
+            on_state_ready=_resume, on_game_complete=completed.append, seed=1,
+        )
+    finally:
+        sf.close()
+
+    assert completed, "no game finalized, so nothing could carry the counter"
+    assert sum(
+        int(cg.outcome_stats.get("resume_discarded_games", 0)) for cg in completed
+    ) == len(files), "discards never reached a CompletedGameBatch"
+
+
 # ── negative controls: the gate must be able to fail ────────────────────────
 
 
-def _one_suspended_game(tmp_path: Path) -> tuple[Path, GameConfig, SelfplayState]:
-    """A single hand-built in-flight game persisted to disk.
+def _fill_slot(
+    state: SelfplayState, i: int, *, plies: int = 6, refute_opp_plies: bool = False,
+) -> None:
+    """Hand-build one in-flight game on slot ``i`` (no Stockfish).
 
-    Built without Stockfish so the corruption tests stay fast and deterministic:
-    what they exercise is the LOADER's validation, which never sees an engine.
+    Records land on the plies the slot's OWN ``net_color`` is to move — the live
+    rule (``_classify_live_slots_python`` partitions by exactly that), which is
+    also what the net_color invariant on the resume side checks. With
+    ``refute_opp_plies`` the opponent's plies carry SF-refute opponent rows, the
+    only record kind whose ``pov_color`` is legitimately the other colour.
     """
     from chess_anti_engine.encoding._lc0_ext import CBoard
     from chess_anti_engine.moves import POLICY_SIZE, index_to_move
     from chess_anti_engine.selfplay.state import _NetRecord
 
-    game = _game_config()
-    state = _fresh_state(game, batch_size=2)
+    net_color = bool(state.net_color_arr[i])
     board = chess.Board()
     cb = CBoard.from_board(board)
-    moves: list[int] = []
-    state.boards[0] = board.copy()
+    state.boards[i] = board.copy()
     assert state.starting_boards is not None
-    state.starting_boards[0] = board.copy()
-    state.samples_per_game[0] = []
-    state.move_idx_history[0] = []
-    for ply in range(6):
+    state.starting_boards[i] = board.copy()
+    state.samples_per_game[i] = []
+    state.move_idx_history[i] = []
+    for _ply in range(plies):
         legal = np.asarray(cb.legal_move_indices(), dtype=np.int64)
         probs = np.zeros(POLICY_SIZE, dtype=np.float32)
         probs[legal] = 1.0 / float(legal.size)
-        if ply % 2 == 0:  # only "net" plies carry records
+        is_net_turn = bool(cb.turn) == net_color
+        if is_net_turn or refute_opp_plies:
             rec = _NetRecord(
                 x=np.zeros((1,), np.float32),  # replaced by the re-encode
                 policy_probs=probs,
@@ -443,17 +540,30 @@ def _one_suspended_game(tmp_path: Path) -> tuple[Path, GameConfig, SelfplayState
                 sample_weight=1.0,
                 keep_prob=1.0,
                 legal_mask=_mask_of(cb),
-                move_offset=len(state.move_idx_history[0]),
+                move_offset=len(state.move_idx_history[i]),
                 pos_hash=int(cb.zobrist_hash),
             )
-            state.samples_per_game[0].append(rec)
+            rec.is_sf_refute_opp = not is_net_turn
+            state.samples_per_game[i].append(rec)
         action = int(legal[0])
         board.push(index_to_move(action, board))
         cb.push_index(action)
-        state.move_idx_history[0].append(action)
-        moves.append(action)
-    state.cboards[0] = cb
-    state.starting_ply_arr[0] = 0
+        state.move_idx_history[i].append(action)
+    state.cboards[i] = cb
+    state.starting_ply_arr[i] = 0
+    state.done_arr[i] = 0
+    state.finalized_arr[i] = 0
+
+
+def _one_suspended_game(tmp_path: Path) -> tuple[Path, GameConfig, SelfplayState]:
+    """A single hand-built in-flight game persisted to disk.
+
+    Built without Stockfish so the corruption tests stay fast and deterministic:
+    what they exercise is the LOADER's validation, which never sees an engine.
+    """
+    game = _game_config()
+    state = _fresh_state(game, batch_size=2)
+    _fill_slot(state, 0, plies=6)
     state.done_arr[1] = 1  # keep slot 1 out of the way
 
     out_dir = tmp_path / "resume"
@@ -711,6 +821,149 @@ def test_resume_never_overwrites_a_seeded_slot(tmp_path: Path) -> None:
     assert target2.opening_source_arr[0] == "fenlist"
 
 
+def test_negative_control_flipped_net_color_is_rejected(tmp_path: Path) -> None:
+    """`net_color` is not derivable from the MOVE LIST — but it is derivable
+    from the RECORDS. On a curriculum game every non-refute record is a net
+    turn, so net_color must equal the single pov_color among them.
+
+    Flipping it is silent otherwise: no crash, no metric move. It decides which
+    seat the net keeps playing (`_classify_live_slots_python` compares the board
+    turn against it) and finalize scores the game's w/d/l from that seat, so a
+    flipped header hands the PID a win the net actually lost.
+    """
+    path, game, _src = _one_suspended_game(tmp_path)
+    before = _meta_of(_load_arrays(path))
+    assert int(before["is_selfplay"]) == 0, "the invariant only binds curriculum games"
+
+    def _flip(arrays: dict[str, Any]) -> None:
+        meta = _meta_of(arrays)
+        meta["net_color"] = 1 - int(meta["net_color"])
+        _set_meta(arrays, meta)
+
+    _rewrite(path, _flip)
+    target, report = _resume_one(path, game)
+
+    assert report.resumed == 0
+    assert report.reasons.get("net_color_mismatch") == 1
+    assert not any(target.resumed_from_disk)
+
+
+def test_net_color_is_not_checked_on_a_selfplay_game(tmp_path: Path) -> None:
+    """The net plays BOTH seats in selfplay, so pov_color alternates and the
+    records constrain nothing. Asserting there would reject valid games."""
+    path, game, _src = _one_suspended_game(tmp_path)
+
+    def _flip_selfplay(arrays: dict[str, Any]) -> None:
+        meta = _meta_of(arrays)
+        meta["is_selfplay"] = 1
+        meta["net_color"] = 1 - int(meta["net_color"])
+        _set_meta(arrays, meta)
+
+    _rewrite(path, _flip_selfplay)
+    _target, report = _resume_one(path, game)
+    assert (report.resumed, report.discarded) == (1, 0)
+
+
+def test_a_resumed_refute_opp_record_gains_no_alternate_inputs(
+    tmp_path: Path,
+) -> None:
+    """`_emit_sf_refute_opp_record` ALWAYS builds its row with x_lc0_root=None
+    and relations=None, whatever record_lc0_root_input/record_relations say. A
+    resumed refute row that re-encoded them would carry columns its non-resumed
+    twin does not — the same row shape differing by whether a restart happened.
+    """
+    game = _game_config(
+        input_history_encoding=LC0_HISTORY_LEGACY,
+        record_lc0_root_input=True,
+        record_relations=True,
+    )
+    state = _fresh_state(game, batch_size=2)
+    _fill_slot(state, 0, plies=6, refute_opp_plies=True)
+    state.done_arr[1] = 1
+    out_dir = tmp_path / "resume"
+    assert _suspend_all(state, out_dir) == 1
+
+    target, report = _resume_one(_state_files(out_dir)[0], game)
+    assert report.resumed == 1
+    records = next(iter(_inflight_records(target).values()))
+    net_rows = [r for r in records if not r.is_sf_refute_opp]
+    opp_rows = [r for r in records if r.is_sf_refute_opp]
+    assert net_rows, "the fixture must produce net rows"
+    assert opp_rows, "the fixture must produce refute-opp rows"
+    # The config IS on: the net rows prove the alternate columns were available.
+    for rec in net_rows:
+        assert rec.x_lc0_root is not None
+        assert rec.relations is not None
+    for rec in opp_rows:
+        assert rec.x_lc0_root is None, "a refute-opp row must not gain x_lc0_root"
+        assert rec.relations is None, "a refute-opp row must not gain relations"
+
+
+def test_a_failed_write_costs_exactly_that_game(tmp_path: Path) -> None:
+    """`_write_game` json.dumps(meta) has no `default=`, so a non-JSON value
+    raises TypeError, not OSError. Under a narrow `except OSError` it escapes
+    suspend_inflight_games entirely, hits the worker's blanket handler and
+    abandons EVERY remaining in-flight game — including ones already written.
+    """
+    game = _game_config()
+    state = _fresh_state(game, batch_size=3)
+    for i in range(3):
+        _fill_slot(state, i, plies=4 + 2 * i)
+    # Slot 1's diag is not JSON-serializable => TypeError inside _write_game.
+    state.samples_per_game[1][0].gumbel_policy_diag = cast("Any", object())
+
+    out_dir = tmp_path / "resume"
+    report = suspend_inflight_games(
+        state, out_dir=out_dir, compat_fingerprint=FINGERPRINT,
+        model_sha="a" * 64, model_step=7, trial_id=TRIAL_ID,
+    )
+    assert report.persisted == 2, "one bad game must not abort the whole suspend"
+    assert report.reasons.get("write_failed") == 1
+    assert len(_state_files(out_dir)) == 2
+    # ...and no half-written archive was left behind for the next session.
+    assert not list(out_dir.glob(f"*{RESUME_FILE_SUFFIX}.tmp"))
+
+
+def test_a_game_with_no_trial_id_is_neither_written_nor_resumed(
+    tmp_path: Path,
+) -> None:
+    """`"" == ""` would make the trial guard match EVERYTHING. An unknown trial
+    is not a matching trial, so an empty id must refuse on both sides — and a
+    game that could never be resumed must not be written at all."""
+    game = _game_config()
+    state = _fresh_state(game, batch_size=2)
+    _fill_slot(state, 0, plies=6)
+    state.done_arr[1] = 1
+    out_dir = tmp_path / "resume"
+    report = suspend_inflight_games(
+        state, out_dir=out_dir, compat_fingerprint=FINGERPRINT,
+        model_sha="", model_step=0, trial_id="",
+    )
+    assert report.persisted == 0
+    assert report.reasons.get("no_trial_id") == 1
+    assert not _state_files(out_dir)
+
+    # ...and the read side refuses independently, so a file written by an older
+    # build cannot be matched by an empty id either.
+    ok = {
+        "format_version": RESUME_FORMAT_VERSION,
+        "compat_fingerprint": FINGERPRINT,
+        "root_fen": chess.STARTING_FEN,
+        "moves": [], "opening_moves": [],
+        "final_pos_hash": 12345,
+        "saved_at": time.time(),
+    }
+    assert should_resume_game(
+        {**ok, "trial_id": ""}, compat_fingerprint=FINGERPRINT, trial_id="",
+    ) == "no_trial_id"
+    assert should_resume_game(
+        {**ok, "trial_id": TRIAL_ID}, compat_fingerprint=FINGERPRINT, trial_id="",
+    ) == "no_trial_id"
+    assert should_resume_game(
+        {**ok, "trial_id": ""}, compat_fingerprint=FINGERPRINT, trial_id=TRIAL_ID,
+    ) == "no_trial_id"
+
+
 def test_missing_state_directory_is_a_silent_no_op(tmp_path: Path) -> None:
     game = _game_config()
     target = _fresh_state(game, batch_size=2)
@@ -742,11 +995,15 @@ def test_empty_slots_are_not_persisted(tmp_path: Path) -> None:
     out_dir = tmp_path / "resume"
     report = suspend_inflight_games(
         state, out_dir=out_dir, compat_fingerprint=FINGERPRINT,
-        model_sha="", model_step=0,
+        model_sha="", model_step=0, trial_id=TRIAL_ID,
     )
     assert report.persisted == 0
     assert report.reasons.get("empty_slot") == 3
     assert not _state_files(out_dir)
+    # An empty slot is not a LOSS: `_finalize_completed_slots` recycles every
+    # finished slot just before teardown, so most of a real table is empty here
+    # and counting it as `skipped` would bury serialize_failed / write_failed.
+    assert (report.skipped, report.empty_slots) == (0, 3)
 
 
 @pytest.mark.parametrize("untracked", ["move_offset", "pos_hash"])
@@ -778,10 +1035,11 @@ def test_record_without_replay_bookkeeping_is_not_persisted(
     out_dir = tmp_path / "resume"
     report = suspend_inflight_games(
         state, out_dir=out_dir, compat_fingerprint=FINGERPRINT,
-        model_sha="", model_step=0,
+        model_sha="", model_step=0, trial_id=TRIAL_ID,
     )
     assert report.persisted == 0
     assert report.reasons.get("serialize_failed") == 1
+    assert report.skipped == 1  # a real loss, counted as one
 
 
 # ── worker wiring ───────────────────────────────────────────────────────────
@@ -829,6 +1087,108 @@ def test_resume_flag_is_watched_and_defaults_off() -> None:
     assert build_recommended_worker(
         config={}, model_cfg=ModelConfig(), sf_nodes=1000, mcts_simulations=32,
     )[key] is False
+
+
+def _bare_session(tmp_path: Path) -> Any:
+    """A WorkerSession with only the fields the resume plumbing touches."""
+    import logging
+
+    from chess_anti_engine.worker import WorkerSession
+
+    session = object.__new__(WorkerSession)
+    session.log = logging.getLogger("test-worker")
+    session.resume_dir = tmp_path / "selfplay_resume"
+    session.resume_dir.mkdir(parents=True, exist_ok=True)
+    session.fixed_trial_id = ""
+    session.leased_trial_id = ""
+    return session
+
+
+def test_trial_id_is_snapshot_at_session_start_not_read_at_suspend(
+    tmp_path: Path,
+) -> None:
+    """The ordering bug, not just a mismatched id at rest.
+
+    `_negotiate_lease` assigns `self.leased_trial_id = new_trial_id`
+    (worker.py) and only THEN does its caller notice the change and set
+    `_stop_selfplay`. The selfplay thread runs `on_suspend` after that, so a
+    LIVE read inside the suspend hook returns trial B while every ply in the
+    game was played under trial A. Those games would then pass the trial guard
+    and be uploaded as trial B's data — and `config_mismatch` cannot catch it,
+    since sibling GPBT trials differ on LR and loss weights, not on the 11
+    record-shaping keys.
+    """
+    session = _bare_session(tmp_path)
+    session.leased_trial_id = "trial-a"
+    session._begin_resume_session({"selfplay_resume_inflight_games": True})
+    assert session._resume_trial_id() == "trial-a"
+
+    # The reassignment lands BEFORE the suspend hook runs. This is the mutation.
+    session.leased_trial_id = "trial-b"
+    assert session._current_trial_id() == "trial-b"
+    assert session._resume_trial_id() == "trial-a", (
+        "the suspend hook must stamp the trial the GAMES were played under"
+    )
+
+    # ...and end to end: a game stamped trial-a is refused by a trial-b session.
+    game = _game_config()
+    state = _fresh_state(game, batch_size=2)
+    _fill_slot(state, 0, plies=6)
+    state.done_arr[1] = 1
+    out_dir = tmp_path / "resume"
+    assert suspend_inflight_games(
+        state, out_dir=out_dir, compat_fingerprint=FINGERPRINT,
+        model_sha="", model_step=0, trial_id=session._resume_trial_id(),
+    ).persisted == 1
+
+    target = _fresh_state(game, batch_size=2)
+    report = resume_inflight_games(
+        target, in_dir=out_dir, compat_fingerprint=FINGERPRINT,
+        trial_id="trial-b",
+    )
+    assert report.resumed == 0
+    assert report.reasons.get("trial_mismatch") == 1
+
+
+def test_orphan_sweep_runs_with_the_resume_flag_off(tmp_path: Path) -> None:
+    """Turning the flag OFF is the documented revert, and it disables the drain
+    along with the suspend — so a flag-gated sweep would never run in the one
+    case the backstop is named for, and the last teardown's files would sit in
+    selfplay_resume/ forever."""
+    session = _bare_session(tmp_path)
+    session.leased_trial_id = "trial-a"
+    stale_game = session.resume_dir / f"old{RESUME_FILE_SUFFIX}"
+    orphan_tmp = session.resume_dir / f"x{RESUME_FILE_SUFFIX}.tmp"
+    fresh_game = session.resume_dir / f"new{RESUME_FILE_SUFFIX}"
+    for p in (stale_game, orphan_tmp, fresh_game):
+        p.write_bytes(b"junk")
+    old = time.time() - 20 * 86_400
+    for p in (stale_game, orphan_tmp):
+        os.utime(p, (old, old))
+
+    session._begin_resume_session({"selfplay_resume_inflight_games": False})
+
+    assert session._resume_inflight_enabled is False
+    assert not stale_game.exists(), "flag-off residue must still be swept"
+    assert not orphan_tmp.exists()
+    assert fresh_game.exists(), "a recent file is for the next session, not litter"
+
+
+def test_discarded_games_are_parked_for_the_next_finalize(tmp_path: Path) -> None:
+    """`resumed_inflight_games` (the success) reaches result.json; the FAILURE
+    must reach the same place, not just a worker log. A discard has no game of
+    its own, so resume parks it and the next finalize drains it."""
+    path, game, _src = _one_suspended_game(tmp_path)
+    raw = path.read_bytes()
+    path.write_bytes(raw[: len(raw) // 2])  # unreadable => discarded
+
+    target = _fresh_state(game, batch_size=2)
+    report = resume_inflight_games(
+        target, in_dir=path.parent, compat_fingerprint=FINGERPRINT,
+        trial_id=TRIAL_ID,
+    )
+    assert report.discarded == 1
+    assert target.pending_outcome_stats == {"resume_discarded_games": 1}
 
 
 def test_compat_fingerprint_moves_only_with_record_shaping_keys() -> None:

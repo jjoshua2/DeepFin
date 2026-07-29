@@ -944,6 +944,30 @@ both start near 0 and take ~9 iterations to recover).
 truncation, so the length bias has a second source and C14b's mechanism claim
 is wrong.
 
+**PRECONDITION of the yardstick — the seeding dose.** `_resumable_slots`
+excludes every `fenlist*` slot: a fresh fenlist slot has ALREADY consumed a
+doled blind-spot seed at `SelfplayState.create`, and the seed line cannot be
+pushed back, so resuming over it would destroy the seed silently. That is
+correct, and it means **restorable games are bounded by the NON-seeded slot
+count.** Today `opening_fen_dole_per_iter: 0`, so every slot is a target and
+this yardstick reads the full effect. **If seeding is re-enabled at a high
+dose** — and `opening_fen_sf_refute_frac: 0.9` drains the refute channel into
+`fenlist_sf_refute*` sources on TOP of the dole — a large share of suspended
+games will find no target slot, sit on disk, go stale at 6 h and be discarded.
+A flat readout under those settings is the seeding dose, NOT the feature
+failing. Check `resume_discarded_games` (with `stale` dominating the worker
+log's discard reasons) before concluding anything.
+
+**COST (measured, not estimated).** Suspend is **33.5 ms and 76 KB per
+in-flight game** — payload build 28.6 ms (86% of it), npz write 4.9 ms. At
+production slot counts (`games_per_batch` 200-512 × `slot_oversubscribe: 2.0` =
+400-1024 slots/worker) that is **13-34 s of added teardown per restart, plus
+comparable on the resume side**; 256 games end-to-end measured 8.4 s suspend,
+9.4 s resume, 19.6 MB on disk. This is **pure added restart latency on a fix
+whose whole purpose is reducing restart damage**, so it is stated as a number
+rather than as "expected small". It buys back games that today cost ~698k SF
+nodes per recorded ply and are thrown away entirely.
+
 **Confounds.** The deploy restart ITSELF runs on old code and still abandons
 its games, so iteration 0 of the window is a normal post-restart transient;
 score from the FIRST flag-ON teardown, not from the deploy. A game suspended
@@ -959,6 +983,14 @@ read and a list length) and one `mkdir` at worker start.
 **Deploy note.** The key must NOT be added to `configs/pbt2_small.yaml` until
 the workers are restarted onto code that defines it — the live-yaml validator
 is all-or-nothing and one unknown key rejects the WHOLE reload.
+
+**Second failure counter.** `resume_discarded_games` rides the same
+`outcome_stats` path as `resumed_inflight_games`, so the FAILURE side is
+readable where the success is rather than only in a worker log. A window with
+`resumed_inflight_games` ≈ 0 and `resume_discarded_games` > 0 says the games
+were persisted and then refused; the worker log's discard reasons name which
+gate (`trial_mismatch`, `config_mismatch`, `stale`, `net_color_mismatch`,
+`position_mismatch`, …).
 
 ### PRE-REGISTERED (not yet live) — selfplay clients stop zero-padding root evals to 32 rows (PR #280, 2026-07-27)
 

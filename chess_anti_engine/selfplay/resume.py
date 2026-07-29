@@ -97,7 +97,14 @@ class SuspendReport:
     """Outcome of one ``suspend_inflight_games`` call."""
 
     persisted: int = 0
+    # Games we MEANT to persist and could not. Deliberately excludes empty
+    # slots: `_finalize_completed_slots` recycles every finished slot just
+    # before teardown, so at a real suspend most of the table is freshly-empty
+    # and counting those here buries the two readings that matter
+    # (serialize_failed / write_failed) under hundreds of `empty_slot`.
     skipped: int = 0
+    # Empty slots, counted separately so the noise stays visible but apart.
+    empty_slots: int = 0
     records: int = 0
     # Games whose most recent record still had an SF label query in flight. The
     # future dies with the session. On a CURRICULUM slot the label is re-bought:
@@ -113,6 +120,10 @@ class SuspendReport:
     def note(self, reason: str) -> None:
         self.skipped += 1
         self.reasons[reason] = self.reasons.get(reason, 0) + 1
+
+    def note_empty(self) -> None:
+        self.empty_slots += 1
+        self.reasons["empty_slot"] = self.reasons.get("empty_slot", 0) + 1
 
 
 @dataclass
@@ -466,8 +477,26 @@ def suspend_inflight_games(
     COMPLETION), so a same-net guard would buy no correctness. The resume side
     logs when they differ.
     """
-    out_dir.mkdir(parents=True, exist_ok=True)
     report = SuspendReport()
+    # A game persisted without a trial id can never come back:
+    # should_resume_game refuses an empty id on BOTH sides. Writing it anyway
+    # would produce hundreds of files per teardown that only the sweep ever
+    # removes, and a feature that looks armed while doing nothing. Refuse
+    # loudly instead.
+    if not str(trial_id or ""):
+        _LOG.warning(
+            "selfplay resume: no trial id at session start; in-flight games are "
+            "NOT persisted (a game with no trial id could never be resumed)",
+        )
+        for i in range(state.batch_size):
+            if state.finalized_arr[i] or state.done_arr[i]:
+                continue
+            if not state.move_idx_history[i] and not state.samples_per_game[i]:
+                report.note_empty()
+                continue
+            report.note("no_trial_id")
+        return report
+    out_dir.mkdir(parents=True, exist_ok=True)
     awaiting = {int(i) for i in pending_label_slots}
     header = {
         "model_sha": str(model_sha),
@@ -480,7 +509,7 @@ def suspend_inflight_games(
         if state.finalized_arr[i] or state.done_arr[i]:
             continue
         if not state.move_idx_history[i] and not state.samples_per_game[i]:
-            report.note("empty_slot")
+            report.note_empty()
             continue
         try:
             payload = _game_payload(state, i)
@@ -491,8 +520,16 @@ def suspend_inflight_games(
         path = out_dir / f"{uuid.uuid4().hex}{RESUME_FILE_SUFFIX}"
         try:
             _write_game(path, payload, header=header)
-        except OSError as exc:
-            _LOG.warning("selfplay resume: slot %d write failed: %s", i, exc)
+        except Exception as exc:
+            # Deliberately broad, and the module docstring's "a partial write is
+            # contained to that single game" depends on it. `json.dumps(meta)`
+            # has no `default=`, so a non-JSON value anywhere in the header (a
+            # gumbel_policy_diag that stops being plain floats, say) raises
+            # TypeError; np.savez can raise ValueError. Either would escape a
+            # narrow `except OSError`, hit the caller's blanket handler and
+            # abandon EVERY remaining in-flight game — including the ones
+            # already serialized fine. One bad game must cost one game.
+            _LOG.warning("selfplay resume: slot %d write failed: %r", i, exc)
             report.note("write_failed")
             continue
         report.persisted += 1
@@ -500,9 +537,9 @@ def suspend_inflight_games(
         if i in awaiting:
             report.games_with_label_refetch += 1
     _LOG.info(
-        "selfplay resume: suspended games=%d records=%d skipped=%d [%s] "
-        "label_refetch=%d dir=%s",
-        report.persisted, report.records, report.skipped,
+        "selfplay resume: suspended games=%d records=%d skipped=%d empty_slots=%d "
+        "[%s] label_refetch=%d dir=%s",
+        report.persisted, report.records, report.skipped, report.empty_slots,
         _reason_str(report.reasons), report.games_with_label_refetch, out_dir,
     )
     return report
@@ -542,7 +579,17 @@ def should_resume_game(
         return "version_mismatch"
     if str(meta.get("compat_fingerprint") or "") != str(compat_fingerprint):
         return "config_mismatch"
-    if str(meta.get("trial_id") or "") != str(trial_id or ""):
+    # An EMPTY id must refuse, not match. `"" == ""` would make the trial guard
+    # inert exactly when we cannot tell whose data this is, and "no evidence of
+    # a mismatch" is not "evidence of a match". The caller passes a snapshot
+    # taken at SESSION START (see WorkerSession._resume_trial_id_active) —
+    # reading it at suspend time returns the id of the trial we were just
+    # reassigned TO, so games played under the old trial would sail through.
+    saved_trial = str(meta.get("trial_id") or "")
+    want_trial = str(trial_id or "")
+    if not saved_trial or not want_trial:
+        return "no_trial_id"
+    if saved_trial != want_trial:
         return "trial_mismatch"
     if not isinstance(meta.get("moves"), list) or not isinstance(
         meta.get("opening_moves"), list,
@@ -700,6 +747,49 @@ def _record_fields(npz: Any, n: int) -> list[dict[str, Any]]:
     return out
 
 
+def _validate_net_color(meta: dict[str, Any], fields: list[dict[str, Any]]) -> None:
+    """Check the header's ``net_color`` against what the RECORDS imply.
+
+    ``net_color`` is not derivable from the move list — but it IS derivable from
+    the persisted records. On a CURRICULUM game (``is_selfplay == 0``) the net
+    plays exactly one seat: every record that is not an SF-refute opponent row
+    was taken on a net turn, so its ``pov_color`` (the side to move, already
+    pinned to the replayed board by the pov check) IS the net's colour.
+
+    This is not cosmetic. ``net_color`` decides which side ``state.net_idxs``
+    lets the net move for the rest of the game, and finalize scores the game
+    from that seat — a flipped value hands the PID a win it lost and writes the
+    game's outcome keys from the wrong side, with no crash and no metric move.
+    Corruption is caught by the zip CRC; this catches a header that is
+    internally consistent but wrong.
+
+    A SELFPLAY game is exempt: the net plays both seats, ``pov_color``
+    alternates, and nothing in the records constrains the field.
+    """
+    if int(meta.get("is_selfplay", 0)):
+        return
+    net_turns = {
+        bool(f["pov_color"]) for f in fields if not bool(f["is_sf_refute_opp"])
+    }
+    if not net_turns:
+        return  # nothing to derive from (all rows are refute-opp rows)
+    raw = meta.get("net_color")
+    if raw is None:
+        raise ResumeStateError("malformed_meta", "net_color missing")
+    net_color = bool(int(raw))
+    if len(net_turns) > 1:
+        raise ResumeStateError(
+            "net_color_mismatch",
+            "a curriculum game's net records span BOTH colours",
+        )
+    if net_turns != {net_color}:
+        raise ResumeStateError(
+            "net_color_mismatch",
+            f"header says net_color={int(net_color)} but every net record was "
+            f"taken with {int(next(iter(net_turns)))} to move",
+        )
+
+
 def _legal_mask_for(cb: CBoard) -> np.ndarray:
     mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
     mask[np.asarray(cb.legal_move_indices(), dtype=np.int64)] = 1
@@ -732,6 +822,10 @@ def _replay_and_reencode(
             "offset_out_of_range",
             f"record offset {offsets[-1]} outside a {len(moves)}-move game",
         )
+    # Needs only the records, but it belongs with the other per-record header
+    # invariants (ply_index below) rather than in should_resume_game, which
+    # decides POLICY from the header alone and never sees a record.
+    _validate_net_color(meta, fields)
 
     game = state.game
     want_lc0_root_alt = bool(game.record_lc0_root_input) and not _uses_lc0_root(game)
@@ -819,6 +913,12 @@ def _rebuild_record(
     from chess_anti_engine.encoding.lc0 import LC0_HISTORY_ROOT
 
     game = state.game
+    # An SF-refute OPPONENT row is built by _emit_sf_refute_opp_record with
+    # x_lc0_root=None and relations=None ALWAYS, whatever record_lc0_root_input
+    # / record_relations say. Re-encoding them here would give a resumed refute
+    # row columns its non-resumed twin does not have — the same row shape
+    # differing by whether a restart happened. Match the live path exactly.
+    is_refute_opp = bool(f["is_sf_refute_opp"])
     x = encode_cboard(
         cb,
         input_history_encoding=game.input_history_encoding,
@@ -830,7 +930,7 @@ def _rebuild_record(
             input_history_encoding=LC0_HISTORY_ROOT,
             input_extra_features=game.input_extra_features,
         )
-        if want_lc0_root_alt else None
+        if (want_lc0_root_alt and not is_refute_opp) else None
     )
     rec = _NetRecord(
         x=x,
@@ -848,7 +948,10 @@ def _rebuild_record(
         sf_move_index=f["sf_move_index"],
         sf_wdl=f["sf_wdl"],
         x_lc0_root=x_lc0_root,
-        relations=(cb.compute_relations() if want_relations else None),
+        relations=(
+            cb.compute_relations()
+            if (want_relations and not is_refute_opp) else None
+        ),
         priority_policy_kl=f["priority_policy_kl"],
         priority_q_delta=f["priority_q_delta"],
         gumbel_policy_diag=f.get("gumbel_policy_diag"),
@@ -964,7 +1067,9 @@ def _resumable_slots(state: SelfplayState) -> list[int]:
 _SWEEP_AGE_MULTIPLE = 4.0
 
 
-def _sweep_orphans(in_dir: Path, *, now_s: float, max_age_s: float) -> int:
+def sweep_orphan_state_files(
+    in_dir: Path, *, now_s: float | None = None, max_age_s: float = DEFAULT_MAX_AGE_S,
+) -> int:
     """Delete the debris of a killed suspend/resume, and long-dead state files.
 
     Nothing else removes a ``.tmp`` from a suspend killed mid-write or a
@@ -972,9 +1077,18 @@ def _sweep_orphans(in_dir: Path, *, now_s: float, max_age_s: float) -> int:
     game files are swept only well past ``max_age_s``, as a bound on a
     directory nobody drains — the ordinary expiry path is
     ``should_resume_game`` returning ``stale``, which is counted.
+
+    **Call this unconditionally at session start, NOT only when the resume flag
+    is on.** The one case this backstop names — a directory nobody drains — is
+    exactly the flag-off case: turning the flag off is the documented revert,
+    and it disables the drain along with the suspend, so the last teardown's
+    400-1024 files (~30-78 MB) would otherwise sit in ``selfplay_resume/``
+    forever. Bounded residue rather than a growth leak, since flag-off also
+    stops anything new being written, but a revert should not leave litter.
     """
-    if max_age_s <= 0:
+    if max_age_s <= 0 or not in_dir.is_dir():
         return 0
+    now_s = time.time() if now_s is None else float(now_s)
     removed = 0
     limits = (
         (f"*{RESUME_FILE_SUFFIX}{_TMP_SUFFIX}", max_age_s),
@@ -1020,7 +1134,7 @@ def resume_inflight_games(
     if not in_dir.is_dir():
         return report
     now_s = time.time()
-    _sweep_orphans(in_dir, now_s=now_s, max_age_s=max_age_s)
+    sweep_orphan_state_files(in_dir, now_s=now_s, max_age_s=max_age_s)
     slots = _resumable_slots(state)
     if max_games is not None:
         slots = slots[: max(0, int(max_games))]
@@ -1074,6 +1188,17 @@ def resume_inflight_games(
             continue
         report.resumed += 1
         report.records += len(game.records)
+    # Park the failure where the success already goes. `resumed_inflight_games`
+    # reaches result.json via the per-game counters; a discard has no game of
+    # its own, so the next finalize drains this onto the same path (see
+    # finalize._update_aggregate_stats). Without it the only evidence that a
+    # restart LOST games is a worker log line nobody diffs.
+    if report.discarded:
+        pending = getattr(state, "pending_outcome_stats", None)
+        if pending is not None:
+            pending["resume_discarded_games"] = (
+                int(pending.get("resume_discarded_games", 0)) + int(report.discarded)
+            )
     _LOG.info(
         "selfplay resume: resumed games=%d records=%d discarded=%d [%s] "
         "target_slots=%d dir=%s",
@@ -1093,4 +1218,5 @@ __all__ = [
     "resume_inflight_games",
     "should_resume_game",
     "suspend_inflight_games",
+    "sweep_orphan_state_files",
 ]
