@@ -6401,7 +6401,62 @@ PLAY-shape substitution. `wdl_regret` sounds like a strength dial; measuring its
 realized candidate set showed it moves 10.4→8.4 moves across its whole range.
 
 
-### PRE-REGISTERED (2026-07-28) — SF label economics: MultiPV 40@698k -> MultiPV 6@150k + `sf_policy_temp` 0.012 -> 0.0277
+### ⚑⚑ KILLED BEFORE LAUNCH (2026-07-29) — the MultiPV 6 @150k label change is DEAD. Nodes dominate width; the 2026-07-01 kill is CONFIRMED, not overridden.
+
+**Never deployed. Config untouched.** The pre-registration below was written on
+value-fidelity evidence and then falsified by the two checks it was missing.
+
+**What killed it — policy quality, the axis the 2026-07-01 cap kill measured
+and my evidence did not.** Against a MultiPV 8 @3M reference on 109 unbiased
+positions from real training games, cp lost by playing each label's top move:
+
+| setting | top-1 = deep best | in top-3 | **mean cp regret** |
+|---|---|---|---|
+| production MPV40@698k | 78.0% | 97.2% | **5.9** |
+| MPV6@150k (the candidate) | 84.4% | 97.2% | **34.5** |
+| MPV6@698k | 78.0% | 98.2% | **6.1** |
+| MPV40@150k (**the 07-01 killed arm**) | 76.1% | 94.5% | **39.2** |
+
+**The candidate sits with the killed arm (34.5 vs 39.2), not with production
+(5.9).** MPV6@698k matches production exactly ⇒ **it is the NODES, not the
+width**. Cutting width does not rescue a node cut.
+
+**The trap:** top-1 agreement *improves* at 150k (84.4% vs 78.0%). The damage is
+entirely in the TAIL — when the cheap label is wrong it is wrong by ~220cp
+(vs ~27cp for production). **Agreement-rate metrics cannot see this**, and every
+metric I had used up to that point was an agreement rate.
+
+**DIRECT CONFIRMATION — head-to-head, 80 games / 40 paired openings, on-distribution
+openings from real training games:** `MPV6@150k` vs `MPV40@698k` scored
+**0.4375 ±0.0674**, **Elo −43.7 [−92.4, +3.4]**, W/D/L 15/40/25, trailing at every
+checkpoint. Note `MPV40` handicaps itself by spreading search over 40 root moves
+**and still wins** — the 4.6x node advantage more than pays for the width penalty.
+
+**Verdict: the 2026-07-01→02 `sf_label_nodes_cap` kill is CONFIRMED by two
+independent new measurements.** Its recorded mechanism — *"the policy teacher
+needs full ~700k-node labels"* — is correct and is about node count.
+
+**What survives from the investigation (measured on unbiased positions, still
+valid):** the VALUE label is genuinely cheap-able — MPV6@150k value fidelity
+beats production (mean |dQ| 0.0097 vs 0.0111, p90 0.0220 vs 0.0321, 0.0% vs 0.7%
+above 0.25, zero material reversals). **Policy needs the nodes; value does not.**
+That asymmetry is real and is the opposite of the split originally sketched. It
+does NOT yield a throughput win on its own, because a cheap value probe on top of
+a full-node policy search costs MORE, not less.
+
+**UNMEASURED, the only place a win could still hide:** intermediate budgets. The
+cp-regret cliff between 150k and 698k is uncharacterised; MPV6@400k (1.75x
+cheaper) was never run. Amdahl caps any label saving at 3.15x anyway
+(`train_time_s` 110.8s of a 685.7s iteration), so a 1.75x label cut is worth
+only ~1.5x on the loop.
+
+**METHOD LESSON.** I recommended this on value fidelity, best-move coverage and
+target entropy — three agreement-style metrics — without ever measuring the
+teacher's cp cost or playing it. The ledger's own kill entry named the right
+metric and I did not run it until prompted. **Read the ledger for the METRIC a
+prior kill used, not just for its verdict.**
+
+### SUPERSEDED PRE-REGISTRATION (2026-07-28) — SF label economics: MultiPV 40@698k -> MultiPV 6@150k + `sf_policy_temp` 0.012 -> 0.0277
 
 **Status: PRE-REGISTERED, NOT DEPLOYED.** Training is deliberately down. This is
 data-affecting on every labelled position and needs an authorised restart.
