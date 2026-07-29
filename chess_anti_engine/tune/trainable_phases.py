@@ -49,6 +49,7 @@ from chess_anti_engine.tune.distributed_runtime import (
 from chess_anti_engine.tune.promotion_gate import (
     AnchoredSample,
     GateDecision,
+    GateHoldController,
     PromotionGate,
     gate_metrics,
 )
@@ -97,8 +98,7 @@ def _publish_iteration_model(
     ds: DifficultyState,
     sims: int,
     reuse_existing_model_for_same_step: bool,
-    gate_hold_model_path: Path | None,
-    gate_promoted_model_path: Path | None,
+    hold: GateHoldController | None,
 ) -> str:
     """Publish this iteration's model to the fleet, honouring a gate hold.
 
@@ -113,6 +113,8 @@ def _publish_iteration_model(
 
     Returns the published model sha.
     """
+    gate_hold_model_path = hold.hold_path if hold is not None else None
+    gate_promoted_model_path = hold.promoted_model_path if hold is not None else None
     published_model_sha = _publish_distributed_trial_state(
         trainer=trainer,
         config=config,
@@ -140,37 +142,11 @@ def _publish_iteration_model(
             gate_promoted_model_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(publish_dir / "latest_model.pt", _tmp)
             _tmp.replace(gate_promoted_model_path)
+  # Roll the held-flag history for the sign-validity check. Must happen on
+  # EVERY publish, held or not, or the transition becomes invisible.
+    if hold is not None:
+        hold.note_published()
     return published_model_sha
-
-
-def resolve_gate_hold_path(
-    decision: GateDecision, *, gate_promoted_model_path: Path | None,
-) -> Path | None:
-    """Turn a verdict into the path the NEXT publish must serve, or None.
-
-    Extracted from the trial loop so the "does the decision reach the
-    actuator" step is testable on its own. A demote with no fallback on disk
-    (the first iterations after a fresh start) must publish normally and say
-    so rather than crash the trial.
-    """
-    if not decision.acted:
-        return None
-    hold = (
-        gate_promoted_model_path
-        if gate_promoted_model_path is not None and gate_promoted_model_path.is_file()
-        else None
-    )
-    print(
-        "[gate] HOLD publish on the promoted export: "
-        f"reason={decision.reason} delta_elo={decision.delta_elo:.1f} "
-        f"ci=[{decision.elo_lo:.1f},{decision.elo_hi:.1f}] "
-        f"iters={decision.iters} "
-        f"games={decision.games_cur}/{decision.games_prev} "
-        f"holds={decision.holds} "
-        f"fallback={'present' if hold else 'MISSING (publishing anyway)'}",
-        flush=True,
-    )
-    return hold
 
 
 def _run_puzzle_eval_if_due(
@@ -281,11 +257,21 @@ def _run_net_gating(
     ``gate_max_hold_iters`` exists -- it is the only thing that releases a
     brake the gate can no longer re-measure.
     """
-    gate.observe(AnchoredSample(
-        iteration=int(iteration_idx),
-        cur_w=int(sp.gate_cur_w), cur_d=int(sp.gate_cur_d), cur_l=int(sp.gate_cur_l),
-        prev_w=int(sp.gate_prev_w), prev_d=int(sp.gate_prev_d), prev_l=int(sp.gate_prev_l),
-    ))
+  # A hold transition swaps which published model the ingest labels "cur":
+  # the sample's SIGN inverts on the iteration that first serves the anchor,
+  # and spans many iterations on the one that releases. Neither is a sample of
+  # one training step, so neither is observed -- see
+  # ``GateHoldController.sample_is_valid``. An empty sample keeps the row in
+  # the metrics (with zero games, so it is visibly excluded) while keeping it
+  # out of the window.
+    if sp.gate_sample_valid:
+        gate.observe(AnchoredSample(
+            iteration=int(iteration_idx),
+            cur_w=int(sp.gate_cur_w), cur_d=int(sp.gate_cur_d), cur_l=int(sp.gate_cur_l),
+            prev_w=int(sp.gate_prev_w), prev_d=int(sp.gate_prev_d), prev_l=int(sp.gate_prev_l),
+        ))
+    else:
+        gate.observe(AnchoredSample(iteration=int(iteration_idx)))
     decision = gate.apply(gate.decide())
     gate_match_idx += 1
     with contextlib.suppress(Exception):
@@ -769,8 +755,7 @@ def _run_selfplay_phase(
     in_salvage_startup_grace: bool,
     prefetcher=None,
     reuse_existing_model_for_same_step: bool = False,
-    gate_hold_model_path: Path | None = None,
-    gate_promoted_model_path: Path | None = None,
+    hold: GateHoldController | None = None,
 ) -> tuple[SelfplayResult, str, int]:
     """Run distributed selfplay, ingest, export shards, grow window, cross-trial share.
 
@@ -804,8 +789,7 @@ def _run_selfplay_phase(
         ds=ds,
         sims=int(sims),
         reuse_existing_model_for_same_step=bool(reuse_existing_model_for_same_step),
-        gate_hold_model_path=gate_hold_model_path,
-        gate_promoted_model_path=gate_promoted_model_path,
+        hold=hold,
     )
     broker_proc_box[0] = _ensure_inference_broker(
         config=config,
@@ -932,7 +916,14 @@ def _run_selfplay_phase(
         )
         time.sleep(max(0.5, tc.distributed_worker_poll_seconds))
         return (
-            SelfplayResult(should_retry=True, ingest_ms=ingest_ms),
+  # Carry the validity flag even on the retry path. The loop `continue`s
+  # before the gate sees this result, so it changes no behaviour today --
+  # but a default of True on a publish that served the anchor is a latent
+  # wrong answer waiting for someone to start reading it.
+            SelfplayResult(
+                should_retry=True, ingest_ms=ingest_ms,
+                gate_sample_valid=bool(hold is None or hold.sample_is_valid),
+            ),
             prev_published_model_sha,
             current_window,
         )
@@ -1000,6 +991,7 @@ def _run_selfplay_phase(
         gate_prev_w=int(ingest_summary.get("gate_prev_w", 0)),
         gate_prev_d=int(ingest_summary.get("gate_prev_d", 0)),
         gate_prev_l=int(ingest_summary.get("gate_prev_l", 0)),
+        gate_sample_valid=bool(hold is None or hold.sample_is_valid),
         **_selfplay_diagnostic_fields_from_ingest(ingest_summary),
         total_sf_d6=total_sf_d6,
         total_sf_d6_n=total_sf_d6_n,

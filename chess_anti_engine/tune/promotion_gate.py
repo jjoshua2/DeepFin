@@ -97,13 +97,35 @@ what the publish cadence predicts):
 
     n_cur ~= **197** games/iteration, n_prev ~= **38** (prev share **16.3%**)
     per-iteration anchored delta: mean **-4.3 Elo**, sd **45.6 Elo** (n=53)
+    that mean is **BOUNDED, NOT MEASURED**: se 6.26, 95% CI **[-16.6, +7.9]**,
+    t = -0.69 -- indistinguishable from zero and spanning 25 Elo
 
 Note ``distributed_prev_model_max_fraction: 0.60`` is a CEILING that never
 binds -- ``distributed_stale_games`` is 0 on every recent iteration, and a
 binding cap would have to discard prev shards into ``stale_*``. Sizing this
-gate off 0.60 gives 95/143 and a standard error of 31 Elo; the realized 197/38
-gives **41.5 Elo** predicted from binomial noise alone and **45.6 Elo**
-observed. Always take the realized split from shard data, never the cap.
+gate off 0.60 gives 95/143 and a standard error of 31 Elo. Always take the
+realized split from shard data, never the cap.
+
+**The observed spread is pure binomial noise -- there is NO detectable
+anchor-drift variance**, and an earlier revision of this module claimed the
+opposite. Standardizing each window's delta by its binomial se, using the
+POOLED per-game score variance (sd 0.3447) rather than a per-window estimate,
+gives a residual sd of **1.011**, where 1.0 is "pure independent binomial".
+Under a simulated pure-binomial null at the realized window shape that
+statistic is 0.994 +/- 0.099, so 1.011 is dead centre. Using per-window
+variance estimates instead gives 1.262 and looks like 26% overdispersion --
+that is an artefact: the same simulation returns 1.373 +/- 0.629 under the
+null, because at n_prev ~ 12-38 the denominator is noisy and correlated with
+the numerator. Use the pooled estimate.
+
+Two consequences. First, the empirical between-iteration sd absorbs no drift
+variance, because there is none to absorb. Second, the raw sd of 45.6 is
+*below* the independent-binomial value for this shape (RMS of the per-window
+se, 61.1 Elo) -- consistent with the two arms being positively correlated
+within an iteration, which they should be: they share the opening book draw,
+the same PID difficulty and the same fleet. That correlation is a benefit of
+anchoring inside one iteration, and 45.6 -- the empirical dispersion of the
+statistic this class actually computes -- is the number to size power with.
 
 The loop's measured improvement is +0.21 Elo per 1000 optimizer steps, roughly
 **0.02 Elo per iteration**. Against a per-iteration se of 45.6 Elo, detecting
@@ -115,11 +137,24 @@ STRONGER, not weaker:** the noise is 47% larger than first estimated, so "no
 gate can ratchet at 0.02 Elo/iteration" holds a fortiori.
 
 So this gate is a **regression alarm and a publish brake**, not a ratchet. At
-the default 24-iteration window (~4.5 h) the window se is **9.3 Elo**, which
-catches a sustained **-50 Elo/iteration** break at 93% power with the demote
-line at -25, and a **-200** break instantly. It does NOT catch the 2026-06
-warm-start LR crash (-494 Elo over 74 iterations = -6.7 Elo/iteration) at any
-window this design can reach -- power there is ~0%. That class of slow bleed
+the default 24-iteration window (~4.5 h) the window se is **9.3 Elo**. Analytic
+one-sided power against a sustained **-50 Elo/iteration** break, recomputed
+from sd 45.56 by ``test_documented_power_at_the_shipped_line_reproduces``:
+
+    demote line **-25** (shipped):  K=8 -> **48.3%**   K=24 -> **92.5%**
+    demote line -45 (earlier draft): K=8 -> 10.0%      K=24 -> 23.9%
+
+An earlier revision of this PR published **14% / 37%** for the -45 rows. Those
+do not reproduce; the -25 rows do. The line ships at -25 for that reason, and
+because 0 spurious holds occurred in 8000 simulated null iterations at either
+line (95% upper bound 0.04%), so the tighter line costs nothing measurable.
+K=48 rows are UNREACHABLE at ``window_iters: 24`` and are not quoted.
+
+A -100 or -200 Elo/iteration break -- a bad merge, a broken loss term, a
+mis-set LR -- trips within the ``min_iters`` floor of 8 iterations (~1.5 h).
+The gate does NOT catch the 2026-06 warm-start LR crash (-494 Elo over 74
+iterations = -6.7 Elo/iteration) at any window this design can reach -- power
+there is below 0.02% at every reachable K and line. That class of slow bleed
 needs the cumulative vs-frozen-anchor series in
 ``scripts/daily_gate_ratchet.sh``, which is why this gate does not replace it.
 
@@ -132,11 +167,23 @@ direction, the anchored delta carries a systematic offset of unknown size that
 is plausibly the same order as the effects above. Nothing has measured it,
 because the per-sha split did not exist until this change.
 
-That offset has since been measured offline from the same 418 shards: mean
-**-4.3 Elo**, with cur/prev draw rates 0.5147 vs 0.5149 -- so it is small and
-shows no length-bias signature. ``gate_mode`` still defaults to ``shadow``, but
-the shadow window's job is now narrower and falsifiable: confirm that the
-IN-LOOP instrument reproduces that offline reconstruction, which it can fail.
+That offset has since been bounded offline from the same 418 shards: mean
+**-4.3 Elo, 95% CI [-16.6, +7.9]** -- small, and not distinguishable from
+zero. On length bias: pooled over games (the estimator with the power to see
+one) the draw rates are cur **0.5192** vs prev **0.5384**, a **1.9 pp** gap at
+z = **-1.6**, so not significant -- but NOT the "identical to four decimals" an
+earlier revision claimed, which was an artefact of averaging per-iteration
+rates and so weighting a 12-game arm like an 80-game one.
+
+``gate_mode`` defaults to ``off``, and the shadow window does NOT need
+``shadow``: ``decide()`` fills the per-iteration sample before the ``MODE_OFF``
+check, so all four ``gate_sample_*`` columns are populated at the shipped
+default. Running at ``shadow`` adds only the window aggregates -- which the
+readout must not read -- and re-arms the ~252 MB anchor copy. The readout's job
+is narrow and falsifiable: confirm the IN-LOOP split reproduces the offline
+reconstruction, decided on the per-iteration COUNTS rather than on the delta.
+See ``shadow_readout_verdict`` for why the delta cannot carry that decision and
+what the rule still cannot detect.
 
 Note what the metrics must therefore report. A rolling-window mean is not a
 readable series -- consecutive rows share ~95% of their samples, so the sd of
@@ -147,8 +194,13 @@ the sample columns are the ones a decision rule must be written against.
 """
 from __future__ import annotations
 
+import csv
+import logging
 import math
+import statistics
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 # Decision codes. Deliberately NOT booleans: the whole point of this module is
 # that "did not run" must be distinguishable from "passed" in the metrics, and
@@ -187,6 +239,8 @@ ELO_PER_SCORE_AT_HALF = 400.0 / (math.log(10.0) * 0.25)
 # sizes; ``_t_quantile`` widens these for small df instead of adding a scipy
 # dependency to the training loop.
 _Z_ONE_SIDED = {0.10: 1.2816, 0.05: 1.6449, 0.025: 1.9600, 0.01: 2.3263, 0.005: 2.5758}
+
+log = logging.getLogger(__name__)
 
 
 def elo_from_score_delta(delta: float) -> float:
@@ -319,12 +373,23 @@ class GateConfig:
     # K=9-12, and makes ``gate_delta_elo`` repeat verbatim across consecutive
     # rows -- an inert series that reads exactly like a live one. 15 keeps 96%.
     min_games_per_side: int = 15
-    # -45 Elo is DERIVED, not chosen: the measured null is mean -4.3 Elo with
-    # per-iteration sd 45.6, so at the default 24-iteration window the window se
-    # is 9.3 Elo and this line sits ~4.4 sigma below the null. Tightening to -25
-    # buys 93% power on a -50 Elo/iteration break at the same window; do that
-    # only after the shadow readout confirms the null in-loop.
-    demote_delta_elo: float = -45.0
+    # -25, and the derivation is a FALSE-BRAKE BUDGET, not a sigma count. A
+    # 4-sigma line (-45) was the first choice and it does not deliver what the
+    # PR claimed for it. Analytic one-sided power against a sustained -50
+    # Elo/iteration break at sd 45.56 (recomputed by
+    # ``test_documented_power_at_the_shipped_line_reproduces``):
+    #
+    #     line -45:  K=8 -> 10.0%   K=24 -> 23.9%   (PR round 1 said 14% / 37%)
+    #     line -25:  K=8 -> 48.3%   K=24 -> 92.5%
+    #
+    # The cost of buying that is a false brake, and it is not measurable at
+    # this window: 0 spurious holds in 8000 simulated null iterations at BOTH
+    # -45 and -25 (95% upper bound 0.04%). An earlier revision of this comment
+    # quoted "0.01%" as a point estimate; it is an upper bound, not a
+    # measurement. Each spurious hold costs at most ``max_hold_iters`` of
+    # slightly stale selfplay and never a training step, which is the right
+    # trade for an alarm whose action is cheap and whose misses are expensive.
+    demote_delta_elo: float = -25.0
     alpha: float = 0.05
     max_hold_iters: int = 12
 
@@ -537,7 +602,7 @@ class PromotionGate:
             del self.samples[:-keep]
 
 
-def gate_metrics(decision: GateDecision) -> dict[str, float]:
+def gate_metrics(decision: GateDecision, *, strict: bool = True) -> dict[str, float]:
     """Flatten a decision into reported metrics.
 
     THE INVARIANT THIS FUNCTION EXISTS TO ENFORCE: a pass is never reported
@@ -551,6 +616,21 @@ def gate_metrics(decision: GateDecision) -> dict[str, float]:
     if decision.decision == DECISION_PROMOTE and min(
         decision.games_cur, decision.games_prev,
     ) <= 0:
+        if not strict:
+  # The reporting path passes strict=False. This invariant guards a
+  # state no shipped code path can reach, so a raise from inside
+  # ``_build_report_dict`` would take the whole trial down to protect
+  # against something that cannot happen. Degrade to "did not run",
+  # loudly, and let the loop keep training.
+            log.error(
+                "promotion gate reported PROMOTE with zero anchored games "
+                "(cur=%d, prev=%d, reason=%s) -- downgrading to NOT_RUN in the "
+                "metrics. This should be unreachable; investigate.",
+                decision.games_cur, decision.games_prev, decision.reason,
+            )
+            return gate_metrics(
+                replace(decision, decision=DECISION_NOT_RUN, reason="disabled"),
+            )
         raise AssertionError(
             "promotion reported with zero anchored games "
             f"(cur={decision.games_cur}, prev={decision.games_prev}, "
@@ -607,7 +687,339 @@ def gate_config_from_dict(config: dict) -> GateConfig:
         window_iters=int(config.get("gate_window_iters", 24)),
         min_iters=int(config.get("gate_min_iters", 8)),
         min_games_per_side=int(config.get("gate_min_games_per_side", 15)),
-        demote_delta_elo=float(config.get("gate_demote_delta_elo", -45.0)),
+        demote_delta_elo=float(config.get("gate_demote_delta_elo", -25.0)),
         alpha=float(config.get("gate_alpha", 0.05)),
         max_hold_iters=int(config.get("gate_max_hold_iters", 12)),
     )
+
+
+# --------------------------------------------------------------------------
+# The shadow readout: the promote-to-enforce decision, as CODE.
+# --------------------------------------------------------------------------
+# It lives here rather than in the ledger's shell one-liner because the two
+# disagreed: the ledger's worked example computed ``usable_frac`` over windows
+# with a non-empty split (51/53 = 0.96) while its command computed it over all
+# progress rows (51/57 = 0.89), against a KILL line of 0.85. One implementation
+# means the worked example and the shipped command CANNOT diverge, and it means
+# the rule is something a test can drive.
+
+READOUT_PROMOTE = "promote_to_enforce"
+READOUT_HOLD = "hold_in_shadow"
+READOUT_KILL = "kill"
+
+
+@dataclass(frozen=True)
+class OfflineReference:
+    """What the offline reconstruction measured, BEFORE the shadow window ran.
+
+    Binning 418 processed shard ``.zattrs`` by ``generated_at_unix`` against
+    ``progress.csv`` over live iterations 163-219, splitting each window's
+    curriculum games by ``model_sha256``. Reproduced independently three times
+    (author, review round 2, this change) to the digit.
+
+    ``tests/test_promotion_gate.py`` carries the 57-row reconstruction itself
+    and recomputes every field here from it, so these cannot drift into being
+    decoration.
+    """
+
+    mean_games_cur: float = 196.8
+    mean_games_prev: float = 38.3
+    prev_share: float = 0.1629
+    mean_delta_elo: float = -4.33
+    sd_delta_elo: float = 45.56
+    n_usable: int = 53
+
+
+OFFLINE = OfflineReference()
+
+
+@dataclass(frozen=True)
+class ShadowReadout:
+    """The shadow window's verdict plus every number it was computed from."""
+
+    verdict: str
+    n_rows: int
+    n_usable: int
+    usable_frac: float
+    mean_games_cur: float
+    mean_games_prev: float
+    prev_share: float
+    mean_delta_elo: float
+    sd_delta_elo: float
+    failed_legs: tuple[str, ...] = ()
+
+    def __str__(self) -> str:
+        return (
+            f"{self.verdict}  rows={self.n_rows} usable={self.n_usable} "
+            f"({self.usable_frac:.3f})  games_cur={self.mean_games_cur:.1f} "
+            f"games_prev={self.mean_games_prev:.1f} "
+            f"prev_share={self.prev_share:.4f}  "
+            f"delta mean={self.mean_delta_elo:.2f} sd={self.sd_delta_elo:.2f}"
+            + (f"  FAILED: {', '.join(self.failed_legs)}" if self.failed_legs else "")
+        )
+
+
+def shadow_readout_verdict(
+    rows: Sequence[tuple[int, int, float]],
+    *,
+    min_games_per_side: int = 15,
+    last_n: int = 40,
+    ref: OfflineReference = OFFLINE,
+) -> ShadowReadout:
+    """Decide whether the in-loop instrument reproduces the offline split.
+
+    ``rows`` are ``(gate_sample_games_cur, gate_sample_games_prev,
+    gate_sample_delta_elo)`` -- the PER-ITERATION columns. Never the window
+    aggregates: consecutive windows overlap ~95%, so the sd of a window column
+    understates the per-iteration sd ~10x and a rule keyed to it cannot fail.
+
+    WHY THE DECIDING LEGS ARE COUNTS AND NOT THE DELTA
+    --------------------------------------------------
+    The window exists to catch a mis-attributed ingest split. Round 2 of review
+    tested exactly that: pool each iteration's cur+prev games and redeal them
+    at random into the SAME realized arm sizes -- destroying the
+    ``model_sha256`` attribution completely -- and all three delta-based legs
+    still passed on 176 of 200 reshuffles. That is not a tuning miss, it is
+    structural. The true anchored signal is -4.33 Elo with 95% CI [-16.6, +7.9]
+    -- indistinguishable from zero -- so any splitter that keeps the arms
+    balanced lands inside any honest band around it, and the spread leg is
+    satisfied by pure binomial noise (standardized residual sd 1.011), which is
+    exactly what a broken split also produces.
+
+    The per-iteration game COUNTS are the opposite: attribution moves them by
+    tens of games per row with essentially no sampling noise. A random
+    shard-level relabelling drives ``prev_share`` from 0.1629 to ~0.50; a
+    cur/prev swap drives it to ~0.83; an unrecognised prev sha drives it to 0
+    and empties the window. All three are caught every time
+    (``test_negative_control_reshuffled_attribution_is_killed``).
+
+    The count tolerances are deliberately WIDE against throughput drift and
+    still decisive against attribution, because those are different axes:
+    ``prev_share`` is a ratio, so it is invariant to games/iteration changing
+    with cadence, while attribution failures move it by 0.34-0.67 against a
+    tolerance of 0.06.
+
+    WHAT THIS RULE CANNOT DO, STATED SO NOBODY DISCOVERS IT LATER
+    -------------------------------------------------------------
+    It cannot detect a destruction that CONDITIONS on the realized arm sizes --
+    review round 2's exact control. Nothing can: conditional on the counts, the
+    only remaining channel is the delta, and the true effect is not
+    distinguishable from zero at n=53. That control is also unphysical -- shards
+    are attributed whole, by sha, so no real bug moves games between arms
+    without moving the counts -- but the honest statement is "no rule passes
+    that control", not "this rule does".
+    """
+    window = list(rows)[-max(1, int(last_n)):]
+    floor = max(1, int(min_games_per_side))
+    usable = [(c, p, d) for c, p, d in window
+              if c >= floor and p >= floor and not math.isnan(d)]
+    n_rows, n_usable = len(window), len(usable)
+    frac = n_usable / n_rows if n_rows else 0.0
+
+    if n_usable < 2:
+        # The most important failure mode must have a defined answer. An
+        # earlier draft of this rule raised StatisticsError here instead.
+        return ShadowReadout(
+            verdict=READOUT_KILL, n_rows=n_rows, n_usable=n_usable,
+            usable_frac=frac, mean_games_cur=0.0, mean_games_prev=0.0,
+            prev_share=0.0, mean_delta_elo=float("nan"),
+            sd_delta_elo=float("nan"),
+            failed_legs=("usable_rows>=2",),
+        )
+
+    mean_cur = statistics.mean([c for c, _, _ in usable])
+    mean_prev = statistics.mean([p for _, p, _ in usable])
+    prev_share = mean_prev / (mean_cur + mean_prev)
+    deltas = [d for _, _, d in usable]
+    mean_d, sd_d = statistics.mean(deltas), statistics.stdev(deltas)
+
+    failed: list[str] = []
+    # -- deciding legs: attribution-sensitive, near-noiseless --------------
+    if frac < 0.85:
+        failed.append(f"usable_frac {frac:.3f} < 0.85")
+    if abs(mean_cur - ref.mean_games_cur) > 60.0:
+        failed.append(f"mean_games_cur {mean_cur:.1f} vs {ref.mean_games_cur} +/-60")
+    if abs(mean_prev - ref.mean_games_prev) > 20.0:
+        failed.append(f"mean_games_prev {mean_prev:.1f} vs {ref.mean_games_prev} +/-20")
+    if abs(prev_share - ref.prev_share) > 0.06:
+        failed.append(f"prev_share {prev_share:.4f} vs {ref.prev_share} +/-0.06")
+    # -- deciding leg: instrument-sensitive --------------------------------
+    # 4.56 is the sd of the 95%-overlapping WINDOW column. If the readout is
+    # ever wired to that column again this leg is what says so.
+    if not (20.0 < sd_d < 70.0):
+        failed.append(f"sd_delta_elo {sd_d:.2f} outside (20, 70)")
+    # -- offset leg: the PID-lag bias must not dominate ---------------------
+    if abs(mean_d) > 25.0:
+        failed.append(f"|mean_delta_elo| {abs(mean_d):.2f} > 25")
+
+    if failed:
+        verdict = READOUT_KILL
+    elif abs(mean_d) > 15.0:
+        verdict = READOUT_HOLD  # extend the window rather than promote or kill
+    else:
+        verdict = READOUT_PROMOTE
+    return ShadowReadout(
+        verdict=verdict, n_rows=n_rows, n_usable=n_usable, usable_frac=frac,
+        mean_games_cur=mean_cur, mean_games_prev=mean_prev,
+        prev_share=prev_share, mean_delta_elo=mean_d, sd_delta_elo=sd_d,
+        failed_legs=tuple(failed),
+    )
+
+
+def shadow_readout_rows_from_csv(
+    rows: Iterable[dict[str, str]],
+) -> list[tuple[int, int, float]]:
+    """Pull the four ``gate_sample_*`` columns out of ``progress.csv`` rows.
+
+    A row whose gate columns are BLANK never ran the gate and is not an
+    iteration of the shadow window, so it is dropped. A row with
+    ``games_cur == 0`` (the shape during a hold) DID run and is kept, with its
+    NaN delta: it is unusable, and dropping it would quietly inflate
+    ``usable_frac`` -- which is the denominator confusion that made the
+    ledger's worked example and its command disagree by 7 points against a
+    kill line 4 points away.
+    """
+    out: list[tuple[int, int, float]] = []
+    for r in rows:
+        raw_c = r.get("gate_sample_games_cur")
+        raw_p = r.get("gate_sample_games_prev")
+        if raw_c is None or raw_p is None or raw_c == "" or raw_p == "":
+            continue
+        try:
+            c, p = int(float(raw_c)), int(float(raw_p))
+            d = float(r.get("gate_sample_delta_elo") or "nan")
+        except ValueError:
+            continue
+        out.append((c, p, d))
+    return out
+
+
+def shadow_readout_from_csv(
+    path: str | Path, *, min_games_per_side: int = 15, last_n: int = 40,
+) -> ShadowReadout:
+    """The ledger's ONE deciding command, as a function. See the ledger entry."""
+    with Path(path).open(newline="") as fh:
+        rows = shadow_readout_rows_from_csv(csv.DictReader(fh))
+    return shadow_readout_verdict(
+        rows, min_games_per_side=min_games_per_side, last_n=last_n,
+    )
+
+
+@dataclass
+class GateHoldController:
+    """Owns every piece of gate state the trial loop used to keep in locals.
+
+    Six loose local variables in ``trainable.py`` -- the anchor path, the hold
+    path, the startup restore, the retry ageing, the release, and the
+    sign-validity history -- were individually mutable and individually
+    untested: an independent reviewer mutated each of them and all six escaped
+    35 tests. Collapsing them into one object means the loop makes three calls
+    instead of six assignments, and the state machine is drivable by a test.
+
+    Nothing here plays a game or touches a weight. It decides which FILE the
+    next publish serves.
+    """
+
+    gate: PromotionGate
+    promoted_model_path: Path | None = None
+    hold_path: Path | None = None
+    _this_publish_held: bool = False
+    _prev_publish_held: bool = False
+
+    @classmethod
+    def create(cls, gate: PromotionGate, *, durable_dir: Path) -> GateHoldController:
+        """Build at trial startup, restoring a hold that survived a restart.
+
+        The anchor path is None while the gate is off, which is what keeps a
+        disabled feature from copying a ~252 MB export every iteration. A
+        restored hold with no anchor on disk is released rather than trusted.
+        """
+        promoted = (
+            durable_dir / "gate_promoted_model.pt" if gate.cfg.mode != MODE_OFF else None
+        )
+        hold = (
+            promoted
+            if (gate.hold_active and promoted is not None and promoted.is_file())
+            else None
+        )
+        if gate.hold_active:
+            print(
+                f"[gate] resuming with the fleet HELD: holds={gate.holds} "
+                f"fallback={'present' if hold else 'MISSING (releasing)'}",
+                flush=True,
+            )
+        if gate.hold_active and hold is None:
+            log.warning(
+                "promotion gate resumed with hold_active but no anchor on disk; "
+                "releasing the hold",
+            )
+            gate.hold_active = False
+        return cls(gate=gate, promoted_model_path=promoted, hold_path=hold)
+
+    def note_published(self) -> None:
+        """Record whether the publish that just happened served the anchor.
+
+        Called once per publish. The one-iteration history is what makes
+        ``sample_is_valid`` able to see the transition.
+        """
+        self._prev_publish_held = self._this_publish_held
+        self._this_publish_held = self.hold_path is not None
+
+    @property
+    def sample_is_valid(self) -> bool:
+        """Whether this iteration's anchored counts mean what their names say.
+
+        THE SIGN INVERTS ON A HOLD TRANSITION. ``_process_shard`` labels a
+        shard "prev" by comparing against ``prev_published_model_sha``, which
+        still names the DEMOTED net on the iteration that first serves the
+        anchor -- so the older net is labelled "cur" and the newer one "prev",
+        and a -139 Elo regression is recorded as +139 at exactly the moment the
+        gate acts on it. The release iteration is wrong differently: "prev" is
+        then the anchor, so the delta spans however many iterations the hold
+        lasted rather than one.
+
+        Neither is a sample of "one training iteration", so neither is
+        observed. The gate's own action must not contaminate its own evidence
+        -- that is the "ruler moved with the model" defect this module exists
+        to remove, and it would be the worst possible place to reintroduce it.
+        """
+        return not (self._this_publish_held or self._prev_publish_held)
+
+    def on_decision(self, decision: GateDecision) -> None:
+        """Apply a verdict to the NEXT publish."""
+        self.hold_path = resolve_gate_hold_path(
+            decision, gate_promoted_model_path=self.promoted_model_path,
+        )
+
+    def on_aborted_iteration(self) -> None:
+        """Age an active hold on an iteration that produced no verdict."""
+        if not self.gate.advance_hold_without_decision():
+            self.hold_path = None
+
+
+def resolve_gate_hold_path(
+    decision: GateDecision, *, gate_promoted_model_path: Path | None,
+) -> Path | None:
+    """Turn a verdict into the path the next publish must serve, or None.
+
+    A demote with no fallback on disk (the first iterations after a fresh
+    start) publishes normally and says so rather than crashing the trial.
+    """
+    if not decision.acted:
+        return None
+    hold = (
+        gate_promoted_model_path
+        if gate_promoted_model_path is not None and gate_promoted_model_path.is_file()
+        else None
+    )
+    print(
+        "[gate] HOLD publish on the promoted export: "
+        f"reason={decision.reason} delta_elo={decision.delta_elo:.1f} "
+        f"ci=[{decision.elo_lo:.1f},{decision.elo_hi:.1f}] "
+        f"iters={decision.iters} "
+        f"games={decision.games_cur}/{decision.games_prev} "
+        f"holds={decision.holds} "
+        f"fallback={'present' if hold else 'MISSING (publishing anyway)'}",
+        flush=True,
+    )
+    return hold

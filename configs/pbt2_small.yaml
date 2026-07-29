@@ -806,8 +806,15 @@ tune:
   # gate_demote_delta_elo / gate_alpha / gate_max_hold_iters, all defaulted OFF
   # in code. They are deliberately NOT listed here yet: adding a key to the
   # live yaml before the running process is on code that defines it makes the
-  # validator reject the WHOLE reload. Add them at the next restart, starting
-  # at gate_mode: shadow.
+  # validator reject the WHOLE reload. Add them at the next restart.
+  #
+  # AND THE SHADOW READOUT DOES NOT NEED THEM. decide() fills the
+  # per-iteration sample BEFORE the gate_mode: off check, so all four
+  # gate_sample_* columns are populated at the shipped default. Setting
+  # gate_mode: shadow adds only the rolling-window aggregates -- which the
+  # readout must NOT be keyed to, they overlap ~95% row-to-row -- and re-arms
+  # a ~252 MB export copy every iteration. So the readout runs with no yaml
+  # key, no restart-required key, no copy and nothing to revert.
   #
   # NOTE distributed_prev_model_max_fraction: 0.60 below is a CEILING THAT
   # NEVER BINDS -- distributed_stale_games is 0 on every recent iteration, and
@@ -817,14 +824,23 @@ tune:
   # is wrong, and on the wrong side of the split.
   #
   # What it can resolve, so nobody reads it as a ratchet: per-iteration
-  # standard error 45.6 Elo MEASURED (41.5 predicted from binomial noise
-  # alone), against a loop that gains ~0.02 Elo/iteration. At the default
-  # 24-iteration window (~4.5 h) the window se is 9.3 Elo: it catches a
-  # sustained -50 Elo/iteration break, and does NOT catch the 2026-06
-  # warm-start class (-6.7 Elo/iteration) at any reachable window. It is a
-  # regression alarm, not a selection step; no affordable measurement can
-  # select on 0.02 Elo. The slow-bleed job stays with
-  # scripts/daily_gate_ratchet.sh's cumulative vs-frozen-anchor series.
+  # standard error 45.6 Elo MEASURED, against a loop that gains ~0.02
+  # Elo/iteration. That spread is PURE BINOMIAL NOISE -- standardized
+  # residuals sit at 1.011 where 1.0 is independent binomial, so there is no
+  # anchor-drift variance in it. (An earlier revision of this comment said
+  # "41.5 predicted from binomial alone", implying excess variance. That
+  # comparison used 1/mean(n); the honest per-window figure is 61.1 Elo, so
+  # 45.6 is BELOW binomial, not above.)
+  #
+  # At the default 24-iteration window (~4.5 h) the window se is 9.3 Elo and
+  # the shipped demote line is -45 -> -25. QUOTE THE LINE WITH THE CLAIM:
+  # a sustained -50 Elo/iteration break is caught at 92.5% power in one window
+  # AT -25, and at only 23.9% at -45. A -100/-200 break trips inside the
+  # 8-iteration floor (~1.5 h) at either line. It does NOT catch the 2026-06
+  # warm-start class (-6.7 Elo/iteration) at any reachable window or line
+  # (worst-case power 0.3%). It is a regression alarm, not a selection step;
+  # no affordable measurement can select on 0.02 Elo. The slow-bleed job stays
+  # with scripts/daily_gate_ratchet.sh's cumulative vs-frozen-anchor series.
   gate_games: 0           # DEAD KEY: must stay 0
   gate_threshold: 0.50    # DEAD KEY: inert
   gate_interval: 1        # DEAD KEY: inert

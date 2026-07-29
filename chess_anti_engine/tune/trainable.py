@@ -51,7 +51,7 @@ from chess_anti_engine.tune.trainable_init import (
     peek_checkpoint_arch,
 )
 from chess_anti_engine.tune.promotion_gate import (
-    MODE_OFF,
+    GateHoldController,
     PromotionGate,
     gate_config_from_dict,
 )
@@ -62,7 +62,6 @@ from chess_anti_engine.tune.trainable_phases import (
     _run_pid_and_eval,
     _run_selfplay_phase,
     _run_training_and_gating,
-    resolve_gate_hold_path,
 )
 from chess_anti_engine.tune.trainable_report import (
     _guard_checkpoint_index,
@@ -544,32 +543,12 @@ def train_trial(config: dict):
   # back on by editing the yaml.
     gate = PromotionGate(cfg=gate_config_from_dict(config))
     gate.load_state_dict(_gate_state)
-  # The fallback the fleet is held on when the gate demotes. Lives in the
-  # durable dir, not the per-session staging dir, so a restart does not lose it.
-  # None while the gate is off: the copy below is ~252 MB and would otherwise
-  # run every iteration to serve a feature nobody enabled.
-    gate_promoted_model_path = (
-        durable_dir / "gate_promoted_model.pt" if gate.cfg.mode != MODE_OFF else None
-    )
-  # Restored, not reset. An unpersisted hold means a restart mid-hold publishes
-  # the held-back weights AND overwrites the anchor with them while ``holds``
-  # still reads "N deep" -- so the brake would be bounded by restart cadence
-  # rather than by gate_max_hold_iters, and nothing would report the release.
-    gate_hold_model_path: Path | None = (
-        gate_promoted_model_path
-        if (gate.hold_active
-            and gate_promoted_model_path is not None
-            and gate_promoted_model_path.is_file())
-        else None
-    )
-    if gate.hold_active:
-        print(
-            f"[gate] resuming with the fleet HELD: holds={gate.holds} "
-            f"fallback={'present' if gate_hold_model_path else 'MISSING (releasing)'}",
-            flush=True,
-        )
-        if gate_hold_model_path is None:
-            gate.hold_active = False
+  # Every piece of gate-side mutable loop state lives in this object, not in
+  # locals: the anchor path (None while the gate is off, so a disabled feature
+  # copies nothing), the hold path, the restart restore, the retry ageing and
+  # the sign-validity history. Six loose locals here were individually mutable
+  # and individually untested.
+    gate_hold = GateHoldController.create(gate, durable_dir=durable_dir)
 
     best_state_path = durable_dir / "best.json"
     best_dir = durable_dir / "best"
@@ -679,6 +658,11 @@ def train_trial(config: dict):
         pause_selfplay=False,
         pause_reason="",
         reuse_existing_model_for_same_step=(ckpt is not None),
+  # A resume mid-hold must not lift the brake for one publish. This is the
+  # only publish outside _publish_iteration_model, so it takes the raw path
+  # rather than the controller; note_published() is deliberately NOT called --
+  # the loop's first real publish is what starts the sign-validity history.
+        override_model_path=gate_hold.hold_path,
     )
     _broker_box[0] = _ensure_inference_broker(
         config=config,
@@ -797,8 +781,7 @@ def train_trial(config: dict):
                 in_salvage_startup_grace=in_salvage_startup_grace,
                 prefetcher=shard_prefetcher,
                 reuse_existing_model_for_same_step=(ckpt is not None),
-                gate_hold_model_path=gate_hold_model_path,
-                gate_promoted_model_path=gate_promoted_model_path,
+                hold=gate_hold,
             )
             t_selfplay_secs = time.monotonic() - t_selfplay_start
             distributed_pause_active = False
@@ -808,8 +791,7 @@ def train_trial(config: dict):
   # iteration -- but the fleet is still held. Age the hold anyway, or
   # a run stuck in retry during a hold holds forever with the release
   # counter frozen.
-                if not gate.advance_hold_without_decision():
-                    gate_hold_model_path = None
+                gate_hold.on_aborted_iteration()
                 continue
 
             holdout_frozen = _maybe_freeze_holdout(
@@ -850,9 +832,7 @@ def train_trial(config: dict):
             t_train_secs = time.monotonic() - t_train_start
             gate_match_idx = tr.gate_match_idx
   # The verdict acts on the NEXT publish, not on the weights just trained.
-            gate_hold_model_path = resolve_gate_hold_path(
-                tr.gate_decision, gate_promoted_model_path=gate_promoted_model_path,
-            )
+            gate_hold.on_decision(tr.gate_decision)
             _log_iter_phase_split(
                 trainer=trainer, iteration_idx=iteration_idx,
                 distributed_dirs=distributed_dirs,

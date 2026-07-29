@@ -330,15 +330,15 @@ class TrialConfig:
     gate_interval: int = 1
     gate_threshold: float = 0.50
     gate_mcts_sims: int = 1
-  # Anchored promotion gate. off = do not compute; shadow = compute and report,
-  # never act; enforce = hold the published model on a proven regression.
-    gate_mode: str = "off"
-    gate_window_iters: int = 24
-    gate_min_iters: int = 8
-    gate_min_games_per_side: int = 40
-    gate_demote_delta_elo: float = -50.0
-    gate_alpha: float = 0.05
-    gate_max_hold_iters: int = 12
+  # The anchored promotion gate's knobs (gate_mode, gate_window_iters,
+  # gate_min_iters, gate_min_games_per_side, gate_demote_delta_elo, gate_alpha,
+  # gate_max_hold_iters) are DELIBERATELY ABSENT from this dataclass. They are
+  # read once, at construction, by ``promotion_gate.gate_config_from_dict``
+  # straight from the config dict. Parsing them here too would give the gate
+  # two sources of truth, and the copy nothing reads is the one that rots: an
+  # earlier revision of this class carried the pre-review floor of 40 and line
+  # of -50.0 for exactly as long as it took a reviewer to grep ``tc.gate_``
+  # and find nothing.
 
   # --- Puzzle ---
     puzzle_epd: str | None = None
@@ -711,13 +711,6 @@ class TrialConfig:
             gate_interval=int(config.get("gate_interval", 1)),
             gate_threshold=float(config.get("gate_threshold", 0.50)),
             gate_mcts_sims=int(config.get("gate_mcts_sims", 1)),
-            gate_mode=str(config.get("gate_mode", "off")),
-            gate_window_iters=int(config.get("gate_window_iters", 24)),
-            gate_min_iters=int(config.get("gate_min_iters", 8)),
-            gate_min_games_per_side=int(config.get("gate_min_games_per_side", 40)),
-            gate_demote_delta_elo=float(config.get("gate_demote_delta_elo", -50.0)),
-            gate_alpha=float(config.get("gate_alpha", 0.05)),
-            gate_max_hold_iters=int(config.get("gate_max_hold_iters", 12)),
 
   # --- Puzzle ---
             puzzle_epd=_get("puzzle_epd", None),
@@ -807,6 +800,10 @@ class SelfplayResult:
     gate_prev_w: int = 0
     gate_prev_d: int = 0
     gate_prev_l: int = 0
+  # False on an iteration whose publish crossed a hold boundary: the anchored
+  # labels are then inverted (or span many iterations) and the sample must not
+  # enter the window. See GateHoldController.sample_is_valid.
+    gate_sample_valid: bool = True
 
   # Selfplay-only subset
     total_selfplay_games: int = 0

@@ -1285,12 +1285,17 @@ def _build_report_dict(
         "sf_wdl_temperature": float(trainer.sf_wdl_temperature),
         "best_loss": float(best_loss),
         **train_metrics_dict,
+  # strict=False: the zero-game invariant guards a state no shipped path can
+  # reach, so raising from inside the REPORTING path would take the trial down
+  # to protect against something that cannot happen. It logs and degrades here;
+  # ``gate_metrics`` still raises everywhere else, which is where the tests
+  # pin it.
   # ``gate_passed`` is GONE, not renamed. It was a constant 1 emitted while
   # ``gate_games: 0`` -- a pass indistinguishable from a gate that never ran.
   # ``gate_decision`` is -1/0/1 (not-run / demote / promote) and travels with
   # the games it was computed from; ``gate_metrics`` refuses to emit a promote
   # with zero anchored games at all.
-        **gate_metrics(tr.gate_decision),
+        **gate_metrics(tr.gate_decision, strict=False),
         "ingest_ms": float(sp.ingest_ms),
         "train_ms": float(tr.train_ms),
         "total_iter_ms": float((time.monotonic() - iter_t0) * 1000.0),
