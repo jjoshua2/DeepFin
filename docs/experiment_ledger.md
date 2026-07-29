@@ -6401,6 +6401,85 @@ PLAY-shape substitution. `wdl_regret` sounds like a strength dial; measuring its
 realized candidate set showed it moves 10.4→8.4 moves across its whole range.
 
 
+### PRE-REGISTERED (2026-07-28) — SF label economics: MultiPV 40@698k -> MultiPV 6@150k + `sf_policy_temp` 0.012 -> 0.0277
+
+**Status: PRE-REGISTERED, NOT DEPLOYED.** Training is deliberately down. This is
+data-affecting on every labelled position and needs an authorised restart.
+
+**Hypothesis.** Production spends 698k nodes at MultiPV 40 to produce a
+**median-depth-12** label. Width is paid for in depth (`sf_multipv` is not a cost
+lever at fixed `go nodes N`), and the width past ~6 PVs is depth-12 noise. A
+narrow-deep label at a fraction of the cost is **equal or better** on the axis
+that matters (the value verdict) and frees ~4.6x of the loop's dominant cost.
+
+**Evidence (all on UNBIASED positions reconstructed from real training games,
+scored against a MultiPV 1 @3M reference).**
+
+| | mean \|dQ\| | p90 | >0.25 | material reversal |
+|---|---|---|---|---|
+| production MPV40@698k | 0.0111 | 0.0321 | **0.7%** | 0.0% |
+| **MPV6@150k** | **0.0097** | **0.0220** | **0.0%** | 0.0% |
+
+Best-move coverage of the deep reference by production's top-K: top-3 90.0%,
+**top-6 98.6%**, top-40 100.0% — ranks 7-40 buy **1.4pp** while carrying ~12% of
+target mass.
+
+**The compensation, and why it is required.** Truncating 40 -> 6 sharpens the
+policy target by **23%** (entropy 1.1821 -> 0.9090; effective support 3.26 -> 2.48
+moves). `sf_policy_temp` **0.012 -> 0.02773** restores the production entropy
+exactly (measured by bisection on 10,988 rows). **Ship the two together** — the
+node change alone silently narrows the prior that feeds Gumbel root selection.
+(K=3 cannot be compensated: temperature saturates. Prefer 6.)
+
+**Why 150k and not 100k — AMDAHL, measured.** Loop timings over 57 iterations:
+`time_this_iter_s` median **685.7s**, `train_time_s` **110.8s = 16.2%**. A 7x SF
+cut yields at most **3.15x** and makes TRAIN **50.9%** of the iteration. At 150k
+(4.6x) the iteration goes 686s -> ~257s (**2.7x**) with SF ~46% vs TRAIN ~43% —
+balanced. **Below ~140k the GPU is the bottleneck and further SF savings are
+wasted, so label quality between 100k and 150k is free.**
+
+**Escalation was designed, measured, and DROPPED.** 150k->200k is 1.33x nodes
+(~25 Elo) — not an escalation; the base label already resolves the
+extreme-disagreement cases; net-vs-label triggers are ANTI-predictive (label
+wrong 18.2% where the net disagrees most vs 29.9% elsewhere — the net plays
+~SF@300 and is usually the wrong one); and top-2 margin predicts only cosmetic
+best-move swaps. On unbiased positions the production verdict **never materially
+reverses** (0.0% sign flips with both |Q|>0.30; median |dQ| 0.001).
+
+**THE DECIDING YARDSTICK — throughput, which is measurable in hours.**
+Pre-committed on the FIRST 10 post-restart iterations, compared to the banked
+pre-change median of 685.7s:
+
+- **SUCCESS** if median `time_this_iter_s` <= **330s** (>= 2.0x) AND the holdout
+  value metric is within its noise floor of the pre-change value.
+- **KILL** if median `time_this_iter_s` > **480s** (< 1.43x — the change did not
+  deliver) OR the holdout value metric degrades by more than 2x its noise floor.
+- **INCONCLUSIVE** between, and then hold for a day-scale read.
+
+Throughput is the right yardstick precisely because Elo is not readable here
+(~0.02 Elo/iteration vs a ~2.74 Elo/day instrument). **This entry claims a DATA
+lever, not a strength lever, and must never later be cited as an Elo win.**
+
+**Guard metrics (not deciding, but recorded):** realized label depth from
+`sf_label_meta` col1 (expect ~9-12), SF-policy-target entropy on new shards
+(expect ~1.18, matching production), and `sf_wdl` distribution shape.
+
+**Confounds.** One data-affecting change per readout window — this owns the
+window. Do NOT bundle with task #69 (cp-ranked target) or #68
+(`feature_dropout_p`). The PID will respond to changed label economics
+(games/iteration rises), so winrate/regret series are **not comparable across
+the change** — re-baseline them.
+
+**Revert.** Two yaml keys back (`sf_multipv`, the node budget, `sf_policy_temp`).
+The replay window holds ~a day of old-label data, so the first post-revert
+readout is mixed — that is expected and must be stated in any verdict.
+
+**⚠ WHAT THIS EVIDENCE DOES NOT COVER.** Everything above is label fidelity,
+target shape and cost. **No training outcome has been measured.** The offline
+half is screenable now (truncate stored MultiPV rows to 6 + retemp via
+`train/target_builder.py`); the depth half cannot be simulated from stored rows
+and only reads out live.
+
 ### ⚑⚑ TWO SEPARABLE TARGET/LABEL FINDINGS, both MEASURED and offline-screenable (2026-07-28)
 
 **These were initially claimed to be one root cause. They are NOT — that claim is
