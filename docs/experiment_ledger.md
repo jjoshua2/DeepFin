@@ -12738,13 +12738,34 @@ are 1332 endgame + 668 middlegame + ZERO opening, so any 2000-position result is
 an endgame verdict), build a MultiPV 1 @ 3M-node reference and measure **top-1
 agreement with that reference, split by position type**:
 
-```
-PYTHONPATH=. nice -n 19 python3 scripts/probe_policy_targets.py \
-  --shards data/replay --n 300 --unbiased-sample \
-  --reference-nodes 3000000 --reference-multipv 1 \
-  --compare-rankings wdl,cp --split-by-score won,balanced,lost \
-  --dump-per-position data/prereg69/per_position.jsonl
-```
+**⚠ THE TOOL DOES NOT EXIST YET — BUILDING IT IS A PREREQUISITE, NOT A DETAIL.**
+I first wrote this pre-registration against a plausible-looking
+`scripts/probe_policy_targets.py` invocation with `--shards / --n /
+--unbiased-sample / --reference-nodes / --reference-multipv /
+--compare-rankings / --split-by-score / --dump-per-position`. **Every one of
+those flags is invented.** The script accepts exactly three: `--replay-dir`,
+`--positions`, `--out`. A pre-registered command that cannot execute is the same
+defect class this audit exists to catch — a yardstick that reads as precise and
+is inert. *Verify the command runs before committing it as a yardstick.*
+
+What the tool must do, to be built before this experiment is launched:
+
+1. sample n>=300 rows UNBIASED from live shards (not the stratum-blocked audit
+   set), keeping only rows with valid `sf_multipv_raw`;
+2. rebuild the SF policy target twice from the SAME stored MultiPV rows — once
+   ranked by the cp-logistic (production) and once ranked by raw `cp` at matched
+   overall top-1 mass (T=16.4cp) — via `train/target_builder.py`, so neither arm
+   involves new SF work;
+3. generate the INDEPENDENT reference: MultiPV 1 @ 3M nodes per position (this
+   is the only expensive step and the reason for the CPU window);
+4. report top-1 agreement of each ranking with the reference, split by the
+   reference's own score into won (>0.90) / balanced (0.35-0.65) / lost (<0.10),
+   with paired CIs across positions;
+5. dump per-position rows so the summary can be re-analysed after checkpoints
+   are pruned.
+
+Splitting on the REFERENCE's score, not the production label's, matters: the
+production label is the thing under test and must not define the strata.
 
 **Pre-committed decision rule, written before the run:**
 - **PROMOTE** if cp-ranking's top-1 agreement with the deep reference beats
