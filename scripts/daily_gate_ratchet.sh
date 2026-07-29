@@ -72,6 +72,22 @@ REPORT_EVERY=16
 SNAP_DIR=data/ratchet/snapshots
 LOG=data/ratchet/ratchet.csv
 ANCHOR=scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
+# WHICH SEARCH THIS SERIES IS MEASURED WITH. arena_standard.py now REQUIRES this
+# (it used to seed itself from PLAY_SEARCH_DEFAULTS silently), and the answer for
+# this job is `training`: the ratchet exists to price the RL loop's own progress
+# — scripts/ratchet_slope.py fits Elo against cumulative optimizer steps — so it
+# has to rank nets under the search selfplay actually runs, not the tuned 8000-sim
+# UCI shape. Judging the loop through the play shape is exactly what the
+# 2026-07-28 ledger finding condemns.
+#
+# THIS IS AN INSTRUMENT BREAK. Rows written before 2026-07-29 were measured on
+# the play shape at vloss_weight=0 — a ruler that no longer exists on either
+# side of this flag — so they are NOT comparable with rows written after, and
+# the migration below labels them `legacy_play_vloss0` rather than pretending
+# they are `play`. ratchet_slope.py refuses to fit across two labels.
+SHAPE=training
+CSV_HEADER="date,iter,series,elo,ci_lo,ci_hi,score,games,search_shape"
+LEGACY_SHAPE=legacy_play_vloss0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -80,6 +96,7 @@ while [ $# -gt 0 ]; do
         --max-concurrent-games) CONC=$2; shift 2 ;;
         --max-minutes) BUDGET_MIN=$2; shift 2 ;;
         --report-every) REPORT_EVERY=$2; shift 2 ;;
+        --search-shape) SHAPE=$2; shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
@@ -90,7 +107,22 @@ DEADLINE=$(( $(date +%s) + BUDGET_MIN * 60 ))
 SERIES_LEFT=2
 
 mkdir -p "$SNAP_DIR" "$(dirname "$LOG")"
-[ -s "$LOG" ] || echo "date,iter,series,elo,ci_lo,ci_hi,score,games" > "$LOG"
+[ -s "$LOG" ] || echo "$CSV_HEADER" > "$LOG"
+# One-time migration of the pre-instrument-break CSV. Appending a 9th field to a
+# file whose header has 8 would leave csv.DictReader stuffing the shape into the
+# restkey and every old row claiming the new ruler by omission — a schema break
+# that reads as agreement. Stamp the old rows with what they ACTUALLY measured
+# instead. Idempotent: keyed on the header line, atomic via mv.
+if [ "$(head -1 "$LOG")" != "$CSV_HEADER" ]; then
+    if [ "$(head -1 "$LOG")" = "date,iter,series,elo,ci_lo,ci_hi,score,games" ]; then
+        echo "[ratchet] migrating $LOG to the search_shape schema (old rows -> $LEGACY_SHAPE)"
+        { echo "$CSV_HEADER"; tail -n +2 "$LOG" | sed "s/\$/,$LEGACY_SHAPE/"; } > "$LOG.tmp" \
+            && mv "$LOG.tmp" "$LOG"
+    else
+        echo "[ratchet] REFUSING to write: $LOG header is neither the current nor the pre-2026-07-29 schema" >&2
+        exit 1
+    fi
+fi
 
 today=$(date +%F)
 
@@ -135,7 +167,7 @@ run_arena () {   # $1=reference  $2=series-label
     timeout -k 20 "${budget}s" \
         python3 scripts/arena_standard.py \
         --candidate "$snap" --reference "$ref" \
-        --mode matched_sims --sims "$SIMS" --games "$GAMES" \
+        --mode matched_sims --search-shape "$SHAPE" --sims "$SIMS" --games "$GAMES" \
         --max-concurrent-games "$CONC" --report-every "$REPORT_EVERY" \
         --no-compile --device cuda --seed 42 \
         --label "ratchet_${today}_iter${iter}_${series}" > "$out" 2>&1
@@ -195,8 +227,8 @@ run_arena () {   # $1=reference  $2=series-label
     # print "[arena] N games (M opening pairs)", so the last one is the truth.
     played=$(grep -E "^\[arena\] [0-9]+ games \(" "$out" | tail -1 | sed -E 's/.*\] ([0-9]+) games.*/\1/')
     case "${played:-}" in ''|*[!0-9]*) played=$GAMES ;; esac
-    echo "$today,$iter,$series,$elo,$lo,$hi,$score,$played" >> "$LOG"
-    echo "[ratchet] $series: Elo $elo [$lo, $hi]  ($played games)"
+    echo "$today,$iter,$series,$elo,$lo,$hi,$score,$played,$SHAPE" >> "$LOG"
+    echo "[ratchet] $series: Elo $elo [$lo, $hi]  ($played games, $SHAPE shape)"
 }
 
 # --- series 1: vs yesterday (most recent earlier snapshot) ------------------
