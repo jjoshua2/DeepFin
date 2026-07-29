@@ -64,7 +64,7 @@ def _run_starved_ingest(
         buf=DiskReplayBuffer(
             256,
             shard_dir=tmp_path / "replay",
-            rng=np.random.default_rng(0),
+            rng=np.random.default_rng(0), read_only=False,
             shuffle_cap=64,
             shard_size=8,
         ),

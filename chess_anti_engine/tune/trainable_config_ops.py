@@ -23,6 +23,7 @@ from chess_anti_engine.selfplay.config import (
 )
 from chess_anti_engine.selfplay.opening import OpeningConfig
 from chess_anti_engine.train import Trainer
+from chess_anti_engine.train.trainer import resolve_sf_target_params
 from chess_anti_engine.tune.trainable_metrics import _dynamic_sf_wdl_weight
 from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
 import contextlib
@@ -633,6 +634,32 @@ def _sync_trainer_weights(
     take effect immediately.
     """
     _apply_lr_gamma_weights(trainer, config, rescale_current_lr=True)
+
+    # SF target rebuild: construction-time on the Trainer, so it needs an
+    # explicit push or a live yaml edit silently waits for the next restart.
+    # This is what lets an SfTargetParams change hit ~95% of the SF-labelled
+    # rows already in the replay window at the next iteration, instead of only
+    # newly generated data. Not the whole window -- see target_builder.
+    want_rebuild = bool(config.get("rebuild_sf_targets", False))
+    was_rebuild = trainer.rebuild_sf_targets
+    want_params = resolve_sf_target_params(config)
+    # `set_sf_target_rebuild` returns True only when something a live consumer
+    # reads actually moved -- the flag itself, or the params while the rebuild
+    # or sf_policy_sparse_ce is on. With both consumers off, `sf_policy_temp`
+    # edits retune the worker's capture params and touch nothing here.
+    if trainer.set_sf_target_rebuild(enabled=want_rebuild, params=want_params):
+        log.warning(
+            "SF target rebuild: enabled=%s (was %s) params=%s. While ON, SF "
+            "targets are rebuilt from sf_multipv_raw for ~95%% of the "
+            "SF-LABELLED replay rows -- NOT the whole window; rows without "
+            "sf_multipv_raw keep capture-time targets, so the window is a "
+            "mixture of two target regimes. sf_p0_policy_target / "
+            "sf_volatility_target are MASKED (their sources live on other "
+            "shard rows) so has_sf_p0_frac reads 0. The frozen full-pass "
+            "holdout is NOT rebuilt. Proof of effect is "
+            "sf_rebuild_policy_frac in progress.csv, not this line.",
+            want_rebuild, was_rebuild, want_params,
+        )
 
     cur_sf_frac = _dynamic_sf_wdl_weight(
         sf_wdl_start=tc.sf_wdl_frac,

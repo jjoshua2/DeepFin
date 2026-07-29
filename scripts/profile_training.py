@@ -110,6 +110,8 @@ def main() -> None:
         args.num_samples,
         shard_dir=Path(tmpdir) / "replay",
         rng=rng,
+        # Writes synthetic samples (`add_many` below) into a fresh mkdtemp.
+        read_only=False,
         shuffle_cap=args.num_samples,
         shard_size=500,
     )

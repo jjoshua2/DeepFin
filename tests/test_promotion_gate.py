@@ -336,6 +336,8 @@ def test_ingest_splits_anchored_counts_by_publishing_model(tmp_path: Path) -> No
         buf=DiskReplayBuffer(
             256, shard_dir=tmp_path / "replay",
             rng=np.random.default_rng(0), shuffle_cap=64, shard_size=8,
+  # This test INGESTS, so it is a writer (audit G12's required keyword).
+            read_only=False,
         ),
         holdout_buf=ArrayReplayBuffer(32, rng=np.random.default_rng(1)),
         holdout_frac=0.0, holdout_frozen=False,

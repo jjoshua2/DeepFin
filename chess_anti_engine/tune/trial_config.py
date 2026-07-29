@@ -1016,3 +1016,7 @@ class RestoreResult:
     holdout_state_dir: Any = None
     holdout_frozen: bool = False
     holdout_generation: int = 0
+  # Identity of the MEASUREMENT the restored generation was earned under, so a
+  # ruler change across the restart bumps the generation instead of hiding
+  # inside it. "" on any checkpoint written before this was recorded.
+    holdout_ruler: str = ""

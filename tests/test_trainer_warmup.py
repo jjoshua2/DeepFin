@@ -93,6 +93,7 @@ def test_train_batch_iterator_prefetches_across_optimizer_boundary(
         *,
         batch_size: int,
         mirror_prob: float,
+        **_kw: Any,
     ) -> dict[str, np.ndarray]:
         nonlocal sample_index
         del batch_size, mirror_prob
