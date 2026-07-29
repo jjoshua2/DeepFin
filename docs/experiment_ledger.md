@@ -366,6 +366,16 @@ channel (`opening_fen_sf_refute_frac: 0.9`, `plies: 3`), which has been inert
 throughout. These two cannot be separated in this readout — a positive result is
 attributable to "seeding + refute at 16%", not to seeding alone.
 
+**⚑ INTERACTION WITH PR #287 (in-flight game resume) — an argument FOR the low cap.**
+`_resumable_slots` **excludes `fenlist*` slots**, so seeded games are NOT resumed
+across a restart even once #287 is live. Two consequences. (1) #287 shrinks the C14b
+truncation bias for normal games but leaves it **fully intact on the seeded fraction**,
+so the higher the dose, the less of #287's benefit is realized — at cap 0.25 half of
+selfplay would still be abandoned at every restart. (2) It cuts the other way for
+attribution too: a flat or disappointing #287 readout taken while seeding runs hot
+would be **the dose, not the feature**. Both point the same direction — keep the cap at
+0.08, and do not raise it while #287's own readout is open.
+
 **REVERT (live, instant, no restart):** `opening_fen_dole_per_iter: 0`. Pure
 opening-source change — no weights, optimizer or replay state touched, so no salvage
 snapshot is required.
