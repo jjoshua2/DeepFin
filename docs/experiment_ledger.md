@@ -12700,3 +12700,77 @@ needed, and it additionally stops discarding ~256 games' worth of Stockfish
 labels per restart at ~698k nodes each. **If and only if the resume fix proves
 impractical**, revisit (3) with the restart event plumbed through; do not revisit
 (1) or (2), which are measured dead ends.
+
+---
+
+## PRE-REGISTRATION (2026-07-29) — #69 cp-ranked SF policy target
+
+**NOT LAUNCHED. Blocked on a CPU window — see the constraint below.**
+
+**Hypothesis.** The SF policy target is a softmax over cp→WDL logistic scores
+(`sf_wdl_use_cp_logistic: true`, slope 0.0060, draw_width 120,
+`sf_policy_temp: 0.012`). The logistic saturates in decisive positions, so at the
+SAME cp gap a won position gets **2.0x the entropy** of a balanced one (1.907 vs
+0.945) and **0.379 vs 0.648** top-1 mass. The net is therefore taught that
+winning moves are interchangeable, which is a candidate mechanism for
+"we shuffle instead of converting" and matches the Cheese loss profile (80% of
+losses = one collapse). Ranking the target by **cp** instead removes the
+distortion entirely at matched overall top-1 mass (T=16.4cp): won/balanced
+entropy ratio **2.02x → 1.00x**, won top-1 +46%, lost top-1 +103%.
+
+**⚠ WHAT IS ALREADY ESTABLISHED, AND WHAT IS NOT.** The entropy repair is
+measured and solid. It is NOT evidence that cp-ranking is a BETTER TEACHER —
+only that it is a differently-shaped one. Two of my own claims here were already
+measured and refuted: WDL exact ties are 0.0% of positions (the mechanism is
+compression at the logistic's extremes, not ties), and this fix is INDEPENDENT of
+the MultiPV width lever (cp-ranking concentrates mass by only ~2pp).
+
+**⚠ CORRECTION TO A PRIOR NOTE: this is NOT fully offline-screenable.** I
+recorded it as screenable because `cp` is stored per MultiPV row and
+`train/target_builder.py` rebuilds targets with no training compute. Rebuilding
+is free; **judging is not.** Scoring a cp-ranked target against a reference
+derived from the same stored cp is circular — cp-ranking wins by construction.
+Deciding the question needs an INDEPENDENT, DEEPER reference.
+
+**Deciding yardstick — ONE, pre-committed.** On n≥300 unbiased positions drawn
+from real training games (NOT the audit set: it is stratum-BLOCKED, rows 0-1999
+are 1332 endgame + 668 middlegame + ZERO opening, so any 2000-position result is
+an endgame verdict), build a MultiPV 1 @ 3M-node reference and measure **top-1
+agreement with that reference, split by position type**:
+
+```
+PYTHONPATH=. nice -n 19 python3 scripts/probe_policy_targets.py \
+  --shards data/replay --n 300 --unbiased-sample \
+  --reference-nodes 3000000 --reference-multipv 1 \
+  --compare-rankings wdl,cp --split-by-score won,balanced,lost \
+  --dump-per-position data/prereg69/per_position.jsonl
+```
+
+**Pre-committed decision rule, written before the run:**
+- **PROMOTE** if cp-ranking's top-1 agreement with the deep reference beats
+  WDL-ranking by **≥5 percentage points in WON positions (score>0.90)** AND is
+  **not worse by >2pp in balanced positions**. Won positions are the ones the
+  hypothesis is about; a win there that costs balanced play is not a win.
+- **KILL** if cp-ranking is **worse in won positions**, or worse by >2pp
+  overall. The entropy repair being real does not save it.
+- **INCONCLUSIVE** otherwise ⇒ do NOT promote. Inconclusive is a verdict here;
+  "deferred" is not.
+
+Bank `--dump-per-position` with the number — Ray prunes checkpoints same-day and
+a bare summary cannot be re-analysed.
+
+**⚑ THE CONSTRAINT THAT BLOCKS THIS.** Audit D5: Stockfish label generation holds
+**27.1 of 32 cores** during training, and load average sits at ~48/32. A 300 x 3M
+node reference is a large SF job and would directly preempt production labels —
+**and selfplay workers run at `nice 15`, so even a nice-19 job of this size
+distorts the loop it is measuring.** Run it in a training PAUSE window, batched
+with other queued GPU/CPU work. Do NOT run it against live training, and do not
+self-authorize the pause.
+
+**Confounds to record if it runs alongside anything else:** none currently — this
+must be the only data-affecting change in its readout window if it is ever
+promoted to live.
+
+**If PROMOTED, this is a target change, not a config tweak:** the replay window
+holds ~a day of data built under the old ranking, so a yaml flip is not a
+rollback. Snapshot first per protocol step 2.
