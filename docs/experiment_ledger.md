@@ -12552,7 +12552,16 @@ worth running at all.
 ## FINDING (2026-07-29) — the PID observes a LENGTH-TRUNCATED curriculum sample for ~10 iterations after every restart
 
 **Status: MEASURED, no fix launched.** Instrument/control defect, not an
-experiment verdict. Registered as task #71.
+experiment verdict. Registered as task #71 and as audit **C14b**.
+
+**⚠ THIS IS NOT A NEW FINDING — it re-derives audit C14 (2026-07-27), which
+already identified the post-restart winrate bias, already proposed the same
+draw-rate hold rule, and already decided not to intervene.** I found it again
+from the symptom without checking the audit record first. What this pass adds
+is quantification (frequency, cost, a natural control), a strictly better
+discriminator, and one genuinely new defect (the unreachable
+`min_games_between_adjust`). The lesson is the one the audit doc already
+states: read the invariant record before investigating a stage.
 
 **Symptom that started it.** At iters 230-237 regret was climbing steadily
 (0.0725 -> 0.0826, all `fit`/`fit_capped`) while raw winrate ran 0.427-0.489
