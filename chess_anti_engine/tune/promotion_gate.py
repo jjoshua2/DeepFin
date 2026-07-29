@@ -112,11 +112,11 @@ opposite. Standardizing each window's delta by its binomial se, using the
 POOLED per-game score variance (sd 0.3447) rather than a per-window estimate,
 gives a residual sd of **1.011**, where 1.0 is "pure independent binomial".
 Under a simulated pure-binomial null at the realized window shape that
-statistic is 0.994 +/- 0.099, so 1.011 is dead centre. Using per-window
-variance estimates instead gives 1.262 and looks like 26% overdispersion --
-that is an artefact: the same simulation returns 1.373 +/- 0.629 under the
-null, because at n_prev ~ 12-38 the denominator is noisy and correlated with
-the numerator. Use the pooled estimate.
+statistic is 1.007 +/- 0.095 over 200 draws, so 1.011 is dead centre. Using
+per-window variance estimates instead gives 1.262 and looks like 26%
+overdispersion -- that is an artefact: the same simulation returns
+1.365 +/- 0.598 under the null, because at n_prev ~ 12-38 the denominator is
+noisy and correlated with the numerator. Use the pooled estimate.
 
 Two consequences. First, the empirical between-iteration sd absorbs no drift
 variance, because there is none to absorb. Second, the raw sd of 45.6 is
@@ -153,13 +153,14 @@ K=48 rows are UNREACHABLE at ``window_iters: 24`` and are not quoted.
 A -100 or -200 Elo/iteration break -- a bad merge, a broken loss term, a
 mis-set LR -- trips within the ``min_iters`` floor of 8 iterations (~1.5 h).
 The gate does NOT catch the 2026-06 warm-start LR crash (-494 Elo over 74
-iterations = -6.7 Elo/iteration) at any window this design can reach -- power
-there is below 0.02% at every reachable K and line. That class of slow bleed
+iterations = -6.7 Elo/iteration) at any window this design can reach -- the
+worst-case power over K in {8, 12, 16, 24} and lines {-25, -45} is **0.32%**,
+at K=8 / -25. That class of slow bleed
 needs the cumulative vs-frozen-anchor series in
 ``scripts/daily_gate_ratchet.sh``, which is why this gate does not replace it.
 
-THE KNOWN BIAS, AND WHY THE DEFAULT MODE IS ``shadow``
-------------------------------------------------------
+THE KNOWN BIAS, AND WHY THE SHADOW READOUT NEEDS NO CONFIG CHANGE
+-----------------------------------------------------------------
 Model and difficulty are published in ONE manifest, so a game tagged with the
 previous model's sha was also played at the previous iteration's
 ``wdl_regret`` / ``sf_nodes``. While the PID is moving difficulty in one
