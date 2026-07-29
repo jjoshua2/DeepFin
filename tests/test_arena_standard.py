@@ -92,6 +92,12 @@ def test_smoke_arena_matched_sims_cpu(tmp_path):
     d4.push_uci("d2d4")
     openings = [e4, d4]
 
+    # NOTE: this now hard-requires the compiled gumbel extension. The `play`
+    # shape carries vloss_weight=3, and `pick_moves_for_boards` refuses to run
+    # the Python reference with a virtual loss it cannot honour rather than
+    # silently dropping it. Consistent with the repo's no-skips rule (the test
+    # suite hard-requires every extra); it means a missing `.so` fails here
+    # loudly instead of quietly measuring a different search.
     side = resolve_search_shape("play")
     pair_scores = play_paired_games_matched_sims(
         model_a, model_b, openings,

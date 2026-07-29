@@ -99,6 +99,52 @@ def weighted_slope(x: np.ndarray, y: np.ndarray, se: np.ndarray) -> tuple[float,
     return slope, se_slope, slope - Z95 * se_slope, slope + Z95 * se_slope
 
 
+def row_search_shape(row: dict[str, str]) -> str:
+    """Which search measured this row.
+
+    Rows written before 2026-07-29 have no ``search_shape`` column at all: the
+    arena silently seeded itself from ``PLAY_SEARCH_DEFAULTS`` and passed no
+    ``vloss_weight``, so they were measured on the play shape at
+    ``vloss_weight=0`` — a ruler that is no longer reachable from either
+    ``--search-shape`` choice. They get their own label rather than being
+    folded into ``play``.
+    """
+    return (row.get("search_shape") or "legacy_play_vloss0").strip()
+
+
+def _one_ruler_only(rows: list[dict[str, str]], args: argparse.Namespace) -> list[dict[str, str]]:
+    """Refuse to fit a slope across two different instruments.
+
+    A ratchet slope is a claim about the NET improving. Rows measured with
+    different search shapes differ by the instrument as well, so a fit across
+    the break reports the instrument change as training progress. The repo has
+    made exactly this mistake before (the iter-165 'new best model' that was a
+    holdout ruler change, ledger G16).
+    """
+    shapes = {row_search_shape(r) for r in rows}
+    if args.search_shape is not None:
+        kept = [r for r in rows if row_search_shape(r) == args.search_shape]
+        if not kept:
+            raise SystemExit(
+                f"no rows with search_shape={args.search_shape!r}; present: {sorted(shapes)}"
+            )
+        return kept
+    if len(shapes) <= 1 or args.allow_mixed_rulers:
+        if len(shapes) > 1:
+            print(f"! FITTING ACROSS {len(shapes)} RULERS ({sorted(shapes)}) — "
+                  "part of any slope below is the instrument change, not the net")
+        return rows
+    newest = row_search_shape(rows[-1])
+    kept = [r for r in rows if row_search_shape(r) == newest]
+    print(
+        f"! search-shape break in this series: {sorted(shapes)}. Fitting only the "
+        f"newest ruler ({newest}, {len(kept)}/{len(rows)} rows). Rows on the other "
+        "ruler are a different instrument -- pass --search-shape to pick one "
+        "explicitly, or --allow-mixed-rulers to override."
+    )
+    return kept
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ratchet-csv", type=Path, default=ROOT / "data/ratchet/ratchet.csv")
@@ -107,6 +153,13 @@ def main() -> None:
                     help="frozen-anchor series; vs_prev is a moving reference and is NOT the yardstick")
     ap.add_argument("--min-rows", type=int, default=4,
                     help="pre-committed minimum before the slope is a verdict")
+    ap.add_argument("--search-shape", default=None,
+                    help="fit only rows measured with this search shape "
+                         "(default: the newest shape present; see --allow-mixed-rulers)")
+    ap.add_argument("--allow-mixed-rulers", action="store_true",
+                    help="fit across rows measured with DIFFERENT search shapes. "
+                         "Almost never right: the slope would then be part real and "
+                         "part instrument change.")
     args = ap.parse_args()
 
     cum = load_cumulative_steps(args.run_dir)
@@ -114,6 +167,7 @@ def main() -> None:
         rows = [r for r in csv.DictReader(fh) if r.get("series") == args.series]
     if not rows:
         raise SystemExit(f"no rows with series={args.series} in {args.ratchet_csv}")
+    rows = _one_ruler_only(rows, args)
 
     xs, ys, ses, meta = [], [], [], []
     missing = []
@@ -129,7 +183,9 @@ def main() -> None:
         ses.append(se)
         meta.append((r["date"], it, float(r["elo"]), lo, hi, int(float(r["games"])), cum[it]))
 
-    print(f"series: {args.series}   rows usable: {len(xs)}   (need >= {args.min_rows} for a verdict)")
+    rulers = sorted({row_search_shape(r) for r in rows})
+    print(f"series: {args.series}   search shape: {'+'.join(rulers)}   "
+          f"rows usable: {len(xs)}   (need >= {args.min_rows} for a verdict)")
     if missing:
         print(f"  ! {len(missing)} row(s) dropped — iteration not found in any progress CSV: {missing}")
     print()

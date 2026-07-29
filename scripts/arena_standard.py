@@ -1086,6 +1086,10 @@ def run_arena(
   # this enforces audit method rule 7 in code for arch-bearing checkpoints and
   # leaves it a human habit for the rest; check for a `Tolerant load` line on
   # the console before believing a lopsided result off an old checkpoint.
+        assert search_candidate is not None
+        assert search_reference is not None
+        print(f"[arena] SEARCH candidate: {search_candidate.describe()}", flush=True)
+        print(f"[arena] SEARCH reference: {search_reference.describe()}", flush=True)
         print(f"[arena] loading candidate: {candidate}")
         model_candidate = load_model_from_checkpoint(candidate, device=device)
         print(f"[arena] loading reference: {reference}")
@@ -1104,10 +1108,6 @@ def run_arena(
             f"reference={sims_reference} sims/move, temp={temperature}, "
             f"noise={gumbel_add_noise}"
         )
-        assert search_candidate is not None
-        assert search_reference is not None
-        print(f"[arena] SEARCH candidate: {search_candidate.describe()}", flush=True)
-        print(f"[arena] SEARCH reference: {search_reference.describe()}", flush=True)
         # Syzygy adjudication: end each game the instant it reaches a covered
         # (<=N-man) position, so long endgame tails don't dominate the wall clock
         # (reuses match_vs_uci's WDL probe). Opened once, shared across chunks.
@@ -1448,11 +1448,30 @@ def main() -> None:
             vloss_weight=args.ref_vloss_weight,
             target_batch=args.ref_target_batch,
         )
-    elif args.search_shape is not None:
-        raise SystemExit(
-            "--search-shape applies to matched_sims only; matched_time runs UCI "
-            "engine subprocesses with their own play shape (use --uci-args)."
-        )
+    else:
+        # matched_time launches UCI subprocesses, which carry their own search.
+        # EVERY in-process search flag is inert here, not just --search-shape:
+        # accepting `--cand-vloss-weight 5` and running something else is the
+        # exact accepted-then-ignored defect this script was just fixed for, and
+        # it would be newly introduced by the fix. Refuse the whole family.
+        inert = [
+            flag for flag, value in (
+                ("--search-shape", args.search_shape),
+                ("--cand-gumbel", args.cand_gumbel),
+                ("--ref-gumbel", args.ref_gumbel),
+                ("--cand-vloss-weight", args.cand_vloss_weight),
+                ("--ref-vloss-weight", args.ref_vloss_weight),
+                ("--cand-target-batch", args.cand_target_batch),
+                ("--ref-target-batch", args.ref_target_batch),
+            ) if value is not None
+        ]
+        if inert:
+            raise SystemExit(
+                f"{', '.join(inert)} cannot apply to matched_time: it plays through "
+                "UCI engine subprocesses, which build their own search from their "
+                "own flags. Pass engine search settings via --uci-args, or use "
+                "--mode matched_sims."
+            )
 
     run_arena(
         candidate=args.candidate,

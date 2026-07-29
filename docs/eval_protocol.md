@@ -24,13 +24,28 @@ the encoding stored in the checkpoint itself.
    ```bash
    PYTHONPATH=. python3 scripts/arena_standard.py \
        --candidate <ckpt> --reference <ckpt> --games 1000 \
-       --mode matched_sims --sims 64
+       --mode matched_sims --search-shape training --sims 64
 
    PYTHONPATH=. python3 scripts/arena_standard.py \
        --candidate <ckpt> --reference <ckpt> --games 1000 \
        --mode matched_time --ms-per-move 100
    ```
 
+   - **`--search-shape` is REQUIRED for `matched_sims` and has no default.**
+     `training` is what production selfplay runs (`c_scale` 0.1, `topk` 16,
+     linear root, `gumbel_vloss_weight` from the yaml); `play` is the tuned
+     UCI/match shape (`c_scale` 0.025, `topk` 32, log root, `vloss_weight` 3).
+     Judge the training loop with `training`; judge the shipped engine with
+     `play`. Before 2026-07-29 the script silently used the play shape and
+     passed no `vloss_weight` at all, so **every arena Elo recorded before
+     that date was measured on a third configuration neither flag reproduces**
+     (the play shape at `vloss_weight=0`) and is not comparable with anything
+     measured after — see the ledger's 2026-07-28 findings. The realized knobs
+     are printed at startup and stored per row under `search_candidate` /
+     `search_reference`.
+   - `matched_time` rejects `--search-shape` and the other in-process search
+     flags: it plays through UCI subprocesses that build their own search from
+     their own flags. Pass those via `--uci-args`.
    - Openings come from the production 8-move UHO book
      (`opening_book_path_2` in `configs/pbt2_small.yaml`); each opening is
      played twice with colors swapped, and the pair is the unit of analysis.

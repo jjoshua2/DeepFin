@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import ast
 import inspect
+import re
+import sys
 from typing import Any
 
 import chess
@@ -211,6 +213,68 @@ def test_matched_time_rejects_a_shape_it_cannot_apply() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--search-shape", "play"),
+        ("--cand-gumbel", "c_scale=0.5"),
+        ("--ref-gumbel", "c_scale=0.5"),
+        ("--cand-vloss-weight", "5"),
+        ("--ref-vloss-weight", "5"),
+        ("--cand-target-batch", "7"),
+        ("--ref-target-batch", "7"),
+    ],
+)
+def test_matched_time_rejects_every_in_process_search_flag(
+    monkeypatch: Any, flag: str, value: str,
+) -> None:
+    """matched_time runs UCI subprocesses that build their own search.
+
+    Accepting an in-process search flag there and running something else is the
+    accepted-then-ignored defect this whole PR exists to remove — and four of
+    these flags are NEW here, so leaving them inert would have introduced the
+    defect while fixing it. ``--cand-gumbel`` had the hole on main already.
+    """
+    from scripts import arena_standard as arena_mod
+
+    monkeypatch.setattr(sys, "argv", [
+        "arena_standard.py",
+        "--candidate", "c.pt", "--reference", "r.pt",
+        "--mode", "matched_time", "--ms-per-move", "10", "--games", "2",
+        flag, value,
+    ])
+
+    with pytest.raises(SystemExit, match=re.escape(flag)):
+        arena_mod.main()
+
+
+def test_matched_time_without_those_flags_still_gets_past_validation(
+    monkeypatch: Any,
+) -> None:
+    """The rejection above must not pass by matched_time always exiting.
+
+    Stops at the engine launch, which is as far as a test can go without two
+    real checkpoints — the point is that validation let it through.
+    """
+    from scripts import arena_standard as arena_mod
+
+    monkeypatch.setattr(sys, "argv", [
+        "arena_standard.py",
+        "--candidate", "c.pt", "--reference", "r.pt",
+        "--mode", "matched_time", "--ms-per-move", "10", "--games", "2",
+    ])
+    reached: list[str] = []
+
+    def fake_run_arena(**kwargs: Any) -> dict:
+        reached.append(str(kwargs["mode"]))
+        return {}
+
+    monkeypatch.setattr(arena_mod, "run_arena", fake_run_arena)
+    arena_mod.main()
+
+    assert reached == ["matched_time"]
+
+
 def test_the_play_shape_is_the_engine_play_shape() -> None:
     side = resolve_search_shape("play")
 
@@ -291,37 +355,52 @@ def test_a_config_value_actually_reaches_the_arenas_training_shape(
     assert SearchConfig().gumbel_vloss_weight != 2
 
 
-def test_the_training_shape_carries_every_knob_production_sets_from_config() -> None:
+def test_every_config_driven_knob_reaches_the_arena_or_is_provably_inert() -> None:
     """Drift guard: a NEW yaml-driven search knob must reach the arena too.
 
     Reads the ``GumbelConfig(...)`` production selfplay builds
-    (``network_turn.py``) and requires every field it fills from
-    ``search.gumbel_*`` to be pinned by the training shape. Without this the
-    arena silently keeps measuring the OLD shape the day a knob is added —
-    which is how it ended up measuring the play shape in the first place.
+    (``network_turn.py``) and takes every field it fills from ``search.*`` —
+    not just ``search.gumbel_*``: the same call is also fed
+    ``search.volatility_q_scale/_fpu/_anchor``, and a narrower scan would call
+    itself a coverage guard while missing three knobs.
+
+    A field the training shape does not carry passes only if production's value
+    for it equals the ``GumbelConfig`` default, i.e. omitting it is provably a
+    no-op TODAY. Turning such a knob on in the yaml fails this test, which is
+    the intent: the arena would otherwise keep measuring the old shape.
     """
     from chess_anti_engine.selfplay import network_turn
 
     src = inspect.getsource(network_turn.run_network_turn)
-    config_driven: set[str] = set()
+    config_driven: dict[str, str] = {}
     for node in ast.walk(ast.parse(src)):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
             continue
         if node.func.id != "GumbelConfig":
             continue
         for kw in node.keywords:
-            if kw.arg and "search.gumbel_" in ast.unparse(kw.value):
-                config_driven.add(kw.arg)
+            if not kw.arg:
+                continue
+            match = re.search(r"\bsearch\.(\w+)", ast.unparse(kw.value))
+            if match:
+                config_driven[kw.arg] = match.group(1)
 
-    assert config_driven, (
-        "no search.gumbel_* keys found in network_turn's GumbelConfig -- the "
-        "selfplay search construction moved; re-point this test"
+    assert len(config_driven) >= 5, (
+        f"only {sorted(config_driven)} found in network_turn's GumbelConfig -- "
+        "the selfplay search construction moved; re-point this test"
     )
+    search = production_selfplay_search_config()
     pinned = set(resolve_search_shape("training").gumbel) | _ARENA_OWNED_GUMBEL_FIELDS
-    assert not (config_driven - pinned), (
-        f"production selfplay configures {sorted(config_driven - pinned)}, but the "
-        "arena's training shape does not carry it -- --search-shape training would "
-        "measure a search production does not run"
+    live_and_unpinned = {
+        field: (getattr(search, attr), getattr(GumbelConfig(), field))
+        for field, attr in config_driven.items()
+        if field not in pinned and getattr(search, attr) != getattr(GumbelConfig(), field)
+    }
+    assert not live_and_unpinned, (
+        f"production selfplay configures {sorted(live_and_unpinned)} away from the "
+        f"GumbelConfig default {live_and_unpinned}, but the arena's training shape "
+        "does not carry it -- --search-shape training would measure a search "
+        "production does not run"
     )
 
 
