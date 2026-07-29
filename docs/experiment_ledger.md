@@ -260,6 +260,92 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## PRE-REGISTERED (2026-07-29) — the promotion-gate SHADOW READOUT (PR #285), and the two things it must settle before `gate_mode` ever leaves `off`
+
+**This entry exists because `promotion_gate.py` asserted it did.** The constant
+`_READOUT_MIN_ROWS = 40` carries a comment reading *"The ledger pre-registers this
+readout as 'run it after >=40 iterations carrying the `gate_sample_*` columns'"* — and
+no such entry existed. A code comment asserting a pre-registration that was never
+written is this repo's own signature defect pointed at itself, so the entry is written
+here rather than the comment softened. **Found by the round-6 independent review of
+#285, 2026-07-29.**
+
+**Context.** The loop has had **no working selection step**: the old gate ran at
+`gate_games: 0` and reported `gate_passed: 1` while broken three ways. #285 rebuilds it
+as an anchored, free, publish-side circuit breaker. It ships `gate_mode: off` and emits
+`gate_sample_*` columns in shadow.
+
+**THE READOUT (exact command).**
+
+```
+PYTHONPATH=. python3 scripts/gate_shadow_readout.py <progress_csv>
+```
+
+Exit codes: `0` promote_to_enforce · `1` hold_in_shadow · `2` kill · `3` gate never ran
+· `4` no such file. ⚠ **`$?` after a pipe reads the LAST stage's code** — capture the
+exit status directly, not through `| tail`.
+
+**PRECONDITION (enforced in code, not prose).** ≥ **40** rows carrying the
+`gate_sample_*` columns. `harness._rotate_progress_csv_if_schema_changed` starts a
+FRESH `progress.csv` whenever the reported key set changes — **three rotations in four
+days** in this repo — so running the command a few iterations after a rotation reads a
+3-row window, on which every leg passes trivially. A short window reports
+`hold_in_shadow` with a **named** hold leg, not a kill: nothing is broken, the window is
+simply unfinished.
+
+**⚑ TWO BLOCKING FINDINGS THIS READOUT MUST SETTLE — `gate_mode` DOES NOT MOVE OFF
+`off` UNTIL BOTH ARE CLOSED.** Recorded 2026-07-29 from the round-6 review; both are
+confirmed, one by pure algebra.
+
+**(1) The anchored delta may be a CONTROLLED VARIABLE of the PID.** #285's load-bearing
+claim was that anchoring inside one iteration makes the PID cancel. It does not: model
+and difficulty ship in the **same** `recommended_worker` manifest and are live-applied
+together, so the prev arm is one PID step behind on difficulty and **old-model-at-new-
+difficulty is unobservable by construction**. Measured on 259 live iterations: median
+|confound| **7.0 Elo** (p90 23.7), **9.4%** of *healthy* iterations exceed the entire
+−25 demote line, corr(prev winrate, next regret change) **−0.304**, and the mean shift
+after a sub-0.45 winrate is **+15.3 Elo — the MASKING direction**. Closed-loop against
+the repo's real `DifficultyPID`, a −50 Elo/iter break reads **+3.2 Elo instead of −30:
+the sign flips.** This is defect (f), *"a controller pinned the gate's own statistic"*,
+reintroduced one level up inside the module written to eliminate it.
+**DECIDING TEST, on production data rather than simulation:** `ShardMeta` gains
+`wdl_regret_limit` and `sf_nodes` (it had only `model_sha256` / `model_step`, so which
+difficulty each arm played was unrecoverable), and the shadow readout reports the
+predicted confound `Δwdl_regret × pid_regret_fit_slope × 1391` **as a column beside**
+`gate_sample_delta_elo`. **KILL: if |corr(predicted confound, measured delta)| ≥ 0.5
+over the 40-row window, the gate is measuring the controller — do NOT enable, and the
+anchoring design must change (frozen anchor, or difficulty-matched arms).**
+
+**(2) A single-iteration STEP of any magnitude cannot demote.** `regressed = elo_hi <
+demote_delta_elo`, where `elo_hi` bounds the MEAN of a K-row window. For one −M with
+the rest ≈0: `mean = −M/K`, `se = M/K` **exactly**, so `elo_hi = M(t−1)/K` — **positive
+for every t>1, independent of M.** Verified: at K=24, α=0.05 a **−1,000,000 Elo**
+one-shot yields elo_hi **+29,744**; driving the real gate, −100/−300/−600 one-shots
+demote in **0/200** runs. The docstring named what it catches as *"a bad merge, a broken
+loss term, a mis-set LR"* — **a bad merge is a STEP, not a rate.** Not tunable: raising
+K, lowering α or moving the line cannot change the sign. **Requires a separate
+single-iteration leg, pinned by a test that injects a step.** See
+[[window_mean_ci_cannot_detect_a_step]].
+
+**SUCCESS (all four, else stay in shadow):** ≥40 rows; readout exits `0`; the F1
+correlation above is **< 0.5**; and the step leg fires on an injected step in test.
+**KILL:** readout exits `2`, or the F1 correlation is ≥0.5.
+**WATCH, not deciding:** a spurious hold costs at most `max_hold_iters` iterations of
+stale selfplay.
+
+**⚠ LATENCY IS SLOWER THAN THE MODULE CLAIMED.** *"A −100/−200 break trips inside the
+8-iteration floor (~1.5h)"* is the **cold-window** number. From a steady-state 24-row
+window — what production always has — measured medians are −200/iter **7** iters,
+−100/iter **12** (p90 15), −50/iter **20** (p90 27). Budget the readout accordingly.
+
+**Confounds.** None on the readout itself: it is offline, reads a CSV, runs no GPU and
+changes no training. The gate is `off`, so nothing here alters production behaviour
+until `gate_mode` is deliberately moved.
+
+**Revert:** `gate_mode: off` (the shipped default). The publish path is byte-identical
+when `hold_path is None`, and `_init_local_stockfish` already returned `None` at
+`gate_games: 0`, so shadow mode changes no production input.
+
 ## PRE-REGISTERED, NOT LAUNCHED (2026-07-29) — re-enable blind-spot seeding at a LOW cap (`opening_fen_dole_max_fraction` 0.25 → 0.08, `opening_fen_dole_per_iter` 0 → 1)
 
 **Status: pre-registered only. DO NOT FLIP until the preconditions below are met.**
