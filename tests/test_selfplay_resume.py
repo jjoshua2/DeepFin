@@ -16,6 +16,8 @@ counted reason rather than silently producing a shorter or misaligned game.
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -53,6 +55,7 @@ from tests.stockfish_binary import find_stockfish
 
 SF_PATH = find_stockfish()
 FINGERPRINT = "test-fingerprint"
+TRIAL_ID = "trial-a"
 
 _PROD = flatten_run_config_defaults(load_yaml_file("configs/pbt2_small.yaml"))
 
@@ -228,7 +231,7 @@ def _assert_record_identical(before: Any, after: Any, where: str) -> None:
 def _suspend_all(state: SelfplayState, out_dir: Path) -> int:
     report = suspend_inflight_games(
         state, out_dir=out_dir, compat_fingerprint=FINGERPRINT,
-        model_sha="a" * 64, model_step=7,
+        model_sha="a" * 64, model_step=7, trial_id=TRIAL_ID,
     )
     return report.persisted
 
@@ -287,6 +290,12 @@ def test_resume_reencodes_every_inflight_ply_byte_exactly(
     sf = StockfishUCI(SF_PATH, nodes=80, multipv=4)
     try:
         state = _play_session(sf=sf, game=game, games=3, max_steps=10)
+        # The claim under test is about the PRODUCTION C path
+        # (batch_process_ply). Without the extension the records would come
+        # from the Python fallback, which encodes through the same helper the
+        # resume uses — the comparison would degrade toward self-comparison
+        # while still passing.
+        assert state.has_c_ply, "byte-exactness must be proven against the C path"
         before = _inflight_records(state)
         assert before, "no in-flight games to resume"
         assert sum(len(recs) for recs in before.values()) >= 3
@@ -300,6 +309,7 @@ def test_resume_reencodes_every_inflight_ply_byte_exactly(
         target = _fresh_state(game, batch_size=state.batch_size)
         report = resume_inflight_games(
             target, in_dir=out_dir, compat_fingerprint=FINGERPRINT,
+            trial_id=TRIAL_ID,
         )
     finally:
         sf.close()
@@ -343,6 +353,7 @@ def test_resume_restores_slot_state_and_counts_completed_games(
         def _resume(state: SelfplayState) -> None:
             report = resume_inflight_games(
                 state, in_dir=out_dir, compat_fingerprint=FINGERPRINT,
+                trial_id=TRIAL_ID,
             )
             # Snapshot NOW: a resumed game that finishes gets its slot
             # recycled, which clears the per-slot flag by design.
@@ -462,6 +473,7 @@ def _resume_one(path: Path, game: GameConfig) -> Any:
     target = _fresh_state(game, batch_size=2)
     report = resume_inflight_games(
         target, in_dir=path.parent, compat_fingerprint=FINGERPRINT,
+        trial_id=TRIAL_ID,
     )
     return target, report
 
@@ -544,6 +556,7 @@ def test_config_mismatch_and_version_mismatch_are_discarded(tmp_path: Path) -> N
     target = _fresh_state(game, batch_size=2)
     report = resume_inflight_games(
         target, in_dir=path.parent, compat_fingerprint="a-different-fingerprint",
+        trial_id=TRIAL_ID,
     )
     assert report.resumed == 0
     assert report.reasons.get("config_mismatch") == 1
@@ -558,11 +571,144 @@ def test_config_mismatch_and_version_mismatch_are_discarded(tmp_path: Path) -> N
         compat_fingerprint=FINGERPRINT,
     ) == "config_mismatch"
     assert should_resume_game(
-        {"format_version": RESUME_FORMAT_VERSION,
-         "compat_fingerprint": FINGERPRINT,
-         "root_fen": chess.STARTING_FEN, "moves": [], "opening_moves": []},
-        compat_fingerprint=FINGERPRINT,
+        {"format_version": RESUME_FORMAT_VERSION, "compat_fingerprint": FINGERPRINT,
+         "trial_id": "other"},
+        compat_fingerprint=FINGERPRINT, trial_id=TRIAL_ID,
+    ) == "trial_mismatch"
+    ok = {
+        "format_version": RESUME_FORMAT_VERSION,
+        "compat_fingerprint": FINGERPRINT,
+        "trial_id": TRIAL_ID,
+        "root_fen": chess.STARTING_FEN,
+        "moves": [], "opening_moves": [],
+        "final_pos_hash": 12345,
+        "saved_at": time.time(),
+    }
+    assert should_resume_game(
+        ok, compat_fingerprint=FINGERPRINT, trial_id=TRIAL_ID,
     ) is None
+    assert should_resume_game(
+        {**ok, "final_pos_hash": 0}, compat_fingerprint=FINGERPRINT,
+        trial_id=TRIAL_ID,
+    ) == "malformed_meta"
+
+
+def test_negative_control_zeroed_tail_hash_is_rejected(tmp_path: Path) -> None:
+    """The tail guard must not be switchable off by the file it guards. Blanking
+    `final_pos_hash` is rejected outright, so the dropped-trailing-move control
+    above cannot be defeated by also clearing the field."""
+    path, game, _src = _one_suspended_game(tmp_path)
+
+    def _blank(arrays: dict[str, Any]) -> None:
+        meta = _meta_of(arrays)
+        meta["final_pos_hash"] = 0
+        meta["moves"] = list(meta["moves"])[:-1]
+        _set_meta(arrays, meta)
+
+    _rewrite(path, _blank)
+    _target, report = _resume_one(path, game)
+
+    assert report.resumed == 0
+    assert report.reasons.get("malformed_meta") == 1
+
+
+def test_negative_control_tampered_ply_index_is_rejected(tmp_path: Path) -> None:
+    """`ply_index` is not derivable from the moves, and finalize keys its
+    sf_p0 one-ply shift off it — a wrong value shifts a teacher instead of
+    failing. On the C play path it must equal the replayed CBoard ply."""
+    path, game, _src = _one_suspended_game(tmp_path)
+
+    def _shift(arrays: dict[str, Any]) -> None:
+        arrays["ply_index"] = arrays["ply_index"] + 100
+
+    _rewrite(path, _shift)
+    _target, report = _resume_one(path, game)
+
+    assert report.resumed == 0
+    assert report.reasons.get("ply_index_mismatch") == 1
+
+
+def test_a_game_from_another_trial_is_discarded(tmp_path: Path) -> None:
+    """A trial reassignment also tears the session down. A game played under
+    another trial's hyperparameters must not be finished and uploaded here."""
+    path, game, _src = _one_suspended_game(tmp_path)
+    target = _fresh_state(game, batch_size=2)
+    report = resume_inflight_games(
+        target, in_dir=path.parent, compat_fingerprint=FINGERPRINT,
+        trial_id="some-other-trial",
+    )
+    assert report.resumed == 0
+    assert report.reasons.get("trial_mismatch") == 1
+
+
+def test_stale_games_are_discarded_and_swept(tmp_path: Path) -> None:
+    """A game the fleet never came back for is from another era of the run —
+    and nothing else on disk would ever delete it."""
+    path, game, _src = _one_suspended_game(tmp_path)
+
+    def _age(arrays: dict[str, Any]) -> None:
+        meta = _meta_of(arrays)
+        meta["saved_at"] = time.time() - 100_000  # ~27.8h, past the 6h default
+        _set_meta(arrays, meta)
+
+    _rewrite(path, _age)
+    target = _fresh_state(game, batch_size=2)
+    report = resume_inflight_games(
+        target, in_dir=path.parent, compat_fingerprint=FINGERPRINT,
+        trial_id=TRIAL_ID,
+    )
+    # Expiry runs through the SINGLE decision point, so it is counted with a
+    # reason rather than silently swept.
+    assert report.resumed == 0
+    assert report.reasons.get("stale") == 1
+    assert not _state_files(path.parent)
+
+    # The sweep removes the debris a killed suspend/resume leaves behind.
+    orphan_tmp = path.parent / f"x{RESUME_FILE_SUFFIX}.tmp"
+    orphan_claimed = path.parent / f"y{RESUME_FILE_SUFFIX}.claimed"
+    orphan_tmp.write_bytes(b"junk")
+    orphan_claimed.write_bytes(b"junk")
+    old = time.time() - 86_400
+    os.utime(orphan_tmp, (old, old))
+    os.utime(orphan_claimed, (old, old))
+    _fresh = _fresh_state(game, batch_size=2)
+    resume_inflight_games(
+        _fresh, in_dir=path.parent, compat_fingerprint=FINGERPRINT,
+        trial_id=TRIAL_ID, max_age_s=3600.0,
+    )
+    assert not orphan_tmp.exists()
+    assert not orphan_claimed.exists()
+
+
+def test_resume_never_overwrites_a_seeded_slot(tmp_path: Path) -> None:
+    """A fenlist slot has already CONSUMED a doled blind-spot seed at create
+    time and the seed line cannot be pushed back, so resuming over it would
+    destroy the seed silently — the dole's historical failure mode."""
+    path, game, _src = _one_suspended_game(tmp_path)
+    target = _fresh_state(game, batch_size=2)
+    # Both slots look seeded => nothing may be overwritten.
+    target.opening_source_arr[0] = "fenlist"
+    target.opening_source_arr[1] = "fenlist_dole"
+    report = resume_inflight_games(
+        target, in_dir=path.parent, compat_fingerprint=FINGERPRINT,
+        trial_id=TRIAL_ID,
+    )
+    assert (report.resumed, report.discarded) == (0, 0)
+    assert not any(target.resumed_from_disk)
+    # The state file is left for the next session rather than claimed and lost.
+    assert _state_files(path.parent)
+
+    # One free slot => exactly that slot is used, and the seeded one is intact.
+    target2 = _fresh_state(game, batch_size=2)
+    target2.opening_source_arr[0] = "fenlist"
+    target2.opening_source_arr[1] = "book"
+    report2 = resume_inflight_games(
+        target2, in_dir=path.parent, compat_fingerprint=FINGERPRINT,
+        trial_id=TRIAL_ID,
+    )
+    assert report2.resumed == 1
+    assert target2.resumed_from_disk == [False, True]
+    assert target2.opening_source_arr[0] == "fenlist"
 
 
 def test_missing_state_directory_is_a_silent_no_op(tmp_path: Path) -> None:
@@ -570,6 +716,7 @@ def test_missing_state_directory_is_a_silent_no_op(tmp_path: Path) -> None:
     target = _fresh_state(game, batch_size=2)
     report = resume_inflight_games(
         target, in_dir=tmp_path / "does-not-exist", compat_fingerprint=FINGERPRINT,
+        trial_id=TRIAL_ID,
     )
     assert (report.resumed, report.discarded) == (0, 0)
     assert not any(target.resumed_from_disk)

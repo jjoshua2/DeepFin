@@ -3044,6 +3044,12 @@ class WorkerSession:
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
+    def _resume_trial_id(self) -> str:
+        """Trial a suspended game belongs to. A trial reassignment also tears
+        the session down, and a game played under another trial's
+        hyperparameters must not be finished and uploaded under this one."""
+        return str(self.leased_trial_id or self.fixed_trial_id or "")
+
     def _suspend_inflight_games(self, state: Any) -> None:
         """play_batch on_suspend hook: persist this session's in-flight games."""
         # _PendingSfLabel.slot; a label still in flight here dies with the
@@ -3056,6 +3062,7 @@ class WorkerSession:
                 compat_fingerprint=str(self._resume_compat_fingerprint_active),
                 model_sha=str(self.model_sha),
                 model_step=int(self.model_step),
+                trial_id=self._resume_trial_id(),
                 pending_label_slots=[i for i in pending if i >= 0],
             )
         except Exception:
@@ -3076,6 +3083,7 @@ class WorkerSession:
                 compat_fingerprint=str(self._resume_compat_fingerprint_active),
                 model_sha=str(self.model_sha),
                 model_step=int(self.model_step),
+                trial_id=self._resume_trial_id(),
             )
         except Exception:
             self.log.exception("selfplay resume: restore failed; starting fresh games")

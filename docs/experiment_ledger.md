@@ -947,12 +947,15 @@ is wrong.
 **Confounds.** The deploy restart ITSELF runs on old code and still abandons
 its games, so iteration 0 of the window is a normal post-restart transient;
 score from the FIRST flag-ON teardown, not from the deploy. A game suspended
-with an SF label still in flight resumes with that ply unlabelled (counted as
-`label_futures_lost` in the suspend log) — a small target-density dip, not a
-correctness issue.
+with an SF label still in flight loses that future (`label_refetch` in the
+suspend log): a CURRICULUM slot re-buys the label from the reused opponent-move
+future, a SELFPLAY slot leaves that one ply unlabelled — a small target-density
+dip, not a correctness issue.
 **Revert.** `selfplay_resume_inflight_games: false` (restart-keyed, so it
-applies at the next session restart), or revert the PR. With the flag off the
-code path is unreachable and behaviour is byte-identical to today.
+applies at the next session restart), or revert the PR. With the flag off no
+state is written or read and every stored value is byte-identical to today; the
+only unconditional work added is two extra ints per record (a stored zobrist
+read and a list length) and one `mkdir` at worker start.
 **Deploy note.** The key must NOT be added to `configs/pbt2_small.yaml` until
 the workers are restarted onto code that defines it — the live-yaml validator
 is all-or-nothing and one unknown key rejects the WHOLE reload.

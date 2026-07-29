@@ -71,6 +71,13 @@ RESUME_FILE_SUFFIX = ".game.npz"
 # A file is renamed to this before being read, so two selfplay threads (or two
 # worker processes sharing a work dir) can never resume the same game twice.
 _CLAIM_SUFFIX = ".claimed"
+_TMP_SUFFIX = ".tmp"
+
+# A suspended game older than this is not resumed: it comes from a session
+# boundary the worker never came back from, so its opponent difficulty and its
+# net are from another era of the run. It also bounds the directory's size —
+# nothing else deletes a file that is never claimed.
+DEFAULT_MAX_AGE_S: float = 6 * 3600.0
 
 
 class ResumeStateError(ValueError):
@@ -92,7 +99,15 @@ class SuspendReport:
     persisted: int = 0
     skipped: int = 0
     records: int = 0
-    records_awaiting_label: int = 0
+    # Games whose most recent record still had an SF label query in flight. The
+    # future dies with the session. On a CURRICULUM slot the label is re-bought:
+    # the board has not advanced, so the next step's opponent-move future is
+    # reused for the label (submit_async_sf_labels_from_curriculum_moves, gated
+    # on the same "latest record is unlabelled" test). On a SELFPLAY slot it is
+    # not — label queries are submitted for the record created in that same
+    # step — so that one ply stays unlabelled. Counted either way; it is the
+    # bound on what suspension costs in labels.
+    games_with_label_refetch: int = 0
     reasons: dict[str, int] = field(default_factory=dict)
 
     def note(self, reason: str) -> None:
@@ -341,6 +356,10 @@ def _game_payload(state: SelfplayState, i: int) -> dict[str, Any]:
         # covers the tail after the last record, so a move list truncated or
         # extended at the end cannot pass.
         "final_pos_hash": int(state.cboards[i].zobrist_hash),
+        # On the C play path a record's ply_index IS the CBoard ply, so the
+        # replay can check it. The Python fallback counts move_stack entries
+        # instead, which starts from the opening's own stack — not comparable.
+        "has_c_ply": bool(state.has_c_ply),
     }
 
     arrays: dict[str, np.ndarray] = {
@@ -432,6 +451,7 @@ def suspend_inflight_games(
     compat_fingerprint: str,
     model_sha: str,
     model_step: int,
+    trial_id: str = "",
     pending_label_slots: Sequence[int] = (),
 ) -> SuspendReport:
     """Write every in-flight game of ``state`` to ``out_dir``.
@@ -453,6 +473,7 @@ def suspend_inflight_games(
         "model_sha": str(model_sha),
         "model_step": int(model_step),
         "compat_fingerprint": str(compat_fingerprint),
+        "trial_id": str(trial_id or ""),
         "saved_at": float(time.time()),
     }
     for i in range(state.batch_size):
@@ -477,12 +498,12 @@ def suspend_inflight_games(
         report.persisted += 1
         report.records += int(payload["meta"]["n_records"])
         if i in awaiting:
-            report.records_awaiting_label += 1
+            report.games_with_label_refetch += 1
     _LOG.info(
         "selfplay resume: suspended games=%d records=%d skipped=%d [%s] "
-        "label_futures_lost=%d dir=%s",
+        "label_refetch=%d dir=%s",
         report.persisted, report.records, report.skipped,
-        _reason_str(report.reasons), report.records_awaiting_label, out_dir,
+        _reason_str(report.reasons), report.games_with_label_refetch, out_dir,
     )
     return report
 
@@ -494,30 +515,54 @@ def should_resume_game(
     meta: dict[str, Any],
     *,
     compat_fingerprint: str,
+    trial_id: str = "",
+    now_s: float | None = None,
+    max_age_s: float = DEFAULT_MAX_AGE_S,
 ) -> str | None:
     """THE resume-or-discard decision. Returns a discard reason, or None to resume.
 
     Every path that could keep a persisted game funnels through here, so the
-    policy lives in one place: version, record-affecting config identity, and
-    structural sanity of the header. Decoding failures downstream are discards
-    too, but they are failures of the FILE, not of policy.
+    policy lives in one place: version, record-affecting config identity, trial
+    identity, age, and structural sanity of the header. Decoding failures
+    downstream are discards too, but they are failures of the FILE, not of
+    policy.
 
     The record-affecting config must match exactly. Half a game's plies encoded
     under one ``input_history_encoding`` (or one label-shape flag) and half
     under another is a corrupt game, not a resumed one — and a restart-key
     change is precisely when that happens.
+
+    The TRIAL must match too. A trial reassignment also tears the session down,
+    and a game whose plies were produced under another trial's hyperparameters
+    would be uploaded under this one's id. Model swaps within a trial are fine
+    (games already span those); a different trial is not the same experiment.
     """
     version = meta.get("format_version")
     if version != RESUME_FORMAT_VERSION:
         return "version_mismatch"
     if str(meta.get("compat_fingerprint") or "") != str(compat_fingerprint):
         return "config_mismatch"
+    if str(meta.get("trial_id") or "") != str(trial_id or ""):
+        return "trial_mismatch"
     if not isinstance(meta.get("moves"), list) or not isinstance(
         meta.get("opening_moves"), list,
     ):
         return "malformed_meta"
     if not isinstance(meta.get("root_fen"), str) or not meta.get("root_fen"):
         return "malformed_meta"
+    # Written by every writer of this format version; its absence means the
+    # header was tampered with or truncated, and it is the ONLY check that can
+    # see a move list corrupted after the last record (see _replay_and_reencode).
+    if not int(meta.get("final_pos_hash") or 0):
+        return "malformed_meta"
+    age_s = float(now_s if now_s is not None else time.time()) - float(
+        meta.get("saved_at") or 0.0,
+    )
+    if max_age_s > 0 and age_s > max_age_s:
+        # A game older than this is from a session boundary we already gave up
+        # on (worker down, flag toggled off and back); its opponent difficulty
+        # and net are from another era of the run.
+        return "stale"
     return None
 
 
@@ -691,6 +736,7 @@ def _replay_and_reencode(
     game = state.game
     want_lc0_root_alt = bool(game.record_lc0_root_input) and not _uses_lc0_root(game)
     want_relations = bool(game.record_relations)
+    check_ply = bool(meta.get("has_c_ply"))
 
     board = opening_board.copy()
     cb = _CBoard.from_board(opening_board)
@@ -709,6 +755,14 @@ def _replay_and_reencode(
                     "position_mismatch",
                     f"record {r} at offset {k}: the replayed position is not the "
                     "one this record was taken at",
+                )
+            if check_ply and int(cb.ply) != int(f["ply_index"]):
+                # ply_index is not derivable from the moves — finalize keys its
+                # sf_p0 one-ply shift off it, so a wrong value silently shifts
+                # a teacher rather than failing.
+                raise ResumeStateError(
+                    "ply_index_mismatch",
+                    f"record {r}: stored ply {f['ply_index']} != replayed {cb.ply}",
                 )
             if bool(cb.turn) != bool(f["pov_color"]):
                 raise ResumeStateError(
@@ -733,8 +787,10 @@ def _replay_and_reencode(
         raise ResumeStateError(
             "unmatched_record", "not every record was matched to a position",
         )
-    final_hash = int(meta.get("final_pos_hash", 0))
-    if final_hash and int(cb.zobrist_hash) != final_hash:
+    # Mandatory: should_resume_game has already rejected a header without it,
+    # so this cannot be silently skipped.
+    final_hash = int(meta.get("final_pos_hash") or 0)
+    if int(cb.zobrist_hash) != final_hash:
         raise ResumeStateError(
             "final_position_mismatch",
             "replaying the move list does not reach the suspended position",
@@ -810,11 +866,22 @@ def _rebuild_record(
     return rec
 
 
-def decode_game(state: SelfplayState, path: Path, *, compat_fingerprint: str) -> _DecodedGame:
+def decode_game(
+    state: SelfplayState,
+    path: Path,
+    *,
+    compat_fingerprint: str,
+    trial_id: str = "",
+    now_s: float | None = None,
+    max_age_s: float = DEFAULT_MAX_AGE_S,
+) -> _DecodedGame:
     """Load + fully validate one persisted game. Raises ``ResumeStateError``."""
     with np.load(path, allow_pickle=False) as npz:
         meta = _decode_meta(npz)
-        reason = should_resume_game(meta, compat_fingerprint=compat_fingerprint)
+        reason = should_resume_game(
+            meta, compat_fingerprint=compat_fingerprint, trial_id=trial_id,
+            now_s=now_s, max_age_s=max_age_s,
+        )
         if reason is not None:
             raise ResumeStateError(reason, f"file {path.name}")
         n = int(meta.get("n_records", -1))
@@ -872,6 +939,62 @@ def _claim(path: Path) -> Path | None:
     return claimed
 
 
+def _resumable_slots(state: SelfplayState) -> list[int]:
+    """Slots a resumed game may replace, in preference order.
+
+    A fresh game on a fenlist slot has ALREADY consumed a doled blind-spot seed
+    (``SelfplayState.create`` drains ``fen_dole_queue`` at construction), and
+    the seed line cannot be pushed back from here. Overwriting such a slot
+    would silently destroy the seed — the exact "delivered but never played"
+    failure the dole feed has hit before. Non-seeded slots cost nothing to
+    replace, so they are the only targets; when they run out, the remaining
+    state files stay on disk for the next session rather than being claimed
+    and dropped.
+    """
+    return [
+        i for i in range(state.batch_size)
+        if not str(state.opening_source_arr[i]).startswith("fenlist")
+    ]
+
+
+# A state file this far past ``max_age_s`` is garbage-collected without being
+# read. The multiple matters: an expired GAME is meant to be discarded through
+# should_resume_game (so it is counted with a reason), and only a directory
+# nobody is draining should reach the backstop.
+_SWEEP_AGE_MULTIPLE = 4.0
+
+
+def _sweep_orphans(in_dir: Path, *, now_s: float, max_age_s: float) -> int:
+    """Delete the debris of a killed suspend/resume, and long-dead state files.
+
+    Nothing else removes a ``.tmp`` from a suspend killed mid-write or a
+    ``.claimed`` from a resume killed between the rename and the unlink. Whole
+    game files are swept only well past ``max_age_s``, as a bound on a
+    directory nobody drains — the ordinary expiry path is
+    ``should_resume_game`` returning ``stale``, which is counted.
+    """
+    if max_age_s <= 0:
+        return 0
+    removed = 0
+    limits = (
+        (f"*{RESUME_FILE_SUFFIX}{_TMP_SUFFIX}", max_age_s),
+        (f"*{RESUME_FILE_SUFFIX}{_CLAIM_SUFFIX}", max_age_s),
+        (f"*{RESUME_FILE_SUFFIX}", max_age_s * _SWEEP_AGE_MULTIPLE),
+    )
+    for pattern, limit in limits:
+        for path in in_dir.glob(pattern):
+            try:
+                if now_s - path.stat().st_mtime <= limit:
+                    continue
+                path.unlink(missing_ok=True)
+            except OSError:
+                continue
+            removed += 1
+    if removed:
+        _LOG.info("selfplay resume: swept %d expired/orphaned state files", removed)
+    return removed
+
+
 def resume_inflight_games(
     state: SelfplayState,
     *,
@@ -879,31 +1002,39 @@ def resume_inflight_games(
     compat_fingerprint: str,
     model_sha: str = "",
     model_step: int = 0,
+    trial_id: str = "",
     max_games: int | None = None,
+    max_age_s: float = DEFAULT_MAX_AGE_S,
 ) -> ResumeReport:
     """Restore persisted games into ``state``'s fresh slots.
 
     Called from ``play_batch``'s ``on_state_ready`` hook, i.e. after
     ``SelfplayState.create`` has built a full table of fresh games, so every
-    slot is a valid target. Each file is claimed by rename before it is read,
-    so concurrent selfplay threads never resume the same game twice, and it is
-    deleted whether the decode succeeded or failed — a file that cannot be
-    decoded once will not decode later either, and leaving it would retry the
-    same failure at every restart.
+    slot holds a replaceable game. Each file is claimed by rename before it is
+    read, so concurrent selfplay threads never resume the same game twice, and
+    it is deleted whether the decode succeeded or failed — a file that cannot
+    be decoded once will not decode later either, and leaving it would retry
+    the same failure at every restart.
     """
     report = ResumeReport()
     if not in_dir.is_dir():
         return report
-    budget = state.batch_size if max_games is None else min(state.batch_size, max_games)
-    slot = 0
+    now_s = time.time()
+    _sweep_orphans(in_dir, now_s=now_s, max_age_s=max_age_s)
+    slots = _resumable_slots(state)
+    if max_games is not None:
+        slots = slots[: max(0, int(max_games))]
     for path in sorted(in_dir.glob(f"*{RESUME_FILE_SUFFIX}")):
-        if report.resumed >= budget:
+        if report.resumed >= len(slots):
             break
         claimed = _claim(path)
         if claimed is None:
             continue  # another thread took it
         try:
-            game = decode_game(state, claimed, compat_fingerprint=compat_fingerprint)
+            game = decode_game(
+                state, claimed, compat_fingerprint=compat_fingerprint,
+                trial_id=trial_id, now_s=now_s, max_age_s=max_age_s,
+            )
         except ResumeStateError as exc:
             _LOG.warning("selfplay resume: discarding %s: %s", path.name, exc)
             report.note(exc.reason)
@@ -927,14 +1058,27 @@ def resume_inflight_games(
                 saved_sha[:8], game.meta.get("model_step"), model_sha[:8],
                 int(model_step),
             )
-        _restore_into_slot(state, slot, game)
-        slot += 1
+        slot = slots[report.resumed]
+        try:
+            _restore_into_slot(state, slot, game)
+        except Exception as exc:
+            # A half-transplanted slot is the one outcome worse than an
+            # abandoned game: it would play a resumed board against the fresh
+            # game's records. Put the slot back to a clean fresh game.
+            _LOG.warning(
+                "selfplay resume: restore into slot %d failed (%r); recycling it",
+                slot, exc,
+            )
+            state.recycle_slot(slot)
+            report.note("restore_failed")
+            continue
         report.resumed += 1
         report.records += len(game.records)
     _LOG.info(
-        "selfplay resume: resumed games=%d records=%d discarded=%d [%s] dir=%s",
+        "selfplay resume: resumed games=%d records=%d discarded=%d [%s] "
+        "target_slots=%d dir=%s",
         report.resumed, report.records, report.discarded,
-        _reason_str(report.reasons), in_dir,
+        _reason_str(report.reasons), len(slots), in_dir,
     )
     return report
 
