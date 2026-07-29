@@ -182,8 +182,9 @@ A -100 or -200 Elo/iteration break -- a bad merge, a broken loss term, a
 mis-set LR -- trips within the ``min_iters`` floor of 8 iterations (~1.5 h).
 The gate does NOT catch the 2026-06 warm-start LR crash (-494 Elo over 74
 iterations = -6.7 Elo/iteration) at any window this design can reach -- the
-worst-case power over K in {8, 12, 16, 24} and lines {-25, -45} is **0.32%**,
-at K=8 / -25. That class of slow bleed
+worst-case power over K in {8, 12, 16, 24} and lines {-25, -45} is **0.287%**,
+at K=8 / -25 (``test_documented_power_at_the_shipped_line_reproduces`` asserts
+0.0029; the yaml comment rounds it to 0.29%). That class of slow bleed
 needs the cumulative vs-frozen-anchor series in
 ``scripts/daily_gate_ratchet.sh``, which is why this gate does not replace it.
 
@@ -212,7 +213,12 @@ readout must not read -- and re-arms the ~252 MB anchor copy. The readout's job
 is narrow and falsifiable: confirm the IN-LOOP split reproduces the offline
 reconstruction, decided on the per-iteration COUNTS rather than on the delta.
 See ``shadow_readout_verdict`` for why the delta cannot carry that decision and
-what the rule still cannot detect.
+what the rule still cannot detect. The rule ships as ONE implementation and as
+a command::
+
+    PYTHONPATH=. python3 scripts/gate_shadow_readout.py <trial>/progress.csv
+
+which exits 0 promote / 1 hold / 2 kill / 3 the gate never ran.
 
 Note what the metrics must therefore report. A rolling-window mean is not a
 readable series -- consecutive rows share ~95% of their samples, so the sd of
@@ -459,8 +465,14 @@ class GateConfig:
     # Elo/iteration break at sd 45.56 (recomputed by
     # ``test_documented_power_at_the_shipped_line_reproduces``):
     #
-    #     line -45:  K=8 -> 10.0%   K=24 -> 23.9%   (PR round 1 said 14% / 37%)
-    #     line -25:  K=8 -> 48.3%   K=24 -> 92.5%
+    #     line -45:  K=8 ->  9.4%   K=24 -> 23.9%   (PR round 1 said 14% / 37%)
+    #     line -25:  K=8 -> 47.1%   K=24 -> 92.5%
+    #
+    # Exactly: 9.42 / 23.86 / 47.06 / 92.50. An earlier revision of THIS
+    # comment carried 10.0% / 48.3% for the K=8 rows -- those came from the
+    # RETIRED anti-conservative ``_t_quantile`` and OVERSTATE power. The module
+    # docstring said so while this copy, the one sitting next to the shipped
+    # constant, still quoted them.
     #
     # The cost of buying that is a false brake, and it is not measurable at
     # this window: 0 spurious holds in 8000 simulated null iterations at BOTH
@@ -776,12 +788,19 @@ def gate_config_from_dict(config: dict) -> GateConfig:
 # --------------------------------------------------------------------------
 # The shadow readout: the promote-to-enforce decision, as CODE.
 # --------------------------------------------------------------------------
-# It lives here rather than in the ledger's shell one-liner because the two
-# disagreed: the ledger's worked example computed ``usable_frac`` over windows
-# with a non-empty split (51/53 = 0.96) while its command computed it over all
-# progress rows (51/57 = 0.89), against a KILL line of 0.85. One implementation
-# means the worked example and the shipped command CANNOT diverge, and it means
-# the rule is something a test can drive.
+# It lives here rather than in a ledger shell one-liner because a rule stated
+# twice is a rule stated inconsistently, and ``usable_frac`` is where that bites:
+# on the SAME reconstruction, counting only windows with a non-empty split gives
+# 51/53 = 0.962 while counting every progress row gives 51/57 = 0.895, against a
+# KILL line of 0.85. Seven points apart with four points of margin -- the two
+# denominators do not straddle the line here, but a slightly worse window would
+# have them disagree on the verdict, and neither number announces which one it
+# is. ``test_usable_frac_denominator_counts_every_iteration_that_ran`` computes
+# BOTH from the committed rows and pins which one ships (all rows: an iteration
+# that produced no anchored sample is exactly what the leg is meant to count).
+# One implementation means the ledger's number and the shipped command cannot
+# diverge, and it means the rule is something a test can drive.
+# ``scripts/gate_shadow_readout.py`` is that one implementation as a command.
 
 READOUT_PROMOTE = "promote_to_enforce"
 READOUT_HOLD = "hold_in_shadow"
@@ -813,13 +832,31 @@ class OfflineReference:
     n_usable: int = 53
     # Mean ``time_this_iter_s`` over the same 51 rows the counts come from.
     mean_iter_seconds: float = 721.0
-    # Mean anchored games per iteration-SECOND over those rows. Empirical and
-    # aggregate -- it includes the training phase, during which
-    # `distributed_pause_selfplay_during_training` stops selfplay -- so it is a
-    # cadence-normalised count, not a physical selfplay rate. Per-iteration it
-    # spans 0.59x-1.22x of this and the rolling-40 window mean spans
-    # 1.00x-1.05x, which is why its leg is a factor-of-2 band and not tight.
-    games_per_second: float = 0.3411
+
+    @property
+    def games_per_second(self) -> float:
+        """Anchored games per iteration-SECOND, DERIVED so it cannot disagree.
+
+        This was a stored field, ``0.3411``, and it made the reference
+        internally inconsistent by 4.6%::
+
+            mean_games_cur + mean_games_prev   = 235.1
+            games_per_second * mean_iter_secs  = 245.9   (4.6% apart)
+            mean_games_prev                    =  38.3
+            refresh_lag_seconds * games_per_s  =  40.1   (4.6% apart)
+
+        because 0.3411 was the mean of the per-row RATES while ``mean_games_*``
+        are means of per-row COUNTS, and ``E[g/s] != E[g]/E[s]``. Two legs then
+        measured the same window against two different reference loops. Derived
+        here it is 0.32607, and both identities close exactly --
+        ``test_offline_reference_is_internally_consistent`` asserts them.
+
+        It is still an aggregate, cadence-normalised count and NOT a physical
+        selfplay rate: it includes the training phase, during which
+        ``distributed_pause_selfplay_during_training`` stops selfplay. That is
+        why its leg is a factor-of-2 band and not tight.
+        """
+        return (self.mean_games_cur + self.mean_games_prev) / self.mean_iter_seconds
 
     @property
     def refresh_lag_seconds(self) -> float:
@@ -856,7 +893,41 @@ OFFLINE = OfflineReference()
 # exists to pass. Outside the band the readout reports a cadence leg by name
 # rather than extrapolating -- an operator must not read "your cadence moved"
 # as "your attribution is broken".
-_CADENCE_RATIO_MIN = 0.4
+#
+# THE FLOOR IS 0.6 AND IT USED TO BE 0.4, WHICH WAS DECLARED TRUSTED AND WAS
+# NOT. Review round 4 swept a healthy loop across the band and found `kill` on
+# the ATTRIBUTION leg -- "your split is mis-attributing shards", the exact false
+# alarm this rework exists to remove -- for every ratio in [0.40, ~0.46]:
+#
+#     x0.40  cur=79 prev=38 -> kill  ('prev_share 0.3248 vs expected 0.4072')
+#     x0.45  cur=89 prev=38 -> kill
+#     x0.47  cur=92 prev=38 -> promote_to_enforce
+#
+# The cause is NOT the reference's 4.6% inconsistency (fixing that leaves the
+# band unchanged -- the failing leg is `prev_share`, which never read
+# `games_per_second`). It is that below ~0.5x the two defensible pictures of "a
+# healthy loop at k x cadence" stop agreeing, by more than the leg's ENTIRE
+# 0.06 tolerance:
+#
+#   (A) total ingest scales with cadence and the refresh lag is constant in
+#       seconds, so cur = rate*T - rate*L: the model's own picture, under which
+#       expected = refresh_lag/T is exact at every k by construction.
+#   (B) cur alone scales with cadence and prev is pinned at its absolute count
+#       (the sweep's construction, and the shipped test's): expected is then
+#       prev/(prev + cur*k), which is 1/k only to first order in prev_share.
+#
+# Their gap is 0.0000 at 1.0x, 0.0079 at 0.8x, 0.0265 at 0.6x, 0.0455 at 0.5x
+# and 0.0800 at 0.4x, against a 0.06 tolerance -- and on the high side it never
+# exceeds 0.0072 out to 3.0x, which is why only the floor moves. The
+# calibration window itself only spans 0.94x-1.40x (675-1012 s/iter), so
+# everything below 0.6x is extrapolation of a model whose two readings already
+# disagree by half the budget. 0.5x is the lowest ratio that merely passes;
+# 0.6x is the lowest that passes with the model ambiguity under half the
+# tolerance, leaving the rest for actual noise. Production runs 620-750 s/iter
+# against a 721 s reference, so a 0.6 floor (433 s/iter) excludes nothing that
+# has ever been observed. ``test_benign_cadence_change_is_not_reported_as_an_
+# attribution_bug`` sweeps BOTH constructions across the whole band.
+_CADENCE_RATIO_MIN = 0.6
 _CADENCE_RATIO_MAX = 3.0
 
 
@@ -941,8 +1012,24 @@ def shadow_readout_verdict(
 
     The leg is therefore evaluated against ``refresh_lag_seconds / cadence``
     rather than a fixed share, which cuts that excursion from 0.0509 to 0.0058,
-    and a separate CADENCE leg fires by name outside a 0.4x-3.0x band instead
-    of extrapolating a model that stops holding there.
+    and a separate CADENCE leg fires by name outside a 0.6x-3.0x band instead
+    of extrapolating a model that stops holding there. That floor was 0.4x and
+    the band below ~0.46x false-killed a healthy loop on the ATTRIBUTION leg --
+    see ``_CADENCE_RATIO_MIN`` for the two constructions that stop agreeing
+    there.
+
+    THE POOLED-COUNT IDENTITY IS THE ONE LEG WITH NO STATISTICS IN IT. By
+    construction in ``_process_shard``, an accepted shard increments the cur or
+    the prev bucket AND the pooled ``matching_w/d/l`` in the same branch, so::
+
+        gate_sample_games_cur + gate_sample_games_prev
+            == pid_curriculum_w + pid_curriculum_d + pid_curriculum_l
+
+    holds exactly on every iteration that formed a sample -- both sides are
+    already ``progress.csv`` columns. Shard loss between the split and the pool,
+    or a game bucketed to neither arm because its sha went unrecognised, breaks
+    it by an exact integer with no noise to hide in. Rows that carry no
+    ``pid_curriculum_*`` skip the leg rather than passing it.
 
     THE SENSITIVITY FLOOR, because "0.34-0.67" is true only of TOTAL failures.
     Leaking a fraction f of one arm into the other:
@@ -964,10 +1051,10 @@ def shadow_readout_verdict(
     two regimes (0.2545 vs 0.3549 games/s) with margin. ``mean_games_cur`` and
     ``mean_games_prev`` are still REPORTED, and carry no invariance claim.
 
-    Verified across the cadence band: benign 0.5x-2.5x cadence changes all
-    return ``promote_to_enforce`` with no leg firing, 3.5x fires the CADENCE
-    leg by name, and the coin/swap destructions are still caught 50/50 at
-    0.4x, 0.5x, 1.0x, 2.0x and 3.0x.
+    Verified across the cadence band: benign 0.6x-3.0x cadence changes all
+    return ``promote_to_enforce`` with no leg firing under EITHER construction
+    of "healthy at k x cadence", 3.5x fires the CADENCE leg by name, and the
+    coin/swap destructions are still caught 50/50 at 0.6x, 1.0x, 2.0x and 3.0x.
 
     WHAT THIS RULE CANNOT DO, STATED SO NOBODY DISCOVERS IT LATER
     -------------------------------------------------------------
@@ -983,6 +1070,14 @@ def shadow_readout_verdict(
     floor = max(1, int(min_games_per_side))
     usable = [r for r in window
               if r[0] >= floor and r[1] >= floor and not math.isnan(r[2])]
+    # The identity leg, first because it involves no estimation at all: a
+    # mismatch is a plumbing fact, and reading a share or a spread off a window
+    # whose two arms do not add up to the pooled count it was split from is
+    # reading an artefact.
+    pooled_mismatch = [
+        (r[0], r[1], int(r[4])) for r in usable
+        if not math.isnan(r[4]) and r[0] + r[1] != int(r[4])
+    ]
     n_rows, n_usable = len(window), len(usable)
     frac = n_usable / n_rows if n_rows else 0.0
 
@@ -1007,6 +1102,7 @@ def shadow_readout_verdict(
     secs = [r[3] for r in usable if not math.isnan(r[3]) and r[3] > 0.0]
     mean_secs = statistics.mean(secs) if secs else float("nan")
     failed: list[str] = []
+    share_leg_valid = True
     if math.isnan(mean_secs):
         # No `time_this_iter_s` in the rows. Fall back to the raw reference
         # share and SAY SO on a failure, rather than pretending to a
@@ -1014,18 +1110,36 @@ def shadow_readout_verdict(
         expected_share, share_tol, share_note = ref.prev_share, 0.06, " (cadence unknown)"
     else:
         ratio = mean_secs / ref.mean_iter_seconds
-        if not (_CADENCE_RATIO_MIN <= ratio <= _CADENCE_RATIO_MAX):
+        # Outside the band the share model is not trusted, so the share leg is
+        # NOT EVALUATED rather than evaluated against an extrapolation. The
+        # verdict is already `kill` on the cadence leg, so nothing is missed --
+        # what this buys is that the operator reads one unambiguous finding
+        # ("your cadence moved") instead of that finding plus a `prev_share`
+        # failure that means "the model you were told not to trust here says
+        # your attribution is broken".
+        share_leg_valid = _CADENCE_RATIO_MIN <= ratio <= _CADENCE_RATIO_MAX
+        if not share_leg_valid:
             failed.append(
                 f"cadence {mean_secs:.0f}s is {ratio:.2f}x the reference "
                 f"{ref.mean_iter_seconds:.0f}s, outside "
                 f"[{_CADENCE_RATIO_MIN}, {_CADENCE_RATIO_MAX}] -- the "
-                "prev-share model is not trusted here; this is a CADENCE "
-                "finding, NOT an attribution finding"
+                "prev-share model is not trusted here, so the prev_share leg "
+                "was NOT evaluated; this is a CADENCE finding, NOT an "
+                "attribution finding"
             )
         expected_share = ref.refresh_lag_seconds / mean_secs
         share_tol, share_note = 0.06, ""
 
     # -- deciding legs: attribution-sensitive, near-noiseless --------------
+    if pooled_mismatch:
+        c, p, pooled = pooled_mismatch[0]
+        failed.append(
+            f"anchored_games_vs_pooled: {len(pooled_mismatch)} of {n_usable} "
+            f"rows have gate_sample_games_cur+prev != pid_curriculum_w+d+l "
+            f"(first: {c}+{p}={c + p} vs {pooled}) -- the split and the pool it "
+            "was split from disagree, so games were lost or bucketed to neither "
+            "arm. This is an exact integer identity, not a statistic"
+        )
     if frac < 0.85:
         failed.append(f"usable_frac {frac:.3f} < 0.85")
     if not math.isnan(mean_secs):
@@ -1051,7 +1165,7 @@ def shadow_readout_verdict(
             f"{ref.mean_games_cur + ref.mean_games_prev:.1f} (band 0.25-4.0x,"
             " cadence unknown)"
         )
-    if abs(prev_share - expected_share) > share_tol:
+    if share_leg_valid and abs(prev_share - expected_share) > share_tol:
         failed.append(
             f"prev_share {prev_share:.4f} vs expected {expected_share:.4f}"
             f" +/-{share_tol}{share_note}"
@@ -1080,36 +1194,44 @@ def shadow_readout_verdict(
     )
 
 
-def _readout_row(row: Sequence[float]) -> tuple[int, int, float, float]:
-    """Normalise a readout row to (cur, prev, delta_elo, iter_seconds).
+def _readout_row(row: Sequence[float]) -> tuple[int, int, float, float, float]:
+    """Normalise a row to (cur, prev, delta_elo, iter_seconds, pooled_games).
 
-    Three-element rows are accepted so a caller with no cadence column still
-    gets a verdict -- with the cadence adjustment disabled and named.
+    Three- and four-element rows are accepted so a caller with no cadence
+    column, or no pooled-count column, still gets a verdict -- with the
+    corresponding leg disabled and named rather than silently passing.
     """
     cur, prev, delta = int(row[0]), int(row[1]), float(row[2])
     secs = float(row[3]) if len(row) > 3 else float("nan")
-    return cur, prev, delta, secs
+    pooled = float(row[4]) if len(row) > 4 else float("nan")
+    return cur, prev, delta, secs, pooled
 
 
 def shadow_readout_rows_from_csv(
     rows: Iterable[dict[str, str]],
-) -> list[tuple[int, int, float, float]]:
-    """Pull the gate sample columns, plus cadence, out of ``progress.csv`` rows.
+) -> list[tuple[int, int, float, float, float]]:
+    """Pull the gate sample columns, cadence and the pooled curriculum count.
 
     ``time_this_iter_s`` comes along because the ``prev_share`` leg is
     evaluated against a CADENCE-ADJUSTED expectation -- see
     ``OfflineReference.refresh_lag_seconds``. A row missing it still counts;
     the adjustment is then disabled for the whole window and says so.
 
+    ``pid_curriculum_w/d/l`` comes along because their sum is the pooled
+    quantity the gate split, so ``cur + prev == w + d + l`` is an exact
+    identity on every iteration that formed a sample. It is the only leg with
+    no statistics in it, and it catches shard loss and unrecognised-sha
+    bucketing outright. A row missing any of the three skips the leg.
+
     A row whose gate columns are BLANK never ran the gate and is not an
     iteration of the shadow window, so it is dropped. A row with
     ``games_cur == 0`` (the shape during a hold) DID run and is kept, with its
     NaN delta: it is unusable, and dropping it would quietly inflate
-    ``usable_frac`` -- which is the denominator confusion that made the
-    ledger's worked example and its command disagree by 7 points against a
-    kill line 4 points away.
+    ``usable_frac`` -- the denominator confusion worked through in
+    ``test_usable_frac_denominator_counts_every_iteration_that_ran``, where the
+    two readings land 7 points apart with 4 points of margin to the kill line.
     """
-    out: list[tuple[int, int, float, float]] = []
+    out: list[tuple[int, int, float, float, float]] = []
     for r in rows:
         raw_c = r.get("gate_sample_games_cur")
         raw_p = r.get("gate_sample_games_prev")
@@ -1119,16 +1241,29 @@ def shadow_readout_rows_from_csv(
             c, p = int(float(raw_c)), int(float(raw_p))
             d = float(r.get("gate_sample_delta_elo") or "nan")
             secs = float(r.get("time_this_iter_s") or "nan")
+            pid = [r.get(f"pid_curriculum_{k}") for k in ("w", "d", "l")]
+            pooled = (
+                float(sum(int(float(v)) for v in pid if v is not None))
+                if all(v not in (None, "") for v in pid) else float("nan")
+            )
         except ValueError:
             continue
-        out.append((c, p, d, secs))
+        out.append((c, p, d, secs, pooled))
     return out
 
 
 def shadow_readout_from_csv(
     path: str | Path, *, min_games_per_side: int = 15, last_n: int = 40,
 ) -> ShadowReadout:
-    """The ledger's ONE deciding command, as a function. See the ledger entry."""
+    """The shadow window's ONE deciding rule, applied to a ``progress.csv``.
+
+    ``scripts/gate_shadow_readout.py`` is the command form of exactly this
+    call -- one implementation, so the ledger's pre-committed command, the CLI
+    an operator actually runs and the tests cannot drift apart. Before it
+    existed this function was documented as "the ledger's ONE deciding command,
+    as a function" while nothing invoked it: a yardstick pre-committed as an
+    exact command that could not be run as one.
+    """
     with Path(path).open(newline="") as fh:
         rows = shadow_readout_rows_from_csv(csv.DictReader(fh))
     return shadow_readout_verdict(

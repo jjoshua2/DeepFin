@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import dataclasses
+import inspect
 import json
 import math
 import random
@@ -29,7 +30,10 @@ from chess_anti_engine.tune.distributed_runtime import (
     _ingest_distributed_selfplay,
     _publish_distributed_trial_state,
 )
+from chess_anti_engine.tune import promotion_gate
 from chess_anti_engine.tune.promotion_gate import (
+    _CADENCE_RATIO_MAX,
+    _CADENCE_RATIO_MIN,
     DECISION_DEMOTE,
     DECISION_NOT_RUN,
     DECISION_PROMOTE,
@@ -287,6 +291,65 @@ def test_nonzero_gate_games_is_refused() -> None:
     assert cfg.mode == MODE_OFF
 
 
+# Every yaml key -> GateConfig field, with a NON-DEFAULT value for each. The
+# value must differ from the default, or the test cannot tell "the key was read"
+# from "the key was ignored and the default happened to match" -- which is the
+# exact shape this whole module is about.
+_YAML_TO_GATE_FIELD = (
+    ("gate_mode", "mode", MODE_ENFORCE),
+    ("gate_window_iters", "window_iters", 31),
+    ("gate_min_iters", "min_iters", 7),
+    ("gate_min_games_per_side", "min_games_per_side", 23),
+    ("gate_demote_delta_elo", "demote_delta_elo", -37.5),
+    ("gate_alpha", "alpha", 0.01),
+    ("gate_max_hold_iters", "max_hold_iters", 9),
+)
+
+
+@pytest.mark.parametrize(("yaml_key", "field", "value"), _YAML_TO_GATE_FIELD)
+def test_every_yaml_gate_key_reaches_the_gate(
+    yaml_key: str, field: str, value: object,
+) -> None:
+    """MUTATION: hardcode ANY of the seven fields in ``gate_config_from_dict``
+    to its default -- i.e. simulate that yaml key being unreadable.
+
+    All seven survived the whole 61-test suite before this test existed, and
+    ``gate_config_from_dict`` is the ONLY path from the yaml to the gate
+    (one call site, ``trainable.py``). The production yaml deliberately ships
+    no gate keys, so the only way this feature is EVER enabled is an operator
+    adding ``gate_mode: shadow|enforce`` at a restart -- and if that key does
+    not land, ``gate_decision`` stays -1/``disabled`` forever, which is
+    indistinguishable in the metrics from "the window is not full yet". A knob
+    accepted and silently ignored, in the module whose docstrings are about
+    that failure mode.
+    """
+    default = getattr(GateConfig(), field)
+    assert value != default, (
+        f"{yaml_key} must be tested at a NON-DEFAULT value; {value!r} is the "
+        "default, so this row could not distinguish read from ignored"
+    )
+    cfg = gate_config_from_dict({yaml_key: value})
+    assert getattr(cfg, field) == value, (
+        f"{yaml_key} did not reach GateConfig.{field}: got "
+        f"{getattr(cfg, field)!r}, wanted {value!r}"
+    )
+    # ...and every other field keeps its default, so no key writes a neighbour.
+    for _, other, _ in _YAML_TO_GATE_FIELD:
+        if other != field:
+            assert getattr(cfg, other) == getattr(GateConfig(), other)
+
+
+def test_all_seven_yaml_gate_keys_reach_the_gate_together() -> None:
+    """The same seven in ONE dict, as an operator would actually write them,
+    and the result must be a config the gate accepts rather than a shape that
+    only survives because nothing validated it."""
+    cfg = gate_config_from_dict({k: v for k, _, v in _YAML_TO_GATE_FIELD})
+    for _, field, value in _YAML_TO_GATE_FIELD:
+        assert getattr(cfg, field) == value, field
+    cfg.validate()
+    assert PromotionGate(cfg=cfg).cfg.mode == MODE_ENFORCE
+
+
 def test_gate_mode_default_is_off() -> None:
     assert gate_config_from_dict({}).mode == MODE_OFF
     # TrialConfig must NOT carry a second copy of the gate knobs: the copy
@@ -357,6 +420,16 @@ def test_ingest_splits_anchored_counts_by_publishing_model(tmp_path: Path) -> No
     # by a net no longer under comparison.
     assert summary["gate_cur_w"] + summary["gate_prev_w"] == summary["matching_w"]
     assert summary["stale_games"] == 27
+    # THE IDENTITY, at its source. ``_process_shard`` increments one gate arm
+    # and the pooled ``matching_w/d/l`` in the SAME branch, so the two arms and
+    # the pool must add up exactly -- and the pool is what ships to
+    # ``progress.csv`` as ``pid_curriculum_w/d/l``. This is the check with no
+    # statistics in it: shard loss between the split and the pool, or a game
+    # bucketed to neither arm, breaks it by an exact integer.
+    assert (
+        sum(summary[f"gate_{side}_{o}"] for side in ("cur", "prev") for o in "wdl")
+        == sum(summary[f"matching_{o}"] for o in "wdl")
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1147,6 +1220,36 @@ def test_offline_reference_matches_the_committed_reconstruction() -> None:
     assert st.stdev(deltas) == pytest.approx(OFFLINE.sd_delta_elo, abs=0.01)
 
 
+def test_offline_reference_is_internally_consistent() -> None:
+    """MUTATION: store ``games_per_second`` as a literal again.
+
+    It WAS a literal, 0.3411, and it made the reference disagree with itself by
+    4.6% -- because 0.3411 was the mean of the per-row RATES while
+    ``mean_games_*`` are means of per-row COUNTS, and ``E[g/s] != E[g]/E[s]``::
+
+        mean_games_cur + mean_games_prev  = 235.1
+        games_per_second * mean_iter_secs = 245.9   (4.6% apart)
+        mean_games_prev                   =  38.3
+        refresh_lag_seconds * games_per_s =  40.1   (4.6% apart)
+
+    Two legs of one rule were then measuring the same window against two
+    different reference loops, and 4.6% of the margin on each was being spent
+    on the disagreement rather than on noise. Both identities must close.
+    """
+    total = OFFLINE.mean_games_cur + OFFLINE.mean_games_prev
+    assert OFFLINE.games_per_second * OFFLINE.mean_iter_seconds == pytest.approx(
+        total, rel=1e-9), "cadence x rate must reproduce the anchored game count"
+    assert OFFLINE.refresh_lag_seconds * OFFLINE.games_per_second == pytest.approx(
+        OFFLINE.mean_games_prev, abs=0.01), (
+        "the refresh lag, priced at the reference rate, IS the prev arm -- that "
+        "is the whole content of the cadence model"
+    )
+    assert OFFLINE.games_per_second == pytest.approx(0.32607, abs=1e-5)
+    # ...and the share the model is built on is the one the counts imply.
+    assert OFFLINE.mean_games_prev / total == pytest.approx(
+        OFFLINE.prev_share, abs=0.0005)
+
+
 def test_the_live_reconstruction_promotes() -> None:
     """The rule must PASS on the data it was written against.
 
@@ -1266,25 +1369,54 @@ def test_benign_cadence_change_is_not_reported_as_an_attribution_bug() -> None:
     cadence would have reported `kill` -- which the ledger reads as "the split
     is mis-attributing shards".
 
-    Here the loop is perfectly healthy at k x the reference cadence: it plays
-    k x as many cur games while the refresh lag, and therefore the prev arm,
-    stays put.
-    """
-    for mult in (0.5, 0.75, 1.0, 1.5, 2.0, 2.5):
-        secs = OFFLINE.mean_iter_seconds * mult
-        cur = round(OFFLINE.mean_games_cur * mult)
-        rows = [(cur, 38, 8.0 * (1 if i % 2 else -1) * 5.5, secs) for i in range(40)]
-        r = shadow_readout_verdict(rows, last_n=40)
-        assert r.verdict == READOUT_PROMOTE, f"cadence x{mult}: {r}"
+    THE SWEEP RUNS TO THE DECLARED FLOOR, AND UNDER BOTH CONSTRUCTIONS. It used
+    to start at 0.5x, which is why nobody saw that every ratio in
+    [0.40, ~0.46] -- INSIDE the then-declared trusted band of 0.4 -- returned
+    `kill` on the ATTRIBUTION leg. `_CADENCE_RATIO_MIN` is now 0.6, and the
+    reason it is 0.6 rather than 0.5 is that "healthy at k x cadence" has two
+    defensible readings that diverge as k falls:
 
-    # ...and outside the trusted band the CADENCE leg fires BY NAME, so an
-    # operator reads "your cadence moved", not "your attribution is broken".
-    secs = OFFLINE.mean_iter_seconds * 3.5
-    rows = [(762, 38, 8.0 * (1 if i % 2 else -1) * 5.5, secs) for i in range(40)]
-    r = shadow_readout_verdict(rows, last_n=40)
-    assert r.verdict == READOUT_KILL
-    assert r.failed_legs == tuple(x for x in r.failed_legs if x.startswith("cadence"))
-    assert "CADENCE finding" in r.failed_legs[0]
+      pinned_prev  -- cur alone scales, prev keeps its absolute count (what
+                      this test used to assume, and the only one swept)
+      pinned_rate  -- TOTAL ingest scales, the refresh lag stays constant in
+                      seconds, cur = total - prev (the model's own picture)
+
+    They differ by 0.0000 at 1.0x, 0.0265 at 0.6x, 0.0455 at 0.5x and 0.0800 at
+    0.4x, against a 0.06 tolerance. Sweeping only one of them cannot see that,
+    so both are swept, at every 0.05 across the whole declared band.
+    """
+    def rows_for(mult: float, construction: str) -> list[tuple[int, int, float, float]]:
+        secs = OFFLINE.mean_iter_seconds * mult
+        prev = round(OFFLINE.mean_games_prev)
+        if construction == "pinned_prev":
+            cur = round(OFFLINE.mean_games_cur * mult)
+        else:
+            total = (OFFLINE.mean_games_cur + OFFLINE.mean_games_prev) * mult
+            cur = round(total - OFFLINE.mean_games_prev)
+        return [(cur, prev, 8.0 * (1 if i % 2 else -1) * 5.5, secs) for i in range(40)]
+
+    steps = round((_CADENCE_RATIO_MAX - _CADENCE_RATIO_MIN) / 0.05)
+    mults = [round(_CADENCE_RATIO_MIN + 0.05 * i, 10) for i in range(steps + 1)]
+    assert mults[0] == pytest.approx(_CADENCE_RATIO_MIN)
+    assert mults[-1] == pytest.approx(_CADENCE_RATIO_MAX)
+    for construction in ("pinned_prev", "pinned_rate"):
+        for mult in mults:
+            r = shadow_readout_verdict(rows_for(mult, construction), last_n=40)
+            assert r.verdict == READOUT_PROMOTE, (
+                f"{construction} at cadence x{mult:.2f} is a HEALTHY loop and "
+                f"must not be reported as an attribution bug: {r}"
+            )
+
+    # ...and outside the trusted band the CADENCE leg fires BY NAME and ALONE,
+    # so an operator reads "your cadence moved", not "your attribution is
+    # broken". Below the band the share model is the thing that stopped
+    # holding, so its leg is not evaluated at all rather than extrapolated.
+    for mult in (0.4, 3.5):
+        r = shadow_readout_verdict(rows_for(mult, "pinned_prev"), last_n=40)
+        assert r.verdict == READOUT_KILL, mult
+        assert len(r.failed_legs) == 1, f"x{mult}: {r.failed_legs}"
+        assert r.failed_legs[0].startswith("cadence"), r
+        assert "CADENCE finding" in r.failed_legs[0]
 
 
 def test_partial_attribution_leak_sensitivity_floor() -> None:
@@ -1407,20 +1539,40 @@ def test_readout_reports_a_verdict_instead_of_raising_on_a_dead_series() -> None
 
 
 def test_usable_frac_denominator_counts_every_iteration_that_ran() -> None:
-    """The ledger's worked example and its command must share a denominator.
+    """A rule stated twice is stated inconsistently, and this is where it bit.
 
-    The example computed 51/53 = 0.96 (windows with a non-empty split) while
-    the command computed 51/57 = 0.89 (all rows), against a KILL line of 0.85.
-    Seven points apart with four points of margin. There is now one
-    implementation, and the hold-shaped rows -- ``games_cur == 0`` -- stay in
-    the denominator, because an iteration that produced no anchored sample is
-    exactly what the leg is meant to count.
+    ``usable_frac`` has two defensible denominators: windows with a non-empty
+    split, or every progress row. There is now one implementation, and the
+    hold-shaped rows -- ``games_cur == 0`` -- stay in the denominator, because
+    an iteration that produced no anchored sample is exactly what the leg is
+    meant to count.
+
+    THE WORKED EXAMPLE, so the two numbers exist somewhere a reader can check
+    rather than only in prose: on the committed reconstruction, 51 windows
+    clear the floor, 53 have a non-empty split, and 57 rows ran. 51/53 = 0.962
+    against 51/57 = 0.895, with the kill line at 0.85 -- seven points apart
+    with four points of margin, which is close enough that a slightly worse
+    window has the two denominators returning opposite verdicts. The shipped
+    denominator is every row that ran.
     """
-    rows = _rows(_live_samples())
+    live = _live_samples()
+    rows = _rows(live)
     assert len(rows) == 57
     r = shadow_readout_verdict(rows, last_n=_N_LIVE)
     assert r.n_rows == 57
     assert r.usable_frac == pytest.approx(51 / 57, abs=0.005)
+
+    split_rows = [s for s in live if s.cur_games and s.prev_games]
+    assert len(split_rows) == 53
+    assert r.n_usable == 51
+    rejected_denominator = 51 / len(split_rows)   # windows with a split: 0.962
+    shipped_denominator = 51 / len(rows)          # every row that ran:   0.895
+    assert rejected_denominator == pytest.approx(0.962, abs=0.001)
+    assert shipped_denominator == pytest.approx(0.895, abs=0.001)
+    # Both clear the line on THIS window -- the defect was that they are seven
+    # points apart with four points of margin, not that they disagree here.
+    assert min(rejected_denominator, shipped_denominator) > 0.85
+    assert rejected_denominator - shipped_denominator == pytest.approx(0.067, abs=0.001)
 
     # Six more hold-shaped iterations drag it under the line and flip the
     # verdict; they must not be silently dropped.
@@ -1460,6 +1612,147 @@ def test_the_deciding_command_reads_the_sample_columns_from_a_real_csv(
     assert r.verdict == READOUT_PROMOTE, r
     assert r.n_rows == 57
     assert r.sd_delta_elo == pytest.approx(OFFLINE.sd_delta_elo, abs=1.0)
+
+
+def test_the_pooled_count_identity_is_a_deciding_leg(tmp_path: Path) -> None:
+    """MUTATION: drop the ``anchored_games_vs_pooled`` leg, or stop reading
+    ``pid_curriculum_*`` in ``shadow_readout_rows_from_csv``.
+
+    ``gate_sample_games_cur + gate_sample_games_prev
+      == pid_curriculum_w + pid_curriculum_d + pid_curriculum_l``
+    is exact BY CONSTRUCTION -- ``_process_shard`` increments one arm and the
+    pool in the same branch -- and both sides are already progress.csv columns.
+    Every other leg in this rule is a band around an estimate; this one is an
+    integer identity, so it catches shard loss and unrecognised-sha bucketing
+    outright, with no statistics and no tolerance to widen later.
+    """
+    def write(path: Path, *, lose: int) -> None:
+        with path.open("w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=[
+                "training_iteration", "gate_sample_games_cur",
+                "gate_sample_games_prev", "gate_sample_delta_elo",
+                "time_this_iter_s", "pid_curriculum_w", "pid_curriculum_d",
+                "pid_curriculum_l"])
+            w.writeheader()
+            for s in _live_samples():
+                w.writerow({
+                    "training_iteration": s.iteration,
+                    # the SPLIT loses `lose` games that the POOL still counts
+                    "gate_sample_games_cur": max(s.cur_games - lose, 0),
+                    "gate_sample_games_prev": s.prev_games,
+                    "gate_sample_delta_elo": (
+                        s.delta * ELO_PER_SCORE_AT_HALF
+                        if (s.cur_games and s.prev_games) else float("nan")),
+                    "time_this_iter_s": OFFLINE.mean_iter_seconds,
+                    "pid_curriculum_w": s.cur_w + s.prev_w,
+                    "pid_curriculum_d": s.cur_d + s.prev_d,
+                    "pid_curriculum_l": s.cur_l + s.prev_l,
+                })
+
+    clean = tmp_path / "clean.csv"
+    write(clean, lose=0)
+    r = shadow_readout_from_csv(clean, last_n=_N_LIVE)
+    assert r.verdict == READOUT_PROMOTE, r
+
+    # ONE lost game per iteration -- far too small for any band leg to see, and
+    # nowhere near the 0.06 prev_share tolerance -- must still kill.
+    leaky = tmp_path / "leaky.csv"
+    write(leaky, lose=1)
+    r = shadow_readout_from_csv(leaky, last_n=_N_LIVE)
+    assert r.verdict == READOUT_KILL, r
+    assert r.failed_legs == tuple(
+        x for x in r.failed_legs if x.startswith("anchored_games_vs_pooled")), r
+
+    # ...and a window with no pid_curriculum columns SKIPS the leg rather than
+    # passing it, so a schema change cannot quietly retire the check.
+    assert shadow_readout_verdict(
+        [(197, 38, 8.0 * (1 if i % 2 else -1) * 5.5, 721.0) for i in range(40)],
+    ).verdict == READOUT_PROMOTE
+
+
+def test_the_documented_yardstick_is_actually_runnable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MUTATION: delete ``scripts/gate_shadow_readout.py``.
+
+    ``shadow_readout_from_csv`` was documented as "the ledger's ONE deciding
+    command, as a function" while no script or CLI invoked it -- a yardstick
+    pre-committed as an exact command that could not be run as one. The rule
+    and the command must be the same code, and the command must exist.
+
+    Driven through ``main()`` rather than by reading the file, so this fails if
+    the script stops working, not merely if it stops existing.
+    """
+    from scripts.gate_shadow_readout import main
+
+    path = tmp_path / "progress.csv"
+    with path.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=[
+            "training_iteration", "gate_delta_elo", "gate_sample_games_cur",
+            "gate_sample_games_prev", "gate_sample_delta_elo", "time_this_iter_s"])
+        w.writeheader()
+        for s in _live_samples():
+            w.writerow({
+                "training_iteration": s.iteration,
+                "gate_delta_elo": 3.42,          # the window column: a decoy
+                "gate_sample_games_cur": s.cur_games,
+                "gate_sample_games_prev": s.prev_games,
+                "gate_sample_delta_elo": (
+                    s.delta * ELO_PER_SCORE_AT_HALF
+                    if (s.cur_games and s.prev_games) else float("nan")),
+                "time_this_iter_s": OFFLINE.mean_iter_seconds,
+            })
+
+    monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py", str(path),
+                                     "--last-n", str(_N_LIVE), "--verbose"])
+    assert main() == 0, "the reference reconstruction must exit 0 = promote"
+    out = capsys.readouterr().out
+    assert READOUT_PROMOTE in out
+    assert "prev_share=0.16" in out, out
+
+    # A destroyed attribution must exit NON-ZERO, or the command cannot be a
+    # kill rule regardless of what it prints.
+    rng = random.Random(7)
+    with path.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=[
+            "gate_sample_games_cur", "gate_sample_games_prev",
+            "gate_sample_delta_elo", "time_this_iter_s"])
+        w.writeheader()
+        for s in (_redeal(rng, x, "coin") for x in _live_samples()):
+            w.writerow({
+                "gate_sample_games_cur": s.cur_games,
+                "gate_sample_games_prev": s.prev_games,
+                "gate_sample_delta_elo": (
+                    s.delta * ELO_PER_SCORE_AT_HALF
+                    if (s.cur_games and s.prev_games) else float("nan")),
+                "time_this_iter_s": OFFLINE.mean_iter_seconds,
+            })
+    monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py", str(path),
+                                     "--last-n", str(_N_LIVE)])
+    assert main() == 2
+    assert "FAILED:" in capsys.readouterr().out
+
+    # A missing file exits non-zero and says where to look, rather than
+    # traceback-ing out of a command the ledger pre-committed to.
+    monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py",
+                                     str(tmp_path / "nope.csv")])
+    assert main() == 2
+    assert "no such file" in capsys.readouterr().out
+
+    # ...and a csv with NO gate columns -- every progress.csv written before
+    # this module shipped -- reports NOT RUN, not `kill`. An empty window looks
+    # identical to a failed rule from inside the readout, and "did not run
+    # reported as a verdict" is the defect this whole module exists to remove.
+    bare = tmp_path / "bare.csv"
+    with bare.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["training_iteration", "train_loss"])
+        w.writeheader()
+        w.writerow({"training_iteration": 1, "train_loss": 1.0})
+    monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py", str(bare)])
+    assert main() == 3
+    out = capsys.readouterr().out
+    assert out.startswith("NOT RUN")
+    assert not out.startswith(READOUT_KILL)
 
 
 def test_a_hold_erases_its_own_evidence(tmp_path: Path) -> None:
@@ -1565,6 +1858,45 @@ def test_documented_power_at_the_shipped_line_reproduces() -> None:
                 for line in (-25.0, -45.0) for k in (8, 12, 16, 24)
                 for mu in (null - 6.7, -6.7))
     assert worst == pytest.approx(0.0029, abs=0.0003), worst
+    assert round(100 * worst, 3) == 0.287
+
+
+def test_the_documented_power_numbers_are_quoted_consistently_everywhere() -> None:
+    """MUTATION: leave a stale power number in ANY of the three copies.
+
+    These numbers live in four places -- the module docstring, the comment
+    sitting next to the shipped ``demote_delta_elo`` constant, the production
+    yaml, and the test above. Review round 4 found the GateConfig comment still
+    carrying ``10.0%`` / ``48.3%``, computed with the RETIRED anti-conservative
+    ``_t_quantile``, while the module docstring three hundred lines up
+    explicitly said those two numbers were wrong. The copy nobody recomputes is
+    the one that gets cited; that is why "63M not 78.8M" is in this repo's
+    memory index. So the copies are pinned against the source text.
+    """
+    src = inspect.getsource(promotion_gate)
+    cfg_comment = src.split("demote_delta_elo: float")[0].split(
+        "# -25, and the derivation is a FALSE-BRAKE BUDGET")[1]
+    # The TABLE rows only: the prose below them names the retired numbers on
+    # purpose, and a check that cannot tell the table from the note explaining
+    # why the table changed is a check nobody can keep green.
+    table = [ln.strip() for ln in cfg_comment.splitlines() if "line -" in ln]
+    assert len(table) == 2, table
+    for quoted in ("K=8 ->  9.4%", "K=24 -> 23.9%"):
+        assert quoted in table[0], table[0]
+    for quoted in ("K=8 -> 47.1%", "K=24 -> 92.5%"):
+        assert quoted in table[1], table[1]
+    for retired in ("10.0%", "48.3%"):
+        assert not [ln for ln in table if retired in ln], (
+            f"{retired} came from the retired anti-conservative _t_quantile"
+        )
+    # The warm-start worst case is 0.287%, asserted as 0.0029 above and rounded
+    # to 0.29% in the yaml. The docstring used to round it UP to 0.32%.
+    doc = promotion_gate.__doc__ or ""
+    assert "0.287%" in doc
+    assert "0.32%" not in doc
+    yaml_src = (Path(__file__).resolve().parents[1]
+                / "configs" / "pbt2_small.yaml").read_text()
+    assert "worst-case power 0.29%" in yaml_src
 
 
 # --------------------------------------------------------------------------
