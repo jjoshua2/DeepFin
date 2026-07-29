@@ -12546,3 +12546,96 @@ see 1x progress. That is the standing decision rule (same date) demonstrated
 rather than argued: improvement per iteration is ~1500x below measurement noise,
 so only changes plausibly worth >=5-8 Elo/day, or offline-screenable ones, are
 worth running at all.
+
+---
+
+## FINDING (2026-07-29) — the PID observes a LENGTH-TRUNCATED curriculum sample for ~10 iterations after every restart
+
+**Status: MEASURED, no fix launched.** Instrument/control defect, not an
+experiment verdict. Registered as task #71.
+
+**Symptom that started it.** At iters 230-237 regret was climbing steadily
+(0.0725 -> 0.0826, all `fit`/`fit_capped`) while raw winrate ran 0.427-0.489
+under the 0.50 target. Reading that alone suggests the net weakening. It is not.
+
+**Mechanism — length-biased completion sampling.** After a session restart only
+the SHORT curriculum games have finished. The completed-game sample is truncated
+at a length ceiling that rises with wall-clock, so `avg_plies_win` and
+`avg_plies_draw` BOTH ramp monotonically from ~0 back to steady state
+(**78.8 / 118.8 plies**) over ~9 iterations:
+
+```
+restart 220:  k=5  win=47.0  draw=50.2       k=8  win=77.8  draw=87.1
+              k=6  win=60.0  draw=63.7       k=9  win=85.5  draw=94.9
+```
+
+Draws are the LONGEST games, so they arrive last. Hence
+`curriculum_draw_rate` starts at 0.00-0.10 against a steady-state
+**0.486 +/- 0.130**, and `pid_raw_winrate` reads **+0.110 too HIGH
+(t = +2.94)**. `selfplay_draw_rate` stays inside **0.212 +/- 0.038** the whole
+time — the anomaly is confined to the SF-facing stream.
+
+**Why "the net just won faster" is ruled out:** draw length ramps *identically*
+to win length. Strength does not do that; a rising truncation ceiling does.
+Restart 220 k=0 seals it — win=94.0, draw=116.5 (the pre-restart population
+draining), then a 4-iteration gap with no games, then the new population filling
+in from 47 plies upward.
+
+**⚑ THE SAMPLE-SIZE GUARDS CANNOT CATCH THIS.** `sf_pid_min_games_for_adjust:
+30` is a floor on sample SIZE, not on sample COMPOSITION — the biased batches
+carry **n = 230-270 games** and pass trivially. `sf_pid_min_games_between_adjust:
+200` never applies at all: `trainable_phases.py:437` calls
+`pid.observe(..., force=True)` and `pid.py:795` gates that guard on `not force`.
+This is the standing signature defect of this codebase — a guard that is present,
+configured, and cannot fire on the case that matters.
+
+**Cost, with a natural control.** Restart 124 is the one restart with no
+draw-rate collapse:
+
+| restart | draw-rate collapse | cumulative regret change, 12 iters |
+|---|---|---|
+| 81 | yes | **-0.0107** |
+| 163 | yes | **-0.0107** |
+| 220 | yes | **-0.0086** |
+| **124** | **no** | -0.0028, mixed signs |
+
+The PID drives regret DOWN (harder) on the false winrate, then spends ~10
+iterations unwinding it. **A -0.010 spurious tighten equals ~88 iterations of
+genuine progress** at the measured post-C17 rate of -0.000114/iter.
+**71 of 237 iterations (30%)** sit inside a 12-iteration post-restart window, and
+**the PID stepped the lever on 58 of them.**
+
+**Corrects two earlier diagnoses.** This is NOT "the curriculum opponent was
+momentarily weaker" (2026-06-22) and NOT "a 6-game small-sample artifact"
+(2026-06-27). Those may hold for their own episodes; this signature is different,
+reproducible across 3 of 4 clean restarts, and survives the sample-size guard.
+
+**The C17 readout SURVIVES this confound** — re-fit with all 71 post-restart rows
+dropped:
+
+| window | all rows | transient-excluded |
+|---|---|---|
+| pre-C17 (iters 5-120) | -0.000014, t=-1.38 | -0.000008, **t=-0.84** |
+| post-C17 (iters 121+) | -0.000114, t=-9.78 | -0.000120, **t=-7.90** |
+
+Pre-C17 was flat either way; post-C17 tightening is unchanged. The verdict was
+not an artifact of restarts landing inside the post-C17 window.
+
+**Note on the trial:** `opponent_sf_nodes` is pinned at 698289 for all 237 rows
+(`pid_nodes_active: 0`), so within this trial difficulty IS regret. That is not
+true across trials — see the 07-28 correction where the nodes lever had ratcheted
+108k -> 698k.
+
+**Fix options — NONE pre-registered.**
+- (a) **composition gate**: hold the levers while `avg_plies_draw` sits below its
+  trailing steady-state EMA by more than 1 sd. One-sided, self-calibrating,
+  targets the mechanism.
+- (b) fixed ~10-iteration settle window after session start. Crude but
+  predictable.
+- (c) source fix: resume in-flight games across a restart (task #63). Removes the
+  transient entirely; much larger change.
+
+Preference is (a). **It must ship with a negative control** (per the standing
+rule): synthesise a truncated batch and require the gate to FIRE, and require it
+NOT to fire on a genuine winrate shift at steady-state game lengths. A gate that
+cannot fail is the exact defect this entry is about.
