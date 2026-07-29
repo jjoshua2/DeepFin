@@ -6401,6 +6401,60 @@ PLAY-shape substitution. `wdl_regret` sounds like a strength dial; measuring its
 realized candidate set showed it moves 10.4→8.4 moves across its whole range.
 
 
+### PRE-REGISTERED, NOT EXECUTED (2026-07-29) — manually reclaim part of the airbag's spurious +0.05 regret
+
+**Status: written, NOT applied. Needs explicit authorisation** — it is a
+training-affecting live change to the difficulty controller.
+
+**Rationale.** The airbag at iter 2 added **+0.05000** regret on a stale-game
+reading (root-cause entry above). The loop is clawing it back at ~0.06%/iter,
+i.e. **~8.5 days** to return to 0.0393. A manual step recovers most of that
+immediately IF the net can hold the tighter setting.
+
+**The net can take some of it — measured, not assumed.** Regret required to hold
+a ~0.53-0.54 winrate has tightened monotonically: 0.09026 (iters 4-40) → 0.08778
+→ 0.08885 → 0.08181 → **0.07731** (220+). Paired at comparable tightness: early
+n=24 at 0.08367 → wr 0.5546; late n=23 at **0.07552** → wr 0.5368. Harder
+opponent, similar result.
+
+**How far is safe.** Local sensitivity measured within blocks: **≈ −0.035
+winrate per +0.01 regret** (range −0.026 to −0.049 across four windows).
+
+| step to | predicted EMA wr | verdict |
+|---|---|---|
+| 0.070 | ~0.514 | safe |
+| **0.060** | **~0.477** | **safe; saves ~389 iters ≈ 3 days** |
+| 0.050 | ~0.442 | **BELOW the 0.45 airbag floor — refires, −0.05 again** |
+
+**PROPOSAL: step `opponent_wdl_regret_limit` 0.0766 → 0.060, once, and let the
+PID resume from there.** Do NOT go to 0.0393: that value never had a clean
+reading — its EMA was carried from the prior session and its raw was the stale
+0.39 that caused this whole entry.
+
+**THE DECIDING YARDSTICK.** `pid_ema_winrate` over the 10 iterations after the
+step:
+- **SUCCESS**: EMA settles ≥ **0.48** and no `pid_regret_reason == "airbag"`.
+- **KILL / revert to 0.0766**: any `airbag` firing, OR EMA < **0.46** on two
+  consecutive iterations.
+- Read `pid_regret_reason` EVERY iteration for the first 10 — that is the
+  instrument, not the winrate alone.
+
+**Mechanics** (from the clamp-on-load note): pinning below the floor requires
+lowering `sf_pid_wdl_regret_min` and `stage_end` AND editing `pid_state`, then a
+restart. A step DOWN to 0.060 is above the 0.0075 floor, so it needs only the
+`pid_state` edit — but verify the realized value on the FIRST new row, because a
+resume restores the trial config for construction-time keys.
+
+**Confounds.** This changes the training-data difficulty distribution
+immediately. It must not share a readout window with the label/target levers
+(#69, #70) or `feature_dropout_p`. The regret series itself becomes
+discontinuous — mark the step in the ledger so no later slope fit spans it.
+
+**Risk accepted.** If the sensitivity estimate is optimistic the airbag refires
+and costs +0.05 — i.e. the downside is exactly the status quo ante, plus one
+wasted window. The sensitivity figure is a local, noisy estimate from blocks
+where regret barely varied; treat 0.060 as the aggressive end of the safe range.
+
 ### ⚑⚑ ROOT CAUSE (2026-07-29) — the whole regret rise in this trial is ONE airbag firing at iteration 2
 
 Reason-code totals over the full 235-iteration series (`result.json`):
