@@ -838,9 +838,16 @@ tune:
   # AT -25, and at only 23.9% at -45. A -100/-200 break trips inside the
   # 8-iteration floor (~1.5 h) at either line. It does NOT catch the 2026-06
   # warm-start class (-6.7 Elo/iteration) at any reachable window or line
-  # (worst-case power 0.3%). It is a regression alarm, not a selection step;
+  # (worst-case power 0.29%). It is a regression alarm, not a selection step;
   # no affordable measurement can select on 0.02 Elo. The slow-bleed job stays
   # with scripts/daily_gate_ratchet.sh's cumulative vs-frozen-anchor series.
+  #
+  # AND IF YOU EVER SET gate_mode: enforce, know that the brake is PARTIAL:
+  # a hold puts the fleet on one sha, so cur_games goes to 0 and the gate
+  # observes zero rows that evict real samples from its own window. It then
+  # reads NOT_RUN and releases. Measured: 55-66% of iterations held under a
+  # sustained break, never 100%. That is fail-open, not unsafe, but it is not
+  # what "hold the published model" sounds like.
   gate_games: 0           # DEAD KEY: must stay 0
   gate_threshold: 0.50    # DEAD KEY: inert
   gate_interval: 1        # DEAD KEY: inert

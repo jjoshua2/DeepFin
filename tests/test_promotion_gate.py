@@ -46,6 +46,7 @@ from chess_anti_engine.tune.promotion_gate import (
     GateHoldController,
     PromotionGate,
     _t_quantile,
+    _Z_ONE_SIDED,
     gate_config_from_dict,
     gate_metrics,
     resolve_gate_hold_path,
@@ -869,6 +870,55 @@ def test_documented_per_iteration_resolution_holds_at_the_live_shape() -> None:
     assert observed_sd / (0.02 / 2.8) > 1e3
 
 
+def test_t_quantile_is_never_narrower_than_the_exact_t() -> None:
+    """MUTATION: revert to the one-term Cornish-Fisher `z + (z**3+z)/(4 df)`.
+
+    That form was shipped with a docstring claiming it was "conservative
+    (wider)" below df=8. It is the opposite: 1.7% NARROWER at df=7 and 8.5%
+    narrower at df=3 -- and df=3 is reachable, because `validate()` admits
+    `min_iters >= 4`. A CI narrower than its stated alpha demotes more readily
+    than advertised.
+
+    The reference column is `scipy.stats.t.ppf(1 - alpha, df)`, recorded here
+    as literals rather than imported: scipy is not a declared dependency of
+    this package, and a test may not add one.
+    """
+    exact = {
+        # df: (alpha 0.10, 0.05, 0.025, 0.01, 0.005) -- scipy.stats.t.ppf
+        3: (1.63774, 2.35336, 3.18245, 4.54070, 5.84091),
+        5: (1.47588, 2.01505, 2.57058, 3.36493, 4.03214),
+        7: (1.41492, 1.89458, 2.36462, 2.99795, 3.49948),
+        8: (1.39682, 1.85955, 2.30600, 2.89646, 3.35539),
+        12: (1.35622, 1.78229, 2.17881, 2.68100, 3.05454),
+        15: (1.34061, 1.75305, 2.13145, 2.60248, 2.94671),
+        23: (1.31946, 1.71387, 2.06866, 2.49987, 2.80734),
+        50: (1.29871, 1.67591, 2.00856, 2.40327, 2.67779),
+        200: (1.28580, 1.65251, 1.97190, 2.34513, 2.60063),
+    }
+    old_form = {}
+    for df, ref in exact.items():
+        for alpha, e in zip((0.10, 0.05, 0.025, 0.01, 0.005), ref):
+            got = _t_quantile(alpha, df)
+            assert got >= e, (
+                f"alpha={alpha} df={df}: {got:.5f} is NARROWER than the exact "
+                f"t {e:.5f} -- the interval claims more confidence than it has"
+            )
+            assert got <= e * 1.001, (
+                f"alpha={alpha} df={df}: {got:.5f} is {100*(got/e-1):.2f}% "
+                "wider than exact; conservative is right, sloppy is not"
+            )
+            z = _Z_ONE_SIDED[alpha]
+            old_form[(alpha, df)] = z + (z ** 3 + z) / (4.0 * df)
+
+    # ...and pin that the OLD form really was anti-conservative, so the
+    # rationale in the docstring cannot rot into folklore.
+    assert old_form[(0.05, 3)] < exact[3][1] * 0.92
+    assert old_form[(0.05, 7)] < exact[7][1] * 0.99
+
+    # df=3 is reachable from a config edit, which is why this matters.
+    GateConfig(mode=MODE_SHADOW, min_iters=4, window_iters=4).validate()
+
+
 def test_elo_scale_matches_the_logistic_derivative_at_even_score() -> None:
     """MUTATION: change ELO_PER_SCORE_AT_HALF. Every threshold in the config is
     denominated in it."""
@@ -1203,6 +1253,89 @@ def test_size_preserving_reshuffle_is_NOT_detectable_and_the_rule_says_so(
     )
 
 
+def test_benign_cadence_change_is_not_reported_as_an_attribution_bug() -> None:
+    """MUTATION: compare `prev_share` against the RAW reference instead of the
+    cadence-adjusted expectation (i.e. `expected = ref.prev_share`).
+
+    `prev` games are the fleet's model-refresh lag, roughly constant in
+    SECONDS, so a longer iteration shrinks their share with nothing wrong:
+    `corr(time_this_iter_s, prev_share) = -0.332` over the reference window,
+    and a 1.5x cadence change *inside that window* moves the leg 0.0509 against
+    a 0.06 tolerance. An earlier revision claimed the leg was
+    "throughput-invariant". It is not, and a benign restart at a different
+    cadence would have reported `kill` -- which the ledger reads as "the split
+    is mis-attributing shards".
+
+    Here the loop is perfectly healthy at k x the reference cadence: it plays
+    k x as many cur games while the refresh lag, and therefore the prev arm,
+    stays put.
+    """
+    for mult in (0.5, 0.75, 1.0, 1.5, 2.0, 2.5):
+        secs = OFFLINE.mean_iter_seconds * mult
+        cur = round(OFFLINE.mean_games_cur * mult)
+        rows = [(cur, 38, 8.0 * (1 if i % 2 else -1) * 5.5, secs) for i in range(40)]
+        r = shadow_readout_verdict(rows, last_n=40)
+        assert r.verdict == READOUT_PROMOTE, f"cadence x{mult}: {r}"
+
+    # ...and outside the trusted band the CADENCE leg fires BY NAME, so an
+    # operator reads "your cadence moved", not "your attribution is broken".
+    secs = OFFLINE.mean_iter_seconds * 3.5
+    rows = [(762, 38, 8.0 * (1 if i % 2 else -1) * 5.5, secs) for i in range(40)]
+    r = shadow_readout_verdict(rows, last_n=40)
+    assert r.verdict == READOUT_KILL
+    assert r.failed_legs == tuple(x for x in r.failed_legs if x.startswith("cadence"))
+    assert "CADENCE finding" in r.failed_legs[0]
+
+
+def test_partial_attribution_leak_sensitivity_floor() -> None:
+    """The rule's BLIND SPOT, pinned so it stays known rather than surprising.
+
+    "attribution failures move prev_share by 0.34-0.67" is true of TOTAL
+    failures. A partial one-sided leak of fraction f is a different story, and
+    a 10-20% leak from prev into cur is invisible to every leg. That is
+    consistent with the whole-shard argument -- shards are attributed entire by
+    sha, so a partial leak has no mechanism -- but a blind spot that nobody
+    wrote down is how the last two review rounds went.
+    """
+    live = _live_samples()
+
+    def leaked(f: float, direction: str) -> list[tuple[int, int, float, float]]:
+        out = []
+        for s_ in live:
+            c = [s_.cur_w, s_.cur_d, s_.cur_l]
+            pv = [s_.prev_w, s_.prev_d, s_.prev_l]
+            src, dst = (pv, c) if direction == "prev->cur" else (c, pv)
+            for i in range(3):
+                n = round(src[i] * f)
+                src[i] -= n
+                dst[i] += n
+            moved = AnchoredSample(s_.iteration, cur_w=c[0], cur_d=c[1], cur_l=c[2],
+                                   prev_w=pv[0], prev_d=pv[1], prev_l=pv[2])
+            out.append((moved.cur_games, moved.prev_games,
+                        moved.delta * ELO_PER_SCORE_AT_HALF
+                        if (moved.cur_games and moved.prev_games) else float("nan"),
+                        OFFLINE.mean_iter_seconds))
+        return out
+
+    def verdict(f: float, direction: str) -> str:
+        return shadow_readout_verdict(leaked(f, direction), last_n=_N_LIVE).verdict
+
+    # prev -> cur: invisible up to 20%, and at 30% it is `usable_frac` that
+    # notices (the prev arm drops under the floor), NOT `prev_share`.
+    for f in (0.10, 0.20):
+        assert verdict(f, "prev->cur") == READOUT_PROMOTE, f
+    r30 = shadow_readout_verdict(leaked(0.30, "prev->cur"), last_n=_N_LIVE)
+    assert r30.verdict == READOUT_KILL
+    assert any(x.startswith("usable_frac") for x in r30.failed_legs), r30
+
+    # cur -> prev is caught much earlier, on prev_share, because the prev arm
+    # is small and a leak into it moves the share a long way.
+    assert verdict(0.06, "cur->prev") == READOUT_PROMOTE
+    r08 = shadow_readout_verdict(leaked(0.08, "cur->prev"), last_n=_N_LIVE)
+    assert r08.verdict == READOUT_KILL
+    assert any(x.startswith("prev_share") for x in r08.failed_legs), r08
+
+
 def test_every_deciding_leg_is_individually_load_bearing() -> None:
     """MUTATION: loosen ANY ONE leg's bound.
 
@@ -1214,24 +1347,27 @@ def test_every_deciding_leg_is_individually_load_bearing() -> None:
     Each row below trips exactly ONE leg and leaves every other inside its
     bound, so each bound is asserted to be load-bearing on its own.
     """
-    def series(cur: int, prev: int, mean: float, sd: float, *, n: int = 40,
-               dead: int = 0) -> list[tuple[int, int, float]]:
+    def series(cur: int, prev: int, mean: float, sd: float, *, secs: float = 721.0,
+               n: int = 40, dead: int = 0) -> list[tuple[int, int, float, float]]:
         # deltas with exactly the requested mean and sample sd, by construction
         half = [mean - sd / math.sqrt(2), mean + sd / math.sqrt(2)]
-        rows = [(cur, prev, half[i % 2]) for i in range(n)]
-        return rows + [(0, prev, float("nan"))] * dead
+        rows = [(cur, prev, half[i % 2], secs) for i in range(n)]
+        return rows + [(0, prev, float("nan"), secs)] * dead
 
-    cases: list[tuple[str, int, int, float, float, int]] = [
-        # leg,              cur, prev,  mean,   sd, dead
-        ("mean_games_cur",  300,   38,   0.0, 44.0, 0),
-        ("mean_games_prev", 250,   60,   0.0, 44.0, 0),
-        ("prev_share",      140,   56,   0.0, 44.0, 0),
-        ("sd_delta_elo",    197,   38,   0.0,  4.56, 0),
-        ("|mean_delta_elo|", 197,  38,  30.0, 44.0, 0),
-        ("usable_frac",     197,   38,   0.0, 44.0, 10),
+    # Each row trips exactly ONE leg. `secs` is chosen so the cadence-adjusted
+    # `prev_share` expectation still matches, which is what makes the throughput
+    # and share legs separable at all.
+    cases: list[tuple[str, int, int, float, float, float, int]] = [
+        # leg,               cur, prev,  mean,   sd,   secs, dead
+        ("games_per_second",  92,   18,   0.0, 44.0,  721.0, 0),
+        ("prev_share",       140,   56,   0.0, 44.0,  721.0, 0),
+        ("sd_delta_elo",     197,   38,   0.0,  4.56, 721.0, 0),
+        ("|mean_delta_elo|", 197,   38,  30.0, 44.0,  721.0, 0),
+        ("usable_frac",      197,   38,   0.0, 44.0,  721.0, 10),
+        ("cadence",          762,   38,   0.0, 44.0, 2500.0, 0),
     ]
-    for leg, cur, prev, mean, sd, dead in cases:
-        r = shadow_readout_verdict(series(cur, prev, mean, sd, dead=dead),
+    for leg, cur, prev, mean, sd, secs, dead in cases:
+        r = shadow_readout_verdict(series(cur, prev, mean, sd, secs=secs, dead=dead),
                                    last_n=60)
         assert r.verdict == READOUT_KILL, f"{leg}: {r}"
         assert [x for x in r.failed_legs if x.startswith(leg)], (
@@ -1326,6 +1462,72 @@ def test_the_deciding_command_reads_the_sample_columns_from_a_real_csv(
     assert r.sd_delta_elo == pytest.approx(OFFLINE.sd_delta_elo, abs=1.0)
 
 
+def test_a_hold_erases_its_own_evidence(tmp_path: Path) -> None:
+    """The enforce-mode brake is PARTIAL, and this is the mechanism.
+
+    §7 of the PR quoted "~16% of iterations held" -- measured at the RETIRED
+    -45 line, and against a model its own author flagged as an underestimate.
+    At the shipped -25 it is 55-66%. That is a materially different brake, and
+    the reason is not where the line sits:
+
+    during a hold the fleet is on ONE sha, so every accepted shard buckets to
+    prev, `cur_games == 0`, and `_run_net_gating` observes a row of ZEROS.
+    Those rows occupy slots in the 24-long window. Twelve of them evict half
+    the real samples, `len(usable)` drops under `min_iters`, the verdict goes
+    NOT_RUN -- `acted=False` -- and the brake releases. `delta_elo` is frozen
+    at its pre-hold value throughout, because no new sample can form.
+
+    The hold erases its own evidence. Fail-open, so nothing is unsafe; but it
+    is the thing to decide before `enforce`, and it must not be re-quoted at
+    16% again.
+    """
+    anchor = tmp_path / "gate_promoted_model.pt"
+    anchor.write_bytes(b"anchor")
+    gate = _gate(min_games_per_side=5)
+    ctrl = GateHoldController(gate=gate, promoted_model_path=anchor)
+
+    held = zero_rows = not_run = 0
+    longest = run = 0
+    deltas_during_hold: list[float] = []
+    for i in range(120):
+        ctrl.note_published()
+        holding = ctrl.hold_path is not None
+        if holding:
+            gate.observe(AnchoredSample(i))       # the zero row
+            zero_rows += 1
+        else:
+            gate.observe(_sample(i, 0.35, 0.50))  # a sustained regression
+        d = gate.apply(gate.decide())
+        not_run += d.decision == DECISION_NOT_RUN
+        if holding and not math.isnan(d.delta_elo):
+            deltas_during_hold.append(d.delta_elo)
+        ctrl.on_decision(d)
+        if ctrl.hold_path is not None:
+            held += 1
+            run += 1
+            longest = max(longest, run)
+        else:
+            run = 0
+
+    assert held > 0, "the gate must be able to act at all"
+    assert held < 120, "and the brake must be PARTIAL, not 100%"
+    assert 0.3 < held / 120 < 0.9, f"held {held}/120 -- restate §7 if this moved"
+    assert longest <= gate.cfg.max_hold_iters, "the release path must bound a hold"
+    # A hold takes effect on the NEXT publish, so the zero rows trail the
+    # held count by at most one.
+    assert abs(zero_rows - held) <= 1, (
+        f"every held iteration must contribute a zero row (held {held}, "
+        f"zero rows {zero_rows}) -- that is the eviction mechanism"
+    )
+    assert not_run > 0, (
+        "the window must actually go blind: zero rows evicting real samples "
+        "is why the brake releases, not the line position"
+    )
+    # ...and the reported delta is frozen while held, because no new sample
+    # can form. If this ever starts varying, the mechanism has changed.
+    assert len({round(x, 6) for x in deltas_during_hold}) < len(deltas_during_hold)
+
+
 def test_documented_power_at_the_shipped_line_reproduces() -> None:
     """The power numbers in the module docstring, recomputed from scratch.
 
@@ -1343,22 +1545,26 @@ def test_documented_power_at_the_shipped_line_reproduces() -> None:
         crit = line - _t_quantile(0.05, k - 1) * se
         return 0.5 * (1.0 + math.erf(((crit - mu) / se) / math.sqrt(2.0)))
 
-    # A -50 Elo/iteration break lands ON TOP of the measured null.
-    assert power(-45.0, 8, null - 50.0) == pytest.approx(0.100, abs=0.005)
-    assert power(-45.0, 24, null - 50.0) == pytest.approx(0.239, abs=0.005)
-    assert power(-25.0, 8, null - 50.0) == pytest.approx(0.483, abs=0.005)
-    assert power(-25.0, 24, null - 50.0) == pytest.approx(0.925, abs=0.005)
+    # A -50 Elo/iteration break lands ON TOP of the measured null. These moved
+    # by ~0.5 point when `_t_quantile` was made exact -- the old approximation
+    # was anti-conservative, so it OVERSTATED power. They now agree with
+    # scipy.stats.t to two decimals; the -45 rows are the ones that matter,
+    # because the retired line looks even weaker than first corrected.
+    assert power(-45.0, 8, null - 50.0) == pytest.approx(0.0942, abs=0.002)
+    assert power(-45.0, 24, null - 50.0) == pytest.approx(0.2386, abs=0.002)
+    assert power(-25.0, 8, null - 50.0) == pytest.approx(0.4706, abs=0.002)
+    assert power(-25.0, 24, null - 50.0) == pytest.approx(0.9250, abs=0.002)
     # The shipped line is the one that delivers the documented capability.
     assert GateConfig().demote_delta_elo == -25.0
     assert power(-25.0, GateConfig().window_iters, null - 50.0) > 0.90
 
     # The warm-start class (-6.7 Elo/iteration) stays out of reach at every
     # reachable K and line, under either reading of "break": the worst case
-    # over K in {8, 12, 16, 24} x line in {-25, -45} is 0.32%, at K=8 / -25.
+    # over K in {8, 12, 16, 24} x line in {-25, -45} is 0.29%, at K=8 / -25.
     worst = max(power(line, k, mu)
                 for line in (-25.0, -45.0) for k in (8, 12, 16, 24)
                 for mu in (null - 6.7, -6.7))
-    assert worst == pytest.approx(0.0032, abs=0.0003), worst
+    assert worst == pytest.approx(0.0029, abs=0.0003), worst
 
 
 # --------------------------------------------------------------------------

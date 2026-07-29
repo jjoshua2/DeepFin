@@ -141,14 +141,42 @@ the default 24-iteration window (~4.5 h) the window se is **9.3 Elo**. Analytic
 one-sided power against a sustained **-50 Elo/iteration** break, recomputed
 from sd 45.56 by ``test_documented_power_at_the_shipped_line_reproduces``:
 
-    demote line **-25** (shipped):  K=8 -> **48.3%**   K=24 -> **92.5%**
-    demote line -45 (earlier draft): K=8 -> 10.0%      K=24 -> 23.9%
+    demote line **-25** (shipped):  K=8 -> **47.1%**   K=24 -> **92.5%**
+    demote line -45 (earlier draft): K=8 ->  9.4%      K=24 -> 23.9%
 
 An earlier revision of this PR published **14% / 37%** for the -45 rows. Those
-do not reproduce; the -25 rows do. The line ships at -25 for that reason, and
-because 0 spurious holds occurred in 8000 simulated null iterations at either
-line (95% upper bound 0.04%), so the tighter line costs nothing measurable.
-K=48 rows are UNREACHABLE at ``window_iters: 24`` and are not quoted.
+do not reproduce. A later one published 10.0% / 48.3%, computed with the OLD
+``_t_quantile``, which was anti-conservative and therefore OVERSTATED power;
+against the corrected quantile the numbers are 9.4% / 47.1% and now agree with
+``scipy.stats.t`` to two decimals. Both corrections move the retired -45 line
+further from the headline it was quoted with, not closer.
+
+The line ships at -25 because 0 spurious holds occurred in 8000 simulated null
+iterations at EITHER line (95% upper bound 0.04%), so the tighter line costs
+nothing measurable. K=48 rows are UNREACHABLE at ``window_iters: 24`` and are
+not quoted.
+
+WHAT AN ENFORCE-MODE HOLD ACTUALLY DOES -- IT ERASES ITS OWN EVIDENCE
+---------------------------------------------------------------------
+During a hold the fleet is on ONE sha, so every accepted shard buckets to prev
+and ``cur_games == 0``. ``_run_net_gating`` still observes a row -- a row of
+ZEROS -- and those zero rows occupy slots in the ``window_iters``-long window.
+A 12-iteration hold therefore evicts half the real samples, ``len(usable)``
+falls under ``min_iters``, and the verdict goes ``NOT_RUN`` (``acted=False``),
+which RELEASES the brake. Measured through the real ``GateHoldController`` and
+``PromotionGate``, 200 iterations, ``max_hold_iters: 12``, 5 seeds:
+
+    line -25, break  -50 Elo/iter: held 54.6%  longest 12  109 zero rows  45 NOT_RUN
+    line -25, break -100 Elo/iter: held 66.2%  longest 12  131 zero rows  66 NOT_RUN
+    line -45, break -100 Elo/iter: held 65.8%
+    line -25 or -45, no break:     held  0.0%
+
+and ``delta_elo`` is FROZEN at its pre-hold value for the whole hold (-94.2 for
+all 12 iterations in one run), because no new sample can form. So the brake is
+**partial by construction, at 55-66%**, and the cause is the zero-row eviction
+rather than where the line sits. This is fail-open, so nothing is unsafe, but
+it is the thing to decide before turning ``enforce`` on -- see the PR's open
+questions. ``test_a_hold_erases_its_own_evidence`` pins the mechanism.
 
 A -100 or -200 Elo/iteration break -- a bad merge, a broken loss term, a
 mis-set LR -- trips within the ``min_iters`` floor of 8 iterations (~1.5 h).
@@ -240,6 +268,29 @@ ELO_PER_SCORE_AT_HALF = 400.0 / (math.log(10.0) * 0.25)
 # sizes; ``_t_quantile`` widens these for small df instead of adding a scipy
 # dependency to the training loop.
 _Z_ONE_SIDED = {0.10: 1.2816, 0.05: 1.6449, 0.025: 1.9600, 0.01: 2.3263, 0.005: 2.5758}
+_T_ALPHA_ORDER = (0.10, 0.05, 0.025, 0.01, 0.005)
+# Exact one-sided t quantiles for the df the gate can actually reach, rounded
+# UP at the 4th decimal so every entry is >= the true value. See _t_quantile:
+# the asymptotic series this replaces was anti-conservative by 8.5% at df=3,
+# which `validate()`'s `min_iters >= 4` floor makes reachable.
+_T_EXACT_SMALL_DF = {
+    # df: (alpha 0.10, 0.05, 0.025, 0.01, 0.005)
+    1: (3.0777, 6.3138, 12.7063, 31.8206, 63.6568),
+    2: (1.8857, 2.9200, 4.3027, 6.9646, 9.9249),
+    3: (1.6378, 2.3534, 3.1825, 4.5408, 5.8410),
+    4: (1.5333, 2.1319, 2.7765, 3.7470, 4.6041),
+    5: (1.4759, 2.0151, 2.5706, 3.3650, 4.0322),
+    6: (1.4398, 1.9432, 2.4470, 3.1427, 3.7075),
+    7: (1.4150, 1.8946, 2.3647, 2.9980, 3.4995),
+    8: (1.3969, 1.8596, 2.3061, 2.8965, 3.3554),
+    9: (1.3831, 1.8332, 2.2622, 2.8215, 3.2499),
+    10: (1.3722, 1.8125, 2.2282, 2.7638, 3.1693),
+    11: (1.3635, 1.7959, 2.2010, 2.7181, 3.1059),
+    12: (1.3563, 1.7823, 2.1789, 2.6810, 3.0546),
+    13: (1.3502, 1.7710, 2.1604, 2.6504, 3.0123),
+    14: (1.3451, 1.7614, 2.1448, 2.6245, 2.9769),
+    15: (1.3407, 1.7531, 2.1315, 2.6025, 2.9468),
+}
 
 log = logging.getLogger(__name__)
 
@@ -250,12 +301,28 @@ def elo_from_score_delta(delta: float) -> float:
 
 
 def _t_quantile(alpha: float, df: int) -> float:
-    """One-sided t quantile, table-free.
+    """One-sided t quantile, scipy-free and NEVER narrower than the exact t.
 
-    Uses the normal quantile inflated by the Cornish-Fisher correction
-    ``z + (z**3 + z) / (4 df)``, which is within ~1% of the exact t for
-    df >= 8 and conservative (wider) below it. The gate's minimum window is 8
-    iterations, so this is the regime it runs in.
+    An earlier revision used the one-term Cornish-Fisher correction
+    ``z + (z**3 + z) / (4 df)`` and documented it as "within ~1% for df >= 8
+    and conservative (wider) below it". Both halves were wrong: it is
+    ANTI-conservative at every df, by 1.7% at df=7 and **8.5% at df=3** -- and
+    df=3 is reachable, because ``validate()`` admits ``min_iters >= 4``. A CI
+    that is narrower than it claims demotes more readily than its stated alpha,
+    which is the cheap direction, but "documented as the opposite of what it
+    does" is the defect class this module exists to remove.
+
+    Two branches, both conservative by construction:
+
+    * ``df <= 15`` -- the exact quantile from the table below, rounded UP at
+      the 4th decimal. This is the regime the gate can actually reach.
+    * ``df >= 16`` -- the five-term Cornish-Fisher expansion, whose worst
+      shortfall against the exact t over all supported alphas and every
+      ``df >= 16`` is 0.0026%, scaled by ``1 + 1e-4`` so the margin dominates
+      the truncation error.
+
+    ``test_t_quantile_is_never_narrower_than_the_exact_t`` pins the direction
+    against exact literals, so this cannot silently regress.
     """
     z = _Z_ONE_SIDED.get(round(float(alpha), 4))
     if z is None:
@@ -264,7 +331,19 @@ def _t_quantile(alpha: float, df: int) -> float:
         )
     if df <= 0:
         return float("inf")
-    return float(z + (z ** 3 + z) / (4.0 * df))
+    exact = _T_EXACT_SMALL_DF.get(int(df))
+    if exact is not None:
+        return float(exact[_T_ALPHA_ORDER.index(round(float(alpha), 4))])
+    v = float(df)
+    series = (
+        z
+        + (z ** 3 + z) / (4.0 * v)
+        + (5.0 * z ** 5 + 16.0 * z ** 3 + 3.0 * z) / (96.0 * v ** 2)
+        + (3.0 * z ** 7 + 19.0 * z ** 5 + 17.0 * z ** 3 - 15.0 * z) / (384.0 * v ** 3)
+        + (79.0 * z ** 9 + 776.0 * z ** 7 + 1482.0 * z ** 5
+           - 1920.0 * z ** 3 - 945.0 * z) / (92160.0 * v ** 4)
+    )
+    return float(series * (1.0 + 1.0e-4))
 
 
 @dataclass(frozen=True)
@@ -721,6 +800,9 @@ class OfflineReference:
     ``tests/test_promotion_gate.py`` carries the 57-row reconstruction itself
     and recomputes every field here from it, so these cannot drift into being
     decoration.
+
+    ``mean_iter_seconds`` is the cadence the other fields were measured at, and
+    it is load-bearing rather than decorative: see ``refresh_lag_seconds``.
     """
 
     mean_games_cur: float = 196.8
@@ -729,9 +811,53 @@ class OfflineReference:
     mean_delta_elo: float = -4.33
     sd_delta_elo: float = 45.56
     n_usable: int = 53
+    # Mean ``time_this_iter_s`` over the same 51 rows the counts come from.
+    mean_iter_seconds: float = 721.0
+    # Mean anchored games per iteration-SECOND over those rows. Empirical and
+    # aggregate -- it includes the training phase, during which
+    # `distributed_pause_selfplay_during_training` stops selfplay -- so it is a
+    # cadence-normalised count, not a physical selfplay rate. Per-iteration it
+    # spans 0.59x-1.22x of this and the rolling-40 window mean spans
+    # 1.00x-1.05x, which is why its leg is a factor-of-2 band and not tight.
+    games_per_second: float = 0.3411
+
+    @property
+    def refresh_lag_seconds(self) -> float:
+        """The prev arm's implied duration, in SECONDS -- the cadence-free form.
+
+        ``prev`` games are not a fixed fraction of ingest. They are the fleet's
+        model-refresh lag: shards still tagged with the previous sha because the
+        worker had not picked up the new manifest yet. That lag is roughly
+        constant in wall-clock seconds, so a longer iteration shrinks its SHARE
+        without anything being wrong. Measured on the reference window:
+
+            corr(time_this_iter_s, prev_share) = **-0.332** (n=51)
+            slow half (815 s/iter): prev_share 0.1438
+            fast half (629 s/iter): prev_share 0.1820
+            iters <=175 (1012 s/iter): 0.1218 | iters >175 (675 s/iter): 0.1728
+              -> a 0.0509 excursion, 85% of the leg's 0.06 tolerance, from a
+                 1.5x cadence change INSIDE the calibration window
+
+        ``prev_share * iter_seconds`` removes most of that: the same early/late
+        split moves this quantity by **7.5%** where it moves ``prev_share`` by
+        **31.1%**. So the leg is evaluated against ``refresh_lag / cadence``
+        rather than against a fixed share.
+        """
+        return self.prev_share * self.mean_iter_seconds
 
 
 OFFLINE = OfflineReference()
+
+# The band of cadence ratios over which the 1/cadence model is trusted.
+# Below the floor the model predicts shares approaching
+# ``distributed_prev_model_max_fraction: 0.60``, where the CAP starts binding
+# and the model stops holding (it predicts 0.60 at ~0.27x); it also erodes the
+# margin against a coin-shuffle's ~0.50, which is the negative control the leg
+# exists to pass. Outside the band the readout reports a cadence leg by name
+# rather than extrapolating -- an operator must not read "your cadence moved"
+# as "your attribution is broken".
+_CADENCE_RATIO_MIN = 0.4
+_CADENCE_RATIO_MAX = 3.0
 
 
 @dataclass(frozen=True)
@@ -747,21 +873,29 @@ class ShadowReadout:
     prev_share: float
     mean_delta_elo: float
     sd_delta_elo: float
+    # Cadence of the read window, and the prev_share it implies. NaN when the
+    # rows carry no `time_this_iter_s`, in which case the raw reference share
+    # is used and `failed_legs` says so on a failure.
+    mean_iter_seconds: float = float("nan")
+    expected_prev_share: float = float("nan")
     failed_legs: tuple[str, ...] = ()
 
     def __str__(self) -> str:
+        cad = (f"  cadence={self.mean_iter_seconds:.0f}s "
+               f"expected_prev_share={self.expected_prev_share:.4f}"
+               if not math.isnan(self.mean_iter_seconds) else "  cadence=unknown")
         return (
             f"{self.verdict}  rows={self.n_rows} usable={self.n_usable} "
             f"({self.usable_frac:.3f})  games_cur={self.mean_games_cur:.1f} "
             f"games_prev={self.mean_games_prev:.1f} "
-            f"prev_share={self.prev_share:.4f}  "
+            f"prev_share={self.prev_share:.4f}{cad}  "
             f"delta mean={self.mean_delta_elo:.2f} sd={self.sd_delta_elo:.2f}"
             + (f"  FAILED: {', '.join(self.failed_legs)}" if self.failed_legs else "")
         )
 
 
 def shadow_readout_verdict(
-    rows: Sequence[tuple[int, int, float]],
+    rows: Sequence[Sequence[float]],
     *,
     min_games_per_side: int = 15,
     last_n: int = 40,
@@ -794,11 +928,46 @@ def shadow_readout_verdict(
     and empties the window. All three are caught every time
     (``test_negative_control_reshuffled_attribution_is_killed``).
 
-    The count tolerances are deliberately WIDE against throughput drift and
-    still decisive against attribution, because those are different axes:
-    ``prev_share`` is a ratio, so it is invariant to games/iteration changing
-    with cadence, while attribution failures move it by 0.34-0.67 against a
-    tolerance of 0.06.
+    ``prev_share`` IS COUPLED TO CADENCE, and an earlier revision of this
+    docstring claimed the opposite ("a ratio, so cadence drift cannot trip
+    it"). It is measurably false. ``prev`` games are the fleet's model-refresh
+    lag, roughly constant in SECONDS, so a longer iteration shrinks their share
+    with nothing wrong: ``corr(time_this_iter_s, prev_share) = -0.332`` over
+    the 51 reference rows, and a 1.5x cadence change *inside the calibration
+    window* moves the leg by **0.0509** against a tolerance of 0.06. The
+    documented cadence excursions in this repo are larger than that (11 -> 22
+    min under side-job CPU contention alone), so the claim would have produced
+    a `kill` -- read as "your attribution is broken" -- on a benign restart.
+
+    The leg is therefore evaluated against ``refresh_lag_seconds / cadence``
+    rather than a fixed share, which cuts that excursion from 0.0509 to 0.0058,
+    and a separate CADENCE leg fires by name outside a 0.4x-3.0x band instead
+    of extrapolating a model that stops holding there.
+
+    THE SENSITIVITY FLOOR, because "0.34-0.67" is true only of TOTAL failures.
+    Leaking a fraction f of one arm into the other:
+
+        prev -> cur:  f = 0.10 and 0.20 PROMOTE (invisible to every leg);
+                      f = 0.30 kills, but on ``usable_frac``, not ``prev_share``
+        cur  -> prev: f <= 0.06 PROMOTE;  f = 0.08 kills on ``prev_share``
+
+    So a 10-20% one-sided partial leak is NOT detected. That is consistent with
+    the whole-shard argument -- shards are attributed entire, so a partial leak
+    has no mechanism -- but it is a blind spot, not an absence of one, and
+    ``test_partial_attribution_leak_sensitivity_floor`` pins the numbers.
+
+    THE OTHER COUNT LEG IS A RATE, for the same reason. An absolute band on
+    ``mean_games_cur`` carries exactly the false alarm ``prev_share`` used to:
+    at 1.5x cadence a healthy loop plays 1.5x the games and a +/-60 band fires.
+    The leg is ``(cur + prev) / iter_seconds`` against a factor-2 band, which
+    covers the 1.4x throughput difference between the reference window's own
+    two regimes (0.2545 vs 0.3549 games/s) with margin. ``mean_games_cur`` and
+    ``mean_games_prev`` are still REPORTED, and carry no invariance claim.
+
+    Verified across the cadence band: benign 0.5x-2.5x cadence changes all
+    return ``promote_to_enforce`` with no leg firing, 3.5x fires the CADENCE
+    leg by name, and the coin/swap destructions are still caught 50/50 at
+    0.4x, 0.5x, 1.0x, 2.0x and 3.0x.
 
     WHAT THIS RULE CANNOT DO, STATED SO NOBODY DISCOVERS IT LATER
     -------------------------------------------------------------
@@ -810,10 +979,10 @@ def shadow_readout_verdict(
     without moving the counts -- but the honest statement is "no rule passes
     that control", not "this rule does".
     """
-    window = list(rows)[-max(1, int(last_n)):]
+    window = [_readout_row(r) for r in list(rows)[-max(1, int(last_n)):]]
     floor = max(1, int(min_games_per_side))
-    usable = [(c, p, d) for c, p, d in window
-              if c >= floor and p >= floor and not math.isnan(d)]
+    usable = [r for r in window
+              if r[0] >= floor and r[1] >= floor and not math.isnan(r[2])]
     n_rows, n_usable = len(window), len(usable)
     frac = n_usable / n_rows if n_rows else 0.0
 
@@ -828,22 +997,65 @@ def shadow_readout_verdict(
             failed_legs=("usable_rows>=2",),
         )
 
-    mean_cur = statistics.mean([c for c, _, _ in usable])
-    mean_prev = statistics.mean([p for _, p, _ in usable])
+    mean_cur = statistics.mean([r[0] for r in usable])
+    mean_prev = statistics.mean([r[1] for r in usable])
     prev_share = mean_prev / (mean_cur + mean_prev)
-    deltas = [d for _, _, d in usable]
+    deltas = [r[2] for r in usable]
     mean_d, sd_d = statistics.mean(deltas), statistics.stdev(deltas)
 
+    # -- the cadence adjustment, and its own leg ---------------------------
+    secs = [r[3] for r in usable if not math.isnan(r[3]) and r[3] > 0.0]
+    mean_secs = statistics.mean(secs) if secs else float("nan")
     failed: list[str] = []
+    if math.isnan(mean_secs):
+        # No `time_this_iter_s` in the rows. Fall back to the raw reference
+        # share and SAY SO on a failure, rather than pretending to a
+        # cadence-corrected comparison that was never made.
+        expected_share, share_tol, share_note = ref.prev_share, 0.06, " (cadence unknown)"
+    else:
+        ratio = mean_secs / ref.mean_iter_seconds
+        if not (_CADENCE_RATIO_MIN <= ratio <= _CADENCE_RATIO_MAX):
+            failed.append(
+                f"cadence {mean_secs:.0f}s is {ratio:.2f}x the reference "
+                f"{ref.mean_iter_seconds:.0f}s, outside "
+                f"[{_CADENCE_RATIO_MIN}, {_CADENCE_RATIO_MAX}] -- the "
+                "prev-share model is not trusted here; this is a CADENCE "
+                "finding, NOT an attribution finding"
+            )
+        expected_share = ref.refresh_lag_seconds / mean_secs
+        share_tol, share_note = 0.06, ""
+
     # -- deciding legs: attribution-sensitive, near-noiseless --------------
     if frac < 0.85:
         failed.append(f"usable_frac {frac:.3f} < 0.85")
-    if abs(mean_cur - ref.mean_games_cur) > 60.0:
-        failed.append(f"mean_games_cur {mean_cur:.1f} vs {ref.mean_games_cur} +/-60")
-    if abs(mean_prev - ref.mean_games_prev) > 20.0:
-        failed.append(f"mean_games_prev {mean_prev:.1f} vs {ref.mean_games_prev} +/-20")
-    if abs(prev_share - ref.prev_share) > 0.06:
-        failed.append(f"prev_share {prev_share:.4f} vs {ref.prev_share} +/-0.06")
+    if not math.isnan(mean_secs):
+        # Absolute counts scale with cadence, so an absolute band on them is
+        # the same false alarm prev_share used to carry -- at 1.5x cadence a
+        # `mean_games_cur` band of +/-60 fires on a perfectly healthy loop.
+        # Compare the cadence-normalised rate instead, with a factor-2 band:
+        # the reference window's own throughput regimes differ by 1.4x.
+        rate = (mean_cur + mean_prev) / mean_secs
+        if not (0.5 <= rate / ref.games_per_second <= 2.0):
+            failed.append(
+                f"games_per_second {rate:.4f} is "
+                f"{rate / ref.games_per_second:.2f}x the reference "
+                f"{ref.games_per_second} (band 0.5-2.0)"
+            )
+    elif not (0.25 <= (mean_cur + mean_prev) / (
+            ref.mean_games_cur + ref.mean_games_prev) <= 4.0):
+        # No cadence column: fall back to a deliberately loose absolute band,
+        # because without cadence the count carries no information about
+        # anything except gross breakage.
+        failed.append(
+            f"anchored games/iteration {mean_cur + mean_prev:.1f} vs reference "
+            f"{ref.mean_games_cur + ref.mean_games_prev:.1f} (band 0.25-4.0x,"
+            " cadence unknown)"
+        )
+    if abs(prev_share - expected_share) > share_tol:
+        failed.append(
+            f"prev_share {prev_share:.4f} vs expected {expected_share:.4f}"
+            f" +/-{share_tol}{share_note}"
+        )
     # -- deciding leg: instrument-sensitive --------------------------------
     # 4.56 is the sd of the 95%-overlapping WINDOW column. If the readout is
     # ever wired to that column again this leg is what says so.
@@ -863,14 +1075,31 @@ def shadow_readout_verdict(
         verdict=verdict, n_rows=n_rows, n_usable=n_usable, usable_frac=frac,
         mean_games_cur=mean_cur, mean_games_prev=mean_prev,
         prev_share=prev_share, mean_delta_elo=mean_d, sd_delta_elo=sd_d,
+        mean_iter_seconds=mean_secs, expected_prev_share=expected_share,
         failed_legs=tuple(failed),
     )
 
 
+def _readout_row(row: Sequence[float]) -> tuple[int, int, float, float]:
+    """Normalise a readout row to (cur, prev, delta_elo, iter_seconds).
+
+    Three-element rows are accepted so a caller with no cadence column still
+    gets a verdict -- with the cadence adjustment disabled and named.
+    """
+    cur, prev, delta = int(row[0]), int(row[1]), float(row[2])
+    secs = float(row[3]) if len(row) > 3 else float("nan")
+    return cur, prev, delta, secs
+
+
 def shadow_readout_rows_from_csv(
     rows: Iterable[dict[str, str]],
-) -> list[tuple[int, int, float]]:
-    """Pull the four ``gate_sample_*`` columns out of ``progress.csv`` rows.
+) -> list[tuple[int, int, float, float]]:
+    """Pull the gate sample columns, plus cadence, out of ``progress.csv`` rows.
+
+    ``time_this_iter_s`` comes along because the ``prev_share`` leg is
+    evaluated against a CADENCE-ADJUSTED expectation -- see
+    ``OfflineReference.refresh_lag_seconds``. A row missing it still counts;
+    the adjustment is then disabled for the whole window and says so.
 
     A row whose gate columns are BLANK never ran the gate and is not an
     iteration of the shadow window, so it is dropped. A row with
@@ -880,7 +1109,7 @@ def shadow_readout_rows_from_csv(
     ledger's worked example and its command disagree by 7 points against a
     kill line 4 points away.
     """
-    out: list[tuple[int, int, float]] = []
+    out: list[tuple[int, int, float, float]] = []
     for r in rows:
         raw_c = r.get("gate_sample_games_cur")
         raw_p = r.get("gate_sample_games_prev")
@@ -889,9 +1118,10 @@ def shadow_readout_rows_from_csv(
         try:
             c, p = int(float(raw_c)), int(float(raw_p))
             d = float(r.get("gate_sample_delta_elo") or "nan")
+            secs = float(r.get("time_this_iter_s") or "nan")
         except ValueError:
             continue
-        out.append((c, p, d))
+        out.append((c, p, d, secs))
     return out
 
 
