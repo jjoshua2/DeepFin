@@ -13005,3 +13005,84 @@ using**, so it is queued for the next pause window alongside the #69 screen — 
 skipped, and not run against live training. If a pause does not come before the
 next ratchet run, the blackout is real and must be stated in that row rather than
 left implicit.
+
+---
+
+## PRE-REGISTRATION (2026-07-29) — #59 `sf_fast_ply_node_scale` 0.25 → 0.10
+
+**NOT LAUNCHED.** Deploys at a restart; one data-affecting change per readout
+window, so it must NOT share a window with #68 (`feature_dropout_p`) or #69.
+
+**Hypothesis.** SF is ~95% of loop cost and holds 27.1 of 32 cores (audit D5).
+`playout_cap_fraction: 0.25` means **75% of plies are fast plies**, on which the
+opponent's SF budget is already scaled by `sf_fast_ply_node_scale: 0.25`.
+Dropping that to 0.10 cuts the dominant cost on the majority of plies for
+~**1.13x** loop throughput.
+
+**⚑ CORRECTION TO MY OWN STANDING NOTE: this is NOT "label-neutral".** I have
+been carrying it as label-neutral on the strength of `_eff_sf_nodes`'s docstring
+(`stockfish_turn.py:190-209`): *"SF labels only attach to full plies ... every
+label already runs at full nodes. The scale only makes the opponent play cheaply
+on the ~75% of fast plies that are not training targets."* That is true and it is
+only half the story.
+
+**No training row is created from a fast ply, but the GAME OUTCOME is**, and the
+outcome is a weighted component of the value target. Live blend:
+`sf_wdl_frac: 0.50`, `search_wdl_frac: 0.20` ⇒ **the game-result term Z carries
+0.30 of the WDL target.** A weaker opponent on 75% of plies changes who wins, so
+**~30% of the value target moves.** Two further consequences:
+- the net will win more ⇒ the **PID tightens regret to compensate**, restoring
+  winrate at a *different opponent profile* (weak on fast plies, unchanged on
+  full plies). Winrate is a CONTROLLED variable and will therefore look fine
+  whether or not this was a good idea.
+- so the honest description is **"direct-label-neutral, outcome-affecting"**, and
+  it must be judged on value quality, not on winrate or on labels.
+
+**Deciding yardstick — THROUGHPUT, with a value KILL-GUARD.**
+
+Primary (decides promote/revert), read over ≥5 iterations at steady state,
+**excluding the ~10 post-restart iterations** per audit C14b, since a restart is
+required to deploy it and those rows are length-truncated:
+
+```
+median(time_this_iter_s) over 5 steady-state iterations, vs the 670.1 s
+pre-change baseline measured 2026-07-29 (iters 220-246, transient excluded)
+```
+
+- **PROMOTE** if median iteration time drops ≥8% (670 s → ≤617 s). The predicted
+  1.13x is ~11.5%; 8% is the floor worth the outcome risk.
+- **REVERT** if <5%, i.e. the cost model was wrong and the value risk buys nothing.
+
+Kill-guard (can independently force a revert regardless of throughput), run in a
+pause window on a banked checkpoint:
+
+```
+PYTHONPATH=. nice -n 19 python3 scripts/value_regret.py \
+  --checkpoint data/salvage/<label>/seeds/slot_000/trainer.pt \
+  --audit-set data/audit_set_v1.jsonl --gpu-mem-fraction 0.2 \
+  --dump-per-position data/prereg59/per_position.jsonl
+```
+
+Flags verified to exist 2026-07-29 (`--checkpoint`, `--audit-set`,
+`--max-positions`, `--device`, `--batch-size`, `--pos-chunk`,
+`--gpu-mem-fraction`, `--dump-per-position`, `--min-pieces`). **Deliberately NO
+`--max-positions 2000`**: the audit set is stratum-BLOCKED and rows 0-1999 are
+1332 endgame + 668 middlegame + **zero opening**, so every 2000-position verdict
+is an endgame verdict.
+
+- **REVERT** if value regret degrades by more than the ruler's own noise against
+  the pre-change baseline on the same checkpoint lineage. Bank the
+  `--dump-per-position` file with the number; Ray prunes checkpoints same-day.
+
+**Do NOT judge this on `pid_raw_winrate`** — the PID pins it near target by
+construction, so it cannot discriminate. **Do NOT judge it on label quality** —
+labels genuinely do not change; that is the half of the story that made this look
+free.
+
+**Confounds:** must be the only data-affecting change in its window. It deploys
+at a restart, so its first ~10 iterations are C14b-contaminated and are not part
+of the readout.
+
+**Revert:** `sf_fast_ply_node_scale` back to 0.25. **A yaml revert is not a
+rollback** — the replay window holds ~a day of games played against the weakened
+fast-ply opponent, so snapshot per protocol step 2 before deploying.
