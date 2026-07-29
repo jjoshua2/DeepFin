@@ -6401,6 +6401,42 @@ PLAY-shape substitution. `wdl_regret` sounds like a strength dial; measuring its
 realized candidate set showed it moves 10.4→8.4 moves across its whole range.
 
 
+### ⚑⚑ READOUT (2026-07-29) — the loop was NOT improving before C17; it is now. Regret slope +0.0086%/iter -> -0.0631%/iter, t=-2.11
+
+**Source: `result.json`, the full 235-iteration series (07-26 06:22 -> 07-29 09:54),
+not a windowed CSV.** `progress.csv` rotates by design (three archived files);
+fitting the live CSV alone silently truncates the series.
+
+| era | n | regret slope | t |
+|---|---|---|---|
+| before C17 vloss (< 07-28 01:00) | 177 | **+0.0086%/iter** | +0.60 |
+| after C17 vloss | 58 | **-0.0631%/iter** | **-2.05** |
+| **difference** | | **-0.0716%/iter** | **-2.11 (significant)** |
+
+Regret is the PID's handicap on the curriculum opponent: LOWER = harder opponent
+= stronger net, and it is the strength odometer because winrate is a CONTROLLED
+variable pinned near target (mean 0.535, sd 0.025 here). So a flat slope means
+**the loop was not gaining**, and the post-C17 slope means it now is.
+
+**Confound stated:** the 07-28 window bundled the C17 legacy virtual-loss deploy
+with the sf_p0 teacher restore and the zclip change. This readout cannot separate
+them; it says the BUNDLE moved the odometer.
+
+**⚠ THE LEVEL IS STILL BAD.** Over this trial regret went **0.03932 (iter 1) ->
+0.07655 (iter 235)** — the minimum is the FIRST value. The opponent is ~2x easier
+than at trial start. C17 reversed the direction; it has not recovered the ground.
+At -0.063%/iter, returning to 0.0393 is ~1,060 iterations (~8.5 days).
+
+**Throughput:** median `time_this_iter_s` 695.3s before / **670.1s after**
+(~129 iterations/day) — unchanged by the bundle, and close enough to the 685.7s
+used in the label-economics Amdahl analysis that it stands.
+
+**METHOD CORRECTION.** An earlier fit over iters 163-219 alone reported
+-0.205%/iter and was cited as evidence the loop was healthy. Over the full series
+that window is unrepresentative: the honest numbers are -0.063%/iter post-C17 and
+POSITIVE before it. **Fit the whole series from `result.json`; short windows on
+this series are unreliable.**
+
 ### ⚑⚑ KILLED BEFORE LAUNCH (2026-07-29) — the MultiPV 6 @150k label change is DEAD. Nodes dominate width; the 2026-07-01 kill is CONFIRMED, not overridden.
 
 **Never deployed. Config untouched.** The pre-registration below was written on
