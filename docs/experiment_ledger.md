@@ -260,6 +260,116 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## PRE-REGISTERED, NOT LAUNCHED (2026-07-29) — re-enable blind-spot seeding at a LOW cap (`opening_fen_dole_max_fraction` 0.25 → 0.08, `opening_fen_dole_per_iter` 0 → 1)
+
+**Status: pre-registered only. DO NOT FLIP until the preconditions below are met.**
+Both keys are live-reloadable (`opening_fen_dole_max_fraction` is in
+`config_yaml.py:142`'s live list and resolves server-side into
+`opening_fen_dole_max_games` in `distributed_runtime.py:334-338`;
+`opening_fen_dole_per_iter` is in both `_RECO_LIVE_KEYS` and `_RECO_RESTART_KEYS`).
+No restart needed to flip or to revert.
+
+**Measured current state (2026-07-29, iter 252).** Seeding has been **fully off for
+3 days** — `opening_fen_dole_per_iter: 0` since 07-26, `opening_fen_prob: 0.0`. So
+**0% of games are seeded**, and `opening_fen_sf_refute_frac: 0.9` is inert with it
+(it only applies to seeded games). **The harvester never stopped**, and the pool is in
+near-perfect churn: over 193 monitor steps / 3.3 days, **+601 seeds in, −593 out, net
++8** (370 → 378), i.e. **+3.11/iter in, −3.07/iter out**. ⚑ **The removals are NOT
+resolutions.** Nothing is played, so nothing can be learned *from seeding*; seeds fall
+out because the vet criterion is net-side (seed playable AND the net's own top move
+drops it to lost) and the net drifts under ordinary training. Answering "is it
+resolving faster than finding" on the net pool size would score a treadmill as
+equilibrium — **finding ≈ removing, resolving = 0.**
+
+**Hypothesis.** The 07-19/07-20 damage was **displacement, not the seeds themselves.**
+Per the "Seeded-share runaway" row, seeded share went **81.8% → 93.4% → 98.9% →
+100.0%** of selfplay — *"`selfplay_book*` vanished entirely; every net-vs-net game
+opened from a harvested blunder position."* `opening_fen_dole_max_fraction` (PR #223,
+2026-07-24) now bounds this and **did not exist when the damage happened**. At a cap
+that keeps normal openings dominant, the seed + SF-refute channel should be a net
+positive on value without the policy cost.
+
+**⚠ DOSE MATH — "dose 1" is NOT a small amount, and the DOSE is not the dial.** The
+dole hands the WHOLE list out each iteration, so the request is `pool_size` (378) and
+the cap does all the limiting. At `games_per_iter: 440`:
+
+| `dole_max_fraction` | seeded games/iter | % of selfplay (220) |
+|---|---|---|
+| 0.25 (current value, seeding off) | 110 | **50%** |
+| **0.08 (this entry)** | **35** | **16%** |
+
+**PRECONDITIONS (all three, before flipping):**
+1. The pending restart bundle (#284/#286/#287 flag-off/#68) has landed **and settled
+   ≥12 rows past the C14b truncation window** — this is a data-affecting change and
+   must not share a readout window with `feature_dropout_p`.
+2. **Purge the known-phantom seeds.** Of 26 long-stuck seeds, SF rates them median
+   **0.500 at every rung from 300k to 5M nodes** (vs 0.35 for seeds the net actually
+   learned) — drawn positions, never blind spots. Re-feeding measured junk is the one
+   cost already quantified.
+3. **A fresh FULL-SET baseline dump exists** (see the yardstick — the standing
+   `vdump_*` series cannot serve).
+
+**DECIDING YARDSTICK (value, exact commands — both CLIs verified 2026-07-29).**
+Bank a baseline from the checkpoint live at flip time (copy it out of the tune dir
+first — Ray prunes), then re-run on the checkpoint ~1 day later:
+
+```
+PYTHONPATH=. python3 scripts/value_regret.py --checkpoint <ckpt> \
+    --max-positions 0 --gpu-mem-fraction 0.15 \
+    --dump-per-position scratchpad/seedcap/vdump_<label>.jsonl
+PYTHONPATH=. python3 scripts/paired_compare.py \
+    scratchpad/seedcap/vdump_pre.jsonl scratchpad/seedcap/vdump_post.jsonl \
+    --label-a pre_seed_on --label-b post_seed_on
+```
+
+⚑ **`--max-positions 0` is REQUIRED and is a deliberate break from the standing
+series.** `monitor_fen.sh:94-96` runs `--max-positions 2000`, and the audit set is
+stratum-BLOCKED: rows 0-1999 are 1332 endgame + 668 middlegame + **ZERO opening**.
+Every `vdump_*.jsonl` on disk is therefore an **ENDGAME** ruler, while blind-spot seeds
+are mined from Cheese collapses that are mostly middlegame — the standing baseline is
+close to the wrong instrument for this experiment. `0` = no slice (`value_regret.py:164`),
+all 4000 positions.
+
+**SUCCESS:** paired CI improves and excludes 0 on the better side.
+**KILL (revert immediately, live):** paired CI worse by >2cp with the CI excluding 0 on
+the worse side — the same guardrail every prior seed-feed row used.
+**SECONDARY WATCH (not deciding):** realized `selfplay_book*` share stays >60% of
+selfplay — this is the displacement detector, and it is the one number that would have
+caught the 07-19 runaway on day one.
+
+**⚠ POWER CAVEAT, STATED UP FRONT SO A NULL IS NOT READ AS A REFUTATION.** Prior
+seed-feed readouts on this ruler returned CIs around **±10cp** (07-13 feed:
+−0.11cp [−10.32, +10.97] NS; ck108: +6.16 [−3.30, +15.46] NS). At 16% of selfplay the
+expected effect is smaller than those feeds', so **NS is the most likely outcome and
+means "not resolved", not "no effect"**. The full 4000-position set is used partly to
+tighten this. Per [[most_experiments_here_are_unfalsifiable]] the honest framing is
+that this is a **cheap, instantly reversible restoration of a channel that is currently
+contributing zero**, guarded by a kill rule — not a powered test of whether seeding
+helps.
+
+**DO NOT judge this on the v1/v2 BLIND panels.** BLIND is defined as "net > −0.2", so a
+globally-more-optimistic value shift inflates the BLIND count with no true
+understanding change — that definitional coupling is exactly what made the ck108 read
+unresolvable (value nominally better, panels worse, same underlying shift explains
+both). Panels may be reported as colour; they decide nothing here.
+
+**KNOWN INSTRUMENT LIMIT.** The right ruler is value error on **LOSING** positions
+specifically (aggregate calibration hides the defect completely: on 2,496 positions
+mined from real Cheese losses the net reads −13.7cp where SF reads −300.9cp). **No
+packaged scorer for that exists** — the measurement was ad hoc over
+`data/blindspot_fens_*.txt` using the miner's stored evaluations. Building one is
+tracked separately; **it must not be cited as a result of this entry until it exists
+and has run.**
+
+**CONFOUNDS.** Turning `opening_fen_dole_per_iter` on also re-activates the SF-refute
+channel (`opening_fen_sf_refute_frac: 0.9`, `plies: 3`), which has been inert
+throughout. These two cannot be separated in this readout — a positive result is
+attributable to "seeding + refute at 16%", not to seeding alone.
+
+**REVERT (live, instant, no restart):** `opening_fen_dole_per_iter: 0`. Pure
+opening-source change — no weights, optimizer or replay state touched, so no salvage
+snapshot is required.
+
 ## ⚑ INSTRUMENT BREAK + PRE-REGISTERED ENGINE CHANGE (2026-07-29, PR #286) — the arena, the daily ratchet and the shipped UCI engine all change search on this commit
 
 Three plumbing defects fixed at once (details in PR #286). Two are pure
