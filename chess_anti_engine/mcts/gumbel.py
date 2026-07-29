@@ -93,6 +93,23 @@ PLAY_SEARCH_DEFAULTS: dict[str, float | int] = {
     "fpu_reduction": 0.33,
 }
 
+# The two C-path search controls that are NOT GumbelConfig fields, so no
+# `dataclasses.replace`-based override surface can reach them --- not
+# PLAY_SEARCH_DEFAULTS above, not `gumbel_overrides`, not arena_standard's
+# `--cand-gumbel`. That is precisely how they went missing: every arena Elo in
+# docs/experiment_ledger.md was measured at `vloss_weight=0`, the pre-C17
+# duplicate-leaf search, while production selfplay ran `gumbel_vloss_weight: 1`
+# (ledger 2026-07-28, "SECOND, INDEPENDENT arena/production divergence"). They
+# are function arguments of `run_gumbel_root_many_c`, so they have to be passed
+# explicitly at every call site; these constants are the PLAY/UCI side of that
+# pair, mirrored by `uci.search.SearchWorker` and the `--vloss-weight` /
+# `MinibatchSize` defaults so the play shape cannot drift from the engine.
+# The TRAINING side is not here: it is yaml-driven (`gumbel_vloss_weight` /
+# `gumbel_target_batch` in the selfplay SearchConfig) and must be read from the
+# production config, never hard-coded.
+PLAY_SEARCH_VLOSS_WEIGHT = 3
+PLAY_SEARCH_TARGET_BATCH = 0
+
 
 @dataclass
 class GumbelConfig:

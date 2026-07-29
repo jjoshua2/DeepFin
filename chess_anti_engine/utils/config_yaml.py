@@ -128,7 +128,8 @@ _SELFPLAY_KEYS = (
     "max_plies",
     "mcts", "mcts_simulations", "mcts_start_simulations", "mcts_ramp_steps", "mcts_ramp_exponent",
     "playout_cap_fraction", "full_ply_pair_fraction", "fast_simulations",
-    "fpu_reduction", "fpu_at_root", "gumbel_topk", "gumbel_vloss_weight",
+    "fpu_reduction", "fpu_at_root", "gumbel_topk",
+    "gumbel_target_batch", "gumbel_vloss_weight",
     "gumbel_c_scale", "gumbel_scale", "gumbel_scale_after",
     "gumbel_scale_decay_start_move", "gumbel_scale_decay_moves",
     "curriculum_gumbel_scale", "curriculum_gumbel_scale_after",
@@ -452,7 +453,60 @@ def flatten_run_config_defaults(cfg: dict[str, Any]) -> dict[str, Any]:
 
     flat = {k: v for k, v in out.items() if v is not None}
     _check_sparse_sf_policy_flags(flat)
+    _check_volatility_search_unsupported(flat)
     return flat
+
+
+# The evaluators a distributed selfplay worker can actually hold. None of them
+# implements ``evaluate_encoded_with_volatility``; the two that do
+# (``LocalModelEvaluator``, ``DirectGPUEvaluator``) only ever appear in-process
+# on the trainer side. Named here so the error message says WHICH capability is
+# missing and WHERE, rather than "unsupported".
+_VOLATILITY_INCAPABLE_EVALUATORS = (
+    "MultiSlotInferenceClient",
+    "ThreadedDispatcher",
+    "SlotInferenceClient",
+    "AOTEvaluator",
+)
+
+
+def _check_volatility_search_unsupported(flat: dict[str, Any]) -> None:
+    """Reject volatility-aware search: it CRASHES every distributed worker.
+
+    ``volatility_q_scale``/``volatility_fpu`` are the two keys
+    ``mcts.gumbel.volatility_search_enabled`` reads (``volatility_anchor`` alone
+    is inert). Any non-zero value makes ``selfplay/network_turn.py`` abandon the
+    C search for ``mcts.gumbel.run_gumbel_root_many``, which raises ``ValueError``
+    unless the evaluator exposes ``evaluate_encoded_with_volatility``. No
+    distributed-worker evaluator does, nothing catches the ValueError, and every
+    worker reads the same manifest — so the whole selfplay fleet exits together.
+
+    This is deliberately a HARD error rather than a clamp to 0.0: clamping would
+    re-create the accepted-and-silently-ignored defect this check exists to end.
+    The keys stay in the selfplay allowlist so that this message is what an
+    operator sees, instead of a generic "unknown key".
+    """
+    offenders = sorted(
+        k for k in ("volatility_q_scale", "volatility_fpu")
+        if float(flat.get(k, 0.0) or 0.0) != 0.0
+    )
+    if not offenders:
+        return
+    raise ValueError(
+        f"selfplay volatility-aware search is NOT runnable on the production "
+        f"path: {offenders} is non-zero. A non-zero value forces the Python "
+        f"Gumbel search (mcts/gumbel.py:run_gumbel_root_many), which requires "
+        f"an evaluator exposing 'evaluate_encoded_with_volatility'. Every "
+        f"distributed-worker evaluator lacks it "
+        f"({', '.join(_VOLATILITY_INCAPABLE_EVALUATORS)}), the resulting "
+        f"ValueError is caught nowhere, and all workers read the same manifest "
+        f"— so this kills the entire selfplay fleet, it does not merely slow it "
+        f"down. Set both to 0.0. To actually use this, first implement "
+        f"evaluate_encoded_with_volatility on the worker-side evaluators (only "
+        f"LocalModelEvaluator/DirectGPUEvaluator have it, and those are "
+        f"in-trainer only), then re-enable publication in "
+        f"tune/distributed_runtime.build_recommended_worker."
+    )
 
 
 def _check_sparse_sf_policy_flags(flat: dict[str, Any]) -> None:
