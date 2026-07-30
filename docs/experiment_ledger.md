@@ -14216,3 +14216,26 @@ label. Also note the guard-instrument rule — the in-loop label is ~698k nodes
 at full plies and ~175k at fast plies, vs the gate's 2M, so this can only ever
 be a recall-preserving PREFILTER with a loose threshold, never a replacement
 for the gate.
+
+### FINAL value-gap number (run completed 2026-07-30 ~17:50)
+
+    [valuegap] seeds=363 unscorable=0
+               LIVE(net>=0.2 and sf<=-0.5)=87 (24.0%)
+               median_gap=+0.887 p10=+0.078 p90=+1.499
+
+**24.0% is the canonical number for this readout.** The entry above cites 27.3%
+and the enabling commit message cites the same; both were INTERIM reads taken
+while the flip was being made. The trajectory was 24.1% (n=162) -> 27.3%
+(n=209) -> 26.7% (n=288) -> **24.0% (n=363, complete)**. The early slice ran
+high; the pool is heterogeneous and ordered, which is exactly why a partial
+read is not a result.
+
+Nothing about the decision changes — the pre-committed bar was 15% and the
+final number clears it with the same margin class. Recording it because the
+ledger's number must be the complete one, not the one that happened to be on
+screen when the action was taken. (Also note the pool was 363 seeds, not the
+331 quoted earlier: it grows every iteration as the harvest/retire pipeline
+runs, so seed COUNTS quoted from different moments will not agree.)
+
+unscorable=0 — every seed in the live pool was scorable, so this is a complete
+census of the pool, not a sample of it.
