@@ -1699,8 +1699,26 @@ the FULL effect. This is now a reason to keep seeding off until the readout
 lands (see the seeding entry's cap-0.08 pre-registration, which must not start
 inside this window).
 
-**VERIFY (owed, next teardown):** `outcome_stats.resumed_inflight_games > 0`.
-If it is 0 or absent, nothing was resumed and the yardstick measures nothing.
+**IN EFFECT — CONFIRMED 12:41 on the live fleet.** yaml written 12:31:06; the
+FIRST `selfplay resume:` line each worker has ever emitted follows it —
+worker_00 12:35:11, worker_02 12:35:20, worker_01 12:35:34, worker_03
+12:41:40. The path had **zero** occurrences in the whole log before 12:31, so
+this is the reco reaching the worker and the session restart the
+`_RECO_RESTART_KEY` classification promises, not a pre-existing line.
+
+**⚠ `resumed games=0 records=0 discarded=0 preserved=0 target_slots=24` on
+every worker is the EXPECTED reading here and must NOT be scored as a
+failure.** The session that just tore down ran with the flag OFF, so it never
+SUSPENDED anything and there was nothing on disk to restore — exactly the
+"deploy restart itself runs with the old behaviour" confound this entry
+already names. It also confirms the one-time abandonment was paid, as
+predicted, at 12:35.
+
+**VERIFY (owed, FIRST FLAG-ON TEARDOWN — the next restart, not this one):**
+`outcome_stats.resumed_inflight_games > 0`, and `selfplay resume: resumed
+games=N` with N>0 in the worker logs. If it is still 0 THERE, the suspend half
+never wrote and the yardstick below measures nothing. Only score the ply-ramp
+yardstick from that teardown onward.
 
 **Class: waste correction + removal of a known PID sample bias. Not a target,
 loss, or search change.** Pre-registered before deploy because it touches the
