@@ -14044,3 +14044,104 @@ at the 13:36 teardown) but resume does NOT prevent the winrate spike. **Do not
 flip this key twice.** Drop the first 12 rows after the flip before fitting
 anything, and gate contamination on `pid_raw_winrate` / `curriculum_draw_rate`,
 NOT on `avg_plies_*` (which the resume fix made blind).
+
+---
+
+## 2026-07-30 17:30 — SEEDING ON. Gate PASSED. Two corrections to the record.
+
+### The number
+
+`scripts/blindspot_value_gap.py --seeds data/blindspot_fens_retire_389.txt
+--sf-nodes 2000000`, live pool, run at nice 19 alongside training:
+
+    scored=209  LIVE=57  = 27.3%      (interim; run still advancing)
+    at n=162:   39 LIVE  = 24.1%      95% binomial lower bound 17.9%
+
+**PASSES the pre-committed `LIVE >= 15%` bar.** The bar was cleared decisively
+enough at n=162 that the remaining seeds could not drag it under, so the flip
+was made without waiting for the tail. Note the flip was pre-committed to
+happen EITHER WAY, so reading the number early cannot have biased the action —
+only the follow-on work was conditional, and that is judged on the final n.
+
+⇒ Under the pre-registered rule: **the pool still teaches**, and the harvester
+throughput fix (select Type A directly at harvest from the previous ply's SF
+label, rather than emitting Type B for the gate to discard at 76.6%) is now
+worth building.
+
+**This is a LOWER bound, and the slack is large.** A further 47/162 seeds sit
+at `net_q` in [-0.2, 0.2) with `sf_q <= -0.5` — the net reads the position as
+roughly equal while deep SF reads it dead lost. Given the documented value-head
+compression (|net_q| <= 0.456 where |sf_q| = 1.000) those are arguably Type A
+as well, which would put the share at (39+47)/162 = 53%. **The threshold is
+kept AS PRE-REGISTERED at 0.2.** The wider reading is recorded as context for
+choosing the next threshold, not as the verdict — widening a bar after seeing
+the data is the move this ledger exists to prevent.
+
+### CORRECTION 1 — "the 16:37 revert cost nothing" is FALSE
+
+The prior entry states the 16:26 enable was reverted "BEFORE the change ever
+reached a worker, so this cost nothing". The worker log says otherwise:
+
+    16:33:08 worker_01  dole: capped seeded games 363+327 -> 19+17 (max 36)
+    16:33:08 worker_01  dole: received 363 seed(s) x1 -> live session;
+                              sf_refute=17 (frac=0.90 plies=3 iter=1966)
+    16:47:19 + 16:47:49  restarting selfplay session
+                              [restart_keys=opening_fen_dole_per_iter]
+
+The episode doled one full iteration and cost TWO selfplay-session restarts.
+
+**Method rule this earns:** a NEGATIVE log check is only valid if taken after
+the propagation deadline. The dole rides a ~30s HTTP manifest poll, not the
+yaml write, so a grep run seconds after an edit proves nothing — and I never
+re-checked. "I looked and saw no line" is not evidence unless the deadline for
+that line to appear had already passed.
+
+Useful side effect: this is the **cap's first live confirmation**.
+`opening_fen_dole_max_fraction: 0.08` x ~450 games/iter resolved to max 36, and
+363+327 candidate games were cut to 19+17. The cap is real and reaches workers.
+
+### CORRECTION 2 — C14b resume fix: the pre-registered yardstick READS POSITIVE
+
+Task #71 was open pending a ply-ramp readout at a flag-ON restart. The 16:47
+restart supplied one, and it is the first restart on code carrying the fix
+(deployed 12:31).
+
+    iter  end       regret   raw_wr  cur_draw  plies_draw
+    392   16:44:47  0.06397  0.4583  0.5735    121.97   <- last row before
+    393   17:00:02  0.06589  0.4228  0.6423    124.16   <- 16:47 restart here
+    394   17:13:32  0.06688  0.4612  0.5603    120.66
+    395   17:25:52  0.06889  0.4413  0.6009    123.39
+
+`avg_plies_draw` did NOT ramp — it held 121-124 straight across the restart.
+The pre-fix 11:09 restart, for contrast, took ~17 iterations to climb 0.00 ->
+123 (rows 370-387, with `curriculum_draw_rate` pinned at 0.0000 and `raw_wr` at
+1.0000 for the first eight rows: only short decisive games had finished).
+Regret also continued its smooth PID-easing rise rather than showing the
+~-0.01 spurious tighten the bias used to produce. Direct telemetry agrees:
+`resumed games=24 records=731 discarded=0 preserved=0` per restart, which also
+closes the `resumed_inflight_games > 0` verification owed by task #77.
+
+**Confound, stated rather than buried:** 11:09 was a full process restart and
+16:47 a selfplay-session restart. These are not the same event class, so this
+is a strong suggestive reading, not a paired result. **And per task #80 a flat
+ply ramp is necessary, not sufficient** — resume fixes the ply-LENGTH ramp; the
+completion-ORDER bias is untouched. Do not promote `avg_plies_*` back to a
+contamination detector on the strength of this. The fix is precisely what makes
+it read healthy.
+
+Consequence for this experiment: rows 393-395 ARE a usable pre-flip baseline.
+
+### As flipped
+
+`opening_fen_dole_per_iter: 0 -> 1` at 17:30, iteration boundary 395 -> 396,
+cap `opening_fen_dole_max_fraction: 0.08`, `opening_fen_prob: 0.0`.
+Baseline row 395: regret 0.06889, raw_wr 0.4413, curriculum_draw 0.6009.
+Revert point `data/salvage/pre_seeding_20260730` (ckpt393) — WEIGHTS +
+OPTIMIZER ONLY, shards=0 (task #75); this is not a full rollback.
+KILL unchanged: `curriculum_draw_rate` steady state < 0.30, or `value_regret`
+degrading. Drop the first 12 rows before fitting. Judge on `pid_raw_winrate` /
+`curriculum_draw_rate`, never `avg_plies_*`.
+
+VERIFICATION OWED: a `dole: received N seed(s) x1 -> live session` line dated
+after 17:30. Until that line exists this experiment is NOT running, regardless
+of what the yaml says.

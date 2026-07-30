@@ -266,7 +266,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_389.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_394.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -303,17 +303,64 @@ selfplay:
   # Pre-committed bar was lift >= 2.0 (ledger, 2026-07-30 pre-registration).
   # This was the BEST case: severe80 is a filtered subset, and
   # `unplayable_dropped=0` says all 80 were winning positions for the mover.
-  # ⇒ The pool is "positions where most moves lose", NOT blind spots, which is
-  # exactly what the 2026-07-26 kill below suspected. Purge/re-harvest first
-  # (task #72); the 6 KEPT seeds are individually defensible but cannot be fed
-  # alone while live, because opening_fen_list_path is rewritten every
-  # iteration.
-  # Correction to the comment that stood here for 11 minutes: this key is NOT
-  # live-reloadable. It is in worker.py `_RECO_RESTART_KEYS`, so changing it
-  # triggers a graceful selfplay-session restart and a C14b window (~9-12
-  # contaminated rows, ~-0.01 spurious regret tighten). That cost was avoided
-  # here ONLY because the revert beat the next manifest build.
-  opening_fen_dole_per_iter: 0
+  # ⚑⚑ THE ABOVE VERDICT IS RETRACTED (2026-07-30 ~17:00). It was measured on
+  # the WRONG FILE. severe80.txt has ZERO overlap (len(a & b) == 0) with the
+  # live pool data/blindspot_fens_retire_389.txt, and was drawn from the
+  # stream harvest_gate_step.py ALREADY REJECTS. It could not have described
+  # the live pool. Do not cite lift=1.09x for anything.
+  # The gate was also the WRONG INSTRUMENT. blindspot_netside_vet.py asks a
+  # TYPE B question (is the position fine but the net's MOVE losing?) and the
+  # live pool is TYPE A by construction (the net's VALUE says fine, deep SF
+  # says lost) — harvest_gate_step.py keeps on SF at the PRE-move position and
+  # rejected 8963 / kept 2734 on exactly that split. A gate that cannot fire on
+  # the population it guards is not a gate.
+  # RE-SPECIFIED GATE (ledger 5d265ba9b, pre-committed BEFORE the number
+  # existed): LIVE(seed) := net_q >= 0.2 AND sf_q <= -0.5 at 2M nodes, via
+  # scripts/blindspot_value_gap.py, on the LIVE pool.
+  #   MEASURED 2026-07-30: 39 LIVE / 162 scored = 24.1% (95% lower bound 17.9%)
+  # ⇒ passes the pre-committed LIVE >= 15% bar. NOTE this is a LOWER bound: a
+  # further 47/162 sit at net_q in [-0.2, 0.2) with sf_q <= -0.5, which the
+  # documented value-head compression (|net_q| <= 0.456 where |sf_q| = 1.000)
+  # makes arguably Type A too. Threshold kept AS PRE-REGISTERED, not widened
+  # post-hoc.
+  # This key is NOT live-reloadable. It is in worker.py `_RECO_RESTART_KEYS`,
+  # so changing it triggers a graceful selfplay-session restart and a C14b
+  # window (~9-12 contaminated rows, ~-0.01 spurious regret tighten).
+  # ⚑⚑ CORRECTION 2026-07-30 17:31: the claim that the 16:26 enable "never
+  # reached a worker, so the revert cost nothing" is FALSE. The worker log
+  # proves otherwise:
+  #   16:33:08 worker_01  dole: capped seeded games 363+327 -> 19+17 (max 36)
+  #   16:33:08 worker_01  dole: received 363 seed(s) x1 -> live session;
+  #                             sf_refute=17 (frac=0.90 plies=3 iter=1966)
+  #   16:47:19 + 16:47:49  restarting selfplay session
+  #                             [restart_keys=opening_fen_dole_per_iter]
+  # So the 11-minute episode DID dole one iteration and DID cost two session
+  # restarts. I reached the wrong conclusion by grepping for a restart-trigger
+  # line before the revert had propagated, and never re-checked afterward.
+  # Rule: a NEGATIVE log check is only valid if taken AFTER the propagation
+  # deadline, and the dole rides a ~30s manifest poll, not the yaml write.
+  # Useful side effect: this is the cap's first live confirmation --
+  # 0.08 x ~450 games = max 36, and 363+327 candidates were cut to 19+17.
+  # ⚑ ENABLED 2026-07-30 17:30, at iteration boundary 395->396.
+  # Baseline row 395: wdl_regret 0.06889, pid_raw_winrate 0.4413,
+  # curriculum_draw_rate 0.6009, avg_plies_draw 123.39.
+  # Rows 393-395 sit after the 16:47 restart but ARE usable as a baseline,
+  # because the C14b resume fix (deployed 12:31) held across it -- see the
+  # yardstick reading recorded in docs/experiment_ledger.md for 2026-07-30.
+  # Steady state is already reached: plies_draw 121.97 -> 124.16 -> 120.66 ->
+  # 123.39 with NO ramp, vs the pre-fix 11:09 restart which took ~17 iters to
+  # climb 0.00 -> 123. Do NOT read that as licence to trust avg_plies_* as a
+  # contamination detector going forward -- the fix is exactly what makes it
+  # read healthy. Judge the seeding readout on pid_raw_winrate and
+  # curriculum_draw_rate.
+  # KILL: curriculum_draw_rate < 0.30, or value_regret degrading vs the
+  # pre-flip anchor. Revert = this key to 0 (+ opening_fen_prob 0.05).
+  # Revert point: data/salvage/pre_seeding_20260730 (ckpt393, WEIGHTS+OPTIMIZER
+  # ONLY — shards=0, task #75; this is not a full rollback).
+  # READOUT: drop the first 12 rows (C14b). Judge on pid_raw_winrate /
+  # curriculum_draw_rate, NEVER on avg_plies_* — the resume fix makes those
+  # read healthy on contaminated windows.
+  opening_fen_dole_per_iter: 1
   # This is the documented KILL above (dose 0). Rationale: (a) one data-affecting
   # change per readout window and the LR change owns this one; (b) the pool is
   # measurably contaminated — of 26 long-stuck seeds, SF rates them median 0.500
