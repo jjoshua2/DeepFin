@@ -14239,3 +14239,87 @@ runs, so seed COUNTS quoted from different moments will not agree.)
 
 unscorable=0 — every seed in the live pool was scorable, so this is a complete
 census of the pool, not a sample of it.
+
+## 2026-07-30 18:10 — #82 RESOLVED: the prefilter is DEAD; the lever is SOURCE
+
+Offline on banked data. Nothing deployed. Instruments:
+`scratchpad/harvest_prefilter_eval{2,3}.py`.
+
+### The prefilter is killed by structure, not by tuning
+
+The missing pre-move labels are not a data gap to be plugged. Records exist
+only for plies the NET moved:
+
+    recorded-ply spacing:  selfplay    28723 games,   0.1% step >= 2 plies
+                           curriculum  31000 games, 100.0% step >= 2 plies
+
+In curriculum games (net vs Stockfish) the net moves every OTHER ply, so ply
+p-1 is Stockfish's and has no record at all. The free pre-move label is
+**structurally unavailable for 100% of curriculum candidates, permanently.**
+
+    source      prev label?  emitted  rejected  total  yield
+    selfplay    yes               44      1334   1378   3.2%
+    selfplay    no               182      4569   4751   3.8%
+    curriculum  never           2512      3079   5591  44.9%
+
+Applicable to 1378/11720 = **11.8%** of gated candidates; saves **9.8%** of
+gate work, not 83.8%. The 83.8% was the biased subsample doing exactly what I
+warned it might. **Do not build it.**
+
+### The 7x base-rate skew, explained — and it is the real finding
+
+The skew was never about labels. It is the yield gap between the two game
+sources, and the prefilter happens to be applicable only to the LOW-yield one:
+
+    curriculum  2510 emitted / 5589 unique keys = 44.9%
+    selfplay     225 emitted / 6128 unique keys =  3.7%     ⇒ 12.2x
+    curriculum share of ALL emitted seeds: 91.7%
+
+**Dedup check passed:** counted per unique placement KEY (the gate's own unit),
+not per line. repeat_factor 1.00x, so no source was inflated by re-capture —
+the per-line reading in the previous entry was not distorted. n=5589 vs
+n=6128, so unlike the n=44 prefilter this is well-powered.
+
+**Mechanism, and it corroborates a standing result.** In selfplay both sides
+share the same blind spots, so "net says fine, SF says lost after the move"
+is usually a mutual illusion — the PRE-move position was fine, i.e. Type B,
+which the gate correctly rejects. Against real Stockfish the net is genuinely
+in lost positions, so the pre-move position is already lost, i.e. Type A. This
+is the same phenomenon as the flywheel-stall finding (selfplay value poison,
+do NOT raise selfplay_fraction) showing up in a completely different
+instrument.
+
+### The change worth making: ORDER, not filter
+
+`harvest_gate_step.py --max-vet-per-run` defaults to **30** deep-SF vets per
+run, and overflow is DEFERRED, not rejected (`candidates[:max_vet_per_run]`).
+So reordering costs nothing — deprioritised candidates simply wait.
+
+    drop/deprioritise selfplay: 52.3% of gate work freed,
+                                8.2% of seeds deferred (not lost),
+                                1.92x seeds per SF node
+
+There is direct precedent in the same function: the order was already changed
+once from "pending first (FIFO)" to newest-first, because the old order "spent
+the whole SF budget re-litigating a dead net's mistakes". This is the same
+class of fix with a 12.2x signal behind it.
+
+**Required plumbing:** the seed line does not currently carry its source.
+`format_record` writes `sev=/game=/ply=` only, while `run_harvest` already
+receives `is_selfplay`. So the change is (a) emit `sp=0/1` in `format_record`,
+(b) sort curriculum-first in the gate's candidate ordering, (c) treat lines
+with no `sp=` tag as unknown and leave their relative order untouched, so the
+existing backlog is not reshuffled by a format change.
+
+### PRE-REGISTRATION (build now, DEPLOY LATER)
+
+- **Hypothesis:** ordering curriculum-first raises gate yield from the blended
+  23.3% toward 44.9%, i.e. ~1.9x good seeds per unit gate SF time.
+- **Yardstick (exact):** `vetted_kept / (vetted_kept + vetted_rejected)` from
+  the gate's own stdout counters, summed over 20 consecutive gate runs.
+- **Pre-committed success:** yield >= 35% (vs 23.3% baseline). **Kill:** yield
+  below 25%, or `emitted` per run falling.
+- **⚑ DEPLOY IS HELD.** This changes which seeds enter the pool, so it is
+  data-affecting and would confound the seeding readout that started at 17:40.
+  One data-affecting change per readout window. Build, review, merge; flip
+  only after the seeding readout closes.
