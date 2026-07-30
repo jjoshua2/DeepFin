@@ -1707,10 +1707,35 @@ predicted, caught in real time rather than reconstructed.
 The key is a `_RECO_RESTART_KEY`, so flipping it costs exactly one more
 selfplay-session abandonment (`worker.py`: *"toggling it costs exactly one
 more abandonment, after which restarts stop abandoning"*). Paying that at
-12:40, four rows into the window the 11:09 restart already opened, largely
-OVERLAPS the existing truncation ramp instead of opening a fresh one later on
-clean rows. The alternative — wait for the next natural restart — pays a full
-independent window for the same one-time cost.
+12:40, four rows into the window the 11:09 restart already opened, was expected
+to largely OVERLAP the existing truncation ramp instead of opening a fresh one
+later on clean rows. The alternative — wait for the next natural restart — pays
+a full independent window for the same one-time cost.
+
+**⚠ CORRECTION (row 375, 13:08) — "largely overlaps" was OPTIMISTIC and is now
+measured wrong.** The 12:35 abandonment **RESET the ramp rather than merging
+into it**:
+
+| row | `avg_plies_win` | `avg_plies_draw` | w/d/l | `pid_raw_winrate` | regret Δ |
+|---|---|---|---|---|---|
+| 374 (12:33) | 49.6 | **32.0** | 91/1/0 | 0.9946 | −0.00206 |
+| 375 (13:08) | 40.9 | **0.0** ← reset | 31/0/1 | 0.9688 | −0.00113 |
+
+`avg_plies_draw` had climbed to 32.0 and went back to **zero**. The overlap
+saved ~2 rows of a ~9-12 row window, not most of it, so the deploy bought a
+near-complete fresh window. **Running spurious-tighten total for 07-30:
+−0.00207 (r373) + −0.00206 (r374) + −0.00113 (r375) = −0.00526**, already half
+the −0.010/restart this entry prices, with rows still to run.
+
+**⇒ SCORING CONSEQUENCE, binding on the yardstick below: the post-restart
+contamination window starts at ROW 375 (the 12:35 teardown), NOT row 370.**
+Drop ~12 rows from 375. Row 375 is also the last iteration whose games were
+generated with the flag OFF end-to-end; the 35-minute gap 12:33→13:08 (vs an
+~11 min cadence) is the abandonment being paid, and is expected, not a stall.
+The decision to deploy now still stands on its merits — the cost is one-time
+and the alternative was paying it later anyway — but it was NOT the discount I
+claimed, and a future reader must not repeat the "flip it inside an existing
+window, it's nearly free" reasoning on that basis.
 
 **Precondition re-checked at deploy:** `opening_fen_dole_per_iter: 0`, so no
 `fenlist*` slot competes with `_resumable_slots` and the yardstick below reads
