@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
+from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.utils.architecture import (
     normalize_embed_dim_by_layer,
@@ -14,6 +15,10 @@ from chess_anti_engine.utils.architecture import (
 
 if TYPE_CHECKING:
     from chess_anti_engine.train.trainer import TrainMetrics
+
+# Single home of the SF target-construction defaults (see
+# trainer.resolve_sf_target_params, which derives from the same dataclass).
+_SF_TARGET_DEFAULTS = SfTargetParams()
 
 StartupSource = Literal[
     "fresh",
@@ -594,11 +599,29 @@ class TrialConfig:
             ),
 
   # --- SF policy / game ---
-            sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
-            sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
-            sf_wdl_use_cp_logistic=bool(config.get("sf_wdl_use_cp_logistic", False)),
-            sf_wdl_cp_slope=float(config.get("sf_wdl_cp_slope", 0.010)),
-            sf_wdl_cp_draw_width=float(config.get("sf_wdl_cp_draw_width", 60.0)),
+  # Defaults derive from SfTargetParams, the single home of these five (the
+  # trainer-side rebuild resolves the same yaml keys through it).
+            sf_policy_temp=float(
+                config.get("sf_policy_temp", _SF_TARGET_DEFAULTS.sf_policy_temp)
+            ),
+            sf_policy_label_smooth=float(
+                config.get(
+                    "sf_policy_label_smooth", _SF_TARGET_DEFAULTS.sf_policy_label_smooth
+                )
+            ),
+            sf_wdl_use_cp_logistic=bool(
+                config.get(
+                    "sf_wdl_use_cp_logistic", _SF_TARGET_DEFAULTS.sf_wdl_use_cp_logistic
+                )
+            ),
+            sf_wdl_cp_slope=float(
+                config.get("sf_wdl_cp_slope", _SF_TARGET_DEFAULTS.sf_wdl_cp_slope)
+            ),
+            sf_wdl_cp_draw_width=float(
+                config.get(
+                    "sf_wdl_cp_draw_width", _SF_TARGET_DEFAULTS.sf_wdl_cp_draw_width
+                )
+            ),
             soft_policy_temp=float(config.get("soft_policy_temp", 2.0)),
             timeout_adjudication_threshold=float(config.get("timeout_adjudication_threshold", 0.90)),
             volatility_source=str(config.get("volatility_source", "raw")),

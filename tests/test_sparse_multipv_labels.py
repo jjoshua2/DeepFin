@@ -21,6 +21,7 @@ from chess_anti_engine.replay.shard import (
     validate_array_declarations,
 )
 from chess_anti_engine.train.target_builder import (
+    CrossPlyMaskCounts,
     SfRebuildCoverage,
     SfTargetParams,
     mask_cross_ply_sf_targets,
@@ -783,8 +784,13 @@ def _adversarial_batch(
     """(raw, legal_dense) covering every branch the scalar rebuild can take.
 
     Mixes: variable candidate counts (including 0 and the full 48), cp-only /
-    mate-only / native-wdl-only / entirely unscorable rows, legal sets that are
-    fully covered and partially covered, and empty legal masks.
+    mate-only / native-wdl-only / entirely unscorable rows, rows carrying
+    cp AND mate AND native wdl SIMULTANEOUSLY (mate precedence in the logistic
+    path, native score otherwise), legal sets that are fully covered and
+    partially covered, empty legal masks, and legal sets that EXCLUDE some
+    candidates (live MultiPV rows are always legal moves, but the storage does
+    not forbid otherwise and the smoothing gate counts candidates-IN-the-legal-
+    set, so the exclusion branch must stay exercised).
     """
     raw = np.full((n, SF_MULTIPV_RAW_MAX, 5), -1, np.int16)
     raw[:, :, 1] = SF_CP_SENTINEL
@@ -794,7 +800,7 @@ def _adversarial_batch(
         k = int(rng.integers(0, SF_MULTIPV_RAW_MAX + 1))
         moves = rng.choice(width, size=max(k, 1), replace=False)[:k]
         for j, mv in enumerate(moves):
-            kind = int(rng.integers(0, 4))
+            kind = int(rng.integers(0, 5))
             if kind == 0:                                  # cp only
                 raw[i, j] = (mv, int(rng.integers(-3000, 3000)), 0, -1, -1)
             elif kind == 1:                                # mate only
@@ -802,14 +808,25 @@ def _adversarial_batch(
             elif kind == 2:                                # native permille wdl
                 w = int(rng.integers(0, 1001))
                 raw[i, j] = (mv, SF_CP_SENTINEL, 0, w, int(rng.integers(0, 1001 - w)))
-            else:                                          # unscorable
+            elif kind == 3:                                # unscorable
                 raw[i, j] = (mv, SF_CP_SENTINEL, 0, -1, -1)
-        mode = int(rng.integers(0, 3))
+            else:                                          # cp + mate + native, all at once
+                w = int(rng.integers(0, 1001))
+                raw[i, j] = (
+                    mv, int(rng.integers(-3000, 3000)),
+                    int(rng.integers(-60, 61)) or 3,
+                    w, int(rng.integers(0, 1001 - w)),
+                )
+        mode = int(rng.integers(0, 4))
         if mode == 0 and k:                    # legal set == candidates (covered)
             legal[i, moves] = 1
         elif mode == 1:                        # candidates + extra legal moves
             extra = rng.choice(width, size=int(rng.integers(1, 12)), replace=False)
             legal[i, moves.astype(np.int64)] = 1
+            legal[i, extra] = 1
+        elif mode == 3:                        # only HALF the candidates are legal
+            extra = rng.choice(width, size=int(rng.integers(1, 12)), replace=False)
+            legal[i, moves.astype(np.int64)[: max(1, k // 2)]] = 1
             legal[i, extra] = 1
         # mode == 2: empty legal mask
     return raw, legal
@@ -1016,6 +1033,9 @@ def test_rebuild_masks_cross_ply_targets_and_spares_p0_regret():
     out, cov = rebuild_sf_targets_in_arrays(arrs, params=SfTargetParams(sf_policy_temp=0.012))
     assert cov.cross_ply_masked == 4      # ROWS masked, not flags cleared (8)
     assert cov.policy_rebuilt == 4
+    # Per-flag PRE-mask decomposition: every fixture row carried both flags.
+    assert cov.p0_masked == 4
+    assert cov.volatility_masked == 4
     assert not out["has_sf_p0"].any()
     assert not out["has_sf_volatility"].any()
     assert out["has_sf_p0_regret"].all()
@@ -1040,7 +1060,7 @@ def test_masking_is_unconditional_so_control_and_treatment_pair():
 
 def test_mask_cross_ply_is_a_noop_without_those_fields():
     arrs = {"sf_policy_target": np.zeros((2, 8), np.float16)}
-    assert mask_cross_ply_sf_targets(arrs) == 0
+    assert mask_cross_ply_sf_targets(arrs) == CrossPlyMaskCounts()
     assert set(arrs) == {"sf_policy_target"}
 
 
@@ -1063,7 +1083,10 @@ def test_disabled_rebuild_leaves_cross_ply_flags_alone():
     t.set_sf_target_rebuild(enabled=True, params=t.sf_target_params)
     arrs2 = _cross_ply_arrs()
     arrs2["x"] = np.zeros((4, 146, 8, 8), np.float16)
-    out2 = t._prepare_host_arrays(arrs2, rng=np.random.default_rng(0), mirror_prob=0.0)
+    out2 = t._prepare_host_arrays(
+        arrs2, rng=np.random.default_rng(0), mirror_prob=0.0,
+        rebuild_sf_targets=True,   # the training path's explicit opt-in
+    )
     assert not out2["has_sf_p0"].any()
     assert not out2["has_sf_volatility"].any()
 
@@ -1173,6 +1196,7 @@ def test_full_pass_ruler_is_not_rebuilt_even_when_the_flag_is_on():
     trained = t._prepare_host_arrays(
         {k: np.array(v, copy=True) for k, v in arrs.items()},
         rng=np.random.default_rng(0), mirror_prob=0.0,
+        rebuild_sf_targets=True,
     )
     assert not trained["has_sf_p0"].any()
     assert not np.array_equal(trained["sf_policy_target"], arrs["sf_policy_target"])
@@ -1212,12 +1236,15 @@ def test_rebuild_coverage_is_reported_and_is_not_total():
         "sf_rebuild_policy_frac": 0.0,
         "sf_rebuild_wdl_frac": 0.0,
         "sf_rebuild_masked_frac": 0.0,
+        "sf_rebuild_masked_p0_frac": 0.0,
+        "sf_rebuild_masked_volatility_frac": 0.0,
     }
 
     t.set_sf_target_rebuild(enabled=True, params=SfTargetParams(sf_policy_temp=0.012))
     t._prepare_host_arrays(
         {k: np.array(v, copy=True) for k, v in arrs.items()},
         rng=np.random.default_rng(0), mirror_prob=0.0,
+        rebuild_sf_targets=True,
     )
     got = t._sf_rebuild_coverage.drain()
     assert got["sf_rebuild_policy_frac"] == pytest.approx(3 / 4)   # NOT 1.0
@@ -1225,6 +1252,9 @@ def test_rebuild_coverage_is_reported_and_is_not_total():
     # ROWS that lost a cross-ply target / rows — a real fraction, never > 1.0
     # even though each row here carried BOTH has_sf_p0 and has_sf_volatility.
     assert got["sf_rebuild_masked_frac"] == pytest.approx(1.0)
+    # ...and the per-flag PRE-mask decomposition of that row count.
+    assert got["sf_rebuild_masked_p0_frac"] == pytest.approx(1.0)
+    assert got["sf_rebuild_masked_volatility_frac"] == pytest.approx(1.0)
     # Drained, not accumulated forever.
     assert t._sf_rebuild_coverage.drain()["sf_rebuild_policy_frac"] == 0.0
 
@@ -1262,6 +1292,7 @@ def test_an_eval_does_not_drain_the_training_coverage_counters(monkeypatch):
     t._prepare_host_arrays(
         {k: np.array(v, copy=True) for k, v in arrs.items()},
         rng=np.random.default_rng(0), mirror_prob=0.0,
+        rebuild_sf_targets=True,
     )
 
     # A full-pass eval runs on the SAME trainer. The batch iterator is stubbed
@@ -1318,6 +1349,8 @@ def test_the_ruler_alarm_reaches_progress_csv_not_only_tensorboard():
         "test_sf_rebuild_policy_frac",
         "test_sf_rebuild_wdl_frac",
         "test_sf_rebuild_masked_frac",
+        "test_sf_rebuild_masked_p0_frac",
+        "test_sf_rebuild_masked_volatility_frac",
     )
     for key in want:
         assert key in _TEST_METRIC_KEYS, f"{key} would never reach progress.csv"
@@ -1367,3 +1400,333 @@ def test_sf_target_params_are_not_written_when_no_consumer_reads_them():
     assert t.set_sf_target_rebuild(enabled=False, params=moved) is True
     assert t.sf_target_params == moved           # written, and LOGGED by the caller
     assert t._loss_kwargs["sf_sparse_params"] == moved
+
+
+# --------------------------------------------------------------------------
+# PR #283 review follow-up: observability, fail-closed gating, default
+# unification, and the parity gates for the vectorized-path efficiency edits.
+# --------------------------------------------------------------------------
+
+def test_masked_frac_decomposition_is_the_rebuild_mode_outage_detector():
+    """The cross-ply mask zeroes `has_sf_p0` indistinguishably from "never
+    recorded", so `has_sf_p0_frac` — documented in trainable_report.py as the
+    sf_p0 OUTAGE detector — is pinned at 0.0 for the whole of any rebuild
+    experiment. The per-flag PRE-mask fractions are the detector that keeps
+    working: a real p0 outage reads masked_p0 -> 0 while volatility stays up,
+    which the row-level `sf_rebuild_masked_frac` alone cannot distinguish."""
+    arrs = _cross_ply_arrs()
+    arrs["has_sf_p0"] = np.array([1, 1, 0, 0], np.uint8)
+    arrs["has_sf_volatility"] = np.array([1, 0, 1, 0], np.uint8)
+    _, cov = rebuild_sf_targets_in_arrays(arrs, params=SfTargetParams())
+    assert cov.p0_masked == 2
+    assert cov.volatility_masked == 2
+    assert cov.cross_ply_masked == 3          # rows 0, 1, 2 lost >= 1 flag
+    kw = cov.metric_kwargs()
+    assert kw["sf_rebuild_masked_p0_frac"] == pytest.approx(2 / 4)
+    assert kw["sf_rebuild_masked_volatility_frac"] == pytest.approx(2 / 4)
+    assert kw["sf_rebuild_masked_frac"] == pytest.approx(3 / 4)
+
+    # The outage itself: workers stop recording p0. Post-mask flags read 0
+    # either way; only the pre-mask column can see it go to exactly 0.0.
+    outage = _cross_ply_arrs()
+    outage["has_sf_p0"] = np.zeros(4, np.uint8)
+    _, cov2 = rebuild_sf_targets_in_arrays(outage, params=SfTargetParams())
+    kw2 = cov2.metric_kwargs()
+    assert kw2["sf_rebuild_masked_p0_frac"] == 0.0
+    assert kw2["sf_rebuild_masked_volatility_frac"] == pytest.approx(1.0)
+
+
+def test_rows_probe_falls_back_to_cross_ply_flags_so_frac_stays_a_fraction():
+    """A batch lacking all four row-count probe keys but carrying `has_sf_p0`
+    used to get rows=0 while the mask still counted rows, turning
+    `sf_rebuild_masked_frac` into a raw COUNT (> 1.0). Unreachable from the
+    live schema today; the fallback keeps the invariant structural."""
+    arrs = {
+        "has_sf_p0": np.ones(6, np.uint8),
+        "has_sf_volatility": np.ones(6, np.uint8),
+    }
+    _, cov = rebuild_sf_targets_in_arrays(arrs, params=SfTargetParams())
+    assert cov.rows == 6
+    kw = cov.metric_kwargs()
+    assert kw["sf_rebuild_masked_frac"] == pytest.approx(1.0)
+    for key, value in kw.items():
+        assert 0.0 <= value <= 1.0, f"{key} is not a fraction: {value}"
+
+
+class _SampleBuf:
+    """Minimal ReplayBuffer stand-in for the SAMPLED (training) path."""
+
+    rng = np.random.default_rng(0)
+
+    def __init__(self, arrs: dict[str, np.ndarray]) -> None:
+        self._arrs = arrs
+
+    def sample_batch_arrays(self, _bs: int) -> dict[str, np.ndarray]:
+        return {k: np.array(v, copy=True) for k, v in self._arrs.items()}
+
+
+def test_prepare_host_arrays_defaults_to_stored_targets():
+    """The rebuild gate FAILS CLOSED: a NEW producer calling
+    `_prepare_host_arrays` without taking a position gets STORED targets even
+    when the trainer flag is on. The default used to be True with the ruler
+    protected only by a per-callsite False pin — under that arrangement this
+    very call would have silently rebuilt. The sampled training path is the
+    one explicit opt-in."""
+    t = _tiny_trainer()
+    t.set_sf_target_rebuild(enabled=True, params=SfTargetParams(sf_policy_temp=0.5))
+    arrs = _cross_ply_arrs()
+    arrs["x"] = np.zeros((4, 146, 8, 8), np.float16)
+
+    # Hypothetical future producer: no kwarg -> stored bytes, flags intact,
+    # nothing added to the coverage counters.
+    out = t._prepare_host_arrays(
+        {k: np.array(v, copy=True) for k, v in arrs.items()},
+        rng=np.random.default_rng(0), mirror_prob=0.0,
+    )
+    np.testing.assert_array_equal(out["sf_policy_target"], arrs["sf_policy_target"])
+    np.testing.assert_array_equal(out["sf_wdl"], arrs["sf_wdl"])
+    assert out["has_sf_p0"].all()
+    assert out["has_sf_volatility"].all()
+    assert t._sf_rebuild_coverage.drain()["sf_rebuild_policy_frac"] == 0.0
+
+    # The training path opts in explicitly and does rebuild.
+    trained = t._sample_batch_host(
+        cast(Any, _SampleBuf(arrs)), batch_size=4, mirror_prob=0.0,
+    )
+    assert isinstance(trained, dict)
+    assert not np.array_equal(trained["sf_policy_target"], arrs["sf_policy_target"])
+    assert not trained["has_sf_p0"].any()
+    assert t._sf_rebuild_coverage.drain()["sf_rebuild_policy_frac"] == pytest.approx(1.0)
+
+
+def test_metric_splat_sources_cannot_collide_in_build_metrics():
+    """`train_steps` splats `coverage.drain()` AND `_loss_sums_to_metric_kwargs`
+    (plus grad-clip and explicit extras) into `_build_metrics` ->
+    `TrainMetrics(**...)`. A duplicate keyword raises TypeError only AT
+    RUNTIME, in production, on the first iteration after someone names a
+    compute_loss scalar like a coverage column. Pin the disjointness here so
+    that collision fails in CI instead. The loss side is DRIVEN (a real
+    compute_loss), then widened by the static key maps."""
+    from chess_anti_engine.train.losses import compute_loss
+    from chess_anti_engine.train import trainer as trainer_mod
+
+    logits, sparse_batch, _params, dense = _sparse_ce_batch(
+        use_logistic=False, smooth=0.01,
+    )
+    n = 3
+    torch.manual_seed(2)
+    outputs = {
+        "policy_own": torch.randn(n, 4672),
+        "policy_sf": logits,
+        "wdl": torch.randn(n, 3),
+    }
+    pol = torch.zeros(n, 4672)
+    pol[:, 5] = 1.0
+    batch = {
+        "x": torch.zeros(n, 1),
+        "policy_t": pol,
+        "wdl_t": torch.tensor([0, 1, 2]),
+        "sf_policy_t": torch.from_numpy(dense),
+        "has_sf_policy": torch.tensor([1.0, 1.0, 1.0]),
+        **sparse_batch,
+    }
+    losses = compute_loss(outputs, batch)
+    sums = trainer_mod.Trainer._extract_loss_scalars(losses)
+    loss_kwargs = trainer_mod._loss_sums_to_metric_kwargs(dict(sums), 1.0)
+    loss_surface = (
+        set(loss_kwargs)
+        | set(trainer_mod._LOSS_KEY_TO_METRIC_FIELD.values())
+        | set(trainer_mod._RATIO_METRIC_FIELDS)
+    )
+
+    coverage_kwargs = SfRebuildCoverage(
+        rows=8, policy_rebuilt=4, wdl_rebuilt=2,
+        cross_ply_masked=1, p0_masked=1, volatility_masked=1,
+    ).metric_kwargs()
+    grad_kwargs = trainer_mod._grad_clip_metric_kwargs(
+        [1.0, 2.0],
+        {"clipped": 1, "adaptive_clip": 0, "hard_clip": 1, "nonfinite_grad": 0},
+        [0.5],
+    )
+    explicit = {
+        "train_time_s": 1.0, "opt_step_time_s": 0.5, "train_steps_done": 2,
+        "train_samples_seen": 4, "opt_lr_mean": 1e-4, "opt_lr_max": 2e-4,
+    }
+    extras = {**coverage_kwargs, **grad_kwargs, **explicit}
+    # The extras must be disjoint among THEMSELVES too (a dict merge silently
+    # keeps the last writer)...
+    assert len(extras) == len(coverage_kwargs) + len(grad_kwargs) + len(explicit)
+    # ...and none of them reachable from the loss path's splat.
+    overlap = loss_surface & set(extras)
+    assert not overlap, f"loss-path keys collide with _build_metrics extras: {overlap}"
+    # The union constructs TrainMetrics — the exact call `_build_metrics`
+    # makes, including its named accuracy kwargs (which are also keywords a
+    # loss-path or extras key could collide with).
+    acc_kwargs = {
+        "sf_move_acc": 0.5, "sf_move_acc_top5": 0.5,
+        "policy_own_acc_top1": 0.5, "policy_own_acc_top5": 0.5,
+        "policy_future_acc_top1": 0.5, "policy_future_acc_top5": 0.5,
+    }
+    assert not set(acc_kwargs) & (loss_surface | set(extras))
+    # cast: the runtime construction is the assertion; pyright cannot type a
+    # heterogeneous kwargs splat against the dataclass's int/float fields.
+    trainer_mod.TrainMetrics(
+        **cast("dict[str, Any]", {**loss_kwargs, **acc_kwargs, **extras})
+    )
+
+
+def test_sf_target_param_defaults_have_one_home():
+    """The five SF target-construction defaults live on `SfTargetParams`.
+    Every other reader either DERIVES from it (`resolve_sf_target_params`,
+    `tune/distributed_runtime.build_recommended_worker`, worker.py's reco
+    reads, `TrialConfig.from_dict`) or is PINNED equal here (the `GameConfig`
+    / `TrialConfig` dataclass defaults), so a drifted copy fails CI instead
+    of silently splitting capture-time and rebuilt targets on any config that
+    omits the key."""
+    from chess_anti_engine.model import ModelConfig
+    from chess_anti_engine.selfplay.config import GameConfig
+    from chess_anti_engine.train.trainer import resolve_sf_target_params
+    from chess_anti_engine.tune.distributed_runtime import build_recommended_worker
+    from chess_anti_engine.tune.trial_config import TrialConfig
+
+    d = SfTargetParams()
+    fields = (
+        "sf_policy_temp", "sf_policy_label_smooth", "sf_wdl_use_cp_logistic",
+        "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
+    )
+    assert resolve_sf_target_params({}) == d
+    for owner in (GameConfig, TrialConfig):
+        for f in fields:
+            assert getattr(owner, f) == getattr(d, f), (owner.__name__, f)
+    reco = build_recommended_worker(
+        config={}, model_cfg=ModelConfig(), sf_nodes=5000, mcts_simulations=8,
+    )
+    for f in fields:
+        assert reco[f] == getattr(d, f), f
+
+
+def test_batch_sf_wdl_logistic_has_no_sentinel_overflow():
+    """The WDL logistic used to run over ALL rows and select afterwards; rows
+    without a cp carry the -32768 sentinel, which overflows exp() for
+    sf_wdl_cp_slope >= ~0.022 — exactly the knob this rebuild exists to
+    sweep. Compressed to the use_log rows (the policy twin's convention)
+    there is nothing to overflow, and the result stays bitwise equal to the
+    scalar path at the same slope."""
+    import warnings
+
+    meta = np.zeros((8, 6), np.int32)
+    meta[:, 2] = SF_CP_SENTINEL      # no cp, no mate -> native rows
+    meta[:, 3] = 0
+    meta[:, 4] = 500
+    meta[:, 5] = 300
+    meta[0, 2] = 120                 # one logistic row so the branch runs
+    params = SfTargetParams(
+        sf_wdl_use_cp_logistic=True, sf_wdl_cp_slope=0.025,
+        sf_wdl_cp_draw_width=60.0,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")   # any overflow RuntimeWarning fails
+        got, ok = rebuild_sf_wdl_batch(meta, params)
+    want = np.zeros((8, 3), np.float32)
+    want_ok = np.zeros(8, bool)
+    for i in range(8):
+        r = rebuild_sf_wdl(meta[i], params)
+        if r is not None:
+            want[i], want_ok[i] = r, True
+    np.testing.assert_array_equal(ok, want_ok)
+    np.testing.assert_array_equal(got[ok], want[ok])
+
+
+def test_batch_rebuild_bitwise_across_randomized_params():
+    """Bitwise equality against the scalar reference across RANDOMIZED param
+    configs — including slopes past the old exp-overflow threshold — over the
+    adversarial generator (which mixes cp+mate+native-simultaneous rows).
+    This is the standing parity gate any future efficiency edit to the
+    vectorized path must pass; the fixture params elsewhere in this file are
+    points, this is the sweep."""
+    width = 512
+    for seed in range(8):
+        rng = np.random.default_rng(1000 + seed)
+        params = SfTargetParams(
+            sf_policy_temp=float(rng.choice([0.006, 0.012, 0.05, 0.25, 0.5])),
+            sf_policy_label_smooth=float(rng.choice([0.0, 0.01, 0.05])),
+            sf_wdl_use_cp_logistic=bool(seed % 2),
+            sf_wdl_cp_slope=float(rng.choice([0.006, 0.010, 0.025])),
+            sf_wdl_cp_draw_width=float(rng.choice([60.0, 120.0])),
+        )
+        raw, legal = _adversarial_batch(rng, n=32, width=width)
+        want, want_ok = _scalar_reference(raw, legal, width, params)
+        got, got_ok = rebuild_sf_policy_targets_batch(
+            raw, legal_dense=legal, policy_size=width, params=params,
+        )
+        np.testing.assert_array_equal(got_ok, want_ok, err_msg=f"seed {seed}")
+        np.testing.assert_array_equal(
+            got[want_ok], want[want_ok], err_msg=f"seed {seed}",
+        )
+
+
+@pytest.mark.parametrize("use_logistic", [False, True])
+def test_torch_sparse_ce_row_scores_match_numpy_batch_row_scores(use_logistic):
+    """`_batch_row_scores` (numpy, dense rebuild) and `sparse_sf_ce._row_scores`
+    (torch, sparse CE) implement the same MultiPV row-score semantics from the
+    same params object with NO cross-pin until now — a drift would silently
+    split the dense and sparse trainings of the same loss. Pin them.
+
+    Scoreable masks must agree EXACTLY. Scores agree within fp32 assembly
+    noise: the torch leg computes in float32 by design (it feeds an fp32 CE;
+    see the sparse_sf_ce module docstring), the numpy leg in float64. Measured
+    max |Δ| over 20 seeds of this generator: 3.0e-8 native, 7.5e-8 logistic;
+    atol=1e-6 keeps >10x margin above that noise while any semantic drift —
+    swapped slope/draw_width, dropped mate precedence, permille-vs-fraction
+    scale — moves scores by >= 1e-3."""
+    from chess_anti_engine.train.sparse_sf_ce import _row_scores
+    from chess_anti_engine.train.target_builder import _batch_row_scores
+
+    for seed in range(6):
+        rng = np.random.default_rng(300 + seed)
+        raw, _legal = _adversarial_batch(rng, n=48, width=512)
+        params = SfTargetParams(
+            sf_wdl_use_cp_logistic=use_logistic,
+            sf_wdl_cp_slope=float(rng.choice([0.006, 0.010, 0.025])),
+            sf_wdl_cp_draw_width=float(rng.choice([60.0, 120.0])),
+        )
+        np_scores, np_ok = _batch_row_scores(np.asarray(raw), params)
+        t_scores, t_ok = _row_scores(
+            torch.from_numpy(raw.astype(np.int64)), params=params,
+        )
+        np.testing.assert_array_equal(t_ok.numpy(), np_ok, err_msg=f"seed {seed}")
+        np.testing.assert_allclose(
+            t_scores.numpy().astype(np.float64)[np_ok], np_scores[np_ok],
+            atol=1e-6, rtol=0.0, err_msg=f"seed {seed}",
+        )
+
+
+@pytest.mark.parametrize("dtype", [np.float16, np.float32])
+def test_rebuild_in_arrays_writeback_matches_astype(dtype):
+    """The writeback relies on fancy-index assignment casting f32 to the
+    stored dtype bit-identically to an explicit astype (which is what the
+    code used to do, at the cost of a full-width temporary). Pin the
+    equivalence in both stored dtypes and on BOTH writeback branches
+    (every-row-ok fast path and the partial `[ok]` gather)."""
+    rng = np.random.default_rng(5)
+    width = 96
+    n = 16
+    params = SfTargetParams(sf_policy_temp=0.012, sf_policy_label_smooth=0.05)
+
+    raw_partial, legal = _adversarial_batch(rng, n=n, width=width)
+    raw_all = np.array(raw_partial, copy=True)
+    raw_all[:, 0] = (3, 40, 0, 700, 200)     # force >=1 scoreable row everywhere
+    for raw in (raw_partial, raw_all):
+        arrs = {
+            "sf_policy_target": rng.random((n, width)).astype(dtype),
+            "sf_legal_mask": legal,
+            "sf_multipv_raw": raw,
+            "has_sf_multipv_raw": np.ones(n, np.uint8),
+        }
+        stored = np.array(arrs["sf_policy_target"], copy=True)
+        out, _cov = rebuild_sf_targets_in_arrays(arrs, params=params)
+        want, want_ok = _scalar_reference(raw, legal, width, params)
+        expect = np.array(stored, copy=True)
+        expect[want_ok] = want[want_ok].astype(dtype)   # the explicit-astype form
+        assert out["sf_policy_target"].dtype == np.dtype(dtype)
+        np.testing.assert_array_equal(out["sf_policy_target"], expect)

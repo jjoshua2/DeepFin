@@ -839,9 +839,12 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "m_sf_own": 0.0, "m_sf_own_regret": 0.0,
     "has_sf_p0_frac": 0.0, "has_sf_p0_regret_frac": 0.0,
   # SF target rebuild coverage (train.rebuild_sf_targets). 0.0 with the flag
-  # off; non-zero is the proof the flip reached the batch pipeline.
+  # off; non-zero is the proof the flip reached the batch pipeline. The
+  # masked_p0/_volatility pair are PRE-mask presence fractions — the outage
+  # detector while a rebuild pins `has_sf_p0_frac` at 0.0 (see TrainMetrics).
     "sf_rebuild_policy_frac": 0.0, "sf_rebuild_wdl_frac": 0.0,
     "sf_rebuild_masked_frac": 0.0,
+    "sf_rebuild_masked_p0_frac": 0.0, "sf_rebuild_masked_volatility_frac": 0.0,
     "policy_loss_selfplay": 0.0, "policy_loss_curriculum": 0.0,
     "wdl_loss_selfplay": 0.0, "wdl_loss_curriculum": 0.0,
     "frac_is_selfplay_batch": 0.0, "frac_tagged_batch": 0.0,
@@ -890,7 +893,11 @@ def _train_metrics_dict(metrics) -> dict:
         # sf_p0 teacher. `has_sf_p0_frac == 0.0` means the selfplay workers
         # recorded no eligible rows at all this iteration — the teacher is dead
         # regardless of what `m_sf_own` reads. Do not judge either `m_*` column
-        # without its `_frac`.
+        # without its `_frac`. CAVEAT: while `rebuild_sf_targets` is on, the
+        # cross-ply mask pins this column at 0.0 (a cleared flag is
+        # indistinguishable from a never-recorded one) — read
+        # `sf_rebuild_masked_p0_frac`, the PRE-mask presence fraction, as the
+        # outage detector for the duration of a rebuild experiment.
         "m_sf_own": float(metrics.m_sf_own),
         "m_sf_own_regret": float(metrics.m_sf_own_regret),
         "has_sf_p0_frac": float(metrics.has_sf_p0_frac),
@@ -898,10 +905,16 @@ def _train_metrics_dict(metrics) -> dict:
         # Rebuild coverage. `sf_rebuild_policy_frac` below the SF-labelled row
         # fraction is the rows the rebuild could NOT reach (no sf_multipv_raw),
         # which stay at capture-time targets; `sf_rebuild_masked_frac` counts
-        # the cross-ply targets it masked instead of leaving stale.
+        # the cross-ply targets it masked instead of leaving stale, and the
+        # per-flag pair decomposes it PRE-mask (the rebuild-mode outage
+        # detector — see the has_sf_p0_frac caveat above).
         "sf_rebuild_policy_frac": float(metrics.sf_rebuild_policy_frac),
         "sf_rebuild_wdl_frac": float(metrics.sf_rebuild_wdl_frac),
         "sf_rebuild_masked_frac": float(metrics.sf_rebuild_masked_frac),
+        "sf_rebuild_masked_p0_frac": float(metrics.sf_rebuild_masked_p0_frac),
+        "sf_rebuild_masked_volatility_frac": float(
+            metrics.sf_rebuild_masked_volatility_frac
+        ),
         "policy_loss_selfplay": float(metrics.policy_loss_selfplay),
         "policy_loss_curriculum": float(metrics.policy_loss_curriculum),
         "wdl_loss_selfplay": float(metrics.wdl_loss_selfplay),
@@ -970,6 +983,7 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
   # sink is not an alarm. The train-side twins are in _TRAIN_METRIC_DEFAULTS.
     "test_sf_rebuild_policy_frac", "test_sf_rebuild_wdl_frac",
     "test_sf_rebuild_masked_frac",
+    "test_sf_rebuild_masked_p0_frac", "test_sf_rebuild_masked_volatility_frac",
 )
 
 
@@ -1040,6 +1054,10 @@ def _test_and_drift_dict(
             "test_sf_rebuild_policy_frac": float(tm.sf_rebuild_policy_frac),
             "test_sf_rebuild_wdl_frac": float(tm.sf_rebuild_wdl_frac),
             "test_sf_rebuild_masked_frac": float(tm.sf_rebuild_masked_frac),
+            "test_sf_rebuild_masked_p0_frac": float(tm.sf_rebuild_masked_p0_frac),
+            "test_sf_rebuild_masked_volatility_frac": float(
+                tm.sf_rebuild_masked_volatility_frac
+            ),
         })
     return test_dict
 

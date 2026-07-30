@@ -950,6 +950,25 @@ The "one bump" case only arises if the two deploy at different restarts, which
 will not happen here. **If a bump IS observed at that restart, that is a KILL
 signal for this entry's condition 3**, not a shrug.
 
+**Addendum (2026-07-30, #283 review follow-up).** The follow-up PR inverts the
+rebuild gate to fail-closed (`_prepare_host_arrays` defaults
+`rebuild_sf_targets=False`; `_sample_batch_host` opts in explicitly), which
+edits two covered frames and moves BOTH pins again:
+
+| constant | after #283 | after the follow-up |
+|---|---|---|
+| `PRODUCTION_FULL_PASS_RULER` | `v1:full_pass:2efe658b4e778870` | **`v1:full_pass:bed3d8e3799e997d`** |
+| `PRODUCTION_SAMPLED_RULER` | `v1:sampled:d6f7cabecd8e6f67` | **`v1:sampled:610f05cf817b4783`** |
+
+Same shape as the #283 move: a **declared false positive** — the full pass
+still pins the rebuild off and the sampled path still rebuilds exactly when
+the trainer flag is on, so neither measurement changed; the covered source
+did. If the follow-up deploys at a LATER restart than #283 and the checkpoint
+by then carries a recorded `holdout_ruler`, expect exactly ONE
+`holdout_generation` bump and one best-model handover at that restart — the
+pin announcing a source move, to be read against this addendum, not as the
+ruler moving.
+
 ### PRE-REGISTERED (not yet live) — selfplay clients stop zero-padding root evals to 32 rows (PR #280, 2026-07-27)
 
 **Class: efficiency plumbing. NOT an experiment, and NOT a throughput lever.**
