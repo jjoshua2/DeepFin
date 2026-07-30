@@ -1575,14 +1575,27 @@ def test_metric_splat_sources_cannot_collide_in_build_metrics():
     )
 
 
+_SF_TARGET_FIELDS = (
+    "sf_policy_temp", "sf_policy_label_smooth", "sf_wdl_use_cp_logistic",
+    "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
+)
+
+
 def test_sf_target_param_defaults_have_one_home():
     """The five SF target-construction defaults live on `SfTargetParams`.
     Every other reader either DERIVES from it (`resolve_sf_target_params`,
-    `tune/distributed_runtime.build_recommended_worker`, worker.py's reco
-    reads, `TrialConfig.from_dict`) or is PINNED equal here (the `GameConfig`
+    `tune/distributed_runtime.build_recommended_worker`,
+    `TrialConfig.from_dict`) or is PINNED equal here (the `GameConfig`
     / `TrialConfig` dataclass defaults), so a drifted copy fails CI instead
     of silently splitting capture-time and rebuilt targets on any config that
-    omits the key."""
+    omits the key.
+
+    worker.py is the FIFTH reader and is covered by
+    `test_worker_reco_defaults_derive_from_sf_target_params`, which drives it
+    rather than asserting about it — this test used to merely NAME worker.py
+    in its docstring while never executing a line of it, so hardcoding a
+    literal at `worker.py:3384` survived as a mutation.
+    """
     from chess_anti_engine.model import ModelConfig
     from chess_anti_engine.selfplay.config import GameConfig
     from chess_anti_engine.train.trainer import resolve_sf_target_params
@@ -1590,10 +1603,7 @@ def test_sf_target_param_defaults_have_one_home():
     from chess_anti_engine.tune.trial_config import TrialConfig
 
     d = SfTargetParams()
-    fields = (
-        "sf_policy_temp", "sf_policy_label_smooth", "sf_wdl_use_cp_logistic",
-        "sf_wdl_cp_slope", "sf_wdl_cp_draw_width",
-    )
+    fields = _SF_TARGET_FIELDS
     assert resolve_sf_target_params({}) == d
     for owner in (GameConfig, TrialConfig):
         for f in fields:
@@ -1603,6 +1613,44 @@ def test_sf_target_param_defaults_have_one_home():
     )
     for f in fields:
         assert reco[f] == getattr(d, f), f
+
+
+def test_worker_reco_defaults_derive_from_sf_target_params():
+    """worker.py's reco reads must FALL BACK to `SfTargetParams`, not to a
+    literal typed at the call site.
+
+    A manifest that omits these keys (an older server, or any config that
+    never set them) makes the worker stamp its own fallback onto the captured
+    record while `resolve_sf_target_params` stamps `SfTargetParams` onto the
+    rebuild — the exact capture-vs-rebuild split this family of tests exists
+    to prevent, and the one a docstring naming worker.py could not catch.
+
+    Driven through the real `_build_selfplay_configs` with an EMPTY reco, so
+    replacing any default at `worker.py:3384+` with its current literal value
+    fails here.
+    """
+    from chess_anti_engine.worker import WorkerSession
+
+    from tests.test_reco_coverage import _bare_session
+
+    d = SfTargetParams()
+    cfgs, _sf_args = WorkerSession._build_selfplay_configs(
+        _bare_session(), {"sf_nodes": 5000},
+    )
+    game = cfgs["game"]
+    for f in _SF_TARGET_FIELDS:
+        assert getattr(game, f) == getattr(d, f), f
+
+    # Negative control: the assertions above pass trivially if the worker
+    # ignores the reco entirely, so prove this path is live and reco-driven.
+    bumped = {
+        "sf_nodes": 5000,
+        "sf_policy_temp": d.sf_policy_temp + 0.25,
+        "sf_wdl_cp_slope": d.sf_wdl_cp_slope + 0.5,
+    }
+    cfgs2, _ = WorkerSession._build_selfplay_configs(_bare_session(), bumped)
+    assert cfgs2["game"].sf_policy_temp == d.sf_policy_temp + 0.25
+    assert cfgs2["game"].sf_wdl_cp_slope == d.sf_wdl_cp_slope + 0.5
 
 
 def test_batch_sf_wdl_logistic_has_no_sentinel_overflow():

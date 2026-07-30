@@ -329,11 +329,12 @@ prose's "~95 %" as a coverage regression. The denominator is all batch rows on
 purpose — it makes the column a fraction of the training batch, which is what
 "how much of what I trained on was re-pointed" actually asks.
 
-**The deploying restart will ROTATE `progress.csv`.** This PR adds three report
-keys (`sf_rebuild_policy_frac` / `_wdl_frac` / `_masked_frac`, plus their
-`test_` twins; the review follow-up adds `_masked_p0_frac` /
-`_masked_volatility_frac` the same way, so ITS deploying restart rotates
-again), which changes the report schema, so
+**The deploying restart will ROTATE `progress.csv`.** The rebuild reports
+**five** `sf_rebuild_*` keys, each with a `test_` twin — ten columns in all.
+Three arrived with #283 (`sf_rebuild_policy_frac` / `_wdl_frac` /
+`_masked_frac`) and two with the #288 review follow-up (`_masked_p0_frac` /
+`_masked_volatility_frac`), so BOTH deploys rotate: #283's and then #288's.
+Each rotation changes the report schema, so
 `_rotate_progress_csv_if_schema_changed` (`tune/harness.py`, PR #262) moves the
 existing file aside and starts a new one. That is correct behaviour and
 `scripts/ratchet_slope.py` and `scripts/train_watchdog.py` already follow
