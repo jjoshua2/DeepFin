@@ -266,7 +266,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_377.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_389.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
@@ -277,7 +277,23 @@ selfplay:
   # selfplay seeded games/iter. Threaded-path delivery wired+verified. Live-reloadable.
   # KILL: set 0 + opening_fen_prob 0.05. Ledger LIVE-UNREAD row (readout ~iter 725); baseline
   # ckpt686 (v1 16/35, value 74.3), revert trunk data/salvage/pre_dole_ckpt686_20260708.
-  opening_fen_dole_per_iter: 0   # 2026-07-26: SEEDING OFF for the boot512 restart readout.
+  # 2026-07-30 16:2x: SEEDING BACK ON at a deliberately small dose (user request).
+  # This reverses the 2026-07-26 kill below. Read that first — the contamination
+  # it cites is REAL and is NOT yet resolved; this is a bounded trial, not a
+  # clearance. What changed: nothing about the pool. What bounds the risk:
+  # max_fraction 0.25 -> 0.08 (see that key), which is ~16% of SELFPLAY at
+  # selfplay_fraction 0.50, i.e. ~35 of ~440 games.
+  # Net-side vetting of a filtered 80-seed subset kept 6, but the PAIRED lift
+  # that would say whether those 6 are blind spots or merely "positions where
+  # most moves lose" is STILL UNMEASURED — three separate defects were found in
+  # that instrument on 2026-07-30 (see scripts/blindspot_netside_vet.py). Do not
+  # cite the "6 vetted seeds" as evidence this pool is clean.
+  # A curated 6-seed list is NOT possible while live: opening_fen_list_path
+  # (line ~269) is rewritten EVERY ITERATION by the harvest/retire pipeline, so
+  # any custom path is clobbered within ~12 min. That is why this runs on the
+  # live pool.
+  # REVERT (live-reloadable, no restart): set this back to 0.
+  opening_fen_dole_per_iter: 1
   # This is the documented KILL above (dose 0). Rationale: (a) one data-affecting
   # change per readout window and the LR change owns this one; (b) the pool is
   # measurably contaminated — of 26 long-stuck seeds, SF rates them median 0.500
@@ -300,7 +316,10 @@ selfplay:
   # 0.25 here. (0.5 would allow 220 seeded = ~100% of selfplay, i.e. exactly the
   # runaway this cap exists to stop -- the two fractions are NOT the same number.)
   # Both channels rotate, so nothing in the tail is starved. 0 = uncapped.
-  opening_fen_dole_max_fraction: 0.25
+  # 2026-07-30: 0.25 -> 0.08 for the bounded re-enable above. Per the arithmetic
+  # in this comment block, 0.08 of TOTAL games is ~0.16 of SELFPLAY — roughly a
+  # third of the previous ceiling. Still NOT 0: on this key 0 means UNCAPPED.
+  opening_fen_dole_max_fraction: 0.08
   # 2026-07-19: SF-refutation channel on top of selfplay dole — value-blind-spot
   # lever. Round-robin 50% of the live seed list each iter as short curriculum
   # games: SF plays the first 3 opponent plies (breaks net-net collusion on
