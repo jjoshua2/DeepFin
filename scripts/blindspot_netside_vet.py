@@ -297,6 +297,12 @@ def main() -> None:
                 "deep_before": d_before, "deep_after": d_after,
                 "gap": d_before - d_after, "control": args.control,
                 "safe_frac": safe_frac, "n_legal": len(legal), "n_surveyed": len(survey),
+                # Recorded so a later reader can PROVE the guard and the criterion
+                # shared a depth, instead of inferring it from wall-clock. The
+                # 30k-vs-4M mismatch that broke the control was invisible in the
+                # output that existed at the time.
+                "safe_frac_nodes": args.safe_frac_nodes,
+                "screen_nodes": args.screen_nodes, "deep_nodes": args.deep_nodes,
             }
             keep = d_before >= args.fine and d_after <= args.lost
             rec["keep"] = keep
