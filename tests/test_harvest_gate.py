@@ -728,3 +728,41 @@ def test_tagged_curriculum_outranks_untagged_pending() -> None:
         out_path="/dev/null",
     )
     assert calls == [_key(_FEN_C), _key(_FEN_B), _key(_FEN_A)]
+
+
+def test_sp_tag_survives_the_real_harvester_write_path(tmp_path: Path) -> None:
+    """END-TO-END: harvester writes -> file -> read_new_lines -> source_rank.
+
+    The unit tests above feed hand-built strings, so they would all still pass
+    if `format_record` never actually emitted `sp=`, or if `read_new_lines`
+    mangled it. This drives the REAL producer and the REAL reader, because the
+    failure mode that matters here is a tag that is written and then silently
+    not read on the production path.
+    """
+    from chess_anti_engine.selfplay.blindspot_harvest import (
+        HarvestedSeed,
+        format_record,
+    )
+    from scripts.harvest_gate_step import (
+        SRC_CURRICULUM,
+        SRC_SELFPLAY,
+        SRC_UNKNOWN,
+        source_rank,
+    )
+
+    seed = HarvestedSeed(line=_FEN_A, net_q=0.6, sf_q=-0.7, severe=True, ply_index=10)
+    path = tmp_path / "blindspot.severe.p1.txt"
+    _write(path, "".join(
+        format_record(seed, game_id="g1", is_selfplay=sp) + "\n"
+        for sp in (False, True, None)
+    ))
+
+    lines, _off, n_raw = read_new_lines([str(path)], {})
+    assert n_raw == 3
+    assert [source_rank(ln) for ln in lines] == [
+        SRC_CURRICULUM, SRC_SELFPLAY, SRC_UNKNOWN,
+    ]
+    # And the tag must not have broken the seed grammar the gate parses.
+    for ln in lines:
+        parsed = parse_seed_line(ln)
+        assert parsed is not None and parsed[0] == _key(_FEN_A)
