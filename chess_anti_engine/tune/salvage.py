@@ -457,12 +457,40 @@ def _export_one_seed(
     )
 
     copied_shards = 0
+    replay_source = ""
+    replay_tried: list[str] = []
     if copy_replay:
-        src_replay = td / "replay_shards"
-        if (not src_replay.is_dir()) and replay_root_override:
-            src_replay = Path(replay_root_override).expanduser() / td.name / "replay_shards"
-        if src_replay.is_dir():
-            copied_shards = _copy_replay_shards(src_replay, seed_dir / "replay_shards")
+        # Pick the source by whether it actually CONTAINS shards, not by whether
+        # the directory exists. The trial dir holds an EMPTY `replay_shards/`
+        # under the distributed layout (shards live under
+        # tune_replay_root_override/<trial>/replay_shards), so an is_dir() test
+        # on the primary succeeds vacuously and the override is never tried.
+        # That silently produced weights-only "revert points": the salvage pool
+        # banked 2026-07-30 recorded copied_replay_shards=0 while 839 shards
+        # (3.4G) sat unread at the override path.
+        candidates = [td / "replay_shards"]
+        if replay_root_override:
+            candidates.append(
+                Path(replay_root_override).expanduser() / td.name / "replay_shards")
+        for cand in candidates:
+            replay_tried.append(str(cand))
+            if not cand.is_dir() or not iter_shard_paths(cand):
+                continue
+            copied_shards = _copy_replay_shards(cand, seed_dir / "replay_shards")
+            replay_source = str(cand)
+            break
+        if copied_shards == 0:
+            # A rollback point with no replay window is not a rollback point: a
+            # yaml revert cannot undo a day of data made under the old settings.
+            # Fail rather than hand back a pool that LOOKS complete — pass
+            # --no-copy-replay to export weights+optimizer only on purpose.
+            raise SystemExit(
+                "salvage-export: --salvage-copy-replay was requested but ZERO "
+                "replay shards were found for trial "
+                f"{td.name}. Tried:\n  " + "\n  ".join(replay_tried) +
+                "\nThis would produce a weights-only pool that cannot restore "
+                "the replay window. Pass --no-copy-replay to export without "
+                "shards deliberately, or set tune_replay_root_override.")
 
     return {
         "slot": int(slot),
@@ -480,6 +508,11 @@ def _export_one_seed(
         "stale_result_rows": bool(plan.stale_result_rows),
         "seed_dir": str(seed_dir.relative_to(out_dir)),
         "copied_replay_shards": int(copied_shards),
+        # Which path the shards actually came from, and every path considered —
+        # so a banked pool is self-describing and a zero count can be diagnosed
+        # from the manifest alone, months later, without the source tree.
+        "replay_shard_source": replay_source,
+        "replay_shard_paths_tried": list(replay_tried),
         "pid_state_overrides": list(pid_state_overrides),
         "result_row": plan.row,
     }

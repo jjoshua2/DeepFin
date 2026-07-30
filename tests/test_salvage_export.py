@@ -295,3 +295,110 @@ def test_row_for_checkpoint_picks_max_iter() -> None:
     assert match is not None
     assert match["training_iteration"] == 691
     assert _row_for_checkpoint(rows, "checkpoint_000000") is None
+
+
+# ── replay-shard source selection (2026-07-30) ───────────────────────────────
+#
+# The distributed layout keeps shards under
+# `tune_replay_root_override/<trial>/replay_shards`, while the TRIAL dir holds
+# an EMPTY `replay_shards/`. Selecting the source with `is_dir()` therefore
+# succeeded vacuously on the empty primary and never tried the override, so
+# every "revert point" banked was weights-only while reporting the fact only as
+# a 0 in the manifest. Verified against production 2026-07-30: the pool banked
+# that day recorded copied_replay_shards=0 with 839 shards (3.4G) unread.
+
+
+def _replay_args(
+    work_dir: Path, out_dir: Path, override: str, *, copy_replay: bool = True,
+) -> argparse.Namespace:
+    a = _args(work_dir, out_dir, "training_iteration")
+    a.salvage_copy_replay = copy_replay
+    a.tune_replay_root_override = override
+    return a
+
+
+def _mk_run(tmp_path: Path) -> tuple[Path, Path]:
+    work = tmp_path / "work"
+    td = work / "tune" / TRIAL_NAME
+    _write_rows(td, [_row(7, "checkpoint_000007")])
+    _mk_ckpt(td, "checkpoint_000007", content="w7")
+    return work, td
+
+
+def _mk_shards(root: Path, n: int) -> Path:
+    """`n` zarr-style shard dirs, the layout iter_shard_paths recognises."""
+    root.mkdir(parents=True, exist_ok=True)
+    for i in range(n):
+        d = root / f"shard_{i:06d}.zarr"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / ".zgroup").write_text('{"zarr_format":2}', encoding="utf-8")
+    return root
+
+
+def test_empty_trial_replay_dir_falls_through_to_override(tmp_path: Path) -> None:
+    """THE BUG. An EMPTY `replay_shards/` in the trial dir must not shadow the
+    override that actually holds the shards."""
+    work, td = _mk_run(tmp_path)
+    (td / "replay_shards").mkdir(parents=True, exist_ok=True)   # empty decoy
+    override = tmp_path / "replayroot"
+    _mk_shards(override / TRIAL_NAME / "replay_shards", 3)
+
+    out = tmp_path / "pool"
+    export_seed_pool(_replay_args(work, out, str(override)))
+    entry = json.loads((out / "manifest.json").read_text(encoding="utf-8"))["entries"][0]
+
+    assert entry["copied_replay_shards"] == 3
+    assert entry["replay_shard_source"].startswith(str(override))
+    # Both paths recorded, so a future zero is diagnosable from the pool alone.
+    assert len(entry["replay_shard_paths_tried"]) == 2
+    assert len(list((out / entry["seed_dir"] / "replay_shards").iterdir())) == 3
+
+
+def test_populated_trial_dir_still_wins(tmp_path: Path) -> None:
+    """Negative control: when the primary genuinely HAS shards it must be used,
+    so the fix is a fall-through and not a blanket redirect to the override."""
+    work, td = _mk_run(tmp_path)
+    _mk_shards(td / "replay_shards", 2)
+    override = tmp_path / "replayroot"
+    _mk_shards(override / TRIAL_NAME / "replay_shards", 9)
+
+    out = tmp_path / "pool"
+    export_seed_pool(_replay_args(work, out, str(override)))
+    entry = json.loads((out / "manifest.json").read_text(encoding="utf-8"))["entries"][0]
+
+    assert entry["copied_replay_shards"] == 2
+    assert entry["replay_shard_source"] == str(td / "replay_shards")
+
+
+def test_zero_shards_fails_loudly_instead_of_banking_a_dud(tmp_path: Path) -> None:
+    """A rollback point with no replay window is not a rollback point. When
+    copy-replay is requested and nothing is found anywhere, the export must
+    FAIL rather than hand back a pool that looks complete."""
+    import pytest
+
+    work, td = _mk_run(tmp_path)
+    (td / "replay_shards").mkdir(parents=True, exist_ok=True)   # empty
+    override = tmp_path / "replayroot"                          # nothing there
+
+    out = tmp_path / "pool"
+    with pytest.raises(SystemExit) as ei:
+        export_seed_pool(_replay_args(work, out, str(override)))
+    msg = str(ei.value)
+    assert "ZERO replay shards" in msg
+    assert "--no-copy-replay" in msg          # names the deliberate opt-out
+    assert str(td / "replay_shards") in msg   # names every path tried
+    assert str(override) in msg
+
+
+def test_no_copy_replay_is_still_allowed_to_export_nothing(tmp_path: Path) -> None:
+    """The opt-out must remain silent: --no-copy-replay is the supported way to
+    bank weights+optimizer only, and must not trip the new failure."""
+    work, td = _mk_run(tmp_path)
+    (td / "replay_shards").mkdir(parents=True, exist_ok=True)
+
+    out = tmp_path / "pool"
+    export_seed_pool(_replay_args(work, out, "", copy_replay=False))
+    entry = json.loads((out / "manifest.json").read_text(encoding="utf-8"))["entries"][0]
+    assert entry["copied_replay_shards"] == 0
+    assert entry["replay_shard_source"] == ""
+    assert entry["replay_shard_paths_tried"] == []
