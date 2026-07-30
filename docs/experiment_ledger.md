@@ -13949,3 +13949,45 @@ but they cannot be fed alone while the run is live, because
 pipeline (`retire_377 → retire_389` observed today), so a curated path is
 clobbered within ~12 minutes. Feeding a curated list requires pausing or
 pinning that pipeline, which is a larger change than this entry covers.
+
+### ⚑⚑ CORRECTION (2026-07-30 16:50) — the lift=1.09x verdict above measured THE WRONG FILE. It says nothing about the live pool.
+
+**Retracted claim:** "the pool is 'positions where most moves lose', not blind
+spots." That is NOT established. The measurement was run on
+`scratchpad/.../severe80.txt`, and:
+
+    severe80: 80 seeds   live pool (retire_389): 363 lines   OVERLAP: 0
+
+**Zero overlap.** `severe80` is a hand-built sample of the RAW harvest
+candidate stream (`data/harvest/blindspot_live.severe.p*.txt`, `sev=1` lines),
+not of the pool the dole feeds. The pre-registration for this experiment
+explicitly said "Run this on the LIVE pool ... **Not** on a filtered 'severe'
+subset" — and it was then run on the subset anyway. Writing the rule down did
+not prevent the error; only diffing the two files did.
+
+**It is worse than a scope error — the sample was drawn from the REJECTED
+stream.** `scripts/harvest_gate_step.py` is live (`monitor_fen.sh` pid 7275)
+and stages a candidate only when its terminal scores `<= --vet-lost-below`
+(default −0.80), i.e. only LOST terminals. Its state file reads **emitted 2,734
+/ rejected 8,963 = 23.4% keep**. Every one of the 80 vetted seeds had
+`unplayable_dropped=0`, i.e. `before >= +0.20` — a WINNING terminal — so all 80
+sit in the 76.6% the gate already discards. Measuring them proves the discarded
+material is knife-edge, which is evidence the gate WORKS, not that the pool is
+contaminated. The number was real; the population was wrong.
+
+**Why the two files differ structurally, which is the tell I should have read
+first:** raw harvest lines are seed-grammar `<fen> | <8 uci>` with `nq=`/`sq=`
+annotations, where the stored terminal is the PRE-blunder position (score ≈
+`nq`, winning) and `sq` labels the unstored POST-blunder position. The live pool
+is **bare FENs**, no move list at all. A tool that parses both without
+complaint hides the fact that they are different populations.
+
+**Consequence for the seeding decision:** `opening_fen_dole_per_iter` stays 0,
+but now for want of evidence rather than against it. The gate that should have
+caught this — "does this file's content match the population the claim is
+about?" — did not exist. The admission gate stands unchanged at lift >= 2.0 on
+the LIVE pool; that run is now in flight on all 331 seeds of `retire_389`.
+
+**Method rule earned here:** before reporting any verdict about a production
+artifact, diff the file measured against the file production reads. Provenance
+is not established by a filename that sounds right.
