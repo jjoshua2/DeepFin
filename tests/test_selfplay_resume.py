@@ -109,7 +109,23 @@ _DIFF_FOCUS = DiffFocusConfig(min_keep=1.0)
 # that has produced two retracted findings in this repo. random_start_plies is
 # the cheap way to get the same property (_random_playout_from_start pushes real
 # moves, so the board has a real _stack); 4 is production's book depth.
-_START_PLIES_IDS = {0: "startpos-empty-stack", 4: "prior-moves-depth-4"}
+#
+# The "fen" arm covers the third production shape: a blind-spot fenlist seed,
+# whose ROOT is a mid-game FEN with a nonzero halfmove clock and fullmove
+# number. Both survive suspension only through `root_fen` — the zobrist
+# excludes the halfmove clock, so no pos_hash can catch a wrong clock, yet
+# rule50 is an input plane. The seed's history moves also put a repetition
+# inside the 8-position history window, so the repetition plane is exercised.
+_START_MODE_IDS = {
+    0: "startpos-empty-stack", 4: "prior-moves-depth-4", "fen": "midgame-fen-root",
+}
+
+_MIDGAME_ROOT_FEN = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+# Knights out and back: the root position recurs after move 4 (a twofold, so
+# the seed is not immediately claim-drawable), and no pawn move or capture
+# means the halfmove clock keeps counting — 2 at the root, 6 at the live
+# game's first ply.
+_MIDGAME_SEED_MOVES = "b1c3 g8f6 c3b1 f6g8"
 
 
 def _opening_cfg(random_start_plies: int) -> OpeningConfig:
@@ -305,37 +321,78 @@ def _set_meta(arrays: dict[str, Any], meta: dict[str, Any]) -> None:
     ],
 )
 @pytest.mark.parametrize(
-    "random_start_plies",
-    [pytest.param(n, id=_START_PLIES_IDS[n]) for n in (0, 4)],
+    "start_mode",
+    [pytest.param(n, id=_START_MODE_IDS[n]) for n in (0, 4, "fen")],
 )
 def test_resume_reencodes_every_inflight_ply_byte_exactly(
-    tmp_path: Path, encoding_overrides: dict[str, Any], random_start_plies: int,
+    tmp_path: Path, encoding_overrides: dict[str, Any], start_mode: int | str,
 ) -> None:
     """Replay + re-encode must reproduce the live C path's inputs bit for bit.
 
-    Run at BOTH an empty starting move stack and one carrying prior moves:
-    production's `opening_book_prob: 1.0` / `opening_book_max_plies: 4` means
-    every real game is the second shape, and the history planes at the early
-    plies are the whole hazard the replay exists to get right.
+    Run at an empty starting move stack, at one carrying prior moves
+    (production's `opening_book_prob: 1.0` / `opening_book_max_plies: 4` means
+    every real book game is that shape, and the history planes at the early
+    plies are the whole hazard the replay exists to get right), and from a
+    mid-game FEN root (a blind-spot fenlist seed: nonzero halfmove clock and
+    fullmove number, which only `root_fen` carries — the zobrist excludes the
+    clock, so pos_hash passes on a wrong clock while the rule50 PLANE differs).
     """
     assert SF_PATH is not None
     game = _game_config(**encoding_overrides)
-    opening = _opening_cfg(random_start_plies)
+    if start_mode == "fen":
+        seeds = tmp_path / "seeds.txt"
+        seeds.write_text(
+            f"{_MIDGAME_ROOT_FEN} | {_MIDGAME_SEED_MOVES}\n", encoding="utf-8",
+        )
+        opening = OpeningConfig(
+            opening_fen_list_path=str(seeds), opening_fen_prob=1.0,
+            opening_book_prob=0.0,
+        )
+        # A fenlist TARGET slot is never overwritten by resume (the fresh slot
+        # already consumed a seed), so the post-restart session uses a
+        # non-seeded opening — which is also production's shape: the SUSPENDED
+        # game keeps its own opening; only fresh slots use the new config.
+        target_opening = _OPENING
+    else:
+        opening = _opening_cfg(int(start_mode))
+        target_opening = opening
     out_dir = tmp_path / "resume"
     sf = StockfishUCI(SF_PATH, nodes=80, multipv=4)
     try:
         state = _play_session(
             sf=sf, game=game, games=3, max_steps=10, opening=opening,
         )
-        if random_start_plies:
+        if start_mode == 4:
             # The arm is only meaningful if the games really do start from a
             # board with prior moves — a silently-ignored opening config would
             # otherwise make this arm a duplicate of the startpos one.
             assert state.starting_boards is not None
             assert all(
-                len(state.starting_boards[i].move_stack) == random_start_plies
+                len(state.starting_boards[i].move_stack) == start_mode
                 for i in range(state.batch_size)
             )
+        if start_mode == "fen":
+            # ...and the fen arm only if the roots really carry the seed's
+            # clock/fullmove and the opening really contains a repetition.
+            assert state.starting_boards is not None
+            for i in range(state.batch_size):
+                start = state.starting_boards[i]
+                root = start.root()
+                assert root.fen() == _MIDGAME_ROOT_FEN
+                assert root.halfmove_clock >= 1
+                assert root.fullmove_number > 1
+                assert start.is_repetition(2), (
+                    "the seed history must put a repetition in the window"
+                )
+        # The rule50 clock of every live in-flight board, keyed by move list;
+        # the restored boards must carry the same clock (no hash covers it).
+        live_clock = {
+            tuple(int(m) for m in state.move_idx_history[i]):
+                int(state.cboards[i].halfmove_clock)
+            for i in range(state.batch_size)
+            if not state.finalized_arr[i] and not state.done_arr[i]
+            and state.samples_per_game[i]
+        }
         # The claim under test is about the PRODUCTION C path
         # (batch_process_ply). Without the extension the records would come
         # from the Python fallback, which encodes through the same helper the
@@ -352,7 +409,9 @@ def test_resume_reencodes_every_inflight_ply_byte_exactly(
 
         assert _suspend_all(state, out_dir) == len(before)
 
-        target = _fresh_state(game, batch_size=state.batch_size, opening=opening)
+        target = _fresh_state(
+            game, batch_size=state.batch_size, opening=target_opening,
+        )
         report = resume_inflight_games(
             target, in_dir=out_dir, compat_fingerprint=FINGERPRINT,
             trial_id=TRIAL_ID,
@@ -369,6 +428,17 @@ def test_resume_reencodes_every_inflight_ply_byte_exactly(
         assert len(got) == len(want)
         for k, (rec_before, rec_after) in enumerate(zip(want, got, strict=True)):
             _assert_record_identical(rec_before, rec_after, f"game {moves[:4]} ply {k}")
+    # The restored LIVE boards carry the suspended games' rule50 clocks — the
+    # one field of the tail position no hash covers, and an input plane for
+    # every ply still to be played.
+    for i in range(target.batch_size):
+        if not target.resumed_from_disk[i]:
+            continue
+        key = tuple(int(m) for m in target.move_idx_history[i])
+        assert int(target.cboards[i].halfmove_clock) == live_clock[key]
+        if start_mode == "fen":
+            assert target.starting_boards is not None
+            assert target.starting_boards[i].root().fen() == _MIDGAME_ROOT_FEN
     # ...and the planes are not trivially equal because they are all zero.
     any_x = next(iter(after.values()))[0].x
     assert np.count_nonzero(any_x) > 0
@@ -1207,3 +1277,247 @@ def test_compat_fingerprint_moves_only_with_record_shaping_keys() -> None:
         moved = dict(base)
         moved[key] = "changed"
         assert session._resume_compat_fingerprint(moved) != fp, key
+
+
+# ── refusals about OUR state must not destroy the file ──────────────────────
+
+
+def test_a_refusal_about_our_state_preserves_the_file(tmp_path: Path) -> None:
+    """A leased worker whose model-sha change cleared `leased_trial_id` starts
+    its next session with trial_id="" — every suspended game then refuses
+    `no_trial_id`. That is a fact about OUR side, not a defect of the FILE, so
+    the file must survive for a later, matching session; unlinking it would
+    make the feature DESTROY the previous session's games on exactly the
+    leased workers it was built for. Same for `trial_mismatch` and
+    `config_mismatch`.
+    """
+    path, game, _src = _one_suspended_game(tmp_path)
+
+    for fingerprint, trial_id, reason in (
+        (FINGERPRINT, "", "no_trial_id"),
+        (FINGERPRINT, "some-other-trial", "trial_mismatch"),
+        ("another-fingerprint", TRIAL_ID, "config_mismatch"),
+    ):
+        target = _fresh_state(game, batch_size=2)
+        report = resume_inflight_games(
+            target, in_dir=path.parent, compat_fingerprint=fingerprint,
+            trial_id=trial_id,
+        )
+        assert (report.resumed, report.discarded) == (0, 0), reason
+        assert report.preserved == 1, reason
+        assert report.reasons.get(reason) == 1
+        # The file survives, un-claimed, for the next session...
+        assert _state_files(path.parent), f"{reason} must not destroy the file"
+        assert not list(path.parent.glob("*.claimed")), reason
+        # ...and nothing is parked as a LOSS, because the game is not lost.
+        assert not target.pending_outcome_stats
+
+    # A matching session can still resume the very same file.
+    target, report = _resume_one(path, game)
+    assert report.resumed == 1
+    assert any(target.resumed_from_disk)
+
+
+def test_no_trial_id_at_session_start_warns(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The leased-worker gap must be loud: with the flag on and no trial id,
+    nothing can be persisted or resumed this session, and without a log line
+    `resumed_inflight_games: 0` looks like the feature simply not working."""
+    import logging
+
+    session = _bare_session(tmp_path)
+    session.leased_trial_id = ""
+    with caplog.at_level(logging.WARNING, logger="test-worker"):
+        session._begin_resume_session({"selfplay_resume_inflight_games": True})
+    assert any("no trial id" in r.message for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="test-worker"):
+        session._begin_resume_session({"selfplay_resume_inflight_games": False})
+    assert not any("no trial id" in r.message for r in caplog.records), (
+        "flag off must not warn — nothing is armed to be surprised about"
+    )
+
+
+# ── ply-index convention guard ───────────────────────────────────────────────
+
+
+def test_a_game_from_the_other_ply_convention_is_rejected(tmp_path: Path) -> None:
+    """`ply_index` means CBoard.ply on the C path but len(move_stack) on the
+    Python fallback — different origins for a seeded opening. `has_c_ply` says
+    which convention the stored values use; a session on the OTHER convention
+    cannot validate them (the replay's ply check keys off the file's own flag)
+    and finalize keys its sf_p0 one-ply shift off ply_index, so the game must
+    be refused, not resumed under a reinterpreted index."""
+    path, game, _src = _one_suspended_game(tmp_path)
+
+    def _flip(arrays: dict[str, Any]) -> None:
+        meta = _meta_of(arrays)
+        meta["has_c_ply"] = not bool(meta["has_c_ply"])
+        _set_meta(arrays, meta)
+
+    _rewrite(path, _flip)
+    target, report = _resume_one(path, game)
+
+    assert report.resumed == 0
+    assert report.reasons.get("ply_convention_mismatch") == 1
+    assert not any(target.resumed_from_disk)
+
+
+# ── the worker->play_batch wirings ───────────────────────────────────────────
+
+
+def _wired_session(tmp_path: Path) -> Any:
+    """A WorkerSession with enough state to drive the REAL `_run_selfplay`
+    through the REAL `_dispatch_selfplay_one_shard`, with `play_batch` faked.
+
+    Everything the wiring under test touches is real: `_begin_resume_session`,
+    the on_suspend conditional, `_register_live_state` and the resume hook.
+    Everything else (engine sync, evaluators, upload) is stubbed out.
+    """
+    import threading
+    from types import SimpleNamespace
+
+    session = _bare_session(tmp_path)
+    session.leased_trial_id = TRIAL_ID
+    session.device = "cpu"
+    session.model_sha = "f" * 64
+    session.model_step = 3
+    session.model = None
+    session.inference_client = object()  # broker mode: no local model needed
+    session._direct_evaluator = None
+    session.games_per_batch_local = 2
+    session.rng = np.random.default_rng(0)
+    session.args = SimpleNamespace(
+        threaded_selfplay=False, selfplay_threads=1, poll_seconds=0.0,
+        stockfish_from_server=False,
+    )
+    session.sf = None
+    session._live_states_lock = threading.Lock()
+    session._live_states = []
+    session._pending_live_override = None
+    session._dole_lock = threading.Lock()
+    session._live_dole_queue = None
+    session._live_sf_refute_queue = None
+    session._pending_fen_dole = []
+    session._pending_sf_refute = []
+    session._resume_counts_lock = threading.Lock()
+    session._resume_counts = {
+        "suspended": 0, "suspend_skipped": 0, "resumed": 0, "discarded": 0,
+    }
+    session._resume_skip_reasons = {}
+    # Collaborators outside the wiring under test.
+    session._build_selfplay_configs = lambda reco: (
+        {"opening": _OPENING}, (1000, 4, 16, None),
+    )
+    session._sync_stockfish = lambda *a, **k: setattr(session, "sf", object())
+    session._promote_pending_dole = lambda: ([], [])
+    session._note_selfplay_progress = lambda: None
+    session._start_selfplay_stall_watchdog = lambda: None
+    session._start_model_watch_thread = lambda: None
+    session._flush_and_upload_after_shard = lambda *a, **k: None
+    return session
+
+
+@pytest.mark.parametrize(
+    "threaded", [False, True], ids=["single-path", "threaded-path"],
+)
+def test_run_selfplay_wires_resume_hooks_into_play_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, threaded: bool,
+) -> None:
+    """The three worker-side wirings, driven through the real `_run_selfplay`:
+
+    1. `_run_selfplay` calls `_begin_resume_session(reco)` — delete it and the
+       flag sits at its class default False while the yaml says true;
+    2. `_dispatch_selfplay_one_shard` / `_run_selfplay_threaded` hand
+       `on_suspend=self._suspend_inflight_games` to play_batch;
+    3. `_register_live_state` (play_batch's on_state_ready) calls
+       `_resume_inflight_games`, which really restores a persisted game.
+
+    The end-to-end tests supply their own hooks, so they prove play_batch's
+    side of the contract, not the worker's — this is the worker's side. The
+    concrete failure this pins: yaml says true, a hook silently unwired,
+    `resumed_inflight_games` stays 0 forever and nothing crashes.
+    """
+    import chess_anti_engine.worker as worker_mod
+    from chess_anti_engine.selfplay.state import BatchStats
+
+    game = _game_config()
+    session = _wired_session(tmp_path)
+    session.args.threaded_selfplay = threaded
+    reco = {"selfplay_resume_inflight_games": True}
+
+    # One real suspended game, written by the WORKER's own suspend hook so the
+    # file carries the same fingerprint/trial the session's resume side reads.
+    source = _fresh_state(game, batch_size=2)
+    _fill_slot(source, 0, plies=6)
+    source.done_arr[1] = 1
+    session._begin_resume_session(reco)
+    session._suspend_inflight_games(source)
+    assert session._resume_counts["suspended"] == 1
+    # Reset the session-fixed state to its class defaults: only _run_selfplay's
+    # OWN _begin_resume_session call may re-arm it, otherwise the direct call
+    # above would mask a deleted wiring (the exact mutation this test pins).
+    session._resume_inflight_enabled = False
+    session._resume_compat_fingerprint_active = ""
+    session._resume_trial_id_active = ""
+
+    captured: list[dict[str, Any]] = []
+    states: list[SelfplayState] = []
+
+    def _fake_play_batch(_model: Any, **kwargs: Any) -> Any:
+        captured.append(kwargs)
+        state = _fresh_state(game, batch_size=2, seed=9)
+        states.append(state)
+        on_ready = kwargs.get("on_state_ready")
+        if on_ready is not None:
+            on_ready(state)
+        return [], BatchStats(games=0, positions=0, w=0, d=0, l=0)
+
+    monkeypatch.setattr(worker_mod, "play_batch", _fake_play_batch)
+    session._run_selfplay({"recommended_worker": reco})
+
+    # Wiring 1: the session began a resume session from the reco.
+    assert session._resume_inflight_enabled is True
+    assert session._resume_trial_id_active == TRIAL_ID
+    # Wiring 2: play_batch got the worker's real suspend hook, not None.
+    (kw,) = captured
+    assert kw["on_suspend"] == session._suspend_inflight_games
+    assert kw["on_state_ready"] == session._register_live_state
+    # Wiring 3: on_state_ready really brought the persisted game back.
+    assert session._resume_counts["resumed"] == 1
+    (state,) = states
+    assert any(state.resumed_from_disk)
+    assert not _state_files(session.resume_dir)
+
+
+def test_run_selfplay_keeps_hooks_dark_with_the_flag_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flag off = exactly today's behaviour: no suspend hook reaches play_batch
+    and no resume runs at state registration."""
+    import chess_anti_engine.worker as worker_mod
+    from chess_anti_engine.selfplay.state import BatchStats
+
+    game = _game_config()
+    session = _wired_session(tmp_path)
+    captured: list[dict[str, Any]] = []
+
+    def _fake_play_batch(_model: Any, **kwargs: Any) -> Any:
+        captured.append(kwargs)
+        state = _fresh_state(game, batch_size=2, seed=9)
+        on_ready = kwargs.get("on_state_ready")
+        if on_ready is not None:
+            on_ready(state)
+        return [], BatchStats(games=0, positions=0, w=0, d=0, l=0)
+
+    monkeypatch.setattr(worker_mod, "play_batch", _fake_play_batch)
+    session._run_selfplay(
+        {"recommended_worker": {"selfplay_resume_inflight_games": False}},
+    )
+
+    assert session._resume_inflight_enabled is False
+    (kw,) = captured
+    assert kw["on_suspend"] is None
+    assert session._resume_counts["resumed"] == 0

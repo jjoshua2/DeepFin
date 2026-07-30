@@ -132,11 +132,21 @@ class ResumeReport:
 
     resumed: int = 0
     discarded: int = 0
+    # Files refused for a reason that is about OUR session's state, not a
+    # defect of the file (see _PRESERVE_FILE_REASONS). They are put back on
+    # disk for a later, matching session — refused, but not LOST, so they are
+    # deliberately kept out of `discarded` (and out of the
+    # `resume_discarded_games` counter it feeds).
+    preserved: int = 0
     records: int = 0
     reasons: dict[str, int] = field(default_factory=dict)
 
     def note(self, reason: str) -> None:
         self.discarded += 1
+        self.reasons[reason] = self.reasons.get(reason, 0) + 1
+
+    def note_preserved(self, reason: str) -> None:
+        self.preserved += 1
         self.reasons[reason] = self.reasons.get(reason, 0) + 1
 
 
@@ -555,6 +565,7 @@ def should_resume_game(
     trial_id: str = "",
     now_s: float | None = None,
     max_age_s: float = DEFAULT_MAX_AGE_S,
+    has_c_ply: bool | None = None,
 ) -> str | None:
     """THE resume-or-discard decision. Returns a discard reason, or None to resume.
 
@@ -579,6 +590,15 @@ def should_resume_game(
         return "version_mismatch"
     if str(meta.get("compat_fingerprint") or "") != str(compat_fingerprint):
         return "config_mismatch"
+    # `ply_index` means CBoard.ply on the C play path but len(move_stack) on
+    # the Python fallback — different origins for a seeded opening. A session
+    # on the OTHER convention cannot validate the stored values (the replay's
+    # ply check is keyed off the file's own flag), and finalize keys its sf_p0
+    # one-ply shift off ply_index, so reinterpreting the index would silently
+    # shift a teacher. Refuse instead. ``None`` skips the check (header-only
+    # callers that have no session).
+    if has_c_ply is not None and bool(meta.get("has_c_ply", False)) != bool(has_c_ply):
+        return "ply_convention_mismatch"
     # An EMPTY id must refuse, not match. `"" == ""` would make the trial guard
     # inert exactly when we cannot tell whose data this is, and "no evidence of
     # a mismatch" is not "evidence of a match". The caller passes a snapshot
@@ -983,7 +1003,7 @@ def decode_game(
         meta = _decode_meta(npz)
         reason = should_resume_game(
             meta, compat_fingerprint=compat_fingerprint, trial_id=trial_id,
-            now_s=now_s, max_age_s=max_age_s,
+            now_s=now_s, max_age_s=max_age_s, has_c_ply=bool(state.has_c_ply),
         )
         if reason is not None:
             raise ResumeStateError(reason, f"file {path.name}")
@@ -1060,6 +1080,20 @@ def _resumable_slots(state: SelfplayState) -> list[int]:
     ]
 
 
+# Refusal reasons that are about OUR session's state rather than a defect of
+# the FILE. A leased worker between model swaps has an empty trial id
+# (`_check_model_update` clears `leased_trial_id` on a sha change, so
+# `_current_trial_id()` returns ""), a reassigned worker carries another
+# trial's id, and a reverted restart-key change carries another fingerprint —
+# in every case the game itself is intact and a later, matching session may
+# still resume it. Unlinking here would make the feature DESTROY the previous
+# session's games on exactly the leased workers it was built for, so these
+# files are put back instead. Expiry stays bounded: `stale` (counted) and the
+# sweep's 4x backstop remain the deleting paths.
+_PRESERVE_FILE_REASONS = frozenset(
+    {"no_trial_id", "trial_mismatch", "config_mismatch"},
+)
+
 # A state file this far past ``max_age_s`` is garbage-collected without being
 # read. The multiple matters: an expired GAME is meant to be discarded through
 # should_resume_game (so it is counted with a reason), and only a directory
@@ -1125,10 +1159,12 @@ def resume_inflight_games(
     Called from ``play_batch``'s ``on_state_ready`` hook, i.e. after
     ``SelfplayState.create`` has built a full table of fresh games, so every
     slot holds a replaceable game. Each file is claimed by rename before it is
-    read, so concurrent selfplay threads never resume the same game twice, and
-    it is deleted whether the decode succeeded or failed — a file that cannot
-    be decoded once will not decode later either, and leaving it would retry
-    the same failure at every restart.
+    read, so concurrent selfplay threads never resume the same game twice.
+    A resumed or genuinely defective file is deleted — a file that cannot be
+    decoded once will not decode later either, and leaving it would retry the
+    same failure at every restart. A file refused for a reason in
+    ``_PRESERVE_FILE_REASONS`` (a fact about THIS session, not the file) is
+    put back for a later, matching session instead.
     """
     report = ResumeReport()
     if not in_dir.is_dir():
@@ -1144,14 +1180,24 @@ def resume_inflight_games(
         claimed = _claim(path)
         if claimed is None:
             continue  # another thread took it
+        keep_file = False
         try:
             game = decode_game(
                 state, claimed, compat_fingerprint=compat_fingerprint,
                 trial_id=trial_id, now_s=now_s, max_age_s=max_age_s,
             )
         except ResumeStateError as exc:
-            _LOG.warning("selfplay resume: discarding %s: %s", path.name, exc)
-            report.note(exc.reason)
+            if exc.reason in _PRESERVE_FILE_REASONS:
+                # OUR state refused it; the file is fine. Put it back.
+                keep_file = True
+                _LOG.warning(
+                    "selfplay resume: leaving %s for a matching session: %s",
+                    path.name, exc,
+                )
+                report.note_preserved(exc.reason)
+            else:
+                _LOG.warning("selfplay resume: discarding %s: %s", path.name, exc)
+                report.note(exc.reason)
             continue
         except Exception as exc:
             # Deliberately broad: a state file that cannot be decoded — bad
@@ -1163,7 +1209,16 @@ def resume_inflight_games(
             report.note("unreadable")
             continue
         finally:
-            claimed.unlink(missing_ok=True)
+            if keep_file:
+                try:
+                    claimed.rename(path)
+                except OSError:
+                    # Cannot un-claim (dir vanished, permissions): better to
+                    # drop this one file than to leak a .claimed the sweep
+                    # only collects a day later.
+                    claimed.unlink(missing_ok=True)
+            else:
+                claimed.unlink(missing_ok=True)
         saved_sha = str(game.meta.get("model_sha") or "")
         if model_sha and saved_sha and saved_sha != model_sha:
             _LOG.info(
@@ -1200,9 +1255,9 @@ def resume_inflight_games(
                 int(pending.get("resume_discarded_games", 0)) + int(report.discarded)
             )
     _LOG.info(
-        "selfplay resume: resumed games=%d records=%d discarded=%d [%s] "
-        "target_slots=%d dir=%s",
-        report.resumed, report.records, report.discarded,
+        "selfplay resume: resumed games=%d records=%d discarded=%d preserved=%d "
+        "[%s] target_slots=%d dir=%s",
+        report.resumed, report.records, report.discarded, report.preserved,
         _reason_str(report.reasons), len(slots), in_dir,
     )
     return report

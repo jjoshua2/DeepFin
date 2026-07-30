@@ -3010,8 +3010,17 @@ class WorkerSession:
   # record-shaping key would silently mix two schemas inside one game.
     _RESUME_COMPAT_EXEMPT_KEYS = (
   # Engine/session plumbing — no bearing on a stored ply.
-        "sf_hash_mb", "games_per_batch", "slot_oversubscribe", "sf_move_nodes",
+        "sf_hash_mb", "games_per_batch", "slot_oversubscribe",
         "selfplay_resume_inflight_games",
+  # NOT plumbing — stockfish_turn branches on it (>0 buys separate node-capped
+  # label queries; 0 reuses the full-strength opponent-move future), so a flip
+  # across a resume mixes label node budgets within one game. Exempt anyway,
+  # accepted rather than overlooked: sf_nodes — the dominant label-budget knob
+  # (108k-698k under the PID) — is a LIVE key applied to running games, so
+  # mixed-depth labels within one game are already normal operation, and
+  # discarding suspended games on this knob while accepting sf_nodes swings
+  # would be a gate that guards nothing.
+        "sf_move_nodes",
   # Search shape. Changes the target's provenance the same way a mid-game model
   # swap does (which already happens every iteration); each ply keeps a valid
   # target for its own position.
@@ -3074,6 +3083,17 @@ class WorkerSession:
   # A SNAPSHOT, not a live read — see _resume_trial_id for why reading it at
   # suspend time stamps the wrong trial on the games it is guarding.
         self._resume_trial_id_active = self._current_trial_id()
+        if self._resume_inflight_enabled and not self._resume_trial_id_active:
+  # A leased worker between model swaps has no trial id yet
+  # (_check_model_update clears leased_trial_id on a sha change). Nothing can
+  # be persisted or resumed this session — existing files are preserved on
+  # disk, not destroyed — but without this line `resumed_inflight_games: 0`
+  # is indistinguishable from the feature simply not working.
+            self.log.warning(
+                "selfplay resume: enabled but no trial id at session start; "
+                "suspended games stay on disk unresumed and this session's "
+                "games cannot be persisted until a lease assigns a trial",
+            )
   # Unconditional, flag or no flag. Turning the flag OFF is the documented
   # revert, and it disables the drain (resume_inflight_games runs only under the
   # flag) along with the suspend — so sweeping only under the flag would leave
