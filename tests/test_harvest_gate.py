@@ -614,3 +614,117 @@ def test_run_gate_tolerates_malformed_among_good(tmp_path: Path, bad: str) -> No
     assert counts.unique_new == 1
     assert counts.vetted_kept == 1
     assert len(staged) == 1
+
+
+# ── source ordering: curriculum-first ────────────────────────────────────────
+
+
+def _sp_line(fen: str, *, sp: int | None, game: str = "g1") -> str:
+    """Harvest line with (or deliberately without) the sp= provenance tag."""
+    tag = "" if sp is None else f" sp={sp}"
+    return (f"{fen}  # nq=0.60 sq=-0.70 sev=1 game={game} ply=10{tag}")
+
+
+def test_source_rank_reads_the_tag() -> None:
+    from scripts.harvest_gate_step import (
+        SRC_CURRICULUM,
+        SRC_SELFPLAY,
+        SRC_UNKNOWN,
+        source_rank,
+    )
+
+    assert source_rank(_sp_line(_FEN_A, sp=0)) == SRC_CURRICULUM
+    assert source_rank(_sp_line(_FEN_A, sp=1)) == SRC_SELFPLAY
+    # Absent tag must NOT be guessed as either source.
+    assert source_rank(_sp_line(_FEN_A, sp=None)) == SRC_UNKNOWN
+    # `sp=` must not be matched inside another token (e.g. a game id ending sp=1).
+    assert source_rank(f"{_FEN_A}  # game=xsp=1 ply=3") == SRC_UNKNOWN
+    assert SRC_CURRICULUM < SRC_UNKNOWN < SRC_SELFPLAY
+
+
+def test_curriculum_vetted_before_selfplay_under_budget() -> None:
+    """The whole point: a 1-vet budget must be spent on the curriculum capture.
+
+    Ordering is what buys the 1.9x yield, so this pins the CHOICE, not the
+    outcome — sf_score is constant so only the pick can differ.
+    """
+    calls: list[str] = []
+
+    def sf_score(fen: str) -> float | None:
+        calls.append(position_key(fen))
+        return -0.99
+
+    # Selfplay line is NEWEST, so plain newest-first would vet it first.
+    counts, _staged, st = run_gate(
+        new_lines=[_sp_line(_FEN_A, sp=0), _sp_line(_FEN_B, sp=1)],
+        state=GateState(),
+        exclude_keys=set(),
+        sf_score=sf_score,
+        vet_lost_below=-0.80,
+        max_vet_per_run=1,
+        dry_run=False,
+        stamp=_STAMP,
+        out_path="/dev/null",
+    )
+    assert counts.vetted_kept == 1
+    assert calls == [_key(_FEN_A)]              # curriculum, despite being older
+    assert _key(_FEN_A) in st.emitted
+    assert _key(_FEN_B) in {k for k, _ in st.pending}   # deferred, NOT dropped
+
+
+def test_untagged_backlog_order_is_unchanged() -> None:
+    """NEGATIVE CONTROL. With no sp= tags anywhere, this change must be a
+    perfect no-op: every line ranks UNKNOWN and the stable sort must preserve
+    newest-first exactly. If the sort ever reorders equal ranks, the existing
+    backlog silently reshuffles on a pure format change."""
+    calls: list[str] = []
+
+    def sf_score(fen: str) -> float | None:
+        calls.append(position_key(fen))
+        return -0.99
+
+    run_gate(
+        new_lines=[_sp_line(f, sp=None) for f in (_FEN_A, _FEN_B, _FEN_C)],
+        state=GateState(),
+        exclude_keys=set(),
+        sf_score=sf_score,
+        vet_lost_below=-0.80,
+        max_vet_per_run=3,
+        dry_run=False,
+        stamp=_STAMP,
+        out_path="/dev/null",
+    )
+    # Newest-first over the untagged run, byte-for-byte the pre-change order.
+    assert calls == [_key(_FEN_C), _key(_FEN_B), _key(_FEN_A)]
+
+
+def test_tagged_curriculum_outranks_untagged_pending() -> None:
+    """A fresh curriculum capture must outrank the untagged backlog, but an
+    untagged line must still outrank a tagged SELFPLAY one — untagged sits in
+    the middle rather than being lumped in with selfplay."""
+    calls: list[str] = []
+
+    def sf_score(fen: str) -> float | None:
+        calls.append(position_key(fen))
+        return -0.99
+
+    # Order the INPUT so newest-first and rank order disagree: curriculum is
+    # written OLDEST and selfplay NEWEST. Written the other way round, plain
+    # newest-first already yields the expected sequence and the test passes
+    # with the sort removed — i.e. it would assert nothing.
+    run_gate(
+        new_lines=[
+            _sp_line(_FEN_C, sp=0),      # curriculum, OLDEST  -> must be first
+            _sp_line(_FEN_B, sp=None),   # untagged            -> middle
+            _sp_line(_FEN_A, sp=1),      # selfplay, NEWEST    -> must be last
+        ],
+        state=GateState(),
+        exclude_keys=set(),
+        sf_score=sf_score,
+        vet_lost_below=-0.80,
+        max_vet_per_run=3,
+        dry_run=False,
+        stamp=_STAMP,
+        out_path="/dev/null",
+    )
+    assert calls == [_key(_FEN_C), _key(_FEN_B), _key(_FEN_A)]

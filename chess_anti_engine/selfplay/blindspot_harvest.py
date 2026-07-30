@@ -213,12 +213,24 @@ def harvest_from_records(
     return out
 
 
-def format_record(seed: HarvestedSeed, *, game_id: str) -> str:
+def format_record(
+    seed: HarvestedSeed, *, game_id: str, is_selfplay: bool | None = None,
+) -> str:
     """One seed-file line: the seed grammar + an inline provenance comment
-    (stripped by the loader). ``sev=1`` marks the auto-feed band. ``ply=`` is
-    appended last so parsers keyed on ``game=`` are unaffected."""
+    (stripped by the loader). ``sev=1`` marks the auto-feed band. ``ply=`` and
+    ``sp=`` are appended last so parsers keyed on ``game=`` are unaffected.
+
+    ``sp=1`` marks a selfplay-sourced capture, ``sp=0`` a curriculum (vs
+    Stockfish) one. The gate orders by this: measured 2026-07-30, curriculum
+    captures are kept by the deep-SF vet at 44.9% vs selfplay's 3.7% (12.2x,
+    n=5589 vs n=6128), because in selfplay BOTH sides share the blind spot, so
+    "net says fine, SF says lost after the move" is usually a mutual illusion
+    over a pre-move position that was actually fine — a Type B capture the gate
+    correctly rejects. Omitted entirely when the source is unknown, so the tag
+    is never guessed; the gate leaves untagged lines in their existing order."""
+    tag = "" if is_selfplay is None else f" sp={int(is_selfplay)}"
     return (f"{seed.line}  # nq={seed.net_q:.2f} sq={seed.sf_q:.2f} "
-            f"sev={int(seed.severe)} game={game_id} ply={seed.ply_index}")
+            f"sev={int(seed.severe)} game={game_id} ply={seed.ply_index}{tag}")
 
 
 def severe_path_for(out_path: str) -> str:
@@ -358,7 +370,7 @@ def run_harvest(
         collect_path = _worker_path(out_path)
         with open(collect_path, "a", encoding="utf-8") as fh:
             for s in seeds:
-                fh.write(format_record(s, game_id=game_id) + "\n")
+                fh.write(format_record(s, game_id=game_id, is_selfplay=is_selfplay) + "\n")
         severe = [s for s in seeds if s.severe]
         if severe and cfg.auto_feed_one_per_game:
             # one worst-mismatch (max net_q - sf_q) row per game — see HarvestConfig
@@ -366,7 +378,7 @@ def run_harvest(
         if severe:
             with open(_worker_path(severe_path_for(out_path)), "a", encoding="utf-8") as fh:
                 for s in severe:
-                    fh.write(format_record(s, game_id=game_id) + "\n")
+                    fh.write(format_record(s, game_id=game_id, is_selfplay=is_selfplay) + "\n")
         _save_game(final_board, records, ply_indices, seeds, game_id=game_id,
                    out_path=out_path, result=result, is_selfplay=is_selfplay)
         return len(seeds)
