@@ -13774,3 +13774,125 @@ mechanism (`avg_plies_draw` recovered AND the unwind complete), not on
 **What stands:** direction is real and significant; the restart ended net-harder;
 C14b's mechanism is now confirmed end-to-end on live data. **What does not:** the
 2.7x rate, and any attribution of it to the restart.
+
+## PRE-REGISTRATION (2026-07-30) — re-enable blind-spot seeding, cap 0.08
+
+**Status: NOT LAUNCHED. This entry exists so the launch is legal under protocol
+rule 1; the admission gate below has NOT yet passed, and seeding stays OFF until
+it does.**
+
+**Requested by the user** ("i do also want to have the blind seed on. a cap of
+.08 sounds fine to me"), then correctly gated by the user's own follow-up ("ok
+you can fix the vetter first and then turn it on").
+
+### The change
+
+    opening_fen_dole_per_iter:      0    -> 1
+    opening_fen_dole_max_fraction:  0.25 -> 0.08
+
+Both are live-reloadable (dole keys are NOT in `_RECO_RESTART_KEYS`), so this
+needs no restart. **`opening_fen_dole_max_fraction: 0` means UNCAPPED, not
+off** — the off switch is `opening_fen_dole_per_iter: 0`, which is what is set
+today. Do not "disable" seeding by zeroing the fraction.
+
+### Hypothesis
+
+Seeding selfplay from positions the net demonstrably misplays raises the share
+of training data that is on the net's own error manifold, which the aggregate
+loss cannot reach. Motivated by [[value_head_overoptimistic_on_loss_positions]]:
+the net reads −13.7cp where SF reads −300.9cp on positions mined from real
+Cheese losses, and that is a DATA problem (the PID-handicapped opponent never
+punishes), not a search problem.
+
+### ⚠ ADMISSION GATE — must pass BEFORE the yaml edit
+
+Blind-spot seeding was turned off on 2026-07-26 and the pool was never purged
+(open task #72). The pool is only worth feeding if its seeds are positions the
+NET misplays, not positions where most moves lose. The deciding number is the
+PAIRED lift from `scripts/blindspot_netside_vet.py`:
+
+    PYTHONPATH=. python3 -u scripts/blindspot_netside_vet.py \
+      --seeds <the live opening_fen_list_path> \
+      --checkpoint <a copied-out live checkpoint>/trainer.pt \
+      --control net --max-keep 999 \
+      --out-list  data/blindspot_vet/live_net.txt \
+      --out-jsonl data/blindspot_vet/live_net.jsonl
+
+Read the `PAIRED ... lift=` line.
+
+- **lift >= 2.0** — admit. The net blunders at least twice as often as a random
+  mover does ON THE SAME POSITIONS at the SAME depth. Feed the KEPT seeds only.
+- **lift < 2.0** — DO NOT ENABLE. The pool is "positions where most moves lose".
+  Purge it (task #72) and re-harvest before revisiting.
+
+**Run this on the LIVE pool** (`opening_fen_list_path`, currently
+`data/blindspot_fens_retire_388.txt`, 331 seeds — the harvester rewrites this
+path every few iterations, so re-read it at run time). **Not** on a filtered
+"severe" subset: a subset is the best case and cannot license a decision about
+what production will actually be fed.
+
+### Why the lift, and not the two-arm keep rate
+
+The obvious control — run the vetter again with `--control random` and require
+the keep rate to collapse — **was run twice on 2026-07-30 and is not fit for
+purpose.** Round 1: net 20/42 = 48% vs random 20/53 = 38%. Round 2, after a
+forgiveness guard was added: net 6/80 = 7.5% vs random 4/80 = 5.0%, Fisher
+p≈0.75. Two positions were deep-checked in both arms, with DIFFERENT moves, and
+both arms KEPT both.
+
+The keep rate fell 48% → 7.5% and it would have been easy to call that a fix.
+**It is not: the CONTROL fell with it, 38% → 5.0%, and the ratio only moved
+1.26 → 1.50.** Comparing two MARGINAL rates over 80 seeds cannot resolve 7.5%
+from 5.0% — that needs ~1500 seeds per arm at ~8M nodes each. The arm was never
+capable of the job.
+
+The paired form uses each position as its own control: `blunder_frac` is the
+measured fraction of sampled legal moves that would themselves drop that
+position to lost, so `sum(blunder_frac)` is the expected random-mover blunder
+count over the same positions at the same depth. That is interpretable at n=80.
+
+**A real defect was found and fixed along the way that did NOT explain
+anything, and is recorded that way on purpose:** the guard ran at 30,000 nodes
+while the criterion it guards ran at 4,000,000 — 1/133rd the search. Fixed
+(`--safe-frac-nodes` now defaults to `--screen-nodes`). Re-running returned
+**identical** `safe_frac` values (c8c5 0.92, g1g5 0.67), because at a `--fine`
+bar of +0.20 on `+1.000` positions the dead band never binds. Correct fix, zero
+verdicts changed. See [[guard_must_share_the_criterion_instrument]].
+
+### ONE deciding yardstick (post-launch)
+
+`scripts/value_regret.py` — the VALUE yardstick, since the mechanism claim is
+about value on losing positions. NOT winrate: **the PID restores winrate by
+construction, so winrate cannot detect a data-composition change**
+([[fast_ply_scale_is_outcome_affecting]]).
+
+Paired against the pre-seeding window, dropping the first 12 rows after any
+restart (C14b). **⚠ Use the post-fix contamination rule: the ply ramp is now a
+BLIND discriminator — gate on `pid_raw_winrate` vs steady state or on
+`curriculum_draw_rate`, never on `avg_plies_*`.**
+
+### Pre-committed thresholds
+
+- **SUCCESS**: `value_regret` improves by >= 1 sd of the paired baseline over a
+  day-plus window. Learning-quality changes need day-plus windows and paired
+  CIs (protocol rule 3).
+- **KILL**: `curriculum_draw_rate` steady state falls below 0.30 (seeded
+  positions are decisive by construction and could starve the draw stream), or
+  `value_regret` degrades at all. Revert = `opening_fen_dole_per_iter: 0`,
+  live-reloadable, no restart.
+- **Confounds**: the queued PID change (`sf_pid_target_winrate` 0.50 → 0.45,
+  `sf_pid_regret_safety_floor` 0.45 → 0.40) is a data-affecting change and
+  **must not overlap this readout** (protocol rule 4). Sequence them; whichever
+  goes second names the other in its Confounds line.
+
+### Revert point
+
+Required before launch per protocol rule 2 — a yaml revert is NOT a rollback,
+the replay window holds ~a day of data made under the old settings:
+
+    ./scripts/train.sh salvage-export --top-n 1 --metric training_iteration \
+      --out data/salvage/pre_seeding_20260730
+
+**⚠ `--metric training_iteration` is REQUIRED** (the default picks the
+best-metric row, not current state), and note open task #75: salvage-export
+silently copies ZERO replay shards, so this banks weights+optimizer only.
