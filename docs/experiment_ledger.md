@@ -14323,3 +14323,53 @@ existing backlog is not reshuffled by a format change.
   data-affecting and would confound the seeding readout that started at 17:40.
   One data-affecting change per readout window. Build, review, merge; flip
   only after the seeding readout closes.
+
+## 2026-07-30 18:45 — ⚑⚑ EVERY REVERT POINT SINCE 07-27 IS WEIGHTS-ONLY (#75)
+
+**This invalidates the rollback half of the revert-point protocol for three
+days, including the pool guarding the seeding experiment enabled today.**
+
+`data/salvage/pre_seeding_20260730` records `copied_replay_shards: 0`. It was
+banked at 17:22 specifically so the 17:40 seeding flip could be undone. It
+cannot undo it: a yaml revert is not a rollback, because the replay window
+holds ~a day of data made under the old settings, and that window was never
+copied.
+
+**Cause** (PR #290): the shard source was chosen by whether a DIRECTORY EXISTS
+rather than by whether it CONTAINS shards.
+
+    src_replay = td / "replay_shards"
+    if (not src_replay.is_dir()) and replay_root_override:   # never reached
+        src_replay = ...override... / td.name / "replay_shards"
+    if src_replay.is_dir():
+        copied_shards = _copy_replay_shards(...)             # copies 0
+
+Under the distributed layout shards live under
+`tune_replay_root_override/<trial>/replay_shards`, while the TRIAL dir holds an
+EMPTY `replay_shards/` (created 2026-07-27 12:15, 0 entries). `is_dir()` on the
+empty decoy succeeds, so the fallback is never tried. Measured on live paths:
+
+    runs/.../tune/train_trial_13a9f_.../replay_shards            0 entries
+    runs/pbt2_small/replay/train_trial_13a9f_.../replay_shards   839 entries, 3.4G
+
+**A fallback that cannot fire because the primary succeeds VACUOUSLY.** Same
+family as "a gate that cannot fail" and the dead-knob findings: the mechanism
+reported its own failure as a calm `shards=0` and nothing treated that as an
+error.
+
+**Method rule this earns:** `shards=0` was PRINTED on every export and recorded
+in every manifest, and was read as a known quirk (task #75 existed) rather than
+as the protocol being broken. A number that is surfaced but never gated is not
+observability. The fix makes zero-shards FAIL when copy-replay was requested,
+since `--no-copy-replay` already exists as the deliberate opt-out.
+
+**Consequence for the live experiment, stated plainly:** seeding is running
+with a revert point that restores weights + optimizer but NOT the replay
+window. The KILL rule (`curriculum_draw_rate` < 0.30) still works — it just
+costs more to act on than the protocol assumed, because unwinding the data
+would mean waiting the window out rather than restoring it. Given the dose (36
+of ~450 games/iter, 8%) this is a bounded exposure, not an emergency, but the
+pool should be re-taken once #290 merges.
+
+Fix + tests: PR #290. Both bug tests verified to FAIL against the current
+selection logic; the two controls pass in both states.
