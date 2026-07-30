@@ -1655,7 +1655,52 @@ The "one bump" case only arises if the two deploy at different restarts, which
 will not happen here. **If a bump IS observed at that restart, that is a KILL
 signal for this entry's condition 3**, not a shrug.
 
-### PRE-REGISTERED (not yet live, flag default OFF) — selfplay sessions RESUME their in-flight games across a restart instead of abandoning them (`selfplay_resume_inflight_games`, 2026-07-29)
+### DEPLOYED 2026-07-30 12:40 (pre-registered 2026-07-29) — selfplay sessions RESUME their in-flight games across a restart instead of abandoning them (`selfplay_resume_inflight_games`)
+
+**DEPLOY RECORD (2026-07-30 12:40).** `selfplay_resume_inflight_games: true`
+added to `configs/pbt2_small.yaml` under `selfplay:`. The pre-condition this
+entry's own Deploy note set — *"must NOT be added until the workers are
+restarted onto code that defines it"* — was met by the 11:09 restart (PID
+1951445 → worker 1953735), which put the fleet on `0a59f6f47`. Validated
+before trusting the live reload: `flatten_run_config_defaults` on the edited
+yaml returns `selfplay_resume_inflight_games -> True` with no unknown-key
+raise, so the all-or-nothing validator accepts the whole reload.
+
+**⚑ THE 11:09 RESTART ITSELF RAN WITH THE FLAG OFF — the fix was merged but
+never enabled, and I missed it at the restart it was staged for.** Absent from
+the yaml, absent from `params.json`, `TrialConfig` default `False`, and zero
+`selfplay resume:` lines in the worker log. So this restart abandoned its
+in-flight games like every one before it, and C14b fired again on schedule,
+LIVE and in full view:
+
+| row | pid | w/d/l | `avg_plies_draw` | `curriculum_winrate_raw` | `pid_regret_delta` |
+|---|---|---|---|---|---|
+| 372 | 1953735 | 67/0/0 | 0.0 | — | — |
+| 373 | 1953735 | 65/0/1 | 0.0 | **0.985** (ema 0.568) | **−0.00207** |
+| 374 | 1953735 | 91/1/0 | **32.0** ← first draw finishes | — | — |
+
+`pid_regret_frozen: 0`, `pid_regret_reason: fit` — the controller tightened
+regret (**lower regret = HARDER opponent**) on a sample with **zero completed
+draws**. Row 374's jump from 0.0 to 32.0 plies is the monotone ramp this entry
+predicted, caught in real time rather than reconstructed.
+
+**Timing rationale — deployed INSIDE the contaminated window on purpose.**
+The key is a `_RECO_RESTART_KEY`, so flipping it costs exactly one more
+selfplay-session abandonment (`worker.py`: *"toggling it costs exactly one
+more abandonment, after which restarts stop abandoning"*). Paying that at
+12:40, four rows into the window the 11:09 restart already opened, largely
+OVERLAPS the existing truncation ramp instead of opening a fresh one later on
+clean rows. The alternative — wait for the next natural restart — pays a full
+independent window for the same one-time cost.
+
+**Precondition re-checked at deploy:** `opening_fen_dole_per_iter: 0`, so no
+`fenlist*` slot competes with `_resumable_slots` and the yardstick below reads
+the FULL effect. This is now a reason to keep seeding off until the readout
+lands (see the seeding entry's cap-0.08 pre-registration, which must not start
+inside this window).
+
+**VERIFY (owed, next teardown):** `outcome_stats.resumed_inflight_games > 0`.
+If it is 0 or absent, nothing was resumed and the yardstick measures nothing.
 
 **Class: waste correction + removal of a known PID sample bias. Not a target,
 loss, or search change.** Pre-registered before deploy because it touches the

@@ -187,6 +187,22 @@ selfplay:
   max_plies: 450
   history_rep_fix: true  # 2026-06-17: lc0-root repetition-plane correctness fix; affects ~0.2% of positions; net-neutral-to-faster. Propagates as the replay window refills.
 
+  # 2026-07-30: ENABLE the C14b source fix (PR #287, pre-registered in the ledger
+  # 2026-07-29 as "not yet live, flag default OFF"). The 11:09 restart put the
+  # workers on code that DEFINES this key, which was the pre-condition the ledger
+  # deploy note set for adding it here at all (unknown key => whole reload rejected).
+  # Without it a teardown abandons every in-flight game, the survivors are
+  # LENGTH-TRUNCATED, and the PID tightens regret -0.0086..-0.0107 on a winrate
+  # that reads +0.110 too high -- ~88 iterations of progress, on 30% of all rows.
+  # Live proof it was still firing: iter 373 read w/d/l 65/0/1, avg_plies_draw 0.0,
+  # curriculum_winrate_raw 0.985 vs ema 0.568, and booked pid_regret_delta -0.00207.
+  # _RECO_RESTART_KEY: flipping it costs exactly ONE more abandonment, so it is
+  # being flipped INSIDE the window the 11:09 restart already opened rather than
+  # later into clean rows.
+  # VERIFY: outcome_stats.resumed_inflight_games > 0 after the NEXT teardown -- if
+  # it is 0 or absent nothing was resumed and the ledger yardstick measures nothing.
+  selfplay_resume_inflight_games: true
+
   temperature: 0.0       # 2026-05-17: root audit found even tiny final-action temp worsened SF regret; keep exploration in Gumbel/root noise instead.
   temperature_drop_plies: 0
   temperature_after: 0.0
@@ -241,7 +257,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_367.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_372.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).
