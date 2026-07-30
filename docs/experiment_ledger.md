@@ -13991,3 +13991,56 @@ the LIVE pool; that run is now in flight on all 331 seeds of `retire_389`.
 **Method rule earned here:** before reporting any verdict about a production
 artifact, diff the file measured against the file production reads. Provenance
 is not established by a filename that sounds right.
+
+### RE-SPECIFIED GATE + COMMITMENT TO FLIP (2026-07-30 17:1x)
+
+**The admission gate written earlier today is INAPPLICABLE, not passed and not
+failed, and is replaced here.** It named `blindspot_netside_vet.py`'s paired
+`lift >= 2.0`. That tool asks the Type B question — "is the net's top move
+worse than a random legal move here" — and the live pool is Type A (positions
+deep SF calls LOST, which is what `harvest_gate_step.py` admits). Pointed at
+Type A, the vetter's `before >= --fine` screen rejects essentially every seed
+and the paired denominator collapses; the run was started at 16:50 and
+abandoned for exactly that reason. **A gate that cannot fire on the population
+it guards is not a gate.**
+
+**Replacement gate — Type A, on the live pool, via `scripts/blindspot_value_gap.py`:**
+
+    LIVE(seed) := net_q >= 0.2  AND  sf_q <= -0.5
+
+i.e. the net still calls the position fine while deep SF (2M nodes, the gate's
+own budget) calls it lost. Defaults are `HarvestConfig.net_ok` / `.sf_lost`, so
+each seed is re-tested against the rule that admitted it. Deliberately NOT a
+raw `net_q - sf_q` threshold: the net's value output is compressed toward zero
+(|net_q| <= 0.456 on a slice where |sf_q| reached 1.000), so a gap threshold
+measures SCALE, not blindness — the documented calibrated-not-broken trap.
+
+**PRE-COMMITTED DECISION, written before the full-pool number exists:**
+
+- **LIVE >= 15%** — the pool still teaches. Flip `opening_fen_dole_per_iter`
+  0 -> 1 at cap 0.08, and the harvester throughput fix (select Type A directly
+  at harvest using the PREVIOUS ply's SF label, instead of emitting Type B for
+  the gate to discard at 76.6%) becomes worth building.
+- **LIVE < 15%** — flip it on ANYWAY at cap 0.08, but under an explicitly
+  DIFFERENT hypothesis, stated here so it is not a post-hoc rescue: not
+  blind-spot correction but **position diversity** — seeded games start from
+  hard non-opening positions the book never reaches. This is a weaker claim and
+  must be judged as such. In this case do NOT build the harvester throughput
+  fix: making a learned pool arrive faster is worthless.
+
+The flip happens either way; only the hypothesis and the follow-on work change.
+This is written down now precisely so that reading the number cannot change
+what the number means.
+
+**KILL (unchanged, and it is what actually bounds the risk):**
+`curriculum_draw_rate` steady state below 0.30, or `value_regret` degrading.
+Revert is `opening_fen_dole_per_iter: 0`.
+
+**⚑ COST OF THE FLIP, and why it is not free:** `opening_fen_dole_per_iter` is
+in `worker.py` `_RECO_RESTART_KEYS`, so it triggers a graceful selfplay-session
+restart and therefore a C14b window — ~9-12 contaminated rows and roughly
+-0.01 of spurious regret tighten. In-flight games are now preserved (2,100 were
+at the 13:36 teardown) but resume does NOT prevent the winrate spike. **Do not
+flip this key twice.** Drop the first 12 rows after the flip before fitting
+anything, and gate contamination on `pid_raw_winrate` / `curriculum_draw_rate`,
+NOT on `avg_plies_*` (which the resume fix made blind).
