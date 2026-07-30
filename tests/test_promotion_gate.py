@@ -6,6 +6,7 @@ records the mutation run that proved each name honest.
 """
 from __future__ import annotations
 
+import ast
 import csv
 import dataclasses
 import inspect
@@ -46,6 +47,7 @@ from chess_anti_engine.tune.promotion_gate import (
     READOUT_KILL,
     READOUT_PROMOTE,
     _READOUT_MIN_ROWS,
+    ShadowReadout,
     AnchoredSample,
     GateConfig,
     GateDecision,
@@ -2676,10 +2678,14 @@ def test_every_shipped_gate_constant_is_pinned_by_value(
     change to any of them makes the whole document a description of a different
     gate.
     """
-    assert getattr(GateConfig(), field) == shipped
+    assert getattr(GateConfig(), field) == shipped, (
+        f"{yaml_key}'s dataclass default drifted from the documented value"
+    )
     # ...and the yaml fallback is the same value, so an operator who does not
     # set the key gets what the docs describe.
-    assert getattr(gate_config_from_dict({}), field) == shipped
+    assert getattr(gate_config_from_dict({}), field) == shipped, (
+        f"{yaml_key}'s gate_config_from_dict fallback drifted"
+    )
 
 
 def test_min_games_per_side_is_pinned_from_BOTH_sides() -> None:
@@ -2723,7 +2729,7 @@ def test_the_no_cadence_fallback_band_is_pinned_by_value() -> None:
     """
     ref_total = OFFLINE.mean_games_cur + OFFLINE.mean_games_prev
 
-    def verdict_at(scale: float) -> ShadowReadoutLike:
+    def verdict_at(scale: float) -> ShadowReadout:
         rows = [
             (int(OFFLINE.mean_games_cur * scale),
              int(OFFLINE.mean_games_prev * scale),
@@ -2744,15 +2750,11 @@ def test_the_no_cadence_fallback_band_is_pinned_by_value() -> None:
         assert out.verdict == READOUT_KILL
 
 
-# A structural alias so the helper above type-checks without importing the
-# dataclass name twice.
-ShadowReadoutLike = object
-
 
 # --------------------------------------------------------------------------
 # 13. THE SIX PRODUCTION CALL SITES (review round 6, F3)
 # --------------------------------------------------------------------------
-def _train_trial_body() -> object:
+def _train_trial_body() -> ast.FunctionDef:
     """The ``ast`` of ``trainable.train_trial``.
 
     WHY AST AND NOT EXECUTION, stated plainly: ``train_trial`` needs Ray, a GPU,
@@ -2763,8 +2765,6 @@ def _train_trial_body() -> object:
     behavioural test of what the call does; this test is what fails when the
     call stops being made.
     """
-    import ast
-
     import chess_anti_engine.tune.trainable as trainable
 
     tree = ast.parse(inspect.getsource(trainable))
@@ -2774,20 +2774,17 @@ def _train_trial_body() -> object:
     raise AssertionError("train_trial not found in chess_anti_engine.tune.trainable")
 
 
-def _calls_on(node: object, obj: str, attr: str) -> list[object]:
-    import ast
-
-    out = []
-    for n in ast.walk(node):  # type: ignore[arg-type]
+def _calls_on(node: ast.AST, obj: str, attr: str) -> list[ast.Call]:
+    return [
+        n for n in ast.walk(node)
         if (
             isinstance(n, ast.Call)
             and isinstance(n.func, ast.Attribute)
             and n.func.attr == attr
             and isinstance(n.func.value, ast.Name)
             and n.func.value.id == obj
-        ):
-            out.append(n)
-    return out
+        )
+    ]
 
 
 def test_the_loop_body_calls_on_decision_with_the_verdict_and_keeps_it() -> None:
@@ -2799,8 +2796,6 @@ def test_the_loop_body_calls_on_decision_with_the_verdict_and_keeps_it() -> None
     verdict accepted and then silently ignored, in the module whose docstrings
     are about that failure mode. It survived the whole 74-test suite.
     """
-    import ast
-
     body = _train_trial_body()
     calls = _calls_on(body, "gate_hold", "on_decision")
     assert len(calls) == 1, f"expected exactly one on_decision call, got {len(calls)}"
@@ -2811,7 +2806,7 @@ def test_the_loop_body_calls_on_decision_with_the_verdict_and_keeps_it() -> None
     # anchor's refresh health attached, and dropping it puts
     # gate_anchor_refresh_failures back to living only inside the controller.
     assigns = [
-        n for n in ast.walk(body)  # type: ignore[arg-type]
+        n for n in ast.walk(body)
         if isinstance(n, ast.Assign) and n.value is call
     ]
     assert assigns, "on_decision's return value must be assigned, not discarded"
@@ -2827,11 +2822,9 @@ def test_the_loop_body_ages_a_hold_on_an_aborted_iteration() -> None:
     hold HOLDS FOREVER. The call must be inside that branch and before the
     ``continue``, or it is unreachable.
     """
-    import ast
-
     body = _train_trial_body()
     retry_ifs = [
-        n for n in ast.walk(body)  # type: ignore[arg-type]
+        n for n in ast.walk(body)
         if isinstance(n, ast.If) and ast.unparse(n.test) == "sp.should_retry"
     ]
     assert len(retry_ifs) == 1, "expected exactly one `if sp.should_retry:`"
@@ -2858,11 +2851,9 @@ def test_the_startup_publish_honours_a_restored_hold() -> None:
     held-back weights, so an enforce-mode hold would be bounded by restart
     cadence rather than by ``gate_max_hold_iters``.
     """
-    import ast
-
     body = _train_trial_body()
     publishes = [
-        n for n in ast.walk(body)  # type: ignore[arg-type]
+        n for n in ast.walk(body)
         if isinstance(n, ast.Call)
         and isinstance(n.func, ast.Name)
         and n.func.id == "_publish_distributed_trial_state"
@@ -2950,9 +2941,8 @@ def test_gate_mode_is_restart_required_and_the_reload_says_so(
         "a live gate_mode edit must NOT reach the config: the gate is built "
         "once, at launch, so an applied value here is a knob that cannot act"
     )
-    assert "gate_mode" in caplog.text and "requires restart" in caplog.text, (
-        caplog.text
-    )
+    assert "gate_mode" in caplog.text, caplog.text
+    assert "requires restart" in caplog.text, caplog.text
 
     # (b) the CHANGE case.
     caplog.clear()
@@ -3078,9 +3068,7 @@ def test_the_module_no_longer_claims_the_pid_cancels() -> None:
     assert "does NOT\n  # apply during a break" in yaml_src
 
 
-def test_shard_meta_records_the_difficulty_each_arm_played_at(
-    tmp_path: Path,
-) -> None:
+def test_shard_meta_records_the_difficulty_each_arm_played_at() -> None:
     """MUTATION: drop ``opponent_wdl_regret_limit`` from ``ShardMeta``, or drop
     the per-arm accumulation from ``_process_shard``.
 
@@ -3142,33 +3130,35 @@ def test_worker_refuses_to_mix_two_difficulties_into_one_shard() -> None:
         outcome_stats: ClassVar[dict[str, int]] = {}
 
     buf = _BufferedUpload()
-    kw = {"buf": buf, "game_batch": _GB(), "now_s": 0.0,
-          "model_sha": "aa", "model_step": 1}
-    _buffer_add_completed_game(**kw, opponent_wdl_regret_limit=0.08, sf_nodes=500_000)
+
+    def add(regret: float | None = None, nodes: int | None = None,
+            *, tracked: bool = True) -> None:
+        _buffer_add_completed_game(
+            buf=buf, game_batch=_GB(), now_s=0.0,
+            model_sha="aa", model_step=1,
+            opponent_wdl_regret_limit=regret if tracked else None,
+            sf_nodes=nodes if tracked else None,
+        )
+
+    add(0.08, 500_000)
     assert buf.opponent_wdl_regret_limit == 0.08
     assert buf.sf_nodes == 500_000
 
     # same difficulty -> accumulates
-    _buffer_add_completed_game(**kw, opponent_wdl_regret_limit=0.08, sf_nodes=500_000)
+    add(0.08, 500_000)
     assert buf.games == 2
 
     # regret moved -> flush, not silent mixing
     with pytest.raises(ValueError, match="model metadata mismatch"):
-        _buffer_add_completed_game(
-            **kw, opponent_wdl_regret_limit=0.09, sf_nodes=500_000,
-        )
+        add(0.09, 500_000)
     # nodes moved -> same
     with pytest.raises(ValueError, match="model metadata mismatch"):
-        _buffer_add_completed_game(
-            **kw, opponent_wdl_regret_limit=0.08, sf_nodes=600_000,
-        )
+        add(0.08, 600_000)
     # None vs a value is a DIFFERENT opponent, not the same one written twice
     with pytest.raises(ValueError, match="model metadata mismatch"):
-        _buffer_add_completed_game(
-            **kw, opponent_wdl_regret_limit=None, sf_nodes=500_000,
-        )
+        add(None, 500_000)
     # ...and a caller that tracks neither (local/bench paths) never flushes.
-    _buffer_add_completed_game(**kw)
+    add(tracked=False)
     assert buf.games == 3
 
 
@@ -3183,28 +3173,37 @@ def test_worker_reads_difficulty_from_the_reco_it_actually_applied() -> None:
     quantity being measured. And 0.0 regret means UNHANDICAPPED Stockfish, so
     "unknown" must be None, never 0.
     """
+    from typing import cast
+
     from chess_anti_engine.worker import WorkerSession
 
-    class _Stub:
-        _active_reco = {"opponent_wdl_regret_limit": 0.0875, "sf_nodes": 698_000}
+    def difficulty_of(stub: object) -> tuple[float | None, int | None]:
+        # The method only reads ``_active_reco`` via getattr, so a stub self is
+        # the honest harness -- constructing a real WorkerSession needs a
+        # server, argparse namespace and a GPU broker.
+        return WorkerSession._active_difficulty(cast("WorkerSession", stub))
 
-    assert WorkerSession._active_difficulty(_Stub()) == (0.0875, 698_000)
+    class _Stub:
+        _active_reco: ClassVar[dict[str, object]] = {
+            "opponent_wdl_regret_limit": 0.0875, "sf_nodes": 698_000}
+
+    assert difficulty_of(_Stub()) == (0.0875, 698_000)
 
     class _NoReco:
         pass
 
-    assert WorkerSession._active_difficulty(_NoReco()) == (None, None)
+    assert difficulty_of(_NoReco()) == (None, None)
 
     class _PartialReco:
-        _active_reco = {"sf_nodes": 5_000}
+        _active_reco: ClassVar[dict[str, object]] = {"sf_nodes": 5_000}
 
-    assert WorkerSession._active_difficulty(_PartialReco()) == (None, 5_000)
+    assert difficulty_of(_PartialReco()) == (None, 5_000)
 
     class _Junk:
-        _active_reco = {"opponent_wdl_regret_limit": "not-a-number",
-                        "sf_nodes": 5_000}
+        _active_reco: ClassVar[dict[str, object]] = {
+            "opponent_wdl_regret_limit": "not-a-number", "sf_nodes": 5_000}
 
-    assert WorkerSession._active_difficulty(_Junk()) == (None, None)
+    assert difficulty_of(_Junk()) == (None, None)
 
 
 def test_the_predicted_confound_is_emitted_beside_the_delta() -> None:

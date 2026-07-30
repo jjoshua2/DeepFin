@@ -1772,7 +1772,7 @@ def _confound_fit(pairs: Sequence[tuple[float, float]]) -> _ConfoundFit:
     slope_se = math.sqrt(resid / (n - 2) / sxx) if n > 2 else float("nan")
     # se scales as 1/sqrt(n) at fixed spread, so the n that reaches the target.
     needed = (
-        int(math.ceil(n * (slope_se / _CONFOUND_TARGET_SE) ** 2))
+        math.ceil(n * (slope_se / _CONFOUND_TARGET_SE) ** 2)
         if slope_se > _CONFOUND_TARGET_SE else n
     )
     return _ConfoundFit(
