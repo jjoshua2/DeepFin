@@ -14373,3 +14373,55 @@ pool should be re-taken once #290 merges.
 
 Fix + tests: PR #290. Both bug tests verified to FAIL against the current
 selection logic; the two controls pass in both states.
+
+## 2026-07-30 19:05 — WITHDRAWN: the gate-ordering pre-registration (#82)
+
+**The pre-registration two entries above is withdrawn, not rewritten.** An
+independent review of PR #289 found its yardstick could not move; verifying
+that against production killed the intervention itself.
+
+**The vet budget does not bind.** Live counters, `scratchpad/live_read/monitor/`
+and the gate state:
+
+    capped=0 in 89 of the last 100 gate runs
+    pending = 0
+    after_dedup = 2..7 per run,  against --max-vet-per-run 50
+
+`to_vet == candidates`, so reordering is a strict no-op. In the 11 runs with
+`capped>0` it is still a no-op over any window long enough to drain the burst,
+because nothing is discarded: every candidate is vetted exactly once and the
+kept/vetted ratio is a property of the MIX, not the order. The pre-registered
+yardstick (kept/vetted over 20 runs) is therefore identical under both arms by
+construction — a rule that can neither pass nor fail.
+
+**And the cost is not scarce.** One gate run per ~8-14 min vetting 2-7
+candidates at 2M nodes is ~1.7% of one core, against 4 workers x 8 SF workers.
+The filtering alternative (OPTION B, 52.3% of gate work) would remove ~85% of
+~1.7% of one core.
+
+⇒ **I pre-registered an experiment on a bottleneck that does not exist.** The
+"1.9x seeds per SF node" claim is WITHDRAWN: seeds per SF node was never the
+binding quantity. The binding constraint on seed supply is the ARRIVAL RATE of
+genuine Type A captures — 24 kept per 100 gate runs, ~1.4/hour — which neither
+ordering nor filtering changes.
+
+**Method rule this earns, and it is the sharpest one today:** before
+pre-registering a yardstick, check that the RESOURCE the change economises is
+actually binding. Both my analyses (the prefilter, then the ordering) optimised
+gate SF time; neither ever asked whether gate SF time was scarce. The 44.9% vs
+3.7% yield gap is real, well-powered and reproduced independently — a true
+finding attached to a lever with no torque. **A large effect size is not
+evidence that acting on it is worth anything.**
+
+**What SURVIVES and is worth keeping:**
+- The measured fact: curriculum captures are kept by the deep-SF vet at 44.9%
+  vs selfplay's 3.7% all-time; independently recomputed as 12.8x over the last
+  four days and 25x over the last two, with 84.6% of recently gated keys being
+  selfplay. This corroborates the flywheel-stall result (selfplay value poison)
+  from an unrelated instrument, and is an argument against raising
+  `selfplay_fraction` — a KNOWLEDGE outcome, not a code change.
+- The `sp=` provenance tag (PR #289, reduced scope), so the above is
+  re-checkable from the harvest files without joining the game jsonl.
+
+**If seed supply is ever the thing to raise, the lever is curriculum game
+VOLUME or a lower harvest bar for curriculum captures — not the gate.**
