@@ -14145,3 +14145,74 @@ degrading. Drop the first 12 rows before fitting. Judge on `pid_raw_winrate` /
 VERIFICATION OWED: a `dole: received N seed(s) x1 -> live session` line dated
 after 17:30. Until that line exists this experiment is NOT running, regardless
 of what the yaml says.
+
+### VERIFIED LIVE 17:40 — the dole reaches workers
+
+The verification owed above is discharged. From the worker's OWN log line, not
+the yaml:
+
+    17:40:13 restarting selfplay session
+                 [restart_keys=opening_fen_dole_per_iter assets_changed=False]
+    17:40:29 dole: capped seeded games 366+329 -> 19+17 (max 36)
+    17:40:29 dole: received 366 seed(s) x1 -> live session;
+                 sf_refute=17 (frac=0.90 plies=3 iter=1971)
+
+**36 seeded games/iter (19 selfplay dole + 17 SF-refute) out of ~450** — the
+0.08 cap, realized. The experiment is running. First post-flip row is 397.
+Value-gap run at scored=288 LIVE=77 = 26.7%, still above the 15% bar.
+
+---
+
+## 2026-07-30 17:45 — HARVESTER PREFILTER: mechanism CONFIRMED, magnitude NOT
+
+Offline, on banked data only. Nothing deployed; no live change.
+`scratchpad/harvest_prefilter_eval.py`.
+
+**Hypothesis.** The gate re-scores each candidate's PRE-move position at 2M
+nodes and keeps only Type A (already lost), rejecting ~77%. That pre-move value
+is already known for free: the record at ply p-1 carries an in-loop SF label of
+the position AFTER its move, which IS the position at ply p pre-move. A POV
+flip should recover it.
+
+**Ground truth** is the gate's own persisted decision sets (2736 emitted / 8974
+rejected placement keys), joined to candidates by `position_key(fen)` — not a
+proxy for the gate's opinion, the gate's actual opinion.
+
+**The POV convention was NOT assumed.** Both orientations were reported and the
+gate labels chose. FLIPPED is correct and the margin is not close:
+
+    pre-move estimate       emitted p10/med/p90     rejected p10/med/p90
+    FLIPPED (-sq[p-1])      -1.000 -0.880 -0.763    -0.866 +0.720 +1.000
+    RAW     (+sq[p-1])      +0.763 +0.887 +1.000    -1.000 -0.720 +0.866
+
+The emitted median lands at -0.880 against the gate's own -0.80 bar. RAW gives
+0.0% recall — had the sign been assumed wrong, the prefilter would have
+discarded exactly the seeds it exists to keep, and would have looked like a
+working filter while doing it.
+
+    thresh   recall(emitted)   kept(rejected)   gate work saved
+    -0.60      43/44 = 97.7%    180/1333 = 13.5%     83.8%
+    -0.80      37/44 = 84.1%    149/1333 = 11.2%     86.5%
+
+**⚑ WHY THE 83.8% IS NOT YET A NUMBER TO BUILD ON.** Only 1377 of 24939 scanned
+lines were usable, and the usable subsample is demonstrably NOT representative:
+
+- **Base rate 3.2% emitted, against 23.4% in the gate state overall — 7x off.**
+  Something selects hard between "candidate the gate ruled on" and "candidate I
+  could also price". Until that is explained, extrapolating the savings to
+  production repeats the failure this ledger already records twice (measuring a
+  file with no overlap with the live pool).
+- **10,335 lines (41%) have NO previous-ply SF label at all.** Fast plies carry
+  scaled-down or absent labels. The prefilter is structurally inapplicable to
+  those; they must pass through to the gate unfiltered, which caps achievable
+  savings well below 83.8% no matter how good the threshold is.
+- 13,062 lines are in neither decision set (rotated out / not yet gated).
+
+**Verdict: the MECHANISM is established and the sign is nailed down. The
+THROUGHPUT CLAIM is not measured.** Do not build the production change against
+83.8%. Required first: a measurement whose denominator matches production's
+candidate stream, and an explicit decision for the 41% with no previous-ply
+label. Also note the guard-instrument rule — the in-loop label is ~698k nodes
+at full plies and ~175k at fast plies, vs the gate's 2M, so this can only ever
+be a recall-preserving PREFILTER with a loose threshold, never a replacement
+for the gate.
