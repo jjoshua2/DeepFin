@@ -459,6 +459,21 @@ def main() -> None:
         print(f"[netvet:{args.control}] PAIRED surveyed={n_surveyed_pos} "
               f"blunders={n_screen_blunders} "
               f"expected_if_random={exp_random_blunders:.2f} lift={lift:.2f}x")
+        # A GATE THAT CAN ACTUALLY FAIL. `blunders == surveyed` is the exact
+        # fingerprint of the 2026-07-30 conditioning bug: it means every
+        # position in the denominator was one where the arm blundered, so the
+        # numerator is pinned at 1.0 by the selection rule and the lift is an
+        # artifact. That run printed a plausible 1.53x and was believed. Refuse
+        # to hand back a number instead of letting the next reader trust it.
+        if n_screen_blunders == n_surveyed_pos:
+            raise SystemExit(
+                f"[netvet:{args.control}] REFUSING TO REPORT: blunders "
+                f"({n_screen_blunders}) == surveyed ({n_surveyed_pos}). The "
+                "paired denominator is conditioned on the arm having blundered, "
+                "so `lift` is meaningless. The survey must run on every "
+                "PLAYABLE position (stage 1a), not only on positions that "
+                "failed stage 1b — see the module docstring."
+            )
         print(f"[netvet:{args.control}] lift ~1.0 means this arm is "
               f"INDISTINGUISHABLE from random play on these positions; the "
               f"seeds are then 'positions where most moves lose', not blind "
