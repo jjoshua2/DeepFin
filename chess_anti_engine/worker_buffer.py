@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import secrets
 from dataclasses import dataclass, field
@@ -26,6 +27,12 @@ class _BufferedUpload:
     model_step: int | None = None
     input_history_encoding: str | None = None
     history_rep_fix: bool | None = None
+  # Opponent difficulty in force when these games were buffered. Part of the
+  # buffer's IDENTITY, alongside the model sha: a change flushes rather than
+  # mixing, so a shard's recorded difficulty is exact, not an average of two.
+  # See ShardMeta.opponent_wdl_regret_limit for why the field exists at all.
+    opponent_wdl_regret_limit: float | None = None
+    sf_nodes: int | None = None
     games: int = 0
     positions: int = 0
     w: int = 0
@@ -114,6 +121,38 @@ def _merge_outcome_stats(dst: dict[str, int], src) -> None:
         dst[key_s] = int(dst.get(key_s, 0)) + val_i
 
 
+def _difficulty_matches(
+    buf: _BufferedUpload,
+    regret: float | None,
+    sf_nodes: int | None,
+) -> bool:
+    """Whether ``buf``'s recorded difficulty is the one now in force.
+
+    ``None`` on the incoming side means "the caller does not track difficulty"
+    -- the local/bench paths -- and must not force a flush on every game, so it
+    matches anything. A caller that DOES pass values gets an exact comparison,
+    including None-vs-value: "no regret limit" and "regret limit 0.0" are
+    different opponents, not the same one written two ways.
+    """
+    if regret is None and sf_nodes is None:
+        return True
+    same_regret = (
+        buf.opponent_wdl_regret_limit is None if regret is None
+        else (
+            buf.opponent_wdl_regret_limit is not None
+            and math.isclose(
+                float(buf.opponent_wdl_regret_limit), float(regret),
+                rel_tol=0.0, abs_tol=1e-9,
+            )
+        )
+    )
+    same_nodes = (
+        buf.sf_nodes is None if sf_nodes is None
+        else buf.sf_nodes is not None and int(buf.sf_nodes) == int(sf_nodes)
+    )
+    return same_regret and same_nodes
+
+
 def _buffer_add_completed_game(
     *,
     buf: _BufferedUpload,
@@ -121,6 +160,8 @@ def _buffer_add_completed_game(
     now_s: float,
     model_sha: str,
     model_step: int,
+    opponent_wdl_regret_limit: float | None = None,
+    sf_nodes: int | None = None,
     max_positions: int = 0,
     buffered_positions_offset: int = 0,
 ) -> None:
@@ -148,6 +189,13 @@ def _buffer_add_completed_game(
         if (
             str(buf.model_sha or "") != str(model_sha)
             or int(buf.model_step or 0) != int(model_step)
+  # Difficulty is part of the buffer's identity, for the same reason the
+  # model sha is: the shard records ONE value for it, so two values in
+  # one shard would make the record a lie. The levers are live-applied
+  # (worker._RECO_LIVE_KEYS), so they CAN move without the sha moving --
+  # a flush here is the only thing standing between that and a shard
+  # whose stated difficulty is neither of the two it actually played.
+            or not _difficulty_matches(buf, opponent_wdl_regret_limit, sf_nodes)
             or (
                 incoming_history is not None
                 and buf.input_history_encoding is not None
@@ -166,6 +214,11 @@ def _buffer_add_completed_game(
     else:
         buf.model_sha = str(model_sha)
         buf.model_step = int(model_step)
+        buf.opponent_wdl_regret_limit = (
+            float(opponent_wdl_regret_limit)
+            if opponent_wdl_regret_limit is not None else None
+        )
+        buf.sf_nodes = int(sf_nodes) if sf_nodes is not None else None
         game_input_history = getattr(game_batch, "input_history_encoding", None)
         if game_input_history is not None:
             buf.input_history_encoding = normalize_lc0_history_encoding(str(game_input_history))
@@ -279,6 +332,13 @@ def _flush_upload_buffer_to_pending(
         model_step=int(buf.model_step),
         input_history_encoding=buf.input_history_encoding,
         history_rep_fix=bool(buf.history_rep_fix or False),
+  # Exact, not an average: _difficulty_matches forces a flush before two
+  # difficulties can share a buffer.
+        opponent_wdl_regret_limit=(
+            float(buf.opponent_wdl_regret_limit)
+            if buf.opponent_wdl_regret_limit is not None else None
+        ),
+        sf_nodes=int(buf.sf_nodes) if buf.sf_nodes is not None else None,
         games=int(buf.games),
         positions=int(buf.positions),
         wins=int(buf.w),
