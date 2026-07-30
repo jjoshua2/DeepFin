@@ -333,6 +333,35 @@ correlation above is **< 0.5**; and the step leg fires on an injected step in te
 **WATCH, not deciding:** a spurious hold costs at most `max_hold_iters` iterations of
 stale selfplay.
 
+**⚑ 2026-07-30 — BOTH BLOCKING FINDINGS CLOSED AS BUILT (round-7 MERGE verdict);
+this paragraph supersedes the mechanism sketch above where they differ.**
+- **(1) as implemented:** `ShardMeta` carries `opponent_wdl_regret_limit`/`sf_nodes`
+  (absent = UNKNOWN, never 0), the worker records the **applied** reco, difficulty is
+  part of upload-buffer identity (flush on change), and `gate_sample_confound_elo` is
+  emitted beside `gate_sample_delta_elo` using `slope × Δregret × 694.87`
+  (`ELO_PER_SCORE_AT_HALF` — the entry's earlier ×1391 was a 2× transcription error in
+  the round-6 report, adjudicated against the repo constant). The readout leg is a
+  **regression of delta on confound, HOLD-only, with its own se** — driven in test: a
+  delta tracking the confound (slope 0.887 ± 0.134) HOLDS with an explicit message; at
+  40 rows it reports "needs ~84+ rows" rather than ruling. ⚠ **Consequence for THIS
+  readout: at the 40-row floor the promote-to-enforce decision rests on the count legs;
+  the confound verdict arrives later (~84+ rows). The ≥0.5-corr kill above therefore
+  reads out on the longer window, and an early exit-0 is NOT yet evidence the gate
+  isn't measuring the controller.** Stated in the module in three places.
+- **(2) as implemented:** `gate_demote_step_elo: -125` leg on the iteration's OWN
+  sample, evaluated before `min_iters`, OR-ed into demote, pooled-variance floor
+  load-bearing. Measured: at 197/38 games `score_se` = 42.4 Elo so the leg fires at
+  delta < ≈**−195**; −300/−600 one-shots demote **100/100 at latency 0**; −200 fires
+  62%; **−100 stays blind, documented**; healthy null 0 spurious demotes in 6000
+  iterations (~1.5e-5/iter analytic). Latency docs corrected to steady-state (−100
+  median 12 iters, not 8) and pinned.
+- **Verification:** 24/24 round-7 mutations killed by the reviewer's own hand,
+  including a coherence sweep of the replay-from-memory commit. **Known residual:**
+  `state_dict()` does not persist the three new `AnchoredSample` confound fields, so
+  restored window samples lose them across a restart — nil effect today (metrics rows
+  come from freshly-observed samples; the readout regression reads `progress.csv`);
+  tracked as a follow-up.
+
 **⚠ LATENCY IS SLOWER THAN THE MODULE CLAIMED.** *"A −100/−200 break trips inside the
 8-iteration floor (~1.5h)"* is the **cold-window** number. From a steady-state 24-row
 window — what production always has — measured medians are −200/iter **7** iters,
