@@ -493,7 +493,26 @@ train:
   # With ~10k new positions/iter and buffer growing by 2500/iter, each position
   # survives ~50 iters in the buffer and gets trained ~5 times before eviction.
   no_amp: false
-  feature_dropout_p: 0.10  # Fixed at 0.10 (not searched).
+  # 2026-07-30: 0.10 -> 0.0 (audit M8 arm C, OPERATOR DECISION — delete the knob
+  # rather than compensate it; arm B, the 1/(1-p) rescale, is deliberately NOT run).
+  # Rationale: never shown to earn its keep, and it created a systematic train/serve
+  # gap — 46.9% of TRAINING rows had >=1 of the 6 classical feature groups zeroed with
+  # no survivor rescale, while 0% of inference rows did, and the 112 LC0 planes are
+  # never dropped. So it shifted the LC0-vs-features balance between train and play.
+  # ⚠ NOT live-reloadable and it LOOKS like it is: this key IS in config_yaml.py's
+  # live allowlist (so a live edit is accepted and does NOT reject the reload) but is
+  # NOT in TRAINER_WEIGHT_KEYS, and self.feature_dropout_p is assigned only in
+  # Trainer.__init__ (trainer.py:1757). Construction-time => needs a RESTART, and a
+  # --resume restores the trial config for construction-time keys, so the restart
+  # alone is not proof. VERIFY on the first new progress.csv row: the reported
+  # feature_dropout_p (trainable_report.py:1317) must read 0.0, not 0.10.
+  # Guardrail (no success criterion by design — this is removal of an unjustified
+  # knob, not a bet on a gain): value_regret --max-positions 0 paired vs the
+  # pre-restart dump worse by >2cp with the CI excluding 0 => restore 0.10.
+  # Revert is NOT instant (construction-time => another restart). Snapshot:
+  # data/salvage/pre_restart_20260730 (iter 368 / ckpt_000367).
+  # Ledger: "feature dropout has no 1/(1-p) rescale (audit M8)".
+  feature_dropout_p: 0.0
   resid_channel_dropout: 0.0  # Keep channel spreading on the explicit balance regularizer; dropout cost more eval loss offline.
   resid_channel_balance_weight: 0.0  # Disabled: offline sidecar .001/.003 did not improve loss or WDL.
   zclip_z_thresh: 2.0  # was 2.5; tighten top grad tail during flat-loss plateau (Apr 20). The "median grad norm 1.81, max 3.65" that used to be quoted here is stale by 2.3x — see zclip_max_norm below for the current measurement.
