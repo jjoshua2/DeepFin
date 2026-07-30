@@ -79,7 +79,16 @@ stockfish:
   sf_workers: 4
   sf_nice: 19              # Run SF at lowest CPU priority so search/dispatch/GPU batching wins contention.
   sf_multipv: 40            # Bumped from 20 (2026-04-29) to enrich sf_policy_t targets — measurement showed regret≤0.47 saturated top-20; multipv=40 widens tail for richer training distribution. Difficulty implication: opponent gets slightly weaker since more sub-optimal moves enter the regret-filter pool; PID will compensate via regret/nodes.
-  sf_hash_mb: 16           # Larger TT helps at higher node counts
+  # 2026-07-30 16→17: a DELIBERATE 1 MB no-op used as a graceful-teardown
+  # trigger. sf_hash_mb is a _RECO_RESTART_KEY, so changing it makes every
+  # worker tear its selfplay session down through the REAL stop path (which
+  # runs on_suspend) and start a new one — the exact code path a process
+  # restart uses, WITHOUT the SIGKILL that would destroy the suspend. It is
+  # also in _RESUME_COMPAT_EXEMPT_KEYS ("no bearing on a stored ply"), so it
+  # cannot invalidate a suspended game's compat fingerprint. 1 MB is chosen to
+  # make the SF-strength perturbation negligible while still changing the key.
+  # This is the first flag-ON teardown, i.e. the owed test of PR #287.
+  sf_hash_mb: 17           # Larger TT helps at higher node counts
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
   sf_pid_enabled: true
@@ -257,7 +266,7 @@ selfplay:
   # 2026-07-13: += 54 mined seeds (26 v4 pruned + 28 harvest_v5 cheese-mined,
   # incl. value-mismatch band targeting the flat value head). retire_58's 101 +
   # 54 new = 155, deduped by FEN. Ledger entry: "07-13 seed feed v4+v5".
-  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_372.txt
+  opening_fen_list_path: /home/josh/projects/chess/data/blindspot_fens_retire_377.txt
   opening_fen_prob: 0.0   # 2026-07-08: SWITCHED OFF — seeding now via the server dole below (deterministic, PID-safe). Kill of the dole restores this to 0.05.
   opening_fen_net_side_to_move: true
   # 2026-07-08 (~iter 690): ACTIVATED server-doled FEN seeding (PR #128, restarted onto 54f4037).

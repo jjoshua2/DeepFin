@@ -1764,6 +1764,58 @@ games=N` with N>0 in the worker logs. If it is still 0 THERE, the suspend half
 never wrote and the yardstick below measures nothing. Only score the ply-ramp
 yardstick from that teardown onward.
 
+### ✅ MECHANISM VERDICT 2026-07-30 13:46 — THE FIX WORKS. 2,119 games suspended, 2,100 resumed, 0 discarded.
+
+**How the teardown was triggered, and why NOT by a process restart.** `train.sh
+restart` would have DESTROYED this test: `stop()` sends SIGTERM, sleeps **2 s**,
+then `kill -9`, then unconditionally `pkill -9 -f 'ray::'`. Suspend costs
+13-34 s at production slot counts, and the observed drain took **~9 minutes**
+(threads carry ~1500 s of in-flight work each), so the workers would have been
+killed mid-suspend and the readout would have shown 0 — indistinguishable from
+"the feature does not work". `graceful_restart.py` is no better: `on_suspend`
+fires only at a REAL teardown with `stop_fn()` true (`manager.py:384`); its
+pause merely HOLDS the session.
+
+Triggered instead with `sf_hash_mb: 16 → 17` — a `_RECO_RESTART_KEY` that is
+also in `_RESUME_COMPAT_EXEMPT_KEYS` ("no bearing on a stored ply"), so it
+drives the real teardown path with **no trainer downtime and no lost
+iteration**. Log confirms clean attribution: `restarting selfplay session
+[restart_keys=sf_hash_mb assets_changed=False]`.
+
+| worker | suspended | resumed | discarded |
+|---|---|---|---|
+| worker_00 | 635 | 635 | 0 |
+| worker_01 | 600 | 581 | 0 |
+| worker_02 | 236 | 236 | 0 |
+| worker_03 | 648 | 648 | 0 |
+| **total** | **2,119** | **2,100** | **0** |
+
+`suspend_skipped=0` on every worker and **0 `.npz` left in the resume dirs** —
+every persisted game was consumed. Pre-fix, all 2,119 would have been abandoned.
+
+**⚠ TWO READING TRAPS THIS READOUT WALKED INTO — record them.**
+1. **A mid-drain snapshot reads as total failure.** At 13:45:08 the totals were
+   `suspended=2100 resumed=236`, i.e. 3 of 4 workers at ZERO, with 1,621 npz
+   files piling up on disk. Thirteen seconds later worker_00 logged
+   `suspended=635 resumed=635`. **Resume only runs after ALL threads have
+   suspended**, so any sample taken during the ~9-minute drain shows a large
+   suspend count against ~0 resumes. Do not score this before
+   `selfplay resume totals` has appeared on all four workers.
+2. **The repeated `recommended_worker changed (poll), restarting selfplay
+   session` line every ~30 s is NOT a restart loop.** It is the poll re-logging
+   a still-pending teardown while long curriculum threads drain. It stops when
+   the session actually turns over.
+
+**⚑ `play_batch exit: … in_flight_abandoned=24` NOW LIES.** It fires alongside
+`suspended games=20` for the same games — they are PERSISTED, not abandoned.
+PR #224's yardstick reads exactly this field, so that yardstick is no longer
+meaningful with resume on. Filed as a task.
+
+**Still owed (the QUANTITATIVE half):** the ply-ramp yardstick — whether
+`avg_plies_win`/`avg_plies_draw` now hold up instead of collapsing to ~0 — is
+scored over the ~9 rows after this teardown, i.e. from row 379. Mechanism is
+proven; the *bias removal* is not yet.
+
 **Class: waste correction + removal of a known PID sample bias. Not a target,
 loss, or search change.** Pre-registered before deploy because it touches the
 selfplay path and adds a config key.
