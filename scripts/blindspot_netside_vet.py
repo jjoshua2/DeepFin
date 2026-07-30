@@ -94,6 +94,33 @@ SAME positions at the SAME depth. The printed ``lift`` is the ratio.
                   where most moves lose", NOT blind spots. Do not admit them.
     lift >> 1.0 ⇒ the net errs where random play would not. Admit.
 
+⚠⚠⚠ AND THE FIRST VERSION OF THAT STATISTIC WAS ALSO WRONG — third catch, same
+day, this one found by reading the number rather than by a control. It printed:
+
+    PAIRED surveyed=28 blunders=28 expected_if_random=18.35 lift=1.53x
+
+**28 of 28 is 100%, and it was 100% BY CONSTRUCTION.** The survey ran only on
+positions that had passed the screen, and the screen required
+``after <= --lost`` — i.e. it required that the arm had ALREADY blundered. So
+the numerator was fixed at 1.0 by the selection rule, and it was being compared
+against the ``blunder_frac`` of exactly the positions selected for having a
+high one. The 1.53x meant nothing whatsoever.
+
+The fix is the ORDER of the stages, which is why the code below is split into
+1a/1b and the ``arm_blundered`` flag is carried rather than used immediately:
+
+    1a  ``before >= --fine``     position-level, arm-independent  → may gate
+    1b  ``after  <= --lost``     the arm's outcome                → RECORDED ONLY
+    1c  survey → blunder_frac    arm-independent                  → may gate
+        ... accumulate the paired counters over EVERYTHING reaching here ...
+    2   arm_blundered / knife-edge / deep confirmation            → candidate only
+
+**Never gate the denominator of a control on the event the control measures.**
+The general form of this mistake is conditioning on the outcome, and note that
+it survived both a negative control and a lint gate — it produced a plausible
+non-trivial number (1.53x, neither 1.0 nor absurd) and only the coincidence of
+``surveyed`` and ``blunders`` being the same integer gave it away.
+
 ``--control random`` is retained as a cheap end-to-end sanity check — it does
 exercise the whole path — but **it must not be used to decide whether the tool
 works.** Note also for the record that ``blunder_frac`` is counted separately
@@ -239,7 +266,7 @@ def main() -> None:
 
     kept: list[str] = []
     audit: list[dict] = []
-    n_parse = n_noleg = n_screen_drop = n_knife_edge = 0
+    n_parse = n_noleg = n_screen_drop = n_knife_edge = n_no_blunder = 0
     n_surveyed_pos = n_screen_blunders = 0
     exp_random_blunders = 0.0
 
@@ -265,16 +292,30 @@ def main() -> None:
                 n_noleg += 1
                 continue
 
-            # Stage 1: cheap screen on both sides of the move.
+            # Stage 1a: is the position PLAYABLE at all? Position-level and
+            # arm-independent, so it may gate the paired denominator.
             before = _q(eng.analyse(board, chess.engine.Limit(nodes=args.screen_nodes)), mover)
+            if before < args.fine:
+                n_screen_drop += 1
+                continue
+
+            # Stage 1b: did THIS arm's move throw it away? Recorded, NOT used to
+            # gate the survey below.
+            #
+            # ⚑ THE ORDER HERE IS THE WHOLE POINT. This test used to be part of
+            # the screen, so the survey only ever ran on positions where the arm
+            # had ALREADY blundered — which made the paired baseline conditional
+            # on its own outcome. The 2026-07-30 run printed
+            # `surveyed=28 blunders=28`: 100% by construction, compared against
+            # the blunder_frac of exactly those positions selected for having a
+            # high one. It reported lift=1.53x, which meant nothing. Never gate
+            # the denominator of a control on the event being measured.
             board.push(mv)
             after = _q(eng.analyse(board, chess.engine.Limit(nodes=args.screen_nodes)), mover) \
                 if not board.is_game_over() else (
                     -1.0 if board.is_checkmate() else 0.0)
             board.pop()
-            if not (before >= args.fine and after <= args.lost):
-                n_screen_drop += 1
-                continue
+            arm_blundered = after <= args.lost
 
             # Stage 1b: how FORGIVING is this position? Survey a SAMPLE of legal
             # moves. Without this the random control scores like the net (see
@@ -335,13 +376,13 @@ def main() -> None:
             # do not use it to decide whether the tool works.
             n_surveyed_pos += 1
             exp_random_blunders += blunder_frac
-            if after <= args.lost:
+            if arm_blundered:
                 n_screen_blunders += 1
             audit.append({
                 "line": line, "move": mv.uci(), "mover": "W" if mover else "B",
                 "stage": "surveyed", "control": args.control,
                 "screen_before": before, "screen_after": after,
-                "screen_blunder": after <= args.lost,
+                "screen_blunder": arm_blundered,
                 "safe_frac": safe_frac, "blunder_frac": blunder_frac,
                 "n_legal": len(legal),
                 "n_surveyed": len(survey),
@@ -349,6 +390,11 @@ def main() -> None:
                 "screen_nodes": args.screen_nodes,
             })
 
+            # Only now may the arm's own outcome gate anything: everything the
+            # paired statistic needs has already been accumulated above.
+            if not arm_blundered:
+                n_no_blunder += 1
+                continue
             if safe_frac < args.min_safe_frac:
                 n_knife_edge += 1
                 continue
@@ -398,8 +444,8 @@ def main() -> None:
 
     n_deep = sum(1 for r in audit if r.get("stage") == "deep")
     print(f"\n[netvet:{args.control}] seeds={len(lines)} parse_fail={n_parse} "
-          f"no_legal={n_noleg} screen_dropped={n_screen_drop} "
-          f"knife_edge_dropped={n_knife_edge} "
+          f"no_legal={n_noleg} unplayable_dropped={n_screen_drop} "
+          f"no_blunder={n_no_blunder} knife_edge_dropped={n_knife_edge} "
           f"deep_checked={n_deep} KEPT={len(kept)} -> {args.out_list}")
 
     # PAIRED CONTROL — the number that actually decides whether this tool works.
