@@ -59,22 +59,47 @@ was the *cost fix above*. Rates were **net 6/80 = 7.5% vs random 4/80 = 5.0%**
 the CONTROL FELL WITH IT: net:random only moved 1.26 → 1.50. Two positions were
 deep-checked in both arms, with DIFFERENT moves, and both arms KEPT both.
 
-Cause, and the lesson worth more than the tool: **the guard was measured at a
-different search depth from the criterion it guards.** Keep required
-``after <= --lost`` at 4,000,000 nodes; ``safe_frac`` counted a move "safe" at
-``cq >= --fine`` on **30,000** nodes — 1/133rd the search. A move reading +0.3
-at 30k reads −0.9 at 4M, so ``safe_frac`` was systematically INFLATED and the
-guard was measuring *search depth*, not forgiveness. The tell was visible in
-the output and is worth recognising on sight: kept rows with
-``safe_frac=0.92`` — 92% of moves supposedly fine — on positions a RANDOM move
-threw away. That is arithmetically absurd and was the signature of the bug.
+A REAL defect was found while diagnosing this, and it is fixed, but **it was
+not the cause** — recorded that way deliberately, because the tempting write-up
+("found the bug, fixed it, moved on") would have been wrong. The defect: the
+guard ran at a different search depth from the criterion it guards. Keep
+required ``after <= --lost`` at 4,000,000 nodes while ``safe_frac`` counted a
+move "safe" at ``cq >= --fine`` on **30,000** — 1/133rd the search. Hence
+``--safe-frac-nodes`` now defaults to ``--screen-nodes``: **a threshold
+compared against another threshold must be measured with the same instrument at
+the same setting**; the guard's cost is not a free parameter, it is part of the
+guard's meaning.
 
-Note what was NOT wrong: sampling instead of surveying every move is fine, and
-the position-seeded rng is fine. Only the node budget was wrong. Hence
-``--safe-frac-nodes`` now defaults to ``--screen-nodes`` rather than to a cheap
-constant. **Any threshold compared against another threshold must be measured
-with the same instrument at the same setting** — the cost of the guard is not a
-free parameter, it is part of the guard's meaning.
+But re-running at 300k returned **identical** ``safe_frac`` values (c8c5 0.92,
+g1g5 0.67 — the same numbers to 2dp). On these lopsided ``+1.000`` positions
+the ``--fine`` bar of +0.20 is so low that a move keeping the mover clearly
+winning at 30k also does at 300k; the dead band between −0.50 and +0.20 almost
+never binds. So the depth fix is correct and was measuring the wrong thing by
+luck, and it changed no verdict.
+
+**The actual defect is statistical power, and it is a defect in the CONTROL'S
+DESIGN, not the criterion.** Comparing two marginal keep rates over 80 seeds
+cannot resolve anything: separating 7.5% from 5.0% needs ~1500 seeds per arm at
+~8M nodes each. The arm was never capable of the job it was given.
+
+So the primary evidence is now a PAIRED statistic that costs nothing extra,
+because the survey already measures it. For each surveyed position
+``blunder_frac`` is the fraction of sampled legal moves that would themselves
+have dropped it to ``<= --lost`` — i.e. the random mover's blunder probability
+ON THAT POSITION. Summed over the surveyed set that gives
+``expected_if_random``, tested against this arm's observed blunder count on the
+SAME positions at the SAME depth. The printed ``lift`` is the ratio.
+
+    lift ≈ 1.0  ⇒ indistinguishable from random play: the seeds are "positions
+                  where most moves lose", NOT blind spots. Do not admit them.
+    lift >> 1.0 ⇒ the net errs where random play would not. Admit.
+
+``--control random`` is retained as a cheap end-to-end sanity check — it does
+exercise the whole path — but **it must not be used to decide whether the tool
+works.** Note also for the record that ``blunder_frac`` is counted separately
+from ``safe_frac`` rather than as ``1 - safe_frac``: "safe" (>= --fine) and
+"blunder" (<= --lost) are not complements, and folding the dead band into the
+baseline would have inflated it and understated the net's lift.
 
 History note: boards come from ``seed_board_from_line``, which replays the move
 list, so the encoder sees real LC0 history. Do NOT swap in ``chess.Board(fen)``
@@ -215,6 +240,8 @@ def main() -> None:
     kept: list[str] = []
     audit: list[dict] = []
     n_parse = n_noleg = n_screen_drop = n_knife_edge = 0
+    n_surveyed_pos = n_screen_blunders = 0
+    exp_random_blunders = 0.0
 
     try:
         for line in lines:
@@ -268,6 +295,12 @@ def main() -> None:
                 else survey_rng.sample(legal, args.safe_frac_sample)
             )
             n_safe = 0
+            # Counted separately from n_safe because "safe" (>= --fine) and
+            # "blunder" (<= --lost) are NOT complements — a move landing in the
+            # dead band between them is neither. Using 1 - safe_frac as the
+            # random blunder rate would inflate the baseline with dead-band
+            # moves and understate the net's lift.
+            n_blunder = 0
             for cand in survey:
                 board.push(cand)
                 if board.is_game_over():
@@ -278,7 +311,44 @@ def main() -> None:
                 board.pop()
                 if cq >= args.fine:
                     n_safe += 1
+                if cq <= args.lost:
+                    n_blunder += 1
             safe_frac = n_safe / len(survey) if survey else 0.0
+            blunder_frac = n_blunder / len(survey) if survey else 0.0
+
+            # PAIRED BASELINE — the reason every surveyed position is recorded,
+            # not just the ones that reach the deep check.
+            #
+            # The survey IS the per-position random-move control: `blunder_frac`
+            # is the measured fraction of sampled legal moves that a random
+            # mover would have thrown the position away with. So the expected
+            # number of blunders a random player commits over the surveyed set
+            # is sum(blunder_frac), and the net's observed blunder count is
+            # tested against it on the SAME positions at the SAME depth.
+            #
+            # This replaces `--control random` as the primary evidence. That arm
+            # compares two MARGINAL rates and is hopelessly underpowered: the
+            # 2026-07-30 run read net 6/80 vs random 4/80, and separating 7.5%
+            # from 5.0% needs ~1500 seeds per arm at ~8M nodes each. The paired
+            # form uses each position as its own control and needs no second
+            # arm. Keep `--control random` as a cheap end-to-end sanity check;
+            # do not use it to decide whether the tool works.
+            n_surveyed_pos += 1
+            exp_random_blunders += blunder_frac
+            if after <= args.lost:
+                n_screen_blunders += 1
+            audit.append({
+                "line": line, "move": mv.uci(), "mover": "W" if mover else "B",
+                "stage": "surveyed", "control": args.control,
+                "screen_before": before, "screen_after": after,
+                "screen_blunder": after <= args.lost,
+                "safe_frac": safe_frac, "blunder_frac": blunder_frac,
+                "n_legal": len(legal),
+                "n_surveyed": len(survey),
+                "safe_frac_nodes": args.safe_frac_nodes,
+                "screen_nodes": args.screen_nodes,
+            })
+
             if safe_frac < args.min_safe_frac:
                 n_knife_edge += 1
                 continue
@@ -293,6 +363,7 @@ def main() -> None:
 
             rec = {
                 "line": line, "move": mv.uci(), "mover": "W" if mover else "B",
+                "stage": "deep",
                 "screen_before": before, "screen_after": after,
                 "deep_before": d_before, "deep_after": d_after,
                 "gap": d_before - d_after, "control": args.control,
@@ -325,10 +396,27 @@ def main() -> None:
             for r in audit:
                 fh.write(json.dumps(r) + "\n")
 
+    n_deep = sum(1 for r in audit if r.get("stage") == "deep")
     print(f"\n[netvet:{args.control}] seeds={len(lines)} parse_fail={n_parse} "
           f"no_legal={n_noleg} screen_dropped={n_screen_drop} "
           f"knife_edge_dropped={n_knife_edge} "
-          f"deep_checked={len(audit)} KEPT={len(kept)} -> {args.out_list}")
+          f"deep_checked={n_deep} KEPT={len(kept)} -> {args.out_list}")
+
+    # PAIRED CONTROL — the number that actually decides whether this tool works.
+    # Over the surveyed positions, a uniformly random mover would blunder
+    # sum(1 - safe_frac) times; this arm blundered n_screen_blunders times.
+    # Both are measured on the SAME positions at the SAME depth, so the ratio is
+    # interpretable at n=80 where two marginal keep rates are not.
+    if n_surveyed_pos:
+        lift = (n_screen_blunders / exp_random_blunders
+                if exp_random_blunders > 0 else float("inf"))
+        print(f"[netvet:{args.control}] PAIRED surveyed={n_surveyed_pos} "
+              f"blunders={n_screen_blunders} "
+              f"expected_if_random={exp_random_blunders:.2f} lift={lift:.2f}x")
+        print(f"[netvet:{args.control}] lift ~1.0 means this arm is "
+              f"INDISTINGUISHABLE from random play on these positions; the "
+              f"seeds are then 'positions where most moves lose', not blind "
+              f"spots, and must NOT be admitted.")
 
 
 if __name__ == "__main__":
