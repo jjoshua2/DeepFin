@@ -103,13 +103,16 @@ def _gate(
     min_iters: int = 8,
     min_games_per_side: int = 40,
     demote_delta_elo: float = -25.0,
+    demote_step_elo: float = -125.0,
     alpha: float = 0.05,
     max_hold_iters: int = 12,
 ) -> PromotionGate:
     return PromotionGate(cfg=GateConfig(
         mode=mode, window_iters=window_iters, min_iters=min_iters,
         min_games_per_side=min_games_per_side,
-        demote_delta_elo=demote_delta_elo, alpha=alpha,
+        demote_delta_elo=demote_delta_elo,
+        demote_step_elo=min(demote_step_elo, demote_delta_elo),
+        alpha=alpha,
         max_hold_iters=max_hold_iters,
     ))
 
@@ -147,15 +150,39 @@ def test_promote_with_zero_games_cannot_be_reported() -> None:
 def test_disabled_gate_reports_not_run_and_never_a_pass() -> None:
     """MUTATION: make DECISION_NOT_RUN equal DECISION_PROMOTE, or default the
     decision to 1. An off gate must be distinguishable in the metrics from a
-    gate that ran and passed."""
-    m = gate_metrics(_gate(mode=MODE_OFF).decide())
-    assert m["gate_decision"] == float(DECISION_NOT_RUN)
-    assert m["gate_decision"] != float(DECISION_PROMOTE)
-    assert m["gate_games_cur"] == 0.0
-    assert m["gate_games_prev"] == 0.0
-    # The old metric name must be gone: a dashboard still charting it would
-    # silently show a constant again.
-    assert "gate_passed" not in m
+    gate that ran and passed.
+
+    THE WINDOW IS FULL ON PURPOSE, and an earlier version of this test got that
+    wrong. It called ``.decide()`` on an EMPTY gate, which returns
+    ``DECISION_NOT_RUN`` via the ``min_iters`` branch whether or not the
+    ``MODE_OFF`` check exists -- so ``if cfg.mode == MODE_OFF:`` -> ``if False:``
+    survived it, and the OFF SWITCH, the only thing standing between this
+    feature and production, was untested. Reviewer round 6.
+
+    With a full clean window the mutation returns ``DECISION_PROMOTE``; with a
+    full regressing window it returns ``DECISION_DEMOTE``. Both are asserted,
+    because "off" must beat both halves of the rule, not just the quiet one.
+    """
+    for window in (_window(0.0), _window(-0.30)):
+        g = _gate(mode=MODE_OFF)
+        for s in window:
+            g.observe(s)
+        d = g.decide()
+        m = gate_metrics(d)
+        assert d.reason == "disabled"
+        assert m["gate_decision"] == float(DECISION_NOT_RUN)
+        assert m["gate_decision"] != float(DECISION_PROMOTE)
+        assert m["gate_decision"] != float(DECISION_DEMOTE)
+        assert m["gate_would_demote"] == 0.0
+        # The window aggregates stay empty: an off gate reports no verdict AND
+        # no numbers behind one. The per-iteration sample is still filled, which
+        # is what makes the shadow readout run at gate_mode: off.
+        assert m["gate_games_cur"] == 0.0
+        assert m["gate_games_prev"] == 0.0
+        assert m["gate_sample_games_cur"] == 100.0
+        # The old metric name must be gone: a dashboard still charting it would
+        # silently show a constant again.
+        assert "gate_passed" not in m
 
 
 def test_training_result_default_is_not_a_pass() -> None:
@@ -219,8 +246,16 @@ def test_identical_deltas_refuse_to_decide() -> None:
 
 def test_short_window_and_thin_iterations_do_not_decide() -> None:
     """MUTATION: drop the min_iters / min_games_per_side guards. A verdict off
-    3 iterations, or off 5 games a side, is noise wearing a decision's clothes."""
-    short = _feed(_gate(), _window(-0.30)[:3])
+    3 iterations, or off 5 games a side, is noise wearing a decision's clothes.
+
+    The shift is -0.10 (about -70 Elo/iteration), not -0.30: a -0.30 sample is
+    STEP-scale and now demotes on the single-iteration leg from one row, which
+    is the whole point of that leg
+    (``test_a_step_leg_fires_on_a_single_iteration_step``). Dropping min_iters
+    still fails this test -- at 3 iterations of -0.10 the window mean is
+    -69.5 Elo with ``elo_hi`` -46, well under the -25 line.
+    """
+    short = _feed(_gate(), _window(-0.10)[:3])
     assert short.decision == DECISION_NOT_RUN
     assert short.reason == "insufficient_iters"
 
@@ -366,8 +401,15 @@ def test_gate_mode_default_is_off() -> None:
 # --------------------------------------------------------------------------
 # 4. the ingest split is what makes the games free -- and it must be REAL
 # --------------------------------------------------------------------------
-def _shard(path: Path, *, sha: str, w: int, d: int, l: int) -> None:
+def _shard(path: Path, *, sha: str, w: int, d: int, l: int,
+           regret: float | None = None) -> None:
     n = 2
+    meta: dict = {
+        "model_sha256": sha, "games": w + d + l, "positions": n,
+        "wins": w, "draws": d, "losses": l,
+    }
+    if regret is not None:
+        meta["opponent_wdl_regret_limit"] = regret
     save_local_shard_arrays(
         path,
         arrs={
@@ -377,10 +419,7 @@ def _shard(path: Path, *, sha: str, w: int, d: int, l: int) -> None:
             "priority": np.ones((n,), dtype=np.float32),
             "has_policy": np.ones((n,), dtype=np.uint8),
         },
-        meta={
-            "model_sha256": sha, "games": w + d + l, "positions": n,
-            "wins": w, "draws": d, "losses": l,
-        },
+        meta=meta,
     )
 
 
@@ -394,9 +433,16 @@ def test_ingest_splits_anchored_counts_by_publishing_model(tmp_path: Path) -> No
     """
     inbox = tmp_path / "inbox"
     processed = tmp_path / "processed"
-    _shard(inbox / "w0" / f"a{LOCAL_SHARD_SUFFIX}", sha="cur-sha", w=7, d=2, l=1)
-    _shard(inbox / "w0" / f"b{LOCAL_SHARD_SUFFIX}", sha="prev-sha", w=3, d=4, l=5)
-    _shard(inbox / "w0" / f"c{LOCAL_SHARD_SUFFIX}", sha="ancient-sha", w=9, d=9, l=9)
+    _shard(inbox / "w0" / f"a{LOCAL_SHARD_SUFFIX}", sha="cur-sha", w=7, d=2, l=1,
+           regret=0.0900)
+    _shard(inbox / "w0" / f"b{LOCAL_SHARD_SUFFIX}", sha="prev-sha", w=3, d=4, l=5,
+           regret=0.0850)
+    _shard(inbox / "w0" / f"c{LOCAL_SHARD_SUFFIX}", sha="ancient-sha", w=9, d=9, l=9,
+           regret=0.5000)
+    # A LEGACY shard (predates ShardMeta.opponent_wdl_regret_limit): its games
+    # count toward the arm, but contribute NOTHING to the difficulty mean --
+    # absent is unknown, and 0.0 would read as unhandicapped Stockfish.
+    _shard(inbox / "w0" / f"d{LOCAL_SHARD_SUFFIX}", sha="cur-sha", w=1, d=1, l=1)
 
     summary = _ingest_distributed_selfplay(
         buf=DiskReplayBuffer(
@@ -416,8 +462,16 @@ def test_ingest_splits_anchored_counts_by_publishing_model(tmp_path: Path) -> No
         rng=np.random.default_rng(2), on_poll=None, min_games_fraction=0.0,
     )
 
-    assert (summary["gate_cur_w"], summary["gate_cur_d"], summary["gate_cur_l"]) == (7, 2, 1)
+    assert (summary["gate_cur_w"], summary["gate_cur_d"], summary["gate_cur_l"]) == (8, 3, 2)
     assert (summary["gate_prev_w"], summary["gate_prev_d"], summary["gate_prev_l"]) == (3, 4, 5)
+    # The difficulty each arm played at rides the same split (MUTATION: delete
+    # the gate_*_regret_* accumulation from _process_shard). Games-weighted;
+    # the STALE shard's 0.50 must contaminate neither arm; and the legacy
+    # shard's 3 games count toward the arm but not toward the difficulty mean.
+    assert summary["gate_cur_regret_games"] == 10
+    assert summary["gate_cur_regret_weighted"] == pytest.approx(0.0900 * 10)
+    assert summary["gate_prev_regret_games"] == 12
+    assert summary["gate_prev_regret_weighted"] == pytest.approx(0.0850 * 12)
     # Stale (neither published model) contributes to NEITHER side: it was played
     # by a net no longer under comparison.
     assert summary["gate_cur_w"] + summary["gate_prev_w"] == summary["matching_w"]
@@ -2335,3 +2389,1083 @@ def test_selfplay_phase_forwards_the_hold_to_the_publish(
     assert sp.gate_sample_valid is False, (
         "a publish that served the anchor cannot produce a valid anchored sample"
     )
+
+
+# --------------------------------------------------------------------------
+# 11. A SINGLE-ITERATION STEP: the mean-CI rule cannot see one at all
+#     (review round 6, F2)
+# --------------------------------------------------------------------------
+def _one_shot_window(step_elo: float, k: int) -> list[float]:
+    """K score-deltas: k-1 exact zeros and one worth ``step_elo``."""
+    return [0.0] * (k - 1) + [step_elo / ELO_PER_SCORE_AT_HALF]
+
+
+def test_a_one_iteration_step_cannot_move_the_mean_ci_rule() -> None:
+    """THE ARITHMETIC, PINNED. Not a mutation test -- a proof that no tuning of
+    this rule can catch a step, which is why a second leg exists.
+
+    For a window of K deltas with one ``-M`` and the rest 0:
+        mean = -M/K ; var = M^2/K ; se = M/K ; elo_hi = (M/K)(t-1) > 0
+    M cancels. If this test ever fails, the mean-CI rule has become
+    step-sensitive and the step leg's justification needs re-reading.
+    """
+    for k in (8, 12, 24, 48):
+        t = _t_quantile(0.05, k - 1)
+        assert t > 1.0
+        for m in (100.0, 300.0, 600.0, 1_000_000.0):
+            d = _one_shot_window(-m, k)
+            mean = sum(d) / k
+            var = sum((x - mean) ** 2 for x in d) / (k - 1)
+            se = math.sqrt(var / k)
+            # se equals |mean| exactly, which is the whole result.
+            assert se == pytest.approx(abs(mean), rel=1e-12)
+            elo_hi = ELO_PER_SCORE_AT_HALF * (mean + t * se)
+            assert elo_hi > 0.0, (k, m, elo_hi)
+            # ...and it scales with M rather than shrinking, so a bigger break
+            # reads as a bigger POSITIVE upper bound.
+            assert elo_hi == pytest.approx((m / k) * (t - 1.0), rel=1e-9)
+
+    # The measured headline in the docstring and the yaml.
+    k, m = 24, 1_000_000.0
+    d = _one_shot_window(-m, k)
+    mean = sum(d) / k
+    se = math.sqrt(sum((x - mean) ** 2 for x in d) / (k - 1) / k)
+    hi = ELO_PER_SCORE_AT_HALF * (mean + _t_quantile(0.05, k - 1) * se)
+    assert hi == pytest.approx(29_754.0, abs=5.0)
+
+    # And the same thing through the REAL gate, with the step leg turned off by
+    # setting its line beyond reach: the window rule alone promotes a -300 step.
+    g = _gate(demote_step_elo=-100_000.0, min_games_per_side=40)
+    for i in range(23):
+        g.observe(_sample(i, 0.50, 0.50))
+    g.observe(_sample(23, cur_score=0.50 - 300.0 / ELO_PER_SCORE_AT_HALF,
+                      prev_score=0.50))
+    d_ = g.decide()
+    assert d_.decision == DECISION_PROMOTE
+    assert d_.reason == "promote_no_regression"
+    assert d_.elo_hi > 0.0
+
+
+def test_a_step_leg_fires_on_a_single_iteration_step() -> None:
+    """MUTATION: delete ``PromotionGate._step_regressed``'s comparison (return
+    False), or drop ``step`` from ``decide()``'s ``_resolve`` call.
+
+    THE LEG THE WHOLE OF SECTION 11 EXISTS FOR. One iteration, at the realized
+    live arm shape, with a step big enough to clear ``demote_step_elo`` plus its
+    own binomial noise -> DEMOTE, from a window that the mean-CI rule promotes.
+    """
+    g = _gate(min_games_per_side=15)
+    for i in range(23):
+        g.observe(_sample(i, 0.50, 0.50))
+    # -300 Elo in one iteration, at n_cur=197 / n_prev=38.
+    shift = -300.0 / ELO_PER_SCORE_AT_HALF
+    cur_w = round((0.50 + shift) * 197)
+    g.observe(AnchoredSample(
+        23, cur_w=cur_w, cur_d=0, cur_l=197 - cur_w,
+        prev_w=19, prev_d=0, prev_l=19,
+    ))
+    d = g.decide()
+    assert d.decision == DECISION_DEMOTE
+    assert d.reason == "demote_step"
+    assert d.would_demote is True
+    # The window mean alone would NOT have demoted -- that is the point.
+    assert d.elo_hi > GateConfig().demote_delta_elo
+    # The leg's own input travels with the verdict.
+    assert d.sample_elo_hi < GateConfig().demote_step_elo
+    assert gate_metrics(d)["gate_sample_elo_hi"] == pytest.approx(d.sample_elo_hi)
+    assert gate_metrics(d)["gate_would_demote"] == 1.0
+    assert gate_metrics(d)["gate_reason_code"] == 8.0
+
+
+def test_the_step_leg_fires_before_the_window_is_full() -> None:
+    """MUTATION: move ``step = self._step_regressed()`` below the ``min_iters``
+    early return.
+
+    A bad merge three iterations after a restart is exactly when a step leg has
+    to work, and every window path (short window, thin rows, degenerate
+    variance) returns NOT_RUN -- which RELEASES the brake.
+    """
+    g = _gate(min_games_per_side=15)
+    # The current model lost EVERY game while the previous one held 50%:
+    # a -347 Elo step at this sample shape, well past demote_step_elo + noise.
+    broken = AnchoredSample(
+        0, cur_w=0, cur_d=0, cur_l=197, prev_w=19, prev_d=0, prev_l=19,
+    )
+    g.observe(broken)
+    d = g.decide()
+    assert len(g.samples) == 1 < GateConfig().min_iters
+    assert d.decision == DECISION_DEMOTE
+    assert d.reason == "demote_step"
+
+    # ...and a DEGENERATE window (every delta identical) does not shelter a
+    # step either: that path also used to return NOT_RUN unconditionally.
+    g2 = _gate(min_games_per_side=15)
+    for i in range(8):
+        g2.observe(dataclasses.replace(broken, iteration=i))
+    d2 = g2.decide()
+    assert d2.reason != "degenerate_variance"
+    assert d2.decision == DECISION_DEMOTE
+
+
+def test_the_step_leg_cannot_create_a_promote() -> None:
+    """MUTATION: make ``decide()`` return the STEP verdict unconditionally, or
+    turn the ``or`` in ``regressed=window_regressed or step`` into an ``and``.
+
+    The leg is allowed to ADD a demote and nothing else. Two directions:
+
+    * a window that already demotes must still demote, with the WINDOW's name,
+      whatever the step leg says (an ``and`` would silently disarm the
+      sustained-break rule on every iteration whose single sample is quiet);
+    * no configuration of the step leg may turn a demote into a promote.
+    """
+    # window demotes, step quiet -> demote_regression, not promote
+    g = _gate(demote_delta_elo=-50.0, min_games_per_side=40)
+    d = _feed(g, _window(-0.10))
+    assert d.decision == DECISION_DEMOTE
+    assert d.reason == "demote_regression"
+
+    # window demotes AND step fires -> still named for the window
+    g2 = _gate(demote_delta_elo=-50.0, min_games_per_side=40)
+    d2 = _feed(g2, _window(-0.30))
+    assert d2.decision == DECISION_DEMOTE
+    assert d2.reason == "demote_regression"
+
+    # Exhaustive over the step line: a window-demoting series can never become
+    # a promote by moving demote_step_elo.
+    for line in (-1.0, -50.0, -125.0, -1000.0, -100_000.0):
+        gk = _gate(demote_delta_elo=-50.0, demote_step_elo=min(line, -50.0),
+                   min_games_per_side=40)
+        assert _feed(gk, _window(-0.30)).decision == DECISION_DEMOTE, line
+
+
+def test_step_leg_false_brake_budget_and_power_reproduce() -> None:
+    """The numbers the shipped ``demote_step_elo`` was chosen against, in the
+    docstring, the GateConfig comment and the yaml.
+
+    MUTATION: change ``AnchoredSample.score_se`` to use a per-arm variance with
+    no pooled FLOOR. An arm that drew every game then has se 0 and the leg
+    fires on certainty it does not have.
+    """
+    z = _Z_ONE_SIDED[0.05]
+
+    def se_elo(nc: int, npv: int) -> float:
+        # All-draw arms have observed variance 0, so this reads the POOLED
+        # floor exactly -- the narrowest se the leg can ever act on, hence the
+        # WORST case for the false-brake budget. Real draw-light arms have
+        # observed variance up to 0.25 > the floor, so their se is wider and
+        # they fire less readily.
+        return AnchoredSample(
+            0, cur_d=nc, prev_d=npv,
+        ).score_se * ELO_PER_SCORE_AT_HALF
+
+    realized, worst = se_elo(197, 38), se_elo(197, 15)
+    assert realized == pytest.approx(42.4, abs=1.5)
+    assert worst == pytest.approx(64.2, abs=2.0)
+
+    def norm_sf(x: float) -> float:
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+    line = GateConfig().demote_step_elo
+    for se, budget, p50, p90 in ((realized, 0.05, 195.0, 249.0),
+                                 (worst, 1.5, 231.0, 313.0)):
+        fires_at = line - z * se           # sample delta must be below this
+        p_null = norm_sf(fires_at / se)
+        assert p_null * 8000 < budget, (se, p_null * 8000)
+        assert -fires_at == pytest.approx(p50, abs=6.0)
+        assert -(fires_at - 1.2816 * se) == pytest.approx(p90, abs=8.0)
+
+    # THE STATED BLIND SPOT: a -100 step does not fire at the realized shape.
+    g = _gate(min_games_per_side=15)
+    shift = -100.0 / ELO_PER_SCORE_AT_HALF
+    cur_w = round((0.50 + shift) * 197)
+    g.observe(AnchoredSample(0, cur_w=cur_w, cur_d=0, cur_l=197 - cur_w,
+                             prev_w=19, prev_d=0, prev_l=19))
+    assert g.decide().decision != DECISION_DEMOTE, (
+        "the docs must not claim the step leg catches -100"
+    )
+
+    # The pooled floor is load-bearing: an all-draws arm must not read se 0.
+    all_draws = AnchoredSample(0, cur_d=197, prev_d=38)
+    assert all_draws.score_se > 0.0
+    assert all_draws.score_se == pytest.approx(
+        math.sqrt(0.3447 ** 2 / 197 + 0.3447 ** 2 / 38), rel=1e-9,
+    )
+
+
+def test_documented_time_to_trip_is_the_steady_state_number() -> None:
+    """MUTATION: restore the docstring's "trips inside the 8-iteration floor".
+
+    Eight is the COLD-window latency. Production always carries 24 healthy
+    rows, whose means drag the statistic toward zero until they age out, and
+    the two regimes disagree by 50% at -100 Elo/iteration. Both are computed
+    here so the docs cannot quote one as the other.
+    """
+    sd, line, k, min_iters, alpha = 45.56, -25.0, 24, 8, 0.05
+
+    def trip(break_elo: float, warm: bool, rng: random.Random) -> int | None:
+        w = [rng.gauss(0.0, sd) for _ in range(k)] if warm else []
+        for i in range(1, 201):
+            w.append(rng.gauss(break_elo, sd))
+            w = w[-k:]
+            if len(w) < min_iters:
+                continue
+            n = len(w)
+            mean = sum(w) / n
+            se = math.sqrt(sum((x - mean) ** 2 for x in w) / (n - 1) / n)
+            if se > 0.0 and mean + _t_quantile(alpha, n - 1) * se < line:
+                return i
+        return None
+
+    rng = random.Random(7)
+    med: dict[tuple[float, bool], float] = {}
+    for warm in (True, False):
+        for b in (-50.0, -100.0, -200.0, -300.0):
+            hits = [t for t in (trip(b, warm, rng) for _ in range(400))
+                    if t is not None]
+            assert len(hits) == 400
+            med[(b, warm)] = st.median(hits)
+
+    # Steady state: the numbers the corrected docstring and yaml quote.
+    assert med[(-50.0, True)] == pytest.approx(20, abs=2)
+    assert med[(-100.0, True)] == pytest.approx(12, abs=2)
+    assert med[(-200.0, True)] == pytest.approx(8, abs=2)
+    assert med[(-300.0, True)] == pytest.approx(6, abs=2)
+    # Cold: pinned at the min_iters floor, which is where "8" came from.
+    for b in (-100.0, -200.0, -300.0):
+        assert med[(b, False)] == pytest.approx(min_iters, abs=1)
+    # ...and the two regimes genuinely differ, or the correction is vacuous.
+    assert med[(-100.0, True)] >= med[(-100.0, False)] + 3
+
+    doc = promotion_gate.__doc__ or ""
+    assert "EIGHT IS THE COLD-WINDOW" in doc.upper()
+    assert "trips within the ``min_iters`` floor of 8 iterations" not in doc
+
+
+# --------------------------------------------------------------------------
+# 12. EVERY SHIPPED CONSTANT PINNED BY VALUE, not merely by consistency
+#     (review round 6, F4)
+# --------------------------------------------------------------------------
+# yaml key -> (GateConfig field, shipped value). The technique that already
+# worked for ``demote_delta_elo``: assert the VALUE, so changing it in both the
+# dataclass default and ``gate_config_from_dict`` still fails. The previous
+# suite only had a CONSISTENCY pin, and every one of these survived being
+# changed in both copies at once (window_iters 24->48, min_iters 8->4,
+# min_games_per_side 15->5, alpha 0.05->0.10, max_hold_iters 12->100).
+_SHIPPED_GATE_CONSTANTS = (
+    ("gate_mode", "mode", MODE_OFF),
+    ("gate_window_iters", "window_iters", 24),
+    ("gate_min_iters", "min_iters", 8),
+    ("gate_min_games_per_side", "min_games_per_side", 15),
+    ("gate_demote_delta_elo", "demote_delta_elo", -25.0),
+    ("gate_demote_step_elo", "demote_step_elo", -125.0),
+    ("gate_alpha", "alpha", 0.05),
+    ("gate_max_hold_iters", "max_hold_iters", 12),
+)
+
+
+@pytest.mark.parametrize(("yaml_key", "field", "shipped"), _SHIPPED_GATE_CONSTANTS)
+def test_every_shipped_gate_constant_is_pinned_by_value(
+    yaml_key: str, field: str, shipped: object,
+) -> None:
+    """MUTATION: change the constant in BOTH the dataclass default and
+    ``gate_config_from_dict``'s fallback. Consistency pins pass; this does not.
+
+    Every headline number in this module's docs is quoted AT these values --
+    the 9.3 Elo window se, the 92.5% power, the 0.02/8000 false-brake budget,
+    the 42.4 Elo sample se, the "96% of iterations admitted" floor. A silent
+    change to any of them makes the whole document a description of a different
+    gate.
+    """
+    assert getattr(GateConfig(), field) == shipped
+    # ...and the yaml fallback is the same value, so an operator who does not
+    # set the key gets what the docs describe.
+    assert getattr(gate_config_from_dict({}), field) == shipped
+
+
+def test_min_games_per_side_is_pinned_from_BOTH_sides() -> None:
+    """MUTATION: 15 -> 5, which the old suite did NOT kill (only 15 -> 60 did).
+
+    Five games a side is ~150 Elo of binomial se on ONE anchored delta -- six
+    times the demote line -- so admitting a 5-vs-5 iteration puts pure noise
+    into the window mean with the same weight as a 197-game row.
+    """
+    floor = GateConfig().min_games_per_side
+    assert floor == 15
+    # Upper pin (the pre-review 40 disqualified ~70% of live iterations).
+    assert floor <= 20
+    # Lower pin, by consequence rather than by taste: one iteration at the
+    # floor must not carry more than ~4x the demote line's worth of noise
+    # (at 15/15 the pooled-floor se is 87.5 Elo).
+    at_floor = AnchoredSample(
+        0, cur_d=floor, prev_d=floor,
+    ).score_se * ELO_PER_SCORE_AT_HALF
+    assert at_floor < 4.0 * abs(GateConfig().demote_delta_elo), (
+        f"a floor of {floor} admits an iteration whose own se is "
+        f"{at_floor:.0f} Elo"
+    )
+    assert floor >= 10, "below ~10 games a side an iteration is a coin flip"
+    # And the arithmetic that makes 5 unacceptable, so the bound above is not
+    # just a number: 5 games a side is ~150 Elo of se on ONE row even at the
+    # pooled floor, i.e. 6x the line.
+    five = AnchoredSample(0, cur_d=5, prev_d=5).score_se * ELO_PER_SCORE_AT_HALF
+    assert five > 140.0
+    assert five > 5.0 * abs(GateConfig().demote_delta_elo)
+
+
+def test_the_no_cadence_fallback_band_is_pinned_by_value() -> None:
+    """MUTATION: widen the cadence-unknown count band from 0.25-4.0x to
+    0.001-1000x, which the old suite did not kill.
+
+    Without ``time_this_iter_s`` the count carries no information except gross
+    breakage, which is why the band is loose -- but "loose" is 4x, not 1000x.
+    At 1000x the leg cannot fail, and it is the ONLY count leg on a csv with no
+    cadence column.
+    """
+    ref_total = OFFLINE.mean_games_cur + OFFLINE.mean_games_prev
+
+    def verdict_at(scale: float) -> ShadowReadoutLike:
+        rows = [
+            (int(OFFLINE.mean_games_cur * scale),
+             int(OFFLINE.mean_games_prev * scale),
+             -4.0 + 40.0 * math.sin(i))
+            for i in range(_READOUT_MIN_ROWS)
+        ]
+        return shadow_readout_verdict(rows, min_games_per_side=5)
+
+    inside = verdict_at(1.0)
+    assert not any("anchored games/iteration" in leg
+                   for leg in inside.failed_legs)
+    for scale in (0.20, 5.0):
+        out = verdict_at(scale)
+        assert any("anchored games/iteration" in leg for leg in out.failed_legs), (
+            f"a {scale}x count swing with no cadence column must fire the "
+            f"fallback band; total {ref_total * scale:.0f} vs {ref_total:.0f}"
+        )
+        assert out.verdict == READOUT_KILL
+
+
+# A structural alias so the helper above type-checks without importing the
+# dataclass name twice.
+ShadowReadoutLike = object
+
+
+# --------------------------------------------------------------------------
+# 13. THE SIX PRODUCTION CALL SITES (review round 6, F3)
+# --------------------------------------------------------------------------
+def _train_trial_body() -> object:
+    """The ``ast`` of ``trainable.train_trial``.
+
+    WHY AST AND NOT EXECUTION, stated plainly: ``train_trial`` needs Ray, a GPU,
+    a published manifest and a live replay window, so its body cannot be driven
+    in a unit test. But the defect class here is WIRING -- six calls that a
+    reviewer deleted, all six of which escaped the entire suite -- and wiring is
+    exactly what a structural assertion can pin. Each site below ALSO has a
+    behavioural test of what the call does; this test is what fails when the
+    call stops being made.
+    """
+    import ast
+
+    import chess_anti_engine.tune.trainable as trainable
+
+    tree = ast.parse(inspect.getsource(trainable))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "train_trial":
+            return node
+    raise AssertionError("train_trial not found in chess_anti_engine.tune.trainable")
+
+
+def _calls_on(node: object, obj: str, attr: str) -> list[object]:
+    import ast
+
+    out = []
+    for n in ast.walk(node):  # type: ignore[arg-type]
+        if (
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == attr
+            and isinstance(n.func.value, ast.Name)
+            and n.func.value.id == obj
+        ):
+            out.append(n)
+    return out
+
+
+def test_the_loop_body_calls_on_decision_with_the_verdict_and_keeps_it() -> None:
+    """MUTATION: ``tr.gate_decision = gate_hold.on_decision(tr.gate_decision)``
+    -> ``pass``.
+
+    THIS IS THE ACTUATOR. Without it ``hold_path`` never changes, so the gate
+    reports DEMOTE forever and the fleet keeps receiving the demoted net -- a
+    verdict accepted and then silently ignored, in the module whose docstrings
+    are about that failure mode. It survived the whole 74-test suite.
+    """
+    import ast
+
+    body = _train_trial_body()
+    calls = _calls_on(body, "gate_hold", "on_decision")
+    assert len(calls) == 1, f"expected exactly one on_decision call, got {len(calls)}"
+    call = calls[0]
+    src = ast.unparse(call)
+    assert "tr.gate_decision" in src, src
+    # The RESULT must be kept: on_decision returns the decision with the
+    # anchor's refresh health attached, and dropping it puts
+    # gate_anchor_refresh_failures back to living only inside the controller.
+    assigns = [
+        n for n in ast.walk(body)  # type: ignore[arg-type]
+        if isinstance(n, ast.Assign) and n.value is call
+    ]
+    assert assigns, "on_decision's return value must be assigned, not discarded"
+    assert ast.unparse(assigns[0].targets[0]) == "tr.gate_decision"
+
+
+def test_the_loop_body_ages_a_hold_on_an_aborted_iteration() -> None:
+    """MUTATION: delete ``gate_hold.on_aborted_iteration()`` from the
+    ``sp.should_retry`` branch.
+
+    ``should_retry`` aborts before the gate observes anything, so the release
+    counter freezes while the fleet stays held: a run stuck in retry during a
+    hold HOLDS FOREVER. The call must be inside that branch and before the
+    ``continue``, or it is unreachable.
+    """
+    import ast
+
+    body = _train_trial_body()
+    retry_ifs = [
+        n for n in ast.walk(body)  # type: ignore[arg-type]
+        if isinstance(n, ast.If) and ast.unparse(n.test) == "sp.should_retry"
+    ]
+    assert len(retry_ifs) == 1, "expected exactly one `if sp.should_retry:`"
+    inner = retry_ifs[0].body
+    assert _calls_on(retry_ifs[0], "gate_hold", "on_aborted_iteration"), (
+        "the retry branch must age an active hold"
+    )
+    # ...and before the continue, or it never runs.
+    idx_call = next(
+        i for i, st_ in enumerate(inner)
+        if _calls_on(st_, "gate_hold", "on_aborted_iteration")
+    )
+    idx_cont = next(
+        i for i, st_ in enumerate(inner) if isinstance(st_, ast.Continue)
+    )
+    assert idx_call < idx_cont
+
+
+def test_the_startup_publish_honours_a_restored_hold() -> None:
+    """MUTATION: ``override_model_path=gate_hold.hold_path`` -> ``None`` at the
+    startup publish.
+
+    A resume mid-hold would lift the brake for one publish AND re-anchor on the
+    held-back weights, so an enforce-mode hold would be bounded by restart
+    cadence rather than by ``gate_max_hold_iters``.
+    """
+    import ast
+
+    body = _train_trial_body()
+    publishes = [
+        n for n in ast.walk(body)  # type: ignore[arg-type]
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "_publish_distributed_trial_state"
+    ]
+    assert len(publishes) == 1, (
+        "train_trial should have exactly one direct publish (the startup one); "
+        "the per-iteration publish goes through _publish_iteration_model"
+    )
+    kw = {k.arg: ast.unparse(k.value) for k in publishes[0].keywords}
+    assert kw.get("override_model_path") == "gate_hold.hold_path", kw
+
+
+def test_the_publish_helper_rolls_the_sign_validity_history(tmp_path: Path) -> None:
+    """MUTATION: ``hold.note_published()`` -> ``pass`` in
+    ``_publish_iteration_model``.
+
+    Behavioural, not structural. Without the roll, ``_prev_publish_held`` never
+    advances, so ``sample_is_valid`` stays True across a hold transition and the
+    SIGN-INVERTED sample -- a -139 Elo regression recorded as +139, at exactly
+    the moment the gate acts on it -- enters the window.
+    """
+    trainer = _MarkerTrainer()
+    promoted = tmp_path / "gate_promoted_model.pt"
+    ctrl = GateHoldController(
+        gate=_gate(mode=MODE_ENFORCE), promoted_model_path=promoted,
+    )
+
+    _publish_iter(tmp_path, trainer, hold=None, promoted=promoted,
+                  controller=ctrl)      # normal publish
+    assert ctrl.sample_is_valid is True
+    ctrl.hold_path = promoted
+    _publish_iter(tmp_path, trainer, hold=promoted, promoted=promoted,
+                  controller=ctrl)      # the iteration that STARTS the hold
+    assert ctrl.sample_is_valid is False, (
+        "the hold-transition sample has an inverted sign and must be excluded"
+    )
+    ctrl.hold_path = None
+    _publish_iter(tmp_path, trainer, hold=None, promoted=promoted,
+                  controller=ctrl)      # the RELEASE iteration
+    assert ctrl.sample_is_valid is False, (
+        "the release sample spans the whole hold, not one training step"
+    )
+    _publish_iter(tmp_path, trainer, hold=None, promoted=promoted,
+                  controller=ctrl)
+    assert ctrl.sample_is_valid is True
+
+
+def test_gate_mode_is_restart_required_and_the_reload_says_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """MUTATION: drop ``"gate_mode"`` from ``_LIVE_RELOAD_SKIPPED_KEYS``.
+
+    The list's own comment claims membership "turns that silence into a
+    WARNING". Nothing checked it, and the claim was only half true: the guard
+    read ``k in config and config[k] != v``, so a live ADD -- the ONLY way
+    ``gate_mode`` ever changes, because ``configs/pbt2_small.yaml`` ships no
+    ``gate_*`` key at all -- took the silent-overlay path. The value landed in
+    ``config``, ``PromotionGate`` had been built from the launch config
+    iterations earlier, and the operator got a knob that reads back correctly
+    and does nothing.
+    """
+    import logging
+
+    from chess_anti_engine.tune.trainable_config_ops import (
+        _LIVE_RELOAD_SKIPPED_KEYS,
+        _reload_yaml_into_config,
+        restart_required_config_keys,
+    )
+
+    for key in ("gate_mode", "gate_window_iters", "gate_min_iters",
+                "gate_min_games_per_side", "gate_demote_delta_elo",
+                "gate_demote_step_elo", "gate_alpha", "gate_max_hold_iters",
+                "gate_games"):
+        assert key in _LIVE_RELOAD_SKIPPED_KEYS, key
+        assert key in restart_required_config_keys(), key
+
+    yaml_path = tmp_path / "live.yaml"
+    yaml_path.write_text("gate_mode: enforce\nbatch_size: 512\n", encoding="utf-8")
+
+    # (a) the live ADD case -- the one the old guard could not see.
+    cfg_add: dict = {"batch_size": 512}
+    with caplog.at_level(logging.WARNING):
+        _reload_yaml_into_config(cfg_add, str(yaml_path), live_reload=True)
+    assert cfg_add.get("gate_mode") != "enforce", (
+        "a live gate_mode edit must NOT reach the config: the gate is built "
+        "once, at launch, so an applied value here is a knob that cannot act"
+    )
+    assert "gate_mode" in caplog.text and "requires restart" in caplog.text, (
+        caplog.text
+    )
+
+    # (b) the CHANGE case.
+    caplog.clear()
+    cfg_chg: dict = {"batch_size": 512, "gate_mode": "off"}
+    with caplog.at_level(logging.WARNING):
+        _reload_yaml_into_config(cfg_chg, str(yaml_path), live_reload=True)
+    assert cfg_chg["gate_mode"] == "off"
+    assert "requires restart" in caplog.text
+    assert "gate_mode" in caplog.text
+
+    # (c) and a NON-live reload (startup/resume) still applies it, or a restart
+    # could never pick the new value up.
+    cfg_start: dict = {"batch_size": 512, "gate_mode": "off"}
+    _reload_yaml_into_config(cfg_start, str(yaml_path), live_reload=False)
+    assert cfg_start["gate_mode"] == "enforce"
+
+
+# --------------------------------------------------------------------------
+# 14. THE ANCHOR REFRESH MUST NOT FAIL SILENTLY (review round 6, F5)
+# --------------------------------------------------------------------------
+def test_a_failing_anchor_refresh_is_visible_and_stops_the_brake(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """MUTATION: restore ``with contextlib.suppress(OSError):`` around the
+    anchor refresh in ``_publish_iteration_model``.
+
+    The two halves of the anchor contract disagreed. The hold path RAISES
+    ``FileNotFoundError`` rather than publish an unheld model under a hold
+    decision, while the refresh -- a ~252 MB copy into ``durable_dir``, every
+    iteration -- swallowed every OSError. A full disk therefore froze the
+    fallback at an arbitrarily old export with no log line and no metric, and a
+    hold N iterations later published that export to the whole fleet.
+
+    It must still not RAISE (an optional alarm may not kill a training run), so
+    the required end state is: loud, counted, reported, and eventually
+    consequential.
+    """
+    import logging
+
+    import chess_anti_engine.tune.trainable_phases as phases
+
+    gate = _gate(mode=MODE_ENFORCE)
+    anchor = tmp_path / "gate_promoted_model.pt"
+    anchor.write_bytes(b"good-old-export")
+    ctrl = GateHoldController(gate=gate, promoted_model_path=anchor)
+    trainer = _MarkerTrainer()
+
+    real_copyfile = phases.shutil.copyfile
+
+    def _boom(src, dst, *a, **k):
+        # Only the ANCHOR copy fails; the publish's own export must succeed,
+        # because the scenario is "durable_dir is full", not "publishing broke".
+        if "gate_promoted_model" in str(dst):
+            raise OSError(28, "No space left on device")
+        return real_copyfile(src, dst, *a, **k)
+
+    monkeypatch.setattr(phases.shutil, "copyfile", _boom)
+
+    with caplog.at_level(logging.ERROR):
+        for _ in range(3):
+            _publish_iter(tmp_path, trainer, hold=None, promoted=anchor,
+                          controller=ctrl)
+    assert ctrl.anchor_refresh_failures == 3
+    assert "anchor refresh FAILED" in caplog.text
+    assert "No space left on device" in caplog.text
+
+    # ...and the number reaches progress.csv rather than living in the object.
+    demote = GateDecision(decision=DECISION_DEMOTE, reason="demote_regression",
+                          mode=MODE_ENFORCE, games_cur=197, games_prev=38)
+    reported = ctrl.on_decision(demote)
+    assert gate_metrics(reported)["gate_anchor_refresh_failures"] == 3.0
+    # Three failures is inside gate_max_hold_iters, so the brake still works.
+    assert ctrl.hold_path == anchor
+
+    # Past the cap the anchor is older than the longest hold the gate is
+    # allowed to impose, so serving it would roll the fleet back further than
+    # the mechanism is designed to. It declines instead -- fail-open, which is
+    # the same refusal the hold path's raise makes about a MISSING anchor.
+    ctrl.anchor_refresh_failures = gate.cfg.max_hold_iters + 1
+    assert ctrl.anchor_is_trustworthy is False
+    with caplog.at_level(logging.ERROR):
+        stale = ctrl.on_decision(demote)
+    assert ctrl.hold_path is None, (
+        "a hold must not publish an export older than gate_max_hold_iters"
+    )
+    assert "publishing normally" in caplog.text
+    assert gate_metrics(stale)["gate_anchor_refresh_failures"] == float(
+        gate.cfg.max_hold_iters + 1,
+    )
+
+    # A recovered refresh clears the counter and re-arms the brake.
+    monkeypatch.undo()
+    ctrl.note_anchor_refreshed()
+    assert ctrl.anchor_refresh_failures == 0
+    assert ctrl.anchor_is_trustworthy is True
+
+
+# --------------------------------------------------------------------------
+# 15. THE PID LAG DOES NOT CANCEL (review round 6, F1)
+# --------------------------------------------------------------------------
+def test_the_module_no_longer_claims_the_pid_cancels() -> None:
+    """MUTATION: restore "the PID's tracking cancels in the difference".
+
+    The claim is false by construction -- model and difficulty ship in one
+    manifest and are applied together, so old-model-at-new-difficulty is not an
+    observable state and there is nothing for the subtraction to cancel. It was
+    in the module docstring, the yaml and the PR body simultaneously, which is
+    why it is pinned as text in all the copies a reader might reach for.
+    """
+    doc = promotion_gate.__doc__ or ""
+    yaml_src = (Path(__file__).resolve().parents[1]
+                / "configs" / "pbt2_small.yaml").read_text("utf-8")
+
+    for banned in ("tracking cancels", "PID's tracking cancels",
+                   "the PID cancels"):
+        assert banned not in doc, banned
+        assert banned not in yaml_src, banned
+
+    assert "THE PID LAG DOES NOT CANCEL" in doc
+    assert "IT DOES NOT" in yaml_src
+    # The -4.3 bound must be labelled as not applying during a break, in both.
+    assert "Do not quote -4.3 Elo" in doc
+    assert "does NOT\n  # apply during a break" in yaml_src
+
+
+def test_shard_meta_records_the_difficulty_each_arm_played_at(
+    tmp_path: Path,
+) -> None:
+    """MUTATION: drop ``opponent_wdl_regret_limit`` from ``ShardMeta``, or drop
+    the per-arm accumulation from ``_process_shard``.
+
+    Without this NOTHING -- not the loop, not an offline reconstruction -- can
+    check which difficulty each anchored arm played at, so the PID-lag term is
+    unmeasurable and the false cancellation claim is unfalsifiable. This is the
+    prerequisite that makes F1 answerable with production data.
+    """
+    from chess_anti_engine.replay.shard import ShardMeta
+
+    # The field exists, and absent means UNKNOWN rather than 0.0.
+    assert ShardMeta().opponent_wdl_regret_limit is None
+    assert ShardMeta().sf_nodes is None
+    assert ShardMeta(opponent_wdl_regret_limit=0.0875).opponent_wdl_regret_limit == 0.0875
+    legacy = {k: v for k, v in dataclasses.asdict(ShardMeta(positions=2)).items()
+              if k not in ("opponent_wdl_regret_limit", "sf_nodes")}
+    assert ShardMeta(**legacy).opponent_wdl_regret_limit is None
+
+    # ...and the ingest split carries a games-weighted mean per arm.
+    summary = _empty_ingest_summary()
+    summary["gate_cur_regret_weighted"] = 0.08 * 100 + 0.09 * 100
+    summary["gate_cur_regret_games"] = 200
+    summary["gate_prev_regret_weighted"] = 0.10 * 40
+    summary["gate_prev_regret_games"] = 40
+    assert phases_arm_mean(summary, "cur") == pytest.approx(0.085)
+    assert phases_arm_mean(summary, "prev") == pytest.approx(0.10)
+    # No shard said -> NaN, never 0.0 (0.0 regret is UNHANDICAPPED Stockfish,
+    # the opposite end of the range from "no data").
+    assert math.isnan(phases_arm_mean(_empty_ingest_summary(), "cur"))
+
+
+def phases_arm_mean(summary: dict, side: str) -> float:
+    from chess_anti_engine.tune.trainable_phases import _arm_mean_regret
+
+    return _arm_mean_regret(summary, side)
+
+
+def test_worker_refuses_to_mix_two_difficulties_into_one_shard() -> None:
+    """MUTATION: drop ``_difficulty_matches`` from the buffer identity check.
+
+    ``opponent_wdl_regret_limit`` and ``sf_nodes`` are LIVE reco keys
+    (``worker._RECO_LIVE_KEYS``), so they can move without the model sha moving
+    -- and then one shard would carry games played at two difficulties under a
+    single recorded value. A shard whose stated difficulty is neither of the two
+    it played is worse than no field at all.
+    """
+    from chess_anti_engine.worker_buffer import (
+        _buffer_add_completed_game,
+        _BufferedUpload,
+    )
+
+    class _GB:
+        positions = 2
+        games = 1
+        w = 1
+        d = 0
+        l = 0
+        samples: ClassVar[list[object]] = [object(), object()]
+        outcome_stats: ClassVar[dict[str, int]] = {}
+
+    buf = _BufferedUpload()
+    kw = {"buf": buf, "game_batch": _GB(), "now_s": 0.0,
+          "model_sha": "aa", "model_step": 1}
+    _buffer_add_completed_game(**kw, opponent_wdl_regret_limit=0.08, sf_nodes=500_000)
+    assert buf.opponent_wdl_regret_limit == 0.08
+    assert buf.sf_nodes == 500_000
+
+    # same difficulty -> accumulates
+    _buffer_add_completed_game(**kw, opponent_wdl_regret_limit=0.08, sf_nodes=500_000)
+    assert buf.games == 2
+
+    # regret moved -> flush, not silent mixing
+    with pytest.raises(ValueError, match="model metadata mismatch"):
+        _buffer_add_completed_game(
+            **kw, opponent_wdl_regret_limit=0.09, sf_nodes=500_000,
+        )
+    # nodes moved -> same
+    with pytest.raises(ValueError, match="model metadata mismatch"):
+        _buffer_add_completed_game(
+            **kw, opponent_wdl_regret_limit=0.08, sf_nodes=600_000,
+        )
+    # None vs a value is a DIFFERENT opponent, not the same one written twice
+    with pytest.raises(ValueError, match="model metadata mismatch"):
+        _buffer_add_completed_game(
+            **kw, opponent_wdl_regret_limit=None, sf_nodes=500_000,
+        )
+    # ...and a caller that tracks neither (local/bench paths) never flushes.
+    _buffer_add_completed_game(**kw)
+    assert buf.games == 3
+
+
+def test_worker_reads_difficulty_from_the_reco_it_actually_applied() -> None:
+    """MUTATION: make ``WorkerSession._active_difficulty`` read the manifest
+    instead of ``_active_reco``, or default absent values to 0.
+
+    ``_active_reco`` is the snapshot the worker APPLIED (set at session start
+    and on every live apply); the manifest is what the server most recently
+    published. The difference between the two is the refresh lag -- exactly the
+    thing the field exists to record -- so reading the manifest would erase the
+    quantity being measured. And 0.0 regret means UNHANDICAPPED Stockfish, so
+    "unknown" must be None, never 0.
+    """
+    from chess_anti_engine.worker import WorkerSession
+
+    class _Stub:
+        _active_reco = {"opponent_wdl_regret_limit": 0.0875, "sf_nodes": 698_000}
+
+    assert WorkerSession._active_difficulty(_Stub()) == (0.0875, 698_000)
+
+    class _NoReco:
+        pass
+
+    assert WorkerSession._active_difficulty(_NoReco()) == (None, None)
+
+    class _PartialReco:
+        _active_reco = {"sf_nodes": 5_000}
+
+    assert WorkerSession._active_difficulty(_PartialReco()) == (None, 5_000)
+
+    class _Junk:
+        _active_reco = {"opponent_wdl_regret_limit": "not-a-number",
+                        "sf_nodes": 5_000}
+
+    assert WorkerSession._active_difficulty(_Junk()) == (None, None)
+
+
+def test_the_predicted_confound_is_emitted_beside_the_delta() -> None:
+    """MUTATION: drop ``sample_confound_elo`` from ``_base_decision``, or make
+    ``AnchoredSample.confound_elo`` return 0.0 when the inputs are NaN.
+
+    The confound column is the falsifier: it is the MEASURED difficulty gap
+    between the two arms times the PID's own dWR/dregret, in the same Elo units
+    as the delta beside it. A 0.0 where the answer is unknown would read as
+    "the controller contributed nothing", which is the claim under dispute.
+    """
+    s = AnchoredSample(
+        0, cur_w=100, cur_d=0, cur_l=97, prev_w=19, prev_d=0, prev_l=19,
+        cur_wdl_regret=0.0900, prev_wdl_regret=0.0850, regret_fit_slope=10.886,
+    )
+    expected = 0.0050 * 10.886 * ELO_PER_SCORE_AT_HALF
+    assert s.confound_elo == pytest.approx(expected)
+    assert expected == pytest.approx(37.8, abs=0.5)   # ~1.5x the demote line
+
+    g = _gate(mode=MODE_SHADOW, min_games_per_side=15)
+    g.observe(s)
+    m = gate_metrics(g.decide())
+    assert m["gate_sample_confound_elo"] == pytest.approx(expected)
+
+    # Unknown stays unknown.
+    unknown = dataclasses.replace(s, regret_fit_slope=float("nan"))
+    assert math.isnan(unknown.confound_elo)
+    g2 = _gate(mode=MODE_SHADOW, min_games_per_side=15)
+    g2.observe(unknown)
+    assert math.isnan(gate_metrics(g2.decide())["gate_sample_confound_elo"])
+
+
+def test_the_readout_regresses_the_delta_on_the_confound() -> None:
+    """MUTATION: make the confound leg a bare report with no slope, or drop the
+    ``slope_se`` term so it fires on noise.
+
+    THE READOUT THAT SETTLES F1. If the anchored delta is a controller output
+    the regression slope is ~1; if the controller is irrelevant it is ~0. The
+    leg is one-sided and HOLD-only, so it can never manufacture a promote.
+    """
+    rng = random.Random(11)
+    n = 400   # far past the 40-row window, deliberately: see the last assert
+
+    def rows(passthrough: float, noise_sd: float) -> list[tuple]:
+        out = []
+        for _ in range(n):
+            c = rng.gauss(0.0, 12.0)                      # predicted confound
+            d = passthrough * c + rng.gauss(0.0, noise_sd)
+            out.append((197, 38, d, OFFLINE.mean_iter_seconds, 235.0, c))
+        return out
+
+    # (a) the confound passes straight through -> hold, by name
+    hit = shadow_readout_verdict(rows(1.0, 45.56), min_games_per_side=15,
+                                 last_n=n)
+    assert hit.confound_slope == pytest.approx(1.0, abs=0.25)
+    assert hit.verdict == READOUT_HOLD
+    assert any("confound_slope" in leg for leg in hit.hold_legs), hit.hold_legs
+    assert not hit.failed_legs, "the confound leg must HOLD, never kill"
+
+    # (b) the controller is irrelevant -> the leg is silent
+    miss = shadow_readout_verdict(rows(0.0, 45.56), min_games_per_side=15,
+                                  last_n=n)
+    assert miss.confound_slope == pytest.approx(0.0, abs=0.25)
+    assert not any("confound_slope" in leg for leg in miss.hold_legs)
+
+    # (c) AND THE HONEST LIMIT, which is why se is reported. At the
+    # pre-registered 40-row window the slope cannot separate 0 from 1, so the
+    # readout must say how many rows it needs instead of ruling.
+    short = shadow_readout_verdict(rows(1.0, 45.56)[:40], min_games_per_side=15,
+                                   last_n=40)
+    assert short.confound_slope_se > 0.4
+    assert short.confound_rows_needed > 100
+    assert not any("confound_slope" in leg for leg in short.hold_legs), (
+        "at 40 rows this leg must not rule; se is ~0.6 against a hypothesis "
+        "of 1.0"
+    )
+
+    # A csv with no confound column at all reports n=0 and fires nothing.
+    plain = shadow_readout_verdict(
+        [(197, 38, -4.0 + 40.0 * math.sin(i), OFFLINE.mean_iter_seconds, 235.0)
+         for i in range(_READOUT_MIN_ROWS)],
+        min_games_per_side=15,
+    )
+    assert plain.n_confound == 0
+    assert not any("confound_slope" in leg for leg in plain.hold_legs)
+
+
+def test_the_confound_column_survives_the_csv_round_trip(tmp_path: Path) -> None:
+    """MUTATION: drop ``gate_sample_confound_elo`` from
+    ``shadow_readout_rows_from_csv``.
+
+    A column emitted into progress.csv that the deciding command does not read
+    is decoration, which is the defect class this whole module is about.
+    """
+    from chess_anti_engine.tune.promotion_gate import shadow_readout_rows_from_csv
+
+    path = tmp_path / "progress.csv"
+    cols = ["gate_sample_games_cur", "gate_sample_games_prev",
+            "gate_sample_delta_elo", "gate_sample_confound_elo",
+            "time_this_iter_s", "pid_curriculum_w", "pid_curriculum_d",
+            "pid_curriculum_l"]
+    with path.open("w", newline="") as fh:
+        wr = csv.DictWriter(fh, fieldnames=cols)
+        wr.writeheader()
+        wr.writerow({"gate_sample_games_cur": 197, "gate_sample_games_prev": 38,
+                     "gate_sample_delta_elo": -7.5,
+                     "gate_sample_confound_elo": 4.25,
+                     "time_this_iter_s": 721.0, "pid_curriculum_w": 100,
+                     "pid_curriculum_d": 100, "pid_curriculum_l": 35})
+    with path.open(newline="") as fh:
+        got = shadow_readout_rows_from_csv(csv.DictReader(fh))
+    assert got == [(197, 38, -7.5, 721.0, 235.0, 4.25)]
+
+    # A row from before the column existed reads NaN, not 0.0.
+    with path.open("w", newline="") as fh:
+        wr = csv.DictWriter(fh, fieldnames=cols[:3])
+        wr.writeheader()
+        wr.writerow({"gate_sample_games_cur": 197, "gate_sample_games_prev": 38,
+                     "gate_sample_delta_elo": -7.5})
+    with path.open(newline="") as fh:
+        old = shadow_readout_rows_from_csv(csv.DictReader(fh))
+    assert math.isnan(old[0][5])
+
+
+def test_the_pid_exposes_its_regret_fit_slope_to_the_gate() -> None:
+    """MUTATION: delete ``self.last_regret_fit_slope = ...`` from
+    ``DifficultyPID.observe``, or drop it from ``DifficultyState.from_pid``.
+
+    The gate runs EARLIER in the iteration than the PID does, so it cannot read
+    a ``PIDUpdate``. Without the slope the confound column is permanently NaN --
+    a falsifier that cannot fire, which is worse than not shipping it.
+    """
+    from chess_anti_engine.stockfish.pid import DifficultyPID
+
+    pid = DifficultyPID(
+        initial_nodes=500_000, min_nodes=100_000, max_nodes=1_000_000,
+        target_winrate=0.50, initial_wdl_regret=0.09,
+        wdl_regret_min=0.001, wdl_regret_max=0.70,
+    )
+    assert pid.last_regret_fit_slope is None
+    assert math.isnan(
+        DifficultyState.from_pid(pid, None, TrialConfig()).regret_fit_slope,
+    )
+
+    # Seed the lever with a clean positive-slope history (higher regret ->
+    # higher winrate, the physical direction), then one out-of-deadband
+    # observation drives the FIT path in ``_step_lever``.
+    pid.regret_lever.history.extend([
+        (0.05, 0.40, 0.02), (0.07, 0.45, 0.02),
+    ])
+    pid.observe(wins=240, draws=0, losses=160, force=True)   # raw 0.60 at 0.09
+    assert pid.last_regret_fit_slope is not None, (
+        "the PID must expose the slope the gate needs"
+    )
+    assert pid.last_regret_fit_slope > 0.0
+    ds = DifficultyState.from_pid(pid, None, TrialConfig())
+    assert ds.regret_fit_slope == pytest.approx(pid.last_regret_fit_slope)
+
+    # ...and it survives a restart, or the column blanks after every resume.
+    revived = DifficultyPID(
+        initial_nodes=500_000, min_nodes=100_000, max_nodes=1_000_000,
+        target_winrate=0.50, initial_wdl_regret=0.09,
+        wdl_regret_min=0.001, wdl_regret_max=0.70,
+    )
+    revived.load_state_dict(json.loads(json.dumps(pid.state_dict())))
+    assert revived.last_regret_fit_slope == pytest.approx(pid.last_regret_fit_slope)
+
+
+def test_the_gating_phase_puts_the_measured_difficulty_gap_on_the_sample(
+    tmp_path: Path,
+) -> None:
+    """MUTATION: drop ``cur_wdl_regret``/``prev_wdl_regret``/
+    ``regret_fit_slope`` from the ``AnchoredSample`` built in
+    ``_run_net_gating``.
+
+    End to end through the phase the loop actually calls: shard-measured
+    difficulty per arm plus the PID's slope, arriving as a reported Elo column.
+    """
+    gate = _gate(mode=MODE_SHADOW, min_games_per_side=15)
+    sp = SelfplayResult(
+        gate_cur_w=100, gate_cur_d=0, gate_cur_l=97,
+        gate_prev_w=19, gate_prev_d=0, gate_prev_l=19,
+        gate_cur_wdl_regret=0.0900, gate_prev_wdl_regret=0.0850,
+    )
+    result = _run_training_and_gating(
+        tc=TrialConfig(batch_size=512), trainer=_StubTrainer(),
+        buf=[], holdout_buf=[], config={}, model_cfg=None, device="cpu",
+        ds=DifficultyState(wdl_regret=0.09, sf_nodes=500_000,
+                           regret_fit_slope=10.886),
+        sims=64, sp=sp, positions_ingested=0, imported_samples_this_iter=0,
+        gate=gate, gate_match_idx=0,
+        gate_state_path=tmp_path / "gate_state.json",
+        distributed_server_root=tmp_path, iteration_idx=5,
+        iteration_zero_based=5, trial_id="t0", restore=RestoreResult(),
+    )
+    s = gate.samples[-1]
+    assert s.cur_wdl_regret == pytest.approx(0.0900)
+    assert s.prev_wdl_regret == pytest.approx(0.0850)
+    assert s.regret_fit_slope == pytest.approx(10.886)
+    assert result.gate_decision.sample_confound_elo == pytest.approx(
+        0.0050 * 10.886 * ELO_PER_SCORE_AT_HALF,
+    )
+
+
+# --------------------------------------------------------------------------
+# 16. gate_decision == 1 MEANS FOUR THINGS (review round 6, F8)
+# --------------------------------------------------------------------------
+def test_would_demote_separates_a_shadow_fire_from_a_clean_pass() -> None:
+    """MUTATION: derive ``gate_would_demote`` from ``decision`` instead of from
+    ``reason``, or drop the metric.
+
+    ``gate_decision == 1`` is emitted for FOUR situations. In shadow mode -- the
+    only mode this ships anywhere near -- "the gate wanted to fire" is THE
+    event, and it used to be legible only as ``gate_reason_code == 6``, a number
+    mentioned in no yaml and in no script.
+    """
+    clean = _feed(_gate(mode=MODE_SHADOW, min_games_per_side=40), _window(0.0))
+    assert clean.decision == DECISION_PROMOTE
+    assert clean.reason == "promote_no_regression"
+    assert clean.would_demote is False
+    assert gate_metrics(clean)["gate_would_demote"] == 0.0
+
+    window_fire = _feed(
+        _gate(mode=MODE_SHADOW, demote_delta_elo=-50.0, min_games_per_side=40),
+        _window(-0.10),
+    )
+    assert window_fire.decision == DECISION_PROMOTE   # shadow never acts
+    assert window_fire.reason == "shadow_would_demote"
+    assert window_fire.would_demote is True
+    assert gate_metrics(window_fire)["gate_would_demote"] == 1.0
+    assert gate_metrics(window_fire)["gate_reason_code"] == 6.0
+
+    # A shadow-suppressed STEP demote has its own reason code, so the two legs
+    # are distinguishable in a dashboard rather than merged.
+    g = _gate(mode=MODE_SHADOW, min_games_per_side=15)
+    for i in range(23):
+        g.observe(_sample(i, 0.50, 0.50))
+    # The current model lost every game: a -347 Elo one-iteration step.
+    g.observe(AnchoredSample(23, cur_w=0, cur_d=0, cur_l=197,
+                             prev_w=19, prev_d=0, prev_l=19))
+    step_fire = g.decide()
+    assert step_fire.decision == DECISION_PROMOTE
+    assert step_fire.reason == "shadow_would_demote_step"
+    assert step_fire.would_demote is True
+    assert gate_metrics(step_fire)["gate_reason_code"] == 9.0
+
+    # hold_expired is ALSO a 1 that means the rule fired.
+    g2 = _gate(demote_delta_elo=-50.0, min_games_per_side=40)
+    for s in _window(-0.30):
+        g2.observe(s)
+    g2.holds = g2.cfg.max_hold_iters
+    expired = g2.decide()
+    assert expired.decision == DECISION_PROMOTE
+    assert expired.reason == "hold_expired"
+    assert expired.would_demote is True
+
+    # ...and both the yaml and the shipped command name the column.
+    yaml_src = (Path(__file__).resolve().parents[1]
+                / "configs" / "pbt2_small.yaml").read_text("utf-8")
+    script = (Path(__file__).resolve().parents[1]
+              / "scripts" / "gate_shadow_readout.py").read_text("utf-8")
+    for text in (yaml_src, script):
+        assert "gate_would_demote" in text
+        assert "shadow_would_demote_step" in text

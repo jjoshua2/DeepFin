@@ -808,6 +808,15 @@ class SelfplayResult:
     gate_prev_w: int = 0
     gate_prev_d: int = 0
     gate_prev_l: int = 0
+  # Games-weighted mean ``wdl_regret`` each arm was actually played at, from
+  # the shards' own ``ShardMeta.opponent_wdl_regret_limit``. NaN when the
+  # shards predate that field. These are NOT decoration: model and difficulty
+  # ship in one manifest, so the prev arm is one PID step behind and the
+  # anchored delta carries a controller term whose size is
+  # ``(cur - prev) * dWR/dregret``. See promotion_gate's "THE PID LAG DOES NOT
+  # CANCEL".
+    gate_cur_wdl_regret: float = float("nan")
+    gate_prev_wdl_regret: float = float("nan")
   # False on an iteration whose publish crossed a hold boundary: the anchored
   # labels are then inverted (or span many iterations) and the sample must not
   # enter the window. See GateHoldController.sample_is_valid.
@@ -944,6 +953,14 @@ class DifficultyState:
 
     wdl_regret: float
     sf_nodes: int
+  # d(winrate)/d(wdl_regret) from the PID's most recent inverse fit. Carried
+  # here because the promotion gate needs it to convert the difficulty gap
+  # between its two arms into Elo, and ``ds`` is already threaded to the gating
+  # phase -- a second loose local in ``train_trial`` is what this dataclass
+  # exists to avoid. NaN whenever the PID had no usable fit (deadband, airbag,
+  # or fewer than 3 history points), which is honest: no fit means no
+  # prediction, not a prediction of zero.
+    regret_fit_slope: float = float("nan")
 
     @classmethod
     def from_pid(cls, pid: Any, sf: Any, tc: TrialConfig) -> DifficultyState:
@@ -955,9 +972,13 @@ class DifficultyState:
         this method still prefers pid.nodes to make divergence impossible.
         """
         if pid is not None:
+            slope = getattr(pid, "last_regret_fit_slope", None)
             return cls(
                 wdl_regret=float(pid.wdl_regret),
                 sf_nodes=int(pid.nodes),
+                regret_fit_slope=(
+                    float(slope) if slope is not None else float("nan")
+                ),
             )
         return cls(
             wdl_regret=-1.0,

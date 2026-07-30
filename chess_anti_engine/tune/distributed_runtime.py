@@ -1277,6 +1277,14 @@ def _empty_ingest_summary() -> dict[str, Any]:
         "gate_prev_w": 0,
         "gate_prev_d": 0,
         "gate_prev_l": 0,
+  # Games-weighted opponent difficulty per arm, and the games that carried a
+  # difficulty at all. The ratio is the arm's mean ``wdl_regret``; a zero
+  # denominator means "the shards did not say", which is reported as NaN and
+  # never as 0.0.
+        "gate_cur_regret_weighted": 0.0,
+        "gate_cur_regret_games": 0,
+        "gate_prev_regret_weighted": 0.0,
+        "gate_prev_regret_games": 0,
   # Per-sample source counters (is_selfplay tag): sum of tagged samples
   # and the selfplay-true subset, across ingested shards.  Used to
   # compute ingest_frac_selfplay = selfplay / tagged.
@@ -1599,6 +1607,23 @@ def _process_shard(
         summary[f"gate_{side}_w"] += m["w"]
         summary[f"gate_{side}_d"] += m["d"]
         summary[f"gate_{side}_l"] += m["l"]
+  # ...and the DIFFICULTY that arm played at, games-weighted. Model and
+  # difficulty ship in one manifest, so the prev arm is always one PID step
+  # behind: without this the anchored delta carries a controller term nothing
+  # can measure (see promotion_gate's "THE PID LAG DOES NOT CANCEL"). Shards
+  # written before ShardMeta carried the field contribute NOTHING to either
+  # sum or denominator -- absent is UNKNOWN, and a 0.0 regret would read as
+  # "unhandicapped Stockfish", the opposite end of the range.
+  # From the raw shard META, not from ``m``: ``_extract_shard_metrics``
+  # yields the counters the ``matching_`` loop above SUMS, and a difficulty
+  # is not summable.
+        shard_regret = meta.get("opponent_wdl_regret_limit")
+        if shard_regret is not None:
+            shard_games = int(m["w"]) + int(m["d"]) + int(m["l"])
+            summary[f"gate_{side}_regret_weighted"] += (
+                float(shard_regret) * shard_games
+            )
+            summary[f"gate_{side}_regret_games"] += shard_games
     else:
         summary["stale_games"] += m["games"]
         summary["stale_positions"] += m["positions"]

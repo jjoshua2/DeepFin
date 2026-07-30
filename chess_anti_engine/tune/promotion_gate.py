@@ -77,12 +77,16 @@ Three changes of kind, not of tuning:
 * **The reference is the previous published model, not Stockfish.**
 * **The games are free.** Up to ``distributed_prev_model_max_fraction`` of every
   iteration's ingest is already played by the *previous* published net against
-  the *same* handicapped Stockfish as the current one. That is an anchored A/B
-  that the loop pays for anyway. This module reads it; it never plays a game.
-  Because both sides face the same opponent *within one iteration*, the PID's
-  tracking cancels in the difference -- the moving-ruler defect above does not
-  survive the subtraction. What survives is a one-iteration difficulty lag,
-  documented at the bottom of this docstring.
+  a handicapped Stockfish. That is an anchored A/B that the loop pays for
+  anyway. This module reads it; it never plays a game.
+
+  **The two arms do NOT face the same opponent, and the PID's tracking does
+  NOT cancel in the difference.** An earlier revision of this docstring and of
+  the PR body claimed both, and the claim is false by construction -- see
+  "THE PID LAG DOES NOT CANCEL" below. What the anchoring DOES remove is the
+  aging defect: the comparison is regenerated from scratch every iteration and
+  nothing about it is frozen. That is the property this design buys, and it is
+  a different property from "the controller cancels".
 * **The action is on the PUBLISHED model, not on the training weights.**
   A demote holds the selfplay fleet on the last promoted export while training
   continues uninterrupted. A false demote costs a little data freshness. It
@@ -183,8 +187,29 @@ rather than where the line sits. This is fail-open, so nothing is unsafe, but
 it is the thing to decide before turning ``enforce`` on -- see the PR's open
 questions. ``test_a_hold_erases_its_own_evidence`` pins the mechanism.
 
-A -100 or -200 Elo/iteration break -- a bad merge, a broken loss term, a
-mis-set LR -- trips within the ``min_iters`` floor of 8 iterations (~1.5 h).
+TIME TO TRIP, AND WHY "8 ITERATIONS" WAS THE WRONG NUMBER
+---------------------------------------------------------
+An earlier revision said "a -100 or -200 Elo/iteration break trips within the
+``min_iters`` floor of 8 iterations (~1.5 h)". **Eight is the COLD-window
+number** -- the latency measured from an EMPTY window, where the first verdict
+is possible at iteration 8 and the window contains nothing but broken rows.
+Production never has that window; it has 24 healthy rows, and the 23 pre-break
+rows sit in the mean dragging it toward zero until they age out.
+
+Measured, 400 seeds per row, deltas ~ N(break, 45.56) driven through the
+shipped rule (``test_documented_time_to_trip_is_the_steady_state_number``):
+
+    break        steady-state window        cold window
+    -50/iter     median 20   p90 26         median 10   p90 25
+    -100/iter    median 12   p90 15         median  8   p90  8
+    -200/iter    median  8   p90 10         median  8   p90  8
+    -300/iter    median  6   p90  8         median  8   p90  8
+
+So a -100 Elo/iteration break costs a median of **12 iterations (~2.4 h)** to
+trip in production and up to 15 at p90, not 8. Every one of these is a
+SUSTAINED per-iteration rate; a one-off STEP of any size is a different object
+and the mean-CI rule cannot see it at all -- see the next section.
+
 The gate does NOT catch the 2026-06 warm-start LR crash (-494 Elo over 74
 iterations = -6.7 Elo/iteration) at any window this design can reach -- the
 worst-case power over K in {8, 12, 16, 24} and lines {-25, -45} is **0.287%**,
@@ -193,22 +218,132 @@ at K=8 / -25 (``test_documented_power_at_the_shipped_line_reproduces`` asserts
 needs the cumulative vs-frozen-anchor series in
 ``scripts/daily_gate_ratchet.sh``, which is why this gate does not replace it.
 
-THE KNOWN BIAS, AND WHY THE SHADOW READOUT NEEDS NO CONFIG CHANGE
------------------------------------------------------------------
-Model and difficulty are published in ONE manifest, so a game tagged with the
-previous model's sha was also played at the previous iteration's
-``wdl_regret`` / ``sf_nodes``. While the PID is moving difficulty in one
-direction, the anchored delta carries a systematic offset of unknown size that
-is plausibly the same order as the effects above. Nothing has measured it,
-because the per-sha split did not exist until this change.
+A SINGLE-ITERATION STEP OF **ANY** MAGNITUDE CANNOT MOVE THE MEAN-CI RULE
+-------------------------------------------------------------------------
+The mean-CI leg (``elo_hi < demote_delta_elo``) tests a per-iteration RATE. A
+bad merge, a broken loss term or a mis-set LR is a **STEP**: the model is worse
+from one iteration onward. The anchored delta is a *first difference* -- cur
+model minus prev model, both re-measured every iteration -- so a level shift of
+-M Elo appears in EXACTLY ONE sample and the series returns to its old level
+immediately after. That single sample cannot demote, and the arithmetic says
+so without any reference to M:
 
-That offset has since been bounded offline from the same 418 shards: mean
-**-4.3 Elo, 95% CI [-16.6, +7.9]** -- small, and not distinguishable from
-zero. On length bias: pooled over games (the estimator with the power to see
-one) the draw rates are cur **0.5192** vs prev **0.5384**, a **1.9 pp** gap at
+    window of K deltas, one equal to -M and the rest 0
+        mean = -M/K
+        var  = sum((d - mean)^2)/(K-1) = (M^2 (K-1)/K) / (K-1) = M^2/K
+        se   = sqrt(var/K) = M/K                      <- EXACTLY the mean
+        elo_hi = mean + t*se = (M/K)(t - 1)           <- POSITIVE for every t>1
+
+``t = _t_quantile(alpha, K-1) > 1`` at every alpha this module supports, so
+**elo_hi is strictly positive and M cancels**. Verified numerically: at K=24,
+alpha=0.05 a -1,000,000 Elo one-shot gives ``elo_hi = +29,754``. Raising K,
+lowering alpha or moving ``demote_delta_elo`` cannot help -- M is not in the
+answer. ``test_a_one_iteration_step_cannot_move_the_mean_ci_rule`` pins it.
+
+So the gate carries a SECOND, independent leg keyed to THIS iteration's sample
+alone: ``sample_elo_hi < demote_step_elo``, where ``sample_elo_hi`` is the
+one-sided upper bound of the single anchored sample from its own binomial
+counts (``AnchoredSample.elo_hi``). It is evaluated BEFORE the ``min_iters``
+window check, because a bad merge three iterations after a restart is exactly
+when a step leg has to work, and it is OR-ed into the demote condition only --
+it can never turn a demote into a promote, and it is not consulted at all on
+the promote path.
+
+WHAT THE STEP LEG COSTS AND WHAT IT BUYS, at the realized shape (n_cur ~197,
+n_prev ~38, pooled per-game score sd 0.3447 -> sample se **42.4 Elo**), and at
+the worst shape ``min_games_per_side`` admits (197/15 -> se **64.2 Elo**):
+
+    line   shape     fires at        spurious per 8000     50% power   90% power
+    -125   197/38    delta < -195    0.02 null iters       -195 Elo    -249 Elo
+    -125   197/15    delta < -231    1.31 null iters       -231 Elo    -313 Elo
+
+``demote_step_elo`` ships at **-125**, chosen on the same FALSE-BRAKE BUDGET as
+``demote_delta_elo``: 1.31 spurious holds per 8000 null iterations at the worst
+admissible shape is 0.016%, inside the 0.04% upper bound the window leg was
+sized against. **It does NOT catch a -100 step** and nothing at this sample
+size can: one anchored sample carries 42-64 Elo of binomial noise, so a
+-100 step is under 2.5 sigma and buying it would cost a false brake every few
+hundred iterations. The honest claim is "a one-iteration step of about -200 Elo
+or worse, at 50% power; -250 or worse at 90%", and that is the claim the tests
+assert.
+
+THE PID LAG DOES NOT CANCEL -- THE ANCHORED DELTA CARRIES A CONTROLLER TERM
+----------------------------------------------------------------------------
+**This section replaces a claim that was wrong.** Earlier revisions of this
+module and of the PR said the two arms face the same opponent within one
+iteration, so that the controller's movement would subtract out of the
+anchored difference. The arms do not face the same opponent, and nothing
+subtracts out.
+
+Model and difficulty ship in the SAME ``recommended_worker`` manifest and are
+applied together (``opponent_wdl_regret_limit`` and ``sf_nodes`` are both in
+``worker._RECO_LIVE_KEYS``; ``_publish_distributed_trial_state`` writes the
+model and both levers in one publish). A shard still tagged with the previous
+model's sha is therefore a shard from a worker that had not picked up the new
+manifest, so it was played at the PREVIOUS iteration's difficulty as well.
+**Old-model-at-new-difficulty is not an observable state**, so there is nothing
+for the subtraction to cancel: the prev arm is one PID step behind on
+difficulty, always, by construction.
+
+Worse, the offset is not noise -- it is a controller output, so its SIGN
+OPPOSES the model change and its MAGNITUDE SCALES WITH IT. The PID lowers
+``wdl_regret`` (harder) when the net wins too much and raises it (easier) when
+the net wins too little, so a net that just got weaker is met with an EASIER
+opponent on the next publish, and the cur arm scores better than the weakening
+warrants. That is the masking direction. Measured on the live trial's
+``progress.csv``:
+
+    corr(pid_raw_winrate_t, pid_regret_delta_{t+1}) = **-0.303** (n=42)
+
+and the size of the induced offset, per iteration, as
+``d(wdl_regret) x pid_regret_fit_slope x ELO_PER_SCORE_AT_HALF``:
+
+    median |confound| **4.96 Elo**, mean 8.13, p90 20.9, max 36.4 (n=34)
+    **5.9% of healthy iterations exceed the whole of ``demote_delta_elo``**
+
+An independent review measured the same quantities over 259 live iterations
+and got median |confound| 7.0 Elo and 9.4% over the line, and found that under
+a closed-loop simulation with this repo's real ``DifficultyPID`` a -50
+Elo/iteration break reads **+3.2 Elo instead of -30** -- the sign flips.
+
+**WHAT THIS DOES TO THE -4.3 Elo BOUND.** The offline reconstruction's mean of
+-4.33 Elo (95% CI [-16.6, +7.9]) was measured UNCONDITIONALLY over 53 healthy
+iterations, where the PID is doing small corrective steps in both directions
+and the confound averages out. That bound says nothing about the regime the
+gate ACTS in: a real regression is precisely the regime where the PID makes a
+large, one-signed, model-correlated step, and there the term does not average
+out -- it opposes the signal the gate is looking for. **Do not quote -4.3 Elo
+as a bound on the bias during a break.**
+
+WHAT THIS CHANGE DOES ABOUT IT: nothing, deliberately. The gate ships
+``off``; the defect was the false claim, not the unsolved statistics. What it
+adds is the means to FALSIFY the claim with production data instead of
+simulation:
+
+* ``ShardMeta`` now records ``opponent_wdl_regret_limit`` and ``sf_nodes``, so
+  every shard says which difficulty it was played at. Before this, neither the
+  loop nor an offline reconstruction could check it at all. The ingest split
+  carries the games-weighted mean per arm into ``gate_cur_wdl_regret`` /
+  ``gate_prev_wdl_regret``, so the arms' difficulty gap is a reported number
+  rather than an inference.
+* ``gate_metrics`` emits ``gate_sample_confound_elo`` next to
+  ``gate_sample_delta_elo``: the MEASURED per-arm regret gap times the PID's
+  own ``pid_regret_fit_slope``, in the same Elo units as the delta. If the two
+  columns track each other, the gate is measuring the controller.
+  ``shadow_readout_verdict`` regresses one on the other and reports the slope,
+  and holds (never promotes) when the confound is proven to be carrying the
+  delta. **At 40 rows that regression cannot decide anything** -- se(slope) is
+  ~0.6 against a hypothesis of 1.0 -- so the readout reports the rows needed
+  rather than pretending; see ``ShadowReadout.confound_slope``.
+
+On length bias: pooled over games (the estimator with the power to see one)
+the draw rates are cur **0.5192** vs prev **0.5384**, a **1.9 pp** gap at
 z = **-1.6**, so not significant -- but NOT the "identical to four decimals" an
 earlier revision claimed, which was an artefact of averaging per-iteration
 rates and so weighting a 12-game arm like an 80-game one.
+
+WHY THE SHADOW READOUT NEEDS NO CONFIG CHANGE
+---------------------------------------------
 
 ``gate_mode`` defaults to ``off``, and the shadow window does NOT need
 ``shadow``: ``decide()`` fills the per-iteration sample before the ``MODE_OFF``
@@ -265,7 +400,15 @@ REASONS = (
     "demote_regression",  # 5  upper bound below the demote line
     "shadow_would_demote",  # 6  demote condition met, but mode is shadow
     "hold_expired",      # 7  demote condition still met past gate_max_hold_iters
+    "demote_step",       # 8  THIS iteration's own sample cleared demote_step_elo
+    "shadow_would_demote_step",  # 9  as 8, but mode is shadow
 )
+# The reasons that mean "the demote rule fired", whatever the mode then did
+# with it. ``gate_would_demote`` is emitted from this set -- see gate_metrics.
+_WOULD_DEMOTE_REASONS = frozenset({
+    "demote_regression", "shadow_would_demote", "hold_expired",
+    "demote_step", "shadow_would_demote_step",
+})
 _REASON_CODES = {name: i for i, name in enumerate(REASONS)}
 
 # 400 / ln(10) / 0.25 -- d(Elo)/d(score) at score 0.5. The anchored delta is a
@@ -274,6 +417,18 @@ _REASON_CODES = {name: i for i, name in enumerate(REASONS)}
 # each score through the logistic separately would inject the PID's setpoint
 # error into the delta.
 ELO_PER_SCORE_AT_HALF = 400.0 / (math.log(10.0) * 0.25)
+
+# Per-GAME score standard deviation, pooled over the 418-shard reconstruction.
+# Used as a FLOOR on each arm's own observed variance when sizing a single
+# iteration's standard error (``AnchoredSample.score_se``). Two reasons it is a
+# floor and not a replacement: an arm that happened to draw every game has an
+# observed variance of ZERO and would otherwise claim certainty (the L11
+# lesson), and at n_prev ~ 15-38 a per-arm estimate is noisy and correlated
+# with the numerator -- the same artefact the overdispersion discussion in the
+# module docstring works through. max(observed, pooled) is conservative in both
+# directions: it can only WIDEN the interval, so it can only make the step leg
+# harder to fire, never easier.
+_POOLED_GAME_SCORE_SD = 0.3447
 
 # One-sided normal quantiles. A t-table would be more correct at small window
 # sizes; ``_t_quantile`` widens these for small df instead of adding a scipy
@@ -309,6 +464,20 @@ log = logging.getLogger(__name__)
 def elo_from_score_delta(delta: float) -> float:
     """Local-linear score-delta -> Elo, valid for small deltas around 0.5."""
     return float(delta) * ELO_PER_SCORE_AT_HALF
+
+
+def _arm_score_var(w: int, d: int, l: int) -> float:
+    """Per-GAME score variance of one arm from its own W/D/L counts.
+
+    Scores are 1 / 0.5 / 0, so this is exact rather than an approximation:
+    ``E[x^2] - E[x]^2`` over the realized outcome distribution.
+    """
+    n = int(w) + int(d) + int(l)
+    if n <= 0:
+        return float("nan")
+    mean = (int(w) + 0.5 * int(d)) / n
+    mean_sq = (int(w) * 1.0 + int(d) * 0.25) / n
+    return max(0.0, mean_sq - mean * mean)
 
 
 def _t_quantile(alpha: float, df: int) -> float:
@@ -373,6 +542,58 @@ class AnchoredSample:
     prev_w: int = 0
     prev_d: int = 0
     prev_l: int = 0
+    # The difficulty each arm actually played at, games-weighted, straight off
+    # the shards' own ``ShardMeta.opponent_wdl_regret_limit``. NaN when the
+    # shards predate the field -- NEVER back-filled from the PID's bookkeeping,
+    # because the whole point of recording it per shard is to be an INDEPENDENT
+    # check on that bookkeeping. See "THE PID LAG DOES NOT CANCEL".
+    cur_wdl_regret: float = float("nan")
+    prev_wdl_regret: float = float("nan")
+    # d(winrate)/d(wdl_regret) from the PID's own inverse fit
+    # (``pid_regret_fit_slope``). NaN when the PID had no usable fit this
+    # iteration (deadband, airbag, or fewer than 3 history points).
+    regret_fit_slope: float = float("nan")
+
+    @property
+    def confound_elo(self) -> float:
+        """The PID-lag offset this sample is predicted to carry, in Elo.
+
+        ``(cur_regret - prev_regret) * dWR/dregret * dElo/dscore``. Positive
+        means the difficulty gap flatters the current model. Both inputs are
+        measured -- the regret gap from the shards, the slope from the PID --
+        so this is a prediction that can be wrong, and comparing it against
+        ``delta`` is the point.
+        """
+        gap = float(self.cur_wdl_regret) - float(self.prev_wdl_regret)
+        return gap * float(self.regret_fit_slope) * ELO_PER_SCORE_AT_HALF
+
+    @property
+    def score_se(self) -> float:
+        """One-sample standard error of ``delta``, in SCORE units.
+
+        Independent-binomial across the two arms. That overstates the true se
+        (the arms are positively correlated within an iteration -- shared
+        opening book, same fleet, same PID setpoint -- which is why the
+        empirical between-iteration sd of 45.6 sits BELOW the 61.1 RMS this
+        form predicts). Overstating is the fail-safe direction for a leg whose
+        only action is to demote.
+        """
+        nc, npv = self.cur_games, self.prev_games
+        if nc <= 0 or npv <= 0:
+            return float("nan")
+        floor = _POOLED_GAME_SCORE_SD ** 2
+        return math.sqrt(
+            max(_arm_score_var(self.cur_w, self.cur_d, self.cur_l), floor) / nc
+            + max(_arm_score_var(self.prev_w, self.prev_d, self.prev_l), floor) / npv,
+        )
+
+    def elo_hi(self, *, alpha: float) -> float:
+        """One-sided upper confidence bound on THIS sample's delta, in Elo."""
+        se = self.score_se
+        if math.isnan(se):
+            return float("nan")
+        z = _Z_ONE_SIDED[round(float(alpha), 4)]
+        return elo_from_score_delta(self.delta + z * se)
 
     @property
     def cur_games(self) -> int:
@@ -432,6 +653,17 @@ class GateDecision:
     sample_delta_elo: float = float("nan")
     sample_games_cur: int = 0
     sample_games_prev: int = 0
+    # The single-sample upper bound the STEP leg is keyed to, carried so the
+    # leg's own input is auditable rather than recomputable-in-principle.
+    sample_elo_hi: float = float("nan")
+    # The PID-lag offset this sample is predicted to carry, same Elo units as
+    # ``sample_delta_elo`` so the two columns are directly comparable. See
+    # "THE PID LAG DOES NOT CANCEL" in the module docstring.
+    sample_confound_elo: float = float("nan")
+    # Consecutive failed refreshes of the promoted anchor, filled in by
+    # ``GateHoldController.on_decision``. Nonzero means the fallback export the
+    # next hold would publish is that many iterations stale.
+    anchor_refresh_failures: int = 0
 
     @property
     def reason_code(self) -> int:
@@ -445,6 +677,21 @@ class GateDecision:
     def acted(self) -> bool:
         """True iff this decision must actually hold the published model back."""
         return self.decision == DECISION_DEMOTE
+
+    @property
+    def would_demote(self) -> bool:
+        """True iff the demote rule FIRED, whatever the mode then did with it.
+
+        ``decision`` cannot carry this: ``DECISION_PROMOTE`` is emitted for
+        ``promote_no_regression`` (nothing fired), ``shadow_would_demote`` and
+        ``shadow_would_demote_step`` (fired, suppressed by shadow mode) and
+        ``hold_expired`` (fired, suppressed by the hold cap). In shadow mode --
+        the only mode this ships anywhere near -- the interesting event is
+        exactly "the gate wanted to fire", and before this property it was
+        visible only as ``gate_reason_code == 6``, a number neither the yaml
+        nor ``scripts/gate_shadow_readout.py`` mentioned.
+        """
+        return self.reason in _WOULD_DEMOTE_REASONS
 
 
 @dataclass
@@ -491,6 +738,26 @@ class GateConfig:
     # slightly stale selfplay and never a training step, which is the right
     # trade for an alarm whose action is cheap and whose misses are expensive.
     demote_delta_elo: float = -25.0
+    # The SECOND, independent line: THIS iteration's own sample, not the window
+    # mean. It exists because the mean-CI rule provably cannot fire on a
+    # single-iteration STEP of any magnitude -- ``elo_hi = (M/K)(t-1) > 0``,
+    # with M cancelling -- and "a bad merge, a broken loss term, a mis-set LR",
+    # the three things the docs name as what this gate catches, are all steps.
+    #
+    # -125, on the SAME false-brake budget that sized ``demote_delta_elo``.
+    # One anchored sample carries 42.4 Elo of binomial se at the realized shape
+    # (n_cur 197 / n_prev 38) and 64.2 at the worst shape ``min_games_per_side``
+    # admits (197/15). At -125 the leg fires when the sample delta is below
+    # -195 (realized) / -231 (worst), which under a null of N(0, se) is
+    # 0.02 / 1.31 spurious holds per 8000 iterations -- 0.016%, inside the
+    # 0.04% upper bound the window line was sized against.
+    #
+    # WHAT IT DOES NOT BUY: a -100 step. 50% power lands at -195 Elo and 90% at
+    # -249 (realized shape). Nothing at this sample size can do better -- a
+    # -100 step is under 2.5 sigma of ONE sample -- and buying it would cost a
+    # false brake every few hundred iterations. Quote the leg as "a step of
+    # about -200 or worse", never as "any bad merge".
+    demote_step_elo: float = -125.0
     alpha: float = 0.05
     max_hold_iters: int = 12
 
@@ -515,6 +782,21 @@ class GateConfig:
                 "evidence of REGRESSION, never on absence of improvement -- a "
                 "loop improving 0.02 Elo/iteration cannot prove improvement at "
                 "any affordable sample size"
+            )
+        if self.demote_step_elo >= 0.0:
+            raise ValueError(
+                "gate_demote_step_elo must be negative: the step leg demotes "
+                "on evidence of a one-iteration REGRESSION, never on absence "
+                "of improvement"
+            )
+        if self.demote_step_elo > self.demote_delta_elo:
+            raise ValueError(
+                f"gate_demote_step_elo ({self.demote_step_elo}) must be at "
+                f"least as strict as gate_demote_delta_elo "
+                f"({self.demote_delta_elo}), i.e. more negative. A single "
+                "sample carries 42-64 Elo of binomial noise where the window "
+                "mean carries ~9, so a step line looser than the sustained "
+                "line would fire on noise every few iterations"
             )
         _t_quantile(self.alpha, 8)  # raises on an unsupported alpha
 
@@ -563,6 +845,56 @@ class PromotionGate:
             sample_delta_elo=elo_from_score_delta(d),
             sample_games_cur=int(nc),
             sample_games_prev=int(npv),
+            sample_elo_hi=s.elo_hi(alpha=self.cfg.alpha),
+            sample_confound_elo=s.confound_elo,
+        )
+
+    def _step_regressed(self) -> bool:
+        """Did THIS iteration's own sample clear ``demote_step_elo``?
+
+        Independent of the window in every way: it uses one sample, its own
+        binomial counts and its own one-sided bound. It exists because a
+        single-iteration STEP cannot move the mean-CI rule at ANY magnitude
+        (``elo_hi = (M/K)(t-1) > 0``, M cancels) and a bad merge is a step.
+
+        Fail-safe by construction: the caller only ever OR-s this into the
+        demote condition, so it can add a demote and can never remove one --
+        there is no path by which a True here produces a PROMOTE that a False
+        would not have produced.
+        """
+        if not self.samples:
+            return False
+        s = self.samples[-1]
+        if not s.usable(min_games_per_side=self.cfg.min_games_per_side):
+            return False
+        hi = s.elo_hi(alpha=self.cfg.alpha)
+        return not math.isnan(hi) and hi < self.cfg.demote_step_elo
+
+    def _resolve(
+        self, measured: GateDecision, *, regressed: bool, step: bool,
+    ) -> GateDecision:
+        """Map (did the rule fire, which leg) onto a decision, honouring mode.
+
+        One place, so shadow-mode suppression and the ``max_hold_iters`` yield
+        cannot be implemented twice and drift.
+        """
+        if not regressed:
+            return replace(measured, decision=DECISION_PROMOTE,
+                           reason="promote_no_regression")
+        if self.cfg.mode == MODE_SHADOW:
+            return replace(
+                measured, decision=DECISION_PROMOTE,
+                reason="shadow_would_demote_step" if step else "shadow_would_demote",
+            )
+        if self.holds >= self.cfg.max_hold_iters:
+            # A brake that can never release is a new way to freeze the fleet
+            # on stale weights -- the exact 2026-03 failure, one level up. Past
+            # the cap the gate yields and says so.
+            return replace(measured, decision=DECISION_PROMOTE,
+                           reason="hold_expired")
+        return replace(
+            measured, decision=DECISION_DEMOTE,
+            reason="demote_step" if step else "demote_regression",
         )
 
     def decide(self) -> GateDecision:
@@ -578,8 +910,19 @@ class PromotionGate:
         ]
         games_cur = sum(s.cur_games for s in usable)
         games_prev = sum(s.prev_games for s in usable)
+        # The step leg is evaluated BEFORE the window checks, not after. A bad
+        # merge three iterations after a restart is exactly when it has to
+        # work, and every window path below (short window, thin iterations,
+        # degenerate variance) returns NOT_RUN -- which RELEASES the brake.
+        step = self._step_regressed()
 
         if len(usable) < cfg.min_iters:
+            if step:
+                return self._resolve(
+                    replace(base, iters=len(usable),
+                            games_cur=games_cur, games_prev=games_prev),
+                    regressed=True, step=True,
+                )
             reason = "insufficient_games" if self.samples else "insufficient_iters"
             if len(self.samples) < cfg.min_iters:
                 reason = "insufficient_iters"
@@ -598,10 +941,16 @@ class PromotionGate:
             # Every iteration produced an identical delta. Real data cannot do
             # this; a stuck counter can. Refusing beats emitting a zero-width
             # interval that claims certainty (the L11 lesson, in a new place).
-            return replace(
-                base, decision=DECISION_NOT_RUN, reason="degenerate_variance",
-                iters=n, games_cur=games_cur, games_prev=games_prev,
+            # The STEP leg still stands: it never divides by a window spread.
+            degenerate = replace(
+                base, iters=n, games_cur=games_cur, games_prev=games_prev,
                 delta_score=mean, delta_elo=elo_from_score_delta(mean),
+            )
+            if step:
+                return self._resolve(degenerate, regressed=True, step=True)
+            return replace(
+                degenerate, decision=DECISION_NOT_RUN,
+                reason="degenerate_variance",
             )
 
         t = _t_quantile(cfg.alpha, n - 1)
@@ -614,28 +963,21 @@ class PromotionGate:
         # we must be confident the regression is real, not merely unable to
         # prove it is absent. Symmetrically, "promote" here means "no proven
         # regression" and explicitly does NOT claim the step was an improvement.
-        regressed = elo_hi < cfg.demote_delta_elo
-
+        window_regressed = elo_hi < cfg.demote_delta_elo
+        # OR, never AND: the step leg can only ADD a demote. The window leg
+        # keeps its name when both fire, because a sustained break is the more
+        # informative diagnosis.
         measured = replace(
             base, iters=n,
             games_cur=games_cur, games_prev=games_prev,
             delta_score=mean, delta_elo=delta_elo,
             elo_lo=elo_lo, elo_hi=elo_hi,
         )
-        if not regressed:
-            return replace(measured, decision=DECISION_PROMOTE,
-                           reason="promote_no_regression")
-        if cfg.mode == MODE_SHADOW:
-            return replace(measured, decision=DECISION_PROMOTE,
-                           reason="shadow_would_demote")
-        if self.holds >= cfg.max_hold_iters:
-            # A brake that can never release is a new way to freeze the fleet
-            # on stale weights -- the exact 2026-03 failure, one level up. Past
-            # the cap the gate yields and says so.
-            return replace(measured, decision=DECISION_PROMOTE,
-                           reason="hold_expired")
-        return replace(measured, decision=DECISION_DEMOTE,
-                       reason="demote_regression")
+        return self._resolve(
+            measured,
+            regressed=window_regressed or step,
+            step=step and not window_regressed,
+        )
 
     def apply(self, decision: GateDecision) -> GateDecision:
         """Commit ``decision``'s effect on the hold latch and counter."""
@@ -750,12 +1092,28 @@ def gate_metrics(decision: GateDecision, *, strict: bool = True) -> dict[str, fl
         "gate_elo_lo": float(decision.elo_lo),
         "gate_elo_hi": float(decision.elo_hi),
         "gate_holds": float(decision.holds),
+  # DID THE DEMOTE RULE FIRE, whatever the mode then did with it. Distinct
+  # from ``gate_decision``, which is 1 for four different situations:
+  # nothing fired, shadow suppressed a window demote, shadow suppressed a
+  # step demote, and the hold cap yielded. In shadow mode -- the only mode
+  # this ships near -- "the gate wanted to fire" is THE event, and it used to
+  # be legible only as ``gate_reason_code == 6``, a number documented
+  # nowhere outside this module. Chart this column, not the reason code.
+        "gate_would_demote": float(1.0 if decision.would_demote else 0.0),
   # The per-iteration sample. Independent across rows, unlike everything
   # above it -- write kill rules and shadow readouts against THESE.
         "gate_sample_delta_score": float(decision.sample_delta_score),
         "gate_sample_delta_elo": float(decision.sample_delta_elo),
         "gate_sample_games_cur": float(decision.sample_games_cur),
         "gate_sample_games_prev": float(decision.sample_games_prev),
+  # The step leg's own input, and the PID-lag offset the delta beside it is
+  # predicted to carry. See "THE PID LAG DOES NOT CANCEL".
+        "gate_sample_elo_hi": float(decision.sample_elo_hi),
+        "gate_sample_confound_elo": float(decision.sample_confound_elo),
+  # Nonzero means the ~252 MB anchor copy has been failing and the export a
+  # hold would publish is that many iterations stale. Used to be a silently
+  # suppressed OSError.
+        "gate_anchor_refresh_failures": float(decision.anchor_refresh_failures),
     }
 
 
@@ -789,6 +1147,7 @@ def gate_config_from_dict(config: dict) -> GateConfig:
         min_iters=int(config.get("gate_min_iters", 8)),
         min_games_per_side=int(config.get("gate_min_games_per_side", 15)),
         demote_delta_elo=float(config.get("gate_demote_delta_elo", -25.0)),
+        demote_step_elo=float(config.get("gate_demote_step_elo", -125.0)),
         alpha=float(config.get("gate_alpha", 0.05)),
         max_hold_iters=int(config.get("gate_max_hold_iters", 12)),
     )
@@ -1038,6 +1397,24 @@ class ShadowReadout:
     # is used and `failed_legs` says so on a failure.
     mean_iter_seconds: float = float("nan")
     expected_prev_share: float = float("nan")
+    # -- the PID-lag confound, REPORTED and (one-sidedly) acted on ----------
+    # ``confound_slope`` is the OLS slope of ``gate_sample_delta_elo`` on
+    # ``gate_sample_confound_elo`` over the usable rows. 0 means the anchored
+    # delta ignores the controller; 1 means it passes the controller term
+    # through untouched, i.e. the gate is measuring the PID.
+    #
+    # ``confound_slope_se`` is what stops this from being a rule that cannot
+    # fail in EITHER direction. The residual sd is ~45.6 Elo and the confound's
+    # own sd is ~10-12, so se(slope) ~ 45.6/(12*sqrt(n)): about **0.60 at
+    # n=40** and 0.24 at n=259. At the pre-registered 40-row window the
+    # estimate cannot separate 0 from 1 and NOTHING should be concluded from
+    # it; ``confound_rows_needed`` reports the n at which se falls to 0.25, so
+    # the readout says how much more window it needs instead of pretending.
+    n_confound: int = 0
+    mean_confound_elo: float = float("nan")
+    confound_slope: float = float("nan")
+    confound_slope_se: float = float("nan")
+    confound_rows_needed: int = 0
     failed_legs: tuple[str, ...] = ()
     # Why a window that broke no leg still did not promote. Named for the same
     # reason ``failed_legs`` is: "not promoted" with no reason attached is how
@@ -1051,13 +1428,19 @@ class ShadowReadout:
         why = (f"  FAILED: {', '.join(self.failed_legs)}" if self.failed_legs
                else f"  HOLD: {', '.join(self.hold_legs)}" if self.hold_legs
                else "")
+        conf = (
+            f"  confound n={self.n_confound} mean={self.mean_confound_elo:.2f} "
+            f"slope={self.confound_slope:.3f}+/-{self.confound_slope_se:.3f} "
+            f"(needs ~{self.confound_rows_needed} rows to decide)"
+            if self.n_confound >= 3 else "  confound=unreported"
+        )
         return (
             f"{self.verdict}  rows={self.n_rows} usable={self.n_usable} "
             f"({self.usable_frac:.3f})  games_cur={self.mean_games_cur:.1f} "
             f"games_prev={self.mean_games_prev:.1f} "
             f"prev_share={self.prev_share:.4f}{cad}  "
             f"delta mean={self.mean_delta_elo:.2f} sd={self.sd_delta_elo:.2f}"
-            + why
+            + conf + why
         )
 
 
@@ -1195,6 +1578,8 @@ def shadow_readout_verdict(
             failed_legs=("usable_rows>=2",),
         )
 
+    conf = _confound_fit([(r[2], r[5]) for r in usable])
+
     mean_cur = statistics.mean([r[0] for r in usable])
     mean_prev = statistics.mean([r[1] for r in usable])
     prev_share = mean_prev / (mean_cur + mean_prev)
@@ -1297,6 +1682,29 @@ def shadow_readout_verdict(
             f"|mean_delta_elo| {abs(mean_d):.2f} > 15 -- the anchored offset is "
             "larger than expected; extend the window"
         )
+    # The PID-lag leg. HOLD, never kill, and one-sided: it fires only when the
+    # regression of the anchored delta on the predicted confound is
+    # SIGNIFICANTLY positive, which is the direction that means "this gate is
+    # reading the controller". It cannot manufacture a promote -- a hold leg
+    # only ever subtracts one -- and it cannot fire on noise, because the
+    # significance test uses the slope's own se, which is ~0.60 at the
+    # pre-registered 40 rows. That also means it will essentially never fire at
+    # 40 rows even if the confound IS passing through at slope 1; that is a
+    # stated limitation, not a tuned threshold. Pass --last-n to read a longer
+    # window once one exists.
+    if (
+        conf.n >= 3
+        and not math.isnan(conf.slope_se)
+        and conf.slope - CONFOUND_Z * conf.slope_se > CONFOUND_SLOPE_MAX
+    ):
+        holds.append(
+            f"confound_slope {conf.slope:.3f} +/- {conf.slope_se:.3f} over "
+            f"{conf.n} rows is significantly above {CONFOUND_SLOPE_MAX} -- the "
+            "anchored delta is tracking the PID's difficulty step, not the "
+            "model. The gate must not be promoted to enforce while its own "
+            "statistic is a controller output; see 'THE PID LAG DOES NOT "
+            "CANCEL'"
+        )
 
     if failed:
         verdict = READOUT_KILL
@@ -1309,26 +1717,89 @@ def shadow_readout_verdict(
         mean_games_cur=mean_cur, mean_games_prev=mean_prev,
         prev_share=prev_share, mean_delta_elo=mean_d, sd_delta_elo=sd_d,
         mean_iter_seconds=mean_secs, expected_prev_share=expected_share,
+        n_confound=conf.n, mean_confound_elo=conf.mean_x,
+        confound_slope=conf.slope, confound_slope_se=conf.slope_se,
+        confound_rows_needed=conf.rows_needed,
         failed_legs=tuple(failed), hold_legs=tuple(holds),
     )
 
 
-def _readout_row(row: Sequence[float]) -> tuple[int, int, float, float, float]:
-    """Normalise a row to (cur, prev, delta_elo, iter_seconds, pooled_games).
+# The confound leg's two pre-registered constants.
+#
+# A slope of 1.0 means the predicted PID-lag term passes into the anchored
+# delta untouched. 0.5 is "half of it does", which is already enough that a
+# demote verdict is as much a statement about the controller as about the
+# model. The one-sided z is 1.6449 (alpha 0.05), matching the gate's own
+# ``alpha`` default -- the leg fires only when the LOWER bound of the slope
+# clears 0.5.
+CONFOUND_SLOPE_MAX = 0.5
+CONFOUND_Z = 1.6449
+# The se the leg needs before the estimate can separate slope 0 from slope 1
+# at ~2 sigma. ``confound_rows_needed`` is reported against this, so an
+# operator reading a wide interval is told how much window would fix it.
+_CONFOUND_TARGET_SE = 0.25
 
-    Three- and four-element rows are accepted so a caller with no cadence
-    column, or no pooled-count column, still gets a verdict -- with the
-    corresponding leg disabled and named rather than silently passing.
+
+@dataclass(frozen=True)
+class _ConfoundFit:
+    n: int = 0
+    mean_x: float = float("nan")
+    slope: float = float("nan")
+    slope_se: float = float("nan")
+    rows_needed: int = 0
+
+
+def _confound_fit(pairs: Sequence[tuple[float, float]]) -> _ConfoundFit:
+    """OLS of the anchored delta (y) on the predicted PID-lag confound (x).
+
+    ``pairs`` are ``(delta_elo, confound_elo)``; rows where either is NaN are
+    dropped, which is what happens for every row whose shards predate
+    ``ShardMeta.opponent_wdl_regret_limit`` or whose PID had no usable fit.
+    A degenerate x (no spread) returns NaNs rather than dividing -- the same
+    refusal ``decide()`` makes on a degenerate window.
+    """
+    pts = [(y, x) for y, x in pairs if not math.isnan(y) and not math.isnan(x)]
+    n = len(pts)
+    if n < 3:
+        return _ConfoundFit(n=n)
+    mx = sum(x for _, x in pts) / n
+    my = sum(y for y, _ in pts) / n
+    sxx = sum((x - mx) ** 2 for _, x in pts)
+    if sxx <= 0.0:
+        return _ConfoundFit(n=n, mean_x=mx)
+    slope = sum((x - mx) * (y - my) for y, x in pts) / sxx
+    resid = sum((y - my - slope * (x - mx)) ** 2 for y, x in pts)
+    slope_se = math.sqrt(resid / (n - 2) / sxx) if n > 2 else float("nan")
+    # se scales as 1/sqrt(n) at fixed spread, so the n that reaches the target.
+    needed = (
+        int(math.ceil(n * (slope_se / _CONFOUND_TARGET_SE) ** 2))
+        if slope_se > _CONFOUND_TARGET_SE else n
+    )
+    return _ConfoundFit(
+        n=n, mean_x=mx, slope=slope, slope_se=slope_se, rows_needed=needed,
+    )
+
+
+def _readout_row(
+    row: Sequence[float],
+) -> tuple[int, int, float, float, float, float]:
+    """Normalise to (cur, prev, delta_elo, iter_seconds, pooled, confound_elo).
+
+    Three- to five-element rows are accepted so a caller with no cadence
+    column, no pooled-count column or no confound column still gets a verdict
+    -- with the corresponding leg disabled and named rather than silently
+    passing.
     """
     cur, prev, delta = int(row[0]), int(row[1]), float(row[2])
     secs = float(row[3]) if len(row) > 3 else float("nan")
     pooled = float(row[4]) if len(row) > 4 else float("nan")
-    return cur, prev, delta, secs, pooled
+    confound = float(row[5]) if len(row) > 5 else float("nan")
+    return cur, prev, delta, secs, pooled, confound
 
 
 def shadow_readout_rows_from_csv(
     rows: Iterable[dict[str, str]],
-) -> list[tuple[int, int, float, float, float]]:
+) -> list[tuple[int, int, float, float, float, float]]:
     """Pull the gate sample columns, cadence and the pooled curriculum count.
 
     ``time_this_iter_s`` comes along because the ``prev_share`` leg is
@@ -1350,7 +1821,7 @@ def shadow_readout_rows_from_csv(
     ``test_usable_frac_denominator_counts_every_iteration_that_ran``, where the
     two readings land 7 points apart with 4 points of margin to the kill line.
     """
-    out: list[tuple[int, int, float, float, float]] = []
+    out: list[tuple[int, int, float, float, float, float]] = []
     for r in rows:
         raw_c = r.get("gate_sample_games_cur")
         raw_p = r.get("gate_sample_games_prev")
@@ -1365,9 +1836,15 @@ def shadow_readout_rows_from_csv(
                 float(sum(int(float(v)) for v in pid if v is not None))
                 if all(v not in (None, "") for v in pid) else float("nan")
             )
+  # Absent on every csv written before this column existed, and NaN on
+  # any row whose shards predate ShardMeta.opponent_wdl_regret_limit or
+  # whose PID had no usable inverse fit. The confound leg drops those
+  # rows and reports its own n, rather than treating "unknown" as 0 --
+  # a zero would read as "the controller contributed nothing".
+            confound = float(r.get("gate_sample_confound_elo") or "nan")
         except ValueError:
             continue
-        out.append((c, p, d, secs, pooled))
+        out.append((c, p, d, secs, pooled, confound))
     return out
 
 
@@ -1410,6 +1887,14 @@ class GateHoldController:
     hold_path: Path | None = None
     _this_publish_held: bool = False
     _prev_publish_held: bool = False
+    # Consecutive failed anchor refreshes. The refresh copies ~252 MB into
+    # ``durable_dir`` every iteration and used to fail SILENTLY inside a bare
+    # ``contextlib.suppress(OSError)``, so a full disk froze the fallback at an
+    # arbitrarily old export with nothing to read. Counted rather than raised
+    # (an optional alarm must not kill a training run), reported as
+    # ``gate_anchor_refresh_failures``, and load-bearing via
+    # ``anchor_is_trustworthy``.
+    anchor_refresh_failures: int = 0
 
     @classmethod
     def create(cls, gate: PromotionGate, *, durable_dir: Path) -> GateHoldController:
@@ -1470,10 +1955,70 @@ class GateHoldController:
         """
         return not (self._this_publish_held or self._prev_publish_held)
 
-    def on_decision(self, decision: GateDecision) -> None:
-        """Apply a verdict to the NEXT publish."""
-        self.hold_path = resolve_gate_hold_path(
-            decision, gate_promoted_model_path=self.promoted_model_path,
+    def note_anchor_refreshed(self) -> None:
+        """The promoted anchor was rewritten from this iteration's export."""
+        if self.anchor_refresh_failures:
+            log.warning(
+                "promotion-gate anchor refresh recovered after %d consecutive "
+                "failures", self.anchor_refresh_failures,
+            )
+        self.anchor_refresh_failures = 0
+
+    def note_anchor_refresh_failed(self, exc: BaseException) -> None:
+        """The refresh raised. Record it LOUDLY; never re-raise.
+
+        A raise here would take a training run down to protect an optional
+        alarm. A silent pass is what this replaces: the counter is what makes a
+        persistent failure legible, and ``anchor_is_trustworthy`` is what makes
+        it consequential rather than merely reported.
+        """
+        self.anchor_refresh_failures += 1
+        log.error(
+            "promotion-gate anchor refresh FAILED %d consecutive time(s) "
+            "(%s): %s. The fallback export is now stale by that many "
+            "iterations; past gate_max_hold_iters (%d) the gate will stop "
+            "braking rather than publish it.",
+            self.anchor_refresh_failures, self.promoted_model_path, exc,
+            self.gate.cfg.max_hold_iters,
+        )
+
+    @property
+    def anchor_is_trustworthy(self) -> bool:
+        """Whether the promoted export is recent enough to publish to the fleet.
+
+        A hold serves the anchor to every worker. An anchor that has not been
+        refreshed for more than ``gate_max_hold_iters`` iterations is older
+        than the longest hold the gate is allowed to impose, so serving it is
+        strictly worse than not braking at all -- it would roll the fleet back
+        further than the mechanism is designed to. Refusing is the same
+        judgement ``_publish_distributed_trial_state``'s ``FileNotFoundError``
+        makes about a MISSING anchor, taken on the fail-open side because a
+        stale anchor, unlike a missing one, cannot be distinguished from a good
+        one at publish time.
+        """
+        return self.anchor_refresh_failures <= self.gate.cfg.max_hold_iters
+
+    def on_decision(self, decision: GateDecision) -> GateDecision:
+        """Apply a verdict to the NEXT publish, and report the anchor's health.
+
+        Returns the decision with ``anchor_refresh_failures`` filled in, so the
+        number reaches ``progress.csv`` instead of living only in this object.
+        """
+        if decision.acted and not self.anchor_is_trustworthy:
+            log.error(
+                "promotion gate wanted to HOLD but the promoted anchor has "
+                "failed to refresh %d consecutive times (> gate_max_hold_iters "
+                "%d); publishing normally rather than rolling the fleet back "
+                "to an export that old",
+                self.anchor_refresh_failures, self.gate.cfg.max_hold_iters,
+            )
+            self.hold_path = None
+        else:
+            self.hold_path = resolve_gate_hold_path(
+                decision, gate_promoted_model_path=self.promoted_model_path,
+            )
+        return replace(
+            decision, anchor_refresh_failures=int(self.anchor_refresh_failures),
         )
 
     def on_aborted_iteration(self) -> None:

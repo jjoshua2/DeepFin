@@ -10,8 +10,31 @@ WHAT IT READS
     consecutive windows overlap ~95%, so their sd understates the
     per-iteration sd ~10x and a rule keyed to them cannot fail.
 
+    ``gate_sample_confound_elo`` comes along too, when present: it is the
+    PID-lag offset each sample is predicted to carry, in the same Elo units as
+    the delta beside it, and the readout regresses one on the other. See
+    ``--verbose`` and "THE PID LAG DOES NOT CANCEL" in
+    ``chess_anti_engine/tune/promotion_gate.py``.
+
     Nothing else is touched. Read-only, CPU only, no GPU, no model load --
     safe to run against a live run.
+
+THE COLUMN TO WATCH IN SHADOW MODE IS ``gate_would_demote``
+    ``gate_decision == 1`` is NOT "the gate is happy". It is emitted for four
+    different situations: nothing fired (``promote_no_regression``), shadow
+    mode suppressed a window demote (``shadow_would_demote``), shadow mode
+    suppressed a single-iteration STEP demote
+    (``shadow_would_demote_step``), and the ``gate_max_hold_iters`` cap
+    yielded (``hold_expired``). In shadow mode the whole point is to see the
+    gate WANT to fire, and that used to be legible only as
+    ``gate_reason_code == 6`` -- a number documented in no yaml and in no
+    script.
+
+    ``gate_would_demote`` is 1.0 on exactly the reasons that mean "the demote
+    rule fired, whatever the mode then did with it". Chart that column. The
+    reason code still distinguishes WHICH leg fired: 5 window-demote,
+    6 shadow-suppressed window, 7 hold cap yielded, 8 step-demote,
+    9 shadow-suppressed step.
 
 WHAT IT PRINTS
     One verdict line: the verdict, the rows read and how many were usable,
@@ -27,9 +50,11 @@ WHAT THE VERDICT MEANS (and the exit code)
                             whether the model improved -- the loop moves
                             ~0.02 Elo/iteration and no window here can see it.
     hold_in_shadow     (1)  every leg passed but the window cannot promote
-                            yet. Read ``HOLD:`` -- either it is shorter than
-                            the pre-registered 40 iterations, or the anchored
-                            offset is larger than expected. Extend the window.
+                            yet. Read ``HOLD:`` -- it is shorter than the
+                            pre-registered 40 iterations, or the anchored
+                            offset is larger than expected, or the anchored
+                            delta is provably tracking the PID's difficulty
+                            step rather than the model. Extend the window.
     kill               (2)  at least one leg failed. Read ``FAILED:`` -- a
                             cadence leg means "your cadence moved", NOT "your
                             attribution is broken".
@@ -53,6 +78,8 @@ import csv
 from pathlib import Path
 
 from chess_anti_engine.tune.promotion_gate import (
+    CONFOUND_SLOPE_MAX,
+    CONFOUND_Z,
     OFFLINE,
     READOUT_HOLD,
     READOUT_KILL,
@@ -118,6 +145,12 @@ def main() -> int:
               f"games_per_second={OFFLINE.games_per_second:.4f} "
               f"cadence={OFFLINE.mean_iter_seconds}s "
               f"delta mean={OFFLINE.mean_delta_elo} sd={OFFLINE.sd_delta_elo}")
+        print(f"confound leg: holds when the OLS slope of "
+              f"gate_sample_delta_elo on gate_sample_confound_elo is "
+              f"significantly above {CONFOUND_SLOPE_MAX} (one-sided, z="
+              f"{CONFOUND_Z}). At 40 rows se(slope) is ~0.60, so this leg "
+              f"cannot decide anything on the pre-registered window -- read "
+              f"'needs ~N rows' and pass --last-n once N exist.")
     print(r)
     return _EXIT[r.verdict]
 

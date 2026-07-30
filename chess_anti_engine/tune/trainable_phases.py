@@ -134,19 +134,60 @@ def _publish_iteration_model(
   # ``gate_promoted_model_path`` is None whenever the gate is off, so a
   # disabled feature copies nothing: the export is ~252 MB and this runs every
   # iteration.
+  #
+  # THE FAILURE HERE USED TO BE SILENT, and the two halves of the anchor
+  # contract disagreed about it: ``_publish_distributed_trial_state`` RAISES
+  # ``FileNotFoundError`` rather than publish an unheld model under a hold
+  # decision, while this refresh sat inside a bare ``contextlib.suppress(OSError)``.
+  # A full ``durable_dir`` (this copies ~252 MB per iteration) therefore left
+  # the anchor frozen at an arbitrarily old export with no log line, no metric
+  # and no way to notice -- and a hold N iterations later would publish that
+  # export to the whole fleet as though it were the last known-good model.
+  #
+  # It is still not allowed to raise: the gate is an optional alarm and a
+  # transient ENOSPC must not take a training run down. Instead the outcome is
+  # RECORDED, so a persistent failure is loud in the log, visible in
+  # ``gate_anchor_refresh_failures``, and eventually DISQUALIFIES the anchor --
+  # ``GateHoldController.anchor_is_trustworthy`` stops braking on an export the
+  # controller can no longer vouch for, which is the same refusal the raise
+  # implements, on the fail-open side.
     if gate_hold_model_path is None and gate_promoted_model_path is not None:
-        with contextlib.suppress(OSError):
+        try:
             _tmp = gate_promoted_model_path.with_suffix(
                 gate_promoted_model_path.suffix + ".tmp",
             )
             gate_promoted_model_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(publish_dir / "latest_model.pt", _tmp)
             _tmp.replace(gate_promoted_model_path)
+        except OSError as exc:
+            if hold is not None:
+                hold.note_anchor_refresh_failed(exc)
+            else:
+                log.error(
+                    "promotion-gate anchor refresh FAILED (%s): %s",
+                    gate_promoted_model_path, exc,
+                )
+        else:
+            if hold is not None:
+                hold.note_anchor_refreshed()
   # Roll the held-flag history for the sign-validity check. Must happen on
   # EVERY publish, held or not, or the transition becomes invisible.
     if hold is not None:
         hold.note_published()
     return published_model_sha
+
+
+def _arm_mean_regret(ingest_summary: dict, side: str) -> float:
+    """Games-weighted mean ``wdl_regret`` for one anchored arm, or NaN.
+
+    NaN when no shard in that arm carried
+    ``ShardMeta.opponent_wdl_regret_limit`` -- absent is UNKNOWN, and 0.0 would
+    read as "unhandicapped Stockfish", the opposite end of the range.
+    """
+    games = int(ingest_summary.get(f"gate_{side}_regret_games", 0) or 0)
+    if games <= 0:
+        return float("nan")
+    return float(ingest_summary.get(f"gate_{side}_regret_weighted", 0.0)) / games
 
 
 def _run_puzzle_eval_if_due(
@@ -240,6 +281,7 @@ def _run_net_gating(
     trainer, *,
     gate: PromotionGate,
     sp: SelfplayResult,
+    ds: DifficultyState,
     gate_match_idx: int, gate_state_path: Path,
     iteration_idx: int,
 ) -> tuple[GateDecision, int]:
@@ -269,6 +311,14 @@ def _run_net_gating(
             iteration=int(iteration_idx),
             cur_w=int(sp.gate_cur_w), cur_d=int(sp.gate_cur_d), cur_l=int(sp.gate_cur_l),
             prev_w=int(sp.gate_prev_w), prev_d=int(sp.gate_prev_d), prev_l=int(sp.gate_prev_l),
+  # The difficulty each arm played at, straight off the shards, plus the
+  # PID's own dWR/dregret. Together they are the predicted PID-lag
+  # confound this sample carries -- reported next to the delta so a
+  # reader can see whether the gate is measuring the model or the
+  # controller. NaN in, NaN out; nothing is back-filled.
+            cur_wdl_regret=float(sp.gate_cur_wdl_regret),
+            prev_wdl_regret=float(sp.gate_prev_wdl_regret),
+            regret_fit_slope=float(ds.regret_fit_slope),
         ))
     else:
         gate.observe(AnchoredSample(iteration=int(iteration_idx)))
@@ -387,7 +437,7 @@ def _run_training_and_gating(
   # training still played games with the published model, and dropping that
   # sample would silently shorten the window.
     gate_decision, gate_match_idx = _run_net_gating(
-        trainer, gate=gate, sp=sp,
+        trainer, gate=gate, sp=sp, ds=ds,
         gate_match_idx=gate_match_idx, gate_state_path=gate_state_path,
         iteration_idx=int(iteration_idx),
     )
@@ -991,6 +1041,8 @@ def _run_selfplay_phase(
         gate_prev_w=int(ingest_summary.get("gate_prev_w", 0)),
         gate_prev_d=int(ingest_summary.get("gate_prev_d", 0)),
         gate_prev_l=int(ingest_summary.get("gate_prev_l", 0)),
+        gate_cur_wdl_regret=_arm_mean_regret(ingest_summary, "cur"),
+        gate_prev_wdl_regret=_arm_mean_regret(ingest_summary, "prev"),
         gate_sample_valid=bool(hold is None or hold.sample_is_valid),
         **_selfplay_diagnostic_fields_from_ingest(ingest_summary),
         total_sf_d6=total_sf_d6,

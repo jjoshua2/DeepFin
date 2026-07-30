@@ -889,7 +889,12 @@ def train_trial(config: dict):
             t_train_secs = time.monotonic() - t_train_start
             gate_match_idx = tr.gate_match_idx
   # The verdict acts on the NEXT publish, not on the weights just trained.
-            gate_hold.on_decision(tr.gate_decision)
+  # The return value carries the anchor's refresh health back into the
+  # decision so `gate_anchor_refresh_failures` reaches progress.csv; a
+  # `hold` that never reaches `on_decision` is the mutation
+  # `test_the_loop_body_calls_on_decision_with_the_verdict_and_keeps_it`
+  # exists to catch.
+            tr.gate_decision = gate_hold.on_decision(tr.gate_decision)
   # Before the checkpoint is written and before the best-model comparison
   # reads the generation: the number that arrived in `tr.test_metrics` has to
   # be judged against the generation of the ruler that produced IT.

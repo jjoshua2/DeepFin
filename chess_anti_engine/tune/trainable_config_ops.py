@@ -423,8 +423,8 @@ _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
     "lr_schedule",
     "gate_games", "gate_threshold", "gate_interval", "gate_mcts_sims",
     "gate_mode", "gate_window_iters", "gate_min_iters",
-    "gate_min_games_per_side", "gate_demote_delta_elo", "gate_alpha",
-    "gate_max_hold_iters",
+    "gate_min_games_per_side", "gate_demote_delta_elo", "gate_demote_step_elo",
+    "gate_alpha", "gate_max_hold_iters",
 })
 
 
@@ -488,12 +488,22 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
             if (
                 live_reload
                 and k in _LIVE_RELOAD_SKIPPED_KEYS
-                and k in config
-                and config[k] != v
+  # `config.get(k)`, NOT `k in config and config[k] != v`. The old form
+  # could not warn about a live ADD, and an add is the ONLY way these
+  # keys ever change in practice: `configs/pbt2_small.yaml` ships no
+  # `gate_*` key at all, so "just turn the gate on" is `gate_mode:
+  # shadow` appearing where there was nothing. Under the old form that
+  # took the silent-overlay path -- the value landed in `config`, the
+  # `PromotionGate` had been constructed from the launch config
+  # iterations earlier, and the operator got a knob that reads back
+  # correctly and does nothing. Same argument for `lr_schedule`: the
+  # trainer's scheduler is already built, so a live add is a no-op that
+  # must announce itself.
+                and config.get(k) != v
             ):
                 log.warning(
                     "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
-                    k, config[k], v,
+                    k, config.get(k), v,
                 )
                 continue
             # Opening-asset PATHS are captured by the server process at launch
