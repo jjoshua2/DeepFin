@@ -525,6 +525,10 @@ class DifficultyPID:
             self._regret_stage_complete = True
 
         self.ema_winrate: float = float(target_winrate)
+  # Most recent d(winrate)/d(wdl_regret) from the regret lever's inverse fit,
+  # or None until one exists. Read by ``DifficultyState.from_pid`` for the
+  # promotion gate's PID-lag confound column; see observe().
+        self.last_regret_fit_slope: float | None = None
         self._games_since_adjust = 0
         # Wins/draws/losses accumulated since the last lever step. While the
         # sample floor (or the cadence gate) holds the levers across iterations,
@@ -683,6 +687,12 @@ class DifficultyPID:
             "held_draws": int(self._held_draws),
             "held_losses": int(self._held_losses),
             "regret_stage_complete": bool(self._regret_stage_complete),
+  # Persisted so a restart does not blank the promotion gate's confound
+  # column for the iterations before the first post-resume PID step.
+            "last_regret_fit_slope": (
+                float(self.last_regret_fit_slope)
+                if self.last_regret_fit_slope is not None else None
+            ),
             "regret_history": [
                 [float(x), float(w), float(s)]
                 for (x, w, s) in self.regret_lever.history
@@ -746,6 +756,10 @@ class DifficultyPID:
         rgc = state.get("regret_stage_complete")
         if rgc is not None and self._regret_gate_enabled:
             self._regret_stage_complete = bool(rgc)
+
+        slope = state.get("last_regret_fit_slope")
+        if isinstance(slope, (int, float)) and math.isfinite(float(slope)):
+            self.last_regret_fit_slope = float(slope)
 
     def _no_change_update(
         self,
@@ -835,6 +849,16 @@ class DifficultyPID:
                 ema_wr=self.ema_winrate, ema_alpha=self.alpha, se=step_se,
             )
             regret_changed = bool(regret_diag.changed)
+  # Keep the fit slope readable AFTER observe() returns. The promotion
+  # gate needs d(winrate)/d(regret) to size the difficulty gap between
+  # its two arms in Elo, and it runs earlier in the iteration than the
+  # PID does -- so it reads the most recent fit rather than this one.
+  # Deliberately NOT reset to None on a deadband or airbag step: the
+  # slope is a slowly-varying regression over the lever's history, and
+  # the last real estimate is a better answer than "unknown" for an
+  # iteration where the controller simply chose not to move.
+            if regret_diag.fit_slope is not None:
+                self.last_regret_fit_slope = float(regret_diag.fit_slope)
             if self._regret_gate_enabled:
                 regret_end = _clamp(
                     self.wdl_regret_stage_end, self.wdl_regret_min, self.wdl_regret_max

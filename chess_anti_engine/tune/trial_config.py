@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
+from chess_anti_engine.tune.promotion_gate import GateDecision
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.utils.architecture import (
     normalize_embed_dim_by_layer,
@@ -331,10 +332,23 @@ class TrialConfig:
     eval_max_plies: int = 0  # 0 means fallback to max_plies
 
   # --- Gate ---
+  # gate_games / gate_threshold / gate_mcts_sims are DEAD KEYS kept only so a
+  # live yaml carrying them still validates. The 1-sim vs-Stockfish gate they
+  # configured is gone; ``gate_games`` at anything but 0 now raises at startup
+  # rather than silently doing nothing (chess_anti_engine/tune/promotion_gate).
     gate_games: int = 0
     gate_interval: int = 1
     gate_threshold: float = 0.50
     gate_mcts_sims: int = 1
+  # The anchored promotion gate's knobs (gate_mode, gate_window_iters,
+  # gate_min_iters, gate_min_games_per_side, gate_demote_delta_elo, gate_alpha,
+  # gate_max_hold_iters) are DELIBERATELY ABSENT from this dataclass. They are
+  # read once, at construction, by ``promotion_gate.gate_config_from_dict``
+  # straight from the config dict. Parsing them here too would give the gate
+  # two sources of truth, and the copy nothing reads is the one that rots: an
+  # earlier revision of this class carried the pre-review floor of 40 and line
+  # of -50.0 for exactly as long as it took a reviewer to grep ``tc.gate_``
+  # and find nothing.
 
   # --- Puzzle ---
     puzzle_epd: str | None = None
@@ -791,6 +805,30 @@ class SelfplayResult:
     total_tb_adjudicated_games: int = 0
     total_draw_games: int = 0
 
+  # Anchored promotion-gate split of the vs-SF (curriculum) outcomes above, by
+  # which published model played them: "cur" = the model published this
+  # iteration, "prev" = last iteration's. Both faced the same handicapped
+  # Stockfish, so their difference is a free A/B of one training iteration.
+    gate_cur_w: int = 0
+    gate_cur_d: int = 0
+    gate_cur_l: int = 0
+    gate_prev_w: int = 0
+    gate_prev_d: int = 0
+    gate_prev_l: int = 0
+  # Games-weighted mean ``wdl_regret`` each arm was actually played at, from
+  # the shards' own ``ShardMeta.opponent_wdl_regret_limit``. NaN when the
+  # shards predate that field. These are NOT decoration: model and difficulty
+  # ship in one manifest, so the prev arm is one PID step behind and the
+  # anchored delta carries a controller term whose size is
+  # ``(cur - prev) * dWR/dregret``. See promotion_gate's "THE PID LAG DOES NOT
+  # CANCEL".
+    gate_cur_wdl_regret: float = float("nan")
+    gate_prev_wdl_regret: float = float("nan")
+  # False on an iteration whose publish crossed a hold boundary: the anchored
+  # labels are then inverted (or span many iterations) and the sample must not
+  # enter the window. See GateHoldController.sample_is_valid.
+    gate_sample_valid: bool = True
+
   # Selfplay-only subset
     total_selfplay_games: int = 0
     total_selfplay_adjudicated_games: int = 0
@@ -898,7 +936,10 @@ class TrainingResult:
 
     metrics: TrainMetrics | None = None
     test_metrics: TrainMetrics | None = None
-    gate_passed: bool = True
+  # NOT a bool. The reported metric must distinguish "the gate did not run"
+  # from "the gate passed"; the old bool defaulted to True and emitted
+  # ``gate_passed: 1`` for 200+ iterations with zero games played.
+    gate_decision: GateDecision = field(default_factory=GateDecision)
     steps: int = 0
     target_sample_budget: int = 0
     window_target_samples: int = 0
@@ -919,6 +960,14 @@ class DifficultyState:
 
     wdl_regret: float
     sf_nodes: int
+  # d(winrate)/d(wdl_regret) from the PID's most recent inverse fit. Carried
+  # here because the promotion gate needs it to convert the difficulty gap
+  # between its two arms into Elo, and ``ds`` is already threaded to the gating
+  # phase -- a second loose local in ``train_trial`` is what this dataclass
+  # exists to avoid. NaN whenever the PID had no usable fit (deadband, airbag,
+  # or fewer than 3 history points), which is honest: no fit means no
+  # prediction, not a prediction of zero.
+    regret_fit_slope: float = float("nan")
 
     @classmethod
     def from_pid(cls, pid: Any, sf: Any, tc: TrialConfig) -> DifficultyState:
@@ -930,9 +979,13 @@ class DifficultyState:
         this method still prefers pid.nodes to make divergence impossible.
         """
         if pid is not None:
+            slope = getattr(pid, "last_regret_fit_slope", None)
             return cls(
                 wdl_regret=float(pid.wdl_regret),
                 sf_nodes=int(pid.nodes),
+                regret_fit_slope=(
+                    float(slope) if slope is not None else float("nan")
+                ),
             )
         return cls(
             wdl_regret=-1.0,

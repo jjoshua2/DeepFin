@@ -1353,6 +1353,32 @@ class WorkerSession:
         """Snapshot every watched reco key (restart + live) for change detection."""
         return {k: reco.get(k) for k in self._RECO_WATCH_KEYS}
 
+    def _active_difficulty(self) -> tuple[float | None, int | None]:
+        """The opponent difficulty currently applied, for the shard's metadata.
+
+        Read off ``_active_reco``, which is the snapshot the worker actually
+        applied -- set at session start (``_run_selfplay``) and re-set on every
+        live apply (``_maybe_restart_for_reco``). Reading the manifest instead
+        would record what the SERVER published rather than what these games
+        were played at, which is the whole distinction the field exists to make
+        (a worker mid-poll is one manifest behind, and that lag is exactly what
+        the promotion gate's anchored delta confounds on).
+
+        ``(None, None)`` before any reco has been applied: absent means
+        UNKNOWN, never 0.0.
+        """
+        reco = getattr(self, "_active_reco", None)
+        if not isinstance(reco, dict):
+            return None, None
+        raw_regret = reco.get("opponent_wdl_regret_limit")
+        raw_nodes = reco.get("sf_nodes")
+        try:
+            regret = float(raw_regret) if raw_regret is not None else None
+            nodes = int(raw_nodes) if raw_nodes is not None else None
+        except (TypeError, ValueError):
+            return None, None
+        return regret, nodes
+
     def _asset_fingerprint(self, manifest: dict) -> tuple:
         """Published SHAs of the session-start assets that a live reco-apply
         cannot swap on a running session (SF binary — only when served — and the
@@ -2264,6 +2290,10 @@ class WorkerSession:
         self._note_selfplay_progress()
         queued_for_flush = False
         buf_lock = getattr(self, "_upload_buf_lock", None)
+  # Difficulty travels with the shard so the promotion gate's anchored
+  # current-vs-previous delta can be checked against the difficulty each arm
+  # played at. Read once per callback, from the reco the worker APPLIED.
+        cur_regret, cur_sf_nodes = self._active_difficulty()
         with buf_lock if buf_lock is not None else nullcontext():
             try:
                 _buffer_add_completed_game(
@@ -2272,6 +2302,8 @@ class WorkerSession:
                     now_s=now_s,
                     model_sha=self.model_sha,
                     model_step=self.model_step,
+                    opponent_wdl_regret_limit=cur_regret,
+                    sf_nodes=cur_sf_nodes,
                     max_positions=int(self.args.upload_max_buffered_positions),
                     buffered_positions_offset=int(getattr(self, "_pending_buffer_positions", 0)),
                 )
@@ -2282,11 +2314,17 @@ class WorkerSession:
                 old_step = int(self.upload_buf.model_step or 0)
                 self.log.warning(
                     "upload buffer model metadata changed old_sha=%s old_step=%d "
-                    "new_sha=%s new_step=%d; flushing buffered shard before retry",
+                    "new_sha=%s new_step=%d old_regret=%s new_regret=%s "
+                    "old_sf_nodes=%s new_sf_nodes=%s; flushing buffered shard "
+                    "before retry",
                     old_sha[:8],
                     old_step,
                     str(self.model_sha)[:8],
                     int(self.model_step),
+                    self.upload_buf.opponent_wdl_regret_limit,
+                    cur_regret,
+                    self.upload_buf.sf_nodes,
+                    cur_sf_nodes,
                 )
                 if self._queue_upload_buffer_locked(now_s=now_s):
                     queued_for_flush = True
@@ -2297,6 +2335,8 @@ class WorkerSession:
                     now_s=now_s,
                     model_sha=self.model_sha,
                     model_step=self.model_step,
+                    opponent_wdl_regret_limit=cur_regret,
+                    sf_nodes=cur_sf_nodes,
                     max_positions=int(self.args.upload_max_buffered_positions),
                     buffered_positions_offset=int(getattr(self, "_pending_buffer_positions", 0)),
                 )

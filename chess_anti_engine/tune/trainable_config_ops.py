@@ -409,7 +409,23 @@ _LAUNCH_FIXED_ASSET_PATH_KEYS = frozenset({
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is
 # already built), but IS applied during startup/resume before the trainer
 # exists — so it is restart-required for a running trial like the rest.
-_LIVE_RELOAD_SKIPPED_KEYS = frozenset({"lr_schedule"})
+#
+# The gate_* keys are the same shape: `PromotionGate` is constructed ONCE from
+# the launch config (trainable.py), so a live edit to any of them would sit in
+# the config dict doing nothing until the next restart. `gate_games` is the
+# dangerous one — it raises at startup, so an operator editing it live gets
+# neither the old behaviour nor the error, just silence. Listing them here
+# turns that silence into a WARNING on the iteration the edit lands, which is
+# the whole difference between "restart required" and "quietly ignored".
+# Window shape is deliberately construction-time as well: changing
+# window_iters mid-window redefines what a half-filled window means.
+_LIVE_RELOAD_SKIPPED_KEYS = frozenset({
+    "lr_schedule",
+    "gate_games", "gate_threshold", "gate_interval", "gate_mcts_sims",
+    "gate_mode", "gate_window_iters", "gate_min_iters",
+    "gate_min_games_per_side", "gate_demote_delta_elo", "gate_demote_step_elo",
+    "gate_alpha", "gate_max_hold_iters",
+})
 
 
 def restart_required_config_keys() -> frozenset[str]:
@@ -469,10 +485,25 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
         for k, v in fresh.items():
             if k in searched or k.startswith("pb2_bounds_"):
                 continue
-            if live_reload and k == "lr_schedule" and k in config and config[k] != v:
+            if (
+                live_reload
+                and k in _LIVE_RELOAD_SKIPPED_KEYS
+  # `config.get(k)`, NOT `k in config and config[k] != v`. The old form
+  # could not warn about a live ADD, and an add is the ONLY way these
+  # keys ever change in practice: `configs/pbt2_small.yaml` ships no
+  # `gate_*` key at all, so "just turn the gate on" is `gate_mode:
+  # shadow` appearing where there was nothing. Under the old form that
+  # took the silent-overlay path -- the value landed in `config`, the
+  # `PromotionGate` had been constructed from the launch config
+  # iterations earlier, and the operator got a knob that reads back
+  # correctly and does nothing. Same argument for `lr_schedule`: the
+  # trainer's scheduler is already built, so a live add is a no-op that
+  # must announce itself.
+                and config.get(k) != v
+            ):
                 log.warning(
                     "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
-                    k, config[k], v,
+                    k, config.get(k), v,
                 )
                 continue
             # Opening-asset PATHS are captured by the server process at launch
