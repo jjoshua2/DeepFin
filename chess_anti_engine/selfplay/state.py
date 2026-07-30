@@ -191,9 +191,11 @@ class _NetRecord:
         "is_sf_refute_opp",
         "keep_prob",
         "legal_mask",
+        "move_offset",
         "net_wdl_est",
         "ply_index",
         "policy_probs",
+        "pos_hash",
         "pov_color",
         "priority",
         "priority_policy_kl",
@@ -223,6 +225,19 @@ class _NetRecord:
     relations: np.ndarray | None
     pov_color: bool
     ply_index: int
+    # Number of moves in ``move_idx_history`` played BEFORE this record's
+    # position. The one piece of bookkeeping that lets selfplay/resume.py
+    # re-encode ``x`` from a replayed move list instead of persisting the
+    # 44.8 KB of planes: it names the exact position each record was taken at,
+    # without relying on ply_index (whose origin differs between the C and
+    # Python play paths). -1 = not tracked; such a game is never resumed.
+    move_offset: int
+    # ``CBoard.zobrist_hash`` of the position this record was taken at, read at
+    # capture time. selfplay/resume.py checks it after replaying the move list:
+    # without it, a move list that is off by one still replays to legal
+    # positions of the right colour and would hand mislabeled planes to the
+    # replay buffer in silence. 0 = not tracked.
+    pos_hash: int
     has_policy: bool
     priority: float
     priority_policy_kl: float | None
@@ -258,7 +273,7 @@ class _NetRecord:
         sf_policy_target=None, sf_move_index=None, sf_wdl=None,
         x_lc0_root=None, relations=None,
         priority_policy_kl=None, priority_q_delta=None,
-        gumbel_policy_diag=None,
+        gumbel_policy_diag=None, move_offset=-1, pos_hash=0,
     ):
         self.x = x
         self.policy_probs = policy_probs
@@ -268,6 +283,8 @@ class _NetRecord:
         self.relations = relations
         self.pov_color = pov_color
         self.ply_index = ply_index
+        self.move_offset = int(move_offset)
+        self.pos_hash = int(pos_hash)
         self.has_policy = has_policy
         self.priority = priority
         self.priority_policy_kl = priority_policy_kl
@@ -643,6 +660,21 @@ class SelfplayState:
     # finalize flushes a game's pending labels before its slot recycles, so
     # a charge can't leak into the next game.
     sf_label_escalations: list[int] = field(default_factory=list)
+    # Per-slot: this game was restored from a persisted in-flight state
+    # (selfplay/resume.py) rather than started here. Purely observational —
+    # finalize counts it into outcome_stats so a resumed game that actually
+    # reaches a shard is a number in result.json, not an assumption. Reset by
+    # recycle_slot, so it only ever marks the resumed game itself.
+    resumed_from_disk: list[bool] = field(default_factory=list)
+    # outcome_stats counts produced OUTSIDE any single game's finalize — today
+    # only the in-flight resume's DISCARD count, which is a session-start event
+    # with no game to hang it on. `resumed_inflight_games` (the success) already
+    # reaches result.json through the per-game counters; a failure that is
+    # visible only in a worker log is not observable where the success is, so
+    # the next finalized game drains this into its own outcome_stats and the
+    # count rides the ordinary CompletedGameBatch -> shard meta -> result.json
+    # path. A session that finalizes no game at all reports it in the log only.
+    pending_outcome_stats: dict[str, int] = field(default_factory=dict)
 
     # ── Shared caches (None when C tree unavailable) ─────────────────────────
     mcts_tree: Any = None
@@ -809,6 +841,7 @@ class SelfplayState:
             pending_sf_labels=[],
             pending_sf_moves={},
             sf_label_escalations=[0] * batch_size,
+            resumed_from_disk=[False] * batch_size,
             mcts_tree=c_caps.mcts_tree,
             has_c_ply=c_caps.has_c_ply,
             has_classify_c=c_caps.has_classify_c,
@@ -1051,6 +1084,8 @@ class SelfplayState:
         self.pending_sf_moves.pop(i, None)
         if i < len(self.sf_label_escalations):
             self.sf_label_escalations[i] = 0  # Fresh per-game escalation budget.
+        if i < len(self.resumed_from_disk):
+            self.resumed_from_disk[i] = False  # This slot's game starts here.
         self.games_started += 1
 
     def replay_board(self, i: int) -> chess.Board:

@@ -235,6 +235,7 @@ def play_batch(
     on_timing: Callable[[str, float], None] | None = None,
     on_step: Callable[[], None] | None = None,
     on_state_ready: Callable[[SelfplayState], None] | None = None,
+    on_suspend: Callable[[SelfplayState], None] | None = None,
     stop_fn: Callable[[], bool] | None = None,
     pause_fn: Callable[[], bool] | None = None,
     slot_oversubscribe: float = 1.0,
@@ -284,6 +285,13 @@ def play_batch(
     selfplay window out of the replay buffer). ``on_step`` keeps being called
     during the hold so the caller's manifest poll can clear the pause and
     hot-swap the freshly trained model before play resumes.
+
+    ``on_suspend`` (optional) is called once at a REAL teardown (stop_fn true),
+    after finished games are finalized, with the live state — every slot it
+    still sees is an in-flight game whose compute is about to be discarded.
+    The worker uses it to persist those games (selfplay/resume.py) so the next
+    session can resume them instead of restarting the length distribution from
+    zero (audit C14/C14b).
 
     ``slot_oversubscribe`` multiplies concurrent slots only in continuous
     mode. Finite calls still play exactly their requested target. The default
@@ -368,6 +376,16 @@ def play_batch(
             )
             if on_timing is not None:
                 on_timing("finalize", time.perf_counter() - t0)
+            # Whatever is still in flight here is what a teardown historically
+            # threw away — the games, their plies, and above all the ~698k-node
+            # SF labels already bought for them. The hook gets its chance after
+            # the finished games are finalized, so it only ever sees genuinely
+            # in-flight boards.
+            if on_suspend is not None:
+                t0 = time.perf_counter()
+                on_suspend(state)
+                if on_timing is not None:
+                    on_timing("suspend_inflight", time.perf_counter() - t0)
             break
 
         if pause_fn is not None and pause_fn():

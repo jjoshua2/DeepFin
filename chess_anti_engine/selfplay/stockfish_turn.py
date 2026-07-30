@@ -1060,6 +1060,11 @@ def _emit_sf_refute_opp_record(
         keep_prob=1.0,
         legal_mask=legal_mask,
         sf_wdl=sf_wdl_stm,
+        # SF's move is pushed AFTER this record is appended, so every move
+        # played so far precedes the recorded position (contrast the net turn,
+        # which records after its own push).
+        move_offset=len(state.move_idx_history[idx]),
+        pos_hash=int(cb.zobrist_hash),
     )
     rec.is_sf_refute_opp = True
     state.samples_per_game[idx].append(rec)
