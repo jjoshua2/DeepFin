@@ -1811,10 +1811,64 @@ every persisted game was consumed. Pre-fix, all 2,119 would have been abandoned.
 PR #224's yardstick reads exactly this field, so that yardstick is no longer
 meaningful with resume on. Filed as a task.
 
-**Still owed (the QUANTITATIVE half):** the ply-ramp yardstick — whether
-`avg_plies_win`/`avg_plies_draw` now hold up instead of collapsing to ~0 — is
-scored over the ~9 rows after this teardown, i.e. from row 379. Mechanism is
-proven; the *bias removal* is not yet.
+### ⚠ QUANTITATIVE VERDICT 2026-07-30 15:52 — PARTIAL. The ply ramp is fixed; the bias that costs progress is NOT. **SUCCESS criterion FAILS.**
+
+Scored on rows 379-387, against a **same-day paired control**: teardown A
+(12:35) ran with the flag on but had nothing to restore (the prior session was
+flag-OFF), teardown B (13:36) actually resumed 2,100 games. Same fleet, one
+hour apart, nothing else changed.
+
+| | A — 0 resumed | B — 2,100 resumed |
+|---|---|---|
+| `avg_plies_draw`, first 3 rows | **0.0 / 0.0 / 0.0** | **61.5 / 76.0 / 68.0** |
+| min `avg_plies_draw` | 0.0 | **53.8 — never zero** |
+| min `curriculum_draw_rate` | 0.000 | **0.013** |
+| peak `pid_raw_winrate` | 1.000 | **0.981** |
+| regret over the window | — | **−0.01160** |
+
+**WHAT WORKED.** The length ramp from ~0 is GONE: three consecutive zero rows
+in A versus a floor of 53.8 plies in B. On the audit's own discriminator the
+fix does exactly what it claimed.
+
+**WHAT DID NOT.** `pid_raw_winrate` still spikes to **0.981**, the draw rate
+still collapses to **0.013**, and the PID still tightened regret **−0.01160**
+across the window — the LARGEST single-window tighten of the day and *above*
+the −0.0086..−0.0107 this entry priced for the UNFIXED defect. **The pre-
+committed SUCCESS bar (`min(curriculum_draw_rate) >= 0.30`) fails at 0.013.**
+The KILL clause does not fire either, because it was phrased as "the monotone
+ramp from ~0 is still there" and that specific symptom is cured. So: judged by
+the pre-committed rule this is **NOT a success**, and it is recorded as such
+rather than talked into one.
+
+**MECHANISM OF THE RESIDUAL — resume preserves ACCUMULATED plies, but games
+still finish in order of REMAINING work.** A restored game keeps the 80 plies
+it had already played, so `avg_plies_draw` looks healthy immediately; but the
+restored games nearest their end still complete first, and those skew decisive.
+Preserving length does not make the completion ORDER representative. C14b's
+mechanism claim ("the length ceiling is the mechanism, the draw rate is the
+symptom") is therefore **half right**: the ceiling was one source, not the only
+one.
+
+**⚑⚑ THE DISCRIMINATOR IS NOW BLIND — this is the dangerous part.** C14b
+selected `avg_plies_win`/`avg_plies_draw` precisely because they ramp
+monotonically from ~0 and the draw rate merely follows. After this fix the ply
+series reads HEALTHY (never below 53.8) while the winrate spike and the −0.0116
+tighten continue at full strength. **Anyone using the ply ramp to decide "is
+this window contaminated?" will now get NO from a contaminated window.** Until a
+replacement is chosen, gate post-restart rows on `pid_raw_winrate` versus its
+steady state (or on `curriculum_draw_rate`), NOT on the ply series.
+
+**CONSEQUENCE FOR THE 12-ROW DROP RULE:** still required, and still ~9-12 rows
+(the draw rate needs until row 387 to reach 0.591). Resume did not shorten the
+contaminated window; it only removed one of its symptoms.
+
+**NEXT LEVER (not run):** the residual is a completion-ORDER bias, so the fix
+has to be on the PID's side — e.g. weight the curriculum sample by remaining
+game length, or hold the lever until the draw rate is within N sd of its
+pre-teardown mean (the rule C14 already proposed and this entry deferred in
+favour of the source fix). The source fix is real and worth keeping — 2,100
+games and their ~698k-node labels were saved — but it is NOT a substitute for
+that guard.
 
 **Class: waste correction + removal of a known PID sample bias. Not a target,
 loss, or search change.** Pre-registered before deploy because it touches the
