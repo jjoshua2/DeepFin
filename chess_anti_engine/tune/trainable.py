@@ -50,6 +50,11 @@ from chess_anti_engine.tune.trainable_init import (
     _restore_checkpoint_or_salvage,
     peek_checkpoint_arch,
 )
+from chess_anti_engine.tune.promotion_gate import (
+    GateHoldController,
+    PromotionGate,
+    gate_config_from_dict,
+)
 from chess_anti_engine.tune.trainable_metrics import _compute_drift_metrics
 from chess_anti_engine.tune.trainable_phases import (
     _finalize_iteration,
@@ -182,21 +187,6 @@ def _make_stockfish_uci(tc: TrialConfig, *, nodes: int, multipv: int) -> Stockfi
         syzygy_path=tc.stockfish_syzygy_path or tc.syzygy_path,
         nice=tc.sf_nice,
     )
-
-
-def _init_local_stockfish(tc: TrialConfig) -> StockfishUCI | StockfishPool | None:
-    """Local SF for gate-check games only; distributed workers run their own SF."""
-    if tc.gate_games <= 0:
-        return None
-    if tc.sf_workers > 1:
-        return StockfishPool(
-            path=tc.stockfish_path, nodes=tc.sf_nodes,
-            num_workers=tc.sf_workers, multipv=tc.sf_multipv,
-            hash_mb=tc.sf_hash_mb,
-            syzygy_path=tc.stockfish_syzygy_path or tc.syzygy_path,
-            nice=tc.sf_nice,
-        )
-    return _make_stockfish_uci(tc, nodes=tc.sf_nodes, multipv=tc.sf_multipv)
 
 
 def _init_eval_stockfish(tc: TrialConfig) -> StockfishUCI | None:
@@ -596,7 +586,22 @@ def train_trial(config: dict):
     _STATUS_CSV_PATH = _init_status_csv(trial_dir)
 
     gate_state_path = durable_dir / "gate_state.json"
-    gate_match_idx = int((load_optional_json(gate_state_path) or {}).get("matches", 0))
+    _gate_state = load_optional_json(gate_state_path) or {}
+    gate_match_idx = int(_gate_state.get("matches", 0))
+  # Anchored promotion gate. Constructed from the LAUNCH config: window shape
+  # and mode are construction-time, so a live yaml edit does not silently
+  # change what a half-filled window means (see the live-reload rules in
+  # CLAUDE.md). ``gate_config_from_dict`` also raises on a non-zero
+  # ``gate_games``, so the removed 1-sim vs-Stockfish gate cannot be turned
+  # back on by editing the yaml.
+    gate = PromotionGate(cfg=gate_config_from_dict(config))
+    gate.load_state_dict(_gate_state)
+  # Every piece of gate-side mutable loop state lives in this object, not in
+  # locals: the anchor path (None while the gate is off, so a disabled feature
+  # copies nothing), the hold path, the restart restore, the retry ageing and
+  # the sign-validity history. Six loose locals here were individually mutable
+  # and individually untested.
+    gate_hold = GateHoldController.create(gate, durable_dir=durable_dir)
 
     best_state_path = durable_dir / "best.json"
     best_dir = durable_dir / "best"
@@ -644,7 +649,12 @@ def train_trial(config: dict):
     holdout_ruler = str(restore.holdout_ruler)
 
     _assert_distributed_configured(tc)
-    sf = _init_local_stockfish(tc)
+  # No in-process Stockfish. Its only consumer was the removed gate-check
+  # (``gate_games`` vs-SF games at 1 sim); distributed workers run their own SF
+  # for selfplay, and the anchored gate plays no games at all. Kept as an
+  # explicit None rather than dropped, because ``sf`` still travels to the PID
+  # (``set_nodes``) and to ``DifficultyState.from_pid``, both None-tolerant.
+    sf: StockfishUCI | StockfishPool | None = None
 
     distributed_server_root = _resolve_local_override_root(
         raw_root=str(tc.distributed_server_root),
@@ -705,6 +715,11 @@ def train_trial(config: dict):
         pause_selfplay=False,
         pause_reason="",
         reuse_existing_model_for_same_step=(ckpt is not None),
+  # A resume mid-hold must not lift the brake for one publish. This is the
+  # only publish outside _publish_iteration_model, so it takes the raw path
+  # rather than the controller; note_published() is deliberately NOT called --
+  # the loop's first real publish is what starts the sign-validity history.
+        override_model_path=gate_hold.hold_path,
     )
     _broker_box[0] = _ensure_inference_broker(
         config=config,
@@ -823,11 +838,17 @@ def train_trial(config: dict):
                 in_salvage_startup_grace=in_salvage_startup_grace,
                 prefetcher=shard_prefetcher,
                 reuse_existing_model_for_same_step=(ckpt is not None),
+                hold=gate_hold,
             )
             t_selfplay_secs = time.monotonic() - t_selfplay_start
             distributed_pause_active = False
             distributed_pause_started_at = None
             if sp.should_retry:
+  # No games ingested, so the gate never observes or decides this
+  # iteration -- but the fleet is still held. Age the hold anyway, or
+  # a run stuck in retry during a hold holds forever with the release
+  # counter frozen.
+                gate_hold.on_aborted_iteration()
                 continue
 
             holdout_frozen = _maybe_freeze_holdout(
@@ -849,11 +870,13 @@ def train_trial(config: dict):
             tr = _run_training_and_gating(
                 tc=tc, trainer=trainer, buf=buf, holdout_buf=holdout_buf,
                 config=config, model_cfg=model_cfg,
-                device=device, rng=rng, sf=sf,
+                device=device,
                 ds=ds,
                 sims=sims,
+                sp=sp,
                 positions_ingested=sp.replay_positions_ingested,
                 imported_samples_this_iter=sp.imported_samples_this_iter,
+                gate=gate,
                 gate_match_idx=gate_match_idx,
                 gate_state_path=gate_state_path,
                 distributed_server_root=distributed_server_root,
@@ -865,6 +888,13 @@ def train_trial(config: dict):
             )
             t_train_secs = time.monotonic() - t_train_start
             gate_match_idx = tr.gate_match_idx
+  # The verdict acts on the NEXT publish, not on the weights just trained.
+  # The return value carries the anchor's refresh health back into the
+  # decision so `gate_anchor_refresh_failures` reaches progress.csv; a
+  # `hold` that never reaches `on_decision` is the mutation
+  # `test_the_loop_body_calls_on_decision_with_the_verdict_and_keeps_it`
+  # exists to catch.
+            tr.gate_decision = gate_hold.on_decision(tr.gate_decision)
   # Before the checkpoint is written and before the best-model comparison
   # reads the generation: the number that arrived in `tr.test_metrics` has to
   # be judged against the generation of the ruler that produced IT.

@@ -509,6 +509,23 @@ class ShardMeta:
     history_rep_fix: bool | None = None
     policy_encoding: str | None = None
     policy_size: int | None = None
+  # The OPPONENT DIFFICULTY these games were played at, as the worker had it
+  # applied when it buffered them. Both levers ship in the same
+  # ``recommended_worker`` manifest as the model itself and are applied
+  # together, so a shard's sha and its difficulty are not independent: a shard
+  # still tagged with the previous model was also played one PID step behind on
+  # difficulty. Without these two fields that lag is UNOBSERVABLE, and the
+  # promotion gate's anchored current-vs-previous delta carries a controller
+  # term nothing can measure. See "THE PID LAG DOES NOT CANCEL" in
+  # ``chess_anti_engine/tune/promotion_gate.py``.
+  #
+  # None on shards written before this field existed, which is why every
+  # consumer treats absent as UNKNOWN and never as zero -- a 0.0 regret means
+  # "unhandicapped Stockfish", the opposite end of the range from "no data".
+  # ``worker_buffer`` refuses to mix two difficulties into one shard: a change
+  # raises the same metadata-mismatch that a model change does, and flushes.
+    opponent_wdl_regret_limit: float | None = None
+    sf_nodes: int | None = None
     games: int | None = None
     positions: int | None = None
     wins: int | None = None
