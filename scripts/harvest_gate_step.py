@@ -25,7 +25,6 @@ import argparse
 import glob
 import json
 import os
-import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -150,34 +149,6 @@ def read_new_lines(
     return lines, new_offsets, n_raw
 
 
-# Vet-order rank: curriculum first, untagged next, selfplay last.
-SRC_CURRICULUM, SRC_UNKNOWN, SRC_SELFPLAY = 0, 1, 2
-
-_SP_TAG = re.compile(r"(?:^|\s)sp=([01])(?:\s|$)")
-
-
-def source_rank(raw: str) -> int:
-    """Vet-order rank from the line's ``sp=`` provenance tag.
-
-    Measured 2026-07-30 on 11,718 unique placement keys: curriculum-sourced
-    captures (net vs Stockfish) are KEPT by the deep-SF vet at 44.9%, selfplay
-    ones at 3.7% — 12.2x, and curriculum supplies 91.7% of every seed the gate
-    has ever emitted. In selfplay both sides share the blind spot, so a capture
-    is usually a Type B mutual illusion over a pre-move position that was
-    actually fine, which is precisely what this gate exists to reject.
-
-    An ABSENT tag ranks in the MIDDLE, not as selfplay. Every line written
-    before this field existed is untagged, so ranking untagged as selfplay
-    would shove the entire existing backlog behind every new capture on the
-    strength of a format change rather than evidence. Middle rank plus a stable
-    sort leaves the backlog's existing newest-first order exactly as it was.
-    """
-    m = _SP_TAG.search(raw)
-    if m is None:
-        return SRC_UNKNOWN
-    return SRC_SELFPLAY if m.group(1) == "1" else SRC_CURRICULUM
-
-
 def parse_seed_line(raw: str) -> tuple[str, str] | None:
     """Parse a harvest/seed line → (placement_key, body) or None if unusable.
 
@@ -261,7 +232,6 @@ def run_gate(
     # ── collect unique new placement keys from this run's lines ──────────
     unique_new_keys: list[str] = []  # insertion order
     unique_new_body: dict[str, str] = {}
-    unique_new_rank: dict[str, int] = {}
     seen_new: set[str] = set()
     n_raw = len(new_lines)
     for raw in new_lines:
@@ -274,10 +244,6 @@ def run_gate(
         seen_new.add(key)
         unique_new_keys.append(key)
         unique_new_body[key] = body
-        # Rank comes from the RAW line: parse_seed_line strips the comment the
-        # sp= tag lives in, so reading it off `body` would silently rank every
-        # capture UNKNOWN and turn this whole ordering into a no-op.
-        unique_new_rank[key] = source_rank(raw)
 
     # NEWEST-FIRST: vet this run's fresh captures before the pending backlog,
     # each group most-recent-first. The harvester emits captures from the
@@ -287,39 +253,31 @@ def run_gate(
     # false positives — the old backlog verified 0/387 genuine — so the former
     # "pending first (FIFO)" order spent the whole SF budget re-litigating a
     # dead net's mistakes and never reached the ~35%-real recent captures.
-    # SOURCE-FIRST, then newest-first. Measured 2026-07-30 over 11,718 unique
-    # placement keys: curriculum captures are kept by the vet at 44.9% vs
-    # selfplay's 3.7% (12.2x), and curriculum supplied 91.7% of every seed ever
-    # emitted. Spending a 30-vet budget in blended order buys 23.3% yield when
-    # the same budget spent curriculum-first buys ~44.9% — 1.9x seeds per SF
-    # node. Nothing is discarded: overflow is DEFERRED to `pending`, so a
-    # deprioritised selfplay capture is vetted on a later run, not dropped.
-    # The sort is STABLE, so within each source the newest-first order below is
-    # preserved exactly.
+    #
+    # Source-ordering (curriculum before selfplay) was BUILT AND REJECTED
+    # 2026-07-30. The yield gap is real and large (44.9% vs 3.7%), but the vet
+    # budget does not bind: capped=0 in 89 of the last 100 runs and pending is
+    # 0, so `to_vet == candidates` and ordering is a no-op. Over any window
+    # long enough to drain a burst it is a no-op even when capped>0, because
+    # every candidate is vetted exactly once and the kept/vetted ratio is a
+    # property of the MIX, not the order. See docs/experiment_ledger.md.
     candidates: list[tuple[str, str]] = []
-    ranks: list[int] = []
     cand_seen: set[str] = set()
     blocked = exclude_keys | work.emitted | work.rejected
 
-    def _consider(key: str, body: str, rank: int) -> None:
+    def _consider(key: str, body: str) -> None:
         if key in cand_seen or key in blocked:
             return
         cand_seen.add(key)
         candidates.append((key, body))
-        ranks.append(rank)
 
     for key in reversed(unique_new_keys):
-        _consider(key, unique_new_body[key], unique_new_rank[key])
+        _consider(key, unique_new_body[key])
     for key, line in reversed(work.pending):
         # pending stores raw lines; re-parse body (pending keys already known)
         parsed = parse_seed_line(line)
         body = parsed[1] if parsed is not None else line.split("#", 1)[0].strip()
-        _consider(key, body, source_rank(line))
-
-    # Stable sort on source rank alone: within a rank the insertion order above
-    # (fresh captures newest-first, then the pending backlog) is untouched.
-    order = sorted(range(len(candidates)), key=lambda i: ranks[i])
-    candidates = [candidates[i] for i in order]
+        _consider(key, body)
 
     after_dedup = len(candidates)
     if max_vet_per_run < 0:

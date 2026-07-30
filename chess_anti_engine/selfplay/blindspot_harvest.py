@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -231,6 +232,27 @@ def format_record(
     tag = "" if is_selfplay is None else f" sp={int(is_selfplay)}"
     return (f"{seed.line}  # nq={seed.net_q:.2f} sq={seed.sf_q:.2f} "
             f"sev={int(seed.severe)} game={game_id} ply={seed.ply_index}{tag}")
+
+
+_SP_TAG = re.compile(r"(?:^|\s)sp=([01])(?:\s|$)")
+
+
+def parse_source_tag(raw: str) -> bool | None:
+    """Inverse of ``format_record``'s ``sp=`` field: True selfplay, False
+    curriculum, None when the line predates the tag or is untagged.
+
+    Kept beside the writer so the two cannot drift. Deliberately returns None
+    rather than guessing a default — every line written before 2026-07-30 is
+    untagged, and silently calling those "curriculum" would corrupt exactly the
+    yield comparison the tag exists to support.
+
+    Note ``sp=1`` means the GAME was selfplay, not that Stockfish never moved:
+    SF-refute games carry the selfplay flag while SF plays the first
+    ``opening_fen_sf_refute_plies`` opponent plies. That is a small share of a
+    game, but the field is a game-level source label, not a per-ply one.
+    """
+    m = _SP_TAG.search(raw)
+    return None if m is None else m.group(1) == "1"
 
 
 def severe_path_for(out_path: str) -> str:
