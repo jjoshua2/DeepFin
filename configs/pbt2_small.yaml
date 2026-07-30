@@ -292,8 +292,28 @@ selfplay:
   # (line ~269) is rewritten EVERY ITERATION by the harvest/retire pipeline, so
   # any custom path is clobbered within ~12 min. That is why this runs on the
   # live pool.
-  # REVERT (live-reloadable, no restart): set this back to 0.
-  opening_fen_dole_per_iter: 1
+  # ⚑ REVERTED 2026-07-30 16:37, ~11 min after the enable above, by the
+  # pre-registered rule — BEFORE the change ever reached a worker, so this cost
+  # nothing. The admission gate FAILED:
+  #
+  #   [netvet:net] surveyed=80 blunders=28 expected_if_random=25.60 lift=1.09x
+  #
+  # The net blundered on 28 of 80 seeds; a RANDOM mover would have blundered on
+  # 25.6 of the SAME positions at the SAME depth — a 0.47 sd gap, i.e. chance.
+  # Pre-committed bar was lift >= 2.0 (ledger, 2026-07-30 pre-registration).
+  # This was the BEST case: severe80 is a filtered subset, and
+  # `unplayable_dropped=0` says all 80 were winning positions for the mover.
+  # ⇒ The pool is "positions where most moves lose", NOT blind spots, which is
+  # exactly what the 2026-07-26 kill below suspected. Purge/re-harvest first
+  # (task #72); the 6 KEPT seeds are individually defensible but cannot be fed
+  # alone while live, because opening_fen_list_path is rewritten every
+  # iteration.
+  # Correction to the comment that stood here for 11 minutes: this key is NOT
+  # live-reloadable. It is in worker.py `_RECO_RESTART_KEYS`, so changing it
+  # triggers a graceful selfplay-session restart and a C14b window (~9-12
+  # contaminated rows, ~-0.01 spurious regret tighten). That cost was avoided
+  # here ONLY because the revert beat the next manifest build.
+  opening_fen_dole_per_iter: 0
   # This is the documented KILL above (dose 0). Rationale: (a) one data-affecting
   # change per readout window and the LR change owns this one; (b) the pool is
   # measurably contaminated — of 26 long-stuck seeds, SF rates them median 0.500

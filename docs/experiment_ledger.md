@@ -13896,3 +13896,56 @@ the replay window holds ~a day of data made under the old settings:
 **⚠ `--metric training_iteration` is REQUIRED** (the default picks the
 best-metric row, not current state), and note open task #75: salvage-export
 silently copies ZERO replay shards, so this banks weights+optimizer only.
+
+### VERDICT (2026-07-30 16:38) — ADMISSION GATE FAILED. Seeding enabled 16:26, REVERTED 16:37, cost zero.
+
+    [netvet:net] seeds=80 unplayable_dropped=0 no_blunder=52
+                 knife_edge_dropped=22 deep_checked=6 KEPT=6
+    [netvet:net] PAIRED surveyed=80 blunders=28
+                 expected_if_random=25.60 lift=1.09x
+
+**lift 1.09x against a pre-committed bar of 2.0 ⇒ KILL.** The net blundered on
+28 of 80 seeds; a uniformly random mover would have blundered on **25.6 of the
+SAME positions at the SAME depth**. The gap is 0.47 sd — chance.
+
+**This was the BEST case.** `severe80` is a filtered "severe" subset, and
+`unplayable_dropped=0` confirms all 80 terminals were winning for the mover.
+Per this entry's own rule a subset can KILL but cannot authorize, and it killed.
+⇒ **The pool is "positions where most moves lose", not blind spots** — precisely
+what the 2026-07-26 contamination finding suspected, now measured against a
+control instead of asserted.
+
+**Sequence, recorded honestly.** The user asked for a small change soon, so
+seeding was enabled at 16:26 (`per_iter` 0→1, `max_fraction` 0.25→0.08) BEFORE
+this number existed, with the commit message stating outright that the gate had
+not passed and that the cap, not the vetting, was what bounded the risk. The
+number landed 11 minutes later and failed. Reverted immediately.
+
+**The revert was free, and only by luck of timing.** Row 391 closed 16:32 and
+iteration 392 had not yet built its manifest, so `per_iter=1` never reached a
+worker: no selfplay-session restart, no C14b window, no seeded game. Had it
+propagated, the round trip would have cost TWO graceful restarts ≈ **2 × −0.01
+spurious regret tighten** for zero net change — the worst available outcome.
+
+**⚑ AND THE KEY IS NOT LIVE-RELOADABLE, contrary to the yaml comment that had
+stood next to it.** `opening_fen_dole_per_iter` is in `worker.py`
+`_RECO_RESTART_KEYS` (~:3015, inside the block opening at :2955 — `_RECO_LIVE_KEYS`
+ends at :2955). Changing it triggers a graceful selfplay-session restart. The
+comment claiming "Live-reloadable — restore by setting this back to 1" was
+wrong and is corrected in the yaml. `opening_fen_dole_max_fraction` IS
+effectively live: it is resolved to `opening_fen_dole_max_games` in
+`distributed_runtime.py:340` against `games_per_iter` and re-read inside the
+dole path each iteration.
+
+`max_fraction` is deliberately LEFT at 0.08 — inert while `per_iter` is 0, and
+it is the value we want pre-set for any future re-enable.
+
+**What would change the verdict:** a re-harvested pool, re-vetted to
+`lift >= 2.0`. Not a threshold tweak on this pool. Note the 6 KEPT seeds are
+individually defensible (each passed `safe_frac >= 0.5`, i.e. at least half of
+sampled legal moves held the position while the net's own top move lost it) —
+but they cannot be fed alone while the run is live, because
+`opening_fen_list_path` is rewritten EVERY ITERATION by the harvest/retire
+pipeline (`retire_377 → retire_389` observed today), so a curated path is
+clobbered within ~12 minutes. Feeding a curated list requires pausing or
+pinning that pipeline, which is a larger change than this entry covers.
