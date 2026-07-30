@@ -21,6 +21,7 @@ from chess_anti_engine.mcts.gumbel import SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
+from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.replay.shard import (
     IN_FLIGHT_DIR_NAME,
     LEGACY_SHARD_SUFFIX,
@@ -50,6 +51,10 @@ log = logging.getLogger(__name__)
 # the chess_anti_engine package work). Resolved once at import time — fs walk
 # would otherwise repeat for every spawn.
 _REPO_ROOT: Path = Path(__file__).resolve().parents[2]
+
+# Single home of the SF target-construction defaults (see
+# trainer.resolve_sf_target_params, which derives from the same dataclass).
+_SF_TARGET_DEFAULTS = SfTargetParams()
 
 # Cache for SHA256 of static files (opening books, worker wheel) that don't
 # change during a run.  Keyed by (path_str, file_size).
@@ -356,8 +361,19 @@ def build_recommended_worker(
         ),
         "sf_multipv": int(config.get("sf_multipv", 1)),
         "sf_hash_mb": int(config.get("sf_hash_mb", 16)),
-        "sf_policy_temp": float(config.get("sf_policy_temp", 0.25)),
-        "sf_policy_label_smooth": float(config.get("sf_policy_label_smooth", 0.05)),
+  # Defaults for the five SF target-construction keys come from
+  # SfTargetParams — the trainer-side rebuild (target_builder.py) resolves the
+  # SAME yaml keys through the same dataclass, so a default that drifted here
+  # would make capture-time and rebuilt targets silently disagree on any
+  # config that omits the key.
+        "sf_policy_temp": float(
+            config.get("sf_policy_temp", _SF_TARGET_DEFAULTS.sf_policy_temp)
+        ),
+        "sf_policy_label_smooth": float(
+            config.get(
+                "sf_policy_label_smooth", _SF_TARGET_DEFAULTS.sf_policy_label_smooth
+            )
+        ),
   # Exponent of the policy_soft target (p^(1/T), selfplay/finalize.py). The
   # default MUST stay at GameConfig.soft_policy_temp: this key was absent
   # from the manifest until 2026-07-26, so every worker built the target at
@@ -384,9 +400,15 @@ def build_recommended_worker(
         "categorical_search_blend_frac": float(
             config.get("categorical_search_blend_frac", 0.0)
         ),
-        "sf_wdl_use_cp_logistic": bool(config.get("sf_wdl_use_cp_logistic", False)),
-        "sf_wdl_cp_slope": float(config.get("sf_wdl_cp_slope", 0.010)),
-        "sf_wdl_cp_draw_width": float(config.get("sf_wdl_cp_draw_width", 60.0)),
+        "sf_wdl_use_cp_logistic": bool(
+            config.get("sf_wdl_use_cp_logistic", _SF_TARGET_DEFAULTS.sf_wdl_use_cp_logistic)
+        ),
+        "sf_wdl_cp_slope": float(
+            config.get("sf_wdl_cp_slope", _SF_TARGET_DEFAULTS.sf_wdl_cp_slope)
+        ),
+        "sf_wdl_cp_draw_width": float(
+            config.get("sf_wdl_cp_draw_width", _SF_TARGET_DEFAULTS.sf_wdl_cp_draw_width)
+        ),
         "opponent_wdl_regret_limit": float(wdl_regret) if float(wdl_regret) >= 0.0 else None,
         "temperature": float(config.get("temperature", 1.0)),
         "temperature_decay_start_move": int(config.get("temperature_decay_start_move", 20)),

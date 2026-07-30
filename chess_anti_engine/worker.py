@@ -62,6 +62,7 @@ from chess_anti_engine.selfplay.config import (
     TemperatureConfig,
 )
 from chess_anti_engine.selfplay.manager import BatchStats
+from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.selfplay.match import play_match_batch
 from chess_anti_engine.selfplay.resume import (
     resume_inflight_games,
@@ -104,6 +105,10 @@ from chess_anti_engine.worker_inference import (
 )
 
 _ResolveT = TypeVar("_ResolveT")
+
+# Single home of the SF target-construction defaults (see
+# trainer.resolve_sf_target_params, which derives from the same dataclass).
+_SF_TARGET_DEFAULTS = SfTargetParams()
 
 
 class _MissingRequiredReco(RuntimeError):
@@ -3370,11 +3375,33 @@ class WorkerSession:
                 sf_label_escalate_max_per_game=self._resolve_reco(
                     reco, "sf_label_escalate_max_per_game", 2, int,
                 ),
-                sf_policy_temp=self._resolve_reco(reco, "sf_policy_temp", 0.25),
-                sf_policy_label_smooth=self._resolve_reco(reco, "sf_policy_label_smooth", 0.05),
-                sf_wdl_use_cp_logistic=bool(reco.get("sf_wdl_use_cp_logistic", False)),
-                sf_wdl_cp_slope=float(reco.get("sf_wdl_cp_slope", 0.010)),
-                sf_wdl_cp_draw_width=float(reco.get("sf_wdl_cp_draw_width", 60.0)),
+  # Defaults for the five SF target-construction keys derive from
+  # SfTargetParams — the trainer-side rebuild resolves the SAME keys through
+  # that dataclass (trainer.resolve_sf_target_params), so a default drifting
+  # here would silently split capture-time and rebuilt targets whenever a
+  # manifest omits the key.
+                sf_policy_temp=self._resolve_reco(
+                    reco, "sf_policy_temp", _SF_TARGET_DEFAULTS.sf_policy_temp,
+                ),
+                sf_policy_label_smooth=self._resolve_reco(
+                    reco,
+                    "sf_policy_label_smooth",
+                    _SF_TARGET_DEFAULTS.sf_policy_label_smooth,
+                ),
+                sf_wdl_use_cp_logistic=bool(
+                    reco.get(
+                        "sf_wdl_use_cp_logistic",
+                        _SF_TARGET_DEFAULTS.sf_wdl_use_cp_logistic,
+                    )
+                ),
+                sf_wdl_cp_slope=float(
+                    reco.get("sf_wdl_cp_slope", _SF_TARGET_DEFAULTS.sf_wdl_cp_slope)
+                ),
+                sf_wdl_cp_draw_width=float(
+                    reco.get(
+                        "sf_wdl_cp_draw_width", _SF_TARGET_DEFAULTS.sf_wdl_cp_draw_width,
+                    )
+                ),
   # No CLI counterpart on purpose (hence reco.get, not _resolve_reco): this
   # is a TRAINING TARGET exponent, and a per-worker override would silently
   # mix two target sharpnesses inside one replay window.

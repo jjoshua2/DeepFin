@@ -250,15 +250,18 @@ def rebuild_sf_policy_targets_batch(
     if not bool(ok.any()):
         return out, ok
 
-    # Masked row-wise softmax over the (B, K) grid. Non-scoreable slots get
-    # -inf so exp() yields an exact 0.0, which is additively neutral in the
-    # row sum — the same value the scalar path gets by compacting first.
+    # Masked row-wise softmax over the (B, K) grid. Non-scoreable slots carry
+    # z = -inf, and zmax is forced finite even on all-masked rows, so
+    # exp(z - zmax) = exp(-inf) is an EXACT +0.0 there — additively neutral in
+    # the row sum, the same value the scalar path gets by compacting first.
+    # That -inf → +0.0 identity is what keeps masked slots out of the result;
+    # no re-zeroing after the exp is needed (scores are bounded, so no
+    # scoreable slot can produce a nan/inf that would escape the mask).
     z = scores / max(1e-6, float(params.sf_policy_temp))
     z = np.where(scoreable, z, -np.inf)
     zmax = np.max(z, axis=1, keepdims=True)
     zmax = np.where(np.isfinite(zmax), zmax, 0.0)  # all-masked rows: keep exp finite
     e = np.exp(z - zmax)
-    e[~scoreable] = 0.0
     row_sum = e.sum(axis=1, keepdims=True)
     p_top = (e / np.where(row_sum > 0.0, row_sum, 1.0)).astype(np.float32, copy=False)
 
@@ -273,23 +276,47 @@ def rebuild_sf_policy_targets_batch(
     keep = scoreable.reshape(-1)
     rows = np.repeat(np.arange(n, dtype=np.int64), raw.shape[1])[keep]
     cols = raw[..., 0].astype(np.int64, copy=False).reshape(-1)[keep]
+    # Distinct (row, col) pairs — needed twice below, for the scatter's
+    # duplicate guard and for the smoothing coverage count. Flattening is safe
+    # HERE because `flat` is only compared and decomposed, never used as a
+    # write index: an out-of-range move index can alias another row's slot in
+    # it, but the only consequence is taking the `np.add.at` branch, which
+    # raises the same IndexError the 2-D writes do.
+    flat = rows * np.int64(width) + cols
+    uniq = np.unique(flat)
 
     smooth = float(params.sf_policy_label_smooth)
     legal = None
     apply = np.zeros((n,), dtype=bool)
     share = np.zeros((n,), dtype=np.float32)
 
-    np.add.at(out, (rows, cols), p_top.reshape(-1)[keep])
+    vals = p_top.reshape(-1)[keep]
+    if uniq.size == flat.size:
+        # No repeated (row, col) pair: a plain scatter-assign into the
+        # all-zero output IS the scatter-add (nothing accumulates), ~5x
+        # cheaper than `np.add.at`'s assume-nothing ufunc loop.
+        out[rows, cols] = vals
+    else:
+        # Repeated move indices must ACCUMULATE to match the scalar path's
+        # `p_sf[a] += p` (test_batch_rebuild_matches_scalar_with_duplicate_
+        # move_indices). Real MultiPV rows never repeat a move, but the
+        # storage format does not forbid it.
+        np.add.at(out, (rows, cols), vals)
 
     if smooth > 0.0 and legal_dense is not None:
         legal = np.asarray(legal_dense) != 0
         legal_n = legal.sum(axis=1)
-        # `covered` holds the scored moves; &= legal in place so no temporary
-        # of the full (B, policy_size) width is materialised.
-        covered = np.zeros((n, width), dtype=bool)
-        covered[rows, cols] = True
-        covered &= legal
-        apply = ok & (legal_n > 0) & (covered.sum(axis=1) < legal_n)
+        # Per-row count of DISTINCT legal moves holding a scored PV, from the
+        # unique candidate pairs. Replaces a zeros/scatter/and/sum over the
+        # full (B, policy_size) grid (~1.5 ms/batch at production shape) with
+        # work proportional to the candidate count; exact, because both forms
+        # count the same set of distinct (row, col) pairs. Any out-of-range
+        # column already raised in the scatter above, so the `legal` gather
+        # cannot go out of bounds.
+        rows_u = uniq // width
+        cols_u = uniq % width
+        covered_n = np.bincount(rows_u[legal[rows_u, cols_u]], minlength=n)
+        apply = ok & (legal_n > 0) & (covered_n < legal_n)
         # float64 divide then one cast to float32, mirroring the scalar path's
         # `p_sf[legal] += smooth / float(legal.size)` (NumPy's weak-scalar
         # rule rounds the float64 scalar exactly once, at the add).
@@ -346,17 +373,26 @@ def rebuild_sf_wdl_batch(
         if params.sf_wdl_use_cp_logistic
         else np.zeros((n,), dtype=bool)
     )
-    has_mate = mate != 0
     native_ok = (wdl_w >= 0) & (wdl_d >= 0)
 
     if bool(use_log.any()):
-        eff_cp = np.where(has_mate, mate_to_effective_cp_array(mate), cp.astype(np.float64))
+        # Evaluate the logistic on the use_log rows ONLY, matching the policy
+        # twin's convention (_batch_row_scores). Running it full-width fed
+        # exp() the rows whose cp is the -32768 sentinel — mathematically
+        # discarded by the select, but overflowing float64 for
+        # sf_wdl_cp_slope >= ~0.022, i.e. exactly on the knob this rebuild
+        # exists to sweep. All the ops are elementwise, so compressing first
+        # is bit-identical (test_batch_sf_wdl_logistic_has_no_sentinel_overflow).
+        m_sel = mate[use_log]
+        eff_cp = np.where(
+            m_sel != 0, mate_to_effective_cp_array(m_sel), cp[use_log].astype(np.float64),
+        )
         logistic = cp_to_wdl_array(
             eff_cp,
             slope=params.sf_wdl_cp_slope,
             draw_width_cp=params.sf_wdl_cp_draw_width,
         )
-        out[use_log] = logistic[use_log][:, ::-1]  # flip_wdl_pov
+        out[use_log] = logistic[:, ::-1]  # flip_wdl_pov
 
     native_rows = native_ok & ~use_log
     if bool(native_rows.any()):
@@ -390,6 +426,14 @@ class SfRebuildCoverage:
     policy_rebuilt: int = 0
     wdl_rebuilt: int = 0
     cross_ply_masked: int = 0   # ROWS that lost >=1 cross-ply target, not flags
+  # Per-flag PRE-mask presence counts (rows whose flag was set before the
+  # mask cleared it). The mask zeroes `has_sf_p0`/`has_sf_volatility`
+  # indistinguishably from "never recorded", which pins `has_sf_p0_frac` —
+  # the sf_p0 outage detector (trainable_report.py) — at 0.0 for the whole
+  # rebuild experiment. These carry the pre-mask signal so the detector
+  # keeps working while the flag is on.
+    p0_masked: int = 0
+    volatility_masked: int = 0
 
     def __add__(self, other: SfRebuildCoverage) -> SfRebuildCoverage:
         return SfRebuildCoverage(
@@ -397,17 +441,38 @@ class SfRebuildCoverage:
             policy_rebuilt=self.policy_rebuilt + other.policy_rebuilt,
             wdl_rebuilt=self.wdl_rebuilt + other.wdl_rebuilt,
             cross_ply_masked=self.cross_ply_masked + other.cross_ply_masked,
+            p0_masked=self.p0_masked + other.p0_masked,
+            volatility_masked=self.volatility_masked + other.volatility_masked,
         )
 
     def metric_kwargs(self) -> dict[str, float]:
         """The reported columns. All zero (not absent) when nothing ran, so a
         rebuild that silently stopped happening reads as 0.0 rather than as a
-        missing column that a consumer would skip."""
+        missing column that a consumer would skip.
+
+        DENOMINATOR: ``rows`` counts only batches that actually went through
+        ``rebuild_sf_targets_in_arrays`` — the accumulator receives coverage
+        from nowhere else — so every ``_frac`` here is a fraction of the
+        REBUILT batches, not of all batches trained on. With the flag on for
+        a whole iteration the two are the same thing; on the iteration where
+        a live flip lands mid-way the fracs are over the rebuilt subset only,
+        a one-row transient (docs/target_rebuildability.md, "Before flipping
+        the flag live").
+
+        ``sf_rebuild_masked_p0_frac`` / ``_volatility_frac`` decompose
+        ``sf_rebuild_masked_frac`` per flag, and are PRE-mask presence
+        fractions: while a rebuild experiment runs they are the replacement
+        for ``has_sf_p0_frac``, which the mask pins at 0.0. A masked_p0 frac
+        of 0.0 with the flag on means the selfplay workers stopped recording
+        sf_p0 rows — the outage the original column existed to catch.
+        """
         denom = float(max(1, self.rows))
         return {
             "sf_rebuild_policy_frac": float(self.policy_rebuilt) / denom,
             "sf_rebuild_wdl_frac": float(self.wdl_rebuilt) / denom,
             "sf_rebuild_masked_frac": float(self.cross_ply_masked) / denom,
+            "sf_rebuild_masked_p0_frac": float(self.p0_masked) / denom,
+            "sf_rebuild_masked_volatility_frac": float(self.volatility_masked) / denom,
         }
 
 
@@ -444,7 +509,15 @@ def rebuild_sf_targets_in_arrays(
     stays paired.
     """
     n_rows = 0
-    for probe in ("has_sf_multipv_raw", "sf_policy_target", "has_sf_label_meta", "sf_wdl"):
+    for probe in (
+        "has_sf_multipv_raw", "sf_policy_target", "has_sf_label_meta", "sf_wdl",
+        # Fall back to the cross-ply flags: a batch carrying ONLY those still
+        # gets rows counted by the mask below, and rows=0 would turn
+        # sf_rebuild_masked_frac from a fraction into a raw count (> 1.0).
+        # Unreachable from the live schema today (every producer ships the
+        # four keys above); the guard is cheaper than that failure mode.
+        *CROSS_PLY_SF_FLAGS,
+    ):
         cand = arrs.get(probe)
         if cand is not None and np.asarray(cand).ndim >= 1:
             n_rows = int(np.asarray(cand).shape[0])
@@ -465,12 +538,17 @@ def rebuild_sf_targets_in_arrays(
             params=params,
         )
         rows_idx = np.flatnonzero(has_raw)
+        # No astype before the write: fancy-index assignment casts f32 to the
+        # stored dtype (fp16 in shards) element-by-element with the same
+        # rounding astype uses, so a pre-cast only materialises an extra
+        # (B, width) temporary (~0.9 ms + 1.9 MB/batch measured) for a
+        # bit-identical result (test_rebuild_in_arrays_writeback_matches_astype).
         if bool(ok.all()):
             # Common case: every labelled row rebuilt. Skip the `[ok]` gather,
             # which at policy width 1858 is a full copy of the output.
-            pol[rows_idx] = rebuilt.astype(pol.dtype, copy=False)
+            pol[rows_idx] = rebuilt
         else:
-            pol[rows_idx[ok]] = rebuilt[ok].astype(pol.dtype, copy=False)
+            pol[rows_idx[ok]] = rebuilt[ok]
         arrs["sf_policy_target"] = pol
         n_policy = int(np.count_nonzero(ok))
 
@@ -481,7 +559,7 @@ def rebuild_sf_targets_in_arrays(
             np.asarray(arrs["sf_label_meta"])[has_meta], params,
         )
         write = np.flatnonzero(has_meta)[ok_wdl]
-        wdl[write] = rebuilt_wdl[ok_wdl].astype(wdl.dtype, copy=False)
+        wdl[write] = rebuilt_wdl[ok_wdl]  # assignment casts; see the policy write
         arrs["sf_wdl"] = wdl
         n_wdl = int(write.size)
 
@@ -490,7 +568,9 @@ def rebuild_sf_targets_in_arrays(
         rows=n_rows,
         policy_rebuilt=n_policy,
         wdl_rebuilt=n_wdl,
-        cross_ply_masked=masked,
+        cross_ply_masked=masked.rows,
+        p0_masked=masked.p0,
+        volatility_masked=masked.volatility,
     )
 
 
@@ -500,12 +580,26 @@ def rebuild_sf_targets_in_arrays(
 CROSS_PLY_SF_FLAGS: tuple[str, ...] = ("has_sf_p0", "has_sf_volatility")
 
 
-def mask_cross_ply_sf_targets(arrs: dict[str, np.ndarray]) -> int:
-    """Zero the presence flags of the cross-ply SF targets.
+@dataclass(frozen=True)
+class CrossPlyMaskCounts:
+    """PRE-mask row counts from one `mask_cross_ply_sf_targets` call.
 
-    Returns the number of ROWS that lost at least one cross-ply target — not
-    the number of flags cleared, which would exceed the row count whenever a
-    row carried both and make a column named ``_frac`` report > 1.0.
+    ``rows`` is the number of ROWS that lost at least one cross-ply target —
+    not the number of flags cleared, which would exceed the row count
+    whenever a row carried both and make a column named ``_frac`` report
+    > 1.0. ``p0`` / ``volatility`` are the per-flag presence counts BEFORE
+    the mask cleared them; after it, a cleared flag is indistinguishable from
+    one the worker never recorded, so these counts are the only place the
+    outage signal survives (see ``SfRebuildCoverage.metric_kwargs``).
+    """
+
+    rows: int = 0
+    p0: int = 0
+    volatility: int = 0
+
+
+def mask_cross_ply_sf_targets(arrs: dict[str, np.ndarray]) -> CrossPlyMaskCounts:
+    """Zero the presence flags of the cross-ply SF targets.
 
     ``sf_p0_policy_target[t]`` IS ``sf_policy_target[t-1]`` (verified exactly
     on live shards) and ``sf_volatility_target[t]`` IS
@@ -518,6 +612,7 @@ def mask_cross_ply_sf_targets(arrs: dict[str, np.ndarray]) -> int:
     so it stays valid under any rebuild.
     """
     touched: np.ndarray | None = None
+    per_flag: dict[str, int] = {}
     for flag in CROSS_PLY_SF_FLAGS:
         cur = arrs.get(flag)
         if cur is None:
@@ -526,9 +621,14 @@ def mask_cross_ply_sf_targets(arrs: dict[str, np.ndarray]) -> int:
         if arr.size == 0:
             continue
         nonzero = arr != 0
+        per_flag[flag] = int(np.count_nonzero(nonzero))
         touched = nonzero if touched is None else (touched | nonzero)
         arrs[flag] = np.zeros_like(arr)
-    return 0 if touched is None else int(np.count_nonzero(touched))
+    return CrossPlyMaskCounts(
+        rows=0 if touched is None else int(np.count_nonzero(touched)),
+        p0=per_flag.get("has_sf_p0", 0),
+        volatility=per_flag.get("has_sf_volatility", 0),
+    )
 
 
 def rebuild_categorical_target_in_arrays(

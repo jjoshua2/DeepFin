@@ -424,8 +424,17 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # and a human decides whether the meaning moved with it. Here it did not.
 #   full_pass  c8fb48a79e804bb4 -> 2efe658b4e778870
 #   sampled    e3cc3241626a581f -> d6f7cabecd8e6f67
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:2efe658b4e778870"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:d6f7cabecd8e6f67"
+#
+# Moved again by the #283 review follow-up (fail-closed rebuild default):
+# `_prepare_host_arrays` now defaults `rebuild_sf_targets=False` and
+# `_sample_batch_host` opts in explicitly — both frames are covered, and the
+# sampled/full-pass numbers are unchanged (the full pass still pins False;
+# the sampled path still rebuilds exactly when the trainer flag is on), so
+# this is another declared false positive of the same shape as #283's.
+#   full_pass  2efe658b4e778870 -> bed3d8e3799e997d
+#   sampled    d6f7cabecd8e6f67 -> 610f05cf817b4783
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:bed3d8e3799e997d"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:610f05cf817b4783"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:

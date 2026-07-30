@@ -30,24 +30,43 @@ experiment is therefore a ~95/5 **mixture of two target regimes**, not a clean
 swap. Probably tolerable; it is not "the entire window", and a verdict that
 assumes a clean swap is overstating its own treatment.
 
-Three `progress.csv` columns report what actually happened, per iteration:
+Five `progress.csv` columns report what actually happened, per iteration:
 
 | column | meaning |
 |---|---|
 | `sf_rebuild_policy_frac` | rows whose `sf_policy_target` was rebuilt / rows in the batch |
 | `sf_rebuild_wdl_frac` | rows whose `sf_wdl` was rebuilt / rows in the batch |
 | `sf_rebuild_masked_frac` | **rows** that lost ≥1 cross-ply target / rows in the batch |
+| `sf_rebuild_masked_p0_frac` | rows whose `has_sf_p0` was set **before** the mask / rows in the batch |
+| `sf_rebuild_masked_volatility_frac` | same, for `has_sf_volatility` |
 
 `sf_rebuild_masked_frac` counts ROWS, not flags. Counting flags made it read
 **2.0** on a window where every masked row carried both `has_sf_p0` and
 `has_sf_volatility` — a column named `_frac` that exceeds 1.0 is not a coverage
 number, and it hid the real per-row rate behind the number of flags per row.
+The two `masked_*` columns decompose it per flag, and they are **PRE-mask**
+presence fractions, which makes them the outage detector while a rebuild
+runs: the mask zeroes the flags indistinguishably from "never recorded", so
+`has_sf_p0_frac` — documented in `trainable_report.py` as the sf_p0 outage
+detector — is pinned at exactly 0.0 for the duration of any rebuild
+experiment and can detect nothing there. `sf_rebuild_masked_p0_frac → 0`
+with the flag on is the reading that means "the selfplay workers stopped
+recording sf_p0 rows".
 
-All three read **0.0** with the flag off, so a non-zero value *is* the proof
+All five read **0.0** with the flag off, so a non-zero value *is* the proof
 the flip reached the batch pipeline. The transition log line proves only the
 config push — it fires from the setter, before any batch is built. Do not use
 `has_sf_p0_frac → 0` as the proof either: on a window with no p0 rows it
-already reads 0 and proves nothing.
+already reads 0 and proves nothing — and with the flag ON it reads 0 by
+construction (the mask), which proves even less.
+
+**Denominator caveat, all five columns:** the accumulator receives counts only
+from batches that actually went through the rebuild, so each `_frac` is a
+fraction of the REBUILT batches, not of every batch the iteration trained on.
+With the flag steady for a whole iteration the two denominators coincide; on
+the single iteration where a live flip lands mid-way, the row mixes pre- and
+post-flip batches and the fracs cover only the post-flip subset — a one-row
+transient to read around, not a coverage regression.
 
 On the row produced by `eval_full_pass` — the frozen ruler, and the only eval
 production runs — all three stay 0.0 **by construction** (it pins the rebuild
@@ -179,6 +198,12 @@ makes the corruption visible; the pin keeps the measurement usable.
   | `PRODUCTION_FULL_PASS_RULER` | `v1:full_pass:c8fb48a79e804bb4` | **`v1:full_pass:2efe658b4e778870`** |
   | `PRODUCTION_SAMPLED_RULER` | `v1:sampled:e3cc3241626a581f` | **`v1:sampled:d6f7cabecd8e6f67`** |
 
+  (Historical: the #283 review follow-up later moved both again — to
+  `v1:full_pass:bed3d8e3799e997d` / `v1:sampled:610f05cf817b4783` — by making
+  the rebuild gate fail-closed in `_prepare_host_arrays` /
+  `_sample_batch_host`. Same declared-false-positive shape; see the ledger's
+  2026-07-30 addendum.)
+
   Both are interpreter-independent, re-verified on the merged tree: the seven
   covered frames digest identically on CPython **3.10.12, 3.11.14 and
   3.12.12**. (#282's earlier `ast.unparse` digest was interpreter-dependent —
@@ -229,7 +254,7 @@ control run (flag on, capture-identical params) and a treatment run must mask
 the *same* rows, or the paired comparison is confounded by the own-move teacher
 switching on and off between arms.
 
-Two rejected alternatives, for the record:
+Three rejected alternatives, for the record:
 
 * **Leave them stale.** This is the defect the masking exists to prevent: the
   loop's only external move-teacher would train on capture-time targets while
@@ -241,6 +266,22 @@ Two rejected alternatives, for the record:
   and at temp 0.012 keeps only ~18 non-zero entries; softening has to resurrect
   a tail that fp16 already flushed to zero. Softening is the direction any
   `sf_policy_temp` experiment goes, so this is not a substitute.
+* **Also mask the ~5.4 % of SF-labelled rows without `sf_multipv_raw`.** Those
+  rows train `w_sf_move` on capture-time targets while the other ~95 % move —
+  the SAME failure shape the cross-ply mask exists to prevent, just bounded by
+  the mixture fraction instead of total. And the slice is **not a random
+  5.4 %**: whether a row carries raw is decided by what happened at capture
+  (the live builder's no-scoreable-candidates fallback writes no sparse rows,
+  and pre-raw-schema rows age through the window), so it is correlated with
+  position type and shard age. It is left UNMASKED as a judgment call, and
+  this is a **known gap**, not an oversight: masking would silently delete
+  those rows from the `w_sf_move` leg for the entire run — a permanent
+  coverage cut paid on every iteration — to prevent a contamination that is
+  (a) reported per iteration by `sf_rebuild_policy_frac` sitting below the
+  SF-labelled fraction and (b) proportional to how far the experiment's
+  params sit from capture. An experiment that moves the params far enough to
+  care should apply the strict variant itself (mask `has_sf_move` where
+  `has_sf_multipv_raw` is 0) and say so in its ledger entry.
 
 ## NOT rebuildable — the source was never stored
 
@@ -288,9 +329,12 @@ prose's "~95 %" as a coverage regression. The denominator is all batch rows on
 purpose — it makes the column a fraction of the training batch, which is what
 "how much of what I trained on was re-pointed" actually asks.
 
-**The deploying restart will ROTATE `progress.csv`.** This PR adds three report
-keys (`sf_rebuild_policy_frac` / `_wdl_frac` / `_masked_frac`, plus their
-`test_` twins), which changes the report schema, so
+**The deploying restart will ROTATE `progress.csv`.** The rebuild reports
+**five** `sf_rebuild_*` keys, each with a `test_` twin — ten columns in all.
+Three arrived with #283 (`sf_rebuild_policy_frac` / `_wdl_frac` /
+`_masked_frac`) and two with the #288 review follow-up (`_masked_p0_frac` /
+`_masked_volatility_frac`), so BOTH deploys rotate: #283's and then #288's.
+Each rotation changes the report schema, so
 `_rotate_progress_csv_if_schema_changed` (`tune/harness.py`, PR #262) moves the
 existing file aside and starts a new one. That is correct behaviour and
 `scripts/ratchet_slope.py` and `scripts/train_watchdog.py` already follow

@@ -854,6 +854,15 @@ class TrainMetrics:
     sf_rebuild_policy_frac: float = 0.0
     sf_rebuild_wdl_frac: float = 0.0
     sf_rebuild_masked_frac: float = 0.0
+  # Per-flag PRE-mask decomposition of `sf_rebuild_masked_frac`. The cross-ply
+  # mask zeroes has_sf_p0 / has_sf_volatility indistinguishably from "never
+  # recorded", which pins `has_sf_p0_frac` — the outage detector above — at
+  # 0.0 for the whole of any rebuild experiment. These columns carry the
+  # pre-mask presence fractions, so the detector keeps working while the flag
+  # is on: `sf_rebuild_masked_p0_frac == 0.0` with the rebuild running means
+  # the selfplay workers stopped recording sf_p0 rows.
+    sf_rebuild_masked_p0_frac: float = 0.0
+    sf_rebuild_masked_volatility_frac: float = 0.0
   # Per-game-phase loss split (bucketed by moves_left).
     policy_loss_open: float = 0.0
     policy_loss_mid: float = 0.0
@@ -1198,13 +1207,29 @@ def resolve_sf_target_params(config: dict) -> SfTargetParams:
     Shared by `trainer_kwargs_from_config` (construction) and the per-iteration
     live push, so the two cannot read the same yaml keys differently — the
     defect shape where a live edit lands in a value the constructor never saw.
+
+    Defaults come FROM THE DATACLASS, not from a re-hardcoded copy: the same
+    five yaml keys are also read by `tune/distributed_runtime.py` (worker
+    manifest), `worker.py` (reco resolution) and `tune/trial_config.py`, all
+    of which now derive from `SfTargetParams` too, and
+    `test_sf_target_param_defaults_have_one_home` pins the `GameConfig` /
+    `TrialConfig` dataclass defaults to it. Five independent copies of the
+    same default is how a drifted reader ships a silent capture/rebuild
+    mismatch.
     """
+    d = SfTargetParams()
     return SfTargetParams(
-        sf_policy_temp=float(config.get("sf_policy_temp", 0.25)),
-        sf_policy_label_smooth=float(config.get("sf_policy_label_smooth", 0.05)),
-        sf_wdl_use_cp_logistic=bool(config.get("sf_wdl_use_cp_logistic", False)),
-        sf_wdl_cp_slope=float(config.get("sf_wdl_cp_slope", 0.010)),
-        sf_wdl_cp_draw_width=float(config.get("sf_wdl_cp_draw_width", 60.0)),
+        sf_policy_temp=float(config.get("sf_policy_temp", d.sf_policy_temp)),
+        sf_policy_label_smooth=float(
+            config.get("sf_policy_label_smooth", d.sf_policy_label_smooth)
+        ),
+        sf_wdl_use_cp_logistic=bool(
+            config.get("sf_wdl_use_cp_logistic", d.sf_wdl_use_cp_logistic)
+        ),
+        sf_wdl_cp_slope=float(config.get("sf_wdl_cp_slope", d.sf_wdl_cp_slope)),
+        sf_wdl_cp_draw_width=float(
+            config.get("sf_wdl_cp_draw_width", d.sf_wdl_cp_draw_width)
+        ),
     )
 
 
@@ -2114,7 +2139,7 @@ class Trainer:
         *,
         rng: np.random.Generator,
         mirror_prob: float,
-        rebuild_sf_targets: bool = True,
+        rebuild_sf_targets: bool = False,
         coverage: _SfRebuildCoverageAccumulator | None = None,
     ) -> dict[str, np.ndarray]:
         """Target rebuilds, payload pruning, history selection and mirroring.
@@ -2125,10 +2150,17 @@ class Trainer:
         Every step here is a pure function of ``arrs`` except the mirror, which
         is a no-op at ``mirror_prob <= 0`` and does not touch ``rng`` there.
 
-        ``rebuild_sf_targets=False`` suppresses the SF target rebuild even when
-        ``self.rebuild_sf_targets`` is on. The full-pass ruler passes False —
-        same reasoning, and the same mechanism, as ``mirror_prob=0.0`` there:
-        a ruler must not acquire a dependency on a training-side config knob.
+        ``rebuild_sf_targets`` gates the SF target rebuild and DEFAULTS OFF —
+        fail-closed. Only ``_sample_batch_host``, the training path, opts in
+        with True (and even then nothing rebuilds unless
+        ``self.rebuild_sf_targets`` is on). The default used to be True with
+        the ruler protected by a per-callsite ``False`` pin, which made every
+        FUTURE producer a hazard: a new caller that took no position would
+        silently rebuild — i.e. retarget its measurement whenever the flag
+        was on. Defaulting False inverts that: forgetting the kwarg can only
+        under-apply a training experiment (visible as ``sf_rebuild_*_frac``
+        staying 0), never move a ruler
+        (test_prepare_host_arrays_defaults_to_stored_targets).
 
         ``coverage`` is the sink the rebuild's row counts land in, defaulting
         to the trainer-wide one that the TRAINING metrics drain. It has to be
@@ -2184,6 +2216,9 @@ class Trainer:
                 buf.sample_batch_arrays(batch_size),
                 rng=buf.rng,
                 mirror_prob=mirror_prob,
+  # The one explicit opt-in: sampled batches are the TRAINING
+  # distribution, the thing the rebuild exists to retarget.
+                rebuild_sf_targets=True,
                 coverage=coverage,
             )
 
@@ -2255,8 +2290,10 @@ class Trainer:
         eval path already passed 0.0 here; it is pinned rather than plumbed so
         the full pass cannot acquire an rng dependency by configuration.
 
-        ``rebuild_sf_targets=False`` is pinned for the same reason and by the
-        same mechanism. With the rebuild on, this path would (a) score the
+        ``rebuild_sf_targets=False`` is also the DEFAULT (fail-closed since
+        the PR #283 review follow-up), but stays pinned explicitly here for
+        the same reason: the ruler must not depend on a default that a
+        refactor could flip back. With the rebuild on, this path would (a) score the
         model against REBUILT `sf_policy_target` / `sf_wdl` and (b) drop
         `w_sf_own` and `w_sf_volatility` from `total`, because the rebuild
         masks the two cross-ply targets it cannot move. Both change what
