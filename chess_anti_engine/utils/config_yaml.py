@@ -161,6 +161,7 @@ _SELFPLAY_KEYS = (
     "record_sf_p0_regret",
     "record_fast_ply_value",
     "blindspot_harvest_out_path",
+    "selfplay_resume_inflight_games",
 )
 
 # Public alias. This tuple is the canonical enumeration of "yaml keys that

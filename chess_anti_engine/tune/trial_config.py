@@ -253,6 +253,10 @@ class TrialConfig:
     record_sf_p0_regret: bool = False
     record_fast_ply_value: bool = False
     blindspot_harvest_out_path: str = ""
+  # Distributed workers only: persist in-flight games at a selfplay-session
+  # teardown and resume them in the next session, instead of abandoning ~256
+  # partial games (and their ~698k-node SF labels) every restart. Default off.
+    selfplay_resume_inflight_games: bool = False
 
   # --- Diff focus ---
     diff_focus_enabled: bool = True
@@ -621,6 +625,9 @@ class TrialConfig:
             record_sf_p0_regret=bool(config.get("record_sf_p0_regret", False)),
             record_fast_ply_value=bool(config.get("record_fast_ply_value", False)),
             blindspot_harvest_out_path=str(config.get("blindspot_harvest_out_path", "")),
+            selfplay_resume_inflight_games=bool(
+                config.get("selfplay_resume_inflight_games", False)
+            ),
 
   # --- Diff focus ---
             diff_focus_enabled=bool(config.get("diff_focus_enabled", True)),

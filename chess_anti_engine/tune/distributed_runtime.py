@@ -377,6 +377,9 @@ def build_recommended_worker(
         "record_sf_p0_regret": bool(config.get("record_sf_p0_regret", False)),
         "record_fast_ply_value": bool(config.get("record_fast_ply_value", False)),
         "blindspot_harvest_out_path": str(config.get("blindspot_harvest_out_path", "")),
+        "selfplay_resume_inflight_games": bool(
+            config.get("selfplay_resume_inflight_games", False)
+        ),
         "categorical_blend_frac": float(config.get("categorical_blend_frac", 0.0)),
         "categorical_search_blend_frac": float(
             config.get("categorical_search_blend_frac", 0.0)
