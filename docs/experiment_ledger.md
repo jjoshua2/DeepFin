@@ -82,6 +82,7 @@ and 2026-07-02):
 
 | snapshot | state captured | restore |
 |---|---|---|
+| `data/salvage/pre_restart_bundle_20260731` | 2026-07-31 12:54, trial 13a9f **iter 477** (ckpt_000476, **833 shards, 4.0G**) — banked immediately before the restart that deploys the merged bundle: **#291** (`train.sh stop` drains selfplay workers instead of discarding in-flight games) and **#289** (`sp=` harvest provenance tag). No yaml keys change, so the all-or-nothing live validator is not exercised. **⚑ THIS IS THE FIRST COMPLETE REVERT POINT SINCE 2026-07-27.** Every snapshot from 07-27 to 07-30 is weights-only (0 shards, 656M) because `salvage.py` chose its source by `is_dir()` on an EMPTY decoy directory and reported `shards=0` as success — fixed in **#290**, and this export is the end-to-end proof on production: 833 of the real shards copied, `iter=477` matched live, `newest on disk: checkpoint_000476` matched the exported ckpt. State at bank time: seeding ON (`opening_fen_dole_per_iter: 1`, `opening_fen_dole_max_fraction: 0.08`, realized 6.67% of games / 4.14% of rows), pool `blindspot_fens_retire_474.txt`, `zclip_max_norm: 6.5`, `selfplay_resume_inflight_games: true`. **This is the pool to restore if the bundle goes wrong**, and unlike its recent predecessors it can serve a genuinely data-affecting rollback. | `./scripts/train.sh salvage-restart data/salvage/pre_restart_bundle_20260731` |
 | `data/salvage/pre_restart_20260730` | 2026-07-30 11:05, trial 13a9f **iter 368** (ckpt_000367, **0 shards, 656M — see the warning**) — banked immediately before the restart that deploys **#283/#284/#285/#286/#287** (all plumbing or flag-off) plus the ONE data-affecting change, `feature_dropout_p` 0.10 → 0.0. Export guard verified: `iter=368` matched live, and `newest on disk: checkpoint_000367` matched the exported ckpt. Contains `trainer.pt` (weights+optimizer), `pid_state.json`, `rng_state.json`, `holdout.npz`, `trial_meta.json`. **⚑⚑ WARNING — THIS SNAPSHOT HAS NO REPLAY WINDOW, AND NEITHER DOES ANY RECENT ONE.** `salvage.py:461-463` falls back to `tune_replay_root_override` only when the trial's `replay_shards` **is not a dir** — it IS a dir but EMPTY, so the fallback never fires and **0 of the 842 real shards (3.4G, at `runs/pbt2_small/replay/<trial>/replay_shards`) are copied**, reported as success via a `shards=0` log line that nothing checks. Signature-defect class: a guard that cannot fire plus a success report that does not mean what it says. Tracked as a fix task. **Adequate for THIS restart anyway, and the reason is specific:** `feature_dropout_p` is applied at `trainer.py:2876` inside `_run_optimizer_step` to `batch["x"]` — a train-time augmentation that changes NO recorded data, so the replay window is bit-identical either way and the revert is "set 0.10 + restart". **Do NOT rely on this snapshot for a data-affecting rollback** — for those, copy the shards from the override root by hand until the fallback is fixed. | `./scripts/train.sh salvage-restart data/salvage/pre_restart_20260730` |
 | `data/salvage/pre_audit_deploy_20260726` | 2026-07-26 ~23:00, trial 13a9f **iter 65** (ckpt_000064, 821 shards, 3.6G) — banked immediately before the deploy restart that merges PRs **#260/#262/#263/#264/#265/#266/#267**. Export guard verified: printed `iter=65` matched live iter 65, and `newest on disk: checkpoint_000064` matched the exported ckpt, so the `result.json`-is-a-sync-copy gotcha is ruled out by the guard rather than assumed. State at bank time: boot512 lineage at 3e-5, seeding OFF (`opening_fen_dole_per_iter: 0`), `holdout_frozen: 1` / `test_replay: 2000`, and the live yaml already pinned to the REALIZED `soft_policy_temp: 2.0` and `diff_focus 6.0/3.5/3.0/0.025`. **This is the one to restore if the six-PR deploy goes wrong** — note #260 changes per-group `weight_decay` re-application, so the optimizer state, not just the weights, is what this preserves. | `./scripts/train.sh salvage-restart data/salvage/pre_audit_deploy_20260726` |
 | `data/salvage/pre_audit_window_20260726` | 2026-07-26 ~16:40, trial 13a9f **iter 41** (ckpt_000040, 820 shards, 2.3G) — banked immediately before the audit restart that merges `origin/main` (PRs #249–#253) and sets `freeze_holdout_at: 2000`. Export guard verified: printed iter 41 == live iter 41 (`result.json` row 4.1 min old), and `newest on disk: checkpoint_000040` matched the exported ckpt. This is the boot512-restart lineage at the donor's own LR (3e-5), seeding off. | `./scripts/train.sh salvage-restart data/salvage/pre_audit_window_20260726` |
@@ -14603,3 +14604,114 @@ resume). Nothing about the seeding verdict can be read from rows 407-411.
 operator pause currently costs ~-0.008 regret plus a wasted readout window, and
 pauses are routine. The fix is to make `train.sh stop` drain in-flight games
 into `selfplay_resume/` the way a graceful session restart already does.
+
+---
+
+## ⚑⚑ PRE-REGISTRATION (2026-07-31 13:5x) — WIDE-SPAN STRENGTH ARENA, written BEFORE the games are played
+
+**Why this exists.** The daily ratchet has produced **no usable reading since 2026-07-29**.
+07-30 (iter308) and 07-31 (iter409) both logged `unparseable Elo/CI (elo='' lo='' hi='')`
+on BOTH series because the arena completed **zero games** inside its ~880s budget; the
+last run that finished any games (07-29, no `--search-shape`) did 16 games in 175s. The
+cliff is exactly aligned with `daily_gate_ratchet.sh` starting to pass
+`--search-shape training`. `daily_gate_ratchet.sh` **exits 0 on an unparseable result**,
+so `ratchet_loop.sh` stamped `data/ratchet/last_run_date` and never retried — the only
+strength instrument in the project failed silently for two days while still charging the
+L6 contention tax (~30 min/day at a measured 2.4x iteration slowdown). **It was pure cost.**
+
+**Why the daily cadence could never have worked anyway.** One day is ~90 iterations. At
+the loop's assumed ~0.02 Elo/iter that is ~2 Elo, against a 26-game pentanomial CI of
+±150. `vs_prev` was unresolvable by construction. The fix is not a bigger budget (L6
+already rejected that) but **spending the whole budget on one maximally-wide lever arm.**
+
+**THE RUN.** Training PAUSED via `runs/pbt2_small/tune/pause.txt` (not stopped — the
+trial blocks at the top of an iteration, so no in-flight selfplay game is discarded).
+
+```
+PYTHONPATH=. python3 scripts/arena_standard.py \
+  --candidate scratchpad/strength_readout_0731/ck477/trainer.pt \
+  --reference scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt \
+  --mode matched_sims --search-shape training --sims 32 --games 600 \
+  --max-concurrent-games 16 --report-every 32 --no-compile --device cuda --seed 42 \
+  --label widespan_boot512_vs_ck477
+```
+
+Span: the frozen `boot512` anchor (2026-07-11) vs live iter 477 (2026-07-31) — **20 days.**
+
+**⚠ NOT COMPARABLE TO THE TWO HISTORICAL `vs_boot512` ROWS.** Those (−12.2 @iter25,
+−11.1 @iter122) were measured under the implicit PLAY shape at `vloss_weight=0`. The
+shape change is known to move Elo by tens of points (a sims-ladder rung went −52.5 →
++5.8 under it). This is a NEW series; the old rows are not its baseline.
+
+**PRE-COMMITTED READING RULE.**
+- **CI excludes 0, POSITIVE** ⇒ the loop does produce strength. Next action is the
+  BISECTION: re-run against the banked daily snapshots (iter25/122/218/308/409, all in
+  `data/ratchet/snapshots/`) to localise WHEN the gain happened and attribute it.
+- **CI includes 0** ⇒ at the expected ~±25 Elo half-width, 20 days of training produced
+  less than 25 Elo. We are ~500 Elo below Cheese, i.e. in the large-easy-gains regime
+  where a working loop should be nowhere near this flat. **This is a stop-and-diagnose
+  finding, not a tuning signal**, and the next action is "why are we not gaining",
+  NOT another arena.
+- **CI excludes 0, NEGATIVE** ⇒ the loop is actively destroying strength. Bisect
+  immediately against the daily snapshots to find the day it started.
+- **Fewer than 200 games completed** ⇒ report as NO READING and fix the arena's
+  throughput first. Do NOT read a <200-game CI as a null. (This clause exists because
+  the 07-28/07-29 rows — 46 and 26 games — were written into the CSV as if they were
+  readings.)
+
+**Companion offline evidence, already measured (2026-07-31, `scripts/value_regret.py`,
+canonical v1-2k protocol, dumps in `scratchpad/strength_readout_0731/`).** Value-head
+1-ply deep-SF regret, cp, LOWER is better, TB-excluded n=1723:
+
+| checkpoint | overall | endgame | middlegame |
+|---|---|---|---|
+| boot512 (2026-07-11 anchor) | **74.4** | 86.1 | 55.9 |
+| iter 25 | 79.2 | 89.3 | 63.3 |
+| iter 122 | 79.0 | 91.3 | 59.6 |
+| iter 218 | 77.4 | 85.6 | 64.4 |
+| iter 308 | 78.6 | 90.8 | 59.3 |
+| iter 409 | 78.1 | 89.5 | 60.1 |
+| iter 477 | **88.3** | 98.9 | 71.6 |
+
+Paired CIs owed before any of this is a verdict, and the iter-477 jump is being checked
+against iters 430/450/470 to tell a trend from a spike. Stated plainly: **on this ruler
+the value head has not beaten the bootstrap weights at any point in the trial.** That is
+an independent instrument pointing the same way as the arena nulls — but see the
+`offline_distillation_value_trap` row: a ruler and an arena have disagreed by 96 Elo
+before, so neither one settles it alone.
+
+### ⚑ CORRECTION (2026-07-31 14:0x) — the shape hypothesis above is REFUTED. It was contention.
+
+The pre-registration one section up states, as its leading explanation for the
+ratchet's zero-game runs, that `--search-shape training` made each game much
+more expensive. **Measured and false.**
+
+With training STOPPED (13:52) the training-shape arena runs **32 games / 175s** —
+**twice** the rate of the last ratchet run that completed any games at all
+(07-29, implicit play shape, 16 games / 175s). The shape is not the cost.
+
+The 07-30 and 07-31 zero-game runs were **pure GPU contention with training**,
+which is what audit L6 already said: sims-32 concurrent with training was
+measured at **2.4x iteration slowdown**, and its conclusion was "sims-1 screening
+is genuinely cheap and **sims-32 never is, at any concurrency**". The game counts
+fall monotonically as loop throughput rose — 314 (training DOWN, post-reboot) →
+46 → 26 → 0 → 0 — which is a contention curve, not a step at a flag.
+
+**I reached for the flag because it changed on the same day.** Coincidence in
+time is the weakest kind of evidence and I ranked it above a measurement that
+was already in the audit doc, about this exact instrument, taken for this exact
+reason. Read L6 before theorising about arena cost.
+
+**CONSEQUENCE — a nightly concurrent sims-32 ratchet cannot work at ANY budget.**
+Raising the budget is the thing L6 already rejected; lowering it is what produced
+the 26-game rows. The instrument has to run in a training-down window. And the
+daily cadence should go regardless: one day is ~90 iterations, ~2 Elo at the
+loop's assumed rate, against a ±150 CI at 26 games — `vs_prev` was unresolvable
+by construction, so the same GPU is worth far more spent infrequently on the
+widest span available.
+
+**STILL OPEN (not fixed by this correction):** `daily_gate_ratchet.sh` exits 0 on
+an unparseable result, so `ratchet_loop.sh` stamps `data/ratchet/last_run_date`
+and never retries. And `train.sh start` restarts `ratchet_loop.sh`, so tonight it
+will spend ~30 min of contended GPU on a guaranteed zero-game run unless it is
+disabled first.
