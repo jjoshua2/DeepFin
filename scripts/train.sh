@@ -156,9 +156,69 @@ stop() {
     # on a stop the operator asked for (it keeps watching; a later crash or a
     # forgotten restart still shows in its log, just not as an alert).
     touch "$STOP_MARKER"
+
+    # ── Drain selfplay BEFORE anything is killed ─────────────────────────────
+    # Workers are children of the raylet, NOT of $pid, so SIGTERM to the driver
+    # never reaches them; they used to die to the `pkill -9 ray::` below, which
+    # no handler can catch. Every in-flight game was therefore discarded on an
+    # operator pause: measured 2026-07-31, `resumed games=0` on all four
+    # workers, versus `resumed games=24 records=731` across a graceful session
+    # restart. Those discarded games are what makes the next window
+    # length-truncated (only short decisive games have finished), spiking
+    # winrate and driving the PID to tighten regret ~-0.008 against a phantom.
+    #
+    # Signalling the workers directly lets their SIGTERM handler run the same
+    # suspend path a reco restart-key change already uses. Games land in
+    # <worker>/selfplay_resume/ and the next session picks them up.
+    #
+    # The wait is over the pid list captured ONCE, never a re-run of pgrep: the
+    # driver's revive_dead_selfplay_processes() (distributed_runtime.py) relaunches
+    # a worker that exits mid-iteration, so a `pgrep`-until-empty loop would never
+    # converge — it would burn the whole grace period and then report a false
+    # "still alive" warning. A revived worker is seconds old and has nothing in
+    # flight worth suspending; it dies to the `pkill -9 ray::` below at no cost.
+    local grace="${CAE_STOP_GRACE_SECONDS:-90}"
+    # -f is required (the module name is an argument, not the comm); the pattern
+    # cannot match this script because it never appears in our own argv.
+    local wpids
+    wpids=$(pgrep -f 'chess_anti_engine\.worker' 2>/dev/null || true)
+    if [ -n "$wpids" ]; then
+        echo "Draining selfplay workers (grace ${grace}s): $(echo "$wpids" | tr '\n' ' ')"
+        # shellcheck disable=SC2086
+        kill -TERM $wpids 2>/dev/null || true
+        local waited=0 alive w
+        alive="$wpids"
+        while [ "$waited" -lt "$grace" ] && [ -n "$alive" ]; do
+            sleep 2
+            waited=$((waited + 2))
+            alive=""
+            for w in $wpids; do
+                # `if`, not `kill -0 ... && ...`: under the `set -e` at the top of
+                # this file a bare && whose left side fails is the for-loop's exit
+                # status, which would abort stop() BEFORE the driver is killed —
+                # i.e. the last worker exiting would leave training half-stopped.
+                if kill -0 "$w" 2>/dev/null; then
+                    alive="$alive $w"
+                fi
+            done
+        done
+        if [ -z "$alive" ]; then
+            echo "Workers drained after ${waited}s"
+        else
+            echo "WARNING: workers still alive after ${grace}s ($alive); their" \
+                 "in-flight games will be DISCARDED." \
+                 "Raise CAE_STOP_GRACE_SECONDS if this recurs."
+        fi
+    fi
+
     echo "Stopping PID $pid ..."
     kill "$pid" 2>/dev/null || true
-    sleep 2
+    # The driver still gets a short grace; the expensive drain already happened.
+    local dwait=0
+    while [ "$dwait" -lt 15 ] && kill -0 "$pid" 2>/dev/null; do
+        sleep 1
+        dwait=$((dwait + 1))
+    done
     if kill -0 "$pid" 2>/dev/null; then
         echo "Force killing ..."
         kill -9 "$pid" 2>/dev/null || true
