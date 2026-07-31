@@ -14715,3 +14715,74 @@ an unparseable result, so `ratchet_loop.sh` stamps `data/ratchet/last_run_date`
 and never retries. And `train.sh start` restarts `ratchet_loop.sh`, so tonight it
 will spend ~30 min of contended GPU on a guaranteed zero-game run unless it is
 disabled first.
+
+---
+
+## ⚑⚑ PRE-REGISTRATION (2026-07-31 14:2x) — THE POSITIVE CONTROL: can this loop climb from random at all?
+
+**Operator decision (2026-07-31): regular training does NOT resume until we are
+convinced the loop should gain Elo rapidly.** Training has been down since 13:52.
+
+**Why this experiment exists.** Everything measured today says the loop does not
+move: value regret paired delta over 287 iterations of ordinary training is
+**+0.45 and +0.46 cp, both CIs spanning zero**; `wdl_loss` moved 0.8133 → 0.8128
+in 67 iterations; the 20-day arena vs `boot512` is sitting on zero. The one large
+movement found anywhere is **−14.06 cp [−22.09, −6.64]** across the iteration-410
+teardown window — i.e. backwards, and operational rather than learned.
+
+**We have never observed this loop produce a large, unambiguous gain.** There is
+no positive control anywhere in this ledger. Without one we cannot distinguish
+"subtly mis-tuned" from "structurally broken", and every null verdict above is
+uninterpretable — see [[most_experiments_here_are_unfalsifiable]], where the loop's
+per-iteration effect is ~1500x below the best instrument's noise floor. The fix is
+not a better instrument. It is a **regime where the effect is enormous**: random
+init to ~2000 Elo is ~2000 Elo of movement against a ±25 Elo ruler.
+
+**THE CONFIG:** `configs/scratch_pc.yaml`, isolated so it cannot touch production:
+
+```
+TRAIN_WORK_DIR=runs/scratch_positive_control \
+  ./scripts/train.sh start --config configs/scratch_pc.yaml --fresh
+```
+
+| knob | prod | scratch | why |
+|---|---|---|---|
+| `sf_pid_enabled` | true | **false** | **The PID is a homeostat and it cancels the signal.** It lowers regret (harder SF) as the net wins more, holding winrate at 0.50 — so an improving net and a dead net produce the SAME winrate. This is why every in-loop progress signal is flat, and it is [[live_progress_signals_flat]] read correctly at last. |
+| `sf_nodes` | 5000 floor, **698,289 realized** | **10000 fixed** | THE throughput lever. Measured 2026-07-31 on the live workers: **40–85% of selfplay thread time was BLOCKED on SF** (`sf_block_starved` vs `total_thread`), GPU `network` only 2–47%, all 32 cores committed to 32 SF processes. A smaller NET attacks the wrong slice. |
+| `mcts_simulations` | 256 | 64 | cheaper tree/move |
+| `bootstrap_checkpoint` | v5_iter239 | **null** | genuinely random init |
+| `opening_fen_dole_per_iter` | 1 | **0** | seeding off — clean baseline. (NOT `opening_fen_dole_max_fraction: 0`, which means UNCAPPED.) |
+| architecture | 512×16 | **unchanged** | so a positive result transfers, instead of being about a different model |
+
+**EVERY KNOB VERIFIED ON THE REAL PATH, not read off the yaml** (2026-07-31, both
+configs loaded through `flatten_run_config_defaults` → `TrialConfig.from_dict` →
+`DifficultyState.from_pid(None, None, tc)`, which is what actually runs because
+`trainable.py:656` pins `sf = None` on the distributed path):
+
+```
+scratch_pc: sf_pid_enabled=False  tc.sf_nodes=10000  bootstrap=None  sims=64
+            DifficultyState(PID-off).sf_nodes   = 10000   <- reaches the manifest
+            DifficultyState(PID-off).wdl_regret = -1.0    <- sentinel: no adaptive handicap
+```
+
+**PRE-COMMITTED READING RULE.** The whole point is an effect far outside the noise
+floor, so the bar is blunt and the window short:
+
+- **SUCCESS** = winrate vs the fixed 10k opponent rises from ~0 to **>0.30 within
+  24h**, AND Elo vs the frozen iter-0 random weights exceeds **+300 with a CI
+  excluding 0**. ⇒ the machinery learns; the fault is in targets/tuning at
+  production difficulty, and the ledger's flat verdicts become interpretable.
+- **FAILURE** = no monotone climb in winrate over 24h. ⇒ something structural is
+  broken, and **every verdict in this ledger that rests on the loop learning is
+  suspect**, not just the recent ones.
+- **NO READING** = fewer than ~20 iterations completed, or the run dies. Do not
+  read a stalled run as a failure.
+
+**TWO LIMITS, written down NOW so they cannot be rounded up later.**
+1. **A 10k-node teacher caps the ceiling.** This is ample to demonstrate a climb to
+   ~2000 — which is exactly what was asked — but it says NOTHING about behaviour at
+   the 698k-node production regime.
+2. **If it climbs, that does NOT exonerate production.** It localises the fault to
+   targets/tuning at high difficulty rather than to the pipeline. That is a
+   different and much narrower claim than "the loop works", and it must not be
+   cited as the latter.
