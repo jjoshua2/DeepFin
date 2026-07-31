@@ -342,6 +342,13 @@ def test_audit_targets_smoke(tmp_path, monkeypatch):
     for label in ("net raw policy", "Gumbel search", "SF MultiPV soft target",
                   "production training target", "Brier vs deep WDL"):
         assert label in text
+    # The same-material warnings are the point of the report, not decoration: both
+    # tables grade a Stockfish candidate against a deeper Stockfish, and the policy
+    # one was read as a teaching verdict on 2026-07-27. Gate them so neither can be
+    # dropped silently — a warning nobody can delete is the difference between this
+    # and a comment.
+    assert "deeper version of itself" in text          # policy table, row (c)
+    assert "CALIBRATION ruler, not a target-quality ruler" in text  # value table, row (ii)
     # Every regret cell is finite and non-negative by construction; spot-check
     # the table parsed numbers exist.
     assert "cp" in text

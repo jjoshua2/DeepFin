@@ -33,6 +33,20 @@ headline that prices SF's MultiPV CPU bill.
 and scores each as expected deep-SF regret (cp) of a move sampled from the
 distribution, plus top-1 regret — reported per phase and per source.
 
+  !! THE POLICY TABLE CARRIES THE SAME SAME-MATERIAL BIAS AS THE VALUE TABLE
+  BELOW, and for the same reason. The ruler is deep SF; candidate (c) is
+  shallow SF. (c) is therefore graded against a DEEPER VERSION OF ITSELF while
+  (a)/(b)/(d)/(e) are graded against a different engine family. Wherever SF is
+  decisive the two SF objects agree by construction, so (c) starts with a margin
+  that has nothing to do with being a better TEACHER.
+  Use this table to rank candidates of the SAME material against each other —
+  search shape vs search shape, checkpoint vs checkpoint — and to detect a
+  candidate that has DRIFTED or BROKEN. Do NOT read "(c) beats (d)" as "training
+  on (c) would beat training on (d)": that inference needs a ruler the SF target
+  did not help write. This was read the wrong way on 2026-07-27 (the "the
+  external teacher is 2x better on top-1" framing) and the correction is what
+  this warning exists to prevent.
+
 For VALUE it scores, against the deep-SF native WDL (and separately against
 full-strength game outcomes on the positions that have them):
 
@@ -1039,7 +1053,13 @@ def main() -> None:
         f"see the value table.\n\n"
         f"## Policy: expected / top-1 deep-SF regret (cp)\n\n"
         f"Unlisted legal moves carry the worst-listed-line regret as a "
-        f"floor (lower bound; MultiPV >= 10 at >=1M nodes).\n\n"
+        f"floor (lower bound; MultiPV >= 10 at >=1M nodes).\n"
+        f"**Row (c) is scored against a deeper version of itself** — the ruler is "
+        f"deep SF and (c) is shallow SF — so part of its margin over (a)/(b)/(d) "
+        f"is definitional, exactly as the value table warns for row (ii). "
+        f"Same-material comparisons (search shape vs search shape, checkpoint vs "
+        f"checkpoint) are sound; \"the SF target beats the training target\" is a "
+        f"calibration reading, NOT a teaching verdict.\n\n"
         f"{_policy_table(agg, group_names)}\n\n"
         f"## Target distribution shape (the stored policy target's sharpness)\n\n"
         f"Row (d) is the distribution the policy head is trained on; row (c) is "
@@ -1047,6 +1067,16 @@ def main() -> None:
         f"training DATA, not a diagnostic.\n\n"
         f"{shape_table}\n\n"
         f"## Value: calibration against deep-SF WDL\n\n"
+        f"**This is a CALIBRATION ruler, not a target-quality ruler.** Row (ii) "
+        f"is shallow SF native WDL and the reference is deep SF native WDL — the "
+        f"same kind of object — so (ii) normally wins for a reason that has "
+        f"nothing to do with being a better teacher, exactly as the policy table "
+        f"warns for row (c). Production deliberately uses the softer cp-logistic "
+        f"(`sf_wdl_use_cp_logistic: true`) because `UCI_ShowWDL` is ~72% one-hot "
+        f"and a one-hot value target teaches over-confidence. Use this table to "
+        f"detect a candidate that has DRIFTED or BROKEN, never to pick the value "
+        f"target; reading it as a target ranking was attempted and retracted on "
+        f"2026-07-27.\n\n"
         + "\n".join(value_lines)
         + "\n\nOutcome column counts only positions whose game continued at "
         "full strength; the v1 audit set has none (handicapped curriculum), "
