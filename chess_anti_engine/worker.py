@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -888,6 +889,10 @@ class WorkerSession:
         self.model_step = 0
         self._saw_completed_game = False
         self._stop_selfplay = False
+  # Set from the SIGTERM/SIGINT handler; read by run()'s loop head so the worker
+  # exits only AFTER the normal suspend path has banked in-flight games.
+        self._shutdown_requested = False
+        self._shutdown_signal = 0
   # Train-phase pause: HOLD in-flight games (play_batch pause_fn) instead of
   # tearing the session down — teardown discards every partial game (~all
   # slots) each iteration and censors games longer than one selfplay window
@@ -1001,18 +1006,71 @@ class WorkerSession:
         return DirectGPUEvaluator(model, device=device, max_batch=4096, n_slots=2)
 
     def _stop_fn(self) -> bool:
-        """Called every ply by play_batch.  Return True to exit continuous selfplay."""
-        return self._stop_selfplay
+        """Called every ply by play_batch.  Return True to exit continuous selfplay.
+
+        `_shutdown_requested` is checked SEPARATELY rather than relying on the
+        `_stop_selfplay` the handler also sets: `_run_selfplay` clears
+        `_stop_selfplay` at session start, so a SIGTERM landing between `run()`'s
+        loop-head check and that line was erased, and a full 32-thread session
+        started with nothing left to stop it. A shutdown is terminal — once
+        requested it can never be un-requested — so it belongs here, not in a
+        flag that session setup resets.
+        """
+        return self._stop_selfplay or self._shutdown_requested
 
     def _pause_fn(self) -> bool:
         """play_batch hold gate: True while the server's train-phase pause is
         active. A pending stop always wins so teardown is never delayed."""
-        return self._hold_selfplay and not self._stop_selfplay
+        return self._hold_selfplay and not self._stop_fn()
+
+    def _install_shutdown_handlers(self) -> None:
+        """Turn SIGTERM/SIGINT into the SAME graceful teardown a reco restart-key
+        change already performs, so a shutdown suspends in-flight games instead
+        of discarding them.
+
+        Without this the worker had no signal handler at all, so
+        `_suspend_inflight_games` was reachable ONLY via `_stop_selfplay` — and
+        an operator pause therefore killed every in-flight game. Measured
+        2026-07-31: `resumed games=0` on all four workers after a pause, versus
+        `resumed games=24 records=731` across a graceful session restart. The
+        discarded games are what makes the next window length-truncated (only
+        short decisive games have finished), which spikes winrate and drives the
+        PID to tighten regret ~-0.008 against a phantom.
+
+        The handler only sets flags. The per-ply `_stop_fn` poll does the real
+        work, which keeps this async-signal-safe and reuses the suspend path that
+        is already exercised in production. Handlers run on the MAIN thread only;
+        selfplay threads observe the flag through `_stop_fn`, so threaded
+        selfplay is covered.
+        """
+        def _handler(signum: int, _frame: object) -> None:
+  # Signal-handler context: set flags, do not log or take locks.
+            self._shutdown_signal = int(signum)
+            self._shutdown_requested = True
+            self._stop_selfplay = True
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                signal.signal(sig, _handler)
+            except (ValueError, OSError):
+  # Not the main thread, or the platform refuses — the worker must still
+  # run; it just falls back to the old discard-on-kill behaviour.
+                self.log.warning("could not install %s handler", sig)
 
     def run(self) -> None:
         """Main loop."""
+        self._install_shutdown_handlers()
         try:
             while True:
+                if self._shutdown_requested:
+  # Set by SIGTERM/SIGINT. Any in-flight session has already been torn
+  # down through the normal suspend path by the time control returns
+  # here, so this is the clean exit point.
+                    self.log.info(
+                        "shutdown requested (signal %d); exiting after suspend",
+                        self._shutdown_signal,
+                    )
+                    return
                 manifest = self._poll_manifest()
                 if manifest is None:
                     continue
@@ -3678,6 +3736,15 @@ class WorkerSession:
 
     def _run_selfplay(self, manifest: dict) -> None:
         """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
+  # Do not start a session we have already been told to shut down. `run()`'s
+  # loop-head check cannot cover the gap between itself and here — a SIGTERM
+  # landing while the worker is between sessions (blocked in `_poll_manifest`'s
+  # 30s GET, syncing assets, resuming banked games) would be erased by the reset
+  # below. That window is NARROW — sessions restart 1-2x in 11h on the live
+  # run — but it is silent, and the session it starts would also un-bank games
+  # an earlier teardown had saved.
+        if self._shutdown_requested:
+            return
         self._stop_selfplay = False
         self._hold_selfplay = False
         self._last_manifest_poll_s = time.time()

@@ -1674,6 +1674,135 @@ by then carries a recorded `holdout_ruler`, expect exactly ONE
 pin announcing a source move, to be read against this addendum, not as the
 ruler moving.
 
+### PRE-REGISTERED (not yet live) — the C14b resume never covered `train.sh stop`: an operator pause discards every in-flight game (PR TBD, 2026-07-31)
+
+**Class: completes the C14b fix below. Same mechanism, second entry point.**
+Not a target, loss, or search change.
+
+**What was measured.** The entry below reads WORKED on the path it was built
+for: a `_RECO_RESTART_KEYS` graceful session restart logs `selfplay resume:
+resumed games=24 records=731`. The operator pause path logs **`resumed
+games=0`, on all four workers.** Same feature, same flag, same worker — zero.
+
+**Why (established, not inferred).** Two independent breaks, either sufficient:
+
+1. `worker.py` installed **no signal handler at all**. `_suspend_inflight_games`
+   was reachable only via `_stop_selfplay`, which only a manifest/reco change
+   sets. A SIGTERM was simply fatal.
+2. `train.sh stop` sends SIGTERM to the pid in `/tmp/chess_training.pid`, which
+   is the **tune driver**. Workers are `subprocess.Popen` grandchildren of
+   `ray::ImplicitFunc.train`, verified on the live run (`ps -o ppid` on all
+   four worker pids gives 2140868, not the driver's 2138517). The signal never
+   reached them.
+
+**⚑ CORRECTION, same day, before this entry was ever read as a verdict.** The
+first version of this entry continued "they died to the `pkill -9 -f 'ray::'`
+further down, which no handler can catch." **That is false**, caught by the
+independent reviewer of PR #291 and then confirmed directly against
+`/proc/<pid>/cmdline`: **zero** of the four workers match `ray::` or `raylet`,
+and `comm -12` of `pgrep -f 'ray::'` with the worker pids is **empty**. Tearing
+down ray ORPHANS the workers; it does not kill them. **That much is MEASURED.**
+
+**What killed them instead is INFERRED and deliberately left that way.** The
+likely route is the 5s SIGTERM→SIGKILL in `tune/_utils.py::terminate_process`
+(via `_cleanup_trial_resources` → `_stop_worker_processes`), which runs from a
+`finally` and therefore only if `ray stop` unwinds the trial actor's task
+*before* raylet teardown kills it — nobody has instrumented that. The competing
+explanation is that they simply survived as orphans until the next launch's
+`_spawn_with_reap` stale reap (`distributed_runtime.py:973-977`, also 5s
+SIGTERM). **Correctness no longer depends on which is true**, because the second
+drain pass handles survivors unconditionally — which is exactly why this is
+recorded as inferred rather than resolved. The instrument that would settle it:
+`pgrep -f -- '-m chess_anti_engine\.worker( |$)'` immediately after a `ray stop`
+with the second pass stubbed out. **Swapping one asserted mechanism for another
+inside the paragraph correcting an asserted mechanism is the trap here**; the
+`/proc` evidence refutes the old claim without establishing a new one.
+
+Break (1) alone is sufficient for the fix and is unaffected. But the wrong
+mechanism had a **consequence in the code**: it justified the claim that a
+worker the driver revives mid-drain "dies to the `pkill -9 ray::` below at no
+cost". Nothing kills it. It reuses the dead worker's `worker_index`, hence its
+`work_dir` and `selfplay_resume/`, reaches a session in ~60s and
+**claims-by-rename the very files the drain just banked** — then dies as an
+orphan with them. `stop()` therefore now runs a SECOND drain pass after
+`ray stop`/`pkill`, SIGTERM-then-SIGKILL over whatever workers remain.
+**The lesson is the one this project keeps relearning: `ps -o ppid` answered
+"who is the parent", and I let it also answer "what killed them", which is a
+different question with a different instrument.**
+
+So the pause path cost is exactly the C14b cost the entry below quantifies —
+`pid_raw_winrate` **+0.110 too high**, PID tightening regret **−0.0086 to
+−0.0107 ≈ 88 iterations of progress** — and it has been paid on *every*
+operator pause, which is the most common teardown there is.
+
+**⚑ This is the [[merged_on_live_branch_still_never_ran]] shape again, one
+layer down.** The flag was ON, the code was merged and live, the feature's own
+log line was checked — and the observation that proved it working came from
+the *other* entry point. A verdict read on one caller does not transfer to
+another caller of the same function.
+
+**Change.** (a) `worker.py` installs SIGTERM/SIGINT handlers that set
+`_stop_selfplay` — the flag `play_batch` polls every ply — so a shutdown runs
+the SAME `on_suspend` → `suspend_inflight_games` path the restart already
+uses; `run()`'s loop head then exits. The handler only sets flags
+(async-signal-safe); an install failure off the main thread warns and keeps the
+worker running. (b) `train.sh stop` SIGTERMs the workers and waits
+(`CAE_STOP_GRACE_SECONDS`, default 90s) BEFORE touching the driver or ray, and
+again after, for orphans.
+
+**⚑ The first version of (a) reproduced this project's signature defect inside
+its own fix.** `_run_selfplay` clears `_stop_selfplay` at session start — that
+is the ONLY flag anything downstream polls — so a SIGTERM landing between
+`run()`'s loop-head check and that line was **erased**, and the worker started a
+full 32-thread session with nothing left to stop it. The window is narrow but wholly
+untested: sessions restart only 1-2 times in 11h on the live run, so the
+between-sessions state (blocked in `_poll_manifest`'s 30s GET, syncing assets,
+~60s of worker startup) is a small fraction of wall time. Rare, silent, and
+unbounded in cost when it does fire -- NOT "the common case", which is what an
+earlier draft of this line claimed without measuring it. Worse, that session runs `_resume_inflight_games`
+and un-banks games saved by an EARLIER teardown, so those die too. Reproduced
+before fixing:
+```
+after SIGTERM:       _shutdown_requested=True   _stop_fn()=True
+after _run_selfplay: _shutdown_requested=True   _stop_fn()=False
+```
+Fixed by making the shutdown terminal — `_stop_fn` returns `_stop_selfplay or
+_shutdown_requested`, and `_run_selfplay` refuses to start at all — because a
+shutdown, unlike a task change, can never be un-requested. **A flag that session
+setup resets is not where a terminal condition belongs.**
+
+**Gotcha that shaped (b):** the wait is over the pid list captured ONCE. The
+driver's `revive_dead_selfplay_processes` relaunches a worker that exits
+mid-iteration, so a `pgrep`-until-empty loop never converges — it would burn
+the full grace period and then print a false "still alive" warning. A revived
+worker is seconds old with nothing in flight, and dies to the `pkill -9` at no
+cost. `tests/test_train_sh_worker_drain.py` runs the drain block **extracted
+from the real `scripts/train.sh`** against a live-filtered `pgrep` stub, so it
+can tell the two loop shapes apart; the pgrep-polling variant fails it.
+
+**MECHANISM INSTRUMENT (same as below, different trigger) — exact command,
+run right after the NEXT `./scripts/train.sh stop`:**
+```
+grep -h "selfplay resume:" runs/pbt2_small/server/trials/*/workers/worker_*/worker.log | tail -8
+```
+**SUCCESS = `resumed games=` is > 0 on at least one worker after a pause**
+(today: 0 on all four, deterministically).
+**KILL = still 0 with the handler installed** ⇒ the suspend path is not
+reachable from a signal at all and the mechanism claim above is wrong; check
+for `shutdown requested (signal 15)` in the log to tell "handler never ran"
+from "handler ran, suspend did nothing".
+
+**Not claimed.** That the `set -e` hazard in the drain loop is live today. It
+is **latent**: measured 2026-07-31, the `&&` form is exempt from `set -e` as an
+AND-list, and the non-zero for-loop status only aborts when the loop ends a
+function — `echo "Stopping PID ..."` follows it, so it does not. The `if` form
+ships anyway because the hazard arms itself the moment anything is appended,
+and it would fire on the clean-drain path, the one case that matters. **The
+negative control for that specific claim PASSES and is recorded as passing.**
+
+**Confounds.** None with the seeding readout: this changes teardown behaviour
+only, and takes effect at the next stop.
+
 ### DEPLOYED 2026-07-30 12:40 (pre-registered 2026-07-29) — selfplay sessions RESUME their in-flight games across a restart instead of abandoning them (`selfplay_resume_inflight_games`)
 
 **DEPLOY RECORD (2026-07-30 12:40).** `selfplay_resume_inflight_games: true`
