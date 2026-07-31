@@ -331,3 +331,113 @@ def test_train_sh_still_parses() -> None:
 @pytest.mark.parametrize("marker", [_BEGIN, _END])
 def test_extraction_markers_exist(marker: str) -> None:
     assert marker in TRAIN_SH.read_text()
+
+
+# ---------------------------------------------------------------------------
+# The verdict must come from the SUSPEND LINE, not from liveness
+# ---------------------------------------------------------------------------
+#
+# 2026-07-31, first real teardown with the handler: workers 01/02/03 each
+# logged "exiting after suspend" BEFORE the 90s deadline and banked 22-23
+# in-flight games, and stop() named all three in
+#     WARNING: workers still alive after 90s (...); their in-flight games
+#     will be DISCARDED.
+# because the liveness probe caught them tearing down their CUDA context. The
+# message reported a success as data loss. These tests pin the replacement:
+# only a worker that banked NOTHING is a loss.
+
+_SUSPEND_LINE = "INFO chess_anti_engine.selfplay.resume selfplay resume: suspended games={n} records=7 skipped=0"
+
+
+def _logging_victim(*, stale: int = 0, suspend: int = 0, ignore_term: bool = False) -> str:
+    """A victim carrying a real `--log-file` argv, which is where the drain
+    reads its evidence from.
+
+    ``stale`` writes a suspend line BEFORE the drain starts; ``suspend``
+    writes one in the SIGTERM handler. ``ignore_term`` keeps the process alive
+    through the grace period so the "still running" branch is the one under
+    test.
+    """
+    handler = (
+        f'signal.signal(signal.SIGTERM, lambda *_: log("{_SUSPEND_LINE.format(n=suspend)}"))'
+        if suspend
+        else "signal.signal(signal.SIGTERM, signal.SIG_IGN)"
+        if ignore_term
+        else "pass"
+    )
+    exit_after = "" if ignore_term else "\n    sys.exit(0)"
+    stale_line = (
+        f'log("{_SUSPEND_LINE.format(n=stale)}")' if stale else "pass"
+    )
+    # NOT `exec -a`, unlike the other victims here. `exec -a "a b c"` sets
+    # argv[0] to that ONE string, so `--log-file` would not be a separate
+    # cmdline element and the drain's `awk /^--log-file$/{{getline}}` could
+    # never find it — the first version of this test failed for exactly that
+    # reason, against production code that is correct. A real worker's argv has
+    # `--log-file` and its value as distinct elements (verified 2026-07-31 with
+    # `pgrep -af` against the four live workers), so the victim is launched with
+    # real separate arguments instead. The `wpat` match is unaffected: the
+    # stub greps the whole space-joined cmdline, which still contains
+    # `-m chess_anti_engine.worker `.
+    return f"""
+WLOG=$(mktemp)
+READY=$(mktemp -u)
+PYF=$(mktemp --suffix=.py)
+cat > "$PYF" <<'EOF'
+import signal, sys, time
+argv = sys.argv
+LOG = argv[argv.index("--log-file") + 1]
+READY = argv[argv.index("--ready") + 1]
+def log(msg):
+    with open(LOG, "a") as fh:
+        fh.write(msg + "\\n")
+        fh.flush()
+{stale_line}
+{handler}
+open(READY, "w").close()
+time.sleep(300){exit_after}
+EOF
+python3 "$PYF" -m chess_anti_engine.worker --work-dir /tmp/fake_worker \
+    --log-file "$WLOG" --ready "$READY" >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+for _ in $(seq 200); do
+    if [ -f "$READY" ]; then break; fi
+    sleep 0.05
+done
+if [ ! -f "$READY" ]; then echo "STUB_NEVER_READY"; fi
+"""
+
+
+def test_a_worker_that_banked_its_games_is_not_reported_as_discarded() -> None:
+    """THE REGRESSION. Still running at the deadline, but it suspended 23
+    games — that is a success, not a loss."""
+    r = _run(_harness(_logging_victim(suspend=23, ignore_term=True), grace=6), timeout=40)
+    assert "STUB_NEVER_READY" not in r.stdout, r.stdout
+    assert "suspended 23 in-flight game(s)" in r.stdout, r.stdout + r.stderr
+    assert "DISCARDED" not in r.stdout, r.stdout
+    assert "WARNING" not in r.stdout, r.stdout
+    assert "23 in-flight game(s) suspended" in r.stdout, r.stdout
+    assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
+
+
+def test_a_worker_that_banked_nothing_still_warns() -> None:
+    """The POSITIVE control for the warning. Without this, a change that simply
+    deleted the warning would pass the test above."""
+    r = _run(_harness(_logging_victim(ignore_term=True), grace=6), timeout=40)
+    assert "STUB_NEVER_READY" not in r.stdout, r.stdout
+    assert "WARNING" in r.stdout, r.stdout + r.stderr
+    assert "DISCARDED" in r.stdout, r.stdout
+    assert "NO suspend recorded" in r.stdout, r.stdout
+    assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
+
+
+def test_a_suspend_line_from_BEFORE_the_drain_is_not_credited() -> None:
+    """NEGATIVE CONTROL. `suspended games=` is emitted by every in-session reco
+    restart too, so a whole-file grep would find an hours-old line and read it
+    as proof THIS drain worked. The block records each log's byte offset before
+    signalling; this test fails if that offset is dropped."""
+    r = _run(_harness(_logging_victim(stale=99, ignore_term=True), grace=6), timeout=40)
+    assert "STUB_NEVER_READY" not in r.stdout, r.stdout
+    assert "99" not in r.stdout, f"stale pre-drain suspend line was credited:\n{r.stdout}"
+    assert "WARNING" in r.stdout, r.stdout + r.stderr
+    assert "DISCARDED" in r.stdout, r.stdout
+    assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr

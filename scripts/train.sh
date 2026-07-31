@@ -210,6 +210,28 @@ stop() {
     wpids=$(pgrep -f -- "$wpat" 2>/dev/null || true)
     if [ -n "$wpids" ]; then
         echo "Draining selfplay workers (grace ${grace}s): $(echo "$wpids" | tr '\n' ' ')"
+        # Snapshot each worker's --log-file and its CURRENT LENGTH before we
+        # signal anything. The evidence that a worker banked its games is the
+        # worker's OWN line
+        #     selfplay resume: suspended games=N records=M ...
+        # and that string is also emitted by every in-session reco restart, so
+        # a naive grep of the whole log would find an hours-old line and read
+        # it as proof that THIS drain worked. Recording the byte offset first
+        # means we only ever read what this drain produced. (Same trap as the
+        # negative-log checks elsewhere: a stale success line is worse than no
+        # line at all.)
+        local dstate w logf
+        dstate=$(mktemp -d) || dstate=""
+        if [ -n "$dstate" ]; then
+            for w in $wpids; do
+                logf=$(tr '\0' '\n' < "/proc/$w/cmdline" 2>/dev/null \
+                       | awk '/^--log-file$/{getline; print; exit}')
+                if [ -n "$logf" ] && [ -f "$logf" ]; then
+                    printf '%s\n' "$logf" > "$dstate/$w.log"
+                    wc -c < "$logf" > "$dstate/$w.off"
+                fi
+            done
+        fi
         # shellcheck disable=SC2086
         kill -TERM $wpids 2>/dev/null || true
         local waited=0 alive w
@@ -233,11 +255,47 @@ stop() {
                 fi
             done
         done
-        if [ -z "$alive" ]; then
-            echo "Workers drained after ${waited}s"
+        # LIVENESS IS NOT EVIDENCE ABOUT DATA. Until 2026-07-31 this reported
+        # every still-running pid as "in-flight games will be DISCARDED", which
+        # was measured false on the first real teardown: workers 01/02/03 each
+        # logged "exiting after suspend" 4-40s BEFORE the 90s deadline and
+        # banked 22-23 games (100/252/128 records), yet all three were named in
+        # the warning because the probe caught them tearing down their CUDA
+        # context. An operator reading that would either mourn a window of games
+        # that survived, or raise CAE_STOP_GRACE_SECONDS to lengthen every
+        # future stop against a non-problem — and, worst, could no longer tell
+        # that case apart from a real discard. So the verdict is read off the
+        # suspend line, and only a worker that banked NOTHING is a loss.
+        local banked total=0 lost=""
+        for w in $wpids; do
+            banked=0
+            if [ -n "$dstate" ] && [ -s "$dstate/$w.log" ]; then
+                logf=$(cat "$dstate/$w.log")
+                if [ -f "$logf" ]; then
+                    banked=$(tail -c "+$(( $(cat "$dstate/$w.off" 2>/dev/null || echo 0) + 1 ))" \
+                                 "$logf" 2>/dev/null \
+                             | grep -oE 'suspended games=[0-9]+' \
+                             | sed 's/.*=//' \
+                             | awk '{s += $1} END {print s + 0}')
+                fi
+            fi
+            case "${banked:-0}" in ''|*[!0-9]*) banked=0 ;; esac
+            total=$((total + banked))
+            if [ "$banked" -gt 0 ]; then
+                echo "  worker $w: suspended ${banked} in-flight game(s)"
+            elif kill -0 "$w" 2>/dev/null; then
+                # Still running AND nothing banked: this is the real failure.
+                lost="$lost $w"
+            fi
+        done
+        # `if`, not `[ ... ] && ...`: an AND-list whose left side is false leaves
+        # a non-zero status, which is the same set -e footgun documented above.
+        if [ -n "$dstate" ]; then rm -rf "$dstate"; fi
+        if [ -z "$lost" ]; then
+            echo "Workers drained after ${waited}s (${total} in-flight game(s) suspended)"
         else
-            echo "WARNING: workers still alive after ${grace}s ($alive); their" \
-                 "in-flight games will be DISCARDED." \
+            echo "WARNING: worker(s) ($lost) still alive after ${grace}s with NO" \
+                 "suspend recorded; their in-flight games are DISCARDED." \
                  "Raise CAE_STOP_GRACE_SECONDS if this recurs."
         fi
     fi
