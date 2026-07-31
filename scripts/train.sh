@@ -156,9 +156,100 @@ stop() {
     # on a stop the operator asked for (it keeps watching; a later crash or a
     # forgotten restart still shows in its log, just not as an alert).
     touch "$STOP_MARKER"
+
+    # ── Drain selfplay BEFORE anything is killed ─────────────────────────────
+    # Workers are subprocess grandchildren of `ray::ImplicitFunc.train`, NOT of
+    # $pid, so `kill "$pid"` below never reaches them (verified 2026-07-31:
+    # ps -o ppid on all four live workers gives the trial actor, not the driver).
+    # Every in-flight game was therefore discarded on an operator pause:
+    # `resumed games=0` on all four workers, versus `resumed games=24
+    # records=731` across a graceful session restart. Those discarded games are
+    # what makes the next window length-truncated (only short decisive games
+    # have finished), spiking winrate and driving the PID to tighten regret
+    # ~-0.008 against a phantom.
+    #
+    # NOT the mechanism: the `pkill -9 ray::` / `raylet` lines below. Measured
+    # 2026-07-31 against /proc/<pid>/cmdline, ZERO of the four workers match
+    # either pattern, and the intersection of `pgrep -f 'ray::'` with the worker
+    # pids is empty. Killing the trial actor ORPHANS the workers rather than
+    # killing them; what actually reached them was the 5s SIGTERM->SIGKILL in
+    # tune/_utils.py::terminate_process, and with no handler installed that was
+    # simply fatal. An earlier revision of this comment asserted the pkill
+    # mechanism -- it was wrong, and the second pass at the end of stop() exists
+    # because of it.
+    #
+    # Signalling the workers directly lets their SIGTERM handler run the same
+    # suspend path a reco restart-key change already uses. Games land in
+    # <worker>/selfplay_resume/ and the next session picks them up.
+    #
+    # The wait is over the pid list captured ONCE, never a re-run of pgrep: the
+    # driver's revive_dead_selfplay_processes() (distributed_runtime.py) relaunches
+    # a worker that exits mid-iteration, so a `pgrep`-until-empty loop would never
+    # converge — it would burn the whole grace period and then report a false
+    # "still alive" warning. A revived worker is seconds old and has nothing in
+    # flight worth suspending, so it is not worth waiting for HERE — but it is
+    # NOT free: it reuses the dead worker's worker_index and therefore its
+    # work_dir, so once it reaches a session (~60s) it claims-by-rename the very
+    # selfplay_resume/ files this drain just banked. The second pass at the end
+    # of stop() is what stops that, since nothing above kills it.
+    local grace="${CAE_STOP_GRACE_SECONDS:-90}"
+    # ONE definition, used by both drain passes. Duplicating the literal is how
+    # this PR's own founding defect recurs: the second pass sits outside the
+    # range tests/test_train_sh_worker_drain.py extracts, so a pattern edit
+    # applied to one copy and not the other would leave the suite green while
+    # silently reopening the orphan race. `test_the_worker_pattern_is_defined_once`
+    # pins that. `--` is REQUIRED: the pattern begins with `-m`.
+    #
+    # -f is required (the module name is an argument, not the comm); the pattern
+    # cannot match this script because it never appears in our own argv. Anchored
+    # on `-m ... ( |$)` so it cannot also catch `chess_anti_engine.worker_pool`,
+    # `.worker_config` or `.worker_buffer`. Verified 2026-07-31 against the live
+    # run: anchored and unanchored select the identical four worker pids.
+    local wpat='-m chess_anti_engine\.worker( |$)'
+    local wpids
+    wpids=$(pgrep -f -- "$wpat" 2>/dev/null || true)
+    if [ -n "$wpids" ]; then
+        echo "Draining selfplay workers (grace ${grace}s): $(echo "$wpids" | tr '\n' ' ')"
+        # shellcheck disable=SC2086
+        kill -TERM $wpids 2>/dev/null || true
+        local waited=0 alive w
+        alive="$wpids"
+        while [ "$waited" -lt "$grace" ] && [ -n "$alive" ]; do
+            sleep 2
+            waited=$((waited + 2))
+            alive=""
+            for w in $wpids; do
+                # `if`, not `kill -0 ... && ...`. Measured 2026-07-31 against the
+                # `set -e` at the top of this file: the && form itself is exempt
+                # (it is an AND-list), but it leaves the for-loop's status
+                # non-zero on the SUCCESS path — every worker gone — and a
+                # for-loop that ends a function DOES abort under set -e. Today
+                # that is only latent, because `echo "Stopping PID ..."` follows
+                # this block; it becomes a live bug the moment the block moves or
+                # something is appended after it, and it would fail in the one
+                # case that matters (a clean drain).
+                if kill -0 "$w" 2>/dev/null; then
+                    alive="$alive $w"
+                fi
+            done
+        done
+        if [ -z "$alive" ]; then
+            echo "Workers drained after ${waited}s"
+        else
+            echo "WARNING: workers still alive after ${grace}s ($alive); their" \
+                 "in-flight games will be DISCARDED." \
+                 "Raise CAE_STOP_GRACE_SECONDS if this recurs."
+        fi
+    fi
+
     echo "Stopping PID $pid ..."
     kill "$pid" 2>/dev/null || true
-    sleep 2
+    # The driver still gets a short grace; the expensive drain already happened.
+    local dwait=0
+    while [ "$dwait" -lt 15 ] && kill -0 "$pid" 2>/dev/null; do
+        sleep 1
+        dwait=$((dwait + 1))
+    done
     if kill -0 "$pid" 2>/dev/null; then
         echo "Force killing ..."
         kill -9 "$pid" 2>/dev/null || true
@@ -168,6 +259,43 @@ stop() {
     sleep 1
     pkill -9 -f 'ray::' 2>/dev/null || true
     pkill -9 -f 'raylet' 2>/dev/null || true
+
+    # ── Second drain pass: ORPHANS ───────────────────────────────────────────
+    # Nothing above kills a worker. Verified 2026-07-31 against
+    # /proc/<pid>/cmdline: no worker matches `ray::` or `raylet`, and the
+    # intersection of `pgrep -f 'ray::'` with the worker pids is empty. Workers
+    # are subprocess grandchildren, so tearing down ray ORPHANS any that the
+    # first pass did not already drain -- including one the driver revived
+    # DURING that pass, which reuses the dead worker's work_dir and would
+    # otherwise reach a session in ~60s and claim-by-rename the selfplay_resume/
+    # files we just banked.
+    #
+    # These get the same graceful SIGTERM: a survivor of the first pass may be
+    # mid-suspend, and a revived one has a (small) table of its own. Only then
+    # SIGKILL, so a hung worker cannot wedge `stop`.
+    local orphans
+    orphans=$(pgrep -f -- "$wpat" 2>/dev/null || true)
+    if [ -n "$orphans" ]; then
+        echo "Draining orphaned workers: $(echo "$orphans" | tr '\n' ' ')"
+        # shellcheck disable=SC2086
+        kill -TERM $orphans 2>/dev/null || true
+        local owait=0 oalive="$orphans" o
+        while [ "$owait" -lt "${CAE_ORPHAN_GRACE_SECONDS:-30}" ] && [ -n "$oalive" ]; do
+            sleep 2
+            owait=$((owait + 2))
+            oalive=""
+            for o in $orphans; do
+                if kill -0 "$o" 2>/dev/null; then
+                    oalive="$oalive $o"
+                fi
+            done
+        done
+        if [ -n "$oalive" ]; then
+            echo "Force killing orphaned workers:$oalive"
+            # shellcheck disable=SC2086
+            kill -9 $oalive 2>/dev/null || true
+        fi
+    fi
     echo "Stopped"
 }
 
