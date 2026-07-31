@@ -14866,3 +14866,56 @@ loop is understood. Diagnosis is in flight; the from-scratch positive control is
 built and pre-registered (`configs/scratch_pc.yaml`) but deliberately NOT launched,
 because a from-scratch run answers "can it learn at all", not "why doesn't this
 configuration learn".
+
+### ⚑⚑ CORRECTION (2026-07-31 14:5x) — "THE POLICY HEAD IS LEARNING" IS FALSE. BOTH HEADS DEGRADED.
+
+The verdict entry immediately above states, as its localising asymmetry, that
+"the POLICY head is learning and the VALUE head is not", citing raw-policy mean
+top-1 rising **0.5235 -> 0.5426 -> 0.5566**. **That was CONFIDENCE, not
+correctness, and the regret data refutes it.**
+
+`scripts/paired_compare.py` over `scratchpad/strength_readout_0731/pdump_*.jsonl`,
+`--join-key key`, delta = A-B so NEGATIVE means the later checkpoint is WORSE:
+
+| field | boot512 -> iter409 | boot512 -> ck477 | iter409 -> ck477 |
+|---|---|---|---|
+| `cand.raw.exp` | **-9.89 [-14.58, -5.98]** | **-8.44 [-12.94, -4.32]** | +1.45 [-2.19, +5.32] ns |
+| `cand.raw.top1` | **-15.36 [-25.49, -6.51]** | **-13.70 [-21.64, -6.23]** | +1.66 [-6.85, +11.55] ns |
+| `cand.search.exp` | -0.65 [-8.41, +8.66] ns | -3.21 [-8.80, +2.33] ns | -2.56 [-11.61, +4.57] ns |
+| `cand.search.top1` | +0.46 [-8.11, +10.39] ns | -1.27 [-7.57, +5.19] ns | -1.72 [-11.07, +6.07] ns |
+
+**The net got MORE CONFIDENT and LESS CORRECT.** Top-1 probability rose 0.5235 ->
+0.5566 while top-1 REGRET worsened by 13.70 cp with the CI excluding zero. This is
+exactly the failure the eval protocol bans Brier for — a head can sharpen while
+its RANKING rots. I made that error on the policy head within an hour of quoting
+the rule about it for the value head.
+
+**SEARCH IS MASKING A DEGRADING POLICY HEAD.** Raw regret worsens significantly on
+both slices; search regret is flat (all four search comparisons ns). So the
+degradation is real and search is absorbing it — the mirror image of the
+2026-07-25 finding that raw-policy GAINS did not reach the played moves. Gains do
+not propagate through search, and neither do losses. **`cand.search.*` is
+therefore a poor early-warning instrument for policy health; use `cand.raw.*`.**
+
+**`policy_loss` FALLING IN TRAINING IS CONSISTENT WITH THIS, NOT AGAINST IT.**
+`policy_target` is SELF-generated MCTS visits. A falling `policy_loss` alongside
+worsening SF-referenced regret means the net is agreeing ever more tightly with
+its own search output while both drift from ground truth. **Do not read
+`policy_loss` as evidence of learning** — the same decaying-self-target defect
+already recorded for the frozen holdout in `docs/rl_loop_audit.md` L16.
+
+**CONSEQUENCE FOR THE VERDICT ABOVE:** the localisation was wrong. It is not
+"value broken, policy fine". BOTH heads degrade against ground truth over the
+20-day span, which is coherent with the -25.5 Elo arena result and removes the
+argument for treating the value target as the sole suspect.
+
+**SEEDING DID NOT FIX THE VALUE HEAD.** Server-doled FEN seeding has been ACTIVE
+since 2026-07-08 (config: "ACTIVATED server-doled FEN seeding"), i.e. for the
+ENTIRE boot512(07-11) -> ck477(07-31) window in which value regret went
+74.4 -> 88.3 (paired **-13.97 [-23.69, -4.20]**) and raw policy regret worsened
+significantly. **Twenty days of the intervention meant to fix the value head, and
+the value head got significantly worse.** ⚠ There is NO seeding-OFF arm, so this
+does NOT establish that seeding caused the degradation — only that it
+demonstrably did not prevent it. That is sufficient to stop treating "feed more
+seeds" as the remedy. The 63 seeds fed 2026-07-31 13:10 are far too recent to
+bear on this either way (see the HOLD on the remaining 381, task #87).
