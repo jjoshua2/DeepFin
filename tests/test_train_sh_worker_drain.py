@@ -272,8 +272,38 @@ if [ ! -f "$READY{n}" ]; then echo "VICTIM_NEVER_READY {n}"; fi
 """
 
 
+# What a REPLACEMENT process writes into the dead worker's log. Every launch
+# emits `worker starting version=` (worker.py:669) before it can emit anything
+# else, which is what makes it usable as the identity boundary.
+_WORKER_STARTING_LINE = (
+    "INFO chess_anti_engine.worker worker starting version=0.0.2 protocol=2"
+)
+
+
+def _replacement_appender(n: int, *, lines: list[str]) -> str:
+    """Simulate `revive_dead_selfplay_processes` relaunching into the SAME
+    `worker.log` while the drain is watching it.
+
+    Gated on the victim's DEATH, not on a timer: the appended bytes must land
+    after the drain recorded its byte offset (which happens before the SIGTERM)
+    and before the verdict reads it. Waiting for the pid to disappear puts the
+    append strictly inside that window instead of hoping a `sleep` lands there.
+    `REPLACEMENT_NEVER_APPENDED` fails the test if it did not happen at all.
+    """
+    body = "\n".join(
+        f'    printf \'%s\\n\' "$(date +%%F) {ln}" >> "$WLOG{n}"' for ln in lines
+    )
+    return f"""
+REPL_DONE{n}=$(mktemp -u)
+( while kill -0 "$V{n}" 2>/dev/null; do sleep 0.05; done
+{body}
+  : > "$REPL_DONE{n}"
+) >/dev/null 2>&1 </dev/null &
+"""
+
+
 def _harness(
-    victim: str, *, grace: int, post: str = "",
+    victim: str, *, grace: int, post: str = "", post_drain: str = "",
     orphan_pass: bool = False, orphan_grace: int = 4,
 ) -> str:
     """Run the real drain block, then the real VERDICT block, under the same
@@ -290,7 +320,8 @@ def _harness(
 
     ``orphan_pass`` splices in the second drain pass, which is where a worker's
     LAST chance to bank is. Off by default so the common tests do not pay its
-    grace period.
+    grace period. ``post_drain`` injects shell between the drain and the
+    verdict — the window in which an early exit would leak the snapshot dir.
     """
     orphan = _block(_ORPHAN_BEGIN, _ORPHAN_END) if orphan_pass else ""
     return f"""
@@ -306,6 +337,7 @@ drain() {{
 # echo is load-bearing for `set -e` — it is what keeps the drain's non-zero
 # for-loop status from ending the function — so it is modelled, not skipped.
 echo "REACHED_DRIVER_KILL"
+{post_drain}
 {orphan}
 {_block(_VERDICT_BEGIN, _VERDICT_END)}
 }}
@@ -754,6 +786,185 @@ def test_the_verdict_is_emitted_after_the_orphan_pass_not_before() -> None:
         "the first pass must not render a verdict; it runs before the orphan "
         "pass has given the worker its last chance"
     )
+
+
+# --- identity: the offset separates TIME, not the process ------------------
+#
+# `revive_dead_selfplay_processes` relaunches with the SAME `worker_index`
+# (distributed_runtime.py:1253), the artifact root and `worker.log` path are
+# rebuilt identically (:722,:724), and `logging.FileHandler` appends. The
+# driver survives the whole first drain pass, so a worker that dies during the
+# grace period is revived INTO THE FILE THIS BLOCK IS READING, and its lines
+# land after the recorded offset.
+#
+# Observed in production on the very teardown this feature was built from:
+# worker_01/worker.log line 817 is a second `worker starting version=` at
+# 13:51:29 — stop() began 13:50:16, deadline 13:51:46. It cost nothing only
+# because that replacement was SIGKILLed while still importing.
+
+
+def test_a_replacements_graceful_exit_is_not_credited_to_the_worker_that_died() -> None:
+    """THE SHIP-BLOCKER OF THE SECOND ROUND, and the same silent false-negative
+    as M1 arriving through a different door.
+
+    The victim dies having banked nothing. Its replacement reaches the poll
+    loop, is SIGTERMed, and logs `exiting after suspend` with nothing in flight
+    — into the dead worker's log, after the offset. Reading that as the dead
+    worker's evidence prints `exited cleanly with no games in flight` and
+    `Selfplay drained cleanly` for a worker whose table was dropped.
+    """
+    victim = _victim(1, action="die") + _replacement_appender(
+        1, lines=[_WORKER_STARTING_LINE, _GRACEFUL_LINE],
+    )
+    post = """
+if [ ! -f "$REPL_DONE1" ]; then echo "REPLACEMENT_NEVER_APPENDED"; fi
+"""
+    r = _run(_harness(victim, grace=6, post=post), timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "REPLACEMENT_NEVER_APPENDED" not in r.stdout, r.stdout
+    assert "exited cleanly" not in r.stdout, (
+        f"a replacement's graceful exit was credited to the dead worker:\n{r.stdout}"
+    )
+    assert "died and was REPLACED mid-drain having recorded nothing" in r.stdout, (
+        r.stdout + r.stderr
+    )
+    assert "WARNING" in r.stdout, r.stdout + r.stderr
+    assert "DISCARDED" in r.stdout, r.stdout
+    assert "drained cleanly" not in r.stdout, r.stdout
+
+
+def test_a_replacements_suspend_line_is_not_credited_to_the_worker_that_died() -> None:
+    """Same door, larger lie: the replacement banks games of its own and the
+    dead worker is credited with them. `suspended 42` for a worker that
+    suspended nothing would also inflate the run-wide total an operator reads
+    as the price of the teardown."""
+    victim = _victim(1, action="die") + _replacement_appender(
+        1, lines=[_WORKER_STARTING_LINE, _SUSPEND_LINE.format(n=42)],
+    )
+    post = """
+if [ ! -f "$REPL_DONE1" ]; then echo "REPLACEMENT_NEVER_APPENDED"; fi
+"""
+    r = _run(_harness(victim, grace=6, post=post), timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "REPLACEMENT_NEVER_APPENDED" not in r.stdout, r.stdout
+    # Specific strings, never a bare `"42" not in r.stdout`: every line carries
+    # a pid and pid 2399696 already broke one control in this file that way.
+    assert "suspended 42 in-flight game(s)" not in r.stdout, (
+        f"a replacement's suspend line was credited to the dead worker:\n{r.stdout}"
+    )
+    assert "in-flight game(s) suspended" not in r.stdout, (
+        f"a loss was summarised as a clean drain:\n{r.stdout}"
+    )
+    assert "died and was REPLACED mid-drain having recorded nothing" in r.stdout, (
+        r.stdout + r.stderr
+    )
+    assert "WARNING" in r.stdout, r.stdout + r.stderr
+    assert "DISCARDED" in r.stdout, r.stdout
+
+
+def test_a_worker_that_banked_and_was_then_replaced_keeps_its_own_count() -> None:
+    """The truncation must not throw away what the ORIGINAL recorded. This is
+    worker_01 on 2026-07-31: it banked, exited, and was revived into the same
+    log 23s later. Its 251 games are real and must still be credited — and only
+    its own."""
+    victim = _victim(1, action="bank_and_exit", suspend=11) + _replacement_appender(
+        1, lines=[_WORKER_STARTING_LINE, _SUSPEND_LINE.format(n=42)],
+    )
+    post = """
+if [ ! -f "$REPL_DONE1" ]; then echo "REPLACEMENT_NEVER_APPENDED"; fi
+"""
+    r = _run(_harness(victim, grace=6, post=post), timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "REPLACEMENT_NEVER_APPENDED" not in r.stdout, r.stdout
+    assert "suspended 11 in-flight game(s)" in r.stdout, r.stdout + r.stderr
+    assert "Selfplay drained cleanly: 11 in-flight game(s) suspended" in r.stdout, (
+        r.stdout
+    )
+    assert "suspended 53 in-flight game(s)" not in r.stdout, (
+        f"11 and the replacement's 42 were summed:\n{r.stdout}"
+    )
+    assert "cleanly: 53" not in r.stdout, r.stdout
+    assert "WARNING" not in r.stdout, r.stdout
+
+
+# --- the remaining could-not-verify routes ---------------------------------
+
+
+def test_a_failed_mktemp_makes_every_worker_could_not_verify() -> None:
+    """`dstate=""`. Without its own state the block has no offsets at all, so
+    NOTHING can be verified — including a drain that went perfectly. Degrading
+    to either of the other two verdicts here is what the review rejected."""
+    poison = """
+mktemp() {
+    if [ "$1" = "-d" ]; then return 1; fi
+    command mktemp "$@"
+}
+"""
+    r = _run(_harness(poison + _victim(1, action="bank_and_exit", suspend=9), grace=6),
+             timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "COULD NOT VERIFY" in r.stdout, r.stdout + r.stderr
+    assert "no snapshot dir (mktemp -d failed)" in r.stdout, r.stdout
+    assert "DISCARDED" not in r.stdout, r.stdout
+    assert "drained cleanly" not in r.stdout, r.stdout
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
+
+
+def test_a_log_that_vanishes_between_snapshot_and_verdict_is_could_not_verify() -> None:
+    """Present when the offset was taken, gone when the evidence is read."""
+    victim = _victim(1, action="ignore") + """
+( sleep 2; rm -f "$WLOG1" ) >/dev/null 2>&1 </dev/null &
+"""
+    r = _run(_harness(victim, grace=6), timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "COULD NOT VERIFY" in r.stdout, r.stdout + r.stderr
+    assert "log disappeared during teardown" in r.stdout, r.stdout
+    assert "DISCARDED" not in r.stdout, r.stdout
+    assert "drained cleanly" not in r.stdout, r.stdout
+
+
+def test_the_snapshot_dir_is_not_leaked_when_stop_exits_early(tmp_path: Path) -> None:
+    """The explicit `rm -rf` sits in the verdict block at the END of stop(), so
+    anything that exits in between would leak the dir — on the filesystem with
+    this repo's documented growth-leak history. A trap armed at creation covers
+    it. Proven by aborting between the snapshot and the verdict.
+
+    Run as a CHILD script, not inline: the leak is only observable after the
+    shell that armed the trap has exited, and the block's own `trap ... EXIT`
+    would displace any the harness tried to set for itself.
+    """
+    snaproot = tmp_path / "snaproot"
+    snaproot.mkdir()
+    poison = f"""
+mktemp() {{
+    if [ "$1" = "-d" ]; then command mktemp -d -p {snaproot}; return $?; fi
+    command mktemp "$@"
+}}
+"""
+    inner = tmp_path / "inner.sh"
+    inner.write_text(_harness(
+        poison + _victim(1, action="bank_and_exit", suspend=2),
+        grace=6, post_drain='echo "FORCED_ABORT"; exit 7',
+    ))
+    r = _run(f"""
+bash {inner}
+echo "INNER_RC=$?"
+if [ -z "$(ls -A {snaproot})" ]; then
+    echo "SNAPROOT_EMPTY"
+else
+    echo "SNAPROOT_LEAKED: $(ls -A {snaproot})"
+fi
+""", timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "FORCED_ABORT" in r.stdout, r.stdout + r.stderr
+    assert "INNER_RC=7" in r.stdout, r.stdout + r.stderr
+    assert "drained cleanly" not in r.stdout, (
+        f"the abort did not land between snapshot and verdict:\n{r.stdout}"
+    )
+    assert "SNAPROOT_LEAKED" not in r.stdout, (
+        f"the snapshot dir outlived the aborted stop:\n{r.stdout}"
+    )
+    assert "SNAPROOT_EMPTY" in r.stdout, r.stdout + r.stderr
 
 
 def test_the_set_e_hazard_in_the_snapshot_loop_cannot_abort_stop() -> None:

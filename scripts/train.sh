@@ -234,7 +234,20 @@ stop() {
         local dstate w logf
         dstate=$(mktemp -d) || dstate=""
         if [ -n "$dstate" ]; then
+            # Backstop cleanup. The explicit `rm -rf` lives in the verdict
+            # block at the END of stop(), so anything that exits in between
+            # leaks the dir, and /tmp here has a documented growth-leak
+            # history. Expanded NOW rather than deferred: by the time an EXIT
+            # trap fires, `$dstate` is a `local` that is out of scope.
+            trap "rm -rf '$dstate'" EXIT
             for w in $wpids; do
+                # `--log-file` and its value are always distinct argv elements:
+                # distributed_runtime.py:863 appends them as two list items and
+                # `Popen` gets a LIST, so no shell splits or joins them and
+                # `--log-file=X` cannot occur. If it were ever the LAST element,
+                # `getline` fails at EOF and awk re-prints `--log-file`, which
+                # then fails the `[ -f ]` below and degrades to could-not-verify
+                # — wrong-but-loud, which is the acceptable direction here.
                 logf=$(tr '\0' '\n' < "/proc/$w/cmdline" 2>/dev/null \
                        | awk '/^--log-file$/{getline; print; exit}') || logf=""
                 if [ -z "$logf" ]; then
@@ -385,13 +398,40 @@ stop() {
     #             either of the others: an operator must be able to tell "no
     #             games were lost" from "we cannot tell whether games were
     #             lost", and every earlier version of this code could not.
+    #
+    # ⚑ THE OFFSET SEPARATES TIME. IT DOES NOT SEPARATE IDENTITY.
+    #
+    # `revive_dead_selfplay_processes` relaunches with the SAME `worker_index`
+    # (distributed_runtime.py:1253), `_launch_distributed_worker` rebuilds the
+    # same `worker_artifact_root`/`worker.log` path (:722,:724), and
+    # `logging.FileHandler` opens it in APPEND mode. The driver is not killed
+    # until after this drain's first pass, so a worker that dies DURING the
+    # grace period is revived into the very file we are reading — and its
+    # replacement's lines land after our recorded offset. Reading them as the
+    # dead worker's evidence would credit a fresh process's clean shutdown to
+    # the process whose games were dropped: the same silent false-negative this
+    # block exists to remove, arriving through a different door.
+    #
+    # NOT hypothetical. On the 2026-07-31 teardown analysed above,
+    # worker_01/worker.log line 817 is a second `worker starting version=` at
+    # 13:51:29 — stop() began 13:50:16, deadline 13:51:46. It did no damage
+    # only because that replacement was SIGKILLed while still importing.
+    #
+    # Every launch logs `worker starting version=` (worker.py:669) before it
+    # can log anything else, and the shared log file is the only channel we
+    # have, so that line is both the available and the correct discriminator:
+    # truncate the evidence there. Seeing it before any suspend line means the
+    # original died and was replaced having recorded nothing — a LOSS, not an
+    # absence of information.
     if [ -n "$wpids" ]; then
-        local banked total=0 lost="" unknown="" why evidence failed
+        local banked total=0 lost="" unknown="" why evidence failed graceful replaced
         for w in $wpids; do
             banked=0
             evidence=""
             why=""
             failed=""
+            graceful=""
+            replaced=""
             if [ -z "$dstate" ]; then
                 why="no snapshot dir (mktemp -d failed)"
             elif [ -s "$dstate/$w.why" ]; then
@@ -405,6 +445,13 @@ stop() {
                 else
                     evidence=$(tail -c "+$(( $(cat "$dstate/$w.off") + 1 ))" \
                                     "$logf" 2>/dev/null || true)
+                    if printf '%s\n' "$evidence" \
+                       | grep -q 'worker starting version='; then
+                        replaced=1
+                    fi
+                    # Drop everything from the replacement's first line on.
+                    evidence=$(printf '%s\n' "$evidence" \
+                               | awk '/worker starting version=/{exit} {print}')
                     banked=$(printf '%s\n' "$evidence" \
                              | grep -oE 'suspended games=[0-9]+' \
                              | sed 's/.*=//' \
@@ -412,6 +459,10 @@ stop() {
                     if printf '%s\n' "$evidence" \
                        | grep -q 'suspend failed; games abandoned'; then
                         failed=1
+                    fi
+                    if printf '%s\n' "$evidence" \
+                       | grep -q 'exiting after suspend'; then
+                        graceful=1
                     fi
                 fi
             fi
@@ -429,11 +480,17 @@ stop() {
                      "the rest were abandoned"
             elif [ "$banked" -gt 0 ]; then
                 echo "  worker $w: suspended ${banked} in-flight game(s)"
-            elif printf '%s\n' "$evidence" | grep -q 'exiting after suspend'; then
+            elif [ -n "$graceful" ]; then
                 # It reached the graceful exit point with nothing to suspend —
                 # a worker between sessions. Counting that as data loss is the
-                # same defect as the one being fixed, one layer down.
+                # same defect as the one being fixed, one layer down. Read from
+                # the TRUNCATED evidence, so a replacement's graceful exit can
+                # never be credited here.
                 echo "  worker $w: exited cleanly with no games in flight"
+            elif [ -n "$replaced" ]; then
+                lost="$lost $w"
+                echo "  worker $w: died and was REPLACED mid-drain having" \
+                     "recorded nothing"
             else
                 lost="$lost $w"
                 echo "  worker $w: NO suspend recorded"
@@ -441,7 +498,7 @@ stop() {
         done
         # `if`, not `[ ... ] && ...`: an AND-list whose left side is false
         # leaves a non-zero status, the same set -e footgun documented above.
-        if [ -n "$dstate" ]; then rm -rf "$dstate" || true; fi
+        if [ -n "$dstate" ]; then rm -rf "$dstate" || true; trap - EXIT; fi
         if [ -n "$lost" ]; then
             echo "WARNING: worker(s) (${lost# }) recorded NOTHING this teardown;" \
                  "their in-flight games were DISCARDED." \
