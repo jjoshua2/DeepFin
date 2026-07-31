@@ -38,13 +38,26 @@ def _run(script: str, *, timeout: float = 60.0) -> subprocess.CompletedProcess[s
 
 def _harness(victim: str, *, grace: int) -> str:
     """Run the real drain block under the same `set -e` train.sh uses, against
-    processes `pgrep` is stubbed to report."""
+    real processes.
+
+    `pgrep` is stubbed to report whichever members of $POOL_FILE are ALIVE
+    RIGHT NOW, rather than a fixed list. That is what lets a test add a
+    process partway through and have the stub start reporting it — the
+    behaviour of the driver's `revive_dead_selfplay_processes`. A fixed-list
+    stub cannot tell a pid-capture drain from a pgrep-polling one, because
+    both converge.
+    """
     return f"""
 set -e
 export CAE_STOP_GRACE_SECONDS={grace}
+POOL_FILE=$(mktemp)
+pgrep() {{
+    local p
+    while read -r p; do
+        if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then echo "$p"; fi
+    done < "$POOL_FILE"
+}}
 {victim}
-pgrep() {{ echo "$VICTIM_PIDS" | tr ' ' '\\n' | sed '/^$/d'; }}
-export -f pgrep 2>/dev/null || true
 drain() {{
 {_drain_block()}
 }}
@@ -55,33 +68,46 @@ echo "REACHED_DRIVER_KILL"
 # redirect stdout, or a surviving grandchild would hold the pipe open and
 # subprocess.run() would block on EOF long after bash exited.
 for j in $(jobs -p); do kill -9 "$j" 2>/dev/null || true; done
+for p in $(cat "$POOL_FILE"); do kill -9 "$p" 2>/dev/null || true; done
+rm -f "$POOL_FILE"
 """
 
 
 def test_workers_are_signalled_and_the_wait_ends_when_they_exit() -> None:
     victim = """
-sleep 300 >/dev/null 2>&1 </dev/null & A=$!
-sleep 300 >/dev/null 2>&1 </dev/null & B=$!
-VICTIM_PIDS="$A $B"
+sleep 300 >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+sleep 300 >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
 """
     r = _run(_harness(victim, grace=30))
     assert "Draining selfplay workers" in r.stdout, r.stdout + r.stderr
     assert "Workers drained after" in r.stdout, r.stdout + r.stderr
     assert "WARNING" not in r.stdout, r.stdout
-    # THE POINT: stop() must go on to kill the driver. Before the `if kill -0`
-    # rewrite the last worker's exit made the for-loop's status non-zero, and
-    # `set -e` aborted stop() right here — leaving training half-stopped with
-    # the driver still up.
+    # THE POINT: a clean drain must not stop stop(). The block runs under
+    # `set -e` and the only thing keeping its non-zero for-loop status from
+    # aborting the function is that another command follows it — so this
+    # assertion, not the drain output above, is what catches a rearrangement
+    # that leaves training half-stopped with the driver still up.
     assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
     assert r.returncode == 0, r.stderr
 
 
 def test_a_worker_that_ignores_sigterm_warns_instead_of_hanging() -> None:
     victim = """
-bash -c 'trap "" TERM; sleep 300' >/dev/null 2>&1 </dev/null & A=$!
-VICTIM_PIDS="$A"
+READY=$(mktemp -u)
+python3 -c 'import signal,time,sys
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+open(sys.argv[1], "w").close()
+time.sleep(300)' "$READY" >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+for _ in $(seq 200); do
+    if [ -f "$READY" ]; then break; fi
+    sleep 0.05
+done
+if [ ! -f "$READY" ]; then echo "STUB_NEVER_READY"; fi
 """
     r = _run(_harness(victim, grace=4))
+    # If the stub were signalled before it installed SIG_IGN it would die and
+    # this would silently become the clean-drain case, asserting nothing.
+    assert "STUB_NEVER_READY" not in r.stdout, r.stdout
     assert "WARNING" in r.stdout, r.stdout + r.stderr
     assert "DISCARDED" in r.stdout, r.stdout
     assert "Workers drained after" not in r.stdout, r.stdout
@@ -94,10 +120,15 @@ def test_a_revived_worker_does_not_extend_the_wait() -> None:
     re-ran `pgrep` instead it would keep finding the replacement and burn the
     whole grace period, then warn falsely."""
     victim = """
-sleep 300 >/dev/null 2>&1 </dev/null & A=$!
-# The "revived" worker: never signalled, still alive when the wait ends.
-bash -c 'trap "" TERM; sleep 300' >/dev/null 2>&1 </dev/null & R=$!
-VICTIM_PIDS="$A"
+sleep 300 >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+# The revival: appears 1s in — after the drain captured its pid list (t~0) and
+# before its first liveness check (t~2). It is never signalled and outlives the
+# wait, exactly like a worker the driver relaunched mid-teardown. A revival
+# landing after the first check would not discriminate the two loop shapes,
+# because the captured list has already gone empty by then.
+( sleep 1
+  sleep 300 >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+  sleep 60 ) >/dev/null 2>&1 </dev/null &
 """
     r = _run(_harness(victim, grace=30), timeout=40)
     assert "Workers drained after" in r.stdout, r.stdout + r.stderr
@@ -108,7 +139,7 @@ VICTIM_PIDS="$A"
 
 
 def test_no_workers_is_a_no_op() -> None:
-    r = _run(_harness('VICTIM_PIDS=""', grace=30))
+    r = _run(_harness("", grace=30))
     assert "Draining selfplay workers" not in r.stdout, r.stdout
     assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
 

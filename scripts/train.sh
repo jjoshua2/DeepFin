@@ -193,10 +193,15 @@ stop() {
             waited=$((waited + 2))
             alive=""
             for w in $wpids; do
-                # `if`, not `kill -0 ... && ...`: under the `set -e` at the top of
-                # this file a bare && whose left side fails is the for-loop's exit
-                # status, which would abort stop() BEFORE the driver is killed —
-                # i.e. the last worker exiting would leave training half-stopped.
+                # `if`, not `kill -0 ... && ...`. Measured 2026-07-31 against the
+                # `set -e` at the top of this file: the && form itself is exempt
+                # (it is an AND-list), but it leaves the for-loop's status
+                # non-zero on the SUCCESS path — every worker gone — and a
+                # for-loop that ends a function DOES abort under set -e. Today
+                # that is only latent, because `echo "Stopping PID ..."` follows
+                # this block; it becomes a live bug the moment the block moves or
+                # something is appended after it, and it would fail in the one
+                # case that matters (a clean drain).
                 if kill -0 "$w" 2>/dev/null; then
                     alive="$alive $w"
                 fi

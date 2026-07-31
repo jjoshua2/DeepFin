@@ -79,6 +79,52 @@ def test_pending_stop_beats_a_train_phase_hold() -> None:
     assert w._stop_fn() is True
 
 
+def test_run_installs_the_handlers_before_it_polls() -> None:
+    """The handler only helps if the PRODUCTION entry point installs it. Every
+    other test here calls `_install_shutdown_handlers` directly and so passes
+    even with the call deleted from `run()` — verified by removing it. This is
+    the test that fails.
+    """
+    order: list[str] = []
+
+    class _StopLoop(Exception):
+        pass
+
+    def _poll() -> None:
+        order.append("poll")
+        raise _StopLoop
+
+    w = _bare_session()
+    w._install_shutdown_handlers = lambda: order.append("install")
+    w._poll_manifest = _poll
+    w._cleanup = lambda: order.append("cleanup")
+
+    with pytest.raises(_StopLoop):
+        w.run()
+
+    # Order matters: a worker that polls first can be signalled during that
+    # first poll and die unhandled.
+    assert order == ["install", "poll", "cleanup"], order
+
+
+@pytest.mark.usefixtures("restore_handlers")
+def test_run_exits_at_the_loop_head_once_a_shutdown_is_requested() -> None:
+    """After the suspend path returns, `run()` must exit rather than poll for
+    more work — otherwise the drained games are followed by a fresh session
+    that the imminent SIGKILL discards."""
+    order: list[str] = []
+    w = _bare_session()
+    w._poll_manifest = lambda: order.append("poll")
+    w._cleanup = lambda: order.append("cleanup")
+    w._install_shutdown_handlers()
+    os.kill(os.getpid(), signal.SIGTERM)
+
+    w.run()   # must return, not spin
+
+    assert "poll" not in order, order
+    assert order == ["cleanup"], order
+
+
 @pytest.mark.usefixtures("restore_handlers")
 def test_handler_installation_is_not_fatal_off_the_main_thread(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
