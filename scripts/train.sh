@@ -193,10 +193,21 @@ stop() {
     # selfplay_resume/ files this drain just banked. The second pass at the end
     # of stop() is what stops that, since nothing above kills it.
     local grace="${CAE_STOP_GRACE_SECONDS:-90}"
+    # ONE definition, used by both drain passes. Duplicating the literal is how
+    # this PR's own founding defect recurs: the second pass sits outside the
+    # range tests/test_train_sh_worker_drain.py extracts, so a pattern edit
+    # applied to one copy and not the other would leave the suite green while
+    # silently reopening the orphan race. `test_the_worker_pattern_is_defined_once`
+    # pins that. `--` is REQUIRED: the pattern begins with `-m`.
+    #
     # -f is required (the module name is an argument, not the comm); the pattern
-    # cannot match this script because it never appears in our own argv.
+    # cannot match this script because it never appears in our own argv. Anchored
+    # on `-m ... ( |$)` so it cannot also catch `chess_anti_engine.worker_pool`,
+    # `.worker_config` or `.worker_buffer`. Verified 2026-07-31 against the live
+    # run: anchored and unanchored select the identical four worker pids.
+    local wpat='-m chess_anti_engine\.worker( |$)'
     local wpids
-    wpids=$(pgrep -f 'chess_anti_engine\.worker' 2>/dev/null || true)
+    wpids=$(pgrep -f -- "$wpat" 2>/dev/null || true)
     if [ -n "$wpids" ]; then
         echo "Draining selfplay workers (grace ${grace}s): $(echo "$wpids" | tr '\n' ' ')"
         # shellcheck disable=SC2086
@@ -263,7 +274,7 @@ stop() {
     # mid-suspend, and a revived one has a (small) table of its own. Only then
     # SIGKILL, so a hung worker cannot wedge `stop`.
     local orphans
-    orphans=$(pgrep -f 'chess_anti_engine\.worker' 2>/dev/null || true)
+    orphans=$(pgrep -f -- "$wpat" 2>/dev/null || true)
     if [ -n "$orphans" ]; then
         echo "Draining orphaned workers: $(echo "$orphans" | tr '\n' ' ')"
         # shellcheck disable=SC2086

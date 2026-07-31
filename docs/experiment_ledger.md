@@ -996,10 +996,22 @@ further down, which no handler can catch." **That is false**, caught by the
 independent reviewer of PR #291 and then confirmed directly against
 `/proc/<pid>/cmdline`: **zero** of the four workers match `ray::` or `raylet`,
 and `comm -12` of `pgrep -f 'ray::'` with the worker pids is **empty**. Tearing
-down ray ORPHANS the workers; it does not kill them. What actually reached them
-was the 5s SIGTERM→SIGKILL in `tune/_utils.py::terminate_process` (via
-`_cleanup_trial_resources` → `_stop_worker_processes`), and with no handler
-installed that was simply fatal.
+down ray ORPHANS the workers; it does not kill them. **That much is MEASURED.**
+
+**What killed them instead is INFERRED and deliberately left that way.** The
+likely route is the 5s SIGTERM→SIGKILL in `tune/_utils.py::terminate_process`
+(via `_cleanup_trial_resources` → `_stop_worker_processes`), which runs from a
+`finally` and therefore only if `ray stop` unwinds the trial actor's task
+*before* raylet teardown kills it — nobody has instrumented that. The competing
+explanation is that they simply survived as orphans until the next launch's
+`_spawn_with_reap` stale reap (`distributed_runtime.py:973-977`, also 5s
+SIGTERM). **Correctness no longer depends on which is true**, because the second
+drain pass handles survivors unconditionally — which is exactly why this is
+recorded as inferred rather than resolved. The instrument that would settle it:
+`pgrep -f -- '-m chess_anti_engine\.worker( |$)'` immediately after a `ray stop`
+with the second pass stubbed out. **Swapping one asserted mechanism for another
+inside the paragraph correcting an asserted mechanism is the trap here**; the
+`/proc` evidence refutes the old claim without establishing a new one.
 
 Break (1) alone is sufficient for the fix and is unaffected. But the wrong
 mechanism had a **consequence in the code**: it justified the claim that a
@@ -1037,9 +1049,12 @@ again after, for orphans.
 its own fix.** `_run_selfplay` clears `_stop_selfplay` at session start — that
 is the ONLY flag anything downstream polls — so a SIGTERM landing between
 `run()`'s loop-head check and that line was **erased**, and the worker started a
-full 32-thread session with nothing left to stop it. The window is the common
-case, not an exotic one: the signal normally arrives while the worker is blocked
-in `_poll_manifest`'s 30s GET. Worse, that session runs `_resume_inflight_games`
+full 32-thread session with nothing left to stop it. The window is narrow but wholly
+untested: sessions restart only 1-2 times in 11h on the live run, so the
+between-sessions state (blocked in `_poll_manifest`'s 30s GET, syncing assets,
+~60s of worker startup) is a small fraction of wall time. Rare, silent, and
+unbounded in cost when it does fire -- NOT "the common case", which is what an
+earlier draft of this line claimed without measuring it. Worse, that session runs `_resume_inflight_games`
 and un-banks games saved by an EARLIER teardown, so those die too. Reproduced
 before fixing:
 ```

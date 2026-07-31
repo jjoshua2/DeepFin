@@ -8,6 +8,8 @@ them.
 """
 from __future__ import annotations
 
+import re
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -18,15 +20,36 @@ TRAIN_SH = Path(__file__).resolve().parents[1] / "scripts" / "train.sh"
 _BEGIN = "── Drain selfplay BEFORE anything is killed"
 _END = 'echo "Stopping PID $pid ..."'
 
+# The second pass, which runs AFTER ray teardown against orphans. It lives
+# outside the first block's range, so it needs its own extraction or it is
+# exactly the untested-second-caller shape this whole change is about.
+_ORPHAN_BEGIN = "── Second drain pass: ORPHANS"
+_ORPHAN_END = 'echo "Stopped"'
 
-def _drain_block() -> str:
+
+def _block(begin: str, end: str) -> str:
     lines = TRAIN_SH.read_text().splitlines()
-    starts = [i for i, ln in enumerate(lines) if _BEGIN in ln]
-    ends = [i for i, ln in enumerate(lines) if _END in ln]
-    assert len(starts) == 1, f"drain block marker not unique: {starts}"
-    assert len(ends) == 1, f"end marker not unique: {ends}"
+    starts = [i for i, ln in enumerate(lines) if begin in ln]
+    ends = [i for i, ln in enumerate(lines) if end in ln]
+    assert len(starts) == 1, f"begin marker not unique ({begin!r}): {starts}"
+    assert len(ends) == 1, f"end marker not unique ({end!r}): {ends}"
     assert starts[0] < ends[0]
     return "\n".join(lines[starts[0]:ends[0]])
+
+
+def _drain_block() -> str:
+    return _block(_BEGIN, _END)
+
+
+def _worker_pattern() -> str:
+    """The single `local wpat=...` definition, read out of the real file.
+
+    Read rather than duplicated: a copy here would pass while production's
+    pattern was broken, which is the defect this file exists to catch.
+    """
+    found = re.findall(r"^\s*local wpat='(.+)'$", TRAIN_SH.read_text(), re.M)
+    assert len(found) == 1, f"expected exactly one wpat definition, got {found}"
+    return found[0]
 
 
 def _run(script: str, *, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
@@ -60,11 +83,11 @@ POOL_FILE=$(mktemp)
 pgrep() {{
     local p pat=""
     for a in "$@"; do
-        case "$a" in -*) ;; *) pat="$a" ;; esac
+        case "$a" in --) ;; -*) ;; *) pat="$a" ;; esac
     done
     while read -r p; do
         if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
-            if tr '\\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qE "$pat"; then
+            if tr '\\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qE -- "$pat"; then
                 echo "$p"
             fi
         fi
@@ -159,6 +182,145 @@ def test_no_workers_is_a_no_op() -> None:
     r = _run(_harness("", grace=30))
     assert "Draining selfplay workers" not in r.stdout, r.stdout
     assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
+
+
+def _orphan_harness(victim: str, *, grace: int) -> str:
+    """The SECOND pass, which runs after ray teardown. `wpat` is injected from
+    the real file's single definition, not restated here."""
+    return f"""
+set -e
+export CAE_ORPHAN_GRACE_SECONDS={grace}
+POOL_FILE=$(mktemp)
+wpat='{_worker_pattern()}'
+pgrep() {{
+    local p pat=""
+    for a in "$@"; do
+        case "$a" in --) ;; -*) ;; *) pat="$a" ;; esac
+    done
+    while read -r p; do
+        if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+            if tr '\\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qE -- "$pat"; then
+                echo "$p"
+            fi
+        fi
+    done < "$POOL_FILE"
+}}
+{victim}
+second_pass() {{
+{_block(_ORPHAN_BEGIN, _ORPHAN_END)}
+}}
+second_pass
+echo "REACHED_END_OF_STOP"
+# SIGKILL is asynchronous: the pid stays visible until the parent reaps it, so
+# checking immediately would report a survivor that is already dead. Give each
+# one up to 2s to disappear before calling it alive.
+for p in $(cat "$POOL_FILE"); do
+    for _ in $(seq 20); do
+        if ! kill -0 "$p" 2>/dev/null; then break; fi
+        sleep 0.1
+    done
+    if kill -0 "$p" 2>/dev/null; then echo "STILL_ALIVE $p"; fi
+    kill -9 "$p" 2>/dev/null || true
+done
+for j in $(jobs -p); do kill -9 "$j" 2>/dev/null || true; done
+rm -f "$POOL_FILE"
+"""
+
+
+_FAKE_WORKER_ARGV = (
+    "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker"
+)
+
+
+def test_orphaned_workers_are_drained_after_ray_teardown() -> None:
+    """Nothing before this point kills a worker — verified 2026-07-31 against
+    /proc/<pid>/cmdline, no worker matches `ray::` or `raylet`. So a worker the
+    driver revived DURING the first pass survives ray teardown, reuses the dead
+    worker's work_dir, and would claim-by-rename the selfplay_resume/ files the
+    first pass just banked."""
+    victim = f"""
+bash -c 'exec -a "{_FAKE_WORKER_ARGV}" sleep 300' >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+"""
+    r = _run(_orphan_harness(victim, grace=30))
+    assert "Draining orphaned workers" in r.stdout, r.stdout + r.stderr
+    assert "STILL_ALIVE" not in r.stdout, r.stdout
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0, r.stderr
+
+
+def test_an_orphan_that_ignores_sigterm_is_killed_not_left_running() -> None:
+    """Unlike the first pass, this one must never leave a survivor: there is no
+    later stage to catch it, and `train.sh start` would race it."""
+    victim = f"""
+READY=$(mktemp -u)
+PYF=$(mktemp --suffix=.py)
+cat > "$PYF" <<'EOF'
+import signal, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+open(sys.argv[1], "w").close()
+time.sleep(300)
+EOF
+bash -c 'exec -a "{_FAKE_WORKER_ARGV}" python3 "$1" "$2"' _ "$PYF" "$READY" >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+for _ in $(seq 200); do
+    if [ -f "$READY" ]; then break; fi
+    sleep 0.05
+done
+if [ ! -f "$READY" ]; then echo "STUB_NEVER_READY"; fi
+"""
+    r = _run(_orphan_harness(victim, grace=4))
+    assert "STUB_NEVER_READY" not in r.stdout, r.stdout
+    assert "Force killing orphaned workers" in r.stdout, r.stdout + r.stderr
+    assert "STILL_ALIVE" not in r.stdout, r.stdout
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
+
+
+def test_second_pass_is_a_no_op_on_a_clean_teardown() -> None:
+    """It runs on every stop, so it must cost nothing when the first pass
+    already drained everything."""
+    r = _run(_orphan_harness("", grace=30))
+    assert "Draining orphaned workers" not in r.stdout, r.stdout
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
+
+
+def test_the_worker_pattern_is_defined_once_and_used_by_both_passes() -> None:
+    """Both passes must select workers the SAME way. A literal duplicated
+    between them could be edited in one place, leaving the suite green while
+    the second pass silently matched nothing — the untested-second-caller
+    shape this whole change exists to fix."""
+    text = TRAIN_SH.read_text()
+    pattern = _worker_pattern()   # asserts exactly one definition
+
+    assert text.count(f"'{pattern}'") == 1, "the pattern literal is duplicated"
+    for block, name in (
+        (_drain_block(), "first pass"),
+        (_block(_ORPHAN_BEGIN, _ORPHAN_END), "second pass"),
+    ):
+        assert 'pgrep -f -- "$wpat"' in block, f"{name} does not use $wpat"
+        assert pattern not in block.replace(f"local wpat='{pattern}'", ""), (
+            f"{name} restates the pattern instead of using $wpat"
+        )
+
+
+def test_the_worker_pattern_excludes_neighbouring_module_names() -> None:
+    """`chess_anti_engine\\.worker` unanchored also matches `.worker_pool`,
+    `.worker_config` and `.worker_buffer`; a volunteer pool would be killed by
+    a stop it has nothing to do with."""
+    pattern = _worker_pattern()
+    should_match = [
+        _FAKE_WORKER_ARGV,
+        "/usr/bin/python3 -m chess_anti_engine.worker",
+    ]
+    should_not_match = [
+        "/usr/bin/python3 -m chess_anti_engine.worker_pool --respawn",
+        "/usr/bin/python3 -m chess_anti_engine.worker_config",
+        "python3 -m chess_anti_engine.inference.broker",
+    ]
+    for argv in should_match:
+        r = _run(f"printf '%s' {shlex.quote(argv)} | grep -qE -- {shlex.quote(pattern)}")
+        assert r.returncode == 0, f"pattern must match: {argv}"
+    for argv in should_not_match:
+        r = _run(f"printf '%s' {shlex.quote(argv)} | grep -qE -- {shlex.quote(pattern)}")
+        assert r.returncode != 0, f"pattern must NOT match: {argv}"
 
 
 def test_train_sh_still_parses() -> None:

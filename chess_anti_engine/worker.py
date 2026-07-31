@@ -3737,9 +3737,12 @@ class WorkerSession:
     def _run_selfplay(self, manifest: dict) -> None:
         """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
   # Do not start a session we have already been told to shut down. `run()`'s
-  # loop-head check cannot cover the gap between itself and here — the SIGTERM
-  # typically arrives while the worker is blocked in `_poll_manifest`'s 30s GET
-  # or syncing assets — and the reset below would then erase it.
+  # loop-head check cannot cover the gap between itself and here — a SIGTERM
+  # landing while the worker is between sessions (blocked in `_poll_manifest`'s
+  # 30s GET, syncing assets, resuming banked games) would be erased by the reset
+  # below. That window is NARROW — sessions restart 1-2x in 11h on the live
+  # run — but it is silent, and the session it starts would also un-bank games
+  # an earlier teardown had saved.
         if self._shutdown_requested:
             return
         self._stop_selfplay = False
