@@ -30,7 +30,7 @@ replay_sf_gap_priority_weight: 0   # 2026-07-05: EXPERIMENT #104 KILLED at the p
 
 # Bootstrap: train initial net on all random games, then discard from window
 bootstrap_dir: data/bootstrap
-bootstrap_checkpoint: /home/josh/projects/chess/data/bootstrap/bootstrap_net_v5_iter239.pt  # os=334, reg=0.375
+bootstrap_checkpoint: null  # POSITIVE CONTROL: random init. _maybe_load_bootstrap (trainable_init.py:453) returns early unless this is set, so null == genuinely random weights.
 bootstrap_zero_policy_heads: true  # Bootstrap trained value/trunk only; start policy heads near-uniform on fresh runs.
 worker_wheel_path: null  # Optional: built wheel to publish for remote worker self-update.
 bootstrap_max_positions: 0   # 0 = load ALL positions (14.2M) — used by scripts/train_bootstrap.py
@@ -73,7 +73,7 @@ model:
 
 stockfish:
   stockfish_path: /home/josh/projects/chess/e2e_server/publish/stockfish
-  sf_nodes: 5000           # 5k nodes: wider WDL spread so regret actually filters moves (was 1k where all 12 passed)
+  sf_nodes: 10000          # POSITIVE CONTROL: with the PID off this is the REALIZED node count, not a floor. Production had ratcheted to 698,289 -- a ~70x cut. 40-85% of selfplay thread time was BLOCKED on SF (measured 2026-07-31), so this is the throughput lever; net size is not.
   sf_move_nodes: 0          # 0 = curriculum moves use the PID-controlled sf_nodes; don't weaken played SF moves by default.
   sf_label_nodes_cap: 0  # 2026-07-02 (late): 400k->0 UNCAPPED — full-refill read at ckpt478 fired the second kill: net+search 52.2 vs 49.6 baseline (>2cp), and raw top-1 61.7 vs 51.5 NEVER recovered from the cap era (60.7 at ckpt466) — the policy teacher needs full ~700k-node labels. Label-cost saving abandoned; leg 2 (fast-ply rows) was killed the same evening — only views survives the triple. History: uncapped->150k (2026-07-01) ->400k (07-02 early) ->0. NOTE: label-node changes shift SF-pool congestion -> finished-game counts -> PID winrate-sample bias; expect n_games and measured winrate to move again. Next read after another refill: if policy still >2cp worse than 49.6, suspect trunk dilution from the 75% value-only rows (levers: per-row loss weighting / record_fast_ply_value off).
   sf_workers: 4
@@ -91,7 +91,7 @@ stockfish:
   sf_hash_mb: 17           # Larger TT helps at higher node counts
   # Keep SF at full strength for labels and sample from MultiPV for easier played moves.
 
-  sf_pid_enabled: true
+  sf_pid_enabled: false   # POSITIVE CONTROL: the PID holds winrate at 0.50 by making SF harder as the net improves, so it CANCELS the progress signal. Fixed difficulty makes winrate a real ruler. With this false, _init_pid returns None and DifficultyState.from_pid falls to tc.sf_nodes (trainable.py:656 pins sf=None on the distributed path) -- VERIFIED 2026-07-31.
   sf_pid_target_winrate: 0.50  # 2026-06-29: 0.575→0.50 (user). Winrate parked ~0.63 well above the old target with regret settling ~0.050 (NOT heading to the 0.0075 floor); per-iter steps are sub-cap so the cap knobs don't help — the lever is the target. Target=0.50 (even match) spends the headroom to drive regret toward full SF strength, then stage 2 climbs nodes past 698k. Airbag floors dropped to 0.45 to sit below the new target. Live-reloadable. 2026-05-29: 0.58→0.575.
   sf_pid_ema_alpha: 0.05      # 2026-04-29: 0.20→0.10→0.05. Offline bake-off (200 episodes × ~30 candidates against a logit-fit plant β=2.18, drift=-0.0064/iter, walk_std=0.31) shows raw_wr behavior is invariant across α (raw_rmse=0.264 universally) — controller is already raw-driven via the inverse fit's history; ema only gates a deadband that almost never fires. Lower α earns a cleaner ema dashboard (settle 50.8 vs 54.4 iters) and a measurably bigger raw-vs-ema lead (~14 iter half-life vs 6.6) which matches the "trust raw, treat ema as stale" intuition. Live-reloadable.
   sf_pid_min_games_between_adjust: 200  # Higher than games_per_iter so only the forced iteration-boundary adjust fires.
@@ -360,7 +360,7 @@ selfplay:
   # READOUT: drop the first 12 rows (C14b). Judge on pid_raw_winrate /
   # curriculum_draw_rate, NEVER on avg_plies_* — the resume fix makes those
   # read healthy on contaminated windows.
-  opening_fen_dole_per_iter: 1
+  opening_fen_dole_per_iter: 0  # POSITIVE CONTROL: seeding OFF. This is the off switch; opening_fen_dole_max_fraction: 0 would mean UNCAPPED, not off.
   # This is the documented KILL above (dose 0). Rationale: (a) one data-affecting
   # change per readout window and the LR change owns this one; (b) the pool is
   # measurably contaminated — of 26 long-stuck seeds, SF rates them median 0.500
@@ -415,7 +415,7 @@ selfplay:
   blindspot_harvest_out_path: /home/josh/projects/chess/data/harvest/blindspot_live.txt
 
   mcts: gumbel
-  mcts_simulations: 256
+  mcts_simulations: 64     # POSITIVE CONTROL: cheaper tree per move; shortens the feedback loop.
   mcts_start_simulations: 256  # Full budget from start (KataGo-style: 75% full, 25% fast)
   playout_cap_fraction: 0.25  # 25% get full sims, 75% get fast
   fast_simulations: 32

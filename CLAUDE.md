@@ -176,6 +176,26 @@ abstraction" is a valid reason to skip; "it touches more files than I expected" 
 State the call and the reasoning explicitly.
 
 Open PRs ready for review, not draft, unless asked. The Codex review bot was disabled
-2026-07-11 — don't wait for a bot review; every PR gets a manual correctness review (you
-or a review subagent) before it counts as done, with the verdict recorded in the PR
-conversation or session summary.
+2026-07-11 — don't wait for a bot review; every PR gets a manual correctness review before
+it counts as done, with the verdict recorded in the PR conversation or session summary.
+
+**THE REVIEWER MUST NOT BE THE AUTHOR.** A subagent that wrote a change does not review
+it — spawn a SEPARATE agent whose only job is the review, and give it the PR, not the
+authoring agent's summary. Self-review reliably passes: the author re-reads the reasoning
+that produced the code, so a wrong premise gets confirmed rather than caught. The failure
+this rule exists for is real and recent — PR #267's J9 "fix" replaced a working
+`str.replace(...)` with `str.removeprefix(...)`, which silently cannot strip the NESTED
+`module._orig_mod.*` key `AveragedModel` produces. Its own tests passed, because they only
+inspected the output where the prefix happened to be leading. A separate reviewer caught
+it by patching `main`'s helper to the PR's semantics and watching `main`'s own test fail.
+
+Give the reviewing agent the standing bias: **this codebase's signature defect is a value
+that is accepted and then silently ignored** — a knob that never reaches the worker, a
+metric that does not mean what its name says, a gate that cannot fail. So the review
+question is not "is this code correct" but "does this take effect on the production path,
+and what observation would prove it did".
+
+When the author is the main session rather than a subagent, the same rule applies: spawn a
+review agent. If that is genuinely impractical, say in the PR that the review was
+self-performed — an unlabelled self-review is the thing to avoid, not the occasional
+justified one.
