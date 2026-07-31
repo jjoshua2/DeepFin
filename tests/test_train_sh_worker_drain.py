@@ -670,7 +670,17 @@ def test_a_suspend_line_from_BEFORE_the_drain_is_not_credited() -> None:
     signalling; this test fails if that offset is dropped."""
     r = _run(_harness(_victim(1, action="ignore", stale=99), grace=6), timeout=40)
     assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
-    assert "99" not in r.stdout, f"stale pre-drain suspend line was credited:\n{r.stdout}"
+    # NOT a bare `"99" not in r.stdout`, which is what this assertion used to
+    # be: every line of the output carries a pid, and pid 2399696 failed it
+    # against correct behaviour (observed 2026-07-31). A negative control that
+    # fires on the pid it was handed is not a control. Assert the strings that
+    # would only appear if the stale line HAD been credited.
+    assert "suspended 99 in-flight game(s)" not in r.stdout, (
+        f"stale pre-drain suspend line was credited:\n{r.stdout}"
+    )
+    assert "in-flight game(s) suspended" not in r.stdout, (
+        f"a loss was summarised as a clean drain:\n{r.stdout}"
+    )
     assert "NO suspend recorded" in r.stdout, r.stdout
     assert "WARNING" in r.stdout, r.stdout + r.stderr
     assert "DISCARDED" in r.stdout, r.stdout
