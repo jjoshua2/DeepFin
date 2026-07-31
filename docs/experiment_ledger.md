@@ -14425,3 +14425,52 @@ evidence that acting on it is worth anything.**
 
 **If seed supply is ever the thing to raise, the lever is curriculum game
 VOLUME or a lower harvest bar for curriculum captures — not the gate.**
+
+## 2026-07-31 00:40 — C14b IS UNPROTECTED ON THE PAUSE/RESUME PATH (#78)
+
+**The resume fix does not cover an operator pause.** Verified on the new
+session started 00:27:16:
+
+    resumed games=0 records=0 discarded=0 preserved=0   (all FOUR workers)
+    worker_01/selfplay_resume/                          0 entries
+
+Compare the 2026-07-30 16:47 graceful selfplay-session restart, which showed
+`resumed games=24 records=731 discarded=0` and held `avg_plies_draw` flat. The
+fix works — it is simply **not on this path**. `train.sh stop` gives a 2s
+SIGTERM grace and cannot preserve in-flight games (task #78), so a pause
+discards the entire in-flight set and the next window is fully length-truncated.
+
+**The cost is already on the board.** Rows 397-406 were clean steady state
+(raw_wr 0.46-0.52, curriculum_draw 0.54-0.61, avg_plies_win 71-89) with regret
+easing smoothly 0.071 -> 0.0905. Then a restart at ~19:50 (22-min gap before
+row 407):
+
+    it   end            regret   raw_wr  cur_dr  pl_win  pl_draw
+    406  07-30 19:42:44 0.09051  0.5171  0.5475   81.1    118.1   <- last clean
+    407  07-30 20:04:57 0.08808  0.6887  0.3444   45.5    128.8   <- restart
+    408  07-30 20:14:27 0.08544  0.9423  0.0577   46.7     84.0
+    409  07-30 20:21:58 0.08416  0.8136  0.2189   52.0    122.0
+    410  07-30 20:32:38 0.08289  0.8204  0.1845   56.7    103.5   <- then paused
+
+`avg_plies_win` collapses 81.1 -> 45.5 (only short decisive games had finished)
+and the PID read the resulting 0.94 winrate as "too easy": **regret tightened
+0.09051 -> 0.08289 = -0.0076 in four iterations**, reversing ten iterations of
+easing. The 00:27 resume opens a second identical window.
+
+**⚑ THE KILL RULE ALMOST FIRED ON THE ARTIFACT.** The seeding KILL is
+`curriculum_draw_rate < 0.30`. Rows 408 (0.0577) and 410 (0.1845) are far below
+it. **That is NOT seeding** — it is the same length-truncation, since draws are
+the longest games and arrive last. The pre-registration says "steady state",
+which is what saves it, but only barely: a kill rule whose metric is corrupted
+by the very event that precedes it is one careless reading from firing. **Do
+not kill seeding on rows 407-410 or on anything before ~12 rows past 00:27.**
+
+**Consequence for the seeding readout:** the clean post-flip window was rows
+397-406, ten rows, and it is now closed. Rows 407+ are contaminated by two
+restarts. The readout clock restarts at ~row 412 (12 rows past the 00:27
+resume). Nothing about the seeding verdict can be read from rows 407-411.
+
+**Action:** #78 is promoted from cleanup to the top of the ops queue. Every
+operator pause currently costs ~-0.008 regret plus a wasted readout window, and
+pauses are routine. The fix is to make `train.sh stop` drain in-flight games
+into `selfplay_resume/` the way a graceful session restart already does.
