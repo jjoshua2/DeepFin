@@ -354,16 +354,36 @@ def test_empty_trial_replay_dir_falls_through_to_override(tmp_path: Path) -> Non
     assert len(list((out / entry["seed_dir"] / "replay_shards").iterdir())) == 3
 
 
-def test_populated_trial_dir_still_wins(tmp_path: Path) -> None:
-    """Negative control: when the primary genuinely HAS shards it must be used,
-    so the fix is a fall-through and not a blanket redirect to the override."""
+def test_production_answer_wins_over_a_stale_trial_dir(tmp_path: Path) -> None:
+    """When the override is set, PRODUCTION writes there — so it is the live
+    window and must win even if the trial dir also holds shards.
+
+    Selecting merely "whichever is non-empty, trial dir first" would prefer a
+    stale decoy and report a plausible non-zero count. That the trial dir's
+    `replay_shards/` exists at all is evidence something other than the
+    trainable writes there.
+    """
     work, td = _mk_run(tmp_path)
-    _mk_shards(td / "replay_shards", 2)
+    _mk_shards(td / "replay_shards", 2)          # stale decoy
     override = tmp_path / "replayroot"
-    _mk_shards(override / TRIAL_NAME / "replay_shards", 9)
+    _mk_shards(override / TRIAL_NAME / "replay_shards", 9)   # live window
 
     out = tmp_path / "pool"
     export_seed_pool(_replay_args(work, out, str(override)))
+    entry = json.loads((out / "manifest.json").read_text(encoding="utf-8"))["entries"][0]
+
+    assert entry["copied_replay_shards"] == 9
+    assert entry["replay_shard_source"].startswith(str(override))
+
+
+def test_trial_dir_is_used_when_no_override_is_configured(tmp_path: Path) -> None:
+    """Control: with no override, production's answer IS the trial dir, so the
+    fix must not redirect anywhere else."""
+    work, td = _mk_run(tmp_path)
+    _mk_shards(td / "replay_shards", 2)
+
+    out = tmp_path / "pool"
+    export_seed_pool(_replay_args(work, out, ""))
     entry = json.loads((out / "manifest.json").read_text(encoding="utf-8"))["entries"][0]
 
     assert entry["copied_replay_shards"] == 2
@@ -402,3 +422,76 @@ def test_no_copy_replay_is_still_allowed_to_export_nothing(tmp_path: Path) -> No
     assert entry["copied_replay_shards"] == 0
     assert entry["replay_shard_source"] == ""
     assert entry["replay_shard_paths_tried"] == []
+
+
+def test_preflight_aborts_before_writing_anything(tmp_path: Path) -> None:
+    """F1: a bad slot must not abort AFTER earlier slots paid multi-GB copies.
+
+    SystemExit is a BaseException, so raising it inside the per-slot
+    `except Exception` isolation would slip past it and leave orphan seed dirs
+    with NO manifest.json. Resolving every slot up front means the failure
+    happens before out_dir exists.
+    """
+    import pytest
+
+    work = tmp_path / "work"
+    good = f"train_trial_{RUN_ID}_00000_0_lr=0.0003_2026-01-01_00-00-00"
+    bad = f"train_trial_{RUN_ID}_00001_0_lr=0.0003_2026-01-01_00-00-00"
+    for name, it in ((good, 9), (bad, 7)):
+        td = work / "tune" / name
+        _write_rows(td, [_row(it, f"checkpoint_{it:06d}")])
+        _mk_ckpt(td, f"checkpoint_{it:06d}", content=f"w{it}")
+        (td / "replay_shards").mkdir(parents=True, exist_ok=True)
+    override = tmp_path / "replayroot"
+    _mk_shards(override / good / "replay_shards", 5)   # only the GOOD slot has any
+
+    out = tmp_path / "pool"
+    a = _replay_args(work, out, str(override))
+    a.salvage_top_n = 2
+    with pytest.raises(SystemExit) as ei:
+        export_seed_pool(a)
+
+    msg = str(ei.value)
+    assert "ZERO replay shards" in msg
+    assert bad in msg
+    assert "1 of 2 slot(s)" in msg
+    assert "Nothing has been written" in msg
+    # THE POINT: no partial pool, no orphan seed dirs, no missing manifest.
+    assert not out.exists(), f"pre-flight wrote {sorted(p.name for p in out.iterdir())}"
+
+
+def test_rerun_into_same_out_dir_is_idempotent(tmp_path: Path) -> None:
+    """F3: the ledger protocol pins a fixed --out <label>, so re-running into
+    the same directory is normal. copytree without pre-clean raises
+    FileExistsError, and per-slot isolation then silently DROPS the slot from
+    the manifest."""
+    work, _td = _mk_run(tmp_path)
+    override = tmp_path / "replayroot"
+    _mk_shards(override / TRIAL_NAME / "replay_shards", 4)
+
+    out = tmp_path / "pool"
+    for _ in range(2):
+        export_seed_pool(_replay_args(work, out, str(override)))
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["entries"], "slot was dropped from the manifest on re-run"
+    assert manifest["entries"][0]["copied_replay_shards"] == 4
+    assert len(list((out / "seeds" / "slot_000" / "replay_shards").iterdir())) == 4
+
+
+def test_dry_run_previews_the_replay_source(tmp_path: Path) -> None:
+    """F4: --dry-run is the one way to check an export before paying for it, so
+    it must show the replay source and must surface the abort condition."""
+    work, td = _mk_run(tmp_path)
+    (td / "replay_shards").mkdir(parents=True, exist_ok=True)
+    override = tmp_path / "replayroot"
+    _mk_shards(override / TRIAL_NAME / "replay_shards", 3)
+
+    a = _replay_args(work, tmp_path / "pool", str(override))
+    a.salvage_dry_run = True
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        export_seed_pool(a)
+    text = buf.getvalue()
+    assert "replay:" in text
+    assert str(override) in text
+    assert not (tmp_path / "pool").exists()
