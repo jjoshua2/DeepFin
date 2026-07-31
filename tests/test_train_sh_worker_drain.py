@@ -40,21 +40,34 @@ def _harness(victim: str, *, grace: int) -> str:
     """Run the real drain block under the same `set -e` train.sh uses, against
     real processes.
 
-    `pgrep` is stubbed to report whichever members of $POOL_FILE are ALIVE
-    RIGHT NOW, rather than a fixed list. That is what lets a test add a
-    process partway through and have the stub start reporting it — the
-    behaviour of the driver's `revive_dead_selfplay_processes`. A fixed-list
-    stub cannot tell a pid-capture drain from a pgrep-polling one, because
-    both converge.
+    `pgrep` is stubbed rather than real because the real one would match — and
+    then SIGTERM — the four production workers running on this machine.
+
+    The stub honours BOTH of the things the production call depends on:
+    liveness and the PATTERN. Liveness, because a fixed list cannot tell a
+    pid-capture drain from a pgrep-polling one (both converge), and it is what
+    lets a test add a process partway through the way the driver's
+    `revive_dead_selfplay_processes` does. The pattern, because ignoring it
+    made the drain's ONLY production selector untested: replacing it with a
+    name that matches nothing left all seven tests green while draining nothing
+    at all. Victims therefore carry a realistic worker argv via `exec -a`, and
+    the stub greps /proc/<pid>/cmdline with the pattern it was actually given.
     """
     return f"""
 set -e
 export CAE_STOP_GRACE_SECONDS={grace}
 POOL_FILE=$(mktemp)
 pgrep() {{
-    local p
+    local p pat=""
+    for a in "$@"; do
+        case "$a" in -*) ;; *) pat="$a" ;; esac
+    done
     while read -r p; do
-        if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then echo "$p"; fi
+        if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+            if tr '\\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qE "$pat"; then
+                echo "$p"
+            fi
+        fi
     done < "$POOL_FILE"
 }}
 {victim}
@@ -75,8 +88,8 @@ rm -f "$POOL_FILE"
 
 def test_workers_are_signalled_and_the_wait_ends_when_they_exit() -> None:
     victim = """
-sleep 300 >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
-sleep 300 >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker" sleep 300' >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker" sleep 300' >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
 """
     r = _run(_harness(victim, grace=30))
     assert "Draining selfplay workers" in r.stdout, r.stdout + r.stderr
@@ -94,10 +107,14 @@ sleep 300 >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
 def test_a_worker_that_ignores_sigterm_warns_instead_of_hanging() -> None:
     victim = """
 READY=$(mktemp -u)
-python3 -c 'import signal,time,sys
+PYF=$(mktemp --suffix=.py)
+cat > "$PYF" <<'EOF'
+import signal, sys, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
-open(sys.argv[1], "w").close()
-time.sleep(300)' "$READY" >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+open(sys.argv[1], "w").close()   # readiness: SIG_IGN is installed
+time.sleep(300)
+EOF
+bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker" python3 "$1" "$2"' _ "$PYF" "$READY" >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
 for _ in $(seq 200); do
     if [ -f "$READY" ]; then break; fi
     sleep 0.05
@@ -120,14 +137,14 @@ def test_a_revived_worker_does_not_extend_the_wait() -> None:
     re-ran `pgrep` instead it would keep finding the replacement and burn the
     whole grace period, then warn falsely."""
     victim = """
-sleep 300 >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker" sleep 300' >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
 # The revival: appears 1s in — after the drain captured its pid list (t~0) and
 # before its first liveness check (t~2). It is never signalled and outlives the
 # wait, exactly like a worker the driver relaunched mid-teardown. A revival
 # landing after the first check would not discriminate the two loop shapes,
 # because the captured list has already gone empty by then.
 ( sleep 1
-  sleep 300 >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+  bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker" sleep 300' >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
   sleep 60 ) >/dev/null 2>&1 </dev/null &
 """
     r = _run(_harness(victim, grace=30), timeout=40)

@@ -126,6 +126,45 @@ def test_run_exits_at_the_loop_head_once_a_shutdown_is_requested() -> None:
 
 
 @pytest.mark.usefixtures("restore_handlers")
+def test_session_setup_cannot_erase_a_pending_shutdown() -> None:
+    """`_run_selfplay` clears `_stop_selfplay` at session start. That is the
+    ONLY flag `play_batch` polls, so a SIGTERM arriving between `run()`'s
+    loop-head check and that line used to be erased outright — and the worker
+    then started a full 32-thread session with nothing left to stop it.
+
+    The window is not exotic: the signal normally lands while the worker is
+    blocked in `_poll_manifest`'s 30s GET, or syncing assets, or resuming
+    banked games. Worse, that session would run `_resume_inflight_games` and
+    un-bank the games an EARLIER teardown had saved, so they die too.
+    """
+    w = _bare_session()
+    w._install_shutdown_handlers()
+    os.kill(os.getpid(), signal.SIGTERM)
+    assert w._stop_fn() is True
+
+    # Exactly what session start does to the flag.
+    w._stop_selfplay = False
+
+    # THE POINT: the shutdown is terminal and must survive the reset.
+    assert w._stop_fn() is True, "the flag play_batch polls was erased by session setup"
+    assert w._pause_fn() is False
+
+
+@pytest.mark.usefixtures("restore_handlers")
+def test_run_selfplay_refuses_to_start_a_session_after_a_shutdown() -> None:
+    """Belt to the `_stop_fn` braces: don't merely stop the new session on its
+    first ply, don't start it. A bare session has no model, client or manifest,
+    so reaching ANY real setup would raise — returning cleanly is the proof."""
+    w = _bare_session()
+    w._install_shutdown_handlers()
+    os.kill(os.getpid(), signal.SIGTERM)
+
+    w._run_selfplay({})   # must return, not raise and not set up a session
+
+    assert w._stop_fn() is True
+
+
+@pytest.mark.usefixtures("restore_handlers")
 def test_handler_installation_is_not_fatal_off_the_main_thread(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:

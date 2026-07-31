@@ -985,11 +985,33 @@ games=0`, on all four workers.** Same feature, same flag, same worker — zero.
    was reachable only via `_stop_selfplay`, which only a manifest/reco change
    sets. A SIGTERM was simply fatal.
 2. `train.sh stop` sends SIGTERM to the pid in `/tmp/chess_training.pid`, which
-   is the **tune driver**. Workers are children of `ray::ImplicitFunc.train` →
-   **raylet**, verified on the live run (`ps -o ppid` on all four worker pids
-   gives 2140868, not the driver's 2138517). The signal never reached them;
-   they died to the `pkill -9 -f 'ray::'` further down, which no handler can
-   catch.
+   is the **tune driver**. Workers are `subprocess.Popen` grandchildren of
+   `ray::ImplicitFunc.train`, verified on the live run (`ps -o ppid` on all
+   four worker pids gives 2140868, not the driver's 2138517). The signal never
+   reached them.
+
+**⚑ CORRECTION, same day, before this entry was ever read as a verdict.** The
+first version of this entry continued "they died to the `pkill -9 -f 'ray::'`
+further down, which no handler can catch." **That is false**, caught by the
+independent reviewer of PR #291 and then confirmed directly against
+`/proc/<pid>/cmdline`: **zero** of the four workers match `ray::` or `raylet`,
+and `comm -12` of `pgrep -f 'ray::'` with the worker pids is **empty**. Tearing
+down ray ORPHANS the workers; it does not kill them. What actually reached them
+was the 5s SIGTERM→SIGKILL in `tune/_utils.py::terminate_process` (via
+`_cleanup_trial_resources` → `_stop_worker_processes`), and with no handler
+installed that was simply fatal.
+
+Break (1) alone is sufficient for the fix and is unaffected. But the wrong
+mechanism had a **consequence in the code**: it justified the claim that a
+worker the driver revives mid-drain "dies to the `pkill -9 ray::` below at no
+cost". Nothing kills it. It reuses the dead worker's `worker_index`, hence its
+`work_dir` and `selfplay_resume/`, reaches a session in ~60s and
+**claims-by-rename the very files the drain just banked** — then dies as an
+orphan with them. `stop()` therefore now runs a SECOND drain pass after
+`ray stop`/`pkill`, SIGTERM-then-SIGKILL over whatever workers remain.
+**The lesson is the one this project keeps relearning: `ps -o ppid` answered
+"who is the parent", and I let it also answer "what killed them", which is a
+different question with a different instrument.**
 
 So the pause path cost is exactly the C14b cost the entry below quantifies —
 `pid_raw_winrate` **+0.110 too high**, PID tightening regret **−0.0086 to
@@ -1008,7 +1030,26 @@ the SAME `on_suspend` → `suspend_inflight_games` path the restart already
 uses; `run()`'s loop head then exits. The handler only sets flags
 (async-signal-safe); an install failure off the main thread warns and keeps the
 worker running. (b) `train.sh stop` SIGTERMs the workers and waits
-(`CAE_STOP_GRACE_SECONDS`, default 90s) BEFORE touching the driver or ray.
+(`CAE_STOP_GRACE_SECONDS`, default 90s) BEFORE touching the driver or ray, and
+again after, for orphans.
+
+**⚑ The first version of (a) reproduced this project's signature defect inside
+its own fix.** `_run_selfplay` clears `_stop_selfplay` at session start — that
+is the ONLY flag anything downstream polls — so a SIGTERM landing between
+`run()`'s loop-head check and that line was **erased**, and the worker started a
+full 32-thread session with nothing left to stop it. The window is the common
+case, not an exotic one: the signal normally arrives while the worker is blocked
+in `_poll_manifest`'s 30s GET. Worse, that session runs `_resume_inflight_games`
+and un-banks games saved by an EARLIER teardown, so those die too. Reproduced
+before fixing:
+```
+after SIGTERM:       _shutdown_requested=True   _stop_fn()=True
+after _run_selfplay: _shutdown_requested=True   _stop_fn()=False
+```
+Fixed by making the shutdown terminal — `_stop_fn` returns `_stop_selfplay or
+_shutdown_requested`, and `_run_selfplay` refuses to start at all — because a
+shutdown, unlike a task change, can never be un-requested. **A flag that session
+setup resets is not where a terminal condition belongs.**
 
 **Gotcha that shaped (b):** the wait is over the pid list captured ONCE. The
 driver's `revive_dead_selfplay_processes` relaunches a worker that exits

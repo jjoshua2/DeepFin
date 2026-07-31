@@ -158,14 +158,25 @@ stop() {
     touch "$STOP_MARKER"
 
     # ── Drain selfplay BEFORE anything is killed ─────────────────────────────
-    # Workers are children of the raylet, NOT of $pid, so SIGTERM to the driver
-    # never reaches them; they used to die to the `pkill -9 ray::` below, which
-    # no handler can catch. Every in-flight game was therefore discarded on an
-    # operator pause: measured 2026-07-31, `resumed games=0` on all four
-    # workers, versus `resumed games=24 records=731` across a graceful session
-    # restart. Those discarded games are what makes the next window
-    # length-truncated (only short decisive games have finished), spiking
-    # winrate and driving the PID to tighten regret ~-0.008 against a phantom.
+    # Workers are subprocess grandchildren of `ray::ImplicitFunc.train`, NOT of
+    # $pid, so `kill "$pid"` below never reaches them (verified 2026-07-31:
+    # ps -o ppid on all four live workers gives the trial actor, not the driver).
+    # Every in-flight game was therefore discarded on an operator pause:
+    # `resumed games=0` on all four workers, versus `resumed games=24
+    # records=731` across a graceful session restart. Those discarded games are
+    # what makes the next window length-truncated (only short decisive games
+    # have finished), spiking winrate and driving the PID to tighten regret
+    # ~-0.008 against a phantom.
+    #
+    # NOT the mechanism: the `pkill -9 ray::` / `raylet` lines below. Measured
+    # 2026-07-31 against /proc/<pid>/cmdline, ZERO of the four workers match
+    # either pattern, and the intersection of `pgrep -f 'ray::'` with the worker
+    # pids is empty. Killing the trial actor ORPHANS the workers rather than
+    # killing them; what actually reached them was the 5s SIGTERM->SIGKILL in
+    # tune/_utils.py::terminate_process, and with no handler installed that was
+    # simply fatal. An earlier revision of this comment asserted the pkill
+    # mechanism -- it was wrong, and the second pass at the end of stop() exists
+    # because of it.
     #
     # Signalling the workers directly lets their SIGTERM handler run the same
     # suspend path a reco restart-key change already uses. Games land in
@@ -176,7 +187,11 @@ stop() {
     # a worker that exits mid-iteration, so a `pgrep`-until-empty loop would never
     # converge — it would burn the whole grace period and then report a false
     # "still alive" warning. A revived worker is seconds old and has nothing in
-    # flight worth suspending; it dies to the `pkill -9 ray::` below at no cost.
+    # flight worth suspending, so it is not worth waiting for HERE — but it is
+    # NOT free: it reuses the dead worker's worker_index and therefore its
+    # work_dir, so once it reaches a session (~60s) it claims-by-rename the very
+    # selfplay_resume/ files this drain just banked. The second pass at the end
+    # of stop() is what stops that, since nothing above kills it.
     local grace="${CAE_STOP_GRACE_SECONDS:-90}"
     # -f is required (the module name is an argument, not the comm); the pattern
     # cannot match this script because it never appears in our own argv.
@@ -233,6 +248,43 @@ stop() {
     sleep 1
     pkill -9 -f 'ray::' 2>/dev/null || true
     pkill -9 -f 'raylet' 2>/dev/null || true
+
+    # ── Second drain pass: ORPHANS ───────────────────────────────────────────
+    # Nothing above kills a worker. Verified 2026-07-31 against
+    # /proc/<pid>/cmdline: no worker matches `ray::` or `raylet`, and the
+    # intersection of `pgrep -f 'ray::'` with the worker pids is empty. Workers
+    # are subprocess grandchildren, so tearing down ray ORPHANS any that the
+    # first pass did not already drain -- including one the driver revived
+    # DURING that pass, which reuses the dead worker's work_dir and would
+    # otherwise reach a session in ~60s and claim-by-rename the selfplay_resume/
+    # files we just banked.
+    #
+    # These get the same graceful SIGTERM: a survivor of the first pass may be
+    # mid-suspend, and a revived one has a (small) table of its own. Only then
+    # SIGKILL, so a hung worker cannot wedge `stop`.
+    local orphans
+    orphans=$(pgrep -f 'chess_anti_engine\.worker' 2>/dev/null || true)
+    if [ -n "$orphans" ]; then
+        echo "Draining orphaned workers: $(echo "$orphans" | tr '\n' ' ')"
+        # shellcheck disable=SC2086
+        kill -TERM $orphans 2>/dev/null || true
+        local owait=0 oalive="$orphans" o
+        while [ "$owait" -lt "${CAE_ORPHAN_GRACE_SECONDS:-30}" ] && [ -n "$oalive" ]; do
+            sleep 2
+            owait=$((owait + 2))
+            oalive=""
+            for o in $orphans; do
+                if kill -0 "$o" 2>/dev/null; then
+                    oalive="$oalive $o"
+                fi
+            done
+        done
+        if [ -n "$oalive" ]; then
+            echo "Force killing orphaned workers:$oalive"
+            # shellcheck disable=SC2086
+            kill -9 $oalive 2>/dev/null || true
+        fi
+    fi
     echo "Stopped"
 }
 

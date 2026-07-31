@@ -1006,13 +1006,22 @@ class WorkerSession:
         return DirectGPUEvaluator(model, device=device, max_batch=4096, n_slots=2)
 
     def _stop_fn(self) -> bool:
-        """Called every ply by play_batch.  Return True to exit continuous selfplay."""
-        return self._stop_selfplay
+        """Called every ply by play_batch.  Return True to exit continuous selfplay.
+
+        `_shutdown_requested` is checked SEPARATELY rather than relying on the
+        `_stop_selfplay` the handler also sets: `_run_selfplay` clears
+        `_stop_selfplay` at session start, so a SIGTERM landing between `run()`'s
+        loop-head check and that line was erased, and a full 32-thread session
+        started with nothing left to stop it. A shutdown is terminal — once
+        requested it can never be un-requested — so it belongs here, not in a
+        flag that session setup resets.
+        """
+        return self._stop_selfplay or self._shutdown_requested
 
     def _pause_fn(self) -> bool:
         """play_batch hold gate: True while the server's train-phase pause is
         active. A pending stop always wins so teardown is never delayed."""
-        return self._hold_selfplay and not self._stop_selfplay
+        return self._hold_selfplay and not self._stop_fn()
 
     def _install_shutdown_handlers(self) -> None:
         """Turn SIGTERM/SIGINT into the SAME graceful teardown a reco restart-key
@@ -3727,6 +3736,12 @@ class WorkerSession:
 
     def _run_selfplay(self, manifest: dict) -> None:
         """Continuous selfplay — runs until stop signal (task change/pause/shutdown)."""
+  # Do not start a session we have already been told to shut down. `run()`'s
+  # loop-head check cannot cover the gap between itself and here — the SIGTERM
+  # typically arrives while the worker is blocked in `_poll_manifest`'s 30s GET
+  # or syncing assets — and the reset below would then erase it.
+        if self._shutdown_requested:
+            return
         self._stop_selfplay = False
         self._hold_selfplay = False
         self._last_manifest_poll_s = time.time()
