@@ -14786,3 +14786,83 @@ floor, so the bar is blunt and the window short:
    targets/tuning at high difficulty rather than to the pipeline. That is a
    different and much narrower claim than "the loop works", and it must not be
    cited as the latter.
+
+### ⚑⚑ VERDICT (2026-07-31 14:48) — WIDE-SPAN ARENA: **-25.5 Elo [-48.4, -2.9]** over 20 days. The pre-committed NEGATIVE branch fired.
+
+**Judged by the rule written before the games were played, at the pre-committed
+600-game endpoint.** Result banked in `runs/arena_results.jsonl`
+(`label=widespan_boot512_vs_ck477`), log
+`scratchpad/strength_readout_0731/arena_widespan.log`:
+
+```
+600 games (300 opening pairs)
+pentanomial (candidate POV): WW 31 | WD_DW 42 | DD_WL 123 | LD_DL 60 | LL 44
+score 0.4633 +/- 0.0166 (SE)     Elo -25.5   95% CI [-48.4, -2.9]
+```
+
+Candidate ck477 (2026-07-31) vs the frozen `boot512` anchor (2026-07-11), matched
+32 sims, **training** search shape, paired openings, conc 16, training DOWN.
+
+**The rule said: CI excludes 0 and NEGATIVE ⇒ the loop is actively destroying
+strength; bisect immediately.** That branch fired. Twenty days of training left
+the net measurably WEAKER than the weights it started from.
+
+**⚠ DO NOT QUOTE -25.5 AS A POINT ESTIMATE.** The running value oscillated across
+the run and crossed the significance line three times:
+
+| games | Elo | 95% CI | excludes 0? |
+|---|---|---|---|
+| 26 | -95.9 | [-238.1, +19.6] | no |
+| 90 | -62.4 | [-123.1, -5.4] | **yes** |
+| 124 | -47.9 | [-96.5, -1.2] | **yes** |
+| 152 | -25.2 | [-68.7, +17.5] | no |
+| 218 | -9.6 | [-46.9, +27.6] | no |
+| 348 | -14.0 | [-43.6, +15.5] | no |
+| 476 | -19.0 | [-44.6, +6.4] | no |
+| 508 | -26.7 | [-51.8, -1.9] | **yes** |
+| **600** | **-25.5** | **[-48.4, -2.9]** | **yes** |
+
+The true effect sits AT this ruler's resolution limit. What is solid is the SIGN
+(never positive after the first 26 games) and the absence of any gain. **The
+pre-commitment is the only reason this is reportable at all** — reading at 90
+games would have published "actively destroying strength", and reading at 218
+would have published a null. Both would have been the analyst choosing the number.
+
+**⚠ NOT COMPARABLE to the two historical `vs_boot512` rows** (-12.2 @iter25,
+-11.1 @iter122): those were measured under the implicit PLAY shape at
+`vloss_weight=0`. This is a NEW series.
+
+**CONFOUND, stated rather than buried:** ck477 is on the WRONG SIDE of the
+iteration-410 value regression (-14.06 cp [-22.09, -6.64]). This run therefore
+mixes "did 20 days of training help" with "how much did the 07-30/07-31 teardowns
+hurt". The cleaner test of training alone is **iter409 vs boot512**, and of the
+teardown cost is **iter409 vs ck477** — both checkpoints are banked
+(`data/ratchet/snapshots/`, `scratchpad/strength_readout_0731/ck477`). NOT YET RUN.
+
+**THREE INDEPENDENT INSTRUMENTS NOW AGREE**, which is what makes this credible
+rather than another wide-CI null:
+
+| instrument | span | result |
+|---|---|---|
+| paired arena, 600 games | 20 days | **-25.5 Elo [-48.4, -2.9]** |
+| `value_regret`, paired bootstrap | boot512 -> ck477 | **-13.97 cp [-23.69, -4.20]** |
+| `wdl_loss` (its OWN training objective) | 67 iters | 0.8133 -> 0.8128, flat |
+
+with negative controls holding: 287 iterations of ordinary training moved value
+regret **+0.45 and +0.46 cp, both CIs spanning zero**. The ruler resolves 14 cp
+when there is 14 cp to resolve (it caught the iter-410 step); it has nothing to
+resolve in the ordinary case.
+
+**ASYMMETRY THAT LOCALISES THE FAULT.** The POLICY head is learning and the VALUE
+head is not — visible on the training objective (`policy_loss` -0.00036/iter,
+`sf_move_loss` -0.00072/iter, both falling; `wdl_loss` +0.00003/iter flat,
+`wdl_loss_open` +0.00069/iter RISING) and independently on the frozen audit set
+(raw-policy mean top-1 **0.5235 -> 0.5426 -> 0.5566** across boot512/iter409/ck477,
+entropy 1.3948 -> 1.3555). Whether that rising confidence is rising CORRECTNESS is
+a separate question — the paired raw/search regret comparison is owed.
+
+**OPERATOR DECISION (2026-07-31):** regular training does NOT resume until the
+loop is understood. Diagnosis is in flight; the from-scratch positive control is
+built and pre-registered (`configs/scratch_pc.yaml`) but deliberately NOT launched,
+because a from-scratch run answers "can it learn at all", not "why doesn't this
+configuration learn".
