@@ -262,6 +262,163 @@ always re-dump and pair.
   stale yaml appearing, no restart in between). Treat every `selfplay.*` recording
   knob as live unless proven otherwise.
 
+## PRE-REGISTERED (2026-07-31, WRITTEN BEFORE THE RUN) — the VALUE-HEAD SWAP: is the value head causally upstream of the training-target degradation?
+
+**Status at write time: rig built, ZERO numbers seen.** Offline, forward-only,
+no training change. This is the intervention that decides whether the
+`sf_wdl_frac_floor` / `search_wdl_frac` proposal has a rationale.
+
+**BACKGROUND (already measured, 2026-07-31).** Over boot512 → iter477 the
+production training target's own deep-SF regret degraded
+`cand.train.exp` **+6.59 cp [+0.89, +12.37]**, and the raw policy followed it
+**+8.44 cp [+4.32, +12.94]** — ~1:1. The degradation concentrates in DECIDED
+positions (won: target entropy 0.822 → 0.888; lost: raw top-1 mass 0.539 →
+0.588 while regret rises +14.80). That is a *fingerprint* consistent with the
+value head — the policy target is `softmax(log prior + σ(completed Q))` and
+`wdl` is the only value head in MCTS — but it is correlational.
+
+**HYPOTHESIS.** The value head is causally upstream: feeding the iter477 policy
+prior a *boot512* value function recovers a large share of the target
+degradation.
+
+**RIG.** `scratchpad/valueswap/audit_swap.py`, a COPY of
+`scripts/audit_targets.py`'s net leg. Production `audit_targets.py` is NOT
+edited. The swap is done by subclassing `LocalModelEvaluator` and overriding
+`_forward_encoded` to return `{**out_policy_model, "wdl": out_value_model["wdl"]}`,
+so every downstream consumer (sync, async, bf16, volatility) sees the swapped
+value through the production call path. WHOLE-MODEL swap (donor trunk + donor
+head), not a weight graft: `value_wdl.*` is a 3-layer head reading trunk
+features, so grafting boot512's head onto iter477's trunk yields a value
+function that is neither net's — that variant is measured only to demonstrate
+it is void.
+
+**THE ONE DECIDING YARDSTICK** — paired `cand.train.exp` on the frozen v1-2k
+audit set, joined per position, bootstrap CI:
+
+```
+PYTHONPATH=. python3 scripts/paired_compare.py --join-key key --field cand.train.exp \
+  scratchpad/valueswap/pdump_p477_vBOOT.jsonl \
+  scratchpad/strength_readout_0731/pdump_iter477.jsonl
+```
+
+**PRE-COMMITTED DECISION RULE.** Recovery is measured against the +6.59 cp
+baseline degradation.
+
+| outcome | rule | verdict |
+|---|---|---|
+| delta ≤ **−3.95 cp** (≥60% recovery), CI excludes 0 | CONFIRMS | value head is the dominant cause; ship the target-mix fix on this rationale |
+| **−3.95 < delta ≤ −1.65** (25–60%), CI excludes 0 | PARTIAL | contributing but not dominant; fix is defensible, expected effect scaled down |
+| delta > **−1.65 cp** (≤25%) **or** CI spans 0 | REFUTES | target drift is a policy-prior effect; **do NOT propose the fix on this rationale** |
+
+**RECIPROCAL (control, not a second yardstick).** Injecting iter477's value into
+boot512 must REPRODUCE: delta vs `pdump_boot512.jsonl` ≥ **+1.65 cp** with CI
+excluding 0. **If both directions move the SAME sign, or neither moves, the rig
+is measuring something other than the value head and the whole result is VOID.**
+
+**NEGATIVE CONTROL — deliberately NOT the shuffle that was suggested.** A 50/50
+per-position shuffle of the value assignment is a *mixture*, so its expected
+effect is ~half the full swap, not zero; "require the effect to vanish" has no
+valid null there and the control cannot fail correctly. The control used
+instead is a SHAM SWAP with a known-null target: graft boot512's
+**`value_sf_eval`** head into iter477. `value_sf_eval` is documented as
+auxiliary and **not used in MCTS** (`docs/model_heads.md`, CLAUDE.md), so a
+correct rig must return **exactly zero** change in `cand.train.exp`.
+**Pre-committed: |delta| < 0.5 cp AND CI containing 0. Any movement voids every
+number in this entry** — it would prove the rig perturbs the search through a
+path other than the value signal, or that the run is not deterministic.
+
+**KNOWN POWER LIMITATION, STATED BEFORE THE READ.** The +6.59 baseline has a CI
+half-width of ~5.7 cp, so a 3.95 cp effect measured with *that* estimator could
+not clear 0. This test is expected to be tighter because it is paired on the
+SAME policy prior, SAME positions and SAME seed, differing only in the value
+function — most between-position variance cancels. **If the swap CI is not
+materially tighter than ±5.7 cp, the test is underpowered and the honest
+verdict is INCONCLUSIVE, not REFUTES.** That escape hatch is written here, in
+advance, precisely so a wide CI cannot later be read as a refutation.
+
+**Confounds.** The v1-2k set is 1332 endgame + 668 middlegame + **ZERO opening**
+rows; this is an endgame/middlegame verdict. Both arms share it, so the paired
+delta is valid, but the result does not generalise to openings.
+
+### ⚑ VERDICT 2026-07-31 ~15:5x — NOT CONFIRMED. The value head is a REAL but MINORITY channel (~27%); the POLICY PRIOR carries the rest. My decided-position mechanism is REFUTED by its own pre-specified test.
+
+**All five legs ran; every leg proved in effect (~1.14M leaf rows swapped each).**
+
+| leg | `cand.train.exp` paired delta | |
+|---|---|---|
+| NEG CONTROL sham `sf_eval` swap vs self-swap | **+0.00 [+0.00, +0.00]** | control PASSES exactly |
+| rig self-swap vs PRODUCTION dump (iter477) | +3.54 [+0.34, +7.05] SIG | sync-path artefact, see below |
+| rig self-swap vs PRODUCTION dump (boot512) | −1.21 [−4.17, +1.49] ns | |
+| BASELINE inside the rig, pBOOT→p477 | +11.34 [+4.68, +18.20] SIG | production estimate was +6.59 |
+| **PRIMARY** boot512 value → iter477 prior | **−3.30 [−7.88, +1.20] ns** | 29% recovery |
+| RECIPROCAL iter477 value → boot512 prior | +2.75 [−2.10, +7.89] ns | 24% reproduction, OPPOSITE sign |
+
+**VERDICT BY THE LETTER OF THE PRE-COMMITTED RULE: REFUTES** — the primary CI
+spans 0. **VERDICT BY THE PRE-REGISTERED POWER ESCAPE HATCH: INCONCLUSIVE** —
+the primary CI half-width is 4.54 cp against the 5.7 cp I named in advance as
+the underpowering line, i.e. only 20% tighter, which is not "materially
+tighter". **Either way the hypothesis is NOT CONFIRMED, and per this entry's own
+pre-registration the target-mix fix must NOT be shipped on the "value head is
+the dominant cause" rationale.**
+
+**NOT VOID.** Primary and reciprocal moved in OPPOSITE directions, both as
+predicted, at near-identical magnitude (29% vs 24%). The negative control is
+exactly zero. A second, unplanned control landed for free: `cand.raw.exp` moved
+**exactly 0.00** under both swaps — the value swap provably cannot touch the raw
+policy and does not. The rig is surgical; the effect is real, it is just small.
+
+**⚑ THE CLEAN DECOMPOSITION, which is the actual result.** `cand.raw.exp`
+degraded **+8.44** boot512→iter477 and is a pure policy-weights effect (the swap
+cannot move it). The rig's training-target degradation is **+11.34**. The value
+head's causal share, pooled over both arms (post-hoc), is **+3.03 [−0.69,
++7.00]**. So:
+
+> **training-target degradation ≈ 8.4 cp through the POLICY PRIOR + 3.0 cp
+> through the VALUE HEAD.** The value head is ~27% of the channel; the
+> self-distilling policy prior is ~73%.
+
+This **re-ranks the fix list**: the policy-side external anchor (`w_sf_own` 0.1
+on 19.2% coverage vs `w_policy + w_soft` = 2.0 on 100%) is the larger lever, not
+the value-target mix.
+
+**⚑ MY MECHANISM IS REFUTED BY ITS OWN PRE-SPECIFIED SUBGROUP.** The 15:00
+report predicted, before this rig existed, that the value channel lives in
+DECIDED positions (value saturates → completed-Q flat → uninformative target).
+Pooled effect by bucket:
+
+| bucket | n | pooled value-head effect |
+|---|---|---|
+| DECIDED \|best_cp\|>300 | 1022 | +2.91 [−4.07, +10.28] ns |
+| LOST best_cp<−300 | 612 | +6.89 [−3.17, +17.87] ns |
+| WON best_cp>+300 | 410 | **−3.03** — WRONG SIGN |
+| **NEAR-EQUAL \|best_cp\|≤300** | 978 | **+3.15 [+0.89, +5.78] SIG** |
+
+The only significant cell is NEAR-EQUAL — the opposite of the prediction, and
+the WON bucket carries the wrong sign. **The saturation-in-decided-positions
+story does not survive.** A ceiling effect on the *instrument* is a live
+alternative (where both value heads saturate they agree, so a swap has no lever
+regardless of whether value matters there) — but I did not measure the
+per-position value disagreement, so that is an untested rescue and must not be
+used as one.
+
+**⚑ INSTRUMENT FINDING, worth its own row.** Forcing the C search onto the
+synchronous evaluator path (necessary so `evaluate_encoded_async` could not
+bypass the swap — `gumbel_c.py:402`) shifts `cand.train.exp` by **+3.54 cp on
+iter477 and −1.21 cp on boot512**, a 4.75 cp differential that fully explains
+the rig baseline (+11.34) vs production (+6.59) gap. **The async/sync batching
+choice changes the training target by more than the entire value-head effect
+being measured.** Any future rig that swaps evaluators must regenerate both
+baselines through the same path; comparing a rig leg against a production dump
+would have manufactured a spurious ~5 cp result here.
+
+**Rig:** `scratchpad/valueswap/run_swap.py` + `run_all.sh` + `analyse.py`.
+Production `scripts/audit_targets.py` was **NOT edited — diff is empty**; the rig
+monkeypatches `chess_anti_engine.inference.LocalModelEvaluator` before the
+audit's net leg imports it. Legs were produced by the pre-fix revision of
+`run_swap.py`; the subsequent edit touches only `graft` mode (never run) and the
+proof-of-effect print format, neither of which is on the `wdl`/`sf_eval`
+numeric path.
+
 ## PRE-REGISTERED (2026-07-29) — the promotion-gate SHADOW READOUT (PR #285), and the two things it must settle before `gate_mode` ever leaves `off`
 
 **This entry exists because `promotion_gate.py` asserted it did.** The constant
@@ -1803,6 +1960,88 @@ negative control for that specific claim PASSES and is recorded as passing.**
 
 **Confounds.** None with the seeding readout: this changes teardown behaviour
 only, and takes effect at the next stop.
+
+#### READOUT 2026-07-31 13:50 — the mechanism instrument reads SUCCESS, and the WARNING it printed was 2/3 false, not 3/3
+
+First real teardown with the handler. Counted 2026-07-31 directly from the
+worker logs under
+`/tmp/ray/session_2026-07-31_13-07-52_227127_2349250/artifacts/.../distributed_workers/`
+— every `suspended games=N` line in the file, timestamp-filtered to `>=
+13:50:16` (the stop), summed per worker:
+
+| worker | pid | suspend lines, all after 13:50:16 | banked | `exiting after suspend` | named in the warning |
+|---|---|---|---|---|---|
+| 01 | 2351836 | 11 | **251** | 13:51:06 | no — exited within grace |
+| 02 | 2351838 | 8 | **174** | 13:51:42 | **yes — FALSE alarm** |
+| 03 | 2351840 | 9 | **206** | 13:51:24 | yes — **FALSE alarm** |
+| 00 | 2356433 | **0** (0 in the whole file) | **0** | **never, whole session** | yes — **TRUE alarm** |
+
+**631 games banked; ~24 lost.** So the pre-registered SUCCESS criterion
+(`resumed games=` > 0 on at least one worker) is met by a wide margin — the
+handler works.
+
+Two contested numbers, resolved here. A review of PR #292 put worker_01 at
+**114** on the theory that the sum double-counts `play_batch` thread groups.
+It does not: all 11 of worker_01's lines postdate the stop and sum to 251, and
+none of them predate it, so there is nothing to exclude. The author's
+independent cross-check (a file count in `selfplay_resume/`, also 251) can no
+longer be re-run — those directories are consumed by the next session and are
+gone — so this row rests on the log sum alone, which is the measure the shipped
+code uses. worker_00's own record is unambiguous: two `worker starting` lines
+(13:08:10 and the 13:20:16 revival, which is why its pid is the outlier), zero
+`shutdown requested`, zero suspend lines, and a log that stops mid-stats at
+13:51:03 with `in_flight_avg=24.0`.
+
+**⚑ AND THE FIRST ATTEMPT TO FIX THE WARNING REPRODUCED THE SIGNATURE DEFECT
+INSIDE THE FIX, FOR THE SECOND TIME IN TWO DAYS.** PR #292 v1 claimed "every
+word of that warning is wrong about those three workers". Wrong: worker_00 was
+relaunched at 13:20:16 by `revive_dead_selfplay_processes` (hence its outlier
+pid), logged **no** suspend line and **no** graceful-exit line in its entire
+session, and its log stops mid-stats with `in_flight_avg=24.0`. It really did
+discard its table, and the warning was right about it. The v1 loss branch was
+`elif kill -0 "$w"` — it required the worker to still be **ALIVE** to call it a
+loss — so a worker that dies having banked nothing printed `Workers drained
+after Ns (0 in-flight game(s) suspended)` and no warning at all. A noisy
+true-positive traded for a silent false-negative, in the one case the warning
+exists for.
+
+Both the old rule (alive ⇒ discarded) and v1's (dead ⇒ fine) are the same
+error: asking `kill -0` a question about DATA. Liveness answers neither
+direction — 02 and 03 were alive because they were tearing down a CUDA context
+*after* banking, and 00 would have been dead having banked nothing.
+
+**The shipped rule is three states, read off the worker's own log from the byte
+offset recorded before the SIGTERM** (that same `suspended games=` string is
+emitted by every in-session reco restart, so a whole-file grep would credit an
+hours-old line to this drain):
+
+- **banked** — suspend line(s) after the offset, or `exiting after suspend`
+  with nothing in flight to suspend (a worker between sessions is not a loss).
+- **lost** — the log was readable and records NOTHING from this drain. Loud,
+  and **never conditioned on liveness**.
+- **could not verify** — no `--log-file` in argv (worker.py's default, and what
+  every volunteer launch in README.md does), file missing, or the offset
+  capture failed. Said explicitly, folded into neither of the others: an
+  operator must be able to tell "no games were lost" from "we cannot tell".
+
+The verdict is emitted **after the orphan pass**, which sends a second SIGTERM
+and waits again — worker_02 finished suspending with 4 s of margin on a 90 s
+grace, so judging at the end of the first pass judges before the last chance.
+
+**Also fixed, and it was live rather than latent:** v1's snapshot loop ended in
+an unguarded `wc -c < "$logf" > "$dstate/$w.off"`. Under this file's `set -e`
+an ENOSPC/EROFS on `/tmp` — the filesystem with the documented growth-leak
+history here — would have exited `stop` **before any SIGTERM was sent**,
+leaving training running with the pidfile intact. Every write in that loop is
+now guarded and a failed capture degrades to *could not verify*.
+
+**Method note.** The guard that was supposed to make all of this testable did
+not fire: `tests/test_train_sh_worker_drain.py`'s `pgrep` stub swallowed the
+worker pattern (`case "$a" in -*)` ate `-m chess_anti_engine\.worker( |$)`,
+which starts with `-`), so it matched every process and mutating the production
+pattern to a module that cannot exist left every drain test green. Fixed
+separately and FIRST, because no number measured through that stub was worth
+anything. See [[a_gate_that_cannot_fail]].
 
 ### DEPLOYED 2026-07-30 12:40 (pre-registered 2026-07-29) — selfplay sessions RESUME their in-flight games across a restart instead of abandoning them (`selfplay_resume_inflight_games`)
 

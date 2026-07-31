@@ -220,15 +220,38 @@ stop() {
         # means we only ever read what this drain produced. (Same trap as the
         # negative-log checks elsewhere: a stale success line is worse than no
         # line at all.)
+        #
+        # EVERY write below is guarded. Unguarded, `wc -c < "$logf" > ...` is
+        # the LAST command of this loop body, and under this file's `set -e` a
+        # failure there exits the shell immediately -- BEFORE `kill -TERM
+        # $wpids`, before the driver is signalled, before `ray stop`. The
+        # operator would see the "Draining" line, an errno and exit 1, with
+        # training still running and the pidfile intact. Trigger is ENOSPC or
+        # EROFS on /tmp, which is where the ray session artifacts and
+        # /tmp/chess_training.log live -- the one filesystem here with a
+        # documented growth-leak history. A snapshot that cannot be taken must
+        # cost us the EVIDENCE, never the teardown.
         local dstate w logf
         dstate=$(mktemp -d) || dstate=""
         if [ -n "$dstate" ]; then
             for w in $wpids; do
                 logf=$(tr '\0' '\n' < "/proc/$w/cmdline" 2>/dev/null \
-                       | awk '/^--log-file$/{getline; print; exit}')
-                if [ -n "$logf" ] && [ -f "$logf" ]; then
-                    printf '%s\n' "$logf" > "$dstate/$w.log"
-                    wc -c < "$logf" > "$dstate/$w.off"
+                       | awk '/^--log-file$/{getline; print; exit}') || logf=""
+                if [ -z "$logf" ]; then
+                    # No --log-file in argv. worker.py defaults it to None and
+                    # every volunteer launch documented in README.md omits it,
+                    # so this is reachable in normal use. There is no evidence
+                    # to read: that is a THIRD state, not a loss.
+                    printf '%s\n' "no --log-file in its argv" \
+                        > "$dstate/$w.why" || true
+                elif [ ! -f "$logf" ]; then
+                    printf '%s\n' "log file does not exist: $logf" \
+                        > "$dstate/$w.why" || true
+                elif ! { printf '%s\n' "$logf" > "$dstate/$w.log" \
+                         && wc -c < "$logf" > "$dstate/$w.off"; }; then
+                    rm -f "$dstate/$w.log" "$dstate/$w.off" 2>/dev/null || true
+                    printf '%s\n' "offset capture failed (disk full?)" \
+                        > "$dstate/$w.why" || true
                 fi
             done
         fi
@@ -255,48 +278,15 @@ stop() {
                 fi
             done
         done
-        # LIVENESS IS NOT EVIDENCE ABOUT DATA. Until 2026-07-31 this reported
-        # every still-running pid as "in-flight games will be DISCARDED", which
-        # was measured false on the first real teardown: workers 01/02/03 each
-        # logged "exiting after suspend" 4-40s BEFORE the 90s deadline and
-        # banked 22-23 games (100/252/128 records), yet all three were named in
-        # the warning because the probe caught them tearing down their CUDA
-        # context. An operator reading that would either mourn a window of games
-        # that survived, or raise CAE_STOP_GRACE_SECONDS to lengthen every
-        # future stop against a non-problem — and, worst, could no longer tell
-        # that case apart from a real discard. So the verdict is read off the
-        # suspend line, and only a worker that banked NOTHING is a loss.
-        local banked total=0 lost=""
-        for w in $wpids; do
-            banked=0
-            if [ -n "$dstate" ] && [ -s "$dstate/$w.log" ]; then
-                logf=$(cat "$dstate/$w.log")
-                if [ -f "$logf" ]; then
-                    banked=$(tail -c "+$(( $(cat "$dstate/$w.off" 2>/dev/null || echo 0) + 1 ))" \
-                                 "$logf" 2>/dev/null \
-                             | grep -oE 'suspended games=[0-9]+' \
-                             | sed 's/.*=//' \
-                             | awk '{s += $1} END {print s + 0}')
-                fi
-            fi
-            case "${banked:-0}" in ''|*[!0-9]*) banked=0 ;; esac
-            total=$((total + banked))
-            if [ "$banked" -gt 0 ]; then
-                echo "  worker $w: suspended ${banked} in-flight game(s)"
-            elif kill -0 "$w" 2>/dev/null; then
-                # Still running AND nothing banked: this is the real failure.
-                lost="$lost $w"
-            fi
-        done
-        # `if`, not `[ ... ] && ...`: an AND-list whose left side is false leaves
-        # a non-zero status, which is the same set -e footgun documented above.
-        if [ -n "$dstate" ]; then rm -rf "$dstate"; fi
-        if [ -z "$lost" ]; then
-            echo "Workers drained after ${waited}s (${total} in-flight game(s) suspended)"
+        # NO VERDICT HERE. The orphan pass at the end of stop() sends a SECOND
+        # SIGTERM and waits again, so a worker that has banked nothing by now
+        # may still bank; judging it here would be judging before the last
+        # chance. All this pass reports is what it did.
+        if [ -n "$alive" ]; then
+            echo "  still running after ${grace}s:${alive}" \
+                 "(verdict deferred until after the orphan pass)"
         else
-            echo "WARNING: worker(s) ($lost) still alive after ${grace}s with NO" \
-                 "suspend recorded; their in-flight games are DISCARDED." \
-                 "Raise CAE_STOP_GRACE_SECONDS if this recurs."
+            echo "  all workers exited within ${waited}s"
         fi
     fi
 
@@ -352,6 +342,117 @@ stop() {
             echo "Force killing orphaned workers:$oalive"
             # shellcheck disable=SC2086
             kill -9 $oalive 2>/dev/null || true
+        fi
+    fi
+
+    # ── Selfplay drain VERDICT ───────────────────────────────────────────────
+    # Emitted HERE, after BOTH passes, because the orphan pass above sends a
+    # second SIGTERM and waits CAE_ORPHAN_GRACE_SECONDS before SIGKILL: a
+    # worker can bank its games ~10s after the first pass gave up on it. Not a
+    # corner case — on 2026-07-31 worker_02 finished suspending with 4s of
+    # margin on a 90s grace. Scope is $wpids, the workers that were running
+    # when stop() began; an orphan the driver revived DURING teardown is
+    # seconds old with nothing in flight, so it has no snapshot and nothing to
+    # lose, and reporting on it would be noise.
+    #
+    # LIVENESS IS NOT EVIDENCE ABOUT DATA — IN EITHER DIRECTION.
+    #
+    # Until 2026-07-31 this called every still-running pid a discard. Measured
+    # false for 2 of the 3 workers it named on the first real teardown: 02 and
+    # 03 had each logged "exiting after suspend" BEFORE the 90s deadline and
+    # banked 174 and 206 games; `kill -0` had merely caught them tearing down
+    # their CUDA context.
+    #
+    # The first fix then made the mirror-image error: it required a worker to
+    # still be ALIVE to call it a loss. The third pid in that same warning was
+    # worker_00, which logged NO suspend line and NO "exiting after suspend" in
+    # its whole session and really did drop ~24 games — and under that rule a
+    # worker which dies having banked nothing prints "0 in-flight game(s)
+    # suspended" and no warning at all. That is strictly worse: a noisy
+    # true-positive traded for a silent false-negative, in the ONE case the
+    # warning exists for. A worker being gone is not evidence that it banked.
+    #
+    # So: three states per worker, never two. The evidence is the worker's own
+    # log, read only from the byte offset this drain recorded (that same
+    # `suspended games=` string is emitted by every in-session reco restart, so
+    # a whole-file grep would find an hours-old line and read it as proof THIS
+    # drain worked).
+    #
+    #   banked  — suspend line(s) appended after this drain's offset, or
+    #             "exiting after suspend" with nothing in flight to suspend
+    #   lost    — the log was readable and records NOTHING from this drain
+    #   unknown — we could not read a log at all. Say so. Do NOT fold it into
+    #             either of the others: an operator must be able to tell "no
+    #             games were lost" from "we cannot tell whether games were
+    #             lost", and every earlier version of this code could not.
+    if [ -n "$wpids" ]; then
+        local banked total=0 lost="" unknown="" why evidence failed
+        for w in $wpids; do
+            banked=0
+            evidence=""
+            why=""
+            failed=""
+            if [ -z "$dstate" ]; then
+                why="no snapshot dir (mktemp -d failed)"
+            elif [ -s "$dstate/$w.why" ]; then
+                why=$(cat "$dstate/$w.why")
+            elif [ ! -s "$dstate/$w.log" ] || [ ! -s "$dstate/$w.off" ]; then
+                why="log offset was not captured"
+            else
+                logf=$(cat "$dstate/$w.log")
+                if [ ! -f "$logf" ]; then
+                    why="log disappeared during teardown: $logf"
+                else
+                    evidence=$(tail -c "+$(( $(cat "$dstate/$w.off") + 1 ))" \
+                                    "$logf" 2>/dev/null || true)
+                    banked=$(printf '%s\n' "$evidence" \
+                             | grep -oE 'suspended games=[0-9]+' \
+                             | sed 's/.*=//' \
+                             | awk '{s += $1} END {print s + 0}')
+                    if printf '%s\n' "$evidence" \
+                       | grep -q 'suspend failed; games abandoned'; then
+                        failed=1
+                    fi
+                fi
+            fi
+            case "${banked:-0}" in ''|*[!0-9]*) banked=0 ;; esac
+            total=$((total + banked))
+            if [ -n "$why" ]; then
+                unknown="$unknown $w"
+                echo "  worker $w: COULD NOT VERIFY (${why})"
+            elif [ -n "$failed" ]; then
+                # Partial success is still a loss: worker.py logs this from the
+                # blanket handler around the suspend, after which the remaining
+                # games are abandoned.
+                lost="$lost $w"
+                echo "  worker $w: suspend FAILED after ${banked} game(s);" \
+                     "the rest were abandoned"
+            elif [ "$banked" -gt 0 ]; then
+                echo "  worker $w: suspended ${banked} in-flight game(s)"
+            elif printf '%s\n' "$evidence" | grep -q 'exiting after suspend'; then
+                # It reached the graceful exit point with nothing to suspend —
+                # a worker between sessions. Counting that as data loss is the
+                # same defect as the one being fixed, one layer down.
+                echo "  worker $w: exited cleanly with no games in flight"
+            else
+                lost="$lost $w"
+                echo "  worker $w: NO suspend recorded"
+            fi
+        done
+        # `if`, not `[ ... ] && ...`: an AND-list whose left side is false
+        # leaves a non-zero status, the same set -e footgun documented above.
+        if [ -n "$dstate" ]; then rm -rf "$dstate" || true; fi
+        if [ -n "$lost" ]; then
+            echo "WARNING: worker(s) (${lost# }) recorded NOTHING this teardown;" \
+                 "their in-flight games were DISCARDED." \
+                 "Raise CAE_STOP_GRACE_SECONDS if this recurs."
+        fi
+        if [ -n "$unknown" ]; then
+            echo "WARNING: COULD NOT VERIFY worker(s) (${unknown# });" \
+                 "a clean drain and lost in-flight games look identical here."
+        fi
+        if [ -z "$lost" ] && [ -z "$unknown" ]; then
+            echo "Selfplay drained cleanly: ${total} in-flight game(s) suspended."
         fi
     fi
     echo "Stopped"

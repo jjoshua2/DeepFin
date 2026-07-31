@@ -1,9 +1,10 @@
 """`train.sh stop` must SIGTERM the selfplay workers and wait for them, so their
-handler can suspend in-flight games before ray is torn down.
+handler can suspend in-flight games before ray is torn down — and must then
+report what actually happened, read off the workers' own logs.
 
-These tests execute the drain block EXTRACTED FROM THE REAL FILE, not a copy of
-it, so an edit to `scripts/train.sh` that breaks the contract fails here. The
-block is run against real short-lived processes with `pgrep` stubbed to name
+These tests execute the blocks EXTRACTED FROM THE REAL FILE, not a copy of
+them, so an edit to `scripts/train.sh` that breaks the contract fails here. The
+blocks are run against real short-lived processes with `pgrep` stubbed to name
 them.
 """
 from __future__ import annotations
@@ -24,7 +25,14 @@ _END = 'echo "Stopping PID $pid ..."'
 # outside the first block's range, so it needs its own extraction or it is
 # exactly the untested-second-caller shape this whole change is about.
 _ORPHAN_BEGIN = "── Second drain pass: ORPHANS"
-_ORPHAN_END = 'echo "Stopped"'
+
+# The verdict is emitted after BOTH passes, because the orphan pass sends a
+# second SIGTERM and is therefore a worker's LAST chance to bank. It is a third
+# extractable block, run in the same function as the other two so it sees their
+# `local`s exactly the way it does inside stop().
+_VERDICT_BEGIN = "── Selfplay drain VERDICT"
+_VERDICT_END = 'echo "Stopped"'
+_ORPHAN_END = _VERDICT_BEGIN
 
 
 def _block(begin: str, end: str) -> str:
@@ -59,48 +67,253 @@ def _run(script: str, *, timeout: float = 60.0) -> subprocess.CompletedProcess[s
     )
 
 
-def _harness(victim: str, *, grace: int) -> str:
-    """Run the real drain block under the same `set -e` train.sh uses, against
-    real processes.
-
-    `pgrep` is stubbed rather than real because the real one would match — and
-    then SIGTERM — the four production workers running on this machine.
-
-    The stub honours BOTH of the things the production call depends on:
-    liveness and the PATTERN. Liveness, because a fixed list cannot tell a
-    pid-capture drain from a pgrep-polling one (both converge), and it is what
-    lets a test add a process partway through the way the driver's
-    `revive_dead_selfplay_processes` does. The pattern, because ignoring it
-    made the drain's ONLY production selector untested: replacing it with a
-    name that matches nothing left all seven tests green while draining nothing
-    at all. Victims therefore carry a realistic worker argv via `exec -a`, and
-    the stub greps /proc/<pid>/cmdline with the pattern it was actually given.
-    """
-    return f"""
-set -e
-export CAE_STOP_GRACE_SECONDS={grace}
-POOL_FILE=$(mktemp)
-pgrep() {{
-    local p pat=""
+# ---------------------------------------------------------------------------
+# The pgrep stub
+# ---------------------------------------------------------------------------
+#
+# `pgrep` is stubbed rather than real because the real one would match — and
+# then SIGTERM — the four production workers running on this machine.
+#
+# The stub honours BOTH of the things the production call depends on: liveness
+# and the PATTERN. Liveness, because a fixed list cannot tell a pid-capture
+# drain from a pgrep-polling one (both converge), and it is what lets a test
+# publish a process partway through the way the driver's
+# `revive_dead_selfplay_processes` does. The pattern, because it is the drain's
+# ONLY production selector.
+#
+# 2026-07-31: the pattern half DID NOT WORK and this comment claimed it did.
+# The old parser was
+#     for a in "$@"; do case "$a" in --) ;; -*) ;; *) pat="$a" ;; esac; done
+# and the production pattern is `-m chess_anti_engine\.worker( |$)`, which
+# STARTS WITH `-`. So `-*)` ate it, `pat` stayed empty, and the match degraded
+# to `grep -qE -- ""` — which matches every non-empty cmdline. Mutating the
+# production pattern to a module name that cannot exist left every
+# process-executing test in this file green. A written-down guard that cannot
+# fire is worse than no guard, so the parser now mirrors the real pgrep: `--`
+# ends option processing and everything after it is the pattern even when it
+# starts with `-`, and an EMPTY pattern is a hard error rather than a wildcard.
+# `test_the_pgrep_stub_honours_the_pattern_it_is_given` pins that directly, so
+# the next regression here fails without needing a production-side mutation.
+_PGREP_STUB = r"""
+pgrep() {
+    local a p pat="" endopts=0
     for a in "$@"; do
-        case "$a" in --) ;; -*) ;; *) pat="$a" ;; esac
+        if [ "$endopts" -eq 0 ]; then
+            case "$a" in
+                --) endopts=1; continue ;;
+                -*) continue ;;
+            esac
+        fi
+        pat="$a"
     done
+    if [ -z "$pat" ]; then
+        echo "PGREP_STUB_NO_PATTERN in argv: $*" >&2
+        return 2
+    fi
     while read -r p; do
         if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
-            if tr '\\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qE -- "$pat"; then
+            if tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qE -- "$pat"; then
                 echo "$p"
             fi
         fi
     done < "$POOL_FILE"
-}}
+}
+"""
+
+
+_FAKE_WORKER_ARGV = (
+    "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker"
+)
+
+# The two lines the verdict reads. Both are real production strings:
+#   selfplay/resume.py:549  "selfplay resume: suspended games=%d records=%d ..."
+#   worker.py:1069          "shutdown requested (signal %d); exiting after suspend"
+#   worker.py:3249          "selfplay resume: suspend failed; games abandoned"
+_SUSPEND_LINE = (
+    "INFO chess_anti_engine.selfplay.resume selfplay resume: "
+    "suspended games={n} records=7 skipped=0 empty_slots=0 [] label_refetch=0 dir=/x"
+)
+_GRACEFUL_LINE = (
+    "INFO chess_anti_engine.worker shutdown requested (signal 15); "
+    "exiting after suspend"
+)
+_FAILED_LINE = (
+    "ERROR chess_anti_engine.worker selfplay resume: suspend failed; games abandoned"
+)
+
+# What the victim's SIGTERM handler does. These are the states the verdict has
+# to tell apart, and every one of them was observed on the 2026-07-31 teardown
+# or is directly reachable from worker.py.
+_ACTIONS = {
+    # No handler at all: the default disposition kills it. THE worker_00 case —
+    # it dies having banked nothing, and it is the case the warning exists for.
+    "die": "    pass",
+    # Survives the whole grace period without recording anything.
+    "ignore": "    pass",
+    # The common real case: banks and exits before the deadline.
+    "bank_and_exit": "    log(SUSPEND)\n    log(GRACEFUL)\n    sys.exit(0)",
+    # The 2026-07-31 regression: banked, but still tearing down its CUDA
+    # context when the deadline passed, so liveness called it a discard.
+    "bank_and_stay": "    log(SUSPEND)",
+    # A worker between sessions: reaches the graceful exit with nothing in
+    # flight. Never logs a suspend line, and is NOT a loss.
+    "graceful_empty": "    log(GRACEFUL)\n    sys.exit(0)",
+    # worker.py's blanket handler around the suspend. Partial or total, it is a
+    # loss and must be loud.
+    "suspend_failed": "    log(FAILED)\n    sys.exit(0)",
+    # Ignores the first pass entirely and banks on the orphan pass's SIGTERM.
+    "bank_on_second": (
+        "    if len(SEEN) < 2:\n"
+        "        return\n"
+        "    log(SUSPEND)\n"
+        "    log(GRACEFUL)\n"
+        "    sys.exit(0)"
+    ),
+}
+
+
+def _victim(
+    n: int,
+    *,
+    action: str = "die",
+    suspend: int = 0,
+    stale: int = 0,
+    log_file: bool = True,
+    missing_log: bool = False,
+    publish: bool = True,
+) -> str:
+    """A worker-shaped victim process, gated on readiness before it is published
+    to the stub's pool.
+
+    THE GATE IS THE POINT. The victims used to be
+    `bash -c 'exec -a "<argv>" sleep 300' & echo $! >> "$POOL_FILE"`, which
+    registers the pid BEFORE `execve` completes — and /proc/<pid>/cmdline is
+    EMPTY during that window (measured 2026-07-31: 84/200 = 42% when sampled
+    immediately after fork). An empty cmdline does not match the worker
+    pattern, so the victim was invisible to `pgrep`, `wpids` came back empty
+    and the drain drained nothing: two tests could pass VACUOUSLY, and did
+    flake under load when the window widened.
+
+    So the victim touches a READY file of its own after startup, the harness
+    waits for it, and only then appends the pid to `$POOL_FILE` — the pool is
+    the stub's whole universe, so publishing last makes visibility atomic and
+    removes the race rather than papering over it. The pid is appended even if
+    the gate times out, so the reaper still gets it, and `VICTIM_NEVER_READY`
+    fails the test loudly instead.
+
+    Not `exec -a`: that sets argv[0] to one string, so `--log-file` would not
+    be a separate cmdline element and the drain's `awk '/^--log-file$/{getline}'`
+    parse could never find a value — an early version of these tests failed for
+    exactly that reason against production code that was correct. A real
+    worker's argv has them as distinct elements: `distributed_runtime.py:863`
+    appends `"--log-file", str(worker_log)` as two list items and `Popen` gets a
+    LIST, so `--log-file=X` cannot occur.
+
+    ``stale`` writes a suspend line BEFORE the drain starts (the negative
+    control). ``log_file=False`` omits `--log-file` entirely, which is what
+    every volunteer launch in README.md does. ``missing_log`` names a log that
+    is deleted before the drain. ``publish=False`` withholds the pid from the
+    pool so the caller can publish it later, simulating a mid-drain revival.
+    """
+    assert action in _ACTIONS, action
+    install = {
+        "die": "pass",
+        "ignore": "signal.signal(signal.SIGTERM, signal.SIG_IGN)",
+    }.get(action, "signal.signal(signal.SIGTERM, on_term)")
+    stale_stmt = f'log(SUSPEND_FMT.format(n={stale}))' if stale else "pass"
+    logarg = "" if not log_file else f'--log-file "$WLOG{n}" '
+    rm_log = f'rm -f "$WLOG{n}"' if missing_log else ""
+    publish_line = f'echo "$V{n}" >> "$POOL_FILE"' if publish else ""
+    return f"""
+PYF{n}=$(mktemp --suffix=.py)
+READY{n}=$(mktemp -u)
+WLOG{n}=$(mktemp)
+cat > "$PYF{n}" <<'PYEOF'
+import signal, sys, time
+
+argv = sys.argv
+READY = argv[argv.index("--ready") + 1]
+LOG = argv[argv.index("--log-file") + 1] if "--log-file" in argv else None
+SUSPEND_FMT = {_SUSPEND_LINE!r}
+SUSPEND = SUSPEND_FMT.format(n={suspend})
+GRACEFUL = {_GRACEFUL_LINE!r}
+FAILED = {_FAILED_LINE!r}
+SEEN = []
+
+
+def log(msg):
+    if LOG is None:
+        return
+    with open(LOG, "a") as fh:
+        fh.write(msg + "\\n")
+        fh.flush()
+
+
+def on_term(signum, frame):
+    SEEN.append(signum)
+{_ACTIONS[action]}
+
+
+{stale_stmt}
+{install}
+open(READY, "w").close()
+time.sleep(300)
+PYEOF
+python3 "$PYF{n}" -m chess_anti_engine.worker --work-dir /tmp/fake_worker \
+    {logarg}--ready "$READY{n}" >/dev/null 2>&1 </dev/null &
+V{n}=$!
+for _ in $(seq 200); do
+    if [ -f "$READY{n}" ]; then break; fi
+    sleep 0.05
+done
+if [ ! -f "$READY{n}" ]; then echo "VICTIM_NEVER_READY {n}"; fi
+{rm_log}
+{publish_line}
+"""
+
+
+def _harness(
+    victim: str, *, grace: int, post: str = "",
+    orphan_pass: bool = False, orphan_grace: int = 4,
+) -> str:
+    """Run the real drain block, then the real VERDICT block, under the same
+    `set -e` train.sh uses, against real processes.
+
+    Both blocks run inside ONE function, as they do inside `stop()`, so the
+    verdict sees the drain's `local` variables (`wpids`, `dstate`, `grace`)
+    exactly the way production does. Extracting them into separate functions
+    would give the verdict an empty `$wpids` and make every assertion vacuous.
+
+    What sits BETWEEN them in production — `kill "$pid"`, `ray stop`,
+    `pkill -9 -f 'ray::'` — is deliberately absent: it is outside every marker,
+    and running it here would tear down this machine's real ray.
+
+    ``orphan_pass`` splices in the second drain pass, which is where a worker's
+    LAST chance to bank is. Off by default so the common tests do not pay its
+    grace period.
+    """
+    orphan = _block(_ORPHAN_BEGIN, _ORPHAN_END) if orphan_pass else ""
+    return f"""
+set -e
+export CAE_STOP_GRACE_SECONDS={grace}
+export CAE_ORPHAN_GRACE_SECONDS={orphan_grace}
+POOL_FILE=$(mktemp)
+{_PGREP_STUB}
 {victim}
 drain() {{
 {_drain_block()}
+# Production has `echo "Stopping PID $pid ..."` and the driver kill here. That
+# echo is load-bearing for `set -e` — it is what keeps the drain's non-zero
+# for-loop status from ending the function — so it is modelled, not skipped.
+echo "REACHED_DRIVER_KILL"
+{orphan}
+{_block(_VERDICT_BEGIN, _VERDICT_END)}
 }}
 drain
-echo "REACHED_DRIVER_KILL"
+echo "REACHED_END_OF_STOP"
+{post}
 # Reap the stubs. `wait` would block forever on a victim that survived the
-# drain, which is the expected state in two of these tests. The stubs also
+# drain, which is the expected state in several of these tests. The stubs also
 # redirect stdout, or a surviving grandchild would hold the pipe open and
 # subprocess.run() would block on EOF long after bash exited.
 for j in $(jobs -p); do kill -9 "$j" 2>/dev/null || true; done
@@ -109,14 +322,60 @@ rm -f "$POOL_FILE"
 """
 
 
-def test_workers_are_signalled_and_the_wait_ends_when_they_exit() -> None:
-    victim = """
-bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker" sleep 300' >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
-bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker" sleep 300' >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
+# ---------------------------------------------------------------------------
+# The harness's own guards
+# ---------------------------------------------------------------------------
+
+
+def test_the_pgrep_stub_honours_the_pattern_it_is_given() -> None:
+    """A CONTROL ON THE CONTROL.
+
+    Every process-executing test in this file selects its victims through the
+    stub, so a stub that matches everything makes all of them assert nothing
+    about the production pattern. This drives the stub directly: the real
+    pattern must find the worker-shaped victim, a pattern that cannot match
+    must find nothing, and a call with no pattern at all must ERROR rather than
+    quietly behave like a wildcard.
+    """
+    script = f"""
+set -e
+POOL_FILE=$(mktemp)
+{_PGREP_STUB}
+{_victim(1)}
+echo "REAL: $(pgrep -f -- {shlex.quote(_worker_pattern())} | tr '\\n' ' ')"
+echo "NOMATCH: $(pgrep -f -- '-m chess_anti_engine\\.nosuchmodule( |$)' || true)"
+echo "NOPAT: $(pgrep -f || echo "rc=$?")"
+echo "V1=$V1"
+for p in $(cat "$POOL_FILE"); do kill -9 "$p" 2>/dev/null || true; done
+rm -f "$POOL_FILE"
 """
+    r = _run(script)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    pid = r.stdout.split("V1=")[1].strip()
+    assert f"REAL: {pid}" in r.stdout, r.stdout + r.stderr
+    assert "NOMATCH: \n" in r.stdout + "\n", (
+        f"a non-matching pattern found something:\n{r.stdout}"
+    )
+    assert "NOPAT: rc=2" in r.stdout, f"a pattern-less call did not error:\n{r.stdout}"
+    assert "PGREP_STUB_NO_PATTERN" in r.stderr, r.stderr
+
+
+# ---------------------------------------------------------------------------
+# First pass: the workers get signalled and waited for
+# ---------------------------------------------------------------------------
+
+
+def test_workers_are_signalled_and_the_wait_ends_when_they_exit() -> None:
+    victim = (
+        _victim(1, action="bank_and_exit", suspend=5)
+        + _victim(2, action="bank_and_exit", suspend=6)
+    )
     r = _run(_harness(victim, grace=30))
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "Draining selfplay workers" in r.stdout, r.stdout + r.stderr
-    assert "Workers drained after" in r.stdout, r.stdout + r.stderr
+    assert "Selfplay drained cleanly: 11 in-flight game(s) suspended" in r.stdout, (
+        r.stdout + r.stderr
+    )
     assert "WARNING" not in r.stdout, r.stdout
     # THE POINT: a clean drain must not stop stop(). The block runs under
     # `set -e` and the only thing keeping its non-zero for-loop status from
@@ -124,33 +383,20 @@ bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/f
     # assertion, not the drain output above, is what catches a rearrangement
     # that leaves training half-stopped with the driver still up.
     assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
     assert r.returncode == 0, r.stderr
 
 
 def test_a_worker_that_ignores_sigterm_warns_instead_of_hanging() -> None:
-    victim = """
-READY=$(mktemp -u)
-PYF=$(mktemp --suffix=.py)
-cat > "$PYF" <<'EOF'
-import signal, sys, time
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
-open(sys.argv[1], "w").close()   # readiness: SIG_IGN is installed
-time.sleep(300)
-EOF
-bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker" python3 "$1" "$2"' _ "$PYF" "$READY" >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
-for _ in $(seq 200); do
-    if [ -f "$READY" ]; then break; fi
-    sleep 0.05
-done
-if [ ! -f "$READY" ]; then echo "STUB_NEVER_READY"; fi
-"""
-    r = _run(_harness(victim, grace=4))
-    # If the stub were signalled before it installed SIG_IGN it would die and
-    # this would silently become the clean-drain case, asserting nothing.
-    assert "STUB_NEVER_READY" not in r.stdout, r.stdout
+    r = _run(_harness(_victim(1, action="ignore"), grace=4))
+    # If the victim were signalled before it installed SIG_IGN it would die and
+    # this would silently become a different case, asserting nothing.
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "still running after 4s" in r.stdout, r.stdout + r.stderr
+    assert "NO suspend recorded" in r.stdout, r.stdout
     assert "WARNING" in r.stdout, r.stdout + r.stderr
     assert "DISCARDED" in r.stdout, r.stdout
-    assert "Workers drained after" not in r.stdout, r.stdout
+    assert "drained cleanly" not in r.stdout, r.stdout
     assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
 
 
@@ -158,53 +404,70 @@ def test_a_revived_worker_does_not_extend_the_wait() -> None:
     """The driver's `revive_dead_selfplay_processes` relaunches a worker that
     exits mid-iteration. The drain waits on the pids captured ONCE; if it
     re-ran `pgrep` instead it would keep finding the replacement and burn the
-    whole grace period, then warn falsely."""
-    victim = """
-bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker" sleep 300' >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
-# The revival: appears 1s in — after the drain captured its pid list (t~0) and
-# before its first liveness check (t~2). It is never signalled and outlives the
-# wait, exactly like a worker the driver relaunched mid-teardown. A revival
-# landing after the first check would not discriminate the two loop shapes,
-# because the captured list has already gone empty by then.
-( sleep 1
-  bash -c 'exec -a "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker" sleep 300' >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
-  sleep 60 ) >/dev/null 2>&1 </dev/null &
+    whole grace period, then warn falsely.
+
+    The revival becomes VISIBLE 1s in — after the drain captured its pid list
+    (t~0) and before its first liveness check (t~2). It is never signalled and
+    outlives the wait, exactly like a worker the driver relaunched mid-teardown.
+    A revival landing after the first check would not discriminate the two loop
+    shapes, because the captured list has already gone empty by then.
+
+    Visibility, not launch, is what is delayed. The process is started and
+    READY-gated up front and merely withheld from `$POOL_FILE` — the stub's
+    entire universe — until t=1s. Launching it at t=1s instead would put python
+    startup inside the 1s budget and, worse, could leave it never visible at
+    all, in which case a pgrep-polling drain would also converge and this test
+    would pass while discriminating nothing. `REVIVAL_UNPUBLISHED` asserts the
+    publish actually happened.
+
+    The revival is not in `$wpids`, so the verdict says nothing about it — by
+    design: it is seconds old with nothing in flight, and the orphan pass is
+    what stops it reclaiming the files this drain just banked.
+    """
+    victim = (
+        _victim(1, action="bank_and_exit", suspend=3)
+        + _victim(2, publish=False)
+        + """
+( sleep 1; echo "$V2" >> "$POOL_FILE"; sleep 60 ) >/dev/null 2>&1 </dev/null &
 """
-    r = _run(_harness(victim, grace=30), timeout=40)
-    assert "Workers drained after" in r.stdout, r.stdout + r.stderr
+    )
+    post = """
+if ! grep -qx "$V2" "$POOL_FILE"; then echo "REVIVAL_UNPUBLISHED"; fi
+"""
+    r = _run(_harness(victim, grace=30, post=post), timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "REVIVAL_UNPUBLISHED" not in r.stdout, r.stdout
+    assert "Selfplay drained cleanly: 3 in-flight game(s) suspended" in r.stdout, (
+        r.stdout + r.stderr
+    )
     assert "WARNING" not in r.stdout, r.stdout
     # A pgrep-until-empty loop would have spent the full 30s and then warned.
-    waited = int(r.stdout.split("Workers drained after ")[1].split("s")[0])
+    waited = int(r.stdout.split("all workers exited within ")[1].split("s")[0])
     assert waited <= 6, f"drain waited {waited}s; it should not track revivals"
 
 
 def test_no_workers_is_a_no_op() -> None:
     r = _run(_harness("", grace=30))
     assert "Draining selfplay workers" not in r.stdout, r.stdout
-    assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
+    assert "drained cleanly" not in r.stdout, r.stdout
+    assert "WARNING" not in r.stdout, r.stdout
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
+
+
+# ---------------------------------------------------------------------------
+# Second pass: orphans
+# ---------------------------------------------------------------------------
 
 
 def _orphan_harness(victim: str, *, grace: int) -> str:
-    """The SECOND pass, which runs after ray teardown. `wpat` is injected from
-    the real file's single definition, not restated here."""
+    """The SECOND pass alone, which runs after ray teardown. `wpat` is injected
+    from the real file's single definition, not restated here."""
     return f"""
 set -e
 export CAE_ORPHAN_GRACE_SECONDS={grace}
 POOL_FILE=$(mktemp)
 wpat='{_worker_pattern()}'
-pgrep() {{
-    local p pat=""
-    for a in "$@"; do
-        case "$a" in --) ;; -*) ;; *) pat="$a" ;; esac
-    done
-    while read -r p; do
-        if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
-            if tr '\\0' ' ' < "/proc/$p/cmdline" 2>/dev/null | grep -qE -- "$pat"; then
-                echo "$p"
-            fi
-        fi
-    done < "$POOL_FILE"
-}}
+{_PGREP_STUB}
 {victim}
 second_pass() {{
 {_block(_ORPHAN_BEGIN, _ORPHAN_END)}
@@ -227,21 +490,14 @@ rm -f "$POOL_FILE"
 """
 
 
-_FAKE_WORKER_ARGV = (
-    "/usr/bin/python3 -m chess_anti_engine.worker --work-dir /tmp/fake_worker"
-)
-
-
 def test_orphaned_workers_are_drained_after_ray_teardown() -> None:
     """Nothing before this point kills a worker — verified 2026-07-31 against
     /proc/<pid>/cmdline, no worker matches `ray::` or `raylet`. So a worker the
     driver revived DURING the first pass survives ray teardown, reuses the dead
     worker's work_dir, and would claim-by-rename the selfplay_resume/ files the
     first pass just banked."""
-    victim = f"""
-bash -c 'exec -a "{_FAKE_WORKER_ARGV}" sleep 300' >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
-"""
-    r = _run(_orphan_harness(victim, grace=30))
+    r = _run(_orphan_harness(_victim(1), grace=30))
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "Draining orphaned workers" in r.stdout, r.stdout + r.stderr
     assert "STILL_ALIVE" not in r.stdout, r.stdout
     assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
@@ -251,24 +507,8 @@ bash -c 'exec -a "{_FAKE_WORKER_ARGV}" sleep 300' >/dev/null 2>&1 </dev/null & e
 def test_an_orphan_that_ignores_sigterm_is_killed_not_left_running() -> None:
     """Unlike the first pass, this one must never leave a survivor: there is no
     later stage to catch it, and `train.sh start` would race it."""
-    victim = f"""
-READY=$(mktemp -u)
-PYF=$(mktemp --suffix=.py)
-cat > "$PYF" <<'EOF'
-import signal, sys, time
-signal.signal(signal.SIGTERM, signal.SIG_IGN)
-open(sys.argv[1], "w").close()
-time.sleep(300)
-EOF
-bash -c 'exec -a "{_FAKE_WORKER_ARGV}" python3 "$1" "$2"' _ "$PYF" "$READY" >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
-for _ in $(seq 200); do
-    if [ -f "$READY" ]; then break; fi
-    sleep 0.05
-done
-if [ ! -f "$READY" ]; then echo "STUB_NEVER_READY"; fi
-"""
-    r = _run(_orphan_harness(victim, grace=4))
-    assert "STUB_NEVER_READY" not in r.stdout, r.stdout
+    r = _run(_orphan_harness(_victim(1, action="ignore"), grace=4))
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "Force killing orphaned workers" in r.stdout, r.stdout + r.stderr
     assert "STILL_ALIVE" not in r.stdout, r.stdout
     assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
@@ -280,6 +520,11 @@ def test_second_pass_is_a_no_op_on_a_clean_teardown() -> None:
     r = _run(_orphan_harness("", grace=30))
     assert "Draining orphaned workers" not in r.stdout, r.stdout
     assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
+
+
+# ---------------------------------------------------------------------------
+# The pattern itself
+# ---------------------------------------------------------------------------
 
 
 def test_the_worker_pattern_is_defined_once_and_used_by_both_passes() -> None:
@@ -328,106 +573,94 @@ def test_train_sh_still_parses() -> None:
     assert r.returncode == 0, r.stderr
 
 
-@pytest.mark.parametrize("marker", [_BEGIN, _END])
+@pytest.mark.parametrize(
+    "marker", [_BEGIN, _END, _ORPHAN_BEGIN, _VERDICT_BEGIN, _VERDICT_END],
+)
 def test_extraction_markers_exist(marker: str) -> None:
     assert marker in TRAIN_SH.read_text()
 
 
 # ---------------------------------------------------------------------------
-# The verdict must come from the SUSPEND LINE, not from liveness
+# THE VERDICT: three states, and liveness is evidence for none of them
 # ---------------------------------------------------------------------------
 #
-# 2026-07-31, first real teardown with the handler: workers 01/02/03 each
-# logged "exiting after suspend" BEFORE the 90s deadline and banked 22-23
-# in-flight games, and stop() named all three in
-#     WARNING: workers still alive after 90s (...); their in-flight games
-#     will be DISCARDED.
-# because the liveness probe caught them tearing down their CUDA context. The
-# message reported a success as data loss. These tests pin the replacement:
-# only a worker that banked NOTHING is a loss.
-
-_SUSPEND_LINE = "INFO chess_anti_engine.selfplay.resume selfplay resume: suspended games={n} records=7 skipped=0"
-
-
-def _logging_victim(*, stale: int = 0, suspend: int = 0, ignore_term: bool = False) -> str:
-    """A victim carrying a real `--log-file` argv, which is where the drain
-    reads its evidence from.
-
-    ``stale`` writes a suspend line BEFORE the drain starts; ``suspend``
-    writes one in the SIGTERM handler. ``ignore_term`` keeps the process alive
-    through the grace period so the "still running" branch is the one under
-    test.
-    """
-    handler = (
-        f'signal.signal(signal.SIGTERM, lambda *_: log("{_SUSPEND_LINE.format(n=suspend)}"))'
-        if suspend
-        else "signal.signal(signal.SIGTERM, signal.SIG_IGN)"
-        if ignore_term
-        else "pass"
-    )
-    exit_after = "" if ignore_term else "\n    sys.exit(0)"
-    stale_line = (
-        f'log("{_SUSPEND_LINE.format(n=stale)}")' if stale else "pass"
-    )
-    # NOT `exec -a`, unlike the other victims here. `exec -a "a b c"` sets
-    # argv[0] to that ONE string, so `--log-file` would not be a separate
-    # cmdline element and the drain's `awk /^--log-file$/{{getline}}` could
-    # never find it — the first version of this test failed for exactly that
-    # reason, against production code that is correct. A real worker's argv has
-    # `--log-file` and its value as distinct elements (verified 2026-07-31 with
-    # `pgrep -af` against the four live workers), so the victim is launched with
-    # real separate arguments instead. The `wpat` match is unaffected: the
-    # stub greps the whole space-joined cmdline, which still contains
-    # `-m chess_anti_engine.worker `.
-    return f"""
-WLOG=$(mktemp)
-READY=$(mktemp -u)
-PYF=$(mktemp --suffix=.py)
-cat > "$PYF" <<'EOF'
-import signal, sys, time
-argv = sys.argv
-LOG = argv[argv.index("--log-file") + 1]
-READY = argv[argv.index("--ready") + 1]
-def log(msg):
-    with open(LOG, "a") as fh:
-        fh.write(msg + "\\n")
-        fh.flush()
-{stale_line}
-{handler}
-open(READY, "w").close()
-time.sleep(300){exit_after}
-EOF
-python3 "$PYF" -m chess_anti_engine.worker --work-dir /tmp/fake_worker \
-    --log-file "$WLOG" --ready "$READY" >/dev/null 2>&1 </dev/null & echo $! >> "$POOL_FILE"
-for _ in $(seq 200); do
-    if [ -f "$READY" ]; then break; fi
-    sleep 0.05
-done
-if [ ! -f "$READY" ]; then echo "STUB_NEVER_READY"; fi
-"""
+# 2026-07-31, the first real teardown with the #291 handler. stop() printed
+#     WARNING: workers still alive after 90s ( 2351838 2351840 2356433); their
+#     in-flight games will be DISCARDED.
+# Mapping those pids to workers afterwards:
+#   worker_02 (2351838) banked 174 games, worker_03 (2351840) banked 206 —
+#     both FALSE alarms; `kill -0` had caught them tearing down CUDA.
+#   worker_00 (2356433) logged ZERO suspend lines and zero "exiting after
+#     suspend" in its whole session and really did drop ~24 games — a TRUE
+#     alarm.
+# So the old rule (alive ⇒ discarded) was wrong 2 times in 3. The first attempt
+# to fix it required a worker to be ALIVE to call it a loss, which would have
+# reported worker_00 as a clean drain had it exited two seconds earlier: a
+# noisy true-positive traded for a silent false-negative in the one case that
+# matters. Both errors are the same error — asking liveness a question about
+# data. These tests pin all three states of the replacement.
 
 
 def test_a_worker_that_banked_its_games_is_not_reported_as_discarded() -> None:
-    """THE REGRESSION. Still running at the deadline, but it suspended 23
-    games — that is a success, not a loss."""
-    r = _run(_harness(_logging_victim(suspend=23, ignore_term=True), grace=6), timeout=40)
-    assert "STUB_NEVER_READY" not in r.stdout, r.stdout
+    """THE 2026-07-31 REGRESSION. Still running at the deadline, but it
+    suspended 23 games — that is a success, not a loss."""
+    r = _run(_harness(_victim(1, action="bank_and_stay", suspend=23), grace=6),
+             timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "suspended 23 in-flight game(s)" in r.stdout, r.stdout + r.stderr
     assert "DISCARDED" not in r.stdout, r.stdout
     assert "WARNING" not in r.stdout, r.stdout
-    assert "23 in-flight game(s) suspended" in r.stdout, r.stdout
-    assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
+    assert "Selfplay drained cleanly: 23 in-flight game(s) suspended" in r.stdout, (
+        r.stdout
+    )
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
 
 
-def test_a_worker_that_banked_nothing_still_warns() -> None:
-    """The POSITIVE control for the warning. Without this, a change that simply
-    deleted the warning would pass the test above."""
-    r = _run(_harness(_logging_victim(ignore_term=True), grace=6), timeout=40)
-    assert "STUB_NEVER_READY" not in r.stdout, r.stdout
+def test_a_worker_that_dies_having_banked_nothing_is_a_loud_loss() -> None:
+    """THE SHIP-BLOCKER, and the primary case the warning exists for.
+
+    This is worker_00: it takes the default SIGTERM disposition, dies at once,
+    and records nothing. The previous implementation's loss branch was
+    `elif kill -0 "$w"`, so a worker that died having banked nothing fell off
+    the end and printed `Workers drained after 2s (0 in-flight game(s)
+    suspended)` with NO warning — real, certain data loss reported as a clean
+    teardown. A loss verdict must NEVER require the worker to still be alive.
+    """
+    r = _run(_harness(_victim(1, action="die"), grace=6), timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "all workers exited within" in r.stdout, r.stdout + r.stderr
+    assert "NO suspend recorded" in r.stdout, r.stdout
     assert "WARNING" in r.stdout, r.stdout + r.stderr
     assert "DISCARDED" in r.stdout, r.stdout
-    assert "NO suspend recorded" in r.stdout, r.stdout
-    assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
+    assert "drained cleanly" not in r.stdout, r.stdout
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
+
+
+def test_a_suspend_that_raised_is_reported_as_a_loss_even_though_it_banked() -> None:
+    """`worker.py:3249` logs `suspend failed; games abandoned` from the blanket
+    handler around the suspend, after which the rest of the table is dropped.
+    Partial success is still a loss."""
+    r = _run(_harness(_victim(1, action="suspend_failed"), grace=6), timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "suspend FAILED" in r.stdout, r.stdout + r.stderr
+    assert "WARNING" in r.stdout, r.stdout + r.stderr
+    assert "DISCARDED" in r.stdout, r.stdout
+
+
+def test_a_worker_with_nothing_in_flight_is_not_reported_as_losing_games() -> None:
+    """A worker between sessions reaches the graceful exit point without ever
+    suspending anything. `suspended games=0` and "no suspend line at all" are
+    indistinguishable by count, so the verdict keys on the graceful-exit line
+    that `worker.py:1069` emits exactly once. Calling this data loss would be
+    the same defect as the one being fixed, one layer down."""
+    r = _run(_harness(_victim(1, action="graceful_empty"), grace=6), timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "exited cleanly with no games in flight" in r.stdout, r.stdout + r.stderr
+    assert "WARNING" not in r.stdout, r.stdout
+    assert "DISCARDED" not in r.stdout, r.stdout
+    assert "Selfplay drained cleanly: 0 in-flight game(s) suspended" in r.stdout, (
+        r.stdout
+    )
 
 
 def test_a_suspend_line_from_BEFORE_the_drain_is_not_credited() -> None:
@@ -435,9 +668,117 @@ def test_a_suspend_line_from_BEFORE_the_drain_is_not_credited() -> None:
     restart too, so a whole-file grep would find an hours-old line and read it
     as proof THIS drain worked. The block records each log's byte offset before
     signalling; this test fails if that offset is dropped."""
-    r = _run(_harness(_logging_victim(stale=99, ignore_term=True), grace=6), timeout=40)
-    assert "STUB_NEVER_READY" not in r.stdout, r.stdout
+    r = _run(_harness(_victim(1, action="ignore", stale=99), grace=6), timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
     assert "99" not in r.stdout, f"stale pre-drain suspend line was credited:\n{r.stdout}"
+    assert "NO suspend recorded" in r.stdout, r.stdout
     assert "WARNING" in r.stdout, r.stdout + r.stderr
     assert "DISCARDED" in r.stdout, r.stdout
+
+
+# --- the third state: could not verify -------------------------------------
+
+
+def test_a_worker_with_no_log_file_is_could_not_verify_not_a_loss() -> None:
+    """`worker.py` defaults `--log-file` to None and every volunteer launch in
+    README.md omits it, so there is simply no evidence to read. Reporting that
+    as DISCARDED is a lie an operator cannot check; reporting it as a clean
+    drain is worse. It gets its own state and its own message."""
+    r = _run(_harness(_victim(1, action="ignore", log_file=False), grace=6),
+             timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "COULD NOT VERIFY" in r.stdout, r.stdout + r.stderr
+    assert "no --log-file in its argv" in r.stdout, r.stdout
+    assert "DISCARDED" not in r.stdout, r.stdout
+    assert "drained cleanly" not in r.stdout, r.stdout
+    assert "WARNING" in r.stdout, r.stdout + r.stderr
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
+
+
+def test_a_worker_whose_log_is_missing_is_could_not_verify() -> None:
+    """Second route into the same state: `--log-file` is in the argv but the
+    file is not there when the offset is taken."""
+    r = _run(_harness(_victim(1, action="ignore", missing_log=True), grace=6),
+             timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "COULD NOT VERIFY" in r.stdout, r.stdout + r.stderr
+    assert "log file does not exist" in r.stdout, r.stdout
+    assert "DISCARDED" not in r.stdout, r.stdout
+    assert "drained cleanly" not in r.stdout, r.stdout
+
+
+# --- ordering: the verdict comes after the LAST chance to bank --------------
+
+
+def test_a_worker_that_banks_on_the_orphan_pass_is_credited() -> None:
+    """The orphan pass sends a SECOND SIGTERM and waits again before SIGKILL,
+    so it is a worker's last chance. If the verdict were printed at the end of
+    the first pass — where it used to be — this worker would be named as a loss
+    and nothing would ever retract it. Not a corner case: on 2026-07-31
+    worker_02 finished suspending with 4s of margin on a 90s grace.
+    """
+    victim = _victim(1, action="bank_on_second", suspend=7)
+    r = _run(_harness(victim, grace=4, orphan_pass=True, orphan_grace=10),
+             timeout=60)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    assert "still running after 4s" in r.stdout, r.stdout + r.stderr
+    assert "Draining orphaned workers" in r.stdout, r.stdout + r.stderr
+    assert "suspended 7 in-flight game(s)" in r.stdout, r.stdout + r.stderr
+    assert "WARNING" not in r.stdout, r.stdout
+    assert "Selfplay drained cleanly: 7 in-flight game(s) suspended" in r.stdout, (
+        r.stdout
+    )
+
+
+def test_the_verdict_is_emitted_after_the_orphan_pass_not_before() -> None:
+    """Pins the ORDER, not just the outcome. A rearrangement that moved the
+    verdict back into the first pass would still pass the test above whenever
+    the worker happened to bank in time, so the position is asserted directly.
+    """
+    text = TRAIN_SH.read_text()
+    assert text.index(_ORPHAN_BEGIN) < text.index(_VERDICT_BEGIN), (
+        "the verdict must be emitted after the orphan pass, which is the "
+        "worker's last chance to bank"
+    )
+    assert _drain_block().count("DISCARDED") == 0, (
+        "the first pass must not render a verdict; it runs before the orphan "
+        "pass has given the worker its last chance"
+    )
+
+
+def test_the_set_e_hazard_in_the_snapshot_loop_cannot_abort_stop() -> None:
+    """A failed offset capture must cost the EVIDENCE, never the teardown.
+
+    `wc -c < "$logf" > "$dstate/$w.off"` was the last command of the snapshot
+    loop body, unguarded, under this file's `set -e` — so ENOSPC or EROFS on
+    /tmp exited the shell BEFORE `kill -TERM $wpids`, before the driver was
+    signalled, before `ray stop`. The operator would see the "Draining" line,
+    an errno and exit 1, with training still running.
+
+    Reproduced by making the snapshot dir read-only, which is what a full or
+    read-only /tmp looks like to these writes.
+    """
+    victim = _victim(1, action="bank_and_exit", suspend=4)
+    # Wrap mktemp so the snapshot dir the block creates is unwritable.
+    poison = """
+mktemp() {
+    if [ "$1" = "-d" ]; then
+        local d
+        d=$(command mktemp -d)
+        chmod a-w "$d"
+        echo "$d"
+        return 0
+    fi
+    command mktemp "$@"
+}
+"""
+    r = _run(_harness(poison + victim, grace=10), timeout=40)
+    assert "VICTIM_NEVER_READY" not in r.stdout, r.stdout
+    # The teardown completed: the workers were signalled and stop() ran on.
     assert "REACHED_DRIVER_KILL" in r.stdout, r.stdout + r.stderr
+    assert "REACHED_END_OF_STOP" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0, r.stdout + r.stderr
+    # And the lost evidence is reported as lost evidence, not as a verdict.
+    assert "COULD NOT VERIFY" in r.stdout, r.stdout + r.stderr
+    assert "DISCARDED" not in r.stdout, r.stdout
+    assert "drained cleanly" not in r.stdout, r.stdout
