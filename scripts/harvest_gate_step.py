@@ -253,6 +253,14 @@ def run_gate(
     # false positives — the old backlog verified 0/387 genuine — so the former
     # "pending first (FIFO)" order spent the whole SF budget re-litigating a
     # dead net's mistakes and never reached the ~35%-real recent captures.
+    #
+    # Source-ordering (curriculum before selfplay) was BUILT AND REJECTED
+    # 2026-07-30. The yield gap is real and large (44.9% vs 3.7%), but the vet
+    # budget does not bind: capped=0 in 89 of the last 100 runs and pending is
+    # 0, so `to_vet == candidates` and ordering is a no-op. Over any window
+    # long enough to drain a burst it is a no-op even when capped>0, because
+    # every candidate is vetted exactly once and the kept/vetted ratio is a
+    # property of the MIX, not the order. See docs/experiment_ledger.md.
     candidates: list[tuple[str, str]] = []
     cand_seen: set[str] = set()
     blocked = exclude_keys | work.emitted | work.rejected

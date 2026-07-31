@@ -614,3 +614,58 @@ def test_run_gate_tolerates_malformed_among_good(tmp_path: Path, bad: str) -> No
     assert counts.unique_new == 1
     assert counts.vetted_kept == 1
     assert len(staged) == 1
+
+
+# ── sp= provenance tag (2026-07-30) ──────────────────────────────────────────
+#
+# Provenance only. Source ORDERING was built and rejected the same day: the vet
+# budget does not bind (capped=0 in 89 of the last 100 production runs,
+# pending=0), so reordering is a no-op. The tag is kept because the yield gap it
+# records is large -- 44.9% of curriculum captures are kept by the deep-SF vet
+# vs 3.7% of selfplay ones -- and having the source in the seed line lets that
+# be re-checked from the harvest files alone, without joining the game jsonl.
+
+
+def test_sp_tag_round_trips_through_the_real_writer(tmp_path: Path) -> None:
+    """END-TO-END: harvester writes -> file -> read_new_lines -> parse.
+
+    A hand-built string would still pass if `format_record` never emitted the
+    tag, so this drives the real producer and the real reader.
+    """
+    from chess_anti_engine.selfplay.blindspot_harvest import (
+        HarvestedSeed,
+        format_record,
+        parse_source_tag,
+    )
+
+    seed = HarvestedSeed(line=_FEN_A, net_q=0.6, sf_q=-0.7, severe=True, ply_index=10)
+    path = tmp_path / "blindspot.severe.p1.txt"
+    _write(path, "".join(
+        format_record(seed, game_id="g1", is_selfplay=sp) + "\n"
+        for sp in (False, True, None)
+    ))
+
+    lines, _off, n_raw = read_new_lines([str(path)], {})
+    assert n_raw == 3
+    assert [parse_source_tag(ln) for ln in lines] == [False, True, None]
+    # The tag must not disturb the seed grammar the gate parses.
+    for ln in lines:
+        parsed = parse_seed_line(ln)
+        assert parsed is not None
+        assert parsed[0] == _key(_FEN_A)
+
+
+def test_parse_source_tag_never_guesses() -> None:
+    from chess_anti_engine.selfplay.blindspot_harvest import parse_source_tag
+
+    assert parse_source_tag(f"{_FEN_A}  # sev=1 game=g1 ply=10 sp=0") is False
+    assert parse_source_tag(f"{_FEN_A}  # sev=1 game=g1 ply=10 sp=1") is True
+    # Untagged is None, NOT a default source: every pre-2026-07-30 line is
+    # untagged, and defaulting them would corrupt the yield comparison.
+    assert parse_source_tag(f"{_FEN_A}  # sev=1 game=g1 ply=10") is None
+    # Must not match inside another token, or accept malformed values.
+    assert parse_source_tag(f"{_FEN_A}  # game=absp=1 ply=3") is None
+    assert parse_source_tag(f"{_FEN_A}  # sp=2") is None
+    assert parse_source_tag(f"{_FEN_A}  # sp=10") is None
+    assert parse_source_tag(f"{_FEN_A}  # sp=") is None
+    assert parse_source_tag("") is None

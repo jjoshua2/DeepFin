@@ -247,12 +247,70 @@ def _align_pid_state(pid_seed_path: Path, row: dict) -> list[str]:
     return overrides
 
 
+@dataclass(frozen=True)
+class _ReplayPlan:
+    """Where a slot's replay shards will come from, decided BEFORE anything is
+    written. ``source is None`` means no candidate held any shards."""
+    source: Path | None
+    tried: tuple[Path, ...]
+
+
+def _resolve_replay_shard_source(
+    *, td: Path, replay_root_override: str, work_dir: object,
+) -> _ReplayPlan:
+    """Resolve a trial's replay-shard directory, preferring PRODUCTION's answer.
+
+    `replay_exchange._trial_replay_shard_dir` is the authority on where the
+    trainable actually writes shards, and it CHOOSES on
+    ``tune_replay_root_override`` rather than falling through. Salvage asks it
+    first — including `resolve_local_override_root`, which rewrites a
+    `/mnt/c/chess_active/` root to `<run_root>_replay` and which a plain
+    `.expanduser()` here would silently get wrong.
+
+    The other location is kept only as a fallback for when production's answer
+    is empty. Selecting on "contains shards" rather than `is_dir()` is the
+    actual 2026-07-30 fix: the trial dir holds an EMPTY `replay_shards/`
+    (created 07-27), so an `is_dir()` test on it succeeded vacuously, the
+    override was never tried, and SEVEN revert points were banked weights-only.
+    Preferring production's answer also means a stale non-empty decoy cannot
+    outrank the live window — "non-empty wins" alone would have picked it and
+    reported a plausible non-zero count.
+    """
+    from chess_anti_engine.tune.replay_exchange import (
+        _trial_replay_shard_dir,
+    )
+
+    prod = _trial_replay_shard_dir(
+        config={"tune_replay_root_override": replay_root_override,
+                "work_dir": work_dir},
+        trial_dir=td,
+    )
+    other = td / "replay_shards"
+    candidates = [prod] if prod == other else [prod, other]
+    for cand in candidates:
+        if cand.is_dir() and iter_shard_paths(cand):
+            return _ReplayPlan(source=cand, tried=tuple(candidates))
+    return _ReplayPlan(source=None, tried=tuple(candidates))
+
+
 def _copy_replay_shards(src_replay: Path, dst_replay: Path) -> int:
-    """Copy every shard under ``src_replay`` into ``dst_replay``."""
+    """Copy every shard under ``src_replay`` into ``dst_replay``.
+
+    Idempotent: an existing destination entry is removed first. Without this a
+    re-run into the same ``--out`` dies with FileExistsError from copytree and
+    the slot is silently dropped from the manifest — and the ledger protocol
+    pins a fixed ``--out <label>``, so re-running into the same directory is
+    the normal case, not an edge one. `replay/shard.py`'s `copy_or_link_shard`
+    already pre-cleans; these two helpers must not disagree.
+    """
     dst_replay.mkdir(parents=True, exist_ok=True)
     copied = 0
     for sp in iter_shard_paths(src_replay):
         dst = dst_replay / sp.name
+        if dst.is_dir():
+            shutil.rmtree(str(dst))
+        elif dst.exists():
+            dst.unlink()
         if sp.is_dir():
             shutil.copytree(str(sp), str(dst))
         else:
@@ -433,7 +491,7 @@ def _export_one_seed(
     seeds_dir: Path,
     out_dir: Path,
     copy_replay: bool,
-    replay_root_override: str,
+    replay_plan: _ReplayPlan,
 ) -> dict:
     seed_dir = seeds_dir / f"slot_{slot:03d}"
     seed_dir.mkdir(parents=True, exist_ok=True)
@@ -457,12 +515,15 @@ def _export_one_seed(
     )
 
     copied_shards = 0
-    if copy_replay:
-        src_replay = td / "replay_shards"
-        if (not src_replay.is_dir()) and replay_root_override:
-            src_replay = Path(replay_root_override).expanduser() / td.name / "replay_shards"
-        if src_replay.is_dir():
-            copied_shards = _copy_replay_shards(src_replay, seed_dir / "replay_shards")
+    replay_source = ""
+    # Only paths actually considered FOR COPYING are recorded; with
+    # --no-copy-replay nothing was looked at on the seed's behalf, so an empty
+    # list is the honest record rather than a list implying a search happened.
+    replay_tried = [str(p) for p in replay_plan.tried] if copy_replay else []
+    if copy_replay and replay_plan.source is not None:
+        copied_shards = _copy_replay_shards(
+            replay_plan.source, seed_dir / "replay_shards")
+        replay_source = str(replay_plan.source)
 
     return {
         "slot": int(slot),
@@ -480,6 +541,11 @@ def _export_one_seed(
         "stale_result_rows": bool(plan.stale_result_rows),
         "seed_dir": str(seed_dir.relative_to(out_dir)),
         "copied_replay_shards": int(copied_shards),
+        # Which path the shards actually came from, and every path considered —
+        # so a banked pool is self-describing and a zero count can be diagnosed
+        # from the manifest alone, months later, without the source tree.
+        "replay_shard_source": replay_source,
+        "replay_shard_paths_tried": list(replay_tried),
         "pid_state_overrides": list(pid_state_overrides),
         "result_row": plan.row,
     }
@@ -519,6 +585,49 @@ def export_seed_pool(args: argparse.Namespace) -> None:
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
     selected = scored[: min(top_n, len(scored))]
 
+    copy_replay = bool(getattr(args, "salvage_copy_replay", True))
+
+    # ── PRE-FLIGHT: resolve every slot's replay source BEFORE writing anything.
+    # This must run ahead of out_dir creation. Failing mid-loop instead would
+    # abort AFTER earlier slots had already paid multi-GB copies, and — because
+    # SystemExit is a BaseException and so slips past the per-slot
+    # `except Exception` isolation below — would leave orphan seed dirs with NO
+    # manifest.json. The operator's natural retry into the same --out (the
+    # ledger protocol pins a fixed label) would then write a manifest saying
+    # copied_replay_shards=0 while the leftover shards were still on disk, and
+    # trainable_init._seed_replay_from_warmstart gates on the DIRECTORY, not on
+    # the manifest — so a "weights-only" pool would silently seed the replay
+    # window, possibly from a different trial if the ranking had shifted.
+    # Deciding up front costs ~5ms of globbing and makes that unreachable.
+    replay_plans: list[_ReplayPlan] = [
+        _resolve_replay_shard_source(
+            td=td, replay_root_override=replay_root_override,
+            work_dir=getattr(args, "work_dir", tune_dir),
+        )
+        for (_m, _it, td, _row, _rows) in selected
+    ]
+    if copy_replay:
+        missing = [
+            (slot, selected[slot][2].name, replay_plans[slot])
+            for slot in range(len(selected))
+            if replay_plans[slot].source is None
+        ]
+        if missing:
+            detail = "\n".join(
+                f"  slot {slot:03d} ({name}) tried:\n"
+                + "\n".join(f"    {p}" for p in plan.tried)
+                for slot, name, plan in missing
+            )
+            raise SystemExit(
+                "salvage-export: --salvage-copy-replay was requested but ZERO "
+                f"replay shards were found for {len(missing)} of "
+                f"{len(selected)} slot(s):\n" + detail +
+                "\nA pool without a replay window cannot roll back a "
+                "data-affecting change — the window holds ~a day of data made "
+                "under the old settings. Nothing has been written. Pass "
+                "--no-copy-replay to export weights+optimizer only on purpose, "
+                "or set tune_replay_root_override.")
+
     dry_run = bool(getattr(args, "salvage_dry_run", False))
     if dry_run:
         print(
@@ -531,6 +640,10 @@ def export_seed_pool(args: argparse.Namespace) -> None:
                 slot=slot, picked_metric=metric, picked_it=it, td=td,
                 plan=plan, metric_key=metric_key,
             )
+            src = replay_plans[slot].source
+            print(f"[salvage]   replay: "
+                  f"{src if src is not None else 'NONE (would abort)'}"
+                  + ("" if copy_replay else "  [--no-copy-replay]"))
         print("[salvage] DRY-RUN: no files written")
         return
 
@@ -538,7 +651,6 @@ def export_seed_pool(args: argparse.Namespace) -> None:
     seeds_dir = out_dir / "seeds"
     seeds_dir.mkdir(parents=True, exist_ok=True)
 
-    copy_replay = bool(getattr(args, "salvage_copy_replay", True))
     entries: list[dict] = []
     failed_slots: list[tuple[int, str]] = []
     for slot, (metric, it, td, row, rows) in enumerate(selected):
@@ -553,7 +665,7 @@ def export_seed_pool(args: argparse.Namespace) -> None:
                 slot=slot, picked_metric=metric, picked_it=it, td=td,
                 plan=plan, metric_key=metric_key,
                 seeds_dir=seeds_dir, out_dir=out_dir,
-                copy_replay=copy_replay, replay_root_override=replay_root_override,
+                copy_replay=copy_replay, replay_plan=replay_plans[slot],
             ))
         except Exception as exc:  # per-slot isolation
             failed_slots.append((int(slot), f"{type(exc).__name__}: {exc}"))
