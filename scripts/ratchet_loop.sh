@@ -19,6 +19,18 @@ export PYTHONPATH=.
 PIDFILE=/tmp/chess_training.pid
 WORK_DIR="${TRAIN_WORK_DIR:-runs/pbt2_small}"
 STATE=data/ratchet/last_run_date
+# ATTEMPTED, not SUCCEEDED. $STATE means "today has a reading"; $GIVEUP_STATE
+# means "today has no reading and asking again cannot produce one". They are
+# separate files on purpose: collapsing them would either stamp a dead day as
+# done (the silent hole the exit-1 path exists to prevent) or leave the day
+# retrying every $POLL seconds forever. A 30-minute 16-concurrent arena every
+# ~40 minutes is ~18 GPU-hours/day spent by the observer on the training it is
+# supposed to be observing, and it is self-reinforcing: contention -> no
+# complete pairs -> no row -> retry -> more contention.
+GIVEUP_STATE=data/ratchet/last_giveup_date
+# scripts/daily_gate_ratchet.sh exit 5. Kept in sync by
+# tests/test_ratchet_search_shape.py, which parses both files.
+RATCHET_EXIT_NO_RETRY=5
 LOG=scratchpad/ratchet_loop.log
 POLL="${RATCHET_POLL:-600}"
 # Skip the first N iterations after a restart: a freshly-restarted trial spends
@@ -40,6 +52,23 @@ paused() {
 
 log() { echo "[$(date -Is)] $*" >> "$LOG"; }
 
+# What the day's outcome does to the loop's state. A standalone function so
+# tests can EXECUTE it: the whole reason this file needed changing is that the
+# "stamps only on exit 0" contract was documented in a comment, asserted
+# nowhere, and had no way to express "stop, but not because it worked".
+ratchet_outcome () {   # $1=rc  $2=today
+    case "$1" in
+        0)  echo "$2" > "$STATE"
+            log "daily ratchet done — see data/ratchet/ratchet.csv" ;;
+        "$RATCHET_EXIT_NO_RETRY")
+            # NOT $STATE: the day gets no reading and must not read as one.
+            echo "$2" > "$GIVEUP_STATE"
+            log "daily ratchet GAVE UP for $2 — zero rows and not retryable." \
+                "NO strength measurement for this day; see data/ratchet/attempts.csv" ;;
+        *)  log "daily ratchet FAILED (rc=$1) — will retry next poll" ;;
+    esac
+}
+
 while true; do
     sleep "$POLL"
 
@@ -50,6 +79,7 @@ while true; do
 
     today=$(date +%F)
     [ "$(cat "$STATE" 2>/dev/null)" = "$today" ] && continue
+    [ "$(cat "$GIVEUP_STATE" 2>/dev/null)" = "$today" ] && continue
 
     trial=$(ls -td "$WORK_DIR"/tune/train_trial_*/ 2>/dev/null | head -1)
     [ -n "$trial" ] || continue
@@ -64,12 +94,11 @@ while true; do
     paused && continue
 
     log "starting daily ratchet (iter=$iter)"
-    if bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1; then
-        # Stamp only on success, so a failed run retries on the next poll
-        # instead of silently skipping the whole day.
-        echo "$today" > "$STATE"
-        log "daily ratchet done — see data/ratchet/ratchet.csv"
-    else
-        log "daily ratchet FAILED (rc=$?) — will retry next poll"
-    fi
+    # `$STATE` is stamped only on exit 0, so a failed run retries on the next
+    # poll instead of silently skipping the whole day — but a failure that
+    # reproduces would then retry until midnight, which the ratchet reports as
+    # exit $RATCHET_EXIT_NO_RETRY and this loop honours WITHOUT claiming the day
+    # succeeded.
+    bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
+    ratchet_outcome "$?" "$today"
 done

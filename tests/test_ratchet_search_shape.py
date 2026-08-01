@@ -26,6 +26,7 @@ from scripts.ratchet_slope import _one_ruler_only, row_search_shape
 
 ROOT = Path(__file__).resolve().parent.parent
 RATCHET_SH = ROOT / "scripts" / "daily_gate_ratchet.sh"
+LOOP_SH = ROOT / "scripts" / "ratchet_loop.sh"
 LEGACY = "legacy_play_vloss0"
 
 
@@ -285,20 +286,281 @@ def test_the_internal_cap_fires_before_the_external_backstop() -> None:
     )
 
 
-def test_a_zero_row_day_is_a_failure_not_a_success() -> None:
-    """The script must exit non-zero when it writes no CSV row.
+# ---------------------------------------------------------------------------
+# The zero-row / retry-storm behaviour, tested by RUNNING the script.
+#
+# The first version of the zero-row guard was asserted by source text, and
+# inserting `ROWS_WRITTEN=1` above the check left all 27 tests green -- the
+# repo's signature defect (a gate that cannot fail) sitting inside the guard
+# against it. Everything below drives the real script against a sandbox tree
+# with a STUB arena, so the only thing asserted is what the script did.
+# ---------------------------------------------------------------------------
+
+# The stub stands in for scripts/arena_standard.py. It records every launch, so
+# a test can ask the one question that matters for a retry storm: HOW MANY
+# TIMES DID THIS SPEND GPU?
+_ARENA_STUB = '''#!/usr/bin/env python3
+import os, pathlib, sys
+
+pathlib.Path(os.environ["ARENA_CALLS"]).open("a").write(" ".join(sys.argv[1:]) + "\\n")
+mode = os.environ.get("ARENA_MODE", "good")
+if mode == "nopairs":
+    # Verbatim shape of arena_standard.py's own no-pairs exit (rc 3), which is
+    # what arena_2026-07-31_vs_boot512.log would have produced had it not been
+    # SIGKILLed first.
+    print("[arena] NO COMPLETE PAIRS in 880s - nothing to score.")
+    raise SystemExit(3)
+if mode == "silent":       # SIGKILLed / block-buffered: nothing parseable
+    raise SystemExit(137)
+print("[arena] 64 games (32 opening pairs)")
+print("[arena] Elo: +16.3  95% CI: [-70.3, +105.0]")
+print("[arena] score: 0.523")
+'''
+
+
+def _sandbox(tmp_path: Path, *, checkpoint: str = "checkpoint_000478") -> Path:
+    """A tree the real ratchet script can be pointed at, with a stub arena."""
+    import shutil
+
+    root = tmp_path / "repo"
+    (root / "scripts").mkdir(parents=True)
+    shutil.copy(RATCHET_SH, root / "scripts" / RATCHET_SH.name)
+    (root / "scripts" / "arena_standard.py").write_text(_ARENA_STUB)
+    ck = root / "runs" / "pbt2_small" / "tune" / "train_trial_x" / checkpoint
+    ck.mkdir(parents=True)
+    (ck / "trainer.pt").write_text("candidate-net")
+    anchor = root / "scratchpad" / "scaleup" / "gateread" / "boot_snap_recheck_0711_0404.pt"
+    anchor.parent.mkdir(parents=True)
+    anchor.write_text("boot512-net")
+    return root
+
+
+def _run_ratchet(root: Path, *args: str, mode: str = "good"):
+    """Run the real script against `root`. Returns (rc, stdout+stderr)."""
+    import subprocess
+
+    r = subprocess.run(
+        ["bash", f"scripts/{RATCHET_SH.name}", *args],
+        cwd=str(root), capture_output=True, text=True, check=False,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "RATCHET_ROOT": str(root),
+            "ARENA_MODE": mode,
+            "ARENA_CALLS": str(root / "arena_calls.txt"),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
+    return r.returncode, r.stdout + r.stderr
+
+
+def _arena_launches(root: Path) -> int:
+    p = root / "arena_calls.txt"
+    return len(p.read_text().splitlines()) if p.exists() else 0
+
+
+def _csv_rows(root: Path) -> list[str]:
+    p = root / "data" / "ratchet" / "ratchet.csv"
+    return [ln for ln in p.read_text().splitlines()[1:] if ln.strip()] if p.exists() else []
+
+
+def _attempt_rows(root: Path) -> list[str]:
+    p = root / "data" / "ratchet" / "attempts.csv"
+    return [ln for ln in p.read_text().splitlines()[1:] if ln.strip()] if p.exists() else []
+
+
+def test_a_readable_arena_writes_a_row_and_exits_zero(tmp_path) -> None:
+    """The happy path, so every failure assertion below means something."""
+    root = _sandbox(tmp_path)
+    rc, out = _run_ratchet(root)
+    assert rc == 0, f"a run that wrote a row must exit 0, got {rc}:\n{out}"
+    rows = _csv_rows(root)
+    assert len(rows) == 1, f"expected one vs_boot512 row (day 1 has no vs_prev): {rows}"
+    assert rows[0].endswith(",training"), rows[0]
+    assert ",478," in rows[0], f"the iteration must reach the row: {rows[0]}"
+    assert _arena_launches(root) == 1
+    # ATTEMPTED is recorded separately from SUCCEEDED.
+    assert _attempt_rows(root) == [f"{rows[0].split(',')[0]},478,1,0,1,vs_prev:nosnap|vs_boot512:row"]
+
+
+def test_a_second_run_the_same_day_costs_no_gpu(tmp_path) -> None:
+    """The already-done path must not re-arena, or the cap protects nothing."""
+    root = _sandbox(tmp_path)
+    assert _run_ratchet(root)[0] == 0
+    rc, out = _run_ratchet(root)
+    assert rc == 0, f"a day that already has its row must exit 0, got {rc}:\n{out}"
+    assert _arena_launches(root) == 1, "the already-done run launched the arena again"
+    assert len(_csv_rows(root)) == 1
+
+
+def test_a_zero_row_day_is_a_failure_not_a_success(tmp_path) -> None:
+    """No CSV row must be a non-zero exit, judged by RUNNING the script.
 
     ``ratchet_loop.sh`` stamps ``data/ratchet/last_run_date`` only on exit 0 and
     documents that a failure "retries on the next poll instead of silently
     skipping the whole day". It could never do that: every early ``return`` in
     ``run_arena`` left the script exiting 0, so 2026-07-30 and 07-31 each burned
     their one attempt and were recorded as successful days.
+
+    Asserted by effect: the source-text version of this test stayed green with
+    ``ROWS_WRITTEN=1`` inserted before the check.
     """
-    text = RATCHET_SH.read_text(encoding="utf-8")
-    assert "ROWS_WRITTEN=0" in text
-    assert re.search(
-        r'if \[ "\$ROWS_WRITTEN" -eq 0 \]; then\n(?:.*\n)*?\s*exit 1\n', text,
-    ), "no row written must exit non-zero so the loop retries"
+    root = _sandbox(tmp_path)
+    rc, out = _run_ratchet(root, mode="nopairs")
+    assert rc != 0, f"a run with no CSV row must not exit 0:\n{out}"
+    assert _csv_rows(root) == [], "no row should have been written"
+    assert "NO ROWS WRITTEN" in out, f"the failure must be loud:\n{out}"
+    assert _arena_launches(root) == 1
+
+
+def test_a_zero_row_day_cannot_become_an_all_day_retry_storm(tmp_path) -> None:
+    """THE BOUND. A day that keeps producing nothing must stop spending GPU.
+
+    ``ratchet_loop.sh`` polls every 600s and stamps the day only on exit 0, so
+    "exit non-zero and let it retry" against a failure that REPRODUCES is a
+    30-minute 16-concurrent arena every ~40 minutes: ~18 GPU-hours/day, spent by
+    the observer against the training it observes, and self-reinforcing
+    (contention -> no complete pairs -> no row -> retry -> more contention). The
+    2026-07-31 log is the shape: 4 lines ending at ``SEARCH reference:`` after
+    880s, which a retry replays identically.
+
+    The bound is asserted the only way that means anything -- by counting how
+    many times the arena was launched.
+    """
+    root = _sandbox(tmp_path)
+
+    rc1, out1 = _run_ratchet(root, mode="nopairs")
+    assert rc1 == 1, f"the first zero-row run is retryable (exit 1), got {rc1}:\n{out1}"
+
+    rc2, out2 = _run_ratchet(root, mode="nopairs")
+    assert rc2 == 5, (
+        f"a second attempt failing IDENTICALLY reproduces, so it is not "
+        f"retryable; expected exit 5, got {rc2}:\n{out2}"
+    )
+    assert "RATCHET DOWN" in out2, f"giving up must be loud:\n{out2}"
+    assert "NOT a null reading" in out2, (
+        f"giving up must be louder than failing, not quieter:\n{out2}"
+    )
+    assert _arena_launches(root) == 2
+
+    # Every later poll of the day is refused BEFORE the arena starts.
+    for _ in range(3):
+        rc, out = _run_ratchet(root, mode="nopairs")
+        assert rc == 5, f"an exhausted day must keep saying so, got {rc}:\n{out}"
+    assert _arena_launches(root) == 2, (
+        "the day kept launching arenas after giving up — this is the retry storm"
+    )
+    assert _csv_rows(root) == [], "a dead day must never gain a row"
+    # ...and the day is legible afterwards: attempted twice, succeeded never.
+    attempts = _attempt_rows(root)
+    assert len(attempts) == 2, f"one ledger row per GPU-spending attempt: {attempts}"
+    assert all(a.split(",")[4] == "0" for a in attempts), attempts
+
+
+def test_the_operator_can_reopen_a_day_they_have_fixed(tmp_path) -> None:
+    """The cap is a budget, not a lockout — but only the operator lifts it."""
+    root = _sandbox(tmp_path)
+    _run_ratchet(root, mode="nopairs")
+    _run_ratchet(root, mode="nopairs")
+    assert _arena_launches(root) == 2
+    rc, out = _run_ratchet(root, "--max-attempts", "0")
+    assert rc == 0, f"--max-attempts 0 must run again, got {rc}:\n{out}"
+    assert _arena_launches(root) == 3
+    assert len(_csv_rows(root)) == 1
+
+
+def test_a_structural_failure_is_not_retried_even_once(tmp_path) -> None:
+    """Nothing later today can make a missing reference file exist.
+
+    A retry that will deterministically reproduce is not a retry, so this one
+    must never reach the arena at all.
+    """
+    root = _sandbox(tmp_path)
+    (root / "scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt").unlink()
+    rc, out = _run_ratchet(root)
+    assert rc == 5, f"an all-structural failure must not be retryable, got {rc}:\n{out}"
+    assert "structurally" in out, out
+    assert _arena_launches(root) == 0, "GPU was spent on a run that could not work"
+
+
+def test_a_changed_failure_is_still_retried(tmp_path) -> None:
+    """The give-up rule must not swallow genuinely transient failures.
+
+    Without this the cap could be satisfied by never retrying anything, which
+    is the opposite defect: a lost race or a burst of contention deserves the
+    second attempt this instrument was given an exit status for.
+    """
+    root = _sandbox(tmp_path)
+    rc1, _ = _run_ratchet(root, mode="silent")      # backstop / SIGKILL shape
+    assert rc1 == 1
+    rc2, out2 = _run_ratchet(root, mode="nopairs")  # a DIFFERENT failure
+    assert rc2 == 1, f"a different failure is still retryable, got {rc2}:\n{out2}"
+    assert _arena_launches(root) == 2
+    # ...and the third is refused by the absolute cap rather than by the reason.
+    rc3, out3 = _run_ratchet(root, mode="silent")
+    assert rc3 == 5, f"the 3rd attempt must exhaust the day's budget, got {rc3}:\n{out3}"
+    assert "budget" in out3, out3
+    assert _arena_launches(root) == 3, "the capping run must not itself skip the arena"
+
+
+def test_the_loop_stamps_the_day_only_for_a_real_reading(tmp_path) -> None:
+    """ratchet_loop.sh's half of the contract, executed.
+
+    Three outcomes, three different states: a reading stamps the day; a
+    retryable failure stamps nothing; giving up stops the day WITHOUT ever
+    claiming it succeeded. Collapsing the last two into one file is how a dead
+    instrument would come to read as a null result.
+    """
+    import subprocess
+
+    src = LOOP_SH.read_text(encoding="utf-8")
+    preamble = "\n".join(
+        ln for ln in src.splitlines()
+        if re.match(r"(STATE|GIVEUP_STATE|LOG|RATCHET_EXIT_NO_RETRY)=", ln)
+    )
+    assert preamble.count("\n") == 3, f"expected 4 settings, got:\n{preamble}"
+    log_fn = next(ln for ln in src.splitlines() if ln.startswith("log() {"))
+    body = (
+        preamble + "\n" + log_fn + "\n"
+        + _extract_shell_func("ratchet_outcome", LOOP_SH)
+    )
+
+    def call(rc: int) -> tuple[str, str]:
+        (tmp_path / "data" / "ratchet").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "scratchpad").mkdir(exist_ok=True)
+        subprocess.run(
+            ["bash", "-c", f'set -u\n{body}\nratchet_outcome {rc} 2026-08-01'],
+            cwd=str(tmp_path), capture_output=True, text=True, check=True,
+        )
+        done = tmp_path / "data" / "ratchet" / "last_run_date"
+        gave_up = tmp_path / "data" / "ratchet" / "last_giveup_date"
+        return (
+            done.read_text().strip() if done.exists() else "",
+            gave_up.read_text().strip() if gave_up.exists() else "",
+        )
+
+    assert call(1) == ("", ""), "a retryable failure must stamp nothing at all"
+    assert call(5) == ("", "2026-08-01"), (
+        "giving up must stop the day WITHOUT stamping it as done"
+    )
+    assert call(0) == ("2026-08-01", "2026-08-01"), "a real reading stamps the day"
+    log = (tmp_path / "scratchpad" / "ratchet_loop.log").read_text()
+    assert "GAVE UP" in log, log
+    assert "NO strength measurement" in log, log
+
+
+def test_both_scripts_agree_on_the_no_retry_status() -> None:
+    """A status the consumer does not recognise is a status that does nothing."""
+    ratchet = re.search(r"^EXIT_NO_RETRY=(\d+)", RATCHET_SH.read_text(encoding="utf-8"), re.M)
+    loop = re.search(r"^RATCHET_EXIT_NO_RETRY=(\d+)", LOOP_SH.read_text(encoding="utf-8"), re.M)
+    assert ratchet is not None, "daily_gate_ratchet.sh defines no EXIT_NO_RETRY"
+    assert loop is not None, "ratchet_loop.sh defines no RATCHET_EXIT_NO_RETRY"
+    assert ratchet.group(1) == loop.group(1), (
+        "daily_gate_ratchet.sh and ratchet_loop.sh disagree about the "
+        "not-retryable exit status; the loop would treat a give-up as a retry"
+    )
+    # It must not collide with success, the retryable failure, bad usage, the
+    # arena's own no-pairs status, or `timeout`'s.
+    assert int(ratchet.group(1)) not in (0, 1, 2, 3, 124, 137)
 
 
 
@@ -572,9 +834,9 @@ def test_pick_log_path_never_returns_an_existing_file(tmp_path) -> None:
     assert len(set(seen)) == 3, f"collided: {seen}"
 
 
-def _extract_shell_func(name: str) -> str:
-    """Pull one function out of the real ratchet script so a test can RUN it."""
-    src = RATCHET_SH.read_text(encoding="utf-8")
+def _extract_shell_func(name: str, path: Path = RATCHET_SH) -> str:
+    """Pull one function out of a real script so a test can RUN it."""
+    src = path.read_text(encoding="utf-8")
     start = src.index(f"{name} () {{")
     end = src.index("\n}\n", start) + len("\n}\n")
     return src[start:end]
@@ -595,46 +857,68 @@ def test_vs_prev_refuses_to_arena_a_net_against_itself(tmp_path) -> None:
     write a row, and the ratchet is advised to run in a training-down window --
     exactly when this fires. Executed, not grepped: N7 showed a guard can be
     perfect and uncalled.
+
+    The comparison is on CONTENT (`cmp -s`), not on the iteration parsed out of
+    the filename: the name is a claim about the file and the file is the file.
+    The iteration check survives as a second net, for a same-iteration
+    checkpoint that was re-SAVED and so differs byte-wise while still being a
+    self-match for Elo purposes.
     """
     import subprocess
 
     func = _extract_shell_func("pick_prev_snapshot")
     snaps = tmp_path / "snaps"
     snaps.mkdir()
+    today = snaps / "ck_2026-08-01_iter478.pt"
 
-    def call(current: str, it: str) -> tuple[int, str]:
+    def call(it: str) -> tuple[int, str]:
         r = subprocess.run(
-            ["bash", "-c", f"{func}\npick_prev_snapshot '{snaps}' '{current}' '{it}'"],
+            ["bash", "-c", f"{func}\npick_prev_snapshot '{snaps}' '{today}' '{it}'"],
             cwd=str(tmp_path), capture_output=True, text=True, check=False,
         )
         return r.returncode, r.stdout.strip()
 
     # 1. No earlier snapshot at all.
-    (snaps / "ck_2026-08-01_iter478.pt").write_text("x")
-    rc, out = call("ck_2026-08-01_iter478.pt", "478")
+    today.write_text("net-478")
+    rc, out = call("478")
     assert rc == 1, f"expected 'none available', got rc={rc} {out!r}"
     assert out == "", f"nothing should be printed when there is no reference: {out!r}"
 
-    # 2. THE BUG: the newest earlier snapshot is the same iteration.
-    older = snaps / "ck_2026-07-31_iter478.pt"
-    older.write_text("x")
-    os.utime(older, (2, 2))  # older than today's snapshot, newer than iter409
-    rc, out = call("ck_2026-08-01_iter478.pt", "478")
+    # 2. THE BUG: the newest earlier snapshot is byte-identical to today's. Its
+    #    NAME says iter409, so a filename comparison waves it through; it is the
+    #    same net, and the row would be a self-match with true Elo 0.
+    twin = snaps / "ck_2026-07-31_iter409.pt"
+    twin.write_text("net-478")
+    os.utime(twin, (2, 2))  # older than today's snapshot, newer than the rest
+    rc, out = call("478")
+    assert rc == 3, (
+        f"a byte-identical reference must be refused, got rc={rc} {out!r} — this "
+        "is the case the iteration-from-the-filename check cannot see"
+    )
+    assert out == "", "a refused reference must not be handed back as a path"
+    twin.unlink()
+
+    # 3. The second net: a re-saved checkpoint of the SAME iteration differs
+    #    byte-wise, so `cmp` alone would accept it.
+    resaved = snaps / "ck_2026-07-31_iter478.pt"
+    resaved.write_text("net-478 re-saved (different optimizer moments)")
+    os.utime(resaved, (2, 2))
+    rc, out = call("478")
     assert rc == 3, f"same-iteration reference must be refused, got rc={rc} {out!r}"
     assert out == "", "a refused reference must not be handed back as a path"
 
-    # 3. A genuinely earlier iteration is still used.
+    # 4. A genuinely earlier, genuinely different net is still used.
     real = snaps / "ck_2026-07-30_iter409.pt"
-    real.write_text("x")
+    real.write_text("net-409")
     os.utime(real, (1, 1))  # oldest, so `ls -t` still ranks iter478 first
-    rc, out = call("ck_2026-08-01_iter478.pt", "478")
+    rc, out = call("478")
     assert rc == 3, (
         "the newest earlier snapshot is still iter478; falling back to an older "
         "iteration would silently relabel a 2-day gap as 'vs_prev'"
     )
-    older.unlink()
-    rc, out = call("ck_2026-08-01_iter478.pt", "478")
-    assert rc == 0, f"a different iteration must be usable, got rc={rc} {out!r}"
+    resaved.unlink()
+    rc, out = call("478")
+    assert rc == 0, f"a different net must be usable, got rc={rc} {out!r}"
     assert out.endswith("ck_2026-07-30_iter409.pt"), (
         f"wrong reference returned: {out!r}"
     )
@@ -643,13 +927,43 @@ def test_vs_prev_refuses_to_arena_a_net_against_itself(tmp_path) -> None:
 def test_the_self_match_guard_is_wired_into_the_series() -> None:
     """The helper has to be what actually selects the vs_prev reference."""
     src = RATCHET_SH.read_text(encoding="utf-8")
-    assert 'prev=$(pick_prev_snapshot "$SNAP_DIR" "$(basename "$snap")" "$iter")' in src
+    assert 'prev=$(pick_prev_snapshot "$SNAP_DIR" "$snap" "$iter")' in src, (
+        "the helper must be handed today's snapshot PATH — it compares content"
+    )
     assert 'grep -v "$(basename "$snap")"' not in src, (
         "the filename-only selector is what produced the self-match row"
     )
     # rc 3 must be handled distinctly, or a self-match degrades to "no snapshot"
     # and the operator never learns why the series stopped.
     assert "3)" in src.split("series 1:")[1].split("series 2:")[0]
+
+
+def test_the_iteration_parse_survives_checkpoint_000000(tmp_path) -> None:
+    """`sed 's/checkpoint_0*//'` returns the EMPTY STRING for iteration 0.
+
+    The zeros it strips ARE the number. The snapshot then lands at
+    ``ck_<date>_iter.pt``, ``ratchet_loop.sh``'s ``[ "${iter:-0}" -ge ...``
+    silently reads 0, and every CSV row for that day carries an empty iter
+    column. Executes the real line out of the script rather than asserting on
+    its text.
+    """
+    import subprocess
+
+    src = RATCHET_SH.read_text(encoding="utf-8")
+    line = next(
+        ln for ln in src.splitlines() if ln.startswith("iter=$(basename ")
+    )
+    for name, want in (
+        ("checkpoint_000000", "0"),
+        ("checkpoint_000042", "42"),
+        ("checkpoint_000478", "478"),
+        ("checkpoint_001000", "1000"),
+    ):
+        out = subprocess.run(
+            ["bash", "-c", f'ck="{name}"\n{line}\nprintf "%s" "$iter"'],
+            cwd=str(tmp_path), capture_output=True, text=True, check=True,
+        ).stdout
+        assert out == want, f"{name} parsed as {out!r}, expected {want!r}"
 
 
 def _slope_fixture(tmp_path, rows: list[tuple[str, int, float, int]]):
