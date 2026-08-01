@@ -1383,7 +1383,7 @@ def test_check_model_update_releases_its_lock_on_failure() -> None:
     def _boom() -> None:
         raise RuntimeError("poll exploded")
 
-    session._check_model_update_locked = _boom  # type: ignore[method-assign]
+    session._check_model_update_locked = _boom
     with pytest.raises(RuntimeError, match="poll exploded"):
         session._check_model_update()
 
@@ -1502,8 +1502,8 @@ def test_model_watch_thread_idles_between_sessions() -> None:
     session._model_watch_started = False
     session._selfplay_session_active = False
     calls: list[int] = []
-    session._check_model_update = lambda: calls.append(1)  # type: ignore[method-assign]
-    session._check_model_freshness = lambda: None  # type: ignore[method-assign]
+    session._check_model_update = lambda: calls.append(1)
+    session._check_model_freshness = lambda: None
 
     import os as _os
 
@@ -1521,8 +1521,8 @@ def test_model_watch_thread_starts_only_once() -> None:
     session = _bare_worker_session()
     session._model_watch_started = False
     session._selfplay_session_active = False
-    session._check_model_update = lambda: None  # type: ignore[method-assign]
-    session._check_model_freshness = lambda: None  # type: ignore[method-assign]
+    session._check_model_update = lambda: None
+    session._check_model_freshness = lambda: None
 
     before = threading.active_count()
     session._start_model_watch_thread()

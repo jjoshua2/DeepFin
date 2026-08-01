@@ -27,6 +27,11 @@ ALERT (exit 1) — needs action:
     post-restart iteration, which the stale_games marker identifies).
   - --max-age-min M (opt-in): the newest row's timestamp is older than M
     minutes — result.json has stopped advancing (stall / no-games drought).
+  - the daily strength ratchet's newest day wrote no ratchet.csv row at all
+    (read from data/ratchet/attempts.csv). The ratchet runs OUTSIDE the
+    training process and now stops after a couple of failed attempts rather
+    than retrying all day, so that day silently has no strength reading while
+    every result.json row stays green.
 
 NOTE (informational): pid_ema_winrate > 0.75 (benign restart spike / difficulty
 miscalibration), distributed_stale_games > 0 (benign post-restart marker),
@@ -249,6 +254,55 @@ def _live_fen_dose(path: Path) -> tuple[int | None, float | None]:
     return (None, None)
 
 
+def ratchet_gap_alerts(path: Path) -> list[str]:
+    """ALERT when the newest day in the ratchet's attempt ledger produced no row.
+
+    ``scripts/daily_gate_ratchet.sh`` bounds a bad day to a few attempts and
+    then stops (exit 5), which is what keeps a muted instrument from becoming an
+    all-day GPU retry storm. The cost of stopping is that the day ends with NO
+    strength measurement and nothing running says so: ``ratchet.csv`` simply has
+    no row for that date, which is exactly "a dead instrument reading as a null
+    result" one level out. The attempt ledger is the record that distinguishes
+    them — this is the automated reader that makes it a control rather than a
+    file nobody opens.
+
+    A missing ledger is NOT an alert: the ratchet may legitimately never have
+    run (fresh box, training down all day). Whether the ratchet fires at all is
+    invariant L1's question, not this one.
+    """
+    import csv
+
+    if not path.exists():
+        return []
+    try:
+        with path.open(encoding="utf-8", newline="") as fh:
+            rows = [r for r in csv.DictReader(fh) if r.get("date")]
+    except (OSError, csv.Error):
+        return []
+    if not rows:
+        return []
+    newest = max(r["date"] for r in rows)
+    today = list(filter(lambda r: r["date"] == newest, rows))
+
+    def _int(row: dict, key: str) -> int:
+        try:
+            return int(str(row.get(key) or 0))
+        except ValueError:
+            return 0
+
+    if any(_int(r, "rows") > 0 for r in today):
+        return []
+    last = today[-1]
+    gave_up = str(last.get("rc") or "") == "5"
+    return [
+        f"the daily strength ratchet wrote NO row on {newest} after "
+        f"{len(today)} attempt(s) "
+        f"({'gave up: not retryable' if gave_up else 'last attempt still retryable'}; "
+        f"reason {last.get('reason') or '?'}) — that day has no strength "
+        f"measurement, and an absent row is not a null result. See {path}"
+    ]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -258,6 +312,11 @@ def main() -> None:
     ap.add_argument("--expect-fenlist", action=argparse.BooleanOptionalAction, default=None,
                     help="force the FEN-delivery check on/off; default auto-detects from whether "
                          "the scanned window ever delivered a FEN game (so non-FEN trials are green)")
+    ap.add_argument("--ratchet-attempts", type=Path,
+                    default=Path("data/ratchet/attempts.csv"),
+                    help="the daily ratchet's attempt ledger; alerts when its newest day "
+                         "produced no CSV row at all (the day has no strength reading). "
+                         "A missing file is silent — see ratchet_gap_alerts.")
     ap.add_argument("--max-age-min", type=float, default=None,
                     help="alert if the newest row's timestamp is older than this many minutes "
                          "(catches the no-games drought / stall, which writes no result row). "
@@ -366,6 +425,13 @@ def main() -> None:
                 print(f"  ALERT: newest row is {age_min:.0f} min old "
                       f"(> {args.max_age_min:.0f}) — result.json not advancing "
                       "(stall / no-games drought)")
+
+    # The strength ruler's own outage, which no result.json row can show: the
+    # ratchet runs outside the training process, so a day it gave up on leaves
+    # result.json perfectly green.
+    for a in ratchet_gap_alerts(args.ratchet_attempts):
+        any_alert = True
+        print(f"  ALERT: {a}")
 
     # Say WHY a check is off. A silently suppressed check is indistinguishable
     # from one that passed, which is how a real outage hides behind an intended

@@ -738,6 +738,31 @@ class WorkerSession:
   # record-shaping keys).
     _resume_trial_id_active: str = ""
 
+  # Shutdown latch. NOT the same reasoning as the three above: those are
+  # class-only (nothing in __init__ touches them; _begin_resume_session assigns
+  # all three, :3216), whereas __init__ ALSO sets this pair (:922-923) — the one
+  # place in this class with two sources of truth for the same initial value.
+  # The class default therefore only ever serves a session that never ran
+  # __init__, i.e. the ones tests build with object.__new__. Such a session
+  # reaches _run_selfplay's entry guard (`if self._shutdown_requested: return`,
+  # :3778) BEFORE any per-ply hook, and without a default it raises
+  # AttributeError there rather than taking the not-shutting-down path — that
+  # guard, not run()'s loop head, is the line the three
+  # tests/test_selfplay_resume.py cases hit. (run()'s loop head, :1093, and
+  # _stop_fn, :1036, read the flag too; neither is reached first, and neither is
+  # the on_suspend hook — that is _suspend_inflight_games, :3259, which does not
+  # read this flag at all.)
+  # False is fail-OPEN with respect to shutting down: it means "no shutdown
+  # requested, keep working". That is right because it is the state a session
+  # that never ran is in — not because refusing to stop is a safe default.
+  # ⚠ Applied inconsistently across this class: _stop_selfplay (:919) and
+  # _hold_selfplay (:928), the other two flags the per-ply hooks read, have NO
+  # class defaults, so the object.__new__ invariant holds for some of these
+  # flags and not others. Left alone deliberately — no test needs them today,
+  # and adding defaults would mint two more two-source-of-truth pairs.
+    _shutdown_requested: bool = False
+    _shutdown_signal: int = 0
+
     def __init__(
         self,
         args,

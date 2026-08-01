@@ -87,9 +87,30 @@ seconds, kept at **zero findings repo-wide with no baseline**. CI gates basedpyr
 the whole repo.
 
 ```bash
-./scripts/lint.sh --changed          # changed and untracked .py files
+./scripts/lint.sh                    # ruff + basedpyright at CI's scope — run before committing
+./scripts/lint.sh --changed          # changed/untracked .py (basedpyright: whole repo)
 ./scripts/lint.sh --deep [paths...]  # + skylos + ruff cleanup report (advisory, ~40s)
 ```
+
+**Naming paths is the only thing that narrows basedpyright** — 2 files analyzed in ~1.4s
+versus 544 in ~32s whole-repo. Every invocation without paths (bare, `--changed`,
+`--fast`, `--deep`, `--slop`, `--all`) runs it at `pyrightconfig.json`'s whole-repo scope,
+which is what CI runs. A path-scoped run cannot see breakage the change caused in a file
+it never opened; that is how PR #295 turned `main` red. Run the no-argument form before
+committing.
+
+`--changed` narrows **ruff and vulture** to the changed `.py` files, falling back to the
+full default list when the change collected none. It is a scope *swap* for basedpyright,
+not purely a widening: a changed `.py` outside `pyrightconfig.json`'s include set is no
+longer type-checked by it. `setup.py` was the only tracked file in that position and is
+now in the include set, so there is no in-tree instance left — but a new top-level `.py`
+would need adding there too.
+
+In a **fresh worktree the whole-repo form is not clean until the C extensions are
+built**: without the three in-place `.so` files it emits 120 spurious
+`reportMissingModuleSource` errors (`chess_anti_engine.encoding._lc0_ext`,
+`chess_anti_engine.mcts._mcts_tree`, `chess_anti_engine.encoding._features_ext`), which
+all disappear after `python3 scripts/build_production_extensions.py`.
 
 `--deep` sweeps the not-yet-gated ruff groups (B, NPY) as a cleanup shopping list; only
 the needs-judgment tail remains there (B905 `zip strict=`, B008 call-in-default, NPY002

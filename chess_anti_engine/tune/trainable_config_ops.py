@@ -649,9 +649,9 @@ def _sync_trainer_weights(
 
     # SF target rebuild: construction-time on the Trainer, so it needs an
     # explicit push or a live yaml edit silently waits for the next restart.
-    # This is what lets an SfTargetParams change hit ~95% of the SF-labelled
-    # rows already in the replay window at the next iteration, instead of only
-    # newly generated data. Not the whole window -- see target_builder.
+    # This is what lets an SfTargetParams change hit the SF-labelled rows
+    # already in the replay window at the next iteration, instead of only newly
+    # generated data. All of them on healthy data -- see target_builder.
     want_rebuild = bool(config.get("rebuild_sf_targets", False))
     was_rebuild = trainer.rebuild_sf_targets
     want_params = resolve_sf_target_params(config)
@@ -662,14 +662,14 @@ def _sync_trainer_weights(
     if trainer.set_sf_target_rebuild(enabled=want_rebuild, params=want_params):
         log.warning(
             "SF target rebuild: enabled=%s (was %s) params=%s. While ON, SF "
-            "targets are rebuilt from sf_multipv_raw for ~95%% of the "
-            "SF-LABELLED replay rows -- NOT the whole window; rows without "
-            "sf_multipv_raw keep capture-time targets, so the window is a "
-            "mixture of two target regimes. sf_p0_policy_target / "
-            "sf_volatility_target are MASKED (their sources live on other "
-            "shard rows) so has_sf_p0_frac reads 0. The frozen full-pass "
-            "holdout is NOT rebuilt. Proof of effect is "
-            "sf_rebuild_policy_frac in progress.csv, not this line.",
+            "targets are rebuilt from sf_multipv_raw for every SF-LABELLED "
+            "replay row -- un-labelled rows have no SF target to rebuild. "
+            "sf_p0_policy_target / sf_volatility_target are MASKED (their "
+            "sources live on other shard rows) so has_sf_p0_frac reads 0. The "
+            "frozen full-pass holdout is NOT rebuilt. Proof of effect is "
+            "sf_rebuild_policy_frac in progress.csv, not this line; that "
+            "column sitting BELOW sf_rebuild_wdl_frac means desynced Stockfish "
+            "labels in the window, not rows the rebuild could not reach.",
             want_rebuild, was_rebuild, want_params,
         )
 

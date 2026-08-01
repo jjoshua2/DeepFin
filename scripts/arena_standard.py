@@ -314,6 +314,24 @@ def game_scores_to_pair_scores(game_scores: list[float]) -> list[float]:
     ]
 
 
+def complete_pair_scores(game_scores: list[float | None]) -> list[float]:
+    """Pair scores for the openings where BOTH colorings finished.
+
+    ``None`` means "this game did not finish" — an unstarted queue entry or a
+    game still in flight when a ``--max-seconds`` deadline stopped the loop.
+    Such a pair is DROPPED, never imputed: scoring an unfinished game as a draw
+    would let a truncated run claim pairs it never played, which is precisely
+    the "a number that does not mean what its name says" defect the arena's own
+    games column exists to avoid.
+    """
+    out: list[float] = []
+    for i in range(0, len(game_scores) - len(game_scores) % 2, 2):
+        w, b = game_scores[i], game_scores[i + 1]
+        if w is not None and b is not None:
+            out.append(w + b)
+    return out
+
+
 def pentanomial_counts(pair_scores: list[float]) -> tuple[int, int, int, int, int]:
     """Bin pair scores into (WW, WD/DW, DD+WL, LD/DL, LL) counts."""
     counts = [0, 0, 0, 0, 0]
@@ -698,6 +716,7 @@ def play_paired_games_matched_sims_rolling(
     tb_max_pieces: int = 6,
     pool_size: int = 256,
     report_every: int = 64,
+    deadline: float | None = None,
 ) -> list[float]:
     """Rolling-pool variant: keep ``pool_size`` games active at all times, starting
     a fresh game the instant one finishes (like production selfplay), instead of
@@ -712,6 +731,11 @@ def play_paired_games_matched_sims_rolling(
     Each opening is still played twice (colors swapped) and scored as a pair;
     game_id ``2k``/``2k+1`` are the white/black halves of opening ``k``, so the
     flat ``game_scores`` reassemble into the same pairs as the lockstep path.
+
+    ``deadline`` (``time.time()`` epoch seconds) stops the loop between plies
+    and returns whatever COMPLETE pairs exist. Only complete pairs are ever
+    returned: a half-played game contributes nothing, because filling it in as
+    a draw would let a truncated run report pairs it never finished.
     """
     from chess_anti_engine.selfplay.match import (
         apply_actions_to_boards,
@@ -754,6 +778,10 @@ def play_paired_games_matched_sims_rolling(
     done = 0
     last_report = 0
     while queue or boards:
+        # Stop on our OWN clock rather than waiting to be SIGKILLed by the
+        # caller's `timeout`. A killed process returns nothing at all; stopping
+        # here returns every pair that finished and lets run_arena print the
+        # final summary and append the JSONL record like any other run.
         _refill()
         # Reap finished / adjudicated / over-cap games, compacting the pool.
         kb: list[chess.Board] = []
@@ -778,6 +806,20 @@ def play_paired_games_matched_sims_rolling(
                 ka.append(awhite[j])
                 kp.append(gplies[j])
         boards[:], gids[:], awhite[:], gplies[:] = kb, kg, ka, kp
+        # Deadline check goes AFTER the reap, not before it. Checking first
+        # discarded every game that had finished on the ply we just played —
+        # up to pool_size of them, and measurably: the 2026-07-31 proof run
+        # banked 100 games but scored 96, and 118 but scored 114. Reaping first
+        # costs nothing (no ply is played below this point) and cannot fabricate
+        # anything, because `_record` still only runs for a game with a result.
+        if deadline is not None and time.time() >= deadline:
+            print(
+                f"[arena] max-seconds reached after {time.time() - t0:.0f}s: "
+                f"stopping with {done}/{n_games} games finished — "
+                f"scoring COMPLETE PAIRS only",
+                flush=True,
+            )
+            break
         _refill()  # backfill the slots the reaped games freed — keep the pool full
         if not boards:
             break
@@ -789,11 +831,7 @@ def play_paired_games_matched_sims_rolling(
             )
             # Running Elo over the pairs that have BOTH colorings finished so far,
             # so the standings stream in instead of only printing at the end.
-            ready: list[float] = []
-            for k in range(n_games // 2):
-                w, blk = game_scores[2 * k], game_scores[2 * k + 1]
-                if w is not None and blk is not None:
-                    ready.append(w + blk)
+            ready = complete_pair_scores(game_scores)
             if ready:
                 print(f"[arena] RUNNING Elo after {len(ready)} complete pairs:", flush=True)
                 print_summary(summarize_pentanomial(pentanomial_counts(ready)))
@@ -822,7 +860,7 @@ def play_paired_games_matched_sims_rolling(
         for i in active:
             gplies[i] += 1
 
-    return game_scores_to_pair_scores([s if s is not None else 0.5 for s in game_scores])
+    return complete_pair_scores(game_scores)
 
 
 # ---------------------------------------------------------------------------
@@ -838,8 +876,17 @@ def play_paired_games_matched_time(
     ms_per_move: int,
     max_plies: int,
     uci_args: str,
+    deadline: float | None = None,
 ) -> list[float]:
-    """Pair-by-pair UCI match using the production engine inference path."""
+    """Pair-by-pair UCI match using the production engine inference path.
+
+    ``deadline`` stops between PAIRS. A wall-clock budget is not a search knob
+    — it changes nothing about the ruler — so unlike ``--search-shape`` and the
+    vloss/target-batch family it is honoured here rather than refused. Pair
+    granularity is the natural unit: this loop only ever appends a score once
+    both colorings of an opening are played, so a truncated run drops the
+    in-progress pair by construction.
+    """
     import chess.engine
 
     from scripts.match_vs_uci import _open_engine, _score_for_a, play_one_game
@@ -864,6 +911,14 @@ def play_paired_games_matched_time(
         print(f"[arena] starting reference engine: {engine_cmd(reference_ckpt)}")
         eng_b = _open_engine(engine_cmd(reference_ckpt), cwd=str(REPO_ROOT))
         for pair_idx, opening in enumerate(openings):
+            if deadline is not None and time.time() >= deadline:
+                print(
+                    f"[arena] max-seconds reached: stopping before pair "
+                    f"{pair_idx + 1}/{len(openings)} with {len(pair_scores)} "
+                    f"pairs complete",
+                    flush=True,
+                )
+                break
             scores: list[float] = []
             for a_is_white in (True, False):
                 eng_w, eng_b_side = (eng_a, eng_b) if a_is_white else (eng_b, eng_a)
@@ -936,6 +991,9 @@ def build_result_record(
     volatility_candidate: dict[str, float] | None = None,
     search_candidate: SideSearch | None = None,
     search_reference: SideSearch | None = None,
+    games_requested: int | None = None,
+    max_seconds: float | None = None,
+    truncated: bool = False,
 ) -> dict:
     elo_lo, elo_hi = summary.elo_ci95
     return {
@@ -952,8 +1010,14 @@ def build_result_record(
         "volatility_candidate": volatility_candidate,
         "candidate": candidate,
         "reference": reference,
+        # `games`/`pairs` are what was PLAYED AND SCORED. `games_requested` and
+        # `truncated` are what makes a wall-clock-capped row readable: a 40-game
+        # row that asked for 200 is a valid small sample, not a 200-game claim.
         "games": summary.games,
         "pairs": summary.pairs,
+        "games_requested": games_requested,
+        "max_seconds": max_seconds,
+        "truncated": bool(truncated),
         "openings": openings_path,
         "openings_kind": openings_kind,
         "opening_plies": opening_plies,
@@ -995,7 +1059,24 @@ def print_summary(summary: PentanomialSummary) -> None:
     print(f"[arena] {summary.games} games ({summary.pairs} opening pairs)")
     print(f"[arena] pentanomial (candidate POV): {counts}")
     print(f"[arena] score: {summary.score:.4f} +/- {summary.score_se:.4f} (SE)")
-    print(f"[arena] Elo: {fmt(summary.elo)}  95% CI: [{fmt(elo_lo)}, {fmt(elo_hi)}]")
+    # flush is LOAD-BEARING, not cosmetic, and this ONE line is by itself the
+    # whole fix for the 2026-07-30/31 ratchet outage. Every caller redirects
+    # stdout to a file, so it is block-buffered, and the ratchet runs this
+    # script under `timeout -k 20` — SIGKILL discards the buffer.
+    #
+    # Buffering is not all-or-nothing: each flush=True print pushes everything
+    # written before it, so the loss is always exactly the LAST block. The
+    # RUNNING-Elo header above each block flushed while these five lines did
+    # not, so the block was only ever saved by the NEXT header. A run that
+    # printed several blocks kept all but the last (2026-07-28/29 recorded rows
+    # this way); a run slow enough to print only one lost everything, and its
+    # log ends EXACTLY at
+    #   [arena] RUNNING Elo after 6 complete pairs:
+    # so daily_gate_ratchet.sh's `grep '^\[arena\] Elo:'` found nothing and
+    # wrote no CSV row. See data/ratchet/arena_2026-07-3*_vs_prev.log
+    # .broken_flush_evidence, whose last byte is that header.
+    print(f"[arena] Elo: {fmt(summary.elo)}  95% CI: [{fmt(elo_lo)}, {fmt(elo_hi)}]",
+          flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1025,6 +1106,7 @@ def run_arena(
     volatility_candidate: dict[str, float] | None = None,
     max_concurrent_games: int = 128,
     report_every: int = 64,
+    max_seconds: float | None = None,
     syzygy_path: str | None = None,
     tb_max_pieces: int = 6,
     compile_models: bool = True,
@@ -1060,6 +1142,12 @@ def run_arena(
         )
     n_pairs = games // 2
     rng = np.random.default_rng(seed)
+    # Anchored HERE, not at the play loop, so opening sampling and the two
+    # ~700MB checkpoint loads are inside the budget the caller granted — they
+    # are what the caller's `timeout` counts, and on a contended box they are
+    # not small (data/ratchet/arena_2026-07-31_vs_boot512.log spent its whole
+    # 880s window before the play loop started).
+    deadline = None if max_seconds is None else time.time() + float(max_seconds)
 
     if (openings_path is None) == (openings_fen is None):
         raise SystemExit("exactly one of openings_path / openings_fen is required")
@@ -1090,10 +1178,21 @@ def run_arena(
         assert search_reference is not None
         print(f"[arena] SEARCH candidate: {search_candidate.describe()}", flush=True)
         print(f"[arena] SEARCH reference: {search_reference.describe()}", flush=True)
-        print(f"[arena] loading candidate: {candidate}")
+        # Flushed, and timed. data/ratchet/arena_2026-07-31_vs_boot512.log spent
+        # its entire 880s window somewhere in here and the log could not say
+        # whether loading had even started, because these two lines were
+        # buffered behind the next flushed print. A load that takes minutes is a
+        # real signal (GPU/disk contention) and has to be visible while it is
+        # happening, not only if the process survives to the next flush.
+        print(f"[arena] loading candidate: {candidate}", flush=True)
+        _t_load = time.time()
         model_candidate = load_model_from_checkpoint(candidate, device=device)
-        print(f"[arena] loading reference: {reference}")
+        print(f"[arena] loading reference: {reference} "
+              f"(candidate loaded in {time.time() - _t_load:.0f}s)", flush=True)
+        _t_load = time.time()
         model_reference = load_model_from_checkpoint(reference, device=device)
+        print(f"[arena] both checkpoints loaded "
+              f"(reference in {time.time() - _t_load:.0f}s)", flush=True)
         if compile_models:
             import torch
             # Plain inductor compile (NOT reduce-overhead/cudagraphs, which recompile
@@ -1144,6 +1243,7 @@ def run_arena(
                 pool_size=int(max_concurrent_games),
                 search_candidate=search_candidate, search_reference=search_reference,
                 report_every=int(report_every),
+                deadline=deadline,
             )
         else:
             # Chunked: plays each chunk of `max_concurrent_games` to completion
@@ -1152,6 +1252,18 @@ def run_arena(
             n_chunks = (len(openings) + chunk_pairs - 1) // chunk_pairs
             pair_scores = []
             for ci in range(0, len(openings), chunk_pairs):
+                # Chunk granularity: a chunk plays to completion, so this stops
+                # BEFORE starting one that would run past the budget rather
+                # than mid-chunk. Rolling (the default, and what the ratchet
+                # runs) stops per ply.
+                if deadline is not None and time.time() >= deadline:
+                    print(
+                        f"[arena] max-seconds reached: stopping before chunk "
+                        f"{ci // chunk_pairs + 1}/{n_chunks} with "
+                        f"{len(pair_scores)} pairs complete",
+                        flush=True,
+                    )
+                    break
                 sub = openings[ci:ci + chunk_pairs]
                 print(
                     f"[arena] matched_sims chunk {ci // chunk_pairs + 1}/{n_chunks}: "
@@ -1178,12 +1290,34 @@ def run_arena(
         pair_scores = play_paired_games_matched_time(
             candidate, reference, openings,
             device=device, ms_per_move=ms_per_move, max_plies=max_plies,
-            uci_args=uci_args,
+            uci_args=uci_args, deadline=deadline,
         )
     else:
         raise SystemExit(f"unknown mode {mode!r}")
     duration_s = time.time() - t0
 
+    # Against the openings ACTUALLY loaded, not the requested `n_pairs`:
+    # load_fen_openings uses every row of a short FEN file rather than padding
+    # to games//2, so comparing with n_pairs stamped truncated=True on every
+    # complete --openings-fen run with a small seed list.
+    truncated = bool(len(pair_scores) < len(openings))
+    if not pair_scores:
+        # Nothing finished. Say so on stdout and exit non-zero instead of
+        # letting summarize_pentanomial raise "no pairs" from deep in the
+        # stack: the caller (daily_gate_ratchet.sh) distinguishes "ran and
+        # found nothing" from "crashed" only by what reaches the log.
+        print(
+            f"[arena] NO COMPLETE PAIRS in {duration_s:.0f}s — nothing to score. "
+            f"Raise --max-seconds, lower --games/--sims, or check GPU contention.",
+            flush=True,
+        )
+        raise SystemExit(3)
+    if truncated:
+        print(
+            f"[arena] TRUNCATED: {len(pair_scores)}/{len(openings)} opening pairs "
+            f"completed in {duration_s:.0f}s",
+            flush=True,
+        )
     summary = summarize_pentanomial(pentanomial_counts(pair_scores))
     print_summary(summary)
 
@@ -1212,6 +1346,9 @@ def run_arena(
         volatility_candidate=volatility_candidate,
         search_candidate=search_candidate,
         search_reference=search_reference,
+        games_requested=games,
+        max_seconds=None if max_seconds is None else float(max_seconds),
+        truncated=truncated,
     )
     if out_path is not None:
         append_result(record, out_path)
@@ -1295,6 +1432,14 @@ def main() -> None:
                         "is simply lost. 2026-07-26: a 32-sim rung was stopped at "
                         "18 min having printed nothing, because the first block "
                         "only lands at 64 games.")
+    p.add_argument("--max-seconds", type=float, default=None,
+                   help="stop after this many wall-clock seconds and score the "
+                        "COMPLETE PAIRS finished so far, printing the summary and "
+                        "writing the JSONL record normally. Use this instead of "
+                        "relying on an external `timeout`: a SIGKILLed arena "
+                        "returns NOTHING (the ratchet lost every reading it "
+                        "computed on 2026-07-30/31 that way). The budget covers "
+                        "opening sampling and checkpoint loading too.")
     p.add_argument("--syzygy", default=None,
                    help="matched_sims: colon-separated Syzygy dir(s) to adjudicate "
                         "games the instant they reach a covered position (kills "
@@ -1479,6 +1624,7 @@ def main() -> None:
         games=args.games,
         max_concurrent_games=args.max_concurrent_games,
         report_every=args.report_every,
+        max_seconds=args.max_seconds,
         syzygy_path=args.syzygy,
         tb_max_pieces=args.syzygy_max_pieces,
         compile_models=compile_models,

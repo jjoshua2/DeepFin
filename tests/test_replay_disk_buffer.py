@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -458,8 +459,33 @@ def test_close_discards_late_prefetch_results(tmp_path) -> None:
     started = threading.Event()
     release = threading.Event()
 
-    def _slow_load_refresh_chunks(*, shard_paths, refresh_shards, rng):  # mock matches real signature
-        del shard_paths, refresh_shards, rng
+    # Names only the three arguments this test relies on, typed as the real
+    # method types them, so a RENAME or a type change OF ONE OF THOSE THREE on the
+    # real `_load_refresh_chunks` still fails the type gate here. `**_added_later`
+    # absorbs every other keyword argument, so an additive signature change cannot
+    # turn a test that never reads them red.
+    #
+    # Scope that guarantee honestly: it covers ONLY the three named arguments.
+    # `context` and `chosen_out` exist today (they arrived with the open-time pool
+    # seed) and land in `**_added_later`, so renaming or retyping either one is
+    # invisible here.
+    #
+    # Note `chosen_out` is an OUT-parameter: `_load_refresh_chunks` appends the
+    # drawn shard ranks to it (disk_buffer.py:955-958) and `_seed_shuffle_pool`
+    # reads them back for `mean_recency`. `**_added_later` would accept it and
+    # silently drop the writes. Harmless today because the only call this test
+    # reaches is `_prefetch_loop` (disk_buffer.py:895-899), which passes exactly
+    # the three named kwargs — but one refactor away from this repo's signature
+    # defect, a value accepted and then silently ignored. If a call this test
+    # reaches ever starts passing `chosen_out`, name it here.
+    def _slow_load_refresh_chunks(
+        *,
+        shard_paths: list[Path],
+        refresh_shards: int,
+        rng: np.random.Generator,
+        **_added_later: object,
+    ) -> list[dict[str, np.ndarray]]:
+        del shard_paths, refresh_shards, rng, _added_later
         started.set()
         release.wait(timeout=2.0)
         return [arrs]

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location(
@@ -185,3 +186,103 @@ def test_low_games_on_a_true_restart_iter_stays_a_note() -> None:
         healthy_prev,
     )
     assert any("workers spinning up" in n for n in notes)
+
+
+# ---------------------------------------------------------------------------
+# The strength ruler's own outage. daily_gate_ratchet.sh now stops after a
+# couple of failed attempts instead of retrying all day, so a dead day leaves
+# ratchet.csv with no row for that date and result.json perfectly green. The
+# attempt ledger is only a control if something reads it.
+# ---------------------------------------------------------------------------
+
+_ATTEMPTS_HEADER = "date,iter,attempt,rc,rows,reason\n"
+
+
+def _attempts(tmp_path: Path, body: str) -> Path:
+    p = tmp_path / "attempts.csv"
+    p.write_text(_ATTEMPTS_HEADER + body)
+    return p
+
+
+def test_a_day_that_wrote_no_ratchet_row_is_an_alert(tmp_path: Path) -> None:
+    path = _attempts(tmp_path, (
+        "2026-07-31,409,1,0,1,vs_prev:row|vs_boot512:row\n"
+        "2026-08-01,478,1,1,0,vs_prev:selfmatch|vs_boot512:nopairs\n"
+        "2026-08-01,478,2,5,0,vs_prev:selfmatch|vs_boot512:nopairs\n"
+    ))
+    alerts = loop_health.ratchet_gap_alerts(path)
+    assert len(alerts) == 1, alerts
+    assert "2026-08-01" in alerts[0]
+    assert "2 attempt(s)" in alerts[0]
+    assert "gave up" in alerts[0]
+    assert "not a null result" in alerts[0]
+
+
+def test_a_day_with_a_row_is_silent(tmp_path: Path) -> None:
+    """One failed attempt followed by a good one is a working instrument."""
+    path = _attempts(tmp_path, (
+        "2026-08-01,478,1,1,0,vs_boot512:nopairs\n"
+        "2026-08-01,478,2,0,1,vs_prev:nosnap|vs_boot512:row\n"
+    ))
+    assert loop_health.ratchet_gap_alerts(path) == []
+
+
+def test_a_still_retryable_day_says_so(tmp_path: Path) -> None:
+    path = _attempts(tmp_path, "2026-08-01,478,1,1,0,vs_boot512:backstop\n")
+    alerts = loop_health.ratchet_gap_alerts(path)
+    assert len(alerts) == 1, alerts
+    assert "still retryable" in alerts[0]
+
+
+def test_a_missing_or_empty_ledger_is_not_an_alert(tmp_path: Path) -> None:
+    """The ratchet may legitimately never have run; that is invariant L1's
+    question, not this check's. A monitor that fires on a fresh box is a
+    monitor that gets ignored."""
+    assert loop_health.ratchet_gap_alerts(tmp_path / "nope.csv") == []
+    assert loop_health.ratchet_gap_alerts(_attempts(tmp_path, "")) == []
+
+
+def test_only_the_NEWEST_day_is_judged(tmp_path: Path) -> None:
+    """An old hole stays in the ledger forever; alerting on it would latch the
+    monitor on permanently, which is how a real alert becomes invisible."""
+    path = _attempts(tmp_path, (
+        "2026-07-30,308,1,5,0,vs_boot512:nopairs\n"
+        "2026-08-01,478,1,0,2,vs_prev:row|vs_boot512:row\n"
+    ))
+    assert loop_health.ratchet_gap_alerts(path) == []
+
+
+def test_the_ratchet_check_is_wired_into_the_exit_status(tmp_path: Path) -> None:
+    """The rule is worthless if main() never calls it.
+
+    Runs the tool for real: a green result.json plus a ledger whose newest day
+    produced no row must exit 1 and print the ALERT. Deleting the call in
+    main() leaves every ratchet_gap_alerts test above green, which is the
+    "pinned rule, unpinned wiring" defect this check exists to catch.
+    """
+    import subprocess
+    import sys
+
+    result = tmp_path / "result.json"
+    result.write_text(json.dumps(HEALTHY) + "\n")
+    root = Path(__file__).resolve().parents[1]
+
+    def run(attempts_body: str) -> tuple[int, str]:
+        path = _attempts(tmp_path, attempts_body)
+        r = subprocess.run(
+            [sys.executable, "scripts/loop_health.py",
+             "--result-json", str(result), "--ratchet-attempts", str(path)],
+            cwd=str(root), capture_output=True, text=True, check=False,
+            env={"PYTHONPATH": str(root), "PATH": os.environ.get("PATH", ""),
+                 "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        return r.returncode, r.stdout + r.stderr
+
+    rc, out = run("2026-08-01,478,2,5,0,vs_boot512:nopairs\n")
+    assert rc == 1, f"a day with no strength reading must alert:\n{out}"
+    assert "ALERT: the daily strength ratchet wrote NO row on 2026-08-01" in out, out
+    assert "ALERTS PRESENT" in out
+
+    rc, out = run("2026-08-01,478,1,0,2,vs_prev:row|vs_boot512:row\n")
+    assert rc == 0, f"a working ratchet must stay green:\n{out}"
+    assert "all invariants green" in out, out

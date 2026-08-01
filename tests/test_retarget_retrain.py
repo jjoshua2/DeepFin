@@ -22,7 +22,7 @@ def _patch_first_shard(monkeypatch, planes: int) -> None:
     monkeypatch.setattr(rr, "iter_shard_paths", lambda _d: [Path("fake.zarr")])
     monkeypatch.setattr(
         rr, "load_shard_arrays",
-        lambda _p, lazy=False: ({"x": np.zeros((1, planes, 8, 8), np.float32)}, {}),
+        lambda _p, **_kw: ({"x": np.zeros((1, planes, 8, 8), np.float32)}, {}),
     )
 
 
@@ -109,6 +109,59 @@ def test_plane_guard_quiet_on_empty_dir(monkeypatch) -> None:
     # No shards: defer to the empty-buffer guard, don't raise here.
     monkeypatch.setattr(rr, "iter_shard_paths", lambda _d: [])
     rr._assert_replay_planes_match(Path("x"), 175, upgrade_v1=False)  # no raise
+
+
+def test_the_buffer_is_built_with_a_deterministic_refresh(monkeypatch, tmp_path) -> None:
+    """``deterministic_refresh=True`` must reach the CALL SITE, not just exist.
+
+    The flag is the entire reason this ruler is paired. The default refresh
+    picks between an async and a synchronous shuffle-pool refresh by who won a
+    race and only the synchronous one advances ``self.rng``, so one lost race
+    permanently desynchronises an arm's draw sequence from every other arm's --
+    measured on the sibling probe as 3 distinct sequences from 15 identical
+    invocations, 0.0056 nats of held-out CE apart. Every delta this script
+    reports rests on "each variant is seeded identically, so the buffer's random
+    draws match across arms".
+
+    ``tests/test_replay_deterministic_refresh.py`` pins what the flag DOES;
+    nothing pinned that this script passes it, and deleting the line left all 13
+    tests here green -- a knob that never reaches the worker, one level up.
+    """
+    seen: dict = {}
+
+    class _Reached(Exception):
+        """Stop before the Trainer: the call site is the whole assertion."""
+
+    def _spy(*_args, **kwargs):
+        seen.update(kwargs)
+        raise _Reached
+
+    class _Cfg:
+        input_extra_features = "v2_threats"
+
+    monkeypatch.setattr(rr, "DiskReplayBuffer", _spy)
+    monkeypatch.setattr(rr, "model_config_from_arch", lambda _a: _Cfg())
+    monkeypatch.setattr(rr, "build_model", lambda _cfg: _tiny_net())
+    monkeypatch.setattr(rr, "load_state_dict_tolerant", lambda *a, **k: None)
+    monkeypatch.setattr(rr, "trainer_kwargs_from_config", lambda _c: {})
+    monkeypatch.setattr(rr, "Trainer", lambda *a, **k: object())
+    monkeypatch.setattr(rr, "_assert_replay_planes_match", lambda *a, **k: None)
+    monkeypatch.setattr(torch, "load", lambda *a, **k: {"model": {}, "arch": {}})
+
+    with pytest.raises(_Reached):
+        rr._run_variant(
+            name="base", overrides={}, base_config={"seed": 0},
+            checkpoint=tmp_path / "trainer.pt", replay_dir=tmp_path,
+            steps=1, batch_size=2, device="cpu", out_dir=tmp_path,
+        )
+    assert seen.get("deterministic_refresh") is True, (
+        "retarget_retrain builds its replay buffer WITHOUT "
+        "deterministic_refresh=True; the arms no longer share a draw sequence "
+        f"and every variant delta this script prints is unpaired. kwargs: {sorted(seen)}"
+    )
+    # The paired claim is also made in prose at the top of the module; a reader
+    # who trusts it is trusting the line above.
+    assert "deterministic_refresh=True" in (rr.__doc__ or "")
 
 
 def test_require_complete_raises_on_shape_mismatch() -> None:

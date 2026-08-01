@@ -381,7 +381,7 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
         return captured(update)
 
     @torch.no_grad()
-    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
+    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         loss = None
         if closure is not None:
             with torch.enable_grad():
