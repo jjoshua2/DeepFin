@@ -5,6 +5,7 @@ import logging
 import os
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -458,8 +459,20 @@ def test_close_discards_late_prefetch_results(tmp_path) -> None:
     started = threading.Event()
     release = threading.Event()
 
-    def _slow_load_refresh_chunks(*, shard_paths, refresh_shards, rng):  # mock matches real signature
-        del shard_paths, refresh_shards, rng
+    # Names only the three arguments this test relies on, typed as the real
+    # method types them, so a RENAME or a type change on the real
+    # `_load_refresh_chunks` still fails the type gate here. `**_added_later`
+    # absorbs keyword arguments the real method grows afterwards (`context` and
+    # `chosen_out` arrived with the open-time pool seed) — an additive signature
+    # change must not turn a test that never reads them red.
+    def _slow_load_refresh_chunks(
+        *,
+        shard_paths: list[Path],
+        refresh_shards: int,
+        rng: np.random.Generator,
+        **_added_later: object,
+    ) -> list[dict[str, np.ndarray]]:
+        del shard_paths, refresh_shards, rng, _added_later
         started.set()
         release.wait(timeout=2.0)
         return [arrs]
