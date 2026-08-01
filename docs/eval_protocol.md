@@ -58,10 +58,13 @@ the encoding stored in the checkpoint itself.
      slower architecture pays for its latency. A candidate must be judged on
      both: the gap between the two numbers is its throughput cost in Elo.
    - **Cap a run with `--max-seconds`, never with an external `timeout` alone.**
-     A SIGKILLed arena returns nothing: its stdout is block-buffered into the
-     log file, so every block it computed dies with the process. That is why
-     the daily ratchet wrote no CSV row on 2026-07-27, 07-30 and 07-31 — the
-     logs end mid-report at `[arena] RUNNING Elo after 6 complete pairs:`.
+     A SIGKILLed arena loses whatever is still in its block-buffered stdout,
+     which is always exactly the LAST block printed — each flushed line pushes
+     everything written before it. A run that printed several blocks keeps all
+     but the last; a run slow enough to print only ONE loses everything, and
+     its log ends mid-report at `[arena] RUNNING Elo after 6 complete pairs:`
+     with no `[arena] Elo:` line for any parser to read. That is why the daily
+     ratchet wrote no CSV row on 2026-07-30 and 07-31.
      `--max-seconds` stops the play loop on the arena's own clock, scores the
      opening pairs that FINISHED (half-played games are dropped, never imputed
      as draws), prints the summary and appends the record. A capped run is then

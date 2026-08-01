@@ -250,10 +250,12 @@ def test_no_doc_or_script_invocation_omits_a_required_search_shape() -> None:
 def test_the_ratchet_caps_the_arena_from_inside_not_only_with_timeout() -> None:
     """`timeout` alone SIGKILLs the arena and the reading dies with it.
 
-    2026-07-27, 07-30 and 07-31: the arena reached its cap, was killed, and its
-    computed RUNNING-Elo block never left the block-buffered stdout pipe. The
-    logs end mid-report and the parser wrote no CSV row on 3 of 6 scheduled
-    days. `--max-seconds` makes the arena stop on its own clock and finalize.
+    2026-07-30 and 07-31: the arena reached its cap, was killed, and the single
+    RUNNING-Elo block it had computed never left the block-buffered stdout pipe
+    (buffering loses exactly the LAST block, so only a run too slow to print a
+    second one loses everything). Both logs end mid-report and the parser wrote
+    no CSV row. `--max-seconds` makes the arena stop on its own clock and
+    finalize instead.
     """
     invocation = _arena_invocation()
     assert "--max-seconds" in invocation, (
@@ -288,8 +290,8 @@ def test_a_zero_row_day_is_a_failure_not_a_success() -> None:
     ``ratchet_loop.sh`` stamps ``data/ratchet/last_run_date`` only on exit 0 and
     documents that a failure "retries on the next poll instead of silently
     skipping the whole day". It could never do that: every early ``return`` in
-    ``run_arena`` left the script exiting 0, so 2026-07-27, 07-30 and 07-31 each
-    burned their one attempt and were recorded as successful days.
+    ``run_arena`` left the script exiting 0, so 2026-07-30 and 07-31 each burned
+    their one attempt and were recorded as successful days.
     """
     text = RATCHET_SH.read_text(encoding="utf-8")
     assert "ROWS_WRITTEN=0" in text
@@ -298,15 +300,71 @@ def test_a_zero_row_day_is_a_failure_not_a_success() -> None:
     ), "no row written must exit non-zero so the loop retries"
 
 
-def test_the_already_done_guard_uses_the_parsers_own_pattern() -> None:
-    """A bare ``grep "Elo:"`` matches the RUNNING-block HEADER.
 
-    That header is exactly what a killed arena leaves behind, so the skip guard
-    would treat a run that wrote NO row as already complete and refuse to retry
-    it. The guard has to test the same anchored line the CSV is built from.
+
+def test_already_done_and_the_row_counter_are_keyed_on_the_CSV() -> None:
+    """"Done" must mean "a CSV row exists", not "the log looks parseable".
+
+    Both weaker keys were shipped and both were wrong:
+      ``grep "Elo:"``            matched the RUNNING-block HEADER, i.e. exactly
+                                 what a SIGKILLed run leaves behind.
+      ``grep "^\\[arena\\] Elo:"``  means the LOG parsed, which is still not a
+                                 row: every field guard below `return`s without
+                                 writing, and the one-sided `n/a` CI case is
+                                 common at small pair counts
+                                 (arena_2026-07-29_vs_prev.log has one at 5
+                                 pairs). With --max-seconds a capped run now
+                                 ALWAYS prints a final summary, so that case got
+                                 more likely, not less -- and the skip guard
+                                 would then report "already done today", exit 0,
+                                 and let ratchet_loop.sh stamp a day whose CSV
+                                 gained nothing.
     """
     text = RATCHET_SH.read_text(encoding="utf-8")
-    assert 'grep -qE "^\\[arena\\] Elo:" "$out"' in text, (
-        "the already-done guard must anchor on the same line the parser reads"
+    assert 'grep -q "^$today,$iter,$series," "$LOG"' in text, (
+        "the already-done guard must ask the CSV, not the arena log"
     )
+    assert 'grep -qE "^\\[arena\\] Elo:" "$out"' not in text
     assert 'grep -q "Elo:" "$out"' not in text
+    # The counter that decides the exit status must be incremented only where a
+    # row is actually appended (plus the CSV-keyed skip above).
+    assert text.count("ROWS_WRITTEN=$(( ROWS_WRITTEN + 1 ))") == 2
+    body = text.split("run_arena () {", 1)[1]
+    append_idx = body.index('$score,$played,$SHAPE" >> "$LOG"')
+    incr_idx = body.index("ROWS_WRITTEN=$(( ROWS_WRITTEN + 1 ))", append_idx)
+    assert incr_idx > append_idx, (
+        "the row counter must be incremented AFTER the append, so no early "
+        "return can count a row that was never written"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The slope must not inverse-variance-weight a CI the audit measured as
+# anti-conservative.
+# ---------------------------------------------------------------------------
+
+def test_tiny_rows_are_excluded_from_the_slope_not_silently_weighted() -> None:
+    """`w = 1/se^2` gives the least trustworthy row the MOST weight.
+
+    docs/rl_loop_audit.md L9 measured the 25-pair cell at 92.3-93.8% coverage
+    (71.2% in a degenerate draw-draw regime) — there the se is too small, so
+    the fit would lean hardest on exactly the rows it should distrust. Before
+    `--max-seconds` a contended day usually recorded nothing; now it always
+    records, so this regime is the common case rather than the exception.
+
+    The row still belongs in the CSV — it is a true observation — so the floor
+    lives in the fit, not in the writer.
+    """
+    from scripts.ratchet_slope import MIN_TRUSTED_PAIRS
+
+    # 13-pair and 23-pair rows are real: data/ratchet/ratchet.csv 2026-07-29
+    # (26 games) and 2026-07-28 (46 games).
+    assert MIN_TRUSTED_PAIRS > 25, (
+        "the floor must exclude the 25-pair cell L9 measured as undercovering"
+    )
+    src = (ROOT / "scripts" / "ratchet_slope.py").read_text(encoding="utf-8")
+    assert "--min-pairs" in src
+    assert "args.min_pairs" in src, "the flag must be read, not just declared"
+    # Excluded rows have to be announced; a silently shorter fit is how a
+    # verdict changes without anyone noticing.
+    assert "EXCLUDED below --min-pairs" in src

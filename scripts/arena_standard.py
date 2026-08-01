@@ -782,14 +782,6 @@ def play_paired_games_matched_sims_rolling(
         # caller's `timeout`. A killed process returns nothing at all; stopping
         # here returns every pair that finished and lets run_arena print the
         # final summary and append the JSONL record like any other run.
-        if deadline is not None and time.time() >= deadline:
-            print(
-                f"[arena] max-seconds reached after {time.time() - t0:.0f}s: "
-                f"stopping with {done}/{n_games} games finished — "
-                f"scoring COMPLETE PAIRS only",
-                flush=True,
-            )
-            break
         _refill()
         # Reap finished / adjudicated / over-cap games, compacting the pool.
         kb: list[chess.Board] = []
@@ -814,6 +806,20 @@ def play_paired_games_matched_sims_rolling(
                 ka.append(awhite[j])
                 kp.append(gplies[j])
         boards[:], gids[:], awhite[:], gplies[:] = kb, kg, ka, kp
+        # Deadline check goes AFTER the reap, not before it. Checking first
+        # discarded every game that had finished on the ply we just played —
+        # up to pool_size of them, and measurably: the 2026-07-31 proof run
+        # banked 100 games but scored 96, and 118 but scored 114. Reaping first
+        # costs nothing (no ply is played below this point) and cannot fabricate
+        # anything, because `_record` still only runs for a game with a result.
+        if deadline is not None and time.time() >= deadline:
+            print(
+                f"[arena] max-seconds reached after {time.time() - t0:.0f}s: "
+                f"stopping with {done}/{n_games} games finished — "
+                f"scoring COMPLETE PAIRS only",
+                flush=True,
+            )
+            break
         _refill()  # backfill the slots the reaped games freed — keep the pool full
         if not boards:
             break
@@ -870,8 +876,17 @@ def play_paired_games_matched_time(
     ms_per_move: int,
     max_plies: int,
     uci_args: str,
+    deadline: float | None = None,
 ) -> list[float]:
-    """Pair-by-pair UCI match using the production engine inference path."""
+    """Pair-by-pair UCI match using the production engine inference path.
+
+    ``deadline`` stops between PAIRS. A wall-clock budget is not a search knob
+    — it changes nothing about the ruler — so unlike ``--search-shape`` and the
+    vloss/target-batch family it is honoured here rather than refused. Pair
+    granularity is the natural unit: this loop only ever appends a score once
+    both colorings of an opening are played, so a truncated run drops the
+    in-progress pair by construction.
+    """
     import chess.engine
 
     from scripts.match_vs_uci import _open_engine, _score_for_a, play_one_game
@@ -896,6 +911,14 @@ def play_paired_games_matched_time(
         print(f"[arena] starting reference engine: {engine_cmd(reference_ckpt)}")
         eng_b = _open_engine(engine_cmd(reference_ckpt), cwd=str(REPO_ROOT))
         for pair_idx, opening in enumerate(openings):
+            if deadline is not None and time.time() >= deadline:
+                print(
+                    f"[arena] max-seconds reached: stopping before pair "
+                    f"{pair_idx + 1}/{len(openings)} with {len(pair_scores)} "
+                    f"pairs complete",
+                    flush=True,
+                )
+                break
             scores: list[float] = []
             for a_is_white in (True, False):
                 eng_w, eng_b_side = (eng_a, eng_b) if a_is_white else (eng_b, eng_a)
@@ -1036,17 +1059,22 @@ def print_summary(summary: PentanomialSummary) -> None:
     print(f"[arena] {summary.games} games ({summary.pairs} opening pairs)")
     print(f"[arena] pentanomial (candidate POV): {counts}")
     print(f"[arena] score: {summary.score:.4f} +/- {summary.score_se:.4f} (SE)")
-    # flush is LOAD-BEARING, not cosmetic. Every caller redirects stdout to a
-    # file, so it is block-buffered, and the ratchet runs this script under
-    # `timeout -k 20` — SIGKILL discards the buffer. The RUNNING-Elo header
-    # above each block is printed with flush=True while these five lines were
-    # not, so a capped run's log ended EXACTLY at
+    # flush is LOAD-BEARING, not cosmetic, and this ONE line is by itself the
+    # whole fix for the 2026-07-30/31 ratchet outage. Every caller redirects
+    # stdout to a file, so it is block-buffered, and the ratchet runs this
+    # script under `timeout -k 20` — SIGKILL discards the buffer.
+    #
+    # Buffering is not all-or-nothing: each flush=True print pushes everything
+    # written before it, so the loss is always exactly the LAST block. The
+    # RUNNING-Elo header above each block flushed while these five lines did
+    # not, so the block was only ever saved by the NEXT header. A run that
+    # printed several blocks kept all but the last (2026-07-28/29 recorded rows
+    # this way); a run slow enough to print only one lost everything, and its
+    # log ends EXACTLY at
     #   [arena] RUNNING Elo after 6 complete pairs:
-    # with the reading it had already computed thrown away, and
-    # daily_gate_ratchet.sh's `grep '^\[arena\] Elo:'` found nothing and wrote
-    # no CSV row. That is the whole reason the ratchet produced zero rows on
-    # 2026-07-27, 07-30 and 07-31 (see data/ratchet/arena_2026-07-3*_vs_prev.log,
-    # whose last byte is that header).
+    # so daily_gate_ratchet.sh's `grep '^\[arena\] Elo:'` found nothing and
+    # wrote no CSV row. See data/ratchet/arena_2026-07-3*_vs_prev.log
+    # .broken_flush_evidence, whose last byte is that header.
     print(f"[arena] Elo: {fmt(summary.elo)}  95% CI: [{fmt(elo_lo)}, {fmt(elo_hi)}]",
           flush=True)
 
@@ -1262,13 +1290,17 @@ def run_arena(
         pair_scores = play_paired_games_matched_time(
             candidate, reference, openings,
             device=device, ms_per_move=ms_per_move, max_plies=max_plies,
-            uci_args=uci_args,
+            uci_args=uci_args, deadline=deadline,
         )
     else:
         raise SystemExit(f"unknown mode {mode!r}")
     duration_s = time.time() - t0
 
-    truncated = bool(len(pair_scores) < n_pairs)
+    # Against the openings ACTUALLY loaded, not the requested `n_pairs`:
+    # load_fen_openings uses every row of a short FEN file rather than padding
+    # to games//2, so comparing with n_pairs stamped truncated=True on every
+    # complete --openings-fen run with a small seed list.
+    truncated = bool(len(pair_scores) < len(openings))
     if not pair_scores:
         # Nothing finished. Say so on stdout and exit non-zero instead of
         # letting summarize_pentanomial raise "no pairs" from deep in the
@@ -1282,7 +1314,7 @@ def run_arena(
         raise SystemExit(3)
     if truncated:
         print(
-            f"[arena] TRUNCATED: {len(pair_scores)}/{n_pairs} opening pairs "
+            f"[arena] TRUNCATED: {len(pair_scores)}/{len(openings)} opening pairs "
             f"completed in {duration_s:.0f}s",
             flush=True,
         )

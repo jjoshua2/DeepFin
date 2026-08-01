@@ -250,10 +250,12 @@ def test_both_arena_paths_pass_each_side_its_own_vloss_and_target_batch(
 
 
 # ---------------------------------------------------------------------------
-# A capped run must survive as DATA. 2026-07-27/30/31: the ratchet produced no
-# CSV row at all on three of six scheduled days, because the arena was SIGKILLed
-# by the caller's `timeout` and everything it had computed died in the
-# block-buffered stdout pipe.
+# A capped run must survive as DATA. 2026-07-30 and 07-31: the ratchet produced
+# no CSV row at all, because the arena was SIGKILLed by the caller's `timeout`
+# and the one block it had computed died in the block-buffered stdout pipe.
+# Buffering loses exactly the LAST block (each flushed line pushes what came
+# before it), so only a run too slow to print a second block loses everything --
+# which is why 07-28/07-29 recorded rows off the same code.
 # ---------------------------------------------------------------------------
 
 def test_print_summary_survives_an_unflushed_process_death(tmp_path):
@@ -392,3 +394,122 @@ def test_run_arena_records_truncation_so_a_capped_row_is_readable():
     assert record["games_requested"] == 200
     assert record["truncated"] is True
     assert record["max_seconds"] == 855.0
+
+
+def test_deadline_is_checked_after_the_reap_not_before(monkeypatch):
+    """Games that finished on the last played ply must still be scored.
+
+    The deadline check originally sat at the TOP of the loop, before the reap,
+    so up to ``pool_size`` already-decided games were thrown away with the
+    process: the 2026-07-31 proof run banked 100 finished games and scored 96.
+    Reaping first cannot fabricate anything -- ``_record`` still only runs for a
+    board with a real result -- so the recovery is free.
+
+    Pair 0 starts already stalemated (both colorings decide on arrival); pair 1
+    is a live position that cannot finish. With an expired deadline the honest
+    answer is therefore exactly one pair, scored 0.5+0.5. Checking the deadline
+    before the reap returns ``[]`` instead.
+    """
+    import time as _time
+
+    import scripts.arena_standard as arena
+
+    def _pick(_model, boards, **_kw):
+        return [0] * len(boards)
+
+    monkeypatch.setattr(
+        "chess_anti_engine.selfplay.match.pick_moves_for_boards", _pick,
+    )
+
+    finished = chess.Board("7k/5Q2/6K1/8/8/8/8/8 b - - 0 1")  # stalemate
+    assert finished.is_game_over(claim_draw=True), "fixture must start decided"
+    live = chess.Board()
+    live.push_uci("e2e4")
+    side = resolve_search_shape("training")
+
+    pair_scores = arena.play_paired_games_matched_sims_rolling(
+        None, None, [finished, live],
+        device="cpu", rng=np.random.default_rng(0),
+        sims_candidate=2, sims_reference=2,
+        max_plies=200, temperature=1.0, gumbel_add_noise=False,
+        search_candidate=side, search_reference=side,
+        pool_size=4, report_every=1000,
+        deadline=_time.time() - 1.0,
+    )
+    assert pair_scores == [1.0], (
+        "the decided pair must be reaped and scored before the deadline breaks "
+        f"the loop; got {pair_scores}"
+    )
+
+
+def _run_arena_matched_time(monkeypatch, tmp_path, *, games: int, max_seconds=None):
+    """Drive run_arena's matched_time path with the UCI match stubbed out.
+
+    matched_time loads no models, so this exercises the real orchestration
+    (openings, deadline, truncation, record) without spawning engines.
+    """
+    import scripts.arena_standard as arena
+
+    fen_file = tmp_path / "openings.fen"
+    fen_file.write_text(
+        "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1\n"
+        "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1\n"
+    )
+    seen: dict[str, object] = {}
+
+    def _stub(_cand, _ref, openings, **kw):
+        seen.update(kw)
+        seen["n_openings"] = len(openings)
+        return [1.0] * len(openings)
+
+    monkeypatch.setattr(arena, "play_paired_games_matched_time", _stub)
+    record = arena.run_arena(
+        candidate="cand.pt", reference="ref.pt", games=games,
+        openings_path=None, openings_fen=fen_file, opening_plies=16,
+        mode="matched_time", sims_candidate=32, sims_reference=32,
+        ms_per_move=100, max_plies=300, temperature=0.1,
+        gumbel_add_noise=True, device="cpu", seed=0, out_path=None,
+        max_seconds=max_seconds,
+    )
+    return record, seen
+
+
+def test_max_seconds_reaches_the_matched_time_loop(monkeypatch, tmp_path):
+    """`--max-seconds` must not be accepted and then ignored.
+
+    matched_time REFUSES the search-shape family because those change the ruler
+    and cannot apply to UCI subprocesses. A wall-clock budget is different: it
+    changes nothing about the ruler, so it is honoured rather than rejected --
+    but only if it actually reaches the loop. Accepting it and running unbounded
+    would be the accepted-then-ignored defect this script was just fixed for.
+    """
+    _record, seen = _run_arena_matched_time(
+        monkeypatch, tmp_path, games=4, max_seconds=900.0,
+    )
+    assert "deadline" in seen, (
+        "run_arena did not pass a deadline to play_paired_games_matched_time; "
+        "--max-seconds is inert under matched_time"
+    )
+    assert seen["deadline"] is not None
+    _record2, seen2 = _run_arena_matched_time(monkeypatch, tmp_path, games=4)
+    assert seen2["deadline"] is None, "no --max-seconds must mean no deadline"
+
+
+def test_truncated_is_measured_against_the_openings_actually_loaded(
+    monkeypatch, tmp_path,
+):
+    """A short FEN list is not a truncated run.
+
+    `load_fen_openings` uses ALL rows when the file holds fewer than
+    ``games // 2``, so comparing the completed pair count with ``n_pairs``
+    stamped ``truncated: True`` on every complete `--openings-fen` run with a
+    small seed file -- a flag that would have said "small sample, distrust me"
+    about a run that played every position it was given.
+    """
+    record, seen = _run_arena_matched_time(monkeypatch, tmp_path, games=100)
+    assert seen["n_openings"] == 2, "fixture must supply fewer rows than games//2"
+    assert record["pairs"] == 2
+    assert record["games_requested"] == 100
+    assert record["truncated"] is False, (
+        "every opening in the file was played; that is a complete run"
+    )

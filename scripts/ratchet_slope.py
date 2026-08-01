@@ -43,6 +43,20 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 Z95 = 1.959963985
 
+# Smallest pair count whose CI this fit is willing to WEIGHT, and the smallest
+# one the audit actually verified. Both come from docs/rl_loop_audit.md L9
+# (Monte Carlo, 8000 arenas per cell):
+#   25 pairs  -> 92.3-93.8% coverage, and 71.2% in a degenerate draw-draw
+#                regime. Measured anti-conservative; excluded.
+#   100 pairs -> 94.3-95.4% across five regimes. Verified; trusted.
+# Nothing between them was measured, so rows in 26..99 are UNVERIFIED rather
+# than known-bad: they are fitted but announced. Before `--max-seconds` this
+# barely mattered because a capped run usually recorded nothing at all; now
+# every capped run records, so the small-sample regime is the common case and
+# the floor has to be explicit.
+MIN_TRUSTED_PAIRS = 26
+L9_VERIFIED_PAIRS = 100
+
 
 def load_cumulative_steps(run_dir: Path) -> dict[int, float]:
     """iteration -> cumulative trainer_steps_done, spanning CSV rotations."""
@@ -153,6 +167,14 @@ def main() -> None:
                     help="frozen-anchor series; vs_prev is a moving reference and is NOT the yardstick")
     ap.add_argument("--min-rows", type=int, default=4,
                     help="pre-committed minimum before the slope is a verdict")
+    ap.add_argument("--min-pairs", type=int, default=MIN_TRUSTED_PAIRS,
+                    help="drop rows with fewer opening pairs than this before "
+                         f"fitting (default: {MIN_TRUSTED_PAIRS}). This fit weights "
+                         "by w = 1/se^2, and audit L9 measured the 25-pair cell at "
+                         "92.3-93.8%% coverage (71.2%% in a degenerate draw-draw "
+                         "regime) -- there the se is ANTI-CONSERVATIVE, so 1/se^2 "
+                         "gives the least trustworthy row the most weight. Rows are "
+                         "still listed; they just do not vote. Set 0 to disable.")
     ap.add_argument("--search-shape", default=None,
                     help="fit only rows measured with this search shape "
                          "(default: the newest shape present; see --allow-mixed-rulers)")
@@ -171,23 +193,41 @@ def main() -> None:
 
     xs, ys, ses, meta = [], [], [], []
     missing = []
+    too_small: list[tuple[str, int, int]] = []
+    unverified: list[tuple[str, int, int]] = []
     for r in rows:
         it = int(float(r["iter"]))
         if it not in cum:
             missing.append(it)
             continue
+        games = int(float(r["games"]))
+        pairs = games // 2
+        if args.min_pairs and pairs < args.min_pairs:
+            too_small.append((r["date"], it, pairs))
+            continue
+        if pairs < L9_VERIFIED_PAIRS:
+            unverified.append((r["date"], it, pairs))
         lo, hi = float(r["ci_lo"]), float(r["ci_hi"])
         se = (hi - lo) / (2 * Z95)
         xs.append(cum[it])
         ys.append(float(r["elo"]))
         ses.append(se)
-        meta.append((r["date"], it, float(r["elo"]), lo, hi, int(float(r["games"])), cum[it]))
+        meta.append((r["date"], it, float(r["elo"]), lo, hi, games, cum[it]))
 
     rulers = sorted({row_search_shape(r) for r in rows})
     print(f"series: {args.series}   search shape: {'+'.join(rulers)}   "
           f"rows usable: {len(xs)}   (need >= {args.min_rows} for a verdict)")
     if missing:
         print(f"  ! {len(missing)} row(s) dropped — iteration not found in any progress CSV: {missing}")
+    if too_small:
+        detail = ", ".join(f"{d}/iter{it} ({p} pairs)" for d, it, p in too_small)
+        print(f"  ! {len(too_small)} row(s) EXCLUDED below --min-pairs {args.min_pairs}: {detail}")
+        print("    (audit L9: at 25 pairs the CI covers 92.3-93.8%, 71.2% degenerate — "
+              "w = 1/se^2 would weight these MOST)")
+    if unverified:
+        detail = ", ".join(f"{d}/iter{it} ({p} pairs)" for d, it, p in unverified)
+        print(f"  ! {len(unverified)} row(s) fitted but UNVERIFIED (< {L9_VERIFIED_PAIRS} pairs, "
+              f"the smallest size L9 checked): {detail}")
     print()
     print(f"  {'date':12s} {'iter':>6s} {'cum_steps':>11s} {'elo':>8s} {'95% CI':>20s} {'games':>6s}")
     for d, it, e, lo, hi, g, cs in meta:

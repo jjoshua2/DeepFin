@@ -108,8 +108,8 @@ SERIES_LEFT=2
 # How many series ended with a readable CSV row. The exit status is built from
 # this, because ratchet_loop.sh stamps the calendar day DONE on exit 0: a run
 # that wrote nothing and still exited 0 burned the day's only attempt and told
-# nobody. That is how 2026-07-27, 07-30 and 07-31 each became a silent hole in
-# the series instead of a retry ten minutes later.
+# nobody. That is how 2026-07-30 and 07-31 each became a silent hole in the
+# series instead of a retry ten minutes later.
 ROWS_WRITTEN=0
 
 mkdir -p "$SNAP_DIR" "$(dirname "$LOG")"
@@ -154,13 +154,21 @@ fi
 run_arena () {   # $1=reference  $2=series-label
     local ref="$1" series="$2" out
     out="data/ratchet/arena_${today}_${series}.log"
-    # "Already done" must mean the SAME thing the parser below means, or a run
-    # that produced no row marks itself complete. `grep "Elo:"` matched the
-    # RUNNING-block HEADER ("RUNNING Elo after 6 complete pairs:"), which is
-    # exactly what a killed run leaves behind — so on 2026-07-30/31 every retry
-    # would have skipped a series that had written nothing. Anchor it to the
-    # same `^\[arena\] Elo:` line the CSV is built from.
-    if [ -s "$out" ] && grep -qE "^\[arena\] Elo:" "$out"; then
+    # "Already done" must be keyed on THE CSV ROW, which is the only artifact
+    # this job exists to produce. Two weaker versions were both wrong:
+    #   `grep "Elo:" "$out"`        matched the RUNNING-block HEADER, i.e.
+    #                               exactly what a SIGKILLed run leaves behind.
+    #   `grep "^\[arena\] Elo:"`    means the LOG was parseable, which is still
+    #                               not "a row exists": every field guard below
+    #                               `return`s without writing, and the one-sided
+    #                               `n/a` CI case ("[arena] Elo: +470.4  95% CI:
+    #                               [+311.5, n/a]") is common at small pair
+    #                               counts — arena_2026-07-29_vs_prev.log has one
+    #                               at 5 pairs. A capped run now ALWAYS prints a
+    #                               final summary, so that case got MORE likely,
+    #                               not less.
+    # Asking the CSV directly cannot drift from what the CSV contains.
+    if grep -q "^$today,$iter,$series," "$LOG"; then
         echo "[ratchet] $series already done today"
         ROWS_WRITTEN=$(( ROWS_WRITTEN + 1 )); return
     fi
@@ -177,11 +185,13 @@ run_arena () {   # $1=reference  $2=series-label
     # THE ARENA STOPS ITSELF (`--max-seconds`); `timeout` is only a backstop.
     #
     # It used to be the other way round, and that is why this job produced ZERO
-    # rows on 2026-07-27, 07-30 and 07-31. A SIGKILLed process returns nothing:
-    # the RUNNING-Elo block it had already computed sat in the block-buffered
-    # stdout pipe and died with it, so those logs end mid-report at
-    # "[ratchet] ... RUNNING Elo after 6 complete pairs:" and the parser below
-    # found no "[arena] Elo:" line to read. Under --max-seconds the arena breaks
+    # rows on 2026-07-30 and 07-31. A SIGKILLed process loses whatever is still
+    # in its block-buffered stdout, which is always exactly the LAST block --
+    # each `flush=True` print pushes everything written before it. A run that
+    # printed many blocks therefore kept all but the last (07-28/07-29 recorded
+    # rows); a run slow enough to print only ONE lost everything, and those logs
+    # end mid-report at "[arena] RUNNING Elo after 6 complete pairs:" with no
+    # "[arena] Elo:" line for the parser below. Under --max-seconds the arena breaks
     # out of the play loop on its own clock, scores the pairs that FINISHED, and
     # prints + appends a normal record — so a capped run is a small sample
     # rather than no sample.
