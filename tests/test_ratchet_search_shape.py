@@ -702,7 +702,10 @@ def test_the_two_scripts_pick_the_same_trial_tree(tmp_path) -> None:
     rc, out = _run_ratchet(root, env={"TRAIN_WORK_DIR": "runs/other"})
     assert rc == 0, out
     rows = _csv_rows(root)
-    assert len(rows) == 1 and ",900," in rows[0], (
+    assert len(rows) == 1, (
+        f"the ratchet measured a different tree than TRAIN_WORK_DIR names: {rows}"
+    )
+    assert ",900," in rows[0], (
         f"the ratchet measured a different tree than TRAIN_WORK_DIR names: {rows}"
     )
 
