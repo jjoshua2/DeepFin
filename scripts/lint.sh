@@ -29,10 +29,15 @@
 # opinions; treat the score as a drift signal, not a commit gate. Baseline
 # scores are saved in scripts/scb-baseline.json.
 #
+# basedpyright SCOPE is not the same as ruff/vulture scope. Naming paths narrows
+# basedpyright to those files, so a scoped run cannot see breakage the change caused
+# in a file it never opened. The no-argument form and --changed both run it at
+# pyrightconfig.json's whole-repo scope, which is what CI runs.
+#
 # Usage:
 #   scripts/lint.sh                     # gate on package + tests + scripts
-#   scripts/lint.sh path/a.py path/b.py # gate on given files
-#   scripts/lint.sh --changed           # gate on changed/untracked .py files
+#   scripts/lint.sh path/a.py path/b.py # gate on given files (basedpyright scoped too)
+#   scripts/lint.sh --changed           # ruff/vulture on changed .py; basedpyright whole-repo
 #   scripts/lint.sh --fast [paths...]   # skip vulture
 #   scripts/lint.sh --deep [paths...]   # + skylos + ruff cleanup report (advisory)
 #   scripts/lint.sh --slop [paths...]   # also scb-check (verbosity/erosion)
@@ -59,7 +64,7 @@ for arg in "$@"; do
         --changed) USE_CHANGED=1 ;;
         --all) ;;  # noop: default behavior
         --help|-h)
-            sed -n '2,38p' "$0"
+            sed -n '2,44p' "$0"
             exit 0
             ;;
         *) PATHS+=("$arg"); USER_SET_PATHS=1 ;;
@@ -109,9 +114,17 @@ start_job() {
 
 run_basedpyright() {
     # basedpyright scope is defined in pyrightconfig.json (package + tests + scripts).
-    # No baseline: the repo is kept at zero findings. Only override scope when the
-    # user explicitly names paths, so ad-hoc invocations on specific files still work.
-    if [[ $USER_SET_PATHS -eq 1 ]]; then
+    # No baseline: the repo is kept at zero findings. Only EXPLICITLY NAMED paths
+    # narrow that scope, so ad-hoc invocations on specific files stay fast
+    # (measured 2026-08-01: 2 files analyzed / ~1.4s vs 544 / ~32s whole-repo).
+    #
+    # `--changed` deliberately does NOT narrow it. A change breaks the type gate in
+    # files it never opened -- PR #295 added parameters to
+    # DiskReplayBuffer._load_refresh_chunks and turned main red via
+    # tests/test_replay_disk_buffer.py, which that PR did not touch. A scoped run
+    # structurally cannot see that. --changed is the commit-time form, where the
+    # whole-repo scan is worth the 34s.
+    if [[ $USER_SET_PATHS -eq 1 && $USE_CHANGED -eq 0 ]]; then
         "$(tool basedpyright)" "${PATHS[@]}"
     else
         "$(tool basedpyright)"

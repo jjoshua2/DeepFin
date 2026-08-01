@@ -160,7 +160,10 @@ Python 3.10+ with `from __future__ import annotations`; type hints on functions 
 dataclasses; tests in `tests/`. Write code that reads like the code around it.
 
 Run `./scripts/lint.sh <paths>` after editing; the gate is kept at zero findings
-repo-wide with no baseline. Fix a new finding in the same commit or disable the rule in
+repo-wide with no baseline. Only the **no-argument** form (and `--changed`) runs
+basedpyright at CI's whole-repo scope — naming paths narrows it to those files, so a
+scoped run structurally cannot see breakage the change caused in a file it did not open.
+Fix a new finding in the same commit or disable the rule in
 `pyrightconfig.json` if the whole category isn't worth the ceremony — there is no
 deferral queue, don't recreate one. basedpyright ignores mypy-style
 `# type: ignore[...]`; use `# pyright: ignore[reportRuleName]`. Never write a suppression

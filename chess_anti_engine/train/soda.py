@@ -179,7 +179,7 @@ class SODAWeightDecayWrapper(torch.optim.Optimizer):
         self._ensure_group_defaults()
 
     @torch.no_grad()
-    def step(self, closure=None) -> float | None:  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
+    def step(self, closure=None) -> float | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         loss = None
         if closure is not None:
             with torch.enable_grad():

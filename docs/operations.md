@@ -87,9 +87,21 @@ seconds, kept at **zero findings repo-wide with no baseline**. CI gates basedpyr
 the whole repo.
 
 ```bash
-./scripts/lint.sh --changed          # changed and untracked .py files
+./scripts/lint.sh                    # whole-repo basedpyright — the only form matching CI
+./scripts/lint.sh --changed          # ruff/vulture on changed .py; basedpyright whole-repo
 ./scripts/lint.sh --deep [paths...]  # + skylos + ruff cleanup report (advisory, ~40s)
 ```
+
+Naming paths narrows **basedpyright** to those files — 2 files analyzed in ~1.4s versus
+544 in ~32s whole-repo — so a scoped run cannot see breakage the change caused in a file
+it never opened; that is how PR #295 turned `main` red. Run the no-argument form before
+pushing.
+
+In a **fresh worktree the whole-repo form is not clean until the C extensions are
+built**: without the three in-place `.so` files it emits 120 spurious
+`reportMissingModuleSource` errors (`chess_anti_engine.encoding._lc0_ext`,
+`chess_anti_engine.mcts._mcts_tree`, `chess_anti_engine.encoding._features_ext`), which
+all disappear after `python3 scripts/build_production_extensions.py`.
 
 `--deep` sweeps the not-yet-gated ruff groups (B, NPY) as a cleanup shopping list; only
 the needs-judgment tail remains there (B905 `zip strict=`, B008 call-in-default, NPY002
