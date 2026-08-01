@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from concurrent.futures import FIRST_COMPLETED, wait
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +43,53 @@ from chess_anti_engine.utils.numpy_helpers import softmax_1d as _softmax_np
 _LOG = logging.getLogger("chess_anti_engine.selfplay")
 
 _multipv_truncation_warned = False
+
+# One health line per this many resolved label queries. ~17 labels/s live, so
+# roughly one line every four minutes — cheap enough to leave always on, and the
+# only thing that makes a detached SF label block visible while it is happening.
+_SF_LABEL_REPORT_EVERY = 4096
+# Fraction of labels whose SF bestmove was not legal at the position we queried,
+# above which the health line is a WARNING. A healthy session sits near 0.03
+# (moves the compact policy encoding cannot represent); a Stockfish process that
+# is one search behind sits at 0.8-1.0 because it is answering another position.
+_SF_BESTMOVE_ILLEGAL_WARN_RATE = 0.25
+
+_sf_label_lock = threading.Lock()
+_sf_label_counts = {"resolved": 0, "failed": 0, "bestmove_illegal": 0}
+
+
+def _report_sf_label_health(*, failed: int = 0, bestmove_illegal: int = 0) -> None:
+    """Accumulate label-path health and emit one line per report window.
+
+    ``bestmove_illegal`` is the load-bearing one. ``_process_sf_label_result_for_record``
+    silently substitutes ``legal_indices[0]`` when Stockfish's bestmove is not
+    legal at the queried position, which is exactly what a result belonging to a
+    DIFFERENT position looks like — the substitution kept the pipeline running
+    and the corruption invisible (2026-07-31, shards 033944-033951).
+    """
+    with _sf_label_lock:
+        _sf_label_counts["resolved"] += 1
+        _sf_label_counts["failed"] += int(failed)
+        _sf_label_counts["bestmove_illegal"] += int(bestmove_illegal)
+        if _sf_label_counts["resolved"] % _SF_LABEL_REPORT_EVERY:
+            return
+        counts = dict(_sf_label_counts)
+        _sf_label_counts.update(resolved=0, failed=0, bestmove_illegal=0)
+    resolved = max(1, counts["resolved"])
+    illegal_rate = counts["bestmove_illegal"] / resolved
+    level = (
+        logging.WARNING if illegal_rate > _SF_BESTMOVE_ILLEGAL_WARN_RATE
+        else logging.INFO
+    )
+    _LOG.log(
+        level,
+        "sf label health: resolved=%d failed=%d bestmove_illegal=%d (%.3f) — a "
+        "high illegal rate means Stockfish is answering a DIFFERENT position "
+        "than the one queried (a desynced engine), so the whole SF label block "
+        "on those rows is detached from the row",
+        counts["resolved"], counts["failed"], counts["bestmove_illegal"],
+        illegal_rate,
+    )
 
 
 def _warn_multipv_truncated() -> None:
@@ -680,8 +728,10 @@ def _process_sf_label_result_for_record(
     legal_set = {int(x) for x in legal_indices}
 
     a_idx = uci_to_policy_index(res.bestmove_uci, bool(turn))
-    if a_idx < 0 or a_idx not in legal_set:
+    bestmove_illegal = a_idx < 0 or a_idx not in legal_set
+    if bestmove_illegal:
         a_idx = int(legal_indices[0])
+    _report_sf_label_health(bestmove_illegal=int(bestmove_illegal))
 
     cand_idxs, cand_scores = _collect_sf_pv_candidates(
         res, _turn=bool(turn), legal_set=legal_set,
@@ -893,6 +943,7 @@ def poll_async_sf_labels(state: SelfplayState) -> tuple[int, int]:
             attached += 1
         except Exception as exc:  # pragma: no cover - defensive drop on SF failure.
             failed += 1
+            _report_sf_label_health(failed=1)
             _LOG.debug("async SF label failed: %s", exc, exc_info=True)
     state.pending_sf_labels = still_pending
     return attached, failed
@@ -930,6 +981,7 @@ def flush_async_sf_labels_for_records(
             attached += 1
         except Exception as exc:  # pragma: no cover - defensive drop on SF failure.
             failed += 1
+            _report_sf_label_health(failed=1)
             _LOG.debug("async SF label failed during finalize: %s", exc, exc_info=True)
     state.pending_sf_labels = still_pending
     return attached, failed
@@ -1012,8 +1064,10 @@ def _emit_sf_refute_opp_record(
         return
     legal_set = {int(x) for x in legal_indices}
     a_idx = uci_to_policy_index(res.bestmove_uci, bool(turn))
-    if a_idx < 0 or a_idx not in legal_set:
+    bestmove_illegal = a_idx < 0 or a_idx not in legal_set
+    if bestmove_illegal:
         a_idx = int(legal_indices[0])
+    _report_sf_label_health(bestmove_illegal=int(bestmove_illegal))
     cand_idxs, cand_scores = _collect_sf_pv_candidates(
         res, _turn=bool(turn), legal_set=legal_set,
         sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
@@ -1144,8 +1198,10 @@ def _process_sf_results(
         legal_set = {int(x) for x in legal_indices}
 
         a_idx = uci_to_policy_index(res.bestmove_uci, _turn)
-        if a_idx < 0 or a_idx not in legal_set:
+        bestmove_illegal = a_idx < 0 or a_idx not in legal_set
+        if bestmove_illegal:
             a_idx = int(legal_indices[0])
+        _report_sf_label_health(bestmove_illegal=int(bestmove_illegal))
 
         cand_idxs, cand_scores = _collect_sf_pv_candidates(
             res, _turn=_turn, legal_set=legal_set,
