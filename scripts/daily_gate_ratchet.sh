@@ -151,9 +151,30 @@ if [ ! -s "$snap" ]; then
     echo "[ratchet] snapshotted iter=$iter -> $snap"
 fi
 
+pick_log_path () {   # $1=date  $2=iter  $3=series  -> a path that does NOT exist
+    # NEVER overwrite a previous attempt's log. The name used to be
+    # arena_<date>_<series>.log opened with `>`, so the retry that the exit-1
+    # path now makes routine would destroy the evidence of the attempt it is
+    # retrying. That is not hypothetical: it is exactly how the 2026-07-27 00:09
+    # failure log was lost — a later manual run that day reused the name, which
+    # is why the first version of this fix mis-attributed that day to a flush
+    # bug. Keyed on the ITERATION too, because a new checkpoint is a new
+    # measurement rather than a retry.
+    #
+    # A standalone function so it can be extracted and executed by
+    # tests/test_ratchet_search_shape.py: a guard that only greps this file for
+    # the string cannot fail when the logic behind it is dead.
+    local base="data/ratchet/arena_${1}_iter${2}_${3}"
+    local path="${base}.log" attempt=2
+    while [ -e "$path" ]; do
+        path="${base}.attempt${attempt}.log"
+        attempt=$(( attempt + 1 ))
+    done
+    printf '%s\n' "$path"
+}
+
 run_arena () {   # $1=reference  $2=series-label
     local ref="$1" series="$2" out
-    out="data/ratchet/arena_${today}_${series}.log"
     # "Already done" must be keyed on THE CSV ROW, which is the only artifact
     # this job exists to produce. Two weaker versions were both wrong:
     #   `grep "Elo:" "$out"`        matched the RUNNING-block HEADER, i.e.
@@ -173,6 +194,8 @@ run_arena () {   # $1=reference  $2=series-label
         ROWS_WRITTEN=$(( ROWS_WRITTEN + 1 )); return
     fi
     if [ ! -s "$ref" ]; then echo "[ratchet] $series: reference missing ($ref) — skip"; return; fi
+
+    out=$(pick_log_path "$today" "$iter" "$series")
 
     # Equal share of the time that is actually left, not of the original budget.
     local budget=$(( (DEADLINE - $(date +%s)) / SERIES_LEFT ))

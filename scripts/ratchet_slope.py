@@ -36,6 +36,7 @@ import argparse
 import csv
 import glob
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -43,17 +44,31 @@ import numpy as np
 ROOT = Path(__file__).resolve().parent.parent
 Z95 = 1.959963985
 
-# Smallest pair count whose CI this fit is willing to WEIGHT, and the smallest
-# one the audit actually verified. Both come from docs/rl_loop_audit.md L9
-# (Monte Carlo, 8000 arenas per cell):
+# Smallest pair count this fit will admit, and the smallest one the audit
+# actually verified. Both come from docs/rl_loop_audit.md L9 (Monte Carlo, 8000
+# arenas per cell):
 #   25 pairs  -> 92.3-93.8% coverage, and 71.2% in a degenerate draw-draw
-#                regime. Measured anti-conservative; excluded.
+#                regime. The se is UNDERSTATED there; excluded.
 #   100 pairs -> 94.3-95.4% across five regimes. Verified; trusted.
 # Nothing between them was measured, so rows in 26..99 are UNVERIFIED rather
-# than known-bad: they are fitted but announced. Before `--max-seconds` this
-# barely mattered because a capped run usually recorded nothing at all; now
-# every capped run records, so the small-sample regime is the common case and
-# the floor has to be explicit.
+# than known-bad: they are fitted but announced.
+#
+# WHAT THE FLOOR ACTUALLY DOES — it is OUTLIER REMOVAL, not de-weighting.
+# An earlier version of this comment said a small row would be weighted MOST.
+# That is backwards: w = 1/se^2, and a small sample has a WIDE CI, hence a
+# SMALL weight. Measured on data/ratchet/ratchet.csv (vs_boot512, all rulers):
+#   pairs=23  se=42.35  weight share  7.7%   chi2 share  0.8%
+#   pairs=13  se=68.11  weight share  3.0%   chi2 share 93.5%   resid +98 Elo
+# The damage runs through the chi2 inflation in `weighted_slope`, not through
+# the weights: the 13-pair row supplies 93.5% of the chi2 numerator at 3% of
+# the weight, so it sets `se_slope` for the whole fit. L9 is what makes
+# EXCLUDING it the right call rather than trusting it as real misfit — at 13
+# pairs the se is understated, so chi2 reads ordinary sampling noise as
+# disagreement between rows.
+#
+# The threshold is NOT load-bearing (see the ledger's sensitivity curve): every
+# floor from 14 to 57 gives the same 3-4 row fit and the same slope to 0.05
+# Elo/1k steps. The one decision it makes is whether the 13-pair row is in.
 MIN_TRUSTED_PAIRS = 26
 L9_VERIFIED_PAIRS = 100
 
@@ -113,6 +128,62 @@ def weighted_slope(x: np.ndarray, y: np.ndarray, se: np.ndarray) -> tuple[float,
     return slope, se_slope, slope - Z95 * se_slope, slope + Z95 * se_slope
 
 
+@dataclass(frozen=True)
+class FitRows:
+    """Rows selected for the fit, plus the rows held out and why."""
+
+    xs: list[float]
+    ys: list[float]
+    ses: list[float]
+    # (date, iter, elo, ci_lo, ci_hi, games, cum_steps)
+    meta: list[tuple[str, int, float, float, float, int, float]]
+    missing: list[int]
+    # (date, iter, pairs, elo, ci_lo, ci_hi)
+    too_small: list[tuple[str, int, int, float, float, float]]
+    unverified: list[tuple[str, int, int]]
+
+
+def select_fit_rows(
+    rows: list[dict[str, str]],
+    cum: dict[int, float],
+    *,
+    min_pairs: int,
+) -> FitRows:
+    """Split ratchet rows into what the slope fits and what it holds out.
+
+    Separated from ``main`` so ``--min-pairs`` can be tested by its EFFECT on
+    the fitted set rather than by grepping the source for the flag name. A
+    source-text guard cannot fail when the knob is dead: replacing the pair
+    filter with ``if False`` leaves the flag parsing, the help printing and the
+    string present, while the fit silently reverts to every row.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+    ses: list[float] = []
+    meta: list[tuple[str, int, float, float, float, int, float]] = []
+    missing: list[int] = []
+    too_small: list[tuple[str, int, int, float, float, float]] = []
+    unverified: list[tuple[str, int, int]] = []
+    for r in rows:
+        it = int(float(r["iter"]))
+        lo, hi = float(r["ci_lo"]), float(r["ci_hi"])
+        if it not in cum:
+            missing.append(it)
+            continue
+        games = int(float(r["games"]))
+        pairs = games // 2
+        if min_pairs and pairs < min_pairs:
+            too_small.append((r["date"], it, pairs, float(r["elo"]), lo, hi))
+            continue
+        if pairs < L9_VERIFIED_PAIRS:
+            unverified.append((r["date"], it, pairs))
+        xs.append(cum[it])
+        ys.append(float(r["elo"]))
+        ses.append((hi - lo) / (2 * Z95))
+        meta.append((r["date"], it, float(r["elo"]), lo, hi, games, cum[it]))
+    return FitRows(xs, ys, ses, meta, missing, too_small, unverified)
+
+
 def row_search_shape(row: dict[str, str]) -> str:
     """Which search measured this row.
 
@@ -169,12 +240,17 @@ def main() -> None:
                     help="pre-committed minimum before the slope is a verdict")
     ap.add_argument("--min-pairs", type=int, default=MIN_TRUSTED_PAIRS,
                     help="drop rows with fewer opening pairs than this before "
-                         f"fitting (default: {MIN_TRUSTED_PAIRS}). This fit weights "
-                         "by w = 1/se^2, and audit L9 measured the 25-pair cell at "
-                         "92.3-93.8%% coverage (71.2%% in a degenerate draw-draw "
-                         "regime) -- there the se is ANTI-CONSERVATIVE, so 1/se^2 "
-                         "gives the least trustworthy row the most weight. Rows are "
-                         "still listed; they just do not vote. Set 0 to disable.")
+                         f"fitting (default: {MIN_TRUSTED_PAIRS}). This is OUTLIER "
+                         "removal, not de-weighting: a small row already has a wide "
+                         "CI and therefore a SMALL 1/se^2 weight, but it dominates "
+                         "the chi2 inflation that sets the slope CI (measured: the "
+                         "13-pair row carries 3%% of the weight and 93.5%% of chi2, "
+                         "residual +98 Elo). Audit L9 is what justifies excluding it "
+                         "rather than believing it -- at 25 pairs coverage is "
+                         "92.3-93.8%% (71.2%% degenerate), i.e. the se is understated, "
+                         "so chi2 reads sampling noise as misfit. Rows are still "
+                         "listed with their Elo/CI; they just do not vote. Set 0 to "
+                         "disable.")
     ap.add_argument("--search-shape", default=None,
                     help="fit only rows measured with this search shape "
                          "(default: the newest shape present; see --allow-mixed-rulers)")
@@ -191,28 +267,9 @@ def main() -> None:
         raise SystemExit(f"no rows with series={args.series} in {args.ratchet_csv}")
     rows = _one_ruler_only(rows, args)
 
-    xs, ys, ses, meta = [], [], [], []
-    missing = []
-    too_small: list[tuple[str, int, int]] = []
-    unverified: list[tuple[str, int, int]] = []
-    for r in rows:
-        it = int(float(r["iter"]))
-        if it not in cum:
-            missing.append(it)
-            continue
-        games = int(float(r["games"]))
-        pairs = games // 2
-        if args.min_pairs and pairs < args.min_pairs:
-            too_small.append((r["date"], it, pairs))
-            continue
-        if pairs < L9_VERIFIED_PAIRS:
-            unverified.append((r["date"], it, pairs))
-        lo, hi = float(r["ci_lo"]), float(r["ci_hi"])
-        se = (hi - lo) / (2 * Z95)
-        xs.append(cum[it])
-        ys.append(float(r["elo"]))
-        ses.append(se)
-        meta.append((r["date"], it, float(r["elo"]), lo, hi, games, cum[it]))
+    sel = select_fit_rows(rows, cum, min_pairs=args.min_pairs)
+    xs, ys, ses, meta = sel.xs, sel.ys, sel.ses, sel.meta
+    missing, too_small, unverified = sel.missing, sel.too_small, sel.unverified
 
     rulers = sorted({row_search_shape(r) for r in rows})
     print(f"series: {args.series}   search shape: {'+'.join(rulers)}   "
@@ -220,10 +277,15 @@ def main() -> None:
     if missing:
         print(f"  ! {len(missing)} row(s) dropped — iteration not found in any progress CSV: {missing}")
     if too_small:
-        detail = ", ".join(f"{d}/iter{it} ({p} pairs)" for d, it, p in too_small)
-        print(f"  ! {len(too_small)} row(s) EXCLUDED below --min-pairs {args.min_pairs}: {detail}")
-        print("    (audit L9: at 25 pairs the CI covers 92.3-93.8%, 71.2% degenerate — "
-              "w = 1/se^2 would weight these MOST)")
+        print(f"  ! {len(too_small)} row(s) EXCLUDED below --min-pairs {args.min_pairs} "
+              "— outlier removal, NOT de-weighting: a short run's CI is already wide,")
+        print("    so its 1/se^2 weight is SMALL; what it dominates is the chi2 "
+              "inflation that sets the slope CI. Audit L9 (25 pairs: 92.3-93.8%")
+        print("    coverage, 71.2% degenerate) says that se is understated, so the "
+              "chi2 is reading sampling noise as misfit. Excluded rows:")
+        for d, it, p, e, lo, hi in too_small:
+            print(f"      {d:12s} iter{it:<6d} {p:3d} pairs  {e:+8.1f}  "
+                  f"[{lo:+7.1f},{hi:+7.1f}]")
     if unverified:
         detail = ", ".join(f"{d}/iter{it} ({p} pairs)" for d, it, p in unverified)
         print(f"  ! {len(unverified)} row(s) fitted but UNVERIFIED (< {L9_VERIFIED_PAIRS} pairs, "
@@ -259,6 +321,18 @@ def main() -> None:
     else:
         print("  VERDICT: NULL — CI includes 0. By the pre-committed rule this is KILL/PIVOT")
         print("           (SUCCESS required the CI to exclude 0), not 'needs more time'.")
+    # The caveats have to travel WITH the verdict. They were printed ~15 lines
+    # above, and this block reads only `len(xs)` and the CI sign, so the tool
+    # would print a bare `KILL/PIVOT` while half its rows were flagged
+    # unverified and the reader had scrolled past the flag.
+    if unverified:
+        print(f"           CAVEAT: {len(unverified)}/{len(xs)} fitted row(s) are below "
+              f"{L9_VERIFIED_PAIRS} pairs, the smallest size audit L9 verified;")
+        print("           their CI coverage is unmeasured, so this verdict's own error "
+              "bar is unverified.")
+    if too_small:
+        print(f"           CAVEAT: {len(too_small)} row(s) excluded by --min-pairs "
+              f"{args.min_pairs}. Re-run with --min-pairs 0 before quoting this.")
 
 
 if __name__ == "__main__":

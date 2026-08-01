@@ -16,6 +16,7 @@ ruler change) applied to the ratchet.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 from pathlib import Path
 
@@ -339,32 +340,198 @@ def test_already_done_and_the_row_counter_are_keyed_on_the_CSV() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The slope must not inverse-variance-weight a CI the audit measured as
-# anti-conservative.
+# --min-pairs must be tested by its EFFECT. The first version of this guard was
+# pure source-text matching, and a reviewer killed the filter with `if False`
+# while every assertion still passed -- the repo's signature defect sitting
+# inside the guard against it.
 # ---------------------------------------------------------------------------
 
-def test_tiny_rows_are_excluded_from_the_slope_not_silently_weighted() -> None:
-    """`w = 1/se^2` gives the least trustworthy row the MOST weight.
+def _ratchet_row(date: str, it: int, elo: float, lo: float, hi: float, games: int) -> dict[str, str]:
+    return {
+        "date": date, "iter": str(it), "series": "vs_boot512",
+        "elo": str(elo), "ci_lo": str(lo), "ci_hi": str(hi),
+        "score": "0.5", "games": str(games), "search_shape": "training",
+    }
 
-    docs/rl_loop_audit.md L9 measured the 25-pair cell at 92.3-93.8% coverage
-    (71.2% in a degenerate draw-draw regime) — there the se is too small, so
-    the fit would lean hardest on exactly the rows it should distrust. Before
-    `--max-seconds` a contended day usually recorded nothing; now it always
-    records, so this regime is the common case rather than the exception.
 
-    The row still belongs in the CSV — it is a true observation — so the floor
-    lives in the fit, not in the writer.
+def test_min_pairs_actually_removes_the_row_from_the_fitted_set() -> None:
+    """The short row must be ABSENT from the fitted x/y, not merely mentioned.
+
+    Real values from data/ratchet/ratchet.csv (vs_boot512): the 13-pair
+    2026-07-29 row carries 3.0% of the 1/se^2 weight but 93.5% of the chi2
+    numerator (residual +98 Elo), so it sets `se_slope` for the whole fit. The
+    exclusion is OUTLIER REMOVAL; a de-weighting story would be backwards,
+    because a short run's CI is wide and its weight therefore small.
     """
-    from scripts.ratchet_slope import MIN_TRUSTED_PAIRS
+    from scripts.ratchet_slope import select_fit_rows
 
-    # 13-pair and 23-pair rows are real: data/ratchet/ratchet.csv 2026-07-29
-    # (26 games) and 2026-07-28 (46 games).
-    assert MIN_TRUSTED_PAIRS > 25, (
-        "the floor must exclude the 25-pair cell L9 measured as undercovering"
+    rows = [
+        _ratchet_row("2026-07-27", 122, -11.1, -44.8, 22.5, 314),  # 157 pairs
+        _ratchet_row("2026-07-28", 172, -7.6, -91.0, 75.0, 46),    # 23 pairs
+        _ratchet_row("2026-07-29", 218, 81.6, -39.5, 227.5, 26),   # 13 pairs
+    ]
+    cum = {122: 6213.0, 172: 10943.0, 218: 14959.0}
+
+    sel = select_fit_rows(rows, cum, min_pairs=26)
+    fitted_iters = [m[1] for m in sel.meta]
+    assert fitted_iters == [122], (
+        f"--min-pairs 26 must fit only the 157-pair row; fitted {fitted_iters}"
     )
-    src = (ROOT / "scripts" / "ratchet_slope.py").read_text(encoding="utf-8")
-    assert "--min-pairs" in src
-    assert "args.min_pairs" in src, "the flag must be read, not just declared"
-    # Excluded rows have to be announced; a silently shorter fit is how a
-    # verdict changes without anyone noticing.
-    assert "EXCLUDED below --min-pairs" in src
+    assert len(sel.xs) == len(sel.ys) == len(sel.ses) == 1
+    assert 14959.0 not in sel.xs, "the 13-pair row leaked into the fitted x"
+    excluded = sorted((it, pairs) for _d, it, pairs, *_rest in sel.too_small)
+    assert excluded == [(172, 23), (218, 13)]
+
+    # Disabling the floor must put them back -- otherwise the flag is not what
+    # is doing the work.
+    off = select_fit_rows(rows, cum, min_pairs=0)
+    assert sorted(m[1] for m in off.meta) == [122, 172, 218]
+    assert off.too_small == []
+
+
+def test_excluded_rows_carry_the_number_a_reader_needs() -> None:
+    """Naming a dropped row without its Elo/CI asks for trust, not judgement."""
+    from scripts.ratchet_slope import select_fit_rows
+
+    rows = [_ratchet_row("2026-07-29", 218, 81.6, -39.5, 227.5, 26)]
+    sel = select_fit_rows(rows, {218: 14959.0}, min_pairs=26)
+    assert sel.too_small == [("2026-07-29", 218, 13, 81.6, -39.5, 227.5)]
+
+
+def test_min_pairs_changes_the_fitted_slope(tmp_path) -> None:
+    """End-to-end: the flag must move the number, not just the log.
+
+    Guards the whole path -- argparse -> select_fit_rows -> weighted_slope --
+    rather than any one link. A dead filter gives both invocations the same fit.
+    """
+    import subprocess
+    import sys
+
+    csv_path = tmp_path / "ratchet.csv"
+    csv_path.write_text(
+        "date,iter,series,elo,ci_lo,ci_hi,score,games,search_shape\n"
+        "2026-07-26,25,vs_boot512,-12.2,-61.5,36.7,0.48,200,training\n"
+        "2026-07-27,122,vs_boot512,-11.1,-44.8,22.5,0.48,314,training\n"
+        "2026-07-29,218,vs_boot512,81.6,-39.5,227.5,0.62,26,training\n"
+        "2026-07-31,478,vs_boot512,-39.8,-91.4,10.1,0.44,114,training\n"
+    )
+    trial = tmp_path / "run" / "tune" / "train_trial_x"
+    trial.mkdir(parents=True)
+    (trial / "progress.csv").write_text(
+        "training_iteration,trainer_steps_done\n"
+        "25,961\n122,5252\n218,8746\n478,23103\n"
+    )
+
+    def run(*extra: str) -> str:
+        return subprocess.run(
+            [sys.executable, "scripts/ratchet_slope.py",
+             "--ratchet-csv", str(csv_path), "--run-dir", str(trial.parent.parent),
+             *extra],
+            cwd=str(ROOT), capture_output=True, text=True, check=True,
+            env={"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
+                 "PYTHONDONTWRITEBYTECODE": "1"},
+        ).stdout
+
+    default = run()
+    disabled = run("--min-pairs", "0")
+
+    def slope_of(out: str) -> str:
+        line = next(ln for ln in out.splitlines() if "WLS slope:" in ln)
+        return line.split("WLS slope:")[1].strip()
+
+    assert "rows usable: 3" in default
+    assert "rows usable: 4" in disabled
+    assert slope_of(default) != slope_of(disabled), (
+        "--min-pairs did not change the fit -- the filter is dead:\n"
+        f"  default : {slope_of(default)}\n  disabled: {slope_of(disabled)}"
+    )
+    assert "EXCLUDED below --min-pairs 26" in default
+    assert "EXCLUDED" not in disabled
+
+
+def test_the_verdict_line_carries_its_own_caveats(tmp_path) -> None:
+    """Caveats printed 15 lines above the VERDICT are caveats nobody reads.
+
+    The VERDICT block reads only `len(xs)` and the CI sign, so without this the
+    tool prints a bare KILL/PIVOT while every fitted row is flagged UNVERIFIED.
+    """
+    import subprocess
+    import sys
+
+    csv_path = tmp_path / "ratchet.csv"
+    csv_path.write_text(
+        "date,iter,series,elo,ci_lo,ci_hi,score,games,search_shape\n"
+        "2026-07-01,10,vs_boot512,10.0,0.0,20.0,0.51,60,training\n"
+        "2026-07-02,20,vs_boot512,0.0,-10.0,10.0,0.50,60,training\n"
+        "2026-07-03,30,vs_boot512,-10.0,-20.0,0.0,0.49,60,training\n"
+        "2026-07-04,40,vs_boot512,-20.0,-30.0,-10.0,0.48,60,training\n"
+    )
+    trial = tmp_path / "run" / "tune" / "train_trial_x"
+    trial.mkdir(parents=True)
+    (trial / "progress.csv").write_text(
+        "training_iteration,trainer_steps_done\n10,1000\n20,1000\n30,1000\n40,1000\n"
+    )
+    out = subprocess.run(
+        [sys.executable, "scripts/ratchet_slope.py",
+         "--ratchet-csv", str(csv_path), "--run-dir", str(trial.parent.parent)],
+        cwd=str(ROOT), capture_output=True, text=True, check=True,
+        env={"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
+             "PYTHONDONTWRITEBYTECODE": "1"},
+    ).stdout
+    lines = out.splitlines()
+    verdict_idx = next(i for i, ln in enumerate(lines) if "VERDICT:" in ln)
+    after = "\n".join(lines[verdict_idx:])
+    assert "30 pairs" in out or "below 100 pairs" in after
+    assert "CAVEAT" in after, (
+        "every fitted row is under 100 pairs and the verdict says nothing:\n" + after
+    )
+    assert "UNVERIFIED" in out
+
+
+def test_pick_log_path_never_returns_an_existing_file(tmp_path) -> None:
+    """A retry must not overwrite the attempt it is retrying.
+
+    Executes the REAL ``pick_log_path`` out of daily_gate_ratchet.sh rather than
+    grepping for it: the earlier version of this file's --min-pairs guard was
+    pure source matching and could not fail when the logic was dead, so this one
+    extracts the function and runs it.
+
+    The failure it guards is on the record. The log name used to be
+    ``arena_<date>_<series>.log`` opened with ``>``, and that is exactly how the
+    2026-07-27 00:09 failure log was destroyed by a later run the same day --
+    which then caused that day to be mis-attributed in the first version of this
+    fix. The exit-1 retry path makes repeat attempts routine, so the collision
+    went from rare to expected.
+    """
+    import subprocess
+
+    src = RATCHET_SH.read_text(encoding="utf-8")
+    start = src.index("pick_log_path () {")
+    end = src.index("\n}\n", start) + len("\n}\n")
+    func = src[start:end]
+    assert "printf" in func, "extraction did not capture the whole function"
+
+    (tmp_path / "data" / "ratchet").mkdir(parents=True)
+
+    def call() -> str:
+        out = subprocess.run(
+            ["bash", "-c", f"{func}\npick_log_path 2026-07-31 478 vs_prev"],
+            cwd=str(tmp_path), capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        return out
+
+    first = call()
+    assert first.endswith("arena_2026-07-31_iter478_vs_prev.log")
+    assert "iter478" in first, "the log name must be keyed on the iteration too"
+
+    # Simulate three successive attempts; each must get a fresh path.
+    seen = []
+    for _ in range(3):
+        path = call()
+        assert not (tmp_path / path).exists(), (
+            f"pick_log_path returned an EXISTING file ({path}); the retry would "
+            "overwrite the previous attempt's evidence"
+        )
+        seen.append(path)
+        (tmp_path / path).write_text("attempt log\n")
+    assert len(set(seen)) == 3, f"collided: {seen}"

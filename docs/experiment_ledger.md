@@ -18463,3 +18463,300 @@ flag OFF : [probe_site] DiskReplayBuffer built deterministic_refresh=False prefe
 The 73/75 match stands as a useful smoke result — the script runs, and nothing about the
 change perturbs its metrics — but the load-asymmetry framing (473s vs 36s) overclaimed
 it. Withdrawn as evidence of effect.
+
+---
+
+## 2026-07-31 — ADDENDUM to the value-optimism entries above: SF-desync contamination audit, and a scope-wording correction that matters
+
+Raised in review round 2: the integrity gate keys on the material~`sf_wdl`
+correlation, which collapses only under TOTAL detachment, while the 07-30/07-31
+Stockfish UCI desync (PR #297 owns the cause) is PARTIAL — labels on the right
+rows answering a DIFFERENT position. Three of the four episodes would sail
+through. **The concern is correct and the gate has been tightened. The published
+numbers are unaffected, and that is now measured rather than argued.**
+
+### 1. The detector, independently reproduced
+
+Rate of labelled rows where `sf_move_index` equals the lowest set bit of
+`sf_legal_mask` (the silent `legal_indices[0]` fallback firing). Over all **830**
+labelled shards of trial 13a9f:
+
+    baseline median 0.080, p90 0.094      |      72 shards > 0.15, 137,490 rows
+
+    episodes (shard ids / mtime / rate):
+      33388-33453   07-30 11:38..13:39   0.17-0.64   (26 shards, 5 bursts)
+      33586-33636   07-30 19:58..07-31 01:41   0.16-0.97   (38 shards)
+      33944-33951   07-31 13:33..13:48   0.76-0.96   (8 shards)
+
+Matches the review's numbers. **And it confirms the review's point about the old
+gate**: episodes 1-2 sit at material~`sf_wdl` 0.14-0.45, far above the 0.25
+reject line, while this rate reads 0.16-0.97. Neither axis subsumes the other.
+
+### 2. ⚑ SCOPE-WORDING CORRECTION — the published run's window was NARROWER than the entry above implies
+
+The first entry says *"Scope limit: shards <= 033943"*. That describes the
+EXCLUSION, and it reads like the run used every shard up to 033943. **It did
+not.** The run was `--shards 150`, i.e. the 150 NEWEST shards:
+
+    published window = shard_033802 .. shard_033951
+
+Episodes 1 and 2 (33388-33636) are **entirely below 33802** and were never in
+the sample. Inside the window the only shards over 0.15 are 33944-33951 — the
+exact 8 the attachment axis already rejected.
+
+**Contamination admitted to the published numbers: 0 poisoned rows.** Not "small";
+zero. Anyone re-deriving from "shards <= 033943" would sweep in ~64 poisoned
+shards that the actual run never touched. **Quote the window, not the exclusion.**
+
+### 3. Gate tightened to two axes, and the headline re-run
+
+`sf_bestmove_is_first_legal_rate` is now a second reject axis (default 0.15);
+a NaN on either axis is a reject, because a gate that could not evaluate a shard
+has not cleared it. Re-run of the published 150-shard window:
+
+| | before (1 axis) | after (2 axes) |
+|---|---|---|
+| shards rejected | 8 | 10 (8 + 2 unevaluable, <30 labelled rows) |
+| paired rows | 38,464 | 38,455 |
+| net-target lost / won | +0.0489 / -0.0541 | **+0.0488 / -0.0541** |
+| net-target tail sum | -0.0052 | **-0.0052** |
+| matched level (SF -297.6) | +0.0854 = +108.7 cp | **+0.0854 [+0.0789,+0.0919] = +108.7 cp** |
+| net-SFrul matched level | +70.3 cp [+65,+75] | **+70.3 cp [+65,+75]** |
+| curriculum lost out-ruler | +0.212 [+0.202,+0.222] | **+0.212 [+0.202,+0.221]** |
+| selfplay lost out-ruler | -0.006 | **-0.006 [-0.009,-0.003]** |
+
+Unchanged to four decimals, as expected once the window is known.
+
+### 4. The confound MEASURED, not argued — a controlled wide-window arm
+
+"Zero contamination in this window" is a fact about the window, not evidence
+about the mechanism. So the proposed confound was tested directly: the SAME
+400-shard window (33552-33951, containing 46 poisoned shards, **13.1% of scanned
+rows**), run gated and ungated.
+
+| quantity | UNGATED (contaminated) | GATED | clean 150-shard |
+|---|---|---|---|
+| selfplay lost out-ruler | **+0.030** [+.027,+.032] | **-0.005** [-.007,-.002] | -0.006 [-.009,-.003] |
+| selfplay won out-ruler | **-0.044** [-.047,-.041] | **+0.014** [+.012,+.016] | +0.016 [+.013,+.019] |
+| curriculum lost out-ruler | +0.222 [+.216,+.228] | **+0.218** [+.211,+.224] | +0.212 [+.202,+.221] |
+| curriculum losing out-ruler | +0.096 | +0.094 | +0.098 |
+| net-target lost | +0.0360 | **+0.0484** | +0.0488 |
+| net-target won | -0.0469 | **-0.0505** | -0.0541 |
+
+**The predicted confound is REAL and behaves exactly as the review described —
+and it lands on the SELFPLAY arm, not the curriculum one.** A wrongly-labelled
+row entering the `lost` bucket is not really lost, so its outcome looks better:
+ungated selfplay reads **+0.030** where the truth is **-0.005**, a spurious
+"outcomes beat the eval" of the same sign and shape as the curriculum finding.
+That is precisely the trap, and it fires.
+
+**It cannot account for the curriculum result.** Gating moves curriculum lost by
+**0.004** (+0.222 -> +0.218), ~2% of the effect, because contamination pulls a
+bucket toward the global mean and can manufacture ~+0.035 — not **+0.21**. At
+13.1% contamination, i.e. 4x the share the review estimated for a wider range,
+the curriculum number barely moves. **CONFOUND CLOSED. The
+handicapped-opponent finding stands.**
+
+Second, unasked-for result worth keeping: **contamination ATTENUATES `net-target`**
+(+0.036 ungated vs +0.048 gated). So a contaminated run UNDERSTATES the head's
+compression — the primary axis is biased toward the null by this defect, never
+away from it.
+
+### 5. Why two axes, stated for the record
+
+- `sf_label_attachment_corr` — material vs the shard's own label. Catches TOTAL
+  detachment (~0.00 vs a ~+0.65 baseline). **Blind to partial desync**: episodes
+  1-2 hold 0.14-0.45.
+- `sf_bestmove_is_first_legal_rate` — catches PARTIAL desync (0.16-0.97 vs a
+  0.080 baseline). **Blind to total detachment**, because a scrambled but
+  internally consistent label block still carries a real bestmove.
+
+Neither is redundant; a shard must clear both. Pinned by
+`test_desync_gate_rejects_what_the_attachment_axis_cannot`, which builds a shard
+with a PERFECT attachment correlation and a 0.6 desync rate and asserts the
+attachment axis alone would pass it. Tests 33 -> 36.
+
+### Method note
+
+**A gate tuned on the episode that produced it detects that episode.** The
+attachment axis was written from shards 33944+, where the failure was total, and
+it silently defined "corrupt" as "total". Three earlier, subtler episodes of the
+SAME root cause scored 0.14-0.45 and would have been admitted by a gate whose
+author believed it was checking label integrity in general. **When a gate is
+derived from one incident, go find the other instances of that incident before
+trusting the threshold** — here they were 500 shards back in the same trial, and
+the separating statistic was a different one entirely.
+
+
+---
+
+## 2026-08-01 — CORRECTION 2: the M6 guard could not fire, and its stated mechanism was backwards
+
+Re-review of `e3ec8f10c` returned REQUEST CHANGES on one item. Five of six fixes held
+(11/12 reviewer mutations caught). **The one that failed was the guard against this
+repo's signature defect, sitting inside the guard against it.**
+
+**THE GUARD WAS DEAD.** `test_tiny_rows_are_excluded_from_the_slope_not_silently_weighted`
+was pure source-text matching. Its own assertion `assert "args.min_pairs" in src, "the
+flag must be read, not just declared"` was satisfied by the string appearing inside a
+`print(f"...EXCLUDED below --min-pairs {args.min_pairs}...")`. The reviewer replaced the
+filter with `if False and pairs < 0:` — flag still parses, help still prints, fit
+silently reverts to all 5 rows — and **all 33 tests passed.**
+
+Fixed by making the knob testable by EFFECT: the row loop is now
+`ratchet_slope.select_fit_rows()` returning a `FitRows` record, and three behavioural
+guards assert the 13-pair row is absent from the fitted `xs`, that `--min-pairs 0` puts
+it back, and (end-to-end, via subprocess) that the flag CHANGES THE FITTED SLOPE.
+Re-running the reviewer's exact mutation now fails all three by name.
+
+**THE STATED RATIONALE WAS BACKWARDS.** The previous entry, the code comment, the
+`--min-pairs` help and the operator line all said `w = 1/se^2` would weight the short
+rows MOST. It weights them LEAST — a small sample has a WIDE CI, hence a SMALL weight.
+Measured on `data/ratchet/ratchet.csv` (vs_boot512, all rulers):
+
+```
+date         pairs    elo      se   w share    resid   chi2 share
+2026-07-27     157  -11.1   17.17    46.79%     -1.6        0.4%
+2026-07-26     100  -12.2   25.05    21.98%     -6.8        3.3%
+2026-07-31      57  -39.8   25.89    20.57%     -5.4        2.0%
+2026-07-28      23   -7.6   42.35     7.69%     +5.6        0.8%
+2026-07-29      13  +81.6   68.11     2.97%    +98.0       93.5%
+```
+
+The real mechanism is **chi2 inflation** in `weighted_slope`: the 13-pair row supplies
+**93.5% of the chi2 numerator at 3.0% of the weight**, so it alone sets `se_slope`.
+The floor is therefore **OUTLIER REMOVAL**, and audit L9 is what makes excluding it
+right rather than believing it — at 13 pairs the se is understated, so chi2 reads
+ordinary sampling noise as disagreement between rows. Corrected in the constant
+comment, the help text, the operator line and the test docstrings.
+
+**THE THRESHOLD IS NOT LOAD-BEARING.** Re-measured now:
+
+```
+min-pairs  rows  slope/1k   95% CI                  VERDICT
+0, 13         5   -0.7815   [-2.2443,  +0.6813]     NULL
+14, 23        4   -0.8264   [-1.1608,  -0.4920]     KILL/PIVOT
+24..57 (26)   3   -0.8216   [-1.1293,  -0.5140]     NONE — 3/4 rows
+58            2   +0.2094   [-11.1242, +11.5431]    NONE
+```
+
+Point estimate flat across a 44-wide band (14..57); 20/25/30/50 give an identical fit.
+The single decision the floor makes is whether the 13-pair row is in, and any
+defensible floor above 13 removes it. That the default sits mid-band, not on a knife
+edge, is the check against the rule having been chosen for its outcome.
+
+**⚠ NOTHING HERE IS A NEGATIVE STRENGTH TREND, AND THE PREVIOUS ENTRY OVERSTATED IT.**
+The `[-1.13, -0.51]` fit **requires `--allow-mixed-rulers`** — i.e. it fits across
+`legacy_play_vloss0` and `training` rows under the tool's own banner that *part of any
+slope below is the instrument change, not the net*. The **default invocation prints
+`rows usable: 1` and refuses to fit at all**, and even with mixed rulers the shipped
+default reports `VERDICT: NONE — 3/4 rows. Interim only; explicitly NOT a verdict.`
+`KILL/PIVOT` appears only in the 14..23 band. **Do not cite any of this as evidence the
+loop is losing Elo.** The training-shape series has 1 row; it needs 4.
+
+**Two smaller review items, both taken.**
+- The UNVERIFIED/EXCLUDED caveats were printed ~15 lines above the VERDICT, which reads
+  only `len(xs)` and the CI sign — so at `--min-pairs 20` the tool would print a bare
+  `KILL/PIVOT` while half its rows were flagged. The caveats now print immediately
+  under the VERDICT line, and excluded rows are listed with their Elo/CI rather than
+  named without the number a reader needs.
+- `out="data/ratchet/arena_${today}_${series}.log"` was not iter-keyed and was opened
+  with `>`, so **the retry the exit-1 fix enables would overwrite the evidence of the
+  attempt it is retrying** — precisely how the 2026-07-27 log was destroyed, the loss
+  that caused this ledger's own first mis-attribution. Now `pick_log_path()`, a
+  standalone function (so a test can extract and EXECUTE it) that keys on the iteration
+  and takes an `.attemptN.` suffix rather than ever returning an existing path.
+
+**Verification.** 6 negative controls this round, all FAIL-AS-REQUIRED: the reviewer's
+`if False` mutation (fails 3 guards), zeroing the excluded rows' Elo/CI, deleting the
+VERDICT caveats, deleting the log-collision loop, dropping the iter key from the log
+name, and lowering the floor into the untrusted cell. Run with
+`PYTHONDONTWRITEBYTECODE=1` and `__pycache__` cleared before and after each mutation —
+the byte-identical-length `.pyc` trap that fooled me last round cannot apply. Lint
+clean (ruff / basedpyright 0-0-0 / vulture); 37 tests pass across the two files;
+`bash -n` OK.
+
+## 2026-08-01 — CORRECTION to the 2026-07-31 SF-desync entry: the instrument was a "≥2 engines" detector, and the blast radius was 4.5x larger than I reported
+
+**Corrects my own entry below. Three claims in it were wrong; the mechanism was
+not.** Independent review of PR #297 re-derived the mechanism at source against
+the real binary — with the fix neutralised, **10/10** subsequent searches
+returned the abandoned query's bestmove; with it active, 0/10 stale and all 10
+refused. The C14b refutation also holds (`resumed games=0 records=0 discarded=0
+preserved=0`, all four workers, 13:09:14).
+
+**WRONG 1 — the detector I shipped could not see the failure it was built for.**
+I keyed the WARNING on `bestmove_illegal > 0.25`. That rate is floored by
+structure, not by tuning: with `distributed_worker_sf_workers: 8`,
+
+```
+illegal  ≈  0.079 + (k/8) · 0.82        (k = desynced engines on that worker)
+k=1 -> 0.182     k=2 -> 0.284
+```
+
+so any threshold clearing the 0.079 baseline is a **"two or more engines"**
+detector, and **one fully desynced engine — 12.5% of that worker's labels — is
+invisible forever.** Episode 1's window-mean illegal rate was **0.241**, under
+my own bar: the largest episode would have read HEALTHY. `bestmove_illegal` also
+**undercounts detachment ~10%**, because a stale bestmove is sometimes
+coincidentally legal in the position it was misfiled against.
+
+**The better instrument was already free in the same code path.**
+`_collect_sparse_pv_rows` drops every MultiPV move illegal at the queried
+position and stores `None` if none survive, so `has_sf_multipv_raw == 0` on a
+labelled row means **not one of SF's ~10 PV moves was legal there**:
+
+```
+                    shards  labelled     illegal   no-PV
+ep1 07-30 11:38-13:18   60   100,725       0.241  0.1241
+ep2 07-30 19:56-20:35   19    35,514       0.523  0.3275
+ep3 07-31 00:53-01:23   26    44,124       0.394  0.2541
+ep4 07-31 13:33-13:48    8    12,295       0.868  0.5684
+clean                  721 1,280,663       0.079  0.0008
+```
+
+corr(illegal, no-PV) = **0.995**. Baseline 0.0008 vs 0.079 is ~**100x** better
+separation; k=1 gives ~0.074, a **90x margin** on a 0.01 threshold.
+
+**WRONG 2 — "8 shards, ~16k rows, 1.1% of the window" was episode 4 only.**
+There were **four** episodes across 07-30/31. Corrected: **~72,000 detached
+labelled rows, 4.9% of the window**, with **119 shards over 0.01 on the no-PV
+instrument holding 209,195 labelled rows**. **The quarantine recommendation in
+the entry below is WITHDRAWN — it was priced against the wrong number and the
+disposition decision is the coordinator's, not mine.** No shard has been moved,
+modified or deleted.
+
+**WRONG 3 — I attributed the 3 pre-existing `test_selfplay_resume.py` failures
+to `74d046228`/`d4894e8a6`.** They bisect to **`713539d03`** (the PR #291
+merge). Same class as a bug I hit in my own file: an attribute set only in
+`__init__`, read by a test that builds the object through `object.__new__`. The
+fix is the class-level-default pattern already applied to `_desynced` in
+`37cdda9ab`.
+
+**Two further silent drops, worth recording on their own.**
+`_collect_sparse_pv_rows` and `_collect_sf_pv_candidates` both `continue` past
+illegal PV moves, after which the caller fabricates `cand_idxs=[a_idx],
+cand_scores=[0.0]` — a degenerate one-hot on `legal_indices[0]`. **So a poisoned
+row carries a fake bestmove AND a fake policy distribution**, both well-formed.
+Three independent substitutions absorbed the corruption; none of them counted.
+
+**What the repair firing looks like, which is the part I originally left
+unobservable.** Post-fix, a recurrence produces *no* stale rows — so
+`bestmove_illegal` and `no_legal_pv` both sit at baseline **because the fix
+worked**, and the raise is swallowed at DEBUG. The only positive evidence is now
+an explicit WARNING from `_replace_engine`:
+
+```
+grep 'replaced a desynced engine' runs/pbt2_small/tune/*/distributed_workers/worker_*/worker.log
+grep 'sf label health'            runs/pbt2_small/tune/*/distributed_workers/worker_*/worker.log
+```
+
+Health line escalates to WARNING on `no_legal_pv > 0.01` **or** `failed > 0`.
+Clean reads INFO with `no_legal_pv` near 0.0008. Shard-side, the same field:
+`has_sf_multipv_raw == 0` over labelled rows must stay under 0.01 per shard.
+
+**Method note, the transferable one.** The first instrument I shipped was
+measured only against the episode I already knew about, where it reads 0.87 and
+looks decisive. Its floor — and therefore its blindness to k=1 — only appears
+once you ask what it reads when the fault is *small*. **A detector validated
+solely on the largest instance of a fault is not validated.**
