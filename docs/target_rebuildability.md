@@ -73,14 +73,64 @@ by file identity and bucketed by the day each shard was *written*):
   quarantined 2026-08-01 (122 shards), so new data reads zero.
 
 **⚑ Read `sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac` as CONTAMINATION,
-not as cost.** The two columns share a denominator (all batch rows) and a
+not as cost.** Both columns divide by **all rows in the rebuilt batch**, and a
 healthy labelled row always sets both presence flags, so on clean data they are
-**equal** and their difference is the poisoned-label share of the batch:
-0.000000 on clean days, **0.192** over the quarantined shards. That makes the
-pair a per-iteration desync detector the training loop already computes — but
-only while `rebuild_sf_targets` is ON, since with the flag off both read 0.0 by
-construction and the difference is uninformative. Do not read a gap as "the
-rebuild could not reach those rows".
+**equal** and their difference is the **fully-stripped-label share of the
+batch**: 0.000000 on clean days, **0.192** over the quarantined shards. Do not
+read a gap as "the rebuild could not reach those rows".
+
+Three qualifications, all of which the name hides:
+
+* **It is a LOWER BOUND, not the poisoned share.** The difference counts only
+  rows that lost their *whole* MultiPV block. A desynced engine poisons every
+  label it touches but strips the block on only **~59 %** of them
+  (`scripts/quarantine_desync_shards.py`; also `_SF_NO_LEGAL_PV_WARN_RATE`'s
+  0.074 = 0.125 × 0.59 for one engine in eight), so **~41 % of poisoned rows
+  read clean here**. Divide by ~0.59 — about **1.7×** — for the true share: the
+  quarantined set's 0.192 implies ~0.33 of batch rows actually poisoned. The
+  same point without the constant: the worst shard of the 07-27 episode still
+  has 47 % of its labelled rows carrying a MultiPV block.
+* **Denominator.** All batch rows, not labelled rows. To read the gap against
+  the labelled population, divide by `sf_rebuild_wdl_frac`: on the quarantined
+  set 0.191973 / 0.925347 = **0.207** of labelled rows. Both numbers are
+  correct and they measure different populations — mixing them is how "5.4 %"
+  and "0.92" ended up in this document describing different things.
+* **A latent non-desync way for the gap to open.** `policy_frac` counts
+  *successful rebuilds*, not the presence flag, and `ok` depends on
+  `SfTargetParams`: with `sf_wdl_use_cp_logistic` False a PV entry is scoreable
+  only if it carries native WDL; with it True, cp/mate entries count too. One
+  clean row with both flags set reads gap **+0.0000** at True and **+1.0000** at
+  False. Latent today — 2,750,435 stored PV entries on the live window, **zero**
+  without native WDL, because `stockfish/uci.py:269` hardcodes
+  `UCI_ShowWDL true` — but that knob is the `SfTargetParams` dataclass default
+  (production yaml sets it `true`) and one of the five params this rebuild
+  exists to sweep. **A sweep of it would turn the "detector" into a readout of
+  the sweep.**
+
+### ⚑⚑ The detector is disconnected in production
+
+`rebuild_sf_targets` defaults to `False` and **appears in no config file**, so
+all five columns read exactly `0.0` today — byte-identical to a perfectly
+healthy window. **A zero here is not a pass, and this pair must not go on an
+operator dashboard as "watch for a gap".** As shipped it is a free cross-check
+that exists only while a rebuild experiment is running.
+
+The always-on detectors are the ones to watch instead:
+
+* the worker's `sf label health` log line
+  (`selfplay/stockfish_turn.py::_report_sf_label_health`), which fires above
+  `_SF_NO_LEGAL_PV_WARN_RATE` = 0.01, and
+* the offline gate `eval/value_optimism.py::sf_multipv_missing_rate`, used by
+  `scripts/quarantine_desync_shards.py`.
+
+**Recommendation, and its cost.** If a training-side always-on signal is wanted,
+do *not* get it by turning `rebuild_sf_targets` on: that flag is
+training-affecting (it masks the `w_sf_own` and `w_sf_volatility` legs) and
+needs its own ledger entry with a pre-committed kill threshold. The cheap
+version — **not built here** — is for the trainer to report the
+`has_sf_multipv_raw` / `has_sf_label_meta` presence rates unconditionally,
+independent of the rebuild flag. That costs one metric field, its `test_` twin,
+and one `progress.csv` schema rotation at the deploying restart.
 
 Five `progress.csv` columns report what actually happened, per iteration:
 
@@ -382,11 +432,15 @@ the column a fraction of the training batch, which is what "how much of what I
 trained on was re-pointed" asks — but on healthy data every SF-labelled row
 rebuilds, so `policy_frac` and `wdl_frac` land on the same number.
 
-**A gap between them is the alarm.** `wdl_frac − policy_frac` is the share of
-batch rows whose Stockfish label is detached from its position; it reads
-0.000000 on clean data and 0.192 over the shards quarantined 2026-08-01. Treat
-any sustained non-zero value as a desync incident and check the worker logs for
-the `sf label health` line.
+**A gap between them is the alarm — while the flag is on.** `wdl_frac −
+policy_frac` is the share of batch rows that lost their whole MultiPV block; it
+reads 0.000000 on clean data and 0.192 over the shards quarantined 2026-08-01,
+and it is a **lower bound** on contamination (multiply by ~1.7; see the
+qualifications in "Coverage over labelled rows is TOTAL"). Treat any sustained
+non-zero value as a desync incident and check the worker logs for the `sf label
+health` line. With `rebuild_sf_targets` off — the default, and its state in
+every config today — this reads 0.0 regardless of the data, so it is a check to
+run *during a rebuild experiment*, not a standing monitor.
 
 **The deploying restart will ROTATE `progress.csv`.** The rebuild reports
 **five** `sf_rebuild_*` keys, each with a `test_` twin — ten columns in all.
@@ -410,7 +464,9 @@ under its own flag. Those move from "wait ~18 h for window turnover" to
 untouched because they have no SF target to re-point, so a verdict may be
 written as a clean swap over the labelled population — but confirm it per
 iteration from `sf_rebuild_policy_frac == sf_rebuild_wdl_frac`, rather than
-assuming it.
+assuming it. (That check only reads while the flag is on, which during such an
+experiment it is — it is not a standing monitor; see the disconnected-detector
+section above.)
 
 Note the interaction, and its price: the SF param keys are also **worker reco
 keys** — all five of them (`WorkerSession._RECO_RESTART_KEYS`,

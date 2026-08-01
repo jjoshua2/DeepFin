@@ -842,16 +842,20 @@ class TrainMetrics:
   # flag is off, so a non-zero value IS the proof the flip reached the batch
   # pipeline — the transition log only proves the config push, and
   # has_sf_p0_frac -> 0 only proves it on a window that has p0 rows at all.
-  # `policy_frac` BELOW `wdl_frac` is a CONTAMINATION DETECTOR, not a coverage
-  # cost. Both fracs share the denominator (all batch rows) and every labelled
-  # row carries `sf_label_meta` AND `sf_multipv_raw`, so on healthy data the
-  # two columns are EQUAL and their difference is the share of labelled rows on
-  # which not one of Stockfish's MultiPV moves was legal — the desync
-  # fingerprint (`selfplay/stockfish_turn.py::_SF_NO_LEGAL_PV_WARN_RATE`).
+  # `policy_frac` BELOW `wdl_frac` is a CONTAMINATION SIGNAL, not a coverage
+  # cost. Both fracs divide by ALL rows in the rebuilt batch, and every healthy
+  # labelled row carries `sf_label_meta` AND `sf_multipv_raw`, so the two are
+  # EQUAL on clean data and their difference is the count of rows that lost
+  # their whole MultiPV block, over ALL BATCH ROWS. That is the desync
+  # fingerprint (`selfplay/stockfish_turn.py::_SF_NO_LEGAL_PV_WARN_RATE`) and a
+  # LOWER BOUND on contamination — a desynced engine strips the block on only
+  # ~59% of the labels it poisons, so divide by ~0.59 for the true share.
   # A gap of 5.4% was once documented here as structural; it was a 07-27 desync
   # episode. Measured through this very accumulator: 0.000000 on clean live
-  # shards, 0.192 over the 122 quarantined 2026-08-01. Read a gap as bad data,
-  # not as a mixture cost.
+  # shards, 0.192 over the 122 quarantined 2026-08-01 (0.207 of LABELLED rows
+  # there; do not mix the two denominators). ⚑ Reads 0.0 when
+  # `rebuild_sf_targets` is off, which is the default and is not in any config
+  # — see target_builder's metric_kwargs before treating it as a live alarm.
   # `eval_full_pass` — the frozen ruler, and the only eval production runs
   # (tune/trainable_phases.py) — pins the rebuild off, so these stay 0.0 on
   # its `eval` row by construction and a non-zero value there means the ruler
@@ -1793,7 +1797,8 @@ class Trainer:
   # rebuild reaches 100% of the SF-labelled window and there is no mixture of
   # two target regimes. sf_rebuild_policy_frac reports the realized rate, and
   # any shortfall below sf_rebuild_wdl_frac is Stockfish-desync contamination
-  # (docs/target_rebuildability.md), not a structural cost of the rebuild.
+  # (a LOWER bound on it: docs/target_rebuildability.md), not a structural cost
+  # of the rebuild.
   # False = use stored targets, bitwise identical to the pre-flag pipeline.
   # `set_sf_target_rebuild` flips it live.
         self.rebuild_sf_targets = bool(rebuild_sf_targets)
@@ -2631,7 +2636,8 @@ class Trainer:
         written with ``sf_multipv_raw`` — so the window does NOT become a
         mixture of two target regimes. ``sf_rebuild_policy_frac`` reports the
         realized rate; it falling below ``sf_rebuild_wdl_frac`` means desynced
-        Stockfish rows, not a bound on what the rebuild can reach.
+        Stockfish rows, not a bound on what the rebuild can reach — and it
+        UNDERCOUNTS them, since only ~59% of poisoned rows lose the block.
 
         ``sf_target_params`` is written only when a CONSUMER is active — this
         rebuild, or ``sf_policy_sparse_ce``, which reads the same field as

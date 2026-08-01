@@ -460,17 +460,65 @@ class SfRebuildCoverage:
         a one-row transient (docs/target_rebuildability.md, "Before flipping
         the flag live").
 
-        ⚑ ``sf_rebuild_policy_frac`` BELOW ``sf_rebuild_wdl_frac`` IS A DESYNC
-        ALARM, NOT A COVERAGE COST. The two share a denominator, and the
+        ⚑⚑ THIS ALARM IS DISCONNECTED IN PRODUCTION, AND ITS ZERO IS NOT A
+        PASS. Everything below is conditional on ``rebuild_sf_targets`` being
+        ON. It defaults False and appears in NO config file, so today all five
+        columns read exactly 0.0 by construction — byte-identical to a perfectly
+        healthy window. **Do not put "watch this for a gap" on an operator's
+        dashboard.** The always-on detectors are the worker's own
+        ``sf label health`` log line (`selfplay/stockfish_turn.py::
+        _report_sf_label_health`) and the offline gate
+        `eval/value_optimism.py::sf_multipv_missing_rate`; this pair is a free
+        cross-check that exists only while a rebuild experiment runs. Making it
+        live is NOT as cheap as flipping the flag — the flag is
+        training-affecting (it masks the ``w_sf_own`` / ``w_sf_volatility``
+        legs) and needs a ledger entry. The cheap version, not built here,
+        is a presence-flag column reported unconditionally by the trainer; it
+        costs one metric field and a ``progress.csv`` schema rotation.
+
+        ⚑ WITH THE FLAG ON, ``sf_rebuild_policy_frac`` BELOW
+        ``sf_rebuild_wdl_frac`` IS A DESYNC ALARM, NOT A COVERAGE COST. The
         selfplay writer stamps ``sf_multipv_raw`` and ``sf_label_meta`` on a
         labelled row TOGETHER (`selfplay/stockfish_turn.py::
-        _stamp_sparse_sf_labels`). The only way a row gets meta but no raw is
-        ``_collect_sparse_pv_rows`` returning None — not ONE of Stockfish's
-        MultiPV moves was legal at the position queried, which is the
-        fingerprint of a desynced UCI engine answering a DIFFERENT position
+        _stamp_sparse_sf_labels`). The dominant way a row gets meta but no raw
+        is ``_collect_sparse_pv_rows`` returning None — not ONE of Stockfish's
+        MultiPV moves was legal at the position queried, the fingerprint of a
+        desynced UCI engine answering a DIFFERENT position
         (`_SF_NO_LEGAL_PV_WARN_RATE`, and `eval/value_optimism.py::
         sf_multipv_missing_rate`, the offline twin of the same measurement).
-        So ``wdl_frac - policy_frac`` IS the poisoned-label share of the batch.
+
+        ⚑ IT IS A LOWER BOUND ON CONTAMINATION, NOT THE POISONED SHARE. The
+        difference counts only rows that lost their WHOLE MultiPV block. A
+        desynced engine poisons every label it touches but strips the block on
+        only ~59 % of them (`scripts/quarantine_desync_shards.py`, and
+        ``_SF_NO_LEGAL_PV_WARN_RATE``'s 0.074 = 0.125 x 0.59 for one engine in
+        eight), so the other ~41 % of poisoned rows read CLEAN here. Divide by
+        ~0.59 — about 1.7x — for the true share. Over the 122 shards
+        quarantined 2026-08-01 the gap is 0.192, implying ~0.33 of batch rows
+        (~0.35 of labelled rows) actually poisoned. Visible without the
+        constant too: the worst shard of the 2026-07-27 episode still has 47 %
+        of its labelled rows carrying a MultiPV block.
+
+        ⚑ DENOMINATOR: both columns divide by ALL rows in the rebuilt batch,
+        not by labelled rows, so the difference is fully-stripped rows over ALL
+        batch rows. To read it against the labelled population divide by
+        ``sf_rebuild_wdl_frac``: on the quarantined set 0.191973 / 0.925347 =
+        0.207 of labelled rows. Quoting one number against the other's
+        denominator is how "5.4 %" and "0.92" ended up in the same document
+        describing different populations.
+
+        ⚑ LATENT NON-DESYNC DIVERGENCE. ``policy_frac`` counts SUCCESSFUL
+        rebuilds, not the presence flag, and ``ok`` depends on
+        ``SfTargetParams``: with ``sf_wdl_use_cp_logistic`` False a PV entry is
+        scoreable only if it carries native WDL, with it True cp/mate entries
+        count too (``_batch_row_scores``). One clean row with both flags set
+        reads gap +0.0000 at True and +1.0000 at False. Latent today — 2.75M
+        stored PV entries checked on the live window, ZERO without native WDL,
+        because `stockfish/uci.py` hardcodes ``UCI_ShowWDL true`` — but that
+        knob is the dataclass default AND one of the five params the rebuild
+        exists to sweep, so a sweep of it would turn this "detector" into a
+        readout of the sweep.
+
         Measured over 6,535 shards / 11.05M labelled rows: exactly 0.000000 on
         every clean stretch, 0.192 over the 122 shards quarantined 2026-08-01.
         This column was previously documented as reporting a ~5.4% structural
