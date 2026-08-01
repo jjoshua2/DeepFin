@@ -13,23 +13,25 @@
 # twice in one day and a stopped run simply skips that day — the CSV's date
 # column stays the honest index of when a regression appeared.
 set -u
-# RATCHET_ROOT / TRAIN_PIDFILE are TEST SEAMS, not operator knobs (same
-# treatment as daily_gate_ratchet.sh). Without them nothing can execute this
-# file's loop BODY, and a body that cannot be executed is a body whose wiring is
-# pinned only by reading it: `ratchet_outcome "$?"` -> `ratchet_outcome 0`
-# restores the silent hole this script exists to close and no source-text
-# assertion notices. tests/test_ratchet_search_shape.py drives a whole poll
-# through here against a sandbox tree.
-cd "${RATCHET_ROOT:-/home/josh/projects/chess}" || exit 2
-export PYTHONPATH=.
+# The repo, the run directory, the exit statuses and the checkpoint-iteration
+# parse are all defined ONCE, in scripts/ratchet_common.sh, and shared with
+# daily_gate_ratchet.sh — see the header there for the divergence that made
+# that necessary. Sourced by the script's own location so it does not depend on
+# the caller's cwd, and before anything else because it performs the `cd`.
+. "$(dirname "${BASH_SOURCE[0]}")/ratchet_common.sh"
 
-# --once runs a single poll and exits with that poll's outcome status. The
-# scheduled invocation from scripts/train.sh passes no arguments.
+# --once runs a single poll and exits with that poll's status. The scheduled
+# invocation from scripts/train.sh passes no arguments.
+#
+# NOTE: it exits 0 on every path where the poll deliberately DID NOTHING
+# (trainer down, paused, day already stamped, no trial/checkpoint yet, below
+# MIN_ITER), so as a status it conflates "skipped" with "succeeded". That is
+# fine for what it is — a test seam and a manual one-shot — but do not build a
+# scheduler on it without giving "did nothing" its own status.
 ONCE=0
 [ "${1:-}" = "--once" ] && ONCE=1
 
 PIDFILE="${TRAIN_PIDFILE:-/tmp/chess_training.pid}"
-WORK_DIR="${TRAIN_WORK_DIR:-runs/pbt2_small}"
 STATE=data/ratchet/last_run_date
 # ATTEMPTED, not SUCCEEDED. $STATE means "today has a reading"; $GIVEUP_STATE
 # means "today has no reading and asking again cannot produce one". They are
@@ -40,9 +42,6 @@ STATE=data/ratchet/last_run_date
 # supposed to be observing, and it is self-reinforcing: contention -> no
 # complete pairs -> no row -> retry -> more contention.
 GIVEUP_STATE=data/ratchet/last_giveup_date
-# scripts/daily_gate_ratchet.sh exit 5. Kept in sync by
-# tests/test_ratchet_search_shape.py, which parses both files.
-RATCHET_EXIT_NO_RETRY=5
 LOG=scratchpad/ratchet_loop.log
 POLL="${RATCHET_POLL:-600}"
 # Skip the first N iterations after a restart: a freshly-restarted trial spends
@@ -100,10 +99,7 @@ poll_once () {
     [ -n "$trial" ] || return 0
     ck=$(ls -td "$trial"checkpoint_* 2>/dev/null | head -1)
     [ -n "$ck" ] || return 0
-    # Same parse as daily_gate_ratchet.sh: `sed 's/checkpoint_0*//'` maps
-    # checkpoint_000000 to the empty string, which the `${iter:-0}` below then
-    # reads as iteration 0 without anyone noticing the digits went missing.
-    iter=$(basename "$ck" | sed -E 's/^checkpoint_//; s/^0+([0-9])/\1/')
+    iter=$(ratchet_iter_from_checkpoint "$ck")
     [ "${iter:-0}" -ge "$MIN_ITER" ] 2>/dev/null || return 0
 
     # Re-check immediately before spending GPU: the gap between the poll above
