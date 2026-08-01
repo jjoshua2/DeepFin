@@ -19043,3 +19043,90 @@ the assertion while destroying the point. Same circularity as the source-text
 widen from 4 rows to 5, because at four-with-one-dropped the run is legitimately MUTED
 and prints no slope — the guard firing on an old fixture, not a regression. Lint clean;
 full arena/ratchet suite green.
+
+---
+
+## 2026-08-01 — ADDENDUM 3 (final, PR #296 APPROVED): four factual corrections to addendum 2, and the circularity caveat that completes the method note.
+
+Review round 4: APPROVE (12/12 original + 7/7 new mutations caught, zero
+escapes, every published number independently reproduced). **No number moves
+here.** These are wrong sentences.
+
+### 1. The `033481` / "ATT-only" claim was stale — it described the PRE-FLOOR code
+
+Addendum 2 justified keeping the attachment axis by "uniquely load-bearing for
+exactly one shard, 033481 (attachment +0.0201, multipv-miss 0.000000)".
+Recomputed against the code as shipped: **`ATT-only` is EMPTY.** Shard 033481 has
+**16 rows**, and once `SF_AXIS_MIN_ROWS = 30` was applied to
+`sf_label_attachment_corr` — a change made in the SAME commit — its attachment
+reads `too_few_rows`, not `+0.0201`. The number was measured before the floor
+existed and quoted after.
+
+**The axis is still kept, and the justification is restated on grounds a reject
+count cannot express — said plainly, because the count-based criterion that
+demoted the desync axis would condemn this one on this data:**
+
+- **Mechanism.** It detects a genuinely different failure: the label block
+  landing on the wrong ROWS, which leaves every per-row field internally
+  consistent and can therefore coexist with a perfect MultiPV rate. Redundancy
+  against the corruption modes present in THIS trial is not redundancy against
+  the next one.
+- **Its own separation is honest and not threshold-created.** Lowest ACCEPTED
+  shard **+0.4189** (p10 +0.6092) against detached shards at ~0.00 (median
+  +0.1477, max **+0.2497**): the 0.25 line sits inside a **0.169** gap.
+
+### 2. Headroom is 22.2x, not 33x
+
+Anchors reproduce exactly (accepted max 0.008032, first rejected 0.010511, gap
+0.002478), but the accepted p90 is **0.000450**, not 0.000300. My 0.000300 came
+from a pre-floor accepted set and is not reproducible under any definition;
+both "accepted by the full gate" and "accepted by the MultiPV axis alone" give
+n=712 and p90 0.000450. **0.01 / 0.000450 = 22.2x.**
+
+### 3. Counts
+
+- Union att|multipv = **122** shards (not 120); union of all three is also 122,
+  so the desync axis still adds nothing.
+- The 400-shard confound window holds **64 dirty shards / 117,120 rows =
+  16.3%** under the new gate (not 62). The old-gate figure of 52 stands.
+
+### 4. ⚑ THE 0.01 THRESHOLD IS ALSO PARTLY FITTED — and the non-circular argument was already in the docstring
+
+The 0.008032 -> 0.010511 gap **exists only after removing the 122 shards the
+threshold rejects**. Quoting it as the justification moves the circularity up one
+level rather than removing it. Sensitivity:
+
+    0.005 -> 128 rejects   0.008 -> 123   0.009 -> 122   0.010 -> 122
+    0.020 -> 114           0.050 ->  98
+
+The 0.008-0.01 plateau is why the exact value barely matters — but that is a
+robustness statement, not a justification.
+
+**The non-circular argument, now promoted to primary in both the constant's
+comment and the docstring: the sound distribution has a HARD FLOOR AT ZERO.**
+**89.9% of accepted shards read EXACTLY 0.000000**; median 0.000000, p99
+0.004603. Every labelled row is supposed to carry its candidate list, so a
+materially nonzero rate is anomalous *wherever* the cut is placed. That argument
+survives deleting the threshold. The gap and headroom are now stated as
+secondary and explicitly flagged as partly circular.
+
+Contrast worth keeping: the bestmove-is-first-legal rate has **no floor** — it
+sits at ~0.08 on sound shards for ordinary reasons — which is exactly why no
+honest threshold exists on it and why it is a diagnostic.
+
+### Method note, final form
+
+Addendum 1: *a gate tuned on the episode that produced it detects that episode.*
+Addendum 2: *a threshold is only defensible if you can state the GAP and the
+HEADROOM between the two distributions it separates.*
+
+**Addendum 3, the caveat that completes it: the gap and headroom must be
+computed on a set that is NOT DEFINED BY THE THRESHOLD ITSELF, or the
+circularity simply moves up a level.** "Accepted shards max out at X" where
+"accepted" means "below the threshold" is a tautology wearing a measurement's
+clothes. The escapes from it are (a) an external definition of the clean set,
+(b) a threshold-free property of the sound distribution — a hard floor, a mass
+point, a physical bound — or (c) a sensitivity curve showing the answer is flat
+across a plateau. This gate now leans on (b) and reports (c); (a) is unavailable
+because there is no independent list of clean shards.
+
