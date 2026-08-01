@@ -44,51 +44,89 @@ _LOG = logging.getLogger("chess_anti_engine.selfplay")
 
 _multipv_truncation_warned = False
 
-# One health line per this many resolved label queries. ~17 labels/s live, so
-# roughly one line every four minutes — cheap enough to leave always on, and the
-# only thing that makes a detached SF label block visible while it is happening.
+# One health line per this many LABELLED rows. Only rows that actually receive
+# an SF label count: a curriculum MOVE query produces no training row, so
+# including it would measure something the line is not named after. ~17
+# labels/s live, so roughly one line every four minutes.
 _SF_LABEL_REPORT_EVERY = 4096
-# Fraction of labels whose SF bestmove was not legal at the position we queried,
-# above which the health line is a WARNING. A healthy session sits near 0.03
-# (moves the compact policy encoding cannot represent); a Stockfish process that
-# is one search behind sits at 0.8-1.0 because it is answering another position.
-_SF_BESTMOVE_ILLEGAL_WARN_RATE = 0.25
+
+# THE detector. Fraction of labelled rows on which not ONE of Stockfish's
+# MultiPV moves was legal at the position we queried, i.e. the stored
+# `sf_multipv_raw` came out empty. Measured over the four known episodes
+# (2026-07-30/31) against 721 clean shards / 1,280,663 labelled rows:
+#
+#     no-PV rate   clean 0.0008 | ep1 0.1241  ep2 0.3275  ep3 0.2541  ep4 0.5684
+#
+# A ~100x separation, and one desynced engine out of `distributed_worker_sf_workers`
+# (8 live) still lands near 0.074 — a 90x margin on a 0.01 threshold.
+_SF_NO_LEGAL_PV_WARN_RATE = 0.01
+
+# NOT the trigger, reported for context only. `bestmove_illegal` is floored by
+# structure: illegal ~= 0.079 + (k/8)*0.82 for k desynced engines, so k=1 reads
+# 0.182 and k=2 reads 0.284. Any threshold that clears the 0.079 baseline is a
+# "two or more engines" detector, and episode 1's window mean was 0.241 — it
+# would have read HEALTHY through the largest episode. It also undercounts
+# detachment ~10%, because a stale bestmove is sometimes coincidentally legal
+# in the position it was misfiled against.
+_SF_BESTMOVE_ILLEGAL_CONTEXT_RATE = 0.25
 
 _sf_label_lock = threading.Lock()
-_sf_label_counts = {"resolved": 0, "failed": 0, "bestmove_illegal": 0}
+_sf_label_counts = {
+    "labelled": 0, "failed": 0, "bestmove_illegal": 0, "no_legal_pv": 0,
+}
 
 
-def _report_sf_label_health(*, failed: int = 0, bestmove_illegal: int = 0) -> None:
+def _report_sf_label_health(
+    *, failed: int = 0, bestmove_illegal: int = 0, no_legal_pv: int = 0,
+) -> None:
     """Accumulate label-path health and emit one line per report window.
 
-    ``bestmove_illegal`` is the load-bearing one. ``_process_sf_label_result_for_record``
-    silently substitutes ``legal_indices[0]`` when Stockfish's bestmove is not
-    legal at the queried position, which is exactly what a result belonging to a
-    DIFFERENT position looks like — the substitution kept the pipeline running
-    and the corruption invisible (2026-07-31, shards 033944-033951).
+    Exists because the 2026-07-31 corruption had NO observable: a Stockfish
+    process one search behind returns a real search of another position, and
+    every identity the caller controls (``sf_legal_mask``, the record, the turn)
+    stays correct, so the row binding looks perfect. Three separate silent
+    substitutions then absorb the damage — ``_process_sf_label_result_for_record``
+    swaps in ``legal_indices[0]`` for the illegal bestmove, ``_collect_sparse_pv_rows``
+    and ``_collect_sf_pv_candidates`` drop every illegal PV move, and the caller
+    fabricates a degenerate one-hot when nothing survives. A poisoned row
+    therefore carries a fake bestmove AND a fake policy distribution.
+
+    ``no_legal_pv`` is read from the STORED ``sf_multipv_raw``, so this live
+    counter and the offline shard check are the same measurement by
+    construction rather than by agreement between two descriptions of one.
+
+    ``failed`` participates in the escalation deliberately: post-fix an
+    abandoned search is the incident itself, and the whole point of the repair
+    is that its firing is visible rather than inferred.
     """
     with _sf_label_lock:
-        _sf_label_counts["resolved"] += 1
+        _sf_label_counts["labelled"] += 1
         _sf_label_counts["failed"] += int(failed)
         _sf_label_counts["bestmove_illegal"] += int(bestmove_illegal)
-        if _sf_label_counts["resolved"] % _SF_LABEL_REPORT_EVERY:
+        _sf_label_counts["no_legal_pv"] += int(no_legal_pv)
+        if _sf_label_counts["labelled"] % _SF_LABEL_REPORT_EVERY:
             return
         counts = dict(_sf_label_counts)
-        _sf_label_counts.update(resolved=0, failed=0, bestmove_illegal=0)
-    resolved = max(1, counts["resolved"])
-    illegal_rate = counts["bestmove_illegal"] / resolved
-    level = (
-        logging.WARNING if illegal_rate > _SF_BESTMOVE_ILLEGAL_WARN_RATE
-        else logging.INFO
+        _sf_label_counts.update(
+            labelled=0, failed=0, bestmove_illegal=0, no_legal_pv=0,
+        )
+    labelled = max(1, counts["labelled"])
+    no_pv_rate = counts["no_legal_pv"] / labelled
+    illegal_rate = counts["bestmove_illegal"] / labelled
+    unhealthy = (
+        no_pv_rate > _SF_NO_LEGAL_PV_WARN_RATE
+        or counts["failed"] > 0
+        or illegal_rate > _SF_BESTMOVE_ILLEGAL_CONTEXT_RATE
     )
     _LOG.log(
-        level,
-        "sf label health: resolved=%d failed=%d bestmove_illegal=%d (%.3f) — a "
-        "high illegal rate means Stockfish is answering a DIFFERENT position "
-        "than the one queried (a desynced engine), so the whole SF label block "
-        "on those rows is detached from the row",
-        counts["resolved"], counts["failed"], counts["bestmove_illegal"],
-        illegal_rate,
+        logging.WARNING if unhealthy else logging.INFO,
+        "sf label health: labelled=%d no_legal_pv=%d (%.4f) bestmove_illegal=%d "
+        "(%.3f) failed=%d — no_legal_pv above %.3f means Stockfish is answering "
+        "a DIFFERENT position than the one queried (a desynced engine), so the "
+        "whole SF label block on those rows is detached from its row",
+        counts["labelled"], counts["no_legal_pv"], no_pv_rate,
+        counts["bestmove_illegal"], illegal_rate, counts["failed"],
+        _SF_NO_LEGAL_PV_WARN_RATE,
     )
 
 
@@ -731,7 +769,6 @@ def _process_sf_label_result_for_record(
     bestmove_illegal = a_idx < 0 or a_idx not in legal_set
     if bestmove_illegal:
         a_idx = int(legal_indices[0])
-    _report_sf_label_health(bestmove_illegal=int(bestmove_illegal))
 
     cand_idxs, cand_scores = _collect_sf_pv_candidates(
         res, _turn=bool(turn), legal_set=legal_set,
@@ -740,6 +777,12 @@ def _process_sf_label_result_for_record(
         sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
     )
     if not cand_idxs:
+        # Every MultiPV move was illegal here. On a healthy engine that is a
+        # rounding event (0.0008 of labelled rows); on a desynced one it is the
+        # norm, and the fabricated one-hot below lands on legal_indices[0] — so
+        # the row gets a fake bestmove AND a fake policy distribution, both
+        # looking well-formed. `no_legal_pv` in the health line counts exactly
+        # this; do not make it silent again.
         cand_idxs = [a_idx]
         cand_scores = [0.0]
 
@@ -766,6 +809,13 @@ def _process_sf_label_result_for_record(
             sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
             sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
             sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
+        )
+    if will_attach:
+        # Read the STORED value, not a recomputation of it — the shard-side
+        # check reads the same field, so the two cannot drift apart.
+        _report_sf_label_health(
+            bestmove_illegal=int(bestmove_illegal),
+            no_legal_pv=int(rec.sf_multipv_raw is None),
         )
 
 
@@ -1067,12 +1117,19 @@ def _emit_sf_refute_opp_record(
     bestmove_illegal = a_idx < 0 or a_idx not in legal_set
     if bestmove_illegal:
         a_idx = int(legal_indices[0])
-    _report_sf_label_health(bestmove_illegal=int(bestmove_illegal))
     cand_idxs, cand_scores = _collect_sf_pv_candidates(
         res, _turn=bool(turn), legal_set=legal_set,
         sf_wdl_use_cp_logistic=bool(state.game.sf_wdl_use_cp_logistic),
         sf_wdl_cp_slope=float(state.game.sf_wdl_cp_slope),
         sf_wdl_cp_draw_width=float(state.game.sf_wdl_cp_draw_width),
+    )
+    # This row type never stamps a sparse MultiPV block (no _stamp_sparse_sf_labels
+    # below), so unlike the other two sites the stored field cannot be read back —
+    # `not cand_idxs` is the same event at its only available site. It is also
+    # inert in production: sf_refute_record_opp_rows is false.
+    _report_sf_label_health(
+        bestmove_illegal=int(bestmove_illegal),
+        no_legal_pv=int(not cand_idxs),
     )
     if not cand_idxs:
         cand_idxs = [a_idx]
@@ -1201,7 +1258,6 @@ def _process_sf_results(
         bestmove_illegal = a_idx < 0 or a_idx not in legal_set
         if bestmove_illegal:
             a_idx = int(legal_indices[0])
-        _report_sf_label_health(bestmove_illegal=int(bestmove_illegal))
 
         cand_idxs, cand_scores = _collect_sf_pv_candidates(
             res, _turn=_turn, legal_set=legal_set,
@@ -1233,6 +1289,16 @@ def _process_sf_results(
                 sf_wdl_cp_slope=sf_wdl_cp_slope,
                 sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
             )
+            # Inside the gate: a curriculum MOVE query produces no training row,
+            # so counting it would put a denominator in "sf label health" that
+            # is not labels. Reads the stored field, like the async path.
+            if state.samples_per_game[idx]:
+                _report_sf_label_health(
+                    bestmove_illegal=int(bestmove_illegal),
+                    no_legal_pv=int(
+                        state.samples_per_game[idx][-1].sf_multipv_raw is None,
+                    ),
+                )
 
         # SF opponent when curriculum OR mid SF-refute phase (selfplay-tagged).
         in_refute = _slot_in_sf_refute(state, idx)

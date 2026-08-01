@@ -200,10 +200,18 @@ class _SearchInfoAccumulator:
 
 
 class StockfishUCI:
-    # Class-level default so the guard holds even for an instance built without
-    # __init__ (tests drive the parser through object.__new__). An engine that
-    # cannot report its state must read as USABLE, never as poisoned — the
-    # opposite default would silently disable every such caller.
+    # Class-level default so the guard holds for an instance built without
+    # __init__ (tests drive the parser through object.__new__).
+    #
+    # This one default FAILS OPEN, which is the inverse of the absent-and-loud
+    # principle the rest of this class is built on, and that asymmetry is worth
+    # stating rather than hiding. It is safe only because of what "unknown
+    # state" can mean HERE: __init__ sets the instance attribute before the
+    # process is spawned, so any object still reading the class default has
+    # never owned a Stockfish process and therefore has no abandoned output to
+    # inherit. Failing closed would not protect a real engine; it would only
+    # make every test double permanently unusable. If a future change can leave
+    # a LIVE engine on the class default, this must flip to True.
     _desynced: bool = False
 
     def __init__(
