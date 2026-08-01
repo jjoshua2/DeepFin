@@ -15158,3 +15158,168 @@ does NOT establish that seeding caused the degradation — only that it
 demonstrably did not prevent it. That is sufficient to stop treating "feed more
 seeds" as the remedy. The 63 seeds fed 2026-07-31 13:10 are far too recent to
 bear on this either way (see the HOLD on the remaining 381, task #87).
+
+---
+
+## 2026-07-31 — MEASUREMENT: the value head is SYMMETRICALLY compressed, not optimistic about losing. The +287 cp claim does not survive a non-tail-selected sample.
+
+**Type: instrument + readout. NO training-affecting change** — three new/extended
+offline scripts, no config key, no loss weight, no data-path edit. Recorded here
+because it replaces a number the ledger and memory have been reasoning from.
+
+### What was built
+
+| file | what |
+|---|---|
+| `chess_anti_engine/eval/value_optimism.py` | shared scorer: SF-eval buckets, exact production cp<->expected-score map, game-clustered bootstrap, the shuffled-net negative control, and a ruler-free shard-integrity gate |
+| `scripts/value_optimism.py` | CLI. Scores the value LEVEL on PRODUCTION replay rows, stratified by an SF eval of the row's own position, with the blended TARGET scored in the same buckets |
+| `scripts/value_regret.py --sf-strata` | additive flag on the existing VALUE yardstick: the same buckets on the RANKING axis, frozen audit set. Headline number unchanged, so historical `value_regret` figures stay comparable |
+| `tests/test_value_optimism.py` | 21 tests incl. the negative control, a POSITIVE control, and the integrity gate |
+
+**Why a new script rather than only a flag on `value_regret.py`.** `value_regret`
+scores value RANKING (1-ply deep-SF regret of the move the value head would
+play). This scores value LEVEL. Folding a level metric into the ranking yardstick
+would change what a historical "value_regret = N cp" means — the silent-ruler-
+change failure this repo already has on record. Two further blockers: the frozen
+audit set stores FENs, so 117 of 175 input planes are zero and ABSOLUTE cp bars
+measured there are compromised (rl_loop_audit M10), and it carries neither the
+game outcome nor the blended target, so it physically cannot answer head-vs-target.
+`value_optimism.py` feeds the net the stored `x` planes — the exact tensor
+training and selfplay used — so its absolute cp levels are NOT subject to M10.
+
+**The ruler, and its price: zero new Stockfish compute.** A selfplay row's SF
+label is the eval of the position AFTER that row's move, in the next mover's POV.
+So for two rows that are consecutive plies of one game, the EARLIER row's stored
+`sf_label_meta` eval is an eval of the LATER row's own position, already in its
+POV — the same one-ply shift `sf_p0_policy_target` uses. Verified before use:
+Spearman(P0 cp, that row's own `search_wdl` signal) = **+0.96** on sound shards.
+Labels are production's (~698k nodes, MultiPV 40, median depth 12).
+
+### Sample
+
+`checkpoint_000478` (trial 13a9f), newest 150 shards. **38,464 P0-paired rows
+over ~4,500 games**, from 263,136 scanned (14.6% — a row is paired only when its
+predecessor is the immediately preceding ply, which most are not because ~75% of
+plies are fast-ply and unrecorded). Realized blend read from the stage that
+resolves it: **game 0.35 / sf 0.45 / search 0.20**, `sf_wdl_frac` = 0.45 from
+`progress.csv` iter 478, NOT the yaml's decorative 0.50.
+
+**⚑ SCOPE LIMIT — shards <= 033943 only.** The 8 newest shards (033944-033951,
+written after the 07-31 13:06->13:34 restart) were REJECTED by the instrument's
+own integrity gate: their SF label block is detached from the rows it sits on
+(material~`sf_wdl` rank corr +0.63 -> -0.02 across the boundary). Handed off to a
+dedicated agent. **Do not extend any number below to the newest window rows.**
+
+### The stratified table (expected score W+0.5D, scored side's POV)
+
+| SF bucket | n | games | SF cp | SF ruler | net | target | outcome | net−ruler | target−ruler | net−target | net−ruler cp |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| lost(<=-300) | 6556 | 3523 | -891 | 0.045 | 0.096 | 0.048 | 0.027 | **+0.051** [+.049,+.053] | +0.002 | +0.049 | **+399** [+388,+409] |
+| losing(-300,-100] | 4509 | 2924 | -181 | 0.279 | 0.337 | 0.267 | 0.238 | +0.057 [+.055,+.060] | -0.012 | +0.070 | +48 [+46,+50] |
+| balanced(-100,+100] | 15458 | 4502 | 0 | 0.500 | 0.494 | 0.490 | 0.491 | -0.007 | -0.010 | +0.004 | -6 |
+| winning(+100,+300] | 4975 | 3114 | +181 | 0.721 | 0.647 | 0.706 | 0.738 | -0.074 | -0.015 | -0.059 | -61 |
+| won(>+300) | 6966 | 3658 | +879 | 0.956 | 0.891 | 0.945 | 0.967 | **-0.065** [-.068,-.062] | -0.011 | -0.054 | **-394** [-404,-384] |
+
+95% CIs are game-clustered bootstrap (rows within a game are correlated; a
+row-level bootstrap is several times too tight).
+
+### THE THREE RESULTS
+
+**1. The +287 cp claim does not survive. At a MATCHED ruler level it is +70 cp.**
+The original was measured at SF mean -300.9. Re-run with fine edges, the bucket
+`(-350,-250]` has mean SF **-298**, n=1412 over 1119 games:
+
+    net -227.3 cp vs SF -298 cp  ->  +70.3 cp  [+65, +75]
+    optimistic in 78.4%          (original claimed 77.5%)
+
+**The DIRECTION and FREQUENCY of the original claim reproduce almost exactly.
+The MAGNITUDE is ~4x too large** — tail-selection ("worst value mismatch per lost
+game") inflated the level, not the sign. `--min-pieces 8` moves it to +70.6, so
+it is not a tablebase artifact.
+
+**2. It is SYMMETRIC, so most of even the +70 is a measurement artifact, not a
+defect.** Bucketing on a noisy ruler regresses every extreme bucket toward the
+mean and manufactures apparent optimism when losing AND apparent pessimism when
+winning, for a perfect head. The mirror bucket says exactly that:
+
+    (-350,-250]  net-ruler  +0.071   /  +70.3 cp
+    (+250,+350]  net-ruler  -0.093   /  -88.0 cp
+    tail asymmetry (lost + won, where the artifact cancels): **-0.0124**
+
+The directional component is ~-18 cp at |300| and -0.012 in score units over the
+full tails — i.e. **slightly PESSIMISTIC on net**. The value head is compressed
+toward the draw in both directions. "The net does not know it is losing" is only
+half true: it equally does not know it is winning, and by a bit more.
+Corroborating on the independent RANKING axis (`value_regret --sf-strata`, frozen
+set, ck478): mean regret `lost` 99.1 cp, `balanced` 53.9, `won` **142.7** — also
+U-shaped, also worse on the WINNING side.
+
+**3. The optimism is in the HEAD, not the TARGET — and the recorded causal
+mechanism is refuted on the training distribution.** `|target - SF ruler|` is
+<= 0.015 in every bucket; `net - target` carries the whole error (+0.049 lost,
+-0.054 won). And the mechanism ("the game-outcome half comes from a
+PID-handicapped opponent, so losing positions were survivable") predicts the
+outcome column should sit ABOVE the objective eval when losing. It sits BELOW it:
+at SF -298 the realized outcome is **0.109 vs objective 0.167**; at +298 it is
+**0.878 vs 0.833**. Recorded results are MORE decisive than the objective eval,
+in both directions — the opposite of survivability.
+
+**⚠ SCOPE OF THAT REFUTATION.** This measures the TRAINING distribution. The
+original claim was measured on positions mined from real Cheese games, and
+[[value_head_overoptimistic_on_loss_positions]] says in its own text that the
+head "is calibrated on its own distribution and optimistic against real
+opposition". Nothing here can refute the Cheese-position claim; it refutes the
+*level* on the data the head actually trains on, and it removes the target as the
+suspect. Testing the Cheese claim needs Cheese-game positions scored with a move
+stack — the existing blindspot FEN lists are both FEN-only (M10) and
+tail-selected, so they cannot do it.
+
+### Negative control — SHIPPED AS A TEST
+
+`--shuffle-control` permutes the net's evaluations across rows, destroying the
+position<->evaluation association and nothing else.
+
+    control statistic (spread of bucket mean net score):  0.7944 -> 0.0050  (159x)
+    every bucket's mean net score collapses onto 0.497-0.502
+
+**⚑ AND THE CONTROL CONDEMNS THE ORIGINAL CLAIM'S HEADLINE STATISTIC.** Under the
+shuffle, "optimistic in the lost bucket" reads **94.3% — HIGHER than the real
+87.2%**. A net that ignores the position entirely produces a bigger
+optimistic-fraction than the real one, because the ruler moved and the prediction
+did not. **An optimistic-fraction, and any single-bucket `net - ruler`, is not
+evidence of anything.** Only the spread / tail-asymmetry statistics discriminate,
+and `tests/test_value_optimism.py` pins both plus a POSITIVE control (an injected
+one-sided +0.10 must survive the cancellation; a symmetric compression must not).
+
+### Commands
+
+    PYTHONPATH=. nice -n 19 python3 scripts/value_optimism.py \
+      --checkpoint <ckpt>/trainer.pt --shards 150 --gpu-mem-fraction 0.10 \
+      --batch-size 128 --bootstrap 2000
+    # matched to the original claim's ruler level:
+    #   --edges=-900,-600,-450,-350,-250,-150,-50,50,150,250,350,450,600,900
+    # negative control: --shuffle-control    TB-excluded split: --min-pieces 8
+    PYTHONPATH=. nice -n 19 python3 scripts/value_regret.py \
+      --checkpoint <ckpt>/trainer.pt --sf-strata --gpu-mem-fraction 0.12
+
+Dumps: `scratchpad/value_optimism_ck478{,_fine,_control,_min8}.json`.
+
+### Cost
+
+**Zero new Stockfish.** The ruler is labels the shards already carry. GPU:
+5 forward-only passes at `--gpu-mem-fraction 0.10-0.12`, `nice -n 19`, concurrent
+with nothing (training DOWN). ~25 min GPU total, inside the ~30 min/day
+out-of-training budget.
+
+### What it would take to act on this
+
+Nothing yet, and that is the finding. There is no directional losing-position
+defect on the training distribution large enough to chase, and the target — the
+suspect the seeding and distillation proposals were built on — is clean against
+the objective ruler in every bucket. Before any value work is justified by
+"the head is optimistic when losing", it needs a measurement on REAL-OPPONENT
+positions with a move stack, which does not exist. The cheapest route is to
+record `x` planes (not FENs) during Cheese matches and run this scorer on them;
+that is a selfplay-recording change, not a training change, and it would make the
+one claim this instrument cannot reach falsifiable.
+
