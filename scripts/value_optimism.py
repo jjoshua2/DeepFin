@@ -303,16 +303,30 @@ def _load_rows(
         # enforced axis earns its place by a shard the other cannot catch.
         #
         #   attachment  : rank corr of material vs the shard's own SF label.
-        #                 Catches TOTAL detachment (label block on the wrong
-        #                 rows), ~0.00 against a ~+0.65 baseline. Uniquely
-        #                 catches exactly one shard in this trial (033481:
-        #                 attachment +0.020, multipv-miss 0.000000).
+        #                 Catches TOTAL detachment — the label block landing on
+        #                 the wrong ROWS, which leaves every per-row field
+        #                 internally consistent and so can coexist with a
+        #                 perfect MultiPV rate. On THIS trial it rejects no
+        #                 shard the MultiPV axis misses (ATT-only is empty), so
+        #                 it is kept on MECHANISM plus its own honest
+        #                 separation — lowest accepted +0.4189 vs detached
+        #                 ~0.00 (max +0.2497), a 0.169 gap the 0.25 line did not
+        #                 create — and NOT on a reject count, which would
+        #                 condemn it here. Redundancy against this trial's
+        #                 failure modes is not redundancy against the next.
         #   multipv miss: share of labelled rows with no MultiPV block. Catches
         #                 PARTIAL corruption — a Stockfish UCI desync leaves an
-        #                 eval whose candidate list did not survive. Sound
-        #                 shards max out at 0.008032 (p90 0.000300, median
-        #                 exactly 0.000000) and corrupt ones start at 0.010511,
-        #                 so 0.01 sits in a real gap with 33x headroom.
+        #                 eval whose candidate list did not survive. The
+        #                 justification is the SHAPE of the sound distribution,
+        #                 not the gap: 89.9% of accepted shards read EXACTLY
+        #                 0.000000 (median 0.000000, p99 0.004603, max
+        #                 0.008032), a hard floor at zero, so any material rate
+        #                 is anomalous wherever the cut sits. The 0.002478 gap
+        #                 to the first rejected shard (0.010511, 22.2x headroom
+        #                 over the accepted p90 of 0.000450) is secondary and
+        #                 partly circular — it exists only after removing the
+        #                 122 shards this threshold rejects. Sensitivity:
+        #                 0.008/0.009/0.01 all reject 122-123.
         #   desync rate : bestmove-is-first-legal. REPORTED, not enforced by
         #                 default. Sound max 0.1496 vs corrupt min 0.1505 — any
         #                 threshold sits in a 0.0009 gap between two adjacent
@@ -603,9 +617,10 @@ def main() -> None:
                          "carries no MultiPV block — the sharp fingerprint of a Stockfish "
                          "UCI desync, where the label sits on the right row but answers a "
                          "DIFFERENT position. Sound shards max at 0.008032 (median exactly "
-                         "0.000000); corrupt ones start at 0.010511, so the default sits in "
-                         "a real gap with 33x headroom. The attachment axis does NOT catch "
-                         "this. Set to 1.0 to deliberately measure the contamination effect.")
+                         "0.000000 on 89.9% of accepted shards, p99 0.004603, max 0.008032) "
+                         "— a hard floor at zero, so any material rate is anomalous wherever "
+                         "the cut sits. Corrupt shards start at 0.010511. The attachment axis "
+                         "does NOT catch this. Set to 1.0 to measure the contamination effect.")
     ap.add_argument("--desync-max", type=float, default=SF_DESYNC_MAX,
                     help="bestmove-is-first-legal rate. DIAGNOSTIC ONLY by default (1.0 = "
                          "never reject): its sound max is 0.1496 and its corrupt min 0.1505, "

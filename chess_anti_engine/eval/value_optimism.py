@@ -88,19 +88,30 @@ _PIECE_VALUES: tuple[float, ...] = (1.0, 3.0, 3.0, 5.0, 9.0, 0.0)
 # `sf_label_attachment_corr`.
 SF_LABEL_ATTACHMENT_MIN: float = 0.25
 
-# Maximum share of labelled rows carrying NO MultiPV block. This is the gate's
-# sharp axis for SF-desync corruption. Measured over all 834 shards of trial
-# 13a9f: accepted shards run to a max of 0.008032 and a p90 of 0.000300, the
-# first rejected shard sits at 0.010511, and the median clean shard is EXACTLY
-# 0.000000. The threshold therefore falls in a real 0.0025 gap with **33x**
-# headroom over the accepted p90. See `sf_multipv_missing_rate`.
+# Maximum share of labelled rows carrying NO MultiPV block. The gate's sharp
+# axis for SF-desync corruption.
+#
+# THE PRIMARY JUSTIFICATION IS THE SHAPE OF THE SOUND DISTRIBUTION, NOT THE GAP.
+# Over all 834 shards of trial 13a9f, **89.9% of accepted shards read EXACTLY
+# 0.000000**; median 0.000000, p99 0.004603, max 0.008032. A sound shard has a
+# HARD FLOOR AT ZERO — every labelled row is supposed to carry its candidate
+# list — so any materially nonzero rate is anomalous wherever the cut is placed.
+# That argument does not depend on the threshold.
+#
+# The separation gap is real but SECONDARY, and partly circular: accepted max
+# 0.008032 vs first rejected 0.010511 is a 0.002478 gap with 22.2x headroom over
+# the accepted p90 (0.000450) — but that gap only exists AFTER removing the 122
+# shards this threshold rejects. Sensitivity, which is the honest way to read it:
+# 0.008 -> 123 rejects, 0.009 -> 122, 0.01 -> 122, 0.02 -> 114, 0.005 -> 128. The
+# 0.008-0.01 plateau is why the exact value does not matter much.
+# See `sf_multipv_missing_rate`.
 SF_MULTIPV_MISS_MAX: float = 0.01
 
 # The bestmove-is-first-legal rate is kept as a DIAGNOSTIC and is OFF as a gate
 # by default (1.0 = never reject). It has no defensible threshold: over the same
 # 834 shards the highest sound value is 0.1496 and the lowest corrupt value is
 # 0.1505, so any cut sits in a 0.0009 gap between two adjacent order statistics
-# of the same quantity — 1.7x headroom, versus 33x for the MultiPV axis. Setting
+# of the same quantity — 1.7x headroom, versus 22.2x for the MultiPV axis. Setting
 # it at 0.15 leaked seven shards sitting *inside* runs of rejects. That is
 # precisely the "a gate tuned on the episode that produced it detects that
 # episode" failure, so the number is reported and not enforced. It also catches
@@ -274,6 +285,20 @@ def sf_label_attachment_corr(
     same way). It is a RULER-FREE integrity check: no model, no Stockfish, no
     arena, and it needs nothing but the shard itself.
 
+    **Why it is kept even though it now rejects no shard the MultiPV axis
+    misses.** On the live trial `ATT-only` is EMPTY, so the count-based
+    criterion that demoted the bestmove-is-first-legal rate to a diagnostic
+    would, applied mechanically, condemn this axis too. It is kept on two
+    grounds that a reject count cannot express. (a) MECHANISM: it detects a
+    genuinely different failure — the label block landing on the wrong ROWS,
+    which leaves every per-row field internally consistent and can therefore
+    coexist with a perfect MultiPV rate. Redundancy against the corruption modes
+    that happen to be in this trial is not redundancy against the next one.
+    (b) Its own separation is honest and threshold-independent: the lowest
+    ACCEPTED shard reads +0.4189 (p10 +0.6092) while detached shards read
+    ~0.00 (median +0.1477, max +0.2497), so the 0.25 line sits inside a 0.169
+    gap that was not created by the line itself.
+
     It exists because on 2026-07-31 the SF label block silently detached from
     the rows it was written on — the labels stayed internally self-consistent
     and looked like real Stockfish output, so every check that read the label
@@ -311,11 +336,14 @@ def sf_multipv_missing_rate(
     legality/parse path, so the row lands with an SF eval but no MultiPV block.
     (Cause and fix belong to PR #297; this is only the detector.)
 
-    Preferred over the bestmove-is-first-legal rate purely on SEPARATION, which
-    is the only property a gate threshold has: a sound shard reads exactly
-    0.000000 at the median and 0.008032 at the observed maximum, while corrupt
-    shards start at 0.010511 — a real gap. The other rate's sound maximum and
-    corrupt minimum are 0.0009 apart, so no threshold on it can be honest.
+    Preferred over the bestmove-is-first-legal rate because of the SHAPE of its
+    sound distribution: **89.9% of accepted shards read exactly 0.000000**
+    (median 0.000000, p99 0.004603, max 0.008032). Every labelled row is meant
+    to carry a candidate list, so the sound rate has a hard floor at zero and
+    any material excess is anomalous no matter where the cut sits. The
+    bestmove-is-first-legal rate has no such floor — it sits at ~0.08 on sound
+    shards for ordinary reasons — and its sound maximum and corrupt minimum are
+    0.0009 apart, so no threshold on it can be honest.
     """
     has = np.asarray(has_sf_multipv_raw).astype(bool).reshape(-1)
     if has.size == 0:
@@ -347,8 +375,8 @@ def sf_bestmove_is_first_legal_rate(
 
     Kept as a DIAGNOSTIC, not a default gate — see `SF_DESYNC_MAX`. It is a real
     signal (0.080 baseline, 0.16-0.97 inside an episode) but it admits no honest
-    threshold, and `sf_multipv_missing_rate` detects the same failure with 33x
-    the headroom.
+    threshold, and `sf_multipv_missing_rate` detects the same failure against a
+    sound distribution that is pinned at exactly zero.
 
     Returns a non-"ok" status when the inputs cannot support the check; callers
     must treat that as a REJECT rather than a pass — a gate that cannot evaluate
