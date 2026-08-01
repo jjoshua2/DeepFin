@@ -15323,3 +15323,142 @@ record `x` planes (not FENs) during Cheese matches and run this scorer on them;
 that is a selfplay-recording change, not a training change, and it would make the
 one claim this instrument cannot reach falsifiable.
 
+
+---
+
+## 2026-07-31 — CORRECTION to the value-optimism entry above (same day, PR #296 review). Two inference errors; one of them INVERTED a conclusion.
+
+The instrument passed independent review (P0 shift verified by an algebraic POV
+identity, median residual 1.3e-5; blend reconstruction verified against the live
+`soft_cross_entropy` target tensor to 1.0e-7; integrity gate verified to exclude
+exactly the 8 bad shards; 9/9 reintroduced defects caught by the tests). **The
+code held. The claims did not.** Both errors are mine and both are corrected
+here rather than by editing the entry above.
+
+### ERROR 1 — the paired set is 100% SELFPLAY, and that inverts claim 4
+
+Measured, and now printed by the tool on every run:
+
+    window rows:  selfplay 158719 (64.0%)   curriculum 89464 (36.0%)
+    PAIRED rows:  selfplay  38464 (100.0%, pairing rate 24.23%)
+                  curriculum    0 (  0.0%, pairing rate  0.00%)
+
+The ply-gap guard needs two rows that are consecutive plies of one game.
+Curriculum games never produce such a pair, so the exclusion is **structural,
+not statistical** — and the entry above also gave the wrong reason for the 14.6%
+pairing rate ("~75% of plies are fast-ply and unrecorded"): 36.0% of the
+exclusion is this population filter, not ply sparsity.
+
+**Why it inverts the conclusion: the PID-handicapped Stockfish plays ONLY in
+curriculum games.** So "the handicap does not make losing positions survivable"
+was measured on the one population where the mechanism cannot operate.
+
+The tool now carries an arm that can see it — the row's OWN label as the ruler,
+no pairing and no model needed, so it covers every labelled row and splits by
+`is_selfplay`. Outcome minus objective eval, same ruler, both populations:
+
+| SF bucket | selfplay out-ruler | curriculum out-ruler |
+|---|---|---|
+| lost(<=-300) | **-0.006** [-0.009,-0.003] | **+0.212** [+0.202,+0.222] |
+| losing(-300,-100] | **-0.013** [-0.023,-0.004] | **+0.098** [+0.089,+0.106] |
+
+At the matched level (bucket `(-350,-250]`): selfplay -0.026, curriculum
+**+0.193** [+0.183,+0.203]. From positions deep Stockfish scores as lost,
+curriculum games actually scored **0.274 against an objective 0.062**.
+
+**CLAIM 4 OF THE ENTRY ABOVE IS WITHDRAWN AND INVERTED. The
+handicapped-opponent mechanism is CONFIRMED, hard, on the population that has a
+handicapped opponent.** `train/losses.py:459-463` already says so in a code
+comment ("SF is often wrong about *outcomes* here ... the handicapped opponent
+fails to convert"); I measured against it without reading it.
+
+**Everywhere the entry above says "the training distribution", read "the
+selfplay subset (64% of window rows, 100% of the paired set)".**
+
+### ERROR 2 — the regression-to-the-mean argument has the wrong SIGN
+
+I wrote that most of the +70 cp was a bucketing artifact. RTM requires
+`E[true | ruler in an extreme bucket]` to be LESS extreme than the ruler. The
+realized outcome is an unbiased draw of exactly that quantity, and **it is MORE
+extreme in both tails** (lost: ruler 0.0453 vs outcome 0.0275; won: 0.9558 vs
+0.9673). My own `out` column said so and I read past it. The bias runs the other
+way: an outcome-perfect head would read **-0.018 pessimistic** in the lost
+bucket, so the head's compression is real and LARGER than the entry above
+claimed.
+
+Three further defects in how `tail_asymmetry` was quoted:
+
+- **Its null is not zero.** Under this instrument's own shuffle control it is
+  **-0.0051** [-0.0150,+0.0040] — 37% of the -0.0138 I quoted as a finding.
+- **A perfect head's null is also not zero**: **-0.0064**, leaving an excess of
+  only -0.0074, whose CI overlaps the shuffle null. **Not resolvable.**
+- **The -0.0124 I quoted was the wrong pair.** With the fine edges it is
+  `<=-900` + `>+900` — the SATURATED extremes — not the +-300 mirror pair it was
+  printed under, which sums to -0.022. Fixed: the tool now prints the pair by
+  name and refuses to let the two be confused.
+
+### The corrected primary result
+
+**`net - target` is the primary axis, not `net - SF_ruler`.** Both sides are
+measured on the same row and neither is computed from the bucketing variable, so
+a head that fit its target perfectly reads zero in every bucket under ANY
+bucketing. It is artifact-free by construction, which the ruler-relative axis is
+not. At the matched level (SF -297.6, n=1412 / 1119 games):
+
+    net - target  =  +0.0854 score  [+0.0785, +0.0922]   =  +108.7 cp
+    mirror (+297.7) =  -0.0855      [-0.0932, -0.0778]   =   -98.6 cp
+    mirror-pair tail sum: -0.0001
+
+Default edges: lost **+0.0489** [+0.0468,+0.0510], won **-0.0541**
+[-0.0569,-0.0512], tail sum **-0.0052**.
+
+So: **the value head IS materially compressed toward the draw relative to its
+own target — ~+0.086 in expected score (~109 cp) at |SF| ~ 300 — and that is
+real, not an artifact. But it is SYMMETRIC: the directional component is
+-0.0001 at the +-300 mirror pair and -0.0052 over the default tails.** There is
+no *losing-position-specific* head defect.
+
+### What survives, what dies
+
+| claim | status |
+|---|---|
+| +287 cp -> **+70.3 cp** [+65,+75] vs the ruler at a matched level; direction and frequency (78.4% vs 77.5%) reproduce | **SURVIVES** |
+| "most of even the +70 is a measurement artifact" | **WITHDRAWN** — the artifact runs the other way; the compression is real and larger (+108.7 cp against the head's own target) |
+| no DIRECTIONAL losing-position defect | **SURVIVES**, on the stronger axis: net-target tail sum -0.0001 (mirror) / -0.0052 (default edges) |
+| the TARGET is clean against the objective ruler (\|target-ruler\| <= 0.015) | **SURVIVES**, but only on the selfplay subset |
+| "the handicap mechanism is refuted" | **WITHDRAWN AND INVERTED** — curriculum lost-bucket outcome exceeds the objective eval by **+0.212** |
+| optimistic-fraction is not evidence (shuffle control gives 94.3% > real 87.2%) | **SURVIVES** |
+
+### Tool changes shipped with this correction
+
+- `_load_rows` prints the `is_selfplay` composition of the window AND of the
+  paired set, and shouts when the paired set is single-population. The inference
+  error is now impossible to make silently.
+- `outcome_calibration` / `perfect_head_tail_asymmetry` / `tail_asymmetry_ci`:
+  the arm that can see the handicap, the null, and a CI.
+- `net - target` printed as a labelled PRIMARY block; the asymmetry line names
+  its tail pair and prints both nulls.
+- `resolve_blend_knobs`: `sf_wdl_temperature` now also read REALIZED from
+  progress.csv (it is logged); `search_wdl_frac` and the dampen knobs have no
+  realized column anywhere, so the yaml and the trial's `params.json` are
+  required to AGREE and the run aborts if they do not. Absent keys are a hard
+  error rather than passing as neutral (`reco_diff misses absent keys` shape).
+- `losses.py:443-447`'s over-unity renormalisation is mirrored exactly; the
+  `--max-rows` prefix (biased, shards are in game order) is now a seeded uniform
+  subsample; the TB-inclusion default is stated at run time, not only in `-h`.
+- Tests 21 -> 33, including a rig whose tail-asymmetry null is genuinely
+  non-zero. The previous test drew `sf_cp` from a symmetric uniform and set the
+  outcome equal to the ruler, which **forces the null to zero by construction**,
+  so it could not have caught the error it was written to catch. New file
+  `tests/test_value_optimism_load_rows.py` covers the shard-reading paths over
+  synthetic zarr (ply gap, shard boundary, rejection, mate POV, all-rows arm).
+
+### Method note worth keeping
+
+**A structural filter is a population filter until proven otherwise.** The
+pairing rule looked like a sparsity constraint and was described as one for a
+whole readout. The check costs one line — `is_selfplay` was in every shard the
+whole time — and it decided whether a documented mechanism was confirmed or
+refuted. Same family as "diff the file you measured against production's":
+before quoting a population, print its composition.
+

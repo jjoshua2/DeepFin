@@ -7,6 +7,18 @@ Stockfish evaluation of the row's OWN position; and the blended training target
 is scored in the same buckets as the head, which is what separates "the head
 fails to fit its target" from "the target is itself optimistic".
 
+**⚑ THE HEAD/TARGET ARM IS THE SELFPLAY SUBSET, NOT "THE TRAINING
+DISTRIBUTION".** It needs two rows that are consecutive plies of one game (see
+the P0 ruler note below), and curriculum games never produce such a pair —
+measured pairing rate: selfplay 24.2%, curriculum **0.00%**, while the window is
+36.0% curriculum rows. So that arm is 100% selfplay BY CONSTRUCTION. This
+matters far beyond sample size: **the PID-handicapped Stockfish only plays in
+curriculum games**, so any claim about the handicap read off the head/target arm
+is read off the one population where the mechanism cannot operate. The
+OUTCOME-CALIBRATION arm below exists for exactly that reason: it needs no
+pairing and no model, covers every labelled row, and is split by
+``is_selfplay``. Read it before saying anything about the handicap.
+
 Why this is not a flag on ``scripts/value_regret.py``:
 
 - value_regret scores value RANKING (1-ply deep-SF regret of the move the value
@@ -25,16 +37,27 @@ Why this is not a flag on ``scripts/value_regret.py``:
 ``scripts/value_regret.py --sf-strata`` reports the RANKING axis in the same
 buckets, on the frozen set. Read them together.
 
-The P0 ruler, and why it needs no new Stockfish compute: selfplay records one
-row per net turn, and the SF label attached to a row is the evaluation of the
-position AFTER that row's move, from the mover-to-come's point of view. So for
-two rows that are consecutive plies of one game, the EARLIER row's stored
-``sf_label_meta`` eval is an evaluation of the LATER row's own position, already
-in the later row's point of view — no flip, no re-query. That is the same
-one-ply shift ``sf_p0_policy_target`` uses. Labels are the production ones
-(~698k nodes, MultiPV 40, median depth ~12); they are shallower than the frozen
-audit set's 1M-node MultiPV-10 labels, which is the price of scoring the exact
-rows the target was built from.
+The P0 ruler, and why it needs no new Stockfish compute: a row's SF label is the
+evaluation of the position AFTER that row's move, from the mover-to-come's point
+of view. So for two rows that are consecutive plies of one game, the EARLIER
+row's stored ``sf_label_meta`` eval is an evaluation of the LATER row's own
+position, already in the later row's point of view — no flip, no re-query. That
+is the same one-ply shift ``sf_p0_policy_target`` uses. Labels are the
+production ones (~698k nodes, MultiPV 40, median depth ~12); they are shallower
+than the frozen audit set's 1M-node MultiPV-10 labels, which is the price of
+scoring the exact rows the target was built from.
+
+Reading the output:
+
+- ``net-tgt`` is the PRIMARY axis. Both sides are measured on the same row and
+  neither is computed from the bucket, so a head that fit its target perfectly
+  would read zero in every bucket under any bucketing.
+- ``net-SFrul`` is the ruler-relative axis and can in principle be biased by
+  bucketing on a noisy ruler. Whether it actually is, is decided empirically by
+  the ``out`` column: the realized outcome is an unbiased draw of the true
+  value, so the printed perfect-head null says which way the bias runs.
+- ``tail_asymmetry`` has a non-zero null under BOTH the shuffle control and a
+  perfect head; both are printed. Never read it against zero.
 
 Usage:
 
@@ -69,9 +92,12 @@ from chess_anti_engine.eval.value_optimism import (
     bucket_net_score_spread,
     cp_to_expected_score,
     expected_score,
+    outcome_calibration,
+    perfect_head_tail_asymmetry,
     score_buckets,
     sf_label_attachment_corr,
     tail_asymmetry,
+    tail_asymmetry_ci,
 )
 from chess_anti_engine.inference import LocalModelEvaluator
 from chess_anti_engine.replay.shard import SF_CP_SENTINEL
@@ -93,6 +119,26 @@ _NEUTRAL_BLEND_KNOBS: dict[str, Any] = {
     "use_adjusted_wdl_target": False,
 }
 
+# Knobs the trainer RESOLVES per iteration and logs, so progress.csv is the only
+# artifact that holds the answer (rl_loop_audit method rule 12). `sf_wdl_frac` is
+# the live case: the yaml says 0.50, the realized value is the 0.45 floor.
+# `sf_wdl_temperature` is logged from `trainer.sf_wdl_temperature`
+# (tune/trainable_report.py), so the same rule applies to it.
+_REALIZED_FROM_PROGRESS: tuple[str, ...] = ("sf_wdl_frac", "sf_wdl_temperature")
+
+# Knobs with NO realized column anywhere. Nothing re-resolves them per
+# iteration, so the two artifacts that can disagree are the live yaml (current,
+# and these are live-reloadable) and the trial's params.json (what it launched
+# with). Neither is authoritative alone — params.json is stale after a live
+# reload, the yaml is wrong after a resume restored the trial config — so this
+# script REQUIRES THEM TO AGREE and refuses to guess when they do not. That is
+# as far as the available artifacts allow the realized-value rule to be applied;
+# the residual gap is that "they agree" is not the same as "the trainer used it".
+_CROSSCHECK_YAML_VS_PARAMS: tuple[str, ...] = (
+    "search_wdl_frac", "sf_search_dampen_sf_low", "sf_search_dampen_sf_high",
+    "use_adjusted_wdl_target",
+)
+
 
 def _shard_num(path: Path) -> int:
     m = re.search(r"shard_(\d+)\.zarr$", path.name)
@@ -109,35 +155,88 @@ def _resolve_replay_dir(run_dir: Path, replay_dir: str | None) -> Path:
     return d
 
 
-def _realized_sf_wdl_frac(run_dir: Path) -> tuple[float, str]:
-    """Realized ``sf_wdl_frac`` from progress.csv, NOT the yaml nominal.
-
-    The yaml's 0.50 is decorative: the frac is resolved per iteration from the
-    live ``wdl_regret`` and returns the ``sf_wdl_frac_floor`` whenever regret is
-    below ``sf_wdl_floor_at_regret``, which it always is. The only artifact that
-    holds the answer is the trial's own progress row (rl_loop_audit method rule
-    12: a realized value comes from the stage that resolves it).
-    """
+def _last_progress_row(run_dir: Path, key: str) -> tuple[dict[str, str], Path]:
     import csv
 
     trial = latest_trial_dir(run_dir, required=True)
     path = trial / "progress.csv"
     if not path.exists():
-        raise SystemExit(f"no progress.csv at {path}; pass --sf-wdl-frac explicitly")
+        raise SystemExit(f"no progress.csv at {path}; cannot read realized {key}")
     last: dict[str, str] | None = None
     with open(path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            if row.get("sf_wdl_frac"):
+            if row.get(key):
                 last = row
     if last is None:
-        raise SystemExit(f"{path} has no sf_wdl_frac column; pass --sf-wdl-frac explicitly")
-    return float(last["sf_wdl_frac"]), f"{path} iter={last.get('training_iteration')}"
+        raise SystemExit(
+            f"{path} has no non-empty {key} column. It is in _REALIZED_FROM_PROGRESS "
+            "because the trainer resolves it per iteration; if it stopped being logged, "
+            "decide where the realized value now lives rather than falling back to the "
+            "yaml nominal.",
+        )
+    return last, path
 
 
-def _check_blend_knobs(flat: dict[str, Any]) -> None:
+def _trial_params(run_dir: Path) -> tuple[dict[str, Any], Path]:
+    trial = latest_trial_dir(run_dir, required=True)
+    path = trial / "params.json"
+    if not path.exists():
+        raise SystemExit(f"no params.json at {path}; cannot cross-check the blend knobs")
+    return json.loads(path.read_text(encoding="utf-8")), path
+
+
+def resolve_blend_knobs(flat: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    """Every blend knob, from the artifact that actually holds its value.
+
+    Presence is REQUIRED at every source. An absent key must never fall back to
+    "the neutral value" — that is the `reco_diff misses absent keys` shape, where
+    a comparison that cannot see a missing key reports agreement. Here it would
+    let a knob that was removed from the config silently pass the neutrality
+    gate below.
+    """
+    resolved: dict[str, Any] = {}
+    sources: dict[str, str] = {}
+
+    row, prog_path = _last_progress_row(run_dir, _REALIZED_FROM_PROGRESS[0])
+    for key in _REALIZED_FROM_PROGRESS:
+        if not row.get(key):
+            raise SystemExit(
+                f"{prog_path} has no realized {key} on the row it logs "
+                f"{_REALIZED_FROM_PROGRESS[0]}; refusing to substitute the yaml nominal",
+            )
+        resolved[key] = float(row[key])
+        sources[key] = f"progress.csv iter={row.get('training_iteration')} (REALIZED)"
+
+    params, params_path = _trial_params(run_dir)
+    for key in _CROSSCHECK_YAML_VS_PARAMS:
+        if key not in flat:
+            raise SystemExit(f"{key} is absent from the config; it must be present to be checked")
+        if key not in params:
+            raise SystemExit(f"{key} is absent from {params_path}; cannot cross-check it")
+        a, b = flat[key], params[key]
+        same = (bool(a) == bool(b)) if isinstance(a, bool) else (float(a) == float(b))
+        if not same:
+            raise SystemExit(
+                f"{key} disagrees: config says {a!r}, {params_path} says {b!r}. One of a "
+                "live reload and a resume-restored trial config won and this script "
+                "cannot tell which. Determine what the trainer used and pass it "
+                "explicitly.",
+            )
+        resolved[key] = a
+        sources[key] = "config == params.json (no realized column exists)"
+
+    for key in sorted(resolved):
+        print(f"[value-optimism] {key} = {resolved[key]!r}  <- {sources[key]}")
+    return resolved
+
+
+def _check_blend_knobs(resolved: dict[str, Any]) -> None:
+    """The blend is a plain convex combination only while these are neutral."""
     bad = []
     for key, want in _NEUTRAL_BLEND_KNOBS.items():
-        got = flat.get(key, want)
+        if key not in resolved:
+            raise SystemExit(f"{key} was not resolved; the neutrality gate cannot run on it")
+        got = resolved[key]
         neutral = (bool(got) == bool(want)) if isinstance(want, bool) else (float(got) == float(want))
         if not neutral:
             bad.append(f"{key}={got!r} (neutral: {want!r})")
@@ -154,6 +253,7 @@ def _check_blend_knobs(flat: dict[str, Any]) -> None:
 def _load_rows(
     shard_paths: list[Path], *, max_rows: int, slope: float, draw_width: float,
     history_encoding: str, history_rep_fix: bool, attachment_min: float,
+    seed: int = 0,
 ) -> dict[str, np.ndarray]:
     """Collect P0-paired rows from the newest shards, newest first."""
     import zarr
@@ -163,9 +263,16 @@ def _load_rows(
         "has_sf_wdl", "search_wdl", "has_search_wdl", "wdl_target", "x",
     )
     cols: dict[str, list[np.ndarray]] = {k: [] for k in keys}
+    # The all-rows arm: no pairing, no model, so it keeps the curriculum rows the
+    # paired arm structurally cannot reach.
+    allrows: dict[str, list[np.ndarray]] = {
+        "ruler_cp": [], "outcome_score": [], "is_selfplay": [], "game_id": [],
+    }
     n_seen = 0
     n_rows_total = 0
     n_skipped_encoding = 0
+    scanned_selfplay = paired_selfplay = 0
+    scanned_curriculum = paired_curriculum = 0
     rejected: list[tuple[str, float]] = []
     for path in shard_paths:
         z = zarr.open(str(path), mode="r")
@@ -196,11 +303,15 @@ def _load_rows(
             rejected.append((path.name, float(attach)))
             continue
         # Row i is P0-paired iff row i-1 is the immediately preceding ply of the
-        # same game AND carries a usable eval. Both conditions are needed: the
-        # ply-gap check is what makes the earlier row's label an evaluation of
-        # THIS row's position, and without it the shift silently spans a gap of
-        # several plies (only ~24% of recorded rows are consecutive, because
-        # most plies are fast-ply and unrecorded).
+        # same game AND carries a usable eval. The ply-gap check is what makes
+        # the earlier row's label an evaluation of THIS row's position; without
+        # it the shift silently spans a gap of several plies.
+        #
+        # ⚑ IT IS ALSO A POPULATION FILTER, NOT JUST A SPARSITY ONE. Curriculum
+        # rows pair at 0.00% — the net does not move on consecutive plies there —
+        # so this arm is 100% selfplay, and the PID-handicapped opponent plays
+        # ONLY in curriculum. The composition is printed below so this cannot be
+        # overlooked; the all-rows arm is collected for the same reason.
         paired = np.zeros(gid.shape[0], dtype=bool)
         paired[1:] = (gid[1:] == gid[:-1]) & (ply[1:] == ply[:-1] + 1)
         paired[1:] &= has_meta[:-1]
@@ -216,11 +327,36 @@ def _load_rows(
         paired &= np.isfinite(cp_prev)
         paired &= np.asarray(z["has_sf_wdl"][:]).astype(bool)
         paired &= np.asarray(z["has_search_wdl"][:]).astype(bool)
+
+        selfplay = np.asarray(z["is_selfplay"][:]).astype(bool)
+        scanned_selfplay += int(selfplay.sum())
+        scanned_curriculum += int((~selfplay).sum())
+        paired_selfplay += int((paired & selfplay).sum())
+        paired_curriculum += int((paired & ~selfplay).sum())
+
+        # All-rows arm: the row's OWN label, which is the eval AFTER its move
+        # from the opponent's POV, so the scored side's POV is the negation.
+        wt_all = np.asarray(z["wdl_target"][:]).astype(np.int64)
+        own_ok = has_meta & np.isfinite(eff)
+        allrows["ruler_cp"].append(-eff[own_ok])
+        allrows["outcome_score"].append(
+            ((wt_all == 0) * 1.0 + (wt_all == 1) * 0.5)[own_ok],
+        )
+        allrows["is_selfplay"].append(selfplay[own_ok])
+        allrows["game_id"].append(gid[own_ok])
+
         idx = np.flatnonzero(paired)
         if idx.size == 0:
             continue
         if max_rows > 0 and n_seen + idx.size > max_rows:
-            idx = idx[: max_rows - n_seen]
+            # A PREFIX would be biased: rows are stored in game order, so the
+            # first k rows of a shard over-weight its earliest games and their
+            # opening plies. Subsample uniformly instead, then restore order.
+            take = max_rows - n_seen
+            pick = np.random.default_rng(seed + len(cols["game_id"])).choice(
+                idx.size, size=take, replace=False,
+            )
+            idx = idx[np.sort(pick)]
         cols["game_id"].append(gid[idx])
         cols["ply_index"].append(ply[idx])
         cols["sf_label_meta"].append(cp_prev[idx])
@@ -249,8 +385,33 @@ def _load_rows(
                "--shards to reach older, sound ones)" if rejected else ""),
         )
     out = {k: np.concatenate(v) for k, v in cols.items() if v}
+    for k, v in allrows.items():
+        out[f"_all_{k}"] = np.concatenate(v) if v else np.zeros(0)
     out["_rows_scanned"] = np.array([n_rows_total], dtype=np.int64)
     out["_shards_rejected"] = np.array([len(rejected)], dtype=np.int64)
+
+    scanned = max(1, scanned_selfplay + scanned_curriculum)
+    paired_n = max(1, paired_selfplay + paired_curriculum)
+    print(
+        f"[value-optimism] window composition: selfplay {scanned_selfplay} "
+        f"({100.0 * scanned_selfplay / scanned:.1f}%), curriculum {scanned_curriculum} "
+        f"({100.0 * scanned_curriculum / scanned:.1f}%)",
+    )
+    print(
+        f"[value-optimism] PAIRED-SET composition: selfplay {paired_selfplay} "
+        f"({100.0 * paired_selfplay / paired_n:.1f}%, pairing rate "
+        f"{100.0 * paired_selfplay / max(1, scanned_selfplay):.2f}%), curriculum "
+        f"{paired_curriculum} ({100.0 * paired_curriculum / paired_n:.1f}%, pairing rate "
+        f"{100.0 * paired_curriculum / max(1, scanned_curriculum):.2f}%)",
+    )
+    if paired_curriculum == 0 and scanned_curriculum > 0:
+        print(
+            "[value-optimism] ⚑ THE PAIRED SET IS 100% SELFPLAY. The ply-gap guard "
+            "structurally excludes every curriculum row, and the PID-handicapped "
+            "opponent plays ONLY in curriculum games — so NOTHING in the head/target "
+            "table below can support or refute a claim about the handicap. Use the "
+            "outcome-calibration arm for that.",
+        )
     # The P0 ruler as an expected score, through the SAME cp-logistic the
     # production SF label is built with, so the net is compared against the map
     # its own target was written in.
@@ -326,7 +487,11 @@ def main() -> None:
     ap.add_argument("--shards", type=int, default=120,
                     help="newest N shards to scan (0 = all). Newest-first, so this is a "
                          "recency window, not a biased prefix of a sorted file.")
-    ap.add_argument("--max-rows", type=int, default=0, help="0 = every paired row in the window")
+    ap.add_argument("--max-rows", type=int, default=0,
+                    help="0 (default) = every paired row in the window. When it truncates, "
+                         "rows are subsampled UNIFORMLY within the shard using --seed, not "
+                         "taken as a prefix: shard rows are stored in game order, so a "
+                         "prefix over-weights the earliest games and their opening plies.")
     ap.add_argument("--min-pieces", type=int, default=0,
                     help="0 (default) SCORES ALL ROWS INCLUDING TABLEBASE RANGE. Unlike "
                          "scripts/value_regret.py, which excludes <=7-man positions because "
@@ -373,7 +538,9 @@ def main() -> None:
     # own flattened config, so a yaml reorganisation cannot leave this script
     # reading a key from a section it moved out of.
     flat = flatten_run_config_defaults(load_yaml_file(args.config))
-    _check_blend_knobs(flat)
+    run_dir = Path(args.run_dir) if args.run_dir else default_run_dir()
+    knobs = resolve_blend_knobs(flat, run_dir)
+    _check_blend_knobs(knobs)
     sf_params = resolve_sf_target_params(flat)
     if not bool(sf_params.sf_wdl_use_cp_logistic):
         raise SystemExit(
@@ -383,19 +550,31 @@ def main() -> None:
     slope = float(sf_params.sf_wdl_cp_slope)
     draw_width = float(sf_params.sf_wdl_cp_draw_width)
 
-    run_dir = Path(args.run_dir) if args.run_dir else default_run_dir()
-    if args.sf_wdl_frac is not None:
-        sf_frac, sf_frac_src = float(args.sf_wdl_frac), "--sf-wdl-frac"
-    else:
-        sf_frac, sf_frac_src = _realized_sf_wdl_frac(run_dir)
+    sf_frac = float(args.sf_wdl_frac if args.sf_wdl_frac is not None else knobs["sf_wdl_frac"])
+    sf_frac_src = "--sf-wdl-frac" if args.sf_wdl_frac is not None else "progress.csv (realized)"
     search_frac = float(
-        args.search_wdl_frac if args.search_wdl_frac is not None
-        else flat.get("search_wdl_frac", 0.0)
+        args.search_wdl_frac if args.search_wdl_frac is not None else knobs["search_wdl_frac"]
     )
-    game_frac = max(0.0, 1.0 - sf_frac - search_frac)
+    # Mirror losses.py:443-447 exactly, including the over-unity branch. Today
+    # the fracs sum to 0.65 so the branch is dead, but "currently unreachable" is
+    # how a reconstruction silently stops matching production after a config
+    # change — and the two differ in kind, not degree: production RENORMALISES
+    # sf/search onto the simplex, while `1 - sf - search` clamped at zero would
+    # leave an unnormalised target.
+    sf_frac = max(0.0, sf_frac)
+    search_frac = max(0.0, search_frac)
+    blend_sum = sf_frac + search_frac
+    if blend_sum > 1.0:
+        sf_frac /= blend_sum
+        search_frac /= blend_sum
+        game_frac = 0.0
+        print(f"[value-optimism] blend fracs summed to {blend_sum:.3f} > 1 and were "
+              "renormalised, matching losses.py; the game-outcome share is now zero")
+    else:
+        game_frac = 1.0 - blend_sum
     print(f"[value-optimism] cp-logistic slope={slope} draw_width={draw_width}")
     print(f"[value-optimism] blend game={game_frac:.2f} sf={sf_frac:.2f} search={search_frac:.2f} "
-          f"(sf_wdl_frac realized from {sf_frac_src}; the yaml nominal is decorative)")
+          f"(sf_wdl_frac from {sf_frac_src}; the yaml nominal 0.50 is decorative)")
 
     model = load_model_from_checkpoint(args.checkpoint, device=args.device)
     model.eval()
@@ -414,10 +593,18 @@ def main() -> None:
     if args.shards > 0:
         paths = paths[: args.shards]
     print(f"[value-optimism] {len(paths)} shards from {replay_dir}")
+    print(
+        "[value-optimism] tablebase-range rows are "
+        + (f"EXCLUDED (--min-pieces {args.min_pieces})" if args.min_pieces > 0 else
+           "INCLUDED (--min-pieces 0, the default). scripts/value_regret.py excludes "
+           "<=7-man because tablebase decides those moves; this instrument audits the "
+           "TRAINING TARGET, which trains on them. Pass --min-pieces 8 for the "
+           "play-relevant split"),
+    )
 
     data = _load_rows(paths, max_rows=args.max_rows, slope=slope, draw_width=draw_width,
                       history_encoding=ckpt_hist, history_rep_fix=ckpt_rep_fix,
-                      attachment_min=float(args.attachment_min))
+                      attachment_min=float(args.attachment_min), seed=int(args.seed))
     x = data["x"]
     n = int(x.shape[0])
     print(f"[value-optimism] {n} P0-paired rows out of {int(data['_rows_scanned'][0])} scanned "
@@ -475,18 +662,70 @@ def main() -> None:
     label = "NEGATIVE CONTROL (shuffled)" if args.shuffle_control else "value optimism by SF-eval bucket"
     _print_table(f"{label} @ {args.checkpoint}", stats)
 
+    names = bucket_names_for(edges)
     spread = bucket_net_score_spread(stats)
     asym = tail_asymmetry(stats, edges)
+    null = perfect_head_tail_asymmetry(stats, edges)
+    asym_ci = tail_asymmetry_ci(rows, n_boot=args.bootstrap, seed=args.seed, edges=edges)
+
+    print("\n  --- PRIMARY (artifact-free): net minus its OWN target ---")
+    for s in stats:
+        print(f"  {s.name:20s} net-tgt {s.net_minus_target:+.4f} "
+              f"[{s.net_minus_target_ci[0]:+.4f},{s.net_minus_target_ci[1]:+.4f}]")
+    tails = [s for s in stats if s.name in (names[0], names[-1])]
+    if len(tails) == 2:
+        print(f"  tail sum of net-tgt ('{names[0]}' + '{names[-1]}'): "
+              f"{tails[0].net_minus_target + tails[1].net_minus_target:+.4f}   "
+              "[near zero = the head is compressed symmetrically, i.e. no DIRECTIONAL "
+              "losing-position defect; the per-bucket magnitudes are still real]")
+
     print(f"\n  control statistic (max-min bucket mean net score): {spread:.4f}"
           "   [shuffled control must collapse this to ~0]")
     if asym is not None:
-        names = bucket_names_for(edges)
-        print(f"  tail asymmetry (net-SFrul in '{names[0]}' + net-SFrul in "
-              f"'{names[-1]}'): {asym:+.4f}")
-        print("    Symmetric tails = regression toward the mean off a noisy ruler, not a "
-              "directional defect. Only this sum is evidence of real optimism.")
+        ci_txt = f" CI [{asym_ci[0]:+.4f},{asym_ci[1]:+.4f}]" if asym_ci else ""
+        print(f"  tail asymmetry of net-SFrul, TAIL PAIR '{names[0]}' + '{names[-1]}'"
+              f" (NOT the +-300 mirror pair unless those are the edges): {asym:+.4f}{ci_txt}")
+        if null is not None:
+            print(f"    perfect-head null for the SAME pair (outcome-SFrul): {null:+.4f}"
+                  f"   -> excess {asym - null:+.4f}")
+            print("    The null is the empirical test of whether bucketing biases this "
+                  "axis. A null BELOW zero means the true value in the losing tail is "
+                  "more extreme than the ruler, i.e. bucketing does NOT manufacture "
+                  "optimism here and the head's compression is real.")
+        print("    Its shuffle-control null is also non-zero (-0.0051 measured live); "
+              "run --shuffle-control on this same sample before quoting a level.")
     print("\n  Absolute cp bars here are NOT subject to the FEN-only defect (M10): the net "
           "is fed the stored production x planes, history included.")
+
+    # --- The arm that can see the PID handicap -------------------------------
+    all_cp = data["_all_ruler_cp"]
+    calib: dict[str, list] = {}
+    if all_cp.size:
+        print("\n  --- OUTCOME CALIBRATION (all labelled rows, no pairing, no model) ---")
+        print("  Did games actually score better than the objective eval says? The "
+              "handicap mechanism lives HERE, not in the table above.")
+        print(f"  {'bucket':22s} {'population':11s} {'n':>7s} {'ruler':>7s} {'outcome':>8s} "
+              f"{'out-ruler':>10s}")
+        for pop, mask in (
+            ("selfplay", data["_all_is_selfplay"].astype(bool)),
+            ("curriculum", ~data["_all_is_selfplay"].astype(bool)),
+        ):
+            if not mask.any():
+                continue
+            rowsc = outcome_calibration(
+                ruler_cp=all_cp[mask], outcome_score=data["_all_outcome_score"][mask],
+                game_id=data["_all_game_id"][mask], slope=slope, draw_width_cp=draw_width,
+                edges=edges, n_boot=args.bootstrap, seed=args.seed,
+            )
+            calib[pop] = rowsc
+            for c in rowsc:
+                print(f"  {c.name:22s} {pop:11s} {c.n:7d} {c.ruler_score:7.3f} "
+                      f"{c.outcome_score:8.3f} {c.delta:+10.3f} "
+                      f"[{c.ci[0]:+.3f},{c.ci[1]:+.3f}]")
+        print("  A LARGE POSITIVE out-ruler in the losing buckets of the CURRICULUM row "
+              "is the PID-handicapped opponent failing to convert — the mechanism "
+              "train/losses.py:459-463 already documents. The selfplay row cannot show "
+              "it: no handicapped opponent plays there.")
 
     if args.dump_json:
         payload = {
@@ -501,7 +740,12 @@ def main() -> None:
             "min_pieces": int(args.min_pieces),
             "control_statistic_net_score_spread": spread,
             "tail_asymmetry": asym,
+            "tail_asymmetry_ci": asym_ci,
+            "tail_asymmetry_pair": [names[0], names[-1]],
+            "perfect_head_tail_asymmetry_null": null,
+            "paired_set_is_selfplay_only": True,
             "buckets": [vars(s) for s in stats],
+            "outcome_calibration": {k: [vars(c) for c in v] for k, v in calib.items()},
         }
         Path(args.dump_json).write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"[value-optimism] dump -> {args.dump_json}")

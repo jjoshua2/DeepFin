@@ -6,11 +6,17 @@ so both directions are pinned here:
 
 - ``test_shuffle_control_kills_bucket_structure``: destroy the position <->
   net-evaluation association and the bucket structure must collapse.
-- ``test_tail_asymmetry_separates_artifact_from_defect``: a perfectly
-  SYMMETRIC compression (what a noisy ruler produces from a flawless head)
-  must read as ~0 asymmetry, while an injected one-sided optimism must not.
-  Without this, the negative control would happily pass on an instrument that
-  reports the artifact as a finding.
+- ``test_tail_asymmetry_separates_artifact_from_defect``: a symmetric
+  compression must read as ~0 EXCESS OVER THE MEASURED NULL, while an injected
+  one-sided optimism must not. Without this, the negative control would happily
+  pass on an instrument that reports the artifact as a finding.
+
+An earlier version of that test asserted the raw asymmetry was ~0, on a rig
+whose ``sf_cp`` came from a symmetric uniform and whose outcome equalled the
+ruler — which forces the null to zero by construction, so the test could not
+have caught the thing it was for. ``_noisy_ruler_rows`` replaces it with an
+off-centre latent truth behind a noisy ruler, where the null really is non-zero
+(``test_perfect_head_reads_nonzero_on_the_ruler_axis_and_the_null_catches_it``).
 """
 from __future__ import annotations
 
@@ -28,12 +34,15 @@ from chess_anti_engine.eval.value_optimism import (
     expected_score,
     expected_score_to_cp,
     material_balance_from_planes,
+    outcome_calibration,
+    perfect_head_tail_asymmetry,
     rank_corr,
     score_buckets,
     sf_eval_bucket,
     sf_eval_bucket_array,
     sf_label_attachment_corr,
     tail_asymmetry,
+    tail_asymmetry_ci,
 )
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
 
@@ -190,28 +199,126 @@ def test_shuffle_control_kills_bucket_structure() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _noisy_ruler_rows(
+    *, n: int = 30000, seed: int = 13, optimism_when_losing: float = 0.0,
+    compression: float = 0.0, target_equals_net: bool = True,
+) -> OptimismRows:
+    """A rig where the tail-asymmetry null is genuinely NOT zero.
+
+    The earlier builder drew ``sf_cp`` from a symmetric uniform and set the
+    outcome equal to the ruler, which forces the null to zero by construction —
+    so a test written against it cannot catch a non-zero null, which is exactly
+    the mistake this rig exists to prevent.
+
+    Here the ruler is a NOISY proxy for a latent truth and the truth's mean is
+    off-centre, so bucketing on the ruler really does regress each tail toward
+    the mean, by DIFFERENT amounts in the two tails. ``outcome_score`` is the
+    latent truth (an unbiased draw of it), which is what makes
+    ``perfect_head_tail_asymmetry`` the correct null.
+    """
+    rng = np.random.default_rng(seed)
+    true_cp = rng.normal(-80.0, 500.0, size=n)
+    ruler_cp = true_cp + rng.normal(0.0, 250.0, size=n)
+    true_score = cp_to_expected_score(true_cp, slope=SLOPE, draw_width_cp=DRAW_WIDTH)
+    net = true_score + compression * (0.5 - true_score)
+    net = np.where(ruler_cp < 0.0, net + optimism_when_losing, net)
+    net = np.clip(net, 0.0, 1.0)
+    target = net.copy() if target_equals_net else true_score.copy()
+    return OptimismRows(
+        sf_cp=ruler_cp,
+        sf_ruler_score=cp_to_expected_score(ruler_cp, slope=SLOPE, draw_width_cp=DRAW_WIDTH),
+        net_score=net,
+        target_score=target,
+        outcome_score=true_score,
+        target_sf_score=true_score,
+        search_score=net.copy(),
+        game_id=np.arange(n) // 6,
+        piece_count=np.full(n, 20, dtype=np.int64),
+    )
+
+
+def test_perfect_head_reads_nonzero_on_the_ruler_axis_and_the_null_catches_it() -> None:
+    """The artifact is real; the null is what makes it readable as one.
+
+    A head that predicts the truth exactly still reads non-zero against a NOISY
+    ruler, and the two tails do not cancel when the truth is off-centre. The
+    whole point of `perfect_head_tail_asymmetry` is to supply that offset, so
+    `tail_asymmetry` is never judged against zero.
+    """
+    stats = score_buckets(
+        _noisy_ruler_rows(), slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=200,
+    )
+    asym = tail_asymmetry(stats)
+    null = perfect_head_tail_asymmetry(stats)
+    assert asym is not None
+    assert null is not None
+    # The null is materially away from zero — a test that assumed zero here
+    # would read the artifact as a finding.
+    assert abs(null) > 0.01
+    # And a perfect head's measured asymmetry IS that null.
+    assert asym == pytest.approx(null, abs=0.005)
+
+
 def test_tail_asymmetry_separates_artifact_from_defect() -> None:
+    """Judged as an EXCESS over the measured null, never as a raw level."""
     symmetric = score_buckets(
-        _rows(compression=0.30), slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=200,
+        _noisy_ruler_rows(compression=0.30), slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=200,
     )
     directional = score_buckets(
-        _rows(compression=0.30, optimism_when_losing=0.10),
+        _noisy_ruler_rows(compression=0.30, optimism_when_losing=0.10),
         slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=200,
     )
 
     # A purely symmetric compression is large in each tail...
     assert _stat(symmetric, SF_EVAL_BUCKET_NAMES[0]).net_minus_sf > 0.05
     assert _stat(symmetric, SF_EVAL_BUCKET_NAMES[-1]).net_minus_sf < -0.05
-    # ...yet cancels in the asymmetry, which is what makes it readable as an
-    # artifact rather than a finding.
-    sym = tail_asymmetry(symmetric)
-    assert sym is not None
-    assert abs(sym) < 0.01
 
-    # An injected one-sided optimism survives the cancellation.
+    sym = tail_asymmetry(symmetric)
+    sym_null = perfect_head_tail_asymmetry(symmetric)
+    assert sym is not None
+    assert sym_null is not None
+    # ...and the RAW level is NOT near zero, so the old assertion would have
+    # been reading the null. Only the excess over the null is near zero.
+    assert abs(sym - sym_null) < 0.02
+
     directional_asym = tail_asymmetry(directional)
+    directional_null = perfect_head_tail_asymmetry(directional)
     assert directional_asym is not None
-    assert directional_asym > 0.08
+    assert directional_null is not None
+    assert directional_asym - directional_null > 0.05
+
+
+def test_net_minus_target_is_free_of_the_bucketing_artifact() -> None:
+    """The primary axis reads zero for a head that fits its target, always.
+
+    Same noisy ruler that makes `net_minus_sf` non-zero for a perfect head —
+    `net_minus_target` must stay at zero in every bucket regardless, because
+    neither side is computed from the bucketing variable.
+    """
+    stats = score_buckets(
+        _noisy_ruler_rows(compression=0.30, target_equals_net=True),
+        slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=200,
+    )
+    assert abs(_stat(stats, SF_EVAL_BUCKET_NAMES[0]).net_minus_sf) > 0.05
+    for s in stats:
+        assert abs(s.net_minus_target) < 1e-9
+
+
+def test_tail_asymmetry_ci_covers_the_point_and_narrows_with_data() -> None:
+    small = _noisy_ruler_rows(n=3000, seed=21)
+    large = _noisy_ruler_rows(n=30000, seed=21)
+    for rows in (small, large):
+        stats = score_buckets(rows, slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=400)
+        point = tail_asymmetry(stats)
+        ci = tail_asymmetry_ci(rows, n_boot=400, seed=1)
+        assert point is not None
+        assert ci is not None
+        assert ci[0] <= point <= ci[1]
+    wide = tail_asymmetry_ci(small, n_boot=400, seed=1)
+    narrow = tail_asymmetry_ci(large, n_boot=400, seed=1)
+    assert wide is not None
+    assert narrow is not None
+    assert (wide[1] - wide[0]) > (narrow[1] - narrow[0])
 
 
 def test_scorer_attributes_error_to_head_versus_target() -> None:
@@ -230,6 +337,38 @@ def test_scorer_attributes_error_to_head_versus_target() -> None:
     # The head fits its target exactly; the target is what is optimistic.
     assert abs(lost.net_minus_target) < 0.01
     assert lost.target_minus_sf > 0.1
+
+
+def test_outcome_calibration_detects_a_weak_opponent() -> None:
+    """The arm that carries the handicap conclusion must be able to show it.
+
+    Two populations over the SAME rulers: one where results follow the eval, one
+    where the loser escapes half the time from lost positions — the shape a
+    handicapped opponent produces. Only the second may light up.
+    """
+    rng = np.random.default_rng(4)
+    cp = rng.uniform(-1200.0, 1200.0, size=8000)
+    ruler = cp_to_expected_score(cp, slope=SLOPE, draw_width_cp=DRAW_WIDTH)
+    game_id = np.arange(cp.size) // 5
+    honest = outcome_calibration(
+        ruler_cp=cp, outcome_score=ruler, game_id=game_id,
+        slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=200,
+    )
+    escaped = np.where(cp <= -300.0, np.minimum(ruler + 0.25, 1.0), ruler)
+    handicapped = outcome_calibration(
+        ruler_cp=cp, outcome_score=escaped, game_id=game_id,
+        slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=200,
+    )
+    lost = SF_EVAL_BUCKET_NAMES[0]
+    honest_lost = next(c for c in honest if c.name == lost)
+    hand_lost = next(c for c in handicapped if c.name == lost)
+    assert abs(honest_lost.delta) < 1e-9
+    assert honest_lost.ci[0] <= 0.0 <= honest_lost.ci[1]
+    assert hand_lost.delta > 0.2
+    assert hand_lost.ci[0] > 0.15
+    # And it must stay quiet outside the buckets where the escape was injected.
+    hand_won = next(c for c in handicapped if c.name == SF_EVAL_BUCKET_NAMES[-1])
+    assert abs(hand_won.delta) < 1e-9
 
 
 def test_bootstrap_ci_respects_game_clustering() -> None:

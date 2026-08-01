@@ -21,16 +21,30 @@ Three rules the design follows:
    test and must not select the stratum.
 2. **Stratify, do not filter.** Every bucket across the range is reported, so
    the losing-position number is read against the same instrument's behaviour
-   everywhere else. A single-bucket error rate is uninterpretable, and worse:
-   bucketing on a NOISY ruler regresses every extreme bucket toward the mean,
-   which manufactures apparent optimism when losing and apparent pessimism
-   when winning *even for a perfect head*. That artifact is SYMMETRIC, so only
-   the ASYMMETRY between the two tails (``tail_asymmetry`` below) is evidence
-   of a directional defect.
+   everywhere else. A single-bucket error rate is uninterpretable.
 3. **Score the TARGET next to the HEAD.** A head that matches an optimistic
    target is a data defect; a head that misses a sound target is a fitting
    defect. Reporting ``net``, ``target`` and its three components in the same
    bucket separates them.
+
+**``net_minus_target`` is the PRIMARY axis, not ``net_minus_sf``.** Bucketing on
+a ruler can bias a comparison against that ruler, but ``net`` and ``target`` are
+both measured on the same row and neither is computed from the bucket, so a head
+that fit its target perfectly would read zero in every bucket under ANY
+bucketing. That axis is artifact-free by construction; the ruler-relative one is
+not, and must be read next to the check below.
+
+**Whether bucketing biases the ruler-relative number is an empirical question,
+and this module answers it rather than assuming.** Regression toward the mean
+would require the TRUE value of positions in an extreme bucket to be less
+extreme than the ruler says. The realized game outcome is an unbiased draw of
+exactly that quantity, so ``outcome_score`` versus ``sf_ruler_score`` measures
+the bias directly, and ``perfect_head_tail_asymmetry`` turns it into the NULL
+that ``tail_asymmetry`` must be judged against. On the live 2026-07-31 sample
+the outcome was MORE extreme than the ruler in both tails, i.e. the bias runs
+the other way and the head's compression is real, not manufactured. Never quote
+``tail_asymmetry`` against a null of zero: it is not zero under the shuffle
+control either (-0.0051 measured).
 
 Expected score (``W + 0.5*D``) is the primary unit because it never saturates.
 The centipawn equivalent is reported alongside it for comparability with the
@@ -428,13 +442,25 @@ def bucket_net_score_spread(stats: list[BucketStat]) -> float:
 def tail_asymmetry(
     stats: list[BucketStat], edges: tuple[float, ...] = SF_EVAL_BUCKET_EDGES,
 ) -> float | None:
-    """``net_minus_sf`` in the lost bucket PLUS that in the won bucket.
+    """``net_minus_sf`` in the FIRST bucket PLUS that in the LAST bucket.
 
-    Regression toward the mean from a noisy ruler pushes the lost bucket
-    optimistic and the won bucket pessimistic by the SAME amount, so it cancels
-    here. What survives is the directional part of the effect. Returns None
-    unless BOTH tail buckets are populated — a one-sided read of a symmetric
-    artifact is exactly the mistake this number exists to prevent.
+    Any error the bucketing itself induces enters the two tails with opposite
+    signs and cancels here, so this isolates the directional part. Returns None
+    unless both tail buckets are populated.
+
+    **Three ways to misread this number, all of which have happened.**
+
+    (a) Its null is NOT zero. Under the shuffled-net negative control it
+    measured -0.0051 on live rows — the statistic has an offset that comes from
+    the ruler's own asymmetry about the net's mean, not from the head.
+    (b) A perfect head's null is also not zero; get it from
+    `perfect_head_tail_asymmetry`, which reads it off the realized outcomes.
+    Judge `tail_asymmetry` as an EXCESS over that null, with a CI from
+    `tail_asymmetry_ci` — never as a raw level.
+    (c) The tails are whatever `edges[0]` / `edges[-1]` select. With fine edges
+    those are the SATURATED extremes, where the cp axis is flat and the score
+    axis compressed, and the number is NOT the same quantity as the +-300 mirror
+    pair a reader may be looking at. Say which pair produced it.
     """
     names = bucket_names_for(edges)
     by_name = {s.name: s for s in stats}
@@ -443,3 +469,121 @@ def tail_asymmetry(
     if lo is None or hi is None:
         return None
     return float(lo.net_minus_sf + hi.net_minus_sf)
+
+
+def perfect_head_tail_asymmetry(
+    stats: list[BucketStat], edges: tuple[float, ...] = SF_EVAL_BUCKET_EDGES,
+) -> float | None:
+    """The `tail_asymmetry` an OUTCOME-PERFECT head would score. The null.
+
+    Substitutes the realized game outcome for the net. Because the outcome is an
+    unbiased draw of the position's true value under the actual continuation, a
+    head that predicted it exactly would produce this number — so it is the
+    reference `tail_asymmetry` must be judged against, and the direct empirical
+    test of whether bucketing biases the ruler-relative comparison at all.
+    """
+    names = bucket_names_for(edges)
+    by_name = {s.name: s for s in stats}
+    lo = by_name.get(names[0])
+    hi = by_name.get(names[-1])
+    if lo is None or hi is None:
+        return None
+    return float(
+        (lo.outcome_score - lo.sf_ruler_score) + (hi.outcome_score - hi.sf_ruler_score)
+    )
+
+
+def _game_tail_sums(
+    values: np.ndarray, inv: np.ndarray, n_games: int, mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    sums = np.zeros(n_games, dtype=np.float64)
+    counts = np.zeros(n_games, dtype=np.float64)
+    np.add.at(sums, inv[mask], values[mask])
+    np.add.at(counts, inv[mask], 1.0)
+    return sums, counts
+
+
+def tail_asymmetry_ci(
+    rows: OptimismRows, *, n_boot: int = 2000, seed: int = 0,
+    cp_clamp: float = CP_CLAMP, edges: tuple[float, ...] = SF_EVAL_BUCKET_EDGES,
+    alpha: float = 0.05,
+) -> tuple[float, float] | None:
+    """95% game-clustered bootstrap CI for `tail_asymmetry`.
+
+    Both tails are recomputed inside every resample from the SAME draw of games,
+    so their correlation is preserved — resampling them independently would
+    understate the width of a difference of two means over overlapping games.
+    """
+    buckets = sf_eval_bucket_array(np.clip(rows.sf_cp, -cp_clamp, cp_clamp), edges)
+    lo_mask = buckets == 0
+    hi_mask = buckets == len(edges)
+    if not lo_mask.any() or not hi_mask.any() or n_boot <= 0:
+        return None
+    diff = rows.net_score - rows.sf_ruler_score
+    games, inv = np.unique(rows.game_id, return_inverse=True)
+    n_games = int(games.size)
+    if n_games < 2:
+        return None
+    lo_s, lo_c = _game_tail_sums(diff, inv, n_games, lo_mask)
+    hi_s, hi_c = _game_tail_sums(diff, inv, n_games, hi_mask)
+    rng = np.random.default_rng(seed)
+    draws = rng.integers(0, n_games, size=(n_boot, n_games))
+    boot = (
+        lo_s[draws].sum(axis=1) / np.clip(lo_c[draws].sum(axis=1), 1e-12, None)
+        + hi_s[draws].sum(axis=1) / np.clip(hi_c[draws].sum(axis=1), 1e-12, None)
+    )
+    return (
+        float(np.quantile(boot, alpha / 2.0)),
+        float(np.quantile(boot, 1.0 - alpha / 2.0)),
+    )
+
+
+@dataclass(frozen=True)
+class OutcomeCalibration:
+    """One bucket of the outcome-vs-ruler arm, for one population."""
+
+    name: str
+    n: int
+    ruler_score: float
+    outcome_score: float
+    delta: float
+    ci: tuple[float, float]
+
+
+def outcome_calibration(
+    *, ruler_cp: np.ndarray, outcome_score: np.ndarray, game_id: np.ndarray,
+    slope: float, draw_width_cp: float, edges: tuple[float, ...] = SF_EVAL_BUCKET_EDGES,
+    n_boot: int = 2000, seed: int = 0, cp_clamp: float = CP_CLAMP,
+) -> list[OutcomeCalibration]:
+    """Did games from an SF-evaluated position score better than the eval says?
+
+    This is the arm that can see the PID handicap, and it exists because the
+    head/target arm structurally cannot. The head/target arm needs two rows that
+    are consecutive plies of one game, and curriculum games — the ONLY ones the
+    handicapped Stockfish plays in — never produce such a pair, so that arm is
+    100% selfplay by construction. This arm needs no pairing and no model: it
+    uses the row's own SF label as the ruler, so it covers every labelled row in
+    the window and can be split by ``is_selfplay``.
+
+    ``ruler_cp`` must already be in the SCORED SIDE's point of view.
+    """
+    rng = np.random.default_rng(seed)
+    cp = np.clip(np.asarray(ruler_cp, dtype=np.float64), -cp_clamp, cp_clamp)
+    ruler = cp_to_expected_score(cp, slope=slope, draw_width_cp=draw_width_cp)
+    out = np.asarray(outcome_score, dtype=np.float64)
+    buckets = sf_eval_bucket_array(cp, edges)
+    result: list[OutcomeCalibration] = []
+    for b, name in enumerate(bucket_names_for(edges)):
+        sel = buckets == b
+        if not sel.any():
+            continue
+        delta = out[sel] - ruler[sel]
+        result.append(OutcomeCalibration(
+            name=name,
+            n=int(sel.sum()),
+            ruler_score=float(ruler[sel].mean()),
+            outcome_score=float(out[sel].mean()),
+            delta=float(delta.mean()),
+            ci=_cluster_bootstrap_ci(delta, game_id[sel], n_boot=n_boot, rng=rng),
+        ))
+    return result
