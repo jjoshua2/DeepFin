@@ -20283,3 +20283,98 @@ decides membership. Each time the local patch was obvious and each time it would
 have left the class intact. **The standard that actually worked was the reviewer's:
 prefer the change that makes the wrong answer inexpressible over the change that
 makes this wrong answer go away.** Applied here it cost one line.
+
+## 2026-08-01 — the ratchet's zero-row `exit 1` had no bounded consumer: a muted instrument that would have burned ~18 GPU-hours/day retrying itself
+
+**Change:** `scripts/daily_gate_ratchet.sh` + `scripts/ratchet_loop.sh` +
+`scripts/loop_health.py` (`5777e0906`, `ad8d465a3`, `598c6ab11`).
+
+### What was wrong
+
+Earlier today I made a zero-row arena day `exit 1`, so a muted instrument would
+stop reading as a null result. That half was right and stands. **I never touched
+the consumer.** `ratchet_loop.sh` polls every 600 s and stamped the day only on
+exit 0; `train.sh:142-145` auto-starts it alongside training; `BUDGET_MIN=30`.
+A persistently zero-row day therefore became a 30-minute, 16-concurrent arena
+every ~40 minutes — measured at **144 arena launches in 144 polls** on the parent
+commit. That is positive feedback: contention causes zero rows, zero rows cause
+retries, retries cause contention, against a script whose own header cites the
+2026-07-26 incident (4h32m, 82% throughput loss) as why the budget exists.
+
+Not hypothetical: both series were zero-row on **07-30 and 07-31**.
+
+### The fix, and why this shape
+
+An **attempt ledger** (`data/ratchet/attempts.csv`) recording ATTEMPTED
+separately from SUCCEEDED — neither inferred from the other — plus a distinct
+non-retryable exit 5. Three give-up rules: (1) this attempt's reason equals the
+previous attempt's (deterministic *by evidence*); (2) every series ended
+`noref`/`nosnap`/`selfmatch` (deterministic *by construction* — exits before
+launching any arena); (3) an absolute `--max-attempts` cap, default 3. The cap is
+checked **before** the snapshot copy and before any arena, so an exhausted day
+costs one `grep` per poll.
+
+REJECTED: stamping the day done on failure (that is the silent hole the `exit 1`
+exists to prevent); exponential backoff (still unbounded across a day, and hides
+the give-up behind a schedule); classifying a single arena `rc 3` as structural
+(contention and a deterministic slow start are indistinguishable in ONE run —
+hence the wait for a second *identical* failure).
+
+**Loudness preserved:** give-up stamps `last_giveup_date`, never `last_run_date`.
+The day still has no `ratchet.csv` row. Give-up / never-ran / genuine-null remain
+three distinguishable durable states.
+
+### Deciding yardstick — exact command
+
+```
+PYTHONPATH=. python3 -m pytest tests/test_ratchet_search_shape.py -q
+```
+
+### Pre-committed thresholds
+
+- **SUCCESS:** arena launches per simulated 144-poll day are **2** on a
+  reproducing failure, **3** on a changing failure, **0** all-structural, and a
+  failure→failure→recovery day still gets `rows=1` with `last_run_date` stamped.
+  Measured independently by author and reviewer on separate rigs: identical.
+- **KILL:** any day shape exceeding `3 x BUDGET_MIN` of arena time, or a
+  `ratchet.csv` row appearing for a day that gave up.
+
+### ⚑ The finding that outlived the fix
+
+The reviewer's mutation — `ratchet_outcome "$?"` → `ratchet_outcome 0` —
+**survived all 36 tests**. No test executed the loop body at all
+(`ratchet_loop.sh:16` hard-coded its `cd`), so the tests pinned the *function*
+while the *call site feeding it* was unpinned. Same shape as the `failed=1`
+wiring gap on the SF label path: the rule is pinned, the wiring into it is not.
+Closed with a `RATCHET_ROOT` seam, `poll_once()`, and `--once`; the mutation now
+dies on `test_one_poll_records_the_outcome_it_actually_got`.
+
+A second survivor, self-reported by the author before fixing: the iteration parse
+exists in **both** scripts and the test exercised only one copy. Small today
+(`${iter:-0}` maps empty to 0 and `RATCHET_MIN_ITER=5` skips iteration 0 anyway),
+real at `RATCHET_MIN_ITER=0`. **Second file pair this session where duplicated
+logic was pinned in one copy only.**
+
+### Why `attempts.csv` needed a reader
+
+`loop_health.py::ratchet_gap_alerts` now ALERTs when the newest day in the ledger
+produced no `ratchet.csv` row. **The ratchet runs outside the training process,
+so a day it gave up on leaves `result.json` perfectly green.** A durable record
+nobody reads is how this loop keeps losing signal.
+
+### Corrections to my own framing
+
+I told the implementing agent the 07-31 case was the `nopairs` shape. It is not:
+`arena_2026-07-31_vs_boot512.log.broken_flush_evidence` ends mid-preamble after 4
+complete lines, i.e. the process was killed from outside — the `backstop` path.
+Corrected in the source comment. I also flagged `cmp -s` reading 2x685 MB inside
+the arena deadline as a cost concern; **measured, it is 0.004 s** on different
+nets (it stops at the first differing byte) and 0.81 s cold on identical content,
+and the full read only happens on the branch that then skips a ~900 s arena.
+Concern withdrawn.
+
+### Confounds
+
+`MUTED_EXIT = 4` was checked for the same defect and **verified clear**:
+repo-wide grep plus `crontab -l` shows nothing consumes exit 4 — `ratchet_slope.py`
+is hand-run and reaches no retry loop.
