@@ -151,6 +151,35 @@ if [ ! -s "$snap" ]; then
     echo "[ratchet] snapshotted iter=$iter -> $snap"
 fi
 
+pick_prev_snapshot () {   # $1=snapshot dir  $2=today's basename  $3=today's iter
+    # rc 0 + path : a usable earlier reference
+    # rc 3        : the newest earlier snapshot is the SAME ITERATION — a
+    #               self-match, true Elo exactly 0
+    # rc 1        : no earlier snapshot at all
+    #
+    # The old selector filtered by FILENAME only, so when training is down the
+    # daily snapshot is byte-identical to yesterday's under a new date and the
+    # `vs_prev` series quietly played the net against ITSELF. Confirmed by
+    # sha256: ck_2026-07-31_iter478.pt and ck_2026-08-01_iter478.pt are the same
+    # file (93db63e5…), and the 2026-08-01 vs_prev run wrote -43.7 Elo for a
+    # comparison whose true value is 0.
+    #
+    # This was harmless while a short run wrote nothing; `--max-seconds` made
+    # EVERY run write a row, and the ledger's own advice is to run the ratchet
+    # in a training-down window — exactly when the self-match happens. So the
+    # fix that made the instrument reliable is what made this consequential.
+    #
+    # SKIP rather than fall back to an older iteration: silently substituting a
+    # 2-day-old reference would keep the `vs_prev` label on a row that no longer
+    # means "vs yesterday", which is the defect class this whole PR is about.
+    local prev pit
+    prev=$(ls -t "$1"/ck_*.pt 2>/dev/null | grep -vF "$2" | head -1)
+    [ -n "$prev" ] || return 1
+    pit=$(basename "$prev" | sed 's/.*_iter//; s/\.pt$//')
+    [ "$pit" = "$3" ] && return 3
+    printf '%s\n' "$prev"
+}
+
 pick_log_path () {   # $1=date  $2=iter  $3=series  -> a path that does NOT exist
     # NEVER overwrite a previous attempt's log. The name used to be
     # arena_<date>_<series>.log opened with `>`, so the retry that the exit-1
@@ -297,12 +326,14 @@ run_arena () {   # $1=reference  $2=series-label
 }
 
 # --- series 1: vs yesterday (most recent earlier snapshot) ------------------
-prev=$(ls -t "$SNAP_DIR"/ck_*.pt 2>/dev/null | grep -v "$(basename "$snap")" | head -1)
-if [ -n "$prev" ]; then
-    run_arena "$prev" "vs_prev"
-else
-    echo "[ratchet] no earlier snapshot yet — vs_prev starts tomorrow"
-fi
+prev=$(pick_prev_snapshot "$SNAP_DIR" "$(basename "$snap")" "$iter")
+case $? in
+    0) run_arena "$prev" "vs_prev" ;;
+    3) echo "[ratchet] vs_prev SKIPPED: the newest earlier snapshot is ALSO iter$iter" \
+            "— that is the same net, true Elo exactly 0, and the row would read as a" \
+            "real day-over-day measurement. Training is probably down." ;;
+    *) echo "[ratchet] no earlier snapshot yet — vs_prev starts tomorrow" ;;
+esac
 
 # --- series 2: vs the frozen boot512 anchor ---------------------------------
 run_arena "$ANCHOR" "vs_boot512"

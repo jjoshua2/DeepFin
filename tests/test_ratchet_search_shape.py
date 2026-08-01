@@ -487,6 +487,30 @@ def test_the_verdict_line_carries_its_own_caveats(tmp_path) -> None:
     )
     assert "UNVERIFIED" in out
 
+    # The EXCLUDED caveat is a SEPARATE branch and escaped its own mutation.
+    # Add a 10-pair row: the fit drops it, and the verdict must say so where the
+    # verdict is read, not 15 lines up.
+    csv_path.write_text(
+        csv_path.read_text()
+        + "2026-07-05,50,vs_boot512,-99.0,-200.0,2.0,0.40,20,training\n"
+    )
+    (trial / "progress.csv").write_text(
+        (trial / "progress.csv").read_text() + "50,1000\n"
+    )
+    out2 = subprocess.run(
+        [sys.executable, "scripts/ratchet_slope.py",
+         "--ratchet-csv", str(csv_path), "--run-dir", str(trial.parent.parent)],
+        cwd=str(ROOT), capture_output=True, text=True, check=True,
+        env={"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
+             "PYTHONDONTWRITEBYTECODE": "1"},
+    ).stdout
+    lines2 = out2.splitlines()
+    after2 = "\n".join(lines2[next(i for i, ln in enumerate(lines2) if "VERDICT:" in ln):])
+    assert "excluded by --min-pairs" in after2, (
+        "a row was dropped from the fit and the VERDICT block does not mention "
+        "it:\n" + after2
+    )
+
 
 def test_pick_log_path_never_returns_an_existing_file(tmp_path) -> None:
     """A retry must not overwrite the attempt it is retrying.
@@ -520,6 +544,14 @@ def test_pick_log_path_never_returns_an_existing_file(tmp_path) -> None:
         ).stdout.strip()
         return out
 
+    # The function is only worth anything if run_arena USES it. A perfect,
+    # tested, uncalled helper is the same defect one band down.
+    assert 'out=$(pick_log_path "$today" "$iter" "$series")' in src, (
+        "run_arena does not call pick_log_path; the helper is dead code and the "
+        "retry is back to overwriting the previous attempt's log"
+    )
+    assert 'out="data/ratchet/arena_${today}_${series}.log"' not in src
+
     first = call()
     assert first.endswith("arena_2026-07-31_iter478_vs_prev.log")
     assert "iter478" in first, "the log name must be keyed on the iteration too"
@@ -535,3 +567,83 @@ def test_pick_log_path_never_returns_an_existing_file(tmp_path) -> None:
         seen.append(path)
         (tmp_path / path).write_text("attempt log\n")
     assert len(set(seen)) == 3, f"collided: {seen}"
+
+
+def _extract_shell_func(name: str) -> str:
+    """Pull one function out of the real ratchet script so a test can RUN it."""
+    src = RATCHET_SH.read_text(encoding="utf-8")
+    start = src.index(f"{name} () {{")
+    end = src.index("\n}\n", start) + len("\n}\n")
+    return src[start:end]
+
+
+def test_vs_prev_refuses_to_arena_a_net_against_itself(tmp_path) -> None:
+    """A same-iteration reference has true Elo 0 and must not become a row.
+
+    `prev` was selected by FILENAME only. With training down the daily snapshot
+    is byte-identical to yesterday's under a new date, so `vs_prev` played the
+    net against ITSELF: sha256 of ck_2026-07-31_iter478.pt and
+    ck_2026-08-01_iter478.pt are the same file, and the 2026-08-01 run recorded
+    -43.7 Elo [-224.5, +114.9] for a comparison whose true value is exactly 0.
+    The preserved attempt-1 log is the accidental null control -- +0.0 at 14
+    pairs, -15.8 at 22, +5.8 at 30, converging to zero as a self-match must.
+
+    Harmless while a short run wrote nothing; `--max-seconds` made every run
+    write a row, and the ratchet is advised to run in a training-down window --
+    exactly when this fires. Executed, not grepped: N7 showed a guard can be
+    perfect and uncalled.
+    """
+    import subprocess
+
+    func = _extract_shell_func("pick_prev_snapshot")
+    snaps = tmp_path / "snaps"
+    snaps.mkdir()
+
+    def call(current: str, it: str) -> tuple[int, str]:
+        r = subprocess.run(
+            ["bash", "-c", f"{func}\npick_prev_snapshot '{snaps}' '{current}' '{it}'"],
+            cwd=str(tmp_path), capture_output=True, text=True, check=False,
+        )
+        return r.returncode, r.stdout.strip()
+
+    # 1. No earlier snapshot at all.
+    (snaps / "ck_2026-08-01_iter478.pt").write_text("x")
+    rc, out = call("ck_2026-08-01_iter478.pt", "478")
+    assert rc == 1, f"expected 'none available', got rc={rc} {out!r}"
+    assert out == "", f"nothing should be printed when there is no reference: {out!r}"
+
+    # 2. THE BUG: the newest earlier snapshot is the same iteration.
+    older = snaps / "ck_2026-07-31_iter478.pt"
+    older.write_text("x")
+    os.utime(older, (2, 2))  # older than today's snapshot, newer than iter409
+    rc, out = call("ck_2026-08-01_iter478.pt", "478")
+    assert rc == 3, f"same-iteration reference must be refused, got rc={rc} {out!r}"
+    assert out == "", "a refused reference must not be handed back as a path"
+
+    # 3. A genuinely earlier iteration is still used.
+    real = snaps / "ck_2026-07-30_iter409.pt"
+    real.write_text("x")
+    os.utime(real, (1, 1))  # oldest, so `ls -t` still ranks iter478 first
+    rc, out = call("ck_2026-08-01_iter478.pt", "478")
+    assert rc == 3, (
+        "the newest earlier snapshot is still iter478; falling back to an older "
+        "iteration would silently relabel a 2-day gap as 'vs_prev'"
+    )
+    older.unlink()
+    rc, out = call("ck_2026-08-01_iter478.pt", "478")
+    assert rc == 0, f"a different iteration must be usable, got rc={rc} {out!r}"
+    assert out.endswith("ck_2026-07-30_iter409.pt"), (
+        f"wrong reference returned: {out!r}"
+    )
+
+
+def test_the_self_match_guard_is_wired_into_the_series() -> None:
+    """The helper has to be what actually selects the vs_prev reference."""
+    src = RATCHET_SH.read_text(encoding="utf-8")
+    assert 'prev=$(pick_prev_snapshot "$SNAP_DIR" "$(basename "$snap")" "$iter")' in src
+    assert 'grep -v "$(basename "$snap")"' not in src, (
+        "the filename-only selector is what produced the self-match row"
+    )
+    # rc 3 must be handled distinctly, or a self-match degrades to "no snapshot"
+    # and the operator never learns why the series stopped.
+    assert "3)" in src.split("series 1:")[1].split("series 2:")[0]

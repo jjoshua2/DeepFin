@@ -18339,6 +18339,8 @@ and the new one runs.
   that finished on the last played ply (the proof run banked 100 and scored 96; 118 and
   114). Moved below the reap: free, and cannot fabricate — `_record` still only runs
   for a board with a real result.
+- **⚑ SUPERSEDED — the mechanism below is BACKWARDS and the materiality is
+  overstated. See the 2026-08-01 CORRECTION 2 at EOF.**
 - **M6** `ratchet_slope.py` weights by `w = 1/se^2`, and audit L9 measured the 25-pair
   cell at 92.3-93.8% coverage (71.2% degenerate) — so the fit leant hardest on exactly
   the rows to distrust, and `--max-seconds` makes that regime common. New `--min-pairs`
@@ -18348,6 +18350,9 @@ and the new one runs.
   writer** — the row is a true observation and belongs in the CSV. Material: dropping
   the 13- and 23-pair rows moves the all-rows slope CI from `[-2.24, +0.68]` (NULL) to
   `[-1.13, -0.51]`.
+
+**⚑ SUPERSEDED — the M6 control listed here did NOT fail as required; it was a
+source-text guard that passed with the filter disabled. See CORRECTION 2 at EOF.**
 
 **Verification.** 9 negative controls, all FAIL-AS-REQUIRED (flush, imputation,
 deadline-ignored, two shell guards, B1, M3, M4, M5, M6 floor). Lint clean; 33 tests in
@@ -18760,3 +18765,233 @@ measured only against the episode I already knew about, where it reads 0.87 and
 looks decisive. Its floor — and therefore its blindness to k=1 — only appears
 once you ask what it reads when the fault is *small*. **A detector validated
 solely on the largest instance of a fault is not validated.**
+
+---
+
+## 2026-08-01 — ADDENDUM 2 to the value-optimism entries: the desync threshold was fitted the same way the method note warns against. Gate axis replaced; two numbers corrected.
+
+Review round 3. **Both original blocking findings were confirmed fixed** and the
+realized-vs-yaml design accepted. Four narrow defects, none of which changes a
+published number.
+
+### 1. My own method note applied to my own replacement threshold
+
+The previous addendum ends with: *"a gate tuned on the episode that produced it
+detects that episode."* The `desync <= 0.15` axis I then shipped was picked from
+those same four episodes, and it leaks. Dense over all 834 shards:
+
+    bestmove-is-first-legal:  sound max 0.1496  |  corrupt min 0.1505
+    -> every threshold sits in a 0.0009 gap between two ADJACENT order
+       statistics of the same quantity.  Headroom over accepted p90: 1.7x.
+
+Seven shards (33391, 33394, 33395, 33431, 33626, 33627, 33629) are ADMITTED
+while sitting inside runs of rejects — 33431 has four rejects on each side. My
+stated justification ("clean p90 0.094 ... lowest episode shard 0.16") matched
+neither side of the real distribution.
+
+**Axis replaced with `has_sf_multipv_raw == 0` over SF-labelled rows, at 0.01.**
+Same 834 shards, measured here:
+
+    multipv-miss:  accepted max 0.008032, p90 0.000300, MEDIAN EXACTLY 0.000000
+                   rejected min 0.010511
+    -> a real 0.0025 gap.  Headroom over accepted p90: **33x**.
+    The seven leaked shards read 0.0295-0.0635 on it — all rejected.
+
+**Attachment axis KEPT**: it is independently load-bearing for exactly one
+shard, **033481** (attachment +0.0201, multipv-miss 0.000000, desync
+unevaluable at 16 labelled rows) — the total-detachment mode. Confirmed by
+exhaustive cross-tab: ATT-only rejects = {33481}, MV-only = 28, and
+**DESYNC-only = {} (empty)**. Union att|multipv = 120 shards = union of all
+three, so the desync axis catches nothing the other two miss.
+
+**The desync rate is DEMOTED to a printed diagnostic** (`--desync-max` now
+defaults to 1.0 = never reject). It is a real signal with no honest threshold;
+the run prints its median and max over ACCEPTED shards so a future corruption
+mode the enforced axes cannot see would still surface. Enforcement is opt-in
+with a stated reason.
+
+Also fixed, all flagged in review: NaN-as-reject is now pinned on the
+attachment axis too (it previously escaped mutation), the 30-row floor is
+pinned as `SF_AXIS_MIN_ROWS`, `--multipv-miss-max 1.0` gives the escape hatch
+symmetric to `--attachment-min -2`, and an unevaluable axis now names its reason
+(`field_missing` / `too_few_rows` / `degenerate` / `unusable_input`) instead of
+printing one indistinguishable `nan` under which a pre-schema shard would be
+swallowed wholesale.
+
+**A test caught a real bug in the new detector while it was being written**:
+`sf_multipv_missing_rate` defaulted its denominator to the rows that HAVE a
+MultiPV block, forcing the rate to 0.0 by construction — a detector that could
+only ever report "clean". Fixed and pinned.
+
+### 2. Re-run under the new gate — every published number unchanged
+
+The accepted set in the published window is identical (10 shards / 15,005 rows
+rejected, 38,455 paired rows), because multipv-miss over accepted shards there
+is **0.000000**:
+
+    net-target  lost +0.0488 [+0.0468,+0.0509]   won -0.0541 [-0.0569,-0.0513]
+                tail sum -0.0052
+    matched level (SF -297.6): +0.0854 [+0.0789,+0.0919] = +108.7 cp
+    net-SFrul   matched level +70.3 cp [+65,+75]; mirror -88.0 cp
+    curriculum lost out-ruler +0.212 [+0.202,+0.221]
+    selfplay   lost out-ruler -0.006 [-0.009,-0.003]
+    desync DIAGNOSTIC over accepted shards: median 0.0798, max 0.1100
+
+### 3. ⚑ MY CONFOUND ARGUMENT WAS UNSOUND AS WRITTEN — replaced
+
+Addendum 1 argued: *"at 13.1% contamination the curriculum number barely
+moves."* That conflates a WINDOW-level contamination share with the curriculum
+bucket's actual EXPOSURE, and the two are far apart because poisoned shards are
+not compositionally like clean ones. Measured on the 400-shard window:
+
+    poisoned shards: 91.8% selfplay      clean shards: 65.5% selfplay
+    lost-bucket exposure to poisoned shards:
+        selfplay   18.0%      curriculum   2.5%
+
+**The curriculum arm was never subjected to 13.1%.** The comparison I drew does
+not license the conclusion I drew from it.
+
+**Replaced with an assumption-free bound**, which asks only "how much would be
+needed" and claims nothing about how contamination distributes. If a fraction
+`c` of the curriculum lost bucket carries a label for a different position, its
+outcome is drawn from the curriculum-wide mean (0.4494) rather than the bucket's
+ruler (0.0628), so the observed excess is `c * (0.4494 - 0.0628)`:
+
+    c = 0.2179 / (0.4494 - 0.0628) = 0.564
+    -> manufacturing the finding from a true zero requires **56.4%** of the
+       curriculum lost bucket to be desynced, against **2.5% observed**.
+
+**CONFOUND CLOSED, on a sound argument this time.** The attenuation corollary
+(contamination biases `net - target` toward the null, never away) is unaffected
+and stands.
+
+### 4. Two counts corrected
+
+- **52 poisoned shards** in the 400-shard window under the old gate, not the 46
+  in addendum 1. My own run had printed 52; I recounted from episode ranges
+  instead of reading the tool's output. (Under the new gate it is 62.)
+- The JSON dump hardcoded `"paired_set_is_selfplay_only": True` instead of
+  deriving it from the measured `paired_curriculum == 0` — this repo's signature
+  defect, in a machine-readable artifact, where it would have kept asserting
+  selfplay-only after the pairing logic changed. Now derived, with the two raw
+  counts emitted alongside it.
+
+Minor, both taken: the outcome-calibration block now says in its printed header
+that its ruler is the **P1** (after-the-move) eval, a different ruler from the
+head/target table's P0; and
+`test_net_minus_target_is_free_of_the_bucketing_artifact` no longer runs with
+`target == net`, which made the quantity zero by construction and pinned the
+field's identity rather than the claim. It now uses a noisy-but-unbiased head,
+so `net - target` is a real random variable whose per-bucket mean must still be
+zero while `net - SF_ruler` is driven far from zero on the same rows.
+
+Tests 36 -> 41.
+
+### Method note, second attempt
+
+The first note said: *a gate tuned on the episode that produced it detects that
+episode.* True, and I then did exactly that again — picked the replacement
+threshold from the same four episodes, and shipped a cut sitting in a 0.0009 gap
+between adjacent order statistics.
+
+**The operational form: a threshold is only defensible if you have plotted the
+two distributions it separates and can state the GAP and the HEADROOM.** "It
+rejects the bad shards I know about" is not a property of the threshold, it is a
+property of the sample it was read off. 0.15-on-desync and 0.01-on-multipv
+reject overlapping sets on this data; only one of them would survive a shard
+that is corrupt in a slightly different way, and the number that says which is
+33x versus 1.7x — not the reject count.
+
+
+---
+
+## 2026-08-01 — CORRECTION 3: `vs_prev` was arenaing the net against ITSELF, and my fix made it consequential
+
+Third review pass APPROVED the M6 rework and found one more instance of the house
+defect — this one outside my diff, but promoted from harmless to harmful BY my fix.
+
+**THE DEFECT.** `daily_gate_ratchet.sh` selected the `vs_prev` reference by FILENAME:
+
+```bash
+prev=$(ls -t "$SNAP_DIR"/ck_*.pt | grep -v "$(basename "$snap")" | head -1)
+```
+
+With training down the newest checkpoint does not advance, so the daily snapshot is a
+byte-identical copy under a new date. Confirmed:
+
+```
+93db63e5994233f6ec5f5b815243c8afc94653ff5bea5b0217bd11f3ab228bbe  ck_2026-07-31_iter478.pt
+93db63e5994233f6ec5f5b815243c8afc94653ff5bea5b0217bd11f3ab228bbe  ck_2026-08-01_iter478.pt
+```
+
+**The 2026-08-01 `vs_prev` run played the net against itself — true Elo exactly 0 — and
+wrote a row saying −43.7.** The preserved attempt-1 log is an accidental null control
+that confirms it: `+0.0 [−123.3,+123.3]` at 14 pairs, `−15.8` at 22, `+5.8` at 30,
+converging to zero as a self-match must.
+
+**MY FIX IS WHAT MADE IT MATTER.** Before `--max-seconds`, a short capped run wrote
+NOTHING, so the self-match usually left no trace. Now every run writes a row — and this
+ledger's own advice is to run the ratchet in a training-down window, which is exactly
+when the self-match happens. Reliability without a validity check manufactures
+confident false data faster than the broken version did.
+
+**ROW DELETED FROM `data/ratchet/ratchet.csv`.** Verbatim, so it stays recoverable:
+
+```
+2026-08-01,478,vs_prev,-43.7,-224.5,114.9,0.4375,16,training
+```
+
+Exactly one line removed (12 → 11); `diff` against the pre-edit copy shows only that
+deletion. No other row touched. The 2026-07-31 `vs_prev` row is NOT affected — it is
+iter478 vs iter409, genuinely different nets.
+
+**GUARD.** New `pick_prev_snapshot()` parses the iteration out of the snapshot name and
+returns rc 3 (skip, with a message naming the cause) when the newest earlier snapshot is
+the same iteration. It SKIPS rather than falling back to an older iteration: silently
+substituting a 2-day-old reference would keep the `vs_prev` label on a row that no
+longer means "vs yesterday" — the same defect one level up. Live:
+
+```
+[ratchet] vs_prev SKIPPED: the newest earlier snapshot is ALSO iter478 — that is the
+same net, true Elo exactly 0, and the row would read as a real day-over-day
+measurement. Training is probably down.
+```
+
+**Two smaller items.** N7: `pick_log_path` was perfect, tested and **uncalled** —
+reverting the call site left all 37 tests green. The call site is now asserted. N5: the
+EXCLUDED caveat under the VERDICT line was a separate branch that escaped its mutation;
+now covered by a second fixture with a sub-floor row.
+
+**⚑ HONEST ANSWER ON `--min-pairs`: it currently changes NO decision, and its original
+"material" justification was CONFOUNDED with the ruler filter.** Cross-tabulated:
+
+```
+date         iter  pairs  ruler                kept by ruler?  kept by min-pairs 26?
+2026-07-26     25    100  legacy_play_vloss0   no              YES
+2026-07-27    122    157  legacy_play_vloss0   no              YES
+2026-07-28    172     23  legacy_play_vloss0   no              NO
+2026-07-29    218     13  legacy_play_vloss0   no              NO
+2026-07-31    478     57  training             YES             YES
+2026-08-01    478     13  training             YES             NO
+```
+
+The `[-1.13, -0.51]` "material" claim in CORRECTION 2 rested on `--allow-mixed-rulers`,
+and **both rows the floor drops there (23 and 13 pairs) are legacy rows the DEFAULT
+ruler filter already drops.** So in the configuration the tool actually runs, the floor's
+entire retrospective justification was explained by another criterion — the same trap as
+the value gate that was demoted to a diagnostic. Its only independent exclusion is the
+08-01 training row, and there `--min-rows 4` already forces `VERDICT: NONE`.
+
+**I am keeping it as a gate, and here is why that is not special pleading.** The harm it
+prevents is a MECHANISM measured on real data (a 3%-weight row supplying 93.5% of the
+chi2 numerator), not an outcome it was tuned to produce; the threshold is flat across
+14..57 so it is not fitted to a boundary; and it is now pre-registered BEFORE the regime
+where it bites rather than after. If the reviewer prefers the demotion, the change is
+one line (`default=0`) and the diagnostic output already exists — the exclusion list and
+the UNVERIFIED flag print either way. **Nothing in this series is a strength verdict:
+the training-shape `vs_boot512` series has ONE usable row and needs four.**
+
+**Verification.** 4 negative controls this round, all FAIL-AS-REQUIRED: self-match guard
+removed; guard intact but not wired; `pick_log_path` uncalled; EXCLUDED caveat deleted.
+Run with `PYTHONDONTWRITEBYTECODE=1` and caches cleared each time. Live re-run skips
+`vs_prev` and does not rewrite the deleted row. Lint clean; `bash -n` OK.
