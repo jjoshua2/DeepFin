@@ -18995,3 +18995,51 @@ the training-shape `vs_boot512` series has ONE usable row and needs four.**
 removed; guard intact but not wired; `pick_log_path` uncalled; EXCLUDED caveat deleted.
 Run with `PYTHONDONTWRITEBYTECODE=1` and caches cleared each time. Live re-run skips
 `vs_prev` and does not rewrite the deleted row. Lint clean; `bash -n` OK.
+
+---
+
+## 2026-08-01 — CORRECTION 4: the `--min-pairs` floor can silence the instrument, so the muted state is now LOUD
+
+Operator decision: keep `--min-pairs` as a gate (mechanism measured on real data, flat
+across 14..57, pre-registered before the regime where it bites), and close the live risk
+the earlier review flagged.
+
+**THE RISK.** Under sustained GPU contention EVERY capped run lands under 26 pairs, so
+the floor would leave the fit permanently below `--min-rows` — visible only as a small
+`rows usable: N`. **"No verdict because everything was filtered" and "no verdict because
+the loop is not moving" printed nearly identical tails and mean opposite things.** The
+first is a broken instrument; the second is a finding. A strength instrument that has
+gone quiet must never be mistakable for a strength instrument reporting no trend.
+
+**FIX.** When exclusions leave the fit below `--min-rows` — precisely when
+`len(xs) < min_rows <= len(xs) + len(too_small)`, i.e. *the dropped rows would have been
+enough* — `ratchet_slope.py` now prints a boxed `INSTRUMENT MUTED — this is NOT 'no
+trend'` block naming the floor, the shortfall, and every excluded row with its Elo/CI,
+prints NO verdict, and **exits 4** (`MUTED_EXIT`, distinct from 0). A floor that
+silences us for a week is now visible on day one, and a caller can tell the two states
+apart by status alone.
+
+The condition is deliberately narrow. Thin-but-unfiltered data (2 rows, none excluded)
+stays the ordinary quiet path at exit 0 — firing there would make the status meaningless,
+since every early-life series would look like a filtering failure. Verified: the LIVE
+default invocation still exits 0 today.
+
+**RECORDED, as instructed and in my own words: the floor CURRENTLY CHANGES NO DECISION.**
+Under the default ruler filter, both rows it drops (2026-07-28, 23 pairs; 2026-07-29, 13
+pairs) are `legacy_play_vloss0` rows that filter already drops. Its only independent
+exclusion is 2026-08-01 (13 pairs, training), and there `--min-rows 4` already forces
+`VERDICT: NONE`. The `[-1.13, -0.51]` figure quoted in CORRECTION 2 came from
+`--allow-mixed-rulers` and is therefore not evidence for the floor. **A gate justified by
+a mechanism it has not yet exercised is fine; a gate whose justification quietly rests on
+exclusions another criterion already makes is not — and that is what this was.**
+
+**Verification.** 3 negative controls, all FAIL-AS-REQUIRED: `muted = False` (falls back
+to the quiet path), `muted = len(xs) < min_rows` (fires on merely-thin data), and
+`MUTED_EXIT = 0`. **The third initially ESCAPED** — the test asserted `rc == MUTED_EXIT`,
+comparing against the very constant the mutation changed, so setting it to 0 satisfied
+the assertion while destroying the point. Same circularity as the source-text
+`--min-pairs` guard, in the guard written to replace it. Now asserted as a literal
+(`rc != 0`) with the constant check as a secondary. One pre-existing test fixture had to
+widen from 4 rows to 5, because at four-with-one-dropped the run is legitimately MUTED
+and prints no slope — the guard firing on an old fixture, not a regression. Lint clean;
+full arena/ratchet suite green.

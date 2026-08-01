@@ -738,6 +738,14 @@ class WorkerSession:
   # record-shaping keys).
     _resume_trial_id_active: str = ""
 
+  # Shutdown latch, same reasoning as the three above: `__init__` sets both, but
+  # the suspend hook at run()'s loop head reads _shutdown_requested on sessions
+  # tests build with object.__new__, where it would raise AttributeError instead
+  # of taking the not-shutting-down path. Defaulting here fails CLOSED (no
+  # shutdown requested), which is the state a session that never ran is in.
+    _shutdown_requested: bool = False
+    _shutdown_signal: int = 0
+
     def __init__(
         self,
         args,

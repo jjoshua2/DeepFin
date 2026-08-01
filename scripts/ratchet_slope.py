@@ -72,6 +72,15 @@ Z95 = 1.959963985
 MIN_TRUSTED_PAIRS = 26
 L9_VERIFIED_PAIRS = 100
 
+# Exit status for "the floor silenced the instrument". A CALLER MUST BE ABLE TO
+# TELL THIS FROM A QUIET NULL. "No verdict because every row was filtered out"
+# and "no verdict because the loop is not moving" print similar-looking tails
+# and mean opposite things: the first is a broken instrument, the second is a
+# finding. Under sustained GPU contention EVERY capped run lands under
+# --min-pairs, so this state can persist for a week showing only a small
+# `rows usable:` number that nobody reads.
+MUTED_EXIT = 4
+
 
 def load_cumulative_steps(run_dir: Path) -> dict[int, float]:
     """iteration -> cumulative trainer_steps_done, spanning CSV rotations."""
@@ -230,6 +239,38 @@ def _one_ruler_only(rows: list[dict[str, str]], args: argparse.Namespace) -> lis
     return kept
 
 
+def _print_muted(
+    args: argparse.Namespace,
+    xs: list[float],
+    too_small: list[tuple[str, int, int, float, float, float]],
+) -> None:
+    """Announce that the FLOOR, not the data, is why there is no verdict.
+
+    Deliberately loud and deliberately not shaped like the VERDICT lines: a
+    strength instrument that has gone quiet must never be mistakable for a
+    strength instrument reporting no trend.
+    """
+    would_have = len(xs) + len(too_small)
+    print("  " + "#" * 72)
+    print("  #  INSTRUMENT MUTED — this is NOT 'no trend'. Nothing was measured.")
+    print("  " + "#" * 72)
+    print(f"  --min-pairs {args.min_pairs} removed {len(too_small)} row(s), leaving "
+          f"{len(xs)}/{args.min_rows} required.")
+    print(f"  Without the floor there would have been {would_have} — i.e. the fit is "
+          "silent because of")
+    print("  the filter, not because the loop stopped moving.")
+    for d, it, p, e, lo, hi in too_small:
+        print(f"      dropped: {d:12s} iter{it:<6d} {p:3d} pairs  {e:+8.1f}  "
+              f"[{lo:+7.1f},{hi:+7.1f}]")
+    print("  The ratchet IS producing rows; the fit is refusing them. Under sustained")
+    print("  GPU contention every capped run lands under the floor and this persists")
+    print("  indefinitely. Fix the contention (or raise --max-seconds) so runs finish")
+    print(f"  >= {args.min_pairs} pairs. To read the filtered rows anyway: --min-pairs 0,")
+    print("  and treat the CI as UNVERIFIED — audit L9 measured 92.3-93.8% coverage at")
+    print("  25 pairs, 71.2% in a degenerate draw-draw regime.")
+    print(f"  exit {MUTED_EXIT} (muted), distinct from 0 (a real reading).")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ratchet-csv", type=Path, default=ROOT / "data/ratchet/ratchet.csv")
@@ -295,8 +336,16 @@ def main() -> None:
     for d, it, e, lo, hi, g, cs in meta:
         print(f"  {d:12s} {it:6d} {cs:11,.0f} {e:8.1f}  [{lo:+7.1f},{hi:+7.1f}] {g:6d}")
 
+    # MUTED = the floor, not the data, is why there is no verdict. Distinguished
+    # from "not enough rows yet" by asking whether the excluded rows WOULD have
+    # been enough: len(xs) < min_rows <= len(xs) + len(too_small).
+    muted = len(xs) < args.min_rows <= len(xs) + len(too_small)
+
     if len(xs) < 2:
         print("\nNot enough rows to fit. No verdict.")
+        if muted:
+            _print_muted(args, xs, too_small)
+            raise SystemExit(MUTED_EXIT)
         return
 
     x = np.asarray(xs, float)
@@ -312,6 +361,9 @@ def main() -> None:
     print(f"  implied Elo across that span: {slope*span:+.1f}")
 
     print()
+    if muted:
+        _print_muted(args, xs, too_small)
+        raise SystemExit(MUTED_EXIT)
     if len(xs) < args.min_rows:
         print(f"  VERDICT: NONE — {len(xs)}/{args.min_rows} rows. Interim only; explicitly NOT a verdict.")
     elif slope > 0 and lo > 0:

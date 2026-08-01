@@ -413,13 +413,16 @@ def test_min_pairs_changes_the_fitted_slope(tmp_path) -> None:
         "2026-07-26,25,vs_boot512,-12.2,-61.5,36.7,0.48,200,training\n"
         "2026-07-27,122,vs_boot512,-11.1,-44.8,22.5,0.48,314,training\n"
         "2026-07-29,218,vs_boot512,81.6,-39.5,227.5,0.62,26,training\n"
+        "2026-07-30,300,vs_boot512,-20.0,-70.0,30.0,0.47,220,training\n"
         "2026-07-31,478,vs_boot512,-39.8,-91.4,10.1,0.44,114,training\n"
     )
+    # FIVE rows so that FOUR survive the floor: at four-with-one-dropped the run
+    # is MUTED (exit 4) and prints no slope, which would defeat this test.
     trial = tmp_path / "run" / "tune" / "train_trial_x"
     trial.mkdir(parents=True)
     (trial / "progress.csv").write_text(
         "training_iteration,trainer_steps_done\n"
-        "25,961\n122,5252\n218,8746\n478,23103\n"
+        "25,961\n122,5252\n218,8746\n300,4000\n478,23103\n"
     )
 
     def run(*extra: str) -> str:
@@ -439,8 +442,8 @@ def test_min_pairs_changes_the_fitted_slope(tmp_path) -> None:
         line = next(ln for ln in out.splitlines() if "WLS slope:" in ln)
         return line.split("WLS slope:")[1].strip()
 
-    assert "rows usable: 3" in default
-    assert "rows usable: 4" in disabled
+    assert "rows usable: 4" in default
+    assert "rows usable: 5" in disabled
     assert slope_of(default) != slope_of(disabled), (
         "--min-pairs did not change the fit -- the filter is dead:\n"
         f"  default : {slope_of(default)}\n  disabled: {slope_of(disabled)}"
@@ -647,3 +650,106 @@ def test_the_self_match_guard_is_wired_into_the_series() -> None:
     # rc 3 must be handled distinctly, or a self-match degrades to "no snapshot"
     # and the operator never learns why the series stopped.
     assert "3)" in src.split("series 1:")[1].split("series 2:")[0]
+
+
+def _slope_fixture(tmp_path, rows: list[tuple[str, int, float, int]]):
+    """(csv_path, run_dir) for ratchet_slope, from (date, iter, elo, games)."""
+    csv_path = tmp_path / "ratchet.csv"
+    lines = ["date,iter,series,elo,ci_lo,ci_hi,score,games,search_shape"]
+    prog = ["training_iteration,trainer_steps_done"]
+    for date, it, elo, games in rows:
+        lines.append(
+            f"{date},{it},vs_boot512,{elo},{elo - 50.0},{elo + 50.0},0.5,{games},training"
+        )
+        prog.append(f"{it},1000")
+    csv_path.write_text("\n".join(lines) + "\n")
+    trial = tmp_path / "run" / "tune" / "train_trial_x"
+    trial.mkdir(parents=True)
+    (trial / "progress.csv").write_text("\n".join(prog) + "\n")
+    return csv_path, trial.parent.parent
+
+
+def _run_slope(csv_path, run_dir, *extra: str):
+    import subprocess
+    import sys
+
+    r = subprocess.run(
+        [sys.executable, "scripts/ratchet_slope.py",
+         "--ratchet-csv", str(csv_path), "--run-dir", str(run_dir), *extra],
+        cwd=str(ROOT), capture_output=True, text=True, check=False,
+        env={"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
+             "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    return r.returncode, r.stdout
+
+
+def test_a_floor_that_silences_the_instrument_is_loud_and_exits_nonzero(tmp_path):
+    """"No verdict because everything was filtered" must not look like "no trend".
+
+    Under sustained GPU contention EVERY capped run lands under --min-pairs, so
+    this state persists indefinitely while showing only a small `rows usable:`
+    number. A strength instrument that has gone quiet must never be mistakable
+    for a strength instrument reporting no trend -- so it says MUTED and exits
+    with its own status.
+    """
+    from scripts.ratchet_slope import MUTED_EXIT
+
+    # Four rows, all 20 pairs: enough rows for a verdict, none above the floor.
+    csv_path, run_dir = _slope_fixture(tmp_path, [
+        ("2026-07-01", 10, 10.0, 40), ("2026-07-02", 20, 0.0, 40),
+        ("2026-07-03", 30, -10.0, 40), ("2026-07-04", 40, -20.0, 40),
+    ])
+    rc, out = _run_slope(csv_path, run_dir)
+    # NON-ZERO is the load-bearing property, and it must be asserted as a
+    # LITERAL. Comparing only against MUTED_EXIT is circular: setting the
+    # constant to 0 would satisfy it while destroying the whole point, and a
+    # mutation run proved exactly that.
+    assert rc != 0, (
+        "a muted run must be distinguishable from a real reading by exit status "
+        f"alone; got {rc}:\n{out}"
+    )
+    assert rc == MUTED_EXIT, f"muted run must exit {MUTED_EXIT}, got {rc}:\n{out}"
+    assert MUTED_EXIT != 0, "MUTED_EXIT must stay non-zero"
+    assert "INSTRUMENT MUTED" in out
+    assert "NOT 'no trend'" in out
+    assert "--min-pairs 26 removed 4 row(s)" in out
+    # The rows that caused it must be named with their numbers.
+    assert "2026-07-01" in out
+    assert "20 pairs" in out
+    assert "VERDICT:" not in out, "a muted run must not also print a verdict"
+
+    # Disabling the floor un-mutes it -- proving the floor is the cause.
+    rc0, out0 = _run_slope(csv_path, run_dir, "--min-pairs", "0")
+    assert rc0 == 0, f"with the floor off this must be a normal run, got {rc0}"
+    assert "INSTRUMENT MUTED" not in out0
+    assert "VERDICT:" in out0
+
+
+def test_muted_does_not_fire_when_the_data_is_merely_thin(tmp_path):
+    """Two good rows and nothing excluded is a QUIET instrument, not a muted one.
+
+    The distinction is whether the excluded rows WOULD have been enough. Firing
+    here would make the exit status meaningless -- every early-life series would
+    look like a filtering failure.
+    """
+    csv_path, run_dir = _slope_fixture(tmp_path, [
+        ("2026-07-01", 10, 10.0, 400), ("2026-07-02", 20, 0.0, 400),
+    ])
+    rc, out = _run_slope(csv_path, run_dir)
+    assert rc == 0, f"thin-but-unfiltered data must exit 0, got {rc}:\n{out}"
+    assert "INSTRUMENT MUTED" not in out
+    assert "VERDICT: NONE" in out
+
+
+def test_muted_does_not_fire_when_enough_rows_survive_the_floor(tmp_path):
+    """Exclusions that still leave >= min_rows are a normal, verdict-bearing run."""
+    csv_path, run_dir = _slope_fixture(tmp_path, [
+        ("2026-07-01", 10, 10.0, 400), ("2026-07-02", 20, 0.0, 400),
+        ("2026-07-03", 30, -10.0, 400), ("2026-07-04", 40, -20.0, 400),
+        ("2026-07-05", 50, -99.0, 20),   # dropped, but 4 remain
+    ])
+    rc, out = _run_slope(csv_path, run_dir)
+    assert rc == 0, f"expected a normal run, got {rc}:\n{out}"
+    assert "INSTRUMENT MUTED" not in out
+    assert "VERDICT:" in out
+    assert "excluded by --min-pairs" in out, "the drop must still be announced"
