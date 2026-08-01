@@ -423,6 +423,18 @@ stop() {
     # truncate the evidence there. Seeing it before any suspend line means the
     # original died and was replaced having recorded nothing — a LOSS, not an
     # absence of information.
+    #
+    # KNOWN FALSE ALARM, in the loud direction: a worker revived in the ~10-30s
+    # BEFORE stop() is already in $wpids (the process exists from execve) but has
+    # not reached worker.py:669 yet, because workers spend that window in
+    # module-level imports. Its OWN start marker then lands after our offset, the
+    # evidence truncates to empty, and it is reported "died and was REPLACED
+    # mid-drain having recorded nothing" — although it had nothing in flight to
+    # lose and the predecessor's loss happened before this drain. Check the
+    # named worker's log for a start marker with no preceding session if a
+    # REPLACED warning looks implausible. Left as-is deliberately: over-warning
+    # is the safe direction here, and the silent false-negative this block
+    # replaced fired on 2 of 3 workers every teardown.
     if [ -n "$wpids" ]; then
         local banked total=0 lost="" unknown="" why evidence failed graceful replaced
         for w in $wpids; do

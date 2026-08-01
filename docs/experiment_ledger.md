@@ -15158,3 +15158,2117 @@ does NOT establish that seeding caused the degradation — only that it
 demonstrably did not prevent it. That is sufficient to stop treating "feed more
 seeds" as the remedy. The 63 seeds fed 2026-07-31 13:10 are far too recent to
 bear on this either way (see the HOLD on the remaining 381, task #87).
+
+## ⚑⚑ PRE-REGISTRATION (2026-07-31 15:5x) — EXTERNAL POLICY ANCHOR (`w_sf_own` / `w_sf_own_regret`), OFFLINE AUDIT-FIRST SCREEN
+
+Written BEFORE any arm was scored. Repo at `a44a75199`. Training is DOWN by
+operator decision; this is offline/forward-only work on a free GPU.
+
+### Context this follows from (not re-derived here)
+
+The 07-31 swap rig decomposed the 20-day target degradation as ~8.4 cp through the
+POLICY PRIOR and ~3.0 cp through the VALUE HEAD (~73% / ~27%), and the value-target
+hypothesis was NOT CONFIRMED (primary CI spanned 0). So the lever under test is the
+policy side: the `policy_own` target is self-generated MCTS visits on ~100% of rows,
+and the only externally-anchored policy signal (`w_sf_own` 0.1 + `w_sf_own_regret`
+0.7) is masked to `has_sf_p0` rows, currently **0.1918** of network-turn rows
+(iter 478, `result.json`).
+
+### Hypothesis
+
+H1. Raising the external SF anchor on `policy_own` moves the *effective per-row
+training target* on covered rows toward the SF soft target, and that effective
+target scores materially better against the frozen deep-SF ruler than today's
+effective target.
+
+H0 (the kill): at today's masked-mean normalisation the external block is already
+carrying most of the pull it can carry, so a 3× raise buys less than the
+instrument's materiality bar — the lever is not worth a live window.
+
+### What is actually being scored (the effective target, not the yaml weights)
+
+`masked_mean` divides each term by its OWN mask count, so the per-covered-row
+weight of a masked term is `w / coverage`, not `w`. On a covered row the
+`policy_own` objective is, after dividing through by `w_policy`:
+
+    L(q)/w_policy = CE(q, p_mcts) + b·CE(q, p_sf) + c·E_q[r]
+      b = (w_sf_own      / w_policy) · (N_net / N_sf_p0)
+      c = (w_sf_own_regret/ w_policy) · (N_net / N_sf_p0_regret)
+
+with the realized iter-478 masks (0.19178 / 0.18226): **b = 0.5214, c = 3.8398**.
+
+Its stationary point over the simplex has a closed form up to one scalar:
+`q(a) = m(a) / (λ − c·r(a))`, `m = p_mcts + b·p_sf`, λ set by Σq = 1. That q — the
+EFFECTIVE TARGET — is the object each arm scores. `b=c=0` reduces to `p_mcts`
+(the stored `policy_t`), `b→∞, c=0` reduces to `p_sf`.
+
+### Arms (all share the same per-position `p_mcts`, `p_sf`, `r` — perfectly paired)
+
+| arm | b | c | meaning |
+|---|---|---|---|
+| `A0` | 0 | 0 | stored production target, and the 80.8% of rows with NO teacher |
+| `ASF` | ∞ | 0 | pure SF soft target |
+| `NOW` | 0.5214 | 3.8398 | today's effective target on a covered row |
+| `M0.5/M2/M3/M5/M10` | m·0.5214 | m·3.8398 | external block × m (M3 = `w_sf_own` 0.1→0.3, `w_sf_own_regret` 0.7→2.1) |
+| `CEONLY` | 0.5214 | 0 | mechanism arm: CE teacher alone |
+| `REGONLY` | 0 | 3.8398 | mechanism arm: regret teacher alone |
+
+### ONE deciding yardstick (exact command)
+
+    PYTHONPATH=. nice -n 19 python3 scratchpad/policy_anchor_screen.py \
+      --checkpoint scratchpad/strength_readout_0731/ck477/trainer.pt \
+      --config configs/pbt2_small.yaml --audit-set data/audit_set_v1.jsonl \
+      --out-dir scratchpad/anchor_screen
+    PYTHONPATH=. nice -n 19 python3 scripts/paired_compare.py \
+      scratchpad/anchor_screen/arm_M3.jsonl scratchpad/anchor_screen/arm_NOW.jsonl \
+      --join-key key --field cand.target.top1 --label-a M3 --label-b NOW
+
+`delta = A − B`, regret-style, so NEGATIVE = M3 better.
+
+### Pre-committed thresholds (judged by this rule, not by post-hoc reading)
+
+- **SURVIVES the screen** (→ earns an offline `retarget_retrain` arm, NOT a live
+  window): paired mean delta ≤ **−4.5 cp** on `cand.target.top1` AND 95% CI
+  excludes 0 AND the dose ladder `M0.5 < M1 < M2 < M3 < M5 < M10` is monotone in
+  the improving direction.
+- **KILLED**: delta ≥ 0, or the CI excludes −4.5 cp (i.e. the effect is
+  significantly smaller than material). This kills the lever with zero training
+  compute, which is the point of the audit-first rule.
+- **INCONCLUSIVE**: |delta| < 4.5 cp with a CI that contains both 0 and −4.5. Then
+  report the n required, do not report the point estimate as a result.
+- Materiality (4.5 cp) and significance are separate gates. These arms share the
+  same search output per position, so the pairing is exact and the CI is expected
+  to be much tighter than the ±4.5 cp that separates two CHECKPOINT reads — that
+  tightness buys significance, never materiality.
+
+### Controls (both required; a failure of either voids the verdict)
+
+- **POSITIVE control / instrument identity.** `A0` must reproduce the published
+  `a44a75199` audit row (d) **60.7 / 56.9** and `ASF` must reproduce row (c)
+  **48.5 / 26.3**, each within ±1.0 cp. If they do not, the screen is not running
+  the production target-construction path and no verdict is issued.
+- **NEGATIVE control / attribution.** Rebuild every arm with `p_sf` and `r` taken
+  from a RANDOM OTHER audit position (fixed permutation, seed 1). Requirement: the
+  M3−NOW improvement must VANISH or reverse. If a shuffled teacher still "improves"
+  the target, the effect is not attributable to SF's move knowledge and no verdict
+  is issued.
+
+### Scope limits stated in advance (these go in the verdict, not around it)
+
+- `data/audit_set_v1.jsonl` at n=2000 is **1332 endgame + 668 middlegame + ZERO
+  opening**. Every number here is an endgame/middlegame verdict.
+- The frozen rulers score FEN-only inputs (117/175 planes zero; top-1 changes on
+  21.4% of positions). RANKINGS across arms survive that; ABSOLUTE cp bars do not.
+- This screens the TARGET, not the trained net. "Better target" is necessary, not
+  sufficient — nothing here licenses a live weight change.
+- The audit positions stand in for "a covered row". They are not drawn from the
+  `has_sf_p0` subpopulation, which is selfplay-only, full-sim, prev-ply-full.
+
+### Confounds
+
+None live — training is down, no other data-affecting change is in flight. The
+`selfplay_resume_inflight_games: true` flip (07-30) is changing the selfplay row
+share and therefore `has_sf_p0_frac` (see the coverage finding filed with the
+verdict); coverage is read at iter 478 and the arms are parameterised by it.
+
+### WITHDRAWN (2026-07-31 16:0x) — the external-anchor pre-registration above
+
+Premise retracted before any verdict was read. AlphaZero/LC0 ran with NO external
+policy teacher and Gumbel's guarantee is policy improvement WITHOUT one, so "81% of
+rows carry no external move signal" is the NORMAL configuration, not a defect. The
+screen was killed mid-run (`scratchpad/policy_anchor_screen.py`, 16-position smoke
+only). Its composition arithmetic is kept and re-filed under the entry below,
+because it is the same arithmetic the new question needs. **No verdict was taken on
+the ladder arms and none should be quoted from the smoke run.**
+
+One thing the withdrawn design would have gotten wrong anyway, recorded so it is not
+rebuilt: the frozen deep-SF ruler and the candidate SF soft target are BOTH
+Stockfish. `audit_targets.py` carries that warning explicitly for the VALUE table
+("(ii) will normally win it ... it is the SAME KIND OF OBJECT as the reference")
+and carries NO such warning on the POLICY table, where the identical structural
+bias applies. Any future SF-anchor screen against that ruler is scoring a teacher
+on a ruler made of the same material.
+
+## ⚑⚑ PRE-REGISTRATION (2026-07-31 16:0x) — IS THE MAIN POLICY HEAD UNDER-FITTED TO ITS OWN SEARCH TARGET?
+
+Written BEFORE any of the numbers below were computed. Repo `a44a75199`, training
+DOWN by operator decision, offline/forward-only.
+
+### The question
+
+The loop is a search-distillation loop: `policy_own` is trained purely on
+`batch["policy_t"]` (self-generated MCTS visits) via
+`soft_cross_entropy(masked_base, pol_target)` at `losses.py:297-298`. `w_soft`
+trains a SEPARATE head (`model/transformer.py:997`), so it does not soften the main
+head. Search hands the head a target ~30 cp better than the head's own output every
+iteration and the gap has been STABLE for 477 iterations (boot512 raw 78.8 /
+target 50.6; ck477 raw 87.2 / target 57.2 — both on the frozen v1-2k set). A
+working improvement operator shrinks that gap. So: **does the head fail to absorb
+its own target, and if so what binds?**
+
+### Hypotheses
+
+- **H1 UNDER-FIT.** On the live replay rows, the achieved policy CE exceeds the
+  attainable floor by a large margin, i.e. the head cannot represent/reach the
+  target it is trained on.
+- **H0 CONVERGED.** The achieved CE is at (or near) its floor, and the audit-set
+  gap is a GENERALIZATION gap or a measurement artifact, not under-fitting.
+
+### ONE deciding yardstick (exact command)
+
+    PYTHONPATH=. nice -n 19 python3 scratchpad/policy_floor.py \
+      --checkpoint scratchpad/strength_readout_0731/ck477/trainer.pt \
+      --config configs/pbt2_small.yaml \
+      --replay-dir "runs/pbt2_small/replay/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/replay_shards" \
+      --batches 200 --batch-size 256 --out scratchpad/policy_floor
+
+reporting, per batch, through the PRODUCTION path (`Trainer._iter_prefetched_batches`
+-> `compute_loss`):
+
+    achieved = masked_mean(pol_ce, pol_base)                       # == losses.py m_policy
+    floor    = masked_mean(H(normalize(align(policy_t))), pol_base)
+    excess   = achieved - floor
+
+with `align`/`normalize`/legal-mask IDENTICAL to the ones `soft_cross_entropy` applies,
+plus `leak` = target mass falling outside `legal_mask` after alignment (the part of
+the floor that is structurally unattainable and must be subtracted from any
+under-fitting claim).
+
+**Metric of record: `excess`, in nats, paired by batch, 10k bootstrap CI.**
+
+### Pre-committed thresholds
+
+- **UNDER-FIT CONFIRMED**: `excess` >= 0.30 nats, CI excluding 0.30.
+- **UNDER-FIT KILLED**: `excess` <= 0.10 nats. The "policy head never absorbs its
+  target" lead dies and I say so.
+- **PARTIAL**: 0.10 < excess < 0.30, or a CI spanning either bar -> report as
+  partial with the n needed, never as a point estimate.
+- The same three numbers are computed for the VALUE head (`blended_wdl_ce` vs
+  `H(blended wdl target)`) as the calibrated comparison: the claim under test is
+  that value is at its floor and policy is ~6x further from its.
+
+### Controls (all three required; failure of any voids the verdict)
+
+- **POSITIVE control A (floor attainability).** Replace the model's policy logits
+  with `log(normalize(align(policy_t)))` masked to legal. `excess` must be ~0
+  (<0.01 nats). This proves the floor is the right quantity AND attainable.
+- **POSITIVE control B (power).** Random-permuted logits. `excess` must be large
+  (order `log(n_legal) - H`). A test that cannot see a destroyed head cannot see a
+  half-fitted one.
+- **NEGATIVE control (attribution).** Roll the target tensor by one row within the
+  batch so each row is scored against ANOTHER row's target. `excess` must blow up.
+  If a shuffled target gives a similar excess, the measured excess is not
+  row-specific and no verdict is issued.
+
+### Secondary measurements, decided now (ledger rule 7: carry the arm that explains
+the failure)
+
+1. **`log_temp`** — the free per-head scalar whose stated purpose is to sharpen the
+   head toward the sharp MCTS target. Read it across the lineage. A converged value
+   BELOW 1 means gradient descent chose to SOFTEN, which is what a head does when it
+   cannot rank the target's top move — evidence against "needs more steps to sharpen".
+2. **Step budget** — total optimizer steps over the lineage, steps/iteration, and
+   samples seen; priced against the 63M parameter count.
+3. **Staleness** — the age distribution of sampled rows and the number of distinct
+   model versions that produced the window.
+4. **Train-vs-audit split (H1 vs generalization)** — the same `excess` on the
+   freshest window shards vs the oldest, and the audit-set raw-vs-target gap held
+   separately. ⚠ These are NOT the same quantity: the audit rulers score FEN-only
+   inputs (117/175 planes zero), the audit set is 1332 endgame + 668 middlegame +
+   ZERO opening, and the replay rows carry full history planes. Any cross-claim
+   must state that.
+
+### Scope limits stated in advance
+
+- `excess` is measured in eval mode (no dropout) AND train mode; the reported
+  `policy_loss` column is the train-mode number and only that one is comparable to
+  1.1589.
+- Rows are drawn through the production sampler, so they are the trainer's own
+  sampling distribution (surprise weighting, draw cap, gap priority), not a uniform
+  window sample. That is deliberate — the question is about the rows the head
+  actually sees.
+
+### ⚑⚑ VERDICT (2026-07-31 16:5x) — the policy head sits **0.614 nats** above its floor, and **~half of that is a MEMORISATION gap, not a step-budget gap**
+
+Instrument: `scratchpad/policy_floor.py` (production `Trainer._iter_prefetched_batches`
+-> `compute_loss` path), ck477 (`step 94062`, verified byte-identical to the live
+`checkpoint_000477`), 200 batches x 256 = 51,200 rows drawn through the production
+sampler from the live 1.5M window.
+
+#### Primary yardstick — UNDER-FIT CONFIRMED by the pre-committed rule
+
+| quantity | nats |
+|---|---|
+| FLOOR `H(policy_t)` (same align/normalize/legal-mask as `soft_cross_entropy`) | **0.5772** |
+| ACHIEVED `masked_mean(pol_ce, pol_base)` (== `losses.py` `m_policy`) | **1.1909** |
+| **EXCESS** | **+0.6137, 95% CI [+0.6023, +0.6256]** |
+| target mass outside the legal mask (`leak`) | **0.000000** |
+
+Pre-committed bar was excess >= 0.30 with the CI excluding 0.30. It clears by 2x.
+Eval-mode and train-mode achieved are IDENTICAL because `feature_dropout_p` and
+`resid_channel_dropout` are both 0.0, so the reported `policy_loss` column is
+directly comparable (live iter 478 read 1.1589; this draw reads 1.1909).
+
+Controls, all three pass:
+- posA (logits := `log(target)`): excess **+0.000000** — the floor is exactly attainable, nothing structural blocks it.
+- posB (uniform over legal, a head with no information): excess **+2.4432** — the test has power.
+- neg (each row scored against the NEXT row's target, restricted to this row's legal moves and renormalised so the blow-up cannot be a `-1e9` artifact): excess **+2.5290** — the measured excess is row-specific.
+
+#### ⚠ CORRECTION 1 — "the value head is converged, the policy head is 6x further" is a UNITS ARTIFACT
+
+Same instrument, same rows, value head: `blended_wdl_ce` **0.8251** vs its captured
+blend target's entropy **0.7136** => excess **+0.1115**. In nats the policy head is
+5.5x further, which is where the "6x" comes from. But the two heads have different
+amounts of entropy available to lose. Normalising each by its own
+no-information baseline:
+
+| head | floor | achieved | no-info baseline | **fraction of the reducible gap closed** |
+|---|---|---|---|---|
+| policy | 0.5772 | 1.1909 | 3.0204 (uniform over ~26 legal) | **74.9%** |
+| value | 0.7136 | 0.8251 | 1.0986 (`log 3`) | **71.0%** |
+
+**The two heads are equally far from their floors once the scale is removed — the
+value head is marginally WORSE.** So "value converged, policy uniquely stuck" does
+not survive. What survives is that the policy head's ABSOLUTE residual is 0.61 nats
+and that residual is what search has to work around every ply.
+
+#### ⚠ CORRECTION 2 — "`peak_lr` is 3e-5, 10x below the predecessor lineages" is FALSE
+
+`docs/rl_loop_audit.md` I19 already settled this and it was re-verified on the live
+rows: `peak_lr: 3e-5` is the **AdamW/aux base**. The Aurora **matrix (trunk) group
+runs at `matrix_lr_multiplier` 20, base 6e-4**, cycled 6e-4 -> 6e-5 within each
+iteration by `sqrt_release`. The live columns say so directly at iter 478:
+`opt_lr_mean` **5.29e-4**, `opt_lr_max` **6.0e-4**, `opt_lr_final` 6e-5. **The trunk
+trains at ~5.3e-4, i.e. ABOVE the 3e-4 of the predecessor lineages, not 10x below.**
+Any "raise the LR" lead built on 3e-5 is built on the aux group's number. Drop it.
+
+#### ⚠ CORRECTION 3 — `log_temp` has converged, and it converged the WRONG WAY
+
+`AttentionPolicyHead.log_temp` multiplies the logits (`transformer.py:200`) and its
+stated purpose is to let the head SHARPEN toward the sharp MCTS target ("1/sqrt(d)
+squashes terminal-head logits below sharp MCTS targets"). Realised multiplier
+`exp(log_temp)` on `policy_own`:
+
+| checkpoint | step | `policy_own` multiplier |
+|---|---|---|
+| boot512 (07-11) | 56,000 | 0.7386 |
+| iter409 (07-31) | 88,162 | 0.7499 |
+| ck477 (07-31) | 94,062 | **0.7533** |
+
+Flat to 3 significant figures over **38,062 optimizer steps**, and pinned BELOW 1 —
+gradient descent is choosing to SOFTEN by ~25%. A free scalar sharpness knob sitting
+at a converged optimum on the soft side is not what an under-trained-but-improving
+head looks like; it is what a head does when it cannot rank the target's top move,
+because hedging is the CE-optimal response to being wrong. Consistent with the
+measured `argmax_agree` of **0.6716 on its own training rows**. **`log_temp` is
+NOT pinning the entropy — it is reporting the head's accuracy. Do not "fix" it.**
+
+#### THE FINDING — the residual is dominated by rows the head has not been trained on
+
+Same instrument, 40 batches per bucket, the live window sliced by shard recency
+(834 shards spanning 36.7 h, iterations ~315 -> 478, i.e. **~163 distinct model
+versions produced the window**; `train_views_actual` 5.01):
+
+| bucket | shard age | FLOOR | EXCESS | argmax agree | selfplay-only excess | curriculum-only excess |
+|---|---|---|---|---|---|---|
+| newest 60 | 2.4 – 6 h | 0.5755 | **+0.9263** [+0.9048, +0.9487] | 0.5367 | +0.9556 | +0.8059 |
+| next 60 | ~10–14 h | 0.5657 | +0.6375 [+0.6251, +0.6494] | 0.6638 | +0.6500 | +0.6136 |
+| mid 60 | ~20–24 h | 0.5611 | **+0.4933** [+0.4827, +0.5045] | 0.7288 | +0.5026 | +0.4749 |
+| oldest 60 | 36–39 h | 0.5875 | +0.5491 [+0.5332, +0.5646] | 0.6852 | +0.5503 | +0.5489 |
+
+**The excess on the freshest rows is 0.93 nats; on the best-fitted band it is 0.49.
+A 0.43-nat spread, i.e. 70% of the headline residual, is explained by how many times
+the head has already trained on the row.** The floors are flat across buckets
+(0.561–0.588), so this is not a target-sharpness artifact. The composition control
+passes: the same monotone pattern appears WITHIN selfplay rows and WITHIN curriculum
+rows separately, so it is not the selfplay/curriculum mix shifting across the window
+(`ingest_frac_selfplay` 0.75 -> 0.64 over these iterations). The uptick on the oldest
+bucket is the expected drift term — those targets came from a net ~163 iterations
+back.
+
+The direction matters: the NEWEST rows were produced by the net CLOSEST to ck477, so
+a "the target came from a different model" story predicts they should be the EASIEST.
+They are the hardest. What separates them is views, not provenance.
+
+**Read: the head is fitting the replay window, not learning the search operator.**
+At deployment — selfplay on positions it has never seen — the head behaves like the
+0.93-excess model, not the 0.49-excess one, and that is the policy prior every
+subsequent search starts from. This is a generalisation gap, and more optimizer
+steps on the same window is the treatment that makes it worse, not better.
+
+#### Step-budget context (not the binding constraint, but state it)
+
+94,062 total optimizer steps at ck477, of which **38,062 since boot512 (07-11)**, at
+~88 steps/iteration and batch 256 => **24.1M samples over the whole lineage for a
+63.08M-parameter net** (~0.38 samples per parameter). That IS small in absolute
+terms. It is not what the dose-response above is measuring, and the ranking below
+says so.
+
+#### Ranking of what binds, with the evidence
+
+1. **GENERALISATION / effective-sample-size, not step count.** 0.43 of the 0.61 nats
+   tracks views-on-that-row, within source, with flat floors. This is the mechanism
+   that explains a stable raw-vs-target gap over 477 iterations: the head absorbs the
+   target only where it has repeatedly seen it, so next iteration's search restarts
+   from a prior that never absorbed the last one.
+2. **Target noise sets an unknown part of the remaining ~0.49 nats.** `H(policy_t)`
+   is the entropy of ONE noisy 256-sim visit draw (production selfplay adds root
+   Gumbel noise at `gumbel_scale` 0.75). The attainable floor is `H(E[policy_t|x])`,
+   which is strictly HIGHER than `E[H(policy_t|x)]`. **My `floor` is therefore a
+   LOWER bound and the excess is an UPPER bound** — I did not measure the Jensen gap
+   and cannot claim the 0.49 residual is all reducible. Measuring it needs repeated
+   targets for the same position (duplicate-`x` rows, or re-running selfplay search
+   with `add_noise=True` at two seeds). **Do this before anyone budgets work against
+   the 0.49.**
+3. **LR — dead as stated** (Correction 2). The trunk is already at 5.3e-4.
+4. **Output temperature — dead** (Correction 3). `log_temp` is converged and is a
+   symptom, not a cause.
+5. **Capacity — untested here.** Nothing in this readout separates "too small" from
+   "too little effective data"; the views dose-response is equally consistent with
+   both, and a capacity claim would need a from-scratch size ladder.
+
+#### Scope limits
+
+- Rows come through the PRODUCTION sampler (surprise weighting, draw cap, gap
+  priority), so this is the trainer's own sampling distribution, deliberately.
+- Everything here is on REPLAY rows with full history planes. It is NOT the frozen
+  v1-2k audit number and must not be mixed with it: the audit rulers score FEN-only
+  inputs (117/175 planes zero, top-1 changes on 21.4% of positions) and that set is
+  1332 endgame + 668 middlegame + ZERO opening. The audit-set raw-vs-target gap and
+  the replay excess are different quantities on different inputs.
+- The age buckets are ~106k rows each and CIs are batch-paired bootstrap; the
+  bucket-to-bucket differences are far outside them.
+
+#### UPDATE (2026-07-31 17:1x) — the irreducible term is measured, and it is small
+
+Ranking item 2 above said the target-noise (Jensen) term was unmeasured. It is now
+bounded. `scratchpad/target_noise.py` hashes byte-identical `x` rows in the live
+window -- inputs the net provably cannot tell apart -- and compares
+`E[H(p_i)]` (what the `floor` metric computes) with `H(E[p_i])` (the lowest CE any
+predictor can reach on them):
+
+    rows scanned 106,201 (newest 60 shards)   distinct x 106,167
+    x seen >= 2 times: 31 groups, 65 rows (0.06% of rows), max group size 3
+    E[H(p_i)]  0.3753   H(E[p_i])  0.4511
+    JENSEN GAP +0.0758 nats, 95% CI [+0.0312, +0.1266]
+
+**~0.08 nats of the 0.61-nat excess is irreducible search noise — about an eighth.**
+Even scaling it by the entropy ratio between duplicate-x rows and the window
+(0.5772/0.3753 = 1.54x) puts it near 0.12 nats, ~20% of the residual. The excess is
+therefore overwhelmingly REDUCIBLE, which is what makes the generalisation reading
+above actionable rather than a floor artifact.
+
+⚠ n = 31 groups, and duplicate-`x` rows are enriched in opening/seeded positions
+(their floor is 0.375 vs the window's 0.577), so this is an ORDER OF MAGNITUDE with
+a CI, not the window-wide value. It is enough to rule out "the residual is all
+search noise"; it is not enough to price the residual precisely. A proper
+measurement re-runs selfplay search at two seeds with `add_noise=True` on the same
+boards.
+
+#### The number the live dashboard is not showing
+
+`policy_loss` is computed on rows sampled from the whole window, i.e. mostly rows
+the head has already fitted (live iter 478: 1.1589; this instrument on the same
+distribution: 1.1909). On the FRESHEST rows -- the ones that stand in for the
+positions selfplay will actually meet -- the same head reads **1.5018**, and its
+argmax agrees with its own search only **53.7%** of the time (vs 72.9% on the
+well-fitted band). **`policy_loss` is ~0.31 nats optimistic about the prior every
+new search actually starts from.** Cheapest fix available: evaluate the newest
+ingested shard BEFORE training on it and report that as a separate column. That is
+a pure observability change, no training-path risk, and it turns a stable-looking
+metric into one that can move.
+
+### ⚑⚑ DECISIVE (2026-07-31 17:2x) — MORE STEPS ON THE SAME WINDOW MAKE THE PRIOR WORSE. The step budget is NOT the binding constraint.
+
+`scratchpad/policy_stepbudget.py`: a COPY of ck477 trained with the production
+`Trainer`/loss on the live window with the **newest 60 shards HELD OUT** (774 train
+shards / 1.39M rows, 60 eval shards / 106k rows), probing policy excess on both sides
+every 500 optimizer steps (~5.7 iterations' worth of production training).
+
+| optimizer steps | EVAL (held-out, newest) excess | EVAL argmax agree | TRAIN excess | TRAIN argmax agree |
+|---|---|---|---|---|
+| 0 | 0.8984 | 0.5503 | 0.5778 | 0.6907 |
+| +500 | **0.9309** | **0.5376** | **0.5484** | **0.7031** |
+
+**Train excess falls (-0.0294), held-out excess RISES (+0.0325), and held-out argmax
+agreement FALLS (0.5503 -> 0.5376).** The two move in opposite directions, which is
+the textbook signature of overfitting, and it fires within one probe interval.
+
+This kills the step-budget hypothesis on its own terms. The proposal was "88
+steps/iteration and 94,062 total steps for a 63M net is too few". The measurement
+says the marginal step is already being spent buying training-row fit at the cost of
+the prior on positions the head has not seen — which is exactly the prior every
+subsequent selfplay search starts from. **Adding steps makes the loop worse, not
+better.** Note the direction this points for `train_views_per_position`: the step
+budget scales with ingest volume, so a throughput win currently buys more of the
+thing that is hurting.
+
+Confound bounded, not hand-waved: blind-spot seeding was enabled 2026-07-30 17:30
+(`opening_fen_dole_per_iter` 0 -> 1, cap 0.08, realized 6.67% of games / 4.14% of
+rows) — inside the window, near the age2 boundary. It cannot explain the gradient:
+the LARGEST single step in the age ladder is age0 -> age1 (+0.2888 nats), and BOTH
+of those buckets are entirely post-seeding with the same seed share. Seeding is also
+irrelevant to the train/eval divergence above, which is a within-checkpoint,
+same-data-split comparison.
+
+#### What this leaves as the binding constraint
+
+Not steps, not LR (Correction 2), not output temperature (Correction 3), and not
+target noise (~0.08 nats of 0.61, UPDATE above). What is left is **effective sample
+size / data diversity**: the head fits rows it has seen repeatedly and does not
+transfer to fresh ones, and the loop's response to that is to train harder on the
+same 1.5M-row window. On this reading the levers that could actually move it are the
+ones that change WHICH positions exist — window size and turnover, opening/position
+diversity, augmentation, regularisation strength — not loss weights, not an external
+teacher, and not more steps.
+
+⚠ NOT ESTABLISHED HERE: that a bigger/more diverse window fixes it. This readout
+falsifies the step-budget lead and localises the failure to generalisation; it does
+not test any remedy. The next experiment should be a remedy arm with a pre-committed
+threshold on the held-out excess of the FRESHEST shards, which is now a cheap,
+offline, same-day instrument (`scratchpad/policy_floor.py`) rather than a 20-day
+arena.
+
+#### Noise calibration for the two readouts above (so "decisive" is defensible)
+
+The age ladder replicated on an INDEPENDENT sampling seed (`--seed 3` vs `--seed 0`,
+40 batches each, same checkpoint, same shard buckets):
+
+| bucket | seed 0 excess | seed 3 excess |
+|---|---|---|
+| age0 newest | +0.9263 | +0.9385 |
+| age2 mid | +0.4933 | +0.5114 |
+| **gap** | **0.4330** | **0.4271** |
+
+Seed-to-seed spread on a single 40-batch estimate is **~0.012-0.018 nats**. So:
+- the **0.43-nat age gap is ~25x the sampling noise** — not in question;
+- the step-budget probe's **+0.0325 eval / -0.0294 train** move at 500 steps is
+  ~2-2.7 sd each, in OPPOSITE directions, with `argmax_agree` moving consistently on
+  both sides (train +0.0124, eval -0.0127) as an independent second statistic. That
+  is enough to call the direction, and it is the direction that matters; the
+  magnitude at one probe interval is not the claim.
+
+#### ⚠ CAVEAT ON THE STEP-BUDGET PROBE, stated rather than buried
+
+The probe builds a FRESH `Trainer`, so the optimizer starts COLD (zero moments,
+`warmup_steps: 72`) while live training carries warm state — the same caveat
+`scripts/retarget_retrain.py` documents for its own arms. A cold restart is a
+plausible source of a transient, so the honest reading of the 0 -> 500 point is:
+**the DIRECTION (train down, held-out up) is the claim; the magnitude at one probe
+interval is not.** A cold-start transient would be expected to hurt BOTH sides, and
+train improved, which is the wrong shape for that explanation. The probe continues to
+3000 steps at 500-step intervals; if held-out excess keeps rising past warmup the
+transient story is dead, and if it recovers this section must be corrected. The
+clean version of this experiment restores the checkpoint's optimizer state via
+`Trainer.load()` (available, `trainer.py:3291`) and is the first thing to run if
+anyone wants to lean harder on the magnitude.
+
+**The 0.43-nat age/views gradient does NOT depend on this probe at all** — it is a
+property of ck477 as it stands, replicated across two sampling seeds, controlled for
+selfplay/curriculum composition, with flat floors across buckets. That finding stands
+on its own.
+
+#### TRAJECTORY UPDATE (step 1000) — the transient story is dead; the claim tightens to "zero held-out return"
+
+| optimizer steps | EVAL excess (held-out) | EVAL agree | TRAIN excess | TRAIN agree |
+|---|---|---|---|---|
+| 0 | 0.8984 | 0.5503 | 0.5778 | 0.6907 |
+| +500 | 0.9309 | 0.5376 | 0.5484 | 0.7031 |
+| +1000 | 0.9279 | 0.5429 | **0.5403** | **0.7103** |
+
+**Train improves monotonically on both statistics (excess -0.0375, agree +0.0196).
+Held-out does not improve at all (excess +0.0295, i.e. slightly worse; agree
+-0.0074).** The divergence persisted at 1000 steps, ~14x past `warmup_steps: 72`, so
+the cold-optimizer transient in the caveat above cannot be the explanation.
+
+The defensible claim, stated at the strength the data supports:
+
+> **1000 additional optimizer steps on the existing window — about 11 iterations'
+> worth of production training — bought a clear improvement on rows the head had
+> already seen and ZERO improvement on rows it had not.** Whether the held-out side
+> is flat or mildly negative is within ~2 sd and not the point; the point is that the
+> marginal step's entire return went to training-row fit.
+
+This is what a stable raw-vs-target gap across 477 iterations looks like from the
+inside, and it is why "the head needs more steps" is the wrong lead.
+
+## ⚑⚑ PRE-REGISTRATION (2026-07-31 18:0x) — REMEDY SCREEN, judged ONLY on the held-out prior
+
+Written BEFORE any remedy arm was run. Training DOWN, offline, `nice -n 19`.
+
+### The rule, committed first
+
+**The deciding metric is HELD-OUT, never train.** An arm that improves TRAIN excess
+and not HELD-OUT excess is a FAILURE, because that is exactly the behaviour the
+control already exhibits (train -0.0375, held-out +0.0295 over 1000 steps). Train
+numbers are reported only as the mechanism read.
+
+- Metric of record: **held-out policy excess-over-floor at +1000 optimizer steps**,
+  on the 60 newest shards (106k rows) that no arm trains on.
+- Secondary, must move the same way: **held-out `argmax_agree`**. An arm that moves
+  excess but not agreement, or the two in opposite directions, is reported as
+  UNRESOLVED, not as a win.
+- Baseline for every comparison is the CONTROL arm run in the IDENTICAL harness,
+  same seed, same eval buffer, same step count — **not** the step-0 value.
+  CONTROL (production config, 774 train shards, seed 0), already measured:
+  held-out excess 0.8984 -> 0.9309 (+500) -> **0.9279 (+1000)**;
+  held-out agree 0.5503 -> 0.5376 -> **0.5429**; train excess 0.5778 -> 0.5403.
+
+### Pre-committed thresholds
+
+Seed-to-seed noise on a single 40-batch excess estimate is **0.012-0.018 nats**
+(measured, two seeds, `--seed 0` vs `--seed 3`), so a difference of two independent
+estimates has ~0.031 nats of 95% spread.
+
+- **PASSES the screen**: held-out excess at +1000 is **>= 0.05 nats better than
+  CONTROL** (i.e. <= 0.878) AND held-out `argmax_agree` is higher than CONTROL's
+  0.5429. 0.05 is ~1.6x the two-estimate spread and ~12% of the 0.43-nat
+  age/views gap the remedy is supposed to attack.
+- **FAILS**: held-out excess is no better than CONTROL (>= 0.9279 - 0.031).
+- **UNRESOLVED**: in between, or the two metrics disagree. Report as such; do not
+  promote.
+
+### ⚠ Scope limit that bounds EVERY arm below, stated before the numbers exist
+
+1000 steps x 256 = 256k draws against 1.39M distinct train rows is **0.18 views per
+row**. The memorisation being measured was accumulated over the live run's ~38,062
+steps, and no 1000-step arm can undo it. **This screen measures what a remedy does to
+the MARGINAL step's effect on the held-out prior. It cannot certify that the remedy
+would fix a run trained under it from the start.** A pass here earns a longer arm; it
+does not earn a live deploy. A fail here is stronger evidence, because a knob that
+cannot even change the direction of the marginal update is very unlikely to fix the
+accumulated gap.
+
+### Arms, with what each predicts and what refutes it
+
+| arm | change | predicts | refuted by |
+|---|---|---|---|
+| `CONTROL` | production config, 774 shards | held-out flat/worse (already seen) | — |
+| `R1_LOWDIV` | train on 100 of the 774 shards (178k distinct rows, 1.44 views/row at fixed 1000 steps) | held-out WORSE than CONTROL — the mechanism is distinct-positions-per-step | held-out >= CONTROL, which would kill the diversity mechanism outright |
+| `R5_HIGHDIV` | train on 774 current + 809 shards from the 07-11 `4c17c` pool (~2.8M distinct rows, 0.09 views/row) | held-out BETTER than CONTROL | held-out no better. ⚠ CONFOUNDED: the extra pool is 20 days stale, so a null is ambiguous (diversity helped, staleness hurt) while a WIN is clean |
+| `R2_WD` | `aux_weight_decay` 1e-4 -> 1e-2 | held-out better; this is the group that actually holds the policy head (verified below) | held-out no better |
+| `R4_NOSOFT` | `w_soft` 1.0 -> 0.0 | held-out better: `policy_soft` is a separate head trained on a deterministic retempering of the SAME target (`probe_policy_targets.py`), so 1.0 of trunk gradient is being spent on a duplicate signal | held-out no better, which would say the duplicate target is not costing trunk capacity |
+| `R3_ANCHOR3X` | `w_sf_own` 0.1 -> 0.3, `w_sf_own_regret` 0.7 -> 2.1 | held-out better if an externally-anchored target generalises where a self-generated one does not | held-out no better, which kills the anchor lever on the RIGHT metric this time |
+
+### Weight-decay sub-question, answered before the arms (it changes what R2 means)
+
+The audit's "`matrix_weight_decay` is decorative" finding is **irrelevant to the
+policy head**. Dumped from a real `Trainer` built on ck477's arch
+(`AuroraWithAuxAdam`, `matrix_optimizer_scope: mlp_out`):
+
+| group | n params | wd | policy params |
+|---|---|---|---|
+| 0 (Aurora matrix) | 48 | 1e-4 | **0** |
+| 1 | 0 | 0.0 | 0 |
+| 2 (aux AdamW, weights) | 143 | **1e-4** | **12** — `policy_own.q/k/underpromo.weight`, same for `policy_soft/sf/future` |
+| 3 (aux AdamW, biases/scalars) | 290 | 0.0 | 16 — incl. `policy_own.log_temp` |
+
+So the policy head's weights sit in the aux AdamW group and **`aux_weight_decay`
+1e-4 IS applied to them**; `matrix_weight_decay` never touches them. "Zero dropout
+AND inert weight decay" is therefore only half true: decay is live but small, which
+is why R2 raises it 100x rather than switching it on.
+
+### `full_ply_pair_fraction` — why it is NOT an arm here, and what stands in for it
+
+It is a DATA-GENERATION knob (`network_turn.py:_full_ply_schedule`): it changes which
+plies are recorded at full sims, so its effect only exists in shards produced under
+it. Every shard on disk was generated at `pair_fraction=0`. **No offline retrain on
+existing shards can screen it** — an arm that set the key would change nothing and
+report a null, which is the "gate that cannot fail" pattern. The honest offline proxy
+is `R3_ANCHOR3X`: pairing raises sf_p0 COVERAGE, and coverage and weight enter the
+loss through the same masked-mean term. That proxy is imperfect in a stated
+direction — under `masked_mean`, raising coverage at fixed weight LOWERS the per-row
+external pull while spreading it over more rows, whereas R3 raises the per-row pull
+on the existing rows — so **R3 failing does not formally kill pairing, but it removes
+the reason to spend a live window on it.**
+
+## SPEC 1 (2026-07-31 18:2x) — `audit_targets.py`: the POLICY table needs the same-material warning its VALUE table already has
+
+**Verdict on "is this worth a PR": YES, and specifically it must include the
+REPORT-EMIT hunk, not just the docstring.** A docstring-only change fixes nothing for
+the person reading `runs/target_audit_*.md` six months from now, and the report is
+where the mistake actually gets made. The bias is not hypothetical here: the
+2026-07-27 framing that "the external teacher is roughly TWICE as good on top-1
+(26.3 vs 53.2)" was read straight off this table, and a large part of that margin is
+that candidate (c) is Stockfish being graded by Stockfish. Two hunks, no logic
+change, no behaviour change to any number.
+
+### Hunk A — module docstring, immediately after the policy-scoring sentence (currently ~line 33)
+
+Context line to anchor on:
+
+    and scores each as expected deep-SF regret (cp) of a move sampled from the
+    distribution, plus top-1 regret — reported per phase and per source.
+
+Insert directly below it:
+
+      !! THE POLICY TABLE CARRIES THE SAME SAME-MATERIAL BIAS AS THE VALUE TABLE
+      BELOW, and for the same reason. The ruler is deep SF; candidate (c) is
+      shallow SF. (c) is therefore graded against a DEEPER VERSION OF ITSELF while
+      (a)/(b)/(d)/(e) are graded against a different engine family. Wherever SF is
+      decisive the two SF objects agree by construction, so (c) starts with a margin
+      that has nothing to do with being a better TEACHER.
+      Use this table to rank candidates of the SAME material against each other —
+      search shape vs search shape, checkpoint vs checkpoint — and to detect a
+      candidate that has DRIFTED or BROKEN. Do NOT read "(c) beats (d)" as "training
+      on (c) would beat training on (d)": that inference needs a ruler the SF target
+      did not help write. This was read the wrong way on 2026-07-27 (the "the
+      external teacher is 2x better on top-1" framing) and the correction is what
+      this warning exists to prevent.
+
+### Hunk B — the emitted report, in the `## Policy:` section (currently ~line 1040-1042)
+
+Current:
+
+        f"## Policy: expected / top-1 deep-SF regret (cp)\n\n"
+        f"Unlisted legal moves carry the worst-listed-line regret as a "
+        f"floor (lower bound; MultiPV >= 10 at >=1M nodes).\n\n"
+
+Replace the trailing `\n\n` of the second f-string with `\n` and append:
+
+        f"**Row (c) is scored against a deeper version of itself** — the ruler is "
+        f"deep SF and (c) is shallow SF — so part of its margin over (a)/(b)/(d) "
+        f"is definitional, exactly as the value table warns for row (ii). "
+        f"Same-material comparisons (search shape vs search shape, checkpoint vs "
+        f"checkpoint) are sound; \"the SF target beats the training target\" is a "
+        f"calibration reading, NOT a teaching verdict.\n\n"
+
+### Test impact
+
+`tests/test_audit_set.py::test_audit_targets_smoke` asserts only substring presence
+(`"net raw policy"`, `"Gumbel search"`, `"SF MultiPV soft target"`, `"production
+training target"`, `"Brier vs deep WDL"`, `"cp"`) and that exactly one report is
+written. Both hunks are additive text, so it passes unchanged. Recommend the PR ALSO
+add one assertion so the warning cannot be silently deleted later:
+
+    assert "deeper version of itself" in text
+
+That converts a comment into something with a gate behind it, which is the difference
+between this and the docs the repo already has that nobody reads.
+
+
+## SPEC 2 (2026-07-31 18:3x) — the observability column: measure the prior on rows NOTHING has trained on
+
+### The gap being closed
+
+`policy_loss` is computed on rows sampled from the whole 1.5M window, i.e.
+overwhelmingly rows the head has already fitted. Measured today on ck477: **1.19 on
+that distribution, 1.50 on the freshest shards**, with `argmax_agree` 0.67 vs 0.54.
+The reported column is ~0.31 nats optimistic about the prior every new selfplay
+search actually starts from, and it is flat by design — which is precisely how the
+20-day strength slide went unread (`live_progress_signals_flat`).
+
+### Naming — the constraint the coordinator flagged, taken seriously
+
+The existing `policy_loss` / `test_policy_loss` names describe neither the row
+population nor the reference, which is how they became unreadable. These columns are
+named for **what they measure**, and every one of them names the population:
+
+| column | definition |
+|---|---|
+| `unseen_policy_ce` | `masked_mean(pol_ce, pol_base)` over rows from shards ingested since the previous iteration's last optimizer step |
+| `unseen_policy_floor` | `masked_mean(H(normalize(align(policy_t))), pol_base)` over the SAME rows — the entropy of the target itself |
+| `unseen_policy_excess` | `unseen_policy_ce - unseen_policy_floor`. **This is the number that should move.** It is invariant to how sharp the targets happen to be, which `policy_loss` is not |
+| `unseen_policy_argmax_agree` | fraction of those rows where the head's legal-masked argmax equals the target's argmax |
+| `unseen_policy_rows` | row count. **Required, not optional** — a masked mean cannot distinguish "no fresh shards this iteration" from "fresh shards that happened to score 0", the exact false negative `sf_own_rows` exists for (`losses.py:628-640`). On an ingest drought this reads 0 and the four columns above must be absent/NaN, never 0.0 |
+
+Deliberately NOT `test_*` (that prefix is taken by the frozen-holdout path, which
+dies at every restart) and deliberately NOT any name containing `loss` alone.
+
+### Where it hooks
+
+`chess_anti_engine/tune/trainable.py`, in the iteration body, **between
+`_sync_trainer_weights(trainer, config, tc, ds)` and `t_train_start =
+time.monotonic()`** (currently ~line 868-869). That point is after this iteration's
+selfplay shards have been ingested and after the trainer holds the current weights,
+and before `_run_training_and_gating` takes the iteration's first optimizer step. So
+the rows are provably untouched by any gradient: not by this iteration (it has not
+started) and not by earlier ones (the shards did not exist).
+
+Row selection: read the K newest shard files in `replay_shard_dir` **by shard index**
+directly (`replay.shard.iter_shard_paths` + `shard_index`, the same helpers
+`probe_policy_targets.py` uses), NOT by sampling the live buffer — sampling the buffer
+would draw mostly old rows and reproduce the very bias this column exists to remove.
+Guard: skip any shard whose index is <= the highest index present at the END of the
+previous iteration (persist that watermark next to the other per-iteration state), so
+a stalled ingest cannot silently re-measure rows the last iteration already trained on.
+That watermark IS the correctness condition; without it the column degrades into a
+second `policy_loss` and the repo gains another metric that does not mean its name.
+
+### Cost
+
+Forward-only, `model.eval()`, `torch.no_grad()`, 20 batches x 256 = 5,120 rows.
+Measured on this GPU with the same code path (`scratchpad/policy_floor.py`, 40
+batches): **~2.6 s wall for 40 batches, so ~1.3 s for 20**, against a production
+iteration of **620-750 s**. That is **~0.2% of the iteration**, no backward pass, no
+extra GPU memory beyond one batch of activations, and it runs while nothing else is
+on the GPU. It is inside the standing ~30 min/day non-training GPU budget by three
+orders of magnitude.
+
+### What it buys
+
+A same-day, zero-arena instrument for the one quantity that was shown today to be
+both (a) large — 0.93 nats vs 0.49 on fitted rows — and (b) the thing every remedy
+has to move. It is also the deciding metric of the remedy pre-registration above, so
+shipping it makes that screen repeatable live instead of only offline.
+
+### What it does NOT do
+
+It is not a strength ruler. Per `docs/rl_loop_audit.md` method rule 6, only a paired
+arena decides strength; this decides whether the policy head is absorbing its own
+target on positions it has not memorised. Do not add it to any gate or promotion
+criterion on the strength of this entry.
+
+### PROOF EACH ARM TAKES EFFECT (run BEFORE the arms, per the standing bias)
+
+The repo's signature defect is a value accepted and then silently ignored, so every
+override was resolved through the production constructors (`trainer_kwargs_from_config`
+-> `Trainer`) and the REALIZED quantity read back, on ck477's own arch:
+
+| arm | realized `w_soft` | realized `w_sf_own` | realized `w_sf_own_regret` | optimizer group weight_decay |
+|---|---|---|---|---|
+| CONTROL | 1.0 | 0.1 | 0.7 | [1e-4, 0.0, **1e-4**, 0.0] |
+| R2_WD | 1.0 | 0.1 | 0.7 | [1e-4, 0.0, **1e-2**, 0.0] |
+| R4_NOSOFT | **0.0** | 0.1 | 0.7 | [1e-4, 0.0, 1e-4, 0.0] |
+| R3_ANCHOR3X | 1.0 | **0.3** | **2.1** | [1e-4, 0.0, 1e-4, 0.0] |
+
+Group index 2 is the aux AdamW group that holds the 12 policy-head weight tensors, so
+R2_WD's decay lands on the head under test and not on the Aurora group that contains
+zero policy params. The override parser also REFUSES any key absent from the flat
+config rather than setting a key the trainer would ignore, so a typo aborts the arm
+instead of producing a silent null.
+
+### CANDIDATE REMEDY CLOSED WITHOUT A RUN — mirror augmentation is ALREADY ON
+
+The obvious "more distinct positions with no era confound" lever is left-right mirror
+augmentation, which doubles the effective corpus for free. It is already enabled:
+`mirror_prob` is absent from the yaml AND absent from `trainer_kwargs_from_config`'s
+output, so `Trainer.__init__`'s default applies — realized **`trainer.mirror_prob =
+0.5`**, read back off a Trainer built on ck477's arch. (Valid to use: all 175 planes
+were shown mirror-invariant, `input_encoder_orientation_ruled_out`.) So this lever is
+spent, and the memorisation gap exists WITH 2x mirror augmentation already applied.
+
+Consequence for reading the numbers: `scratchpad/policy_floor.py` measures with
+`mirror_prob = 0.5` (production sampling) while `policy_stepbudget.py`'s eval probe
+uses `mirror_prob = 0.0` (deterministic held-out). That is why the same held-out
+shards read 0.9263 in one instrument and 0.8984 in the other — mirrored rows are
+slightly harder. Every comparison in this entry is within one instrument; the two
+absolute scales must not be mixed.
+
+### THROUGHPUT vs VIEWS — derived from production columns, independent of the remedy arms
+
+The question this answers: step budget scales with ingest under views-targeting, so
+does a THROUGHPUT WIN buy more of the thing the +1000-step probe showed to be
+harmful? **No. The reading is wrong, and the arithmetic says why.**
+
+Realized numbers, iteration 478 (`result.json`, medians over iters 440-478 agree):
+
+    batch_size                        512      (NOT 256 -- the yaml's "effective
+                                                batch = 256" comment is stale;
+                                                88 steps x 512 = train_samples_seen
+                                                45,056, which is the check)
+    trainer_steps_done                88
+    train_samples_seen                45,056
+    replay_positions_ingested         8,987 / iteration
+    replay_window_after               1,500,000  (AT the cap; growth_positions 0)
+    train_views_actual                5.013
+    train_views_per_ingested_position 5.0  (config)
+
+Window-level views per row, worked from those columns:
+
+    draw probability per row per iteration = 45,056 / 1,500,000     = 3.004%
+    residency of a row in a capped window  = 1,500,000 / 8,987      = 166.9 iterations
+    expected views per row over residency  = 166.9 x 0.03004        = 5.01   <-- matches
+                                                                                train_views_actual
+
+The identity behind that agreement is the point:
+
+    views_per_row = (views_target x ingest_rate) x (window / ingest_rate) / window
+                  = views_target
+
+**At a saturated window cap, views-per-row equals `train_views_per_ingested_position`
+EXACTLY, and is independent of both throughput and window size.** Two consequences,
+both load-bearing for whether to resume:
+
+1. **A throughput win is VIEWS-NEUTRAL.** More ingest raises steps AND raises the
+   number of distinct rows those steps draw from, in the same proportion, and shortens
+   residency by the same factor. It buys more distinct positions per unit wall-clock at
+   constant views/row. On the memorisation mechanism that is neutral-to-good, not
+   harmful. **My +1000-step probe is NOT evidence against throughput** — it held the
+   data FIXED and so raised views/row, which is a different intervention. Stated
+   precisely: the probe shows *more views on the same rows* is harmful, not *more
+   steps* per se.
+
+2. **Raising `replay_window_max` does NOT lower views/row either** — longer residency
+   and lower per-iteration draw probability cancel exactly. It changes pool diversity
+   at a given instant and makes the average row older; it does not change how many
+   times a row is trained on. Anyone reaching for the window cap as the memorisation
+   fix should know it is not the lever the identity says it is.
+
+**The one knob that moves views/row directly is `train_views_per_ingested_position`,
+currently 5.0** — and the config's own comment records the external anchors as
+**AZ ~1, KataGo ~4**, so production sits ABOVE both. If the marginal view is
+net-harmful, that is the number to move, and it is live-tunable.
+
+Caveat on the identity: sampling is not uniform (`replay_sf_gap_priority_weight`,
+`fast_low_surprise_priority`, `diff_focus_*` all reweight), so 5.01 is the MEAN
+views/row and the distribution around it is skewed toward whatever those priorities
+favour. The identity holds for the mean, which is what `train_views_actual` reports.
+
+Instrument note carried into every number below: production trains at **batch 512**;
+all probes in this entry ran at **batch 256**. That is constant across CONTROL and
+every arm, so within-instrument comparisons hold, but the absolute excess values here
+are not directly comparable to a hypothetical batch-512 measurement.
+
+### R2_WD partial read (arm interrupted at 500 steps during a driver reorder)
+
+The weight-decay arm was killed at 500 steps when the driver was reordered to put the
+diversity axis first. Its two probe points survive and are reported rather than
+discarded, flagged as PARTIAL (the pre-committed bar is at +1000 steps, so this is not
+a verdict):
+
+| | EVAL excess | EVAL agree | TRAIN excess | TRAIN agree |
+|---|---|---|---|---|
+| step 0 (identical start, both arms) | 0.8984 | 0.5503 | 0.5778 | 0.6907 |
+| CONTROL @500 | 0.9309 | 0.5376 | 0.5484 | 0.7031 |
+| **R2_WD @500** (`aux_weight_decay` 1e-4 -> 1e-2) | **0.9367** | **0.5395** | **0.5580** | 0.7040 |
+
+100x weight decay on the group that actually holds the policy head moved held-out
+excess the WRONG WAY relative to CONTROL (+0.0058, well inside noise, i.e. no
+improvement) while slowing the train-side fit as expected (0.5580 vs 0.5484). The
+decay is demonstrably acting — it is damping memorisation — and the held-out prior
+does not benefit. Re-queued last; if it completes, the +1000 point supersedes this.
+
+### R1_LOWDIV @500 — the mechanism is DISTINCT-POSITIONS-PER-STEP, confirmed by dose
+
+Same harness, same held-out eval buffer, same seed; the ONLY change is the train pool
+(100 shards / 177,967 distinct rows instead of 774 / 1,393,441). At fixed 1000 steps
+that is **1.44 views/row instead of 0.18 — an 7.8x increase in views/row**.
+
+Harness check first: R1_LOWDIV's step-0 held-out value is IDENTICAL to CONTROL's
+(0.8984, agree 0.5503), so every arm starts from the same held-out point and the
+comparisons are paired at the start. (Its train-side start differs, 0.5383 vs 0.5778,
+only because train excess is measured on that arm's own pool.)
+
+| @500 steps | EVAL excess | EVAL agree | TRAIN excess | TRAIN agree |
+|---|---|---|---|---|
+| CONTROL (1.39M distinct, 0.18 views/row) | 0.9309 | 0.5376 | 0.5484 (from 0.5778, **-0.029**) | 0.7031 |
+| **R1_LOWDIV** (178k distinct, 1.44 views/row) | **0.9445** | **0.5280** | **0.3905** (from 0.5383, **-0.148**) | **0.7690** |
+
+**Raising views/row 7.8x made the train-side fit collapse 5x faster (-0.148 vs -0.029)
+and made the held-out prior WORSE than CONTROL on both metrics (+0.0136 excess,
+-0.0096 agree).** That is the predicted direction, at a dose, with the train and
+held-out sides moving in opposite directions more violently the fewer distinct rows
+there are. The mechanism is not "steps" and not "epochs" — it is
+**distinct-positions-per-step**, i.e. views/row.
+
+This is the arm that makes the throughput identity above actionable rather than
+theoretical: views/row is the causal axis, and `train_views_per_ingested_position`
+is the knob that sets it.
+
+## ⚑⚑ VERDICT (2026-07-31 17:3x) — REMEDY SCREEN: **ALL FIVE ARMS FAIL.** No cheap knob touches the held-out prior.
+
+Judged against the bar committed before any arm ran: PASS = held-out excess at +1000
+steps **>= 0.05 nats better than CONTROL (<= 0.8779)** AND held-out `argmax_agree` >
+CONTROL's 0.5429. FAIL = held-out excess >= 0.8969 (i.e. not better by more than the
+0.031-nat two-estimate spread). All arms: identical harness, seed 0, same held-out
+buffer, 1000 steps, batch 256, `scratchpad/policy_stepbudget.py`.
+
+**Harness check: every arm's step-0 held-out value is IDENTICAL (0.8984, agree
+0.5503).** The arms are paired at the start; all differences below are the arms.
+
+| arm | held-out excess @1000 | Δ vs CONTROL | held-out agree | Δ | train excess | train agree | **verdict** |
+|---|---|---|---|---|---|---|---|
+| CONTROL | 0.9279 | — | 0.5429 | — | 0.5403 | 0.7103 | — |
+| R1_LOWDIV | 0.9548 | **+0.0269** | 0.5333 | -0.0096 | **0.3373** | **0.8017** | **FAIL** (predicted; this arm was the mechanism probe) |
+| R5_HIGHDIV | 0.9414 | **+0.0135** | 0.5442 | +0.0013 | 0.5222 | 0.7169 | **FAIL** |
+| R2_WD | 0.9325 | +0.0046 | 0.5424 | -0.0005 | 0.5223 | 0.7173 | **FAIL** |
+| R4_NOSOFT | 0.9321 | +0.0042 | 0.5414 | -0.0015 | 0.5471 | 0.6980 | **FAIL** |
+| R3_ANCHOR3X | 0.9182 | **-0.0097** | 0.5466 | +0.0037 | 0.5615 | 0.7071 | **FAIL** |
+
+**Nothing passes. Nothing is even close.** The best arm (R3_ANCHOR3X) is the only one
+that moved BOTH metrics in the right direction, and it is **-0.0097 against a -0.05
+bar** — a fifth of the required size and well inside the 0.031 noise band. Reporting it
+as "promising" would be exactly the post-hoc reading the pre-registration exists to
+prevent. It is a FAIL.
+
+⚠ **RESTATED WITH THE VERDICTS, NOT ONLY IN THE PRE-REGISTRATION:** 1000 steps x 256
+against 1.39M distinct rows is **0.18 views/row**, while the memorisation under
+investigation accumulated over ~38,062 live steps at **5.0 views/row**. These arms
+measure what a knob does to the MARGINAL step's effect on the held-out prior. A
+reader who sees only the table must not conclude "these knobs are dead in a
+from-scratch run" — they are dead as **repairs to the current head**.
+
+### Per-arm reading
+
+- **R1_LOWDIV — the mechanism arm, and it fired hard.** 7.8x fewer distinct rows
+  (178k, 1.44 views/row) drove train excess from 0.5383 to **0.3373** (-0.201, vs
+  CONTROL's -0.037) and train agreement to **0.8017**, while held-out went to the
+  worst value of any arm. **Memorisation is a function of views-per-row, and the
+  instrument sees it clearly at dose.** This is the arm that makes everything else
+  interpretable: the screen HAS power to detect the effect it is looking for.
+- **R5_HIGHDIV — doubling distinct rows did not help; it was slightly worse.** 2.8M
+  distinct rows (0.09 views/row) gave held-out 0.9414, i.e. +0.0135 vs CONTROL.
+  Confound stated in advance and now load-bearing: the extra 809 shards are the 07-11
+  `4c17c` pool, 20 days stale, so this is "more distinct rows AND staler targets" and
+  the two cannot be separated here. **A win would have been clean; this null/slight-loss
+  is ambiguous.** What it does establish is that no free diversity win was sitting on
+  the disk.
+- **R2_WD — 100x weight decay is acting and does not help.** Train excess fell more
+  than CONTROL's (0.5223 vs 0.5403) with agreement up, held-out unchanged. Decay damps
+  the head's fit without transferring anything to unseen rows.
+- **R4_NOSOFT — the duplicate soft target is not the problem.** Removing `w_soft`
+  entirely (1.0 -> 0.0) freed a whole unit of trunk gradient spent on a deterministic
+  retempering of the same target, and held-out did not move (+0.0042). **This kills the
+  "policy_soft is stealing trunk capacity" lead** — a lead I generated from my own
+  slices, so it is a self-inflicted hypothesis dying on its own yardstick.
+- **R3_ANCHOR3X — the anchor question, finally asked on the right metric.** 3x external
+  pull gave -0.0097 held-out excess and +0.0037 agreement: the right direction, ~5x too
+  small, inside noise. Note its TRAIN excess ROSE (0.5615 vs 0.5403), which is expected
+  and not a defect — the external anchor pulls the head away from `policy_t`, and train
+  excess is measured against `policy_t`. **This is the third independent time the
+  external-anchor lever has come back too small to matter, now on a held-out
+  generalisation metric rather than a same-material SF ruler. Treat it as closed.**
+
+### Where the remedy has to come from, given that all the cheap knobs missed
+
+Every arm changed HOW the existing rows are consumed — decay, loss weights, gradient
+allocation, pool size. None of them touched the held-out prior. Combined with what was
+already established today (LR is already at 5.3e-4 on the trunk; `log_temp` is
+converged and softening; mirror augmentation is already on at 0.5; target noise is
+~0.08 of the 0.61 nats; more steps buy only training-row fit), the space of
+"reweight/retune what we already have" is now substantially closed by measurement
+rather than by argument.
+
+That leaves interventions that change **what the rows ARE**, not how they are
+weighted: genuinely new position distributions, a different target-generation regime,
+or model capacity. This screen deliberately says nothing about those, and none of them
+is cheap. **The honest summary is: the defect is localised and none of the cheap fixes
+touch it.**
+
+### THE RESUME QUESTION — answered, with the limit of the evidence stated
+
+**Q: step budget scales with ingest via views-targeting, so does a throughput win buy
+more of the harmful thing?**
+
+**No.** The identity derived from production columns (above) shows views/row =
+`train_views_per_ingested_position` exactly at a saturated window cap, independent of
+throughput. A throughput win raises steps, distinct rows, and turnover in the same
+proportion: **views-neutral**. My +1000-step probe held data fixed, so it raised
+views/row — a different intervention. **Throughput is not the harmful axis. Views/row
+is.**
+
+**Q: is there a regime where more distinct rows per step makes extra steps helpful?**
+
+**The harmful direction is confirmed; the helpful direction is NOT demonstrated, and
+the screen had no power to demonstrate it.**
+
+| arm | distinct rows | views/row within the arm | held-out excess @1000 |
+|---|---|---|---|
+| R1_LOWDIV | 178k | **1.44** | 0.9548 |
+| CONTROL | 1.39M | 0.18 | **0.9279** |
+| R5_HIGHDIV | 2.8M | 0.09 | 0.9414 |
+
+Raising views/row from 0.18 to 1.44 clearly hurts. Lowering it from 0.18 to 0.09 does
+not help — **but both CONTROL and R5_HIGHDIV are already below 1 view/row, so neither
+arm had memorisation headroom left to remove.** The comparison the live loop actually
+poses is **5.0 views/row vs something lower**, and NO arm ran at those levels. So:
+
+- **Supported:** views/row above ~1 is harmful, at dose, on both metrics.
+- **Supported:** the live loop runs at **5.0**, i.e. 3.5x above the level that already
+  showed harm in R1_LOWDIV, and above both external anchors the config itself cites
+  (AZ ~1, KataGo ~4).
+- **NOT tested:** whether 5.0 -> 2.5 improves the held-out prior. The inference is a
+  dose-response extrapolation plus the identity that this knob sets views/row. **It is
+  the best-supported lever available and it is still an inference, not a measurement.**
+
+**Consequence for resume-as-configured:** nothing here says stop the loop to protect
+it from throughput. It says that if the run resumes, `train_views_per_ingested_position`
+= 5.0 is the single parameter most likely to be doing harm, and it is live-tunable, and
+it has never been screened.
+
+### The confirming arm this earns (no arm PASSED, so this confirms the MECHANISM, not a remedy)
+
+Since every remedy failed, the arm worth buying is not a remedy arm — it is the one
+measurement that would turn the views/row inference into a result:
+
+**A views/row dose ladder at LIVE-relevant levels.** Same harness, same held-out
+buffer, arms at **5.0 / 2.5 / 1.0 views/row** held at EQUAL TOTAL STEPS by scaling the
+train pool (pool size = steps x batch / views_target), so views/row is the only thing
+that varies and distinct-rows-per-step is its exact inverse. To reach 5.0 views/row at
+a pool large enough to be representative needs ~4000 steps against ~205k rows.
+
+Cost: 3 arms x 4000 steps. Measured throughput on this GPU in these arms is **~9
+minutes per 1000-step arm including compile**, so **~2 hours total**, offline, training
+down, no live window consumed. That is the cheapest experiment that could either
+justify moving `train_views_per_ingested_position` or close it.
+
+**What would refute the whole line:** held-out excess flat across 5.0/2.5/1.0 at equal
+steps. That would say views/row is not the axis after all and that R1_LOWDIV's effect
+came from its pool being small in some other way (e.g. 100 contiguous shards spanning
+only ~4 hours of selfplay, hence narrower in opening/PID regime than a random 178k
+sample). **That alternative is live and I did not control for it** — R1_LOWDIV's pool
+was contiguous-by-recency, not a random subsample of the window. A clean ladder must
+draw each pool as a RANDOM subsample of the 774 shards, not a contiguous slice.
+
+## ⚑⚑ PRE-REGISTRATION (2026-07-31 17:4x) — VIEWS/ROW LADDER 5.0 / 2.5 / 1.0. The test that establishes or refutes the views/row line.
+
+Written BEFORE any arm ran. Training DOWN, offline, `nice -n 19`.
+
+### Why this exists
+
+Every cheap remedy failed (5/5). The one mechanism that fired was R1_LOWDIV: raising
+views/row 0.18 -> 1.44 made the held-out prior worse and collapsed train excess. But
+**R1_LOWDIV's pool was a contiguous-by-recency slice of 100 shards spanning only ~4
+hours of selfplay**, so "narrower opening/PID regime" is a live alternative explanation
+for its entire effect. This ladder removes that confound and asks the question at the
+LIVE configuration's actual views/row for the first time.
+
+### Design — views/row is the ONLY variable
+
+Equal total steps and equal batch in every arm, so all arms draw the SAME number of
+samples (4000 x 256 = 1,024,000). Pool sized `steps x batch / views_target`, so
+distinct-rows-per-step is the exact inverse of views/row and nothing else moves.
+
+| arm | target views/row | shards | expected rows | expected realized views/row |
+|---|---|---|---|---|
+| `V5` | **5.0** | 114 | ~205,235 | 4.99 |
+| `V2p5` | 2.5 | 228 | ~410,470 | 2.49 |
+| `V1` | 1.0 | 569 | ~1,024,371 | 1.00 |
+
+**Pools are RANDOM subsamples of the 774 train shards (seed 11), NESTED (V5 subset of
+V2p5 subset of V1), never contiguous.** Verified before launch — age spans
+**33.50 h / 33.72 h / 33.78 h**, all starting 07-30 01:1x and ending 07-31 10:5x, i.e.
+all three pools cover essentially the whole window rather than a slice. That is the
+control R1_LOWDIV lacked. Residual limitation stated in advance: subsampling is at
+SHARD granularity, so rows within a shard remain correlated (same games); this
+controls the age/regime confound, not within-shard clustering.
+
+Realized views/row will be reported from the ACTUAL `len(buf)` each arm prints, not
+from the target.
+
+### ONE deciding readout
+
+Held-out policy excess-over-floor at **+4000 steps**, on the same 60 newest shards no
+arm trains on, plus held-out `argmax_agree`. Same instrument, same seed, same eval
+buffer as every arm so far (`scratchpad/policy_stepbudget.py`, batch 256).
+
+**Harness check, required as before: all three arms must report an IDENTICAL step-0
+held-out value (0.8984, agree 0.5503).** If they do not, the arms are not paired and no
+verdict is issued.
+
+### Pre-committed thresholds — monotonicity, not just endpoints
+
+Two points can be noise; a consistent ordering across three is much harder to get by
+chance (a strict 3-way ordering is 1/6 at random, and requiring it on BOTH metrics is
+~1/36 if they were independent).
+
+- **MECHANISM CONFIRMED** requires ALL THREE:
+  1. strict ordering on excess: `excess(V5) > excess(V2p5) > excess(V1)`;
+  2. strict ordering the opposite way on agreement: `agree(V5) < agree(V2p5) < agree(V1)`;
+  3. endpoint spread `excess(V5) - excess(V1) >= 0.05` nats (~1.6x the 0.031-nat
+     two-estimate noise band, and the same materiality bar the remedy screen used).
+- **REFUTED (FLAT)**: `|excess(V5) - excess(V1)| < 0.031` nats — no detectable
+  difference across a **5x** range of views/row. **I commit in advance: a flat ladder
+  refutes the views/row line entirely, and makes the contiguity artifact the likely
+  explanation for R1_LOWDIV.** I will say exactly that and not reach for a rescue
+  hypothesis.
+- **UNRESOLVED**: ordered but spread between 0.031 and 0.05, or excess ordered while
+  agreement is not. Reported as unresolved with the n/steps needed; not promoted.
+
+### Statement 1 required in the writeup — how much of today was extrapolation
+
+**The `V5` arm is the FIRST measurement anywhere in this work at the live
+configuration's actual views/row (5.0).** Everything measured today ran below 1
+view/row: the floor measurement, the age/views buckets, the +1000-step probe (0.18),
+and all five remedy arms (0.09-1.44, only R1_LOWDIV above 1). So every statement made
+today about the live loop's views regime — including my own "5.0 is the parameter most
+likely doing harm" — has been an extrapolation from below 1 to 5. This ladder is the
+first time the live level is on the instrument, and if it comes back flat that
+extrapolation was wrong.
+
+### Statement 2 required in the writeup — what a confirmation would and would not license
+
+Committed now, before seeing the result: **a confirming ladder does NOT license a live
+`train_views_per_ingested_position` change.** The gap is structural, not a matter of
+confidence: this ladder applies 4000 steps to a head that accumulated its gap over
+**38,062 steps**, and it measures the marginal effect of views/row on a head already
+shaped by 5.0 views/row for 20 days. A confirmation establishes the MECHANISM and
+earns exactly one thing — a longer arm at a live-relevant horizon with a pre-committed
+strength yardstick, since per `docs/rl_loop_audit.md` method rule 6 only a paired arena
+decides strength and every frozen ruler here can move opposite to real play.
+
+## ⚑⚑ PRE-REGISTRATION (2026-07-31 19:1x) — IS SF's NATIVE WDL A BETTER `sf_wdl` LABEL THAN THE cp-LOGISTIC?
+
+Written BEFORE any number below was computed. Repo `a3aa9447e`, training DOWN by
+operator decision, offline/forward-only, zero new SF compute (both label sources are
+already cached).
+
+### Why this is being asked at all, and the disqualifying confound
+
+`audit_targets.py`'s value table reads, on 2000 v1 audit positions at ck409:
+
+| candidate | Brier vs deep WDL | ECE vs deep WDL |
+|---|---|---|
+| i) cp-logistic of shallow SF eval (**= the production `sf_wdl` label**) | 0.2261 | 0.1792 |
+| ii) shallow SF native WDL (`UCI_ShowWDL`, free) | 0.0119 | 0.0099 |
+
+a 19x Brier gap that reads as "switch `sf_wdl` to native WDL". **It is not evidence
+of that**, for the reason the script's own docstring already gives for row (ii) and
+which was attempted-and-retracted on 2026-07-27: the RULER *is* deep-SF native WDL, so
+(ii) shares the criterion's functional form and (i) does not. This is
+[[guard_must_share_the_criterion_instrument]] running in reverse — form agreement alone
+manufactures a gap. Brier/ECE is also banned as a value-strength verdict by
+`docs/eval_protocol.md`. **No Brier/ECE number may appear in this verdict.**
+
+### Hypothesis (H1) and null (H0)
+
+* **H0 (default):** the 19x is entirely form agreement plus the one-hotness of
+  `UCI_ShowWDL`. On a ruler that consumes only a discrete MOVE CHOICE, native WDL does
+  **not** beat the cp-logistic.
+* **H1:** native WDL carries decision-relevant information the cp-logistic loses, and
+  wins the decision ruler.
+
+### The ONE deciding yardstick (exact command)
+
+Both labels are scored the way `scripts/value_regret.py` scores the net's value head —
+as a 1-ply value-match PLAYER. Candidate move set per position = the moves shallow SF
+listed at MultiPV 40 (**identical set for both arms**); each arm ranks them by its own
+label's parent value `W - L` (root side-to-move POV, as MultiPV lines are reported) and
+plays the argmax; the played move is scored by the frozen deep-SF labels.
+
+```
+PYTHONPATH=. nice -n 19 python3 scratchpad/wdl_label_probe/label_value_match.py \
+  --audit-set data/audit_set_v1.jsonl --slope 0.0060 --draw-width 120.0 \
+  --seed 0 --n-boot 10000
+```
+
+`--slope/--draw-width` are the live `configs/pbt2_small.yaml` values (l.479-480).
+
+### Handling the confound: TWO ruler FORMS, one shared with each arm
+
+A single ruler cannot be form-neutral here, so the confound is bracketed instead of
+dodged:
+
+* **R1 (cp form)** — deep-SF cp regret `best_cp - cp(played)`; shares form with **A**.
+* **R2 (WDL form)** — deep-SF native `(W-L)` drop vs the best listed move; shares form
+  with **B**.
+
+Neither ruler consumes a distribution shape, only a move index, so the Brier-style
+"both go one-hot together" channel is closed outright. **A candidate that wins under
+the ruler form it does NOT share cannot be winning by form agreement.** A split
+decision (each arm wins its own form) is reported as INCONCLUSIVE, not as a win.
+
+### Pre-committed decision rule
+
+**Native WDL WINS (H1) only if** its mean regret is lower than the cp-logistic's by
+**>= 3 cp on R1** with the paired 95% bootstrap CI excluding 0, **AND** lower on R2
+with its CI excluding 0. 3 cp is the same band the ledger already uses for
+`value_regret` parity (`within +2cp`), one notch out.
+
+**Otherwise the lever is KILLED** and the 19x Brier gap is recorded as a
+form-agreement artifact — including the case where the difference is significant in
+the WRONG direction, and the case where it is n.s.
+
+Nothing here licenses a live change either way: a data-pipeline change to `sf_wdl`
+would need its own entry, and it is a **RULER CHANGE for `wdl_loss`** (the metric
+becomes a different quantity and must not be compared across it).
+
+### Controls, both required (a passing negative control alone says nothing)
+
+* **NEGATIVE (label shuffle):** `SHUF_A` / `SHUF_B` permute each label vector *within*
+  the position, leaving the marginal value distribution untouched and destroying only
+  the value->move attribution. **Required: both collapse to the `NEG_uniform` arm and
+  `SHUF_B - SHUF_A` is n.s.** If the A-vs-B difference survives the shuffle, the
+  instrument is measuring something other than the labels and the run is void.
+* **POSITIVE:** `POS_deepcp` ranks by the deep-SF cp ruler itself and must score ~0 on
+  R1; `NEG_uniform` picks uniformly at random. **Required: the same paired-CI machinery
+  resolves `A_cplog - POS_deepcp` and `A_cplog - NEG_uniform` as SIG.** If it cannot
+  resolve those, it cannot be trusted to have resolved A vs B.
+
+### Filters are POSITION-LEVEL only
+
+Kept iff the key is in both files, shallow SF listed >= 2 distinct moves, and the deep
+MultiPV listed >= 2. Nothing downstream may condition on an arm's output
+([[never_condition_a_control_on_its_own_outcome]]).
+
+### Known limits, stated in advance
+
+The v1 audit set is side-to-move canonical with no move stack and no full-strength
+continuations, so this is a RANKING screen over SF-listed moves, not a strength
+verdict; per `docs/rl_loop_audit.md` method rule 6 only a paired arena decides
+strength. Positions where shallow SF listed only 1 move are excluded, which removes
+the forced-move rows both arms would trivially agree on.
+
+### ⚑⚑ VERDICT (2026-07-31 19:4x) — KILLED. Native `UCI_ShowWDL` carries ZERO ranking information over the cp score, and LOSES 65.8 cp to saturation.
+
+Judged by the rule pre-committed above, not post hoc. `n=4000` (the whole v1 audit
+set; every position passed the position-level filters, 0 dropped).
+
+| ruler | A_cplog | B_native | B − A | 95% paired CI | |
+|---|---|---|---|---|---|
+| **R1** deep-SF cp regret | **15.84 cp** | 81.59 cp | **+65.76 cp** | [+57.75, +74.13] | SIG, WRONG direction |
+| **R2** deep-SF native (W−L) drop | 0.0086 | 0.0084 | −0.0001 | [−0.0004, +0.0000] | n.s. |
+
+**The pre-committed win condition required native WDL to be >= 3 cp BETTER on R1 with
+the CI excluding 0 AND better on R2 with its CI excluding 0. It is 65.8 cp WORSE on
+R1 and a dead heat on R2 — including on R2, the ruler form it SHARES. Lever KILLED.**
+Reproduced at `--seed 7`: +55.73 cp [+47.52, +63.52], controls unchanged.
+
+**Controls, both required, both PASS.** *Negative (label shuffle, within-position
+permutation):* `SHUF_B − SHUF_A` = +7.36 cp [−1.67, +16.73] n.s. on R1 and n.s. on
+R2, and both shuffled arms collapse onto `NEG_uniform` (196.7 / 204.0 vs 203.0 cp) —
+the effect VANISHES when value→move attribution is destroyed, so the instrument is
+reading the labels and nothing else. *Positive:* `POS_deepcp` scores exactly 0.0000 cp
+on R1, and the same paired-CI machinery resolves `A_cplog − POS_deepcp` (+15.84 SIG)
+and `A_cplog − NEG_uniform` (−187.15 SIG) — it can resolve real differences of both
+signs at this n.
+
+### The mechanism, which makes this conclusive rather than merely negative
+
+Split by whether native WDL's top value is UNIQUE (post-hoc diagnostic, label-property
+filter applied identically to both arms, `scratchpad/wdl_label_probe/posthoc_untied.py`):
+
+| bucket | n | A_cplog | B_native | B − A |
+|---|---|---|---|---|
+| native WDL top **unique** (it discriminates) | 2239 (56.0%) | 4.358 cp | 4.319 cp | **−0.038 cp [−0.118, +0.034] n.s.** |
+| native WDL top **tied** (it cannot rank) | 1761 (44.0%) | 30.83 cp | 163.57 cp | **+132.75 cp [+116.98, +149.01] SIG** |
+
+**Wherever native WDL discriminates at all it is INDISTINGUISHABLE from the
+cp-logistic** — necessarily so: within one MultiPV output every line shares the root
+material and ply, so SF's `UCI_ShowWDL` is a monotone transform of that line's cp and
+induces the IDENTICAL ordering. It has no independent information to add. Its entire
+65.8 cp deficit is **saturation**: its top value is tied among >= 2 candidate moves in
+**44.0%** of positions (vs **8.0%** for the cp-logistic at slope 0.0060 / draw-width
+120), and a tied label cannot rank. This is the same failure as
+[[wdl_regret_filter_leaks_huge_cp]] — a target that goes flat in decided positions
+teaches shuffling, not conversion — and it is exactly why production set
+`sf_wdl_use_cp_logistic: true`. The result CONFIRMS the existing design choice.
+
+**No live change is proposed and none is licensed.** No `sf_wdl` data-pipeline change,
+so no ruler change to `wdl_loss`. Had it gone the other way it would have needed its
+own entry plus the explicit note that `wdl_loss` becomes a DIFFERENT QUANTITY across
+the switch and must not be compared across it.
+
+**Scope.** This is a RANKING screen over SF-listed moves on the frozen v1 set, not a
+strength verdict (`docs/rl_loop_audit.md` method rule 6). It deliberately reports no
+Brier and no ECE. It says nothing about the OTHER two thirds of the value target;
+`search_wdl_frac`'s own-search component remains the most biased part.
+
+### ⚑⚑ INSTRUMENT DEFECT FOUND EN ROUTE — `audit_targets.py` row (iii) "production WDL blend" IS NOT THE PRODUCTION BLEND
+
+`scripts/audit_targets.py:928-942`. Row (iii) is named for the production value target
+but is a renormalised **two**-component mixture of row **(ii)** and row (iv). Three
+independent defects:
+
+1. **It uses `sf_native`, not `cp_log`** — the SF third is SF's native `UCI_ShowWDL`,
+   while production is `sf_wdl_use_cp_logistic: true` (`configs/pbt2_small.yaml:478`),
+   i.e. row (i). The script's own docstring states production uses the cp-logistic; the
+   code does not.
+2. **It reads the NOMINAL `sf_wdl_frac: 0.50`** from the yaml. The realized value is
+   **0.45** in 478/478 rows (`_dynamic_sf_wdl_weight` returns `sf_wdl_frac_floor`
+   whenever regret <= `sf_wdl_floor_at_regret: 0.10`, and measured regret is
+   0.065-0.082) — `docs/rl_loop_audit.md` method rule 12 exactly.
+3. **The game-outcome third is absent on every row.** The v1 set has no full-strength
+   continuations (`Brier vs outcome` reads `— (0)` in every published table), so
+   `pos.outcome is None` always and the sf/search fractions are renormalised to
+   **0.714 / 0.286**. Row (iii) is a target with 0.35 of its mass silently removed.
+
+**Proof, independent of reading the code.** `wdl_brier` is `sum_k (p_k − t_k)^2`, a
+quadratic form, so for `p = a·x + b·y` the mean decomposes EXACTLY as
+`B = a²B(x) + b²B(y) + 2ab·C` with `|C| <= sqrt(B(x)B(y))` by Cauchy-Schwarz over
+positions. At a=0.714, b=0.286 (iter409 row Briers):
+
+* **As NAMED** (cp-logistic 0.2261 + search 0.2490): achievable range **[0.0388,
+  0.2325]**. Observed **0.0307** would need `C = −0.2572` against a bound of 0.2373 —
+  **arithmetically impossible.**
+* **As CODED** (native 0.0119 + search 0.2490): achievable range **[0.0042, 0.0486]**;
+  observed 0.0307 needs `C = +0.0105`, comfortably feasible.
+
+`scratchpad/wdl_label_probe/task1_convexity.py`. The "5x below the convexity bound"
+anomaly is fully resolved and the code reading is confirmed by arithmetic that does not
+depend on it.
+
+**Consequences.** (a) Row (iii) inherits the SAME same-material confound the docstring
+warns about for row (ii), because it is 71% row (ii). (b) The docstring's own
+2026-07-27 comparison — "(ii) 0.0348/0.0069 vs the production blend (iii) 0.0484/0.0868
+— a 12x ECE gap" — is native-WDL vs 71%-native-WDL, not blend-vs-native; the number
+stands but its INTERPRETATION does not. (c) **No published row (iii) number describes
+the production value target.** Not fixed in this session (offline instrument, no live
+effect); filed here so it is not read again as the production blend.
+
+### PR #294 (2026-07-31 20:0x) — SPEC 1 implemented, with one addition the spec was missing
+
+`docs/audit-policy-table-warning` -> main, ready for review, NOT self-reviewed (author
+is the analysis session; routed to a separate reviewer per CLAUDE.md).
+
+Hunks A and B are SPEC 1 as written. **Hunk C was added because the spec was
+incomplete:** the VALUE table's same-material warning existed only in the module
+DOCSTRING, never in the emitted report — so hunk B's cross-reference ("exactly as the
+value table warns for row (ii)") would not have resolved for anyone reading
+`runs/target_audit_*.md`, which is the exact failure mode hunk B exists to prevent.
+Both tables now carry their warning in the artifact people actually open.
+
+The smoke test gains one assertion per warning, and the gate was verified by NEGATIVE
+CONTROL rather than asserted: with both emitted warnings replaced by placeholders,
+`test_audit_targets_smoke` FAILS; restored, it passes. `./scripts/lint.sh` clean across
+all three sections (ruff / basedpyright / vulture). No logic change, no emitted number
+changes.
+
+### MEASUREMENT (2026-07-31) — task #44: `zclip_max_norm` BINDS ON 99.98% OF STEPS AND IT DOES NOT MATTER. Standing watch CLOSED, NO ACTION.
+
+Pre-registration written before any number existed:
+`scratchpad/zclip_torque/PREREG.md`. Probe: `scratchpad/zclip_torque/probe.py`,
+result `result.json` / `result_share8.json`, renderer `report.py`. Training was
+DOWN throughout; buffer opened `read_only=True`; nothing written to the run.
+
+**Design.** `scratchpad/strength_readout_0731/ck477/trainer.pt` (byte-identical
+to live `checkpoint_000477`) loaded through `Trainer.load()` — WARM optimizer,
+m/v/step restored, not a cold start. 40 optimizer steps replayed on 40 batches
+drawn ONCE from the live 1.5M-row disk buffer and cached, so every arm consumes
+identical rows in identical order. Only `zclip.max_grad_norm` differs.
+Arms: **A** 6.5 (production) · **A'** 6.5 rerun · **B** cap OFF ·
+**P** 1.0 (positive control, ~0.11x the median norm) ·
+**Q** 6.5 with `w_categorical` 0.30 -> 0.0 (apparatus control).
+
+**SANITY GATE (pre-registered, PASSED).** Replayed `grad_norm` median **9.06**
+(live iter 477: 8.98), aurora **2.552** (live 2.553), hard-clip rate **1.000**
+(live 1.000), `policy_ce` 1.172 (live 1.174), `blended_wdl` 0.804 (0.812),
+`has_sf_p0_frac` 0.193 (0.192). The probe is in the live regime.
+
+**CONTROLS, all pass.** A vs A': `cos = 1.000000000`, `||d||` ratio
+`1.000000`, every bucket share delta `0.00000 pp` — the noise floor is EXACT, so
+every cosine below is signal. P (cap 1.0): `cos_all 0.9386`, `cos_adamw 0.7498`,
+head energy shares **+136% to +242%**. Q: `cos_all 0.9871`, and
+`value_categorical`'s own bucket cosine collapses to **0.318** with its share
+**-91%** — the instrument detects head reweighting, loudly, when there is any.
+
+**RESULT — A vs B at step 40.** `cos_all` **0.99202**, `cos_adamw` **0.99017**,
+`||dtheta_A|| / ||dtheta_B||` **0.98547**. Against the pre-committed rule this is
+the **SMALL-BUT-NONZERO** band: it misses the strict no-op bar (cos >= 0.999)
+and it misses every MATERIAL trigger by a wide margin (needed cos < 0.99, or a
+bucket share moving > 2.0 pp / > 10% relative, or a norm ratio outside
+[0.90, 1.10]; observed max bucket move **0.50 pp / 7.5% relative**).
+**Recommendation triggers (f)/(g)/cos<0.95 are not met. NO ACTION on the cap.**
+
+**THE LOUD FAILURE DID NOT HAPPEN — the yaml's loss weights ARE the weights in
+effect.** POLICY-head vs VALUE-head share of `||dtheta||`: **0.957190 (A) vs
+0.957159 (B)**, a 3e-5 relative difference. Per-component trunk-grad share
+re-measured at each arm's FINAL weights over **8 HELD-OUT batches**: every
+component within **0.15 pp and <= 0.10 sd** of the other arm. (A single-batch
+first pass showed `sf_own_regret` +0.86 pp; the 8-batch sd for that term is
++/-1.9 pp, so that reading was a one-batch artifact — the masked-mean
+low-coverage tail again. It is retracted, not reported.)
+
+**WHAT THE CLIP ACTUALLY DOES, measured.** (a) **I21 confirmed bit-for-bit on
+the production path**: at step 1, `||dtheta_aurora|| = 0.103445` in ALL THREE of
+cap-6.5 / cap-off / cap-1.0, and `cos_aurora = 1.000000000` exactly — a 9.1x
+clip moves 28.6% of the net by literally nothing. (b) For the AdamW group a mean
+`c = 0.711` (binding 40/40 steps) costs **5.8%** of the AdamW update at step 1
+and **8.3%** of the AdamW/Aurora update ratio over 40 steps: **Adam absorbs ~80%
+of the rescale in one step**. At cap 1.0, `c = 0.110` — a 9.1x gradient cut —
+buys only a **12.0%** smaller AdamW update at step 1. (c) The whole effect is a
+uniform Aurora-vs-AdamW tilt (all ten heads move -6.1% to -7.5%, i.e. together),
+not a head-vs-head reweighting.
+
+**The "normalized-momentum descent" worry is FALSIFIED.** Per-step
+`||dtheta||` CV: **0.2944 clipped vs 0.2969 unclipped**. A 100%-binding clip
+removes 0.8% of the step-to-step update-magnitude variation, not the variation.
+The applied factor `c` itself varies 0.573-0.892 (sd 0.065) and passes through.
+
+**Horizon caveat, and it points the same way.** The banked `v` is equilibrated
+to the CLIPPED regime, so arm B is the perturbed one and 0.99202 is a
+TRANSIENT. Under a permanent cap change `v` -> `c^2 v_true` and `m/sqrt(v)`
+recovers exactly, so the steady-state difference is if anything smaller. 40
+steps is ~half a live iteration (76-88 steps); this is a statement about the
+UPDATE, not about Elo. It does NOT explain or excuse the grad-norm RAMP — that
+remains I11's open question; only the CAP is settled.
+
+**Verdict: the pre-committed GRAD_NORM_MEDIAN_WATCH at 4.75 is measuring a real
+regime signal on a lever with no torque — the same shape as the gate-SF-time
+analysis (12.2x on 1.7% of one core). Task #44 closes NO ACTION. Do not raise
+the cap on clip-rate evidence; a cap change needs its own training experiment
+and there is no measured reason to run one.**
+
+**Two side findings, both real, neither investigated further.**
+1. **A freshly-opened `DiskReplayBuffer` is NOT the live distribution.**
+   `_scan_existing_shards` (disk_buffer.py:774-781) seeds the shuffle pool from
+   the NEWEST `2 * refresh_shards` = **10 shards only**. Measured on that cold
+   pool: `policy_ce` **1.46** vs live 1.17, `grad_norm` **19.2** vs live 8.98,
+   `frac_is_selfplay` 0.87 vs 0.73, `m_sf_own` 4.05 vs 2.49. ~300 warm draws
+   fixes it (each 4th draw swaps in 5 RANDOM shards). My first pass would have
+   published a verdict on batches with nothing to do with production — DIFF THE
+   FILE YOU MEASURED AGAINST PRODUCTION'S, in a new costume. **This also means
+   live training's first ~40 optimizer steps after EVERY restart sample a
+   newest-data-only pool** — roughly half of the first post-restart iteration,
+   in a hotter-gradient regime. Nobody has read that.
+2. **zclip's adaptive EMA is not in the checkpoint.** `Trainer.save`
+   (trainer.py:3153-3173) stores model/opt/scheduler/step/peak_lr/arch/swa and
+   nothing else, so the z-score arm re-warms for 25 steps at every restart. The
+   FIXED cap still applies throughout (`zclip.py` warmup branch calls
+   `clip_grad_norm_`), so the post-restart regime is hard-cap-only. Same family
+   as "the holdout ruler dies at every restart".
+
+---
+
+## Task #93 — the cold shuffle pool: REAL, but the dose was ~40x overstated (2026-07-31)
+
+**Claim under test** (task #44 side finding 1): *"live training's first ~40
+optimizer steps after EVERY restart sample a newest-data-only pool — roughly
+half of the first post-restart iteration, in a hotter-gradient regime."*
+
+**VERDICT: the defect is real and is production, not probe. The DOSE is not.**
+It is **11-15 steps of ONE iteration per restart** (~13-18% of that iteration),
+**~6.7 fully-cold-equivalent steps**, **0.34% of all optimizer steps** — not
+~15%. The *magnitude* half of the claim is void: `grad_hard_clip_rate = 1.0` on
+every recent row, so a hotter gradient is renormalised to the same 6.5 before
+the optimizer sees it. What survives is **direction**: ~7 steps per restart
+pointed at the freshest 1.2% of the window.
+
+**Production path traced** (not assumed from the probe):
+`trainable_init.py:625` opens a FRESH `DiskReplayBuffer` at every restart — the
+shuffle pool is memory-only and is never checkpointed, so `_scan_existing_shards`
+re-seeds it from the newest `2*refresh_shards` shards every time. The probe's
+config matches production exactly (`shuffle_refresh_shards: 5`,
+`shuffle_refresh_interval: 4`, `shuffle_buffer_size: 100000`, `shard_size: 2000`).
+Ingest DOES run first (`_run_selfplay_phase` precedes `_run_training_and_gating`),
+so one iteration of fresh rows is in the pool before step 1 — that makes the pool
+*fresher*, not warmer.
+
+**Instrument.** `DiskReplayBuffer` subclass tagging every pooled row with its
+source shard through the production append/drop/compact bookkeeping; self-check
+asserts the tag store length equals the production priority store length after
+every batch. Read-only against the live 834-shard window (training down).
+
+**Measured composition** (4 seeds; fraction of drawn rows from the newest 10
+shards / mean recency percentile of drawn rows):
+
+```
+b1-3   1.000 / 0.994      b8-11  0.05 / 0.69      warm  0.032 / 0.656
+b4-7   0.494 / 0.820      b12+   0.00 / 0.71
+```
+
+With production's pre-training ingest included (pool 18,953 -> 27,153 rows):
+b1-3 1.00, b4-7 0.64, b8-11 0.30, b12+ 0. Sum of cold fraction over the first
+iteration = **10.14 step-equivalents**, of which **6.7 is excess** over the 0.042
+warm baseline.
+
+**Measured cost, frozen model, production batch path, 6 seeds, PAIRED**
+(batch 256; warm arm reproduces live `policy_loss` 1.168 at 1.181 — the
+instrument is calibrated against production):
+
+```
+policy_ce  vs warm     grad_norm vs warm
+b1-3   +0.4455 +/- 0.0661     +11.70 +/- 1.29
+b4-7   +0.2192 +/- 0.0816     + 7.21 +/- 0.72
+b8-11  +0.0291 +/- 0.0505     + 0.91 +/- 1.26   (n.s.)
+b12-15 -0.0307 +/- 0.0257     - 0.62 +/- 0.91   (n.s.)
+NEG CONTROL warm vs warm2  +0.0095 +/- 0.0221   +0.30 +/- 0.73   (both PASS)
+```
+
+The floor (target entropy) does NOT move (+0.018 +/- 0.081, n.s.), so the whole
+gap is policy EXCESS.
+
+**Two corrections to how the original number was read.** (a) `~300 warm draws`
+was an estimate; the true flush is **12 draws** — `_apply_refresh_chunks` drops
+`min(pool, loaded_n)` oldest rows per refresh, so 2-3 refreshes replace the whole
+seed. (b) The original `19.2 vs 8.98` compared a probe grad norm against the live
+column at a different batch size and parameter scope. Within one instrument the
+ratio is 1.8x, and it is clipped away.
+
+**Side finding, unmeasured before: the pool never grows by refresh.**
+`_apply_refresh_chunks` replaces rows 1:1, so the pool stays at its seeded
+18,953 and only `add_many_arrays` grows it — at 8,200 rows/iteration it reaches
+the 100,000 cap ~9-10 iterations after every restart (verified: 18,953 ->
+27,153 -> 35,353 with simulated ingest). This is NOT a distribution defect:
+expected draws per loaded row is `batch_size / injection_rate` = 512/2603 = 0.20
+independent of pool size. Only the decorrelation horizon changes (7.6 vs 40
+batches).
+
+**Steady state is recency-weighted BY DESIGN, and that is unchanged by any of
+this.** `_load_refresh_chunks` weights shard choice linearly in recency, so the
+mean sampled row sits at the **66th percentile** of window age (measured 0.656,
+theory 2/3); the newest 25% of shards carry ~44% of refresh mass, the oldest 50%
+carry 25%. The restart anomaly is not "more of that bias" — it is a different
+distribution (99.4th percentile, 10 shards wide) for ~11 steps.
+
+**⚑ THE OFFLINE PROBES ARE MORE EXPOSED THAN PRODUCTION.** Every probe that
+constructs a fresh buffer and measures its first N batches eats this. A 40-batch
+probe over-reports policy excess by **~+0.06 nats** (arithmetic from the decay
+curve; direct 3-seed measure +0.041 +/- 0.085). `policy_stepbudget.py`'s
+`_probe(0)` measures 40 batches on two just-constructed buffers, so the step-0
+baseline of the memorisation readout is inflated — and asymmetrically, because
+`train_shards` has 774 shards (full bias) while `eval_shards` has 60 (the newest
+10 already carry ~30% of warm mass, so ~1/4 the bias). Applied to the cited
+numbers: the train-excess FALL 0.578->0.540 is within the artifact and is not
+established; the held-out RISE 0.898->0.928 is UNDERSTATED, so that half of the
+memorisation conclusion is strengthened, not threatened. Re-run any step-0
+baseline with >=12 warm-up draws before quoting it.
+
+**No yardstick is proposed and none exists.** 0.34% of steps, magnitude clipped,
+against a loop that moves ~0.02 Elo/iter — this is ~3 orders of magnitude below
+the best instrument. Ship the fix as a CORRECTNESS change with a unit test, not
+as an experiment with an Elo readout.
+
+**Proposed fix (one line of intent, zero extra I/O):** seed the pool in
+`_scan_existing_shards` with the SAME recency-weighted draw the steady-state
+refresh uses (`_load_refresh_chunks` x2) instead of `seed_paths[-2*refresh_shards:]`
+— the same 10 shard loads, drawn from the whole window. Removes ~2/3 of the
+anomaly (the residual is the ingest burst, which every iteration has anyway).
+Log `rows / shards / mean recency rank` at open so the change is observable: the
+proof is that line reading ~0.67n instead of ~n on the next restart. DECIDED
+AGAINST filling the pool to 100k at open: it fixes nothing distributional (see
+above), and it would hand every read-only probe a 6.6 GB pool at construction —
+5 concurrent arms is 33 GB on a 98 GB box.
+
+Scripts: `scratchpad/pool_mix.py`, `pool_mix_ingest.py`, `pool_cold_loss.py`,
+`pool_cold_floor.py`, `pool_stats.py` (session scratchpad).
+
+## ⚑⚑ VERDICT (2026-07-31 19:2x) — VIEWS/ROW LADDER: **MECHANISM CONFIRMED** on all three pre-committed criteria
+
+All three arms passed the harness check with an IDENTICAL step-0 held-out value
+(0.8984, agree 0.5503). Realized views/row from the actual `len(buf)` each arm
+printed, not from the target: V5 = 1,024,000/205,212 = **4.99**;
+V2p5 = 1,024,000/413,926 = **2.47**; V1 = 1,024,000/1,029,442 = **0.995**.
+
+### The deciding readout — +4000 steps, across arms, all buffers WARM
+
+| arm | views/row | held-out excess | held-out agree | train excess | train agree |
+|---|---|---|---|---|---|
+| **V5** (live config) | 4.99 | **1.0453** | **0.5123** | 0.1819 | 0.8856 |
+| **V2p5** | 2.47 | **1.0231** | **0.5171** | 0.2808 | 0.8354 |
+| **V1** | 0.995 | **0.9775** | **0.5233** | 0.4373 | 0.7549 |
+
+Against the criteria committed before the arms ran:
+
+1. **Strict ordering on held-out excess** `V5 > V2p5 > V1`: 1.0453 > 1.0231 > 0.9775 — **MET**
+2. **Strict ordering the opposite way on held-out agreement** `V5 < V2p5 < V1`: 0.5123 < 0.5171 < 0.5233 — **MET**
+3. **Endpoint spread >= 0.05 nats**: 1.0453 - 0.9775 = **0.0678** — **MET**
+
+**MECHANISM CONFIRMED.** The train side mirrors it exactly and was not part of the
+bar: memorisation is monotone in views/row (train excess 0.1819 < 0.2808 < 0.4373,
+train agreement 0.8856 > 0.8354 > 0.7549). Five ordered quantities, all in the
+predicted direction, across a 5x range of views/row, at equal total steps and equal
+total samples, on random full-window nested pools.
+
+**The contiguity artifact is dead as an explanation.** V5's pool is a RANDOM subsample
+spanning 33.50 h of the window (vs R1_LOWDIV's contiguous ~4 h slice) and it produced a
+LARGER effect than R1_LOWDIV did, not a smaller one. The confound I flagged against my
+own earlier arm does not survive its own control.
+
+### ⚠ INSTRUMENT CORRECTION — cold-start bias, measured HERE rather than imported
+
+A separate agent found that a freshly built `DiskReplayBuffer` seeds its shuffle pool
+from the newest `2 x refresh_shards` = 10 shards (`_scan_existing_shards`,
+`disk_buffer.py:774-781`), so its first draws are not a sample of the pool. I measured
+it on THIS instrument (`scratchpad/warmup_check.py`, discard N draws then measure 40):
+
+| warm-up draws | **train pool (774 shards)** excess | bias vs warm | **eval pool (60 shards)** excess | bias vs warm |
+|---|---|---|---|---|
+| 0 | 0.5895 | **+0.0416** | 0.9055 | -0.0197 |
+| 12 | 0.5764 | **+0.0285** | 0.9044 | -0.0207 |
+| 40 | 0.5383 | -0.0095 | 0.9088 | -0.0163 |
+| 120 (reference) | 0.5479 | 0.0000 | 0.9252 | 0.0000 |
+
+Two refinements to the reported finding, both from my own data:
+
+- **The flush is pool-size dependent, and 12 draws is NOT enough on a large pool.** On
+  774 shards the residual is still **+0.0285 at 12 draws** and only reaches ~0 by 40.
+  The "12 draws" figure was measured on a different setup; anyone adding a warm-up
+  should use **>= 40 on a full-size pool**, not 12.
+- **On the 60-shard HELD-OUT pool I cannot detect the bias above noise.** The four
+  conditions span 0.021 nats with NO monotone trend (0.9055, 0.9044, 0.9088, 0.9252 —
+  three cluster within 0.004 and the outlier is the MOST-warmed condition), and the
+  measured floor swings 0.5599-0.5807 across conditions, which is row-composition noise
+  at 40 batches. So the predicted "+0.06 over-report" does not reproduce on my eval
+  buffer, in size or in sign. **I am not importing a correction I cannot measure.**
+
+### What this does to previously published numbers — stated per number
+
+- **CONTROL's train-excess fall 0.5778 -> 0.5484 -> 0.5403: WITHDRAWN.** Warm-corrected
+  step-0 is ~0.5479 (warmup=120), essentially equal to the +1000 value 0.5403. The
+  train-side "improvement" over the first 1000 steps is inside the artifact. **The
+  coordinator is right and I am not defending it.**
+- **The held-out rise 0.8984 -> 0.9309 -> 0.9279: also weakened, and in the direction
+  OPPOSITE to what was relayed.** My warm eval reference is 0.9252, which would make
+  the +1000 value a flat 0.9279, not a rise. I cannot certify the held-out step-0
+  anchor to better than ~±0.02, so **within-arm step-0 -> step-N deltas are retired
+  from this line of work entirely, on both sides.**
+- **The ladder verdict above is UNAFFECTED, structurally, not by luck.** `tr_buf` and
+  `ev_buf` are constructed ONCE per arm (`policy_stepbudget.py:143-144`) and reused;
+  `_measure` builds a new *iterator* over the same buffer, so pool state persists. The
+  cold-start bias therefore lives entirely inside `_probe(0)`. **Every probe at +1000
+  and later draws from a buffer that has already served >= 40 draws** — past the flush
+  point I measured. And because all three arms construct the eval buffer identically
+  (same dir, same seed 7) and take the same number of prior draws, at +4000 they are in
+  the SAME buffer state and draw the SAME batches: exactly paired, and warm.
+- **The harness check stands as a PAIRING check, and I take the distinction.**
+  Identical step-0 values across arms prove the arms start from the same place; they do
+  NOT prove that place is unbiased. On the eval buffer the bias is undetectable here,
+  but "identical and biased" is not "identical and correct" and the ladder verdict does
+  not rest on the step-0 value.
+
+### The artifact-free version of the headline claim
+
+The original claim came from within-arm deltas and is now compromised on the train
+side. **The ladder re-establishes it on ground with no cold-start exposure at all** —
+warm-to-warm, +1000 to +4000, within each arm:
+
+| arm | views/row | train excess +1000 -> +4000 | held-out excess +1000 -> +4000 |
+|---|---|---|---|
+| V5 | 4.99 | 0.3559 -> 0.1819 (**-0.174**) | 0.9697 -> 1.0453 (**+0.076**) |
+| V2p5 | 2.47 | 0.4288 -> 0.2808 (-0.148) | 0.9478 -> 1.0231 (+0.075) |
+| V1 | 0.995 | 0.5064 -> 0.4373 (**-0.069**) | 0.9510 -> 0.9775 (**+0.027**) |
+
+Both endpoints warm, no step-0 anchor involved. **Training-row fit improves and the
+held-out prior degrades simultaneously, in every arm, and BOTH effects scale with
+views/row.** That is the symmetric claim restored, on data the artifact cannot touch.
+
+### Interpretation note the intermediate probes require
+
+**Only the +4000 endpoint is a ladder point.** At +1000 the arms sit at 1.25 / 0.62 /
+0.25 views/row, not 5.0 / 2.5 / 1.0, so the held-out ordering at +1000 (V5 0.9697 >
+V1 0.9510 > V2p5 0.9478 — not monotone) is NOT a refutation and must not be read as
+one. The ladder is only a ladder where the arms have accumulated their nominal
+views/row.
+
+### Statement 1 (required) — how much of today was extrapolation, now that 5.0 is on the instrument
+
+**The V5 arm is the first measurement anywhere in this work at the live
+configuration's actual views/row.** Everything before it ran below 1 view/row: the
+floor measurement and age buckets (~0-2 views accumulated live, measured passively),
+the +1000-step probe (0.18), and all five remedy arms (0.09-1.44; only R1_LOWDIV
+exceeded 1). So every claim made today about the live views regime — including my own
+"5.0 is the parameter most likely doing harm" — was an extrapolation from below 1 up
+to 5, across a range where nothing had been measured.
+
+That extrapolation is now **confirmed rather than assumed**, and it was not guaranteed
+to be: R5_HIGHDIV had already shown that moving views/row DOWN from 0.18 to 0.09 does
+nothing, so a saturating or non-monotone curve was entirely live. The ladder shows the
+effect is present and ordered precisely in the 1.0-5.0 band the live loop occupies,
+which is the band no earlier arm touched.
+
+### Statement 2 (required) — what this licenses, committed before the result and unchanged by it
+
+**A confirming ladder does NOT license a live `train_views_per_ingested_position`
+change.** The gap is structural:
+
+- The ladder applies **4,000 steps** to a head that accumulated its gap over **38,062**.
+- It measures the MARGINAL effect of views/row on a head already shaped by 5.0
+  views/row for 20 days. It cannot say what a run trained at 2.5 from the start looks
+  like — the state-conditional caveat the ledger already codifies as rule 9.
+- Every number here is a frozen-ruler quantity. Per `docs/rl_loop_audit.md` method
+  rule 6, frozen rulers can and have moved opposite to real play. **Nothing in this
+  entry is a strength result.**
+
+**What it earns is exactly one thing: a longer arm at a live-relevant horizon with a
+pre-committed strength yardstick.** The honest design is a paired two-arm offline
+retrain (5.0 vs 2.5 views/row) run long enough to matter, judged on
+`scripts/arena_standard.py` matched_sims against the shared start checkpoint, with
+`value_regret` and the held-out excess as secondaries. That is a substantially larger
+compute commitment than anything run today and should be costed before it is queued.
+
+### Where this line of work now stands
+
+Three results, in descending order of how well established they are:
+
+1. **The policy head sits ~0.61 nats above its own target's entropy** (floor 0.5772,
+   achieved 1.1909, leak 0.000000, all three controls passing), and only ~0.08 of that
+   is irreducible search noise. Solid.
+2. **The residual is dominated by rows the head has not repeatedly seen** — 0.93 nats
+   on the freshest rows vs 0.49 on the best-fitted band, replicated across two sampling
+   seeds, controlled for selfplay/curriculum composition, flat floors across buckets.
+   Solid.
+3. **Views-per-row is the causal axis**, now shown at dose across 5.0/2.5/1.0 with five
+   ordered quantities and the contiguity confound controlled. Solid as a MECHANISM;
+   silent on whether changing it improves play.
+
+Against that: **every cheap remedy failed** (5/5 — weight decay, `w_soft`, external
+anchor, more pool, less pool), LR was already at 5.3e-4 on the trunk, `log_temp` is
+converged and softening, and mirror augmentation is already on. The space of "retune
+what we have" is closed by measurement. What the ladder adds is that the one axis that
+DOES move the held-out prior is the one knob nobody has ever screened — and screening
+it properly is a real compute commitment, not a yaml edit.
+
+## ⚑⚑ CONFOUND ADMITTED + PRE-REGISTRATION (2026-07-31 19:5x) — STREAMING RIG: window vs views, separated
+
+### The confound in my own ladder, admitted before the new design
+
+I sized each arm's pool as `steps x batch / views_target`. In a FIXED pool
+`views = steps x batch / pool`, so **views/row and pool size were varied together,
+inversely, by construction**:
+
+    V5     views 4.99   pool ~205k    held-out 1.0453
+    V2p5   views 2.47   pool ~415k    held-out 1.0231
+    V1     views 0.995  pool ~1.03M   held-out 0.9775
+
+The result is EQUALLY consistent with "fewer repeats per row helps" and with "more
+distinct positions helps". **My ladder cannot separate them and I reported it as
+though it could.** The verdict "MECHANISM CONFIRMED" stands only for the joint
+manipulation; the causal attribution to views/row specifically is WITHDRAWN.
+
+This matters because in production the two are independent and recommend OPPOSITE
+actions. By my own identity, `views_per_row = views_target` regardless of window
+size, so raising `replay_window_max` at fixed `views_target` gives the SAME views/row
+and the SAME steps per iteration, and changes only (a) instantaneous pool diversity
+and (b) how far apart in time a row's repeats land. Lowering `views_target` at fixed
+window gives fewer views AND fewer gradient steps at the same diversity.
+
+**A bigger fixed pool is NOT the production analogue for a bigger window** — in a
+fixed pool, doubling the pool at fixed steps halves views/row, which is the same
+confounded manipulation again. So this needs a streaming rig, not a static one.
+
+### The rig
+
+Streams shards in time order into a WRITE-mode `DiskReplayBuffer(capacity=W)`, which
+is production's actual mechanism: `add_many_arrays` -> `_enforce_window` deletes the
+oldest shards once tracked rows exceed `capacity`. Rows age out exactly as they do
+live.
+
+**Safety, stated because `_enforce_window` DELETES shard paths:** each arm's write
+buffer points at a FRESH EMPTY scratch dir and writes only its own copies. Source
+shards are read separately and read-only (`load_shard_arrays`) and are NEVER exposed
+to the deleter. No directory containing links to production shards is ever given to a
+write-mode buffer. (This project has already had a resume overwrite live checkpoints;
+the analogous mistake here would delete replay data.)
+
+- Stream: the first **222** of the 774 train shards in time order (~400k rows).
+- Per simulated iteration: ingest **6 shards (~10.8k rows** — close to production's
+  8,987 positions/iteration), then run `round(views_target x rows_ingested / batch)`
+  steps. Batch 256.
+- **Held-out = the NEXT 40 shards in time order, never ingested by any arm** — a
+  genuine forward prediction, identical rows for every arm.
+- Disk: shards are ~1.3 KB/row compressed (measured: 2.4 MB/shard), so a 200k-row
+  window is ~0.26 GB and all arms together are well under 2 GB against 1.7 TB free.
+  **The footprint is not a constraint at this scale**; at the production sizes it
+  would be ~2.0 GB for 1.5M and ~4.0 GB for 3M, also not a constraint.
+
+### Arms
+
+| arm | window W | views_target | steps | purpose |
+|---|---|---|---|---|
+| `S_W50k_V5` | 50k | 5.0 | ~7,810 | A-small, B-high, and NC seed 0 |
+| `S_W200k_V5` | 200k | 5.0 | ~7,810 | **Comparison A**: 4x window at FIXED views |
+| `S_W50k_V2p5` | 50k | 2.5 | ~3,905 | **Comparison B**: half views at FIXED window |
+| `S_W50k_V5_s1` | 50k | 5.0 | ~7,810 | **Negative control**: identical config, seed 1 |
+
+Window ratio 4x (50k -> 200k) against the 400k-row stream, so turnover is 8x vs 2x.
+Production's proposed change is 1.5M -> 3M, a 2x ratio; this is scaled down in rows
+but sharper in ratio, and that is stated rather than hidden. Comparison B's step
+counts differ 2x **by construction — that IS the production treatment, not a
+confound**, because lowering `views_target` really does buy fewer gradient steps.
+
+### Deciding metric and thresholds
+
+Held-out excess-over-floor and `argmax_agree` on the 40 never-ingested shards, at
+MATCHED STREAM POSITIONS (same number of shards ingested), with **>=40 warm-up draws**
+before any baseline and **warm-to-warm deltas only — no step-0 anchors**, per what
+today's cold-start finding forced.
+
+- **WINDOW CARRIES IT**: `S_W200k_V5` beats `S_W50k_V5` by **>=0.05 nats** on held-out
+  excess at the final stream position AND on `argmax_agree`, and the gap **exceeds the
+  negative control's seed-to-seed difference**.
+- **VIEWS CARRIES IT**: `S_W50k_V2p5` beats `S_W50k_V5` by the same bar, same control
+  requirement.
+- **BOTH**: report both effect sizes and state which is larger **per unit of what it
+  costs** — the window change costs zero gradient steps and ~2 GB of disk; the views
+  change halves the gradient steps.
+- **NEITHER**: I will state plainly that the fixed-pool ladder's effect was an artifact
+  of the fixed-pool rig, that neither production knob is supported, and that the
+  views/row line is closed.
+- **DISAGREEMENT**: report which moved and refuse a joint story.
+- **NEGATIVE CONTROL GATE**: if `S_W50k_V5_s1` differs from `S_W50k_V5` by **>=0.05
+  nats**, the rig cannot resolve the effect size being claimed and **NO verdict is
+  issued for either comparison.**
+
+Harness check as before: all arms must report an identical warm held-out baseline
+before any training; it will be reported, and it is a PAIRING check only — identical
+is not the same as unbiased.
+
+### What a positive result would license
+
+Same limit as before, restated: this is a scaled-down offline rig on frozen rulers.
+`docs/rl_loop_audit.md` method rule 6 — only a paired arena decides strength. A
+window result would earn a costed longer arm, not a live yaml edit, and the
+scale-down (50k/200k vs 1.5M/3M) is an additional extrapolation on top of that.
+
+### AMENDMENT (2026-07-31 20:0x) — Comparison A moves to `views_target` 2.5, arms drop to three + control
+
+Superseding the arm table above, before anything ran. Rationale accepted: 5.0 has run
+for 477 iterations and produced -25.5 Elo, so isolating the window effect AT 5.0
+answers a question about a config already rejected. Comparison A now runs in the
+regime a live change would actually land in.
+
+                        views 5.0            views 2.5
+      window W          B0        <---->      A0        <---->   A1  (window 2W)
+                           \_ comparison B _/     \_ comparison A _/
+
+**`A0` is a SINGLE run used by both comparisons**, not two runs with the same config,
+so both comparisons share one common reference.
+
+| arm | window | views_target | steps | role |
+|---|---|---|---|---|
+| `B0` | 100k | 5.0 | ~7,810 | Comparison B high-views end |
+| `A0` | 100k | 2.5 | ~3,905 | **hinge — shared by A and B** |
+| `A1` | 200k | 2.5 | ~3,905 | Comparison A large-window end |
+| `NC` | 100k | 2.5 | ~3,905 | negative control: identical to `A0`, seed 1 |
+
+- **Comparison A (the user's hypothesis):** `A0` vs `A1` — same views/row, same steps,
+  window 2x. Isolates instantaneous pool diversity and the time-spacing of a row's
+  repeats. **Window ratio 2x, matching production's proposed 1.5M -> 3M**, against a
+  400k-row stream so turnover is 4x vs 2x.
+- **Comparison B:** `B0` vs `A0` — fixed window, views halved. **Step counts differ 2x
+  by construction; that IS the production treatment**, since lowering `views_target`
+  really does buy fewer gradient steps. Not a confound, and not corrected for.
+- Measurement is at **matched STREAM POSITIONS** (shards ingested), not matched steps.
+  All arms stream the identical 222 shards in the identical order, so at every probe
+  every arm has ingested exactly the same rows.
+
+**Scale-down, stated plainly:** windows are 100k/200k, not 1.5M/3M. Running the real
+sizes needs a stream longer than 3M rows, i.e. `2.5 x 3M = 7.5M` samples = ~29,300
+steps per arm at batch 256, ~3 h/arm and ~9 h for the set. The **2x ratio is preserved**
+and the row counts are not. That is an extrapolation on top of the frozen-ruler
+extrapolation, and it is the first thing to attack if the result is used to justify
+anything.
+
+**⚠ NO INTERACTION IS MEASURABLE, by design.** The 2W/5.0 cell is absent, so this
+cannot tell whether the window effect DIFFERS at 5.0 vs 2.5. A null in Comparison A
+means "the window does nothing **at views 2.5**" and must never be quoted as "the
+window does nothing". The deliberate trade is that 5.0 is not a deploy candidate. If
+compute proves cheaper than expected, the 2W/5.0 cell completes the 2x2 and is the
+natural addition.
+
+**Pre-committed conclusions, unchanged in substance:**
+- **WINDOW CARRIES IT**: `A1` beats `A0` by >=0.05 nats on held-out excess AND on
+  `argmax_agree`, at the final stream position, by more than the `NC` seed gap.
+- **VIEWS CARRIES IT**: `A0` beats `B0` by the same bar and control requirement.
+- **BOTH**: report both effect sizes and say which is larger **per unit cost** — the
+  window change costs zero gradient steps and ~4.0 GB of disk at 3M; the views change
+  halves the gradient steps.
+- **NEITHER**: I state plainly that the fixed-pool ladder's effect was an artifact of
+  that rig, that neither production knob is supported, and that the views/row line is
+  closed.
+- **DISAGREE**: report which moved; refuse a joint story.
+- **NC GATE**: if `NC` differs from `A0` by >=0.05 nats, the rig cannot resolve the
+  claimed effect and **no verdict is issued for either comparison.**
+
+### DESIGN CORRECTION (2026-07-31 20:3x) — the window:RAM-pool RATIO had to be scaled too
+
+Caught after the first launch, before any arm produced a usable number; those arms
+were killed and relaunched. `shuffle_buffer_size` is **100,000** — the in-RAM shuffle
+pool the buffer actually samples from, refreshed from the disk window by
+`refresh_interval`/`refresh_shards`.
+
+At the scaled-down windows this breaks the analogy: **A0's whole 100k window would fit
+inside the 100k RAM pool**, so A0 would sample uniformly over its entire window while
+A1 (200k) sampled a churning 100k subset of its own. Comparison A would then confound
+"bigger window" with "window no longer fits the pool" — and production is NEVER in the
+fits-in-pool regime (1.5M against 100k is 15:1).
+
+Fixed by scaling the pool with the windows so the RATIOS match production:
+
+| | window | RAM pool | ratio |
+|---|---|---|---|
+| production today | 1.5M | 100k | **15:1** |
+| production proposed | 3M | 100k | **30:1** |
+| `A0` / `B0` / `NC` (scaled) | 100k | **6,700** | **15:1** |
+| `A1` (scaled) | 200k | **6,700** | **30:1** |
+
+The override applies to the TRAIN buffer only. The read-only held-out buffer keeps the
+full 100k pool: a 6,700-row pool would resample the 106k held-out set far too heavily
+and inject sampling noise into the deciding metric, and nothing about the held-out
+measurement is supposed to mimic production's training sampler.
+
+**This is a scaled-down rig and the ratio is one more thing that had to be scaled by
+hand.** Anything it says about 1.5M vs 3M rests on the ratio being the operative
+quantity rather than the absolute row count — which is an assumption, not a result.
+
+## COMPARISON A RESULT (2026-07-31 21:4x) — window at fixed views 2.5: **direction right, magnitude a quarter of the bar → does NOT clear the pre-committed threshold**
+
+Streaming rig, 222 shards (395,558 rows) streamed in time order, held-out = the 60
+newest shards (106,201 rows) never ingested by any arm and strictly later in time.
+Harness check PASSED: both arms opened at an identical warm held-out baseline
+**0.9088 / agree 0.5411** (40 warm-up draws discarded; no step-0 anchor is used below).
+
+| arm | window | views | steps | final window rows | **held-out excess** | **held-out agree** |
+|---|---|---|---|---|---|---|
+| `A0` | 100k | 2.5 | 3,862 | 98,161 | **1.0099** | **0.4976** |
+| `A1` | 200k (2x) | 2.5 | 3,862 | 199,330 | **0.9973** | **0.5045** |
+| Δ (A1 − A0) | | | — | | **−0.0126** | **+0.0069** |
+
+**Both metrics move the way the window hypothesis predicts — the larger window is
+better on excess AND on agreement — but −0.0126 is a QUARTER of the pre-committed
+−0.05 bar.** By the rule committed before the arms ran, that is not a confirmation.
+
+⚠ **Verdict is not final until the negative control lands.** The pre-registered gate
+requires the A1−A0 gap to exceed the seed-to-seed spread of `NC` (identical config to
+`A0`, seed 1). A −0.0126 gap is small enough that the control could plausibly cover
+it, in which case Comparison A returns NO effect at all rather than a small one. `NC`
+is running.
+
+Trajectory (both arms, held-out excess at matched stream positions) — note A1's window
+does not reach its cap until ~110 shards, so the arms only diverge in the second half:
+
+| shards ingested | 36 | 72 | 108 | 144 | 180 | 216 | 222 |
+|---|---|---|---|---|---|---|---|
+| `A0` (100k) | 0.9558 | 1.0001 | 0.9699 | 0.9752 | 0.9938 | 0.9979 | 1.0099 |
+| `A1` (200k) | 0.9459 | 1.0113 | 0.9796 | 0.9809 | 1.0009 | 0.9963 | 0.9973 |
+
+A1 is better at only 3 of the 7 probes, and the ordering flips repeatedly. That is what
+an effect near the noise floor looks like, and it is why the materiality bar exists.
+
+**Both arms degrade from 0.9088 to ~1.00 over the stream.** Whatever the window does,
+it does not stop the held-out prior getting worse as training proceeds — consistent
+with everything measured today.
+
+### FOOTPRINT — measured, and it settles the gating question
+
+| arm | window rows | peak RSS | peak buffer disk |
+|---|---|---|---|
+| `A0` | 100k | **8.7 GB** | **0.14 GB** |
+| `A1` | 200k | **8.7 GB** | **0.28 GB** |
+
+**RAM does not scale with the window; disk does, linearly.** RSS is identical across a
+2x window because the in-RAM pool is set by `shuffle_buffer_size`, not by
+`replay_window_max` — the window is genuinely disk-backed. Disk is exactly 2x for 2x
+the rows, ~1.4 KB/row.
+
+Extrapolated to production sizes at that measured rate:
+
+    replay_window_max 1.5M  ->  ~2.1 GB
+    replay_window_max 3.0M  ->  ~4.2 GB      (delta ~+2.1 GB)
+
+**So the 3M window costs ~2.1 GB of additional disk and essentially zero additional
+RAM.** Against 1.7 TB free that is not a constraint, and the project's disk-growth
+history is not implicated by this knob. If the change is ever made, the thing to watch
+is `shuffle_buffer_size` (100k rows, ~4 GB of the resident footprint here), not the
+window.
+
+### ⚑⚑ INSTRUMENT FINDING (2026-07-31 21:4x) — RUN-TO-RUN NON-DETERMINISM OF **0.0131 NATS**, the same size as Comparison A's effect
+
+`B0`'s warm held-out baseline came back **0.8957 / agree 0.5555**, against
+**0.9088 / agree 0.5411** for `A0` and `A1`. The harness check FAILED for `B0`.
+
+**`A0` and `B0` are bit-identical programs up to that probe.** Both take
+`--window 100000 --seed 0`; the only differing flag is `--views-target`
+(2.5 vs 5.0), which is read only inside the streaming loop that runs AFTER
+`probe(0, first=True)`. Same checkpoint, same eval dir, same eval rng seed
+(`seed + 7`), same 40 discarded warm-up draws, same `torch.manual_seed(0)`, no
+training has happened. **There is no legitimate way for these two numbers to differ.**
+
+Measured spread on an identical measurement: **0.0131 nats of excess, 0.0144 of
+agreement.**
+
+The likely mechanism is `torch.compile` autotuning: the trainer compiles with
+`mode=compile_mode` (`trainer.py:1860`) and max-autotune selects kernels by MEASURED
+TIMING, so a differently-loaded machine can select different kernels and produce
+slightly different numerics for the same math. `A0` and `A1` agreed to four decimals
+and `B0` did not, which fits occasional kernel-selection divergence rather than a
+systematic bug. RSS at probe 0 also differed (5.0 GB vs 4.8 GB), consistent with a
+different compiled artifact.
+
+### What this does to today's results — stated without softening
+
+- **Comparison A's −0.0126 nats is INSIDE this 0.0131-nat non-determinism band.**
+  Two of three arms happened to agree exactly, which made the harness check look like
+  proof of determinism; the third shows it was not. **Comparison A returns NO
+  DETECTABLE EFFECT, not a small one.** The direction agreeing on both metrics is not
+  rescue: a 0.0126 gap cannot be distinguished from an artifact of the same size.
+- **Comparison B is compromised as an ABSOLUTE-level comparison.** `B0` starts 0.0131
+  below `A0` on a measurement where they should be equal, so any B0−A0 difference in
+  final levels inherits that offset. The defensible reading is warm-to-warm DELTA
+  within each arm (each arm against its OWN baseline), and even that only resolves
+  effects well above ~0.013.
+- **The `NC` arm now measures the wrong thing on its own.** It was pre-registered as a
+  SEED control (seed 1 vs seed 0); it will actually report seed variation AND process
+  non-determinism together. That is still the right gate to apply — it is the total
+  spread between two runs that should be identical in expectation — but it must be
+  reported as "run-to-run spread", not "seed spread".
+- **Everything earlier today that rested on ACROSS-ARM comparisons at the ~0.01 level
+  is weakened.** The results that survive are the LARGE ones: the 0.61-nat excess over
+  floor, the 0.43-nat age/views gradient (replicated across two sampling seeds), the
+  ladder's 0.0678-nat endpoint spread, and R1_LOWDIV's +0.0269. The five remedy nulls
+  are unaffected — they were nulls, and a non-determinism floor of 0.013 only makes a
+  null more secure.
+- **The 0.05-nat materiality bar I pre-committed to was, by luck, set about 4x above
+  this floor.** That is the only reason today's verdicts are not all in question.
+
+### What a future rig must do
+
+Run each arm at N>=3 seeds and report the between-arm difference against the
+within-arm spread, or disable autotune (`compile_mode` off / a deterministic mode) and
+verify bit-reproducibility of the probe before trusting any sub-0.05 effect. I did not
+do either, and any sub-0.05 number in this session should be read with that in mind.
+
+---
+
+## READOUT (2026-07-31 22:0x) — PR #292 teardown verdict: **the byte offset separates TIME, not IDENTITY** (tasks #91, #92)
+
+Recorded late because the PR #291/#292 chain reworked the mechanism twice; this is the
+final state of what shipped, not the state any intermediate review saw.
+
+### The defect the offset was supposed to fix, and the one it opened
+
+`train.sh stop` decides whether a teardown lost in-flight selfplay games by reading each
+worker's own log. The `suspended games=` string is emitted by EVERY in-session reco
+restart, so a whole-file grep finds an hours-old line and reads it as proof THIS drain
+worked. Fix: record each worker's log byte offset before the drain and read only past it.
+
+That is correct about time and silent about identity. `revive_dead_selfplay_processes`
+relaunches with the SAME `worker_index` (`distributed_runtime.py:1253`),
+`_launch_distributed_worker` rebuilds the same `worker.log` path (`:722,:724`), and
+`logging.FileHandler` opens it in APPEND mode. The driver is not killed until after the
+first drain pass, so a worker that dies DURING the grace period is revived into the very
+file being read, and the replacement's clean-shutdown lines land after the recorded
+offset. **A fresh process's graceful exit would have been credited to the process whose
+games were dropped** — the same silent false negative the offset was added to remove,
+arriving through a different door.
+
+NOT hypothetical: on the 2026-07-31 teardown, `worker_01/worker.log` line 817 is a second
+`worker starting version=` at 13:51:29, with `stop()` beginning 13:50:16 and the deadline
+at 13:51:46. It did no damage only because that replacement was SIGKILLed while still
+importing.
+
+### What shipped
+
+Every launch logs `worker starting version=` (`worker.py:669`) before it can log anything
+else, and the shared log file is the only channel available, so that line is both the
+available and the correct discriminator. The evidence is truncated at the first
+post-offset occurrence:
+
+```sh
+evidence=$(printf '%s\n' "$evidence" | awk '/worker starting version=/{exit} {print}')
+```
+
+Seeing it before any suspend line is read as a LOSS ("died and was REPLACED mid-drain
+having recorded nothing"), not as an absence of information. The three-state verdict
+(banked / lost / unknown) is preserved: an operator must be able to tell "no games were
+lost" from "we cannot tell whether games were lost", and every version before this chain
+could not.
+
+### Known false alarm, accepted deliberately (task #92, now documented in the source)
+
+A worker revived in the ~10-30s BEFORE `stop()` is already in `$wpids` (the process exists
+from execve) but has not reached `worker.py:669` yet, because workers spend that window in
+module-level imports. Its OWN start marker then lands after the offset, evidence truncates
+to empty, and it is reported as REPLACED — although it had nothing in flight to lose, and
+its predecessor's loss happened before this drain and is not attributable to it.
+
+Left as-is. It is a false alarm in the LOUD direction, on a much rarer trigger than the
+defect it replaced (a revive inside a ~10-30s startup window immediately before a
+teardown, versus the old rule which fired on 2 of 3 workers every teardown), and the
+message names the worker precisely enough to check against the log. It does not
+reintroduce the silent false-negative class. A comment block at `scripts/train.sh:426`
+now names it so the next operator does not chase a phantom.
+
+### The generalisable lesson
+
+**Byte-offset evidence separates TIME but not IDENTITY.** Whenever a log is read from an
+offset to prove that a specific process did something, ask what happens if the process is
+REPLACED and its successor writes to the same file. The answer is not "no evidence" — it
+is "the successor's evidence, attributed to the predecessor", which reads as success.
+
+Related: this is the third instance in two days of the standing bias — a value accepted
+and then silently ignored (PR #291's `pgrep` stub matched everything; PR #292 v1's first
+fix made the REAL loss silent by requiring the worker to be ALIVE; this one credited the
+wrong process). All three were caught by a reviewer who was not the author.
