@@ -79,7 +79,10 @@ from chess_anti_engine.selfplay.opening import (
     warm_opening_book_cache,
 )
 from chess_anti_engine.stockfish import StockfishPool, StockfishUCI
-from chess_anti_engine.stockfish.uci import StockfishTimeoutError
+from chess_anti_engine.stockfish.uci import (
+    StockfishDesyncError,
+    StockfishTimeoutError,
+)
 from chess_anti_engine.utils import sha256_file as _sha256_file
 from chess_anti_engine.utils.gil_probe import GilContentionProbe
 from chess_anti_engine.utils.versioning import version_lt
@@ -3680,10 +3683,14 @@ class WorkerSession:
             finally:
                 self._clear_live_states()
             return stats
-        except StockfishTimeoutError as exc:
-  # Stockfish went silent (DTZ load latency, GPU pressure, etc.).  Kill
-  # the process and let _sync_stockfish restart it on the next shard.
-            self.log.warning("Stockfish timed out, restarting SF process: %s", exc)
+        except (StockfishTimeoutError, StockfishDesyncError) as exc:
+  # Stockfish went silent (DTZ load latency, GPU pressure, etc.), or an
+  # abandoned search left an engine one result behind and the pool could
+  # not build its replacement.  Kill the process and let _sync_stockfish
+  # restart it on the next shard.  Both must land here: a desynced engine
+  # that reaches a caller is refusing to serve, never serving stale data,
+  # so a fresh process is the whole repair.
+            self.log.warning("Stockfish unusable, restarting SF process: %s", exc)
             with suppress(Exception):
                 self.sf.close()
             self.sf = None

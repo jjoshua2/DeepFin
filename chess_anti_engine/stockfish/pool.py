@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 
@@ -7,6 +8,9 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 
 from .uci import StockfishResult, StockfishUCI
+
+
+_LOG = logging.getLogger("chess_anti_engine.stockfish")
 
 
 class StockfishPool:
@@ -26,6 +30,7 @@ class StockfishPool:
         hash_mb: int | None = None,
         syzygy_path: str | None = None,
         nice: int = 0,
+        read_timeout_s: float | None = None,
     ):
         self.path = path
         self.nodes = int(nodes)
@@ -36,19 +41,23 @@ class StockfishPool:
         self.hash_mb = None if hash_mb is None else max(1, int(hash_mb))
         self.syzygy_path = syzygy_path or None
         self.nice = min(19, max(0, int(nice)))
+        # Carried into every engine INCLUDING replacements, so a pool built with
+        # a custom deadline does not silently revert to the 60s default the
+        # moment an engine is swapped.
+        self.read_timeout_s = read_timeout_s
 
         self._exec: ThreadPoolExecutor | None = None
         self._engines: list[StockfishUCI] = []
+        # Guards _engines while a worker thread swaps in a replacement process;
+        # set_nodes/close iterate the same list from other threads.
+        self._engines_lock = threading.Lock()
+        self.replacements = 0  # desynced engines swapped out this session
+        # Set by close(). Stops _replace_engine spawning a process that would
+        # outlive the snapshot close() reaps.
+        self._closing = False
         try:
             for _ in range(self.num_workers):
-                self._engines.append(StockfishUCI(
-                    self.path,
-                    nodes=self.nodes,
-                    multipv=self.multipv,
-                    hash_mb=self.hash_mb,
-                    syzygy_path=self.syzygy_path,
-                    nice=self.nice,
-                ))
+                self._engines.append(self._new_engine())
             self._available_engines: queue.SimpleQueue[StockfishUCI] = queue.SimpleQueue()
             for engine in self._engines:
                 self._available_engines.put(engine)
@@ -68,8 +77,66 @@ class StockfishPool:
                     engine.close()
             raise
 
+    def _new_engine(self) -> StockfishUCI:
+        kwargs = (
+            {} if self.read_timeout_s is None
+            else {"read_timeout_s": float(self.read_timeout_s)}
+        )
+        return StockfishUCI(
+            self.path,
+            nodes=self.nodes,
+            multipv=self.multipv,
+            hash_mb=self.hash_mb,
+            syzygy_path=self.syzygy_path,
+            nice=self.nice,
+            **kwargs,
+        )
+
     def _initialize_worker(self) -> None:
         self._worker_state.engine = self._available_engines.get()
+
+    def _replace_engine(self, old: StockfishUCI) -> None:
+        """Swap a desynced engine for a fresh process, in its owning thread.
+
+        A desynced engine can only raise from here on (see
+        ``StockfishDesyncError``), so leaving it in place would zero this
+        thread's SF throughput. Replacing it restores throughput WITHOUT ever
+        serving a stale result. If building the replacement raises, the poisoned
+        engine stays installed: every later call raises, which is loud and
+        correct, and the next call retries the replacement.
+
+        No-op once ``close`` has run. A replacement built after ``close`` took
+        its snapshot would be an orphaned Stockfish process that nothing reaps.
+        """
+        with self._engines_lock:
+            if self._closing:
+                return
+        fresh = self._new_engine()
+        with self._engines_lock:
+            if self._closing:  # closed while the replacement was starting
+                with suppress(Exception):
+                    fresh.close()
+                return
+            try:
+                self._engines[self._engines.index(old)] = fresh
+            except ValueError:  # already swapped out by a previous failure
+                self._engines.append(fresh)
+            self.replacements += 1
+            replacements = self.replacements
+        self._worker_state.engine = fresh
+        with suppress(Exception):
+            old.close()
+        # The ONLY notice that the desync repair fired. Everything else about it
+        # is silent by design: the raise is swallowed at DEBUG on the label path,
+        # and the health counters stay at baseline precisely BECAUSE no stale
+        # result was served. Without this line the repair working and the repair
+        # never being needed look identical in the log.
+        _LOG.warning(
+            "stockfish pool: replaced a desynced engine (replacements=%d this "
+            "session) — a search was abandoned and its engine was one result "
+            "behind; the abandoned query's label is lost, not misfiled",
+            replacements,
+        )
 
     def _search(
         self,
@@ -79,11 +146,27 @@ class StockfishPool:
         fresh: bool,
     ) -> StockfishResult:
         engine: StockfishUCI = self._worker_state.engine
-        if fresh:
-            return engine.search(
-                fen, nodes=nodes, syzygy_path=syzygy_path, fresh=True,
-            )
-        return engine.search(fen, nodes=nodes, syzygy_path=syzygy_path)
+        try:
+            if fresh:
+                return engine.search(
+                    fen, nodes=nodes, syzygy_path=syzygy_path, fresh=True,
+                )
+            return engine.search(fen, nodes=nodes, syzygy_path=syzygy_path)
+        except BaseException:
+            # The ORIGINAL raise must reach the caller — it is the one that
+            # names what went wrong. `suppress` is load-bearing: _replace_engine
+            # spawns a process, and a constructor failure raised from inside
+            # this handler would SUPERSEDE the original with an unrelated
+            # exception class (FileNotFoundError), which worker.py's
+            # (StockfishTimeoutError, StockfishDesyncError) handler does not
+            # match and the curriculum-move path does not catch at all.
+            # Swallowing it is safe: the poisoned engine simply stays installed,
+            # every later call raises StockfishDesyncError, and the next call
+            # retries the replacement.
+            if engine.desynced:
+                with suppress(Exception):
+                    self._replace_engine(engine)
+            raise
 
     def close(self) -> None:
         # Stop accepting work and discard requests that have not started. A
@@ -93,13 +176,21 @@ class StockfishPool:
         # reaps each executor thread.
         assert self._exec is not None
         self._exec.shutdown(wait=False, cancel_futures=True)
-        for e in self._engines:
+        with self._engines_lock:
+            # Under the lock and BEFORE the snapshot: from here on
+            # _replace_engine is a no-op, so this list cannot grow behind us and
+            # no Stockfish process can survive the join.
+            self._closing = True
+            engines = list(self._engines)
+        for e in engines:
             e.close()
         self._exec.shutdown(wait=True, cancel_futures=True)
 
     def set_nodes(self, nodes: int) -> None:
         self.nodes = int(nodes)
-        for e in self._engines:
+        with self._engines_lock:
+            engines = list(self._engines)
+        for e in engines:
             e.set_nodes(int(nodes))
 
     def submit(
