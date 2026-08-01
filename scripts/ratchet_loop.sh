@@ -13,10 +13,22 @@
 # twice in one day and a stopped run simply skips that day — the CSV's date
 # column stays the honest index of when a regression appeared.
 set -u
-cd /home/josh/projects/chess
+# RATCHET_ROOT / TRAIN_PIDFILE are TEST SEAMS, not operator knobs (same
+# treatment as daily_gate_ratchet.sh). Without them nothing can execute this
+# file's loop BODY, and a body that cannot be executed is a body whose wiring is
+# pinned only by reading it: `ratchet_outcome "$?"` -> `ratchet_outcome 0`
+# restores the silent hole this script exists to close and no source-text
+# assertion notices. tests/test_ratchet_search_shape.py drives a whole poll
+# through here against a sandbox tree.
+cd "${RATCHET_ROOT:-/home/josh/projects/chess}" || exit 2
 export PYTHONPATH=.
 
-PIDFILE=/tmp/chess_training.pid
+# --once runs a single poll and exits with that poll's outcome status. The
+# scheduled invocation from scripts/train.sh passes no arguments.
+ONCE=0
+[ "${1:-}" = "--once" ] && ONCE=1
+
+PIDFILE="${TRAIN_PIDFILE:-/tmp/chess_training.pid}"
 WORK_DIR="${TRAIN_WORK_DIR:-runs/pbt2_small}"
 STATE=data/ratchet/last_run_date
 # ATTEMPTED, not SUCCEEDED. $STATE means "today has a reading"; $GIVEUP_STATE
@@ -69,36 +81,53 @@ ratchet_outcome () {   # $1=rc  $2=today
     esac
 }
 
-while true; do
-    sleep "$POLL"
-
-    trainer_running || continue
+# ONE poll: decide whether to run the ratchet, run it, and record what came
+# back. A function so the whole body — including the `ratchet_outcome "$?"`
+# call site, which is the wiring the state machine hangs off — is reachable by a
+# test rather than only by reading.
+poll_once () {
+    trainer_running || return 0
     # A paused trial still holds its PID, so PIDFILE alone would let the ratchet
     # run during a deliberate pause.
-    paused && continue
+    paused && return 0
 
+    local today trial ck iter rc
     today=$(date +%F)
-    [ "$(cat "$STATE" 2>/dev/null)" = "$today" ] && continue
-    [ "$(cat "$GIVEUP_STATE" 2>/dev/null)" = "$today" ] && continue
+    [ "$(cat "$STATE" 2>/dev/null)" = "$today" ] && return 0
+    [ "$(cat "$GIVEUP_STATE" 2>/dev/null)" = "$today" ] && return 0
 
     trial=$(ls -td "$WORK_DIR"/tune/train_trial_*/ 2>/dev/null | head -1)
-    [ -n "$trial" ] || continue
+    [ -n "$trial" ] || return 0
     ck=$(ls -td "$trial"checkpoint_* 2>/dev/null | head -1)
-    [ -n "$ck" ] || continue
-    iter=$(basename "$ck" | sed 's/checkpoint_0*//')
-    [ "${iter:-0}" -ge "$MIN_ITER" ] 2>/dev/null || continue
+    [ -n "$ck" ] || return 0
+    # Same parse as daily_gate_ratchet.sh: `sed 's/checkpoint_0*//'` maps
+    # checkpoint_000000 to the empty string, which the `${iter:-0}` below then
+    # reads as iteration 0 without anyone noticing the digits went missing.
+    iter=$(basename "$ck" | sed -E 's/^checkpoint_//; s/^0+([0-9])/\1/')
+    [ "${iter:-0}" -ge "$MIN_ITER" ] 2>/dev/null || return 0
 
     # Re-check immediately before spending GPU: the gap between the poll above
     # and here is where a stop/pause lands.
-    trainer_running || continue
-    paused && continue
+    trainer_running || return 0
+    paused && return 0
 
     log "starting daily ratchet (iter=$iter)"
     # `$STATE` is stamped only on exit 0, so a failed run retries on the next
     # poll instead of silently skipping the whole day — but a failure that
     # reproduces would then retry until midnight, which the ratchet reports as
     # exit $RATCHET_EXIT_NO_RETRY and this loop honours WITHOUT claiming the day
-    # succeeded.
+    # succeeded. Capture the status into a local FIRST: any command inserted
+    # between the run and the `ratchet_outcome` call would otherwise clobber
+    # `$?` and turn every outcome into a success.
     bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
-    ratchet_outcome "$?" "$today"
+    rc=$?
+    ratchet_outcome "$rc" "$today"
+    return "$rc"
+}
+
+while true; do
+    sleep "$POLL"
+    poll_once
+    rc=$?
+    [ "$ONCE" -eq 1 ] && exit "$rc"
 done

@@ -325,6 +325,7 @@ def _sandbox(tmp_path: Path, *, checkpoint: str = "checkpoint_000478") -> Path:
     root = tmp_path / "repo"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(RATCHET_SH, root / "scripts" / RATCHET_SH.name)
+    shutil.copy(LOOP_SH, root / "scripts" / LOOP_SH.name)
     (root / "scripts" / "arena_standard.py").write_text(_ARENA_STUB)
     ck = root / "runs" / "pbt2_small" / "tune" / "train_trial_x" / checkpoint
     ck.mkdir(parents=True)
@@ -546,6 +547,102 @@ def test_the_loop_stamps_the_day_only_for_a_real_reading(tmp_path) -> None:
     log = (tmp_path / "scratchpad" / "ratchet_loop.log").read_text()
     assert "GAVE UP" in log, log
     assert "NO strength measurement" in log, log
+
+
+def _run_one_poll(root: Path, *, mode: str = "good", timeout: float = 120.0):
+    """Drive ONE real poll of ratchet_loop.sh end to end. Returns (rc, output).
+
+    The loop's own body, not an extracted function: the defect this whole
+    change is about is a rule that is pinned while the wiring INTO it is not,
+    and `ratchet_outcome "$?"` -> `ratchet_outcome 0` is exactly that mutation.
+    """
+    import subprocess
+
+    pidfile = root / "trainer.pid"
+    # A process that really is alive, so `trainer_running` passes for the same
+    # reason it does in production rather than because a check was stubbed out.
+    alive = subprocess.Popen(["sleep", "600"])
+    try:
+        pidfile.write_text(f"{alive.pid}\n")
+        r = subprocess.run(
+            ["bash", f"scripts/{LOOP_SH.name}", "--once"],
+            cwd=str(root), capture_output=True, text=True, check=False,
+            timeout=timeout,
+            env={
+                "PATH": os.environ.get("PATH", ""),
+                "RATCHET_ROOT": str(root),
+                "TRAIN_PIDFILE": str(pidfile),
+                "RATCHET_POLL": "1",
+                "ARENA_MODE": mode,
+                "ARENA_CALLS": str(root / "arena_calls.txt"),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+        )
+    finally:
+        alive.terminate()
+        alive.wait()
+    log = root / "scratchpad" / "ratchet_loop.log"
+    return r.returncode, r.stdout + r.stderr + (log.read_text() if log.exists() else "")
+
+
+def _loop_state(root: Path) -> tuple[str, str]:
+    """(last_run_date, last_giveup_date) as recorded by the loop."""
+    d = root / "data" / "ratchet"
+    return (
+        (d / "last_run_date").read_text().strip() if (d / "last_run_date").exists() else "",
+        (d / "last_giveup_date").read_text().strip() if (d / "last_giveup_date").exists() else "",
+    )
+
+
+def test_one_poll_records_the_outcome_it_actually_got(tmp_path) -> None:
+    """The loop BODY, executed: a whole poll, both scripts, a stub arena.
+
+    ``ratchet_outcome`` is tested above, but nothing executed the call site that
+    feeds it, and a call site is where this repo's defect lives: replacing
+    ``ratchet_outcome "$rc"`` with ``ratchet_outcome 0`` — or slipping any
+    command between the ratchet run and the status capture, which clobbers
+    ``$?`` — restores the exact silent hole the exit status exists to prevent,
+    with every rule below it still perfect. Both mutations were run against this
+    test and both kill it.
+    """
+    import datetime
+
+    today = datetime.date.today().isoformat()
+
+    # 1. A real reading: the day is stamped DONE and nothing else is.
+    good = _sandbox(tmp_path / "good")
+    rc, out = _run_one_poll(good, mode="good")
+    assert rc == 0, f"a poll that got a reading must exit 0, got {rc}:\n{out}"
+    assert _arena_launches(good) == 1, f"the poll never ran the arena:\n{out}"
+    assert len(_csv_rows(good)) == 1, f"no CSV row was written:\n{out}"
+    assert _loop_state(good) == (today, ""), (
+        f"expected only last_run_date stamped, got {_loop_state(good)}:\n{out}"
+    )
+
+    # 2. A retryable failure: NOTHING is stamped, so the next poll tries again.
+    bad = _sandbox(tmp_path / "bad")
+    rc, out = _run_one_poll(bad, mode="nopairs")
+    assert rc == 1, f"a zero-row poll must report the retryable status, got {rc}:\n{out}"
+    assert _loop_state(bad) == ("", ""), (
+        f"a retryable failure stamped a day: {_loop_state(bad)}:\n{out}"
+    )
+
+    # 3. The same failure again: the day gives up. last_run_date STILL unset —
+    #    the day has no reading and must never read as though it had one.
+    rc, out = _run_one_poll(bad, mode="nopairs")
+    assert rc == 5, f"the repeat failure must be non-retryable, got {rc}:\n{out}"
+    assert _loop_state(bad) == ("", today), (
+        f"give-up must stamp ONLY last_giveup_date, got {_loop_state(bad)}:\n{out}"
+    )
+    assert "GAVE UP" in out, f"the give-up must reach the loop log:\n{out}"
+    assert _csv_rows(bad) == []
+
+    # 4. ...and the next poll costs nothing at all.
+    launches = _arena_launches(bad)
+    rc, out = _run_one_poll(bad, mode="nopairs")
+    assert _arena_launches(bad) == launches, (
+        f"a day that gave up kept spending GPU:\n{out}"
+    )
 
 
 def test_both_scripts_agree_on_the_no_retry_status() -> None:

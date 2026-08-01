@@ -56,8 +56,8 @@
 #     SUCCEEDED, and neither is inferred from the other;
 #   * at most --max-attempts (3) attempts per calendar day may spend GPU;
 #   * a failure whose REASON string repeats the previous attempt's is treated as
-#     deterministic and not retried at all — the 2026-07-31 shape (880s of
-#     model loading inside an 855s cap -> 0 pairs, every time) costs exactly two
+#     deterministic and not retried at all — the 2026-07-31 shape (880s spent
+#     before the play loop ever completes a pair, every time) costs exactly two
 #     attempts rather than the whole day;
 #   * exhausted/deterministic failures exit $EXIT_NO_RETRY (5), which the loop
 #     honours by stopping for the day WITHOUT stamping the day as done.
@@ -102,6 +102,12 @@ LOG=data/ratchet/ratchet.csv
 # of it. This is what bounds the day's GPU and what makes a dead instrument
 # legible — "3 attempts, 0 rows" is a fact on disk, not an inference from a
 # missing CSV row.
+#
+# IT HAS AN AUTOMATED READER: scripts/loop_health.py (`ratchet_gap_alerts`)
+# ALERTs when the newest day here produced no ratchet.csv row at all. Without
+# one this file would be a durable record nobody opens, and a day with no
+# strength measurement would go on looking like a day with nothing to report —
+# the same defect as the retry storm, one level out.
 ATTEMPTS=data/ratchet/attempts.csv
 ATTEMPTS_HEADER="date,iter,attempt,rc,rows,reason"
 MAX_ATTEMPTS=3
@@ -268,10 +274,25 @@ pick_prev_snapshot () {   # $1=snapshot dir  $2=today's snapshot PATH  $3=today'
     # direction that writes a bogus row. The iteration check stays as a second
     # net: a re-SAVED same-iteration checkpoint differs byte-wise (timestamps,
     # optimizer moments) while still being a self-match for Elo purposes.
+    #
+    # COST, measured 2026-08-01 on the real 685MB snapshots, because this runs
+    # inside the job's wall-clock deadline and reading 2 x 685MB against a clock
+    # that decides whether the arena gets to play would be a poor trade:
+    #   different nets (same size)      cmp -s  0.004s  — it stops at the FIRST
+    #                                                    differing byte, which
+    #                                                    lands in the first
+    #                                                    tensors of the file
+    #   identical content, two paths    cmp -s  0.81s cold / 0.28s warm
+    # So the full read happens ONLY on the branch that then skips a ~900s arena,
+    # and it costs 0.04% of a 1800s budget. The size test in front of it is free
+    # and short-circuits a cross-era reference (different arch => different
+    # size) without opening either file.
     local prev pit
     prev=$(ls -t "$1"/ck_*.pt 2>/dev/null | grep -vF "$(basename "$2")" | head -1)
     [ -n "$prev" ] || return 1
-    cmp -s "$prev" "$2" && return 3
+    if [ "$(stat -c %s "$prev" 2>/dev/null)" = "$(stat -c %s "$2" 2>/dev/null)" ]; then
+        cmp -s "$prev" "$2" && return 3
+    fi
     pit=$(basename "$prev" | sed 's/.*_iter//; s/\.pt$//')
     [ "$pit" = "$3" ] && return 3
     printf '%s\n' "$prev"
@@ -366,12 +387,18 @@ run_arena () {   # $1=reference  $2=series-label
         --label "ratchet_${today}_iter${iter}_${series}" > "$out" 2>&1
     local rc=$?
     # The token recorded for this series if no row comes out of the log below.
-    # `nopairs` (arena rc 3) is the 2026-07-31 shape and the reason the retry
-    # storm is not hypothetical: the arena spent its entire budget before the
-    # play loop ever completed a pair — arena_2026-07-31_vs_boot512.log is 4
-    # lines ending at "SEARCH reference:" after 880s — so a retry under the same
-    # cap replays the same 880s to the same end. One log cannot tell that from
-    # transient contention, but two identical ones can, which is what the
+    #
+    # `backstop` is the 2026-07-31 shape, and the reason the retry storm is not
+    # hypothetical. arena_2026-07-31_vs_boot512.log.broken_flush_evidence is 4
+    # complete preamble lines ending at "SEARCH reference:" — the process was
+    # killed from OUTSIDE mid-run, losing its block-buffered stdout, i.e. this
+    # branch and not rc 3. (An earlier revision of this comment called it
+    # `nopairs`; the log says otherwise.) `nopairs` is what the same 880s of
+    # pre-play time produces now that --max-seconds lets the arena stop itself:
+    # it reaches its deadline with zero complete pairs, prints, and exits 3.
+    # Either way the whole budget bought nothing scoreable and a retry under the
+    # same cap replays it to the same end. ONE log cannot tell that from
+    # transient contention; two identical ones can, which is what the
     # repeat-reason rule at the bottom of this script keys on.
     local fail=unparseable
     if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
