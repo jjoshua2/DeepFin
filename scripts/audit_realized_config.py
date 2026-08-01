@@ -23,6 +23,15 @@ two agree. Four of them shipped to production undetected:
     LAUNCH config, and Ray rewrites it on every checkpoint, so the mtime tracks
     the run while the contents never move (rl_loop_audit J5). The provenance
     section names the authoritative source per key and lists what is stale.
+  - this script itself, on `shuffle_buffer_size` and its four siblings: the
+    reloader overlaid them into the trial config every iteration while the
+    `DiskReplayBuffer` that consumes them was built once at startup, so the
+    provenance section printed them under "the running value is correct"
+    about a value nothing was running. It was structurally incapable of any
+    other verdict — the check compared the yaml against the overlaid dict.
+    Fixed 2026-08-01 by classifying them restart-required
+    (`construction_only_config_keys()`), which makes the live edit warn and
+    reads out here as PENDING-RESTART.
 
 This is a point-in-time audit, NOT a loop guard — `loop_health.py` owns the
 per-iteration alerting. Run it after a deploy, before trusting a throughput
@@ -488,6 +497,7 @@ def classify_config_provenance(
     *,
     restart_keys: Iterable[str],
     searched_keys: Iterable[str] = (),
+    construction_only_keys: Iterable[str] = (),
     yaml_is_newer_than_row: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Label every shared config key by which source is authoritative for it.
@@ -500,9 +510,9 @@ def classify_config_provenance(
       * live-reloadable and yaml != realized — the reload did not land. A
         FINDING: the live-yaml validator is all-or-nothing, so one unknown key
         rejects every other key's change too.
-      * live-reloadable and params.json != realized — expected and benign, but
-        reported by count and by name, because reading that file is how the
-        trap fires.
+      * live-reloadable and params.json != realized — the reloader overlaid the
+        yaml value, reported by count and by name because reading that file is
+        how the trap fires.
 
     Compared against ``realized`` rather than against each other on purpose: a
     ``params.json``-vs-yaml diff cannot distinguish "the reload landed" from
@@ -512,6 +522,17 @@ def classify_config_provenance(
     function testable without a built C extension; the caller supplies
     ``trainable_config_ops.restart_required_config_keys()``.
 
+    ``construction_only_keys`` is the subset of those the reloader freezes
+    because a live edit could not act, not because acting would be unsafe
+    (``trainable_config_ops.construction_only_config_keys()``). It is passed
+    SEPARATELY, and checked alongside ``restart_keys`` rather than through it,
+    so the "params.json is merely the launch value" verdict cannot be reached
+    for a key with no live consumer even if ``restart_keys`` is wrong — which
+    is exactly the state this function was in until 2026-08-01, when it printed
+    ``shuffle_buffer_size: params.json=25000 running=100000`` under the header
+    "the running value is correct" about a cap the ``DiskReplayBuffer`` had
+    been built with at 25000 and never re-read.
+
     ``yaml_is_newer_than_row`` downgrades every yaml-vs-realized difference to a
     printed note. The realized row is minutes old by construction, so a yaml
     edited after it has simply not been read yet — reporting that as a rejected
@@ -519,6 +540,7 @@ def classify_config_provenance(
     and a monitor that cries wolf is a monitor nobody reads.
     """
     restart = set(restart_keys)
+    construction_only = set(construction_only_keys)
     searched = set(searched_keys)
     stale: list[str] = []
     report: list[str] = []
@@ -545,13 +567,36 @@ def classify_config_provenance(
             continue
         on_disk = flat_yaml[key]
         live = realized[key]
-        if key in restart:
+        if key in restart or key in construction_only:
             if not _same_value(on_disk, live):
+                extra = (
+                    " (it is a constructor argument — the object using it was "
+                    "built at startup and never re-reads config)"
+                    if key in construction_only else ""
+                )
                 _diverged(
                     "PENDING-RESTART", key, on_disk, live,
                     f"{key}: the yaml says {on_disk!r} but the trial is running "
-                    f"{live!r} and a live reload will never apply it — restart "
-                    "required, or the experiment is not the one you think",
+                    f"{live!r} and a live reload will never apply it{extra} — "
+                    "restart required, or the experiment is not the one you think",
+                )
+            elif key in construction_only and key in params \
+                    and not _same_value(params[key], live):
+                # Reachable only when the reloader overlaid a construction-only
+                # key -- i.e. the classification and the reloader disagree, or
+                # the row predates the fix. `live` is then the yaml's value
+                # echoed back by the config dict, and params.json holds what the
+                # constructor actually got. Never report this as healthy.
+                report.append(
+                    f"  INERT-OVERLAY {key}: params.json={params[key]!r} "
+                    f"row={live!r} — the row echoes the yaml, the object runs "
+                    f"{params[key]!r}"
+                )
+                findings.append(
+                    f"{key}: the trial's config reports {live!r} but this key is "
+                    f"only ever read by a constructor, so the running object holds "
+                    f"the launch value {params[key]!r}. The row is an overlay, not "
+                    "a realization — restart to make the yaml value real"
                 )
             continue
         if not _same_value(on_disk, live):
@@ -566,9 +611,15 @@ def classify_config_provenance(
     if stale:
         report.append(
             f"  STALE-IN-PARAMS-JSON  {len(stale)} live-reloadable key(s) where "
-            "params.json holds the LAUNCH value (the running value is correct):"
+            "params.json holds the LAUNCH value and the reloader has overlaid "
+            "the yaml value:"
         )
         report.extend(stale)
+        report.append(
+            "      That the RELOADER applied it is all this shows. Whether the "
+            "component re-read it is a per-key fact about consumers; for the "
+            "ones already proven inert see construction_only_config_keys()."
+        )
     return report, findings
 
 
@@ -579,7 +630,10 @@ def audit_config_provenance(
     # Imported here, not at module scope: trainable_config_ops pulls in the
     # selfplay package (and its C extension), and this script must stay
     # importable wherever the extension is not built.
-    from chess_anti_engine.tune.trainable_config_ops import restart_required_config_keys
+    from chess_anti_engine.tune.trainable_config_ops import (
+        construction_only_config_keys,
+        restart_required_config_keys,
+    )
 
     print()
     print("=== config provenance: params.json vs live yaml vs realized row ===")
@@ -631,6 +685,7 @@ def audit_config_provenance(
         params, flatten_yaml_config(raw), cfg,
         restart_keys=restart_required_config_keys(),
         searched_keys=searched,
+        construction_only_keys=construction_only_config_keys(),
         yaml_is_newer_than_row=yaml_is_newer,
     )
     for line in report:

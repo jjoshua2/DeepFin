@@ -406,6 +406,45 @@ _LAUNCH_FIXED_ASSET_PATH_KEYS = frozenset({
     "opening_book_path", "opening_book_path_2",
 })
 
+# Keys whose ONLY consumer is a constructor argument in
+# ``trainable_init._init_replay_buffers``, which runs once per trial process.
+# A live yaml edit to one of these lands in ``config`` — and therefore in the
+# result-row ``config`` block and in every tool that reads it — while the
+# object that was going to use it was built at startup and never re-reads it.
+# That is strictly worse than being ignored: the running trial reports the new
+# value back as though it had taken, so `audit_realized_config.py` printed
+# "the running value is correct" about a `shuffle_buffer_size` the
+# `DiskReplayBuffer` was not running (found 2026-08-01, this file's own class
+# of defect). Listing them turns that silent overlay into a WARNING plus a
+# PENDING-RESTART finding, exactly as for `gate_games` below.
+#
+# Membership requires the key to have NO other consumer — a key read again on
+# the per-iteration path takes effect live and must NOT be frozen here. The
+# four sampling knobs passed to the same constructor
+# (`replay_sf_gap_priority_weight`, `replay_fast_low_surprise_priority`,
+# `diff_focus_pol_scale`, `diff_focus_q_weight`) are re-pushed onto the buffer
+# every iteration by ``trainable.py``, and `shard_size` is re-read per
+# iteration by the replay-share ingest, so all five stay live-reloadable.
+# ``tests/test_construction_only_config_keys.py`` re-derives that split from
+# the source and fails on any newly-added constructor argument that joins this
+# class without being classified.
+_CONSTRUCTION_ONLY_REPLAY_KEYS = frozenset({
+    # DiskReplayBuffer(...) — trainable_init.py:625
+    "shuffle_buffer_size",        # -> shuffle_cap, disk_buffer.py:249
+    "shuffle_refresh_interval",   # -> refresh_interval, disk_buffer.py:251
+    "shuffle_refresh_shards",     # -> refresh_shards, disk_buffer.py:252
+    "shuffle_draw_cap_frac",      # -> draw_cap_frac, disk_buffer.py:344
+    "shuffle_wl_max_ratio",       # -> wl_max_ratio, disk_buffer.py:345
+    "replay_upgrade_v1_planes",   # -> upgrade_v1_planes, disk_buffer.py:235
+    # The initial sliding-window size, read once into a local at
+    # trainable_init.py:605; every later window move goes through
+    # replay_window_max / replay_window_growth, which ARE live.
+    "replay_window_start",
+    # ArrayReplayBuffer(...) — trainable_init.py:675. `.capacity` is never
+    # re-assigned from config afterwards.
+    "holdout_capacity",
+})
+
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is
 # already built), but IS applied during startup/resume before the trainer
 # exists — so it is restart-required for a running trial like the rest.
@@ -425,7 +464,25 @@ _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
     "gate_mode", "gate_window_iters", "gate_min_iters",
     "gate_min_games_per_side", "gate_demote_delta_elo", "gate_demote_step_elo",
     "gate_alpha", "gate_max_hold_iters",
-})
+}) | _CONSTRUCTION_ONLY_REPLAY_KEYS
+
+
+def construction_only_config_keys() -> frozenset[str]:
+    """Yaml keys that reach ONLY a constructor, so a live edit cannot act.
+
+    A strict subset of ``restart_required_config_keys()``, and the reason the
+    two are not the same question: the rest of that set is frozen because
+    applying it live would be UNSAFE (rebuild the model away from its
+    checkpoint, advertise an asset the server cannot serve). These are frozen
+    because applying it live would be a LIE — the value would read back correct
+    from the trial's own config while the object using it kept the launch
+    value.
+
+    Exported for tooling that reports on config provenance: a checker may say
+    "the running value is correct" only about a key some live consumer
+    re-reads, and this set is the one it must never say it about.
+    """
+    return _CONSTRUCTION_ONLY_REPLAY_KEYS
 
 
 def restart_required_config_keys() -> frozenset[str]:
@@ -450,6 +507,12 @@ def restart_required_config_keys() -> frozenset[str]:
     PB2-searched keys are also preserved across a reload, but that is a
     property of the trial's own ``pb2_bounds_*`` entries rather than of the key,
     so callers must exclude them separately.
+
+    "Not in here" means the reloader OVERLAYS the yaml value into ``config``.
+    It does not mean a running component re-read it — that is a per-key fact
+    about consumers, and ``construction_only_config_keys()`` is the part of it
+    already proven. A tool that reads "overlaid" as "in effect" will report a
+    knob as healthy precisely when it is inert.
     """
     return (
         _TOPOLOGY_KEYS
