@@ -13,11 +13,25 @@
 # twice in one day and a stopped run simply skips that day — the CSV's date
 # column stays the honest index of when a regression appeared.
 set -u
-cd /home/josh/projects/chess
-export PYTHONPATH=.
+# The repo, the run directory, the exit statuses and the checkpoint-iteration
+# parse are all defined ONCE, in scripts/ratchet_common.sh, and shared with
+# daily_gate_ratchet.sh — see the header there for the divergence that made
+# that necessary. Sourced by the script's own location so it does not depend on
+# the caller's cwd, and before anything else because it performs the `cd`.
+. "$(dirname "${BASH_SOURCE[0]}")/ratchet_common.sh"
 
-PIDFILE=/tmp/chess_training.pid
-WORK_DIR="${TRAIN_WORK_DIR:-runs/pbt2_small}"
+# --once runs a single poll and exits with that poll's status. The scheduled
+# invocation from scripts/train.sh passes no arguments.
+#
+# NOTE: it exits 0 on every path where the poll deliberately DID NOTHING
+# (trainer down, paused, day already stamped, no trial/checkpoint yet, below
+# MIN_ITER), so as a status it conflates "skipped" with "succeeded". That is
+# fine for what it is — a test seam and a manual one-shot — but do not build a
+# scheduler on it without giving "did nothing" its own status.
+ONCE=0
+[ "${1:-}" = "--once" ] && ONCE=1
+
+PIDFILE="${TRAIN_PIDFILE:-/tmp/chess_training.pid}"
 STATE=data/ratchet/last_run_date
 # ATTEMPTED, not SUCCEEDED. $STATE means "today has a reading"; $GIVEUP_STATE
 # means "today has no reading and asking again cannot produce one". They are
@@ -28,9 +42,6 @@ STATE=data/ratchet/last_run_date
 # supposed to be observing, and it is self-reinforcing: contention -> no
 # complete pairs -> no row -> retry -> more contention.
 GIVEUP_STATE=data/ratchet/last_giveup_date
-# scripts/daily_gate_ratchet.sh exit 5. Kept in sync by
-# tests/test_ratchet_search_shape.py, which parses both files.
-RATCHET_EXIT_NO_RETRY=5
 LOG=scratchpad/ratchet_loop.log
 POLL="${RATCHET_POLL:-600}"
 # Skip the first N iterations after a restart: a freshly-restarted trial spends
@@ -69,36 +80,50 @@ ratchet_outcome () {   # $1=rc  $2=today
     esac
 }
 
-while true; do
-    sleep "$POLL"
-
-    trainer_running || continue
+# ONE poll: decide whether to run the ratchet, run it, and record what came
+# back. A function so the whole body — including the `ratchet_outcome "$?"`
+# call site, which is the wiring the state machine hangs off — is reachable by a
+# test rather than only by reading.
+poll_once () {
+    trainer_running || return 0
     # A paused trial still holds its PID, so PIDFILE alone would let the ratchet
     # run during a deliberate pause.
-    paused && continue
+    paused && return 0
 
+    local today trial ck iter rc
     today=$(date +%F)
-    [ "$(cat "$STATE" 2>/dev/null)" = "$today" ] && continue
-    [ "$(cat "$GIVEUP_STATE" 2>/dev/null)" = "$today" ] && continue
+    [ "$(cat "$STATE" 2>/dev/null)" = "$today" ] && return 0
+    [ "$(cat "$GIVEUP_STATE" 2>/dev/null)" = "$today" ] && return 0
 
     trial=$(ls -td "$WORK_DIR"/tune/train_trial_*/ 2>/dev/null | head -1)
-    [ -n "$trial" ] || continue
+    [ -n "$trial" ] || return 0
     ck=$(ls -td "$trial"checkpoint_* 2>/dev/null | head -1)
-    [ -n "$ck" ] || continue
-    iter=$(basename "$ck" | sed 's/checkpoint_0*//')
-    [ "${iter:-0}" -ge "$MIN_ITER" ] 2>/dev/null || continue
+    [ -n "$ck" ] || return 0
+    iter=$(ratchet_iter_from_checkpoint "$ck")
+    [ "${iter:-0}" -ge "$MIN_ITER" ] 2>/dev/null || return 0
 
     # Re-check immediately before spending GPU: the gap between the poll above
     # and here is where a stop/pause lands.
-    trainer_running || continue
-    paused && continue
+    trainer_running || return 0
+    paused && return 0
 
     log "starting daily ratchet (iter=$iter)"
     # `$STATE` is stamped only on exit 0, so a failed run retries on the next
     # poll instead of silently skipping the whole day — but a failure that
     # reproduces would then retry until midnight, which the ratchet reports as
     # exit $RATCHET_EXIT_NO_RETRY and this loop honours WITHOUT claiming the day
-    # succeeded.
+    # succeeded. Capture the status into a local FIRST: any command inserted
+    # between the run and the `ratchet_outcome` call would otherwise clobber
+    # `$?` and turn every outcome into a success.
     bash scripts/daily_gate_ratchet.sh >> "$LOG" 2>&1
-    ratchet_outcome "$?" "$today"
+    rc=$?
+    ratchet_outcome "$rc" "$today"
+    return "$rc"
+}
+
+while true; do
+    sleep "$POLL"
+    poll_once
+    rc=$?
+    [ "$ONCE" -eq 1 ] && exit "$rc"
 done

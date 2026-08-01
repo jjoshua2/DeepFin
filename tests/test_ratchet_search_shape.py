@@ -27,6 +27,7 @@ from scripts.ratchet_slope import _one_ruler_only, row_search_shape
 ROOT = Path(__file__).resolve().parent.parent
 RATCHET_SH = ROOT / "scripts" / "daily_gate_ratchet.sh"
 LOOP_SH = ROOT / "scripts" / "ratchet_loop.sh"
+COMMON_SH = ROOT / "scripts" / "ratchet_common.sh"
 LEGACY = "legacy_play_vloss0"
 
 
@@ -325,6 +326,8 @@ def _sandbox(tmp_path: Path, *, checkpoint: str = "checkpoint_000478") -> Path:
     root = tmp_path / "repo"
     (root / "scripts").mkdir(parents=True)
     shutil.copy(RATCHET_SH, root / "scripts" / RATCHET_SH.name)
+    shutil.copy(LOOP_SH, root / "scripts" / LOOP_SH.name)
+    shutil.copy(COMMON_SH, root / "scripts" / COMMON_SH.name)
     (root / "scripts" / "arena_standard.py").write_text(_ARENA_STUB)
     ck = root / "runs" / "pbt2_small" / "tune" / "train_trial_x" / checkpoint
     ck.mkdir(parents=True)
@@ -335,7 +338,7 @@ def _sandbox(tmp_path: Path, *, checkpoint: str = "checkpoint_000478") -> Path:
     return root
 
 
-def _run_ratchet(root: Path, *args: str, mode: str = "good"):
+def _run_ratchet(root: Path, *args: str, mode: str = "good", env: dict | None = None):
     """Run the real script against `root`. Returns (rc, stdout+stderr)."""
     import subprocess
 
@@ -348,6 +351,7 @@ def _run_ratchet(root: Path, *args: str, mode: str = "good"):
             "ARENA_MODE": mode,
             "ARENA_CALLS": str(root / "arena_calls.txt"),
             "PYTHONDONTWRITEBYTECODE": "1",
+            **(env or {}),
         },
     )
     return r.returncode, r.stdout + r.stderr
@@ -514,7 +518,7 @@ def test_the_loop_stamps_the_day_only_for_a_real_reading(tmp_path) -> None:
 
     src = LOOP_SH.read_text(encoding="utf-8")
     preamble = "\n".join(
-        ln for ln in src.splitlines()
+        ln for ln in (src + COMMON_SH.read_text(encoding="utf-8")).splitlines()
         if re.match(r"(STATE|GIVEUP_STATE|LOG|RATCHET_EXIT_NO_RETRY)=", ln)
     )
     assert preamble.count("\n") == 3, f"expected 4 settings, got:\n{preamble}"
@@ -548,19 +552,308 @@ def test_the_loop_stamps_the_day_only_for_a_real_reading(tmp_path) -> None:
     assert "NO strength measurement" in log, log
 
 
-def test_both_scripts_agree_on_the_no_retry_status() -> None:
-    """A status the consumer does not recognise is a status that does nothing."""
-    ratchet = re.search(r"^EXIT_NO_RETRY=(\d+)", RATCHET_SH.read_text(encoding="utf-8"), re.M)
-    loop = re.search(r"^RATCHET_EXIT_NO_RETRY=(\d+)", LOOP_SH.read_text(encoding="utf-8"), re.M)
-    assert ratchet is not None, "daily_gate_ratchet.sh defines no EXIT_NO_RETRY"
-    assert loop is not None, "ratchet_loop.sh defines no RATCHET_EXIT_NO_RETRY"
-    assert ratchet.group(1) == loop.group(1), (
-        "daily_gate_ratchet.sh and ratchet_loop.sh disagree about the "
-        "not-retryable exit status; the loop would treat a give-up as a retry"
+def _run_one_poll(root: Path, *, mode: str = "good", timeout: float = 120.0):
+    """Drive ONE real poll of ratchet_loop.sh end to end. Returns (rc, output).
+
+    The loop's own body, not an extracted function: the defect this whole
+    change is about is a rule that is pinned while the wiring INTO it is not,
+    and `ratchet_outcome "$?"` -> `ratchet_outcome 0` is exactly that mutation.
+    """
+    import subprocess
+
+    pidfile = root / "trainer.pid"
+    # A process that really is alive, so `trainer_running` passes for the same
+    # reason it does in production rather than because a check was stubbed out.
+    alive = subprocess.Popen(["sleep", "600"])
+    try:
+        pidfile.write_text(f"{alive.pid}\n")
+        r = subprocess.run(
+            ["bash", f"scripts/{LOOP_SH.name}", "--once"],
+            cwd=str(root), capture_output=True, text=True, check=False,
+            timeout=timeout,
+            env={
+                "PATH": os.environ.get("PATH", ""),
+                "RATCHET_ROOT": str(root),
+                "TRAIN_PIDFILE": str(pidfile),
+                "RATCHET_POLL": "1",
+                "ARENA_MODE": mode,
+                "ARENA_CALLS": str(root / "arena_calls.txt"),
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+        )
+    finally:
+        alive.terminate()
+        alive.wait()
+    log = root / "scratchpad" / "ratchet_loop.log"
+    return r.returncode, r.stdout + r.stderr + (log.read_text() if log.exists() else "")
+
+
+def _loop_state(root: Path) -> tuple[str, str]:
+    """(last_run_date, last_giveup_date) as recorded by the loop."""
+    d = root / "data" / "ratchet"
+    return (
+        (d / "last_run_date").read_text().strip() if (d / "last_run_date").exists() else "",
+        (d / "last_giveup_date").read_text().strip() if (d / "last_giveup_date").exists() else "",
     )
-    # It must not collide with success, the retryable failure, bad usage, the
+
+
+def test_one_poll_records_the_outcome_it_actually_got(tmp_path) -> None:
+    """The loop BODY, executed: a whole poll, both scripts, a stub arena.
+
+    ``ratchet_outcome`` is tested above, but nothing executed the call site that
+    feeds it, and a call site is where this repo's defect lives: replacing
+    ``ratchet_outcome "$rc"`` with ``ratchet_outcome 0`` — or slipping any
+    command between the ratchet run and the status capture, which clobbers
+    ``$?`` — restores the exact silent hole the exit status exists to prevent,
+    with every rule below it still perfect. Both mutations were run against this
+    test and both kill it.
+    """
+    import datetime
+
+    today = datetime.date.today().isoformat()
+
+    # 1. A real reading: the day is stamped DONE and nothing else is.
+    good = _sandbox(tmp_path / "good")
+    rc, out = _run_one_poll(good, mode="good")
+    assert rc == 0, f"a poll that got a reading must exit 0, got {rc}:\n{out}"
+    assert _arena_launches(good) == 1, f"the poll never ran the arena:\n{out}"
+    assert len(_csv_rows(good)) == 1, f"no CSV row was written:\n{out}"
+    assert _loop_state(good) == (today, ""), (
+        f"expected only last_run_date stamped, got {_loop_state(good)}:\n{out}"
+    )
+
+    # 2. A retryable failure: NOTHING is stamped, so the next poll tries again.
+    bad = _sandbox(tmp_path / "bad")
+    rc, out = _run_one_poll(bad, mode="nopairs")
+    assert rc == 1, f"a zero-row poll must report the retryable status, got {rc}:\n{out}"
+    assert _loop_state(bad) == ("", ""), (
+        f"a retryable failure stamped a day: {_loop_state(bad)}:\n{out}"
+    )
+
+    # 3. The same failure again: the day gives up. last_run_date STILL unset —
+    #    the day has no reading and must never read as though it had one.
+    rc, out = _run_one_poll(bad, mode="nopairs")
+    assert rc == 5, f"the repeat failure must be non-retryable, got {rc}:\n{out}"
+    assert _loop_state(bad) == ("", today), (
+        f"give-up must stamp ONLY last_giveup_date, got {_loop_state(bad)}:\n{out}"
+    )
+    assert "GAVE UP" in out, f"the give-up must reach the loop log:\n{out}"
+    assert _csv_rows(bad) == []
+
+    # 4. ...and the next poll costs nothing at all.
+    launches = _arena_launches(bad)
+    rc, out = _run_one_poll(bad, mode="nopairs")
+    assert _arena_launches(bad) == launches, (
+        f"a day that gave up kept spending GPU:\n{out}"
+    )
+
+
+def test_neither_script_can_disagree_with_the_other() -> None:
+    """The four shared facts have ONE definition, so drift is inexpressible.
+
+    Keeping two copies EQUAL is not the same as having one, and the difference
+    was not hypothetical: ratchet_loop.sh honoured $TRAIN_WORK_DIR while
+    daily_gate_ratchet.sh hard-coded runs/pbt2_small, so under
+    TRAIN_WORK_DIR=runs/other the loop chose the iteration from one tree and
+    the ratchet snapshotted and recorded from the other. The same class left
+    the checkpoint_000000 parse duplicated with only one copy covered.
+
+    So this asserts ABSENCE in the two scripts, not agreement between them.
+    """
+    common = COMMON_SH.read_text(encoding="utf-8")
+    m = re.search(r"^RATCHET_EXIT_NO_RETRY=(\d+)", common, re.M)
+    assert m is not None, f"{COMMON_SH} defines no RATCHET_EXIT_NO_RETRY"
+    status = int(m.group(1))
+    # Must not collide with success, the retryable failure, bad usage, the
     # arena's own no-pairs status, or `timeout`'s.
-    assert int(ratchet.group(1)) not in (0, 1, 2, 3, 124, 137)
+    assert status not in (0, 1, 2, 3, 124, 137)
+    assert re.search(r'^WORK_DIR="\$\{TRAIN_WORK_DIR:-', common, re.M), common
+
+    for path in (RATCHET_SH, LOOP_SH):
+        src = path.read_text(encoding="utf-8")
+        assert 'ratchet_common.sh"' in src, f"{path.name} does not source the shared file"
+        for pattern, what in (
+            (r"^\s*RATCHET_EXIT_(NO_)?RETRY=", "its own copy of an exit status"),
+            (r"^\s*WORK_DIR=", "its own copy of the run directory"),
+            (r"^\s*cd \S*/home/josh", "its own hard-coded repo path"),
+            (r"sed 's/checkpoint_0\*//'", "the old iteration parse"),
+            (r"sed -E 's/\^checkpoint_//", "its own copy of the iteration parse"),
+        ):
+            assert not re.search(pattern, src, re.M), (
+                f"{path.name} re-defines {what}; that is the duplication this "
+                "shared file exists to remove, and it has drifted before"
+            )
+    # The hard-coded run dir specifically: the drift that was actually shipped.
+    assert "runs/pbt2_small" not in RATCHET_SH.read_text(encoding="utf-8")
+
+
+def test_the_two_scripts_pick_the_same_trial_tree(tmp_path) -> None:
+    """$TRAIN_WORK_DIR must move BOTH, or a row names a foreign checkpoint.
+
+    Reproduces the shipped divergence by effect: with the run directory
+    redirected, the ratchet must measure the redirected tree — previously it
+    kept reading runs/pbt2_small while the loop decided from the other one.
+    """
+    root = _sandbox(tmp_path)
+    other = root / "runs" / "other" / "tune" / "train_trial_z" / "checkpoint_000900"
+    other.mkdir(parents=True)
+    (other / "trainer.pt").write_text("net-900")
+
+    rc, out = _run_ratchet(root, env={"TRAIN_WORK_DIR": "runs/other"})
+    assert rc == 0, out
+    rows = _csv_rows(root)
+    assert len(rows) == 1 and ",900," in rows[0], (
+        f"the ratchet measured a different tree than TRAIN_WORK_DIR names: {rows}"
+    )
+
+
+def test_nothing_to_measure_yet_is_retryable_not_a_finished_day(tmp_path) -> None:
+    """Ray creates checkpoint_NNNNNN/ before it writes trainer.pt.
+
+    That race is a state every fresh restart passes through, and the three
+    early-outs answered it with `exit 0`: no attempts.csv row (they return
+    before the ledger is initialised), so ratchet_loop.sh stamped
+    last_run_date, `loop_health.ratchet_gap_alerts` could not see the hole,
+    result.json stayed green and the log said "daily ratchet done". The day was
+    gone. It costs no GPU to say "not yet" instead — nothing here has run an
+    arena — and the day then keeps its remaining polls.
+    """
+    import datetime
+
+    # (a) the live race: the directory exists, the file does not.
+    racing = _sandbox(tmp_path / "race")
+    (racing / "runs/pbt2_small/tune/train_trial_x/checkpoint_000478/trainer.pt").unlink()
+    rc, out = _run_ratchet(racing)
+    assert rc == 1, f"a half-written checkpoint must be retryable, got {rc}:\n{out}"
+    assert "YET" in out, out
+    assert _arena_launches(racing) == 0, "no GPU may be spent to discover this"
+    assert _attempt_rows(racing) == [], (
+        "a startup race must not consume one of the day's 3 attempts"
+    )
+    # ...and the loop must not stamp the day.
+    rc, out = _run_one_poll(racing)
+    assert rc == 1, f"the loop must see the retryable status, got {rc}:\n{out}"
+    assert _loop_state(racing) == ("", ""), (
+        f"the day was stamped despite having no reading: {_loop_state(racing)}"
+    )
+
+    # (b) no checkpoint at all, and (c) no trial dir at all.
+    for label, victim in (("nock", "runs/pbt2_small/tune/train_trial_x/checkpoint_000478"),
+                          ("notrial", "runs/pbt2_small/tune/train_trial_x")):
+        import shutil
+
+        root = _sandbox(tmp_path / label)
+        shutil.rmtree(root / victim)
+        rc, out = _run_ratchet(root)
+        assert rc == 1, f"{label}: expected retryable, got {rc}:\n{out}"
+        assert _arena_launches(root) == 0
+
+    # And the recovery: once trainer.pt lands, the same day proceeds normally.
+    (racing / "runs/pbt2_small/tune/train_trial_x/checkpoint_000478/trainer.pt").write_text("net")
+    rc, out = _run_one_poll(racing)
+    assert rc == 0, f"the day must still be measurable once the file lands:\n{out}"
+    assert _loop_state(racing) == (datetime.date.today().isoformat(), "")
+    assert len(_csv_rows(racing)) == 1
+
+
+def test_a_skipped_series_hands_its_budget_to_the_other(tmp_path) -> None:
+    """A skipped vs_prev must not forfeit half the day's clock.
+
+    The budget split is (time left / series still to come), and only
+    ``run_arena`` decremented that count — so when the self-match guard skipped
+    vs_prev, vs_boot512 still divided by 2 and ~900s of a 1800s budget went
+    unused. That fired on exactly the training-down days when the guard exists
+    to fire, i.e. when the one remaining series is the only chance of a row.
+
+    Asserted through the --max-seconds the arena is actually launched with.
+    """
+    root = _sandbox(tmp_path)
+    rc, out = _run_ratchet(root)   # day 1: vs_prev has no earlier snapshot
+    assert rc == 0, out
+    calls = (root / "arena_calls.txt").read_text().splitlines()
+    assert len(calls) == 1, calls
+    m = re.search(r"--max-seconds (\d+)", calls[0])
+    assert m is not None, f"no --max-seconds in the arena invocation: {calls[0]}"
+    inner = int(m.group(1))
+    # 30 minutes total, one series running: it must get essentially all of it,
+    # not the ~855s that the un-decremented divisor produced.
+    assert inner > 1500, (
+        f"vs_boot512 was launched with only {inner}s of an 1800s budget — the "
+        "skipped series never gave its share back"
+    )
+
+    # THE SELF-MATCH PATH, which is the one that matters most: it fires when
+    # training is down, and it is a DIFFERENT skip branch from `nosnap` above.
+    # Removing `series_skipped` from just that branch survived a battery that
+    # only covered the day-1 case.
+    twin = _sandbox(tmp_path / "selfmatch")
+    snaps = twin / "data" / "ratchet" / "snapshots"
+    snaps.mkdir(parents=True)
+    # Byte-identical to the checkpoint today's snapshot will be copied from.
+    same = snaps / "ck_2026-07-31_iter409.pt"
+    same.write_text("candidate-net")
+    os.utime(same, (1, 1))
+
+    rc, out = _run_ratchet(twin)
+    assert rc == 0, out
+    assert "SKIPPED" in out, f"the self-match guard did not fire:\n{out}"
+    calls = (twin / "arena_calls.txt").read_text().splitlines()
+    assert len(calls) == 1, calls
+    m = re.search(r"--max-seconds (\d+)", calls[0])
+    assert m is not None, calls[0]
+    assert int(m.group(1)) > 1500, (
+        f"vs_prev was skipped as a self-match and vs_boot512 still only got "
+        f"{m.group(1)}s of 1800s — the branch that fires on training-down days "
+        "is exactly where the forfeited budget hurts most"
+    )
+
+
+def test_a_new_checkpoint_does_not_buy_a_second_arena_the_same_day(tmp_path) -> None:
+    """The loop's own day stamp is a GPU bound, not a convenience.
+
+    It looks redundant with the ratchet's "already done today" guard, and it is
+    not: that guard is keyed on today AND THE ITERATION, so the moment Ray
+    writes a newer checkpoint the ratchet sees no row for the new iter and runs
+    a fresh 30-minute 16-concurrent arena. Only ``$STATE`` stops the day at one.
+    Removing the check survived a battery that never advanced the checkpoint.
+    """
+    root = _sandbox(tmp_path)
+    rc, out = _run_one_poll(root)
+    assert rc == 0, out
+    assert _arena_launches(root) == 1
+
+    # Ray publishes a newer checkpoint, exactly as it does every ~11 minutes.
+    newer = root / "runs/pbt2_small/tune/train_trial_x/checkpoint_000479"
+    newer.mkdir()
+    (newer / "trainer.pt").write_text("candidate-net-479")
+
+    rc, out = _run_one_poll(root)
+    assert _arena_launches(root) == 1, (
+        "a newer checkpoint bought a second full arena on a day that already "
+        f"has its reading — that is the daily budget doubled:\n{out}"
+    )
+    assert len(_csv_rows(root)) == 1
+
+
+def test_both_series_still_split_the_budget(tmp_path) -> None:
+    """The other direction: two live series must still get half each."""
+    root = _sandbox(tmp_path)
+    snaps = root / "data" / "ratchet" / "snapshots"
+    snaps.mkdir(parents=True)
+    old = snaps / "ck_2026-07-30_iter409.pt"
+    old.write_text("an older, genuinely different net")
+    os.utime(old, (1, 1))
+
+    rc, out = _run_ratchet(root)
+    assert rc == 0, out
+    calls = (root / "arena_calls.txt").read_text().splitlines()
+    assert len(calls) == 2, f"both series should have run: {calls}"
+    m = re.search(r"--max-seconds (\d+)", calls[0])
+    assert m is not None, f"no --max-seconds in the arena invocation: {calls[0]}"
+    first = int(m.group(1))
+    assert 700 < first < 1000, (
+        f"the first of two series took {first}s of 1800s — the split is wrong"
+    )
 
 
 
@@ -946,21 +1239,26 @@ def test_the_iteration_parse_survives_checkpoint_000000(tmp_path) -> None:
     silently reads 0, and every CSV row for that day carries an empty iter
     column. Executes the real line out of the script rather than asserting on
     its text.
+
+    BOTH scripts parse it, and the loop's copy was NOT covered when this test
+    only read the ratchet's: reverting `ratchet_loop.sh` alone survived the
+    whole battery. There is now exactly ONE parse, in ratchet_common.sh, which
+    is what this executes — a mutation cannot hide in a second copy because
+    there is no second copy (test_neither_script_can_disagree_with_the_other
+    fails if one reappears).
     """
     import subprocess
 
-    src = RATCHET_SH.read_text(encoding="utf-8")
-    line = next(
-        ln for ln in src.splitlines() if ln.startswith("iter=$(basename ")
-    )
+    func = _extract_shell_func("ratchet_iter_from_checkpoint", COMMON_SH)
     for name, want in (
         ("checkpoint_000000", "0"),
         ("checkpoint_000042", "42"),
         ("checkpoint_000478", "478"),
         ("checkpoint_001000", "1000"),
+        ("runs/x/tune/train_trial_a/checkpoint_000007/", "7"),
     ):
         out = subprocess.run(
-            ["bash", "-c", f'ck="{name}"\n{line}\nprintf "%s" "$iter"'],
+            ["bash", "-c", f'{func}\nprintf "%s" "$(ratchet_iter_from_checkpoint "{name}")"'],
             cwd=str(tmp_path), capture_output=True, text=True, check=True,
         ).stdout
         assert out == want, f"{name} parsed as {out!r}, expected {want!r}"

@@ -56,22 +56,21 @@
 #     SUCCEEDED, and neither is inferred from the other;
 #   * at most --max-attempts (3) attempts per calendar day may spend GPU;
 #   * a failure whose REASON string repeats the previous attempt's is treated as
-#     deterministic and not retried at all — the 2026-07-31 shape (880s of
-#     model loading inside an 855s cap -> 0 pairs, every time) costs exactly two
+#     deterministic and not retried at all — the 2026-07-31 shape (880s spent
+#     before the play loop ever completes a pair, every time) costs exactly two
 #     attempts rather than the whole day;
-#   * exhausted/deterministic failures exit $EXIT_NO_RETRY (5), which the loop
+#   * exhausted/deterministic failures exit $RATCHET_EXIT_NO_RETRY (5), which the loop
 #     honours by stopping for the day WITHOUT stamping the day as done.
 #
 # Nothing here makes a failure quieter: the day still ends with no CSV row, a
 # banner on stderr, and a durable attempts.csv record of every attempt.
 set -u
-# RATCHET_ROOT is a TEST SEAM, not an operator knob: tests/test_ratchet_search_shape.py
-# runs this script for real against a sandbox tree with a stub arena. A guard
-# that only greps this file cannot fail (that is exactly how the zero-row exit
-# below shipped un-fireable), so the script has to be executable somewhere that
-# is not the live run.
-cd "${RATCHET_ROOT:-/home/josh/projects/chess}" || exit 2
-export PYTHONPATH=.
+# The repo, the run directory, the exit statuses and the checkpoint-iteration
+# parse are all defined ONCE, in scripts/ratchet_common.sh, and shared with
+# ratchet_loop.sh — see the header there for the divergence that made that
+# necessary. Sourced by this script's own location so it does not depend on the
+# caller's cwd, and before anything else because it performs the `cd`.
+. "$(dirname "${BASH_SOURCE[0]}")/ratchet_common.sh"
 
 GAMES=200
 SIMS=32
@@ -102,14 +101,15 @@ LOG=data/ratchet/ratchet.csv
 # of it. This is what bounds the day's GPU and what makes a dead instrument
 # legible — "3 attempts, 0 rows" is a fact on disk, not an inference from a
 # missing CSV row.
+#
+# IT HAS AN AUTOMATED READER: scripts/loop_health.py (`ratchet_gap_alerts`)
+# ALERTs when the newest day here produced no ratchet.csv row at all. Without
+# one this file would be a durable record nobody opens, and a day with no
+# strength measurement would go on looking like a day with nothing to report —
+# the same defect as the retry storm, one level out.
 ATTEMPTS=data/ratchet/attempts.csv
 ATTEMPTS_HEADER="date,iter,attempt,rc,rows,reason"
 MAX_ATTEMPTS=3
-# Exit statuses. ratchet_loop.sh branches on these; keep them in sync with the
-# RATCHET_EXIT_NO_RETRY literal there (tests/test_ratchet_search_shape.py
-# asserts the two files agree).
-EXIT_RETRY=1      # no CSV row, but another attempt today might produce one
-EXIT_NO_RETRY=5   # no CSV row, and no further attempt today can help
 ANCHOR=scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt
 # WHICH SEARCH THIS SERIES IS MEASURED WITH. arena_standard.py now REQUIRES this
 # (it used to seed itself from PLAY_SEARCH_DEFAULTS silently), and the answer for
@@ -186,20 +186,41 @@ fi
 today=$(date +%F)
 
 # --- locate the live trial's newest checkpoint ------------------------------
-trial=$(ls -td runs/pbt2_small/tune/train_trial_*/ 2>/dev/null | head -1)
-if [ -z "$trial" ]; then echo "[ratchet] no trial dir — nothing to do"; exit 0; fi
+# ALL THREE OF THESE ARE RETRYABLE, NOT SUCCESS. They used to `exit 0`, which
+# is the same silent hole this script's whole exit-status machinery exists to
+# close, and the one most likely to fire: they return BEFORE the attempt ledger
+# is initialised, so the day got no attempts.csv row AND ratchet_loop.sh
+# stamped last_run_date, `ratchet_gap_alerts` could not see it, result.json
+# stayed green, and the log read "daily ratchet done". Reproduced end to end
+# with Ray having created checkpoint_000479/ but not yet written trainer.pt —
+# a live race that every fresh restart passes through.
+#
+# They are NOT recorded in the ledger and cost NO GPU: nothing here has run an
+# arena yet, and counting a startup race against the day's 3 attempts would let
+# a few unlucky polls burn the budget without ever measuring anything. The
+# correct reading of all three is "not yet", which is exactly what
+# $RATCHET_EXIT_RETRY means to the loop: do not stamp the day, ask again next
+# poll.
+trial=$(ls -td "$WORK_DIR"/tune/train_trial_*/ 2>/dev/null | head -1)
+if [ -z "$trial" ]; then
+    echo "[ratchet] no trial dir under $WORK_DIR — nothing to measure YET" >&2
+    exit "$RATCHET_EXIT_RETRY"
+fi
 
 ck=$(ls -td "$trial"checkpoint_* 2>/dev/null | head -1)
-if [ -z "$ck" ]; then echo "[ratchet] no checkpoint under $trial"; exit 0; fi
+if [ -z "$ck" ]; then
+    echo "[ratchet] no checkpoint under $trial — nothing to measure YET" >&2
+    exit "$RATCHET_EXIT_RETRY"
+fi
 
 src=$(find "$ck" -name "trainer.pt" | head -1)
-if [ -z "$src" ]; then echo "[ratchet] no trainer.pt under $ck"; exit 0; fi
+if [ -z "$src" ]; then
+    echo "[ratchet] no trainer.pt under $ck yet (Ray writes the directory before" \
+         "the file) — nothing to measure YET" >&2
+    exit "$RATCHET_EXIT_RETRY"
+fi
 
-# `sed 's/checkpoint_0*//'` yields the EMPTY STRING for checkpoint_000000 — the
-# zeros it strips are the number. Strip the prefix, then leading zeros only down
-# to the last digit, so iteration 0 stays "0" instead of becoming an empty
-# snapshot name and an empty iter column in every row of that day.
-iter=$(basename "$ck" | sed -E 's/^checkpoint_//; s/^0+([0-9])/\1/')
+iter=$(ratchet_iter_from_checkpoint "$ck")
 snap="$SNAP_DIR/ck_${today}_iter${iter}.pt"
 
 # --- how much GPU may this calendar day still spend? ------------------------
@@ -216,7 +237,7 @@ give_up () {   # $1=why (one line, for the operator)
     echo "[ratchet] This is NOT a null reading: $today has NO strength measurement." >&2
     echo "[ratchet] Attempts: $ATTEMPTS   arena logs: data/ratchet/arena_${today}_iter${iter}_*.log" >&2
     echo "[ratchet] Re-run by hand with --max-attempts 0 once the cause is fixed." >&2
-    exit "$EXIT_NO_RETRY"
+    exit "$RATCHET_EXIT_NO_RETRY"
 }
 
 # The GPU bound, and the only part of it that matters: it is checked BEFORE the
@@ -225,7 +246,7 @@ give_up () {   # $1=why (one line, for the operator)
 # attempts ledger, so it holds for a hand-run job too — the loop's own
 # last_giveup_date only stops the loop.
 if [ "$rows_today" -eq 0 ] && [ "$MAX_ATTEMPTS" -gt 0 ]; then
-    if [ "${last_status:-}" = "$EXIT_NO_RETRY" ]; then
+    if [ "${last_status:-}" = "$RATCHET_EXIT_NO_RETRY" ]; then
         give_up "attempt $attempts_today already concluded today is not retryable (${last_reason:-none})."
     fi
     if [ "$attempts_today" -ge "$MAX_ATTEMPTS" ]; then
@@ -268,10 +289,25 @@ pick_prev_snapshot () {   # $1=snapshot dir  $2=today's snapshot PATH  $3=today'
     # direction that writes a bogus row. The iteration check stays as a second
     # net: a re-SAVED same-iteration checkpoint differs byte-wise (timestamps,
     # optimizer moments) while still being a self-match for Elo purposes.
+    #
+    # COST, measured 2026-08-01 on the real 685MB snapshots, because this runs
+    # inside the job's wall-clock deadline and reading 2 x 685MB against a clock
+    # that decides whether the arena gets to play would be a poor trade:
+    #   different nets (same size)      cmp -s  0.004s  — it stops at the FIRST
+    #                                                    differing byte, which
+    #                                                    lands in the first
+    #                                                    tensors of the file
+    #   identical content, two paths    cmp -s  0.81s cold / 0.28s warm
+    # So the full read happens ONLY on the branch that then skips a ~900s arena,
+    # and it costs 0.04% of a 1800s budget. The size test in front of it is free
+    # and short-circuits a cross-era reference (different arch => different
+    # size) without opening either file.
     local prev pit
     prev=$(ls -t "$1"/ck_*.pt 2>/dev/null | grep -vF "$(basename "$2")" | head -1)
     [ -n "$prev" ] || return 1
-    cmp -s "$prev" "$2" && return 3
+    if [ "$(stat -c %s "$prev" 2>/dev/null)" = "$(stat -c %s "$2" 2>/dev/null)" ]; then
+        cmp -s "$prev" "$2" && return 3
+    fi
     pit=$(basename "$prev" | sed 's/.*_iter//; s/\.pt$//')
     [ "$pit" = "$3" ] && return 3
     printf '%s\n' "$prev"
@@ -299,8 +335,22 @@ pick_log_path () {   # $1=date  $2=iter  $3=series  -> a path that does NOT exis
     printf '%s\n' "$path"
 }
 
+series_skipped () {   # this series is accounted for: it no longer holds a share
+    SERIES_LEFT=$(( SERIES_LEFT - 1 ))
+    # Never negative, or a third caller would make the divisor below zero.
+    [ "$SERIES_LEFT" -ge 0 ] || SERIES_LEFT=0
+}
+
 run_arena () {   # $1=reference  $2=series-label
     local ref="$1" series="$2" out
+    # THIS SERIES IS NOW ACCOUNTED FOR, whatever happens below. The budget split
+    # is (time left / series still to come), so a series that returns early
+    # without decrementing leaves the OTHER one dividing by 2 and quietly
+    # forfeiting ~900s of a 1800s budget. That hit hardest exactly when it was
+    # least affordable: on a training-down day the self-match guard skips
+    # vs_prev, and vs_boot512 — the only series that can still produce a row —
+    # then ran on half the budget for no reason.
+    series_skipped
     # "Already done" must be keyed on THE CSV ROW, which is the only artifact
     # this job exists to produce. Two weaker versions were both wrong:
     #   `grep "Elo:" "$out"`        matched the RUNNING-block HEADER, i.e.
@@ -327,9 +377,10 @@ run_arena () {   # $1=reference  $2=series-label
 
     out=$(pick_log_path "$today" "$iter" "$series")
 
-    # Equal share of the time that is actually left, not of the original budget.
-    local budget=$(( (DEADLINE - $(date +%s)) / SERIES_LEFT ))
-    SERIES_LEFT=$(( SERIES_LEFT - 1 ))
+    # Equal share of the time that is actually left, not of the original budget,
+    # divided among the series that have NOT yet been accounted for (this one
+    # already decremented itself above, so SERIES_LEFT+1 counts it back in).
+    local budget=$(( (DEADLINE - $(date +%s)) / (SERIES_LEFT + 1) ))
     if [ "$budget" -lt 60 ]; then
         echo "[ratchet] $series: out of budget (${budget}s left) — skipping"
         note_reason "$series" nobudget; return
@@ -366,12 +417,18 @@ run_arena () {   # $1=reference  $2=series-label
         --label "ratchet_${today}_iter${iter}_${series}" > "$out" 2>&1
     local rc=$?
     # The token recorded for this series if no row comes out of the log below.
-    # `nopairs` (arena rc 3) is the 2026-07-31 shape and the reason the retry
-    # storm is not hypothetical: the arena spent its entire budget before the
-    # play loop ever completed a pair — arena_2026-07-31_vs_boot512.log is 4
-    # lines ending at "SEARCH reference:" after 880s — so a retry under the same
-    # cap replays the same 880s to the same end. One log cannot tell that from
-    # transient contention, but two identical ones can, which is what the
+    #
+    # `backstop` is the 2026-07-31 shape, and the reason the retry storm is not
+    # hypothetical. arena_2026-07-31_vs_boot512.log.broken_flush_evidence is 4
+    # complete preamble lines ending at "SEARCH reference:" — the process was
+    # killed from OUTSIDE mid-run, losing its block-buffered stdout, i.e. this
+    # branch and not rc 3. (An earlier revision of this comment called it
+    # `nopairs`; the log says otherwise.) `nopairs` is what the same 880s of
+    # pre-play time produces now that --max-seconds lets the arena stop itself:
+    # it reaches its deadline with zero complete pairs, prints, and exits 3.
+    # Either way the whole budget bought nothing scoreable and a retry under the
+    # same cap replays it to the same end. ONE log cannot tell that from
+    # transient contention; two identical ones can, which is what the
     # repeat-reason rule at the bottom of this script keys on.
     local fail=unparseable
     if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
@@ -446,9 +503,9 @@ case $? in
     3) echo "[ratchet] vs_prev SKIPPED: the newest earlier snapshot is the SAME NET" \
             "(byte-identical, or iter$iter again) — true Elo exactly 0, and the row" \
             "would read as a real day-over-day measurement. Training is probably down."
-       note_reason vs_prev selfmatch ;;
+       note_reason vs_prev selfmatch; series_skipped ;;
     *) echo "[ratchet] no earlier snapshot yet — vs_prev starts tomorrow"
-       note_reason vs_prev nosnap ;;
+       note_reason vs_prev nosnap; series_skipped ;;
 esac
 
 # --- series 2: vs the frozen boot512 anchor ---------------------------------
@@ -465,11 +522,11 @@ reason=${REASONS:-none}
 status=0
 detail=""
 if [ "$ROWS_WRITTEN" -eq 0 ]; then
-    status=$EXIT_RETRY
+    status=$RATCHET_EXIT_RETRY
     # 1. Deterministic BY EVIDENCE: this attempt failed exactly the way the last
     #    one did, so the next one reproduces it. That is a loop, not a retry.
     if [ -n "$last_reason" ] && [ "$last_reason" = "$reason" ]; then
-        status=$EXIT_NO_RETRY
+        status=$RATCHET_EXIT_NO_RETRY
         detail="attempt $attempt_no failed identically to attempt $attempts_today ($reason) — it reproduces, so it is not retryable."
     else
         # 2. Deterministic BY CONSTRUCTION: no later attempt today can change any
@@ -480,13 +537,13 @@ if [ "$ROWS_WRITTEN" -eq 0 ]; then
             case "$STRUCTURAL_TOKENS" in *" ${tok#*:} "*) ;; *) transient=1 ;; esac
         done
         if [ "$transient" -eq 0 ]; then
-            status=$EXIT_NO_RETRY
+            status=$RATCHET_EXIT_NO_RETRY
             detail="every series ended structurally ($reason) — no later attempt today can change that."
         # 3. The absolute cap, checked here as well as before the arena so the
         #    LAST attempt reports the give-up itself instead of leaving the next
         #    poll to discover it 10 minutes later.
         elif [ "$MAX_ATTEMPTS" -gt 0 ] && [ "$attempt_no" -ge "$MAX_ATTEMPTS" ]; then
-            status=$EXIT_NO_RETRY
+            status=$RATCHET_EXIT_NO_RETRY
             detail="the day's budget of $MAX_ATTEMPTS attempt(s) x ${BUDGET_MIN}min is now spent."
         fi
     fi
@@ -495,6 +552,6 @@ echo "$today,$iter,$attempt_no,$status,$ROWS_WRITTEN,$reason" >> "$ATTEMPTS"
 
 [ "$status" -eq 0 ] && exit 0
 echo "[ratchet] NO ROWS WRITTEN (attempt $attempt_no, reason $reason)" >&2
-[ "$status" -eq "$EXIT_NO_RETRY" ] && give_up "$detail"
+[ "$status" -eq "$RATCHET_EXIT_NO_RETRY" ] && give_up "$detail"
 echo "[ratchet] retryable — up to $(( MAX_ATTEMPTS - attempt_no )) more attempt(s) today" >&2
-exit "$EXIT_RETRY"
+exit "$RATCHET_EXIT_RETRY"
