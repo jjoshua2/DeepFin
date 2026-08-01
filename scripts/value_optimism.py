@@ -85,6 +85,7 @@ from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 from chess_anti_engine.eval.value_optimism import (
     CP_CLAMP,
     SF_EVAL_BUCKET_EDGES,
+    SF_DESYNC_MAX,
     SF_LABEL_ATTACHMENT_MIN,
     BucketStat,
     OptimismRows,
@@ -95,6 +96,7 @@ from chess_anti_engine.eval.value_optimism import (
     outcome_calibration,
     perfect_head_tail_asymmetry,
     score_buckets,
+    sf_bestmove_is_first_legal_rate,
     sf_label_attachment_corr,
     tail_asymmetry,
     tail_asymmetry_ci,
@@ -253,7 +255,7 @@ def _check_blend_knobs(resolved: dict[str, Any]) -> None:
 def _load_rows(
     shard_paths: list[Path], *, max_rows: int, slope: float, draw_width: float,
     history_encoding: str, history_rep_fix: bool, attachment_min: float,
-    seed: int = 0,
+    desync_max: float, seed: int = 0,
 ) -> dict[str, np.ndarray]:
     """Collect P0-paired rows from the newest shards, newest first."""
     import zarr
@@ -273,7 +275,8 @@ def _load_rows(
     n_skipped_encoding = 0
     scanned_selfplay = paired_selfplay = 0
     scanned_curriculum = paired_curriculum = 0
-    rejected: list[tuple[str, float]] = []
+    rejected: list[tuple[str, str]] = []
+    rejected_rows = 0
     for path in shard_paths:
         z = zarr.open(str(path), mode="r")
         # Method rule 7: verify identity before believing a lopsided number. A
@@ -292,15 +295,42 @@ def _load_rows(
         except KeyError:
             continue
         n_rows_total += int(gid.shape[0])
-        # INTEGRITY GATE, and it is not decorative: shards written after the
-        # 2026-07-31 restart carry SF labels that are detached from their own
-        # rows, so every number below them would be arithmetic over noise.
+        # INTEGRITY GATE — TWO AXES, because one of them provably misses three
+        # of the four known label-corruption episodes.
+        #
+        #   attachment : rank corr of material vs the shard's own SF label.
+        #                Catches TOTAL detachment (label block on the wrong
+        #                rows), which reads ~0.00 against a ~+0.65 baseline.
+        #   desync     : share of rows whose SF bestmove is just the first legal
+        #                move. Catches PARTIAL corruption — a Stockfish UCI
+        #                desync leaves labels on the right rows that answer a
+        #                DIFFERENT position, which degrades the correlation to
+        #                0.14-0.45 (above any sane reject line) while driving
+        #                this rate to 0.16-0.97 against a 0.080 baseline.
+        #
+        # Neither subsumes the other, so a shard must clear BOTH. A NaN on
+        # either axis is a reject: a gate that could not evaluate a shard has
+        # not cleared it.
         attach = sf_label_attachment_corr(
             np.asarray(z["x"][:, 0:12]), np.asarray(z["sf_wdl"][:]).astype(np.float64),
             np.asarray(z["has_sf_wdl"][:]).astype(bool),
         )
+        try:
+            desync = sf_bestmove_is_first_legal_rate(
+                np.asarray(z["sf_move_index"][:]), np.asarray(z["sf_legal_mask"][:]),
+                np.asarray(z["has_sf_move"][:]).astype(bool)
+                & np.asarray(z["has_sf_legal_mask"][:]).astype(bool),
+            )
+        except KeyError:
+            desync = float("nan")
+        n_shard_rows = int(gid.shape[0])
         if not np.isfinite(attach) or attach < attachment_min:
-            rejected.append((path.name, float(attach)))
+            rejected.append((path.name, f"attachment {attach:+.3f}"))
+            rejected_rows += n_shard_rows
+            continue
+        if not np.isfinite(desync) or desync > desync_max:
+            rejected.append((path.name, f"desync {desync:.3f}"))
+            rejected_rows += n_shard_rows
             continue
         # Row i is P0-paired iff row i-1 is the immediately preceding ply of the
         # same game AND carries a usable eval. The ply-gap check is what makes
@@ -374,21 +404,26 @@ def _load_rows(
         print(f"[value-optimism] skipped {n_skipped_encoding} shards whose input encoding "
               f"differs from the checkpoint's ({history_encoding}, rep_fix={history_rep_fix})")
     if rejected:
-        worst = ", ".join(f"{name} ({corr:+.3f})" for name, corr in rejected[:5])
-        print(f"[value-optimism] REJECTED {len(rejected)} shards whose SF labels are not "
-              f"attached to their own rows (material~sf_wdl rank corr < {attachment_min}): "
-              f"{worst}{' ...' if len(rejected) > 5 else ''}")
+        worst = ", ".join(f"{name} ({why})" for name, why in rejected[:6])
+        print(f"[value-optimism] REJECTED {len(rejected)} shards ({rejected_rows} rows, "
+              f"{100.0 * rejected_rows / max(1, n_rows_total):.1f}% of scanned) failing the "
+              f"integrity gate (attachment >= {attachment_min}, desync <= {desync_max}): "
+              f"{worst}{' ...' if len(rejected) > 6 else ''}")
+    else:
+        print("[value-optimism] integrity gate: 0 shards rejected "
+              f"(attachment >= {attachment_min}, desync <= {desync_max})")
     if n_seen == 0:
         raise SystemExit(
             "no usable P0-paired rows in the selected shards"
-            + (f" ({len(rejected)} shards failed the SF-label attachment gate — widen "
-               "--shards to reach older, sound ones)" if rejected else ""),
+            + (f" ({len(rejected)} shards failed the attachment gate or the desync gate "
+               "— widen --shards to reach older, sound ones)" if rejected else ""),
         )
     out = {k: np.concatenate(v) for k, v in cols.items() if v}
     for k, v in allrows.items():
         out[f"_all_{k}"] = np.concatenate(v) if v else np.zeros(0)
     out["_rows_scanned"] = np.array([n_rows_total], dtype=np.int64)
     out["_shards_rejected"] = np.array([len(rejected)], dtype=np.int64)
+    out["_rows_rejected"] = np.array([rejected_rows], dtype=np.int64)
 
     scanned = max(1, scanned_selfplay + scanned_curriculum)
     paired_n = max(1, paired_selfplay + paired_curriculum)
@@ -519,8 +554,16 @@ def main() -> None:
     ap.add_argument("--attachment-min", type=float, default=SF_LABEL_ATTACHMENT_MIN,
                     help="reject a shard whose material~sf_wdl rank correlation falls below "
                          "this — the ruler-free check that its SF labels sit on their own "
-                         "rows. Lower it only to deliberately measure through a known-bad "
-                         "window, and say so in the writeup.")
+                         "rows. Catches TOTAL detachment only. Lower it only to deliberately "
+                         "measure through a known-bad window, and say so in the writeup.")
+    ap.add_argument("--desync-max", type=float, default=SF_DESYNC_MAX,
+                    help="reject a shard where more than this share of labelled rows has the "
+                         "SF bestmove equal to the first legal move — the fingerprint of a "
+                         "Stockfish UCI desync, where labels sit on the right rows but "
+                         "answer a DIFFERENT position. Baseline ~0.080, episodes 0.16-0.97. "
+                         "The attachment axis does NOT catch this (it stays at 0.14-0.45 "
+                         "through three of four known episodes), so both gates are needed. "
+                         "Set to 1.0 to deliberately measure the contamination's effect.")
     ap.add_argument("--shuffle-control", action="store_true",
                     help="NEGATIVE CONTROL: permute the net's evaluations across rows. "
                          "Every bucket effect must collapse; if it does not, the scorer "
@@ -604,7 +647,8 @@ def main() -> None:
 
     data = _load_rows(paths, max_rows=args.max_rows, slope=slope, draw_width=draw_width,
                       history_encoding=ckpt_hist, history_rep_fix=ckpt_rep_fix,
-                      attachment_min=float(args.attachment_min), seed=int(args.seed))
+                      attachment_min=float(args.attachment_min),
+                      desync_max=float(args.desync_max), seed=int(args.seed))
     x = data["x"]
     n = int(x.shape[0])
     print(f"[value-optimism] {n} P0-paired rows out of {int(data['_rows_scanned'][0])} scanned "
@@ -738,6 +782,10 @@ def main() -> None:
             "sf_wdl_frac_source": sf_frac_src,
             "shuffle_control": bool(args.shuffle_control),
             "min_pieces": int(args.min_pieces),
+            "attachment_min": float(args.attachment_min),
+            "desync_max": float(args.desync_max),
+            "shards_rejected": int(data["_shards_rejected"][0]),
+            "rows_rejected": int(data["_rows_rejected"][0]),
             "control_statistic_net_score_spread": spread,
             "tail_asymmetry": asym,
             "tail_asymmetry_ci": asym_ci,

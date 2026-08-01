@@ -15462,3 +15462,127 @@ whole time — and it decided whether a documented mechanism was confirmed or
 refuted. Same family as "diff the file you measured against production's":
 before quoting a population, print its composition.
 
+
+---
+
+## 2026-07-31 — ADDENDUM to the value-optimism entries above: SF-desync contamination audit, and a scope-wording correction that matters
+
+Raised in review round 2: the integrity gate keys on the material~`sf_wdl`
+correlation, which collapses only under TOTAL detachment, while the 07-30/07-31
+Stockfish UCI desync (PR #297 owns the cause) is PARTIAL — labels on the right
+rows answering a DIFFERENT position. Three of the four episodes would sail
+through. **The concern is correct and the gate has been tightened. The published
+numbers are unaffected, and that is now measured rather than argued.**
+
+### 1. The detector, independently reproduced
+
+Rate of labelled rows where `sf_move_index` equals the lowest set bit of
+`sf_legal_mask` (the silent `legal_indices[0]` fallback firing). Over all **830**
+labelled shards of trial 13a9f:
+
+    baseline median 0.080, p90 0.094      |      72 shards > 0.15, 137,490 rows
+
+    episodes (shard ids / mtime / rate):
+      33388-33453   07-30 11:38..13:39   0.17-0.64   (26 shards, 5 bursts)
+      33586-33636   07-30 19:58..07-31 01:41   0.16-0.97   (38 shards)
+      33944-33951   07-31 13:33..13:48   0.76-0.96   (8 shards)
+
+Matches the review's numbers. **And it confirms the review's point about the old
+gate**: episodes 1-2 sit at material~`sf_wdl` 0.14-0.45, far above the 0.25
+reject line, while this rate reads 0.16-0.97. Neither axis subsumes the other.
+
+### 2. ⚑ SCOPE-WORDING CORRECTION — the published run's window was NARROWER than the entry above implies
+
+The first entry says *"Scope limit: shards <= 033943"*. That describes the
+EXCLUSION, and it reads like the run used every shard up to 033943. **It did
+not.** The run was `--shards 150`, i.e. the 150 NEWEST shards:
+
+    published window = shard_033802 .. shard_033951
+
+Episodes 1 and 2 (33388-33636) are **entirely below 33802** and were never in
+the sample. Inside the window the only shards over 0.15 are 33944-33951 — the
+exact 8 the attachment axis already rejected.
+
+**Contamination admitted to the published numbers: 0 poisoned rows.** Not "small";
+zero. Anyone re-deriving from "shards <= 033943" would sweep in ~64 poisoned
+shards that the actual run never touched. **Quote the window, not the exclusion.**
+
+### 3. Gate tightened to two axes, and the headline re-run
+
+`sf_bestmove_is_first_legal_rate` is now a second reject axis (default 0.15);
+a NaN on either axis is a reject, because a gate that could not evaluate a shard
+has not cleared it. Re-run of the published 150-shard window:
+
+| | before (1 axis) | after (2 axes) |
+|---|---|---|
+| shards rejected | 8 | 10 (8 + 2 unevaluable, <30 labelled rows) |
+| paired rows | 38,464 | 38,455 |
+| net-target lost / won | +0.0489 / -0.0541 | **+0.0488 / -0.0541** |
+| net-target tail sum | -0.0052 | **-0.0052** |
+| matched level (SF -297.6) | +0.0854 = +108.7 cp | **+0.0854 [+0.0789,+0.0919] = +108.7 cp** |
+| net-SFrul matched level | +70.3 cp [+65,+75] | **+70.3 cp [+65,+75]** |
+| curriculum lost out-ruler | +0.212 [+0.202,+0.222] | **+0.212 [+0.202,+0.221]** |
+| selfplay lost out-ruler | -0.006 | **-0.006 [-0.009,-0.003]** |
+
+Unchanged to four decimals, as expected once the window is known.
+
+### 4. The confound MEASURED, not argued — a controlled wide-window arm
+
+"Zero contamination in this window" is a fact about the window, not evidence
+about the mechanism. So the proposed confound was tested directly: the SAME
+400-shard window (33552-33951, containing 46 poisoned shards, **13.1% of scanned
+rows**), run gated and ungated.
+
+| quantity | UNGATED (contaminated) | GATED | clean 150-shard |
+|---|---|---|---|
+| selfplay lost out-ruler | **+0.030** [+.027,+.032] | **-0.005** [-.007,-.002] | -0.006 [-.009,-.003] |
+| selfplay won out-ruler | **-0.044** [-.047,-.041] | **+0.014** [+.012,+.016] | +0.016 [+.013,+.019] |
+| curriculum lost out-ruler | +0.222 [+.216,+.228] | **+0.218** [+.211,+.224] | +0.212 [+.202,+.221] |
+| curriculum losing out-ruler | +0.096 | +0.094 | +0.098 |
+| net-target lost | +0.0360 | **+0.0484** | +0.0488 |
+| net-target won | -0.0469 | **-0.0505** | -0.0541 |
+
+**The predicted confound is REAL and behaves exactly as the review described —
+and it lands on the SELFPLAY arm, not the curriculum one.** A wrongly-labelled
+row entering the `lost` bucket is not really lost, so its outcome looks better:
+ungated selfplay reads **+0.030** where the truth is **-0.005**, a spurious
+"outcomes beat the eval" of the same sign and shape as the curriculum finding.
+That is precisely the trap, and it fires.
+
+**It cannot account for the curriculum result.** Gating moves curriculum lost by
+**0.004** (+0.222 -> +0.218), ~2% of the effect, because contamination pulls a
+bucket toward the global mean and can manufacture ~+0.035 — not **+0.21**. At
+13.1% contamination, i.e. 4x the share the review estimated for a wider range,
+the curriculum number barely moves. **CONFOUND CLOSED. The
+handicapped-opponent finding stands.**
+
+Second, unasked-for result worth keeping: **contamination ATTENUATES `net-target`**
+(+0.036 ungated vs +0.048 gated). So a contaminated run UNDERSTATES the head's
+compression — the primary axis is biased toward the null by this defect, never
+away from it.
+
+### 5. Why two axes, stated for the record
+
+- `sf_label_attachment_corr` — material vs the shard's own label. Catches TOTAL
+  detachment (~0.00 vs a ~+0.65 baseline). **Blind to partial desync**: episodes
+  1-2 hold 0.14-0.45.
+- `sf_bestmove_is_first_legal_rate` — catches PARTIAL desync (0.16-0.97 vs a
+  0.080 baseline). **Blind to total detachment**, because a scrambled but
+  internally consistent label block still carries a real bestmove.
+
+Neither is redundant; a shard must clear both. Pinned by
+`test_desync_gate_rejects_what_the_attachment_axis_cannot`, which builds a shard
+with a PERFECT attachment correlation and a 0.6 desync rate and asserts the
+attachment axis alone would pass it. Tests 33 -> 36.
+
+### Method note
+
+**A gate tuned on the episode that produced it detects that episode.** The
+attachment axis was written from shards 33944+, where the failure was total, and
+it silently defined "corrupt" as "total". Three earlier, subtler episodes of the
+SAME root cause scored 0.14-0.45 and would have been admitted by a gate whose
+author believed it was checking label integrity in general. **When a gate is
+derived from one incident, go find the other instances of that incident before
+trusting the threshold** — here they were 500 shards back in the same trial, and
+the separating statistic was a different one entirely.
+

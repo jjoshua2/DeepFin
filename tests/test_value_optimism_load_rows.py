@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 import zarr
 
-from chess_anti_engine.eval.value_optimism import SF_LABEL_ATTACHMENT_MIN
+from chess_anti_engine.eval.value_optimism import SF_DESYNC_MAX, SF_LABEL_ATTACHMENT_MIN
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
 from scripts.value_optimism import _load_rows
 
@@ -29,8 +29,8 @@ N_PLANES = 175
 def _write_shard(
     path: Path, *, game_id: list[int], ply_index: list[int],
     is_selfplay: list[int] | None = None, mate: list[int] | None = None,
-    scramble_labels: bool = False, encoding: str = ENCODING,
-    history_rep_fix: bool = True, seed: int = 3,
+    scramble_labels: bool = False, desync_frac: float = 0.0,
+    encoding: str = ENCODING, history_rep_fix: bool = True, seed: int = 3,
 ) -> np.ndarray:
     """Write a synthetic shard; return each row's record-POV material balance.
 
@@ -89,6 +89,20 @@ def _write_shard(
         "search_wdl", data=np.tile(np.array([0.3, 0.4, 0.3], dtype=np.float16), (n, 1)), overwrite=True,
     )
     g.create_dataset("has_search_wdl", data=np.ones(n, dtype=np.uint8), overwrite=True)
+    # sf_move_index / sf_legal_mask feed the desync axis of the gate. A sound
+    # row points at a move that is NOT the first legal one; a desynced row falls
+    # back to legal_indices[0], which is what the detector counts.
+    legal = np.zeros((n, 1858), dtype=np.uint8)
+    legal[:, 10] = 1
+    legal[:, 40] = 1
+    legal[:, 900] = 1
+    move_idx = np.full(n, 40, dtype=np.int32)
+    n_desync = round(desync_frac * n)
+    move_idx[:n_desync] = 10                      # == first legal index
+    g.create_dataset("sf_move_index", data=move_idx, overwrite=True)
+    g.create_dataset("has_sf_move", data=np.ones(n, dtype=np.uint8), overwrite=True)
+    g.create_dataset("sf_legal_mask", data=legal, overwrite=True)
+    g.create_dataset("has_sf_legal_mask", data=np.ones(n, dtype=np.uint8), overwrite=True)
     g.create_dataset("wdl_target", data=np.zeros(n, dtype=np.int8), overwrite=True)
     sp = np.ones(n, dtype=np.uint8) if is_selfplay is None else np.asarray(is_selfplay, np.uint8)
     g.create_dataset("is_selfplay", data=sp, overwrite=True)
@@ -101,7 +115,7 @@ def _load(paths: list[Path], **kw) -> dict[str, np.ndarray]:
     args: dict[str, object] = {
         "max_rows": 0, "slope": SLOPE, "draw_width": DRAW_WIDTH,
         "history_encoding": ENCODING, "history_rep_fix": True,
-        "attachment_min": SF_LABEL_ATTACHMENT_MIN,
+        "attachment_min": SF_LABEL_ATTACHMENT_MIN, "desync_max": SF_DESYNC_MAX,
     }
     args.update(kw)
     return _load_rows(paths, **args)  # pyright: ignore[reportArgumentType]
@@ -111,10 +125,13 @@ def test_pairing_requires_the_immediately_preceding_ply(tmp_path: Path) -> None:
     """A gap of more than one ply must NOT pair.
 
     Without this the shift silently reads an eval of a position several plies
-    back, which still looks plausible and is wrong.
+    back, which still looks plausible and is wrong. (Shards are >= 30 rows
+    throughout this file: below that the desync detector cannot estimate a rate
+    and correctly refuses to clear the shard.)
     """
     p = tmp_path / "shard_000001.zarr"
-    material = _write_shard(p, game_id=[7] * 8, ply_index=[1, 2, 4, 5, 9, 10, 20, 30])
+    plies = [1, 2, 4, 5, 9, 10] + [20 + 10 * i for i in range(34)]
+    material = _write_shard(p, game_id=[7] * len(plies), ply_index=plies)
     out = _load([p])
     # Rows at index 1, 3 and 5 follow their predecessor by exactly one ply.
     assert out["ply_index"].tolist() == [2, 5, 10]
@@ -134,36 +151,38 @@ def test_pairs_never_form_across_a_shard_boundary(tmp_path: Path) -> None:
     """
     a = tmp_path / "shard_000001.zarr"
     b = tmp_path / "shard_000002.zarr"
-    _write_shard(a, game_id=[4] * 4, ply_index=[10, 11, 12, 13])
-    _write_shard(b, game_id=[4] * 4, ply_index=[14, 15, 16, 17], seed=5)
+    _write_shard(a, game_id=[4] * 40, ply_index=list(range(10, 50)))
+    _write_shard(b, game_id=[4] * 40, ply_index=list(range(50, 90)), seed=5)
     out = _load([a, b])
-    # Pairs form inside each shard, but ply 13 -> ply 14 spans the boundary and
-    # must not, even though the game and ply numbers are contiguous.
-    assert sorted(out["ply_index"].tolist()) == [11, 12, 13, 15, 16, 17]
+    plies = sorted(out["ply_index"].tolist())
+    # Every row but the first of each shard pairs...
+    assert plies == list(range(11, 50)) + list(range(51, 90))
+    # ...and ply 50 does NOT, even though game and ply are contiguous with 49.
+    assert 50 not in plies
 
 
 def test_shard_with_detached_labels_is_rejected_entirely(tmp_path: Path) -> None:
     """The 2026-07-31 defect must remove the shard from BOTH arms."""
     good = tmp_path / "shard_000001.zarr"
     bad = tmp_path / "shard_000002.zarr"
-    _write_shard(good, game_id=[1] * 8, ply_index=list(range(1, 9)))
+    _write_shard(good, game_id=[1] * 40, ply_index=list(range(1, 41)))
     _write_shard(bad, game_id=[2] * 40, ply_index=list(range(1, 41)), scramble_labels=True)
     out = _load([good, bad])
     assert int(out["_shards_rejected"][0]) == 1
     assert set(np.unique(out["game_id"]).tolist()) == {1}
     # The rejected shard must not leak into the model-free arm either.
-    assert out["_all_game_id"].size == 8
+    assert out["_all_game_id"].size == 40
 
 
 def test_encoding_mismatch_skips_the_shard(tmp_path: Path) -> None:
     p = tmp_path / "shard_000001.zarr"
     q = tmp_path / "shard_000002.zarr"
-    _write_shard(p, game_id=[1] * 8, ply_index=list(range(1, 9)))
-    _write_shard(q, game_id=[2] * 8, ply_index=list(range(1, 9)), encoding="legacy")
+    _write_shard(p, game_id=[1] * 40, ply_index=list(range(1, 41)))
+    _write_shard(q, game_id=[2] * 40, ply_index=list(range(1, 41)), encoding="legacy")
     out = _load([p, q])
     assert set(np.unique(out["game_id"]).tolist()) == {1}
     r = tmp_path / "shard_000003.zarr"
-    _write_shard(r, game_id=[3] * 8, ply_index=list(range(1, 9)), history_rep_fix=False)
+    _write_shard(r, game_id=[3] * 40, ply_index=list(range(1, 41)), history_rep_fix=False)
     out2 = _load([p, r])
     assert set(np.unique(out2["game_id"]).tolist()) == {1}
 
@@ -175,14 +194,15 @@ def test_all_rows_arm_keeps_rows_the_paired_arm_drops(tmp_path: Path) -> None:
     "the training distribution".
     """
     p = tmp_path / "shard_000001.zarr"
+    plies = [1, 2] + [5 + 4 * i for i in range(38)]
     material = _write_shard(
-        p, game_id=[1, 1, 1, 1, 2, 2], ply_index=[1, 2, 5, 9, 14, 20],
-        is_selfplay=[1, 1, 1, 1, 0, 0],
+        p, game_id=[1, 1] + [2] * 38, ply_index=plies,
+        is_selfplay=[1, 1] + [0] * 38,
     )
     out = _load([p])
     assert out["game_id"].size == 1                 # only ply 1 -> 2 pairs
-    assert out["_all_game_id"].size == 6            # every labelled row survives
-    assert out["_all_is_selfplay"].astype(bool).tolist() == [True] * 4 + [False] * 2
+    assert out["_all_game_id"].size == 40           # every labelled row survives
+    assert out["_all_is_selfplay"].astype(bool).tolist() == [True] * 2 + [False] * 38
     # The all-rows ruler is the row's OWN eval negated into the scored side's POV.
     assert out["_all_ruler_cp"].tolist() == pytest.approx(
         [round(m * 100.0) for m in material], abs=1e-6,
@@ -192,7 +212,7 @@ def test_all_rows_arm_keeps_rows_the_paired_arm_drops(tmp_path: Path) -> None:
 def test_mate_scores_fold_into_the_ruler(tmp_path: Path) -> None:
     """A mate row carries no cp; dropping it would bias the losing tail."""
     p = tmp_path / "shard_000001.zarr"
-    _write_shard(p, game_id=[1] * 8, ply_index=list(range(1, 9)), mate=[3] + [0] * 7)
+    _write_shard(p, game_id=[1] * 40, ply_index=list(range(1, 41)), mate=[3] + [0] * 39)
     out = _load([p])
     # Row 0's label is "mate in 3 for the side to move AFTER row 0's move" — and
     # that side IS row 1's mover, so row 1's ruler is a large POSITIVE cp. The
@@ -205,8 +225,8 @@ def test_mate_scores_fold_into_the_ruler(tmp_path: Path) -> None:
 def test_max_rows_truncates_and_stops(tmp_path: Path) -> None:
     a = tmp_path / "shard_000001.zarr"
     b = tmp_path / "shard_000002.zarr"
-    _write_shard(a, game_id=[1] * 8, ply_index=list(range(1, 9)))
-    _write_shard(b, game_id=[2] * 8, ply_index=list(range(1, 9)), seed=5)
+    _write_shard(a, game_id=[1] * 40, ply_index=list(range(1, 41)))
+    _write_shard(b, game_id=[2] * 40, ply_index=list(range(1, 41)), seed=5)
     out = _load([a, b], max_rows=3)
     assert out["game_id"].size == 3
     assert set(np.unique(out["game_id"]).tolist()) == {1}
@@ -217,3 +237,48 @@ def test_no_usable_rows_is_a_hard_exit_naming_the_gate(tmp_path: Path) -> None:
     _write_shard(bad, game_id=[1] * 40, ply_index=list(range(1, 41)), scramble_labels=True)
     with pytest.raises(SystemExit, match="attachment gate"):
         _load([bad])
+
+
+def test_desync_gate_rejects_what_the_attachment_axis_cannot(tmp_path: Path) -> None:
+    """The 2026-07-30/31 UCI desync: labels on the RIGHT rows, wrong position.
+
+    The shard is built so its material<->label correlation is perfect — the
+    attachment axis sees nothing wrong, exactly as it saw nothing wrong in three
+    of the four live episodes. Only the bestmove-is-first-legal rate separates
+    it, which is why the gate carries two axes.
+    """
+    good = tmp_path / "shard_000001.zarr"
+    desynced = tmp_path / "shard_000002.zarr"
+    _write_shard(good, game_id=[1] * 40, ply_index=list(range(1, 41)))
+    _write_shard(
+        desynced, game_id=[2] * 40, ply_index=list(range(1, 41)), desync_frac=0.6, seed=4,
+    )
+    # The attachment axis alone would pass BOTH shards.
+    z = zarr.open_group(str(desynced), mode="r")
+    from chess_anti_engine.eval.value_optimism import sf_label_attachment_corr
+    assert sf_label_attachment_corr(
+        np.asarray(z["x"][:, 0:12]), np.asarray(z["sf_wdl"][:]).astype(float),
+    ) > SF_LABEL_ATTACHMENT_MIN
+    out = _load([good, desynced])
+    assert int(out["_shards_rejected"][0]) == 1
+    assert set(np.unique(out["game_id"]).tolist()) == {1}
+    assert set(np.unique(out["_all_game_id"]).tolist()) == {1}
+
+
+def test_desync_gate_passes_the_baseline_rate(tmp_path: Path) -> None:
+    """A sound shard's rate is ~0.08 live; the gate must not eat it."""
+    p = tmp_path / "shard_000001.zarr"
+    _write_shard(p, game_id=[1] * 40, ply_index=list(range(1, 41)), desync_frac=0.08)
+    out = _load([p])
+    assert int(out["_shards_rejected"][0]) == 0
+    assert out["_all_game_id"].size == 40
+
+
+def test_missing_desync_arrays_are_a_reject_not_a_pass(tmp_path: Path) -> None:
+    """A gate that cannot evaluate a shard has not cleared it."""
+    p = tmp_path / "shard_000001.zarr"
+    _write_shard(p, game_id=[1] * 40, ply_index=list(range(1, 41)))
+    g = zarr.open_group(str(p), mode="a")
+    del g["sf_legal_mask"]
+    with pytest.raises(SystemExit, match="desync gate"):
+        _load([p])

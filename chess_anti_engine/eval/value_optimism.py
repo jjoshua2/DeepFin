@@ -88,6 +88,13 @@ _PIECE_VALUES: tuple[float, ...] = (1.0, 3.0, 3.0, 5.0, 9.0, 0.0)
 # `sf_label_attachment_corr`.
 SF_LABEL_ATTACHMENT_MIN: float = 0.25
 
+# Maximum share of labelled rows whose recorded SF bestmove is simply the FIRST
+# LEGAL MOVE. Baseline on sound shards is ~0.080 (measured over 830 live shards,
+# median 0.080, p90 0.094); a UCI-desync episode drives it to 0.16-0.97. The
+# threshold sits well above the clean p90 and well below every observed episode.
+# See `sf_bestmove_is_first_legal_rate`.
+SF_DESYNC_MAX: float = 0.15
+
 
 def sf_eval_bucket(cp: float, edges: tuple[float, ...] = SF_EVAL_BUCKET_EDGES) -> int:
     """Index into the bucket list for one side-to-move cp evaluation."""
@@ -242,6 +249,49 @@ def sf_label_attachment_corr(
         m = np.asarray(mask, dtype=bool)
         signal, material = signal[m], material[m]
     return rank_corr(material, signal)
+
+
+def sf_bestmove_is_first_legal_rate(
+    sf_move_index: np.ndarray, sf_legal_mask: np.ndarray, mask: np.ndarray | None = None,
+) -> float:
+    """Share of labelled rows whose SF bestmove is just the first legal move.
+
+    The fingerprint of a Stockfish UCI DESYNC. When a timed-out ``search``
+    raises while the engine is still calculating, the stale ``bestmove`` is left
+    in the pty buffer and nothing resynchronises, so later searches return the
+    PREVIOUS query's answer. The recorded bestmove then often fails to match any
+    legal move at the current position and the builder's silent
+    ``legal_indices[0]`` fallback fires, which is what this counts. (Cause and
+    fix are PR #297's; this is only the detector.)
+
+    **Why the gate needs BOTH this and `sf_label_attachment_corr`, and why
+    neither subsumes the other.** The correlation asks "is the label block
+    attached to these rows at all"; it collapses to ~0.00 only under TOTAL
+    detachment. A desync is PARTIAL — the labels are on the right rows, they are
+    just answers to a different position — so it degrades the correlation
+    without killing it. Measured on the live trial, three of the four desync
+    episodes sit at 0.14-0.45 correlation, comfortably above a 0.25 reject line,
+    while this rate reads 0.16-0.97 against a 0.080 baseline. The reverse also
+    holds: total detachment does not necessarily raise this rate, because a
+    scrambled-but-internally-consistent label block still carries a real
+    bestmove. One axis catches what the other cannot.
+
+    Returns NaN when the inputs cannot support the check; callers must treat
+    NaN as a REJECT rather than a pass — a gate that cannot evaluate a shard has
+    not cleared it.
+    """
+    smi = np.asarray(sf_move_index).reshape(-1)
+    legal = np.asarray(sf_legal_mask)
+    if smi.size == 0 or legal.ndim != 2 or legal.shape[0] != smi.size:
+        return float("nan")
+    ok = smi >= 0
+    ok &= legal.sum(axis=1) > 0
+    if mask is not None:
+        ok &= np.asarray(mask, dtype=bool)
+    if int(ok.sum()) < 30:
+        return float("nan")
+    first_legal = np.argmax(legal[ok] > 0, axis=1)
+    return float((smi[ok] == first_legal).mean())
 
 
 @dataclass(frozen=True)
