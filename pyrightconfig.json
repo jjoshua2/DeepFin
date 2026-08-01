@@ -1,5 +1,5 @@
 {
-    "include": ["chess_anti_engine", "tests", "scripts"],
+    "include": ["chess_anti_engine", "tests", "scripts", "setup.py"],
     "exclude": ["chess_anti_engine/bench"],
     "pythonVersion": "3.10",
     "pythonPlatform": "Linux",

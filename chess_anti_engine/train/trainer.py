@@ -565,7 +565,7 @@ class _ChainedOptimizer(torch.optim.Optimizer):
         for opt in self.optimizers:
             opt.zero_grad(set_to_none=set_to_none)
 
-    def step(self, closure: Callable[[], float] | None = None) -> float:  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
+    def step(self, closure: Callable[[], float] | None = None) -> float:  # pyright: ignore[reportIncompatibleMethodOverride]
         loss = 0.0
         for i, opt in enumerate(self.optimizers):
             loss_i = opt.step(closure if i == 0 else None)
