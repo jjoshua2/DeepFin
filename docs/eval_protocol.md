@@ -57,6 +57,17 @@ the encoding stored in the checkpoint itself.
      (`python -m chess_anti_engine.uci`) at fixed wall clock per move, so a
      slower architecture pays for its latency. A candidate must be judged on
      both: the gap between the two numbers is its throughput cost in Elo.
+   - **Cap a run with `--max-seconds`, never with an external `timeout` alone.**
+     A SIGKILLed arena returns nothing: its stdout is block-buffered into the
+     log file, so every block it computed dies with the process. That is why
+     the daily ratchet wrote no CSV row on 2026-07-27, 07-30 and 07-31 — the
+     logs end mid-report at `[arena] RUNNING Elo after 6 complete pairs:`.
+     `--max-seconds` stops the play loop on the arena's own clock, scores the
+     opening pairs that FINISHED (half-played games are dropped, never imputed
+     as draws), prints the summary and appends the record. A capped run is then
+     a small sample rather than no sample, and `games`/`pairs` in the record
+     mean what they say; `games_requested` and `truncated` say what was asked
+     for. With nothing complete it prints `NO COMPLETE PAIRS` and exits 3.
    - Every run appends one JSON line to `runs/arena_results.jsonl` with git
      SHA, production-config hash, mode, and both checkpoint paths.
 

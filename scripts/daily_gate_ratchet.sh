@@ -105,6 +105,12 @@ done
 # left, so a slow first series cannot starve the second.
 DEADLINE=$(( $(date +%s) + BUDGET_MIN * 60 ))
 SERIES_LEFT=2
+# How many series ended with a readable CSV row. The exit status is built from
+# this, because ratchet_loop.sh stamps the calendar day DONE on exit 0: a run
+# that wrote nothing and still exited 0 burned the day's only attempt and told
+# nobody. That is how 2026-07-27, 07-30 and 07-31 each became a silent hole in
+# the series instead of a retry ten minutes later.
+ROWS_WRITTEN=0
 
 mkdir -p "$SNAP_DIR" "$(dirname "$LOG")"
 [ -s "$LOG" ] || echo "$CSV_HEADER" > "$LOG"
@@ -148,8 +154,15 @@ fi
 run_arena () {   # $1=reference  $2=series-label
     local ref="$1" series="$2" out
     out="data/ratchet/arena_${today}_${series}.log"
-    if [ -s "$out" ] && grep -q "Elo:" "$out"; then
-        echo "[ratchet] $series already done today"; return
+    # "Already done" must mean the SAME thing the parser below means, or a run
+    # that produced no row marks itself complete. `grep "Elo:"` matched the
+    # RUNNING-block HEADER ("RUNNING Elo after 6 complete pairs:"), which is
+    # exactly what a killed run leaves behind — so on 2026-07-30/31 every retry
+    # would have skipped a series that had written nothing. Anchor it to the
+    # same `^\[arena\] Elo:` line the CSV is built from.
+    if [ -s "$out" ] && grep -qE "^\[arena\] Elo:" "$out"; then
+        echo "[ratchet] $series already done today"
+        ROWS_WRITTEN=$(( ROWS_WRITTEN + 1 )); return
     fi
     if [ ! -s "$ref" ]; then echo "[ratchet] $series: reference missing ($ref) — skip"; return; fi
 
@@ -161,19 +174,37 @@ run_arena () {   # $1=reference  $2=series-label
     fi
 
     echo "[ratchet] $series: iter$iter vs $(basename "$ref"), up to $GAMES games @${SIMS} sims, ${budget}s budget"
-    # SIGTERM at the deadline, SIGKILL 20s later if it ignores it. A timed-out
-    # arena is NOT an error here — it has been printing RUNNING Elo blocks every
-    # $REPORT_EVERY games, and the parser below reads the last one.
+    # THE ARENA STOPS ITSELF (`--max-seconds`); `timeout` is only a backstop.
+    #
+    # It used to be the other way round, and that is why this job produced ZERO
+    # rows on 2026-07-27, 07-30 and 07-31. A SIGKILLed process returns nothing:
+    # the RUNNING-Elo block it had already computed sat in the block-buffered
+    # stdout pipe and died with it, so those logs end mid-report at
+    # "[ratchet] ... RUNNING Elo after 6 complete pairs:" and the parser below
+    # found no "[arena] Elo:" line to read. Under --max-seconds the arena breaks
+    # out of the play loop on its own clock, scores the pairs that FINISHED, and
+    # prints + appends a normal record — so a capped run is a small sample
+    # rather than no sample.
+    #
+    # The internal budget is 45s short of the external one so the arena has room
+    # to finalize (summary + JSONL) before `timeout` would fire. The backstop
+    # stays because the deadline is only checked between plies: a hang inside
+    # the C search or in checkpoint loading still has to be killed from outside.
+    local inner=$(( budget - 45 ))
+    [ "$inner" -lt 30 ] && inner=30
     timeout -k 20 "${budget}s" \
         python3 scripts/arena_standard.py \
         --candidate "$snap" --reference "$ref" \
         --mode matched_sims --search-shape "$SHAPE" --sims "$SIMS" --games "$GAMES" \
         --max-concurrent-games "$CONC" --report-every "$REPORT_EVERY" \
+        --max-seconds "$inner" \
         --no-compile --device cuda --seed 42 \
         --label "ratchet_${today}_iter${iter}_${series}" > "$out" 2>&1
     local rc=$?
     if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
-        echo "[ratchet] $series: hit the ${budget}s cap — recording the partial result"
+        echo "[ratchet] $series: the ${budget}s BACKSTOP fired — --max-seconds ${inner}s did not stop it in time (hang, not slowness); any reading below came from a RUNNING block"
+    elif [ "$rc" -eq 3 ]; then
+        echo "[ratchet] $series: arena finished ${inner}s with NO COMPLETE PAIRS — see $out"
     fi
 
     # arena_standard prints  [arena] Elo: -193.2  95% CI: [-248.7, -145.4]
@@ -228,6 +259,7 @@ run_arena () {   # $1=reference  $2=series-label
     played=$(grep -E "^\[arena\] [0-9]+ games \(" "$out" | tail -1 | sed -E 's/.*\] ([0-9]+) games.*/\1/')
     case "${played:-}" in ''|*[!0-9]*) played=$GAMES ;; esac
     echo "$today,$iter,$series,$elo,$lo,$hi,$score,$played,$SHAPE" >> "$LOG"
+    ROWS_WRITTEN=$(( ROWS_WRITTEN + 1 ))
     echo "[ratchet] $series: Elo $elo [$lo, $hi]  ($played games, $SHAPE shape)"
 }
 
@@ -243,3 +275,7 @@ fi
 run_arena "$ANCHOR" "vs_boot512"
 
 echo "[ratchet] done $(date -Is).  log: $LOG"
+if [ "$ROWS_WRITTEN" -eq 0 ]; then
+    echo "[ratchet] NO ROWS WRITTEN — failing so ratchet_loop.sh retries today instead of stamping the day done" >&2
+    exit 1
+fi

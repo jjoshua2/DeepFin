@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import chess
 import numpy as np
@@ -12,12 +13,15 @@ from chess_anti_engine.moves import POLICY_ENCODING_LC0_1858
 from scripts.arena_standard import (
     append_result,
     build_result_record,
+    complete_pair_scores,
     game_scores_to_pair_scores,
     pentanomial_counts,
     play_paired_games_matched_sims,
     resolve_search_shape,
     summarize_pentanomial,
 )
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_game_scores_collapse_to_pair_scores():
@@ -243,3 +247,148 @@ def test_both_arena_paths_pass_each_side_its_own_vloss_and_target_batch(
             f"{play_fn_name}: side mismatch -- vloss {vloss} came with "
             f"topk {topk}, expected {expect.gumbel['topk']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# A capped run must survive as DATA. 2026-07-27/30/31: the ratchet produced no
+# CSV row at all on three of six scheduled days, because the arena was SIGKILLed
+# by the caller's `timeout` and everything it had computed died in the
+# block-buffered stdout pipe.
+# ---------------------------------------------------------------------------
+
+def test_print_summary_survives_an_unflushed_process_death(tmp_path):
+    """``print_summary`` must flush, or a killed run reports nothing.
+
+    Reproduces the exact failure: stdout redirected to a FILE (block-buffered,
+    not line-buffered), one RUNNING-Elo block computed, then the process dies
+    without stdio cleanup. ``os._exit`` is used because that is what SIGKILL
+    does to the buffer.
+
+    The last byte of data/ratchet/arena_2026-07-31_vs_prev.log is the ``RUNNING
+    Elo after 6 complete pairs:`` header -- the reading was computed and thrown
+    away. Negative control: dropping ``flush=True`` from print_summary's last
+    line makes this test fail.
+    """
+    import subprocess
+    import sys
+
+    script = tmp_path / "die_mid_summary.py"
+    script.write_text(
+        "import os\n"
+        "from scripts.arena_standard import (\n"
+        "    pentanomial_counts, print_summary, summarize_pentanomial,\n"
+        ")\n"
+        "ready = [2.0, 1.0, 1.0, 0.0, 1.0, 2.0]\n"
+        "print('[arena] RUNNING Elo after %d complete pairs:' % len(ready), flush=True)\n"
+        "print_summary(summarize_pentanomial(pentanomial_counts(ready)))\n"
+        "os._exit(137)\n"
+    )
+    log = tmp_path / "arena.log"
+    with log.open("w") as fh:
+        rc = subprocess.call(
+            [sys.executable, str(script)], stdout=fh, stderr=subprocess.STDOUT,
+            cwd=str(ROOT),
+        )
+    assert rc == 137
+    text = log.read_text()
+    # This is the literal pattern daily_gate_ratchet.sh greps for.
+    elo_lines = [ln for ln in text.splitlines() if ln.startswith("[arena] Elo:")]
+    assert elo_lines, (
+        "print_summary's block did not reach the file before the process died, "
+        "so a wall-clock-capped arena yields NO reading:\n" + text
+    )
+
+
+def test_complete_pair_scores_drops_unfinished_pairs_rather_than_imputing():
+    """An unfinished game must remove its pair, never be scored 0.5.
+
+    The rolling loop used to return ``[s if s is not None else 0.5 ...]``, which
+    is harmless only while every game finishes. Under ``--max-seconds`` it would
+    turn in-flight and never-started games into draws and report the FULL
+    requested pair count -- a games column that does not mean what its name says.
+    """
+    # pair 0 complete (W,L), pair 1 half-played, pair 2 complete (W,W),
+    # pair 3 never started.
+    scores: list[float | None] = [1.0, 0.0, 1.0, None, 1.0, 1.0, None, None]
+    assert complete_pair_scores(scores) == [1.0, 2.0]
+    assert complete_pair_scores([None] * 8) == []
+    # Agrees with the strict helper whenever nothing is missing.
+    full = [1.0, 0.0, 0.5, 0.5]
+    assert complete_pair_scores(list(full)) == game_scores_to_pair_scores(full)
+
+
+def test_rolling_loop_stops_at_the_deadline_with_no_imputed_pairs(monkeypatch):
+    """``deadline`` must stop the rolling loop and return only FINISHED pairs.
+
+    A deadline already in the past exits before a single ply, so the honest
+    answer is "no pairs". The pre-fix code would have returned ``[1.0, 1.0]``
+    (both openings imputed as draw/draw), which is exactly the fabricated
+    reading this guard exists to prevent.
+    """
+    import time as _time
+
+    import scripts.arena_standard as arena
+
+    calls: list[int] = []
+
+    def _never_should_run(_model, boards, **_kw):
+        calls.append(len(boards))
+        return [0] * len(boards)
+
+    monkeypatch.setattr(
+        "chess_anti_engine.selfplay.match.pick_moves_for_boards", _never_should_run,
+    )
+
+    e4 = chess.Board()
+    e4.push_uci("e2e4")
+    d4 = chess.Board()
+    d4.push_uci("d2d4")
+    side = resolve_search_shape("training")
+
+    pair_scores = arena.play_paired_games_matched_sims_rolling(
+        None, None, [e4, d4],
+        device="cpu", rng=np.random.default_rng(0),
+        sims_candidate=2, sims_reference=2,
+        max_plies=200, temperature=1.0, gumbel_add_noise=False,
+        search_candidate=side, search_reference=side,
+        pool_size=4, report_every=1000,
+        deadline=_time.time() - 1.0,
+    )
+    assert pair_scores == [], (
+        "an expired deadline must yield zero pairs, not imputed draws"
+    )
+    assert not calls, "the loop played a ply after its deadline had passed"
+
+
+def test_run_arena_records_truncation_so_a_capped_row_is_readable():
+    """``games``/``pairs`` are what was scored; the record must say so.
+
+    A 40-game row that requested 200 is a valid small sample. Without
+    ``games_requested``/``truncated`` a later reader cannot tell it from a
+    200-game claim -- the ratchet CSV hit exactly this on 2026-07-26.
+    """
+    summary = summarize_pentanomial((2, 3, 5, 3, 2))
+    record = build_result_record(
+        summary,
+        mode="matched_sims",
+        candidate="cand.pt",
+        reference="ref.pt",
+        openings_path="book.pgn.zip",
+        opening_plies=16,
+        sims_candidate=32,
+        sims_reference=32,
+        ms_per_move=None,
+        temperature=0.1,
+        gumbel_add_noise=True,
+        max_plies=300,
+        seed=42,
+        device="cuda",
+        duration_s=855.0,
+        games_requested=200,
+        max_seconds=855.0,
+        truncated=True,
+    )
+    assert record["games"] == 30
+    assert record["games_requested"] == 200
+    assert record["truncated"] is True
+    assert record["max_seconds"] == 855.0

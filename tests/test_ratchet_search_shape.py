@@ -241,3 +241,72 @@ def test_no_doc_or_script_invocation_omits_a_required_search_shape() -> None:
     assert not offenders, (
         f"{offenders} omit --search-shape; these commands exit 1 as written"
     )
+
+
+# ---------------------------------------------------------------------------
+# The wall-clock cap must not destroy the reading it caps.
+# ---------------------------------------------------------------------------
+
+def test_the_ratchet_caps_the_arena_from_inside_not_only_with_timeout() -> None:
+    """`timeout` alone SIGKILLs the arena and the reading dies with it.
+
+    2026-07-27, 07-30 and 07-31: the arena reached its cap, was killed, and its
+    computed RUNNING-Elo block never left the block-buffered stdout pipe. The
+    logs end mid-report and the parser wrote no CSV row on 3 of 6 scheduled
+    days. `--max-seconds` makes the arena stop on its own clock and finalize.
+    """
+    invocation = _arena_invocation()
+    assert "--max-seconds" in invocation, (
+        "daily_gate_ratchet.sh relies on an external `timeout` alone: a "
+        "SIGKILLed arena returns no reading at all"
+    )
+
+
+def test_the_internal_cap_fires_before_the_external_backstop() -> None:
+    """An internal budget >= the external one is a cap that cannot take effect.
+
+    The arena needs headroom after its deadline to score, print and append the
+    record; if `timeout` fires first, --max-seconds is decorative.
+    """
+    text = RATCHET_SH.read_text(encoding="utf-8")
+    match = re.search(r"local inner=\$\(\(\s*budget\s*-\s*(\d+)\s*\)\)", text)
+    assert match is not None, (
+        "expected the internal budget to be derived from the external one as "
+        "`budget - <grace>`"
+    )
+    assert int(match.group(1)) > 0, "the internal cap must be strictly shorter than `timeout`"
+    assert '--max-seconds "$inner"' in _arena_invocation()
+    assert 'timeout -k 20 "${budget}s"' in text, (
+        "keep the external backstop: --max-seconds is only checked between "
+        "plies, so a hang inside the C search still needs killing"
+    )
+
+
+def test_a_zero_row_day_is_a_failure_not_a_success() -> None:
+    """The script must exit non-zero when it writes no CSV row.
+
+    ``ratchet_loop.sh`` stamps ``data/ratchet/last_run_date`` only on exit 0 and
+    documents that a failure "retries on the next poll instead of silently
+    skipping the whole day". It could never do that: every early ``return`` in
+    ``run_arena`` left the script exiting 0, so 2026-07-27, 07-30 and 07-31 each
+    burned their one attempt and were recorded as successful days.
+    """
+    text = RATCHET_SH.read_text(encoding="utf-8")
+    assert "ROWS_WRITTEN=0" in text
+    assert re.search(
+        r'if \[ "\$ROWS_WRITTEN" -eq 0 \]; then\n(?:.*\n)*?\s*exit 1\n', text,
+    ), "no row written must exit non-zero so the loop retries"
+
+
+def test_the_already_done_guard_uses_the_parsers_own_pattern() -> None:
+    """A bare ``grep "Elo:"`` matches the RUNNING-block HEADER.
+
+    That header is exactly what a killed arena leaves behind, so the skip guard
+    would treat a run that wrote NO row as already complete and refuse to retry
+    it. The guard has to test the same anchored line the CSV is built from.
+    """
+    text = RATCHET_SH.read_text(encoding="utf-8")
+    assert 'grep -qE "^\\[arena\\] Elo:" "$out"' in text, (
+        "the already-done guard must anchor on the same line the parser reads"
+    )
+    assert 'grep -q "Elo:" "$out"' not in text
