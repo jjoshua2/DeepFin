@@ -324,3 +324,130 @@ def test_reserving_the_top_id_protects_every_lower_one(window: Path, tmp_path: P
     assert buf._shard_index == 108, "the counter must not fall below the quarantined max"
     assert buf._next_free_shard_path().name == "shard_000108.zarr"
     assert buf._total_positions == 5 * 200, "the marker contributes no rows"
+
+
+# --------------------------------------------------------------------------
+# axis B: the post-apply drift watch
+
+
+def _axis_state(window: Path, quar: Path | None, letter: str) -> tuple[str, str]:
+    """(state, detail) for one verify axis, by leading letter."""
+    paths = qds.iter_shard_paths(window)
+    verdicts = [qds.judge(p) for p in paths]
+    top = max((qds.shard_index(p) for p in paths), default=-1)
+    checks = qds._verify_checks(window, quar, verdicts, top)
+    return next((s, d) for lab, s, d in checks if lab.startswith(letter))
+
+
+def test_axis_B_is_not_applicable_before_any_post_apply_shard(
+    window: Path, tmp_path: Path,
+) -> None:
+    """Vacuous truth over an empty set -- and the emptiness must be PROVED."""
+    quar = tmp_path / "q"
+    assert _apply(window, quar) == 0
+    state, _ = _axis_state(window, quar, "B")
+    assert state == "n/a"
+    assert qds.do_verify(window, quar) == 0
+
+
+def test_axis_B_passes_when_a_post_apply_shard_reads_exactly_zero(
+    window: Path, tmp_path: Path,
+) -> None:
+    quar = tmp_path / "q"
+    assert _apply(window, quar) == 0
+    _write(window, 108, n=200)  # clean: miss rate is exactly 0.0
+    state, detail = _axis_state(window, quar, "B")
+    assert state == "pass", detail
+    assert qds.do_verify(window, quar) == 0
+
+
+def test_axis_B_FAILS_on_a_post_apply_shard_epsilon_above_zero(
+    window: Path, tmp_path: Path,
+) -> None:
+    """ONE missing-MultiPV row in 2000 -- 0.0005, twenty times BELOW the gate.
+
+    The bar is a real float comparison against 0.0, not a rounded literal on
+    both sides, which is how the previous axis B shipped broken. This shard is
+    CLEAN by the shipped gate (axis A passes) and dirty only to axis B, which is
+    the whole point: a new desync episode is caught during its ramp instead of
+    after it crosses 0.01.
+    """
+    quar = tmp_path / "q"
+    assert _apply(window, quar) == 0
+    _write(window, 108, n=2000, miss_frac=1 / 2000)
+    dirty = qds.judge(window / "shard_000108.zarr")
+    assert dirty.multipv_miss == pytest.approx(0.0005)
+    assert not dirty.reject, "must be CLEAN by the gate, so only axis B can catch it"
+    a_state, _ = _axis_state(window, quar, "A")
+    assert a_state == "pass", "the gate must not be what fails here"
+    b_state, detail = _axis_state(window, quar, "B")
+    assert b_state == "fail", detail
+    assert qds.do_verify(window, quar) == 1
+
+
+def test_a_dirty_post_apply_shard_cannot_reach_the_empty_branch(
+    window: Path, tmp_path: Path,
+) -> None:
+    """The emptiness exception must be unreachable while the population is not empty.
+
+    This is the pin on the exception itself: forcing the n/a branch to fire
+    unconditionally has to break something, or it is an escape hatch.
+    """
+    quar = tmp_path / "q"
+    assert _apply(window, quar) == 0
+    _write(window, 108, n=200, miss_frac=0.5)
+    state, detail = _axis_state(window, quar, "B")
+    assert state not in ("n/a", "unchecked"), (
+        f"a post-apply shard exists, so the axis MUST evaluate it; got {state}: {detail}"
+    )
+    assert state == "fail"
+
+
+def test_axis_B_is_unchecked_when_emptiness_cannot_be_proved(
+    window: Path, tmp_path: Path,
+) -> None:
+    """A missing kept shard makes 'no new shards' unprovable -> UNCHECKED -> FAIL.
+
+    Without this guard, an evicted or deleted window would let the axis claim
+    vacuous truth over a population it can no longer enumerate.
+    """
+    quar = tmp_path / "q"
+    assert _apply(window, quar) == 0
+    shutil.rmtree(window / "shard_000100.zarr")
+    state, detail = _axis_state(window, quar, "B")
+    assert state == "unchecked", detail
+    assert qds.do_verify(window, quar) == 1
+
+
+# --------------------------------------------------------------------------
+# regression: the defect that made the previous axis B unpassable
+
+
+def test_a_kept_shard_at_the_historical_max_does_not_fail(tmp_path: Path) -> None:
+    """2/249 == 16/1992 == 0.008032128514056224 -- the exact rate of shard_033643.
+
+    The old axis B compared this against 0.008032, its own `:.6f` rendering, and
+    so could only ever be False. A kept shard at that rate is BELOW the shipped
+    gate (0.01) and must not fail the verdict.
+    """
+    d = tmp_path / "replay_shards"
+    d.mkdir()
+    _write(d, 200, n=249, miss_frac=2 / 249)
+    _write(d, 201, n=200)
+    _write(d, 202, n=200, miss_frac=0.6, attached=False)
+    at_max = qds.judge(d / "shard_000200.zarr")
+    assert at_max.multipv_miss == 0.008032128514056224
+    assert not at_max.reject, "0.00803 is below the shipped gate's 0.01"
+    quar = tmp_path / "q"
+    assert _apply(d, quar) == 0
+    assert qds.do_verify(d, quar) == 0, "the historical maximum must not fail the verdict"
+
+
+def test_no_rounded_clean_maximum_constant_survives() -> None:
+    """Structural pin: the self-referential bar must not come back.
+
+    A constant equal to the `:.6f` display of the quantity it is compared with
+    is unfalsifiable in one direction and vacuous in the other; the fix was to
+    delete it, not to widen it.
+    """
+    assert not hasattr(qds, "CLEAN_MAX_MISS_RATE")

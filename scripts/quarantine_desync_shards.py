@@ -80,11 +80,27 @@ MANIFEST_NAME = "quarantine_manifest.json"
 RESTORED_MANIFEST_NAME = "quarantine_manifest.restored.json"
 RESERVATION_STAGING = "_reservation"
 TRAIN_PIDFILE = Path("/tmp/chess_training.pid")
-# The observed maximum of `sf_multipv_missing_rate` over the 712 shards the gate
-# accepts on this window. A measurement, not a tunable. NOTE it is defined by a
-# single shard (033643) and so is tautologically attained at apply time; it earns
-# its keep only once new data has arrived.
-CLEAN_MAX_MISS_RATE = 0.008032
+# ⚑ There is deliberately NO "clean maximum" constant here any more.
+#
+# One used to live at this line, set to 0.008032 — the `:.6f` rendering of
+# 0.008032128514056224, the exact maximum it was then compared against (16/1992
+# on shard_033643). So the comparison `max <= CONST` was a float against its own
+# rounded display and could only ever be FALSE. On the first real run after the
+# apply it failed by 1.285e-07, on the very window it was derived from.
+#
+# The rounding was the proximate bug; the design was the real one. A bar taken
+# from the maximum of the sample it judges is either vacuous (constant >= max)
+# or unpassable (constant < max) — it cannot carry information about that
+# sample, whichever way the rounding falls. Worse as a forward monitor: the
+# maximum of a fresh equal-sized draw from the SAME clean distribution exceeds a
+# previous sample maximum about half the time, so it is a false-positive
+# generator by construction.
+#
+# The drift question it was reaching for is real and is now asked
+# non-circularly, on data that is not the sample being judged — see axis B.
+#
+# The measured value 0.008032128514056224 is a fact about this window and is
+# recorded in the ledger, where a fact belongs. It is not a live threshold.
 
 
 @dataclass(frozen=True)
@@ -320,8 +336,7 @@ def _report(verdicts: list[ShardVerdict], reserve: int | None) -> None:
     if kept:
         ok = [v.multipv_miss for v in kept if v.multipv_status == "ok"]
         if ok:
-            print(f"max multipv-miss among kept: {max(ok):.6f} "
-                  f"(clean maximum on this window: {CLEAN_MAX_MISS_RATE})")
+            print(f"max multipv-miss among kept: {max(ok)!r}")
     held = (
         f"shard_{reserve:06d}{LOCAL_SHARD_SUFFIX}" if reserve is not None
         else "NOT NEEDED (counter cannot drop)"
@@ -528,22 +543,29 @@ def do_restore(shard_dir: Path, quar_dir: Path) -> int:
 
 def _verify_checks(
     shard_dir: Path, quar_dir: Path | None, verdicts: list[ShardVerdict], top: int,
-) -> list[tuple[str, bool | None, str]]:
-    """Every verify axis, each with an explicit UNCHECKED state.
+) -> list[tuple[str, str, str]]:
+    """Every verify axis, as one of four explicit states.
 
-    An axis that cannot be evaluated is NOT a pass — the same rule the shard
-    gate itself applies. This is why the yardstick needs the manifest: without
-    it, axes C/D/E are silently absent and the tool reports PASS on states it
+    ``pass`` / ``fail`` / ``unchecked`` / ``n/a``. Only ``pass`` and ``n/a``
+    clear the verdict.
+
+    ``unchecked`` is a FAIL — the same rule the shard gate applies to a shard it
+    cannot read, and the reason the yardstick needs the manifest: without it,
+    axes B/C/D/E are silently absent and the tool reports PASS on states it
     exists to prevent (notably: shards moved, reservation never installed).
+
+    ``n/a`` clears, and is therefore the dangerous state — it is the one an
+    author reaches for to make a red light go green. It is used in exactly one
+    place (axis B before any post-apply shard exists) and only when emptiness is
+    PROVED against the manifest's kept-list, never merely assumed. If any kept
+    shard is missing, that proof is unavailable and the axis reverts to
+    ``unchecked``, i.e. to failing.
     """
     data = [v for v in verdicts if not v.is_marker]
     rejects = [v for v in verdicts if v.reject]
-    ok = [v.multipv_miss for v in data if v.multipv_status == "ok"]
-    checks: list[tuple[str, bool | None, str]] = [
-        ("A no shard rejected by the gate", not rejects, f"{len(rejects)} rejected"),
-        ("B max multipv-miss <= clean maximum",
-         bool(ok) and max(ok) <= CLEAN_MAX_MISS_RATE,
-         f"{max(ok):.6f} vs {CLEAN_MAX_MISS_RATE}" if ok else "no readable shard"),
+    checks: list[tuple[str, str, str]] = [
+        ("A no shard rejected by the gate",
+         "pass" if not rejects else "fail", f"{len(rejects)} rejected"),
     ]
 
     man: dict[str, Any] | None = None
@@ -557,30 +579,100 @@ def _verify_checks(
     if man is None:
         why = err or "no --quarantine-dir given"
         checks += [
-            ("C index reservation holds", None, why),
-            ("D window matches the manifest exactly", None, why),
-            ("E quarantined shards match their digests", None, why),
+            ("B no post-apply shard carries desync signal", "unchecked", why),
+            ("C index reservation holds", "unchecked", why),
+            ("D window matches the manifest exactly", "unchecked", why),
+            ("E quarantined shards match their digests", "unchecked", why),
         ]
         return checks
 
-    # C -- the axis the mechanism exists for. `top` must sit at or above the
-    # highest quarantined id, or the buffer silently reuses ids that now live in
-    # the quarantine dir, and --restore will refuse them forever.
     top_q = max(int(r["index"]) for r in man["shards"])
-    checks.append((
-        f"C index reservation holds (top {top} >= quarantined max {top_q})",
-        top >= top_q, f"top id {top} < quarantined max {top_q}: ids "
-                      f"{top + 1}..{top_q} will be SILENTLY REUSED",
-    ))
-    # D -- over-removal and botched moves, which axis A structurally cannot see.
     want = {str(r["name"]): int(r["rows"]) for r in man.get("kept", [])}
     have = {v.name: v.rows for v in data}
     missing = sorted(set(want) - set(have))
     extra = sorted(n for n in set(have) - set(want) if shard_index(Path(n)) <= top_q)
     badrows = sorted(n for n in set(want) & set(have) if want[n] != have[n])
+
+    # B -- drift watch on data written AFTER the apply, which is the only
+    # population this tool can say anything non-circular about.
+    #
+    # The bar is EXACTLY 0.000000, and it is not fitted to this window: on a
+    # schema-complete healthy window `sf_multipv_missing_rate` is exactly zero,
+    # measured over 2,878,620 labelled rows across four SEPARATED quiet
+    # stretches (07-06..07-09, 07-19, shards 33118-33387, 33721-33943) — none of
+    # which is the kept set being judged. A desynced engine cannot produce a
+    # near-zero rate: it takes its ~1/8 share of labels to ~59% no-PV, so a
+    # single non-zero row in a 2000-row shard is ~5e-4, some 500x the benign
+    # ceiling of <1e-6 those stretches establish.
+    #
+    # This is strictly tighter than the gate (0.01) and therefore catches a new
+    # episode during its ramp, which is exactly where the 07-30 one was missed.
+    # It says nothing about the kept shards — those already cleared the gate,
+    # and the tapers deliberately left among them read non-zero by design.
+    new_shards = [v for v in data if v.name not in want]
+    if new_shards:
+        dirty = [v for v in new_shards
+                 if v.multipv_status != "ok" or v.multipv_miss > 0.0]
+        b_state = "pass" if not dirty else "fail"
+        b_detail = (f"{len(dirty)} of {len(new_shards)} new shards non-zero: "
+                    f"{[f'{v.name}={v.multipv_miss:.6f}' for v in dirty[:3]]}")
+    elif missing:
+        # Cannot claim the population is empty when the window does not match
+        # the manifest: a shard that vanished is indistinguishable from one that
+        # was never written, and guessing here would make the axis unfalsifiable.
+        b_state, b_detail = "unchecked", (
+            f"cannot establish the post-apply population: {len(missing)} kept "
+            f"shards missing, so 'no new shards' is not provable")
+    else:
+        # ⚑ WHY THIS IS N/A AND NOT UNCHECKED — the one place the
+        # UNCHECKED-is-a-FAIL rule does not apply, so the argument is written
+        # down rather than assumed.
+        #
+        # UNCHECKED means: the question has a truth value and this run cannot
+        # see it. "Does the reservation hold?" without a manifest is unchecked —
+        # there IS a fact, and failing is the honest answer to not knowing it.
+        #
+        # This axis asks "does every post-apply shard read zero?". Over an empty
+        # population that is VACUOUSLY TRUE, not unknown: there is no shard that
+        # could falsify it. Failing here would report a defect that cannot
+        # exist, and a yardstick that is red in its own correct steady state
+        # gets ignored within a day — which is how the previous axis B, red by
+        # 1.3e-07 on the state it was derived from, would have ended up.
+        #
+        # The danger is claiming an empty population without proof, so emptiness
+        # is PROVED, not assumed: every data shard in the window is accounted
+        # for in the manifest's kept-list, so nothing has been written since the
+        # apply. The `elif missing` branch above is what keeps that honest — the
+        # moment the window stops matching, the proof is void and the axis
+        # reverts to UNCHECKED, i.e. to failing. Pinned by
+        # `test_axis_B_is_unchecked_when_emptiness_cannot_be_proved` and by
+        # `test_a_dirty_post_apply_shard_cannot_reach_the_empty_branch`;
+        # forcing this branch to fire unconditionally kills the suite.
+        #
+        # Residual limitation, stated: a post-apply shard that was written and
+        # then deleted WITHOUT any kept shard also going missing would be
+        # invisible here. Eviction cannot do that (it takes the oldest first, so
+        # kept shards go before new ones), but an out-of-band delete could.
+        b_state, b_detail = "n/a", (
+            "no shard written since the apply; axis goes live on the first one")
+    checks.append((
+        "B no post-apply shard carries desync signal (bar: exactly 0.000000)",
+        b_state, b_detail,
+    ))
+
+    # C -- the axis the mechanism exists for. `top` must sit at or above the
+    # highest quarantined id, or the buffer silently reuses ids that now live in
+    # the quarantine dir, and --restore will refuse them forever.
+    checks.append((
+        f"C index reservation holds (top {top} >= quarantined max {top_q})",
+        "pass" if top >= top_q else "fail",
+        f"top id {top} < quarantined max {top_q}: ids "
+        f"{top + 1}..{top_q} will be SILENTLY REUSED",
+    ))
+    # D -- over-removal and botched moves, which axis A structurally cannot see.
     checks.append((
         f"D window matches the manifest ({len(want)} shards, {sum(want.values()):,} rows)",
-        not (missing or extra or badrows),
+        "pass" if not (missing or extra or badrows) else "fail",
         f"missing {len(missing)}{missing[:3]}  unexpected {len(extra)}{extra[:3]}  "
         f"row-count changed {len(badrows)}{badrows[:3]}",
     ))
@@ -594,11 +686,11 @@ def _verify_checks(
             bad.append(f"{r['name']}:digest")
     checks.append((
         f"E quarantined shards intact ({len(man['shards'])} digests)",
-        not bad, f"{len(bad)} bad: {bad[:3]}",
+        "pass" if not bad else "fail", f"{len(bad)} bad: {bad[:3]}",
     ))
     if not man.get("complete", False):
         checks.append((
-            "F apply completed", False,
+            "F apply completed", "fail",
             "manifest says complete=false — the apply was interrupted",
         ))
     return checks
@@ -616,17 +708,21 @@ def do_verify(shard_dir: Path, quar_dir: Path | None) -> int:
 
     print(f"shards in window          : {len(paths)}  rows {sum(v.rows for v in verdicts):,}")
     print(f"  data shards             : {len(data)}    reservations: {len(markers)}")
-    print(f"max sf_multipv_missing_rate: {max(ok):.6f}" if ok else "max multipv-miss: n/a")
+    # Reported at full precision and NOT gated on: rounding this to 6 places is
+    # precisely how the old axis B became a threshold equal to its own display.
+    print(f"max sf_multipv_missing_rate: {max(ok)!r} (diagnostic, not a bar)"
+          if ok else "max multipv-miss: n/a")
     print(f"min sf_label_attachment    : {min(att):+.4f}" if att else "min attachment: n/a")
     print(f"highest shard id           : {top} -> next write would be {top + 1}")
     print(f"zero-row reservations held : {[v.name for v in markers] or 'none'}")
 
     checks = _verify_checks(shard_dir, quar_dir, verdicts, top)
     print()
+    marks = {"pass": "PASS", "fail": "FAIL", "unchecked": "UNCHECKED", "n/a": "N/A"}
     for label, state, detail in checks:
-        mark = "UNCHECKED" if state is None else ("PASS" if state else "FAIL")
-        print(f"  [{mark:9s}] {label}" + (f"   -- {detail}" if state is not True else ""))
-    passed = all(s is True for _, s, _ in checks)
+        print(f"  [{marks[state]:9s}] {label}"
+              + (f"   -- {detail}" if state != "pass" else ""))
+    passed = all(s in ("pass", "n/a") for _, s, _ in checks)
     print(f"\nVERDICT: {'PASS' if passed else 'FAIL'}")
     if not passed:
         print("  (an UNCHECKED axis is a FAIL: a gate that could not evaluate a "

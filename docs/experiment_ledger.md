@@ -19130,3 +19130,1029 @@ point, a physical bound — or (c) a sensitivity curve showing the answer is fla
 across a plateau. This gate now leans on (b) and reports (c); (a) is unavailable
 because there is no independent list of clean shards.
 
+
+## 2026-08-01 — SF-desync follow-ups: the instrument's own reset is now pinned, and ONE open item that a knob cannot fix
+
+**Closes the three non-blocking items from the PR #297 review. PR #297 is merged
+and on the live branch; verdict APPROVE, safe to restart on.**
+
+**The B3 switch was validated on production data, not on my arithmetic.**
+Replaying the actual shard stream chunked at the real 4096-row interval with the
+shipped predicate:
+
+```
+window group  windows   NEW rule WARN   OLD rule WARN
+clean             309       6 (1.9%)        0
+ep1                26      25 (96.2%)      10 (38.5%)
+ep3                11      11 (100%)        7 (63.6%)
+```
+
+48 of 49 episode windows against 28, and 23 shards with k≈1 desynced engine read
+**5-14x the threshold** where the old rule called every one healthy.
+
+**⚑ THE 1.9% CLEAN-WINDOW WARNINGS ARE NOT DETECTOR NOISE — THE CORRUPTION
+TAPERS.** They are two CONTIGUOUS runs, `033448-033453` and `033630-033639`,
+sitting immediately after episodes 1 and 3 end. The fault does not stop
+abruptly, so **any shard boundary drawn on the episode edges is too tight**.
+Feeding the separate disposition analysis; do not re-derive a boundary from the
+episode timestamps alone.
+
+**⚑⚑ OPEN ITEM — THE FIX CONVERTS WRONG-AND-SILENT INTO ABSENT-AND-LOUD; IT
+DOES NOT STOP THE TIMEOUT.** Every one of the four episodes originated in a
+search hitting `read_timeout_s`, which is a **whole-search** deadline defaulting
+to **60s** (`chess_anti_engine/stockfish/uci.py:23`) and is **not settable from
+the yaml on the label path** — there is no config lever, so this cannot be tuned
+away pre-restart and must not be treated as if it could. What the fix guarantees
+is that the next one costs the abandoned query's label and nothing else. **If
+`replaced a desynced engine` fires after the restart, that is the live trigger
+reproducing**: open its own ledger entry and fix it in code (a per-query
+deadline scaled to the node budget, or a plumbed config key), not with a knob.
+The first firing is also the first direct measurement of how often a 698k-node
+label search exceeds 60s under live contention — a number we have never had.
+
+**Follow-ups shipped.**
+
+1. **The instrument's own reset is now pinned, in both places.** The shipped
+   reset was correct but unguarded, and two of the three ways to break it are
+   silent. Dropping `labelled=0` leaves the denominator growing while the
+   numerators reset, so **every rate decays toward zero and the detector goes
+   quiet while the fault continues** — the exact defect class this work exists
+   to fix, sitting inside the fix's own instrument. One test drives two
+   consecutive windows and asserts the reported COUNTS, not just the level:
+   an unreset denominator still WARNs in window 2, it just lies about the base.
+   Parametrised so the second run starts from residue the first leaves, which
+   makes the fixture-reset guard hold independently of test order.
+2. **The sync (curriculum) label path is counted.** Deleting the
+   `_process_sf_results` counting site used to fail nothing — one of three
+   counting sites was unpinned, and a desynced engine serves the curriculum
+   label queue exactly as it serves the async one.
+3. **Correction to my own PR #297 claim.** I wrote that the
+   `BaseException`-over-`Exception` choice was "tested in both places". It was
+   not: the pool test poisons the engine directly and then submits, so `_search`
+   sees a `StockfishDesyncError`, which IS an `Exception` — `except Exception`
+   would have behaved identically and the mutation would have survived. Now
+   genuinely covered by a test that raises `KeyboardInterrupt` out of
+   `engine.search`, and the misleading docstring is corrected rather than left
+   to be re-read as evidence.
+
+**Mutation results (5/5, each killing only its own guard):** misspelt fixture key
+-> the reset test (both runs); production reset missing `no_legal_pv=0` -> same;
+missing `labelled=0` -> same; delete the sync counting site -> the sync test;
+`except BaseException` -> `except Exception` -> the new BaseException test.
+
+**Method note.** Two rounds running, the defect in my work was not the repair
+but the thing that would tell us whether the repair fired. First the detector
+could not see a single desynced engine; then the detector's own reset could
+decay it to zero unobserved. **The instrument deserves the same adversarial
+reading as the code it watches, and a correct-but-unpinned mechanism is one
+edit from being a gate that cannot fail.**
+
+---
+
+## 2026-08-01 — PRE-REGISTRATION: quarantine the 122 SF-desync shards from the live replay window (PR #297 cleanup)
+
+> **SUPERSEDED — see "2026-08-01 — REVIEW RESPONSE to the quarantine pre-registration: the yardstick passed on the state it exists to prevent. Criteria REPLACED, not amended." at EOF.** The DECISION, SCOPE, DOSE and PRICING below stand and were re-endorsed on review. The OBSERVABILITY sections — yardstick command, success criteria, KILL rule — are superseded.
+
+
+**Status at writing: NOTHING HAS MOVED.** Training is DOWN (last iteration 478,
+2026-07-31 13:01:17). All 834 shards are in place. This entry exists before the
+change, per protocol item 1.
+
+### Hypothesis
+
+The 2026-07-30/31 Stockfish UCI desync (cause and fix: PR #297) left detached SF
+labels on ~4.2-4.9 % of the live 1.5 M-row replay window. Removing the shards the
+shipped gate rejects, before training resumes, removes ~99.3 % of the identified
+contamination from all future draws at a cost of 15.1 % of the window and a
+bounded, priced increase in views/row. **The expected effect on playing strength
+is ZERO detectable change** — see "What this cannot show" below.
+
+### Scope — the boundary, and why it is not wider
+
+Dense scan of all 834 shards on the shipped sharp instrument
+(`sf_multipv_missing_rate`: labelled rows with `has_sf_multipv_raw == 0`) plus a
+second, independent per-row instrument, **D2** — a labelled row whose stored
+`sf_move_index` is not among its own stored MultiPV move indices. On a sound row
+the bestmove IS PV line 1 and is always in the block; on a desynced row the stale
+bestmove was illegal, `legal_indices[0]` fired, and it lands in the surviving
+block only by accident.
+
+**D2's baseline is defined by shard id, not by the sharp threshold** — the
+circularity the method rules warn about moves up a level otherwise:
+
+| reference set (chosen without reference to the threshold) | shards | rows | D2 |
+|---|---|---|---|
+| 33118-33387, everything before episode 1 | 270 | 461 726 | **0.000000** |
+| 33660-33940, between episodes 3 and 4 | 281 | 498 516 | 0.000034 |
+
+**Validated where the fault is SMALL, not only where it is large:** D2 reads
+0.000837 / 0.002979 / 0.0100 on shards at sharp (0,0.005] / (0.005,0.01] /
+(0.01,0.05] — monotone up from a true zero. The derived ratio
+`D2*(1-sharp)/sharp` is 0.33-0.46 across every rate decade, i.e. one mechanism at
+one ratio whether the shard is 0.6 % or 60 % corrupt. **Negative control:** scoring
+each row's bestmove against a NEIGHBOURING row's block flags 77.7 % of rows (the
+test discriminates), and those falsely-flagged rows read
+`corr(sf_wdl, search_wdl) = +0.865`, so the flag does not select for bad labels by
+itself. Genuinely D2-flagged rows read **+0.087**.
+
+| band | shards | rows | %win | no-block | D2 | identified detached | % of all |
+|---|---|---|---|---|---|---|---|
+| **hard-zero A** 33118-33387 | 270 | 475 713 | 31.7 | 0 | 0 | **0** | 0.00 |
+| ep-1 core 33388-33453 | 66 | 122 748 | 8.2 | 13 081 | 4 703 | 17 784 | 30.2 |
+| ep-1 **taper** 33454-33584 | 131 | 242 635 | 16.2 | 100 | 59 | **159** | 0.27 |
+| ep-3 core 33585-33639 | 55 | 104 115 | 6.9 | 23 348 | 7 600 | 30 948 | 52.6 |
+| ep-3 **taper** 33640-33720 | 81 | 146 112 | 9.7 | 152 | 99 | **251** | 0.43 |
+| **hard-zero B** 33721-33943 | 223 | 393 366 | 26.2 | 0 | 0 | **0** | 0.00 |
+| ep-4 33944-33951 | 8 | 14 953 | 1.0 | 6 984 | 2 720 | 9 704 | 16.5 |
+
+**The taper is real and nearly empty.** Against a baseline of literally zero over
+474 278 rows, the 1-3 rows/shard dribble that runs ~130 shards past episode 1 and
+~80 past episode 3 is genuine residual desync. It is also **410 rows of 58 846 —
+0.70 %**. Covering it costs **388 747 rows, 25.9 % of the window**. That is the
+decisive number: **the line goes at the gate, not at the taper.**
+
+**Quarantine set = exactly what the shipped two-axis gate rejects: 122 shards,
+226 141 rows, 15.08 % of the window.** **118** over `SF_MULTIPV_MISS_MAX` (0.01)
+plus **4** that return `too_few_rows` — `033481`(16 labelled), `033608`(15),
+`033826`(26), `033921`(26) — because a gate that could not evaluate a shard has
+not cleared it. (An earlier revision of this line said "119 + 3 (16/26/26)"; the
+total was right and the split was wrong. `033608` has 15 labelled rows, not 23
+positions' worth, so it is unevaluable rather than over-threshold.) **The attachment axis is redundant on this
+window** — it rejects 24 shards, all already rejected by the MultiPV axis, 0
+uniquely. No bespoke boundary is introduced anywhere.
+
+### Dose — how bad a detached row actually is
+
+**⚑ Three different percentages circulate for this incident. They are not in
+conflict; they are three quantities with different numerators AND different
+denominators. Naming them, because a later reader will otherwise treat them as
+contradictory:**
+
+| name | numerator | denominator | value |
+|---|---|---|---|
+| **no-PV rate** (the shipped instrument) | 43 665 rows with `has_sf_multipv_raw == 0` | 1 473 317 **labelled** rows | **2.96 %** |
+| **identified-detached rate** | 58 846 = 43 665 no-PV + 15 181 D2 | 1 499 642 **window** rows | **3.92 %** |
+| **calibrated-detached rate** | 63 203 (D2 grossed up by the negative control's 0.777) | 1 499 642 **window** rows | **4.21 %** |
+
+An independent whole-window measurement of the first quantity gives 43 669 /
+1 473 321 = 2.96 %, agreeing with this scan to **4 rows in 43 665**. The larger
+figures are not a different reading of the same thing: the no-PV rate counts only
+rows where NOT ONE stale MultiPV move survived the legality filter, and the
+detached rates add the rows that kept a (wrong) block, which the no-PV instrument
+cannot see by construction. **Quote the no-PV rate when talking about the
+detector; quote the calibrated rate when talking about the damage. Never mix the
+denominators — labelled rows are 98.24 % of window rows, so the two differ by
+1.8 % on top of everything else.**
+
+- **Directly identified: 58 846 rows** (43 665 no-block + 15 181 D2) against a zero
+  baseline. A floor, not an estimate.
+- **Calibrated total 63 203 rows = 4.21 % of the window**, using the negative
+  control's own measured 0.777 to convert D2 into detached-with-block. The code's
+  per-desynced-engine constant (`no_legal_pv ~ 0.59`) gives 74 008 = 4.94 %, the
+  upper end and the source of the previously quoted "~72 000 / 4.9 %".
+  **Range 63k-74k; everything below is computed at 66 000 and scales linearly.**
+
+Measured WITHIN shards, so era/PID drift cannot explain it:
+
+| rows | n | corr(sf, search_wdl) | corr(sf, result) | MAE(sf-search) | mean sf |
+|---|---|---|---|---|---|
+| clean pre-episode | 474 278 | **+0.9347** | +0.6604 | 0.1435 | -0.0806 |
+| ep-1 core, detached | 13 081 | **-0.0503** | -0.0524 | 0.6848 | **+0.1627** |
+| ep-3 core, detached | 23 348 | **-0.0110** | -0.0056 | 0.7059 | **+0.1536** |
+| ep-4, detached | 6 984 | **-0.0768** | -0.0597 | 0.6616 | +0.0504 |
+| ep-4, *kept a block* | 5 309 | **+0.1950** | +0.1061 | 0.4118 | +0.0141 |
+
+A detached row's SF label is **pure noise** against two references that are not
+SF-derived, at 4.8x the error, and **biased optimistic by ~+0.24** in WDL-signal
+units — the same direction as the value head's known optimism on losing positions.
+The last row is the reminder that block-keeping rows inside a hot episode are
+corrupt too, which is why whole-shard removal beats any per-row repair here.
+
+**Effective weight, computed not assumed.** `masked_mean` divides by its own mask
+count, so a covered row's weight is `w / coverage` — amplified, not attenuated
+(this reproduces the known `w_sf_own` -> 0.52, so the arithmetic is checked):
+`sf_wdl_frac` **0.45 realized** of the WDL target; `w_sf_eval` 0.100;
+`w_sf_move` 0.020; `w_sf_own` 0.1/0.192 = 0.521; **`w_sf_own_regret` 0.7/0.182 =
+3.84**; `w_sf_volatility` ~0.28. So a detached row without a p0 block (82 % of
+rows) carries ~16 % of its per-row loss weight as garbage; one with a p0 block
+carries ~64 %. These are loss coefficients, not measured gradient shares —
+`w_sf_own_regret`'s realized share on the 63M net is still unmeasured (yaml task
+\#38).
+
+**Sampling is not selective:** mean `priority` on detached rows 6.92/7.26 vs
+6.83/6.84 clean, and `replay_pmass_gap_share` is 0.0, so the SF-derived priority
+channel carries none of the mass. Uniform-draw accounting is valid.
+
+**Bounding a worry that would otherwise stay open:** contaminated rows are
+**95.3 % selfplay-tagged vs 68.1 % in clean shards**. `_process_sf_results` feeds
+the same stale candidate list to `_push_curriculum_opponent_move`, so a desynced
+curriculum ply had Stockfish actually PLAY `legal_indices[0]` — but only ~4.7 % of
+affected rows are curriculum-tagged. The corruption sat on the LABEL path;
+game-level poisoning through a blundering opponent is a small residual, not the
+main event.
+
+### Most of the harm has not happened yet
+
+Views absorbed computed from actual per-iteration `train_steps_used` x 512 /
+window across all six rotated `progress.csv` files:
+
+| band | views absorbed | views remaining | clears after |
+|---|---|---|---|
+| ep-1 core | 3.17 | 1.81 | 71 iters / 13.6 h |
+| ep-3 core | 1.99 | 3.00 | 112 iters / 21.5 h |
+| ep-4 | **0.00** | 5.01 | 178 iters / 34.1 h |
+
+Weighted by identified detached rows: 118 757 row-views absorbed, **174 891 still
+to come — 59.6 % of total exposure is in the future.** Episode 4 was written
+13:33-13:48, after the last training iteration ended 13:01:17, and is the newest
+data in the window. This is prevention, not archaeology.
+
+### Options priced (220-iteration / 42 h horizon, FIFO, uniform draws)
+
+| option | rows kept | dirty draws | % of draws | views on today's rows |
+|---|---|---|---|---|
+| do nothing | 1 499 642 | 194 490 | 2.084 % | 2.528 (-) |
+| per-row SF-flag clear | 1 499 642 | 21 081 | 0.226 % | 2.528 (+0.0 %) |
+| **quarantine gate (chosen)** | 1 273 501 | **1 417** | **0.015 %** | 2.973 (**+17.6 %**) |
+| quarantine any-signal (207 sh) | 1 106 476 | 0 | 0.000 % | 3.403 (+34.6 %) |
+| quarantine full span (341 sh) | 869 079 | 0 | 0.000 % | 4.224 (+67.1 %) |
+
+**Offline SF-target rebuild was rejected on mechanism, not cost.**
+`train.rebuild_sf_targets` / `target_builder.py` re-derive targets from
+`sf_multipv_raw` and `sf_label_meta` — **which ARE the desynced engine's answer to
+the wrong position.** A rebuild re-parameterises the corruption; it cannot repair
+it. On the 43 665 no-block rows there is nothing to rebuild from, and
+`docs/target_rebuildability.md` records those rows as deliberately left UNMASKED,
+so a rebuild leaves the worst rows exactly as poisoned while moving everything
+around them. **Faithfully rebuildable fraction of affected rows: 0 %.** Re-querying
+Stockfish is the only real repair and shards store no FEN (only `x` planes,
+`game_id`, `ply_index`), so the positions are not exactly recoverable.
+
+**Per-row flag-clear was rejected even though it is technically better.** It
+catches 93 % of detached rows at 3.9 % of SF coverage with zero views inflation —
+but it structurally cannot take the undetected ~41 % with it, so it leaves
+**21 081 poisoned draws against the quarantine's 1 417**. Writing shard-mutating
+code with two cross-ply subtleties (`sf_p0_*` comes from row t-1, `sf_volatility`
+from t+6) to do worse is not a trade.
+
+### Step budget and views: the direction is the opposite of the intuition
+
+`_compute_step_budget` in views mode is `ceil(5.0 * positions_ingested / batch)` —
+**a function of ingest only.** A smaller window does NOT change the step budget.
+What changes is that the same ~42 411 draws/iter land on a smaller pool and
+nothing evicts until refill, so **surviving rows gain views: +17.6 %**, with refill
+taking 226 141 / 8 437 = **26.8 iterations = 5.1 h**. Given that the policy head
+demonstrably memorises the window and ~70 % of held-out excess tracks repeat
+exposure, this is a real cost paid in the known-bad direction. It is the second
+reason not to chase the taper: the same cost is +34.6 % / +67.1 % there.
+
+### ⚑ The shard-index collision, and the mechanism VERIFIED against it
+
+`DiskReplayBuffer._shard_index` is **never persisted** — it is derived at every
+construction from a directory glob: `_scan_existing_shards` sets it to
+`max(shard_index(p)) + 1` over `shard_dir/shard_*.zarr` (disk_buffer.py:788), and
+`_next_free_shard_path` only ever increments from there. The quarantine set
+includes 33944-33951, the eight NEWEST shards, so a plain move drops the counter
+from 33952 to **33944 and the very first new shard collides**. `_next_free_shard_path`
+would log nothing, because it only warns when it steps over a file that is still
+there — **the reuse is silent**, which is this repo's signature defect shape.
+
+Probed on a scratchpad COPY of 7 real shards (never on production data), moving
+the top two and reading the counter back:
+
+| arm | `_shard_index` | tracked rows | refresh failures (20 draws) | verdict |
+|---|---|---|---|---|
+| A untouched | 33922 | 403 | 0 | reference |
+| **B plain move** | **33707** | 351 | 0 | **ids 33826 and 33921 reused within 260 writes — silent** |
+| C empty-directory placeholder at top id | 33922 | 351 | **failed=7** | reserves, but feeds a failure counter nobody reads |
+| D dangling symlink at top id | 33922 | 351 | **failed=1+** | same defect |
+| **E valid ZERO-ROW shard at top id** | **33922** | **351** | **0 / vanished 0** | **silent, correct** |
+
+**Chosen mechanism: reserve the single highest quarantined index (33951) with a
+valid zero-row shard**, written by `save_local_shard_arrays` from that shard's own
+arrays sliced to `[:0]`. Verified: `shard_positions` reads 0 so it contributes
+nothing to the window, `load_shard_arrays` round-trips it (`x` shape
+`(0,175,8,8)`), and 20 consecutive `_refresh_shuffle_buf` calls give
+`failed=0 vanished=0` with the shuffle pool unchanged. Because the counter is
+monotone and derives from the MAXIMUM, reserving the top index alone protects
+**every** lower quarantined id (33944-33950 and all 111 below) — verified in arm E,
+where 33826 was quarantined without its own reservation and never revisited. The
+reservation ages out on its own once the window turns over (~178 iterations), by
+which point the counter is ~34 100.
+
+**Restore hazard, recorded:** restoring `shard_033951.zarr` collides with the
+reservation file. The restore path must delete the reservation first; the script
+enforces this and refuses otherwise.
+
+### ONE deciding yardstick — exact command
+
+> **SUPERSEDED — see "2026-08-01 — REVIEW RESPONSE to the quarantine pre-registration: the yardstick passed on the state it exists to prevent. Criteria REPLACED, not amended." at EOF.** The command below is MISSING `--quarantine-dir` and now exits 1 on a correctly quarantined window, because axes C/D/E read UNCHECKED and an unchecked axis is a FAIL. Use the command in the review-response entry.
+
+
+```
+PYTHONPATH=. nice -n 19 python3 scripts/quarantine_desync_shards.py \
+  --shard-dir 'runs/pbt2_small/replay/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/replay_shards' \
+  --verify
+```
+
+Prints, over EVERY shard remaining in the live dir: the count rejected by the
+shipped gate, the max `sf_multipv_missing_rate`, the min `sf_label_attachment_corr`,
+and the reservation's state. Exit 0 iff the window is clean by the shipped gate.
+
+### Pre-committed thresholds
+
+> **SUPERSEDED — see "2026-08-01 — REVIEW RESPONSE to the quarantine pre-registration: the yardstick passed on the state it exists to prevent. Criteria REPLACED, not amended." at EOF.** Both the three-item SUCCESS list and KILL clause 3 below are REPLACED. Clause 3 waits for a `[disk_buf] shard index collision` line that CANNOT FIRE in the silent-reuse case it was written for.
+
+
+**SUCCESS** (all three, judged by this rule and not post hoc):
+1. `--verify` exits 0: **zero** shards rejected by the shipped gate, and
+   `max(sf_multipv_missing_rate) <= 0.008032` — the observed clean maximum over
+   the 712 accepted shards, not a number invented for this entry.
+2. On the first 5 post-restart `progress.csv` rows, `train_views_actual` is in
+   **[4.90, 5.10]** — the step budget is ingest-driven and must not move.
+3. On the same 5 rows, `train_steps_used == ceil(5.0 * replay_positions_ingested
+   / 512)` exactly, every row. This is the observation that proves the quarantine
+   did not reach the step budget.
+
+**KILL** (revert immediately, before the window refills at ~26.8 iterations /
+5.1 h — after that the restored shards are the oldest and `_enforce_window` simply
+deletes them again):
+- `train_views_actual` outside **[4.5, 5.5]** on any of the first 5 iterations, or
+- `train_steps_used` off the formula by more than 1 step on any row, or
+- any `[disk_buf] shard index collision` line, or any
+  `failed to load a TRACKED shard` naming the reservation.
+
+**EXPECTED OUTCOME: no detectable change in playing strength, and that is not a
+failure of the intervention.** At ~0.02 Elo/iter against a best instrument
+resolution of ~2.74 Elo/day, a 4.2 % label-noise removal is ~1500x below the noise
+floor of every ruler we own. This change is justified by the mechanism and the
+priced dose, not by an expected readout. **Do not run an arena to "confirm" it and
+do not record a null arena as a verdict against it.**
+
+**⚑ `test_loss` / `policy_loss` moving at the quarantine iteration is
+DEFINITIONAL, not evidence.** The window composition changes by 15.1 % in one
+step; both legs will move for that reason alone, in either direction. Neither is
+admissible as success or as kill. Any learning-quality judgement needs a day-plus
+window and paired CIs per protocol item 3, and per the paragraph above it will not
+resolve anything.
+
+### Revert point
+
+> **SUPERSEDED — see "2026-08-01 — REVIEW RESPONSE to the quarantine pre-registration: the yardstick passed on the state it exists to prevent. Criteria REPLACED, not amended." at EOF.** The revert point is real but is UNNAMED here. Its path is `data/desync_quarantine_20260801/`, and `data/salvage/pre_restart_bundle_20260731` is NOT a substitute — see the review-response entry.
+
+
+**The quarantine directory itself IS the revert point** for this change — the
+shards are the state, they are moved and never deleted, and the manifest records
+every original path, id, row count, both instrument readings, mtime and a sha256
+digest. This matters because `salvage-export` banked ZERO shards until 07-30
+(PR #290), so the existing revert points are weights-only and could not restore a
+replay window at all. No weights/optimizer snapshot is taken for this change
+because it touches no weights, no config key and no code on the training path.
+
+### Confounds
+
+One data-affecting change in this readout window, but it does NOT stand alone: the
+same restart carries PR #297's fix, so new data is desync-free by construction.
+The two are inseparable and deliberately so — quarantining old rows while the
+producer still desynced would be pointless. **Any post-restart movement in an
+SF-derived metric is jointly attributable and must not be assigned to either.**
+
+### What this cannot show, stated in advance
+
+That the removed rows were harming training. The dose is measured (SF label
+correlating -0.05 with two independent references, at 45 % of the WDL target on a
+covered row) and the exposure is measured (59.6 % still ahead), but no instrument
+we own can resolve the resulting Elo. **This is a hygiene action justified by a
+measured mechanism, filed as such, and it must not later be cited as a positive
+result.**
+
+### Status
+
+**LIVE-UNREAD — nothing has moved.** Script written, dry-run only, awaiting an
+independent review (author does not review own work) and operator execution.
+
+---
+
+## PRE-RESTART STATE RECORD (2026-08-01 ~11:26) — 631 in-flight games ARE banked, and the checklist that said otherwise was wrong
+
+Recorded before `train.sh start`, because `sweep_orphan_state_files(self.resume_dir)`
+runs UNCONDITIONALLY at every session start (`worker.py:3217`) — after a restart these
+files are either resumed or swept, and the count is unrecoverable either way.
+
+```
+# in-flight resume state recorded 2026-08-01T11:26:28-04:00 BEFORE any restart
+worker_00 games=0 newest_mtime=none
+worker_01 games=251 newest_mtime=2026-07-31T13:51:04-04:00
+worker_02 games=174 newest_mtime=2026-07-31T13:51:40-04:00
+worker_03 games=206 newest_mtime=2026-07-31T13:51:22-04:00
+TOTAL=631
+```
+
+### Why this was nearly missed, and the lesson
+
+A pre-restart checklist recorded "the resume dirs are **empty** and the worker logs end
+abruptly with no suspend lines — the 07-31 teardown was not graceful", and instructed
+**"Do not score it"** for PR #287's `resumed_inflight_games`. Both halves were wrong:
+
+- It looked under the **trial** root (`runs/pbt2_small/tune/.../distributed_workers/worker_NN/`,
+  where `worker.log` lives) instead of the **server** root
+  (`runs/pbt2_small/server/trials/13a9f_00000/workers/worker_NN/`, where the worker's
+  `work_dir` and therefore `resume_dir` live). `_launch_distributed_worker`
+  (`tune/distributed_runtime.py:722-738`) splits those roots when
+  `distributed_server_root` is set, which it is.
+- **`_suspend_inflight_games` (`worker.py:3242`) logs NOTHING on success** — only on
+  failure. So the absent suspend line was not evidence of an absent suspend.
+
+⚑ **This is the checklist's own thesis firing on its author: absence of a log line was
+read as absence of the event, while the state sat on disk.** Same family as
+[[a_gate_that_cannot_fail]] — an observation that cannot distinguish "did not happen"
+from "happened silently" is not an observation.
+
+Corrected reading: **3 of 4 workers drained gracefully.** worker_00 is the exception —
+its log stops at 13:10/13:16, is 10,038 bytes against 13,813 for its peers, and its
+resume dir was last written 07-30. That worker died early and is the one that genuinely
+lost its in-flight games.
+
+### What this now licenses at the next restart
+
+PR #287 (`selfplay_resume_inflight_games`) is **verifiable at THIS restart**, not owed to
+some later graceful teardown. On the first new iteration:
+
+    outcome_stats.resumed_inflight_games + outcome_stats.resume_discarded_games  ~=  631
+
+No training happened while down, so `model_sha` / `model_step` / the compat fingerprint
+should all match and **`resumed` should dominate `discarded`**. A zero here is a real
+defect worth ~631 games, and the checklist's "do not score it" would have buried it.
+
+---
+
+## 2026-08-01 — ⚑⚑ THE SF DESYNC IS AT LEAST 25 DAYS OLD, AND THE "5.4 % STRUCTURAL COVERAGE GAP" WAS MEASURING IT
+
+Raised in review of the quarantine pre-registration above: `train/trainer.py:1786`
+and `train/target_builder.py:490` both assert that **5.4 % of SF-labelled rows lack
+`sf_multipv_raw` "measured on the live window"**, presented as a STRUCTURAL
+property of the pipeline, with `sf_rebuild_policy_frac` named as the metric that
+"reports the real rate". `docs/target_rebuildability.md` (2026-07-27, 10 live
+shards, 18 307 rows) is the source. **The claim is wrong, and the way it is wrong
+is this repo's signature defect: a contamination measurement wearing a benign
+name.**
+
+### The structural rate is ZERO, not 5.4 %
+
+Retrospective sweep of the shipped no-PV instrument (labelled rows with
+`has_sf_multipv_raw == 0`) over four historical shard sets that survive on disk.
+Read-only; the live window was not touched.
+
+| set | shards | labelled rows | no-PV | rate | note |
+|---|---|---|---|---|---|
+| `7cc7c` jun 07-17 | 255 | 503 292 | 346 580 | 0.6886 | **176 shards PRE-SCHEMA** (field absent) |
+| … same, excluding pre-schema | 79 | — | 0 | **0.0000** | |
+| `scaleup_pool` jul 04-19 | 369 | 675 860 | 14 021 | 0.0207 | 89.7 % of shards exactly 0, max 0.6104 |
+| `9c36d` jul 11 | 204 | 380 698 | 3 | **0.0000** | |
+| `quarantine_wedge` jul 15 | 91 | 156 868 | 51 046 | **0.3254** | median 0.4535, 61/91 over 1 % |
+
+Both causes the documentation offers are settled by this:
+
+* **"Pre-raw-schema rows age through the window"** — REAL, and it is the entire
+  June signal: 176 of 255 June shards predate the v2 sparse schema and have no
+  such array at all. It is also **dead by 2026-07-04** — every shard from then on
+  carries the field. A 1.5 M window turns over in ~34 h, so no pre-schema row
+  could still have been in the 07-27 window. This cannot explain 5.4 % on 07-27.
+* **"The live builder's no-scoreable-candidates fallback writes no sparse rows"**
+  — this is not a benign structural fallback. It is
+  `_collect_sparse_pv_rows`'s `if not rows: return None`, which fires exactly when
+  **not one** of Stockfish's ~40 MultiPV moves is legal at the queried position,
+  i.e. the desync fingerprint. On a sound engine it essentially never fires:
+  **0 rows in 1 741 587 labelled rows across 962 shards over 07-06..07-09**, and
+  **0 in 474 278 rows** in the current window's pre-episode band. Benign rate
+  < 1e-6.
+
+**So on a schema-complete, uncontaminated window the rate is exactly 0.000000.
+Any non-zero reading is the fault, not the pipeline.** A ~95/5 "mixture of two
+target regimes" was never a property of the design; it was a description of how
+poisoned that particular window happened to be.
+
+### Day-bucketed onset: episodic and recurrent since at least 07-04
+
+`data/scaleup_pool_512x16/replay_shards`, every 2nd shard, bucketed by mtime:
+
+| day | shards | labelled | no-PV | rate | shards > 1 % |
+|---|---|---|---|---|---|
+| 07-04 | 112 | 206 959 | 723 | 0.00349 | 2 |
+| **07-05** | 101 | 178 795 | 14 942 | **0.08357** | 31 |
+| 07-06 | 122 | 221 173 | 0 | **0.00000** | 0 |
+| 07-07 | 77 | 143 666 | 0 | **0.00000** | 0 |
+| 07-08 | 502 | 909 430 | 0 | **0.00000** | 0 |
+| 07-09 | 261 | 467 318 | 0 | **0.00000** | 0 |
+| 07-10 | 86 | 153 886 | 28 | 0.00018 | 1 |
+| 07-11 | 472 | 851 690 | 286 | 0.00034 | 3 |
+| **07-12** | 112 | 206 402 | 3 090 | **0.01497** | 14 |
+| **07-13** | 84 | 148 168 | 22 871 | **0.15436** | 60 |
+| **07-14** | 89 | 166 910 | 22 483 | **0.13470** | 37 |
+| **07-15** | 44 | 70 761 | 24 140 | **0.34115** | 30 |
+| 07-19 | 150 | 270 815 | 0 | **0.00000** | 0 |
+
+**The 07-30/31 incident was at least the THIRD occurrence, not the first.** There
+is a one-day episode on 07-05 (8.4 %) and a four-day one 07-12..07-15 rising to
+34 %, with clean days between them reading exactly zero — the same
+episode/hard-zero/taper shape the current window shows. The clean days are what
+make this a finding rather than a drift: the instrument separates perfectly, and
+nobody was reading it.
+
+### Consequences
+
+1. **Two source comments state a false structural fact and should be corrected**
+   (`train/trainer.py:1786`, `train/target_builder.py:490`, and the "Coverage is
+   not total — 94.6 %" section of `docs/target_rebuildability.md`). The honest
+   statement is: *rows without `sf_multipv_raw` are a DESYNC signal, not a
+   coverage floor; on a sound window the rebuild covers 100 % of SF-labelled
+   rows.* Left unedited here deliberately — this entry is written by the author of
+   the quarantine change, and a same-session edit to the training path would
+   expand the review surface of a change that must ship first. **Flagged as a
+   one-line follow-up for the reviewer, not deferred indefinitely.**
+2. **`sf_rebuild_policy_frac` has been a desync detector all along**, reported
+   per-iteration and read as coverage. It is only non-zero while
+   `rebuild_sf_targets` is on (it is off in production), so it was never actually
+   watching — but its *definition* is the instrument. The retrospective route that
+   works on archived data is the direct one used here: `has_sf_multipv_raw == 0`
+   over stored shards.
+3. **Any verdict resting on SF-derived targets from 07-05 or 07-12..07-15 needs
+   re-reading.** Those windows carried up to 34 % detached labels, on the same
+   ~45 % of the WDL target and the same `w_sf_own_regret` leg priced in the entry
+   above. This does not automatically overturn anything — it means the ruler was
+   not sound, which per the method rules is not the same as the verdict being
+   wrong, and each affected entry needs checking individually against its own
+   window.
+4. **It does not change the quarantine decision.** Those rows aged out of the
+   replay window weeks ago; nothing in the current 834-shard window predates
+   07-30 01:09. The disposition priced above stands exactly as written.
+
+### Open question this does NOT answer
+
+**How far back does it go, and did it ever stop?** June is unreadable on this
+instrument (pre-schema), and there is no surviving shard set between 07-19 and
+07-30, which is precisely where the 07-27 5.4 % measurement sits. Candidate
+sources not yet swept: `data/salvage_pre_v2layer/seeds/slot_000/replay_shards`
+(1 526 shards) and `runs/parallel_candidate_replay_snapshots/*`. **Assigning this
+sweep separately rather than extending the quarantine session.**
+
+### Method note
+
+The 5.4 % survived in three places for five days because it was **plausible**:
+a coverage gap is exactly the kind of thing a sparse-storage path is expected to
+have, so nobody asked what the sound value was. The question that broke it is the
+cheap one — *what does this number read when nothing is wrong?* — and the answer
+turned out to be an unambiguous zero over 1.7 M rows. **Before writing down a
+measured rate as a structural property, measure it on a window you have
+independently established is healthy.** Absent that control, "94.6 % coverage" and
+"5.4 % of the labels are detached" are the same reading.
+
+---
+
+## 2026-08-01 — ADDENDUM to the 25-day-desync entry: it is EPISODIC not chronic, the disposition is unchanged, and which offline work actually inherited it
+
+Three questions were put to the entry above. All three are answerable from data
+already on disk; none required new instruments.
+
+### 1. "Weeks old" and "clean shards read exactly 0.0000" do not conflict — the mechanism predicts both
+
+They look contradictory only if the defect is imagined as a continuous
+background rate. It is not. **A desynced Stockfish stays desynced permanently
+until the process is replaced** (PR #297's finding), so the per-engine rate is a
+STEP, not a drift: with `distributed_worker_sf_workers: 8`, one engine falling
+one search behind sends its ~1/8 share of labels to ~59 % no-PV and the shard
+reads ~0.074; the engine is replaced at the next worker session rebuild and the
+shard reads **exactly zero** again. The observable is therefore square waves
+separated by true zeros, which is precisely what the record shows:
+
+| stretch | shards | labelled rows | no-PV rate |
+|---|---|---|---|
+| 07-06 .. 07-09 | 962 | 1 741 587 | **0.000000** |
+| 07-19 | 150 | 270 815 | **0.000000** |
+| 33118-33387 (07-30 01:09-11:07) | 270 | 474 278 | **0.000000** |
+| 33721-33943 (07-31 04:59-13:06) | 223 | 391 995 | **0.000000** |
+
+**2 878 620 labelled rows across four separated quiet stretches, zero no-PV rows
+between them.** No chronic process produces that. "At least 25 days old" is a
+statement about the BUG's age — it existed and fired repeatedly from 07-04 —
+**not** about the data being continuously contaminated. Episodes identified:
+[07-04..07-05], [07-10..07-15], [07-30..07-31], with the same core/taper/hard-zero
+shape each time.
+
+### 2. It does NOT change the disposition, and the reason is structural
+
+The quarantine decision is about what is in the replay window NOW. **The window
+holds nothing older than 07-30 01:09** — 834 shards, ids 33118-33951, verified.
+The 1.5 M-row FIFO turns over in ~34 h, so every contaminated row from the July
+04-15 episodes left the window roughly two weeks ago. The pricing in the
+pre-registration above — 122 shards, 226 141 rows, 15.08 %, 59.6 % of exposure
+still ahead — was computed on the live tree and is untouched by this finding.
+
+**"Chronic, therefore this is just what the data is" would have been the right
+call had it been chronic. It is not, so it isn't.** An episodic fault with true
+zeros between episodes is an incident to clean up, which is what the decision
+assumed.
+
+### 3. Which offline work inherited it — and the one that did not
+
+The session's offline pools were built by copying live shards, so they carry the
+contamination of whatever window they were cut from. Gate applied to each:
+
+| pool | shards | rejected | rows rejected | share |
+|---|---|---|---|---|
+| `scratchpad/split/train_shards` (= `highdiv_shards`) | 774 | 113 | 211 162 | **15.15 %** |
+| `scratchpad/split/eval_shards` — **the held-out ruler** | 60 | 9 | 14 979 | **14.10 %** |
+| `scratchpad/split/lowdiv_shards` | 100 | **0** | 0 | **0.00 %** |
+
+The held-out set runs to shard 033951 and therefore contains **all eight
+episode-4 shards**, the worst in the tree (no-PV 0.476-0.646).
+
+**But the policy-memorisation and views-ladder findings survive this, on
+mechanism rather than on luck.** `scratchpad/policy_floor.py` scores
+`batch["policy_t"]` against the policy logits with the floor as the entropy of
+that same tensor — **`policy_target`, which comes from the net's own MCTS visit
+counts at the correct position.** The desync corrupts only the SF label block
+(`sf_wdl`, `sf_policy_target`, `sf_move_index`, `sf_p0_*`, `sf_volatility`); it
+never touches MCTS visits, because the search that produced them ran on the right
+board. No SF-derived quantity enters the excess-over-floor metric at all. The
+train/eval contamination shares are also near-equal (15.15 % vs 14.10 %), so even
+a hypothetical shared channel would not produce a differential between the arms
+that carry the finding.
+
+**The exposed direction is value/SF work, and the one run that mattered was
+already gated:** the value-optimism headline used `--shards 150` = 33802..33951,
+the gate rejected 33944-33951 plus 2 unevaluable, and the numbers were unchanged
+to four decimals (addendum of 2026-07-31). That check was made for the right
+reason and it holds.
+
+**Action for anyone re-cutting an offline pool:** run
+`scripts/quarantine_desync_shards.py --shard-dir <pool>` first and regenerate if
+it rejects anything. `eval_shards` and `train_shards` above should be re-cut
+before reuse — not because a published number is wrong, but because the next
+person to reach for them will not know.
+
+### Limits of the retrospective, stated
+
+The sweep reads `has_sf_multipv_raw == 0` over shard sets that happen to survive
+on disk: `data/scaleup_pool_512x16/replay_shards` (07-04..07-19),
+`train_trial_9c36d` (07-11), `scratchpad/quarantine_wedge_shards` (07-15),
+`train_trial_7cc7c` (06-07..06-17). **June is unreadable on this instrument** —
+176 of 255 shards predate the v2 sparse schema and carry no such array, so the
+field's absence cannot be distinguished from the fault. **There is no surviving
+shard set between 07-19 and 07-30**, which is exactly where the 07-27 "5.4 %"
+measurement sits, so that specific reading cannot be attributed to a named
+episode — only shown not to be structural. Sampling was every 2nd shard for the
+day-buckets and every 6th-12th for the set totals; episode boundaries are
+therefore accurate to a few shards, not exact.
+
+---
+
+## 2026-08-01 — REVIEW RESPONSE to the quarantine pre-registration: the yardstick passed on the state it exists to prevent. Criteria REPLACED, not amended.
+
+Independent review returned REQUEST CHANGES on the pre-registration two entries
+above. It endorsed the decision, the pricing and the reservation design; it
+rejected the observability layer, in three places, with the same shape each
+time — **a value written and never read.** That is the defect this whole
+workstream is about, and it was sitting in the tool built to fix it. The findings
+are accepted in full. **The success and KILL criteria below REPLACE the ones in
+the pre-registration entry; do not read that entry's list.**
+
+### What was actually broken
+
+1. **`--verify` returned PASS on "shards moved, reservation never installed."**
+   The pass predicate was `not rejects and max(miss) <= CLEAN_MAX`; the
+   reservation and the top shard id were *printed* and excluded from the
+   decision. Reproduced by killing the process in the one-call window between the
+   last move and the reservation install.
+2. **KILL clause 3 named an observation that cannot occur.** It waited for a
+   `[disk_buf] shard index collision` line. `_next_free_shard_path`
+   (`disk_buffer.py:1246`) logs only when it steps over a file that is STILL
+   PRESENT — which by construction never happens for an id that was moved away.
+   **The silent-reuse case is exactly the case that produces no log line.**
+3. **The manifest's `sha256` and `mtime` were write-only.** The entry sold the
+   manifest as the revert point *because* it recorded a digest; as shipped that
+   sentence described a field, not a control. Appending `GARBAGE` to a
+   quarantined shard and restoring it produced no complaint.
+4. **`--restore` ignored the manifest's own `shard_dir`**, and would happily
+   restore into any of the 8 sibling `replay_shards` dirs on this box that share
+   the `shard_NNNNNN.zarr` namespace.
+5. **Restore was not resumable and deleted the reservation first**, so an
+   interruption left the window half-restored AND unprotected.
+6. **The yardstick was one-sided**: deleting four CLEAN shards after a correct
+   apply still gave PASS. It detected leftover dirt, never over-removal.
+7. **An interrupted `--apply` wedged the tool** — manifest written last, so a
+   crash mid-move left shards quarantined with no manifest and `--restore`
+   raising a bare `FileNotFoundError`.
+
+### Fixed, and pinned
+
+`--verify` now runs five axes and **an axis it cannot evaluate is a FAIL, not a
+pass** — the same rule the shard gate applies to a shard it cannot read:
+
+| axis | catches |
+|---|---|
+| A no shard rejected by the gate | leftover contamination |
+| B max multipv-miss <= clean max | drift once new data arrives |
+| **C top shard id >= max quarantined id** | **the reservation being absent, i.e. silent id reuse** |
+| **D window matches the manifest's kept-list exactly** | **over-removal and botched moves** |
+| **E every quarantined shard matches its recorded digest** | tampering / bit-rot in the revert point |
+| F manifest `complete: true` | an interrupted apply |
+
+The manifest is now a **journal**: written with `complete: false` *before* the
+first move, with digests taken while the shards are still in the window, flipped
+to `true` only at the end. That makes an interrupted apply a resumable restore
+rather than an unidentifiable pile. `--restore` is idempotent by digest, refuses
+a foreign `shard_dir`, refuses a shard whose bytes moved, and removes the
+reservation only after every other shard is back — so no interruption leaves the
+window both un-restored and unprotected.
+
+**`tests/test_quarantine_desync_shards.py` — 17 tests, and they were mutation
+checked. Seven mutations, each killing only its own guard:**
+
+| mutation | test that died |
+|---|---|
+| verify axis C forced true | `test_verify_FAILS_when_the_reservation_is_missing` |
+| zero-row marker exemption removed | `test_verify_passes_after_a_correct_apply` |
+| manifest `shard_dir` binding removed | `test_restore_refuses_a_foreign_shard_dir` |
+| restore digest check removed | `test_restore_refuses_a_tampered_shard` |
+| verify axis D forced true | `test_verify_FAILS_on_over_removal` |
+| journal moved to after the moves | `test_the_journal_lands_before_the_first_move` |
+| verify axis E forced true | `test_verify_FAILS_on_a_tampered_quarantined_shard` |
+
+**⚑ CORRECTION — the interim control does NOT cover the copy it names, and an
+earlier revision of this paragraph said it did.** `judge()` re-implements the
+reject rule that `scripts/value_optimism.py` applies inline.
+`test_judge_matches_the_shipped_reject_rule` recomputes the verdict from
+`chess_anti_engine.eval.value_optimism` and compares it to `judge()`, so it pins
+`judge()` **against the axis functions and thresholds only**. It never imports,
+executes or observes `scripts/value_optimism.py`. Re-review demonstrated the
+hole: mutating that file's `multipv.value > multipv_miss_max` to `> 999.0`
+disables the shipped scorer's multipv axis — a change that **flips 118 of the 834
+live shards** — and all 17 tests still pass.
+
+The previous wording, "so a drift in either copy fails the suite", was **false**.
+That is the same defect shape as S1: a control sharing its source with the thing
+it checks, described as though it were independent. The only real fix is one
+shared predicate next to the thresholds in
+`chess_anti_engine/eval/value_optimism.py` — **a file this change is explicitly
+barred from touching** — so it stays an OPEN follow-up. **Until it lands, the
+three copies of this reject rule are genuinely unpinned against each other, and
+no test here will notice if the shipped scorer drifts.**
+
+### Success criteria — REPLACING the pre-registration's list
+
+**0 (NEW — the one that proves the window actually changed).** The previous
+criteria 2 and 3 proved only that the *step budget* did not move, which is
+near-tautological: the budget is `ceil(5.0 x ingested / 512)` and depends on
+ingest alone. Nothing observed the window. The free observation already exists —
+the first post-restart `progress.csv` row must show **`replay` ~ 1 273 501**
+(from 1 499 003), and `trainable_init.py:661`'s buffer-init line must print
+**`tracked_shards=713`** (712 data + 1 reservation) and **`total_pos=1273501`**.
+
+**1.** `--verify --quarantine-dir` exits 0 with **all six axes PASS**.
+
+> **⚑ THIS CRITERION FAILED ON ITS FIRST REAL RUN (2026-08-01) and has been REPLACED.** Axis B compared the kept maximum against `0.008032`, which was the `:.6f` rendering of that same maximum (`0.008032128514056224`), so it could only ever be False — it failed by 1.285e-07 on the window it was derived from. The window was correct; the instrument was not. See "SUCCESS CRITERION 1 **FAILED** on its first real run" at EOF for the diagnosis and the replacement.
+
+**⚑ This criterion is only meaningful BETWEEN the apply and the first eviction.**
+Once training resumes and `_enforce_window` starts evicting, the evicted shards
+read as `missing` against the manifest's kept-list and **axis D FAILs
+permanently** — correctly, since it is asserting an exact window that no longer
+exists. (New higher-id shards are already tolerated by the `extra` filter; only
+`missing` is unforgiving, and deliberately so, because that is what catches
+over-removal.) Run this criterion once, immediately after the apply and before
+the restart. **A post-restart axis-D FAIL is expected behaviour and is NOT the
+kill rule** — the kill rule is axis C, which keeps passing forever once the
+reservation holds.
+
+Note also that the `max multipv-miss <= 0.008032` clause is **tautological at
+apply time** — the kept maximum *is* 0.008032, set by exactly one shard
+(`033643`) — so it proves nothing until new data has arrived. It is retained as a
+drift monitor, not as evidence about the move.
+
+**2.** First 5 post-restart rows: `train_views_actual` in [4.90, 5.10] and
+`train_steps_used == ceil(5.0 * replay_positions_ingested / 512)` exactly. (Both
+confirmed decidable against the existing 68-row file: the formula matches 68/68
+and no row is outside the band. They are weak criteria, kept only as a guard that
+the step budget did not move.)
+
+### KILL — clause 3 REPLACED
+
+- `train_views_actual` outside [4.5, 5.5] on any of the first 5 iterations, or
+- `train_steps_used` off the formula by more than 1 step, or
+- **`--verify` axis C FAILS at any point, i.e. the highest live shard id falls
+  below 33951.** This replaces "any `[disk_buf] shard index collision` line",
+  which **cannot fire in the failure mode it was written for.** Axis C is
+  checkable on demand and does not depend on catching a log line that is never
+  emitted.
+- any `failed to load a TRACKED shard` naming the reservation.
+
+Revert while the window is still below cap (~26.8 iterations / 5.1 h); after
+refill the restored shards are the oldest and `_enforce_window` deletes them
+again.
+
+### Revert point — now with a path
+
+`data/desync_quarantine_20260801/` (same filesystem as the window, `/dev/sdd`, so
+the 122 moves are renames rather than a non-atomic ~0.5 GB copy), holding the 122
+shards plus `quarantine_manifest.json`.
+
+**⚑ `data/salvage/pre_restart_bundle_20260731` is NOT a substitute.** It was
+banked 12:54 with 833 shards — **before episode 4 (`033944`-`033951`, written
+13:33-13:48) existed.** Restoring from it would silently reinstate a window that
+never contained the eight worst shards and would lose everything written after
+12:54. The quarantine dir is the only artefact that can put this window back.
+
+### The exact commands
+
+```
+Q=data/desync_quarantine_20260801
+D='runs/pbt2_small/replay/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/replay_shards'
+
+# 0. commit the tool FIRST -- see below
+# 1. dry run, expect 122 shards / 226,141 rows / reservation shard_033951.zarr
+PYTHONPATH=. nice -n 19 python3 scripts/quarantine_desync_shards.py --shard-dir "$D"
+# 2. apply
+PYTHONPATH=. nice -n 19 python3 scripts/quarantine_desync_shards.py --shard-dir "$D" --quarantine-dir "$Q" --apply
+# 3. the deciding yardstick -- MUST exit 0 with six PASS
+PYTHONPATH=. nice -n 19 python3 scripts/quarantine_desync_shards.py --shard-dir "$D" --quarantine-dir "$Q" --verify
+# undo
+PYTHONPATH=. nice -n 19 python3 scripts/quarantine_desync_shards.py --shard-dir "$D" --quarantine-dir "$Q" --restore
+```
+
+**⚑ `scripts/quarantine_desync_shards.py` and its test MUST be committed before
+`--apply` runs.** They are currently untracked, and the revert path for a
+226 141-row window change would be one `git clean` from gone.
+
+### Method note
+
+Three separate mechanisms here were *correct* and *unread*: the reservation was
+installed properly and never checked; the digest was computed properly and never
+compared; the collision log line was reasoned about correctly and cannot fire.
+Each was written by someone who had just proved the mechanism worked — which is
+precisely when it feels unnecessary to ask what would happen if it stopped.
+**The question that finds this class of defect is not "is the mechanism right"
+but "what state would this report as healthy that isn't", and it has to be asked
+by someone other than the author.** It was, and it found three.
+
+---
+
+## 2026-08-01 — ⚑ SUCCESS CRITERION 1 **FAILED** on its first real run. The window was correct; the criterion was a float compared against its own rounded display.
+
+The quarantine executed cleanly — 122 shards to `data/desync_quarantine_20260801`,
+reservation installed, manifest complete, window 713 shards (712 data + 1
+reservation) / 1 273 501 rows, **exactly the pre-registered numbers**. Then the
+pre-committed yardstick returned **FAIL**, on axis B, on the very window the axis
+was derived from.
+
+**This entry records that failure as a failure.** The pre-registration is NOT
+being retouched to look like a pass. What follows is the diagnosis and the
+replacement criterion.
+
+### The reading
+
+```
+[PASS] A no shard rejected by the gate
+[FAIL] B max multipv-miss <= clean maximum   -- 0.008032 vs 0.008032
+[PASS] C index reservation holds (top 33951 >= quarantined max 33951)
+[PASS] D window matches the manifest (712 shards, 1,273,501 rows)
+[PASS] E quarantined shards intact (122 digests)
+VERDICT: FAIL   (exit 1)
+```
+
+At full precision:
+
+| quantity | value |
+|---|---|
+| `CLEAN_MAX_MISS_RATE` (the constant) | `0.008032` |
+| true max among kept (`shard_033643`) | **`0.008032128514056224`** |
+| the same number as a fraction | `16/1992` = `2/249` |
+| `max <= CONST` | **False** |
+| difference | **`1.285140562249515e-07`** |
+| `float(f"{0.008032128514056224:.6f}") == 0.008032` | **True** |
+
+**The constant was the `:.6f` rendering of the exact quantity it was compared
+against.** So `max <= CONST` could only ever be False. The bar was not merely
+tight; it was unpassable by construction — the mirror image of the S1 defect
+(a gate that cannot fail) two rounds earlier, now a gate that cannot pass.
+
+### This is instrument failure, and the record already said so BEFORE the run
+
+The distinction matters, because moving a threshold after seeing the number it
+rejected is exactly the post-hoc reading this protocol forbids. What licenses
+the fix is that **the criticism predates the reading**: the independent reviewer
+flagged this clause pre-apply, calling it *"tautological at apply time — the kept
+maximum IS 0.008032, defined by exactly one shard (`shard_033643`)"*, and that
+caveat was written into criterion 1 in the review-response entry **before**
+`--apply` ran. The record therefore already held that the clause carried no
+information about the apply. The failure confirmed the prediction; it did not
+prompt it.
+
+**Nothing about the window is in question.** Axes A, C, D and E — the four that
+test the actual disposition — all passed, and D matched the manifest to the row.
+
+### Why the rounding was the symptom and not the disease
+
+Patching the constant to `0.008032128514056224` would have turned the light
+green and left the real defect intact: **a bar taken from the maximum of the
+sample it judges cannot say anything about that sample.** It is vacuous when the
+constant sits at or above the max and unpassable when it sits below; which of
+the two you get is decided by a rounding mode, not by the data. And as a forward
+monitor it is worse than useless — the maximum of a fresh equal-sized draw from
+the *same clean distribution* exceeds a previous sample maximum roughly half the
+time, so it is a false-positive generator by construction.
+
+`CLEAN_MAX_MISS_RATE` has therefore been **deleted**, not widened. The measured
+value `0.008032128514056224` is a fact about this window and lives here, in the
+ledger, where facts belong; it is no longer a live threshold. The verify output
+still prints the kept maximum **at full precision and explicitly labelled
+`(diagnostic, not a bar)`** — rounding it for display is how the defect shipped.
+
+### The replacement — axis B, expressed non-circularly
+
+> **B — no post-apply shard carries desync signal (bar: exactly 0.000000)**
+
+Scope is **only shards written AFTER the apply**, identified as those absent
+from the manifest's `kept` list. `shard_033643`, which carries the historical
+maximum, is a *pre*-apply kept shard and is therefore **out of scope by
+construction** (verified: it is in the kept-list of 712).
+
+The bar is **exactly 0.000000**, and it is **not fitted to the window it
+judges**: on a schema-complete healthy window `sf_multipv_missing_rate` is
+exactly zero, measured over **2 878 620 labelled rows across four SEPARATED
+quiet stretches** (07-06..07-09, 07-19, shards 33118-33387, 33721-33943) — none
+of which is the kept set. A desynced engine cannot produce a near-zero rate: it
+drives its ~1/8 share of labels to ~59 % no-PV, so a single non-zero row in a
+2000-row shard is ~5e-4, some **500x** the benign ceiling (<1e-6) those
+stretches establish.
+
+This is **strictly tighter than the gate's 0.01**, which is the point: it catches
+a new episode *during its ramp*. The retrospective shows exactly why that
+matters — 07-04 read 0.00349 and 07-12 read 0.01497, so a 0.01 gate sees the
+episode only after it is already large.
+
+**Current reading on the live window: `N/A` — "no shard written since the apply;
+axis goes live on the first one". VERDICT: PASS, exit 0.**
+
+### ⚑ The emptiness exception, and why it is not an escape hatch
+
+Axis B clears on `N/A`, which is a deliberate hole in the UNCHECKED-is-a-FAIL
+rule introduced two rounds ago. The argument, written at the branch site in code
+as well as here:
+
+* **UNCHECKED** means the question has a truth value this run cannot see —
+  "does the reservation hold?" with no manifest. There is a fact; failing is the
+  honest answer to not knowing it.
+* **N/A** means the population is empty. "Every post-apply shard reads zero" over
+  an empty set is **vacuously TRUE**, not unknown — no shard could falsify it.
+  Failing would report a defect that cannot exist, and a yardstick that is red in
+  its own correct steady state gets ignored within a day. That is precisely how
+  the old axis B would have ended.
+
+The danger is *claiming* emptiness without proof, so emptiness is **proved**:
+every data shard in the window must be accounted for in the manifest's kept-list.
+If any kept shard is missing, the proof is void and the axis reverts to
+**UNCHECKED**, i.e. to failing. Residual limitation, stated: a post-apply shard
+written and then deleted without any kept shard also going missing would be
+invisible. Eviction cannot do that (oldest first, so kept shards go first), but
+an out-of-band delete could.
+
+### Pinned — and the pins were mutation-checked
+
+24 tests. Four new mutations, each killing only its own guard:
+
+| mutation | test that died |
+|---|---|
+| axis B forced to the `n/a` branch unconditionally | `test_a_dirty_post_apply_shard_cannot_reach_the_empty_branch` |
+| axis B bar loosened `> 0.0` → `> 0.01` (duplicating the gate) | `test_axis_B_FAILS_on_a_post_apply_shard_epsilon_above_zero` |
+| emptiness guard removed (missing shards no longer void the proof) | `test_axis_B_is_unchecked_when_emptiness_cannot_be_proved` |
+| `unchecked` branch relabelled `n/a` | same |
+
+The epsilon pair uses a **real float**, not a rounded literal on both sides —
+which is how the original defect shipped. One missing-MultiPV row in 2000 gives
+**0.0005**, twenty times *below* the gate, so axis A passes and only axis B
+catches it; the test asserts both, which is what proves B is strictly tighter
+than the gate rather than a restatement of it. A regression test builds a shard
+at exactly `2/249 == 16/1992 == 0.008032128514056224` — `shard_033643`'s exact
+rate — and asserts the verdict passes. `test_no_rounded_clean_maximum_constant_survives`
+asserts the deleted constant cannot come back.
+
+### Criterion 1, as it now reads
+
+> `--verify --quarantine-dir` exits 0 with every axis in {PASS, N/A}, where N/A
+> is reachable only for axis B and only while the kept-list matches exactly.
+
+Criteria 2 and 3 (step budget) are unchanged. The KILL rule is unchanged: **axis
+C**, which passes and keeps passing. Axis D's post-restart FAIL remains expected
+and documented.
+
+### Method note
+
+Three rounds, three defects, one shape: **a comparison whose two sides are not
+independent.** S1 was a gate whose pass predicate excluded the mechanism it
+guarded. Round two was a test that shared its source with the code it pinned.
+This one is a threshold that was literally the rounded printout of its own
+subject. Each was written immediately after proving the underlying mechanism
+worked — which is exactly when it feels unnecessary to ask what the comparison
+would do if the mechanism broke. **The generalisation worth keeping: when a bar
+is derived from a measurement, write down what it would take to fail it. If the
+answer is "nothing" or "anything", it is not a bar.**
