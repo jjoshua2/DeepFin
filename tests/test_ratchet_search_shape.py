@@ -782,6 +782,58 @@ def test_a_skipped_series_hands_its_budget_to_the_other(tmp_path) -> None:
         "skipped series never gave its share back"
     )
 
+    # THE SELF-MATCH PATH, which is the one that matters most: it fires when
+    # training is down, and it is a DIFFERENT skip branch from `nosnap` above.
+    # Removing `series_skipped` from just that branch survived a battery that
+    # only covered the day-1 case.
+    twin = _sandbox(tmp_path / "selfmatch")
+    snaps = twin / "data" / "ratchet" / "snapshots"
+    snaps.mkdir(parents=True)
+    # Byte-identical to the checkpoint today's snapshot will be copied from.
+    same = snaps / "ck_2026-07-31_iter409.pt"
+    same.write_text("candidate-net")
+    os.utime(same, (1, 1))
+
+    rc, out = _run_ratchet(twin)
+    assert rc == 0, out
+    assert "SKIPPED" in out, f"the self-match guard did not fire:\n{out}"
+    calls = (twin / "arena_calls.txt").read_text().splitlines()
+    assert len(calls) == 1, calls
+    m = re.search(r"--max-seconds (\d+)", calls[0])
+    assert m is not None, calls[0]
+    assert int(m.group(1)) > 1500, (
+        f"vs_prev was skipped as a self-match and vs_boot512 still only got "
+        f"{m.group(1)}s of 1800s — the branch that fires on training-down days "
+        "is exactly where the forfeited budget hurts most"
+    )
+
+
+def test_a_new_checkpoint_does_not_buy_a_second_arena_the_same_day(tmp_path) -> None:
+    """The loop's own day stamp is a GPU bound, not a convenience.
+
+    It looks redundant with the ratchet's "already done today" guard, and it is
+    not: that guard is keyed on today AND THE ITERATION, so the moment Ray
+    writes a newer checkpoint the ratchet sees no row for the new iter and runs
+    a fresh 30-minute 16-concurrent arena. Only ``$STATE`` stops the day at one.
+    Removing the check survived a battery that never advanced the checkpoint.
+    """
+    root = _sandbox(tmp_path)
+    rc, out = _run_one_poll(root)
+    assert rc == 0, out
+    assert _arena_launches(root) == 1
+
+    # Ray publishes a newer checkpoint, exactly as it does every ~11 minutes.
+    newer = root / "runs/pbt2_small/tune/train_trial_x/checkpoint_000479"
+    newer.mkdir()
+    (newer / "trainer.pt").write_text("candidate-net-479")
+
+    rc, out = _run_one_poll(root)
+    assert _arena_launches(root) == 1, (
+        "a newer checkpoint bought a second full arena on a day that already "
+        f"has its reading — that is the daily budget doubled:\n{out}"
+    )
+    assert len(_csv_rows(root)) == 1
+
 
 def test_both_series_still_split_the_budget(tmp_path) -> None:
     """The other direction: two live series must still get half each."""
