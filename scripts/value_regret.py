@@ -28,6 +28,10 @@ import torch
 from chess_anti_engine.encoding import model_encoding_kwargs
 from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
 from chess_anti_engine.eval.audit import PHASE_NAMES, load_audit_set, move_regrets
+from chess_anti_engine.eval.value_optimism import (
+    SF_EVAL_BUCKET_NAMES,
+    sf_eval_bucket,
+)
 from chess_anti_engine.inference import LocalModelEvaluator
 from chess_anti_engine.uci.model_loader import load_model_from_checkpoint
 
@@ -137,6 +141,13 @@ def main() -> None:
     ap.add_argument("--dump-per-position", default=None, metavar="PATH",
                     help="write per-position JSONL (fen, phase, top1 regret cp) for "
                          "paired checkpoint comparison via scripts/paired_compare.py")
+    ap.add_argument("--sf-strata", action="store_true",
+                    help="additionally break the SAME regret down by deep-SF evaluation "
+                         "of the position (lost/losing/balanced/winning/won), using the "
+                         "shared buckets in eval/value_optimism.py. Answers whether value "
+                         "RANKING degrades where the side to move is already lost. The "
+                         "headline number is unchanged — this only adds rows, so a "
+                         "historical value_regret figure stays comparable.")
     ap.add_argument("--min-pieces", type=int, default=8,
                     help="Minimum total pieces to score. DEFAULT 8 EXCLUDES "
                          "Syzygy-range (<=7-man) positions: the engine plays those via "
@@ -208,6 +219,26 @@ def main() -> None:
                       f"P90={float(np.percentile(v, 90)):7.1f} "
                       f">100cp={100 * float((v > 100).mean()):5.1f}% "
                       f">300cp={100 * float((v > 300).mean()):5.1f}%")
+
+    if args.sf_strata:
+        # The stratum comes from the deep-SF label, never from the net: the
+        # net's own opinion is the quantity under test and must not select the
+        # sample it is scored on.
+        buckets = np.array([sf_eval_bucket(float(p.best_cp)) for p in positions])
+        print("\n  --- by deep-SF evaluation of the position (RANKING axis) ---")
+        for b, name in enumerate(SF_EVAL_BUCKET_NAMES):
+            v = per_position[buckets == b]
+            v = v[~np.isnan(v)]
+            if not v.size:
+                continue
+            print(f"  SF {name:20s} n={v.size:5d} mean={float(v.mean()):6.1f} cp  "
+                  f"med={float(np.median(v)):6.1f} P90={float(np.percentile(v, 90)):7.1f} "
+                  f">300cp={100 * float((v > 300).mean()):5.1f}%")
+        print("  This is RANKING (which move the value head would play), not LEVEL. For the "
+              "level — is the head optimistic about losing positions — use "
+              "scripts/value_optimism.py, which scores production input planes; the "
+              "FEN-only inputs here leave 117 of 175 planes zero and compromise absolute "
+              "cp levels (docs/rl_loop_audit.md M10).")
 
 
 if __name__ == "__main__":
