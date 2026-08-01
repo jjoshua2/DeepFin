@@ -159,10 +159,12 @@ Consequential and not apparent from the code:
 Python 3.10+ with `from __future__ import annotations`; type hints on functions and
 dataclasses; tests in `tests/`. Write code that reads like the code around it.
 
-Run `./scripts/lint.sh <paths>` after editing; the gate is kept at zero findings
-repo-wide with no baseline. Only the **no-argument** form (and `--changed`) runs
-basedpyright at CI's whole-repo scope — naming paths narrows it to those files, so a
-scoped run structurally cannot see breakage the change caused in a file it did not open.
+Run `./scripts/lint.sh <paths>` after editing, **and `./scripts/lint.sh` with no
+arguments before committing**; the gate is kept at zero findings repo-wide with no
+baseline. Naming paths narrows basedpyright to those files, so a path-scoped run
+structurally cannot see breakage the change caused in a file it did not open — that is
+how `main` went red. Every invocation *without* paths (bare, `--changed`, `--fast`,
+`--deep`, `--slop`, `--all`) uses CI's whole-repo scope.
 Fix a new finding in the same commit or disable the rule in
 `pyrightconfig.json` if the whole category isn't worth the ceremony — there is no
 deferral queue, don't recreate one. basedpyright ignores mypy-style

@@ -29,15 +29,20 @@
 # opinions; treat the score as a drift signal, not a commit gate. Baseline
 # scores are saved in scripts/scb-baseline.json.
 #
-# basedpyright SCOPE is not the same as ruff/vulture scope. Naming paths narrows
-# basedpyright to those files, so a scoped run cannot see breakage the change caused
-# in a file it never opened. The no-argument form and --changed both run it at
-# pyrightconfig.json's whole-repo scope, which is what CI runs.
+# basedpyright SCOPE is not the same as ruff/vulture scope. NAMING PATHS is what
+# narrows it -- and only that. Every invocation without paths (bare, --changed,
+# --fast, --deep, --slop, --all) runs it at pyrightconfig.json's whole-repo scope,
+# which is what CI runs. A path-scoped run cannot see breakage the change caused in
+# a file it never opened, which is how main went red (PR #295).
+#
+# With --changed, ruff and vulture do narrow to the changed .py files; when the
+# change collected none, PATHS falls back to the full default list and they run
+# whole-repo too.
 #
 # Usage:
 #   scripts/lint.sh                     # gate on package + tests + scripts
 #   scripts/lint.sh path/a.py path/b.py # gate on given files (basedpyright scoped too)
-#   scripts/lint.sh --changed           # ruff/vulture on changed .py; basedpyright whole-repo
+#   scripts/lint.sh --changed           # changed/untracked .py (basedpyright: whole repo)
 #   scripts/lint.sh --fast [paths...]   # skip vulture
 #   scripts/lint.sh --deep [paths...]   # + skylos + ruff cleanup report (advisory)
 #   scripts/lint.sh --slop [paths...]   # also scb-check (verbosity/erosion)
@@ -64,7 +69,7 @@ for arg in "$@"; do
         --changed) USE_CHANGED=1 ;;
         --all) ;;  # noop: default behavior
         --help|-h)
-            sed -n '2,44p' "$0"
+            sed -n '2,49p' "$0"
             exit 0
             ;;
         *) PATHS+=("$arg"); USER_SET_PATHS=1 ;;
