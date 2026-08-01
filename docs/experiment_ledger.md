@@ -15158,3 +15158,655 @@ does NOT establish that seeding caused the degradation — only that it
 demonstrably did not prevent it. That is sufficient to stop treating "feed more
 seeds" as the remedy. The 63 seeds fed 2026-07-31 13:10 are far too recent to
 bear on this either way (see the HOLD on the remaining 381, task #87).
+
+---
+
+## 2026-07-31 — MEASUREMENT: the value head is SYMMETRICALLY compressed, not optimistic about losing. The +287 cp claim does not survive a non-tail-selected sample.
+
+**Type: instrument + readout. NO training-affecting change** — three new/extended
+offline scripts, no config key, no loss weight, no data-path edit. Recorded here
+because it replaces a number the ledger and memory have been reasoning from.
+
+### What was built
+
+| file | what |
+|---|---|
+| `chess_anti_engine/eval/value_optimism.py` | shared scorer: SF-eval buckets, exact production cp<->expected-score map, game-clustered bootstrap, the shuffled-net negative control, and a ruler-free shard-integrity gate |
+| `scripts/value_optimism.py` | CLI. Scores the value LEVEL on PRODUCTION replay rows, stratified by an SF eval of the row's own position, with the blended TARGET scored in the same buckets |
+| `scripts/value_regret.py --sf-strata` | additive flag on the existing VALUE yardstick: the same buckets on the RANKING axis, frozen audit set. Headline number unchanged, so historical `value_regret` figures stay comparable |
+| `tests/test_value_optimism.py` | 21 tests incl. the negative control, a POSITIVE control, and the integrity gate |
+
+**Why a new script rather than only a flag on `value_regret.py`.** `value_regret`
+scores value RANKING (1-ply deep-SF regret of the move the value head would
+play). This scores value LEVEL. Folding a level metric into the ranking yardstick
+would change what a historical "value_regret = N cp" means — the silent-ruler-
+change failure this repo already has on record. Two further blockers: the frozen
+audit set stores FENs, so 117 of 175 input planes are zero and ABSOLUTE cp bars
+measured there are compromised (rl_loop_audit M10), and it carries neither the
+game outcome nor the blended target, so it physically cannot answer head-vs-target.
+`value_optimism.py` feeds the net the stored `x` planes — the exact tensor
+training and selfplay used — so its absolute cp levels are NOT subject to M10.
+
+**The ruler, and its price: zero new Stockfish compute.** A selfplay row's SF
+label is the eval of the position AFTER that row's move, in the next mover's POV.
+So for two rows that are consecutive plies of one game, the EARLIER row's stored
+`sf_label_meta` eval is an eval of the LATER row's own position, already in its
+POV — the same one-ply shift `sf_p0_policy_target` uses. Verified before use:
+Spearman(P0 cp, that row's own `search_wdl` signal) = **+0.96** on sound shards.
+Labels are production's (~698k nodes, MultiPV 40, median depth 12).
+
+### Sample
+
+`checkpoint_000478` (trial 13a9f), newest 150 shards. **38,464 P0-paired rows
+over ~4,500 games**, from 263,136 scanned (14.6% — a row is paired only when its
+predecessor is the immediately preceding ply, which most are not because ~75% of
+plies are fast-ply and unrecorded). Realized blend read from the stage that
+resolves it: **game 0.35 / sf 0.45 / search 0.20**, `sf_wdl_frac` = 0.45 from
+`progress.csv` iter 478, NOT the yaml's decorative 0.50.
+
+**⚑ SCOPE LIMIT — shards <= 033943 only.** The 8 newest shards (033944-033951,
+written after the 07-31 13:06->13:34 restart) were REJECTED by the instrument's
+own integrity gate: their SF label block is detached from the rows it sits on
+(material~`sf_wdl` rank corr +0.63 -> -0.02 across the boundary). Handed off to a
+dedicated agent. **Do not extend any number below to the newest window rows.**
+
+### The stratified table (expected score W+0.5D, scored side's POV)
+
+| SF bucket | n | games | SF cp | SF ruler | net | target | outcome | net−ruler | target−ruler | net−target | net−ruler cp |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| lost(<=-300) | 6556 | 3523 | -891 | 0.045 | 0.096 | 0.048 | 0.027 | **+0.051** [+.049,+.053] | +0.002 | +0.049 | **+399** [+388,+409] |
+| losing(-300,-100] | 4509 | 2924 | -181 | 0.279 | 0.337 | 0.267 | 0.238 | +0.057 [+.055,+.060] | -0.012 | +0.070 | +48 [+46,+50] |
+| balanced(-100,+100] | 15458 | 4502 | 0 | 0.500 | 0.494 | 0.490 | 0.491 | -0.007 | -0.010 | +0.004 | -6 |
+| winning(+100,+300] | 4975 | 3114 | +181 | 0.721 | 0.647 | 0.706 | 0.738 | -0.074 | -0.015 | -0.059 | -61 |
+| won(>+300) | 6966 | 3658 | +879 | 0.956 | 0.891 | 0.945 | 0.967 | **-0.065** [-.068,-.062] | -0.011 | -0.054 | **-394** [-404,-384] |
+
+95% CIs are game-clustered bootstrap (rows within a game are correlated; a
+row-level bootstrap is several times too tight).
+
+### THE THREE RESULTS
+
+**1. The +287 cp claim does not survive. At a MATCHED ruler level it is +70 cp.**
+The original was measured at SF mean -300.9. Re-run with fine edges, the bucket
+`(-350,-250]` has mean SF **-298**, n=1412 over 1119 games:
+
+    net -227.3 cp vs SF -298 cp  ->  +70.3 cp  [+65, +75]
+    optimistic in 78.4%          (original claimed 77.5%)
+
+**The DIRECTION and FREQUENCY of the original claim reproduce almost exactly.
+The MAGNITUDE is ~4x too large** — tail-selection ("worst value mismatch per lost
+game") inflated the level, not the sign. `--min-pieces 8` moves it to +70.6, so
+it is not a tablebase artifact.
+
+**2. It is SYMMETRIC, so most of even the +70 is a measurement artifact, not a
+defect.** Bucketing on a noisy ruler regresses every extreme bucket toward the
+mean and manufactures apparent optimism when losing AND apparent pessimism when
+winning, for a perfect head. The mirror bucket says exactly that:
+
+    (-350,-250]  net-ruler  +0.071   /  +70.3 cp
+    (+250,+350]  net-ruler  -0.093   /  -88.0 cp
+    tail asymmetry (lost + won, where the artifact cancels): **-0.0124**
+
+The directional component is ~-18 cp at |300| and -0.012 in score units over the
+full tails — i.e. **slightly PESSIMISTIC on net**. The value head is compressed
+toward the draw in both directions. "The net does not know it is losing" is only
+half true: it equally does not know it is winning, and by a bit more.
+Corroborating on the independent RANKING axis (`value_regret --sf-strata`, frozen
+set, ck478): mean regret `lost` 99.1 cp, `balanced` 53.9, `won` **142.7** — also
+U-shaped, also worse on the WINNING side.
+
+**3. The optimism is in the HEAD, not the TARGET — and the recorded causal
+mechanism is refuted on the training distribution.** `|target - SF ruler|` is
+<= 0.015 in every bucket; `net - target` carries the whole error (+0.049 lost,
+-0.054 won). And the mechanism ("the game-outcome half comes from a
+PID-handicapped opponent, so losing positions were survivable") predicts the
+outcome column should sit ABOVE the objective eval when losing. It sits BELOW it:
+at SF -298 the realized outcome is **0.109 vs objective 0.167**; at +298 it is
+**0.878 vs 0.833**. Recorded results are MORE decisive than the objective eval,
+in both directions — the opposite of survivability.
+
+**⚠ SCOPE OF THAT REFUTATION.** This measures the TRAINING distribution. The
+original claim was measured on positions mined from real Cheese games, and
+[[value_head_overoptimistic_on_loss_positions]] says in its own text that the
+head "is calibrated on its own distribution and optimistic against real
+opposition". Nothing here can refute the Cheese-position claim; it refutes the
+*level* on the data the head actually trains on, and it removes the target as the
+suspect. Testing the Cheese claim needs Cheese-game positions scored with a move
+stack — the existing blindspot FEN lists are both FEN-only (M10) and
+tail-selected, so they cannot do it.
+
+### Negative control — SHIPPED AS A TEST
+
+`--shuffle-control` permutes the net's evaluations across rows, destroying the
+position<->evaluation association and nothing else.
+
+    control statistic (spread of bucket mean net score):  0.7944 -> 0.0050  (159x)
+    every bucket's mean net score collapses onto 0.497-0.502
+
+**⚑ AND THE CONTROL CONDEMNS THE ORIGINAL CLAIM'S HEADLINE STATISTIC.** Under the
+shuffle, "optimistic in the lost bucket" reads **94.3% — HIGHER than the real
+87.2%**. A net that ignores the position entirely produces a bigger
+optimistic-fraction than the real one, because the ruler moved and the prediction
+did not. **An optimistic-fraction, and any single-bucket `net - ruler`, is not
+evidence of anything.** Only the spread / tail-asymmetry statistics discriminate,
+and `tests/test_value_optimism.py` pins both plus a POSITIVE control (an injected
+one-sided +0.10 must survive the cancellation; a symmetric compression must not).
+
+### Commands
+
+    PYTHONPATH=. nice -n 19 python3 scripts/value_optimism.py \
+      --checkpoint <ckpt>/trainer.pt --shards 150 --gpu-mem-fraction 0.10 \
+      --batch-size 128 --bootstrap 2000
+    # matched to the original claim's ruler level:
+    #   --edges=-900,-600,-450,-350,-250,-150,-50,50,150,250,350,450,600,900
+    # negative control: --shuffle-control    TB-excluded split: --min-pieces 8
+    PYTHONPATH=. nice -n 19 python3 scripts/value_regret.py \
+      --checkpoint <ckpt>/trainer.pt --sf-strata --gpu-mem-fraction 0.12
+
+Dumps: `scratchpad/value_optimism_ck478{,_fine,_control,_min8}.json`.
+
+### Cost
+
+**Zero new Stockfish.** The ruler is labels the shards already carry. GPU:
+5 forward-only passes at `--gpu-mem-fraction 0.10-0.12`, `nice -n 19`, concurrent
+with nothing (training DOWN). ~25 min GPU total, inside the ~30 min/day
+out-of-training budget.
+
+### What it would take to act on this
+
+Nothing yet, and that is the finding. There is no directional losing-position
+defect on the training distribution large enough to chase, and the target — the
+suspect the seeding and distillation proposals were built on — is clean against
+the objective ruler in every bucket. Before any value work is justified by
+"the head is optimistic when losing", it needs a measurement on REAL-OPPONENT
+positions with a move stack, which does not exist. The cheapest route is to
+record `x` planes (not FENs) during Cheese matches and run this scorer on them;
+that is a selfplay-recording change, not a training change, and it would make the
+one claim this instrument cannot reach falsifiable.
+
+
+---
+
+## 2026-07-31 — CORRECTION to the value-optimism entry above (same day, PR #296 review). Two inference errors; one of them INVERTED a conclusion.
+
+The instrument passed independent review (P0 shift verified by an algebraic POV
+identity, median residual 1.3e-5; blend reconstruction verified against the live
+`soft_cross_entropy` target tensor to 1.0e-7; integrity gate verified to exclude
+exactly the 8 bad shards; 9/9 reintroduced defects caught by the tests). **The
+code held. The claims did not.** Both errors are mine and both are corrected
+here rather than by editing the entry above.
+
+### ERROR 1 — the paired set is 100% SELFPLAY, and that inverts claim 4
+
+Measured, and now printed by the tool on every run:
+
+    window rows:  selfplay 158719 (64.0%)   curriculum 89464 (36.0%)
+    PAIRED rows:  selfplay  38464 (100.0%, pairing rate 24.23%)
+                  curriculum    0 (  0.0%, pairing rate  0.00%)
+
+The ply-gap guard needs two rows that are consecutive plies of one game.
+Curriculum games never produce such a pair, so the exclusion is **structural,
+not statistical** — and the entry above also gave the wrong reason for the 14.6%
+pairing rate ("~75% of plies are fast-ply and unrecorded"): 36.0% of the
+exclusion is this population filter, not ply sparsity.
+
+**Why it inverts the conclusion: the PID-handicapped Stockfish plays ONLY in
+curriculum games.** So "the handicap does not make losing positions survivable"
+was measured on the one population where the mechanism cannot operate.
+
+The tool now carries an arm that can see it — the row's OWN label as the ruler,
+no pairing and no model needed, so it covers every labelled row and splits by
+`is_selfplay`. Outcome minus objective eval, same ruler, both populations:
+
+| SF bucket | selfplay out-ruler | curriculum out-ruler |
+|---|---|---|
+| lost(<=-300) | **-0.006** [-0.009,-0.003] | **+0.212** [+0.202,+0.222] |
+| losing(-300,-100] | **-0.013** [-0.023,-0.004] | **+0.098** [+0.089,+0.106] |
+
+At the matched level (bucket `(-350,-250]`): selfplay -0.026, curriculum
+**+0.193** [+0.183,+0.203]. From positions deep Stockfish scores as lost,
+curriculum games actually scored **0.274 against an objective 0.062**.
+
+**CLAIM 4 OF THE ENTRY ABOVE IS WITHDRAWN AND INVERTED. The
+handicapped-opponent mechanism is CONFIRMED, hard, on the population that has a
+handicapped opponent.** `train/losses.py:459-463` already says so in a code
+comment ("SF is often wrong about *outcomes* here ... the handicapped opponent
+fails to convert"); I measured against it without reading it.
+
+**Everywhere the entry above says "the training distribution", read "the
+selfplay subset (64% of window rows, 100% of the paired set)".**
+
+### ERROR 2 — the regression-to-the-mean argument has the wrong SIGN
+
+I wrote that most of the +70 cp was a bucketing artifact. RTM requires
+`E[true | ruler in an extreme bucket]` to be LESS extreme than the ruler. The
+realized outcome is an unbiased draw of exactly that quantity, and **it is MORE
+extreme in both tails** (lost: ruler 0.0453 vs outcome 0.0275; won: 0.9558 vs
+0.9673). My own `out` column said so and I read past it. The bias runs the other
+way: an outcome-perfect head would read **-0.018 pessimistic** in the lost
+bucket, so the head's compression is real and LARGER than the entry above
+claimed.
+
+Three further defects in how `tail_asymmetry` was quoted:
+
+- **Its null is not zero.** Under this instrument's own shuffle control it is
+  **-0.0051** [-0.0150,+0.0040] — 37% of the -0.0138 I quoted as a finding.
+- **A perfect head's null is also not zero**: **-0.0064**, leaving an excess of
+  only -0.0074, whose CI overlaps the shuffle null. **Not resolvable.**
+- **The -0.0124 I quoted was the wrong pair.** With the fine edges it is
+  `<=-900` + `>+900` — the SATURATED extremes — not the +-300 mirror pair it was
+  printed under, which sums to -0.022. Fixed: the tool now prints the pair by
+  name and refuses to let the two be confused.
+
+### The corrected primary result
+
+**`net - target` is the primary axis, not `net - SF_ruler`.** Both sides are
+measured on the same row and neither is computed from the bucketing variable, so
+a head that fit its target perfectly reads zero in every bucket under ANY
+bucketing. It is artifact-free by construction, which the ruler-relative axis is
+not. At the matched level (SF -297.6, n=1412 / 1119 games):
+
+    net - target  =  +0.0854 score  [+0.0785, +0.0922]   =  +108.7 cp
+    mirror (+297.7) =  -0.0855      [-0.0932, -0.0778]   =   -98.6 cp
+    mirror-pair tail sum: -0.0001
+
+Default edges: lost **+0.0489** [+0.0468,+0.0510], won **-0.0541**
+[-0.0569,-0.0512], tail sum **-0.0052**.
+
+So: **the value head IS materially compressed toward the draw relative to its
+own target — ~+0.086 in expected score (~109 cp) at |SF| ~ 300 — and that is
+real, not an artifact. But it is SYMMETRIC: the directional component is
+-0.0001 at the +-300 mirror pair and -0.0052 over the default tails.** There is
+no *losing-position-specific* head defect.
+
+### What survives, what dies
+
+| claim | status |
+|---|---|
+| +287 cp -> **+70.3 cp** [+65,+75] vs the ruler at a matched level; direction and frequency (78.4% vs 77.5%) reproduce | **SURVIVES** |
+| "most of even the +70 is a measurement artifact" | **WITHDRAWN** — the artifact runs the other way; the compression is real and larger (+108.7 cp against the head's own target) |
+| no DIRECTIONAL losing-position defect | **SURVIVES**, on the stronger axis: net-target tail sum -0.0001 (mirror) / -0.0052 (default edges) |
+| the TARGET is clean against the objective ruler (\|target-ruler\| <= 0.015) | **SURVIVES**, but only on the selfplay subset |
+| "the handicap mechanism is refuted" | **WITHDRAWN AND INVERTED** — curriculum lost-bucket outcome exceeds the objective eval by **+0.212** |
+| optimistic-fraction is not evidence (shuffle control gives 94.3% > real 87.2%) | **SURVIVES** |
+
+### Tool changes shipped with this correction
+
+- `_load_rows` prints the `is_selfplay` composition of the window AND of the
+  paired set, and shouts when the paired set is single-population. The inference
+  error is now impossible to make silently.
+- `outcome_calibration` / `perfect_head_tail_asymmetry` / `tail_asymmetry_ci`:
+  the arm that can see the handicap, the null, and a CI.
+- `net - target` printed as a labelled PRIMARY block; the asymmetry line names
+  its tail pair and prints both nulls.
+- `resolve_blend_knobs`: `sf_wdl_temperature` now also read REALIZED from
+  progress.csv (it is logged); `search_wdl_frac` and the dampen knobs have no
+  realized column anywhere, so the yaml and the trial's `params.json` are
+  required to AGREE and the run aborts if they do not. Absent keys are a hard
+  error rather than passing as neutral (`reco_diff misses absent keys` shape).
+- `losses.py:443-447`'s over-unity renormalisation is mirrored exactly; the
+  `--max-rows` prefix (biased, shards are in game order) is now a seeded uniform
+  subsample; the TB-inclusion default is stated at run time, not only in `-h`.
+- Tests 21 -> 33, including a rig whose tail-asymmetry null is genuinely
+  non-zero. The previous test drew `sf_cp` from a symmetric uniform and set the
+  outcome equal to the ruler, which **forces the null to zero by construction**,
+  so it could not have caught the error it was written to catch. New file
+  `tests/test_value_optimism_load_rows.py` covers the shard-reading paths over
+  synthetic zarr (ply gap, shard boundary, rejection, mate POV, all-rows arm).
+
+### Method note worth keeping
+
+**A structural filter is a population filter until proven otherwise.** The
+pairing rule looked like a sparsity constraint and was described as one for a
+whole readout. The check costs one line — `is_selfplay` was in every shard the
+whole time — and it decided whether a documented mechanism was confirmed or
+refuted. Same family as "diff the file you measured against production's":
+before quoting a population, print its composition.
+
+
+---
+
+## 2026-07-31 — ADDENDUM to the value-optimism entries above: SF-desync contamination audit, and a scope-wording correction that matters
+
+Raised in review round 2: the integrity gate keys on the material~`sf_wdl`
+correlation, which collapses only under TOTAL detachment, while the 07-30/07-31
+Stockfish UCI desync (PR #297 owns the cause) is PARTIAL — labels on the right
+rows answering a DIFFERENT position. Three of the four episodes would sail
+through. **The concern is correct and the gate has been tightened. The published
+numbers are unaffected, and that is now measured rather than argued.**
+
+### 1. The detector, independently reproduced
+
+Rate of labelled rows where `sf_move_index` equals the lowest set bit of
+`sf_legal_mask` (the silent `legal_indices[0]` fallback firing). Over all **830**
+labelled shards of trial 13a9f:
+
+    baseline median 0.080, p90 0.094      |      72 shards > 0.15, 137,490 rows
+
+    episodes (shard ids / mtime / rate):
+      33388-33453   07-30 11:38..13:39   0.17-0.64   (26 shards, 5 bursts)
+      33586-33636   07-30 19:58..07-31 01:41   0.16-0.97   (38 shards)
+      33944-33951   07-31 13:33..13:48   0.76-0.96   (8 shards)
+
+Matches the review's numbers. **And it confirms the review's point about the old
+gate**: episodes 1-2 sit at material~`sf_wdl` 0.14-0.45, far above the 0.25
+reject line, while this rate reads 0.16-0.97. Neither axis subsumes the other.
+
+### 2. ⚑ SCOPE-WORDING CORRECTION — the published run's window was NARROWER than the entry above implies
+
+The first entry says *"Scope limit: shards <= 033943"*. That describes the
+EXCLUSION, and it reads like the run used every shard up to 033943. **It did
+not.** The run was `--shards 150`, i.e. the 150 NEWEST shards:
+
+    published window = shard_033802 .. shard_033951
+
+Episodes 1 and 2 (33388-33636) are **entirely below 33802** and were never in
+the sample. Inside the window the only shards over 0.15 are 33944-33951 — the
+exact 8 the attachment axis already rejected.
+
+**Contamination admitted to the published numbers: 0 poisoned rows.** Not "small";
+zero. Anyone re-deriving from "shards <= 033943" would sweep in ~64 poisoned
+shards that the actual run never touched. **Quote the window, not the exclusion.**
+
+### 3. Gate tightened to two axes, and the headline re-run
+
+`sf_bestmove_is_first_legal_rate` is now a second reject axis (default 0.15);
+a NaN on either axis is a reject, because a gate that could not evaluate a shard
+has not cleared it. Re-run of the published 150-shard window:
+
+| | before (1 axis) | after (2 axes) |
+|---|---|---|
+| shards rejected | 8 | 10 (8 + 2 unevaluable, <30 labelled rows) |
+| paired rows | 38,464 | 38,455 |
+| net-target lost / won | +0.0489 / -0.0541 | **+0.0488 / -0.0541** |
+| net-target tail sum | -0.0052 | **-0.0052** |
+| matched level (SF -297.6) | +0.0854 = +108.7 cp | **+0.0854 [+0.0789,+0.0919] = +108.7 cp** |
+| net-SFrul matched level | +70.3 cp [+65,+75] | **+70.3 cp [+65,+75]** |
+| curriculum lost out-ruler | +0.212 [+0.202,+0.222] | **+0.212 [+0.202,+0.221]** |
+| selfplay lost out-ruler | -0.006 | **-0.006 [-0.009,-0.003]** |
+
+Unchanged to four decimals, as expected once the window is known.
+
+### 4. The confound MEASURED, not argued — a controlled wide-window arm
+
+"Zero contamination in this window" is a fact about the window, not evidence
+about the mechanism. So the proposed confound was tested directly: the SAME
+400-shard window (33552-33951, containing 46 poisoned shards, **13.1% of scanned
+rows**), run gated and ungated.
+
+| quantity | UNGATED (contaminated) | GATED | clean 150-shard |
+|---|---|---|---|
+| selfplay lost out-ruler | **+0.030** [+.027,+.032] | **-0.005** [-.007,-.002] | -0.006 [-.009,-.003] |
+| selfplay won out-ruler | **-0.044** [-.047,-.041] | **+0.014** [+.012,+.016] | +0.016 [+.013,+.019] |
+| curriculum lost out-ruler | +0.222 [+.216,+.228] | **+0.218** [+.211,+.224] | +0.212 [+.202,+.221] |
+| curriculum losing out-ruler | +0.096 | +0.094 | +0.098 |
+| net-target lost | +0.0360 | **+0.0484** | +0.0488 |
+| net-target won | -0.0469 | **-0.0505** | -0.0541 |
+
+**The predicted confound is REAL and behaves exactly as the review described —
+and it lands on the SELFPLAY arm, not the curriculum one.** A wrongly-labelled
+row entering the `lost` bucket is not really lost, so its outcome looks better:
+ungated selfplay reads **+0.030** where the truth is **-0.005**, a spurious
+"outcomes beat the eval" of the same sign and shape as the curriculum finding.
+That is precisely the trap, and it fires.
+
+**It cannot account for the curriculum result.** Gating moves curriculum lost by
+**0.004** (+0.222 -> +0.218), ~2% of the effect, because contamination pulls a
+bucket toward the global mean and can manufacture ~+0.035 — not **+0.21**. At
+13.1% contamination, i.e. 4x the share the review estimated for a wider range,
+the curriculum number barely moves. **CONFOUND CLOSED. The
+handicapped-opponent finding stands.**
+
+Second, unasked-for result worth keeping: **contamination ATTENUATES `net-target`**
+(+0.036 ungated vs +0.048 gated). So a contaminated run UNDERSTATES the head's
+compression — the primary axis is biased toward the null by this defect, never
+away from it.
+
+### 5. Why two axes, stated for the record
+
+- `sf_label_attachment_corr` — material vs the shard's own label. Catches TOTAL
+  detachment (~0.00 vs a ~+0.65 baseline). **Blind to partial desync**: episodes
+  1-2 hold 0.14-0.45.
+- `sf_bestmove_is_first_legal_rate` — catches PARTIAL desync (0.16-0.97 vs a
+  0.080 baseline). **Blind to total detachment**, because a scrambled but
+  internally consistent label block still carries a real bestmove.
+
+Neither is redundant; a shard must clear both. Pinned by
+`test_desync_gate_rejects_what_the_attachment_axis_cannot`, which builds a shard
+with a PERFECT attachment correlation and a 0.6 desync rate and asserts the
+attachment axis alone would pass it. Tests 33 -> 36.
+
+### Method note
+
+**A gate tuned on the episode that produced it detects that episode.** The
+attachment axis was written from shards 33944+, where the failure was total, and
+it silently defined "corrupt" as "total". Three earlier, subtler episodes of the
+SAME root cause scored 0.14-0.45 and would have been admitted by a gate whose
+author believed it was checking label integrity in general. **When a gate is
+derived from one incident, go find the other instances of that incident before
+trusting the threshold** — here they were 500 shards back in the same trial, and
+the separating statistic was a different one entirely.
+
+
+---
+
+## 2026-08-01 — ADDENDUM 2 to the value-optimism entries: the desync threshold was fitted the same way the method note warns against. Gate axis replaced; two numbers corrected.
+
+Review round 3. **Both original blocking findings were confirmed fixed** and the
+realized-vs-yaml design accepted. Four narrow defects, none of which changes a
+published number.
+
+### 1. My own method note applied to my own replacement threshold
+
+The previous addendum ends with: *"a gate tuned on the episode that produced it
+detects that episode."* The `desync <= 0.15` axis I then shipped was picked from
+those same four episodes, and it leaks. Dense over all 834 shards:
+
+    bestmove-is-first-legal:  sound max 0.1496  |  corrupt min 0.1505
+    -> every threshold sits in a 0.0009 gap between two ADJACENT order
+       statistics of the same quantity.  Headroom over accepted p90: 1.7x.
+
+Seven shards (33391, 33394, 33395, 33431, 33626, 33627, 33629) are ADMITTED
+while sitting inside runs of rejects — 33431 has four rejects on each side. My
+stated justification ("clean p90 0.094 ... lowest episode shard 0.16") matched
+neither side of the real distribution.
+
+**Axis replaced with `has_sf_multipv_raw == 0` over SF-labelled rows, at 0.01.**
+Same 834 shards, measured here:
+
+    multipv-miss:  accepted max 0.008032, p90 0.000300, MEDIAN EXACTLY 0.000000
+                   rejected min 0.010511
+    -> a real 0.0025 gap.  Headroom over accepted p90: **33x**.
+    The seven leaked shards read 0.0295-0.0635 on it — all rejected.
+
+**Attachment axis KEPT**: it is independently load-bearing for exactly one
+shard, **033481** (attachment +0.0201, multipv-miss 0.000000, desync
+unevaluable at 16 labelled rows) — the total-detachment mode. Confirmed by
+exhaustive cross-tab: ATT-only rejects = {33481}, MV-only = 28, and
+**DESYNC-only = {} (empty)**. Union att|multipv = 120 shards = union of all
+three, so the desync axis catches nothing the other two miss.
+
+**The desync rate is DEMOTED to a printed diagnostic** (`--desync-max` now
+defaults to 1.0 = never reject). It is a real signal with no honest threshold;
+the run prints its median and max over ACCEPTED shards so a future corruption
+mode the enforced axes cannot see would still surface. Enforcement is opt-in
+with a stated reason.
+
+Also fixed, all flagged in review: NaN-as-reject is now pinned on the
+attachment axis too (it previously escaped mutation), the 30-row floor is
+pinned as `SF_AXIS_MIN_ROWS`, `--multipv-miss-max 1.0` gives the escape hatch
+symmetric to `--attachment-min -2`, and an unevaluable axis now names its reason
+(`field_missing` / `too_few_rows` / `degenerate` / `unusable_input`) instead of
+printing one indistinguishable `nan` under which a pre-schema shard would be
+swallowed wholesale.
+
+**A test caught a real bug in the new detector while it was being written**:
+`sf_multipv_missing_rate` defaulted its denominator to the rows that HAVE a
+MultiPV block, forcing the rate to 0.0 by construction — a detector that could
+only ever report "clean". Fixed and pinned.
+
+### 2. Re-run under the new gate — every published number unchanged
+
+The accepted set in the published window is identical (10 shards / 15,005 rows
+rejected, 38,455 paired rows), because multipv-miss over accepted shards there
+is **0.000000**:
+
+    net-target  lost +0.0488 [+0.0468,+0.0509]   won -0.0541 [-0.0569,-0.0513]
+                tail sum -0.0052
+    matched level (SF -297.6): +0.0854 [+0.0789,+0.0919] = +108.7 cp
+    net-SFrul   matched level +70.3 cp [+65,+75]; mirror -88.0 cp
+    curriculum lost out-ruler +0.212 [+0.202,+0.221]
+    selfplay   lost out-ruler -0.006 [-0.009,-0.003]
+    desync DIAGNOSTIC over accepted shards: median 0.0798, max 0.1100
+
+### 3. ⚑ MY CONFOUND ARGUMENT WAS UNSOUND AS WRITTEN — replaced
+
+Addendum 1 argued: *"at 13.1% contamination the curriculum number barely
+moves."* That conflates a WINDOW-level contamination share with the curriculum
+bucket's actual EXPOSURE, and the two are far apart because poisoned shards are
+not compositionally like clean ones. Measured on the 400-shard window:
+
+    poisoned shards: 91.8% selfplay      clean shards: 65.5% selfplay
+    lost-bucket exposure to poisoned shards:
+        selfplay   18.0%      curriculum   2.5%
+
+**The curriculum arm was never subjected to 13.1%.** The comparison I drew does
+not license the conclusion I drew from it.
+
+**Replaced with an assumption-free bound**, which asks only "how much would be
+needed" and claims nothing about how contamination distributes. If a fraction
+`c` of the curriculum lost bucket carries a label for a different position, its
+outcome is drawn from the curriculum-wide mean (0.4494) rather than the bucket's
+ruler (0.0628), so the observed excess is `c * (0.4494 - 0.0628)`:
+
+    c = 0.2179 / (0.4494 - 0.0628) = 0.564
+    -> manufacturing the finding from a true zero requires **56.4%** of the
+       curriculum lost bucket to be desynced, against **2.5% observed**.
+
+**CONFOUND CLOSED, on a sound argument this time.** The attenuation corollary
+(contamination biases `net - target` toward the null, never away) is unaffected
+and stands.
+
+### 4. Two counts corrected
+
+- **52 poisoned shards** in the 400-shard window under the old gate, not the 46
+  in addendum 1. My own run had printed 52; I recounted from episode ranges
+  instead of reading the tool's output. (Under the new gate it is 62.)
+- The JSON dump hardcoded `"paired_set_is_selfplay_only": True` instead of
+  deriving it from the measured `paired_curriculum == 0` — this repo's signature
+  defect, in a machine-readable artifact, where it would have kept asserting
+  selfplay-only after the pairing logic changed. Now derived, with the two raw
+  counts emitted alongside it.
+
+Minor, both taken: the outcome-calibration block now says in its printed header
+that its ruler is the **P1** (after-the-move) eval, a different ruler from the
+head/target table's P0; and
+`test_net_minus_target_is_free_of_the_bucketing_artifact` no longer runs with
+`target == net`, which made the quantity zero by construction and pinned the
+field's identity rather than the claim. It now uses a noisy-but-unbiased head,
+so `net - target` is a real random variable whose per-bucket mean must still be
+zero while `net - SF_ruler` is driven far from zero on the same rows.
+
+Tests 36 -> 41.
+
+### Method note, second attempt
+
+The first note said: *a gate tuned on the episode that produced it detects that
+episode.* True, and I then did exactly that again — picked the replacement
+threshold from the same four episodes, and shipped a cut sitting in a 0.0009 gap
+between adjacent order statistics.
+
+**The operational form: a threshold is only defensible if you have plotted the
+two distributions it separates and can state the GAP and the HEADROOM.** "It
+rejects the bad shards I know about" is not a property of the threshold, it is a
+property of the sample it was read off. 0.15-on-desync and 0.01-on-multipv
+reject overlapping sets on this data; only one of them would survive a shard
+that is corrupt in a slightly different way, and the number that says which is
+33x versus 1.7x — not the reject count.
+
+
+---
+
+## 2026-08-01 — ADDENDUM 3 (final, PR #296 APPROVED): four factual corrections to addendum 2, and the circularity caveat that completes the method note.
+
+Review round 4: APPROVE (12/12 original + 7/7 new mutations caught, zero
+escapes, every published number independently reproduced). **No number moves
+here.** These are wrong sentences.
+
+### 1. The `033481` / "ATT-only" claim was stale — it described the PRE-FLOOR code
+
+Addendum 2 justified keeping the attachment axis by "uniquely load-bearing for
+exactly one shard, 033481 (attachment +0.0201, multipv-miss 0.000000)".
+Recomputed against the code as shipped: **`ATT-only` is EMPTY.** Shard 033481 has
+**16 rows**, and once `SF_AXIS_MIN_ROWS = 30` was applied to
+`sf_label_attachment_corr` — a change made in the SAME commit — its attachment
+reads `too_few_rows`, not `+0.0201`. The number was measured before the floor
+existed and quoted after.
+
+**The axis is still kept, and the justification is restated on grounds a reject
+count cannot express — said plainly, because the count-based criterion that
+demoted the desync axis would condemn this one on this data:**
+
+- **Mechanism.** It detects a genuinely different failure: the label block
+  landing on the wrong ROWS, which leaves every per-row field internally
+  consistent and can therefore coexist with a perfect MultiPV rate. Redundancy
+  against the corruption modes present in THIS trial is not redundancy against
+  the next one.
+- **Its own separation is honest and not threshold-created.** Lowest ACCEPTED
+  shard **+0.4189** (p10 +0.6092) against detached shards at ~0.00 (median
+  +0.1477, max **+0.2497**): the 0.25 line sits inside a **0.169** gap.
+
+### 2. Headroom is 22.2x, not 33x
+
+Anchors reproduce exactly (accepted max 0.008032, first rejected 0.010511, gap
+0.002478), but the accepted p90 is **0.000450**, not 0.000300. My 0.000300 came
+from a pre-floor accepted set and is not reproducible under any definition;
+both "accepted by the full gate" and "accepted by the MultiPV axis alone" give
+n=712 and p90 0.000450. **0.01 / 0.000450 = 22.2x.**
+
+### 3. Counts
+
+- Union att|multipv = **122** shards (not 120); union of all three is also 122,
+  so the desync axis still adds nothing.
+- The 400-shard confound window holds **64 dirty shards / 117,120 rows =
+  16.3%** under the new gate (not 62). The old-gate figure of 52 stands.
+
+### 4. ⚑ THE 0.01 THRESHOLD IS ALSO PARTLY FITTED — and the non-circular argument was already in the docstring
+
+The 0.008032 -> 0.010511 gap **exists only after removing the 122 shards the
+threshold rejects**. Quoting it as the justification moves the circularity up one
+level rather than removing it. Sensitivity:
+
+    0.005 -> 128 rejects   0.008 -> 123   0.009 -> 122   0.010 -> 122
+    0.020 -> 114           0.050 ->  98
+
+The 0.008-0.01 plateau is why the exact value barely matters — but that is a
+robustness statement, not a justification.
+
+**The non-circular argument, now promoted to primary in both the constant's
+comment and the docstring: the sound distribution has a HARD FLOOR AT ZERO.**
+**89.9% of accepted shards read EXACTLY 0.000000**; median 0.000000, p99
+0.004603. Every labelled row is supposed to carry its candidate list, so a
+materially nonzero rate is anomalous *wherever* the cut is placed. That argument
+survives deleting the threshold. The gap and headroom are now stated as
+secondary and explicitly flagged as partly circular.
+
+Contrast worth keeping: the bestmove-is-first-legal rate has **no floor** — it
+sits at ~0.08 on sound shards for ordinary reasons — which is exactly why no
+honest threshold exists on it and why it is a diagnostic.
+
+### Method note, final form
+
+Addendum 1: *a gate tuned on the episode that produced it detects that episode.*
+Addendum 2: *a threshold is only defensible if you can state the GAP and the
+HEADROOM between the two distributions it separates.*
+
+**Addendum 3, the caveat that completes it: the gap and headroom must be
+computed on a set that is NOT DEFINED BY THE THRESHOLD ITSELF, or the
+circularity simply moves up a level.** "Accepted shards max out at X" where
+"accepted" means "below the threshold" is a tautology wearing a measurement's
+clothes. The escapes from it are (a) an external definition of the clean set,
+(b) a threshold-free property of the sound distribution — a hard floor, a mass
+point, a physical bound — or (c) a sensitivity curve showing the answer is flat
+across a plateau. This gate now leans on (b) and reports (c); (a) is unavailable
+because there is no independent list of clean shards.
+
