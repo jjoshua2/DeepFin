@@ -7,6 +7,8 @@ import subprocess
 import termios
 import threading
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -29,6 +31,26 @@ def _stockfish_child_nice(current_nice: int, configured_nice: int) -> int:
 
 class StockfishTimeoutError(RuntimeError):
     """Raised when Stockfish stdout doesn't deliver a line within the deadline."""
+
+
+class StockfishDesyncError(RuntimeError):
+    """Raised when a protocol section was abandoned and the stream is unsafe.
+
+    A search that raises part-way (deadline expiry is the realistic one) leaves
+    the engine still calculating: its ``info``/``bestmove`` lines arrive AFTER
+    we stopped reading and sit in the pty buffer. The next ``search`` sends its
+    own ``position``/``go`` and then reads — and the first ``bestmove`` it sees
+    is the ABANDONED query's. The engine is silently one search behind from
+    then on, permanently, and every result it returns is a real Stockfish
+    search of the WRONG position. That failure is invisible downstream: the
+    label's own legality mask, node count and depth are all computed by the
+    caller or by the engine's genuine work, so it reads as a sane label.
+
+    So an abandoned protocol section poisons the engine: every later protocol
+    call raises this instead of returning a stale result. Callers must replace
+    the engine (``StockfishPool`` does this automatically). Wrong-and-silent is
+    downgraded to absent-and-loud, which is the only safe direction here.
+    """
 
 
 @dataclass
@@ -178,6 +200,20 @@ class _SearchInfoAccumulator:
 
 
 class StockfishUCI:
+    # Class-level default so the guard holds for an instance built without
+    # __init__ (tests drive the parser through object.__new__).
+    #
+    # This one default FAILS OPEN, which is the inverse of the absent-and-loud
+    # principle the rest of this class is built on, and that asymmetry is worth
+    # stating rather than hiding. It is safe only because of what "unknown
+    # state" can mean HERE: __init__ sets the instance attribute before the
+    # process is spawned, so any object still reading the class default has
+    # never owned a Stockfish process and therefore has no abandoned output to
+    # inherit. Failing closed would not protect a real engine; it would only
+    # make every test double permanently unusable. If a future change can leave
+    # a LIVE engine on the class default, this must flip to True.
+    _desynced: bool = False
+
     def __init__(
         self,
         path: str,
@@ -197,6 +233,10 @@ class StockfishUCI:
         self.nice = min(19, max(0, int(nice)))
         self.read_timeout_s = float(read_timeout_s)
         self._lock = threading.Lock()
+        # Set by _protocol_section when a command was sent but its terminating
+        # token was never consumed. Read without the lock (a single bool store)
+        # so a poisoned engine is reported even while another thread holds it.
+        self._desynced = False
 
   # Stockfish's stdout switches to block-buffered when stdin is a pipe,
   # which causes the `uci` response (~1.5 KB) to never reach us — the
@@ -259,6 +299,38 @@ class StockfishUCI:
             except subprocess.TimeoutExpired:
                 pass  # kill didn't finish before timeout — leave the zombie
 
+    @property
+    def desynced(self) -> bool:
+        """Whether a protocol exchange was abandoned and the stream is unsafe."""
+        return self._desynced
+
+    @contextmanager
+    def _protocol_section(self) -> Generator[None]:
+        """Guard one send-then-read-to-terminator exchange.
+
+        Refuses to start on a poisoned engine, and poisons the engine if the
+        exchange is abandoned part-way — see ``StockfishDesyncError``.
+
+        ``BaseException``, not ``Exception``: a ``CancelledError`` (Python 3.8+
+        derives it from ``BaseException``) or a ``KeyboardInterrupt`` leaves the
+        very same unread ``bestmove`` behind as a deadline expiry does.
+
+        A raise before the first byte is written (a malformed FEN rejected by
+        ``_send``) also poisons, which is stricter than strictly necessary. That
+        direction is deliberate: the cost is one engine restart, and the
+        alternative is reasoning per call site about how far the exchange got.
+        """
+        if self._desynced:
+            raise StockfishDesyncError(
+                "this engine abandoned an earlier protocol exchange and is one "
+                "search behind; replace the process instead of reusing it",
+            )
+        try:
+            yield
+        except BaseException:
+            self._desynced = True
+            raise
+
     def set_nodes(self, nodes: int) -> None:
   # nodes are passed via `go nodes X`, so changing the attribute is sufficient.
         with self._lock:
@@ -269,7 +341,7 @@ class StockfishUCI:
         COLD, independent search — needed when re-evaluating one position at
         several node budgets, else the earlier search's hash warm-starts the
         later ones and overstates their agreement (Codex #125)."""
-        with self._lock:
+        with self._lock, self._protocol_section():
             self._new_game_locked()
 
     def _new_game_locked(self) -> None:
@@ -349,7 +421,7 @@ class StockfishUCI:
         their agreement — the same hygiene scripts/blindspot_deepsf_gate.py
         applies between admission verdicts.
         """
-        with self._lock:
+        with self._lock, self._protocol_section():
             if fresh:
                 self._new_game_locked()
             if syzygy_path is not None:
