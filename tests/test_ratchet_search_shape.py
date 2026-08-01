@@ -1043,24 +1043,35 @@ def test_the_iteration_parse_survives_checkpoint_000000(tmp_path) -> None:
     silently reads 0, and every CSV row for that day carries an empty iter
     column. Executes the real line out of the script rather than asserting on
     its text.
+
+    BOTH scripts parse it, and the loop's copy was NOT covered when this test
+    only read the ratchet's: reverting `ratchet_loop.sh` alone survived the
+    whole battery. Its consequence is smaller — `${iter:-0}` maps the empty
+    string to 0 and the default `RATCHET_MIN_ITER=5` skips iteration 0 either
+    way, so today the divergence is a log line reading `iter=` — but it becomes
+    a real skip/no-skip difference the moment `RATCHET_MIN_ITER=0`, and two
+    copies of one parse that only one test covers is how they drift apart.
     """
     import subprocess
 
-    src = RATCHET_SH.read_text(encoding="utf-8")
-    line = next(
-        ln for ln in src.splitlines() if ln.startswith("iter=$(basename ")
-    )
-    for name, want in (
-        ("checkpoint_000000", "0"),
-        ("checkpoint_000042", "42"),
-        ("checkpoint_000478", "478"),
-        ("checkpoint_001000", "1000"),
-    ):
-        out = subprocess.run(
-            ["bash", "-c", f'ck="{name}"\n{line}\nprintf "%s" "$iter"'],
-            cwd=str(tmp_path), capture_output=True, text=True, check=True,
-        ).stdout
-        assert out == want, f"{name} parsed as {out!r}, expected {want!r}"
+    for path in (RATCHET_SH, LOOP_SH):
+        src = path.read_text(encoding="utf-8")
+        line = next(
+            ln for ln in src.splitlines() if ln.strip().startswith("iter=$(basename ")
+        )
+        for name, want in (
+            ("checkpoint_000000", "0"),
+            ("checkpoint_000042", "42"),
+            ("checkpoint_000478", "478"),
+            ("checkpoint_001000", "1000"),
+        ):
+            out = subprocess.run(
+                ["bash", "-c", f'ck="{name}"\n{line.strip()}\nprintf "%s" "$iter"'],
+                cwd=str(tmp_path), capture_output=True, text=True, check=True,
+            ).stdout
+            assert out == want, (
+                f"{path.name}: {name} parsed as {out!r}, expected {want!r}"
+            )
 
 
 def _slope_fixture(tmp_path, rows: list[tuple[str, int, float, int]]):
