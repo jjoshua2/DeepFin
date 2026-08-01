@@ -270,7 +270,17 @@ def test_print_summary_survives_an_unflushed_process_death(tmp_path):
     Elo after 6 complete pairs:`` header -- the reading was computed and thrown
     away. Negative control: dropping ``flush=True`` from print_summary's last
     line makes this test fail.
+
+    ``137`` here is chosen by the child's own ``os._exit(137)`` -- it stands for
+    the SIGKILL the ratchet's ``timeout -k`` delivers, but nothing in this test
+    is timed, so the exit code is deterministic and any other value means the
+    child died before it got there. The child therefore gets an explicit
+    ``PYTHONPATH``: it is launched by path, so ``sys.path[0]`` is ``tmp_path``
+    and ``cwd`` alone does NOT make ``scripts`` importable. Relying on the
+    ambient ``PYTHONPATH`` made this pass only under ``PYTHONPATH=. pytest``
+    and fail under the bare ``python -m pytest`` CI runs.
     """
+    import os
     import subprocess
     import sys
 
@@ -290,9 +300,13 @@ def test_print_summary_survives_an_unflushed_process_death(tmp_path):
         rc = subprocess.call(
             [sys.executable, str(script)], stdout=fh, stderr=subprocess.STDOUT,
             cwd=str(ROOT),
+            env={"PYTHONPATH": str(ROOT), "PATH": os.environ.get("PATH", ""),
+                 "HOME": os.environ.get("HOME", "")},
         )
-    assert rc == 137
     text = log.read_text()
+    # Report what the child actually said; a bare `assert rc == 137` reads like
+    # a timing flake when it is really an import that never reached os._exit.
+    assert rc == 137, f"child exited {rc} instead of reaching os._exit(137):\n{text}"
     # This is the literal pattern daily_gate_ratchet.sh greps for.
     elo_lines = [ln for ln in text.splitlines() if ln.startswith("[arena] Elo:")]
     assert elo_lines, (
