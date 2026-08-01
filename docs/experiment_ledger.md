@@ -20156,3 +20156,130 @@ worked — which is exactly when it feels unnecessary to ask what the comparison
 would do if the mechanism broke. **The generalisation worth keeping: when a bar
 is derived from a measurement, write down what it would take to fail it. If the
 answer is "nothing" or "anything", it is not a bar.**
+
+---
+
+## 2026-08-01 — the SAME defect a fourth time, and the one-line change that removes the class: `judge()` now takes its row count from the buffer, not from a proxy
+
+Re-review of the axis-B replacement returned APPROVE and independently
+re-verified the live window read-only (713 / 1 273 501 / 712 data + 1
+reservation / D matching to the row / 122 digests intact → PASS, exit 0). It also
+confirmed the `N/A` branch is load-bearing: forcing it unconditionally turns an
+epsilon-dirty window into PASS exit 0 and kills three tests. The epsilon pair was
+re-run on **real production shards** — `0.000500751126690035`, one missing
+MultiPV row among 1997, with `judge()` returning `reject=False` on that same
+shard, so axis B is provably tighter than the gate rather than a restatement.
+
+**And it found a route to `N/A` I had not anticipated. It is the same defect
+shape as the previous three.**
+
+### The hole
+
+`judge()` read its row count from the `priority` array. `rows == 0` sets
+`is_marker`; `data` excludes markers; axis B's `new_shards` is drawn from `data`;
+axes A and D read `data` too. So the emptiness proof quantified over
+**non-marker shards, not over the directory.**
+
+Review built a post-apply shard with **2000 real rows in `x`, a 60.1 % no-PV
+rate — worse than anything in the quarantined 122 — and no `priority` array.**
+Result: `data shards: 5, reservations: 2`, axis B printing *"no shard written
+since the apply"*, **VERDICT PASS, exit 0**, while `shard_positions` reported
+2000 rows that `DiskReplayBuffer` would have trained on.
+
+Reachability through today's writers is nil — `priority` is in
+`_REQUIRED_STORAGE_FIELDS`, `prune_storage_arrays` synthesizes it when absent
+(`shard.py:611-613`), and all three writers go through
+`save_local_shard_arrays`. But hand-built shards, `convert_shards_v2_threats.py`
+output, symlinked salvage/seed shards, or any schema change can produce it, and
+the consequence is a **silent PASS on a poisoned window** — the one outcome this
+tool exists to prevent.
+
+### The fix, and why it is a one-liner rather than a patch
+
+```
+rows = int(np.asarray(z["priority"][:]).shape[0]) if "priority" in keys else 0
+->
+rows = shard_positions(path)
+```
+
+`shard_positions` is what `DiskReplayBuffer._scan_existing_shards` uses to decide
+what the window holds. Reading it makes this tool's notion of "zero rows"
+**definitionally the buffer's**, rather than a proxy that agrees with it today.
+That removes the class — any future divergence between `priority` and the real
+row count simply cannot express itself here — instead of patching the one
+instance review happened to construct.
+
+Pinned by `test_a_rowful_shard_without_priority_is_not_a_marker` (200 rows, no
+`priority`, must be `is_marker=False` **and** rejected on its own merits),
+`test_the_escape_hatch_cannot_produce_a_silent_pass` (end-to-end: the verdict
+must go red), and `test_a_genuine_zero_row_shard_is_still_a_marker` (the fix must
+not break the reservation). Reverting the one line kills the suite.
+
+### ⚑ A test of mine passed for the wrong reason, and a mutation caught it
+
+Worth recording separately because it is the same lesson one level up. My first
+readability test asserted only `do_verify(...) == 1` after corrupting a shard.
+Forcing the readability axis to `pass` left the suite **green** — because axis D
+*also* fails on that shard (an unreadable shard reads as `missing`), so the exit
+code was 1 either way. The test was satisfied by a mechanism other than the one
+it named.
+
+Fixed by asserting the **axis state** rather than the exit code, which required
+extracting `read_window()` so axis 0 is reachable in isolation rather than only
+through `do_verify` where other axes mask it. Both mutations now kill it.
+**An exit code is an OR over every axis; asserting on it can only ever pin the
+disjunction, never the term you meant.**
+
+### Three residual limitations, now recorded in the code beside the axis
+
+* **(i)** a post-apply shard written and then deleted without any kept shard also
+  going missing is invisible to axis B. Eviction cannot do it (oldest first);
+  an out-of-band delete could.
+* **(ii)** the emptiness proof quantifies over `data`, i.e. non-marker shards —
+  which is safe **only because** the row count is now the buffer's own number.
+  Recorded as the reason the line reads the way it does, so re-proxying it does
+  not silently reopen the hole.
+* **(iii) ⚑ THE KEPT WINDOW HAS NO INTEGRITY CONTROL AT ALL.** A kept shard
+  mutated **in place** with an unchanged row count passes every axis: A only
+  checks it is under the gate, B excludes kept shards by design, D compares names
+  and row counts only, E covers just the quarantined copies. Review rewrote kept
+  `033500` to a 0.005 no-PV rate — **half the gate** — and the verdict stayed
+  PASS. **Deliberately NOT fixed here**: shards are write-once, and B's scoping is
+  correct because kept shards legitimately read non-zero (the deliberately
+  retained tapers do). But the kept window is what training actually consumes,
+  and nothing in this tool would notice it changing underneath us. That is an
+  open gap, not a closed one.
+
+### Reading a red verify — the operator paragraph
+
+Now in `do_verify`'s docstring, because a red yardstick has to be interpretable
+without reading the source. Three reds are **expected** once training resumes:
+
+* **axis D FAILs permanently after the first eviction** — it asserts an exact
+  window that `_enforce_window` starts dismantling. Run it once, between the
+  apply and the restart.
+* **a post-apply shard with <30 labelled rows reads `nan` and fails BOTH A and
+  B** (`SF_AXIS_MIN_ROWS`; unevaluable is a reject). Historically **4 of 834**
+  shards were that small, so expect occasional false reds at about that rate.
+* **axis 0 fires on an unreadable shard**, which may be one mid-write rather than
+  a corrupt one. It is now a FAIL line rather than a traceback.
+
+The axis that is never expected to be red, and that means what it says, is
+**C** — the index reservation. That is why it is the KILL rule.
+
+### State
+
+Live window re-verified under the fixed read: **713 shards / 1 273 501 rows,
+PASS, exit 0.** 28 tests. No production shard touched; no `--apply`, no
+`--restore`, training still down.
+
+### Method note
+
+Four instances, one class: **a comparison whose two sides are not independent.**
+A pass predicate that excluded the mechanism it guarded; a test sharing its
+source with the code it pinned; a threshold that was the rounded printout of its
+own subject; and now a population defined by a proxy for the quantity that
+decides membership. Each time the local patch was obvious and each time it would
+have left the class intact. **The standard that actually worked was the reviewer's:
+prefer the change that makes the wrong answer inexpressible over the change that
+makes this wrong answer go away.** Applied here it cost one line.

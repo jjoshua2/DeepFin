@@ -331,12 +331,18 @@ def test_reserving_the_top_id_protects_every_lower_one(window: Path, tmp_path: P
 
 
 def _axis_state(window: Path, quar: Path | None, letter: str) -> tuple[str, str]:
-    """(state, detail) for one verify axis, by leading letter."""
-    paths = qds.iter_shard_paths(window)
-    verdicts = [qds.judge(p) for p in paths]
-    top = max((qds.shard_index(p) for p in paths), default=-1)
-    checks = qds._verify_checks(window, quar, verdicts, top)
-    return next((s, d) for lab, s, d in checks if lab.startswith(letter))
+    """(state, detail) for one verify axis, by leading letter.
+
+    Routes through the same reader `do_verify` uses, so every axis -- including
+    the readability one -- is reachable in isolation. Asserting on the exit code
+    alone is not enough: axis D also fails on a corrupt shard, so an exit-code
+    test passes whether or not the readability axis works.
+    """
+    verdicts, unreadable = qds.read_window(window)
+    top = max((qds.shard_index(p) for p in qds.iter_shard_paths(window)), default=-1)
+    checks = qds._verify_checks(window, quar, verdicts, top, unreadable)
+    return next(((s, d) for lab, s, d in checks if lab.startswith(letter)),
+                ("absent", "no such axis"))
 
 
 def test_axis_B_is_not_applicable_before_any_post_apply_shard(
@@ -451,3 +457,78 @@ def test_no_rounded_clean_maximum_constant_survives() -> None:
     delete it, not to widen it.
     """
     assert not hasattr(qds, "CLEAN_MAX_MISS_RATE")
+
+
+# --------------------------------------------------------------------------
+# the marker-misclassification escape hatch (closed by reading shard_positions)
+
+
+def _strip_array(path: Path, name: str) -> None:
+    """Delete one array from a written shard, leaving the rest intact."""
+    shutil.rmtree(path / name)
+
+
+def test_a_rowful_shard_without_priority_is_not_a_marker(tmp_path: Path) -> None:
+    """The reviewer's escape hatch: 2000 real rows, no `priority`, 60% no-PV.
+
+    When `judge()` took its row count from `priority` this read as 0 rows, was
+    classified `is_marker`, and dropped out of `data` -- so axes A, B and D never
+    saw it while `DiskReplayBuffer` would have trained on every row. The row
+    count now comes from `shard_positions`, which is the buffer's own number.
+    """
+    d = tmp_path / "w"
+    d.mkdir()
+    _write(d, 300, n=200, miss_frac=0.601, attached=False)
+    sp = d / "shard_000300.zarr"
+    _strip_array(sp, "priority")
+    assert shard_positions(sp) == 200, "the buffer still sees 200 rows"
+    v = qds.judge(sp)
+    assert not v.is_marker, "a shard with rows is not an index reservation"
+    assert v.rows == 200
+    assert v.reject, "and it must be rejected on its own merits"
+
+
+def test_the_escape_hatch_cannot_produce_a_silent_pass(
+    window: Path, tmp_path: Path,
+) -> None:
+    """End-to-end: the misclassified shard must turn the verdict red, not green."""
+    quar = tmp_path / "q"
+    assert _apply(window, quar) == 0
+    assert qds.do_verify(window, quar) == 0
+    _write(window, 108, n=200, miss_frac=0.601, attached=False)
+    _strip_array(window / "shard_000108.zarr", "priority")
+    b_state, detail = _axis_state(window, quar, "B")
+    assert b_state != "n/a", f"the emptiness claim must not survive this: {detail}"
+    assert qds.do_verify(window, quar) == 1
+
+
+def test_a_genuine_zero_row_shard_is_still_a_marker(window: Path, tmp_path: Path) -> None:
+    """The fix must not break the reservation it exists alongside."""
+    quar = tmp_path / "q"
+    assert _apply(window, quar) == 0
+    res = qds.judge(window / "shard_000107.zarr")
+    assert res.is_marker
+    assert res.rows == 0
+
+
+# --------------------------------------------------------------------------
+# an unreadable shard is a FAIL line, not a traceback
+
+
+def test_an_unreadable_shard_fails_without_a_traceback(
+    window: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    quar = tmp_path / "q"
+    assert _apply(window, quar) == 0
+    (window / "shard_000100.zarr" / ".zgroup").write_text("NOT JSON")
+    # Assert the AXIS, not just the exit code: axis D also fails here (the
+    # unreadable shard reads as `missing`), so `rc == 1` alone would pass even
+    # with the readability axis disabled -- which is exactly what a mutation
+    # showed when this test first checked only the exit code.
+    state, detail = _axis_state(window, quar, "0")
+    assert state == "fail", detail
+    assert "shard_000100.zarr" in detail
+    rc = qds.do_verify(window, quar)
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "every shard in the window is readable" in out

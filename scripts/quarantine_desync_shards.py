@@ -167,7 +167,24 @@ def judge(path: Path) -> ShardVerdict:
         if "has_sf_wdl" in keys
         else np.zeros(0, dtype=bool)
     )
-    rows = int(np.asarray(z["priority"][:]).shape[0]) if "priority" in keys else 0
+    # ⚑ `shard_positions`, NOT a proxy for it. This is the row count
+    # `DiskReplayBuffer._scan_existing_shards` uses to decide what the window
+    # holds, so "zero rows" here is DEFINITIONALLY "zero rows to the buffer".
+    #
+    # It used to read `priority`, which is a proxy, and the gap was an escape
+    # hatch: a shard with 2000 real rows in `x` and no `priority` array read as
+    # 0 rows, was classified `is_marker`, and dropped out of `data` — so axes A,
+    # B and D never saw it. Review built exactly that shard at a 60.1% no-PV
+    # rate, worse than anything in the quarantined 122, and --verify printed
+    # "no shard written since the apply" and exited 0 while the buffer would
+    # have trained on all 2000 rows. Not reachable through today's writers
+    # (`priority` is in `_REQUIRED_STORAGE_FIELDS` and `prune_storage_arrays`
+    # synthesizes it), but hand-built shards, offline converters, symlinked
+    # salvage/seed shards and any schema change can produce it, and the failure
+    # is a silent PASS on a poisoned window — the one outcome this tool exists
+    # to prevent. Reading the buffer's own number removes the class rather than
+    # this instance of it.
+    rows = shard_positions(path)
 
     if "has_sf_multipv_raw" in keys:
         miss, miss_st = _axis(
@@ -541,8 +558,26 @@ def do_restore(shard_dir: Path, quar_dir: Path) -> int:
     return 0
 
 
+def read_window(shard_dir: Path) -> tuple[list[ShardVerdict], list[str]]:
+    """Judge every shard, collecting read failures instead of raising on them.
+
+    A shard that cannot be read fails closed either way, but a stack trace is
+    the wrong surface for something an operator reads to decide on a restart —
+    and it may be a shard mid-write rather than a corrupt one.
+    """
+    verdicts: list[ShardVerdict] = []
+    unreadable: list[str] = []
+    for sp in iter_shard_paths(shard_dir):
+        try:
+            verdicts.append(judge(sp))
+        except Exception as e:
+            unreadable.append(f"{sp.name}: {type(e).__name__}: {e}")
+    return verdicts, unreadable
+
+
 def _verify_checks(
     shard_dir: Path, quar_dir: Path | None, verdicts: list[ShardVerdict], top: int,
+    unreadable: list[str] | None = None,
 ) -> list[tuple[str, str, str]]:
     """Every verify axis, as one of four explicit states.
 
@@ -563,10 +598,12 @@ def _verify_checks(
     """
     data = [v for v in verdicts if not v.is_marker]
     rejects = [v for v in verdicts if v.reject]
-    checks: list[tuple[str, str, str]] = [
-        ("A no shard rejected by the gate",
-         "pass" if not rejects else "fail", f"{len(rejects)} rejected"),
-    ]
+    checks: list[tuple[str, str, str]] = []
+    if unreadable:
+        checks.append(("0 every shard in the window is readable", "fail",
+                       f"{len(unreadable)} unreadable: {unreadable[:3]}"))
+    checks.append(("A no shard rejected by the gate",
+                   "pass" if not rejects else "fail", f"{len(rejects)} rejected"))
 
     man: dict[str, Any] | None = None
     err = ""
@@ -649,10 +686,35 @@ def _verify_checks(
         # `test_a_dirty_post_apply_shard_cannot_reach_the_empty_branch`;
         # forcing this branch to fire unconditionally kills the suite.
         #
-        # Residual limitation, stated: a post-apply shard that was written and
-        # then deleted WITHOUT any kept shard also going missing would be
-        # invisible here. Eviction cannot do that (it takes the oldest first, so
-        # kept shards go before new ones), but an out-of-band delete could.
+        # RESIDUAL LIMITATIONS of this axis, stated so the next reader does not
+        # have to rediscover them:
+        #
+        # (i)  a post-apply shard written and then deleted WITHOUT any kept shard
+        #      also going missing is invisible here. Eviction cannot do that (it
+        #      takes the oldest first, so kept shards go before new ones), but an
+        #      out-of-band delete could.
+        #
+        # (ii) the emptiness proof quantifies over `data` — NON-MARKER shards —
+        #      not over the directory. Anything classified `is_marker` is outside
+        #      it. That is now safe only because `judge()` takes its row count
+        #      from `shard_positions`, the buffer's own number; when it read
+        #      `priority` instead, a 2000-row shard with no `priority` array was
+        #      misclassified as a marker and this axis reported "no shard written
+        #      since the apply" on a 60.1% no-PV window. Recorded because it is
+        #      the reason the row count is read the way it is, and re-proxying it
+        #      would silently reopen the hole.
+        #
+        # (iii) THE KEPT WINDOW HAS NO INTEGRITY CONTROL AT ALL. A kept shard
+        #      mutated IN PLACE with an unchanged row count passes every axis:
+        #      A only checks it is under the gate, B excludes kept shards by
+        #      design, D compares names and row counts only, and E covers just
+        #      the quarantined copies. Review rewrote kept `033500` to a 0.005
+        #      no-PV rate — half the gate — and the verdict stayed PASS. This is
+        #      NOT a bug to fix here: shards are write-once, and B's scoping is
+        #      correct because kept shards legitimately read non-zero (the
+        #      deliberately-retained tapers do). But the kept window is what
+        #      training actually consumes, and nothing in this tool would notice
+        #      it changing under us.
         b_state, b_detail = "n/a", (
             "no shard written since the apply; axis goes live on the first one")
     checks.append((
@@ -697,9 +759,28 @@ def _verify_checks(
 
 
 def do_verify(shard_dir: Path, quar_dir: Path | None) -> int:
-    """The deciding yardstick."""
+    """The deciding yardstick.
+
+    READING A RED VERIFY. Three reds are expected rather than alarming once
+    training resumes, and knowing which is which should not require reading this
+    file:
+
+    * **axis D FAILs permanently after the first eviction.** It asserts an exact
+      window that `_enforce_window` starts dismantling the moment training runs.
+      New higher-id shards are tolerated; evicted kept shards read as `missing`
+      and cannot be. Run D once, between the apply and the restart.
+    * **a post-apply shard with fewer than 30 labelled rows reads `nan`** and
+      fails BOTH A and B, because `SF_AXIS_MIN_ROWS` makes the axes unevaluable
+      and unevaluable is a reject. Historically 4 of 834 shards were this small,
+      so expect occasional false reds at this rate.
+    * **axis 0 fires on an unreadable shard**, which may be a shard being written
+      concurrently rather than a corrupt one.
+
+    The axis that is never expected to be red, and that means what it says, is
+    **C** — the index reservation. It is the KILL rule for that reason.
+    """
     paths = iter_shard_paths(shard_dir)
-    verdicts = [judge(p) for p in paths]
+    verdicts, unreadable = read_window(shard_dir)
     data = [v for v in verdicts if not v.is_marker]
     markers = [v for v in verdicts if v.is_marker]
     ok = [v.multipv_miss for v in data if v.multipv_status == "ok"]
@@ -716,7 +797,7 @@ def do_verify(shard_dir: Path, quar_dir: Path | None) -> int:
     print(f"highest shard id           : {top} -> next write would be {top + 1}")
     print(f"zero-row reservations held : {[v.name for v in markers] or 'none'}")
 
-    checks = _verify_checks(shard_dir, quar_dir, verdicts, top)
+    checks = _verify_checks(shard_dir, quar_dir, verdicts, top, unreadable)
     print()
     marks = {"pass": "PASS", "fail": "FAIL", "unchecked": "UNCHECKED", "n/a": "N/A"}
     for label, state, detail in checks:
