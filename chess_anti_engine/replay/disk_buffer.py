@@ -773,12 +773,86 @@ class DiskReplayBuffer:
 
         seed_paths = self._snapshot_shards()
         if seed_paths:
-            n_seed = min(len(seed_paths), self._refresh_shards * 2)
-            for sp in seed_paths[-n_seed:]:
-                arrs = self._try_load_shard(sp, context="shuffle seed")
-                if arrs is not None:
-                    self._append_shuffle_arrays(arrs)
-            self._trim_shuffle_buf()
+            self._seed_shuffle_pool(seed_paths)
+
+    def _seed_shuffle_pool(self, seed_paths: list[Path]) -> None:
+        """Fill the hot pool at open through the STEADY-STATE refresh draw.
+
+        The pool is memory-only and never checkpointed, so a restart starts
+        from whatever this puts in it. It used to take the newest
+        ``2 * refresh_shards`` shards outright — in production 10 of 834, i.e.
+        1.2% of the window and a mean recency percentile of ~1.0. Measured
+        against a warm arm (6 seeds, paired), the first three optimizer steps
+        after a restart drew 100% of their rows from that slice and ran
+        +0.45 policy_ce above warm, decaying to noise by step ~8 as live
+        ingest diluted it.
+
+        The draw is ``_load_refresh_chunks`` itself, asked for the same
+        ``2 * refresh_shards`` shards the old slice took: same shard COUNT,
+        same wall time, zero extra I/O, but weighted linearly in recency, so
+        the seeded rows land near the 2/3 mean percentile the steady state
+        already samples at instead of at 1.0.
+
+        ONE call of ``2 * refresh_shards``, not two of ``refresh_shards``. Two
+        calls are independent draws, so they can pick the same shard twice --
+        certain, not merely possible, whenever the window holds fewer shards
+        than ``2 * refresh_shards``, which double-weights those rows in the
+        pool and loads a shard for nothing. One call draws without replacement
+        and degrades to "every shard once" on a small window, which is what
+        the old slice did there too.
+
+        Filling the pool to its cap instead was considered and rejected:
+        expected draws per loaded row is ``batch_size / injection_rate``
+        regardless of pool size, so it fixes nothing distributional, and it
+        would hand every read-only probe a multi-GB pool at construction.
+        """
+        picked: list[int] = []
+        rows_per_pick: list[int] = []
+        loaded = self._load_refresh_chunks(
+            shard_paths=seed_paths,
+            refresh_shards=self._refresh_shards * 2,
+  # Not self.rng: the sampling stream stays exactly where it was, and this
+  # prefill is the prefetch thread's work done early. The thread does not
+  # start until after this scan, so there is no concurrent user yet.
+            rng=self._prefetch_rng,
+            context="shuffle seed",
+            chosen_out=picked,
+        )
+        for arrs in loaded:
+  # Counted here, not from _shuffle_sizes: chunks can be dropped or
+  # front-trimmed on the way in, and this must stay 1:1 with `picked`.
+            rows_per_pick.append(int(_batch_dims(arrs)[0]))
+            self._append_shuffle_arrays(arrs)
+        self._trim_shuffle_buf()
+        self._report_seed_recency(
+            n_shards=len(seed_paths), picked=picked, rows_per_pick=rows_per_pick,
+        )
+
+    def _report_seed_recency(
+        self, *, n_shards: int, picked: list[int], rows_per_pick: list[int],
+    ) -> None:
+        """One line proving which part of the window the restart seed came from.
+
+        This is the observation that tells the two seeding regimes apart on the
+        production path, and the only one: the pool is memory-only, so nothing
+        downstream records where its rows came from. ``mean_recency`` is the
+        row-weighted mean of ``(rank + 1) / n_shards`` over the seeded shards,
+        oldest-first. Read it as ~1.0 = newest-only (the pre-fix defect, back),
+        ~0.667 = the steady-state recency-weighted draw.
+        """
+        ranks = np.asarray(picked, dtype=np.float64)
+        rows = np.asarray(rows_per_pick, dtype=np.float64)
+        seeded_rows = int(rows.sum()) if rows.size else 0
+        if n_shards <= 0 or ranks.size != rows.size or seeded_rows <= 0:
+            mean_recency = float("nan")
+        else:
+            mean_recency = float(((ranks + 1.0) / n_shards * rows).sum() / seeded_rows)
+        print(
+            f"[disk_buf] shuffle seed: rows={seeded_rows} pool={self._shuffle_len()} "
+            f"shards={len(picked)}/{n_shards} mean_recency={mean_recency:.3f} "
+            f"(1.0=newest-only, {2 / 3:.3f}=steady-state refresh draw)",
+            flush=True,
+        )
 
     def _ensure_prefetch_thread(self) -> None:
         if self._refresh_interval <= 0 or self._refresh_shards <= 0:
@@ -854,7 +928,13 @@ class DiskReplayBuffer:
         shard_paths: list[Path],
         refresh_shards: int,
         rng: np.random.Generator,
+        context: str = "shuffle refresh",
+        chosen_out: list[int] | None = None,
     ) -> list[dict[str, np.ndarray]]:
+  # `context` and `chosen_out` exist for the open-time pool seed, which runs
+  # this same draw (see _seed_shuffle_pool) and needs to label its log lines
+  # and report which shards it drew. Both default to the steady-state
+  # behaviour, so the refresh path is byte-identical to what it was.
         if not shard_paths:
             return []
 
@@ -869,9 +949,13 @@ class DiskReplayBuffer:
 
         loaded: list[dict[str, np.ndarray]] = []
         for idx in np.asarray(chosen_idxs, dtype=np.int64):
-            arrs = self._try_load_shard(shard_paths[int(idx)], context="shuffle refresh")
+            arrs = self._try_load_shard(shard_paths[int(idx)], context=context)
             if arrs is not None:
                 loaded.append(arrs)
+                if chosen_out is not None:
+  # Appended only for shards that actually loaded, so it stays 1:1
+  # with `loaded` and a vanished shard cannot shift the ranks.
+                    chosen_out.append(int(idx))
 
   # The realized-vs-configured check this function never had: n_pick shards
   # were asked for, len(loaded) arrived. Only a fully empty result is worth
