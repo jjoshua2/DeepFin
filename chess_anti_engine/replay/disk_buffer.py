@@ -216,6 +216,7 @@ class DiskReplayBuffer:
         fast_low_surprise_priority: float = 1.0,
         diff_focus_pol_scale: float = 0.0,
         diff_focus_q_weight: float = 0.0,
+        deterministic_refresh: bool = False,
     ):
         self.capacity = int(capacity)
         self.rng = rng
@@ -250,6 +251,30 @@ class DiskReplayBuffer:
         self._refresh_interval = int(refresh_interval)
         self._refresh_shards = int(refresh_shards)
         self._prefetch_rng = np.random.default_rng(int(rng.integers(0, 2**32 - 1)))
+  # OFF in production; ON makes the draw sequence a pure function of the seed.
+  #
+  # The shuffle-pool refresh has TWO implementations and picks between them by
+  # WHO WON A RACE: `sample_batch_arrays` takes the background thread's chunk
+  # if one is ready and otherwise loads synchronously. They do not consume the
+  # same rng -- the prefetch path draws shards from `_prefetch_rng` and leaves
+  # `self.rng` untouched, the synchronous path draws from `self.rng` and
+  # ADVANCES it. So one lost race changes both which shards enter the pool and
+  # the state of the generator that picks every subsequent row, permanently.
+  # Whether the thread wins depends on machine load, which is why the same
+  # offline probe returned two different numbers on the same seed (measured
+  # 2026-07-31: 0.0056 nats excess / 0.0075 agreement between the two states).
+  #
+  # Setting this suppresses the thread entirely: `_schedule_refresh_prefetch`
+  # then finds no thread and returns, `_take_prefetched_refresh` is always
+  # None, and every refresh goes down the synchronous path. Both paths draw the
+  # same recency-weighted `refresh_shards` without replacement, so this changes
+  # WHICH stream the draw comes from, never the distribution it comes from.
+  #
+  # Not the production default: production trades the refresh's disk read off
+  # the sampling thread for throughput, and its own reproducibility argument is
+  # a checkpoint, not a seed. Offline rulers have the opposite need, so they
+  # opt in.
+        self._deterministic_refresh = bool(deterministic_refresh)
         self._prefetch_lock = threading.Lock()
         self._prefetch_request = threading.Event()
         self._prefetch_stop = threading.Event()
@@ -855,6 +880,11 @@ class DiskReplayBuffer:
         )
 
     def _ensure_prefetch_thread(self) -> None:
+        if self._deterministic_refresh:
+  # Single gate for the whole feature: with no thread the prefetched slot
+  # is never filled, so `sample_batch_arrays` always falls through to the
+  # synchronous `_refresh_shuffle_buf`. See `_deterministic_refresh`.
+            return
         if self._refresh_interval <= 0 or self._refresh_shards <= 0:
             return
         if self._prefetch_thread is not None:

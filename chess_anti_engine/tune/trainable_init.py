@@ -655,11 +655,21 @@ def _init_replay_buffers(
             int(tc.replay_window_max),
         )
     buf.capacity = int(current_window)
+  # shuffle_cap / refresh_interval are consumed ONLY by the DiskReplayBuffer
+  # constructor, so a resume that silently restored the launch value would leave
+  # no trace on any per-iteration row -- these were the two keys in the 2026-08-01
+  # params.json audit with no effect-level observable at all. Read them back off
+  # the constructed object, never off `tc`: a config echo proves the yaml parsed,
+  # not that the buffer consumed it. `shuffle_cap_eff` is the separate question,
+  # since _effective_shuffle_cap() clamps to capacity and would silently shrink a
+  # configured cap that exceeds the window.
     print(
         f"[trial] buffer init: startup_source={restore.startup_source} "
         f"seeded={seeded_replay_start} cross_trial={restore.cross_trial_restore} "
         f"len(buf)={len(buf)} capacity={buf.capacity} "
         f"tracked_shards={len(buf._shard_paths)} total_pos={buf._total_positions} "
+        f"shuffle_cap={buf._shuffle_cap} shuffle_cap_eff={buf._effective_shuffle_cap()} "
+        f"refresh_interval={buf._refresh_interval} refresh_shards={buf._refresh_shards} "
         f"upgrade_v1_planes={tc.replay_upgrade_v1_planes}"
     )
     holdout_buf = ArrayReplayBuffer(tc.holdout_capacity, rng=rng)
