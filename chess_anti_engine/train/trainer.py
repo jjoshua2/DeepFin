@@ -842,10 +842,16 @@ class TrainMetrics:
   # flag is off, so a non-zero value IS the proof the flip reached the batch
   # pipeline — the transition log only proves the config push, and
   # has_sf_p0_frac -> 0 only proves it on a window that has p0 rows at all.
-  # `policy_frac` < the SF-labelled fraction is the real coverage gap: rows
-  # with a stored sf_policy_target but no sf_multipv_raw keep capture-time
-  # targets (5.4% of labelled rows on the live window), so a params change is
-  # a mixture of two regimes, not a clean swap.
+  # `policy_frac` BELOW `wdl_frac` is a CONTAMINATION DETECTOR, not a coverage
+  # cost. Both fracs share the denominator (all batch rows) and every labelled
+  # row carries `sf_label_meta` AND `sf_multipv_raw`, so on healthy data the
+  # two columns are EQUAL and their difference is the share of labelled rows on
+  # which not one of Stockfish's MultiPV moves was legal — the desync
+  # fingerprint (`selfplay/stockfish_turn.py::_SF_NO_LEGAL_PV_WARN_RATE`).
+  # A gap of 5.4% was once documented here as structural; it was a 07-27 desync
+  # episode. Measured through this very accumulator: 0.000000 on clean live
+  # shards, 0.192 over the 122 quarantined 2026-08-01. Read a gap as bad data,
+  # not as a mixture cost.
   # `eval_full_pass` — the frozen ruler, and the only eval production runs
   # (tune/trainable_phases.py) — pins the rebuild off, so these stay 0.0 on
   # its `eval` row by construction and a non-zero value there means the ruler
@@ -1781,11 +1787,13 @@ class Trainer:
 
         self.feature_dropout_p = float(feature_dropout_p)
   # Rebuild SF targets from sparse MultiPV labels at sample time, so an
-  # SfTargetParams change applies to ~95% of the SF-labelled rows already in
-  # the replay window instead of waiting ~18h for it to turn over. NOT the
-  # whole window: rows without sf_multipv_raw (5.4% of labelled rows measured
-  # on the live window) keep capture-time targets, so the window is a mixture
-  # of two target regimes -- sf_rebuild_policy_frac reports the real rate.
+  # SfTargetParams change applies to the SF-labelled rows already in the replay
+  # window instead of waiting ~18h for it to turn over. On healthy data that is
+  # ALL of them: every labelled row is written with sf_multipv_raw, so the
+  # rebuild reaches 100% of the SF-labelled window and there is no mixture of
+  # two target regimes. sf_rebuild_policy_frac reports the realized rate, and
+  # any shortfall below sf_rebuild_wdl_frac is Stockfish-desync contamination
+  # (docs/target_rebuildability.md), not a structural cost of the rebuild.
   # False = use stored targets, bitwise identical to the pre-flag pipeline.
   # `set_sf_target_rebuild` flips it live.
         self.rebuild_sf_targets = bool(rebuild_sf_targets)
@@ -2616,12 +2624,14 @@ class Trainer:
         batch the prefetch thread builds.
 
         Turning it ON is the whole point of the flag: an ``SfTargetParams``
-        change then applies to ~95 % of the SF-LABELLED rows already in the
-        replay window on the next iteration, instead of only to data generated
-        after the edit (~18h for a 1.5M-row window to turn over at the current
-        ingest rate). Not the entire window — rows without ``sf_multipv_raw``
-        keep capture-time targets, so the window becomes a mixture of two
-        target regimes; ``sf_rebuild_policy_frac`` reports the realized rate.
+        change then applies to the SF-LABELLED rows already in the replay
+        window on the next iteration, instead of only to data generated after
+        the edit (~18h for a 1.5M-row window to turn over at the current ingest
+        rate). On healthy data that is every one of them — a labelled row is
+        written with ``sf_multipv_raw`` — so the window does NOT become a
+        mixture of two target regimes. ``sf_rebuild_policy_frac`` reports the
+        realized rate; it falling below ``sf_rebuild_wdl_frac`` means desynced
+        Stockfish rows, not a bound on what the rebuild can reach.
 
         ``sf_target_params`` is written only when a CONSUMER is active — this
         rebuild, or ``sf_policy_sparse_ce``, which reads the same field as

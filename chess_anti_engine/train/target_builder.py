@@ -418,8 +418,9 @@ class SfRebuildCoverage:
     Returned rather than discarded because a rebuild whose coverage cannot be
     observed is unfalsifiable: the transition log proves the config PUSH, not
     the effect, and `has_sf_p0_frac -> 0` only proves it on a window that has
-    p0 rows at all. `sf_rebuild_policy_frac` is the number that both shows the
-    flip took effect and quantifies the rows it could not reach.
+    p0 rows at all. `sf_rebuild_policy_frac` is the number that shows the flip
+    took effect, and — see `metric_kwargs` — the number that detects poisoned
+    SF labels in the window it ran on.
     """
 
     rows: int = 0
@@ -459,6 +460,23 @@ class SfRebuildCoverage:
         a one-row transient (docs/target_rebuildability.md, "Before flipping
         the flag live").
 
+        ⚑ ``sf_rebuild_policy_frac`` BELOW ``sf_rebuild_wdl_frac`` IS A DESYNC
+        ALARM, NOT A COVERAGE COST. The two share a denominator, and the
+        selfplay writer stamps ``sf_multipv_raw`` and ``sf_label_meta`` on a
+        labelled row TOGETHER (`selfplay/stockfish_turn.py::
+        _stamp_sparse_sf_labels`). The only way a row gets meta but no raw is
+        ``_collect_sparse_pv_rows`` returning None — not ONE of Stockfish's
+        MultiPV moves was legal at the position queried, which is the
+        fingerprint of a desynced UCI engine answering a DIFFERENT position
+        (`_SF_NO_LEGAL_PV_WARN_RATE`, and `eval/value_optimism.py::
+        sf_multipv_missing_rate`, the offline twin of the same measurement).
+        So ``wdl_frac - policy_frac`` IS the poisoned-label share of the batch.
+        Measured over 6,535 shards / 11.05M labelled rows: exactly 0.000000 on
+        every clean stretch, 0.192 over the 122 shards quarantined 2026-08-01.
+        This column was previously documented as reporting a ~5.4% structural
+        gap; that figure came from a 10-shard sample drawn inside a 2026-07-27
+        desync episode. There is no structural floor — it is zero.
+
         ``sf_rebuild_masked_p0_frac`` / ``_volatility_frac`` decompose
         ``sf_rebuild_masked_frac`` per flag, and are PRE-mask presence
         fractions: while a rebuild experiment runs they are the replacement
@@ -485,11 +503,12 @@ def rebuild_sf_targets_in_arrays(
     stored targets. Returns ``(arrs, coverage)`` — ``arrs`` mutated in place on
     fresh copies of the touched fields.
 
-    Coverage is NOT total, and the caller is expected to report it. On the live
-    window 91.9 % of all rows and 94.6 % of SF-LABELLED rows carry
-    ``sf_multipv_raw``; the remaining 5.4 % of labelled rows keep capture-time
-    targets, so a params change is a ~95/5 mixture of two target regimes rather
-    than a clean swap.
+    Coverage over SF-LABELLED rows is TOTAL on healthy data — every labelled
+    row is written with ``sf_multipv_raw`` — so a params change is a clean swap
+    over the labelled window, not a mixture of two target regimes. The caller
+    still reports coverage, because a shortfall is the alarm: see
+    ``SfRebuildCoverage.metric_kwargs``. (Coverage over ALL rows is ~97 %, the
+    SF-labelled fraction; the un-labelled rows have no SF target to rebuild.)
 
     Fully vectorized: ~13 ms per 512-row batch at policy width 1858 on the
     host prefetch thread, against a ~90 ms/step training budget (was ~275 ms

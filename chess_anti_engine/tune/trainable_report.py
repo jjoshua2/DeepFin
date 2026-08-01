@@ -903,9 +903,12 @@ def _train_metrics_dict(metrics) -> dict:
         "m_sf_own_regret": float(metrics.m_sf_own_regret),
         "has_sf_p0_frac": float(metrics.has_sf_p0_frac),
         "has_sf_p0_regret_frac": float(metrics.has_sf_p0_regret_frac),
-        # Rebuild coverage. `sf_rebuild_policy_frac` below the SF-labelled row
-        # fraction is the rows the rebuild could NOT reach (no sf_multipv_raw),
-        # which stay at capture-time targets; `sf_rebuild_masked_frac` counts
+        # Rebuild coverage. `sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac`
+        # is a Stockfish-DESYNC alarm, not a coverage cost: the two share a
+        # denominator and a healthy labelled row always carries both fields, so
+        # the difference is the share of rows whose SF label is detached from
+        # its position (target_builder.py::SfRebuildCoverage.metric_kwargs);
+        # `sf_rebuild_masked_frac` counts
         # the cross-ply targets it masked instead of leaving stale, and the
         # per-flag pair decomposes it PRE-mask (the rebuild-mode outage
         # detector — see the has_sf_p0_frac caveat above).
