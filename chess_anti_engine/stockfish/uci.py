@@ -200,6 +200,12 @@ class _SearchInfoAccumulator:
 
 
 class StockfishUCI:
+    # Class-level default so the guard holds even for an instance built without
+    # __init__ (tests drive the parser through object.__new__). An engine that
+    # cannot report its state must read as USABLE, never as poisoned — the
+    # opposite default would silently disable every such caller.
+    _desynced: bool = False
+
     def __init__(
         self,
         path: str,
