@@ -24,9 +24,11 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.eval.value_optimism import (
+    SF_AXIS_MIN_ROWS,
     SF_EVAL_BUCKET_EDGES,
     SF_EVAL_BUCKET_NAMES,
     SF_LABEL_ATTACHMENT_MIN,
+    SF_MULTIPV_MISS_MAX,
     OptimismRows,
     bucket_names_for,
     bucket_net_score_spread,
@@ -40,7 +42,9 @@ from chess_anti_engine.eval.value_optimism import (
     score_buckets,
     sf_eval_bucket,
     sf_eval_bucket_array,
+    sf_bestmove_is_first_legal_rate,
     sf_label_attachment_corr,
+    sf_multipv_missing_rate,
     tail_asymmetry,
     tail_asymmetry_ci,
 )
@@ -289,19 +293,32 @@ def test_tail_asymmetry_separates_artifact_from_defect() -> None:
 
 
 def test_net_minus_target_is_free_of_the_bucketing_artifact() -> None:
-    """The primary axis reads zero for a head that fits its target, always.
+    """The primary axis stays unbiased where the ruler-relative one does not.
 
-    Same noisy ruler that makes `net_minus_sf` non-zero for a perfect head —
-    `net_minus_target` must stay at zero in every bucket regardless, because
-    neither side is computed from the bucketing variable.
+    `target_equals_net` would make this pass trivially — the difference would be
+    identically zero and the test would pin the field's identity rather than the
+    claim. Instead the head is a NOISY but UNBIASED estimate of its target, so
+    `net_minus_target` is a real random variable whose per-bucket mean must
+    still be zero, on the same rows where `net_minus_sf` is driven far from zero
+    by bucketing on a noisy ruler.
     """
-    stats = score_buckets(
-        _noisy_ruler_rows(compression=0.30, target_equals_net=True),
-        slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=200,
+    rng = np.random.default_rng(31)
+    base = _noisy_ruler_rows(n=40000, compression=0.30, target_equals_net=True)
+    noise = rng.normal(0.0, 0.05, size=base.net_score.size)
+    rows = OptimismRows(
+        sf_cp=base.sf_cp, sf_ruler_score=base.sf_ruler_score,
+        net_score=np.clip(base.target_score + noise, 0.0, 1.0),
+        target_score=base.target_score, outcome_score=base.outcome_score,
+        target_sf_score=base.target_sf_score, search_score=base.search_score,
+        game_id=base.game_id, piece_count=base.piece_count,
     )
+    stats = score_buckets(rows, slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=400)
+    # The ruler-relative axis IS driven away from zero in the tails...
     assert abs(_stat(stats, SF_EVAL_BUCKET_NAMES[0]).net_minus_sf) > 0.05
+    # ...while the primary axis stays at zero in EVERY bucket, and its CI says so.
     for s in stats:
-        assert abs(s.net_minus_target) < 1e-9
+        assert abs(s.net_minus_target) < 0.01
+        assert s.net_minus_target_ci[0] <= 0.0 <= s.net_minus_target_ci[1]
 
 
 def test_tail_asymmetry_ci_covers_the_point_and_narrows_with_data() -> None:
@@ -413,7 +430,9 @@ def _planes_and_labels(n: int = 800, seed: int = 11) -> tuple[np.ndarray, np.nda
 def test_attachment_gate_passes_on_attached_labels() -> None:
     x, wdl = _planes_and_labels()
     assert material_balance_from_planes(x).std() > 0
-    assert sf_label_attachment_corr(x, wdl) > 0.9
+    reading = sf_label_attachment_corr(x, wdl)
+    assert reading.usable
+    assert reading.value > 0.9
 
 
 def test_attachment_gate_catches_detached_labels() -> None:
@@ -425,9 +444,10 @@ def test_attachment_gate_catches_detached_labels() -> None:
     """
     x, wdl = _planes_and_labels()
     scrambled = wdl[np.random.default_rng(5).permutation(wdl.shape[0])]
-    corr = sf_label_attachment_corr(x, scrambled)
-    assert abs(corr) < 0.15
-    assert corr < SF_LABEL_ATTACHMENT_MIN
+    reading = sf_label_attachment_corr(x, scrambled)
+    assert reading.usable
+    assert abs(reading.value) < 0.15
+    assert reading.value < SF_LABEL_ATTACHMENT_MIN
 
 
 def test_rank_corr_matches_a_known_case() -> None:
@@ -450,3 +470,71 @@ def test_optimism_rows_rejects_misaligned_inputs() -> None:
             search_score=rows.search_score, game_id=rows.game_id,
             piece_count=rows.piece_count,
         )
+
+
+# ---------------------------------------------------------------------------
+# Axis statuses: "cannot evaluate" must never be indistinguishable from "fine"
+# ---------------------------------------------------------------------------
+
+
+def test_every_axis_reports_too_few_rows_rather_than_a_noisy_value() -> None:
+    """Below the row floor an axis must decline, not guess.
+
+    A rate over a handful of rows is noise, and noise that lands on the pass
+    side is worse than no reading. The floor is pinned here because a silent
+    change to it would turn small shards into automatic passes.
+    """
+    assert SF_AXIS_MIN_ROWS == 30
+    n = SF_AXIS_MIN_ROWS - 1
+    x, wdl = _planes_and_labels(n=n)
+    assert sf_label_attachment_corr(x, wdl).status == "too_few_rows"
+    assert sf_multipv_missing_rate(np.ones(n, dtype=bool)).status == "too_few_rows"
+    assert sf_bestmove_is_first_legal_rate(
+        np.zeros(n, dtype=np.int64), np.ones((n, 8), dtype=np.uint8),
+    ).status == "too_few_rows"
+    # One row over the floor, every axis reports a value.
+    m = SF_AXIS_MIN_ROWS
+    x2, wdl2 = _planes_and_labels(n=m)
+    assert sf_label_attachment_corr(x2, wdl2).usable
+    assert sf_multipv_missing_rate(np.ones(m, dtype=bool)).usable
+
+
+def test_degenerate_attachment_input_is_not_a_pass() -> None:
+    """A constant-material shard yields NaN correlation — that is not evidence.
+
+    Without a status of its own it would arrive as a bare NaN and, on any
+    comparison written as `corr >= threshold`, evaluate False-y in a way that is
+    easy to invert by accident.
+    """
+    n = 60
+    x = np.zeros((n, 12, 8, 8), dtype=np.float32)
+    x[:, 0, 0, 0] = 1.0                       # identical material on every row
+    wdl = np.tile(np.array([0.3, 0.4, 0.3]), (n, 1))
+    reading = sf_label_attachment_corr(x, wdl)
+    assert reading.status == "degenerate"
+    assert not reading.usable
+
+
+def test_multipv_axis_separates_where_the_desync_rate_cannot() -> None:
+    """The reason the enforced axis was switched: threshold headroom.
+
+    Measured over all 834 shards of the live trial, sound shards reach 0.008032
+    on this axis and corrupt shards start at 0.010511, so the 0.01 default sits
+    in a real gap. The bestmove-is-first-legal rate has a sound max of 0.1496
+    against a corrupt min of 0.1505 — no honest threshold exists on it, which is
+    why it is a diagnostic and this is the gate.
+    """
+    n = 400
+    sound = np.ones(n, dtype=bool)
+    sound[:2] = False                                   # 0.005, inside the gap
+    assert sf_multipv_missing_rate(sound).value <= SF_MULTIPV_MISS_MAX
+    corrupt = np.ones(n, dtype=bool)
+    corrupt[:60] = False                                # 0.15
+    assert sf_multipv_missing_rate(corrupt).value > SF_MULTIPV_MISS_MAX
+    # The rate is taken over LABELLED rows only, so unlabelled rows cannot
+    # dilute a corrupt shard back under the threshold.
+    labelled = np.zeros(n, dtype=bool)
+    labelled[:100] = True
+    diluted = np.ones(n, dtype=bool)
+    diluted[:60] = False
+    assert sf_multipv_missing_rate(diluted, labelled).value == pytest.approx(0.6)

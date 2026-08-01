@@ -15586,3 +15586,140 @@ derived from one incident, go find the other instances of that incident before
 trusting the threshold** — here they were 500 shards back in the same trial, and
 the separating statistic was a different one entirely.
 
+
+---
+
+## 2026-08-01 — ADDENDUM 2 to the value-optimism entries: the desync threshold was fitted the same way the method note warns against. Gate axis replaced; two numbers corrected.
+
+Review round 3. **Both original blocking findings were confirmed fixed** and the
+realized-vs-yaml design accepted. Four narrow defects, none of which changes a
+published number.
+
+### 1. My own method note applied to my own replacement threshold
+
+The previous addendum ends with: *"a gate tuned on the episode that produced it
+detects that episode."* The `desync <= 0.15` axis I then shipped was picked from
+those same four episodes, and it leaks. Dense over all 834 shards:
+
+    bestmove-is-first-legal:  sound max 0.1496  |  corrupt min 0.1505
+    -> every threshold sits in a 0.0009 gap between two ADJACENT order
+       statistics of the same quantity.  Headroom over accepted p90: 1.7x.
+
+Seven shards (33391, 33394, 33395, 33431, 33626, 33627, 33629) are ADMITTED
+while sitting inside runs of rejects — 33431 has four rejects on each side. My
+stated justification ("clean p90 0.094 ... lowest episode shard 0.16") matched
+neither side of the real distribution.
+
+**Axis replaced with `has_sf_multipv_raw == 0` over SF-labelled rows, at 0.01.**
+Same 834 shards, measured here:
+
+    multipv-miss:  accepted max 0.008032, p90 0.000300, MEDIAN EXACTLY 0.000000
+                   rejected min 0.010511
+    -> a real 0.0025 gap.  Headroom over accepted p90: **33x**.
+    The seven leaked shards read 0.0295-0.0635 on it — all rejected.
+
+**Attachment axis KEPT**: it is independently load-bearing for exactly one
+shard, **033481** (attachment +0.0201, multipv-miss 0.000000, desync
+unevaluable at 16 labelled rows) — the total-detachment mode. Confirmed by
+exhaustive cross-tab: ATT-only rejects = {33481}, MV-only = 28, and
+**DESYNC-only = {} (empty)**. Union att|multipv = 120 shards = union of all
+three, so the desync axis catches nothing the other two miss.
+
+**The desync rate is DEMOTED to a printed diagnostic** (`--desync-max` now
+defaults to 1.0 = never reject). It is a real signal with no honest threshold;
+the run prints its median and max over ACCEPTED shards so a future corruption
+mode the enforced axes cannot see would still surface. Enforcement is opt-in
+with a stated reason.
+
+Also fixed, all flagged in review: NaN-as-reject is now pinned on the
+attachment axis too (it previously escaped mutation), the 30-row floor is
+pinned as `SF_AXIS_MIN_ROWS`, `--multipv-miss-max 1.0` gives the escape hatch
+symmetric to `--attachment-min -2`, and an unevaluable axis now names its reason
+(`field_missing` / `too_few_rows` / `degenerate` / `unusable_input`) instead of
+printing one indistinguishable `nan` under which a pre-schema shard would be
+swallowed wholesale.
+
+**A test caught a real bug in the new detector while it was being written**:
+`sf_multipv_missing_rate` defaulted its denominator to the rows that HAVE a
+MultiPV block, forcing the rate to 0.0 by construction — a detector that could
+only ever report "clean". Fixed and pinned.
+
+### 2. Re-run under the new gate — every published number unchanged
+
+The accepted set in the published window is identical (10 shards / 15,005 rows
+rejected, 38,455 paired rows), because multipv-miss over accepted shards there
+is **0.000000**:
+
+    net-target  lost +0.0488 [+0.0468,+0.0509]   won -0.0541 [-0.0569,-0.0513]
+                tail sum -0.0052
+    matched level (SF -297.6): +0.0854 [+0.0789,+0.0919] = +108.7 cp
+    net-SFrul   matched level +70.3 cp [+65,+75]; mirror -88.0 cp
+    curriculum lost out-ruler +0.212 [+0.202,+0.221]
+    selfplay   lost out-ruler -0.006 [-0.009,-0.003]
+    desync DIAGNOSTIC over accepted shards: median 0.0798, max 0.1100
+
+### 3. ⚑ MY CONFOUND ARGUMENT WAS UNSOUND AS WRITTEN — replaced
+
+Addendum 1 argued: *"at 13.1% contamination the curriculum number barely
+moves."* That conflates a WINDOW-level contamination share with the curriculum
+bucket's actual EXPOSURE, and the two are far apart because poisoned shards are
+not compositionally like clean ones. Measured on the 400-shard window:
+
+    poisoned shards: 91.8% selfplay      clean shards: 65.5% selfplay
+    lost-bucket exposure to poisoned shards:
+        selfplay   18.0%      curriculum   2.5%
+
+**The curriculum arm was never subjected to 13.1%.** The comparison I drew does
+not license the conclusion I drew from it.
+
+**Replaced with an assumption-free bound**, which asks only "how much would be
+needed" and claims nothing about how contamination distributes. If a fraction
+`c` of the curriculum lost bucket carries a label for a different position, its
+outcome is drawn from the curriculum-wide mean (0.4494) rather than the bucket's
+ruler (0.0628), so the observed excess is `c * (0.4494 - 0.0628)`:
+
+    c = 0.2179 / (0.4494 - 0.0628) = 0.564
+    -> manufacturing the finding from a true zero requires **56.4%** of the
+       curriculum lost bucket to be desynced, against **2.5% observed**.
+
+**CONFOUND CLOSED, on a sound argument this time.** The attenuation corollary
+(contamination biases `net - target` toward the null, never away) is unaffected
+and stands.
+
+### 4. Two counts corrected
+
+- **52 poisoned shards** in the 400-shard window under the old gate, not the 46
+  in addendum 1. My own run had printed 52; I recounted from episode ranges
+  instead of reading the tool's output. (Under the new gate it is 62.)
+- The JSON dump hardcoded `"paired_set_is_selfplay_only": True` instead of
+  deriving it from the measured `paired_curriculum == 0` — this repo's signature
+  defect, in a machine-readable artifact, where it would have kept asserting
+  selfplay-only after the pairing logic changed. Now derived, with the two raw
+  counts emitted alongside it.
+
+Minor, both taken: the outcome-calibration block now says in its printed header
+that its ruler is the **P1** (after-the-move) eval, a different ruler from the
+head/target table's P0; and
+`test_net_minus_target_is_free_of_the_bucketing_artifact` no longer runs with
+`target == net`, which made the quantity zero by construction and pinned the
+field's identity rather than the claim. It now uses a noisy-but-unbiased head,
+so `net - target` is a real random variable whose per-bucket mean must still be
+zero while `net - SF_ruler` is driven far from zero on the same rows.
+
+Tests 36 -> 41.
+
+### Method note, second attempt
+
+The first note said: *a gate tuned on the episode that produced it detects that
+episode.* True, and I then did exactly that again — picked the replacement
+threshold from the same four episodes, and shipped a cut sitting in a 0.0009 gap
+between adjacent order statistics.
+
+**The operational form: a threshold is only defensible if you have plotted the
+two distributions it separates and can state the GAP and the HEADROOM.** "It
+rejects the bad shards I know about" is not a property of the threshold, it is a
+property of the sample it was read off. 0.15-on-desync and 0.01-on-multipv
+reject overlapping sets on this data; only one of them would survive a shard
+that is corrupt in a slightly different way, and the number that says which is
+33x versus 1.7x — not the reject count.
+

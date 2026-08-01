@@ -16,7 +16,11 @@ import numpy as np
 import pytest
 import zarr
 
-from chess_anti_engine.eval.value_optimism import SF_DESYNC_MAX, SF_LABEL_ATTACHMENT_MIN
+from chess_anti_engine.eval.value_optimism import (
+    SF_DESYNC_MAX,
+    SF_LABEL_ATTACHMENT_MIN,
+    SF_MULTIPV_MISS_MAX,
+)
 from chess_anti_engine.stockfish.wdl import cp_to_wdl
 from scripts.value_optimism import _load_rows
 
@@ -29,8 +33,9 @@ N_PLANES = 175
 def _write_shard(
     path: Path, *, game_id: list[int], ply_index: list[int],
     is_selfplay: list[int] | None = None, mate: list[int] | None = None,
-    scramble_labels: bool = False, desync_frac: float = 0.0,
+    scramble_labels: bool = False, desync_frac: float = 0.0, multipv_miss: float = 0.0,
     encoding: str = ENCODING, history_rep_fix: bool = True, seed: int = 3,
+    material_override: list[float] | None = None,
 ) -> np.ndarray:
     """Write a synthetic shard; return each row's record-POV material balance.
 
@@ -46,7 +51,8 @@ def _write_shard(
     # A deterministic material LADDER, not random pieces: random counts tie at
     # small n, rank_corr is then undefined, and the attachment gate rejects the
     # shard for a reason that has nothing to do with what the test is about.
-    material = np.array([((i + seed) % 9) - 4 for i in range(n)], dtype=np.float64)
+    material = (np.array(material_override, dtype=np.float64) if material_override is not None
+                else np.array([((i + seed) % 9) - 4 for i in range(n)], dtype=np.float64))
     for i in range(n):
         white = int(max(material[i], 0.0))
         black = int(max(-material[i], 0.0))
@@ -103,6 +109,10 @@ def _write_shard(
     g.create_dataset("has_sf_move", data=np.ones(n, dtype=np.uint8), overwrite=True)
     g.create_dataset("sf_legal_mask", data=legal, overwrite=True)
     g.create_dataset("has_sf_legal_mask", data=np.ones(n, dtype=np.uint8), overwrite=True)
+    n_miss = round(multipv_miss * n)
+    hmv = np.ones(n, dtype=np.uint8)
+    hmv[:n_miss] = 0
+    g.create_dataset("has_sf_multipv_raw", data=hmv, overwrite=True)
     g.create_dataset("wdl_target", data=np.zeros(n, dtype=np.int8), overwrite=True)
     sp = np.ones(n, dtype=np.uint8) if is_selfplay is None else np.asarray(is_selfplay, np.uint8)
     g.create_dataset("is_selfplay", data=sp, overwrite=True)
@@ -116,6 +126,7 @@ def _load(paths: list[Path], **kw) -> dict[str, np.ndarray]:
         "max_rows": 0, "slope": SLOPE, "draw_width": DRAW_WIDTH,
         "history_encoding": ENCODING, "history_rep_fix": True,
         "attachment_min": SF_LABEL_ATTACHMENT_MIN, "desync_max": SF_DESYNC_MAX,
+        "multipv_miss_max": SF_MULTIPV_MISS_MAX,
     }
     args.update(kw)
     return _load_rows(paths, **args)  # pyright: ignore[reportArgumentType]
@@ -235,50 +246,87 @@ def test_max_rows_truncates_and_stops(tmp_path: Path) -> None:
 def test_no_usable_rows_is_a_hard_exit_naming_the_gate(tmp_path: Path) -> None:
     bad = tmp_path / "shard_000001.zarr"
     _write_shard(bad, game_id=[1] * 40, ply_index=list(range(1, 41)), scramble_labels=True)
-    with pytest.raises(SystemExit, match="attachment gate"):
+    with pytest.raises(SystemExit, match="integrity gate"):
         _load([bad])
 
 
-def test_desync_gate_rejects_what_the_attachment_axis_cannot(tmp_path: Path) -> None:
+def test_multipv_gate_rejects_what_the_attachment_axis_cannot(tmp_path: Path) -> None:
     """The 2026-07-30/31 UCI desync: labels on the RIGHT rows, wrong position.
 
     The shard is built so its material<->label correlation is perfect — the
     attachment axis sees nothing wrong, exactly as it saw nothing wrong in three
-    of the four live episodes. Only the bestmove-is-first-legal rate separates
-    it, which is why the gate carries two axes.
+    of the four live episodes. Only the MultiPV-miss rate separates it, which is
+    why the gate carries two enforced axes.
     """
     good = tmp_path / "shard_000001.zarr"
     desynced = tmp_path / "shard_000002.zarr"
     _write_shard(good, game_id=[1] * 40, ply_index=list(range(1, 41)))
     _write_shard(
-        desynced, game_id=[2] * 40, ply_index=list(range(1, 41)), desync_frac=0.6, seed=4,
+        desynced, game_id=[2] * 40, ply_index=list(range(1, 41)), multipv_miss=0.6, seed=4,
     )
     # The attachment axis alone would pass BOTH shards.
     z = zarr.open_group(str(desynced), mode="r")
     from chess_anti_engine.eval.value_optimism import sf_label_attachment_corr
-    assert sf_label_attachment_corr(
+    reading = sf_label_attachment_corr(
         np.asarray(z["x"][:, 0:12]), np.asarray(z["sf_wdl"][:]).astype(float),
-    ) > SF_LABEL_ATTACHMENT_MIN
+    )
+    assert reading.usable
+    assert reading.value > SF_LABEL_ATTACHMENT_MIN
     out = _load([good, desynced])
     assert int(out["_shards_rejected"][0]) == 1
     assert set(np.unique(out["game_id"]).tolist()) == {1}
     assert set(np.unique(out["_all_game_id"]).tolist()) == {1}
 
 
-def test_desync_gate_passes_the_baseline_rate(tmp_path: Path) -> None:
-    """A sound shard's rate is ~0.08 live; the gate must not eat it."""
+def test_multipv_gate_passes_a_sound_shard(tmp_path: Path) -> None:
+    """Sound shards read exactly 0.000000 live; the gate must not eat them."""
     p = tmp_path / "shard_000001.zarr"
-    _write_shard(p, game_id=[1] * 40, ply_index=list(range(1, 41)), desync_frac=0.08)
+    _write_shard(p, game_id=[1] * 400, ply_index=list(range(1, 401)), multipv_miss=0.005)
     out = _load([p])
     assert int(out["_shards_rejected"][0]) == 0
-    assert out["_all_game_id"].size == 40
+    assert out["_all_game_id"].size == 400
 
 
-def test_missing_desync_arrays_are_a_reject_not_a_pass(tmp_path: Path) -> None:
-    """A gate that cannot evaluate a shard has not cleared it."""
+def test_a_missing_field_is_a_reject_named_as_such(tmp_path: Path) -> None:
+    """A gate that cannot evaluate a shard has not cleared it — and the reason
+    must not share a string with "genuinely corrupt", or a pre-schema shard is
+    swallowed wholesale under it."""
     p = tmp_path / "shard_000001.zarr"
     _write_shard(p, game_id=[1] * 40, ply_index=list(range(1, 41)))
     g = zarr.open_group(str(p), mode="a")
-    del g["sf_legal_mask"]
-    with pytest.raises(SystemExit, match="desync gate"):
+    del g["has_sf_multipv_raw"]
+    with pytest.raises(SystemExit, match="integrity gate"):
         _load([p])
+
+
+def test_attachment_nan_is_a_reject_not_a_pass(tmp_path: Path) -> None:
+    """Pins the attachment axis's own unevaluable path.
+
+    Previously only the second axis pinned this, so a mutation that let an
+    unevaluable attachment reading through escaped the suite.
+    """
+    p = tmp_path / "shard_000001.zarr"
+    good = tmp_path / "shard_000002.zarr"
+    # Constant material on every row -> undefined rank correlation.
+    _write_shard(p, game_id=[1] * 40, ply_index=list(range(1, 41)),
+                 material_override=[3.0] * 40)
+    _write_shard(good, game_id=[2] * 40, ply_index=list(range(1, 41)))
+    out = _load([p, good])
+    assert int(out["_shards_rejected"][0]) == 1
+    assert set(np.unique(out["_all_game_id"]).tolist()) == {2}
+
+
+def test_desync_axis_is_diagnostic_by_default(tmp_path: Path) -> None:
+    """It has no honest threshold, so it must not silently reject.
+
+    Sound max 0.1496 vs corrupt min 0.1505 over the live trial: any cut sits in
+    a 0.0009 gap. The value is reported; enforcement is opt-in.
+    """
+    p = tmp_path / "shard_000001.zarr"
+    good = tmp_path / "shard_000002.zarr"
+    _write_shard(p, game_id=[1] * 40, ply_index=list(range(1, 41)), desync_frac=0.9)
+    _write_shard(good, game_id=[2] * 40, ply_index=list(range(1, 41)), seed=6)
+    assert int(_load([p, good])["_shards_rejected"][0]) == 0   # default: not enforced
+    enforced = _load([p, good], desync_max=0.15)
+    assert int(enforced["_shards_rejected"][0]) == 1
+    assert set(np.unique(enforced["_all_game_id"]).tolist()) == {2}

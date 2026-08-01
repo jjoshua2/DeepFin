@@ -84,9 +84,11 @@ from chess_anti_engine.encoding import model_encoding_kwargs
 from chess_anti_engine.encoding.lc0 import normalize_lc0_history_encoding
 from chess_anti_engine.eval.value_optimism import (
     CP_CLAMP,
+    AxisReading,
     SF_EVAL_BUCKET_EDGES,
     SF_DESYNC_MAX,
     SF_LABEL_ATTACHMENT_MIN,
+    SF_MULTIPV_MISS_MAX,
     BucketStat,
     OptimismRows,
     bucket_names_for,
@@ -98,6 +100,7 @@ from chess_anti_engine.eval.value_optimism import (
     score_buckets,
     sf_bestmove_is_first_legal_rate,
     sf_label_attachment_corr,
+    sf_multipv_missing_rate,
     tail_asymmetry,
     tail_asymmetry_ci,
 )
@@ -255,7 +258,7 @@ def _check_blend_knobs(resolved: dict[str, Any]) -> None:
 def _load_rows(
     shard_paths: list[Path], *, max_rows: int, slope: float, draw_width: float,
     history_encoding: str, history_rep_fix: bool, attachment_min: float,
-    desync_max: float, seed: int = 0,
+    desync_max: float, multipv_miss_max: float, seed: int = 0,
 ) -> dict[str, np.ndarray]:
     """Collect P0-paired rows from the newest shards, newest first."""
     import zarr
@@ -277,6 +280,7 @@ def _load_rows(
     scanned_curriculum = paired_curriculum = 0
     rejected: list[tuple[str, str]] = []
     rejected_rows = 0
+    desync_seen: list[float] = []
     for path in shard_paths:
         z = zarr.open(str(path), mode="r")
         # Method rule 7: verify identity before believing a lopsided number. A
@@ -295,26 +299,44 @@ def _load_rows(
         except KeyError:
             continue
         n_rows_total += int(gid.shape[0])
-        # INTEGRITY GATE — TWO AXES, because one of them provably misses three
-        # of the four known label-corruption episodes.
+        # INTEGRITY GATE. Two enforced axes plus one reported diagnostic; each
+        # enforced axis earns its place by a shard the other cannot catch.
         #
-        #   attachment : rank corr of material vs the shard's own SF label.
-        #                Catches TOTAL detachment (label block on the wrong
-        #                rows), which reads ~0.00 against a ~+0.65 baseline.
-        #   desync     : share of rows whose SF bestmove is just the first legal
-        #                move. Catches PARTIAL corruption — a Stockfish UCI
-        #                desync leaves labels on the right rows that answer a
-        #                DIFFERENT position, which degrades the correlation to
-        #                0.14-0.45 (above any sane reject line) while driving
-        #                this rate to 0.16-0.97 against a 0.080 baseline.
+        #   attachment  : rank corr of material vs the shard's own SF label.
+        #                 Catches TOTAL detachment (label block on the wrong
+        #                 rows), ~0.00 against a ~+0.65 baseline. Uniquely
+        #                 catches exactly one shard in this trial (033481:
+        #                 attachment +0.020, multipv-miss 0.000000).
+        #   multipv miss: share of labelled rows with no MultiPV block. Catches
+        #                 PARTIAL corruption — a Stockfish UCI desync leaves an
+        #                 eval whose candidate list did not survive. Sound
+        #                 shards max out at 0.008032 (p90 0.000300, median
+        #                 exactly 0.000000) and corrupt ones start at 0.010511,
+        #                 so 0.01 sits in a real gap with 33x headroom.
+        #   desync rate : bestmove-is-first-legal. REPORTED, not enforced by
+        #                 default. Sound max 0.1496 vs corrupt min 0.1505 — any
+        #                 threshold sits in a 0.0009 gap between two adjacent
+        #                 order statistics, which is the "a gate tuned on the
+        #                 episode that produced it detects that episode" trap
+        #                 this file's own method note warns about. At 0.15 it
+        #                 leaked seven shards sitting inside runs of rejects,
+        #                 and it catches nothing the other two miss.
         #
-        # Neither subsumes the other, so a shard must clear BOTH. A NaN on
-        # either axis is a reject: a gate that could not evaluate a shard has
-        # not cleared it.
+        # A non-"ok" status on an ENFORCED axis is a reject with its reason
+        # named: "field missing", "too few rows" and "genuinely bad" must not
+        # share one string, or a pre-schema shard is swallowed under it.
+        n_shard_rows = int(gid.shape[0])
+        has_sf_wdl_all = np.asarray(z["has_sf_wdl"][:]).astype(bool)
         attach = sf_label_attachment_corr(
             np.asarray(z["x"][:, 0:12]), np.asarray(z["sf_wdl"][:]).astype(np.float64),
-            np.asarray(z["has_sf_wdl"][:]).astype(bool),
+            has_sf_wdl_all,
         )
+        try:
+            multipv = sf_multipv_missing_rate(
+                np.asarray(z["has_sf_multipv_raw"][:]), has_sf_wdl_all,
+            )
+        except KeyError:
+            multipv = AxisReading(float("nan"), "field_missing")
         try:
             desync = sf_bestmove_is_first_legal_rate(
                 np.asarray(z["sf_move_index"][:]), np.asarray(z["sf_legal_mask"][:]),
@@ -322,16 +344,28 @@ def _load_rows(
                 & np.asarray(z["has_sf_legal_mask"][:]).astype(bool),
             )
         except KeyError:
-            desync = float("nan")
-        n_shard_rows = int(gid.shape[0])
-        if not np.isfinite(attach) or attach < attachment_min:
-            rejected.append((path.name, f"attachment {attach:+.3f}"))
+            desync = AxisReading(float("nan"), "field_missing")
+
+        verdict: str | None = None
+        if not attach.usable:
+            verdict = attach.describe("attachment")
+        elif attach.value < attachment_min:
+            verdict = f"attachment {attach.value:+.4f} < {attachment_min}"
+        elif not multipv.usable:
+            verdict = multipv.describe("multipv-miss")
+        elif multipv.value > multipv_miss_max:
+            verdict = f"multipv-miss {multipv.value:.6f} > {multipv_miss_max}"
+        elif desync_max < 1.0 and not desync.usable:
+            verdict = desync.describe("desync")
+        elif desync_max < 1.0 and desync.value > desync_max:
+            verdict = f"desync {desync.value:.4f} > {desync_max}"
+        if verdict is not None:
+            rejected.append((path.name, verdict))
             rejected_rows += n_shard_rows
             continue
-        if not np.isfinite(desync) or desync > desync_max:
-            rejected.append((path.name, f"desync {desync:.3f}"))
-            rejected_rows += n_shard_rows
-            continue
+        if desync.usable:
+            desync_seen.append(desync.value)
+
         # Row i is P0-paired iff row i-1 is the immediately preceding ply of the
         # same game AND carries a usable eval. The ply-gap check is what makes
         # the earlier row's label an evaluation of THIS row's position; without
@@ -407,16 +441,22 @@ def _load_rows(
         worst = ", ".join(f"{name} ({why})" for name, why in rejected[:6])
         print(f"[value-optimism] REJECTED {len(rejected)} shards ({rejected_rows} rows, "
               f"{100.0 * rejected_rows / max(1, n_rows_total):.1f}% of scanned) failing the "
-              f"integrity gate (attachment >= {attachment_min}, desync <= {desync_max}): "
-              f"{worst}{' ...' if len(rejected) > 6 else ''}")
+              f"integrity gate (attachment >= {attachment_min}, multipv-miss <= "
+              f"{multipv_miss_max}): {worst}{' ...' if len(rejected) > 6 else ''}")
     else:
         print("[value-optimism] integrity gate: 0 shards rejected "
-              f"(attachment >= {attachment_min}, desync <= {desync_max})")
+              f"(attachment >= {attachment_min}, multipv-miss <= {multipv_miss_max})")
+    if desync_seen:
+        print(f"[value-optimism] DIAGNOSTIC (not enforced at --desync-max {desync_max}): "
+              f"bestmove-is-first-legal rate over ACCEPTED shards — median "
+              f"{float(np.median(desync_seen)):.4f}, max {max(desync_seen):.4f}. "
+              "Sound baseline is ~0.08; a max far above that means a corruption mode "
+              "the enforced axes are not seeing.")
     if n_seen == 0:
         raise SystemExit(
             "no usable P0-paired rows in the selected shards"
-            + (f" ({len(rejected)} shards failed the attachment gate or the desync gate "
-               "— widen --shards to reach older, sound ones)" if rejected else ""),
+            + (f" ({len(rejected)} shards failed the integrity gate — widen --shards to "
+               "reach older, sound ones)" if rejected else ""),
         )
     out = {k: np.concatenate(v) for k, v in cols.items() if v}
     for k, v in allrows.items():
@@ -424,6 +464,8 @@ def _load_rows(
     out["_rows_scanned"] = np.array([n_rows_total], dtype=np.int64)
     out["_shards_rejected"] = np.array([len(rejected)], dtype=np.int64)
     out["_rows_rejected"] = np.array([rejected_rows], dtype=np.int64)
+    out["_paired_selfplay"] = np.array([paired_selfplay], dtype=np.int64)
+    out["_paired_curriculum"] = np.array([paired_curriculum], dtype=np.int64)
 
     scanned = max(1, scanned_selfplay + scanned_curriculum)
     paired_n = max(1, paired_selfplay + paired_curriculum)
@@ -556,14 +598,22 @@ def main() -> None:
                          "this — the ruler-free check that its SF labels sit on their own "
                          "rows. Catches TOTAL detachment only. Lower it only to deliberately "
                          "measure through a known-bad window, and say so in the writeup.")
+    ap.add_argument("--multipv-miss-max", type=float, default=SF_MULTIPV_MISS_MAX,
+                    help="reject a shard where more than this share of SF-LABELLED rows "
+                         "carries no MultiPV block — the sharp fingerprint of a Stockfish "
+                         "UCI desync, where the label sits on the right row but answers a "
+                         "DIFFERENT position. Sound shards max at 0.008032 (median exactly "
+                         "0.000000); corrupt ones start at 0.010511, so the default sits in "
+                         "a real gap with 33x headroom. The attachment axis does NOT catch "
+                         "this. Set to 1.0 to deliberately measure the contamination effect.")
     ap.add_argument("--desync-max", type=float, default=SF_DESYNC_MAX,
-                    help="reject a shard where more than this share of labelled rows has the "
-                         "SF bestmove equal to the first legal move — the fingerprint of a "
-                         "Stockfish UCI desync, where labels sit on the right rows but "
-                         "answer a DIFFERENT position. Baseline ~0.080, episodes 0.16-0.97. "
-                         "The attachment axis does NOT catch this (it stays at 0.14-0.45 "
-                         "through three of four known episodes), so both gates are needed. "
-                         "Set to 1.0 to deliberately measure the contamination's effect.")
+                    help="bestmove-is-first-legal rate. DIAGNOSTIC ONLY by default (1.0 = "
+                         "never reject): its sound max is 0.1496 and its corrupt min 0.1505, "
+                         "so every threshold sits in a 0.0009 gap between adjacent order "
+                         "statistics of the same quantity, and 0.15 leaked seven shards "
+                         "sitting inside runs of rejects. It also catches nothing the "
+                         "enforced axes miss. The value is always printed. Set it below 1.0 "
+                         "only with a stated reason.")
     ap.add_argument("--shuffle-control", action="store_true",
                     help="NEGATIVE CONTROL: permute the net's evaluations across rows. "
                          "Every bucket effect must collapse; if it does not, the scorer "
@@ -648,7 +698,8 @@ def main() -> None:
     data = _load_rows(paths, max_rows=args.max_rows, slope=slope, draw_width=draw_width,
                       history_encoding=ckpt_hist, history_rep_fix=ckpt_rep_fix,
                       attachment_min=float(args.attachment_min),
-                      desync_max=float(args.desync_max), seed=int(args.seed))
+                      desync_max=float(args.desync_max),
+                      multipv_miss_max=float(args.multipv_miss_max), seed=int(args.seed))
     x = data["x"]
     n = int(x.shape[0])
     print(f"[value-optimism] {n} P0-paired rows out of {int(data['_rows_scanned'][0])} scanned "
@@ -671,8 +722,9 @@ def main() -> None:
     search_probs = _norm(search_wdl)
     target = game_frac * game_oh + sf_frac * sf_probs + search_frac * search_probs
 
-    attach = sf_label_attachment_corr(x[:, 0:12], sf_wdl)
-    print(f"[value-optimism] pooled SF-label attachment (material~sf_wdl rank corr) = {attach:+.3f}")
+    attach_pooled = sf_label_attachment_corr(x[:, 0:12], sf_wdl)
+    print("[value-optimism] pooled SF-label attachment (material~sf_wdl rank corr) = "
+          + attach_pooled.describe("corr"))
 
     net_wdl = _net_scores(x, model=model, device=args.device, batch_size=args.batch_size)
     piece_count = (np.asarray(x[:, 0:12], dtype=np.float32) > 0.5).sum(axis=(1, 2, 3))
@@ -748,6 +800,10 @@ def main() -> None:
         print("\n  --- OUTCOME CALIBRATION (all labelled rows, no pairing, no model) ---")
         print("  Did games actually score better than the objective eval says? The "
               "handicap mechanism lives HERE, not in the table above.")
+        print("  ⚑ 'ruler' in THIS block is the P1 eval (the row's OWN label, i.e. AFTER "
+              "its move) — a DIFFERENT ruler from the P0 one the head/target table uses. "
+              "That is what lets it cover unpaired rows; do not read the two side by side "
+              "as one quantity.")
         print(f"  {'bucket':22s} {'population':11s} {'n':>7s} {'ruler':>7s} {'outcome':>8s} "
               f"{'out-ruler':>10s}")
         for pop, mask in (
@@ -784,6 +840,7 @@ def main() -> None:
             "min_pieces": int(args.min_pieces),
             "attachment_min": float(args.attachment_min),
             "desync_max": float(args.desync_max),
+            "multipv_miss_max": float(args.multipv_miss_max),
             "shards_rejected": int(data["_shards_rejected"][0]),
             "rows_rejected": int(data["_rows_rejected"][0]),
             "control_statistic_net_score_spread": spread,
@@ -791,7 +848,11 @@ def main() -> None:
             "tail_asymmetry_ci": asym_ci,
             "tail_asymmetry_pair": [names[0], names[-1]],
             "perfect_head_tail_asymmetry_null": null,
-            "paired_set_is_selfplay_only": True,
+            # Derived from the MEASURED counts, never asserted: a hardcoded True
+            # would keep claiming selfplay-only after the pairing logic changed.
+            "paired_selfplay_rows": int(data["_paired_selfplay"][0]),
+            "paired_curriculum_rows": int(data["_paired_curriculum"][0]),
+            "paired_set_is_selfplay_only": bool(int(data["_paired_curriculum"][0]) == 0),
             "buckets": [vars(s) for s in stats],
             "outcome_calibration": {k: [vars(c) for c in v] for k, v in calib.items()},
         }

@@ -88,12 +88,30 @@ _PIECE_VALUES: tuple[float, ...] = (1.0, 3.0, 3.0, 5.0, 9.0, 0.0)
 # `sf_label_attachment_corr`.
 SF_LABEL_ATTACHMENT_MIN: float = 0.25
 
-# Maximum share of labelled rows whose recorded SF bestmove is simply the FIRST
-# LEGAL MOVE. Baseline on sound shards is ~0.080 (measured over 830 live shards,
-# median 0.080, p90 0.094); a UCI-desync episode drives it to 0.16-0.97. The
-# threshold sits well above the clean p90 and well below every observed episode.
-# See `sf_bestmove_is_first_legal_rate`.
-SF_DESYNC_MAX: float = 0.15
+# Maximum share of labelled rows carrying NO MultiPV block. This is the gate's
+# sharp axis for SF-desync corruption. Measured over all 834 shards of trial
+# 13a9f: accepted shards run to a max of 0.008032 and a p90 of 0.000300, the
+# first rejected shard sits at 0.010511, and the median clean shard is EXACTLY
+# 0.000000. The threshold therefore falls in a real 0.0025 gap with **33x**
+# headroom over the accepted p90. See `sf_multipv_missing_rate`.
+SF_MULTIPV_MISS_MAX: float = 0.01
+
+# The bestmove-is-first-legal rate is kept as a DIAGNOSTIC and is OFF as a gate
+# by default (1.0 = never reject). It has no defensible threshold: over the same
+# 834 shards the highest sound value is 0.1496 and the lowest corrupt value is
+# 0.1505, so any cut sits in a 0.0009 gap between two adjacent order statistics
+# of the same quantity — 1.7x headroom, versus 33x for the MultiPV axis. Setting
+# it at 0.15 leaked seven shards sitting *inside* runs of rejects. That is
+# precisely the "a gate tuned on the episode that produced it detects that
+# episode" failure, so the number is reported and not enforced. It also catches
+# nothing the other two axes miss on this data (union is 120 shards either way).
+SF_DESYNC_MAX: float = 1.0
+
+# Minimum evaluable rows before an axis will return a value at all. Below this a
+# rate is noise, and a noisy rate that happens to fall on the pass side is worse
+# than no reading — hence `AxisStatus.TOO_FEW_ROWS`, which callers must treat as
+# a reject rather than a pass.
+SF_AXIS_MIN_ROWS: int = 30
 
 
 def sf_eval_bucket(cp: float, edges: tuple[float, ...] = SF_EVAL_BUCKET_EDGES) -> int:
@@ -182,6 +200,30 @@ def expected_score_to_cp(
     return np.clip(0.5 * (lo + hi), lo_cp, hi_cp), clamped
 
 
+@dataclass(frozen=True)
+class AxisReading:
+    """One integrity-axis measurement, with WHY it is unusable when it is.
+
+    A bare NaN collapses "the field is missing", "too few rows to estimate" and
+    "genuinely corrupt" into one indistinguishable value. A shard written before
+    the field existed would then be rejected under the same string as a poisoned
+    one — or, if the sign were ever flipped, admitted under it. The status is
+    what keeps those three apart in the reject log.
+    """
+
+    value: float
+    status: str = "ok"
+
+    @property
+    def usable(self) -> bool:
+        return self.status == "ok" and bool(np.isfinite(self.value))
+
+    def describe(self, name: str) -> str:
+        if self.status == "ok":
+            return f"{name} {self.value:+.4f}"
+        return f"{name} UNEVALUABLE ({self.status})"
+
+
 def material_balance_from_planes(x: np.ndarray) -> np.ndarray:
     """Side-to-move material balance from the stored input planes.
 
@@ -224,7 +266,7 @@ def rank_corr(a: np.ndarray, b: np.ndarray) -> float:
 
 def sf_label_attachment_corr(
     x: np.ndarray, sf_wdl: np.ndarray, mask: np.ndarray | None = None,
-) -> float:
+) -> AxisReading:
     """Is a shard's SF label actually attached to the position it sits on?
 
     Rank correlation of the mover's material balance (read from ``x``) against
@@ -248,12 +290,51 @@ def sf_label_attachment_corr(
     if mask is not None:
         m = np.asarray(mask, dtype=bool)
         signal, material = signal[m], material[m]
-    return rank_corr(material, signal)
+    if signal.size < SF_AXIS_MIN_ROWS:
+        return AxisReading(float("nan"), "too_few_rows")
+    value = rank_corr(material, signal)
+    # A degenerate shard (all material equal, or a constant label) yields NaN.
+    # It is NOT evidence of soundness, so it carries a status of its own rather
+    # than sharing "too_few_rows" or leaking through as a pass.
+    return AxisReading(value) if np.isfinite(value) else AxisReading(value, "degenerate")
+
+
+def sf_multipv_missing_rate(
+    has_sf_multipv_raw: np.ndarray, labelled: np.ndarray | None = None,
+) -> AxisReading:
+    """Share of SF-LABELLED rows that carry no MultiPV candidate block.
+
+    The sharp fingerprint of a Stockfish UCI desync. When a timed-out ``search``
+    raises while the engine is still calculating, the stale ``bestmove`` is left
+    in the pty buffer and nothing resynchronises; the recorded reply then belongs
+    to a different position and its candidate list fails to survive the
+    legality/parse path, so the row lands with an SF eval but no MultiPV block.
+    (Cause and fix belong to PR #297; this is only the detector.)
+
+    Preferred over the bestmove-is-first-legal rate purely on SEPARATION, which
+    is the only property a gate threshold has: a sound shard reads exactly
+    0.000000 at the median and 0.008032 at the observed maximum, while corrupt
+    shards start at 0.010511 — a real gap. The other rate's sound maximum and
+    corrupt minimum are 0.0009 apart, so no threshold on it can be honest.
+    """
+    has = np.asarray(has_sf_multipv_raw).astype(bool).reshape(-1)
+    if has.size == 0:
+        return AxisReading(float("nan"), "unusable_input")
+    # Default to ALL rows. Defaulting to `has` would restrict the denominator to
+    # rows that have a MultiPV block and force the rate to 0.0 by construction —
+    # a detector that can only ever report "clean".
+    sel = np.ones_like(has) if labelled is None else np.asarray(labelled, dtype=bool)
+    if sel.shape != has.shape:
+        return AxisReading(float("nan"), "unusable_input")
+    n = int(sel.sum())
+    if n < SF_AXIS_MIN_ROWS:
+        return AxisReading(float("nan"), "too_few_rows")
+    return AxisReading(float((~has[sel]).mean()))
 
 
 def sf_bestmove_is_first_legal_rate(
     sf_move_index: np.ndarray, sf_legal_mask: np.ndarray, mask: np.ndarray | None = None,
-) -> float:
+) -> AxisReading:
     """Share of labelled rows whose SF bestmove is just the first legal move.
 
     The fingerprint of a Stockfish UCI DESYNC. When a timed-out ``search``
@@ -264,34 +345,27 @@ def sf_bestmove_is_first_legal_rate(
     ``legal_indices[0]`` fallback fires, which is what this counts. (Cause and
     fix are PR #297's; this is only the detector.)
 
-    **Why the gate needs BOTH this and `sf_label_attachment_corr`, and why
-    neither subsumes the other.** The correlation asks "is the label block
-    attached to these rows at all"; it collapses to ~0.00 only under TOTAL
-    detachment. A desync is PARTIAL — the labels are on the right rows, they are
-    just answers to a different position — so it degrades the correlation
-    without killing it. Measured on the live trial, three of the four desync
-    episodes sit at 0.14-0.45 correlation, comfortably above a 0.25 reject line,
-    while this rate reads 0.16-0.97 against a 0.080 baseline. The reverse also
-    holds: total detachment does not necessarily raise this rate, because a
-    scrambled-but-internally-consistent label block still carries a real
-    bestmove. One axis catches what the other cannot.
+    Kept as a DIAGNOSTIC, not a default gate — see `SF_DESYNC_MAX`. It is a real
+    signal (0.080 baseline, 0.16-0.97 inside an episode) but it admits no honest
+    threshold, and `sf_multipv_missing_rate` detects the same failure with 33x
+    the headroom.
 
-    Returns NaN when the inputs cannot support the check; callers must treat
-    NaN as a REJECT rather than a pass — a gate that cannot evaluate a shard has
-    not cleared it.
+    Returns a non-"ok" status when the inputs cannot support the check; callers
+    must treat that as a REJECT rather than a pass — a gate that cannot evaluate
+    a shard has not cleared it.
     """
     smi = np.asarray(sf_move_index).reshape(-1)
     legal = np.asarray(sf_legal_mask)
     if smi.size == 0 or legal.ndim != 2 or legal.shape[0] != smi.size:
-        return float("nan")
+        return AxisReading(float("nan"), "unusable_input")
     ok = smi >= 0
     ok &= legal.sum(axis=1) > 0
     if mask is not None:
         ok &= np.asarray(mask, dtype=bool)
-    if int(ok.sum()) < 30:
-        return float("nan")
+    if int(ok.sum()) < SF_AXIS_MIN_ROWS:
+        return AxisReading(float("nan"), "too_few_rows")
     first_legal = np.argmax(legal[ok] > 0, axis=1)
-    return float((smi[ok] == first_legal).mean())
+    return AxisReading(float((smi[ok] == first_legal).mean()))
 
 
 @dataclass(frozen=True)
