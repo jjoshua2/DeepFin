@@ -2,7 +2,7 @@
 
 Every bug this exists to catch has the same shape: a number in the yaml that
 is not the number the pipeline produced, with nothing anywhere asserting the
-two agree. Four of them shipped to production undetected:
+two agree. Seven of them shipped to production undetected:
 
   - `train_views_per_position` 2.5 divided by matching-only positions while 4.5-6.5x
     more positions were ingested, so TRUE reuse was ~0.46 and over half of all
@@ -502,11 +502,16 @@ def classify_config_provenance(
 ) -> tuple[list[str], list[str]]:
     """Label every shared config key by which source is authoritative for it.
 
-    Returns ``(report_lines, findings)``. Three outcomes per key:
+    Returns ``(report_lines, findings)``. Four outcomes per key:
 
       * restart-required and yaml != realized — the yaml was edited and the
         running trial has not taken it. A FINDING: this is the
         "my change may not be in effect" trap, and it is silent.
+      * construction-only, yaml == row, params.json != row — a NOTE, never a
+        finding: the row is what the constructor was handed (the reloader
+        refuses to overlay these), and params.json is the trial's ORIGINAL
+        creation config, so a difference here means a restart picked the yaml
+        up. Reading it the other way round is the J5 error itself.
       * live-reloadable and yaml != realized — the reload did not land. A
         FINDING: the live-yaml validator is all-or-nothing, so one unknown key
         rejects every other key's change too.
@@ -582,21 +587,20 @@ def classify_config_provenance(
                 )
             elif key in construction_only and key in params \
                     and not _same_value(params[key], live):
-                # Reachable only when the reloader overlaid a construction-only
-                # key -- i.e. the classification and the reloader disagree, or
-                # the row predates the fix. `live` is then the yaml's value
-                # echoed back by the config dict, and params.json holds what the
-                # constructor actually got. Never report this as healthy.
+                # NOT a finding, and specifically not "the object is running
+                # params.json's value" -- that inference is the J5 error this
+                # script exists to warn about. params.json is the trial's
+                # ORIGINAL creation config; the startup reload runs BEFORE the
+                # constructor (trainable.py:520 precedes :634), so every restart
+                # since the yaml moved handed the constructor the yaml value
+                # while params.json kept the creation-time one. Measured on the
+                # live trial 2026-08-01: params.json said shuffle_buffer_size
+                # 25000 across seven restarts that each built the buffer at the
+                # yaml's 100000.
                 report.append(
-                    f"  INERT-OVERLAY {key}: params.json={params[key]!r} "
-                    f"row={live!r} — the row echoes the yaml, the object runs "
-                    f"{params[key]!r}"
-                )
-                findings.append(
-                    f"{key}: the trial's config reports {live!r} but this key is "
-                    f"only ever read by a constructor, so the running object holds "
-                    f"the launch value {params[key]!r}. The row is an overlay, not "
-                    "a realization — restart to make the yaml value real"
+                    f"  ok(ctor)  {key}: row={live!r} matches the yaml; "
+                    f"params.json={params[key]!r} is the trial's ORIGINAL "
+                    "creation config and does not describe this process"
                 )
             continue
         if not _same_value(on_disk, live):

@@ -297,18 +297,17 @@ def test_provenance_never_calls_a_construction_only_key_correct(key: str) -> Non
     from the branch condition, or restore the header wording
     "(the running value is correct)".
 
-    This is the reproduced output. `params.json` holds the launch value the
-    constructor got, the row echoes the yaml because the reloader overlaid it,
-    and the old classifier listed that under a header asserting the running
+    This is the reproduced output: `params.json` differs from the row, and the
+    old classifier listed exactly that under a header asserting the running
     value was correct -- with an EMPTY findings list, so the audit exited 0.
 
-    Asserted on the specific line for THIS key, not on ``findings != []``:
-    a findings-count assertion is satisfied by any other key diverging, which
-    is the disjunction, not the term.
+    What it asserts is a LINE, for THIS key, not ``findings != []`` -- a
+    findings-count assertion is satisfied by any other key diverging, which is
+    the disjunction, not the term.
     """
     params = {key: 25000}
     flat_yaml = {key: 100000}
-    realized = {key: 100000}  # the overlay -- what the row reports
+    realized = {key: 100000}  # the row: yaml value, from the startup reload
 
     report, findings = classify_config_provenance(
         params, flat_yaml, realized,
@@ -320,11 +319,16 @@ def test_provenance_never_calls_a_construction_only_key_correct(key: str) -> Non
     joined = "\n".join(report)
     assert f"{key}: params.json=25000 running=100000" not in joined, joined
     assert "the running value is correct" not in joined, joined
-    assert any(line.startswith(f"  INERT-OVERLAY {key}:") for line in report), joined
+    # And it must not swing to the opposite error either: params.json is the
+    # trial's ORIGINAL creation config, so "the object runs params.json's value"
+    # is the J5 mistake, not the fix. The honest line says which source the row
+    # is, and raises no finding.
     assert any(
-        f.startswith(f"{key}: ") and "only ever read by a constructor" in f
-        for f in findings
-    ), findings
+        line.startswith(f"  ok(ctor)  {key}:")
+        and "ORIGINAL" in line and "does not describe this process" in line
+        for line in report
+    ), joined
+    assert not findings, findings
 
 
 @pytest.mark.parametrize("key", sorted(construction_only_config_keys()))
