@@ -20339,6 +20339,44 @@ PYTHONPATH=. python3 -m pytest tests/test_ratchet_search_shape.py -q
 - **KILL:** any day shape exceeding `3 x BUDGET_MIN` of arena time, or a
   `ratchet.csv` row appearing for a day that gave up.
 
+### ⚑ ADDENDUM — the exit contract changed after this entry was first written
+
+A follow-up commit (`727dafff2`) fixed a **fourth** instance of the class, and it
+moves the meaning of exit 0. Three early-outs used to `exit 0` before the attempt
+ledger was initialised, so they wrote no `attempts.csv` row **and** the loop
+stamped `last_run_date` — the day was consumed with no reading and nothing could
+see it. Reproduced through the real loop in the state a fresh restart passes
+through: Ray has created `checkpoint_000479/` but has not yet written
+`trainer.pt` → `rc=0`, day stamped, 0 rows, log reads "daily ratchet done",
+`ratchet_gap_alerts` blind, `result.json` green.
+
+**`exit 0` now means "a `ratchet.csv` row exists for today" — never "there was
+nothing to do".** Those paths now `exit $RATCHET_EXIT_RETRY` and deliberately
+write no ledger row, because counting a startup race against the day's 3 attempts
+would let a few unlucky polls burn the budget without ever measuring anything.
+The three give-up rules, the attempt cap and the exit-5 contract are unchanged.
+Mutation-checked both ways: reverting to `exit 0` dies, and *over*-correcting to
+the non-retryable exit 5 also dies — the day must stay retryable, not be killed.
+
+Also fixed in the same round: `SERIES_LEFT` was never decremented when `vs_prev`
+was skipped, so `vs_boot512` got ~855 s of an 1800 s budget on precisely the
+training-down days the self-match guard fires (now >1500 s); and the
+repo-path/`WORK_DIR`/exit-status/iteration-parse duplication between the two
+scripts is now `scripts/ratchet_common.sh`, with a test asserting **absence** of
+a local copy in either script so a reintroduced duplicate fails rather than
+silently drifting. That divergence was already real — `ratchet_loop.sh` honoured
+`$TRAIN_WORK_DIR` while `daily_gate_ratchet.sh` hard-coded `runs/pbt2_small`.
+
+**Two mutations survived the first battery and were reported before being
+patched**, both gaps in the author's own tests rather than code defects: removing
+`series_skipped` from the `selfmatch` branch (the budget test drove only the
+`nosnap` skip — and self-match is the branch that fires when training is down,
+exactly when `vs_boot512` is the only series that can still produce a row), and
+removing the loop's `$STATE` check (no test advanced the checkpoint between
+polls; without it a day whose checkpoint advances buys a second full 30-minute
+arena, because `rows_today` is keyed on today+iter). Final battery: **23
+mutations, 23 killed.**
+
 ### ⚑ The finding that outlived the fix
 
 The reviewer's mutation — `ratchet_outcome "$?"` → `ratchet_outcome 0` —
