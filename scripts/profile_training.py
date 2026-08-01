@@ -114,6 +114,13 @@ def main() -> None:
         read_only=False,
         shuffle_cap=args.num_samples,
         shard_size=500,
+        # Deliberately NOT deterministic_refresh=True, unlike the offline
+        # rulers (scripts/retarget_retrain.py). This script's output is a
+        # timing, and the async shuffle refresh is part of what production
+        # actually does: pinning the refresh onto the sampling thread would
+        # make the reported steps/s slower than the loop being profiled. The
+        # draw sequence being load-dependent costs a profiler nothing, because
+        # no number here depends on WHICH rows were drawn.
     )
     samples = [_make_sample(rng) for _ in range(args.num_samples)]
     buf.add_many(samples)

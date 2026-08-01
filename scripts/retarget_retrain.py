@@ -35,7 +35,9 @@ meaningful, but the absolute trajectories differ from what a live retune
 that kept the optimizer state would produce. Each variant is seeded
 identically, so dropout masks and the buffer's random draws match across
 arms; a replay_* sampling override still (intentionally) changes WHICH rows
-those shared draws select.
+those shared draws select. The draw-matching half of that is enforced by
+``deterministic_refresh=True`` on the buffer below and was NOT true before
+2026-07-31 — see the comment there.
 
 Usage::
 
@@ -255,6 +257,26 @@ def _run_variant(
         draw_cap_frac=tc.shuffle_draw_cap_frac,
         wl_max_ratio=tc.shuffle_wl_max_ratio,
         sf_gap_priority_weight=tc.replay_sf_gap_priority_weight,
+        # Unconditional, and the reason the paired claim in this module's
+        # docstring is true rather than merely intended. The default refresh
+        # picks between an async and a synchronous shuffle-pool refresh by who
+        # won a race, and only the synchronous one advances `self.rng`; a
+        # single lost race therefore desynchronises this variant's entire draw
+        # sequence from every other variant's, permanently, as a function of
+        # machine load. "Each variant is seeded identically, so ... the
+        # buffer's random draws match across arms" is the load-bearing
+        # assumption of every delta this script reports, and without this it
+        # was false. Measured 2026-07-31 on the sibling offline probe: 15
+        # identical invocations gave 3 distinct draw sequences, 0.0056 nats of
+        # held-out CE apart (docs/experiment_ledger.md, that date).
+        #
+        # No flag: an unpaired offline A/B is not a mode anyone wants, and a
+        # switch here would only offer a way to invalidate the comparison
+        # quietly. The cost is the refresh's shard reads moving onto the
+        # sampling thread, ~+40% of sampling wall time on a loaded machine —
+        # bought back many times over by not having to re-run a sweep whose
+        # arms turn out not to have shared their rows.
+        deterministic_refresh=True,
         # Offline-experiment knob (no TrialConfig field yet): read straight
         # from the flat config until it graduates to production.
         sf_gap_priority_signed=tc.replay_sf_gap_priority_signed,

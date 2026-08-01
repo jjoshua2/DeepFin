@@ -42,7 +42,6 @@ guards is a race and a test of a race is a flaky test.
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -123,24 +122,30 @@ def _draw_ranks(buf: DiskReplayBuffer) -> np.ndarray:
     return np.concatenate(out)
 
 
-def _prefetch_threads_alive() -> int:
-    return sum(1 for t in threading.enumerate() if t.name.startswith("replay-prefetch-"))
-
-
 def test_deterministic_refresh_removes_the_prefetch_thread(tmp_path) -> None:
     """The gate is wired -- and the default is unchanged.
 
     Both halves matter. Without the second assertion a flag that had been
     turned into a no-op, or a default that had silently acquired the
-    deterministic behaviour, would both read as a pass.
+    deterministic behaviour, would both read as a pass. This is also the ONLY
+    check in this file that a no-op'd flag cannot survive: a review mutation
+    that accepted ``deterministic_refresh`` and ignored it left the two tests
+    below PASSING, because the race it re-armed simply did not fire on that
+    run. A race can be tested for presence, not for absence.
+
+    Asserted per instance (``buf._prefetch_thread``) rather than by counting
+    live ``replay-prefetch-*`` threads process-wide. The global count is not
+    ours to reason about: threads are daemons owned by other buffers, the rest
+    of the suite constructs dozens and closes only some, and one of those being
+    collected between the two snapshots would flake this. The instance
+    attribute is exact and immune to test ordering.
     """
     shard_dir = _write_window(tmp_path)
-    before = _prefetch_threads_alive()
 
     buf = _open(shard_dir, 0, deterministic=True)
     try:
         _draw_ranks(buf)
-        assert _prefetch_threads_alive() == before, (
+        assert buf._prefetch_thread is None, (
             "deterministic_refresh=True still started a shuffle-refresh prefetch "
             "thread; the refresh can still be served from _prefetch_rng and the "
             "draw sequence is not a function of the seed"
@@ -152,11 +157,12 @@ def test_deterministic_refresh_removes_the_prefetch_thread(tmp_path) -> None:
     loud = _open(shard_dir, 0, deterministic=False)
     try:
         _draw_ranks(loud)
-        assert _prefetch_threads_alive() > before, (
+        assert loud._prefetch_thread is not None, (
             "the default no longer starts a prefetch thread -- either the "
             "production path lost its async refresh, or deterministic_refresh "
             "has become unconditional"
         )
+        assert loud._prefetch_thread.name.startswith("replay-prefetch-")
     finally:
         loud.close()
 
