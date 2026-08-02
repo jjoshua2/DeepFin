@@ -30,7 +30,9 @@ def _make_model(seed: int = 0) -> torch.nn.Module:
     # passes alone and fails in the full run, with no local change to blame.
     # Callers that need two DIFFERENT nets must pass different seeds.
     with torch.random.fork_rng(devices=[]):
-        torch.manual_seed(seed)
+        # CPU generator only: torch.manual_seed would also reseed the global
+        # CUDA generator, which fork_rng(devices=[]) does not restore.
+        torch.default_generator.manual_seed(seed)
         model = build_model(cfg)
     model.eval()
     return model
