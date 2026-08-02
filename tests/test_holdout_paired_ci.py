@@ -80,6 +80,32 @@ def test_clustering_widens_the_interval_versus_singleton_games() -> None:
     assert (wide["hi"] - wide["lo"]) > 3.0 * (narrow["hi"] - narrow["lo"])
 
 
+def test_base_zero_rows_are_excluded_from_the_estimate() -> None:
+    """The `base` mask must gate the comparison, not merely ride along in the dump."""
+    gid = np.repeat(np.arange(4), 5)
+    a = _dump(np.zeros(20), gid)
+    b = _dump(np.concatenate([np.ones(10), np.full(10, 100.0)]), gid)
+    b["base"] = np.concatenate([np.ones(10), np.zeros(10)]).astype(np.float32)
+    out = paired(a, b, "ce", n_boot=200, seed=0)
+    assert out["n_rows"] == 10
+    assert out["n_games"] == 2
+    assert out["delta"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_n_boot_controls_the_number_of_replicates() -> None:
+    """A single replicate collapses the interval; a hard-coded n_boot could not."""
+    rng = np.random.default_rng(5)
+    gid = np.repeat(np.arange(30), 10)
+    a = _dump(np.zeros(300), gid)
+    b = _dump(rng.normal(0.1, 0.5, 300), gid)
+    one = paired(a, b, "ce", n_boot=1, seed=0)
+    assert one["lo"] == one["hi"]
+    assert one["sd_boot"] == 0.0
+    many = paired(a, b, "ce", n_boot=2000, seed=0)
+    assert many["hi"] > many["lo"]
+    assert many["sd_boot"] > 0.0
+
+
 def test_row_order_mismatch_is_refused() -> None:
     gid = np.repeat(np.arange(4), 5)
     a = _dump(np.zeros(20), gid)
