@@ -18,12 +18,20 @@ from chess_anti_engine.inference_threaded import ThreadedDispatcher, _next_bucke
 from chess_anti_engine.model import ModelConfig, build_model
 
 
-def _make_model() -> torch.nn.Module:
+def _make_model(seed: int = 0) -> torch.nn.Module:
     cfg = ModelConfig(
         embed_dim=32, num_layers=1, num_heads=2, ffn_mult=2.0,
         input_extra_features="v1",
     )
-    model = build_model(cfg)
+    # Seed the init draw, forked so this file neither depends on nor perturbs
+    # the process-global torch RNG. Unseeded, the weights are whatever state
+    # earlier tests in the suite happened to leave behind, which makes every
+    # numeric assertion below a lottery re-rolled by test ORDER — a test that
+    # passes alone and fails in the full run, with no local change to blame.
+    # Callers that need two DIFFERENT nets must pass different seeds.
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(seed)
+        model = build_model(cfg)
     model.eval()
     return model
 
@@ -188,17 +196,23 @@ def test_dispatcher_coalesced_legal_bf16_preserves_request_slices():
             rng.integers(0, 4672, size=int(counts.sum()), dtype=np.int32)
             for counts in legal_counts
         ]
-        expected: list[tuple[np.ndarray, np.ndarray]] = []
-        for x, flat, counts in zip(inputs, legal_flat, legal_counts, strict=True):
-            dense_pol, dense_wdl = direct.evaluate_encoded(x)
-            rows = np.repeat(np.arange(x.shape[0]), counts)
-            compact_pol = (
-                torch.from_numpy(dense_pol[rows, flat])
-                .to(torch.bfloat16)
-                .view(torch.uint16)
-                .numpy()
-            )
-            expected.append((compact_pol, dense_wdl))
+        # Baseline: the SAME compact path, one request per submit. It must NOT
+        # be the dense evaluate_encoded gather. Every compact submit pads the
+        # forward to a bucket (>= 16 rows) while evaluate_encoded runs it at
+        # the exact row count, and the two shapes select different CPU GEMM
+        # kernels — real rows come out ~1e-7 apart (padding CONTENT is proven
+        # irrelevant: NaN/Inf in the pad rows leaves real rows bit-identical).
+        # That gap is far below any tolerance worth having, but bf16
+        # quantisation turns it into a 1-ULP bit flip on near-zero logits, and
+        # exact bit equality reports that as a failure — on ~0.7% of weight
+        # draws. Compact-vs-dense agreement is the sibling test's job
+        # (test_dispatcher_legal_bf16_matches_dense_legal_logits); this test's
+        # job is that a COALESCED batch hands each caller its own slice, so the
+        # single-request compact result is the right thing to compare against.
+        expected = [
+            direct.evaluate_legal_bf16(x, flat, counts)
+            for x, flat, counts in zip(inputs, legal_flat, legal_counts, strict=True)
+        ]
 
         barrier = threading.Barrier(len(inputs))
 
@@ -252,8 +266,8 @@ def test_dispatcher_oversize_submission_raises():
 
 
 def test_dispatcher_update_model_swaps_weights():
-    model_a = _make_model()
-    model_b = _make_model()
+    model_a = _make_model(seed=0)
+    model_b = _make_model(seed=1)
     with torch.no_grad():
         for p in model_b.parameters():
             p.mul_(0.5)
@@ -279,8 +293,10 @@ def test_dispatcher_update_model_preserves_compiled_model(monkeypatch):
 
     monkeypatch.setattr(torch, "compile", fake_compile)
 
-    model_a = _make_model()
-    model_b = _make_model()
+    # Distinct seeds: the post-update parameter comparison below is only a gate
+    # if the two nets started out different.
+    model_a = _make_model(seed=0)
+    model_b = _make_model(seed=1)
     dispatcher = ThreadedDispatcher(
         model_a,
         device="cpu",
