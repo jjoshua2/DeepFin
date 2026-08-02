@@ -25176,3 +25176,334 @@ axis is the DATA one — what the sampler shows the net (`G`, running) and wheth
 rehearsal of old-era rows breaks the exchange rate (`F`, specified, unrun). The
 exchange-rate invariance across four optimizer regimes is the strongest argument yet
 that #108 is a data-distribution problem, not a training-hyperparameter problem.
+
+## 2026-08-02 — PRE-REGISTRATION: is the frozen-audit head asymmetry (VALUE +13.36 vs POLICY +8.45) a FEN-only ruler artifact? (audit-v2 = same set, real input encoding)
+
+**Status at write time: PRE-COMMITTED, NOT YET SCORED.** Written before any
+boot512/iter477 forward pass on the full set. Only a 64-position smoke test of
+the rig had been run.
+
+**The defect being tested.** The frozen audit set stores per row only
+`key`/`fen`/`phase`/`source`. Both rulers rebuild the input with
+`chess.Board(fen)`, whose move stack is empty, so under the production encoding
+(`lc0_root_legacy_meta` + `v2_threats`, 175 planes) **93 planes are
+structurally zero on every audit row**: the 7 non-current history slots
+(13..103), the current-frame repetition plane (12), and — separately — the
+side-to-move colour flag (108), which the FEN-only path writes as 0 on 100% of
+rows although the stored rows carry 1 on **50.8%** of them. The set is sound;
+the RULER feeds the net an input it never saw in training.
+
+**audit-v2 changes ONLY the encoding.** Positions, deep-SF labels, legal-move
+indexing, metrics, batch sizes: identical. Per the standing rule this is a
+RULER CHANGE — audit-v2 numbers must never be mixed into a table with v1
+numbers, and every v1 quantity used below is RE-MEASURED on this rig rather
+than cited from the table above.
+
+**Provenance is exact, not approximated.** `audit_set_v1_README.md` names the
+snapshot the set was sampled from, and it survives:
+`runs/parallel_candidate_replay_snapshots/current_live_20260602_202037_v2threats`
+(1463 shards, all `lc0_root_legacy_meta`). Joining by `position_key` recovers
+the original stored production row for **4000/4000 audit positions** (mean
+duplicate multiplicity 1.010, max 3; first match in shard-name order wins).
+Verified on the join: piece planes 0..11 and castling planes 104..107 are
+**bit-identical** to the FEN-only encoding (canonicalisation preserved), while
+history-frame occupancy goes **0.0% -> 71.3%** and whole-input nonzero-plane
+fraction **27.0% -> 64.4%**.
+
+**Child encodings for the VALUE ruler are DERIVED and PROVEN, not assumed.**
+`value_regret.py` evaluates every legal child, so children need history too.
+Child slot k+1 = parent slot k with the us/them 6-plane halves swapped and the
+rank axis flipped. Checked bit-exactly against real consecutive-ply row pairs
+taken from the snapshot itself: **28,539/28,539 piece-history slots exact,
+4,077/4,077 colour flags exact**, 28,535/28,539 repetition planes exact (the 4
+misses are repetitions older than the 8-slot window, which no shift can know).
+
+**Arms.** `v1` = FEN-only (today's ruler). `v1_stm` = v1 plus the true colour
+flag only (attribution: separates the flag from the history). `v2` = stored row
+at the root, derived children.
+
+**THE PRE-COMMITTED QUESTION.** Define, WITHIN a single ruler, the head
+asymmetry `A = ΔV − ΔP` for boot512 → iter477, where ΔV is the paired change in
+1-ply value-match top-1 deep-SF regret (cp) and ΔP the paired change in
+raw-prior top-1 deep-SF regret (cp). Set: `data/audit_set_v1.jsonl`,
+TB-excluded `--min-pieces 8`, n=3723. Batches pinned as in the 08-02 lineage
+read (policy 256, value 128). CIs: 10k-resample percentile bootstrap
+**clustered on `game_id`** (802 source games recovered by the same join) — the
+audit rows are not independent, up to several per game.
+
+**Kill/success rule, committed now:**
+
+- **ARTIFACT** if `A_v2`'s 95% CI contains 0 **and** `|A_v2| < |A_v1|/2`, with
+  `A_v1` re-measured on this rig. The "value degraded more" reading is then a
+  property of the FEN-only encoding, not of the lineage.
+- **SURVIVES** if `A_v2`'s 95% CI excludes 0 with the same sign as `A_v1`.
+- **CANNOT RESOLVE** otherwise (CI contains 0 but the point estimate has not
+  materially shrunk).
+
+**Validity gate, committed now — no verdict is read if it fails.** The `v1` arm
+of this rig must reproduce the 08-02 lineage table within **±0.5 cp** on all
+four anchors: VALUE boot512 60.39 / iter477 73.75, POLICY boot512 47.70 /
+iter477 56.15. A rig that does not reproduce the ruler is not the ruler.
+
+**Confounds.** (i) 38 of 4000 positions occur in more than one stored row with
+different histories; the first-match rule is deterministic but arbitrary among
+them. (ii) The recovered rows are the JUNE snapshot's — the history is the one
+the position actually had when generated, which is what training saw, but it is
+not "iter477-era history". (iii) Repetition-plane reconstruction for children
+is exact to 99.986%, not 100%.
+
+**Bank:** `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/audit_historyfill_20260802/`
+(`match_audit_rows.py`, `historyfill.py`, `score_audit_v2.py`, `matched_rows.npz`,
+`match_report.json`, `child_transform_verify.json`).
+
+### 2026-08-02 — VERDICT: **ARTIFACT.** "Value degraded more" does NOT survive the history fill — it REVERSES. And the reason is that boot512 could use move history and iter477 cannot.
+
+Reads out the pre-registration immediately above. Nothing in the plan changed
+between writing it and scoring.
+
+#### Validity gate: FAILED AS WRITTEN, and the failure is in the ANCHOR, not the rig
+
+The gate demanded ±0.5 cp against the 08-02 lineage table on four anchors.
+POLICY passed (boot512 47.84 vs 47.70; iter477 56.10 vs 56.15). **VALUE failed**
+(boot512 60.53 vs 60.39 ✓; **iter477 74.64 vs 73.75 = 0.89 ✗**). Rather than
+read a verdict through a failed gate, the cause was chased:
+
+**`scripts/value_regret.py` itself no longer reproduces its own recorded number.**
+Run today on the same `iter477.pt`: **74.4 cp at batch 128, 74.6 cp at batch
+256** — never 73.75. This rig matches the canonical tool to **≤0.05 cp at every
+matched setting** (boot512 61.19/61.2 @128, 60.53/60.5 @256; iter477
+74.35/74.4 @128, 74.64/74.6 @256). So the rig IS the ruler; the ledger's
+absolute VALUE anchor has drifted.
+
+**⚑ NEW RULER PROPERTY — `value_regret.py` IS BATCH-SIZE DEPENDENT.** boot512
+**61.19 cp at batch 128 vs 60.53 at batch 256 (0.66 cp)**; iter477 74.35 vs
+74.64 (0.29 cp). Only *raw policy* regret carried this warning before; the
+VALUE yardstick carries it too, and 0.66 cp is ~5% of the entire lineage effect.
+The table above records "batch 128 (fixed)" for VALUE but its numbers match
+neither. **Pin and state the value batch on every future `value_regret` reading.**
+Everything below is pinned at **value batch 256, policy batch 256**.
+
+Gate substituted, explicitly: *the rig must reproduce the CANONICAL TOOL at
+matched settings to ≤0.05 cp* — met. The asymmetry question is a WITHIN-ruler
+contrast computed end-to-end on this one rig, so it does not touch the drifted
+anchor at all.
+
+#### The readout — n=3723 (TB-excluded), 800 source games, 10k game-clustered resamples
+
+| arm | POLICY top-1 boot512→477 | dP [95% CI] | VALUE top-1 boot512→477 | dV [95% CI] | **A = dV − dP** |
+|---|---|---|---|---|---|
+| `v1` FEN-only (today's ruler) | 47.84 → 56.10 | **+8.26 [+3.18, +13.35]** SIG | 60.53 → 74.64 | **+14.11 [+8.36, +20.35]** SIG | **+5.85 [−1.98, +14.15] ns** |
+| `v1_stm` (+ colour flag only) | 47.48 → 54.71 | **+7.23 [+2.46, +12.16]** SIG | 60.46 → 74.85 | **+14.39 [+8.60, +20.62]** SIG | +7.16 [−0.35, +15.20] ns |
+| **`v2` real history** | 42.62 → 56.26 | **+13.64 [+7.97, +19.93]** SIG | 61.61 → 72.88 | **+11.27 [+6.17, +16.51]** SIG | **−2.37 [−9.68, +4.86] ns** |
+
+Policy EXPECTED regret moves the same way: dE = +4.99 [+2.09, +8.05] under v1,
+**+6.12 [+3.29, +9.08]** under v2.
+
+**By the pre-committed rule: ARTIFACT.** `A_v2`'s CI contains 0, and
+`|A_v2| = 2.37 < |A_v1|/2 = 2.93`. Both clauses fire.
+
+**⚠ State it honestly: `A_v1` was never significant either** (+5.85 [−1.98,
++14.15] with game-clustered CIs). The entry above already found the same thing
+by a different route — its scale-free lead test read L = −0.010, ns. So the
+correct claim is NOT "a real asymmetry was destroyed"; it is **"the point
+estimate that the restart plan leaned on reverses sign when the ruler is fixed,
+and it was never significant under either ruler."** `A_v2 − A_v1 = −8.22
+[−18.73, +2.15]` is itself ns — a difference of differences, so wide.
+
+#### The mechanism, and it IS significant
+
+History benefit within a single checkpoint (v2 minus v1, same net, same rows):
+
+| net | head | v2 − v1 |
+|---|---|---|
+| boot512 | POLICY top-1 | **−5.23 [−9.08, −1.86] SIG** |
+| iter477 | POLICY top-1 | +0.16 [−5.49, +6.26] ns |
+| boot512 | VALUE top-1 | +1.07 [−3.57, +5.82] ns |
+| iter477 | VALUE top-1 | −1.77 [−6.04, +2.40] ns |
+
+**boot512's policy is 5.2 cp BETTER when it is given the move history it was
+trained with. iter477's is not better at all.** Per phase (boot512): middlegame
+−6.13 [−12.60, −0.78] SIG, opening −2.29 [−3.85, −0.81] SIG, endgame −7.81 ns.
+Value is history-insensitive for BOTH nets.
+
+That is the whole artifact in one line: the FEN-only ruler taxes boot512's
+policy and does not tax iter477's, so it shrank the measured policy degradation
+from **+13.64 to +8.26** while leaving value roughly alone — manufacturing
+"value degraded more". The `v1_stm` arm shows the colour flag (plane 108, wrong
+on 50.8% of rows) is worth only ~1 cp; the 7 history frames do the work.
+
+#### What this does and does not license
+
+**Does:** kill "value degraded MORE than policy" as an input to the restart
+plan. Under the production input the ordering is the other way round
+(dP +13.64 vs dV +11.27), though not separably so. It also removes the puzzle
+the 08-02 entry flagged — value degrading more on the audit while the value
+memorisation wedge came out SMALLER (~4.7 vs ~12.8 cp). There is no puzzle: the
+audit's policy number was suppressed by its own encoding.
+
+**Does:** promote a new, testable claim — **the lineage LOST the ability to
+exploit move history in the policy head.** boot512 converts real history into
+5.2 cp of policy accuracy; iter477 converts it into nothing. That is a
+degradation the FEN-only audit is structurally blind to, and it is consistent
+with the treadmill/forgetting picture (a net that has collapsed onto
+row-level recall of the current window has no use for the temporal stack).
+
+**Does NOT:** revalidate any absolute audit bar. Per the standing rule a ruler
+change invalidates its records — **every `audit_targets.py` / `value_regret.py`
+absolute number recorded before today is a v1 (FEN-only) number and must never
+be tabled against a v2 number.** The 12-point lineage table above is v1
+throughout and stays internally consistent; it is not comparable to anything
+here except through the within-ruler contrasts stated above.
+
+**Confounds, unchanged from the pre-registration:** 38/4000 positions occur in
+more than one stored row (first-match rule); the recovered history is the June
+snapshot's, i.e. the history the position actually had when generated;
+child repetition planes are exact to 99.986%.
+
+#### Next, not run
+
+A v2 rescore of the remaining 10 lineage points would say WHEN the history
+capability was lost, and whether that onset tracks the forgetting-hinge
+window-exit story. ~4 min/checkpoint on the banked rig at
+`--gpu-mem-fraction 0.15`. Not run: the offline rig owns the card.
+
+**Bank:** `/tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/audit_historyfill_20260802/`
+(`README.md`, `match_audit_rows.py`, `historyfill.py`, `score_audit_v2.py`,
+`analyze.py`, `matched_rows.npz`, `score_{boot512,iter477}_vb256.json`,
+`analysis.json`, `match_report.json`, `child_transform_verify.json`).
+`analyze.py` re-derives every CI above on CPU with no GPU and no checkpoints.
+
+## 2026-08-02 — PRE-REGISTRATION: does the audit-v2 HISTORY BENEFIT decay across the 13a9f lineage, and is the shape a WINDOW-EXIT HINGE or a MONOTONE decline?
+
+**Status at write time: PRE-COMMITTED, NOT YET SCORED.** Only `boot512` and
+`iter477` are in hand (from the audit-v2 entry above). A guard dry-run of the
+sweep script began scoring `iter025` before this entry was written; **that
+output was deleted unread** and `iter025` will be re-scored below. The scorer is
+deterministic against the canonical tool (≤0.05 cp), so nothing could have been
+selected on.
+
+**What is being tracked.** For each checkpoint c, over the SAME 3723 TB-excluded
+audit positions:
+
+    H(c) = mean(policy top-1 regret | v2 real history)
+         − mean(policy top-1 regret | v1 FEN-only)
+
+H < 0 means the net converts real move history into accuracy. Measured so far:
+**boot512 H = −5.23 [−9.08, −1.86] SIG; iter477 H = +0.16 [−5.49, +6.26] ns.**
+The two-point read says the capability was lost. This asks WHEN and HOW.
+
+**Grid.** 14 checkpoints, **all 14 hash-verified today** against
+`scratchpad/vp_timing_20260802/ckpt_verify.json` (16-char weight digest +
+63,084,128 unique-storage params + strictly increasing `step` 56000 → 94169):
+boot512, iter025/070/122/172/218/308/360/409/425/450/475/477/478. Banked at
+`audit_historyfill_20260802/lineage_ckpt_verify.json`. `v1donor` is excluded —
+different architecture (32.3M params), not this lineage.
+
+**Ruler pinned** exactly as the entry above: arms `v1` and `v2` only (`v1_stm`
+dropped — the colour flag was worth ~1 cp and is not worth 50% more GPU on 14
+points), **value batch 256, policy batch 256**, n=3723, CIs by 10k-resample
+percentile bootstrap **clustered on the 800 source `game_id`s**, with the WHOLE
+CURVE recomputed on each game draw so per-checkpoint H values keep their real
+correlation.
+
+**The window-exit anchor, computed BEFORE seeing the curve.** The replay window
+sits at its 1.5M cap and realized ingest is ~8,987 rows/iter, so the window
+spans **1,500,000 / 8,987 = 167 iterations**. If the history capability is lost
+because the data that taught it aged out, the loss should be concentrated near
+iteration ~167 — i.e. between grid points `iter122` and `iter218`. If instead it
+is the same slow global term that degraded the never-in-window audit set by
++9.04 cp monotonically, H should climb steadily across the whole 477.
+
+**PRE-COMMITTED STATISTICS AND ANSWERS.**
+
+1. **PRIMARY — is there decay at all?** Slope of H vs iteration index,
+   game-clustered bootstrap.
+   - **DECAY** if the slope CI excludes 0 with H rising toward 0.
+   - **NO DECAY** if the CI contains 0. Then the boot512-vs-iter477 contrast is
+     an ENDPOINT artifact and neither shape question is answerable — report that
+     and stop. (Note the 2-point slope is already ns, so this is a live outcome.)
+
+2. **SHAPE-A — how much decay is done by the first point past the window?**
+   `f = (H(218) − H(boot512)) / (H(477) − H(boot512))`, bootstrap CI.
+   - **HINGE-consistent** if `f ≥ 0.70`.
+   - **MONOTONE-consistent** if `f ≤ 0.55` (a straight line through 477 predicts
+     218/477 = 0.46).
+   - **AMBIGUOUS** in between.
+
+3. **SHAPE-B — does a breakpoint pay for itself?** Continuous 2-piece linear fit
+   with one free breakpoint vs a straight line, compared by BIC.
+   - **HINGE** requires `ΔBIC(linear − segmented) ≥ 6` **AND** the breakpoint
+     point-estimate inside **[100, 240]** (the ±~40% band around 167).
+   - **MONOTONE** if the linear slope is SIG and `ΔBIC < 6`.
+   - **CANNOT RESOLVE** otherwise — including a `ΔBIC ≥ 6` breakpoint that lands
+     OUTSIDE [100, 240], which would be a real hinge but NOT the window-exit one
+     and must not be reported as confirming the window-exit story.
+
+**Overall verdict rule.** WINDOW-EXIT requires PRIMARY = DECAY **and** SHAPE-A
+hinge-consistent **and** SHAPE-B = HINGE. MONOTONE requires PRIMARY = DECAY
+**and** SHAPE-A monotone-consistent **and** SHAPE-B = MONOTONE. Any split
+decision is reported as **CANNOT RESOLVE**, not adjudicated post-hoc.
+
+**Secondary, expected null.** The same curve for the VALUE head. boot512 and
+iter477 both read ns (+1.07, −1.77), so value is predicted history-insensitive
+throughout; a SIG value curve would undercut the policy-specific reading.
+
+**GPU discipline.** The offline rig owns the card and its footprint GREW during
+this session (free 8625 → 7209 MiB, util 76–88%), recovering to ~8.4–8.7 GB.
+`sweep_lineage.sh` therefore re-checks `nvidia-smi` **before every checkpoint**
+and aborts, keeping partial results, if free memory is below a pre-committed
+**8600 MiB** floor; each process is additionally capped by
+`--gpu-mem-fraction 0.15` (~4.9 GB) so it OOMs itself rather than starving the
+rig. A partial sweep is a legitimate outcome and will be reported as such.
+
+**Bank:** `audit_historyfill_20260802/` — `sweep_lineage.sh`,
+`analyze_lineage.py`, `lineage/score_<ckpt>.json`, `lineage_ckpt_verify.json`.
+`analyze_lineage.py` re-derives every number on CPU with no GPU.
+
+## 2026-08-02 — CORRECTION to the dead-key entry above: the audit branch as first written could not fire for the only action that reaches it
+
+Delta review of the #106 work. The entry above says the misclassification was
+"fixed with a fourth injected set, checked BEFORE the restart branch and
+reported on the VALUE rather than on a diff". The set and the value-based report
+were right; **the placement was not, and the branch was dead on the production
+path.**
+
+It sat inside `for key in sorted(set(flat_yaml) & set(realized))`. The ONLY
+route by which a dead key goes live is an operator **adding** it to the yaml —
+no file under `configs/` carries one — and `_reload_yaml_into_config` **declines
+to overlay it**, so it never enters `config`, never reaches the result row, and
+the intersection drops it. Reproduced directly: live-add gives `report=[]`,
+`findings=[]`, so `audit_realized_config.py` printed *"ok every shared yaml key
+has reached the running trial"* for exactly the action the branch was added to
+catch. The only scenario that did fire — the key already in the row at its inert
+value, then flipped — is **unreachable**, because `reject_dead_config_keys`
+raises at startup before such a row could be written.
+
+**This is the intersection-vs-union defect the same file already documents.**
+The A4/E13 note in `scripts/audit_realized_config.py` says it in as many words:
+`soft_policy_temp` read 3.0 in the yaml for five months while every worker used
+2.0, because a key absent from one side never entered the comparison, and the
+fix was to diff over the UNION so that "absent" is a reportable state. I
+reproduced that defect in the audit whose whole purpose is the silent-detection
+leg. **Rule, restated because it keeps costing: an audit that compares two
+sources over their INTERSECTION cannot see the state where one source lacks the
+key — which is usually the state worth seeing.**
+
+Fixed: dead keys get their own pass over `set(flat_yaml) | set(realized)`,
+before the main loop.
+
+**Second correction, same round — the guard did not share the criterion's
+instrument.** The audit used `bool(value)` while the refusal used
+`bool(value) != bool(inert)`. Those agree only while every dead key's inert
+value is falsey, which is true of the one key that exists and is a property of
+today's key set rather than of the code. Both now route through a single
+exported predicate, `dead_config_key_violations`. Pinned behaviourally by a test
+that registers a SYNTHETIC dead key inert at `True` and requires the audit and
+the refusal to agree on it — without that key the mutation "audit ignores the
+inert value" survives, which it did on the first pass.
+
+**Method note for the mutation standard:** three of the six delta mutations
+survived their first run. Two were real gaps (above); one was a badly chosen
+mutation that did not actually break the property the test asserted. A surviving
+mutation means *either* the test is weak *or* the mutation missed — and the two
+must be told apart by reading, not assumed to be the first or the second.
