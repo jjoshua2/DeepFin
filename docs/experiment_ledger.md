@@ -22892,3 +22892,152 @@ itself account for value being the worse-degraded head on the frozen audit.**
   155,257 LIVE rows fall in the `end` bucket (`moves_left < 0.31`), so
   `wdl_loss_open`/`_mid` are computed on ~4% of the data. Worth knowing before
   anyone reads those columns.
+
+---
+
+### ⚑⚑ VERDICT 2026-08-02 — PLAY-STRENGTH GROUND TRUTH, boot512 → iter477 (lineage 13a9f): **THE LOOP LOST REAL PLAY STRENGTH. −48.6 Elo [−68.1, −29.4], 1000 games, CI ENTIRELY BELOW ZERO.** The degradation the cp rulers reported is NOT an artifact of those rulers, and search does NOT absorb it.
+
+**Why this run exists.** Every readout this week was cross-entropy or 1-ply cp
+regret, and every one of those rulers has a known defect (FEN-only inputs on the
+frozen sets — `docs/rl_loop_audit.md` M10, 117/175 planes zero; raw-policy regret
+is batch-size dependent at 0.80 cp / 25 argmax flips). Their verdict was that
+raw policy got **+8.45 cp worse** and value **+13.36 cp worse** over the lineage,
+while **`search.top1` moved only +1.27 cp (ns)** — which left the decisive
+question open: *did the loop lose real playing strength, or only prior quality
+that search puts back?* Nothing this week produced an Elo. This is that number.
+
+**Pre-committed interpretation rule** (fixed before the run, from the task
+brief): primary = pentanomial Elo(iter477) − Elo(boot512) at sims 32 with 95% CI.
+CI entirely below 0 ⇒ real play strength lost. CI entirely above 0 ⇒ search
+absorbs the prior damage and the "weaker net" narrative needs revision. CI
+spanning 0 ⇒ report the bound only.
+
+#### The result
+
+| | value |
+|---|---|
+| **Elo (iter477 − boot512)** | **−48.61** |
+| **95% CI (pentanomial)** | **[−68.15, −29.37]** |
+| games / pairs | **1000 / 500**, `truncated=False` (ran 3106 s of a 3600 s cap) |
+| pentanomial (candidate POV) | WW **58**, WD_DW **55**, DD_WL **186**, LD_DL **92**, LL **109** |
+| score | **0.4305 ± 0.0139** (SE) |
+| W/D/L (candidate POV) | **342 / 163 / 481** over 986 naturally-decided games, **+14** drawn by the 300-ply cap |
+
+**The CI is entirely below zero, so by the pre-committed rule the loop LOST real
+play strength.** The point estimate was stable from ~100 pairs onward (−52.3,
+−47.3, −48.8, −44.7, −48.5, −48.8, −48.9, −47.7, −51.5, −50.4, −51.4, −45.1,
+−49.1, −45.3, −46.7, −48.6 across the sixteen running blocks), so this is not a
+tail that happened to land negative.
+
+#### Realized configuration — PRINTED from the run, not asserted
+
+```
+[arena] SEARCH candidate: shape=play vloss_weight=3 target_batch=0 c_puct=1.75
+  c_scale=0.025 c_scale_root=7.0 c_visit=50.0 c_visit_root=900.0
+  cpuct_base=38739.0 cpuct_factor=3.89 fpu_reduction=0.33 q_visit_exp_root=-1.0
+  topk=32 [mcts.gumbel PLAY_SEARCH_DEFAULTS + PLAY_SEARCH_VLOSS_WEIGHT]
+[arena] SEARCH reference: <identical>
+[arena] matched_sims: candidate=32 sims/move, reference=32 sims/move, temp=0.1, noise=True
+[arena] ROLLING pool: keep 32 games active
+```
+
+`git_sha` **59518054665b071df76c4f1693822441d4e102ca**, `config_hash` **6dd68d4a613d**,
+seed 42, `max_plies` 300, `compile=off -> EAGER`, device cuda.
+Openings: the production 8-move UHO book
+`data/opening_books/8moves_v3_plus_policybeam_final145cp_plus_uho2024_060_110_plus_2move_thinbeam_dedup.pgn.zip`,
+`opening_plies=16`, **500 pairs** (each opening played twice, colours swapped).
+
+**⚑ This is the PLAY regime, not the training regime** (c_scale 0.025 / LOG root /
+topk 32 / vloss 3, vs training's 0.1 / linear / 16). That is the correct choice
+for *"did we lose playing strength"* — it is the shape the engine ships with —
+but it is deliberately NOT the shape production selfplay runs, and the ledger's
+2026-07-28 entry records a rung that read −52.5 Elo on one shape and +5.8 on the
+other. **A shape-matched second run is therefore reported alongside, below.**
+
+**The YAML-clobbers-CLI check passes:** the log line prints `candidate=32 sims/move,
+reference=32 sims/move`, which is what was asked for on the command line; the
+search block prints its own provenance string; `--search-shape` is a REQUIRED
+argument with no default, so no silent shape could be substituted.
+
+#### Checkpoint identity — verified, not assumed
+
+| name | path | weight hash (first 4 KB/key) | full weight hash | unique-storage params |
+|---|---|---|---|---|
+| boot512 | `scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt` (step **56000**) | `5f61a6b85cd3d3cd` | `cb69a232531b1343` | **63,084,128** |
+| iter477 | `scratchpad/strength_readout_0731/ck477/trainer.pt` (step **94062**) | `cd5e47b4d31a75f4` | `1429d18e2d8fcefa` | **63,084,128** |
+
+Both counted by **unique `untyped_storage().data_ptr()`**, never `sum(numel())`
+(the naive sum reads 78,812,768 for both — 496 keys over 481 distinct storages,
+the tied `layer_smolgens.*.gen_weight.weight` gap). The two short hashes match
+`scratchpad/vp_timing_20260802/ckpt_verify.json` exactly, so this is the same
+pair the cp-regret work measured. **Full-tensor hashes differ**, so the nets are
+genuinely different. Both were copied out of the tree to scratch before use, and
+both loaded through the arena's own `load_model_from_checkpoint` with **no
+`Tolerant load` line** — i.e. the embedded `arch` matched strictly on both sides,
+so neither side is a partially fresh-initialised net.
+
+#### Game lengths and adjudication — checked, because a length shift can bias it
+
+mean **124.4** played plies, median **111.5**, p05 45 / p25 76 / p75 158 / p95 255,
+min 17, max 300. Only **14 of 1000 games (1.4%)** failed to finish naturally and
+were scored as draws by the `--max-plies 300` cap, and Syzygy adjudication was
+OFF, so **adjudication touches too little of the sample to carry the −48.6**.
+**No time forfeits are possible in this measurement at all** — `matched_sims`
+runs in-process at a fixed simulation budget with no clock; forfeits are a
+`matched_time` failure mode only.
+
+W/D/L was recovered by a **pass-through observer** (`run_arena.py`) that wraps
+`pick_moves_for_boards` and `result_from_a_pov` to record per-game ply counts and
+outcomes; it delegates unchanged and cannot alter a move. The JSONL record stores
+only pentanomial PAIR bins, and the `DD_WL` bin merges two different game-level
+outcomes, so game W/D/L is not otherwise recoverable. **Cross-check:** the
+observer's counts reconstruct the arena's own score exactly —
+(342 + 163/2 + 14/2)/1000 = **0.43050** vs the arena's reported **0.43050**.
+
+#### What this establishes, and what it does not
+
+**Establishes.** The lineage's own start and end points, same architecture, same
+parameter count, same search, same openings, same budget: the end point is
+**48.6 Elo weaker**, with 500 paired openings and a CI that excludes zero by
+29 Elo. The cp rulers were not lying about the direction, and **`search.top1`'s
++1.27 cp (ns) must not be read as "search absorbs the damage"** — at this budget
+it does not.
+
+**Does NOT establish.**
+- **This is 32 sims.** Search strength grows with budget, so a deeper search
+  could still absorb more of the prior damage than 32 sims does. The pre-agreed
+  256-sim confirmatory was **NOT affordable** and was not run: the 32-sim run
+  held 0.29 games/s with 32 concurrent games and a 10%-utilised GPU (the MCTS is
+  Python-bound, not GPU-bound), so a 256-sim run of comparable precision would
+  need multiple hours of exclusive GPU. **The Elo-vs-sims exchange rate for this
+  pairing is unmeasured.**
+- **It does not localise the loss** to policy vs value; it is the net-level sum.
+  The paired cp work attributes ~73% policy prior / ~27% value, but that split is
+  from a different instrument on FEN-only inputs and is not confirmed here.
+- **It does not name a cause,** and it does not say the loss is monotone in
+  iteration — only the two endpoints were played. The intermediate ratchet rows
+  are all truncated small samples (13–57 pairs) and cannot date the turn.
+- **boot512 as "the lineage origin" is inherited, not re-proven here.** The step
+  number (56000) and architecture match and nothing contradicts it, but no
+  trial manifest was checked — the same caveat the 08-02 turn-ordering entry
+  records.
+
+#### Relation to the four existing ratchet rows for this pairing
+
+`runs/arena_results.jsonl` already held four boot512-referenced rows, all on the
+**training** shape and all **truncated** by their wall-clock cap: iter478 vs
+boot512 at 57 pairs (−39.8 [−91.4, +10.1]) and at 13 pairs (−110.5 [−224.4,
+−16.2]), plus two vs-prev rows. Their point estimates bracket this one but none
+had the sample size to exclude zero on its own; the 13-pair row's −110 was noise.
+**This run supersedes them for the endpoint question.**
+
+**Banked** at **`scratchpad/arena_13a9f_20260802/`** (copied out of session-temp so
+it survives the session): `arena_results.jsonl` (the full JSONL record — every
+number above is recomputable from it), `arena_play_sims32.log` (the complete run
+log including all sixteen running blocks and the printed search shape),
+`lengths_play_sims32.json` (per-game ply counts + W/D/L), `ckpt_verify.json`
+(the hashes above), and the drivers `verify.py` / `run_arena.py` /
+`launch_play.sh` / `launch_training.sh` / `report.py`. Written to a scratch JSONL
+rather than `runs/arena_results.jsonl` because `runs/` was read-only for this
+task — **fold this row into `runs/arena_results.jsonl` when convenient**, it is a
+full-sample row and the four truncated ratchet rows there are not.
