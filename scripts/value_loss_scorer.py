@@ -331,7 +331,19 @@ def load_rows_from_npz(path: str) -> RowSet:
                 "--dump-x; scorer-written banks always carry all three."
             )
         n = int(z["p_sf"].shape[0])
-        game_id = np.asarray(z["game_id"], dtype=np.int64)
+        raw_gid = np.asarray(z["game_id"])
+        if not np.issubdtype(raw_gid.dtype, np.integer):
+            # A float id of the right shape casts silently: 1.5 and 1.7 both
+            # become 1, MERGING two clusters. The CI moves in the conservative
+            # direction so it would not mislead a verdict, but ``n_games`` is
+            # printed beside it as if measured, and a reported cluster count
+            # that is not the cluster count is the "metric that does not mean
+            # what its name says" defect. Refused rather than truncated.
+            raise SystemExit(
+                f"{path}: game_id has dtype {raw_gid.dtype}, expected an integer "
+                "type — a float cast truncates and silently merges clusters"
+            )
+        game_id = raw_gid.astype(np.int64)
         if game_id.shape != (n,):
             raise SystemExit(
                 f"{path}: game_id has shape {game_id.shape!r}, expected ({n},) "
@@ -700,8 +712,17 @@ def write_dump(
         "outcome": rows.outcome.astype(np.int16),
         "game_id": rows.game_id.astype(np.int64),
         "ply": rows.ply.astype(np.int32),
-        "is_selfplay": rows.is_selfplay.astype(bool),
     }
+    # ⚑ PRESENCE OF THE KEY IS THE SIGNAL, so an unmeasured population must not
+    # be written. ``load_rows_from_npz`` derives ``population_known`` from
+    # ``"is_selfplay" in keys``; writing the all-False placeholder
+    # unconditionally would hand the reload a measured-looking field, flipping
+    # population_known False -> True across a round trip and letting the bank
+    # pass the --split-selfplay guard that its own source could not. The result
+    # is the full-curriculum / empty-selfplay table this guard exists to stop.
+    # Writer and reader must agree on the contract; they did not.
+    if rows.population_known:
+        payload["is_selfplay"] = rows.is_selfplay.astype(bool)
     if with_x:
         payload["x"] = rows.x.astype(np.float32)
     saver: Callable[..., Any] = np.savez_compressed

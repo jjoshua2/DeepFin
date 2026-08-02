@@ -25,6 +25,7 @@ from scripts.value_loss_scorer import (
     _synthetic_rows,
     build_report,
     load_rows_from_npz,
+    load_rows_from_shards,
     main,
     select_oracle_lost,
     shuffle_model_weights,
@@ -305,6 +306,131 @@ def test_split_selfplay_refuses_a_source_that_never_observed_the_population(
         ])
     # A bank that DOES carry it is not refused by this guard.
     assert load_rows_from_npz(str(_bank(tmp_path / "pop.npz"))).population_known is True
+
+
+def test_dump_of_an_unmeasured_population_reloads_as_unmeasured(
+    tmp_path: Path,
+) -> None:
+    """A bank must not invent a population its SOURCE never observed.
+
+    ``load_rows_from_npz`` derives ``population_known`` from PRESENCE of the
+    ``is_selfplay`` key, so ``write_dump`` writing the all-False placeholder
+    unconditionally flipped the flag False -> True across a round trip. The
+    reload then PASSED ``--split-selfplay`` and printed a full 'curriculum'
+    table with an empty 'selfplay' one — precisely the output the guard
+    exists to prevent, reached through the documented "a dump is a valid row
+    source" path.
+
+    MUTATION: put ``is_selfplay`` back in ``write_dump``'s payload
+    unconditionally. Both halves below fail.
+    """
+    n = 6
+    rows = RowSet(
+        x=np.zeros((n, 4, 8, 8), np.float32),
+        p_sf=np.full((n, 3), 1 / 3, np.float64),
+        outcome=np.zeros(n, np.int16),
+        game_id=np.repeat(np.arange(2, dtype=np.int64), 3),
+        ply=np.arange(n, dtype=np.int32),
+        is_selfplay=np.zeros(n, bool),
+        source="shards:legacy-untagged",
+        population_known=False,
+    )
+    path = tmp_path / "unmeasured.npz"
+    write_dump(str(path), rows, rows.p_sf.copy(), np.zeros(n, bool),
+               with_x=True, meta={})
+
+    with np.load(path) as z:
+        assert "is_selfplay" not in set(z.files), "an unmeasured field was banked"
+    back = load_rows_from_npz(str(path))
+    assert back.population_known is False
+
+    # ...and the guard still fires on the RELOAD, not just on the original.
+    with pytest.raises(SystemExit, match="no is_selfplay field"):
+        main([
+            "--npz", str(path), "--split-selfplay",
+            "--checkpoint", str(tmp_path / "no_such.pt"),
+        ])
+
+    # A source that DID measure the population still round-trips as measured,
+    # so the fix is not just "never write the key".
+    measured = RowSet(
+        x=rows.x, p_sf=rows.p_sf, outcome=rows.outcome, game_id=rows.game_id,
+        ply=rows.ply, is_selfplay=np.array([True] * 3 + [False] * 3),
+        source="shards:tagged", population_known=True,
+    )
+    ok = tmp_path / "measured.npz"
+    write_dump(str(ok), measured, measured.p_sf.copy(), np.zeros(n, bool),
+               with_x=True, meta={})
+    with np.load(ok) as z:
+        assert "is_selfplay" in set(z.files)
+    reloaded = load_rows_from_npz(str(ok))
+    assert reloaded.population_known is True
+    assert reloaded.is_selfplay.tolist() == [True] * 3 + [False] * 3
+
+
+def _write_shard(root: Path, index: int, n: int, *, is_selfplay: bool) -> None:
+    """A minimal zarr shard the scorer's loader accepts."""
+    import zarr
+
+    g = zarr.open(str(root / f"shard_{index:06d}.zarr"), mode="w")
+    g["x"] = np.zeros((n, 4, 8, 8), np.float32)
+    g["sf_wdl"] = np.full((n, 3), 1 / 3, np.float32)
+    g["has_sf_wdl"] = np.ones(n, bool)
+    g["is_network_turn"] = np.ones(n, bool)
+    g["game_id"] = np.repeat(np.arange(max(1, n // 3), dtype=np.int64), 3)[:n]
+    g["ply_index"] = np.arange(n, dtype=np.int32)
+    g["wdl_target"] = np.zeros(n, np.int8)
+    if is_selfplay:
+        g["is_selfplay"] = np.zeros(n, bool)
+
+
+def test_shard_source_reports_whether_the_population_was_measured(
+    tmp_path: Path,
+) -> None:
+    """The SHARD path is the production entry point; pin its flag too.
+
+    MUTATION (this one survived the previous round): hardcode
+    ``population_known=True`` in ``load_rows_from_shards``. Legacy shards
+    written before the field existed are real, and under that mutation they
+    would silently split into a full 'curriculum' table and an empty
+    'selfplay' one.
+    """
+    tagged, untagged = tmp_path / "tagged", tmp_path / "untagged"
+    tagged.mkdir()
+    untagged.mkdir()
+    _write_shard(tagged, 1, 6, is_selfplay=True)
+    _write_shard(untagged, 1, 6, is_selfplay=False)
+
+    assert load_rows_from_shards(str(tagged)).population_known is True
+    rows = load_rows_from_shards(str(untagged))
+    assert rows.population_known is False
+    assert len(rows) == 6
+
+    # ...and the CLI guard fires on that shard read, before any model load.
+    with pytest.raises(SystemExit, match="no is_selfplay field"):
+        main([
+            "--shard-dir", str(untagged), "--split-selfplay",
+            "--checkpoint", str(tmp_path / "no_such.pt"),
+        ])
+
+
+def test_npz_row_source_rejects_a_float_game_id(tmp_path: Path) -> None:
+    """MUTATION: drop the integer-dtype check.
+
+    A float id of the right shape casts silently — 1.5 and 1.7 both become 1,
+    MERGING two clusters. The CI moves conservatively so no verdict is
+    inflated, but ``n_games`` is printed beside it as if measured, and a
+    reported cluster count that is not the cluster count is a metric that does
+    not mean what its name says.
+    """
+    path = tmp_path / "floatgid.npz"
+    np.savez_compressed(
+        path, x=np.zeros((4, 4, 8, 8), np.float32),
+        p_sf=np.full((4, 3), 1 / 3, np.float32),
+        game_id=np.array([1.5, 1.7, 2.5, 2.9]),
+    )
+    with pytest.raises(SystemExit, match="expected an integer type"):
+        load_rows_from_npz(str(path))
 
 
 def test_npz_row_source_rejects_a_mis_shaped_game_id(tmp_path: Path) -> None:
