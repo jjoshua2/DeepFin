@@ -6,6 +6,7 @@ the knob under test. These tests pin the guardrails that enforce that.
 """
 from __future__ import annotations
 
+import inspect
 import sys
 from pathlib import Path
 
@@ -183,7 +184,7 @@ def _shards(*names: str) -> list[Path]:
 
 def test_shard_guard_passes_on_an_unchanged_pool() -> None:
     snap = _shards("shard_000001.zarr", "shard_000002.zarr")
-    rr._assert_shards_unchanged(list(snap), snap, name="base")  # no raise
+    rr._assert_shards_unchanged(observed=list(snap), snapshot=snap, name="base")  # no raise
 
 
 def test_shard_guard_fires_when_a_shard_is_ADDED_mid_sweep() -> None:
@@ -194,14 +195,14 @@ def test_shard_guard_fires_when_a_shard_is_ADDED_mid_sweep() -> None:
     snap = _shards("shard_000001.zarr", "shard_000002.zarr")
     grown = snap + _shards("shard_000003.zarr")
     with pytest.raises(SystemExit, match="DE-PAIRED"):
-        rr._assert_shards_unchanged(grown, snap, name="sharp")
+        rr._assert_shards_unchanged(observed=grown, snapshot=snap, name="sharp")
 
 
 def test_shard_guard_fires_when_a_shard_is_REMOVED_mid_sweep() -> None:
     # Eviction/quarantine is the other direction: -1 shard moved 343/800 (42.9%).
     snap = _shards("shard_000001.zarr", "shard_000002.zarr")
     with pytest.raises(SystemExit, match="DE-PAIRED"):
-        rr._assert_shards_unchanged(snap[:1], snap, name="smooth")
+        rr._assert_shards_unchanged(observed=snap[:1], snapshot=snap, name="smooth")
 
 
 def test_shard_guard_fires_on_reordering_alone() -> None:
@@ -209,31 +210,36 @@ def test_shard_guard_fires_on_reordering_alone() -> None:
     # ordered pool, so order alone de-pairs the arms.
     snap = _shards("shard_000001.zarr", "shard_000002.zarr")
     with pytest.raises(SystemExit, match="different scan order"):
-        rr._assert_shards_unchanged(list(reversed(snap)), snap, name="base")
+        rr._assert_shards_unchanged(
+            observed=list(reversed(snap)), snapshot=snap, name="base",
+        )
 
 
 def test_shard_guard_names_the_shards_that_moved() -> None:
     snap = _shards("shard_000001.zarr")
     with pytest.raises(SystemExit) as ei:
-        rr._assert_shards_unchanged(_shards("shard_000009.zarr"), snap, name="x")
+        rr._assert_shards_unchanged(
+            observed=_shards("shard_000009.zarr"), snapshot=snap, name="x",
+        )
     msg = str(ei.value)
     assert "shard_000009.zarr" in msg
     assert "shard_000001.zarr" in msg
 
 
 def test_shard_guard_argument_ORDER_is_pinned() -> None:
-    """X1: the two lists are same-typed, so a swap is silent unless pinned.
+    """X1: the two lists are same-typed, so a swap must not be expressible.
 
-    Every other test here passes ``(observed, snapshot)`` positionally and only
-    requires SOME abort -- which a swapped call still produces, with added and
-    removed inverted and the two counts the wrong way round. That sends the
-    operator hunting for a shard that was DELETED when one was in fact ADDED.
-    Assert the direction, not merely the raise.
+    The primary defence is the signature -- both lists are keyword-only, so the
+    positional swap that #307 allowed is now a ``TypeError`` rather than a
+    silent inversion. This test is the second line: it pins the DIRECTION of the
+    report, so renaming the two parameters (the one swap keyword-only cannot
+    stop) still fails here rather than quietly reporting a shard as DELETED when
+    one was in fact ADDED.
     """
     snap = _shards("shard_000001.zarr", "shard_000002.zarr")
     grown = snap + _shards("shard_000003.zarr")
     with pytest.raises(SystemExit) as ei:
-        rr._assert_shards_unchanged(grown, snap, name="sharp")
+        rr._assert_shards_unchanged(observed=grown, snapshot=snap, name="sharp")
     msg = str(ei.value)
     assert "1 added (shard_000003.zarr)" in msg, (
         f"the grown pool was not reported as ADDED -- arguments swapped? {msg}"
@@ -244,17 +250,79 @@ def test_shard_guard_argument_ORDER_is_pinned() -> None:
     )
 
 
+def test_the_two_shard_lists_are_KEYWORD_ONLY() -> None:
+    """A positional swap must be unexpressible, not merely detected.
+
+    ``observed`` and ``snapshot`` are both ``list[Path]``, so passed
+    positionally a swap type-checks, still aborts, and inverts the report. #307
+    shipped them positional and every one of its tests survived the swap. The
+    signature is the fix; ``..._argument_ORDER_is_pinned`` is the backstop for a
+    parameter RENAME, which keyword-only cannot prevent.
+    """
+    with pytest.raises(TypeError):
+        rr._assert_shards_unchanged(  # pyright: ignore[reportCallIssue]
+            _shards("shard_000001.zarr"), _shards("shard_000002.zarr"), name="x",
+        )
+
+
+def test_run_variant_requires_an_EXPLICIT_shard_snapshot() -> None:
+    """``shard_snapshot`` must have NO default.
+
+    A default of ``None`` reads harmless and is the exact shape of this repo's
+    signature defect: a future call site that forgets the kwarg silently gets
+    arm-1 semantics -- "adopt whatever you scan" -- so the gate is off for that
+    arm with nothing on screen to say so. Requiring it forces every caller to
+    state whether it is defining the reference or being checked against one.
+    """
+    param = inspect.signature(rr._run_variant).parameters["shard_snapshot"]
+    assert param.default is inspect.Parameter.empty, (
+        "shard_snapshot acquired a default; a caller that omits it now silently "
+        f"gets arm-1 semantics and its pool is never checked (default={param.default!r})"
+    )
+
+
+def test_main_demands_the_shard_pool_field_LOUDLY(monkeypatch, tmp_path) -> None:
+    """A summary without ``shard_pool`` must raise, not yield an empty reference.
+
+    ``summary["shard_pool"]`` is deliberately a subscript. With
+    ``.get("shard_pool", [])`` a summary that lost the field would hand arm 2 an
+    empty reference, and the sweep would die on a *false* `(0 shards at start, N
+    now)` de-pairing report instead of naming the real fault.
+    """
+    def _no_pool(**kw) -> dict:
+        return {"variant": kw["name"]}
+
+    monkeypatch.setattr(rr, "_run_variant", _no_pool)
+    monkeypatch.setattr(rr, "flatten_run_config_defaults", lambda _c: {"batch_size": 8})
+    monkeypatch.setattr(rr, "load_yaml_file", lambda _p: {})
+    monkeypatch.setattr(sys, "argv", [
+        "retarget_retrain.py", "--config", "c.yaml", "--checkpoint", "ck.pt",
+        "--replay-dir", str(tmp_path), "--out-dir", str(tmp_path / "out"),
+        "--variant", "base:", "--variant", "sharp:sf_policy_temp=0.006",
+    ])
+
+    with pytest.raises(KeyError, match="shard_pool"):
+        rr.main()
+
+
 def test_shard_guard_fires_against_an_EMPTY_reference() -> None:
     """X9: an empty reference is a reference, not a licence to skip the gate.
 
-    ``_run_variant`` signals "this arm defines the reference" with ``None``.
-    ``[]`` means arm 1 genuinely scanned nothing, and an arm that then finds
-    shards is de-paired from it. A falsy-snapshot early return -- the natural
-    shape of an accepted-and-ignored value -- would turn the gate off for the
-    whole rest of the sweep, silently.
+    ``_run_variant`` signals "this arm defines the reference" with ``None``, so
+    ``[]`` means arm 1 genuinely scanned nothing and an arm that then finds
+    shards is de-paired from it.
+
+    ⚠ On today's path ``main()`` cannot actually hold ``[]``: an arm-1 pool of
+    ``[]`` means ``len(buf) == 0``, which ``SystemExit``s before a summary is
+    returned, so the sweep dies at arm 1 either way. This pins the helper's
+    behaviour as a decision -- no falsy-snapshot early return -- rather than a
+    reachable bug, and keeps the ``None``/``[]`` distinction honest if the
+    empty-pool guard's ordering ever changes.
     """
     with pytest.raises(SystemExit) as ei:
-        rr._assert_shards_unchanged(_shards("shard_000001.zarr"), [], name="sharp")
+        rr._assert_shards_unchanged(
+            observed=_shards("shard_000001.zarr"), snapshot=[], name="sharp",
+        )
     msg = str(ei.value)
     assert "DE-PAIRED" in msg, msg
     assert "1 added (shard_000001.zarr)" in msg, msg
@@ -482,7 +550,10 @@ def test_the_reference_source_matches_what_the_buffer_scans(tmp_path) -> None:
         assert snapshot == rr.iter_shard_paths(shard_dir), (
             "the buffer's scan and the directory disagree on an unchanged pool"
         )
-        rr._assert_shards_unchanged(arm1._snapshot_shards(), snapshot, name="base")
+        # Deliberately NOT re-asserting `_assert_shards_unchanged(snapshot,
+        # snapshot)` here: arm 1 is the reference, so comparing it to itself is
+        # a tautology that would pass against any implementation. The real
+        # assertions are the line above and the arm-2 block below.
     finally:
         arm1.close()
 
@@ -505,7 +576,9 @@ def test_the_reference_source_matches_what_the_buffer_scans(tmp_path) -> None:
     )
     try:
         with pytest.raises(SystemExit, match="DE-PAIRED"):
-            rr._assert_shards_unchanged(arm2._snapshot_shards(), snapshot, name="sharp")
+            rr._assert_shards_unchanged(
+                observed=arm2._snapshot_shards(), snapshot=snapshot, name="sharp",
+            )
     finally:
         arm2.close()
 

@@ -127,7 +127,7 @@ def _assert_replay_planes_match(replay_dir: Path, target_planes: int, *, upgrade
 
 
 def _assert_shards_unchanged(
-    observed: list[Path], snapshot: list[Path], *, name: str,
+    *, observed: list[Path], snapshot: list[Path], name: str,
 ) -> None:
     """Abort if this arm's replay pool differs from the first arm's.
 
@@ -139,13 +139,20 @@ def _assert_shards_unchanged(
     script prints is then unpaired with nothing on screen to say so. Refuse to
     train rather than emit a comparison that reads valid.
 
-    ``observed`` is THIS arm's pool and ``snapshot`` is arm 1's; the order is
-    load-bearing because it decides which shards the message calls added and
-    which removed, and a swap points the operator at the wrong direction of
-    drift. An EMPTY ``snapshot`` is a real reference, not "unset" — it must
-    still fail against a non-empty ``observed``, so there is deliberately no
-    falsy-snapshot early return here. ``_run_variant`` uses ``None``, never
-    ``[]``, for "this arm defines the reference".
+    ``observed`` is THIS arm's pool and ``snapshot`` is arm 1's. Both are
+    keyword-only BECAUSE they are the same type: passed positionally a swap is
+    silent, still aborts, and inverts added/removed and the two counts, sending
+    the operator hunting a shard that was deleted when one was in fact added.
+    Keyword-only makes that swap unexpressible rather than merely tested-for.
+
+    There is deliberately no falsy-``snapshot`` early return: an empty
+    ``snapshot`` is a real reference and must still fail against a non-empty
+    ``observed``. On today's path ``_run_variant`` cannot actually hand this
+    function ``[]`` — an arm-1 pool of ``[]`` means ``len(buf) == 0``, which
+    ``SystemExit``s before the summary is returned, so ``main()`` never adopts
+    an empty reference. That justification therefore describes a case which
+    cannot arise; the choice is still right, and the tests pin it as a decision
+    rather than an unverifiable preference.
     """
     if observed == snapshot:
         return
@@ -360,8 +367,11 @@ def _run_variant(
         # checked against anything, and checking it against a glob taken before
         # `torch.load` + CUDA init only manufactures false aborts from shards
         # that landed during startup — a window in which no arm has drawn yet,
-        # so no arm can be de-paired by it. `[]` is a real reference (arm 1 saw
-        # an empty pool), NOT a synonym for None, so it still gates arm 2.
+        # so no arm can be de-paired by it. The sentinel is `None`, never `[]`:
+        # an empty list is a real reference, not "unset". (It cannot reach here
+        # today — an empty arm-1 pool trips the `len(buf) == 0` exit below
+        # before any summary is returned — but `is None` is what makes that a
+        # property of the code rather than of the empty-pool guard's ordering.)
         if shard_snapshot is None:
             print(f"[retarget] {name}: shard reference = this arm's own scan, "
                   f"{len(shard_pool)} shards under {replay_dir}; "
@@ -370,7 +380,9 @@ def _run_variant(
             # Before the empty-pool check: if the reference was non-empty and
             # the directory has since been emptied, "de-paired" is the accurate
             # report and "wrong --replay-dir" is not.
-            _assert_shards_unchanged(shard_pool, shard_snapshot, name=name)
+            _assert_shards_unchanged(
+                observed=shard_pool, snapshot=shard_snapshot, name=name,
+            )
         if len(buf) == 0:
             raise SystemExit(
                 f"replay buffer is empty: no shards under {replay_dir} match "
@@ -467,8 +479,9 @@ def main() -> None:
             allow_partial_load=args.allow_partial_load,
         )
         if shard_snapshot is None:
-            # `is None`, not falsiness: an empty arm-1 pool is a reference every
-            # later arm must still match, not a licence to skip the gate.
+            # Subscript, not `.get(..., [])`: a missing field must be a loud
+            # KeyError here, not an empty reference that turns every later arm
+            # into a false `(0 shards at start, N now)` abort.
             shard_snapshot = [Path(p) for p in summary["shard_pool"]]
         summaries.append(summary)
 

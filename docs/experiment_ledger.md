@@ -20809,6 +20809,8 @@ different rows, silently unpaired. Measured with the flag ON, same seed, 800
 steps: **+1 shard → 617/800 sampled rows differ (77.1%); −1 shard → 343/800
 (42.9%).**
 
+⚑ **SUPERSEDED 2026-08-02** — the pre-arm `iter_shard_paths` snapshot described in this paragraph was itself a defect (it false-aborts arm 1 on shards that land during startup); the reference is now arm 1's own `_snapshot_shards()`, and the test names cited below have been renamed. See the 2026-08-02 post-merge-review entry at EOF.
+
 Fix: `main()` snapshots the shard list ONCE with `iter_shard_paths` before any
 arm runs and passes it down; `_run_variant` compares the constructed buffer's
 OWN `_snapshot_shards()` against it and `SystemExit`s naming DE-PAIRED. It runs
@@ -20913,9 +20915,19 @@ were paired over — previously unrecorded), and `main()` threads it to arms
 to fail against. `main()` no longer globs at all.
 
 ⚑ `[]` is a REAL reference (arm 1 scanned an empty pool), never a synonym for
-"unset". The sentinel is `None` and the test is `is None`. A falsy test would
-disable the gate for the whole rest of any sweep whose first arm found no
-shards — accepted-and-ignored, one level up.
+"unset". The sentinel is `None` and the test is `is None`.
+
+⚠ **Correction (post-review).** This entry first justified that choice by saying
+a falsy test "would disable the gate for the rest of any sweep whose first arm
+found no shards". **That consequence cannot occur.** An arm-1 pool of `[]` means
+`len(buf) == 0`, which `SystemExit`s before `_run_variant` returns a summary, so
+`main()` can never adopt an empty reference and the sweep dies at arm 1 under
+either spelling. Verified against an empty `--replay-dir`. The `is None` choice
+is still right — it makes the distinction a property of this code rather than of
+the empty-pool guard's ordering — but it is a pinned DECISION, not a fix for a
+reachable bug. Same honesty the sibling test already applies to the
+buffer-filter justification ("describes a case which cannot arise — but the
+choice is still right").
 
 **Mutation table — 9 mutations, 9 killed**, each by tests that name it
 (`tests/test_retarget_retrain.py`, 25 tests, clean run green):
