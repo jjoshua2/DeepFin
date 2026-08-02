@@ -433,6 +433,20 @@ _CONSTRUCTION_ONLY_REPLAY_KEYS = frozenset({
     "shuffle_buffer_size",        # -> shuffle_cap, disk_buffer.py:249
     "shuffle_refresh_interval",   # -> refresh_interval, disk_buffer.py:251
     "shuffle_refresh_shards",     # -> refresh_shards, disk_buffer.py:252
+    # ⚑ THESE TWO WERE A REAL CHOICE, not a classification. Unlike the three
+    # above (consumed inside the buffer's own construction), draw_cap_frac and
+    # wl_max_ratio are plain public attributes read PER BATCH DRAW
+    # (disk_buffer.py:1456, :1469) — structurally identical to
+    # diff_focus_pol_scale, which trainable.py:774 pushes live every iteration.
+    # Two lines in that push loop would make them live-editable.
+    # DECIDED: freeze them. Both change the SAMPLING DISTRIBUTION the window is
+    # drawn with, so a mid-window edit splits one replay window across two
+    # sampling regimes and silently confounds whatever readout spans it — the
+    # experiment protocol's one-data-affecting-change-per-window rule cannot be
+    # honoured for a knob that can move underneath a running window. The
+    # diff_focus_* knobs are pushed live because they were already being tuned
+    # against a same-day readout; these have no such caller. Revisit only with a
+    # ledger entry that names the readout wanting them live.
     "shuffle_draw_cap_frac",      # -> draw_cap_frac, disk_buffer.py:344
     "shuffle_wl_max_ratio",       # -> wl_max_ratio, disk_buffer.py:345
     "replay_upgrade_v1_planes",   # -> upgrade_v1_planes, disk_buffer.py:235

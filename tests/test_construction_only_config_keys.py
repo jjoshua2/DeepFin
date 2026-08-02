@@ -349,7 +349,7 @@ def test_provenance_never_calls_a_construction_only_key_correct(key: str) -> Non
     # is the J5 mistake, not the fix. The honest line says which source the row
     # is, and raises no finding.
     assert any(
-        line.startswith(f"  ok(ctor)  {key}:")
+        line.startswith(f"  note(ctor)  {key}:")
         and "ORIGINAL" in line and "does not describe this process" in line
         for line in report
     ), joined
@@ -384,3 +384,44 @@ def test_provenance_reports_pending_restart_for_a_live_edit(key: str) -> None:
     assert any(
         f.startswith(f"{key}: ") and "constructor argument" in f for f in findings
     ), findings
+
+
+def test_the_stale_header_never_asserts_the_running_value_is_correct() -> None:
+    """MUTATION: restore "(the running value is correct)" to the
+    STALE-IN-PARAMS-JSON header in ``classify_config_provenance``.
+
+    ⚑ ``test_provenance_never_calls_a_construction_only_key_correct`` looks like
+    it already covers this and does NOT: construction-only keys are routed to
+    the ``note(ctor)`` branch and never reach this header at all, so its
+    ``"the running value is correct" not in joined`` assertion is vacuously
+    true for every key it is parametrised over. An independent review proved
+    that by restoring the wording alone and watching all 34 tests pass.
+
+    This drives an ORDINARY live-reloadable key -- one that genuinely is stale
+    in params.json and genuinely was overlaid -- so the header is actually
+    emitted and its wording is on the hook. The claim being forbidden is the
+    strong one: the reloader applying a value does not establish that the
+    consumer re-read it.
+    """
+    key = "replay_sf_gap_priority_weight"  # live-pushed every iteration
+    assert key not in construction_only_config_keys(), (
+        f"{key} must stay OUT of the construction-only set, or this test stops "
+        "exercising the stale-header branch and goes vacuous like the one above"
+    )
+
+    report, findings = classify_config_provenance(
+        {key: 0.0}, {key: 9.5}, {key: 9.5},
+        restart_keys=(),
+        construction_only_keys=construction_only_config_keys(),
+    )
+    joined = "\n".join(report)
+
+    assert "STALE-IN-PARAMS-JSON" in joined, joined
+    assert f"{key}: params.json=0.0 running=9.5" in joined, joined
+    assert "the running value is correct" not in joined, (
+        "the header asserts the running value is correct; that is the claim the "
+        f"audit cannot support -- it knows the reloader applied {key}, not that "
+        f"any consumer re-read it\n{joined}"
+    )
+    assert "That the RELOADER applied it is all this shows" in joined, joined
+    assert findings == [], findings

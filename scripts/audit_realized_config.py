@@ -597,10 +597,24 @@ def classify_config_provenance(
                 # live trial 2026-08-01: params.json said shuffle_buffer_size
                 # 25000 across seven restarts that each built the buffer at the
                 # yaml's 100000.
+                # ⚑ `note`, not `ok`. On a row produced BEFORE this
+                # classification shipped -- which is every row of the current run
+                # and all history -- `row == yaml` is produced by the startup
+                # OVERLAY, not by the constructor, so this line reports an
+                # agreement it cannot attribute. The inference that the two
+                # coincide (trainable.py:520 overlays before :634 constructs) is
+                # sound, but it is an inference; this script has no evidence of
+                # it. `ok` would restate exactly the false reassurance the whole
+                # entry exists to remove. The effect-level observable is the
+                # buffer-init print (trainable_init.py, commit 786205c26), which
+                # reads shuffle_cap/refresh_interval off the CONSTRUCTED object;
+                # it first appears at the next restart.
                 report.append(
-                    f"  ok(ctor)  {key}: row={live!r} matches the yaml; "
+                    f"  note(ctor)  {key}: row={live!r} matches the yaml; "
                     f"params.json={params[key]!r} is the trial's ORIGINAL "
-                    "creation config and does not describe this process"
+                    "creation config and does not describe this process. On a "
+                    "process started before this classification landed, the row "
+                    "is the overlay -- not proof of what the constructor got"
                 )
             continue
         if not _same_value(on_disk, live):
