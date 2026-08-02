@@ -82,6 +82,31 @@ def sf_multipv_presence_counts(
     rate without the checked-frac cannot tell a healthy window from a blind
     instrument, which is the exact defect this column exists to catch.
 
+    ``checked_frac == 0.0`` covers TWO cases, and they are operationally
+    identical — nothing was inspected, so the rate above it means nothing:
+    (a) the batch carried no ``has_sf_multipv_raw`` field at all (the early
+    return here), and (b) the batch carried the field but had no ``has_sf_wdl``
+    rows, so the mask summed to zero. Do not read (b) as "clean"; on the
+    production window ``checked_frac`` sits near 0.99 and any collapse toward
+    zero is a blind instrument whichever cause produced it.
+
+    ⚑ SHARD HETEROGENEITY READS AS CONTAMINATION, NOT AS HEALTH.
+    ``DiskReplayBuffer._gather_rows`` builds its ``proto`` as the UNION of the
+    fields across the sampled chunks, so a chunk written without
+    ``has_sf_multipv_raw`` is zero-filled to match a chunk that has it — and a
+    zero there is indistinguishable from "labelled but no MultiPV block", i.e.
+    contamination. That is a false ALARM rather than a silent pass, the right
+    direction for a tripwire, but a future "any non-zero is an incident" rule
+    would then fire on a mixed pool instead of on a desync.
+
+    Currently moot, and by a slightly stronger margin than "every shard has the
+    field": over the 713 shards of the live window, 712 carry ``has_sf_wdl``
+    and ``has_sf_multipv_raw`` TOGETHER and exactly 0 carry ``has_sf_wdl``
+    without the raw flag — which is the only combination that could produce the
+    false alarm. The single exception (``shard_033951.zarr``) carries NEITHER,
+    so the union zero-fills its ``has_sf_wdl`` as well and its rows fall out of
+    the denominator instead of into the numerator.
+
     Unconditional by construction: it reads two ``has_`` vectors that every
     collated batch either carries or does not, and consults no flag. The
     tripwire it replaces (``sf_rebuild_policy_frac`` minus

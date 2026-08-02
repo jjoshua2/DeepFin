@@ -127,9 +127,26 @@ The always-on detectors are the ones to watch instead:
   argue about.** Verified 0.207461 over the 122 shards quarantined 2026-08-01
   and exactly 0.000000 over 475 713 clean rows, both through the production
   metric path (`scripts/sf_no_multipv_probe.py`).
-* its companion **`sf_multipv_checked_frac`** — that denominator over ALL batch
-  rows. `has_sf_multipv_raw` is an optional shard field, so `0.0` here means the
-  rate measured *nothing*; never read the rate without it.
+
+  ⚑⚑ **The `test_` twin is contaminated TODAY and does not age out.** The frozen
+  holdout bundled with the checkpoints carries 194 no-PV rows out of 1915
+  labelled over 2000 rows — byte-identical in `checkpoint_000474`, `_000476`
+  and `_000478` — so `test_sf_labelled_no_multipv_frac` reads **0.101305** and
+  `test_sf_multipv_checked_frac` **0.957500** on the FIRST live holdout row,
+  about 500× the train row's ~2e-4 post-quarantine residue. The training
+  window's residue drains with the ~34 h FIFO; the holdout's does not, because
+  the set is frozen until it is re-cut. **That is a finding about the ruler,
+  not a wiring bug — do not mute the column over it.** It also means the
+  eventual "any non-zero is an incident" alert must be scoped to the TRAIN row
+  until the holdout is re-cut from post-quarantine shards.
+* its companion **`sf_multipv_checked_frac`** — which reports that same
+  denominator (the SF-labelled rows) as a share of ALL batch rows. The RATE's
+  own denominator is the SF-labelled rows, not all batch rows. `0.0` here means
+  the rate measured *nothing*, in either of two operationally identical cases —
+  `has_sf_multipv_raw` was absent from the batch (it is an optional shard
+  field), or the batch held no SF-labelled rows at all. Never read the rate
+  without it; `scripts/loop_health.py` alerts on `checked_frac == 0` for
+  exactly this reason.
 * the worker's `sf label health` log line
   (`selfplay/stockfish_turn.py::_report_sf_label_health`), which fires above
   `_SF_NO_LEGAL_PV_WARN_RATE` = 0.01, and

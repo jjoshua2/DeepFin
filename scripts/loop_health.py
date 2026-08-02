@@ -25,6 +25,15 @@ ALERT (exit 1) — needs action:
     cannot see it — use --max-age-min to alert on a stale newest row instead.
   - matching_games < 100: selfplay collapse (demoted to a NOTE on a benign
     post-restart iteration, which the stale_games marker identifies).
+  - sf_multipv_checked_frac == 0.0 on an iteration that trained (and the same
+    for test_sf_multipv_checked_frac when a holdout eval ran): the SF-desync
+    detector is BLIND. `sf_labelled_no_multipv_frac` reads 0.0 both when the
+    window is clean and when nothing was inspected, so its companion is the
+    only thing that separates the two, and a blind instrument is never healthy.
+    This is the alert `sf_rebuild_policy_frac` needed and did not have: it sat
+    at a healthy-looking 0.0 through three desync episodes over 25 days because
+    `rebuild_sf_targets` defaults False. NOT armed on the RATE yet — see the
+    NOTE block below for why and what promotes it.
   - --max-age-min M (opt-in): the newest row's timestamp is older than M
     minutes — result.json has stopped advancing (stall / no-games drought).
   - the daily strength ratchet's newest day wrote no ratchet.csv row at all
@@ -37,6 +46,21 @@ NOTE (informational): pid_ema_winrate > 0.75 (benign restart spike / difficulty
 miscalibration), distributed_stale_games > 0 (benign post-restart marker),
 wdl_regret easing >40% in one step (airbag fired), iteration wall-time > 2x
 the scanned-range median.
+
+DELIBERATELY NOT AN ALERT YET — `sf_labelled_no_multipv_frac > 0` (the desync
+RATE). Its healthy floor is exactly 0.000000, so "any non-zero is an incident"
+is the eventual rule, but two known non-zero readings would make it fire on
+arrival and get it muted:
+  * the TRAIN row reads ~2e-4 while the sub-threshold tail of the quarantined
+    window ages out of the ~34 h FIFO, and
+  * the `test_` twin reads 0.101305 (194 no-PV rows of 1915 labelled, over the
+    2000-row frozen holdout — identical in checkpoint_000474/476/478) and does
+    NOT age out at all, because the holdout is frozen until the set is re-cut.
+PROMOTION TRIGGER, SCOPED TO THE TRAIN ROW ONLY: arm the rate alert once a live
+`progress.csv` row reads `sf_labelled_no_multipv_frac == 0.0` with
+`sf_multipv_checked_frac ~ 0.99`. The `test_` twin CANNOT satisfy that trigger
+on the current holdout and must not be included in it; re-cutting the holdout
+from post-quarantine shards is what would clear it.
 
 Usage:
   PYTHONPATH=. python3 scripts/loop_health.py                    # newest trial, last 20 iters
@@ -67,6 +91,69 @@ def parse_outcome_stats(raw: str) -> dict[str, int]:
             out[k] = int(v)
         except ValueError:
             continue
+    return out
+
+
+def blind_desync_detector_alerts(row: dict) -> list[str]:
+    """ALERT when the SF-desync detector inspected NOTHING on a row that ran.
+
+    ``sf_labelled_no_multipv_frac`` reports 0.0 for two opposite states — a
+    clean window, and a window it could not see (``has_sf_multipv_raw`` absent
+    from the batch, or no SF-labelled rows in it at all). Only
+    ``sf_multipv_checked_frac`` separates them, so reading the rate without it
+    reproduces the exact defect the column was added to end: its predecessor
+    ``sf_rebuild_policy_frac`` sat at a healthy-looking 0.0 through three
+    desync episodes over 25 days because ``rebuild_sf_targets`` defaults False.
+    A blind instrument is never healthy, and unlike the rate this has no
+    false-alarm risk today, so it is armed now.
+
+    Three guards, each closing a way this could fire on a non-incident:
+
+    * an ABSENT column is silent. Every ``result.json`` row written before the
+      column shipped lacks it, and "the key is not there" is a schema fact, not
+      a blindness reading.
+    * the train-side check requires ``train_steps_used > 0``. With no train
+      phase the reporter publishes the dataclass DEFAULT 0.0, which is not a
+      measurement; the zero-steps state has its own alert.
+    * the holdout check requires ``test_size > 0``. A row with no eval carries
+      NaN (never equal to 0.0) — but the eval is legitimately dark for the two
+      iterations after every restart, so this is pinned on the row's own
+      evidence that a pass ran rather than on NaN behaviour.
+    """
+    out: list[str] = []
+
+    def _f(key: str) -> float | None:
+        v = row.get(key)
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    steps = _f("train_steps_used")
+    train_checked = _f("sf_multipv_checked_frac")
+    if train_checked is not None and steps is not None and steps > 0 and train_checked == 0.0:
+        out.append(
+            "sf_multipv_checked_frac=0.0 on a trained iteration — the SF-desync "
+            "detector inspected NOTHING (has_sf_multipv_raw missing from the "
+            "batch, or no SF-labelled rows at all). sf_labelled_no_multipv_frac"
+            f"={_f('sf_labelled_no_multipv_frac')} above it is UNMEASURED, not "
+            "clean; on the production window checked_frac sits near 0.99"
+        )
+
+    test_size = _f("test_size")
+    test_checked = _f("test_sf_multipv_checked_frac")
+    if (
+        test_checked is not None and test_size is not None
+        and test_size > 0 and test_checked == 0.0
+    ):
+        out.append(
+            "test_sf_multipv_checked_frac=0.0 on an iteration that scored "
+            f"{int(test_size)} holdout rows — the ruler's own desync detector is "
+            "blind, so test_sf_labelled_no_multipv_frac says nothing about "
+            "whether the frozen set is contaminated"
+        )
     return out
 
 
@@ -138,6 +225,7 @@ def check_row(
         alerts.append(f"pid_ema_winrate={float(wr):.3f} <0.35 — airbag territory / weak opponent")
     if steps_zero_streak >= 2:
         alerts.append(f"train_steps_used=0 for {steps_zero_streak} consecutive iters — ingest drought")
+    alerts.extend(blind_desync_detector_alerts(row))
     if games is not None and games_n < 100:
         # Workers are still spinning up on the first post-restart iteration, so a
         # low count there is benign (the tool's own stale-games NOTE) — demote.

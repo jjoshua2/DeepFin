@@ -841,8 +841,11 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "has_sf_p0_frac": 0.0, "has_sf_p0_regret_frac": 0.0,
   # ALWAYS-ON SF-label contamination detector (see TrainMetrics). Healthy is
   # EXACTLY 0.000000, so any non-zero value is an incident, not a threshold
-  # call. Never read it without `sf_multipv_checked_frac`: 0.0 there means the
-  # batch carried no `has_sf_multipv_raw` field and the rate measured nothing.
+  # call. Never read it without `sf_multipv_checked_frac`: 0.0 there means
+  # nothing was inspected, in either of two operationally identical cases —
+  # the batch carried no `has_sf_multipv_raw` field, or it held no SF-labelled
+  # rows at all. `scripts/loop_health.py` alerts on that; the RATE alert is
+  # deferred until a TRAIN row reads 0.0 (the `test_` twin cannot, see below).
     "sf_labelled_no_multipv_frac": 0.0, "sf_multipv_checked_frac": 0.0,
   # SF target rebuild coverage (train.rebuild_sf_targets). 0.0 with the flag
   # off; non-zero is the proof the flip reached the batch pipeline. The
@@ -1088,6 +1091,16 @@ def _test_and_drift_dict(
             # on a sound set; anything else means the ruler was cut from
             # poisoned shards and every `test_*` SF-derived column above is
             # scored against detached labels.
+            #
+            # ⚑⚑ THE CURRENT HOLDOUT IS NOT SOUND, AND ITS FIRST READING IS
+            # KNOWN: 0.101305 (194 no-PV rows of 1915 labelled over 2000),
+            # identical in checkpoint_000474/476/478, with
+            # `test_sf_multipv_checked_frac` 0.957500. That is ~500x the train
+            # row's ~2e-4 post-quarantine residue and it does NOT decay — the
+            # set is frozen, so it stays until the holdout is re-cut from
+            # post-quarantine shards. Expected on the first live holdout row;
+            # it is a real finding about the RULER, not a plumbing fault, and
+            # must not be used as a reason to mute the column.
             "test_sf_labelled_no_multipv_frac": float(tm.sf_labelled_no_multipv_frac),
             "test_sf_multipv_checked_frac": float(tm.sf_multipv_checked_frac),
         })

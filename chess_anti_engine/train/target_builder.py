@@ -471,7 +471,9 @@ class SfRebuildCoverage:
 
         **The in-loop replacement now exists and is what an operator should
         watch: ``sf_labelled_no_multipv_frac``** (with
-        ``sf_multipv_checked_frac``, its denominator over all batch rows), built
+        ``sf_multipv_checked_frac``, which reports that same denominator as a
+        share of all batch rows — the RATE itself divides by the SF-labelled
+        rows, not by all batch rows), built
         in ``train/losses.py::sf_multipv_presence_counts`` from the batch's own
         presence flags and therefore gated on nothing. It is the same
         measurement over the same rows — verified 0.207461 against the 122

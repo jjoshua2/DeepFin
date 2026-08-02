@@ -855,12 +855,26 @@ class TrainMetrics:
   # is in no config file — so it read 0.0, indistinguishable from healthy,
   # through three separate desync episodes spanning 25 days.
   #
-  # ⚑ NEVER READ THE RATE WITHOUT `sf_multipv_checked_frac`, its denominator
-  # over ALL batch rows. `has_sf_multipv_raw` is an OPTIONAL shard field, so a
-  # batch that lost it reports rate 0.0 — which is also what perfect health
-  # reports. checked_frac 0.0 means UNMEASURED; on the production window it
-  # sits at the SF-labelled share of the batch (~0.99 on the 2026-08-01 live
-  # window).
+  # ⚑ NEVER READ THE RATE WITHOUT `sf_multipv_checked_frac`, which reports that
+  # same denominator as a share of all batch rows. (The RATE's own denominator
+  # is the SF-labelled rows, above — not all batch rows.)
+  # `has_sf_multipv_raw` is an OPTIONAL shard field, so a batch that lost it
+  # reports rate 0.0 — which is also what perfect health reports. checked_frac
+  # 0.0 means UNMEASURED, and it reads 0.0 in two cases that are operationally
+  # identical: the field was absent from the batch, OR the batch held no
+  # SF-labelled rows at all. Either way nothing was inspected. On the
+  # production window it sits at the SF-labelled share of the batch (~0.99 on
+  # the 2026-08-01 live window).
+  #
+  # ⚑⚑ THE `test_` TWINS WILL NOT READ ZERO ON THE FIRST LIVE ROW, AND THAT IS
+  # NOT A PLUMBING BUG. The frozen holdout bundled with the checkpoints is
+  # itself desync-contaminated: 194 no-PV rows out of 1915 labelled over 2000
+  # rows, byte-identical across checkpoint_000474/476/478, so
+  # `test_sf_labelled_no_multipv_frac` = 0.101305 and
+  # `test_sf_multipv_checked_frac` = 0.957500 — about 500x the train row's
+  # ~2e-4 post-quarantine residue. Unlike the train row it does NOT age out:
+  # the holdout is FROZEN, so it stays at 0.101305 until the set is re-cut.
+  # Do not read it as a wiring fault and mute the column.
     sf_labelled_no_multipv_frac: float = 0.0
     sf_multipv_checked_frac: float = 0.0
   # SF target rebuild coverage (train.rebuild_sf_targets). All 0.0 when the

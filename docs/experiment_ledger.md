@@ -20710,3 +20710,68 @@ runs `compute_loss` on one batch with and without the vector and requires
 feeds exactly one loss term, `sparse_sf_policy_ce`, which additionally needs
 `sf_multipv_raw` (still pruned) and is reached only when `sf_policy_sparse_ce`
 is on, a configuration in which nothing was pruned before either.
+
+---
+
+## 2026-08-01 — the FROZEN HOLDOUT is 10.13% desync-contaminated, and the `test_` twin will say so on the first live row (PR #306 review fixes)
+
+**VERDICT: a real finding about the RULER, recorded here because it outlives the
+PR that surfaced it.** Applying the independent review of PR #306 (the always-on
+`sf_labelled_no_multipv_frac` column) required reproducing what the column's
+`test_` twin will actually publish. It is not ~0, and it is not the train row's
+~2e-4 residue:
+
+```
+checkpoint_000474  2000 rows, 1915 labelled, 194 no_pv, rate 0.101305, checked_frac 0.957500
+checkpoint_000476  2000 rows, 1915 labelled, 194 no_pv, rate 0.101305, checked_frac 0.957500
+checkpoint_000478  2000 rows, 1915 labelled, 194 no_pv, rate 0.101305, checked_frac 0.957500
+```
+
+(read off `runs/pbt2_small/tune/train_trial_13a9f_*/checkpoint_0004NN/holdout.npz`,
+`sum((1 - has_sf_multipv_raw) * has_sf_wdl) / sum(has_sf_wdl)` — the same
+quantity the live column computes.)
+
+Three things follow, and only the third is about PR #306:
+
+1. **The frozen holdout was cut from desync-poisoned shards.** 10.13% of its
+   SF-labelled rows carry no `sf_multipv_raw` block, and by PR #302's ~59%
+   strip rate that is a LOWER bound on the poisoned share (~17% implied). Every
+   `test_*` SF-derived column — `test_sf_move_loss`, `test_sf_move_acc`,
+   `test_sf_eval_loss`, and the SF leg of `test_loss` — is scored partly
+   against labels answering a different position. This is independent of, and
+   additive to, the already-recorded 14.10% rejection rate on
+   `scratchpad/split/eval_shards`.
+2. **It does NOT age out.** The training window drains its residue with the
+   ~34 h FIFO; the holdout is FROZEN by design, so 0.101305 is what the ruler
+   reads until the set is re-cut from post-quarantine shards. That re-cut is
+   the fix, and it is a ruler change — by
+   `docs/rl_loop_audit.md`'s own rule it invalidates the records made on the
+   old set rather than silently improving them.
+3. **The rate alert must be scoped to the TRAIN row.** PR #306's promotion
+   trigger ("once a live row reads `sf_labelled_no_multipv_frac == 0.0` with
+   `checked_frac ~ 0.99`") is unsatisfiable by the `test_` twin on the current
+   holdout, so an unscoped trigger is a gate that cannot pass. Scoped in this
+   PR, in `docs/rl_loop_audit.md` D20, `scripts/loop_health.py`'s header and
+   `docs/target_rebuildability.md`.
+
+**The blind-instrument half of the alert IS wired in this PR** —
+`scripts/loop_health.py::blind_desync_detector_alerts` fires on
+`sf_multipv_checked_frac == 0.0` for a row that trained, and on
+`test_sf_multipv_checked_frac == 0.0` for a row that scored holdout rows.
+`checked_frac == 0` means the detector inspected nothing, which is never
+healthy and has no false-alarm case today. The RATE alert stays deferred behind
+the train-row-scoped trigger above.
+
+**Method note, and it is the same shape as the defect the PR repairs.** The
+review's headline finding was that `sf_multipv_checked_frac`'s DENOMINATOR was
+pinned by no test: mutating `batch_rows` from all-rows to `net_mask.sum()`
+turns the column into `1.750` — an impossible "fraction" — and the full
+2959-test suite still exited 0. Cause: the only fixture reaching `compute_loss`
+end to end carried no `is_network_turn`, so all-rows and network-turn-rows
+COLLIDED at 8. Fixed by giving that fixture an explicit
+`is_network_turn` making all-rows (8), network-turn-rows (4), labelled-rows (7)
+and labelled-AND-net (3) four different numbers; the mutation now fails naming
+`sf_multipv_checked_frac` with `assert 1.75 == 0.875`. **A denominator is only
+pinned on a fixture where the candidate denominators disagree** — the live
+shards are `is_network_turn == 1.0` on every row, which is exactly why the
+collision was invisible.

@@ -285,7 +285,26 @@ def test_the_metric_is_not_gated_on_rebuild_sf_targets():
 
 def test_full_pass_publishes_the_columns_on_the_test_row():
     """End to end through the ruler path that produces the `test_*` twins:
-    a poisoned holdout set must show up on the holdout's own row."""
+    a poisoned holdout set must show up on the holdout's own row.
+
+    ⚑ This is the ONLY fixture in this file that reaches `compute_loss` through
+    the real path, so it is also the only place `sf_multipv_checked_frac`'s
+    DENOMINATOR (`batch_rows`, all rows of the microbatch) is pinned end to end.
+    It therefore carries an explicit `is_network_turn` so that all-rows,
+    network-turn-rows and labelled-rows are three DIFFERENT numbers:
+
+      * all rows          -> 8   (the correct denominator)
+      * network-turn rows -> 4   (rows 0, 1, 4, 7)
+      * labelled rows     -> 7   (row 7 is not labelled)
+      * labelled AND net  -> 3   (rows 0, 1, 4)
+
+    Without it every row is a network turn and all-rows collides with
+    network-turn-rows, so swapping the denominator to `net_mask.sum()` — the
+    live shards ARE all `is_network_turn`, which is exactly why the collision is
+    easy to miss — left `checked_frac` at 0.875 and the whole suite green. With
+    it that swap reads 7/4 = 1.75, an impossible "fraction", and this assertion
+    fails naming `sf_multipv_checked_frac`.
+    """
 
     class _SliceBuf:
         rng = np.random.default_rng(0)
@@ -303,15 +322,27 @@ def test_full_pass_publishes_the_columns_on_the_test_row():
             return {k: np.array(v[start:stop], copy=True) for k, v in self._arrs.items()}
 
     t = _tiny_trainer()
+    has_sf_wdl = [1, 1, 1, 1, 1, 1, 1, 0]
+    has_raw = [1, 0, 1, 0, 1, 1, 1, 1]
+    is_network_turn = [1, 1, 0, 0, 1, 0, 0, 1]
     arrs = _arrs(
-        has_sf_wdl=[1, 1, 1, 1, 1, 1, 1, 0],
-        has_raw=[1, 0, 1, 0, 1, 1, 1, 1],
+        has_sf_wdl=has_sf_wdl, has_raw=has_raw, is_network_turn=is_network_turn,
     )
     metrics = t.eval_full_pass(cast(Any, _SliceBuf(arrs, 8)), batch_size=4)
     assert metrics.eval_rows == 8
     # 7 labelled rows (row 7 is not), 2 of them stripped (rows 1 and 3).
     assert metrics.sf_labelled_no_multipv_frac == pytest.approx(2 / 7)
     assert metrics.sf_multipv_checked_frac == pytest.approx(7 / 8)
+
+    # The four candidate denominators, spelled out so a future edit to the
+    # fixture that lets two of them collide again fails here rather than
+    # silently un-pinning the assertion above.
+    triples = list(zip(has_sf_wdl, has_raw, is_network_turn, strict=True))
+    assert len(triples) == 8                                            # all rows
+    assert sum(is_network_turn) == 4                                    # network-turn rows
+    assert sum(has_sf_wdl) == 7                                         # labelled rows
+    assert sum(1 for lab, _raw, net in triples if lab and net) == 3     # labelled AND net
+    assert len({8, sum(is_network_turn), sum(has_sf_wdl)}) == 3
 
 
 def test_the_columns_are_row_weighted_across_ragged_batches():
