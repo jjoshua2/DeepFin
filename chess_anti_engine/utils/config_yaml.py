@@ -273,6 +273,7 @@ _TUNE_KEYS = (
     "gate_min_games_per_side", "gate_demote_delta_elo", "gate_demote_step_elo",
     "gate_alpha", "gate_max_hold_iters",
     "shuffle_buffer_size", "shuffle_refresh_interval", "shuffle_refresh_shards",
+    "replay_shard_recency_exponent",
     "shuffle_draw_cap_frac", "shuffle_wl_max_ratio",
     "replay_sf_gap_priority_weight", "replay_sf_gap_priority_signed",
     "replay_fast_low_surprise_priority",

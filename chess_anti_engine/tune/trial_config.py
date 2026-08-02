@@ -313,6 +313,12 @@ class TrialConfig:
     replay_upgrade_v1_planes: bool = False
     shuffle_refresh_interval: int = 5
     shuffle_refresh_shards: int = 3
+    # Exponent on the shuffle-refresh shard draw's recency weight
+    # (weight ∝ rank**α, oldest rank 1). 1.0 = the linear draw production has
+    # always run and the ONLY value that reproduces it bit-for-bit; 0.0 =
+    # uniform over the window. Construction-time (see
+    # trainable_config_ops.construction_only_config_keys).
+    replay_shard_recency_exponent: float = 1.0
     shuffle_draw_cap_frac: float = 0.90
     shuffle_wl_max_ratio: float = 1.5
     # Surprise-priority shaping at shuffle append (live-reloadable). Weight
@@ -718,6 +724,8 @@ class TrialConfig:
             replay_upgrade_v1_planes=bool(config.get("replay_upgrade_v1_planes", False)),
             shuffle_refresh_interval=int(config.get("shuffle_refresh_interval", 5)),
             shuffle_refresh_shards=int(config.get("shuffle_refresh_shards", 3)),
+            replay_shard_recency_exponent=float(
+                config.get("replay_shard_recency_exponent", 1.0)),
             shuffle_draw_cap_frac=float(config.get("shuffle_draw_cap_frac", 0.90)),
             shuffle_wl_max_ratio=float(config.get("shuffle_wl_max_ratio", 1.5)),
             replay_sf_gap_priority_weight=float(

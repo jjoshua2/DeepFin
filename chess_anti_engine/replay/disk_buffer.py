@@ -81,6 +81,220 @@ _SCALAR_METADATA_FIELDS = (
 # Lookup: value field name → has-flag field name (derived from shard.py's canonical pairs).
 _VALUE_TO_FLAG = dict(_OPTIONAL_STORAGE_PAIRS)
 
+# The shard-recency draw exponent that reproduces the pre-2026-08-02 code
+# exactly: weight ∝ rank, oldest rank 1. Named so the one value that must not
+# drift is written once and referenced everywhere that claims to preserve it.
+DEFAULT_SHARD_RECENCY_EXPONENT = 1.0
+_DRAW_DECILES = 10
+
+# Smallest positive NORMAL float64 (2.225e-308). Post-max-subtraction weights
+# below this are raised to it before normalization, so every shard keeps a
+# strictly positive draw probability. See shard_draw_weights.
+_SHARD_DRAW_WEIGHT_FLOOR = float(np.finfo(np.float64).tiny)
+
+# Shard count used ONLY to derive MAX_SHARD_RECENCY_EXPONENT below. Absurdly
+# generous on purpose: the live window tracks ~834 shards at shard_size 2000
+# against a 1.5M-row cap, so 1e6 shards would be 2e9 rows -- ~1300x a window
+# this project can hold.
+_BOUND_REFERENCE_N_SHARDS = 1_000_000
+
+# Upper bound on the recency exponent, DERIVED rather than picked: the
+# log-space weights span `alpha * ln(n)` nats, so nothing underflows while
+# `alpha <= ln(1/tiny) / ln(n)` = 708.396 / ln(n). At the reference window
+# above that is 708.396 / 13.8155 = 51.28, rounded down to 50.
+#
+# ⚑ The bound is NOT what stops the underflow failures -- the floor is, and it
+# holds for every finite alpha. The bound exists because past the underflow
+# point the knob stops MEANING anything: every larger alpha produces the same
+# "newest shard, probability 1 - 1e-305" draw, so the yaml value would read
+# back correctly and select a regime rather than a value. That is this repo's
+# signature defect, so it is refused loudly instead. Even at the bound the draw
+# is already far past any proposed experiment -- alpha = 50 puts the mean drawn
+# shard at the 98.1st recency percentile, while arm G is about alpha in [0, 1].
+MAX_SHARD_RECENCY_EXPONENT = 50.0
+
+
+def validate_shard_recency_exponent(recency_exponent: float) -> float:
+    """Return the exponent as a float, or raise naming the offending value.
+
+    Separate from the weight computation so the CONSTRUCTOR can reject a bad
+    yaml value at startup. A bad exponent otherwise first bites inside the
+    PREFETCH THREAD, on the first refresh, as a probability vector
+    ``rng.choice`` refuses — where the exception is swallowed and the only
+    symptom is a shuffle pool that quietly stops being refreshed. That is the
+    failure this function exists to move to startup, so the bounds it enforces
+    have to be the ones that actually reach it.
+
+    Three rejections, each a decision rather than an oversight:
+
+    * **non-finite** — a NaN or inf weight vector.
+    * **negative** — refused DELIBERATELY. An oldest-heavy draw (alpha < 0
+      inverts the ranking and trains preferentially on the stalest end of the
+      window) is not a hypothesis anyone has proposed; the open question, rig
+      arm G, is whether to FLATTEN recency, i.e. alpha in [0, 1]. The
+      log-space form below is correct for negative alpha, so enabling it is a
+      one-line relaxation here — behind a ledger entry, not a yaml edit.
+    * **above MAX_SHARD_RECENCY_EXPONENT** — see that constant. Not a numeric
+      safety bound (the floor is), a meaningfulness bound.
+    """
+    alpha = float(recency_exponent)
+    if not np.isfinite(alpha) or alpha < 0.0 or alpha > MAX_SHARD_RECENCY_EXPONENT:
+        raise ValueError(
+            f"shard recency exponent must be finite and within "
+            f"[0.0, {MAX_SHARD_RECENCY_EXPONENT}], got {recency_exponent!r}; "
+            "1.0 = the production linear-recency draw, 0.0 = uniform over the "
+            "window. Negative (oldest-heavy) and above-bound (saturated onto "
+            "the newest shard, where every larger value draws identically) are "
+            "both refused on purpose -- see validate_shard_recency_exponent"
+        )
+    return alpha
+
+
+def _shard_draw_log_weights(n_shards: int, alpha: float) -> np.ndarray:
+    """Unnormalized LOG draw weights, oldest first, shifted so the max is 0.
+
+    ``alpha * log(rank)`` rather than ``rank ** alpha``: the log form's dynamic
+    range is linear in alpha instead of exponential in it, so the intermediate
+    cannot overflow to ``inf`` for any bounded alpha. Subtracting the max makes
+    the largest weight ``exp(0) == 1.0`` EXACTLY, which is what lets the caller
+    reason about the floor and the sum in absolute terms rather than relative
+    ones: every weight is in ``(0, 1]``, so the normalizing sum is always in
+    ``[1, n]`` and can neither vanish nor overflow.
+
+    ``log(rank)`` is exactly 0.0 at rank 1 and finite and increasing after, so
+    this is well defined for negative alpha too (the max then sits at rank 1);
+    only ``validate_shard_recency_exponent`` restricts the sign.
+    """
+    ranks = np.arange(1, int(n_shards) + 1, dtype=np.float64)
+    if ranks.size == 0:
+        return ranks
+    log_weights = alpha * np.log(ranks)
+    return log_weights - log_weights.max()
+
+
+def shard_draw_weights(n_shards: int, recency_exponent: float) -> np.ndarray:
+    """Normalized shard-draw probabilities, OLDEST first: ``w_i ∝ rank_i**α``.
+
+    ``rank`` is ``1..n_shards`` oldest→newest, so α = 1.0 is the linear recency
+    weighting the refresh draw has always used (at production scale, 834
+    tracked shards, the newest shard is drawn 834× as often as the oldest and
+    the mean sampled shard sits at the 2/3 recency percentile). α = 0.0 is
+    uniform over the window; α > 1 sharpens onto the newest shards.
+
+    ⚑ α = 1.0 takes its own branch and is BYTE-IDENTICAL to the code this
+    replaced, which is the whole point of the default. It is not a
+    micro-optimisation and must not be folded into the general expression: it
+    is what lets the knob ship into a live run whose sampling distribution is
+    an open experimental question (rig arm G) without perturbing it. Folding it
+    away would make the default depend on whether ``np.power(x, 1.0)`` returns
+    ``x`` bit-for-bit, which is a libm/numpy-version property, not a promise.
+    ``tests/test_replay_shard_recency_exponent.py`` pins the equality against
+    an inline copy of the original two lines.
+
+    The general branch computes in LOG space (see
+    :func:`_shard_draw_log_weights`) and then FLOORS at the smallest positive
+    normal float64 before normalizing. That closes two DISTINCT failures of the
+    ``(rank / n) ** alpha`` form this branch used first, measured rather than
+    reasoned about (``tests/test_replay_shard_recency_exponent.py``
+    reconstructs both):
+
+    * the OLDEST weight reaches exactly 0.0 at alpha ≈ 110.5 for the live
+      window of 834 shards. No exception — the draw keeps working and that
+      shard is simply PERMANENTLY INELIGIBLE, a shard sitting in the window
+      that can never be sampled. This is the silent half and the worse one.
+    * ``count_nonzero(p) < refresh_shards``, which is what actually makes
+      ``rng.choice(..., replace=False)`` raise ``ValueError: Fewer non-zero
+      entries in p than size``, needs alpha ≈ 154,987 at n = 834. On the
+      production path that raise happens inside the PREFETCH THREAD, where
+      nothing reads it and the only symptom is a shuffle pool that silently
+      stops refreshing.
+
+    Overflow is not among them: ``(rank / n) ** alpha`` is bounded by 1 for
+    every alpha ≥ 0, and the log form is bounded by 1 by construction. Only a
+    raw ``rank ** alpha`` could overflow, which this code has never used.
+
+    The floor makes both unreachable for any finite alpha: the post-shift
+    maximum is exactly 1.0, so the sum is in ``[1, n]`` and every floored entry
+    lands at ``>= tiny / n``, which stays representable (and strictly positive)
+    for any n below ~4.5e15. ``MAX_SHARD_RECENCY_EXPONENT`` then keeps
+    production well clear of the floor entirely; the floor is the belt that
+    survives anyone relaxing that bound.
+
+    The floored mass is negligible by construction, not by hope: at most
+    ``n * tiny`` ≈ 2e-305 of the total for any plausible n, i.e. ~300 orders of
+    magnitude below the least significant digit of the printed decile table.
+    """
+    alpha = validate_shard_recency_exponent(recency_exponent)
+    if alpha == DEFAULT_SHARD_RECENCY_EXPONENT:
+  # ⚑ UNTOUCHED, and deliberately not routed through the log-space form: this
+  # is the byte-identity the default rests on. See the docstring above.
+        weights = np.arange(1, int(n_shards) + 1, dtype=np.float64)
+        weights /= weights.sum()
+        return weights
+
+    weights = np.exp(_shard_draw_log_weights(int(n_shards), alpha))
+    if weights.size == 0:
+        return weights
+    np.maximum(weights, _SHARD_DRAW_WEIGHT_FLOOR, out=weights)
+    weights /= weights.sum()
+    return weights
+
+
+def shard_draw_floored_count(n_shards: int, recency_exponent: float) -> int:
+    """How many shards :func:`shard_draw_weights` had to raise off the floor.
+
+    The one number that says whether the floor engaged, for the construction
+    line. Computed from the same expression the weights use — ``raw < floor``
+    on the pre-floor vector — rather than re-deriving the threshold in log
+    space, so the count cannot disagree with the flooring by a boundary ulp.
+
+    Always 0 on the default path, which never floors: its weights are the
+    integers 1..n.
+    """
+    alpha = validate_shard_recency_exponent(recency_exponent)
+    if alpha == DEFAULT_SHARD_RECENCY_EXPONENT:
+        return 0
+    raw = np.exp(_shard_draw_log_weights(int(n_shards), alpha))
+    return int(np.count_nonzero(raw < _SHARD_DRAW_WEIGHT_FLOOR))
+
+
+def shard_draw_decile_mass_realized(weights: np.ndarray) -> np.ndarray:
+    """Sum a REALIZED draw-weight vector into 10 equal-rank bins, oldest first.
+
+    The counterpart to :func:`shard_draw_decile_mass`, which is the continuum
+    limit. This one is what the sampler will actually do at the window size the
+    buffer currently holds: it carries the discreteness (at n = 3 each shard is
+    a third of the window and no continuum decile describes it) and any
+    flooring, because it is a sum over the very vector handed to
+    ``rng.choice``.
+    """
+    n_shards = int(weights.shape[0])
+    if n_shards == 0:
+        return np.zeros((_DRAW_DECILES,), dtype=np.float64)
+    bins = (np.arange(n_shards) * _DRAW_DECILES) // n_shards
+    return np.bincount(bins, weights=weights, minlength=_DRAW_DECILES).astype(np.float64)
+
+
+def shard_draw_decile_mass(recency_exponent: float) -> np.ndarray:
+    """Analytic draw mass per window decile, OLDEST decile first.
+
+    The continuum limit of :func:`shard_draw_weights`: with density ∝ f**α over
+    the window fraction f (0 = oldest, 1 = newest), the mass below f is
+    ``f**(α+1)``, so decile j spans ``(j/10)**(α+1) - ((j-1)/10)**(α+1)``. For
+    the production α = 1.0 the cumulative mass of the NEWEST fraction f is
+    ``1 - (1-f)**2 = 2f - f²`` — the closed form the realized-draw test checks
+    the sampler against.
+
+    Analytic rather than measured because this is printed at construction, when
+    a fresh trial has no shards yet and a resumed one has a window whose size
+    changes every iteration; the shape of the draw does not depend on either,
+    and a decile table that silently reported "no shards" would be exactly the
+    unreadable observability this line exists to avoid.
+    """
+    alpha = validate_shard_recency_exponent(recency_exponent)
+    edges = np.arange(0, _DRAW_DECILES + 1, dtype=np.float64) / float(_DRAW_DECILES)
+    return np.diff(edges ** (alpha + 1.0))
+
 
 def _batch_dims(arrs: dict[str, np.ndarray]) -> tuple[int, int, int]:
     x = arrs["x"]
@@ -207,6 +421,7 @@ class DiskReplayBuffer:
         shard_size: int = 1000,
         refresh_interval: int = 5,
         refresh_shards: int = 3,
+        shard_recency_exponent: float = DEFAULT_SHARD_RECENCY_EXPONENT,
         draw_cap_frac: float = 0.90,
         wl_max_ratio: float = 1.5,
         input_planes: int | None = None,
@@ -250,6 +465,14 @@ class DiskReplayBuffer:
         self._shard_size = int(shard_size)
         self._refresh_interval = int(refresh_interval)
         self._refresh_shards = int(refresh_shards)
+  # Validated HERE, not on the first refresh: see validate_shard_recency_exponent.
+  # It has to be BEFORE the resume scan at the end of __init__, because that
+  # scan calls _enforce_window() -- a bad yaml exponent must raise before it can
+  # delete shards, not after. The matching REPORT runs after the scan instead,
+  # where there is a real shard count to describe.
+        self._shard_recency_exponent = validate_shard_recency_exponent(
+            shard_recency_exponent,
+        )
         self._prefetch_rng = np.random.default_rng(int(rng.integers(0, 2**32 - 1)))
   # OFF in production; ON makes the draw sequence a pure function of the seed.
   #
@@ -346,6 +569,12 @@ class DiskReplayBuffer:
 
   # Scan existing shards on disk (for resume).
         self._scan_existing_shards()
+  # After the scan, so a resume describes the draw over its ACTUAL window
+  # rather than the continuum limit. On a resume this lands just below the
+  # `[disk_buf] shuffle seed` line the scan emits, and the two are meant to be
+  # read together -- see _report_shard_recency_draw on why their two recency
+  # numbers are not the same quantity.
+        self._report_shard_recency_draw()
   # The seed scan appends to the shuffle pool through the same path as live
   # ingest; drop that mass so the first pop reports only the first
   # iteration's appends (Codex P2 on PR #106).
@@ -814,9 +1043,11 @@ class DiskReplayBuffer:
 
         The draw is ``_load_refresh_chunks`` itself, asked for the same
         ``2 * refresh_shards`` shards the old slice took: same shard COUNT,
-        same wall time, zero extra I/O, but weighted linearly in recency, so
-        the seeded rows land near the 2/3 mean percentile the steady state
-        already samples at instead of at 1.0.
+        same wall time, zero extra I/O, but recency-weighted, so the seeded
+        rows land at whatever mean percentile the steady state already samples
+        at instead of at 1.0. That percentile is 2/3 at the default recency
+        exponent and ``(α+1)/(α+2)`` in general; the point of routing the seed
+        through the same function is that it tracks the knob automatically.
 
         ONE call of ``2 * refresh_shards``, not two of ``refresh_shards``. Two
         calls are independent draws, so they can pick the same shard twice --
@@ -863,7 +1094,10 @@ class DiskReplayBuffer:
         downstream records where its rows came from. ``mean_recency`` is the
         row-weighted mean of ``(rank + 1) / n_shards`` over the seeded shards,
         oldest-first. Read it as ~1.0 = newest-only (the pre-fix defect, back),
-        ~0.667 = the steady-state recency-weighted draw.
+        ~0.667 = the steady-state recency-weighted draw AT THE DEFAULT recency
+        exponent; under another exponent the reference is the
+        ``mean_rank_pct`` the ``[disk_buf] shard draw`` line printed at
+        construction, not 0.667.
         """
         ranks = np.asarray(picked, dtype=np.float64)
         rows = np.asarray(rows_per_pick, dtype=np.float64)
@@ -876,6 +1110,66 @@ class DiskReplayBuffer:
             f"[disk_buf] shuffle seed: rows={seeded_rows} pool={self._shuffle_len()} "
             f"shards={len(picked)}/{n_shards} mean_recency={mean_recency:.3f} "
             f"(1.0=newest-only, {2 / 3:.3f}=steady-state refresh draw)",
+            flush=True,
+        )
+
+    def _report_shard_recency_draw(self) -> None:
+        """One line at construction proving WHICH recency draw this buffer runs.
+
+        ``print``, not ``log.info``, and that is not a style choice: the Ray
+        trial actor installs no logging handler, so INFO from this module
+        reaches no file and no console on the production path — a proof-of-
+        effect line that logs at INFO proves nothing, because its absence and
+        its presence look identical. Every other buffer-side observation on
+        this path (``[disk_buf] shuffle seed``, the empty-refresh alarm) is a
+        ``print`` for the same reason.
+
+        ``source=realized`` whenever the buffer tracks shards: the table is
+        then summed over the very probability vector ``rng.choice`` will be
+        handed, at this window size, AFTER any flooring — so it reports what
+        the sampler does rather than the formula it was derived from, and
+        ``floored=K/N`` says whether the floor engaged at all (0 everywhere in
+        production; see ``MAX_SHARD_RECENCY_EXPONENT``). A fresh trial tracks
+        no shards yet, and there the continuum form is the only honest answer;
+        it is printed with ``source=analytic`` so the two are never confused.
+
+        ⚠ Both forms are MARGINAL, single-shard: the probability that ONE draw
+        lands in each decile. A real refresh takes ``refresh_shards`` WITHOUT
+        replacement, and once the picks are a large fraction of the window that
+        draw is pulled toward the window's UNWEIGHTED mean — downward, not
+        upward, because taking most of the shards leaves recency nothing to
+        select on. Measured against this line's ``mean_rank_pct``, α = 1.0,
+        4000 draws: n = 834 / 5 picks (production) **+0.002**; n = 40 / 6
+        **−0.009**; n = 10 / 6 **−0.048**; n = 6 / 6 **−0.139**. So the line is
+        exact where it matters and optimistic on a nearly-exhausted window.
+        Compare it against another run's line, not against the
+        ``[disk_buf] shuffle seed`` line's ``mean_recency``, which is a
+        row-weighted multi-pick number and answers a different question.
+        ``test_the_printed_marginal_is_the_without_replacement_mean_at_scale``
+        pins both ends of that.
+        """
+        alpha = self._shard_recency_exponent
+        n_shards = len(self._shard_paths)
+        if n_shards > 0:
+            weights = shard_draw_weights(n_shards, alpha)
+            deciles = shard_draw_decile_mass_realized(weights)
+            ranks = np.arange(1, n_shards + 1, dtype=np.float64) / float(n_shards)
+            mean_rank_pct = float((ranks * weights).sum())
+            source = (
+                f"realized n_shards={n_shards} "
+                f"floored={shard_draw_floored_count(n_shards, alpha)}"
+            )
+        else:
+            deciles = shard_draw_decile_mass(alpha)
+            mean_rank_pct = (alpha + 1.0) / (alpha + 2.0)
+            source = "analytic n_shards=0"
+        table = " ".join(f"{m:.4f}" for m in deciles)
+        print(
+            f"[disk_buf] shard draw: recency_exponent={alpha:.4f} "
+            f"(1.0=linear/production, 0.0=uniform) source={source} "
+            f"decile_mass_oldest_to_newest=[{table}] "
+            f"newest_decile={deciles[-1]:.4f} oldest_decile={deciles[0]:.4f} "
+            f"mean_rank_pct={mean_rank_pct:.3f} (marginal, single-draw)",
             flush=True,
         )
 
@@ -973,8 +1267,11 @@ class DiskReplayBuffer:
         if n_pick <= 0:
             return []
 
-        weights = np.arange(1, n_shards + 1, dtype=np.float64)
-        weights /= weights.sum()
+  # `shard_paths` is oldest-first (iter_shard_paths sorts by shard index), so
+  # rank 1 is the oldest shard in the window. At the default exponent this is
+  # the same `np.arange(1, n+1)` vector it always was, drawn from the same rng
+  # in the same one call -- see shard_draw_weights.
+        weights = shard_draw_weights(n_shards, self._shard_recency_exponent)
         chosen_idxs = rng.choice(n_shards, size=n_pick, replace=False, p=weights)
 
         loaded: list[dict[str, np.ndarray]] = []

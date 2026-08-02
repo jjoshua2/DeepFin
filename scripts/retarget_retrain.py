@@ -327,6 +327,11 @@ def _run_variant(
         shard_size=tc.shard_size,
         refresh_interval=tc.shuffle_refresh_interval,
         refresh_shards=tc.shuffle_refresh_shards,
+        # Threaded for the same reason as the refresh knobs: this rig's whole
+        # claim is that its buffer draws like production's, and a recency
+        # exponent left at the constructor default while the config carried
+        # another would make the arms differ from the run they stand in for.
+        shard_recency_exponent=tc.replay_shard_recency_exponent,
         draw_cap_frac=tc.shuffle_draw_cap_frac,
         wl_max_ratio=tc.shuffle_wl_max_ratio,
         sf_gap_priority_weight=tc.replay_sf_gap_priority_weight,
