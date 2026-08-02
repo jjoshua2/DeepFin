@@ -21767,3 +21767,208 @@ production step normalized to exactly 6.5), so LR was not re-tuned at any rung.
 
 **No throughput argument.** Training is 15.9% of a 665s iteration and throughput is
 views-neutral; this buys no extra fresh data.
+
+---
+
+### ⚑⚑ VERDICT 2026-08-02 — VALUE-vs-POLICY TURN ORDERING: **CANNOT RESOLVE.** The pre-committed rule fires "value first", but it flips on the choice of policy metric and the scale-free lead test reads exactly zero. Also: **the value series everyone has been quoting (74.5 / 70.0 / 71.9 / 76.4) is from the DEAD 384×12 lineage and does not describe today's net.**
+
+**Question.** Does the value head degrade BEFORE the policy prior (supporting
+value → MCTS → search-derived target → policy prior), or do they turn together?
+Read-only, offline, forward-only; training stayed paused; no config touched.
+
+**Pre-registration** (written before any paired delta was computed, banked at
+`scratchpad/vp_timing_20260802/PREREG.md`; at write time exactly one absolute
+number had been seen — `value_regret(boot512) = 60.4` — and no delta of any
+kind). Rule: *turn point* T_X = earliest grid checkpoint whose paired delta vs
+boot512 is >0 with a 95% bootstrap CI excluding 0 **and** stays significant at
+every later grid point. VALUE FIRST iff T_V < T_P and dP(T_V) is not
+significant; TOGETHER iff T_V==T_P or adjacent; CANNOT RESOLVE iff either
+series never sustains significance, or the negative control fails.
+
+---
+
+#### ⚑ FIRST, A CORRECTION THAT INVALIDATES THE PROMPTING NUMBERS
+
+`scratchpad/value_regret_trend.out` (iter42 74.5 / iter111 **70.0** / iter281
+71.9 / iter428 76.4 / v1donor 80.6) is dated **2026-07-01** and its checkpoints
+are **34.66M params, 388 state-dict keys, 384-dim × 12-layer, `peak_lr` 3e-4**
+(`scratchpad/base_stable/checkpoint_000428`, `scratchpad/base_stable/params.json`).
+Today's lineage is **63,084,128 params, 496 keys, 512×16, `peak_lr` 3e-5**.
+**Those iter numbers belong to a lineage that no longer exists**, the "+6.4cp
+from its best" was measured on a different net, and it was measured on the
+**v1-2k prefix, which is 1332 endgame + 668 middlegame + ZERO opening rows.**
+Do not carry that table forward. Everything below is a fresh measurement of the
+live `13a9f` lineage on the FULL audit set.
+
+#### Instruments, and what was verified about them
+
+| | VALUE | POLICY (prior) |
+|---|---|---|
+| tool | `scripts/value_regret.py` | `cand.raw` of `scripts/audit_targets.py`, re-implemented at `scratchpad/vp_timing_20260802/raw_policy_regret.py` |
+| set | full `data/audit_set_v1.jsonl` (4000), TB-excluded default `--min-pieces 8` → **n=3723** | same 4000, restricted to the SAME 3723 by a position-level piece-count filter (join verified: intersection 3723, zero rows on either side only) |
+| batch | 128 (fixed) | 256 (fixed) |
+
+- **The light policy path IS the canonical one.** `--verify-against
+  scratchpad/strength_readout_0731/pdump_iter409.jsonl` at batch 256:
+  **`max|Δexp| = 0.000e+00`, `max|Δtop1| = 0.000e+00`, 0 argmax mismatches over
+  2000 rows** — bit-identical to `audit_targets.py`'s own dump produced by a
+  different process on a different day.
+- **⚑ RAW POLICY REGRET IS BATCH-SIZE DEPENDENT.** The same checkpoint reads
+  **70.13 cp at batch 64 vs 69.33 cp at batch 256, with 25/2000 argmax flips.**
+  0.80 cp is a tenth of the entire lineage effect. Batch size is part of this
+  ruler and must be pinned; it is pinned at 256 here.
+- **Value ruler determinism: exact.** Independent re-run of `iter409`,
+  `paired_compare.py` → `+0.00 [+0.00 .. +0.00]`, **100.0% tied**.
+- **Ruler-invariance control (rules out a moving ruler).** `cand.sf_soft.top1`
+  — the frozen SF teacher scored through the same code path — is
+  **+0.00 [+0.00, +0.00]** across boot512 → iter409 → iter477. `audit_set_v1.jsonl`
+  md5 `18451796f936a517f82bf1210581193f`, unchanged since 2026-06-14.
+- **Checkpoint identity verified, not assumed.** All 12 lineage points: 496
+  keys, 63,084,128 unique-storage params, `peak_lr` 3e-5, **distinct weight
+  hashes**, and strictly increasing `step` 56000 → 94062. The net really changed
+  between every pair of points.
+
+**Set composition (the `--max-positions 2000` trap is not repeated here).**
+Phase is a PIECE-COUNT bucket, not a ply — every FEN is rewritten with fullmove
+1, so there is no ply axis to report. endgame ≤13 pieces (n=1332, median 9.5,
+1055 survive TB exclusion), middlegame 14–22 (n=1335, median 18), **opening ≥23
+(n=1333, median 27) — present, and it is the bucket the 2k prefix omitted
+entirely.** Sources are balanced 50/50 selfplay/curriculum in every phase.
+
+#### The two series — paired deltas vs boot512, n=3723, 10k-resample percentile bootstrap
+
+| ckpt | step | VALUE cp | **ΔV [95% CI]** | POLICY top-1 cp | **ΔP [95% CI]** |
+|---|---|---|---|---|---|
+| boot512 | 56000 | 60.39 | — | 47.70 | — |
+| iter025 | 57002 | 65.05 | **+4.66 [+0.02, +9.43]** SIG | 48.00 | +0.30 [−2.79, +3.38] |
+| iter070 | 59893 | 62.17 | +1.78 [−2.85, +6.42] | 47.78 | +0.08 [−3.27, +3.37] |
+| iter122 | 62253 | 65.75 | **+5.36 [+1.38, +9.63]** SIG | 50.74 | +3.04 [−0.65, +6.75] |
+| iter172 | 67021 | 67.71 | **+7.32 [+2.76, +12.23]** SIG | 50.87 | +3.17 [−0.97, +7.49] |
+| iter218 | 71042 | 66.45 | **+6.06 [+1.40, +10.89]** SIG | 53.83 | **+6.13 [+1.60, +10.97]** SIG |
+| iter308 | 79060 | 68.38 | **+8.00 [+2.27, +14.01]** SIG | 52.09 | +4.39 [−0.10, +9.05] |
+| iter360 | 83587 | 69.07 | **+8.68 [+3.38, +14.23]** SIG | 53.64 | **+5.94 [+1.65, +10.42]** SIG |
+| iter409 | 88162 | 67.18 | **+6.79 [+1.27, +12.50]** SIG | 55.43 | **+7.73 [+2.74, +13.44]** SIG |
+| iter425 | 89747 | 72.03 | **+11.64 [+6.08, +17.40]** SIG | 57.06 | **+9.36 [+4.11, +15.40]** SIG |
+| iter450 | 91855 | 73.51 | **+13.12 [+7.16, +19.49]** SIG | 54.82 | **+7.11 [+2.52, +11.84]** SIG |
+| iter477 | 94062 | 73.75 | **+13.36 [+7.38, +19.69]** SIG | 56.15 | **+8.45 [+3.73, +13.32]** SIG |
+| **SHUFFLED** (neg ctl) | — | 203.31 | **+142.92 [+132.58, +153.77]** | 195.29 | **+147.58 [+137.70, +158.10]** |
+| v1donor (cross-era) | — | 65.62 | +5.23 [−0.64, +10.96] | 43.85 | −3.86 [−8.18, +0.26] |
+
+Reproduced with the canonical tool: `paired_compare.py vfull_iter477 vfull_boot512`
+→ `+13.36 [+7.38 .. +19.69]`, identical to the table.
+
+**NEGATIVE CONTROL — PASSES.** `SHUFFLED` = iter477 with every unique weight
+tensor's elements permuted (seed 20260802; shapes, dtypes and the 16-key tied
+`layer_smolgens` storage preserved). Separation is **10.7×** the largest
+lineage-vs-lineage value delta and **15.8×** the largest policy one, against a
+pre-committed bar of 10×. The instrument does separate a known-bad net.
+
+#### Verdict
+
+**By the letter of the pre-committed rule: VALUE FIRST.** T_V = **iter122**
+(iter025 is significant but iter070 is not, so iter025 fails the "sustained"
+clause); T_P = **iter360** (iter218 is significant but iter308 is not); and
+dP(T_V) = +3.04 [−0.65, +6.75] is not significant. That is the rule firing
+exactly as written.
+
+**And it does not survive contact with three checks, so the honest headline is
+CANNOT RESOLVE.**
+
+1. **⚑ IT FLIPS ON THE POLICY METRIC.** The prereg's *secondary* policy metric,
+   raw **expected** regret, is significantly worse at the **first** post-origin
+   grid point — `iter025 +2.01 [+1.18, +2.93] SIG` — and at every point after.
+   On that metric T_P = iter025 ≤ T_V, i.e. TOGETHER or policy-first. Top-1 is
+   an argmax statistic and expected regret uses the whole distribution, so
+   expected regret detects the same movement earlier; it is the more sensitive
+   read of the same head. **A verdict that depends on which of two readings of
+   the same head you pick is not a verdict.**
+2. **⚑ THE SCALE-FREE LEAD TEST READS ZERO.** Normalising each head by its own
+   total lineage degradation (VALUE +13.36 cp, POLICY +8.45 cp) and asking
+   whether one curve is left-shifted:
+   **L = mean(f_V − f_P) over the interior = −0.010, 95% CI [−0.413, +0.347], NOT SIG**
+   (bootstrap over positions, both curves resampled jointly on the shared
+   position set). Per-checkpoint f_V − f_P is non-significant at **every single
+   grid point**. This test is immune to the two metrics having different
+   magnitudes and different noise, and it says neither head leads — with a CI
+   wide enough to admit either leading by up to ~40% of the whole trajectory.
+3. **⚑ T_V ITSELF TURNS ON ONE NOISY POINT.** ΔV(iter025) = +4.66 with a CI
+   lower bound of **+0.02**. Move that point by a hair and T_V becomes iter025;
+   move iter070 by a hair and T_V stays iter025 as *sustained*. The
+   "earliest sustained significance" statistic is a threshold crossing on a
+   non-monotone series and it moves ~100 iterations on sub-noise perturbations.
+
+**So: the data are consistent with value turning no later than policy, and give
+no evidence that it turned meaningfully earlier. They cannot establish a
+separation, which is what the causal claim needs.**
+
+#### The mechanism argument that does survive, and it argues AGAINST the cascade
+
+The proposed chain (value → MCTS → search-derived target → policy prior) has a
+structural minimum latency: the replay window is pinned at **1,500,000 rows**
+and ingest is **~8,000–10,000 rows/iteration** (`progress.csv`, trial 13a9f,
+`replay_window_after` / `replay_positions_ingested`), so a full turnover is
+**~167 iterations** and at **iter025 at most ~15% of the training window can
+contain any post-boot512 data at all.** Yet by iter025 the value head is
+already +4.66 cp worse and the policy prior is already +2.01 cp worse on
+expected regret. **Both heads move before the loop has had time to feed
+anything back**, which points at a common cause acting on both heads at once
+(shared trunk, the LR/optimizer regime, the inherited window) rather than at a
+value→policy cascade.
+
+This agrees with the intervention already on the record: the 2026-07-31
+value-swap rig put value at a **~27% minority channel** with the policy prior
+carrying the rest. Timing and intervention now say the same thing from
+different directions.
+
+#### Two side findings worth carrying
+
+- **The search output is not degrading — only its inputs and the head are.**
+  On the existing 07-31 dumps (v1-2k prefix, endgame+middlegame, n=2000),
+  boot512 → iter477: `raw.top1` **+13.70 [+6.23, +21.64] SIG**,
+  `train.top1` **+6.80 [+0.17, +13.52] SIG**, but
+  `search.top1` **+1.27 [−5.19, +7.57] ns**. Gumbel search keeps absorbing the
+  degradation; the head keeps not absorbing the search.
+- **⚑⚑ v1donor BEATS iter477 ON BOTH HEADS, AND BOTH CLEAR ZERO.** The
+  **32,280,185-param 384×12 net from a month ago**, scored on these same frozen
+  positions through this same code: policy top-1 **−10.41 cp
+  [−16.79, −3.55] SIG** (n=4000) and value **−8.13 cp [−14.56, −1.95] SIG**
+  (n=3723) against iter477. Against boot512 it is −3.86 [−8.18, +0.26] on policy
+  and +5.23 [−0.64, +10.96] on value, i.e. roughly level with the lineage's own
+  starting point. It is a different architecture on a FEN-only ruler, so this is
+  not an Elo claim — but a half-size predecessor scoring significantly better
+  than today's net on both heads belongs in the record next to
+  "63M turns up at ~3.1 views/row".
+
+#### What is VERIFIED vs ASSUMED
+
+**Verified by measurement:** every checkpoint's identity, param count and weight
+hash; that all 12 are one continuous lineage by strictly increasing step; that
+the light policy path reproduces `audit_targets.py`'s `cand.raw` bit-for-bit;
+that the value ruler is bit-deterministic across runs; that the audit set and
+its scoring are unchanged across the whole comparison (frozen `sf_soft` scores
++0.00 exactly); that the position join is exact (3723 = 3723, zero unmatched);
+that the negative control separates by >10×; that batch size perturbs the policy
+ruler by 0.80 cp; the full-set phase composition including 1333 opening rows.
+
+**Assumed / not established:** that `boot_snap_recheck_0711_0404.pt` (step
+56000) is the exact state the 13a9f trial resumed from — the step number and
+architecture match and nothing contradicts it, but no manifest was checked (the
+consecutive-delta table is base-free and does not depend on this). The
+~15%-window-turnover figure is ARITHMETIC from the recorded window cap and
+ingest rate, not a direct measurement of iter025's shard composition — the
+early shards have been evicted, so it cannot be measured now. Restart proximity
+was checked (iter070 sits ~1h after the 07-26 ~23:00 restart, iter360 ~1h before
+the 07-30 11:05 one) and is not corrected for; both series read the same
+checkpoints, so any restart effect is common to both.
+
+**⚑ RULER CAVEAT THAT BOUNDS EVERY NUMBER ABOVE.** Both rulers score **FEN-only**
+inputs — no move stack, **117 of 175 planes zero**, top-1 changes in 21.4% of
+positions (`docs/rl_loop_audit.md` M10). **Every claim here is a RANKING claim
+across checkpoints scored identically. No absolute cp bar is claimed, and none
+of these numbers is production's value or policy quality.**
+
+**Dumps banked** (per-position, so every CI above is recomputable without
+re-running): `scratchpad/vp_timing_20260802/dumps/{vfull,pfull}_*.jsonl`
+(26 files), plus `PREREG.md`, `ckpt_verify.json`, `results.json`, `lead.json`,
+`value.log`, `policy.log`, and the drivers `run_value.sh` / `run_policy.sh` /
+`raw_policy_regret.py` / `analyse.py` / `lead.py` / `make_shuffled.py`.
