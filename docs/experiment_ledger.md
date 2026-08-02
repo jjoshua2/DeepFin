@@ -23310,3 +23310,237 @@ needs a restart, not a live edit.
   sampler, not a demonstration that either causes the −48.6 Elo.
 - The `jun` era is a 150-shard stride subsample, not a full window; it is used
   only for the `moves_left` percentile check.
+
+## ⚑⚑ VERDICT 2026-08-02 — FORGETTING CURVE: **DECAY ONSET TRACKS WINDOW EXIT.** On five fixed row-sets with FIVE DIFFERENT window-exit iterations, each set's best checkpoint lands at **66–83% of its window residency** — i.e. after **88–97% of its recency-weighted training exposure has been spent** — and the five minima order EXACTLY by exit date (**iter 25 / 122 / 172 / 218 / still-falling-at-450** for exits **60 / 154 / 199 / 273 / never**). The never-exited control does the mirror image: it got **+3.19 cp WORSE** while it was still in the future, then **−10.91 cp BETTER [−12.34, −9.50]** the moment it entered the window. **BUT** the frozen audit set, which was never in the window at all and therefore cannot "exit" it, degraded **+9.04 cp monotonically** over the same lineage — MORE than any set's post-exit decay (+2.80 to +5.67 cp). **The timing structure is real; it is not the whole −48.6 Elo.** Pre-registered prediction "openings decay hardest" is **REFUTED**: openings decay LEAST in all four exiting sets.
+
+Read-only, GPU-light (16 checkpoints × 50k rows of single-forward inference at batch
+128, `nice -n 19`, ≤6 GB, no production file touched). Drivers and per-position dumps
+banked at `scratchpad/forget_curve_20260802/`: `PREREG.md` (written before any
+post-exit slope existed), `window_timing.py`, `p0rebuild.py`, `build_sets.py`,
+`sweep.py`, `analyse.py`, `sets/*.npz` (5 × 10,000 rows), `dumps/*.npz` (16 arms ×
+5 sets of per-position top-1 / soft / argmax), `results.json`, `analyse.log`,
+`did.log`, `agree.log`. Every CI below is recomputable from the banked dumps without
+touching the GPU.
+
+### The instrument, and the two things that had to be proven before it could be used
+
+**1 — The window-exit iteration of a shard is now a MEASURED quantity, not an estimate.**
+The replay window is a hard 1,500,000-row FIFO and was already full at iteration 1
+(`replay_window_before/after == 1500000` on every one of the 478 `result.json` rows),
+so a shard leaves when 1.5M rows younger than it exist. `window_timing.py` computes
+that from `replay_positions_ingested` and checks it against **five directly observed
+windows**:
+
+| iteration | observed oldest shard | predicted | delta |
+|---|---|---|---|
+| 41 | 30852 | 30856 | +4 |
+| 65 | 30996 | 30997 | +1 |
+| 121 | 31279 | 31278 | −1 |
+| 477 | 33106 | 33106 | 0 |
+| 478 | 33118 | 33106 | −12 |
+
+~12 shards are written per iteration, so every prediction is inside one iteration.
+
+⚑ **Two provenance traps this exposed, both live hazards for anyone reading salvage
+bundles.** (a) Trial 13a9f re-used shard NUMBERING from the boot512 seed pool: its
+first own shard is `31417` (mtime 2026-07-26 06:09, seven minutes after the trial
+started), while the PREVIOUS lineage had already reached `34676` on 07-25. **Shard
+indices therefore COLLIDE across lineages** — `data/salvage/pre_abandonfix_20260724`
+and the live 13a9f window both contain a `shard_033295.zarr`, and they are different
+games. Only the six 13a9f directories are used here. (b) Consequently the bundles
+dated 07-26/07-27 that report `copied_replay_shards: 820` are NOT stale: indices
+≤ 31416 in them are genuinely seed-pool shards written 07-06..07-11 that were still
+in 13a9f's window at iteration 41. The `shards=0` salvage bug is a separate defect
+and does not apply to those three.
+
+**2 — `sf_p0_regret` had to be REBUILT for the shards that matter, and the rebuild is
+verified bit-for-bit.** The band carrying exits 149–284 (`31417..32110`, written
+07-26/27) predates `pre_sfp0_restore_20260727` and has no `sf_p0_regret` array — only
+`sf_multipv_raw`. `p0rebuild.py` reconstructs the vector the way `finalize.py`
+does (previous full ply's MultiPV = SF's read of THIS position; the stored move column
+is already in shard encoding, so the full→compact gather is skipped). Checked against
+rows that DO carry a stored vector: **1,355 rows across 4 shards spanning the seed era
+and the live era, max |diff| = 0.000e+00** after the shard's own fp16 cast. Zero
+mismatched rows. Without the fp16 cast the residual is 2.4e-04, which is exactly fp16
+resolution near 0.5 — i.e. the disagreement was the storage dtype, not the arithmetic.
+
+**Ruler.** Raw-policy (prior) top-1 cp regret against `sf_p0_regret`, no search, one
+deterministic forward per row on the row's **stored production `x` planes** (175, WITH
+move history — the FEN-only defect of `rl_loop_audit.md` M10 does not apply here).
+Batch **pinned at 128** for every checkpoint and every set (regret is batch-size
+dependent at the ~0.8 cp level). PRIMARY row filter `n_covered == n_legal`, a
+POSITION-level filter. Realized no-PV rate on all five sets: **0.0000** — the
+desync-contamination flag on band 31417–32456 does not bite on these shards.
+
+### The row-sets
+
+| set | shards | rows / games | entry iter | **exit iter** | provenance |
+|---|---|---|---|---|---|
+| `S1_exit065` | 30950–30990 | 10,000 / 2,642 | 0 | **56–83 (med 60)** | seed pool ⚠ boot512 trained on it |
+| `S2_exit155` | 31417–31481 | 10,000 / 2,776 | 1–20 | **149–164 (med 154)** | 13a9f own |
+| `S3_exit200` | 31650–31705 | 10,000 / 2,672 | 38–46 | **195–208 (med 199)** | 13a9f own |
+| `S4_exit275` | 32030–32085 | 10,000 / 2,507 | 106–122 | **268–284 (med 273)** | 13a9f own |
+| `S5_never` | 33118–33174 | 10,000 / 2,504 | 315–344 | **never** | 13a9f own — CONTROL |
+
+### THE CURVE — mean raw-policy top-1 cp regret (lower = better)
+
+| ckpt | S1 exit 60 | S2 exit 154 | S3 exit 199 | S4 exit 273 | S5 never |
+|---|---|---|---|---|---|
+| boot512 | 29.152 | 37.268 | 35.891 | 35.223 | 36.905 |
+| iter025 | **29.045** | 35.477 | 36.132 | 35.665 | 37.343 |
+| iter070 | 29.185 | 33.330 | 34.719 | 36.848 | 38.170 |
+| iter122 | 29.949 | **33.161** | 33.766 | 36.136 | 39.369 |
+| iter172 | 30.457 | 34.272 | **33.438** | 33.314 | 38.827 |
+| iter218 | 32.038 | 34.600 | 34.073 | **32.324** | 39.057 |
+| iter308 | 32.061 | 35.969 | 35.338 | 33.610 | 40.095 |
+| iter360 | 34.042 | 36.181 | 35.014 | 34.741 | 31.004 |
+| iter409 | 34.007 | 36.897 | 37.102 | 34.876 | 29.329 |
+| iter425 | 34.023 | 37.154 | 37.293 | 34.555 | 29.093 |
+| iter450 | 34.102 | 36.715 | 36.566 | 34.052 | **28.320** |
+| iter475 | 34.485 | 36.698 | 37.017 | 34.643 | 29.458 |
+| iter477 | 35.119 | 37.392 | 36.600 | 35.286 | 29.098 |
+| iter478 | 34.719 | 36.782 | 36.826 | 35.122 | 29.184 |
+| `shuffled` | 200.80 | 199.49 | 196.84 | 200.25 | 201.57 |
+| `uniform` | 215.26 | 213.70 | 219.97 | 217.47 | 221.45 |
+
+Every set is U-shaped, and **the minima march right in lock-step with the exit dates**:
+25 → 122 → 172 → 218 → 450, for exits 60 → 154 → 199 → 273 → never.
+
+### The hinge test (pre-registered; `c_pre` = last grid point at or before exit)
+
+| set | c_pre | D_pre (0→c_pre) | D_post (c_pre→478) | D_post − D_pre | hinge raw / rate |
+|---|---|---|---|---|---|
+| S1 | iter025 | −0.107 [−0.84, +0.63] | **+5.674 [+4.36, +7.04]** | +5.780 [+4.12, +7.46] | **True / False** |
+| S2 | iter122 | −4.108 [−5.24, −2.97] | **+3.621 [+2.31, +4.93]** | +7.728 [+5.65, +9.77] | **True / True** |
+| S3 | iter172 | −2.453 [−3.69, −1.23] | **+3.388 [+2.11, +4.72]** | +5.841 [+3.75, +8.03] | **True / True** |
+| S4 | iter218 | −2.899 [−4.16, −1.59] | **+2.798 [+1.57, +4.03]** | +5.697 [+3.61, +7.74] | **True / True** |
+| S5 (control) | iter308 | +3.189 [+1.86, +4.49] | **−10.911 [−12.34, −9.50]** | −14.100 [−16.46, −11.73] | **False / False** |
+
+cp, positive = worse, 95% percentile bootstrap over 10,000 resamples **clustered by
+`game_id`**, seed 0. **3 of 4 exiting sets pass both the raw and the rate-normalised
+hinge; the control passes in the opposite direction with a 14 cp margin.**
+S1 fails the RATE test only, and the reason is mechanical: its pre-exit span is 25
+iterations, so `R_pre` has a ±0.03 cp/iter CI that cannot exclude anything. Its raw
+hinge is the largest of the four.
+
+### The timing is the fingerprint: turning point vs ENTRY and vs EXIT
+
+Window residency is a constant ~148 iterations, so `exit = entry + 148` and the two are
+confounded for the run-generated sets — the fingerprint is WHERE INSIDE residency the
+turn happens, and it is not the middle:
+
+| set | argmin | entry | exit | closer to | fraction of residency | **recency-weighted exposure already spent** |
+|---|---|---|---|---|---|---|
+| S1 | 25 | 0 | 60 | ENTRY (grid-limited: next point is 70, past exit) | 0.42 | 0.66 |
+| S2 | 122 | 7 | 154 | **EXIT** | 0.78 | **0.95** |
+| S3 | 172 | 42 | 199 | **EXIT** | 0.83 | **0.97** |
+| S4 | 218 | 111 | 273 | **EXIT** | 0.66 | **0.88** |
+
+`disk_buffer.py:975-977` draws refresh shards with weight **linear in recency rank**,
+so a shard's sampling rate falls linearly from entry to eviction and the cumulative
+exposure at residency fraction `f` is `2f − f²`. That formula reproduces the
+independently measured "newest 50% of the window carries 75% of draws" from the
+07-26 geometry entry, so it is not a fresh assumption. **The net stops improving on a
+row-set at the point where 88–97% of that set's training exposure has already been
+spent — not when the shard is physically evicted, and not when it was created.** The
+era-matching alternative (a net looks best on positions its own generation produced)
+predicts the turn at ENTRY and is refuted for S2/S3/S4.
+
+### Independent confirmation on a second metric: agreement with the stored target
+
+Fraction of rows where the net's argmax equals the argmax of the `policy_target` the
+head actually trained on:
+
+| ckpt | S1 | S2 | S3 | S4 | S5 |
+|---|---|---|---|---|---|
+| boot512 | 0.6099 | 0.4865 | 0.4693 | 0.4772 | 0.5200 |
+| iter025 | **0.6161** | 0.5248 | 0.4719 | 0.4801 | 0.5215 |
+| iter122 | 0.5897 | **0.5954** | 0.5700 | 0.5148 | 0.5254 |
+| iter172 | 0.5696 | 0.5620 | **0.5789** | 0.5860 | 0.5302 |
+| iter218 | 0.5562 | 0.5426 | 0.5599 | **0.6146** | 0.5395 |
+| iter308 | 0.5325 | 0.5275 | 0.5240 | 0.5721 | 0.5507 |
+| iter425 | 0.5187 | 0.5041 | 0.5033 | 0.5330 | **0.7103** |
+| iter478 | 0.5061 | 0.4964 | 0.4958 | 0.5222 | 0.6933 |
+
+Same five peaks, same order, on a metric that never touches Stockfish. Agreement is
+gained by ~9–14 points during residency and given back after it — **the in-window
+improvement is substantially row-level MEMORISATION of the stored target**
+(consistent with `policy_head_memorises_the_window`), and the post-exit decay is
+substantially its decay. That is what "forgetting" means here; it is not a claim about
+transferable skill.
+
+### Phase split — the pre-registered prediction is REFUTED
+
+`D_post` by piece-count bucket (opening ≥23, middle 14–22, endgame ≤13):
+
+| set | opening ≥23 | middle 14–22 | endgame ≤13 |
+|---|---|---|---|
+| S1 | **+2.86** [+1.09, +4.67] | +7.97 [+5.68, +10.33] | +6.06 [+3.31, +8.82] |
+| S2 | **+2.49** [+0.70, +4.28] | +4.62 [+2.29, +6.88] | +3.55 [+1.02, +6.09] |
+| S3 | **+0.54** [−1.05, +2.13] | +4.24 [+2.14, +6.42] | +5.39 [+2.60, +8.27] |
+| S4 | **+1.93** [+0.62, +3.33] | +1.17 [−0.87, +3.21] | +5.31 [+2.67, +7.98] |
+| S5 | −8.74 [−10.60, −7.00] | −14.16 [−16.69, −11.72] | −9.57 [−12.56, −6.70] |
+
+**Openings decay the LEAST in all four exiting sets**, and in S3 not significantly at
+all. The "fixed rulers degrade in openings/old-era material specifically" limb of the
+hypothesis does not survive. Buckets are near-balanced by construction (≈3,100–3,500
+rows each), so this is not a power artifact.
+
+### ⚑ The size check that keeps this honest: the frozen audit set
+
+Scored with the SAME raw-policy ruler at the same checkpoints (reusing
+`scratchpad/vp_timing_20260802/dumps/pfull_*.jsonl`, n=4000, no new GPU work). This set
+was NEVER in the replay window, so it has no exit and cannot hinge:
+
+| ckpt | boot512 | 025 | 070 | 122 | 172 | 218 | 308 | 360 | 409 | 425 | 450 | 477 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| top-1 cp | 48.33 | 49.29 | 50.01 | 52.94 | 54.62 | 57.79 | 55.56 | 56.05 | 56.69 | 58.98 | 57.09 | 57.37 |
+
+**+9.04 cp, essentially monotone, no U-shape** — larger than the +2.80 to +5.67 cp
+post-exit decay of any era set. So the lineage carries a GLOBAL degradation term that
+window residency does not explain. What residency explains is the U: in-window material
+improves 2.5–4.1 cp against that degrading backdrop and then gives it back. Restated as
+a difference-in-differences against the audit set (`did.log`), every exiting set sits
+BELOW the global trend at every checkpoint — they are the least-damaged material, not
+the most.
+
+### Negative control (pre-committed)
+
+`shuffled477` (every unique tensor permuted, tying preserved) and `uniform`-over-legal:
+**5.03×–6.13× the worst lineage checkpoint on every set.** Threshold was 2×. PASS on
+all ten comparisons, so the ruler resolves a few-cp question on these rows.
+
+### Verified
+
+- Window-exit iteration per shard, against five observed windows (table above).
+- The `sf_p0_regret` rebuild, bit-for-bit on 1,355 rows spanning two eras.
+- 63,084,128 unique-storage params asserted at load for all 15 model arms.
+- No-PV rate 0.0000 on all five sets (desync-clean), 10,000 rows / 2,507–2,776 games each.
+- Shard-index collision across lineages, from mtimes; only 13a9f directories used.
+- The `2f − f²` exposure law re-derived from `disk_buffer.py:975-977` and checked
+  against the already-logged "newest 50% → 75% of draws".
+
+### Assumed / not established
+
+- **No arena, no Elo.** This is per-position cp regret. It shows WHEN skill on fixed
+  material turns; it does not price that in Elo, and the audit-set control shows the
+  window-exit term is smaller than the global term.
+- **Selfplay rows only.** `sf_p0_regret` needs two consecutive stored full-sim plies,
+  which happens only in selfplay slots. Curriculum rows are structurally unmeasurable
+  this way and are ~32% of the window.
+- **Cross-set ABSOLUTE levels are not comparable** — the sets differ in generating net,
+  PID difficulty, opening book and SF node budget. Every claim is within a set, across
+  checkpoints.
+- **`S1_exit065` is inside boot512's own bootstrap pool**, so boot512's score on it is
+  optimistically biased; that biases S1 toward showing decay. It is also the one set
+  whose rate-hinge fails. The verdict rests on S2/S3/S4, which carry no such bias.
+- **Entry and exit are confounded by the constant-length FIFO** (residency ≈148 iters
+  for every run-generated set). They are separated only by WHERE inside residency the
+  turn lands, which is a weaker separation than two independent manipulations would be.
+- **The grid is coarse** (25/70/122/172/218/308/360/…), so each argmin is located to
+  ±25–50 iterations. The ORDERING is robust to that; the exact residency fractions
+  (0.66–0.83) are not.
+- **No intervention was run.** A fingerprint match is not a cause. The pre-registered
+  follow-up this points at is the recency draw (`disk_buffer.py:976-978`, uniform vs
+  linear vs tunable exponent) — construction-time only, needs a restart, and it is the
+  one knob that moves `2f − f²` directly.
