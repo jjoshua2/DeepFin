@@ -444,6 +444,17 @@ def assert_production_metric_matches(prod: float, bf16_ce: float, fp32_ce: float
     below the latter (and is within 8% of their geometric mean). 1e-5 sits BELOW
     two of the four benign readings and would have aborted the PR's own smoke run.
 
+    KNOWN LIMIT of the bound: the benign delta is SET-SIZE dependent and the
+    largest reading above came from the SMALLEST set tested, so an eval set much
+    smaller than 6,000 rows could plausibly exceed 1e-4 and abort spuriously.
+    That is tolerable because this is an opt-in flag and the abort message prints
+    the fp32 delta beside the bf16 one -- a benign ~1e-4 reads as "and the fp32
+    delta is ~2.4e-4", a structural one as "and the fp32 delta is ~0". If the
+    bound is ever wanted back at 1e-5, the fix is not a smaller number: call
+    ``eval_full_pass`` TWICE and gate on the warm second reading, which removes
+    the warm-up artefact from the comparison entirely at the cost of one extra
+    full pass. Not built now -- recorded so the option is not rediscovered.
+
     ``not (d <= tol)`` rather than ``d > tol`` so a NaN ``prod`` -- what
     ``getattr(m, "policy_loss", nan)`` yields if production stops reporting the
     metric at all -- aborts instead of sailing through.
@@ -475,8 +486,15 @@ def verify_production_metric(
     (bf16, ``use_amp`` defaults True) and this rig does not. Pooling contributes
     exactly zero: ``pol_base`` is identically 1 on these rows, so production's
     row-weighted mean IS the row-exact mean. Printing only the fp32 number
-    invited -- and produced -- the wrong explanation of the 0.00025 gap. Measured
-    on the full evalB: fp32 1.1002154, bf16 1.1004884, production 1.1004884.
+    invited -- and produced -- the wrong explanation of the 0.00025 gap.
+
+    Measured on the full evalB: rig fp32 **1.1002153**, rig bf16 **1.1004884**,
+    and production **1.1004596**. That last figure is production's FIRST
+    ``eval_full_pass`` in the process, which is the only one this function ever
+    makes; every LATER call returns 1.1004885, matching the bf16 probe to 7 dp.
+    Quoting the warm number here would be a statement this code path cannot
+    produce -- and would contradict the 2.886e-05 entry in
+    ``assert_production_metric_matches``'s own table for the same set.
     """
     m = trainer.eval_full_pass(ev.buf, batch_size=batch_size)
     prod = float(getattr(m, "policy_loss", float("nan")))

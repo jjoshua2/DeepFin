@@ -537,11 +537,34 @@ def test_verify_production_metric_is_a_gate_and_not_a_print() -> None:
     assert 5.409e-05 < _MOD._PRODUCTION_METRIC_TOL < 2.146e-04
 
 
+class _ScaledPolicy(torch.nn.Module):
+    """forward(x) -> {"policy": x * scale}. `scale` is the fixture's "precision".
+
+    A fake `_amp_context` that only counts its entries leaves the fp32 and bf16
+    probes numerically IDENTICAL, and then no test can tell which one the call
+    site hands to the gate -- swapping the two arguments passes the whole suite.
+    Perturbing the forward is what makes the wiring observable.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.scale = 1.0
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        return {"policy": x * self.scale}
+
+
+# Chosen so the fixture's bf16-minus-fp32 residual is +2.73e-4 -- the real one
+# measured on the full evalB (rig fp32 1.1002153 vs rig bf16 1.1004884).
+_AMP_SCALE = 0.999358
+
+
 class _FakeVerifyTrainer(_FakeFullPassTrainer):
     """`_FakeFullPassTrainer` plus the two members the verification calls."""
 
     def __init__(self, batches: list[dict[str, torch.Tensor]], prod: float) -> None:
         super().__init__(batches)
+        self.model = _ScaledPolicy()
         self._prod = prod
         self.amp_entered = 0
         self.prod_calls: list[tuple[Any, int]] = []
@@ -553,15 +576,38 @@ class _FakeVerifyTrainer(_FakeFullPassTrainer):
     @contextmanager
     def _amp_context(self) -> Generator[None]:
         self.amp_entered += 1
-        yield
+        self.model.scale = _AMP_SCALE
+        try:
+            yield
+        finally:
+            self.model.scale = 1.0
+
+
+def _fixture_ce(scale: float) -> float:
+    lg = _VERIFY_LOGITS * scale
+    return float((-torch.log_softmax(lg, -1)[torch.arange(2), torch.as_tensor([0, 1])]).mean())
+
+
+_VERIFY_LOGITS = torch.tensor([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
 
 
 def _verify_fixture(prod_offset: float) -> tuple[_FakeVerifyTrainer, _FakeEvalSet]:
-    logits = torch.tensor([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
-    batch = {"x": logits, "policy_t": _one_hot([0, 1], 3)}
-    ce = float((-torch.log_softmax(logits, -1)[torch.arange(2), torch.as_tensor([0, 1])]).mean())
-    tr = _FakeVerifyTrainer([batch], ce + prod_offset)
+    """A rig whose bf16 probe sits `prod_offset` from production's metric.
+
+    The fp32 probe sits a further +2.73e-4 away, as it does in reality, so the
+    two probes are NOT interchangeable and the call site's argument order is
+    under test rather than merely its interior.
+    """
+    batch = {"x": _VERIFY_LOGITS, "policy_t": _one_hot([0, 1], 3)}
+    tr = _FakeVerifyTrainer([batch], _fixture_ce(_AMP_SCALE) + prod_offset)
     return tr, _FakeEvalSet(2, np.asarray([1, 2], np.int64))
+
+
+def test_the_verify_fixture_reproduces_the_real_precision_residual() -> None:
+    """Without this the two probes are one number and the wiring is untestable."""
+    gap = _fixture_ce(_AMP_SCALE) - _fixture_ce(1.0)
+    assert gap == pytest.approx(2.73e-04, rel=0.02)
+    assert gap > _MOD._PRODUCTION_METRIC_TOL, "the fp32 probe must be OUTSIDE the tolerance"
 
 
 def test_verify_production_metric_dumps_then_aborts(tmp_path: Path) -> None:
@@ -578,6 +624,9 @@ def test_verify_production_metric_dumps_then_aborts(tmp_path: Path) -> None:
     rec = json.loads((tmp_path / "verify.json").read_text())
     assert rec["abort_bound"] == _MOD._PRODUCTION_METRIC_TOL
     assert rec["delta_vs_bf16"] == pytest.approx(2.146e-04, rel=1e-3)
+    # the two probes are distinct, and each is labelled with the one it is
+    assert rec["probe_ce_bf16"] == pytest.approx(_fixture_ce(_AMP_SCALE), abs=1e-9)
+    assert rec["probe_ce_fp32"] == pytest.approx(_fixture_ce(1.0), abs=1e-9)
     # the bf16 probe really was taken under the amp context, not relabelled
     assert tr.amp_entered == 1
     # and production's metric was read off the SAME buffer at the SAME shape
@@ -585,9 +634,20 @@ def test_verify_production_metric_dumps_then_aborts(tmp_path: Path) -> None:
 
 
 def test_verify_production_metric_passes_a_matching_rig(tmp_path: Path) -> None:
+    """N7: the call site must hand the gate the BF16 probe, not the fp32 one.
+
+    This is the discriminating case for the wiring. The rig is healthy -- its
+    bf16 probe is 5.4e-5 from production, inside the bound -- but its fp32 probe
+    is a further 2.73e-4 away, well outside it. So swapping the two arguments at
+    the call site turns this passing run into an abort. Every other case in the
+    file aborts either way, and the interior of `assert_production_metric_matches`
+    cannot see its own caller.
+    """
     tr, ev = _verify_fixture(5.409e-05)
     rec = _MOD.verify_production_metric(cast(Any, tr), cast(Any, ev), 2, tmp_path)
     assert rec["delta_vs_bf16"] == pytest.approx(5.409e-05, rel=1e-3)
+    assert abs(rec["delta_vs_fp32"]) > _MOD._PRODUCTION_METRIC_TOL, (
+        "the fp32 probe must be outside the bound, or the argument order is untested")
     assert json.loads((tmp_path / "verify.json").read_text())["probe_ce_bf16"] == rec["probe_ce_bf16"]
 
 
