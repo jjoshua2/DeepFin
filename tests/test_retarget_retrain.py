@@ -165,7 +165,7 @@ def test_the_buffer_is_built_with_a_deterministic_refresh(monkeypatch, tmp_path)
             name="base", overrides={}, base_config={"seed": 0},
             checkpoint=tmp_path / "trainer.pt", replay_dir=tmp_path,
             steps=1, batch_size=2, device="cpu", out_dir=tmp_path,
-            shard_snapshot=[],
+            shard_snapshot=None,
         )
     assert seen.get("deterministic_refresh") is True, (
         "retarget_retrain builds its replay buffer WITHOUT "
@@ -221,6 +221,46 @@ def test_shard_guard_names_the_shards_that_moved() -> None:
     assert "shard_000001.zarr" in msg
 
 
+def test_shard_guard_argument_ORDER_is_pinned() -> None:
+    """X1: the two lists are same-typed, so a swap is silent unless pinned.
+
+    Every other test here passes ``(observed, snapshot)`` positionally and only
+    requires SOME abort -- which a swapped call still produces, with added and
+    removed inverted and the two counts the wrong way round. That sends the
+    operator hunting for a shard that was DELETED when one was in fact ADDED.
+    Assert the direction, not merely the raise.
+    """
+    snap = _shards("shard_000001.zarr", "shard_000002.zarr")
+    grown = snap + _shards("shard_000003.zarr")
+    with pytest.raises(SystemExit) as ei:
+        rr._assert_shards_unchanged(grown, snap, name="sharp")
+    msg = str(ei.value)
+    assert "1 added (shard_000003.zarr)" in msg, (
+        f"the grown pool was not reported as ADDED -- arguments swapped? {msg}"
+    )
+    assert "0 removed ()" in msg, msg
+    assert "(2 shards at start, 3 now)" in msg, (
+        f"start/now counts are inverted -- arguments swapped? {msg}"
+    )
+
+
+def test_shard_guard_fires_against_an_EMPTY_reference() -> None:
+    """X9: an empty reference is a reference, not a licence to skip the gate.
+
+    ``_run_variant`` signals "this arm defines the reference" with ``None``.
+    ``[]`` means arm 1 genuinely scanned nothing, and an arm that then finds
+    shards is de-paired from it. A falsy-snapshot early return -- the natural
+    shape of an accepted-and-ignored value -- would turn the gate off for the
+    whole rest of the sweep, silently.
+    """
+    with pytest.raises(SystemExit) as ei:
+        rr._assert_shards_unchanged(_shards("shard_000001.zarr"), [], name="sharp")
+    msg = str(ei.value)
+    assert "DE-PAIRED" in msg, msg
+    assert "1 added (shard_000001.zarr)" in msg, msg
+    assert "(0 shards at start, 1 now)" in msg, msg
+
+
 def test_the_shard_guard_runs_on_the_real_call_path(monkeypatch, tmp_path) -> None:
     """The guard must fire from ``_run_variant``, off the BUFFER's own list.
 
@@ -263,22 +303,109 @@ def test_the_shard_guard_runs_on_the_real_call_path(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(rr, "_assert_replay_planes_match", lambda *a, **k: None)
     monkeypatch.setattr(torch, "load", lambda *a, **k: {"model": {}, "arch": {}})
 
-    with pytest.raises(SystemExit, match="DE-PAIRED"):
+    with pytest.raises(SystemExit) as ei:
         rr._run_variant(
             name="arm2", overrides={}, base_config={"seed": 0},
             checkpoint=tmp_path / "trainer.pt", replay_dir=tmp_path,
             steps=800, batch_size=2, device="cpu", out_dir=tmp_path,
             shard_snapshot=_shards("shard_000001.zarr"),
         )
+    msg = str(ei.value)
+    assert "DE-PAIRED" in msg, msg
+    # X1 at the CALL SITE: `_assert_shards_unchanged(this_arm, reference)`. A
+    # swapped call still aborts, so only the direction of the report catches it.
+    assert "1 added (shard_000002.zarr)" in msg, (
+        f"_run_variant passed the reference as `observed` -- arguments swapped? {msg}"
+    )
+    assert "(1 shards at start, 2 now)" in msg, msg
 
 
-def test_main_snapshots_the_pool_ONCE_for_the_whole_sweep(monkeypatch, tmp_path) -> None:
-    """Every arm must be compared against the SAME reference list.
+def test_an_EMPTY_reference_still_gates_the_real_call_path(monkeypatch, tmp_path) -> None:
+    """X9 on the production path: ``[]`` must not read as "no reference yet".
 
-    Re-globbing per arm would hand each arm a snapshot taken microseconds
-    before its own buffer scan, so the guard would agree with itself on a pool
-    that had drifted between arms -- present, reached, and unable to fire. The
-    pool here GROWS on every scan; both arms must still receive arm 1's list.
+    ``_run_variant`` distinguishes "arm 1, adopt what you see" (``None``) from
+    "arm 1 scanned an empty pool" (``[]``). Conflating them -- ``if not
+    shard_snapshot`` instead of ``is None`` -- silently disables the gate for
+    every later arm of any sweep whose first arm found no shards.
+    """
+    class _OneShardBuf:
+        def __init__(self, *_a, **_k) -> None:
+            self.closed = False
+
+        def _snapshot_shards(self) -> list[Path]:
+            return _shards("shard_000001.zarr")
+
+        def __len__(self) -> int:
+            return 10_000
+
+        def close(self) -> None:
+            self.closed = True
+
+    _variant_harness(monkeypatch, _OneShardBuf)
+
+    with pytest.raises(SystemExit, match="DE-PAIRED"):
+        rr._run_variant(
+            name="arm2", overrides={}, base_config={"seed": 0},
+            checkpoint=tmp_path / "trainer.pt", replay_dir=tmp_path,
+            steps=800, batch_size=2, device="cpu", out_dir=tmp_path,
+            shard_snapshot=[],
+        )
+
+
+def test_arm1_adopts_its_OWN_scan_and_does_not_check_it_against_a_glob(
+    monkeypatch, tmp_path,
+) -> None:
+    """The fix: arm 1's reference is its own buffer scan, never a pre-glob.
+
+    ``main()`` used to glob the replay directory and hand that list to arm 1 as
+    well. Arm 1's own scan happens tens of seconds later -- ``torch.load`` +
+    ``build_model`` + ``Trainer()`` + CUDA init all run in between -- so a shard
+    landing inside that window aborted a sweep in which every arm would have
+    drawn from the same pool. Here the on-disk glob DISAGREES with what the
+    buffer scans, and arm 1 must train anyway and report its own list.
+    """
+    pool = _shards("shard_000001.zarr", "shard_000002.zarr")
+
+    class _Buf:
+        def __init__(self, *_a, **_k) -> None:
+            self.closed = False
+
+        def _snapshot_shards(self) -> list[Path]:
+            return list(pool)
+
+        def __len__(self) -> int:
+            return 10_000
+
+        def close(self) -> None:
+            self.closed = True
+
+    _variant_harness(monkeypatch, _Buf, train=True)
+    # A shard landed between the (now removed) pre-startup glob and arm 1's scan.
+    monkeypatch.setattr(rr, "iter_shard_paths", lambda _d: _shards("shard_000001.zarr"))
+
+    summary = rr._run_variant(
+        name="base", overrides={}, base_config={"seed": 0},
+        checkpoint=tmp_path / "trainer.pt", replay_dir=tmp_path,
+        steps=1, batch_size=2, device="cpu", out_dir=tmp_path,
+        shard_snapshot=None,
+    )
+    assert summary["shard_pool"] == [str(p) for p in pool], (
+        "arm 1 did not report the pool its own buffer scanned; arms 2..N would "
+        f"be paired against the wrong reference: {summary.get('shard_pool')}"
+    )
+
+
+def test_main_makes_arm1s_pool_the_reference_and_never_pre_globs(
+    monkeypatch, tmp_path,
+) -> None:
+    """Every LATER arm must be compared against arm 1's own list.
+
+    Two failure modes at once. Re-globbing per arm would hand each arm a
+    snapshot taken microseconds before its own buffer scan -- guard present,
+    reached, and unable to fire. Globbing ONCE before arm 1 starts (what #307
+    shipped) makes arm 1 fail on shards that landed during startup, which
+    de-pairs nothing. So: arm 1 receives ``None``, arms 2 and 3 receive exactly
+    arm 1's reported pool, and ``main()`` does not glob at all.
     """
     scans: list[int] = []
 
@@ -286,11 +413,13 @@ def test_main_snapshots_the_pool_ONCE_for_the_whole_sweep(monkeypatch, tmp_path)
         scans.append(1)
         return _shards(*(f"shard_{i:06d}.zarr" for i in range(len(scans))))
 
-    got: list[list[Path]] = []
+    got: list[list[Path] | None] = []
+    arm1_pool = _shards("shard_000042.zarr", "shard_000043.zarr")
 
     def _fake_variant(**kw) -> dict:
-        got.append(list(kw["shard_snapshot"]))
-        return {"variant": kw["name"]}
+        snap = kw["shard_snapshot"]
+        got.append(None if snap is None else list(snap))
+        return {"variant": kw["name"], "shard_pool": [str(p) for p in arm1_pool]}
 
     monkeypatch.setattr(rr, "iter_shard_paths", _growing)
     monkeypatch.setattr(rr, "_run_variant", _fake_variant)
@@ -300,26 +429,37 @@ def test_main_snapshots_the_pool_ONCE_for_the_whole_sweep(monkeypatch, tmp_path)
         "retarget_retrain.py", "--config", "c.yaml", "--checkpoint", "ck.pt",
         "--replay-dir", str(tmp_path), "--out-dir", str(tmp_path / "out"),
         "--variant", "base:", "--variant", "sharp:sf_policy_temp=0.006",
+        "--variant", "smooth:sf_policy_temp=0.05",
     ])
 
     rr.main()
 
-    assert len(got) == 2
-    assert got[0] == got[1], (
-        "arms received DIFFERENT shard snapshots: main() re-globbed per arm, so "
-        "the pairing guard compares each arm against itself and can never fire"
+    assert len(got) == 3
+    assert got[0] is None, (
+        "arm 1 was handed a reference it could only fail against: a pre-startup "
+        f"glob aborts on shards that landed before any arm drew a row. got={got[0]}"
     )
-    assert len(scans) == 1, f"iter_shard_paths called {len(scans)}x in main(); expected 1"
+    assert got[1] == arm1_pool, (
+        "arm 2 was not paired against arm 1's OWN scan; the guard is comparing "
+        f"against something else: {got[1]}"
+    )
+    assert got[2] == arm1_pool, (
+        f"arm 3 drifted off arm 1's reference: {got[2]}"
+    )
+    assert scans == [], (
+        f"main() globbed the replay dir {len(scans)}x; the reference must come "
+        "from arm 1's buffer, and a pre-startup glob re-introduces the false abort"
+    )
 
 
-def test_the_snapshot_source_matches_what_the_buffer_scans(tmp_path) -> None:
-    """``main()``'s snapshot and the buffer's own list must be comparable.
+def test_the_reference_source_matches_what_the_buffer_scans(tmp_path) -> None:
+    """Arm 1's list and a directory glob must agree on an unchanged pool.
 
-    ``main()`` snapshots with ``iter_shard_paths`` and ``_run_variant`` compares
-    against ``DiskReplayBuffer._snapshot_shards()``. If those two ever stop
-    agreeing on an unchanged directory the guard becomes either a permanent
-    false abort or -- worse -- pins nothing. Held to a REAL buffer over real
-    shards, not to two calls of the same helper.
+    The reference is ``DiskReplayBuffer._snapshot_shards()``, and every later
+    arm is compared against it with the same call. If the buffer's list ever
+    stops agreeing with the directory on an UNCHANGED pool the guard becomes
+    either a permanent false abort or -- worse -- pins nothing. Held to a REAL
+    buffer over real shards, not to two calls of the same helper.
     """
     shard_dir = tmp_path / "replay"
     writer = DiskReplayBuffer(
@@ -333,13 +473,15 @@ def test_the_snapshot_source_matches_what_the_buffer_scans(tmp_path) -> None:
         writer.close()
     assert len(rr.iter_shard_paths(shard_dir)) >= 3, "fixture wrote no shards"
 
-    snapshot = rr.iter_shard_paths(shard_dir)  # what main() takes, once
-
     arm1 = DiskReplayBuffer(
         10**9, shard_dir=shard_dir, rng=np.random.default_rng(0), read_only=True,
         shuffle_cap=64, shard_size=8, deterministic_refresh=True,
     )
     try:
+        snapshot = arm1._snapshot_shards()  # the reference arm 1 hands onward
+        assert snapshot == rr.iter_shard_paths(shard_dir), (
+            "the buffer's scan and the directory disagree on an unchanged pool"
+        )
         rr._assert_shards_unchanged(arm1._snapshot_shards(), snapshot, name="base")
     finally:
         arm1.close()
@@ -384,8 +526,14 @@ def test_require_complete_raises_on_shape_mismatch() -> None:
         )
 
 
-def _variant_harness(monkeypatch, buf_cls) -> None:
-    """Wire ``_run_variant``'s collaborators so only ``buf_cls`` varies."""
+def _variant_harness(monkeypatch, buf_cls, *, train: bool = False) -> None:
+    """Wire ``_run_variant``'s collaborators so only ``buf_cls`` varies.
+
+    ``train=False`` (the default) makes ``train_steps`` an assertion failure, so
+    a guard that lets a de-paired sweep through is reported as training-ran
+    rather than as a missing exception. ``train=True`` lets the arm complete,
+    for the cases that assert what a PASSING arm returns.
+    """
     class _Cfg:
         input_extra_features = "v2_threats"
 
@@ -395,14 +543,18 @@ def _variant_harness(monkeypatch, buf_cls) -> None:
             "de-paired and the guard did not stop the sweep"
         )
 
+    def _train_steps(*_a, **_k):
+        return type("_M", (), {"loss": 1.0})()
+
+    trainer_ns = {"train_steps": _train_steps if train else _no_training,
+                  "save": lambda *_a, **_k: None}
+
     monkeypatch.setattr(rr, "DiskReplayBuffer", buf_cls)
     monkeypatch.setattr(rr, "model_config_from_arch", lambda _a: _Cfg())
     monkeypatch.setattr(rr, "build_model", lambda _cfg: _tiny_net())
     monkeypatch.setattr(rr, "load_state_dict_tolerant", lambda *a, **k: None)
     monkeypatch.setattr(rr, "trainer_kwargs_from_config", lambda _c: {})
-    monkeypatch.setattr(
-        rr, "Trainer", lambda *a, **k: type("_T", (), {"train_steps": _no_training})(),
-    )
+    monkeypatch.setattr(rr, "Trainer", lambda *a, **k: type("_T", (), trainer_ns)())
     monkeypatch.setattr(rr, "_assert_replay_planes_match", lambda *a, **k: None)
     monkeypatch.setattr(torch, "load", lambda *a, **k: {"model": {}, "arch": {}})
 

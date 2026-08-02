@@ -40,22 +40,27 @@ enforced, not merely intended:
 
 * ``deterministic_refresh=True`` on the buffer below removes the load-dependent
   refresh race (NOT true before 2026-07-31 — see the comment there); and
-* the shard directory is snapshotted ONCE in ``main()`` and every arm asserts
-  its buffer scanned exactly that list. Variants run sequentially and each is a
-  full retrain, so a live window or a salvage pool that ingests mid-run gives
-  the later arms a different pool — same seed, different rows, silently
-  unpaired. Measured 2026-07-31 at ``--steps 800``, flag on, same seed:
+* ARM 1's OWN buffer scan is the reference shard list, and every later arm
+  asserts its buffer scanned exactly that list. Variants run sequentially and
+  each is a full retrain, so a live window or a salvage pool that ingests
+  mid-run gives the later arms a different pool — same seed, different rows,
+  silently unpaired. Measured 2026-07-31 at ``--steps 800``, flag on, same seed:
   one extra shard moved 617/800 sampled rows (77.1%), one shard fewer moved
   343/800 (42.9%). The run now aborts instead.
 
-⚑ POINT ``--replay-dir`` AT A FROZEN COPY, not the live window. The snapshot is
-taken in ``main()`` before ``torch.load`` + ``build_model`` + ``Trainer()`` (and
-CUDA init), so the guard is deliberately STRICTER than "the arms de-paired": a
-shard landing during that startup window aborts arm 1 even though arms 1 and 2
-would have been paired. That is fail-closed on purpose — but it means that once
-training resumes, the live ``<trial>/replay_shards`` shown below is exactly what
-this script will now refuse. ``cp -r`` it, or use a salvage pool nothing writes
-to.
+The reference is arm 1's ``DiskReplayBuffer._snapshot_shards()`` and NOT a glob
+taken earlier in ``main()``. Pairing is defined relative to the pool arm 1
+actually drew from, so arm 1 is the only honest reference: a pre-startup glob
+sits tens of seconds before arm 1's scan (``torch.load`` + ``build_model`` +
+``Trainer()`` + CUDA init all run in between), and a shard landing inside that
+window aborts the sweep even though every arm would have been paired. That is
+not a stricter gate, it is a false one — it fires on the single case the gate
+does not care about while detecting nothing the arm-1 reference misses.
+
+⚑ POINT ``--replay-dir`` AT A FROZEN COPY, not the live window. A shard landing
+while arm 1 TRAINS still de-pairs arm 2, and that abort is real: the sweep has
+to be re-run from the start. ``cp -r`` the shards, or use a salvage pool nothing
+is writing to.
 
 Usage::
 
@@ -133,6 +138,14 @@ def _assert_shards_unchanged(
     different pool: identical seed, different rows, and every variant delta the
     script prints is then unpaired with nothing on screen to say so. Refuse to
     train rather than emit a comparison that reads valid.
+
+    ``observed`` is THIS arm's pool and ``snapshot`` is arm 1's; the order is
+    load-bearing because it decides which shards the message calls added and
+    which removed, and a swap points the operator at the wrong direction of
+    drift. An EMPTY ``snapshot`` is a real reference, not "unset" — it must
+    still fail against a non-empty ``observed``, so there is deliberately no
+    falsy-snapshot early return here. ``_run_variant`` uses ``None``, never
+    ``[]``, for "this arm defines the reference".
     """
     if observed == snapshot:
         return
@@ -195,7 +208,7 @@ def _run_variant(
     batch_size: int,
     device: str,
     out_dir: Path,
-    shard_snapshot: list[Path],
+    shard_snapshot: list[Path] | None,
     rebuild_sf_targets: bool = True,
     gpu_mem_fraction: float = 0.0,
     allow_yaml_arch: bool = False,
@@ -337,14 +350,26 @@ def _run_variant(
         diff_focus_pol_scale=tc.diff_focus_pol_scale,
         diff_focus_q_weight=tc.diff_focus_q_weight,
     )
+    # `_snapshot_shards()` is the buffer's OWN post-scan list, so this is what
+    # THIS arm will actually draw from — not an independent re-glob, which would
+    # agree even if the buffer had filtered.
+    shard_pool = buf._snapshot_shards()
     try:
-        # Before the empty-pool check: if the snapshot was non-empty and the
-        # directory has since been emptied, "de-paired" is the accurate report
-        # and "wrong --replay-dir" is not. `_snapshot_shards()` is the buffer's
-        # OWN post-scan list, so this compares what this arm will actually draw
-        # from against what the first arm drew from — not two independent
-        # re-globs, which would agree even if the buffer had filtered.
-        _assert_shards_unchanged(buf._snapshot_shards(), shard_snapshot, name=name)
+        # Arm 1 (`shard_snapshot is None`) DEFINES the reference; it cannot be
+        # checked against anything, and checking it against a glob taken before
+        # `torch.load` + CUDA init only manufactures false aborts from shards
+        # that landed during startup — a window in which no arm has drawn yet,
+        # so no arm can be de-paired by it. `[]` is a real reference (arm 1 saw
+        # an empty pool), NOT a synonym for None, so it still gates arm 2.
+        if shard_snapshot is None:
+            print(f"[retarget] {name}: shard reference = this arm's own scan, "
+                  f"{len(shard_pool)} shards under {replay_dir}; "
+                  "every later arm must scan exactly these")
+        else:
+            # Before the empty-pool check: if the reference was non-empty and
+            # the directory has since been emptied, "de-paired" is the accurate
+            # report and "wrong --replay-dir" is not.
+            _assert_shards_unchanged(shard_pool, shard_snapshot, name=name)
         if len(buf) == 0:
             raise SystemExit(
                 f"replay buffer is empty: no shards under {replay_dir} match "
@@ -366,6 +391,11 @@ def _run_variant(
         "steps": int(steps),
         "duration_s": round(duration, 1),
         "checkpoint": str(out_path),
+        # The pool this arm actually drew from. `main()` reads arm 1's copy back
+        # as the reference for arms 2..N, and it lands in the report so a reader
+        # can see WHICH shards the printed deltas were paired over — the shard
+        # list is the other half of "same seed" and was previously unrecorded.
+        "shard_pool": [str(p) for p in shard_pool],
         "final_metrics": {
             k: float(v)
             for k, v in vars(metrics).items()
@@ -414,17 +444,18 @@ def main() -> None:
     batch_size = int(args.batch_size or base_config.get("batch_size", 256))
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ONE snapshot for the whole sweep, taken before the first arm trains. Each
-    # arm re-scans the directory inside its own DiskReplayBuffer ctor, so a
-    # per-arm snapshot would just re-measure the drift it is meant to catch.
-    shard_snapshot = iter_shard_paths(args.replay_dir)
-    print(f"[retarget] shard snapshot: {len(shard_snapshot)} shards under "
-          f"{args.replay_dir}; every arm must scan exactly these")
+    # ONE reference for the whole sweep, and it is arm 1's OWN buffer scan —
+    # deliberately not a glob taken here. Each arm re-scans the directory inside
+    # its own DiskReplayBuffer ctor, so a per-arm reference would just re-measure
+    # the drift it is meant to catch; but a reference read HERE sits tens of
+    # seconds (torch.load + CUDA init) before arm 1's scan, and a shard landing
+    # in that window aborts a sweep whose arms would all have been paired.
+    shard_snapshot: list[Path] | None = None
 
     summaries = []
     for spec in args.variant:
         name, overrides = _parse_variant(spec)
-        summaries.append(_run_variant(
+        summary = _run_variant(
             name=name, overrides=overrides, base_config=base_config,
             checkpoint=args.checkpoint, replay_dir=args.replay_dir,
             steps=args.steps, batch_size=batch_size, device=args.device,
@@ -433,7 +464,12 @@ def main() -> None:
             gpu_mem_fraction=args.gpu_mem_fraction,
             allow_yaml_arch=args.allow_yaml_arch,
             allow_partial_load=args.allow_partial_load,
-        ))
+        )
+        if shard_snapshot is None:
+            # `is None`, not falsiness: an empty arm-1 pool is a reference every
+            # later arm must still match, not a licence to skip the gate.
+            shard_snapshot = [Path(p) for p in summary["shard_pool"]]
+        summaries.append(summary)
 
     report = args.out_dir / "retarget_report.json"
     report.write_text(json.dumps(summaries, indent=2))
