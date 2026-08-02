@@ -350,11 +350,12 @@ def _run_variant(
         diff_focus_pol_scale=tc.diff_focus_pol_scale,
         diff_focus_q_weight=tc.diff_focus_q_weight,
     )
-    # `_snapshot_shards()` is the buffer's OWN post-scan list, so this is what
-    # THIS arm will actually draw from — not an independent re-glob, which would
-    # agree even if the buffer had filtered.
-    shard_pool = buf._snapshot_shards()
     try:
+        # `_snapshot_shards()` is the buffer's OWN post-scan list, so this is
+        # what THIS arm will actually draw from — not an independent re-glob,
+        # which would agree even if the buffer had filtered. Inside the try so
+        # the buffer is closed even if the scan itself raises.
+        shard_pool = buf._snapshot_shards()
         # Arm 1 (`shard_snapshot is None`) DEFINES the reference; it cannot be
         # checked against anything, and checking it against a glob taken before
         # `torch.load` + CUDA init only manufactures false aborts from shards
