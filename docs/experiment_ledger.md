@@ -22343,3 +22343,244 @@ only from post-swap shards — decides cause 1;
 at the iters-0-30 clip scope and cap — closes cause 5 with a measurement instead
 of an extrapolation.
 
+
+### ⚑⚑ VERDICT 2026-08-02 — IS THE POLICY TARGET BELOW THE NET THAT TRAINS ON IT? **NO — REFUTED, and not marginally: on the current window the search target is 10.27 cp BETTER on top-1 than the unexposed boot512 student and 18.58 cp better in expectation.** Absorption failure is re-confirmed on stored production planes. Side effect, and it is the bigger number: **12.81 cp of iter478's apparent policy quality is memorisation** — iter478 beats boot512 by 7.94 cp on rows it recently trained on and LOSES to it by 4.87 cp on rows it has not seen since ~iter 60.
+
+**Question.** Does the net train toward a target that is worse than the net
+itself ("teacher below student"), which would make every gradient step
+destructive with no selfplay feedback loop required?
+Read-only, offline, forward-only; training stayed paused; no config touched.
+
+**Pre-registration** banked at `scratchpad/teacher_vs_student_20260802/PREREG.md`,
+written before any teacher-vs-student number existed (only the two frame checks
+below had been run). Rule: D = mean paired `top1_regret(teacher) −
+top1_regret(boot512)` on fully-covered rows, 95% percentile bootstrap over
+10,000 resamples **clustered by `game_id`**, seed 0. SUPPORTED iff D > 0 with CI
+excluding 0; ABSORPTION FAILURE RE-CONFIRMED iff D < 0 with CI excluding 0;
+INCONCLUSIVE otherwise or if the negative control fails.
+
+Per-row dumps banked: `scratchpad/teacher_vs_student_20260802/dumps/full.jsonl`
+(211,028 rows) and `dumps/era46m.jsonl` (86,056 rows), with `results_*.json/.txt`
+and `extra_*.txt`. Scripts: `measure.py`, `analyse.py`, `extra.py`,
+`verify_ruler.py`.
+
+---
+
+#### ⚑⚑ FIRST: THE OBVIOUS INSTRUMENT IS WRONG, AND IT IS WRONG BY 89%
+
+A row's own `sf_multipv_raw` is **NOT** SF's read of that row's position.
+`stockfish_turn.py::_sf_result_wdl_for_record`: *"SF label searches are run after
+the network move has been pushed"*. Measured on shard_033500, 500 labelled rows:
+a row's own MultiPV move indices are legal in its **own** `legal_mask` only
+**11.3%** of the time, and legal in the **next ply's** row **100.0%** of the time
+(n=87 rows whose successor is in the same shard). Scoring
+`argmax(policy_target)` against the row's own `sf_multipv_raw` measures the
+OPPONENT'S REPLY POSITION and would have produced a confident, fabricated answer.
+
+The correct field is **`sf_p0_regret`** (`has_sf_p0_regret`), built in
+`finalize.py::_build_sf_p0_regret_vector` from the PREVIOUS full ply's raw
+MultiPV — SF's read of THIS row's position, per-legal-move cp regret normalised
+by `SF_OWN_REGRET_CAP_CP = 1000`. Verified two ways:
+- its non-default entries are legal in the row's own mask **100.0%** (n=300);
+- **re-derived from scratch** off the ply-1 row's raw table on **9,317 rows**
+  across both eras: max |recon − stored| = **2.42e-4** = exactly one fp16 ulp at
+  0.5, and **0/9,317** SF-best-move disagreements (`verify_ruler.py`).
+
+Ruler strength on these shards: `sf_label_meta` median **698.5k nodes, depth
+12-13**. Best-move based only — `_build_sf_p0_regret_vector` reads `(move_idx,
+cp, mate)` and never touches which move the PID-handicapped opponent played, so
+the "targets are always best-move based" invariant is confirmed for this field
+specifically.
+
+#### The measurement
+
+Rows carry the FULL production input `x` (175,8,8, real move history), so the
+FEN-only ruler defect (117/175 planes zero) **does not apply here** — this is the
+first policy-quality reading in this project taken on inputs the net actually saw.
+Arms scored identically: `teacher` = argmax/distribution of the stored
+`policy_target` over `legal_mask` (verified to be the target of the main policy
+CE at `w_policy=1.0` into `policy_own`, `losses.py:297` `batch["policy_t"]`,
+stored verbatim — no temperature is applied to the main head anywhere in
+buffer/dataset/target_builder); `boot512`, `iter478`, `shuffled` = raw policy
+prior via `LocalModelEvaluator`, `model.eval()`, production AMP, **batch pinned
+at 256**; `uniform` = uniform over legal.
+
+**PRIMARY sample** = rows where every legal move is scored by SF
+(`n_covered == n_legal`), a strictly position-level filter. 60.9% of rows.
+Uncovered moves carry finalize's `(worst+1)/2` imputation; the primary avoids it
+by construction.
+
+#### RESULT — live window (512-era, shards 33118-33943, all 713 shards)
+
+n = 128,567 fully-covered rows / 32,820 games (211,028 rows before the cover
+filter). cp, lower is better.
+
+| arm | top-1 regret | soft (E[regret]) | picks SF-best | ≥100cp blunder |
+|---|---|---|---|---|
+| **teacher (`policy_target`)** | **26.69** | **29.08** | **0.530** | **0.065** |
+| boot512 (unexposed student) | 36.95 | 47.67 | 0.464 | 0.101 |
+| iter478 (exposed student) | 29.01 | 41.38 | 0.511 | 0.074 |
+| uniform-legal (control) | 218.05 | 218.48 | 0.125 | 0.551 |
+| shuffled-477 (control) | 201.22 | 218.61 | 0.126 | 0.520 |
+
+- **teacher − boot512 = −10.266 cp [−10.717, −9.830] SIG** ← the pre-registered D
+- teacher − iter478 = −2.326 cp [−2.614, −2.030] SIG
+- soft: teacher − boot512 = −18.583 [−18.912, −18.247]; teacher − iter478 =
+  −12.296 [−12.504, −12.090], both SIG
+
+**VERDICT: ABSORPTION FAILURE RE-CONFIRMED.** D = **−10.266 cp** [−10.717,
+−9.830]. The teacher is not below the student; it is decisively above it, on
+every arm, every era bucket, every phase bucket, and every branching bucket
+except one (below). The "net trains toward a worse target" hypothesis is dead.
+
+Negative control **PASSES**: uniform 218.05 and shuffled 201.22 against the
+pre-committed bar of 2× the worst real arm (73.91). Both controls are ~7.5× the
+teacher.
+
+Stratification (all PRIMARY, teacher − boot512 unless noted):
+- era quartiles of the window: −10.45 / −10.10 / −10.18 / −10.28. **Flat.** The
+  teacher's own absolute quality is also flat (26.61 / 26.85 / 26.24 / 26.99) —
+  the target is not decaying across the window.
+- phase: opening (ply<20) −7.36, middlegame (20-59) −14.83, late (≥60) −7.08.
+- branching: n_legal<20 −2.61, 20-34 −12.42, ≥35 −15.56.
+- **The one bucket where the teacher loses to a student:** n_legal<20 vs
+  **iter478**, teacher − iter478 = **+2.00 cp [+1.38, +2.64] SIG**. In
+  low-branching (largely late/endgame) positions today's net's prior is already
+  better than the search target it trains on. 30% of rows.
+
+Off-list rates (arm's argmax not scored by SF, all rows): teacher 0.0216,
+boot512 0.0211, iter478 0.0170, uniform 0.1034, shuffled 0.0999. On the
+SECONDARY (all-rows, imputed) sample teacher − iter478 flips to **+2.05 cp** —
+that flip is entirely the imputation acting on a 0.5 pp off-list difference
+(~700 cp per event) and is why the primary was pre-registered on fully-covered
+rows.
+
+#### ⚑⚑ THE SIDE FINDING IS BIGGER THAN THE HEADLINE: 12.81 cp OF iter478's POLICY IS MEMORISATION
+
+Same instrument, same ruler, two row sets, paired within each:
+
+| rows | boot512 − iter478 (top-1) | verdict |
+|---|---|---|
+| **512-era** (in-window, iter478 trained on them) | **+7.940 cp [+7.533, +8.360]** | iter478 looks BETTER |
+| **46M-era** (out of window since ~iter 60) | **−4.873 cp [−5.474, −4.285]** | iter478 is WORSE |
+
+A **12.81 cp sign flip on the same net, same ruler, same metric**, driven only by
+whether the rows are currently in the replay window. This is
+[[policy_head_memorises_the_window]] measured in cp instead of nats, and it is
+an **independent confirmation of the strength slide on inputs that carry real
+move history** — the 08-02 frozen-audit reading (+8.45 cp raw-policy
+degradation) has been criticised as possibly a FEN-only-planes artifact; it is
+not. Any future policy readout taken on in-window rows is reading ~13 cp of
+memorisation.
+
+#### The era contrast the boot forensics asked for — AND WHY IT CANNOT DECIDE
+
+Measured on the boot window itself (`data/salvage/swap_512x16_20260711/seeds/slot_000/replay_shards`,
+204 of 815 shards, stride 4; 86,056 rows / 51,384 fully-covered / 14,995 games):
+
+| arm | top-1 | soft |
+|---|---|---|
+| teacher (46M-era search target) | 29.88 | 31.98 |
+| boot512 | 30.57 | 42.62 |
+| iter478 | 35.44 | 46.91 |
+
+- teacher − boot512 = **−0.695 cp [−1.229, −0.179] SIG** (top-1);
+  **−10.638 [−11.020, −10.266]** (soft)
+- teacher − iter478 = −5.568 [−6.224, −4.923] SIG
+
+The forensics' favoured story predicted *"teacher regret > boot512 student regret
+HERE, decisively"*. **That prediction is REFUTED**: the old teacher is still
+better than the student, not worse. What is true is that its **top-1 headroom
+was ~zero (0.70 cp) where today's is 10.27 cp.**
+
+**⚑ But this contrast is CONFOUNDED, and in the direction that manufactures it.**
+`comm -12` over shard indices: **all 815** of the boot-window shards are inside
+boot512's own bootstrap pool `data/scaleup_pool_512x16` (2,514 unique indices,
+029941-032456). **boot512 had memorised 100% of the 46M-era rows and 0% of the
+512-era rows.** Confirming signature: boot512's top-1 agreement with the teacher
+is **0.598** on the memorised rows vs **0.518** on the unexposed ones. A student
+that has memorised its teacher must score near it — 0.70 cp apart is what
+memorisation predicts, not evidence about headroom. **The 46M-era arm carries
+almost no information about whether that teacher was above or below an
+unexposed student, by construction.** Exposure is perfectly confounded with era
+for both students, so the era contrast cannot be cleanly measured with these
+instruments.
+
+What survives the confound, because it points the other way: the teacher on the
+46M-era rows beats **iter478** (the least-exposed student available for those
+rows) by 5.57 cp. Nothing measured here shows a teacher below a student on the
+boot window.
+
+The mechanism that IS supported for iters 0-25 is therefore **zero headroom, not
+negative headroom**: at boot the 512×16 student had already absorbed the 46M
+teacher (agreement 0.598, top-1 gap 0.70 cp), so the 100%-old-era window offered
+it essentially no top-1 signal to climb — while today's window offers 10.27 cp
+that the net still is not taking. Suggestive only, and flagged as such because it
+conditions on a property of one arm: on the boot window, in the 32% of rows with
+teacher entropy ≥0.8 nats, teacher − boot512 = **+2.41 cp [+1.46, +3.37]** —
+the teacher IS below the student there. No entropy bucket is positive in the
+512-era (−11.91 / −11.37 / −6.97).
+
+#### The shape of the failure, restated
+
+The improvement operator is fine and the target is fine. On the current window
+the target is 10.27 cp (top-1) / 18.58 cp (expected) better than the unexposed
+student, its quality is flat across the whole 713-shard window, it picks SF's
+best move 53.0% of the time vs the student's 46.4%, and it blunders ≥100 cp 6.5%
+vs 10.1%. The net trains on it at `w_policy=1.0` and **does not absorb it** —
+except as memorisation of the specific rows, worth 12.81 cp that evaporates the
+moment the rows leave the window. Search gives +32 cp over the raw prior and the
+prior does not keep it; the target gives +10 cp over the prior and the prior does
+not keep that either. The defect is downstream of the target, in what the policy
+head retains.
+
+#### VERIFIED (artifact for each)
+
+`sf_multipv_raw` is the P1 frame (11.3% / 100.0% legality split, n=500/87);
+`sf_p0_regret` is the P0 frame (100% own-legal, n=300) and is reproduced
+bit-for-bit-to-fp16 from the ply-1 raw table on 9,317 rows with 0 best-move
+disagreements; `policy_target` is the main policy CE target verbatim
+(`losses.py:297`) and its measured mean entropy 0.638 nats matches the documented
+0.63; boot512 / iter478 / shuffled477 all **63,084,128** unique-storage params,
+496 keys, all `lc0_1858` / `v2_threats` / `lc0_root_legacy_meta` and
+`use_dynamic_relations=False`, matching the shards' own `policy_encoding` and
+`input_history_encoding` attrs; the 4672→1858 gather used to align the head to
+the shard axis is **bit-exact** vs the model's native head (max |Δ| = 0.0) with
+no legal slot landing on a −1e9 pad; the `has_sf_p0_regret` subsample is an
+**IID random** subsample, not a difficulty filter — `_draw_is_full` is
+`rng.random(n) < playout_cap_fraction` and `full_ply_pair_fraction` is absent
+from the yaml ⇒ 0.0 ⇒ pure IID at 0.25 (`network_turn.py:239-261`,
+`trial_config.py:172`); 100.0% of measured rows are `is_selfplay=1` in both eras;
+batch pinned at 256; negative control passes at 7.5× the bar; all 815 boot-window
+shard indices are inside boot512's bootstrap pool; the 46M-era pool's provenance
+(`manifest.json`: `checkpoint_000751`, trial `5fac4`, 815 copied replay shards;
+`README.md`: `trainer.pt` = the boot512 snapshot, "trial_meta/manifest still
+describe the 46M trunk").
+
+#### ASSUMED / NOT ESTABLISHED
+
+That the 46M-era rows' `policy_target` was produced by the 384×12 net's search —
+taken from the pool's README/manifest, **not** verifiable from the shards
+themselves (`model_sha256` and `model_step` are `None` in every shard attr set).
+That the ~698k-node depth-12/13 SF label is a sound ABSOLUTE ruler — it is
+identical across arms so all rankings hold, but no absolute cp bar is claimed.
+The 1000 cp regret cap applies inside the primary sample and compresses
+differences in already-lost positions. **This verdict covers SELFPLAY rows
+only**: `sf_p0_regret` needs two consecutive full-sim net plies, which curriculum
+games structurally cannot produce (the net's plies are 2 apart), so ~50% of the
+data is unmeasured by this instrument. No arena, no Elo, no strength claim — cp
+regret against a label-grade SF is not a game result. The entropy stratification
+conditions on a property of one arm (the teacher) and is descriptive only. The
+two era dumps are different rows, so the era contrast is unpaired.
+
+#### WHAT WOULD DECIDE THE REMAINING QUESTION
+
+The open question is no longer "is the target good" — it is "why does the head
+not keep it". The decisive experiment is a retention probe, not another target
+audit: train from `boot_snap_recheck_0711_0404.pt` on a FIXED window for N steps,
+then measure top-1 regret against `sf_p0_regret` on (a) the trained rows and (b)
+held-out rows from the same shards, at several checkpoints. The 12.81 cp
+in-window/out-of-window gap measured here predicts (a) improves and (b) does not;
+if (b) also improves, the retention failure is a property of the live loop's
+window turnover rather than of the head, and the lever is window/views, not
+capacity.
