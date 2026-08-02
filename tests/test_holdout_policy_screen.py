@@ -14,12 +14,21 @@ manufactured rather than measured are:
   printed anyway (`link_name` / `assert_pool_loaded`);
 * the negative control permuting a column the loss never reads (`ShuffleTargets`);
 * the "full" pass covering only some rows (`full_pass_rows`);
-* the `base` mask being accepted and ignored (`summarize`).
+* the `base` mask being accepted and ignored (`summarize`);
+* the per-row CE being paired with the WRONG game ids, which leaves every arm
+  mean untouched and only narrows the CI (`EvalSet._buffer_game_ids`);
+* `--verify-production-metric` reporting a rig that has stopped tracking
+  production's metric, and banking the arms anyway
+  (`assert_production_metric_matches`).
 """
 from __future__ import annotations
 
 import importlib.util
+import json
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
@@ -189,6 +198,111 @@ def test_eval_set_with_zero_labelled_rows_aborts(
     with pytest.raises(SystemExit, match="no denominator"):
         _eval_set([p])
     assert "DESYNC_FRAC=nan" in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# The CE <-> game_id pairing, which is what the paired CI clusters on.
+# --------------------------------------------------------------------------
+
+def test_eval_game_ids_are_the_buffers_own_column_in_its_own_order(tmp_path: Path) -> None:
+    """The positional pairing `full_pass_rows` relies on, proved element-wise.
+
+    `EvalSet.game_id` is a SEPARATE read of the shard column; CE comes out in
+    the buffer's row order. Nothing else in the screen ever compares them.
+    """
+    a = _write_shard(tmp_path / "a" / "shard_000001.zarr", n=5, game_ids=[11, 12, 13])
+    b = _write_shard(tmp_path / "b" / "shard_000002.zarr", n=7, game_ids=[21, 22])
+    ev = _eval_set([a, b])
+
+    from chess_anti_engine.replay.buffer import ArrayReplayBuffer
+    buf = cast(ArrayReplayBuffer, ev.buf)
+    order = np.concatenate([np.asarray(buf.rows_slice_arrays(lo, hi)["game_id"])
+                            for lo, hi in buf.batch_row_bounds(4)])
+    assert order.size == 12
+    assert np.array_equal(order, ev.game_id)
+    # ...and the shards' own concatenation order, oldest shard first
+    assert np.array_equal(ev.game_id[:5], np.asarray([11, 12, 13, 11, 12]))
+
+
+def test_eval_set_aborts_when_the_buffer_order_diverges_from_the_shard_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The count check this replaced could not see this, and it is the harmful one.
+
+    Same rows, same count, permuted pairing: every arm mean is unchanged and the
+    game clusters drift toward independence, so `holdout_paired_ci.py` returns a
+    NARROWER interval -- the direction that makes every verdict look stronger.
+    Restoring `if len(buf) != self.game_id.size` in place of the identity check
+    makes this test pass silently, which is why it is written as a permutation
+    of a FIXED-SIZE array rather than a truncation.
+    """
+    p = _write_shard(tmp_path / "shard_000001.zarr", n=6, game_ids=[10, 11, 12])
+    monkeypatch.setattr(
+        _MOD.EvalSet, "_buffer_game_ids",
+        staticmethod(lambda buf: np.asarray([12, 10, 11, 12, 10, 11], np.int64)))
+    with pytest.raises(SystemExit, match="not in the buffer's row order"):
+        _eval_set([p])
+
+
+def test_eval_set_aborts_when_the_buffer_holds_fewer_rows_than_were_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A capacity that stops covering the set silently drops the OLDEST rows.
+
+    Nothing else notices: `full_pass_rows` covers `len(ev.buf)`, so its own
+    coverage assertion still passes, and every CE lands against a game id
+    belonging to a row that was evicted.
+    """
+    from chess_anti_engine.replay.buffer import ArrayReplayBuffer
+
+    p = _write_shard(tmp_path / "shard_000001.zarr", n=6, game_ids=[10, 11])
+    monkeypatch.setattr(
+        _MOD, "ArrayReplayBuffer",
+        lambda _cap, rng: ArrayReplayBuffer(4, rng=rng))
+    with pytest.raises(SystemExit, match="not in the buffer's row order"):
+        _eval_set([p])
+
+
+def test_eval_set_refuses_a_shard_without_game_ids(tmp_path: Path) -> None:
+    """`arrs["game_id"]` raised a bare KeyError -- the column CAN be absent.
+
+    `load_shard_arrays` materializes only the fields the zarr group holds, so a
+    shard written from samples that carry no game id has no column at all --
+    exactly like the `has_sf_multipv_raw` case handled four lines above it.
+    """
+    rng = np.random.default_rng(0)
+    pol = np.zeros(POLICY_SIZE, dtype=np.float32)
+    pol[0] = 1.0
+    arrs = samples_to_arrays([ReplaySample(
+        x=rng.random((_PLANES, 8, 8)).astype(np.float32), policy_target=pol, wdl_target=0,
+        sf_wdl=np.asarray([0.4, 0.3, 0.3], np.float32),
+        sf_multipv_raw=np.zeros((SF_MULTIPV_RAW_MAX, 5), np.int16))])
+    p = save_local_shard_arrays(tmp_path / "shard_000001.zarr", arrs=arrs)
+    # the column really is absent from the written shard, not merely all-zero
+    assert "game_id" not in _MOD.load_shard_arrays(str(p), lazy=False)[0]
+    with pytest.raises(SystemExit, match="no game_id column"):
+        _eval_set([p])
+
+
+def test_eval_set_aborts_when_the_buffer_drops_the_game_id_column(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`prune_storage_arrays` drops an optional value whose has-flag is all-False.
+
+    The shard read would then succeed while the buffer holds no game ids at all,
+    so there is nothing to pair the CE against.
+    """
+    p = _write_shard(tmp_path / "shard_000001.zarr", n=4, game_ids=[10, 11])
+    real = _MOD.load_shard_arrays
+
+    def _blank_flag(path: Any, **kw: Any) -> Any:
+        arrs, meta = real(path, **kw)
+        arrs["has_game_id"] = np.zeros_like(np.asarray(arrs["has_game_id"]))
+        return arrs, meta
+
+    monkeypatch.setattr(_MOD, "load_shard_arrays", _blank_flag)
+    with pytest.raises(SystemExit, match="dropped its game_id column"):
+        _eval_set([p])
 
 
 # --------------------------------------------------------------------------
@@ -393,6 +507,88 @@ def test_full_pass_refuses_to_cover_only_some_rows() -> None:
     ev = _FakeEvalSet(5, np.zeros(5, np.int64))
     with pytest.raises(SystemExit, match="full pass covered 2 of 5"):
         _MOD.full_pass_rows(cast(Any, tr), cast(Any, ev), 2)
+
+
+def test_verify_production_metric_is_a_gate_and_not_a_print() -> None:
+    """It computed the deltas, wrote verify.json, and proceeded regardless.
+
+    The numbers are the measured ones (banked iter-478 `trainer.pt`): the bf16
+    probe tracks production to within a few 1e-5 at worst, and the defect the
+    gate exists to catch -- the eval forward leaving `_amp_context()` -- shows up
+    as the ~2.1e-4 fp32 residual. Both bounds of the tolerance are asserted, so
+    widening it to swallow the defect or narrowing it onto the noise both fail.
+    """
+    prod = 1.1004884
+
+    # accepted: the largest benign reading ever observed (evalB 3 shards @512,
+    # production's first eval_full_pass in a fresh process)
+    _MOD.assert_production_metric_matches(prod, prod + 5.409e-05, prod - 2.311e-04)
+    # accepted: steady state
+    _MOD.assert_production_metric_matches(prod, prod + 6.697e-08, prod - 2.732e-04)
+
+    # rejected: the rig scoring fp32 while production scores bf16 -- the
+    # SMALLEST such residual measured on any real eval set
+    with pytest.raises(SystemExit, match="no longer measures production's metric"):
+        _MOD.assert_production_metric_matches(prod, prod - 2.146e-04, prod - 2.146e-04)
+    # rejected: production stopped reporting policy_loss at all
+    with pytest.raises(SystemExit):
+        _MOD.assert_production_metric_matches(float("nan"), prod, prod)
+
+    assert 5.409e-05 < _MOD._PRODUCTION_METRIC_TOL < 2.146e-04
+
+
+class _FakeVerifyTrainer(_FakeFullPassTrainer):
+    """`_FakeFullPassTrainer` plus the two members the verification calls."""
+
+    def __init__(self, batches: list[dict[str, torch.Tensor]], prod: float) -> None:
+        super().__init__(batches)
+        self._prod = prod
+        self.amp_entered = 0
+        self.prod_calls: list[tuple[Any, int]] = []
+
+    def eval_full_pass(self, buf: Any, *, batch_size: int) -> Any:
+        self.prod_calls.append((buf, int(batch_size)))
+        return SimpleNamespace(policy_loss=self._prod)
+
+    @contextmanager
+    def _amp_context(self) -> Generator[None]:
+        self.amp_entered += 1
+        yield
+
+
+def _verify_fixture(prod_offset: float) -> tuple[_FakeVerifyTrainer, _FakeEvalSet]:
+    logits = torch.tensor([[2.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    batch = {"x": logits, "policy_t": _one_hot([0, 1], 3)}
+    ce = float((-torch.log_softmax(logits, -1)[torch.arange(2), torch.as_tensor([0, 1])]).mean())
+    tr = _FakeVerifyTrainer([batch], ce + prod_offset)
+    return tr, _FakeEvalSet(2, np.asarray([1, 2], np.int64))
+
+
+def test_verify_production_metric_dumps_then_aborts(tmp_path: Path) -> None:
+    """The abort lives inside the only function that produces the verification.
+
+    Measuring, printing and gating are one call, so deleting the gate from
+    `main` is not an option -- `main` has nowhere else to get the numbers from.
+    And `verify.json` must be on disk BEFORE the abort: a run that fails this
+    gate is exactly the run whose numbers someone will want to look at.
+    """
+    tr, ev = _verify_fixture(2.146e-04)
+    with pytest.raises(SystemExit, match="no longer measures production's metric"):
+        _MOD.verify_production_metric(cast(Any, tr), cast(Any, ev), 2, tmp_path)
+    rec = json.loads((tmp_path / "verify.json").read_text())
+    assert rec["abort_bound"] == _MOD._PRODUCTION_METRIC_TOL
+    assert rec["delta_vs_bf16"] == pytest.approx(2.146e-04, rel=1e-3)
+    # the bf16 probe really was taken under the amp context, not relabelled
+    assert tr.amp_entered == 1
+    # and production's metric was read off the SAME buffer at the SAME shape
+    assert tr.prod_calls == [(ev.buf, 2)]
+
+
+def test_verify_production_metric_passes_a_matching_rig(tmp_path: Path) -> None:
+    tr, ev = _verify_fixture(5.409e-05)
+    rec = _MOD.verify_production_metric(cast(Any, tr), cast(Any, ev), 2, tmp_path)
+    assert rec["delta_vs_bf16"] == pytest.approx(5.409e-05, rel=1e-3)
+    assert json.loads((tmp_path / "verify.json").read_text())["probe_ce_bf16"] == rec["probe_ce_bf16"]
 
 
 def test_summarize_excludes_rows_the_base_mask_drops() -> None:

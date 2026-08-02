@@ -10,6 +10,13 @@ Both held-out properties are ENFORCED here rather than assumed of the manifest:
 `assert_pools_game_disjoint` intersects the train pool's game ids with each eval
 set's. The shard-linking and row-count reconciliation exist for the same reason --
 see `link_name` and `assert_pool_loaded`.
+
+Two more things are proved rather than assumed, because both would be invisible in
+the arm means if they were wrong: `EvalSet` checks its `game_id` array is
+ELEMENT-WISE identical to the buffer's own column in the buffer's own row order
+(the pairing `holdout_paired_ci.py` clusters on -- scramble it and the CI narrows
+rather than moving), and `--verify-production-metric` ABORTS on a mismatch instead
+of printing one.
 """
 from __future__ import annotations
 
@@ -46,6 +53,16 @@ from chess_anti_engine.uci.model_loader import model_config_from_arch
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
 _EPS = 1e-12
+
+# Rows per chunk when re-reading the eval buffer's own ``game_id`` column. Small
+# on purpose: ``rows_slice_arrays`` DENSIFIES, so a chunk costs
+# rows x (175*8*8 + 1858) floats -- 4096 rows is ~200 MB transient, 1<<16 would
+# be ~3 GB on top of an eval set that already holds ~5 GB of ``x``.
+_GID_CHECK_ROWS = 4096
+
+# Abort bound for ``--verify-production-metric``. See
+# ``assert_production_metric_matches`` for the measurements behind the number.
+_PRODUCTION_METRIC_TOL = 1e-4
 
 
 def _entropy(p: torch.Tensor) -> torch.Tensor:
@@ -91,6 +108,17 @@ class EvalSet:
             hm = _flag(arrs, "has_sf_multipv_raw", n)
             lab += int(hw.sum())
             des += int((hw & ~hm).sum())
+            # Absent is an ABORT here, not all-False as for a has-flag: without
+            # game ids these rows cannot be clustered and cannot be checked
+            # against the train pool, so the ruler has no held-out property
+            # left. `load_shard_arrays` only materializes the fields the zarr
+            # group actually holds, so `arrs["game_id"]` could raise a bare
+            # `KeyError` -- the same defect class as the has-flag above, left on
+            # the eval side while the train side got a diagnostic.
+            if "game_id" not in arrs:
+                raise SystemExit(
+                    f"{p}: no game_id column -- eval rows cannot be clustered by game "
+                    f"and the train/eval leak gate cannot be enforced")
             gids.append(np.asarray(arrs["game_id"], dtype=np.int64))
             buf.add_many_arrays(arrs)
         self.buf = buf
@@ -101,9 +129,33 @@ class EvalSet:
         # denominator is undefined, and 0.0 would read as "clean" on the one
         # input the gate exists to reject.
         self.desync_frac = des / lab if lab else float("nan")
-        if len(buf) != self.game_id.size:
-            raise SystemExit(f"{name}: buffer rows {len(buf)} != game ids {self.game_id.size}")
+        # IDENTITY, not just a count. `self.game_id` is a SEPARATE read of the
+        # shard column; `full_pass_rows` emits CE in the BUFFER's row order and
+        # pairs the two POSITIONALLY, and `holdout_paired_ci.py` clusters its
+        # bootstrap on that pairing. A scrambled pairing leaves every arm mean
+        # untouched and pushes the clusters toward independence, so the CI comes
+        # out too NARROW -- the direction that makes every verdict look
+        # stronger. A row-count check cannot see that; this can.
+        got = self._buffer_game_ids(buf)
+        if not np.array_equal(got, self.game_id):
+            raise SystemExit(
+                f"{name}: game ids are not in the buffer's row order "
+                f"(buffer rows {len(buf)} / {got.size} ids vs {self.game_id.size} read from "
+                f"the shards); the per-row CE dump would be paired with the wrong games")
         self.gate()
+
+    @staticmethod
+    def _buffer_game_ids(buf: ArrayReplayBuffer) -> np.ndarray:
+        """The buffer's own ``game_id`` column, in the order a full pass reads it."""
+        out: list[np.ndarray] = []
+        for lo, hi in buf.batch_row_bounds(_GID_CHECK_ROWS):
+            g = buf.rows_slice_arrays(lo, hi).get("game_id")
+            if g is None:
+                raise SystemExit(
+                    "the eval buffer dropped its game_id column "
+                    "(has_game_id is all-False on every shard); rows cannot be clustered")
+            out.append(np.asarray(g, dtype=np.int64))
+        return np.concatenate(out) if out else np.zeros(0, np.int64)
 
     def report(self) -> str:
         return (f"[eval:{self.name}] rows={len(self.buf)} games={np.unique(self.game_id).size} "
@@ -225,8 +277,22 @@ def link_name(src: Path) -> str:
     ``shard_*.zarr``, so the ``shard_`` prefix is mandatory or the shard is not
     found at all; and ``shard_index`` reads ``stem.split("_")[1]``, so the index
     must stay in the second field. The index is zero-padded to a fixed width so
-    the glob's lexicographic sort stays index-monotonic (recency order), and the
-    digest of the resolved source disambiguates reused indices.
+    the glob's lexicographic sort stays INDEX-monotonic (real indices reach
+    34,676, so an unpadded sort would interleave), and the digest of the resolved
+    source disambiguates reused indices.
+
+    That sort order is load-bearing but it is NOT recency, and an earlier
+    revision of this docstring said it was. ``DiskReplayBuffer._load_refresh_chunks``
+    weights shard selection ``np.arange(1, n_shards+1)`` -- linearly by position
+    in ``sorted(glob("shard_*.zarr"))`` -- for the open-time seed pool and for
+    every refresh draw, so position genuinely decides sampling weight. But
+    salvage bundles have non-monotonic index ranges: ``pre_durable_deploy_20260726``
+    occupies 33868-34676, strictly ABOVE ``post_quarantine_20260801``'s
+    33118-33841. Measured on A1_BIG (5,244 shards): rank corr(index, mtime)
+    0.8415, 86.4% of adjacent pairs non-decreasing in mtime, the highest-weighted
+    last decile is 99.8% 07-25/26 data, and the newest shard sits at rank 4,730
+    of 5,244. Read the order as "index order, only approximately recency across
+    salvage bundles" -- see the ledger's A1_BIG staleness confound.
     """
     idx = shard_index(src)
     if idx < 0:
@@ -270,7 +336,12 @@ def read_pool_game_ids(paths: list[str]) -> tuple[np.ndarray, dict[Path, int]]:
 
     The row counts come free with the game-id read and are what the buffer's own
     row total is checked against, so the manifest's arithmetic never gets
-    reported in place of the buffer's.
+    reported in place of the buffer's. They are taken from ``x``, which is what
+    the buffer counts, rather than from ``game_id`` -- the two are the same
+    number today (``validate_array_declarations`` requires every optional field,
+    ``game_id`` included, to have shape ``(x.shape[0], ...)``, and the lazy load
+    path runs it), but the point of the reconciliation is to count the thing the
+    consumer counts, not a column that happens to agree.
     """
     gids: list[np.ndarray] = []
     rows: dict[Path, int] = {}
@@ -282,7 +353,7 @@ def read_pool_game_ids(paths: list[str]) -> tuple[np.ndarray, dict[Path, int]]:
         if "game_id" not in arrs:
             raise SystemExit(f"{src}: no game_id column -- the train/eval leak gate cannot be enforced")
         g = np.asarray(arrs["game_id"][:], dtype=np.int64)
-        rows[src] = int(g.size)
+        rows[src] = int(arrs["x"].shape[0])
         gids.append(g)
     return (np.concatenate(gids) if gids else np.zeros(0, np.int64)), rows
 
@@ -342,6 +413,92 @@ def assert_pool_loaded(
             f"buffer holds {buf_rows} rows but the linked shards carry {expect} "
             f"({expect - buf_rows} rows never entered the pool)")
     return expect
+
+
+def assert_production_metric_matches(prod: float, bf16_ce: float, fp32_ce: float) -> None:
+    """Abort unless the rig's bf16 probe still reproduces production's own metric.
+
+    ``--verify-production-metric`` used to print the deltas and carry on, which
+    makes it a report rather than a gate: a refactor that moved
+    ``_compute_metrics`` out of ``_amp_context()``, or changed the pooling, would
+    print ``delta +0.00026`` and the run would bank its arm numbers anyway.
+
+    THE BOUND. It is not the reviewer's proposed 1e-5 -- that would false-positive
+    on the rig as it stands. Production's FIRST ``eval_full_pass`` in a fresh
+    process does not select the same bf16 kernels as its later ones, and
+    ``--verify-production-metric`` runs exactly that first call. Measured against
+    the banked iter-478 ``trainer.pt`` (values reproduced bit-for-bit across
+    three separate processes, so this is a deterministic warm-up artefact, not
+    sampling noise)::
+
+        set / eval batch          |prod - bf16|    |prod - fp32|
+        evalB 3 shards   @512      5.409e-05        2.311e-04
+        evalB 60 shards  @512      2.886e-05        2.443e-04
+        evalA 100 shards @512      1.571e-07        2.146e-04
+        evalB 3 shards   @64       1.748e-09        4.468e-04
+        any set, 2nd call onward   6.697e-08        2.732e-04
+
+    So the largest benign reading is 5.409e-05 and the SMALLEST reading of the
+    defect this gate exists to catch -- the rig scoring a different precision
+    from production -- is 2.146e-04. 1e-4 is 1.85x above the former and 2.15x
+    below the latter (and is within 8% of their geometric mean). 1e-5 sits BELOW
+    two of the four benign readings and would have aborted the PR's own smoke run.
+
+    ``not (d <= tol)`` rather than ``d > tol`` so a NaN ``prod`` -- what
+    ``getattr(m, "policy_loss", nan)`` yields if production stops reporting the
+    metric at all -- aborts instead of sailing through.
+    """
+    d = abs(prod - bf16_ce)
+    if not (d <= _PRODUCTION_METRIC_TOL):
+        raise SystemExit(
+            f"production eval_full_pass().policy_loss={prod:.7f} but the rig's bf16 probe "
+            f"reads {bf16_ce:.7f} (delta {prod - bf16_ce:+.3e}, bound {_PRODUCTION_METRIC_TOL:.0e}) "
+            f"-- the rig no longer measures production's metric, so nothing it banks is "
+            f"comparable to the live holdout. fp32 probe {fp32_ce:.7f} "
+            f"(delta {prod - fp32_ce:+.3e}); a delta near THAT one means the eval forward "
+            f"has left _amp_context()")
+
+
+def verify_production_metric(
+    trainer: Trainer, ev: EvalSet, batch_size: int, out: Path,
+) -> dict[str, Any]:
+    """Probe production's metric and this rig's, dump both, and GATE on the match.
+
+    Measuring, reporting and aborting are one function for the same reason the
+    leak gate lives inside ``prepare_train_pool``: ``main`` has no other way to
+    obtain the verification, so the abort cannot be dropped from the call site
+    while the verification still gets printed and banked.
+
+    The fp32 and bf16 probes are BOTH reported, because the residual against
+    production is a PRECISION difference, not a pooling one.
+    ``Trainer._compute_metrics`` runs its forward inside ``_amp_context()``
+    (bf16, ``use_amp`` defaults True) and this rig does not. Pooling contributes
+    exactly zero: ``pol_base`` is identically 1 on these rows, so production's
+    row-weighted mean IS the row-exact mean. Printing only the fp32 number
+    invited -- and produced -- the wrong explanation of the 0.00025 gap. Measured
+    on the full evalB: fp32 1.1002154, bf16 1.1004884, production 1.1004884.
+    """
+    m = trainer.eval_full_pass(ev.buf, batch_size=batch_size)
+    prod = float(getattr(m, "policy_loss", float("nan")))
+    r32 = summarize(full_pass_rows(trainer, ev, batch_size))
+    with trainer._amp_context():
+        r16 = summarize(full_pass_rows(trainer, ev, batch_size))
+    rec = {"production_policy_loss": prod,
+           "probe_ce_fp32": r32["ce"], "probe_excess_fp32": r32["excess"],
+           "probe_ce_bf16": r16["ce"], "probe_excess_bf16": r16["excess"],
+           "delta_vs_fp32": prod - r32["ce"], "delta_vs_bf16": prod - r16["ce"],
+           "abort_bound": _PRODUCTION_METRIC_TOL,
+           "note": "probes and arms run fp32; production's own holdout runs bf16"}
+    print(f"[screen] VERIFY production eval_full_pass().policy_loss={prod:.7f} | "
+          f"probe fp32 ce={r32['ce']:.7f} (delta {prod - r32['ce']:+.7f}) | "
+          f"probe bf16 ce={r16['ce']:.7f} (delta {prod - r16['ce']:+.7f}) -- "
+          f"the bf16 delta is the one that should be ~0", flush=True)
+    # Dump BEFORE the gate, so a failing run leaves its numbers on disk, and gate
+    # BEFORE any arm runs, so a rig that has stopped tracking production's metric
+    # cannot bank one.
+    (out / "verify.json").write_text(json.dumps(rec, indent=2))
+    assert_production_metric_matches(prod, r16["ce"], r32["ce"])
+    return rec
 
 
 def run_training(
@@ -450,31 +607,7 @@ def main() -> None:
         print("[screen] NEGATIVE CONTROL: policy_target permuted within every batch", flush=True)
 
     if args.verify_production_metric:
-        # The fp32 and bf16 probes are BOTH reported, because the residual
-        # against production is a PRECISION difference, not a pooling one.
-        # `Trainer._compute_metrics` runs its forward inside `_amp_context()`
-        # (bf16, `use_amp` defaults True) and this rig does not. Pooling
-        # contributes exactly zero: `pol_base` is identically 1 on these rows,
-        # so production's row-weighted mean IS the row-exact mean. Printing only
-        # the fp32 number invited -- and produced -- the wrong explanation of the
-        # 0.00025 gap. Measured on the full evalB: fp32 1.1002154,
-        # bf16 1.1004793, production 1.1004793 (equal to 7 dp).
-        m = trainer.eval_full_pass(evs[0].buf, batch_size=args.eval_batch_size)
-        prod = float(getattr(m, "policy_loss", float("nan")))
-        r32 = summarize(full_pass_rows(trainer, evs[0], args.eval_batch_size))
-        with trainer._amp_context():
-            r16 = summarize(full_pass_rows(trainer, evs[0], args.eval_batch_size))
-        print(f"[screen] VERIFY production eval_full_pass().policy_loss={prod:.7f} | "
-              f"probe fp32 ce={r32['ce']:.7f} (delta {prod - r32['ce']:+.7f}) | "
-              f"probe bf16 ce={r16['ce']:.7f} (delta {prod - r16['ce']:+.7f}) -- "
-              f"the bf16 delta is the one that should be ~0", flush=True)
-        (args.out / "verify.json").write_text(json.dumps(
-            {"production_policy_loss": prod,
-             "probe_ce_fp32": r32["ce"], "probe_excess_fp32": r32["excess"],
-             "probe_ce_bf16": r16["ce"], "probe_excess_bf16": r16["excess"],
-             "delta_vs_fp32": prod - r32["ce"], "delta_vs_bf16": prod - r16["ce"],
-             "note": "probes and arms run fp32; production's own holdout runs bf16"},
-            indent=2))
+        verify_production_metric(trainer, evs[0], args.eval_batch_size, args.out)
 
     hist: list[dict[str, Any]] = []
 
