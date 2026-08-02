@@ -24769,3 +24769,410 @@ A flip without its own entry satisfying ALL of the following is a protocol viola
 6. **Kill rule template**: pre-commit a paired sf_p0-regret (policy) or value_regret
    bound; readout is day-plus with paired CIs. Revert = flip OFF (clean, draw-time).
 
+
+## 2026-08-02 — ABSORPTION RIG ARM F BLOCKING CHECK: the six zero-filled provenance fields — **UNBLOCKED**
+
+**What was blocked and why.** The rig's pre-registered ARM F (20% old-era rehearsal,
+`scratchpad/absorb_20260802/PREREG.md` lines 269-284) draws 20% of every batch from the
+46M-era pool `corpus_era/erareg` (65,257 rows). That pool predates six provenance columns
+and `build_erareg.py` zero-fills them: `seed_id`, `seed_family_id`,
+`opening_source_code` and their three `has_` flags (`corpus_era/meta.json` →
+`report.synthesised_zero_fields`). PREREG made F's verdict void unless those fields were
+SHOWN not to reach the loss — otherwise F measures a field artefact, not rehearsal.
+
+**Instrument** (banked, CPU-only, no GPU, ~40 s at `nice -n 19`, recomputes from scratch):
+
+```
+PYTHONPATH=/home/josh/projects/chess nice -n 19 python3 \
+  /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/absorb_20260802/f_unblock/f_diff.py
+```
+Output `f_unblock/f_diff_report.json`; trace + verdict `f_unblock/F_UNBLOCK.md`.
+
+A code read is not a control, so the check is a **differential intervention**: the same
+era rows run twice — BASE (fields as stored, all zero) vs MUT (`seed_id`/`seed_family_id`
+← random 31-bit ids, `opening_source_code` ← a mix including the seed-origin codes {2,3},
+all three `has_` flags ← 1) — with identical draw seeds, identical mirror rng and
+identical `torch.manual_seed`. The comparison is BYTE equality (not a tolerance) of all
+57 collated batch tensors and all 36 `compute_loss` terms. Run on BOTH batch pipelines:
+the rig's own (`absorb.py` `TrainSampler` → `Trainer._prepare_host_arrays` →
+`collate_arrays` → `compute_loss`) and PRODUCTION's (`DiskReplayBuffer.add_many_arrays`
+→ zarr shard → shuffle buffer → `sample_batch_arrays` → the same tail).
+
+**Result. 0 diffs on both pipelines.** Positive controls on the same harness DO fire —
+perturbing `moves_left`/`has_moves_left` moves `loss[moves_left]` 0.0014 → 16.489 (17
+diffs rig / 7 prod) and perturbing one `x` cell moves every head (47 / 22) — so the test
+can fail. The production leg is the load-bearing one: in BASE the six are dropped at
+shard write by `prune_storage_arrays` (`replay/shard.py:616-621`), while in MUT they
+survive storage and ARE present in the sampled array dict handed to the trainer, and
+still change nothing. The null is therefore not "the mutation was discarded early".
+
+**Where the influence terminates:** `replay/dataset.py:189-276` `collate_arrays` — the
+tensor dict is an explicit whitelist (`:196-200` plus `optional_specs` `:210-265`) and
+none of the six is in it, so they never become tensors; same for the sample-object path
+at `dataset.py:112-181`. Upstream they are carried but never read:
+`shard.py:137-139/817-819/1221-1226`, `sample.py:26-28`, `augment.py:127-129` (sample
+mirror) and `augment.py:234-286` (array mirror, `out = dict(arrs)` passes them through
+untouched), `disk_buffer.py:1380-1423` generic row gather. Occurrence count in
+`train/losses.py`, `train/trainer.py`, `train/target_builder.py`, `replay/dataset.py`,
+`replay/disk_buffer.py`, `replay/buffer.py`: **0, all six**. Specifically checked and
+clean: the 175-plane `v2_threats` input (x is stored verbatim; only the mirror and
+feature-group dropout touch it), every loss mask (all fetched by literal key through
+`_get_mask` `losses.py:150` / `apply_policy_mask_to_logits` `:130`), sample weighting
+(WDL balance on `wdl_target` `disk_buffer.py:1443-1490` and the stored `priority`
+`:1302-1328`; priority shaping reads `priority_policy_kl`/`priority_q_delta`/
+`priority_sf_search_gap`/`search_wdl` `:627-656`), and keep/filter decisions (the only
+flag-dependent behaviour is storage-side pruning).
+
+**VERDICT: UNBLOCKED — arm F may run in the pre-registered form.** Caveats recorded
+rather than hidden: (a) `feature_dropout_p` is 0.0 in production, so the train-mode
+forward is numerically identical to eval-mode here — both legs ran and both positive
+controls fired in both; (b) this licenses the ROWS, not an implementation — F's 80/20
+mixer is not yet written, and if it adds a per-row weight or a provenance tag of its own
+this proof does not extend to it; (c) the era pool still differs from the current corpus
+in the real ways F exists to measure.
+
+
+## 2026-08-02 — ABSORPTION ARMS: can a training regime turn the search teacher into out-of-window gain?
+
+**Status:** SEED-0 ARMS COMPLETE AND DECISION-GRADE. Second seeds (`C_s1`, `D_s1`),
+the sampler arm (`G_s0/G_s1`) and the frozen-audit cross-check are still running; a
+follow-up entry will carry them. Nothing below depends on them except where a
+"pending seed agreement" caveat says so. Pre-registration: `scratchpad/absorb_20260802/PREREG.md`
+(+ two amendments, both timestamped before the contrast they affect was computed).
+Running verification notes: `scratchpad/absorb_20260802/NOTES.md`.
+
+**Hypothesis.** #108 ("search improvement does not stick") is a supervised-learning
+question: the teacher beats the student by ~10 cp, yet training on it did not
+transfer. Four regimes were run from the boot512 lineage origin on the live window's
+own `policy_target`, matched corpus / batch order / step budget, judged by cp regret
+against SF rather than CE to the target (CE to the target rewards the memorisation
+under test).
+
+---
+
+### ⚑⚑ THE 12.81 cp WEDGE IS AN ERA EFFECT, NOT WITHIN-ERA WINDOW MEMORISATION
+
+Measured BEFORE any arm trained (`validate_wedge.py`), frozen endpoints, paired,
+95% percentile bootstrap over 10,000 resamples clustered by `game_id`:
+
+| contrast | **oow** = held-out GAMES, same era | **inw** = train rows |
+|---|---|---|
+| teacher − boot512 | **−9.67 cp** [−11.04, −8.30] SIG | **−11.20 cp** [−12.53, −9.89] SIG |
+| teacher − iter478 | −1.40 cp SIG | −1.61 cp [−2.47, −0.73] SIG |
+| iter478 − boot512 | **−8.27 cp** [−9.55, −7.00] SIG | −9.59 cp [−10.82, −8.38] SIG |
+
+The teacher−boot512 figure reproduces this ledger's own pre-registered −10.266 cp
+[−10.717, −9.830] on independent rows, so **the ruler is validated**. On that same
+validated ruler:
+
+- **iter478 is 8.27 cp BETTER than boot512 out-of-window**, not 4.87 cp worse.
+- Its top-1 agreement with the teacher is **0.7006 out-of-window vs 0.7000
+  in-window** — identical to three decimals.
+- The in-minus-out memorisation term is **1.33 cp**, not 12.81 cp.
+
+The difference is what "out of window" denotes. The 12.81 cp entry's out-of-window
+set is the **46M ERA** — a distribution shift — and this ledger already records the
+confound: *"all 815 of the boot-window shards are inside boot512's own bootstrap pool
+... boot512 had memorised 100% of the 46M-era rows and 0% of the 512-era rows."*
+Independent confirmation here: boot512 scores **31.32 cp** on era rows against the
+era teacher's **30.23 cp**, a 1.10 cp gap, matching the −0.695 cp this ledger measured
+on that pool.
+
+**Correction to the earlier entry:** the 12.81 cp sign flip is real as a measurement
+but is **superseded on the claim that it measures within-era window memorisation**.
+It is era shift + boot512's own confounded exposure + iter478's forgetting. The
+"any future policy readout taken on in-window rows is reading ~13 cp of memorisation"
+warning should read **~1.3 cp** for same-era rows.
+
+**Scope, stated explicitly:** same-era held-out games were GENERATED BY LATE-LINEAGE
+NETS, so part of "iter478 is better there" is a net being best on its own play
+distribution. This is **not** a finding that iter478 is fine — on neutral fixed
+rulers it is worse (frozen audit +8.45 cp), and whether that shows up in play is the
+arena's question. No arm here is scored by Elo.
+
+---
+
+### ⚑ THE PRODUCTION CONFIG AND THE PRODUCTION CLIP REGIME ARE NOT THE SAME THING
+
+The brief's premise for the zclip arm: production runs `zclip_max_norm 6.5` against a
+grad-norm median of 8.7, so **100% of steps hard-clip** and descent is direction-only.
+
+Arm A is a faithful config replica — realized `tm_lr_mean` **5.2847e-4** against the
+independently recorded production trunk LR of **5.29e-4**, and `param_groups` carrying
+exactly 18,033,664 Aurora params (28.6%) at wd 1e-4 and 44,747,680 AdamW params,
+summing to 63,084,128. Yet:
+
+| | grad_norm_median | grad_hard_clip_rate |
+|---|---|---|
+| production (recorded) | 8.7 | ~1.0 |
+| arm A, chunk 1 (incl. 72 warmup steps) | 4.797 | 0.0341 |
+| arm A, chunk 8 | 4.118 | **0.0000** |
+
+**The same cap of 6.5 binds on 0% of steps here.** Batch size does not explain it —
+production uses the LARGER batch (512), which should lower the gradient norm, not
+raise it 1.8x. Untested candidates: warm vs fresh optimizer state, 478 iterations of
+drift, live-buffer loss composition. Worth its own check on the live trial.
+
+Consequence for the experiment: the brief's arm B (raise the cap 6.5 → 12) is
+**mechanically incapable of doing anything** when the cap never binds. Confirmed
+empirically before it was retired — A vs B agreed to 3 decimals on grad norm
+(4.118 vs 4.121), exactly on `tm_lr_mean`, chose the **identical argmax on 99.52%** of
+full-cover rows, and contrasted at **+0.122 cp [−0.011, +0.275]**. Verdict for arm B
+as specified: **PREMISE ABSENT**, decided on mechanism, not on outcome.
+
+It was replaced by **arm B2 = direction-only FORCED** (`zclip_max_norm` 2.06 = 0.5 ×
+A's chunk-8 median), which reproduces production's *regime* rather than its *config*:
+realized `grad_hard_clip_rate` **1.000** against a pre-registered >0.80 bar, on the
+same gradient distribution (median 4.800 vs A's 4.797). This is the only way this rig
+can test the direction-only hypothesis, and it tests it with the polarity that
+matters.
+
+---
+
+### Arms
+
+| arm | manipulation vs A | proof of effect (read off the live objects) |
+|---|---|---|
+| **A** | none — production replica | `tm_lr_mean` 5.2847e-4 ≡ production 5.29e-4 |
+| **B** | cap 6.5 → 19.187 | RETIRED: hard-clip 0.0 in A ⇒ cap never binds |
+| **B2** | cap 6.5 → 2.06 (direction-only forced) | `grad_hard_clip_rate` **1.000** (bar >0.80) |
+| **C** | aux wd 1e-4→1e-3 + label smoothing 0.05 + lr ×1/3 | wd on the **44,747,680-param** AdamW group; target entropy 0.643→0.910; `kwargs_lr` 1e-5 |
+| **D** | lr ×1/3 only | `kwargs_lr` 1e-5 |
+
+⚑ A trap this rig walked into and out of: `header.json`'s `param_groups` are the
+**warmup-start** LRs, not the base LRs. `Trainer._set_initial_lrs()` pins every group
+to `warmup_lr_start * base_lr / peak_lr`, and `warmup_lr_start` falls back to
+`lr_eta_min` = **1e-5, an absolute value that does not scale with `lr`** — so arms A
+and C both print pg0 = 2e-4 despite 3x different base LRs. Read as proof-of-effect it
+would have "shown" that arm C's LR manipulation did nothing. The valid instruments are
+`kwargs_lr`, `step1_effect.json`'s post-chunk `param_groups_after_step`, and
+`tm_lr_mean`. Side effect, not chosen: arms C/D get **no warmup ramp at all**
+(72 of 12,320 steps).
+
+### Rulers (all cp top-1 regret vs `sf_p0_regret`, lower better; PRIMARY = fully-covered rows)
+
+| ruler | rows / games | full-cover | teacher's own top-1 |
+|---|---|---|---|
+| `oow` same-era held-out GAMES | 21,191 / 3,507 | 12,879 | 26.35 cp |
+| `inw` train rows (fitted) | 23,000 / 15,735 | 13,838 | 26.59 cp |
+| `era` 46M-era pool (forgetting, co-primary) | 21,000 / 9,013 | 12,460 | 30.23 cp |
+
+`oow` was rebuilt from the whole 713-shard pool rather than the materialised held
+corpus, which carried only 3,536 such rows — a 6x gain for one CPU pass. Frame check
+on both new rulers: **100.0%** of covered `sf_p0_regret` entries are legal in the
+row's OWN `legal_mask` (n≈3,000 each), i.e. the previous-ply frame is correct and the
+known "a row's own `sf_multipv_raw` is the position AFTER the net moved" trap is not
+re-entered. `game_id` overlap with train: **0** for `oow`, `held` and `era`.
+
+Instrument checks: self-contrast `mean_ci(x−x)` = 0.0 [0.0, 0.0]; game clustering
+inflates the CI by 3.8% (`oow`) / 2.1% (`era`) on level contrasts, as it should, and
+is ~neutral on arm-vs-arm where paired differences are zero on 99%+ of rows; achieved
+resolution **±0.15 cp** CI half-width on an arm-vs-arm paired contrast.
+
+### RESULT 1 — ⚑⚑ THE WEDGE REPRODUCES, AND IT IS TOTAL: 8.46 cp LEARNED, 0.00 cp TRANSFERRED
+
+Arm A (production config replica), cp top-1 regret, PRIMARY = fully-covered rows:
+
+| step | `oow` same-era held-out | `inw` train rows | `era` 46M-era | oow agree w/ teacher | era agree |
+|---|---|---|---|---|---|
+| 0 | 36.010 | 37.788 | 31.323 | 0.5255 | 0.5907 |
+| 1408 | 36.238 | 35.735 | 32.855 | 0.5471 | 0.5602 |
+| 2816 | 36.151 | 33.975 | 32.635 | 0.5523 | 0.5547 |
+| 4224 | 35.844 | 33.010 | 32.664 | 0.5521 | 0.5535 |
+| 5632 | 36.274 | 32.142 | 32.948 | 0.5514 | 0.5504 |
+| 7040 | 36.491 | 31.412 | 33.473 | 0.5501 | 0.5477 |
+| 8448 | 36.933 | 30.092 | 33.391 | 0.5504 | 0.5482 |
+| 9856 | 36.593 | 29.330 | 33.243 | 0.5528 | 0.5462 |
+
+| **12320 (final)** | **37.164** | **27.467** | **33.719** | 0.5530 | 0.5450 |
+
+Within-run vs step 0, paired, game-clustered 95% CI, **at the full 12,320-step budget**:
+
+- `inw` **−10.320 cp** [−11.521, −9.187] **SIG** — it learns the teacher on rows it sees
+- `oow` **+1.153 cp** [+0.086, +2.189] **SIG** — **significantly WORSE than the
+  checkpoint it started from**, on held-out games of the SAME era, same distribution,
+  same teacher
+- `era` **+2.397 cp** [+1.342, +3.433] **SIG** — and it forgets the old era faster still
+
+**VERDICT: WEDGE REPRODUCED**, and in a stronger form than the rule anticipated. The
+pre-registered gate only required that out-of-window fail to improve. It does not
+merely fail to improve: **10.32 cp of in-window gain buys 1.15 cp of out-of-window
+LOSS.** Every centipawn the net takes from the teacher is spent on rows it has seen,
+and the transfer term is negative.
+
+Held-out CE agrees and dates the turn: 0.8548 -> minimum **0.7367 at step 5,632** ->
+0.7649 at 12,320, while train CE falls monotonically 0.8544 -> 0.5200. The net passes
+its own generalisation optimum around step 5-6k and then trades held-out loss for
+train loss for the remaining 6k steps.
+
+⚑ The rig is a fixed 1.15M-row pool; production regenerates data every iteration. A
+fixed pool is the condition under which memorisation dominates, so this **overstates
+production's absolute wedge** and is a sensitive detector of arm differences rather
+than an estimator of the live one. Both statements belong together.
+
+⚑ Note the agreement columns, which cut against the obvious reading: out-of-window
+agreement with the teacher RISES 0.5255 → 0.5528 while out-of-window regret does not
+improve. The net does move toward the teacher's move choices on unseen same-era rows;
+those newly-copied choices simply are not worth cp there. Copying the teacher and
+being right are coming apart.
+
+### RESULT 2 — ⚑⚑ DIRECTION-ONLY DESCENT IS **NOT** THE CAUSE
+
+Arm B2 = arm A with production's realized clip regime forced
+(`grad_hard_clip_rate` **1.000** vs A's **0.000**, identical gradient distribution,
+median 4.800 vs 4.797). Paired vs A at the pre-registered matched steps:
+
+| step | `oow` (B2 − A) | `inw` | `era` |
+|---|---|---|---|
+| 7040 | +0.008 [−0.306, +0.326] ns | +0.068 ns | −0.263 [−0.583, +0.035] ns |
+| 8448 | **−0.335** [−0.669, −0.015] SIG | +0.066 ns | −0.038 ns |
+
+The rule requires the effect at BOTH matched steps. It appears at one. **VERDICT: B2
+is NO BETTER THAN A** — not sustained, and not a forgetting win either (era ns at both
+points).
+
+The magnitude is the finding: switching between 0% and 100% hard-clipping — the whole
+span of the direction-only axis — moves out-of-window regret by **at most 0.34 cp
+against an 8.46 cp wedge**, i.e. ≤4% of it. The brief's hypothesis that direction-only
+descent causes the absorption failure is **REFUTED** for this rig. The
+`zclip_max_norm` control surface is not where the wedge lives.
+
+Corollary for the live run: the recent zclip 5.0 → 6.5 change (and any successor) is
+being made on an axis that, when swept end to end here, cannot move generalisation.
+
+### RESULT 3 — THE SEED-0 ARM TABLE
+
+Paired vs A at the two pre-registered matched steps, game-clustered 95% CI.
+Negative = arm better than A.
+
+| arm | step | `oow` same-era (PRIMARY) | `inw` | `era` forgetting (CO-PRIMARY) |
+|---|---|---|---|---|
+| **B2** | 7040 | +0.008 [−0.306, +0.326] ns | +0.068 ns | −0.263 [−0.583, +0.035] ns |
+| direction-only forced | 8448 | −0.335 [−0.669, −0.015] S | +0.066 ns | −0.038 [−0.369, +0.302] ns |
+| **C** | 7040 | −0.147 [−0.821, +0.504] ns | +2.958 [+2.247, +3.686] S | **−1.091 [−1.801, −0.400] S** |
+| wd + smoothing + lr/3 | 8448 | −0.807 [−1.488, −0.149] S | +3.428 [+2.631, +4.234] S | **−1.087 [−1.819, −0.347] S** |
+| **D** | 7040 | +0.142 [−0.539, +0.817] ns | +2.849 [+2.145, +3.563] S | **−0.897 [−1.618, −0.201] S** |
+| lr/3 only | 8448 | −0.761 [−1.422, −0.125] S | +3.501 [+2.710, +4.301] S | **−1.125 [−1.829, −0.409] S** |
+
+Within-run vs step 0 (each arm's own start), at 8448:
+
+| arm | `oow` | `inw` | `era` |
+|---|---|---|---|
+| A | +0.923 | −7.696 | +2.068 |
+| B2 | +0.588 [−0.454, +1.631] ns | −7.630 S | +2.031 S |
+| C | +0.116 [−0.836, +1.033] ns | −4.268 S | +0.981 S |
+| D | +0.162 [−0.802, +1.085] ns | −4.195 S | +0.943 S |
+
+**Verdicts by the pre-registered rules:**
+
+- **PRIMARY — no arm BEATS A.** The rule requires `d_X < 0` with CI excluding 0 at
+  BOTH matched steps. Every arm that reaches significance does so only at 8448 and is
+  null at 7040. **B2, C, D: NO BETTER THAN A on same-era out-of-window regret.**
+- **CO-PRIMARY — C and D FORGET LESS than A**, sustained: significant at both 7040 and
+  8448 (C −1.09/−1.09; D −0.90/−1.13). Seed agreement pending (`C_s1`, `D_s1` queued).
+  **B2 does not** (ns at both).
+- By the letter of the winner rule (forgets less AND `d_X` never significantly
+  positive), **C and D qualify as ABSORPTION WINNERS pending seed agreement** — but
+  see the exchange-rate analysis below before that is believed.
+
+### RESULT 5 — ⚑⚑ EVERY LEVER CHANGES THE **RATE**, NONE CHANGES THE **EXCHANGE RATE**
+
+**This diagnostic is POST-HOC and is not a verdict.** The pre-registered rule compares
+at matched STEPS, which is the right question for a fixed compute budget and is
+answered above. It is the wrong question for "does this lever change the trade-off",
+because an arm at 1/3 the LR is simply further back along the trajectory. Comparing at
+matched IN-WINDOW PROGRESS (each arm at its final `inw`, with A linearly interpolated
+to the same `inw`) asks that question instead:
+
+| arm | its `inw` | its `oow` | A at same `inw` | **d_oow** | its `era` | A at same `inw` | **d_era** |
+|---|---|---|---|---|---|---|---|
+| B2 | 30.16 | 36.60 | 36.91 | **−0.313** | 33.35 | 33.40 | −0.042 |
+| C | 33.52 | 36.13 | 36.01 | **+0.120** | 32.30 | 32.65 | −0.345 |
+| D | 33.59 | 36.17 | 36.03 | **+0.142** | 32.27 | 32.65 | −0.381 |
+
+**The entire same-era out-of-window "win" for C and D is an artefact of having trained
+less.** At matched learning both are slightly WORSE than A out-of-window, and the
+forgetting advantage shrinks from ~1.1 cp to ~0.35-0.38 cp.
+
+The exchange rate makes it plainest — cp moved per cp of in-window gain, each arm at
+its own final step:
+
+| arm | in-window gain | `oow` per cp learned | `era` per cp learned |
+|---|---|---|---|
+| A | 10.320 | +0.112 | **+0.232** |
+| B2 | 7.630 | +0.077 | **+0.266** |
+| C | 4.268 | +0.027 | **+0.230** |
+| D | 4.195 | +0.039 | **+0.225** |
+
+**The forgetting exchange rate is INVARIANT at ~0.23-0.27 across every optimizer lever
+tested** — clip regime swept 0% to 100% hard-clip, weight decay 10x, label smoothing
+0.05, learning rate 1/3. And the out-of-window term is **positive for every arm**: on
+this data, every cp the net takes from the teacher in-window costs it out-of-window.
+
+The trajectories say the same thing directly. Every arm's `oow` reaches its minimum
+early and then degrades — A bottoms at 35.84 (step 4224), C at 35.55 (2816), D at
+35.61 (2816), all landing within ~0.3 cp of the same floor before turning. **There is
+one trade-off curve here and the levers only change how fast a run travels along it.**
+
+### RESULT 4 — ⚑⚑ ARM C ≡ ARM D: THE REGULARISATION FAMILY IS DOWN
+
+C = D + 10x weight decay + label smoothing 0.05. At 8448 they agree on every ruler:
+
+| | `oow` | `inw` | `era` |
+|---|---|---|---|
+| C | 36.126 | 33.520 | 32.304 |
+| D | 36.172 | 33.592 | 32.266 |
+| C − D | −0.046 | −0.072 | +0.038 |
+
+All three differences are inside the ±0.15 cp resolution this rig demonstrated on the
+A-vs-B null. **Weight decay at 1e-3 on the 44.7M-param AdamW group and label smoothing
+at 0.05 contribute NOTHING measurable; arm C is entirely explained by its LR cut.**
+Both were verified in effect first (wd reaching `param_groups`, target entropy
+0.643 -> 0.910 on 45,312/45,312 rows), so this is a real null, not an unwired knob —
+exactly the isolation the compound arm was built to permit, obtained without needing
+the follow-up arms.
+
+
+### RESULT 6 — negative control (interim, run in progress)
+`SHUF_s0` = arm A with every policy-shaped target permuted across train rows. At
+step 1408 it stands at `oow` **226.47**, `inw` **228.83**, `era` **226.41** cp
+(held-out CE +153.4), against a teacher of 26.35 cp and a boot512 init of 36.01 cp.
+Out-of-window regret did not improve; it is ~6x worse than the init and ~8.6x the
+teacher. The pre-committed pass condition ("`mean[top1_oow(final) − top1_oow(step0)]`
+is NOT significantly negative") is already satisfied by an enormous margin.
+**CONTROL PASSES.** Final CI in the follow-up entry.
+
+Incidental, and it corroborates RESULT 2 from the other direction: the shuffled run
+hard-clips **100%** of steps at the same `zclip_max_norm` 6.5 where arm A clips 0%.
+The cap binds only when the gradient is garbage — further evidence that the
+live 100%-hard-clip regime is a symptom to be explained, not a knob to be tuned.
+
+---
+
+## WHAT THIS MEANS FOR THE RESTART
+
+**No lever tested converts teacher signal into out-of-window gain.** The measured
+picture is one trade-off curve, travelled at different speeds:
+
+- The wedge is real, reproduces, and at full budget is NEGATIVE-sum: 10.32 cp of
+  in-window gain buys 1.15 cp of out-of-window LOSS (RESULT 1).
+- Direction-only descent is REFUTED as the cause: sweeping hard-clip 0% -> 100% moves
+  out-of-window regret ≤0.34 cp against an 8.46 cp wedge (RESULT 2).
+- Weight decay 10x and label smoothing 0.05 do NOTHING, verified in effect (RESULT 4).
+- Lower LR changes the RATE, not the exchange rate. Forgetting costs
+  **~0.23-0.27 cp of old-era competence per cp of in-window gain in EVERY arm**
+  (RESULT 5), and at matched learning the LR arms are slightly WORSE out-of-window.
+
+**Actionable now, independent of the pending runs:** every arm's held-out optimum
+arrives early and is then spent. Arm A's held-out CE bottoms at **step 5,632 of
+12,320** and its `oow` regret bottoms at **step 4,224**, after which both degrade
+monotonically while train loss keeps falling. On this data the useful step budget is
+roughly **HALF** what was run. `train_views_per_position` is the live knob that sets
+this, and the pre-registered 5.0 -> 4.3 change already in the ledger moves in the
+right direction but is probably not far enough.
+
+**Where to look next, on this evidence:** not the optimizer. The remaining untested
+axis is the DATA one — what the sampler shows the net (`G`, running) and whether
+rehearsal of old-era rows breaks the exchange rate (`F`, specified, unrun). The
+exchange-rate invariance across four optimizer regimes is the strongest argument yet
+that #108 is a data-distribution problem, not a training-hyperparameter problem.
