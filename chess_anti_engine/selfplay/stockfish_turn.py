@@ -52,13 +52,53 @@ _SF_LABEL_REPORT_EVERY = 4096
 
 # THE detector. Fraction of labelled rows on which not ONE of Stockfish's
 # MultiPV moves was legal at the position we queried, i.e. the stored
-# `sf_multipv_raw` came out empty. Measured over the four known episodes
-# (2026-07-30/31) against 721 clean shards / 1,280,663 labelled rows:
+# `sf_multipv_raw` came out empty. Calibrated against the four episodes visible
+# in the then-live window (2026-07-30/31), 721 shards / 1,280,663 labelled rows:
 #
-#     no-PV rate   clean 0.0008 | ep1 0.1241  ep2 0.3275  ep3 0.2541  ep4 0.5684
+#     no-PV rate   "clean" 0.0008 | ep1 0.1241  ep2 0.3275  ep3 0.2541  ep4 0.5684
 #
-# A ~100x separation, and one desynced engine out of `distributed_worker_sf_workers`
-# (8 live) still lands near 0.074 — a 90x margin on a 0.01 threshold.
+# One desynced engine out of `distributed_worker_sf_workers` (8 live) lands near
+# 0.074, i.e. a **7.4x** margin over the 0.01 threshold, and the episodes above
+# clear it by 12-57x.
+#
+# ⚑ The "~100x separation / 90x margin" this comment used to claim were both
+# computed against the 0.0008 "clean" figure that correction 2 below repudiates
+# (0.074 / 0.0008 ~= 92). Deleting the baseline while keeping the margins derived
+# from it would leave a calibration comment stating two mutually inconsistent
+# numbers, with the wrong one read first. Against the TRUE floor of exactly
+# 0.000000 no ratio is defined at all, which is why the margin is now quoted
+# against the threshold rather than against the baseline.
+#
+# ⚑ TWO CORRECTIONS to the calibration above (2026-08-01). Neither changes the
+# threshold; both change what a reading MEANS.
+#
+# 1. "the four known episodes" was the visible window, not the history. The bug
+#    (`uci.py` whole-search deadline, fixed in PR #297) dates to at least 07-05:
+#    across 6,535 unique historical shards / 11,052,418 labelled rows, 07-05
+#    reads 0.084, 07-13 0.153, 07-14 0.120. 07-30/31 was at least the THIRD
+#    occurrence. Aggregate contamination over retained history is 1.76%.
+#
+# 2. "clean 0.0008" is NOT the structural floor — that baseline was itself
+#    measured on shards carrying residual contamination. The structural rate is
+#    EXACTLY 0.000000: 90.48% of all historical shards, and 641 of the 713
+#    shards in the post-quarantine window, read exactly zero. Never treat a
+#    small non-zero reading as "the normal background".
+#
+# ⚑⚑ WHAT THIS THRESHOLD CANNOT SEE, BY CONSTRUCTION. 0.01 is a *desynced
+# engine* detector, not a contamination detector. The 2026-08-01 quarantine used
+# the same 0.01 bar and, having removed 122 shards, left 72 shards holding 252
+# no-PV rows — every one of them below the bar. Those 72 are burst EDGES, not a
+# floor: median distance to the nearest quarantined shard is 14 ids against 43.5
+# +/- 6.6 for a uniform draw of the same 72 over the same range (p < 1e-3, 2000
+# draws), and 55 of them sit in two runs butting against quarantined blocks.
+#
+# DECISION (not deferred): the threshold STAYS at 0.01. Tightening it to ~0.002
+# would catch those edges, but they are 252 rows in 1,264,058 — 0.02% of the
+# window, orders of magnitude below anything that moves a training target — while
+# the failure this detector exists for (k=1 desynced engine, 0.074) clears either
+# bar by 7-37x. Buying a 0.02% cleanup with a 5x cut in alarm margin is a bad
+# trade. The blind spot is documented instead: a PASS here means "no engine is
+# detached", and must never be read as "this data is uncontaminated".
 _SF_NO_LEGAL_PV_WARN_RATE = 0.01
 
 # NOT the trigger, reported for context only. `bestmove_illegal` is floored by
