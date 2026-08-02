@@ -24422,3 +24422,214 @@ problem the policy head does not. Cost ≈ 4 GPU-minutes per arm on the existing
 - Value forwards ran at batch **256**, policy forwards at batch **128**. No contrast
   differences raw forwards across the two, and the value-side batch effect on mean E2 is
   ≤0.011 cp-eq, but the two sweeps are not byte-identical instruments.
+
+## ⚑⚑ VERDICT 2026-08-02 — VALUE GLOBAL-vs-WINDOW SPLIT: **VALUE'S "GLOBAL" TERM IS NOT GLOBAL. IT IS ~51% OF THE POST-EXIT RATE (vs policy's 69%) BUT IT VANISHES ON MATERIAL NO NET EVER TRAINED ON AND ON THE OLDEST PREVIOUSLY-TRAINED MATERIAL — WHICH IS THE OPPOSITE OF THE POLICY RESULT.** `rho(N4_jul25)` = **+1.1e-6 E2/iter [−0.7e-6, +2.8e-6] ns** and `rho(N3_jul02)` = −0.3e-6 [−2.0e-6, +1.3e-6] ns, while `rho(N1_jul06)` = `rho(N2_jul04)` = **+5.5e-6 SIG**; the contrast recent(N1,N2) − (N3,N4) is **+5.1e-6 [+3.5e-6, +6.7e-6] SIG**. Policy on the SAME rows with the SAME code has all four SIG > 0 and recent − old **ns** (+0.00203 [−0.00059, +0.00463]). ⚠ Pre-registered verdict is **CANNOT RESOLVE twice over** — the NC-P gate failed and the two co-primaries landed either side of a band edge at 0.50 (g = 0.494 full-grid vs 0.509 span-matched, CIs [0.34, 0.68] and [0.40, 0.65]). The gate failure was a **ply-parity confound in my own control**, diagnosed mechanistically and repaired; the repaired gate passes **9/9 sets × 3 conditions**.
+
+Rig: `scratchpad/value_forget_20260802/` (`PREREG_N.md`, `build_value_sets_n.py`,
+`analyse_n.py`, `followups_n.py`, `results_n.json`, `followups_n.json`, `dumps_n/`).
+Completes the value picture begun at "VALUE FORGETTING CURVE" (this file). Rows and grid
+are the policy decomposition's ("THE 'UNEXPLAINED' GLOBAL TERM IS REAL", this file), so
+every head-to-head below is on identical rows over identical spans.
+
+### THE ROWS ARE THE POLICY N-RIG'S ROWS, AND THE JOIN IS PROVEN TWICE
+
+`neverseen_20260802/sets/N{1..4}*.npz` reused unchanged. Value fields re-extracted with
+the same contract as the S-sets: candidate accepted only on a **bit-identical `x`**
+(uint16 compare), strictly-increasing source-row tie-break, injectivity asserted per
+shard. The independent confirmation is **stronger here** — the N sets banked the FULL
+`policy_target` vector, so the check is a bit-for-bit compare of 1,858 float16 values
+per row on a field never used to make the join.
+
+**40,000 / 40,000 bit-exact on `x`; 40,000 / 40,000 bit-exact on `policy_target`; 0
+ambiguous `(shard, game, ply)` keys; injective on every shard.** All four sets 100%
+`is_network_turn`, 100% `is_selfplay`, 100% `has_search_wdl`, ≥99.79% `has_sf_wdl`.
+
+### THE SPLIT
+
+Per-row OLS slope of `E2` on grid iteration, G12, game-clustered bootstrap, seed 0.
+Units **E2 per iteration**; positive = worse.
+
+| quantity | value (E2/iter) | policy (cp/iter, same code, same rows) |
+|---|---|---|
+| `rho_post_pool` span-matched | **+5.9e-6** [+4.9e-6, +7.0e-6] | +0.01153 [+0.00968, +0.01338] |
+| `rho_never_pool` span-matched | **+3.0e-6** [+2.5e-6, +3.5e-6] | +0.00795 [+0.00700, +0.00890] |
+| `never − post` | **−2.9e-6** [−4.0e-6, −1.7e-6] **SIG** | −0.00358 SIG |
+| **global share `g`** | **0.509** [0.399, 0.652] | **0.689** |
+| full-grid `g` (co-primary) | 0.494 [0.342, 0.679] | 0.689 |
+
+**HEAD-TO-HEAD: `g_val − g_pol` = −0.180 [−0.371, +0.005] — ns, borderline.** On the
+pooled ratio alone the two heads are not distinguishable, with value pointing lower.
+`rho_post` reproduces the hinge run's two-point rates (7.8/4.8/3.7/7.4e-6 vs
+`D_post/(478−c_pre)` = 8.7/5.4/4.2/7.9e-6, OLS slightly lower as expected from curvature).
+
+### ⚑⚑ BUT THE POOLED RATIO HIDES THE ACTUAL RESULT — PER SET, VALUE AND POLICY DIVERGE
+
+| set | written | trained by 13a9f's ancestry? | **value `rho_never`** | **policy `rho_never`** |
+|---|---|---|---|---|
+| `N1_jul06` | 07-06 | yes, most recently | **+5.5e-6** [+3.9e-6, +7.1e-6] **SIG** | +0.01003 [+0.00750, +0.01255] SIG |
+| `N2_jul04` | 07-04 | yes | **+5.5e-6** [+3.9e-6, +7.1e-6] **SIG** | +0.01002 [+0.00746, +0.01265] SIG |
+| `N3_jul02` | 07-02 | yes, longest ago | **−0.3e-6** [−2.0e-6, +1.3e-6] **ns** | +0.00647 [+0.00406, +0.00886] SIG |
+| `N4_jul25` | 07-24/25 | **NO — no net in this lineage ever trained on it** | **+1.1e-6** [−0.7e-6, +2.8e-6] **ns** | +0.00952 [+0.00655, +0.01247] SIG |
+
+The nulls are backed by contrasts, not by absence of evidence:
+
+| contrast (value, full G12) | | |
+|---|---|---|
+| N1 − N3 | +5.8e-6 [+3.5e-6, +8.1e-6] | **SIG** |
+| N1 − N4 | +4.4e-6 [+2.1e-6, +6.8e-6] | **SIG** |
+| N2 − N3 | +5.8e-6 [+3.5e-6, +8.1e-6] | **SIG** |
+| N2 − N4 | +4.4e-6 [+2.0e-6, +6.8e-6] | **SIG** |
+| N1 − N2 | −0.0e-6 [−2.3e-6, +2.3e-6] | ns |
+| N3 − N4 | −1.4e-6 [−3.8e-6, +1.0e-6] | ns |
+| **recent(N1,N2) − (N3,N4)** | **+5.1e-6 [+3.5e-6, +6.7e-6]** | **SIG** |
+| **policy, same contrast** | **+0.00203 [−0.00059, +0.00463]** | **ns** |
+
+`rho(N4) − rho_post_pool` = −4.9e-6 [−6.9e-6, −2.8e-6] **SIG** — for value, never-trained
+material decays significantly SLOWER than exited material. Policy's was −0.00201
+[−0.00551, +0.00147] **ns**, i.e. indistinguishable.
+
+**This is the exact number that killed H1 on the policy side, and for value it goes the
+other way.** Policy degrades material no net ever trained on, at an undiminishing rate —
+that is loss of generalisation. The value head does not: its decay is confined to
+material the ancestry trained on **recently**, is absent on material it trained on
+**longest ago**, and is absent on material **nobody trained on**. That is the age-ordered
+signature of shedding what was memorised — the "unified forgetting" account that the
+policy data refuted survives for value.
+
+Secondary D agrees, on a metric no calibration can touch: the concordance slope over G12
+is **SIG negative on N1 (−1.62e-5/iter) and N2 (−1.43e-5)** and **ns on N3 (−0.07e-5) and
+N4 (−0.17e-5)**; `C(N4)` literally does not move (0.8406 → 0.8411 over 477 iterations).
+
+### THE ONE PLACE NEVER-TRAINED MATERIAL *DOES* MOVE — AND IT IS SCALE, NOT RANKING
+
+NC-D (pre-declared as a decomposition, never as a gate) splits each slope via
+`E[(S−y)²] = E[(S−ȳ)²] + Var(y) − 2Cov(S,y)`:
+
+| set | `rho` | = sharpness term | + tracking term (`−2 dCov/dt`) |
+|---|---|---|---|
+| N1 | +5.46e-6 | −1.37e-6 ns | **+6.84e-6** [+4.26e-6, +9.42e-6] SIG |
+| N2 | +5.47e-6 | −4.34e-6 SIG | **+9.81e-6** [+7.30e-6, +1.23e-5] SIG |
+| N3 | −0.31e-6 | −3.40e-6 SIG | **+3.09e-6** [+0.52e-6, +5.73e-6] SIG |
+| N4 | +1.07e-6 | −5.01e-6 SIG | **+6.08e-6** [+3.37e-6, +8.87e-6] SIG |
+
+So on N3/N4 the flat `E2` is a **cancellation, not an absence**: `Cov(S, outcome)` does
+fall, and it is offset by the head's output dispersion falling too. Read together with
+concordance being **flat** on those sets, the mechanism is unambiguous — on never-trained
+material the value head is **shrinking toward its own mean (hedging harder) without
+losing any rank ordering**. That is a scale/calibration drift, and it is exactly the kind
+of thing E2 is designed not to be fooled by in the other direction. It is NOT the ranking
+loss seen on N1/N2 and on all four exiting sets. ⚑ Note this is the opposite sign to the
+policy head, which becomes **more confidently wrong** (entropy −0.068…−0.087 nats while
+ranking degrades).
+
+### CURVATURE — no deceleration anywhere on the N sets, and the hinge is visible on the S sets
+
+Early [0,218] vs late [218,477], value:
+
+| set | early | late | early − late |
+|---|---|---|---|
+| N1 | +6.5e-6 | +5.8e-6 | +0.7e-6 ns |
+| N2 | +5.7e-6 | +4.9e-6 | +0.8e-6 ns |
+| N3 | −0.7e-6 | −0.8e-6 | +0.1e-6 ns |
+| **N4** | −1.6e-6 | +1.2e-6 | −2.8e-6 ns |
+| S2 | **−4.1e-6** | +3.1e-6 | −7.2e-6 **SIG** |
+| S3 | **−14.1e-6** | +2.1e-6 | −16.2e-6 **SIG** |
+| S4 | **−16.4e-6** | +7.4e-6 | −23.8e-6 **SIG** |
+
+Value shows **no significant curvature on any N set** — unlike policy, where N1
+decelerated 2.2× (0.01252 → 0.00564) while N4 stayed flat. The exiting sets show the
+hinge itself as a significant sign change, which is the same object the hinge entry
+already reported, re-derived here by a different estimator.
+
+### CONTROLS
+
+- **GATE NC-P as pre-registered — FAILED, and the failure was in my control, not the
+  instrument.** Whole-game block permutation put `C_perm` at **0.4844 [0.4749, 0.4947]**
+  on N4, CI below 0.5. **Diagnosed, not excused**: `wdl_target` is STM-POV, so it carries
+  a strong ply-parity signal (mean truth even-ply − odd-ply = **+0.062 … +0.126** across
+  the eight sets) and the value head's `S` tracks it (**+0.079 … +0.109**). Permuting
+  whole games by REORDERING blocks of unequal length re-aligns each row against a label
+  of the wrong parity — the block-permuted parity contrast collapses to ≈0 and on N4
+  **reverses to −0.0184**, the largest reversal of the eight and the only set that
+  failed. The control was manufacturing anti-correlation.
+- **NC-P REPAIRED — PASS 9/9 sets × 3 conditions.** Row-level label shuffle (the clean
+  null for a rank statistic; within-game correlation still enters every CI through the
+  game-clustered bootstrap). `C_perm` at boot512 **0.4951–0.5052**, at iter477
+  **0.4950–0.5069**, and the `C_perm` slope CI contains 0 on every set. Applied to the
+  four N sets AND re-applied to the four S sets of the hinge entry, whose NC-V4 had used
+  the same block scheme — it passes there too, so no banked verdict changes.
+- **NC-P variant, reported not gating**: a length-matched whole-game permutation (games
+  swapped only with games of identical length, so clustering AND parity are preserved)
+  reads C = 0.4992–0.5142. It retains a small REAL positional signal by construction, so
+  its own null is not exactly 0.5 and it cannot be a gate; it is reported because it
+  brackets the two failure modes from the other side.
+- **NC-D is not a gate**, and was pre-declared non-zero (`E[(S−y')²] = Var(y) +
+  E[(S−ȳ)²]`), which is why it is used as the decomposition above and not as a control.
+  The shuffled-net bar is not used at all — it already failed me once for a reason that
+  had nothing to do with the ruler.
+
+### WHAT THE VALUE PICTURE NOW IS, END TO END
+
+1. **Shape** — value hinges at window exit on 4/4 exiting sets, control mirrors, minima
+   order by exit date. Same treadmill as policy.
+2. **Amplitude** — value's post-exit decay is **0.669× [0.536, 0.841]** policy's on
+   identical rows.
+3. **Composition** — value's post-exit decay is ~**51% [40%, 65%]** "not attributable to
+   13a9f's own window" and ~49% window-exit increment, versus policy's 69/31. On the
+   pooled ratio the heads are not significantly different. **But the composition of that
+   half differs qualitatively**: policy's is a true global term that hits never-trained
+   material at full rate, while value's is entirely ancestor-era forgetting that decays
+   to zero with age and is absent on never-trained material.
+
+**Consequence for the remedy discussion.** The two heads do not need the same fix.
+Policy has a generalisation-loss term that rehearsal cannot touch (the policy entry
+already priced rehearsal at ≈31% of its post-exit rate). Value has **no measurable
+generalisation-loss term** — every cp of its decay is attached to material that was in
+some window, so for the value head the addressable fraction is the whole of it. And the
+one thing value does do on never-trained material — shrink toward its mean without
+losing rank — is a scale drift, not a strength loss, and is the one place a calibration
+or temperature intervention would actually be on-target (it is off-target everywhere
+else, per the hinge entry's ranking-not-calibration split).
+
+⚠ This does NOT say value is fine. Value's absolute post-exit decay is real, significant
+on all four exiting sets, and 0.669× policy's. It says value's decay has a **different
+and more tractable cause**.
+
+### VERIFIED (artifact for each)
+
+- Join: 40,000/40,000 bit-exact `x`; 40,000/40,000 bit-exact full `policy_target`;
+  injective per shard; 0 ambiguous keys. `sets/summary_n.json`.
+- 63,084,128 unique-storage params asserted on load for all 15 arms; head-output branch
+  recorded in `dumps_n/meta.json`; batch pinned 256.
+- Repaired gate 9 sets × 3 conditions, all pass. Parity diagnosis reported per set.
+- `rho_post` reproduces the hinge entry's independent two-point rates on all four sets.
+- Policy slopes recomputed **with this code on these rows** and reproduce the banked
+  policy entry (span-matched `rho_never` +0.00795 [+0.00700,+0.00890] vs banked
+  +0.00795 [+0.00698,+0.00890]; `rho_post` +0.01153 vs +0.01153).
+
+### ASSUMED / NOT ESTABLISHED
+
+- **Pre-registered verdict is CANNOT RESOLVE, for two reasons**: the NC-P gate failed,
+  and the two co-primaries straddled a band edge I placed at exactly 0.50 (0.494 vs
+  0.509 — a knife-edge, with the two CIs [0.34,0.68] and [0.40,0.65] almost identical).
+  Everything above the "CONTROLS" section is therefore a post-hoc adjudication, stated as
+  such. The band edge was badly placed; the substantive quantity is `g_val = 0.51`
+  [0.40, 0.65] against policy's 0.689, ns in the head-to-head.
+- **The headline per-set result rests on two NULLS (N3, N4)**, which is why the contrasts
+  are given: N1/N2 − N3/N4 is SIG, so the claim is a measured difference, not an absence
+  of evidence. It remains true that a small non-zero `rho(N4)` cannot be excluded — the
+  CI admits up to +2.8e-6, i.e. up to ~47% of N1's rate.
+- **Selfplay rows only**, both families, inherited. Curriculum rows unmeasured everywhere
+  in this line of work.
+- **"Global" means "not attributable to 13a9f's own window"** — N1–N3 were trained on by
+  the ancestry, N4 by neither. Same meaning as the policy entry.
+- Value forwards at batch **256**, policy N-forwards at batch **128**. No statistic
+  differences a raw forward across the two; the value-side batch effect on mean E2 is
+  ≤0.011 cp-eq.
+- **Cross-set ABSOLUTE levels are not comparable** (different generating nets, PID
+  difficulty, opening composition; N4 is another lineage's stronger nets). All claims are
+  WITHIN a set ACROSS checkpoints; the verdict compares SLOPES for exactly that reason.
+- **No arena, no Elo, no intervention.** A rate difference is not a mechanism, and the
+  scale-drift reading of N3/N4 is an inference from three agreeing statistics (flat E2,
+  flat concordance, negative sharpness term), not an intervention.
+- The 12-point grid is coarse; "early vs late" is not a fitted shape.
