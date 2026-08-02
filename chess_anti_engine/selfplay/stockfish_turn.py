@@ -57,8 +57,17 @@ _SF_LABEL_REPORT_EVERY = 4096
 #
 #     no-PV rate   "clean" 0.0008 | ep1 0.1241  ep2 0.3275  ep3 0.2541  ep4 0.5684
 #
-# A ~100x separation, and one desynced engine out of `distributed_worker_sf_workers`
-# (8 live) still lands near 0.074 — a 90x margin on a 0.01 threshold.
+# One desynced engine out of `distributed_worker_sf_workers` (8 live) lands near
+# 0.074, i.e. a **7.4x** margin over the 0.01 threshold, and the episodes above
+# clear it by 12-57x.
+#
+# ⚑ The "~100x separation / 90x margin" this comment used to claim were both
+# computed against the 0.0008 "clean" figure that correction 2 below repudiates
+# (0.074 / 0.0008 ~= 92). Deleting the baseline while keeping the margins derived
+# from it would leave a calibration comment stating two mutually inconsistent
+# numbers, with the wrong one read first. Against the TRUE floor of exactly
+# 0.000000 no ratio is defined at all, which is why the margin is now quoted
+# against the threshold rather than against the baseline.
 #
 # ⚑ TWO CORRECTIONS to the calibration above (2026-08-01). Neither changes the
 # threshold; both change what a reading MEANS.
