@@ -23069,3 +23069,244 @@ the −48.6 Elo is a **play-shape** number, and this repo has one recorded insta
 training-shape replication is the single highest-value follow-up to this entry,
 it needs ~50 minutes of *uncontended* GPU, and `launch_training.sh` in the banked
 directory will run it as-is.
+
+## ⚑⚑ VERDICT 2026-08-02 — TRAINING-DATA GEOMETRY: **THE DISTRIBUTION DID NOT NARROW, AND `diff_focus` IS NOT AN ANTI-REHEARSAL FILTER.** Both limbs of the "degenerate drift + anti-rehearsal sampling" hypothesis are REFUTED on measurement. The one real narrowing is TEMPORAL: the window's span fell 4.35 d → 1.50 d, and the shuffle pool draws shards with a weight LINEAR IN RECENCY (newest shard 712× the oldest), so the recency-weighted mean age of a training row fell ~1.45 d → ~0.50 d. Separately, task #124 is an INSTRUMENT BUG: the 96% `end` bucket is a stale `moves_left` threshold, not endgame skew — under the codebase's OWN piece-count phase definition the live window is 30.7% opening / 32.4% mid / 36.9% end.
+
+Read-only analysis, CPU-only, no production code touched. Drivers banked at
+`scratchpad/geom_20260802/` (`geom_scan.py`, `geom_analyze.py`, `geom_sampler.py`)
+with the four per-row feature tables they produced.
+
+### Snapshots measured (four eras, all full windows except `jun`)
+
+| era | shard dir | span | rows |
+|---|---|---|---|
+| `jun` | `runs/pbt2_small/replay/train_trial_7cc7c_.../replay_shards` (150-shard stride subsample) | 06-07 → 06-17 | 291,575 |
+| `boot` | `data/salvage/swap_512x16_20260711/seeds/slot_000/replay_shards` (815 shards) | 07-06 → 07-11 | 1,497,712 |
+| `mid` | `data/salvage/pre_sf_reallocation_ck148_20260722/seeds/slot_000/replay_shards` (777) | 07-19 → 07-22 | 1,498,747 |
+| `live` | `runs/pbt2_small/replay/train_trial_13a9f_.../replay_shards` (712) | 07-30 → 07-31 | 1,273,501 |
+
+### 1 — ERA COMPOSITION: NO NARROWING, NO ENDGAME-WARD DRIFT
+
+| | jun | boot | mid | live |
+|---|---|---|---|---|
+| piece count, mean | 17.96 | 17.84 | 17.37 | 17.68 |
+| game length, median plies | 126 | 123 | 126 | 123 |
+| `ply_index` median | — | 66 | 68 | 65 |
+| distinct positions / rows | — | 0.9724 | 0.9881 | **0.9948** |
+| distinct material signatures | — | 48,370 | 50,771 | 44,473 |
+| rows per distinct game | — | 20.84 | 15.18 | 17.86 |
+| selfplay fraction | 0.539 | 0.921 | 0.525 | 0.681 |
+| W / D / L | — | .370/.254/.377 | .301/.340/.359 | .307/.359/.333 |
+| **window SPAN** | — | **4.35 d** | **3.09 d** | **1.50 d** |
+
+Jensen–Shannon divergence, boot → live: `ply_index` **0.00006**, game length
+**0.00087**, piece count **0.00027**, `moves_left` **0.00010** nats. **Reference
+scale, same window, same estimator: JS(piece count | selfplay vs curriculum rows)
+= 0.00098 and JS(ply | selfplay vs curriculum) = 0.00124 nats** — i.e. the entire
+boot→live compositional change is **3–4× SMALLER than a routine within-window
+contrast**. Position diversity went UP (97.2% → 99.5% of rows are distinct
+positions). `mid` is the outlier on every axis, and that tracks its 47.5%
+curriculum fraction, not a lineage trend.
+
+**What DID change:** the selfplay/curriculum mix (0.92 → 0.52 → 0.68), the draw
+rate (+10.6 pp boot→live), and the window's TIME span (4.35 → 1.50 days at a
+fixed 1.5M-row cap, i.e. throughput rose). **Position-space geometry: unchanged.**
+
+### 2 — TASK #124 VERDICT: **INSTRUMENT BUG.** The predicate is not a phase test.
+
+- Predicate: `chess_anti_engine/train/losses.py:213-232` `_phase_split_masks`,
+  thresholds at `losses.py:23-24` (`_PHASE_OPEN_THRESHOLD = 0.45`,
+  `_PHASE_END_THRESHOLD = 0.31`), applied to `moves_left`.
+- `moves_left` is built at `chess_anti_engine/selfplay/finalize.py:924-927`:
+  `(total_plies_played − ply_index) / max_plies` with **`max_plies: 450`**
+  (`configs/pbt2_small.yaml:196`). It is **plies-REMAINING-in-this-game / 450**.
+  It is NOT a board-phase measure and there is no piece-count cut anywhere in it.
+  A row at ply 2 of a 60-ply adjudicated game scores 0.129 and is labelled `end`.
+- Measured live: **open 0.60% / mid 3.03% / end 96.37%.** The value analysis's
+  149,463 of 155,257 (96.27%) reproduces exactly; its *reading* as endgame skew
+  does not survive.
+- **It is not drift.** `end` share: jun 95.86%, boot 96.54%, mid 93.68%, live
+  96.37%. P33/P67 of `moves_left` has been **0.073–0.076 / 0.156–0.160** in all
+  four eras. The 0.45/0.31 cuts sit at **P99.4 / P96.4** today. To restore thirds
+  the thresholds must be ~**0.158 / 0.076** — 2.9× and 4.1× lower. The
+  2026-04-25 recalibration (`0fcf899e4`, claimed 33/34/33) has been wrong for at
+  least the eight weeks of data that still exist on disk.
+- **The window is not endgame-heavy.** Under the codebase's own piece-count phase
+  definition — `PHASE_THRESHOLDS = (13, 22)` at `chess_anti_engine/eval/audit.py:34`,
+  the same one `utils/architecture.py:100` defaults to and the same one the frozen
+  audit set is stratified by — the window is **opening (≥23 pieces) 30.7% / mid
+  32.4% / end (≤13) 36.9%**, and boot was 31.0/33.2/35.8. ~1 pp of endgame-ward
+  movement over the whole lineage.
+- `corr(moves_left, pieces) = 0.554` vs `corr(ply_index, pieces) = −0.851`.
+  `moves_left` is a poor phase proxy even after a retune.
+
+**Fix (for a SEPARATE reviewed PR — not made here):** replace the `moves_left`
+cut in `_phase_split_masks` with the piece-count bucket the rest of the repo
+already uses (`eval/audit.py:39 phase_bucket`, thresholds `(13, 22)`), derived
+from the x planes. That also makes per-phase TRAINING loss directly comparable to
+the audit's per-phase regret, which it currently is not. A pure threshold retune
+(0.45/0.31 → 0.158/0.076) restores thirds but keeps a proxy that measures
+game-length-remaining and will drift again with adjudication.
+
+**Second defect found in the same predicate's inputs, same PR:** the Python
+fallback ply path and the C production path disagree on what `ply_index` means.
+`network_turn.py:558` sets `ply_index = len(board_before.move_stack)` (**relative**
+to the seeded start); the C path sets `ply_out[i] = cb->ply`
+(`chess_anti_engine/mcts/_mcts_tree.c:4734`, **absolute**), and `finalize.py:924`
+divides against `total_plies_played = int(cb.ply)`, which is **absolute**. On the
+fallback path every book/seeded game therefore gets `moves_left` inflated by its
+starting ply (+16/450 for the standard 8-move book, ~+0.22 for a ply-100
+blind-spot seed). Production runs the C path, so live data is self-consistent —
+but the fallback silently produces a different target.
+
+### 3 — WHAT THE SAMPLER ACTUALLY AMPLIFIES: **±10% on every compositional axis, 18× on AGE**
+
+Production sampling is THREE stages. The hypothesis named only the first.
+
+**(a) selfplay-side `diff_focus` DROP** — `finalize.py:905-908`, keep probability
+`clip(priority × 3.0, 0.025, 1.0)` computed at `network_turn.py:599-604` (C twin
+`_mcts_tree.c`), `priority = |q_delta|·6.0 + KL·3.5`. **The 40× floor exists in
+the formula and applies to almost nothing:** on the live window **1.717% of rows
+have keep_prob < 1 and 0.0102% reach the 0.025 floor**; those floor rows carry
+**0.005% of gradient weight**. Logged production keep_rate is 0.977–0.985. This
+stage is not an anti-rehearsal policy; it is a rounding error.
+
+**(b) the shard draw into the 100k-row hot pool — THE REAL AMPLIFIER.**
+`disk_buffer.py:976-978`: `weights = np.arange(1, n_shards + 1)`, normalized —
+**linear in recency**, 5 shards every 4 batches (`shuffle_buffer_size: 100000`,
+`shuffle_refresh_interval: 4`, `shuffle_refresh_shards: 5`). At 712 shards the
+newest shard is **712× the oldest**. Cumulative shard-draw weight: **oldest 10%
+of the window → 1.01%, oldest 25% → 6.3%, oldest 50% → 25.0%.**
+
+**(c) in-pool 50/50 uniform/priority** — `disk_buffer.py:1302-1356`,
+`surprise_mix` hard-coded 0.5 at `disk_buffer.py:323`, with WDL stratification
+(`draw_cap_frac 0.90`, `wl_max_ratio 1.5`, `disk_buffer.py:1446-1481`).
+
+Realized per-row draw rate (all three stages), live window:
+
+| axis | row share → gradient weight | amplification |
+|---|---|---|
+| ESS | — | **0.582 of N** (0.772 without the recency draw) |
+| phase `open` (moves_left) | .0060 → .0054 | 0.896× |
+| phase `end` (moves_left) | .9637 → .9677 | 1.004× |
+| TRUE phase, open (≥23 pieces) | .3070 → .2746 | 0.894× |
+| TRUE phase, end (≤13 pieces) | .3695 → .3975 | 1.076× |
+| ply < 10 | .0030 → .0020 | 0.664× |
+| ply 10–20 | .0428 → .0313 | 0.731× |
+| ply > 120 | .1136 → .1250 | 1.100× |
+| pieces < 8 | .0668 → .0737 | 1.103× |
+| pieces 28–32 | .1453 → .1213 | 0.834× |
+| selfplay / curriculum | .6806 → .6834 / .3194 → .3166 | 1.004× / 0.991× |
+| W / D / L | — | 0.991× / 1.005× / 1.002× |
+| **age decile 0 (OLDEST)** | .1007 → **.0104** | **0.103×** |
+| **age decile 9 (NEWEST)** | .0996 → **.1884** | **1.891×** |
+
+Priority top-quartile vs bottom-quartile mean weight ratio: **2.95×**, not 40×.
+
+**So production's gradient is NOT concentrated on a narrower compositional slice
+than the window suggests — every compositional amplification is within ±10%, and
+the two that are not (ply<10 at 0.66×, pieces 28-32 at 0.83×) point the same way
+as raw scarcity rather than against it. The concentration is entirely TEMPORAL.**
+
+#### Reconciliation against logged production statistics (the proof this is production's sampler)
+
+| quantity | this reimplementation | logged, `progress.csv` iters 471–478 |
+|---|---|---|
+| `replay_pmass_kl_share` | 0.90436 | 0.90522 – 0.90701 |
+| `replay_pmass_qd_share` | 0.09570 | 0.09306 – 0.09485 |
+| `replay_priority_mean` | 6.8561 | 6.689 – 6.876 |
+| `replay_priority_std` | 7.6731 | 7.438 – 7.689 |
+| `diff_focus_keep_rate` (implied by 1/keep_prob importance weights) | 0.98575 | 0.97732 – 0.98542 |
+| `diff_focus_keep_prob_mean` (implied, pre-filter) | 0.98575 | 0.98354 – 0.98991 |
+| `diff_focus_keep_limited_frac` (implied, pre-filter) | 0.0312 | 0.0218 – 0.0359 |
+| `diff_focus_priority_mean` (implied, pre-filter) | 6.7575 | 6.609 – 6.845 |
+| recency mean percentile | 0.667 by construction | `disk_buffer.py:866` states 0.667; a real logged line reads `mean_recency=0.645` |
+
+Also read off the same logs and worth keeping: **the diff-focus priority is 90.6%
+policy-KL and 9.4% q-surprise** despite `q_weight 6.0 > pol_scale 3.5`, and
+`replay_pmass_fast_share` / `gap_share` are exactly 0 (no fast rows,
+`sf_gap_priority_weight: 0`). `priority` is **negative on 0.010% of rows**
+(min −1.27) — mathematically impossible for a KL between two normalized
+distributions, so something in the C priority path is producing a non-normalized
+`imp`; sampling clamps it to 0 (`disk_buffer.py:1315`) so it is harmless today,
+but it is an unexplained value.
+
+### 4 — STARVED-vs-DEGRADED CORRESPONDENCE: **NO MATCH on the audit's own definition**
+
+The frozen audit set's `opening` bucket is a **piece-count** bucket —
+`scripts/build_audit_set.py:114` → `eval/audit.py:39`, thresholds `(13, 22)` —
+and the set is stratified **1333 / 1335 / 1332** across the three. Under that
+same definition the live window is **30.7 / 32.4 / 36.9%** of rows receiving
+**27.5 / 32.8 / 39.8%** of gradient weight. **The audit-opening bucket runs at
+0.894×.** A 12% shortfall is not a mechanism for −48.6 Elo, and the correspondence
+the task asked about is **not present**.
+
+The correspondence DOES exist under a *different* definition of "opening" — early
+**plies**, which is not what the audit measures:
+
+- **Plies 0–3 are literally absent from training: zero rows, in every era.**
+- Plies 4–15 are **0.60% of rows and 0.42% of gradient weight**.
+- Cause, and it is a design constant rather than drift: `opening_book_max_plies_2:
+  16` with `opening_book_mix_prob_2: 0.95` (`configs/pbt2_small.yaml:231-234`) —
+  95% of games are seeded at ply 16 from the 8-move UHO book and 5% at ply 4, so
+  the net never emits a policy target inside the book prefix. The ply histogram
+  shows it exactly: ~640 rows/ply for plies 4–15, then a 20× step to ~12,700
+  rows/ply at ply 16.
+- Identical in every era (0.606% / 0.610% / 0.596% of rows at ply<16 for
+  boot/mid/live), so **it cannot explain a CHANGE over the lineage.**
+
+### What this changes about the working hypothesis
+
+The "~1.3-day moving spotlight + structural anti-rehearsal sampling" framing
+survives only in its **temporal** half, and that half is now quantified rather
+than assumed: the effective rehearsal horizon is **not** the 1.5M-row window. With
+the linear-recency shard draw the recency-weighted mean age of a sampled row is
+**one third of the window's span**, and the span itself fell from 4.35 d (boot) to
+1.50 d (live) as throughput rose — so the mean age of a training row fell from
+**~1.45 d to ~0.50 d** over the lineage, at constant nominal window size. **A
+window measured in ROWS silently shrank in MODEL GENERATIONS.** The compositional
+half of the hypothesis is dead: the data the net trains on looks the same today as
+it did at boot512, only younger.
+
+**The single highest-value follow-up this suggests** is an intervention on the
+recency draw (`disk_buffer.py:976-978` — uniform vs linear vs a tunable exponent)
+rather than on `diff_focus`, which is doing almost nothing. That is a
+one-line-shaped change with a real effect size, and it is *construction-time
+only* (see the `shuffle_*` warning at `configs/pbt2_small.yaml:930-933`) so it
+needs a restart, not a live edit.
+
+### Verified
+
+- Every era-composition number above, from the shard arrays themselves (4 eras,
+  4.56M rows total scanned; piece counts from x planes 0–11, the LC0
+  current-position piece planes).
+- The phase predicate, its thresholds, its input's construction, and its
+  `max_plies` divisor — read from source and confirmed against the measured
+  `moves_left` distribution in four eras.
+- The three sampler stages, read from source, and the composite reproduction
+  reconciled against **nine** independently logged production statistics (table
+  above), all matching.
+- The audit set's phase definition and its 1/3-per-bucket stratification, counted
+  from `data/audit_set_v1.jsonl` directly.
+- The ply-16 book step, from the ply histogram and the two book keys in the yaml.
+
+### Assumed / not established
+
+- **`shard_order` = chronological age.** Taken from the sorted shard filename
+  index and confirmed against file mtimes, but the buffer's own `_shard_paths`
+  deque order was not read back from a live process.
+- **The pool-draw model is a steady-state approximation.** It treats a row's
+  expected draw rate as (per-shard recency weight) × (in-pool rate) and ignores
+  FIFO residence variation across shards of different row counts (live shards
+  range 155–2000 rows). Direction of the error is unknown; magnitude is bounded by
+  the shard-size spread and cannot move the 18× age ratio.
+- **`boot`'s opening-source and seed-id columns do not exist in that era's shard
+  schema.** My first pass reported "boot = 100% start-position, 1 distinct seed"
+  — that was my scanner defaulting absent fields to zero, and it is WRONG. The
+  boot bundle simply predates `opening_source_code` / `seed_id`.
+  Live is 98.0% book / 1.1% fenlist / 0.8% sf_refute with 399 distinct seed ids;
+  mid is 30.1% start / 63.9% book. **Opening-source drift boot→live is unmeasured.**
+- **No Elo, no arena, no training run.** This is a description of the data and the
+  sampler, not a demonstration that either causes the −48.6 Elo.
+- The `jun` era is a 150-shard stride subsample, not a full window; it is used
+  only for the `moves_left` percentile check.
