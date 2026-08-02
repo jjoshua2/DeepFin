@@ -738,16 +738,23 @@ def compute_loss(
   # ever came from.
     split_losses: dict[str, torch.Tensor] = {}
     for suffix, m in split_masks:
-        split_losses[f"policy_loss_{suffix}"] = masked_mean(pol_ce, pol_base * m)
+        policy_bucket_mask = pol_base * m
+        split_losses[f"policy_loss_{suffix}"] = masked_mean(pol_ce, policy_bucket_mask)
         wdl_bucket_mask = net_mask * m
         split_losses[f"wdl_loss_{suffix}"] = masked_mean(blended_wdl_ce, wdl_bucket_mask)
-  # The DENOMINATOR of the line above, emitted as a raw row count. Without it
-  # `wdl_loss_open` cannot be told apart from `wdl_loss_end`: `masked_mean`
-  # clamps its denominator to 1.0, so a bucket holding zero rows reports 0.0,
-  # which reads as the best possible value. Summed (not averaged) across the
-  # iteration's microbatches — see `_RAW_COUNT_METRIC_FIELDS` in train/trainer.py.
+  # The DENOMINATORS of the two lines above, as raw row counts. Without them a
+  # bucket cannot be told apart from a good one: `masked_mean` clamps its
+  # denominator to 1.0, so a bucket holding zero rows reports 0.0, which reads
+  # as the best possible value. Summed (not averaged) across the iteration's
+  # microbatches — see `_RAW_COUNT_METRIC_FIELDS` in train/trainer.py.
+  #
+  # BOTH heads, because their denominators are DIFFERENT: the policy mask
+  # carries `has_policy` on top of `net_mask`, so a phase can be well populated
+  # for the value head and empty for the policy head in the same batch. One
+  # head's count cannot stand in for the other's.
         if suffix in _PHASE_BUCKET_SUFFIXES:
             split_losses[f"wdl_rows_{suffix}"] = wdl_bucket_mask.to(torch.float32).sum()
+            split_losses[f"policy_rows_{suffix}"] = policy_bucket_mask.to(torch.float32).sum()
 
     total = (
         float(w_policy) * m_policy

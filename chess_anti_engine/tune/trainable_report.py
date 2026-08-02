@@ -864,6 +864,10 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # else can say so — see train/losses.py.
     "wdl_loss_phase_n_open": 0.0, "wdl_loss_phase_n_mid": 0.0,
     "wdl_loss_phase_n_end": 0.0,
+  # The policy head's own denominators — a different mask (`has_policy` on top
+  # of `net_mask`), so these can be empty where the wdl counts are not.
+    "policy_loss_phase_n_open": 0.0, "policy_loss_phase_n_mid": 0.0,
+    "policy_loss_phase_n_end": 0.0,
     "grad_norm_mean": 0.0, "grad_norm_median": 0.0, "grad_norm_p95": 0.0,
     "grad_norm_max": 0.0, "grad_clip_rate": 0.0, "grad_adaptive_clip_rate": 0.0,
     "grad_hard_clip_rate": 0.0, "grad_norm_samples": 0,
@@ -960,6 +964,9 @@ def _train_metrics_dict(metrics) -> dict:
         "wdl_loss_phase_n_open": float(metrics.wdl_loss_phase_n_open),
         "wdl_loss_phase_n_mid": float(metrics.wdl_loss_phase_n_mid),
         "wdl_loss_phase_n_end": float(metrics.wdl_loss_phase_n_end),
+        "policy_loss_phase_n_open": float(metrics.policy_loss_phase_n_open),
+        "policy_loss_phase_n_mid": float(metrics.policy_loss_phase_n_mid),
+        "policy_loss_phase_n_end": float(metrics.policy_loss_phase_n_end),
         # Grad-norm / clipping, aggregated over every step of the iteration.
         # Previously TensorBoard-only, at a 1-in-10 subsample, in event files
         # that rotate per Ray session — so no ledger yardstick could cite them

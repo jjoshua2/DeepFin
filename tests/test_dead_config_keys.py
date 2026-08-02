@@ -92,10 +92,13 @@ def test_the_dead_key_is_still_dead() -> None:
     # deletion: dropping it from the allowlist would make the all-or-nothing
     # live-yaml validator reject the WHOLE reload for any yaml carrying it.
     assert _KEY in _FLAT_ALLOWLIST
-    # ...and it still has a real offline consumer, which is why the key is not
-    # deleted from TrialConfig.
-    offline = (_REPO / "scripts" / "retarget_retrain.py").read_text(encoding="utf-8")
-    assert f"sf_gap_priority_signed=tc.{_KEY}" in offline
+    # ...and it still has real offline consumers, which is why the key is not
+    # deleted from TrialConfig. BOTH are pinned: an unpinned consumer can be
+    # deleted as dead, and the refusal message would then name a file that no
+    # longer uses the key.
+    for offline_rel in ("scripts/retarget_retrain.py", "scripts/holdout_policy_screen.py"):
+        offline = (_REPO / offline_rel).read_text(encoding="utf-8")
+        assert f"sf_gap_priority_signed=tc.{_KEY}" in offline, offline_rel
 
 
 def test_the_inert_value_is_the_realized_default() -> None:
@@ -133,6 +136,7 @@ def test_refuses_the_live_value_and_names_the_key() -> None:
     # Naming the offline consumer is what stops the next reader concluding the
     # key is simply obsolete and deleting it out from under retarget_retrain.
     assert "retarget_retrain" in message
+    assert "holdout_policy_screen" in message
 
 
 @pytest.mark.parametrize("truthy", [True, 1, "yes"])
@@ -212,3 +216,78 @@ def test_startup_reload_still_applies_it_so_the_refusal_can_fire(tmp_path) -> No
     assert config[_KEY] is True
     with pytest.raises(ValueError, match=_KEY):
         reject_dead_config_keys(config)
+
+
+# ---------------------------------------------------------------------------
+# The FOURTH reload class: not overlaid, and not restart-required either
+# ---------------------------------------------------------------------------
+
+
+def test_a_dead_key_is_its_own_reload_class() -> None:
+    """Declined live like a restart-required key, but a restart REFUSES it.
+
+    Reporting it as restart-required would send an operator into the one action
+    that turns a silent no-op into a refusal to start, so it must not be in
+    that set -- and it must be reachable on its own, or a provenance tool has
+    no way to name the case.
+    """
+    from chess_anti_engine.tune.trainable_config_ops import (
+        construction_only_config_keys,
+        dead_config_keys,
+        restart_required_config_keys,
+    )
+
+    assert _KEY in dead_config_keys()
+    assert _KEY not in restart_required_config_keys()
+    assert _KEY not in construction_only_config_keys()
+    assert not (dead_config_keys() & restart_required_config_keys())
+
+
+def test_the_provenance_audit_names_the_dead_key_instead_of_calling_it_healthy() -> None:
+    """Without the fourth class it falls through every branch and reads clean.
+
+    The startup overlay puts the yaml value into the realized row, so
+    yaml == realized -- which every remaining branch treats as agreement. The
+    finding has to be raised on the VALUE, not on a diff.
+    """
+    from scripts.audit_realized_config import classify_config_provenance
+    from chess_anti_engine.tune.trainable_config_ops import dead_config_keys
+
+    params = {_KEY: False}
+    yaml_cfg = {_KEY: True}
+    realized = {_KEY: True}  # the startup overlay applied it; nothing consumed it
+
+    report, findings = classify_config_provenance(
+        params, yaml_cfg, realized,
+        restart_keys=frozenset(), construction_only_keys=frozenset(),
+        dead_keys=dead_config_keys(),
+    )
+    assert any(line.startswith(f"  DEAD-KEY {_KEY}:") for line in report), report
+    assert len(findings) == 1, findings
+    assert _KEY in findings[0]
+    assert "REFUSE" in findings[0]
+    # It must NOT be described as restart-required -- that is the wrong advice.
+    assert "restart required" not in findings[0].lower()
+
+    # ...and the inert value is silent, or the audit would fire on every run.
+    report_ok, findings_ok = classify_config_provenance(
+        {_KEY: False}, {_KEY: False}, {_KEY: False},
+        restart_keys=frozenset(), construction_only_keys=frozenset(),
+        dead_keys=dead_config_keys(),
+    )
+    assert findings_ok == []
+    assert not [line for line in report_ok if "DEAD-KEY" in line]
+
+
+def test_the_audit_binds_the_dead_set_to_the_real_one() -> None:
+    """The script must pass the production set, not an empty default.
+
+    An injected argument that no caller supplies is a branch that cannot fire
+    -- the failure mode the construction-only work already had to fix once.
+    """
+    import inspect
+
+    import scripts.audit_realized_config as audit
+
+    src = inspect.getsource(audit)
+    assert "dead_keys=dead_config_keys()," in src

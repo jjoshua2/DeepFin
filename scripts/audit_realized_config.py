@@ -490,6 +490,18 @@ _PROVENANCE_ROTATING_KEYS: dict[str, str] = {
 }
 
 
+def _truthy_dead_value(value: object) -> bool:
+    """Whether a dead key is set to something other than its inert value.
+
+    ``bool()`` rather than a comparison against the inert value: yaml spells the
+    same intent ``true`` / ``True`` / ``1`` / ``yes``, and every dead key so far
+    is inert at falsey. Mirrors ``reject_dead_config_keys``, which is the thing
+    that will actually raise — a report that disagreed with the refusal about
+    which values are safe would be worse than no report.
+    """
+    return bool(value)
+
+
 def classify_config_provenance(
     params: Mapping[str, object],
     flat_yaml: Mapping[str, object],
@@ -498,11 +510,19 @@ def classify_config_provenance(
     restart_keys: Iterable[str],
     searched_keys: Iterable[str] = (),
     construction_only_keys: Iterable[str] = (),
+    dead_keys: Iterable[str] = (),
     yaml_is_newer_than_row: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Label every shared config key by which source is authoritative for it.
 
-    Returns ``(report_lines, findings)``. Four outcomes per key:
+    Returns ``(report_lines, findings)``. Five outcomes per key:
+
+      * DEAD and set to a live value — a FINDING, and checked FIRST. The key
+        reaches no production consumer at any value, so the reloader declines
+        it and the next restart REFUSES to start. It must not be reported as
+        "restart required" (a restart makes it worse) nor fall through to the
+        live-reloadable branches, where yaml == realized would read as healthy
+        precisely because nothing consumed either one.
 
       * restart-required and yaml != realized — the yaml was edited and the
         running trial has not taken it. A FINDING: this is the
@@ -533,6 +553,11 @@ def classify_config_provenance(
     SEPARATELY, and checked alongside ``restart_keys`` rather than through it,
     so the "params.json is merely the launch value" verdict cannot be reached
     for a key with no live consumer even if ``restart_keys`` is wrong — which
+    ``dead_keys`` is injected the same way and for the same reason
+    (``trainable_config_ops.dead_config_keys()``): it is a FOURTH reload class,
+    not a subset of ``restart_keys``, because a restart refuses these rather
+    than applying them.
+
     is exactly the state this function was in until 2026-08-01, when it printed
     ``shuffle_buffer_size: params.json=25000 running=100000`` under the header
     "the running value is correct" about a cap the ``DiskReplayBuffer`` had
@@ -546,6 +571,7 @@ def classify_config_provenance(
     """
     restart = set(restart_keys)
     construction_only = set(construction_only_keys)
+    dead = set(dead_keys)
     searched = set(searched_keys)
     stale: list[str] = []
     report: list[str] = []
@@ -572,6 +598,22 @@ def classify_config_provenance(
             continue
         on_disk = flat_yaml[key]
         live = realized[key]
+        if key in dead:
+            # Checked BEFORE the restart branch: a dead key is not
+            # restart-required, and saying so would send an operator into the
+            # one action that converts a silent no-op into a refusal to start.
+            # Reported on the YAML value, not on a yaml-vs-realized diff: the
+            # two agree whenever the startup overlay ran, and agreeing is
+            # exactly what makes this invisible to every other branch.
+            if _truthy_dead_value(on_disk):
+                report.append(f"  DEAD-KEY {key}: yaml={on_disk!r}")
+                findings.append(
+                    f"{key}: reaches no production consumer at any value. The "
+                    "live reload declines it and the next restart will REFUSE "
+                    "to start (trainable_config_ops.reject_dead_config_keys). "
+                    "Remove it from the yaml or set it back to its inert value."
+                )
+            continue
         if key in restart or key in construction_only:
             if not _same_value(on_disk, live):
                 extra = (
@@ -650,6 +692,7 @@ def audit_config_provenance(
     # importable wherever the extension is not built.
     from chess_anti_engine.tune.trainable_config_ops import (
         construction_only_config_keys,
+        dead_config_keys,
         restart_required_config_keys,
     )
 
@@ -704,6 +747,7 @@ def audit_config_provenance(
         restart_keys=restart_required_config_keys(),
         searched_keys=searched,
         construction_only_keys=construction_only_config_keys(),
+        dead_keys=dead_config_keys(),
         yaml_is_newer_than_row=yaml_is_newer,
     )
     for line in report:

@@ -125,10 +125,21 @@ def test_the_thresholds_are_one_shared_object_not_two_literals() -> None:
     moment somebody edits one of them.
     """
     assert PHASE_THRESHOLDS is DEFAULT_PHASE_PIECE_THRESHOLDS
+    # Every module that buckets by phase reads the shared constant. Four copies
+    # of the same two numbers existed before this change; a probe that quietly
+    # stopped agreeing with the trainer would compare buckets that no longer
+    # name the same positions, and nothing would say so.
+    for rel in (
+        "chess_anti_engine/train/losses.py",
+        "chess_anti_engine/eval/audit.py",
+        "scripts/probe_policy_targets.py",
+    ):
+        src = (_REPO / rel).read_text(encoding="utf-8")
+        assert "DEFAULT_PHASE_PIECE_THRESHOLDS" in src, rel
+        assert "(13, 22)" not in src, f"{rel} still carries its own literal"
     losses_src = (_REPO / "chess_anti_engine" / "train" / "losses.py").read_text(
         encoding="utf-8",
     )
-    assert "DEFAULT_PHASE_PIECE_THRESHOLDS" in losses_src
     # The old cuts must be gone, not merely unused: a leftover constant is the
     # first thing a future edit reaches for.
     assert "_PHASE_OPEN_THRESHOLD" not in losses_src
@@ -192,6 +203,10 @@ def test_counts_reach_train_metrics_and_sum_to_the_rows_trained(tmp_path) -> Non
     assert total == pytest.approx(3 * 8)
     assert metrics.wdl_loss_phase_n_open > 0
     assert metrics.wdl_loss_phase_n_end > 0
+    # The policy head keeps its OWN counts, and on an all-`has_policy` window
+    # they must agree with the value head's exactly.
+    assert metrics.policy_loss_phase_n_open == metrics.wdl_loss_phase_n_open
+    assert metrics.policy_loss_phase_n_end == metrics.wdl_loss_phase_n_end
 
 
 def test_an_empty_bucket_reports_zero_count_while_its_loss_stays_zero(
@@ -249,6 +264,8 @@ def test_counts_are_published_to_the_result_row() -> None:
     src = inspect.getsource(trainable_report)
     for name in (
         "wdl_loss_phase_n_open", "wdl_loss_phase_n_mid", "wdl_loss_phase_n_end",
+        "policy_loss_phase_n_open", "policy_loss_phase_n_mid",
+        "policy_loss_phase_n_end",
     ):
         assert f'"{name}": float(metrics.{name})' in src, f"{name} not in the row"
         assert f'"{name}": 0.0' in src, f"{name} missing from the zero defaults"
@@ -308,3 +325,26 @@ def test_the_phase_split_cannot_perturb_the_trained_loss() -> None:
     # carried by a rounding wobble.
     assert float(after["wdl_rows_phase_open"]) == 0.0
     assert float(after["wdl_rows_phase_end"]) == 8.0
+
+
+def test_the_policy_counts_are_not_a_copy_of_the_wdl_counts() -> None:
+    """`scripts/status.py` prints the POLICY phase columns, and they use a
+    different denominator: `net_mask * has_policy * bucket` against the value
+    head's `net_mask * bucket`. A value-only row (`has_policy=0`) counts for
+    `wdl_loss_phase_*` and not for `policy_loss_phase_*`, so one head's count
+    cannot stand in for the other's -- which is why both ship.
+    """
+    from chess_anti_engine.train.losses import compute_loss
+
+    outputs, batch = _loss_batch([30] * 4 + [6] * 4)
+    # Half the OPENING rows carry no policy target.
+    batch = dict(batch)
+    has_policy = batch["has_policy"].clone()
+    has_policy[:2] = 0.0
+    batch["has_policy"] = has_policy
+
+    losses = compute_loss(outputs, batch)
+    assert float(losses["wdl_rows_phase_open"]) == 4.0
+    assert float(losses["policy_rows_phase_open"]) == 2.0
+    assert float(losses["wdl_rows_phase_end"]) == 4.0
+    assert float(losses["policy_rows_phase_end"]) == 4.0

@@ -938,6 +938,13 @@ class TrainMetrics:
     wdl_loss_phase_n_open: float = 0.0
     wdl_loss_phase_n_mid: float = 0.0
     wdl_loss_phase_n_end: float = 0.0
+  # The policy head's own denominators. NOT redundant with the three above: the
+  # policy mask carries `has_policy` as well as `net_mask`, so the two counts
+  # diverge on any window holding value-only rows. `scripts/status.py` prints
+  # the POLICY phase columns, so these are the ones an operator reads against.
+    policy_loss_phase_n_open: float = 0.0
+    policy_loss_phase_n_mid: float = 0.0
+    policy_loss_phase_n_end: float = 0.0
   # Value-head calibration (populated on holdout eval).
     wdl_brier: float = 0.0
     wdl_ece: float = 0.0
@@ -1048,6 +1055,9 @@ _RAW_COUNT_METRIC_FIELDS: dict[str, str] = {
     "wdl_loss_phase_n_open": "wdl_rows_phase_open",
     "wdl_loss_phase_n_mid": "wdl_rows_phase_mid",
     "wdl_loss_phase_n_end": "wdl_rows_phase_end",
+    "policy_loss_phase_n_open": "policy_rows_phase_open",
+    "policy_loss_phase_n_mid": "policy_rows_phase_mid",
+    "policy_loss_phase_n_end": "policy_rows_phase_end",
 }
 
 # The compute_loss scalars consumed by ``_ratio_metric_kwargs`` and
@@ -3607,10 +3617,24 @@ class Trainer:
                 **dataclasses.asdict(self._model_config),
             }
         atomic_write(path, lambda tmp: torch.save(export, str(tmp)))
-        logging.getLogger(__name__).info(
-            "export_swa: wrote %s source=%s step=%d tensors=%d params=%d "
-            "digest=%s swa_enabled=%s",
-            path, source, int(self.step), len(state_dict),
-            state_dict_unique_param_count(state_dict),
-            state_dict_digest(state_dict), self._swa_model is not None,
+  # ⚑ print(), NOT logging.info(). The trial actor installs NO logging handler:
+  # `tune/trainable.py::_set_log_level` sets a LEVEL on the `chess_anti_engine`
+  # logger and stops there, and nothing in this package or in Ray attaches one
+  # for that process. So an INFO record falls through to `logging.lastResort`,
+  # which is WARNING+, and is DISCARDED — verified directly: with no handler,
+  # `logger.warning` reaches stderr and `logger.info` reaches nothing at all.
+  # Every operator-visible line in this process is a print() for that reason
+  # (`[trial]`, `[disk_buf]`, `[tune]`), and this line exists precisely so that
+  # which weights shipped is OBSERVABLE rather than re-derived from the config.
+  # A provenance line nobody can read would be this PR's own defect: a value
+  # emitted and then silently dropped. Do not "fix" this back to a logger
+  # without also installing a handler, and do not promote it to WARNING — it is
+  # not a warning, it is the normal record of a normal publish.
+        print(
+            f"[trial] export_swa: wrote {path} source={source} "
+            f"step={int(self.step)} tensors={len(state_dict)} "
+            f"params={state_dict_unique_param_count(state_dict)} "
+            f"digest={state_dict_digest(state_dict)} "
+            f"swa_enabled={self._swa_model is not None}",
+            flush=True,
         )

@@ -492,9 +492,10 @@ _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
 # `DiskReplayBuffer.sf_gap_priority_signed` — and never passed. The production
 # construction site (`trainable_init.py`, `DiskReplayBuffer(...)`) passes only
 # `sf_gap_priority_weight`, and the per-iteration live push
-# (`trainable.py`) pushes only the same four live knobs. Its one real consumer
-# is the OFFLINE `scripts/retarget_retrain.py:282`, which is why the key is
-# refused here rather than deleted.
+# (`trainable.py`) pushes only the same four live knobs. Its real consumers are
+# both OFFLINE — `scripts/retarget_retrain.py` and
+# `scripts/holdout_policy_screen.py` — which is why the key is refused here
+# rather than deleted from `TrialConfig`.
 #
 # Each key maps to the ONE value that is inert, i.e. the value the production
 # object actually runs at. That value is tolerated: deleting a key from a live
@@ -530,13 +531,32 @@ def reject_dead_config_keys(config: dict) -> None:
                 f"the trial builds its DiskReplayBuffer without it "
                 f"(trainable_init.py) and never pushes it on live reload "
                 f"(trainable.py), so the only value this run can realize is "
-                f"{inert!r}. Its one consumer is the offline "
-                f"scripts/retarget_retrain.py. Refusing rather than accepting a "
+                f"{inert!r}. Its only consumers are the offline "
+                f"scripts/retarget_retrain.py and scripts/holdout_policy_screen.py. "
+                f"Refusing rather than accepting a "
                 f"knob that reads back correctly and does nothing; the "
                 f"gap-priority family was KILLED by experiment #104 "
                 f"(docs/experiment_ledger.md), so re-enabling it needs a ledger "
                 f"entry and a deliberate wiring change, not a yaml line."
             )
+
+
+def dead_config_keys() -> frozenset[str]:
+    """Yaml keys that reach NO production consumer at any value.
+
+    A FOURTH reload class, distinct from all three in
+    ``restart_required_config_keys()``. Those are declined live because
+    applying them would be unsafe or could not act until a restart; a dead key
+    is declined live and then REFUSED at the restart
+    (``reject_dead_config_keys``). So "not overlaid" is true of both, and
+    "a restart will apply it" is true only of the others.
+
+    Exported so a provenance tool can say which one it is looking at. Without
+    it, a set-but-declined dead key falls through every branch and is reported
+    as a healthy live-reloadable key whose yaml and realized values agree —
+    the exact verdict shape PR #303 removed for construction-only keys.
+    """
+    return frozenset(_DEAD_CONFIG_KEY_INERT_VALUES)
 
 
 def construction_only_config_keys() -> frozenset[str]:
@@ -580,11 +600,19 @@ def restart_required_config_keys() -> frozenset[str]:
     property of the trial's own ``pb2_bounds_*`` entries rather than of the key,
     so callers must exclude them separately.
 
-    "Not in here" means the reloader OVERLAYS the yaml value into ``config``.
-    It does not mean a running component re-read it — that is a per-key fact
-    about consumers, and ``construction_only_config_keys()`` is the part of it
-    already proven. A tool that reads "overlaid" as "in effect" will report a
-    knob as healthy precisely when it is inert.
+    "Not in here" means the reloader overlays the yaml value into ``config``
+    **unless the key is dead** — see ``dead_config_keys()``. A dead key is
+    declined on live reload like a restart-required one, but it is deliberately
+    NOT in this set, because a restart does not apply it either: it makes the
+    trial REFUSE to start. Reporting it as restart-required would tell an
+    operator to do the one thing that turns a silent no-op into a crash.
+    Callers that branch on this set must handle that class separately;
+    ``scripts/audit_realized_config.py`` takes it as its own injected argument.
+
+    Being overlaid still does not mean a running component re-read it — that is
+    a per-key fact about consumers, and ``construction_only_config_keys()`` is
+    the part of it already proven. A tool that reads "overlaid" as "in effect"
+    will report a knob as healthy precisely when it is inert.
     """
     return (
         _TOPOLOGY_KEYS
