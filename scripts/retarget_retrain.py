@@ -35,16 +35,34 @@ meaningful, but the absolute trajectories differ from what a live retune
 that kept the optimizer state would produce. Each variant is seeded
 identically, so dropout masks and the buffer's random draws match across
 arms; a replay_* sampling override still (intentionally) changes WHICH rows
-those shared draws select. The draw-matching half of that is enforced by
-``deterministic_refresh=True`` on the buffer below and was NOT true before
-2026-07-31 — see the comment there.
+those shared draws select. Matched draws need BOTH halves and both are now
+enforced, not merely intended:
+
+* ``deterministic_refresh=True`` on the buffer below removes the load-dependent
+  refresh race (NOT true before 2026-07-31 — see the comment there); and
+* the shard directory is snapshotted ONCE in ``main()`` and every arm asserts
+  its buffer scanned exactly that list. Variants run sequentially and each is a
+  full retrain, so a live window or a salvage pool that ingests mid-run gives
+  the later arms a different pool — same seed, different rows, silently
+  unpaired. Measured 2026-07-31 at ``--steps 800``, flag on, same seed:
+  one extra shard moved 617/800 sampled rows (77.1%), one shard fewer moved
+  343/800 (42.9%). The run now aborts instead.
+
+⚑ POINT ``--replay-dir`` AT A FROZEN COPY, not the live window. The snapshot is
+taken in ``main()`` before ``torch.load`` + ``build_model`` + ``Trainer()`` (and
+CUDA init), so the guard is deliberately STRICTER than "the arms de-paired": a
+shard landing during that startup window aborts arm 1 even though arms 1 and 2
+would have been paired. That is fail-closed on purpose — but it means that once
+training resumes, the live ``<trial>/replay_shards`` shown below is exactly what
+this script will now refuse. ``cp -r`` it, or use a salvage pool nothing writes
+to.
 
 Usage::
 
     PYTHONPATH=. python3 scripts/retarget_retrain.py \\
         --config configs/pbt2_small.yaml \\
         --checkpoint <trial>/checkpoint_000123/trainer.pt \\
-        --replay-dir <trial>/replay_shards \\
+        --replay-dir <frozen copy>/replay_shards   # NOT the live window \\
         --steps 800 --out-dir runs/retarget \\
         --variant base: \\
         --variant sharp:sf_policy_temp=0.006 \\
@@ -103,6 +121,40 @@ def _assert_replay_planes_match(replay_dir: Path, target_planes: int, *, upgrade
     )
 
 
+def _assert_shards_unchanged(
+    observed: list[Path], snapshot: list[Path], *, name: str,
+) -> None:
+    """Abort if this arm's replay pool differs from the first arm's.
+
+    ``deterministic_refresh=True`` makes the draw sequence a function of the
+    seed AND of the shard list the buffer scanned. Variants run sequentially
+    and each is a full retrain (minutes to hours), so a ``--replay-dir`` that
+    is the live window or a salvage pool being topped up hands the later arms a
+    different pool: identical seed, different rows, and every variant delta the
+    script prints is then unpaired with nothing on screen to say so. Refuse to
+    train rather than emit a comparison that reads valid.
+    """
+    if observed == snapshot:
+        return
+    obs, snap = set(observed), set(snapshot)
+    added = sorted(p.name for p in obs - snap)
+    removed = sorted(p.name for p in snap - obs)
+    detail = (
+        f"{len(added)} added ({', '.join(added[:5])}{'...' if len(added) > 5 else ''}), "
+        f"{len(removed)} removed ({', '.join(removed[:5])}{'...' if len(removed) > 5 else ''})"
+        if (added or removed)
+        else "same shards in a different scan order"
+    )
+    raise SystemExit(
+        f"replay shard list CHANGED before variant {name!r}: {detail} "
+        f"({len(snapshot)} shards at start, {len(observed)} now). The arms would "
+        "be DE-PAIRED — same seed, different pool, so their draws no longer "
+        "match and every variant delta this script prints would be unpaired. "
+        "Point --replay-dir at a frozen copy of the shards (or a salvage pool "
+        "nothing is writing to) and re-run the whole sweep."
+    )
+
+
 def _parse_variant(spec: str) -> tuple[str, dict]:
     name, _, body = spec.partition(":")
     if not name:
@@ -143,6 +195,7 @@ def _run_variant(
     batch_size: int,
     device: str,
     out_dir: Path,
+    shard_snapshot: list[Path],
     rebuild_sf_targets: bool = True,
     gpu_mem_fraction: float = 0.0,
     allow_yaml_arch: bool = False,
@@ -285,6 +338,13 @@ def _run_variant(
         diff_focus_q_weight=tc.diff_focus_q_weight,
     )
     try:
+        # Before the empty-pool check: if the snapshot was non-empty and the
+        # directory has since been emptied, "de-paired" is the accurate report
+        # and "wrong --replay-dir" is not. `_snapshot_shards()` is the buffer's
+        # OWN post-scan list, so this compares what this arm will actually draw
+        # from against what the first arm drew from — not two independent
+        # re-globs, which would agree even if the buffer had filtered.
+        _assert_shards_unchanged(buf._snapshot_shards(), shard_snapshot, name=name)
         if len(buf) == 0:
             raise SystemExit(
                 f"replay buffer is empty: no shards under {replay_dir} match "
@@ -354,6 +414,13 @@ def main() -> None:
     batch_size = int(args.batch_size or base_config.get("batch_size", 256))
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
+    # ONE snapshot for the whole sweep, taken before the first arm trains. Each
+    # arm re-scans the directory inside its own DiskReplayBuffer ctor, so a
+    # per-arm snapshot would just re-measure the drift it is meant to catch.
+    shard_snapshot = iter_shard_paths(args.replay_dir)
+    print(f"[retarget] shard snapshot: {len(shard_snapshot)} shards under "
+          f"{args.replay_dir}; every arm must scan exactly these")
+
     summaries = []
     for spec in args.variant:
         name, overrides = _parse_variant(spec)
@@ -361,7 +428,8 @@ def main() -> None:
             name=name, overrides=overrides, base_config=base_config,
             checkpoint=args.checkpoint, replay_dir=args.replay_dir,
             steps=args.steps, batch_size=batch_size, device=args.device,
-            out_dir=args.out_dir, rebuild_sf_targets=args.rebuild_sf_targets,
+            out_dir=args.out_dir, shard_snapshot=shard_snapshot,
+            rebuild_sf_targets=args.rebuild_sf_targets,
             gpu_mem_fraction=args.gpu_mem_fraction,
             allow_yaml_arch=args.allow_yaml_arch,
             allow_partial_load=args.allow_partial_load,
