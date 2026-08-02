@@ -20809,6 +20809,8 @@ different rows, silently unpaired. Measured with the flag ON, same seed, 800
 steps: **+1 shard → 617/800 sampled rows differ (77.1%); −1 shard → 343/800
 (42.9%).**
 
+⚑ **SUPERSEDED 2026-08-02** — the pre-arm `iter_shard_paths` snapshot described in this paragraph was itself a defect (it false-aborts arm 1 on shards that land during startup); the reference is now arm 1's own `_snapshot_shards()`, and the test names cited below have been renamed. See the 2026-08-02 post-merge-review entry at EOF.
+
 Fix: `main()` snapshots the shard list ONCE with `iter_shard_paths` before any
 arm runs and passes it down; `_run_variant` compares the constructed buffer's
 OWN `_snapshot_shards()` against it and `SystemExit`s naming DE-PAIRED. It runs
@@ -20819,7 +20821,7 @@ point: two independent re-globs agree even when the buffer filtered.
 
 Mutation-tested three ways, all against `tests/test_retarget_retrain.py`:
 - delete the guard CALL from `_run_variant` → `test_the_shard_guard_runs_on_the_real_call_path` FAILS;
-- make `_assert_shards_unchanged` return unconditionally (accepted-and-ignored, this repo's signature defect) → **6** tests FAIL (this line said 5; an independent review re-ran the mutation and counted 6 — `..._ADDED_mid_sweep`, `..._REMOVED_mid_sweep`, `..._on_reordering_alone`, `..._names_the_shards_that_moved`, `..._runs_on_the_real_call_path`, `..._snapshot_source_matches_what_the_buffer_scans`. The PR body had it right; the canonical record did not);
+- make `_assert_shards_unchanged` return unconditionally (accepted-and-ignored, this repo's signature defect) → **8** tests FAIL (this line said 5, then 6; re-run on the merged `82390612c` and counted 8 — `..._ADDED_mid_sweep`, `..._REMOVED_mid_sweep`, `..._on_reordering_alone`, `..._names_the_shards_that_moved`, `..._runs_on_the_real_call_path`, `..._snapshot_source_matches_what_the_buffer_scans`, `..._reads_the_BUFFER_list_not_a_re_glob`, `..._depaired_EMPTY_pool_reports_de_pairing_not_wrong_replay_dir`. The 6 count predated the last two tests, which the same PR added; the number was never re-measured after they landed);
 - re-glob per arm instead of snapshotting once in `main()` → `test_main_snapshots_the_pool_ONCE_for_the_whole_sweep` FAILS.
 
 That third mutation is the one worth keeping. A per-arm re-glob leaves the
@@ -20886,3 +20888,174 @@ the documented interpreter, not the recorded numbers.
 **F5 — FIXED.** The withdrawn "73 of 75 metrics bit-for-bit" claim now carries
 a SUPERSEDED marker at the claim itself, pointing at the retraction ~50 lines
 below. One inserted line, `git diff --numstat` = `2 0`, nothing rewritten.
+
+---
+
+## 2026-08-02 — POST-MERGE REVIEW of `82390612c` (#307): the pairing gate's reference was a pre-startup glob, so it could fire on a sweep that was perfectly paired
+
+#307's shard-snapshot gate is the right gate wired to the wrong reference.
+`main()` globbed `--replay-dir` with `iter_shard_paths` and handed that list to
+**every** arm including arm 1. Arm 1's own scan happens inside its
+`DiskReplayBuffer` ctor, after `torch.load` + `build_model` + `Trainer()` +
+CUDA init — tens of seconds later. A shard landing inside that startup window
+aborts the sweep, and **nothing is de-paired by it**: no arm has drawn a row
+yet, so all arms would still have scanned the same pool. With a single
+`--variant` the gate can produce nothing BUT that false abort — there is no
+second arm for it to protect. #307's own docstring argued this was
+"deliberately STRICTER … fail-closed on purpose"; it is not stricter, it is
+false, and the cost is a re-run of an `--steps 800` sweep per occurrence.
+
+**Fix.** Pairing is defined relative to the pool arm 1 actually drew from, so
+arm 1's own `_snapshot_shards()` is the only honest reference. `_run_variant`
+takes `shard_snapshot: list[Path] | None`; `None` means "you are arm 1, adopt
+your own scan", the arm reports that scan back in its summary (and into
+`retarget_report.json`, so a reader can see WHICH shards the printed deltas
+were paired over — previously unrecorded), and `main()` threads it to arms
+2..N. The gate is unchanged and still fatal for every arm that has a reference
+to fail against. `main()` no longer globs at all.
+
+⚑ `[]` is a REAL reference (arm 1 scanned an empty pool), never a synonym for
+"unset". The sentinel is `None` and the test is `is None`.
+
+⚠ **Correction (post-review).** This entry first justified that choice by saying
+a falsy test "would disable the gate for the rest of any sweep whose first arm
+found no shards". **That consequence cannot occur.** An arm-1 pool of `[]` means
+`len(buf) == 0`, which `SystemExit`s before `_run_variant` returns a summary, so
+`main()` can never adopt an empty reference and the sweep dies at arm 1 under
+either spelling. Verified against an empty `--replay-dir`. The `is None` choice
+is still right — it makes the distinction a property of this code rather than of
+the empty-pool guard's ordering — but it is a pinned DECISION, not a fix for a
+reachable bug. Same honesty the sibling test already applies to the
+buffer-filter justification ("describes a case which cannot arise — but the
+choice is still right").
+
+**Mutation table — 11 mutations, 10 killed + 1 made UNEXPRESSIBLE**
+(`tests/test_retarget_retrain.py`, 28 tests, clean run green):
+
+| # | mutation | outcome |
+|---|---|---|
+| M1 | `main()` pre-globs and hands it to arm 1 (revert the fix) | 2 tests FAIL |
+| M2 | `if not snapshot: return` in the helper | 2 tests FAIL |
+| M3 | `if not shard_snapshot:` instead of `is None` at the call site | 1 test FAILS |
+| M4 | pass the two lists positionally, swapped, at the call site | **`TypeError` — not expressible** (see below) |
+| M5 | the two params trade ROLES in the helper body | 3 tests FAIL incl. `..._argument_ORDER_is_pinned` |
+| M6 | delete the guard call | 4 tests FAIL |
+| M7 | helper returns unconditionally | 11 tests FAIL |
+| M8 | `main()` never adopts arm 1's pool | 2 tests FAIL |
+| M9 | arm 1 reports a re-glob instead of its buffer scan | 4 tests FAIL |
+| M10 | `shard_snapshot` gains a `= None` default | 1 test FAILS |
+| M11 | adopt via `.get("shard_pool", [])` instead of subscript | 1 test FAILS |
+
+⚑ **M4 is not "killed" — it is unexpressible.** Both shard lists are now
+keyword-only, so the positional swap #307 allowed raises
+`TypeError: _assert_shards_unchanged() takes 0 positional arguments but 2 were
+given` at the call. The 4 tests that go red do so on that `TypeError`, not on a
+misdirected message. That is the stronger outcome: a defect the signature
+forbids beats one the tests catch.
+
+⚠ Keyword-only cannot stop a RENAME, so M5 was redefined. Merely REORDERING two
+keyword-only parameters is a semantic no-op — the first attempt at M5 did that
+and survived all 28 tests, correctly, because it changed nothing. The real
+mutation swaps what the two names MEAN inside the body, and
+`..._argument_ORDER_is_pinned` catches it by asserting the direction of the
+added/removed report rather than merely that an abort happened.
+
+M10/M11 close the two "kills zero tests" gaps a reviewer found: a default on
+`shard_snapshot` silently gives a forgetful caller arm-1 semantics (gate off),
+and `.get(..., [])` turns a lost field into a false `(0 shards at start, N now)`
+abort instead of a loud `KeyError`. The third candidate in that family —
+`main()`'s adopt-site falsy test — was deliberately NOT pinned: given the
+correction above it is unreachable, and M10 covers the same family at the site
+where it can actually bite.
+
+**What proves the fix is on the production path**, not just in the tests: arm 1
+now prints `shard reference = this arm's own scan, N shards under <dir>` from
+inside `_run_variant` (after the buffer is built, not before), and every
+`retarget_report.json` carries each arm's `shard_pool`. A sweep whose arms were
+paired has identical `shard_pool` lists across arms; one that was not never
+reaches the report, because the gate is still `SystemExit` before `train_steps`.
+
+**Also corrected above:** the F2 mutation count in the #307 entry said 6. Re-run
+on merged `82390612c` it is 8 — the 6 predated `..._reads_the_BUFFER_list_not_a_re_glob`
+and `..._depaired_EMPTY_pool_reports_de_pairing_not_wrong_replay_dir`, which the
+same PR added and after which the number was never re-measured.
+
+⚠ Nothing here is training-affecting: `scripts/retarget_retrain.py` is an
+offline sidecar and training is paused. No yardstick, no kill threshold — this
+is an instrument-correctness entry, not an experiment.
+
+---
+
+## INSTRUMENT 2026-08-02 — `scripts/value_loss_scorer.py`, value error on ORACLE-LOST rows
+
+Not an experiment: a packaged instrument, plus two rename/persistence fixes
+bundled with it. No training-affecting change, so no hypothesis/kill rule — but
+the instrument's own null is pre-registered here, because the trap it sits on is
+one this ledger has been caught by before.
+
+**WHAT IT MEASURES.** Per-row value-head error on replay rows the ORACLE calls
+lost for the side to move (stored `sf_wdl` P(loss) ≥ a bar, and/or the same
+label's cp below a bar). Selection is POSITION-level and never touches the net.
+The `rest` stratum is scored by the identical instrument and the number to read
+is the CONTRAST. Every CI resamples GAMES (`game_id`, the loop's own content
+hash of the whole game), reusing `eval/value_optimism.cluster_bootstrap_ci` so
+the two level instruments cannot drift apart. Banks a per-position npz that is
+itself a valid `--npz` row source.
+
+**⚑ PRE-REGISTERED NULLS — DO NOT READ AN ERROR COLUMN AGAINST ZERO.** Under a
+destroyed position↔prediction association only `net_score` (the net's own
+level) has a null of zero. Every error column is a difference against a
+reference that varies BY STRATUM — the oracle score is ~0.05 where it says lost
+and ~0.58 elsewhere — so a stratum-blind head reads as hugely "optimistic" in
+the lost stratum. Measured on 600 rows of `data/c17_ab/pre` at
+`ck_2026-08-01_iter478.pt`, CPU, `--n-boot 1000`:
+
+| contrast (lost − rest) | real net | `--shuffle-rows` | `--shuffle-weights` |
+|---|---|---|---|
+| `net_score` | **−0.4544** [−0.5235, −0.3896] | −0.0346 [−0.0746, +0.0131] **CONTAINS 0** | +0.0018 [+0.0008, +0.0026] (0.4% of real) |
+| `d_score` | +0.0740 [+0.0388, +0.1101] | **+0.4938** | **+0.5302** |
+| `d_loss` | −0.0986 [−0.1609, −0.0389] | **−0.5902** | **−0.6182** |
+| `d_cp` | +543 [+412, +674] | **+826** | **+853** |
+
+A weight shuffle is still a deterministic function of the input, so its null is
+SMALL, not zero — read the control as a FRACTION of the measured effect.
+`--self-test` T3/T4 pin both halves; T4's bar is "the control kills ≥90%".
+
+**FIRST READING (descriptive, n=600, one 43-shard pool — NOT a verdict).** The
+population asymmetry is the thing to follow up. On CURRICULUM rows the head
+reads `d_score` **+0.199** in the lost stratum against +0.071 elsewhere
+(contrast **+0.128** [+0.075, +0.173]) and `d_loss` **−0.325** against −0.123
+(contrast **−0.202** [−0.269, −0.109]) — it under-calls the loss by 33 points
+where the oracle says lost. On SELFPLAY rows the same two contrasts are
+**+0.058** [+0.042, +0.077] and **−0.067** [−0.090, −0.048], i.e. 2–3× smaller. That is the
+direction the PID-handicap chain predicts — the handicapped opponent plays ONLY
+in curriculum games — and it is exactly the split `scripts/value_optimism.py`'s
+head/target arm structurally cannot see (that arm needs consecutive-ply pairing,
+which curriculum games produce at 0.00%). ⚠ `d_cp` is 16.6% clamp-pinned
+overall and 34.9% in the curriculum-lost stratum; the cp column is reported with
+its clamp rate for exactly this reason and must not be quoted as a level.
+
+**NOT ESTABLISHED.** One shard pool, 600 rows, 25 lost-stratum games, single
+checkpoint, no second pool, no arena. Nothing here is a verdict about the head
+or the handicap; it is the instrument's first exercise and its null table.
+
+**ALSO IN THIS BUNDLE.**
+* `PromotionGate.state_dict()` now persists `cur_wdl_regret` /
+  `prev_wdl_regret` / `regret_fit_slope`. They were recorded at runtime and
+  dropped at every restart, so a restored window silently carried NaN confounds.
+  No current consumer reads them off the gate (the confound leg fits from
+  `progress.csv`), so nothing already recorded changes; the persisted rows
+  simply stop lying about being the gate's state. NaN is written as `null`
+  (strict JSON) and a legacy file with no confound keys loads as NaN, never 0.0.
+* **⚑ RULER RENAME.** `play_batch exit: … in_flight_abandoned=N` →
+  `in_flight_at_exit=N`. The number is unchanged; the NAME was wrong. Since
+  in-flight resume landed, suspension happens in the caller AFTER this line, so
+  play_batch cannot know the fate — 2026-07-30 logged `in_flight_abandoned=24`
+  beside `suspended games=20` for the same games (see the note ~line 2178, and
+  PR #149's pre-registered yardstick ~line 11576, both of which read this
+  token). Renamed outright rather than aliased: it feeds no metric series, no
+  CSV column and no test — the only consumers were this ledger's two mentions
+  and `scratchpad/verify_deploy.sh` (untracked). **Logs written before
+  2026-08-02 carry the OLD token; any grep spanning the rename must match
+  both.** True waste = `in_flight_at_exit` − the resume line's `suspended`,
+  plus whatever the next session's `resumed` fails to restore.

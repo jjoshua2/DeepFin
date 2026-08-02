@@ -801,6 +801,18 @@ class GateConfig:
         _t_quantile(self.alpha, 8)  # raises on an unsupported alpha
 
 
+def _json_float(v: float) -> float | None:
+    """A float for ``json.dumps``, with the non-finite ones as ``null``.
+
+    ``json.dumps`` writes NaN/Infinity as bare ``NaN``/``Infinity`` tokens,
+    which no JSON parser outside Python accepts. ``gate_state.json`` is meant
+    to be readable by hand and by other tools, so the non-finite cases become
+    ``null`` and ``load_state_dict`` maps them back to NaN.
+    """
+    f = float(v)
+    return f if math.isfinite(f) else None
+
+
 @dataclass
 class PromotionGate:
     """Rolling anchored-delta gate over the games the loop already plays."""
@@ -1005,6 +1017,23 @@ class PromotionGate:
         return True
 
     def state_dict(self) -> dict[str, object]:
+        """The gate's full state, JSON-round-trippable.
+
+        EVERY field of ``AnchoredSample`` is written, and
+        ``test_gate_state_dict_covers_every_anchored_sample_field`` enumerates
+        the dataclass to prove it. Before that rule existed the three confound
+        fields (``cur_wdl_regret``, ``prev_wdl_regret``, ``regret_fit_slope``)
+        were recorded at runtime and dropped here, so a restart silently
+        replaced measured difficulty gaps with NaN in every restored row while
+        ``state_dict`` still claimed to be the gate's state -- the "accepted
+        and then silently ignored" shape, applied to persistence.
+
+        NaN is written as ``null``, not as the ``NaN`` token ``json.dumps``
+        emits by default: that token is not JSON, and ``gate_state.json`` is a
+        file offline readers are invited to open. ``load_state_dict`` maps
+        ``null``/missing back to NaN, which is the same "no measurement" the
+        producer meant -- nothing is ever back-filled from a default.
+        """
         return {
             "holds": int(self.holds),
             "hold_active": bool(self.hold_active),
@@ -1013,6 +1042,9 @@ class PromotionGate:
                     "iteration": int(s.iteration),
                     "cur_w": int(s.cur_w), "cur_d": int(s.cur_d), "cur_l": int(s.cur_l),
                     "prev_w": int(s.prev_w), "prev_d": int(s.prev_d), "prev_l": int(s.prev_l),
+                    "cur_wdl_regret": _json_float(s.cur_wdl_regret),
+                    "prev_wdl_regret": _json_float(s.prev_wdl_regret),
+                    "regret_fit_slope": _json_float(s.regret_fit_slope),
                 }
                 for s in self.samples
             ],
@@ -1032,11 +1064,23 @@ class PromotionGate:
             v = d.get(key, default)
             return int(v) if isinstance(v, (int, float)) else default
 
+        def _f(d: dict[str, object], key: str) -> float:
+            # Missing, null, or non-numeric all mean "not measured" -> NaN.
+            # A state file written before the confound fields existed lands
+            # here, and NaN is exactly what the producer would have recorded.
+            v = d.get(key)
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                return float("nan")
+            return float(v)
+
         self.samples = [
             AnchoredSample(
                 iteration=_i(d, "iteration", -1),
                 cur_w=_i(d, "cur_w"), cur_d=_i(d, "cur_d"), cur_l=_i(d, "cur_l"),
                 prev_w=_i(d, "prev_w"), prev_d=_i(d, "prev_d"), prev_l=_i(d, "prev_l"),
+                cur_wdl_regret=_f(d, "cur_wdl_regret"),
+                prev_wdl_regret=_f(d, "prev_wdl_regret"),
+                regret_fit_slope=_f(d, "regret_fit_slope"),
             )
             for d in raw if isinstance(d, dict)
         ]

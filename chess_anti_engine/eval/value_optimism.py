@@ -484,7 +484,7 @@ class BucketStat:
     tb_range_frac: float
 
 
-def _cluster_bootstrap_ci(
+def cluster_bootstrap_ci(
     values: np.ndarray, game_id: np.ndarray, *, n_boot: int, rng: np.random.Generator,
     alpha: float = 0.05,
 ) -> tuple[float, float]:
@@ -493,6 +493,11 @@ def _cluster_bootstrap_ci(
     Rows inside one game are strongly correlated (consecutive plies of the same
     position sequence), so a row-level bootstrap reports a CI several times too
     tight. The cluster is the game.
+
+    Public because ``scripts/value_loss_scorer.py`` scores a different sample
+    with the same clustering: two copies of this would be two chances to get
+    the cluster wrong, and a row-level bootstrap in one of them would report a
+    CI several times too tight while looking identical in the output.
     """
     v = np.asarray(values, dtype=np.float64)
     if v.size == 0:
@@ -560,14 +565,14 @@ def score_buckets(
             target_sf_score=float(rows.target_sf_score[sel].mean()),
             search_score=float(rows.search_score[sel].mean()),
             net_minus_sf=float(d_net_sf.mean()),
-            net_minus_sf_ci=_cluster_bootstrap_ci(d_net_sf, gid, n_boot=n_boot, rng=rng),
+            net_minus_sf_ci=cluster_bootstrap_ci(d_net_sf, gid, n_boot=n_boot, rng=rng),
             target_minus_sf=float(d_tgt_sf.mean()),
-            target_minus_sf_ci=_cluster_bootstrap_ci(d_tgt_sf, gid, n_boot=n_boot, rng=rng),
+            target_minus_sf_ci=cluster_bootstrap_ci(d_tgt_sf, gid, n_boot=n_boot, rng=rng),
             net_minus_target=float(d_net_tgt.mean()),
-            net_minus_target_ci=_cluster_bootstrap_ci(d_net_tgt, gid, n_boot=n_boot, rng=rng),
+            net_minus_target_ci=cluster_bootstrap_ci(d_net_tgt, gid, n_boot=n_boot, rng=rng),
             net_cp_mean=float(net_cp[sel].mean()),
             net_minus_sf_cp=float(d_net_sf_cp.mean()),
-            net_minus_sf_cp_ci=_cluster_bootstrap_ci(d_net_sf_cp, gid, n_boot=n_boot, rng=rng),
+            net_minus_sf_cp_ci=cluster_bootstrap_ci(d_net_sf_cp, gid, n_boot=n_boot, rng=rng),
             target_minus_sf_cp=float((target_cp[sel] - sf_cp_clamped[sel]).mean()),
             optimistic_frac=float((d_net_sf > 0.0).mean()),
             cp_clamped_frac=float(net_clamped[sel].mean()),
@@ -736,6 +741,6 @@ def outcome_calibration(
             ruler_score=float(ruler[sel].mean()),
             outcome_score=float(out[sel].mean()),
             delta=float(delta.mean()),
-            ci=_cluster_bootstrap_ci(delta, game_id[sel], n_boot=n_boot, rng=rng),
+            ci=cluster_bootstrap_ci(delta, game_id[sel], n_boot=n_boot, rng=rng),
         ))
     return result
