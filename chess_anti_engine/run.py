@@ -7,6 +7,7 @@ import torch
 
 from chess_anti_engine.tune.salvage import export_seed_pool as _run_salvage
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+from chess_anti_engine.utils.architecture import DEFAULT_PHASE_PIECE_THRESHOLDS
 
 
 
@@ -499,7 +500,7 @@ def main() -> None:
         "--phase-piece-thresholds",
         type=int,
         nargs=2,
-        default=(13, 22),
+        default=DEFAULT_PHASE_PIECE_THRESHOLDS,
         metavar=("END_MAX", "MID_MAX"),
         help="Root piece-count thresholds for end/mid/open phase buckets.",
     )

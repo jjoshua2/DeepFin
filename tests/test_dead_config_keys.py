@@ -243,40 +243,138 @@ def test_a_dead_key_is_its_own_reload_class() -> None:
     assert not (dead_config_keys() & restart_required_config_keys())
 
 
-def test_the_provenance_audit_names_the_dead_key_instead_of_calling_it_healthy() -> None:
-    """Without the fourth class it falls through every branch and reads clean.
-
-    The startup overlay puts the yaml value into the realized row, so
-    yaml == realized -- which every remaining branch treats as agreement. The
-    finding has to be raised on the VALUE, not on a diff.
-    """
+def _classify(params: dict, yaml_cfg: dict, realized: dict):
+    from chess_anti_engine.tune.trainable_config_ops import (
+        dead_config_key_inert_values,
+    )
     from scripts.audit_realized_config import classify_config_provenance
-    from chess_anti_engine.tune.trainable_config_ops import dead_config_keys
 
-    params = {_KEY: False}
-    yaml_cfg = {_KEY: True}
-    realized = {_KEY: True}  # the startup overlay applied it; nothing consumed it
-
-    report, findings = classify_config_provenance(
+    return classify_config_provenance(
         params, yaml_cfg, realized,
         restart_keys=frozenset(), construction_only_keys=frozenset(),
-        dead_keys=dead_config_keys(),
+        dead_keys=dead_config_key_inert_values(),
     )
+
+
+def test_the_audit_fires_on_a_LIVE_ADD_where_the_row_lacks_the_key() -> None:
+    """The only operator action that can make a dead key live, and the one the
+    intersection could not see.
+
+    No file under ``configs/`` carries a dead key, so the sole route to a live
+    value is an operator ADDING one to the yaml. ``_reload_yaml_into_config``
+    then DECLINES to overlay it, so it never enters the trial config and never
+    reaches the result row -- and a sweep over ``yaml & realized`` drops it and
+    prints "ok every shared yaml key has reached the running trial".
+
+    ``realized`` deliberately does NOT contain the key here. The previously
+    pinned state (key present in the row at a live value) is unreachable on the
+    production path anyway, because ``reject_dead_config_keys`` raises at
+    startup before such a row could ever be written.
+    """
+    report, findings = _classify({}, {_KEY: True}, {"lr": 3e-5})
+
     assert any(line.startswith(f"  DEAD-KEY {_KEY}:") for line in report), report
     assert len(findings) == 1, findings
     assert _KEY in findings[0]
     assert "REFUSE" in findings[0]
+    assert "DECLINES" in findings[0], (
+        "the finding must say the key is ABSENT from the running config, not "
+        "merely stale -- that distinction is why it needs its own sweep"
+    )
     # It must NOT be described as restart-required -- that is the wrong advice.
     assert "restart required" not in findings[0].lower()
 
-    # ...and the inert value is silent, or the audit would fire on every run.
-    report_ok, findings_ok = classify_config_provenance(
-        {_KEY: False}, {_KEY: False}, {_KEY: False},
-        restart_keys=frozenset(), construction_only_keys=frozenset(),
-        dead_keys=dead_config_keys(),
+
+def test_the_audit_also_fires_when_only_the_ROW_carries_it() -> None:
+    """The other half of the union: yaml cleaned up, row still carrying it."""
+    _, findings = _classify({}, {}, {_KEY: True})
+    assert len(findings) == 1, findings
+    assert "running=True" in findings[0]
+
+
+def test_the_audit_is_silent_at_the_inert_value_on_every_shape() -> None:
+    """Or it would fire on every run of a healthy trial."""
+    for params, yaml_cfg, realized in (
+        ({}, {_KEY: False}, {"lr": 3e-5}),
+        ({_KEY: False}, {_KEY: False}, {_KEY: False}),
+        ({}, {}, {_KEY: 0}),
+        ({}, {}, {"lr": 3e-5}),
+    ):
+        report, findings = _classify(params, yaml_cfg, realized)
+        assert findings == [], (params, yaml_cfg, realized, findings)
+        assert not [line for line in report if "DEAD-KEY" in line]
+
+
+def test_the_audit_and_the_refusal_share_ONE_predicate() -> None:
+    """A guard must share the criterion's instrument.
+
+    The audit says "safe" and the trial says "refuse" about the same value only
+    if the two derive that answer from the same code. They did not: the audit
+    used ``bool(value)`` while the refusal compared ``bool(value) != bool(inert)``,
+    which agree only while every inert value is falsey -- true today, and a
+    silent trap the first time a dead key is added that is inert at True.
+
+    Driven over a value matrix rather than argued: for every value, "the audit
+    raised a finding" must equal "the trial would refuse to start".
+    """
+    from chess_anti_engine.tune.trainable_config_ops import (
+        dead_config_key_inert_values,
+        reject_dead_config_keys,
     )
-    assert findings_ok == []
-    assert not [line for line in report_ok if "DEAD-KEY" in line]
+
+    for value in (True, False, 1, 0, "yes", "", None, 2):
+        _, findings = _classify({}, {_KEY: value}, {"lr": 3e-5})
+        try:
+            reject_dead_config_keys({_KEY: value})
+            refused = False
+        except ValueError:
+            refused = True
+        assert bool(findings) == refused, (
+            f"{value!r}: audit findings={len(findings)} but refusal={refused}"
+        )
+
+    # And the invariant the old two-implementation version silently relied on,
+    # asserted for EVERY dead key rather than for the one that exists today.
+    for key, inert in dead_config_key_inert_values().items():
+        assert not bool(inert), (
+            f"{key} is inert at a TRUTHY value; re-check every bool(...) "
+            f"comparison that assumed otherwise"
+        )
+
+
+def test_the_shared_predicate_holds_for_a_key_that_is_inert_at_TRUE(
+    monkeypatch,
+) -> None:
+    """The case every ``bool(value)`` shortcut gets right by luck today.
+
+    Both the audit and the refusal currently agree with a bare truthiness test,
+    because the one dead key in existence is inert at ``False``. That is a
+    property of today's key set, not of the code, and a test that only exercises
+    that key cannot tell a correct implementation from a lucky one -- so a
+    SYNTHETIC dead key inert at ``True`` is registered here, and both sides must
+    then treat ``True`` as the safe value and ``False`` as the violation.
+
+    Registered on the module's own mapping (restored by ``monkeypatch``) so both
+    the accessor the audit reads and the global the refusal reads see it --
+    otherwise the two would be driven from different sources and the test would
+    be asserting the very split it exists to forbid.
+    """
+    from chess_anti_engine.tune import trainable_config_ops as ops
+
+    synthetic = "synthetic_dead_key_inert_at_true"
+    monkeypatch.setitem(ops._DEAD_CONFIG_KEY_INERT_VALUES, synthetic, True)
+
+    # The INERT value is True here: silent on both sides.
+    _, findings = _classify({}, {synthetic: True}, {"lr": 3e-5})
+    assert findings == [], findings
+    ops.reject_dead_config_keys({synthetic: True})  # must not raise
+
+    # ...and False is the violation, on both sides.
+    _, findings = _classify({}, {synthetic: False}, {"lr": 3e-5})
+    assert len(findings) == 1, findings
+    assert "inert=True" in _classify({}, {synthetic: False}, {"lr": 3e-5})[0][0]
+    with pytest.raises(ValueError, match=synthetic):
+        ops.reject_dead_config_keys({synthetic: False})
 
 
 def test_the_audit_binds_the_dead_set_to_the_real_one() -> None:
@@ -290,4 +388,7 @@ def test_the_audit_binds_the_dead_set_to_the_real_one() -> None:
     import scripts.audit_realized_config as audit
 
     src = inspect.getsource(audit)
-    assert "dead_keys=dead_config_keys()," in src
+    assert "dead_keys=dead_config_key_inert_values()," in src
+    # ...and swept over the UNION, not the intersection: the live-ADD case has
+    # no realized value at all.
+    assert "for key in sorted(set(flat_yaml) | set(realized)):" in src

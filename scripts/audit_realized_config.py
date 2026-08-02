@@ -490,18 +490,6 @@ _PROVENANCE_ROTATING_KEYS: dict[str, str] = {
 }
 
 
-def _truthy_dead_value(value: object) -> bool:
-    """Whether a dead key is set to something other than its inert value.
-
-    ``bool()`` rather than a comparison against the inert value: yaml spells the
-    same intent ``true`` / ``True`` / ``1`` / ``yes``, and every dead key so far
-    is inert at falsey. Mirrors ``reject_dead_config_keys``, which is the thing
-    that will actually raise — a report that disagreed with the refusal about
-    which values are safe would be worse than no report.
-    """
-    return bool(value)
-
-
 def classify_config_provenance(
     params: Mapping[str, object],
     flat_yaml: Mapping[str, object],
@@ -510,7 +498,7 @@ def classify_config_provenance(
     restart_keys: Iterable[str],
     searched_keys: Iterable[str] = (),
     construction_only_keys: Iterable[str] = (),
-    dead_keys: Iterable[str] = (),
+    dead_keys: Mapping[str, object] | Iterable[str] = (),
     yaml_is_newer_than_row: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Label every shared config key by which source is authoritative for it.
@@ -553,15 +541,16 @@ def classify_config_provenance(
     SEPARATELY, and checked alongside ``restart_keys`` rather than through it,
     so the "params.json is merely the launch value" verdict cannot be reached
     for a key with no live consumer even if ``restart_keys`` is wrong — which
-    ``dead_keys`` is injected the same way and for the same reason
-    (``trainable_config_ops.dead_config_keys()``): it is a FOURTH reload class,
-    not a subset of ``restart_keys``, because a restart refuses these rather
-    than applying them.
-
     is exactly the state this function was in until 2026-08-01, when it printed
     ``shuffle_buffer_size: params.json=25000 running=100000`` under the header
     "the running value is correct" about a cap the ``DiskReplayBuffer`` had
     been built with at 25000 and never re-read.
+
+    ``dead_keys`` is injected the same way and for the same reason, but as a
+    MAPPING of key -> inert value (``dead_config_key_inert_values()``): it is a
+    FOURTH reload class, not a subset of ``restart_keys``, because a restart
+    refuses these rather than applying them. It is swept over the UNION of the
+    yaml and the realized row rather than their intersection — see the loop.
 
     ``yaml_is_newer_than_row`` downgrades every yaml-vs-realized difference to a
     printed note. The realized row is minutes old by construction, so a yaml
@@ -571,6 +560,7 @@ def classify_config_provenance(
     """
     restart = set(restart_keys)
     construction_only = set(construction_only_keys)
+    dead_inert = dict(dead_keys) if isinstance(dead_keys, Mapping) else {}
     dead = set(dead_keys)
     searched = set(searched_keys)
     stale: list[str] = []
@@ -593,27 +583,54 @@ def classify_config_provenance(
         report.append(f"  {kind} {key}: yaml={on_disk!r} running={live!r}")
         findings.append(why)
 
+  # ⚑ DEAD KEYS ARE SWEPT OVER THE UNION, IN THEIR OWN PASS, BEFORE THE MAIN
+  # LOOP -- and that is the whole reason this branch can fire at all.
+  #
+  # The main loop below runs over the INTERSECTION of yaml and realized, which
+  # is right for every other class: a key the trial never heard of has no
+  # "realized" value to compare against. A dead key is the exact opposite. The
+  # ONLY route by which one goes live is an operator ADDING it to the yaml (no
+  # file under configs/ carries one), and `_reload_yaml_into_config` DECLINES
+  # to overlay it -- so it never enters `config`, never reaches the result row,
+  # and the intersection drops it. Under the intersection this audit printed
+  # "ok every shared yaml key has reached the running trial" for precisely the
+  # action it was added to catch.
+  #
+  # This is the same intersection-vs-union defect as A4/E13 below, in which
+  # `soft_policy_temp` read 3.0 in the yaml for five months while every worker
+  # used 2.0, because a key absent from one side never entered the comparison.
+  # Absent must be a REPORTABLE state, not an invisible one.
+  #
+  # Reported on the VALUE against its inert counterpart, never on a
+  # yaml-vs-realized diff: whenever the startup overlay did run the two AGREE,
+  # and agreeing is what makes this invisible to every other branch.
+    for key in sorted(set(flat_yaml) | set(realized)):
+        if key not in dead or key in searched:
+            continue
+  # The yaml is what the operator edited and what the next restart will read,
+  # so it wins when both carry the key.
+        source = "yaml" if key in flat_yaml else "running"
+        value = flat_yaml[key] if key in flat_yaml else realized[key]
+        inert = dead_inert.get(key, False)
+        if bool(value) == bool(inert):
+            continue
+        report.append(f"  DEAD-KEY {key}: {source}={value!r} inert={inert!r}")
+        findings.append(
+            f"{key}: reaches no production consumer at any value ({source}="
+            f"{value!r}). The live reload DECLINES it — so it is absent from "
+            f"the running config rather than merely stale — and the next "
+            f"restart will REFUSE to start "
+            f"(trainable_config_ops.reject_dead_config_keys). Remove it from "
+            f"the yaml or set it back to {inert!r}."
+        )
+
     for key in sorted(set(flat_yaml) & set(realized)):
         if key in searched or key.startswith("pb2_bounds_"):
             continue
         on_disk = flat_yaml[key]
         live = realized[key]
         if key in dead:
-            # Checked BEFORE the restart branch: a dead key is not
-            # restart-required, and saying so would send an operator into the
-            # one action that converts a silent no-op into a refusal to start.
-            # Reported on the YAML value, not on a yaml-vs-realized diff: the
-            # two agree whenever the startup overlay ran, and agreeing is
-            # exactly what makes this invisible to every other branch.
-            if _truthy_dead_value(on_disk):
-                report.append(f"  DEAD-KEY {key}: yaml={on_disk!r}")
-                findings.append(
-                    f"{key}: reaches no production consumer at any value. The "
-                    "live reload declines it and the next restart will REFUSE "
-                    "to start (trainable_config_ops.reject_dead_config_keys). "
-                    "Remove it from the yaml or set it back to its inert value."
-                )
-            continue
+            continue  # sweept over the UNION, above -- not here
         if key in restart or key in construction_only:
             if not _same_value(on_disk, live):
                 extra = (
@@ -692,7 +709,7 @@ def audit_config_provenance(
     # importable wherever the extension is not built.
     from chess_anti_engine.tune.trainable_config_ops import (
         construction_only_config_keys,
-        dead_config_keys,
+        dead_config_key_inert_values,
         restart_required_config_keys,
     )
 
@@ -747,7 +764,7 @@ def audit_config_provenance(
         restart_keys=restart_required_config_keys(),
         searched_keys=searched,
         construction_only_keys=construction_only_config_keys(),
-        dead_keys=dead_config_keys(),
+        dead_keys=dead_config_key_inert_values(),
         yaml_is_newer_than_row=yaml_is_newer,
     )
     for line in report:

@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
@@ -509,7 +510,43 @@ _DEAD_CONFIG_KEY_INERT_VALUES: dict[str, object] = {
 }
 
 
-def reject_dead_config_keys(config: dict) -> None:
+def dead_config_key_inert_values() -> dict[str, object]:
+    """The dead keys with the ONE value each that is inert, for reporting tools.
+
+    ``dead_config_keys()`` answers "is this key dead"; this answers "is this
+    VALUE the harmless one", which a provenance report needs in order to stay
+    quiet on a yaml that merely leaves the key in place at its realized default.
+    """
+    return dict(_DEAD_CONFIG_KEY_INERT_VALUES)
+
+
+def dead_config_key_violations(
+    config: Mapping[str, object],
+) -> list[tuple[str, object, object]]:
+    """Dead keys in *config* set to something other than their inert value.
+
+    ⚑ THE SINGLE PREDICATE. ``reject_dead_config_keys`` (which raises at
+    startup) and ``scripts/audit_realized_config.py`` (which reports) both go
+    through this function rather than each re-deriving "is this value live".
+    Two implementations that agree today drift the moment a dead key is added
+    whose inert value is not falsey, and then the audit would call safe a value
+    the trial refuses to start on — a guard disagreeing with the criterion it
+    guards.
+
+    ``bool(...)`` rather than ``!=``: yaml spells the same intent ``true`` /
+    ``True`` / ``1`` / ``yes``, and a ``1 != False`` comparison would flag a
+    value the consumer would have treated as identical to the inert one.
+
+    Returns ``(key, value, inert)`` triples so a caller can name all three.
+    """
+    return [
+        (key, config[key], inert)
+        for key, inert in _DEAD_CONFIG_KEY_INERT_VALUES.items()
+        if key in config and bool(config[key]) != bool(inert)
+    ]
+
+
+def reject_dead_config_keys(config: Mapping[str, object]) -> None:
     """Raise on a yaml key that is parsed but reaches no production consumer.
 
     Called from the production replay-buffer construction path, so the refusal
@@ -518,27 +555,20 @@ def reject_dead_config_keys(config: dict) -> None:
     ``_reload_yaml_into_config``), because crashing a running trial on a yaml
     edit would crash-loop under ``train.sh``'s auto-resume.
     """
-    for key, inert in _DEAD_CONFIG_KEY_INERT_VALUES.items():
-        if key not in config:
-            continue
-        value = config[key]
-  # bool(...) rather than `!=`: yaml gives `true`/`True`/`1` for the same
-  # intent, and a `1 != False` comparison would refuse a value that the
-  # buffer would have treated as identical to the inert one.
-        if bool(value) != bool(inert):
-            raise ValueError(
-                f"{key}={value!r} is parsed but reaches no production code path: "
-                f"the trial builds its DiskReplayBuffer without it "
-                f"(trainable_init.py) and never pushes it on live reload "
-                f"(trainable.py), so the only value this run can realize is "
-                f"{inert!r}. Its only consumers are the offline "
-                f"scripts/retarget_retrain.py and scripts/holdout_policy_screen.py. "
-                f"Refusing rather than accepting a "
-                f"knob that reads back correctly and does nothing; the "
-                f"gap-priority family was KILLED by experiment #104 "
-                f"(docs/experiment_ledger.md), so re-enabling it needs a ledger "
-                f"entry and a deliberate wiring change, not a yaml line."
-            )
+    for key, value, inert in dead_config_key_violations(config):
+        raise ValueError(
+            f"{key}={value!r} is parsed but reaches no production code path: "
+            f"the trial builds its DiskReplayBuffer without it "
+            f"(trainable_init.py) and never pushes it on live reload "
+            f"(trainable.py), so the only value this run can realize is "
+            f"{inert!r}. Its only consumers are the offline "
+            f"scripts/retarget_retrain.py and scripts/holdout_policy_screen.py. "
+            f"Refusing rather than accepting a knob that reads back correctly "
+            f"and does nothing; the gap-priority family was KILLED by "
+            f"experiment #104 (docs/experiment_ledger.md), so re-enabling it "
+            f"needs a ledger entry and a deliberate wiring change, not a yaml "
+            f"line."
+        )
 
 
 def dead_config_keys() -> frozenset[str]:

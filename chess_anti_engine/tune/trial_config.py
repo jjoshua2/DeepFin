@@ -9,6 +9,7 @@ from chess_anti_engine.train.target_builder import SfTargetParams
 from chess_anti_engine.train.targets import DEFAULT_CATEGORICAL_BINS
 from chess_anti_engine.tune.promotion_gate import GateDecision
 from chess_anti_engine.utils.architecture import (
+    DEFAULT_PHASE_PIECE_THRESHOLDS,
     normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
     normalize_phase_piece_thresholds,
@@ -134,7 +135,7 @@ class TrialConfig:
     phase_output_adapter: bool = False
     phase_output_adapter_dim: int = 64
     phase_smolgen: bool = False
-    phase_piece_thresholds: tuple[int, int] = (13, 22)
+    phase_piece_thresholds: tuple[int, int] = DEFAULT_PHASE_PIECE_THRESHOLDS
 
   # --- Training ---
     lr: float = 0.0003
@@ -485,7 +486,7 @@ class TrialConfig:
             phase_output_adapter_dim=int(config.get("phase_output_adapter_dim", 64)),
             phase_smolgen=bool(config.get("phase_smolgen", False)),
             phase_piece_thresholds=normalize_phase_piece_thresholds(
-                config.get("phase_piece_thresholds", (13, 22))
+                config.get("phase_piece_thresholds")
             ),
 
   # --- Training ---

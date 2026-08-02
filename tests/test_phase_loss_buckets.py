@@ -137,6 +137,19 @@ def test_the_thresholds_are_one_shared_object_not_two_literals() -> None:
         src = (_REPO / rel).read_text(encoding="utf-8")
         assert "DEFAULT_PHASE_PIECE_THRESHOLDS" in src, rel
         assert "(13, 22)" not in src, f"{rel} still carries its own literal"
+
+    # Repo-wide: the numbers may appear in exactly ONE place. This catches a
+    # sixth copy appearing in a file nobody thought to list here, which is how
+    # the first four accumulated.
+    offenders = []
+    for path in sorted((_REPO / "chess_anti_engine").rglob("*.py")) + sorted(
+        (_REPO / "scripts").rglob("*.py")
+    ):
+        if path.name == "architecture.py":
+            continue  # the one definition
+        if "(13, 22)" in path.read_text(encoding="utf-8"):
+            offenders.append(str(path.relative_to(_REPO)))
+    assert offenders == [], f"phase thresholds re-typed in: {offenders}"
     losses_src = (_REPO / "chess_anti_engine" / "train" / "losses.py").read_text(
         encoding="utf-8",
     )
