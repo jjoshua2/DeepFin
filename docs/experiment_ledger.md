@@ -24048,3 +24048,118 @@ separates them, it needs no restart, and it costs ~4 GPU-minutes per arm.
 - **The 12-point grid is coarse**, so "early vs late" is located to ±25–50 iterations.
 - **No intervention was run.** A rate decomposition is not a mechanism. The capacity
   cross-check above is the pre-registerable next step, not a result.
+
+## ⛔ 2026-08-02 — BLOCKED, not deferred: the capacity-ladder × `N4_jul25` cross-check is **UNRUNNABLE**. The capsize and rows/param rigs banked **ZERO weight files** — no per-eval-point checkpoints, no finals, and no `torch.save` anywhere in their source. The three-way PARAMS / ROWS-PER-PARAM / OPTIMIZER rule is pre-registered and ready at `scratchpad/capacity_n4_20260802/PREREG.md`; it needs a **≈19 GPU-hour re-run** (≈6.4 h at reduced seeds) of arms that already ran once. **A metric was banked instead of the artifact that produced it** — the weights-level version of [[bank_the_dump_not_just_the_number]].
+
+This is the pre-registered follow-up named in the never-seen entry ("score the capacity
+ladder on `N4_jul25` … costs ~4 GPU-minutes per arm"). That cost estimate was wrong by
+three orders of magnitude, for a reason that had nothing to do with scoring.
+
+### What was checked, before any scoring was attempted
+
+| check | result |
+|---|---|
+| `find` both rigs for `*.pt` / `*.pth` / `*.safetensors` / `*.ckpt` / `*.bin` | **0 files** |
+| `grep -rn "torch.save"` over `capsize/*.py`, `rowsparam/*.py` | **0 hits** |
+| `slope.py::_record` (263-282) | evaluates, appends a **metrics-only** JSON row, discards the model |
+| what each of the 8 runs banked | `header.json`, `rows.json`, `slope.jsonl` (25 rows), one TB event file. **Scalars only.** |
+
+**Not even finals exist**, so there is no two-point-slope substitute to fall back on
+either. Recorded as UNRUNNABLE rather than quietly swapping in a weaker instrument.
+
+### What DOES survive, and why the re-run is cheap in everything except GPU time
+
+- Both corpora are intact: `capsize/corpus` 4.2 GB, `rowsparam/corpus_wide` 25.7 GB. No
+  rebuild needed.
+- Encoding is compatible with the eval set as-is: the capsize corpus is
+  `x (N,175,8,8) float16`, `policy_target (N,1858)`, `legal_mask (N,1858)` — identical to
+  `N4_jul25`, so `scratchpad/neverseen_20260802/sweep.py` transfers **unchanged**.
+- The fix is one `torch.save` inside `_record`, writing
+  `{"arch": <the config already in scope at slope.py:222>, "model": state_dict}` so the
+  existing `load_model_from_checkpoint` reads it with no scorer change.
+- Re-run cost, from the runs' own banked `wall_s`: L 79.9 / 77.6 min, M 64.4 / 41.0,
+  S 52.5 / 29.8, **L-wide 414.8 / 414.2** (seed0 / seed1) ⇒ **≈19 GPU-hours** for all 8,
+  **≈6.4 h** for one L-wide seed plus two seeds of each sibling arm. Banking 10 of the 25
+  eval points costs ≈12 GB (63M ≈252 MB/ckpt, 19.6M ≈78 MB, 6.2M ≈25 MB); 1.6 TB free.
+
+### The pre-registered rule, fixed now so the re-run cannot be read post-hoc
+
+Full text at `scratchpad/capacity_n4_20260802/PREREG.md`. Summary:
+
+- **Instrument**: byte-identical to the never-seen entry — raw-policy top-1 cp regret on
+  `N4_jul25` (10,000 rows / 2,960 games, stored 175-plane inputs, no-PV 0.0000), batch
+  pinned 128. `N4_jul25` is shards 034000–034064 of the **abandoned** lineage and shares
+  no shard index or directory with any arm's corpus (to be re-verified at run time).
+- **⚠ Absolute levels are meaningless** — the arms train from scratch, so their `N4`
+  regret starts near the random-net level (~190–210 cp) and falls before any rebound.
+  Only the **post-minimum** slope is the analogue of the live global term, because live
+  production sits past its minimum (63M turns up at ~3.1 views/row; production runs 5.0).
+- **Axis, stated explicitly**: PRIMARY = **views per row**, on which all four arms share
+  an identical 25-point grid 0 → 11.53 (`chunk_steps 176`, `batch 256`) so no
+  interpolation is needed and the 08-02 capacity verdict stays commensurable. SECONDARY =
+  **optimizer steps**, which the arms do NOT share — L/M/S reach 11.53 views in **8,448**
+  steps, L-wide in **51,568**. The step axis is the only handle on the data-vs-steps
+  confound in the L vs L-wide contrast; if the two axes rank the arms differently the
+  verdict is downgraded to CANNOT RESOLVE.
+- **PRIMARY quantity** `rho_late` = per-row OLS over the **last 8 eval points**
+  (views ≈7.9 → 11.53) — span-identical, no arm-specific choice, inside the rebound for
+  L, M and L-wide. **SECONDARY** `rho_rebound` from each arm's own `views_at_min`
+  (banked: L 3.364 / 2.883, M 7.688 / 6.727, **S 11.532 / 11.532 = last point, no
+  rebound**, L-wide 4.326 / 4.798). S's empty rebound span is handled by a pre-committed
+  rule (last-5-point slope, reported as an upper bound, arm recorded as "no rebound") so
+  that the answer is an answer, not a missing value.
+- **Three-way rule** (seeds pooled, game-clustered CIs), with
+  `rho_pred(L-wide)` = log-interpolation of `rho_late` across `log(rows/param)` through
+  L 0.0029728 / M 0.0095811 / S 0.0303797, evaluated at L-wide's **0.0181617**:
+  - **ROWS/PARAM driver** iff `rho_late(S) <= 0.5 × rho_late(L)` with non-overlapping CIs,
+    **and** `rho_late(L-wide)` strictly between L and S with the difference CI excluding
+    0, **and** `rho_pred(L-wide)` inside `rho_late(L-wide)`'s CI. ⇒ coverage/size is the lever.
+  - **PARAMS driver** iff the S clause holds **but** `rho_late(L-wide) − rho_late(L)`
+    includes 0 despite **6.11×** the rows/param, and L-wide is significantly above
+    `rho_pred`. ⇒ a different remedy: raising data rate will not help, and live's 0.0202
+    rows/param is not the lever.
+  - **OPTIMIZER-STATE DRIFT** iff the S clause fails — the term survives a 10.2× size
+    change. ⇒ optimizer/schedule; neither capacity nor data rate is the lever.
+  - **CANNOT RESOLVE** otherwise, including any arm whose `rho_late` CI includes 0.
+- **Negative control**: the rigs' label-shuffled arms (`run_SHUF_s0`, `run_LWSHUF_s0`)
+  must score `N4_jul25` at ≥2× the worst real arm at every eval point and show no
+  significant `rho_late`, alongside the already-banked `uniform` (206.56 cp) and
+  `shuffled477` (192.21 cp) controls for this set.
+
+### ⚑⚑ THE TRANSFERABLE DEFECT — this is [[bank_the_dump_not_just_the_number]] one level up
+
+The capacity rig was designed to answer exactly one question — *where does held-out loss
+turn* — and banked exactly the scalar that answered it. It answered that question well
+(the 08-02 verdict stands, all four pre-committed conditions passed). But the **nets it
+built were thrown away at process exit**, so every later question about those nets is
+unanswerable without paying the full training cost again. The scalar was banked; the
+artifact that produced it was not.
+
+**Standing rule going forward: any rig that trains a net `torch.save`s the net at every
+eval point unless disk genuinely forbids it.** Weights are the reusable artifact; the
+metric is one query against them. At 63M params a full 25-point grid is 6.3 GB — against
+19 GPU-hours, that trade is not close.
+
+### VERIFIED
+
+- 0 weight files of any extension under either rig; 0 `torch.save` occurrences in either
+  rig's source; `_record` writes scalars only.
+- 8 runs × 25 eval points of metrics present and intact (`slope.jsonl`, `header.json`,
+  TB events), so the ORIGINAL capacity and rows/param verdicts are unaffected by this.
+- Corpora present and encoding-compatible with `N4_jul25`
+  (`x (N,175,8,8)`, policy/legal width 1858).
+- Re-run cost taken from the runs' own recorded `wall_s`, not estimated.
+- `views_at_min` per arm re-read from the banked `slope.jsonl` (values above), which is
+  existing on-record data and involves no `N4` number, so the pre-registration remains
+  blind to the quantity it decides.
+
+### NOT ESTABLISHED
+
+- **No `N4` number exists for any capacity arm.** Nothing about params vs rows/param vs
+  optimizer drift is claimed here in either direction. The never-seen entry's global term
+  (+0.0080 cp/iter) remains unattributed.
+- The re-run cost assumes the rigs reproduce at their original wall-clock on a card that
+  is currently shared with the live rig; contention could inflate it.
+- Corpus retention is not guaranteed — both corpora live under `/tmp/claude-1000/…`,
+  30 GB that a cleanup would remove, and rebuilding them is additional cost not counted
+  above.
