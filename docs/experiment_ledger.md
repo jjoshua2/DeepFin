@@ -20809,6 +20809,8 @@ different rows, silently unpaired. Measured with the flag ON, same seed, 800
 steps: **+1 shard → 617/800 sampled rows differ (77.1%); −1 shard → 343/800
 (42.9%).**
 
+⚑ **SUPERSEDED 2026-08-02** — the pre-arm `iter_shard_paths` snapshot described in this paragraph was itself a defect (it false-aborts arm 1 on shards that land during startup); the reference is now arm 1's own `_snapshot_shards()`, and the test names cited below have been renamed. See the 2026-08-02 post-merge-review entry at EOF.
+
 Fix: `main()` snapshots the shard list ONCE with `iter_shard_paths` before any
 arm runs and passes it down; `_run_variant` compares the constructed buffer's
 OWN `_snapshot_shards()` against it and `SystemExit`s naming DE-PAIRED. It runs
@@ -20819,7 +20821,7 @@ point: two independent re-globs agree even when the buffer filtered.
 
 Mutation-tested three ways, all against `tests/test_retarget_retrain.py`:
 - delete the guard CALL from `_run_variant` → `test_the_shard_guard_runs_on_the_real_call_path` FAILS;
-- make `_assert_shards_unchanged` return unconditionally (accepted-and-ignored, this repo's signature defect) → **6** tests FAIL (this line said 5; an independent review re-ran the mutation and counted 6 — `..._ADDED_mid_sweep`, `..._REMOVED_mid_sweep`, `..._on_reordering_alone`, `..._names_the_shards_that_moved`, `..._runs_on_the_real_call_path`, `..._snapshot_source_matches_what_the_buffer_scans`. The PR body had it right; the canonical record did not);
+- make `_assert_shards_unchanged` return unconditionally (accepted-and-ignored, this repo's signature defect) → **8** tests FAIL (this line said 5, then 6; re-run on the merged `82390612c` and counted 8 — `..._ADDED_mid_sweep`, `..._REMOVED_mid_sweep`, `..._on_reordering_alone`, `..._names_the_shards_that_moved`, `..._runs_on_the_real_call_path`, `..._snapshot_source_matches_what_the_buffer_scans`, `..._reads_the_BUFFER_list_not_a_re_glob`, `..._depaired_EMPTY_pool_reports_de_pairing_not_wrong_replay_dir`. The 6 count predated the last two tests, which the same PR added; the number was never re-measured after they landed);
 - re-glob per arm instead of snapshotting once in `main()` → `test_main_snapshots_the_pool_ONCE_for_the_whole_sweep` FAILS.
 
 That third mutation is the one worth keeping. A per-arm re-glob leaves the
@@ -20887,6 +20889,100 @@ the documented interpreter, not the recorded numbers.
 a SUPERSEDED marker at the claim itself, pointing at the retraction ~50 lines
 below. One inserted line, `git diff --numstat` = `2 0`, nothing rewritten.
 
+---
+
+## 2026-08-02 — POST-MERGE REVIEW of `82390612c` (#307): the pairing gate's reference was a pre-startup glob, so it could fire on a sweep that was perfectly paired
+
+#307's shard-snapshot gate is the right gate wired to the wrong reference.
+`main()` globbed `--replay-dir` with `iter_shard_paths` and handed that list to
+**every** arm including arm 1. Arm 1's own scan happens inside its
+`DiskReplayBuffer` ctor, after `torch.load` + `build_model` + `Trainer()` +
+CUDA init — tens of seconds later. A shard landing inside that startup window
+aborts the sweep, and **nothing is de-paired by it**: no arm has drawn a row
+yet, so all arms would still have scanned the same pool. With a single
+`--variant` the gate can produce nothing BUT that false abort — there is no
+second arm for it to protect. #307's own docstring argued this was
+"deliberately STRICTER … fail-closed on purpose"; it is not stricter, it is
+false, and the cost is a re-run of an `--steps 800` sweep per occurrence.
+
+**Fix.** Pairing is defined relative to the pool arm 1 actually drew from, so
+arm 1's own `_snapshot_shards()` is the only honest reference. `_run_variant`
+takes `shard_snapshot: list[Path] | None`; `None` means "you are arm 1, adopt
+your own scan", the arm reports that scan back in its summary (and into
+`retarget_report.json`, so a reader can see WHICH shards the printed deltas
+were paired over — previously unrecorded), and `main()` threads it to arms
+2..N. The gate is unchanged and still fatal for every arm that has a reference
+to fail against. `main()` no longer globs at all.
+
+⚑ `[]` is a REAL reference (arm 1 scanned an empty pool), never a synonym for
+"unset". The sentinel is `None` and the test is `is None`.
+
+⚠ **Correction (post-review).** This entry first justified that choice by saying
+a falsy test "would disable the gate for the rest of any sweep whose first arm
+found no shards". **That consequence cannot occur.** An arm-1 pool of `[]` means
+`len(buf) == 0`, which `SystemExit`s before `_run_variant` returns a summary, so
+`main()` can never adopt an empty reference and the sweep dies at arm 1 under
+either spelling. Verified against an empty `--replay-dir`. The `is None` choice
+is still right — it makes the distinction a property of this code rather than of
+the empty-pool guard's ordering — but it is a pinned DECISION, not a fix for a
+reachable bug. Same honesty the sibling test already applies to the
+buffer-filter justification ("describes a case which cannot arise — but the
+choice is still right").
+
+**Mutation table — 11 mutations, 10 killed + 1 made UNEXPRESSIBLE**
+(`tests/test_retarget_retrain.py`, 28 tests, clean run green):
+
+| # | mutation | outcome |
+|---|---|---|
+| M1 | `main()` pre-globs and hands it to arm 1 (revert the fix) | 2 tests FAIL |
+| M2 | `if not snapshot: return` in the helper | 2 tests FAIL |
+| M3 | `if not shard_snapshot:` instead of `is None` at the call site | 1 test FAILS |
+| M4 | pass the two lists positionally, swapped, at the call site | **`TypeError` — not expressible** (see below) |
+| M5 | the two params trade ROLES in the helper body | 3 tests FAIL incl. `..._argument_ORDER_is_pinned` |
+| M6 | delete the guard call | 4 tests FAIL |
+| M7 | helper returns unconditionally | 11 tests FAIL |
+| M8 | `main()` never adopts arm 1's pool | 2 tests FAIL |
+| M9 | arm 1 reports a re-glob instead of its buffer scan | 4 tests FAIL |
+| M10 | `shard_snapshot` gains a `= None` default | 1 test FAILS |
+| M11 | adopt via `.get("shard_pool", [])` instead of subscript | 1 test FAILS |
+
+⚑ **M4 is not "killed" — it is unexpressible.** Both shard lists are now
+keyword-only, so the positional swap #307 allowed raises
+`TypeError: _assert_shards_unchanged() takes 0 positional arguments but 2 were
+given` at the call. The 4 tests that go red do so on that `TypeError`, not on a
+misdirected message. That is the stronger outcome: a defect the signature
+forbids beats one the tests catch.
+
+⚠ Keyword-only cannot stop a RENAME, so M5 was redefined. Merely REORDERING two
+keyword-only parameters is a semantic no-op — the first attempt at M5 did that
+and survived all 28 tests, correctly, because it changed nothing. The real
+mutation swaps what the two names MEAN inside the body, and
+`..._argument_ORDER_is_pinned` catches it by asserting the direction of the
+added/removed report rather than merely that an abort happened.
+
+M10/M11 close the two "kills zero tests" gaps a reviewer found: a default on
+`shard_snapshot` silently gives a forgetful caller arm-1 semantics (gate off),
+and `.get(..., [])` turns a lost field into a false `(0 shards at start, N now)`
+abort instead of a loud `KeyError`. The third candidate in that family —
+`main()`'s adopt-site falsy test — was deliberately NOT pinned: given the
+correction above it is unreachable, and M10 covers the same family at the site
+where it can actually bite.
+
+**What proves the fix is on the production path**, not just in the tests: arm 1
+now prints `shard reference = this arm's own scan, N shards under <dir>` from
+inside `_run_variant` (after the buffer is built, not before), and every
+`retarget_report.json` carries each arm's `shard_pool`. A sweep whose arms were
+paired has identical `shard_pool` lists across arms; one that was not never
+reaches the report, because the gate is still `SystemExit` before `train_steps`.
+
+**Also corrected above:** the F2 mutation count in the #307 entry said 6. Re-run
+on merged `82390612c` it is 8 — the 6 predated `..._reads_the_BUFFER_list_not_a_re_glob`
+and `..._depaired_EMPTY_pool_reports_de_pairing_not_wrong_replay_dir`, which the
+same PR added and after which the number was never re-measured.
+
+⚠ Nothing here is training-affecting: `scripts/retarget_retrain.py` is an
+offline sidecar and training is paused. No yardstick, no kill threshold — this
+is an instrument-correctness entry, not an experiment.
 ## 2026-08-02 — INFRASTRUCTURE, NOT AN EXPERIMENT: `replay_shard_recency_exponent`, a knob on the shard-recency draw whose default is byte-identical to the code it replaces
 
 **No verdict is claimed here and no behaviour changes.** This entry exists so
