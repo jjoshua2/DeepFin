@@ -118,7 +118,7 @@ def main() -> None:
         # rulers (scripts/retarget_retrain.py). This script's output is a
         # timing, and the async shuffle refresh is part of what production
         # actually does: pinning the refresh onto the sampling thread would
-        # make the reported steps/s slower than the loop being profiled. The
+        # make the reported steps/s slower than the loop being profiled.
         # The draw sequence being load-dependent costs a PROFILER nothing.
         # It is not free of consequence: the loss block printed at the end of
         # this script (policy/wdl/sf_move/... , 12 numbers) is computed over

@@ -382,3 +382,116 @@ def test_require_complete_raises_on_shape_mismatch() -> None:
         load_state_dict_tolerant(
             dst, dict(state), label="test", require_complete=True,
         )
+
+
+def _variant_harness(monkeypatch, buf_cls) -> None:
+    """Wire ``_run_variant``'s collaborators so only ``buf_cls`` varies."""
+    class _Cfg:
+        input_extra_features = "v2_threats"
+
+    def _no_training(*_a, **_k):
+        raise AssertionError(
+            "train_steps ran despite a changed shard pool: the arms are "
+            "de-paired and the guard did not stop the sweep"
+        )
+
+    monkeypatch.setattr(rr, "DiskReplayBuffer", buf_cls)
+    monkeypatch.setattr(rr, "model_config_from_arch", lambda _a: _Cfg())
+    monkeypatch.setattr(rr, "build_model", lambda _cfg: _tiny_net())
+    monkeypatch.setattr(rr, "load_state_dict_tolerant", lambda *a, **k: None)
+    monkeypatch.setattr(rr, "trainer_kwargs_from_config", lambda _c: {})
+    monkeypatch.setattr(
+        rr, "Trainer", lambda *a, **k: type("_T", (), {"train_steps": _no_training})(),
+    )
+    monkeypatch.setattr(rr, "_assert_replay_planes_match", lambda *a, **k: None)
+    monkeypatch.setattr(torch, "load", lambda *a, **k: {"model": {}, "arch": {}})
+
+
+def test_the_guard_reads_the_BUFFER_list_not_a_re_glob(monkeypatch, tmp_path) -> None:
+    """MUTATION: compare ``iter_shard_paths(replay_dir)`` instead of
+    ``buf._snapshot_shards()``.
+
+    That mutation survived an independent review's whole suite, because every
+    other test makes the two agree. Here the on-disk glob MATCHES the snapshot
+    while the buffer reports a different pool -- so a re-globbing guard sees no
+    change and trains, and only a guard reading what THIS ARM WILL ACTUALLY
+    DRAW FROM aborts.
+
+    The module comment claims the buffer's list is authoritative because a
+    re-glob "would agree even if the buffer had filtered". On today's path the
+    buffer cannot filter (`read_only=True` makes `_enforce_window` return at
+    once), so that justification describes a case which cannot arise -- but the
+    choice is still right, and this is the test that makes it a pinned decision
+    rather than an unverifiable preference.
+    """
+    snap = _shards("shard_000001.zarr")
+
+    class _DisagreeingBuf:
+        def __init__(self, *_a, **_k) -> None:
+            self.closed = False
+
+        def _snapshot_shards(self) -> list[Path]:
+            # What this arm will draw from -- NOT what a directory glob says.
+            return _shards("shard_000001.zarr", "shard_000002.zarr")
+
+        def __len__(self) -> int:
+            return 10_000
+
+        def close(self) -> None:
+            self.closed = True
+
+    _variant_harness(monkeypatch, _DisagreeingBuf)
+    # The on-disk view agrees with the snapshot, so a re-glob cannot detect it.
+    monkeypatch.setattr(rr, "iter_shard_paths", lambda _d: list(snap))
+
+    with pytest.raises(SystemExit, match="DE-PAIRED"):
+        rr._run_variant(
+            name="arm2", overrides={}, base_config={"seed": 0},
+            checkpoint=tmp_path / "trainer.pt", replay_dir=tmp_path,
+            steps=800, batch_size=2, device="cpu", out_dir=tmp_path,
+            shard_snapshot=list(snap),
+        )
+
+
+def test_a_depaired_EMPTY_pool_reports_de_pairing_not_wrong_replay_dir(
+    monkeypatch, tmp_path,
+) -> None:
+    """MUTATION: move the guard BELOW the ``len(buf) == 0`` check.
+
+    That ordering is argued for in the module comment and in the ledger, and it
+    survived an independent review's suite -- because every other fixture's
+    fake buffer reports ``__len__ == 10_000``, so the empty branch is never
+    reachable and the ordering is never exercised.
+
+    A pool emptied mid-sweep is a PAIRING failure. Diagnosing it as "wrong
+    --replay-dir, or plane-count mismatch" sends the operator to re-check a
+    path that was right, and loses the fact that the arms diverged.
+    """
+    class _EmptyDisagreeingBuf:
+        def __init__(self, *_a, **_k) -> None:
+            self.closed = False
+
+        def _snapshot_shards(self) -> list[Path]:
+            return []
+
+        def __len__(self) -> int:
+            return 0
+
+        def close(self) -> None:
+            self.closed = True
+
+    _variant_harness(monkeypatch, _EmptyDisagreeingBuf)
+
+    with pytest.raises(SystemExit) as ei:
+        rr._run_variant(
+            name="arm2", overrides={}, base_config={"seed": 0},
+            checkpoint=tmp_path / "trainer.pt", replay_dir=tmp_path,
+            steps=800, batch_size=2, device="cpu", out_dir=tmp_path,
+            shard_snapshot=_shards("shard_000001.zarr", "shard_000002.zarr"),
+        )
+    msg = str(ei.value)
+    assert "DE-PAIRED" in msg, (
+        "an emptied pool was reported as an empty buffer, not as a pairing "
+        f"failure -- the guard now runs AFTER the empty-pool check: {msg}"
+    )
+    assert "wrong --replay-dir" not in msg, msg

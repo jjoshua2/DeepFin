@@ -48,12 +48,21 @@ enforced, not merely intended:
   one extra shard moved 617/800 sampled rows (77.1%), one shard fewer moved
   343/800 (42.9%). The run now aborts instead.
 
+⚑ POINT ``--replay-dir`` AT A FROZEN COPY, not the live window. The snapshot is
+taken in ``main()`` before ``torch.load`` + ``build_model`` + ``Trainer()`` (and
+CUDA init), so the guard is deliberately STRICTER than "the arms de-paired": a
+shard landing during that startup window aborts arm 1 even though arms 1 and 2
+would have been paired. That is fail-closed on purpose — but it means that once
+training resumes, the live ``<trial>/replay_shards`` shown below is exactly what
+this script will now refuse. ``cp -r`` it, or use a salvage pool nothing writes
+to.
+
 Usage::
 
     PYTHONPATH=. python3 scripts/retarget_retrain.py \\
         --config configs/pbt2_small.yaml \\
         --checkpoint <trial>/checkpoint_000123/trainer.pt \\
-        --replay-dir <trial>/replay_shards \\
+        --replay-dir <frozen copy>/replay_shards   # NOT the live window \\
         --steps 800 --out-dir runs/retarget \\
         --variant base: \\
         --variant sharp:sf_policy_temp=0.006 \\

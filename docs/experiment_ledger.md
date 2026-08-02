@@ -20819,7 +20819,7 @@ point: two independent re-globs agree even when the buffer filtered.
 
 Mutation-tested three ways, all against `tests/test_retarget_retrain.py`:
 - delete the guard CALL from `_run_variant` → `test_the_shard_guard_runs_on_the_real_call_path` FAILS;
-- make `_assert_shards_unchanged` return unconditionally (accepted-and-ignored, this repo's signature defect) → 5 tests FAIL;
+- make `_assert_shards_unchanged` return unconditionally (accepted-and-ignored, this repo's signature defect) → **6** tests FAIL (this line said 5; an independent review re-ran the mutation and counted 6 — `..._ADDED_mid_sweep`, `..._REMOVED_mid_sweep`, `..._on_reordering_alone`, `..._names_the_shards_that_moved`, `..._runs_on_the_real_call_path`, `..._snapshot_source_matches_what_the_buffer_scans`. The PR body had it right; the canonical record did not);
 - re-glob per arm instead of snapshotting once in `main()` → `test_main_snapshots_the_pool_ONCE_for_the_whole_sweep` FAILS.
 
 That third mutation is the one worth keeping. A per-arm re-glob leaves the
