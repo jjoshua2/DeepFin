@@ -23555,8 +23555,12 @@ Task #123. Read-only; `data/` and `runs/` were not written.
 an order of magnitude smaller than the number that prompted the question.**
 
 `data/scaleup_pool_512x16/replay_shards` indices **31417-32456** read
-**8.022 % no-PV** (1 014 shards, 1 837 669 labelled rows, 147 422 no-PV —
-reproducing the 8.1 % figure). **boot512 never saw one row of it.** Its visible
+**8.022 % no-PV** (1 014 shard FILES, 1 837 669 labelled rows, 147 422 no-PV —
+reproducing the 8.1 % figure). The index span is 1 040 wide but holds 1 013
+distinct indices: **27 are absent because every 40th shard was split off into
+the pool's `holdout_shards/`** (105 of them pool-wide), and index 31417 carries
+two files (a hash-suffixed duplicate), giving 1 014 files. **boot512 never saw
+one row of any of it.** Its visible
 shard set stops at index **31416**; the contaminated range begins at 31417. The
 boundary is exact, not approximate.
 
@@ -24633,3 +24637,102 @@ and more tractable cause**.
   scale-drift reading of N3/N4 is an inference from three agreeing statistics (flat E2,
   flat concordance, negative sharpness term), not an intervention.
 - The 12-point grid is coarse; "early vs late" is not a fitted shape.
+
+## 2026-08-02 — `replay_sf_gap_priority_signed` REFUSED rather than wired, and the fourth reload class it exposed
+
+Backlog #106, in the same PR as the #124 ruler change. Not a training-affecting
+change: it makes an already-inert knob say so.
+
+**The state.** The key is in the yaml allowlist (`utils/config_yaml.py`), parsed
+into `TrialConfig`, and supported by `DiskReplayBuffer.sf_gap_priority_signed` —
+and never passed to the buffer the trial trains from. `trainable_init.py` hands
+over `sf_gap_priority_weight` alone; the per-iteration live push in
+`trainable.py` pushes the same four live knobs and not this one. Flagged by
+PR #303's review, which correctly declined to fold it in.
+
+**Decision: hard startup error, NOT wiring.** Four reasons, in order of weight:
+
+1. **Experiment #104 KILLED the gap-priority family** at the pre-committed
+   ckpt559 readout. Production pins `replay_sf_gap_priority_weight: 0`, and
+   `_gap_boost_and_mask` is only reached when `w_gap > 0`, so `signed` is
+   unreachable regardless. Wiring adds a live-reachable path for a killed
+   mechanism with no ledger entry — i.e. it would need this entry to be a
+   pre-registration, and there is no experiment to register.
+2. **The semantics are not unambiguous**, which was the stated bar for wiring.
+   `signed` does not refine the default — it swaps the boost SOURCE from the
+   stored `priority_sf_search_gap` column to a recomputed `(search − sf)`
+   difference gated on DIFFERENT `has_` flags, and returns `None` (no shaping at
+   all) for a chunk carrying one set and not the other.
+3. **Wiring it would arm a silent live change.** The key is live-reload
+   allowlisted, so a future `signed: true` would take effect MID-WINDOW,
+   splitting one replay window across two sampling regimes — exactly what
+   `_CONSTRUCTION_ONLY_REPLAY_KEYS` already refuses for `shuffle_draw_cap_frac`.
+4. **Deleting the key is also wrong**: `scripts/retarget_retrain.py` and
+   `scripts/holdout_policy_screen.py` both consume it offline, and dropping it
+   from the allowlist would make the all-or-nothing validator reject the WHOLE
+   reload for any yaml carrying it.
+
+**Blast radius: none today, and that is verified rather than assumed.** The key
+appears in NO config under `configs/` (pinned by a test), `TrialConfig`'s default
+is `False`, and `DiskReplayBuffer.__init__`'s default is `False`. The guard
+cannot fire on the current yaml; only a deliberate edit reaches it.
+
+**Startup raises, live reload declines-and-warns.** Raising on live reload would
+crash-loop under `train.sh`'s auto-resume. The live warning gets its own message
+rather than the generic `_LIVE_RELOAD_SKIPPED_KEYS` "requires restart" one,
+because restarting does not honour the value — it refuses to start, so the
+generic text would be the same lie relocated.
+
+**⚑ The finding underneath: dead keys are a FOURTH reload class the provenance
+API did not have.** They are declined on live reload like restart-required keys,
+but absent from `restart_required_config_keys()` — correctly, since a restart
+refuses rather than applies them. That left a set-but-declined dead key falling
+through every branch of `scripts/audit_realized_config.py`, where yaml ==
+realized (the startup overlay ran) reads as a healthy live-reloadable key. Fixed
+with a fourth injected set, `dead_config_keys()`, checked BEFORE the restart
+branch and reported on the VALUE rather than on a diff — the diff is zero by
+construction, which is what made it invisible. Same shape as the verdict PR #303
+removed for construction-only keys.
+
+## 2026-08-02 — `export_swa` now says which weights it shipped, and the first attempt at saying it was itself swallowed
+
+Backlog #57 / audit J10. Observability only; no training path touched.
+
+J10 established by READING THE BRANCH that `export_swa` emits `self.model` today
+(`swa_start: -1`) but would emit `_swa_model.module` under SWA, while the ratchet
+arena reads the raw model out of `checkpoint_*/trainer.pt` — 86/86 tensors
+different. Nothing in the artifact said which side ran, so the fact had to be
+re-derived from the config every time and a change to the branch would
+invalidate it silently.
+
+Now every publish emits:
+
+```
+[trial] export_swa: wrote <path> source={model|swa_model.module} step=… tensors=… params=… digest=… swa_enabled=…
+```
+
+`digest` is a content hash over the exported tensors (key, dtype, shape, values;
+key-order independent), so it is an IDENTITY claim recomputable from the
+published file — not a label. `params` counts **unique storage** per J11, not
+`sum(numel())`, which would read 78,812,768 against a true 63,084,128 on the
+production net.
+
+**⚑ THE FIRST VERSION OF THIS LINE WAS `logging.info` AND REACHED NO OUTPUT AT
+ALL — caught in independent review of the PR.** The trial actor installs no
+logging handler: `tune/trainable.py::_set_log_level` sets a LEVEL on the
+`chess_anti_engine` logger and stops, and nothing in the package or in Ray
+attaches one for that process, so INFO records fall to `logging.lastResort`
+(WARNING+) and are discarded. Verified directly: with no handler, a WARNING
+reaches stderr and an INFO reaches nothing. Consistent with production logs,
+which contain zero INFO-level `chess_anti_engine` records while being full of
+`[trial]` / `[disk_buf]` `print()` lines.
+
+**The tests passed because `caplog` installs the handler production lacks** —
+they proved the record was EMITTED and said nothing about whether anyone could
+SEE it. That is this repo's signature defect committed inside the fix for it,
+and it is worth recording as a method rule: **`caplog` is not evidence of
+observability in this process; `capsys` is.** The line is now a `print()`
+matching the neighbouring `[trial]` convention, asserted with `capsys` on the
+real `_publish_distributed_trial_state` path, and a companion test reproduces
+the handler-free configuration and requires INFO to be dropped — so if a handler
+ever appears, the test says so rather than the print silently becoming redundant.
