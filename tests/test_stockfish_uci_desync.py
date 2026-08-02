@@ -254,11 +254,15 @@ def test_base_exception_mid_section_poisons_the_engine(tmp_path):
         eng.close()
 
 
-def test_pool_replaces_on_a_base_exception_too(tmp_path):
-    """`_search`'s handler is `except BaseException` for the same reason.
+def test_pool_refuses_then_replaces_a_poisoned_engine(tmp_path):
+    """Pins the cost of the repair, which is exactly one query.
 
-    Also pins the cost of the repair, which is exactly one query: the submit
-    that MEETS the poisoned engine is refused and re-raises (that refusal is
+    NOT a test of `_search`'s `except BaseException` — it reaches `_search`
+    through a `StockfishDesyncError`, which IS an `Exception`, so `except
+    Exception` would behave identically here. That path is covered by
+    `test_search_re_raises_a_base_exception_and_still_replaces`.
+
+    The submit that MEETS the poisoned engine is refused and re-raises (that refusal is
     the point — it is never answered with stale data), the engine is replaced
     on the way out, and the next submit is served correctly. The pool does not
     retry transparently; a swallowed retry would hide the incident, and the
@@ -497,3 +501,175 @@ def test_an_already_labelled_row_is_not_counted_twice():
         state, rec=rec, res=res, turn=True, legal_indices=legal,
     )
     assert stockfish_turn._sf_label_counts["labelled"] == 1
+
+
+@pytest.mark.usefixtures("fresh_counters")
+@pytest.mark.parametrize("run", [1, 2])
+def test_counters_reset_between_windows(caplog, run):
+    """Two consecutive windows must read identically on an identical signal.
+
+    Pins the reset in BOTH places, because the shipped reset being correct is
+    not the same as it being held correct:
+
+    * Drop ``labelled=0`` from the production reset and the denominator grows
+      without bound while the numerators reset — so every rate **decays toward
+      zero** and the detector goes quiet while the fault continues. That is the
+      exact defect class this whole change exists to fix, sitting inside the
+      fix's own instrument.
+    * Drop ``no_legal_pv=0`` and the numerator accumulates instead (loud, but
+      wrong).
+    * Misspell a key in the TEST fixture and ``dict.update`` silently adds a
+      junk key and resets nothing — caught by the zero-check below, which only
+      holds on run 2 if the fixture actually ran. The body deliberately leaves a
+      partial window behind so run 2 has something to fail on.
+
+    Asserting the reported counts, not just the level, is what makes this bite:
+    an unreset denominator still WARNs in window 2 here, it just lies about the
+    base it was computed over.
+    """
+    every = stockfish_turn._SF_LABEL_REPORT_EVERY
+    assert stockfish_turn._sf_label_counts == {
+        "labelled": 0, "failed": 0, "bestmove_illegal": 0, "no_legal_pv": 0,
+    }, f"run {run}: the fixture did not reset the counters between tests"
+
+    with caplog.at_level(logging.INFO, logger="chess_anti_engine.selfplay"):
+        for _ in range(2 * every):
+            stockfish_turn._report_sf_label_health(no_legal_pv=1)
+        stockfish_turn._report_sf_label_health(no_legal_pv=1)  # residue for run 2
+
+    recs = [r for r in caplog.records if r.msg.startswith("sf label health")]
+    assert len(recs) == 2, f"expected two windows, got {len(recs)}"
+    for i, rec in enumerate(recs, start=1):
+        labelled, no_pv = rec.args[0], rec.args[1]
+        assert labelled == every, (
+            f"run {run} window {i} reported labelled={labelled}, want {every} — the "
+            "denominator is not reset, so every rate decays toward zero while "
+            "the fault continues"
+        )
+        assert no_pv == every, (
+            f"window {i} reported no_legal_pv={no_pv}, expected {every} — the "
+            "numerator is not reset"
+        )
+        assert rec.levelno == logging.WARNING
+
+
+# ── the sync (curriculum) label path ────────────────────────────────────────
+
+
+class _StubCBoard:
+    """Only what `_process_sf_results` reads off a board."""
+
+    def __init__(self, board: chess.Board) -> None:
+        self._idx = legal_move_indices(board)
+        self.turn = bool(board.turn)
+
+    def legal_move_indices(self):
+        return self._idx
+
+
+def _sync_state(board: chess.Board, rec) -> Any:
+    state = _fake_state()
+    state.opponent = SimpleNamespace(wdl_regret_limit=None)
+    state.cboards = [_StubCBoard(board)]
+    state.samples_per_game = [[rec]]
+    state.done_arr = [0]
+    state.selfplay_arr = [1]
+    return state
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_the_sync_label_path_is_counted_too():
+    """N11: curriculum labels attach through `_process_sf_results`.
+
+    It is one of three counting sites and the only one the other two tests do
+    not reach — deleting its `_report_sf_label_health` call used to fail
+    nothing. A desynced engine serves the curriculum label queue exactly as it
+    serves the async one, so an uncounted site is a blind spot of the same
+    shape as the bug.
+    """
+    board = chess.Board("8/8/8/4k3/8/8/4K3/4R3 w - - 0 1")
+    own_ucis = [m.uci() for m in board.legal_moves]
+
+    rec = _blank_record()
+    rec.has_policy = True
+    rec.is_sf_refute_opp = False
+    stockfish_turn._process_sf_results(
+        _sync_state(board, rec),
+        [0],
+        results={0: _FakeRes(own_ucis[0], own_ucis[:4])},
+        play_curriculum_moves=False,
+        attach_labels=True,
+    )
+    assert stockfish_turn._sf_label_counts["labelled"] == 1
+    assert stockfish_turn._sf_label_counts["no_legal_pv"] == 0
+
+    # A real search of an unrelated position, arriving on the curriculum queue.
+    rec2 = _blank_record()
+    rec2.has_policy = True
+    rec2.is_sf_refute_opp = False
+    stockfish_turn._process_sf_results(
+        _sync_state(board, rec2),
+        [0],
+        results={0: _FakeRes("g8f6", ["g8f6", "b8c6", "e7e5"])},
+        play_curriculum_moves=False,
+        attach_labels=True,
+    )
+    assert stockfish_turn._sf_label_counts["labelled"] == 2
+    assert stockfish_turn._sf_label_counts["no_legal_pv"] == 1, (
+        "the sync label path did not count a result belonging to another position"
+    )
+    assert stockfish_turn._sf_label_counts["bestmove_illegal"] == 1
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_a_curriculum_move_query_is_not_counted_as_a_label():
+    """Denominator hygiene at the same site.
+
+    `_process_sf_results` also runs for curriculum MOVE queries, which produce
+    no training row. Counting those would put something in the denominator of a
+    line named "sf label health" that is not a label, diluting exactly the rate
+    the restart checklist reads.
+    """
+    board = chess.Board("8/8/8/4k3/8/8/4K3/4R3 w - - 0 1")
+    rec = _blank_record()
+    rec.has_policy = True
+    rec.is_sf_refute_opp = False
+    stockfish_turn._process_sf_results(
+        _sync_state(board, rec),
+        [0],
+        results={0: _FakeRes("g8f6", ["g8f6", "b8c6"])},
+        play_curriculum_moves=False,
+        attach_labels=False,
+    )
+    assert stockfish_turn._sf_label_counts["labelled"] == 0
+
+
+def test_search_re_raises_a_base_exception_and_still_replaces(tmp_path):
+    """`_search`'s handler is `except BaseException`, not `except Exception`.
+
+    Unreachable in practice — a poisoned engine refuses at entry with
+    `StockfishDesyncError`, which IS an `Exception` — so this drives the case
+    directly rather than claiming the pool test covers it. It does not: that
+    test reaches `_search` through a `StockfishDesyncError`, and `except
+    Exception` would catch it identically.
+    """
+    engine_path = _write_engine(tmp_path, "basesearch.py", stall=0.0)
+    pool = StockfishPool(path=engine_path, nodes=10, num_workers=1)
+    try:
+        assert pool.submit("A").result().bestmove_uci == "A"
+        victim = pool._engines[0]
+
+        def _abandon(*_a, **_k):
+            victim._desynced = True  # what _protocol_section would have done
+            raise KeyboardInterrupt
+
+        victim.search = _abandon
+        with pytest.raises(KeyboardInterrupt):
+            pool.submit("B").result()
+        assert pool.replacements == 1, (
+            "a BaseException left the desynced engine installed — `except "
+            "Exception` here would serve the NEXT query from a poisoned engine"
+        )
+        assert pool.submit("C").result().bestmove_uci == "C"
+    finally:
+        pool.close()
