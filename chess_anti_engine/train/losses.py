@@ -47,6 +47,56 @@ def masked_sum_and_count(
     return (x.to(torch.float32) * m).sum(), m.sum()
 
 
+def sf_multipv_presence_counts(
+    batch: dict[str, torch.Tensor], *, has_sf_wdl: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """(no-MultiPV labelled rows, labelled rows CHECKED) for this batch, as 0-d sums.
+
+    **DENOMINATOR, stated once: rows of this batch with ``has_sf_wdl`` set.**
+    Not ``net_mask * has_sf_wdl``, and not all batch rows. That is the exact
+    population ``eval/value_optimism.py::sf_multipv_missing_rate`` divides by —
+    the offline gate that selected the 122 shards quarantined 2026-08-01 — so
+    the live column and the gate's per-shard reading are the same quantity and
+    compare without rescaling. (The sibling ``sf_rebuild_*_frac`` pair divides
+    by ALL rows of the rebuilt batch; quoting one against the other's
+    denominator is how 0.191973 and 0.207461 ended up describing the same 122
+    shards in one docstring. Do not repeat it here.)
+
+    The numerator is the desync fingerprint. The selfplay writer stamps
+    ``sf_multipv_raw`` on a labelled row together with its SF eval
+    (``selfplay/stockfish_turn.py::_stamp_sparse_sf_labels``); a labelled row
+    that arrives without the block came through
+    ``_collect_sparse_pv_rows``'s ``if not rows: return None``, i.e. not ONE of
+    Stockfish's MultiPV moves was legal at the position queried — a UCI engine
+    answering a DIFFERENT position. On healthy data this is **exactly
+    0.000000**: 11.05 M labelled rows over every clean stretch on disk (PR #302),
+    2 878 620 across four separated quiet stretches. It is a LOWER bound on
+    contamination, not the poisoned share: a desynced engine strips the block on
+    only ~59 % of the labels it poisons, so divide by ~0.59 for the true share.
+
+    ⚑ The second return value is not decoration. ``has_sf_multipv_raw`` is an
+    OPTIONAL shard field, so a batch that never carried it must not report a
+    perfect zero rate. When the field is absent BOTH counts are zero, which
+    drives the reported ``sf_multipv_checked_frac`` to 0.0 and marks the rate
+    unmeasured — as opposed to measured-and-clean. A consumer that reads the
+    rate without the checked-frac cannot tell a healthy window from a blind
+    instrument, which is the exact defect this column exists to catch.
+
+    Unconditional by construction: it reads two ``has_`` vectors that every
+    collated batch either carries or does not, and consults no flag. The
+    tripwire it replaces (``sf_rebuild_policy_frac`` minus
+    ``sf_rebuild_wdl_frac``) is definitionally the same signal but is gated
+    behind ``rebuild_sf_targets``, which defaults False and is in no config
+    file — so it has read 0.0 through three separate desync episodes.
+    """
+    has_raw = batch.get("has_sf_multipv_raw")
+    if has_raw is None:
+        zero = has_sf_wdl.new_zeros(())
+        return zero, zero.clone()
+    missing = 1.0 - has_raw.to(torch.float32)
+    return masked_sum_and_count(missing, has_sf_wdl)
+
+
 def normalize_distribution(probs: torch.Tensor, *, eps: float = 1e-8) -> torch.Tensor:
     """Renormalize a distribution along the last axis so each row sums to 1.
 
@@ -567,6 +617,10 @@ def compute_loss(
         sf_own_regret, sf_p0_regret_base,
     )
     net_rows = net_mask.to(torch.float32).sum()
+    sf_no_multipv_rows, sf_multipv_checked_rows = sf_multipv_presence_counts(
+        batch, has_sf_wdl=has_sf_wdl,
+    )
+    batch_rows = net_mask.new_full((), float(net_mask.shape[0]))
     m_wdl_onehot = masked_mean(wdl_onehot_ce, net_mask)
     m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
     m_sf_move = masked_mean(sf_move_ce, net_mask * has_sf_policy)
@@ -639,6 +693,15 @@ def compute_loss(
         "sf_own_regret_sum": sf_own_regret_sum,
         "sf_own_regret_rows": sf_own_regret_rows,
         "net_rows": net_rows,
+  # SF-label contamination detector, ALWAYS ON. Sums + row counts for the same
+  # reason as the sf_p0 pair above: the trainer accumulates them over every
+  # microbatch and divides once, so the ratio is row-weighted rather than a
+  # mean of per-batch means. See `sf_multipv_presence_counts` for the
+  # denominator and the zero floor; mapped to `sf_labelled_no_multipv_frac` /
+  # `sf_multipv_checked_frac` in train/trainer.py.
+        "sf_no_multipv_rows": sf_no_multipv_rows,
+        "sf_multipv_checked_rows": sf_multipv_checked_rows,
+        "batch_rows": batch_rows,
         "sf_move_ce": m_sf_move,
         "sf_eval_ce": m_sf_eval,
         "categorical_ce": m_cat,

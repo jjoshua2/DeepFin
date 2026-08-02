@@ -465,16 +465,23 @@ class SfRebuildCoverage:
         ON. It defaults False and appears in NO config file, so today all five
         columns read exactly 0.0 by construction — byte-identical to a perfectly
         healthy window. **Do not put "watch this for a gap" on an operator's
-        dashboard.** The always-on detectors are the worker's own
-        ``sf label health`` log line (`selfplay/stockfish_turn.py::
-        _report_sf_label_health`) and the offline gate
-        `eval/value_optimism.py::sf_multipv_missing_rate`; this pair is a free
-        cross-check that exists only while a rebuild experiment runs. Making it
-        live is NOT as cheap as flipping the flag — the flag is
-        training-affecting (it masks the ``w_sf_own`` / ``w_sf_volatility``
-        legs) and needs a ledger entry. The cheap version, not built here,
-        is a presence-flag column reported unconditionally by the trainer; it
-        costs one metric field and a ``progress.csv`` schema rotation.
+        dashboard.** Making it live is NOT as cheap as flipping the flag — the
+        flag is training-affecting (it masks the ``w_sf_own`` /
+        ``w_sf_volatility`` legs) and needs a ledger entry.
+
+        **The in-loop replacement now exists and is what an operator should
+        watch: ``sf_labelled_no_multipv_frac``** (with
+        ``sf_multipv_checked_frac``, its denominator over all batch rows), built
+        in ``train/losses.py::sf_multipv_presence_counts`` from the batch's own
+        presence flags and therefore gated on nothing. It is the same
+        measurement over the same rows — verified 0.207461 against the 122
+        shards quarantined 2026-08-01, where the ``policy``/``wdl`` gap here is
+        0.191973 over its own wider denominator — but it is reported every
+        iteration instead of only while a rebuild experiment runs. The other
+        always-on detectors are the worker's own ``sf label health`` log line
+        (`selfplay/stockfish_turn.py::_report_sf_label_health`) and the offline
+        gate `eval/value_optimism.py::sf_multipv_missing_rate`; this pair is
+        now purely a free cross-check.
 
         ⚑ WITH THE FLAG ON, ``sf_rebuild_policy_frac`` BELOW
         ``sf_rebuild_wdl_frac`` IS A DESYNC ALARM, NOT A COVERAGE COST. The

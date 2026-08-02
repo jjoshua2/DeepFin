@@ -117,20 +117,37 @@ that exists only while a rebuild experiment is running.
 
 The always-on detectors are the ones to watch instead:
 
+* **`sf_labelled_no_multipv_frac`** — the in-loop one, added 2026-08-01. Share
+  of the batch's **SF-labelled** rows (`has_sf_wdl`) carrying no
+  `sf_multipv_raw` block, computed in
+  `train/losses.py::sf_multipv_presence_counts` from the batch's own presence
+  flags and so gated on nothing. Reported on the train row and as
+  `test_sf_labelled_no_multipv_frac` on the holdout row. **Healthy is exactly
+  `0.000000`, so any non-zero value is an incident and there is no threshold to
+  argue about.** Verified 0.207461 over the 122 shards quarantined 2026-08-01
+  and exactly 0.000000 over 475 713 clean rows, both through the production
+  metric path (`scripts/sf_no_multipv_probe.py`).
+* its companion **`sf_multipv_checked_frac`** — that denominator over ALL batch
+  rows. `has_sf_multipv_raw` is an optional shard field, so `0.0` here means the
+  rate measured *nothing*; never read the rate without it.
 * the worker's `sf label health` log line
   (`selfplay/stockfish_turn.py::_report_sf_label_health`), which fires above
   `_SF_NO_LEGAL_PV_WARN_RATE` = 0.01, and
 * the offline gate `eval/value_optimism.py::sf_multipv_missing_rate`, used by
   `scripts/quarantine_desync_shards.py`.
 
-**Recommendation, and its cost.** If a training-side always-on signal is wanted,
-do *not* get it by turning `rebuild_sf_targets` on: that flag is
-training-affecting (it masks the `w_sf_own` and `w_sf_volatility` legs) and
-needs its own ledger entry with a pre-committed kill threshold. The cheap
-version — **not built here** — is for the trainer to report the
-`has_sf_multipv_raw` / `has_sf_label_meta` presence rates unconditionally,
-independent of the rebuild flag. That costs one metric field, its `test_` twin,
-and one `progress.csv` schema rotation at the deploying restart.
+⚑ **Do not get a training-side signal by turning `rebuild_sf_targets` on.** That
+flag is training-affecting (it masks the `w_sf_own` and `w_sf_volatility` legs)
+and needs its own ledger entry with a pre-committed kill threshold. The
+unconditional column above is the reason it is no longer necessary.
+
+⚑ **The two share a fingerprint but not a denominator.** Over the quarantined
+122, `sf_labelled_no_multipv_frac` = 0.207461 while
+`sf_rebuild_policy_frac − sf_rebuild_wdl_frac` = 0.191973, because the rebuild
+pair divides by every row of the batch and the new column divides by the
+SF-labelled rows (0.191973 / 0.925347 = 0.207). They are the same rows counted
+against two populations; quoting one against the other's denominator is how
+"5.4 %" survived here for five days.
 
 Five `progress.csv` columns report what actually happened, per iteration:
 

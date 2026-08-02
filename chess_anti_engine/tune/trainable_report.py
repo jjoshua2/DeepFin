@@ -839,6 +839,11 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # fractions. The fractions are the outage detector (see TrainMetrics).
     "m_sf_own": 0.0, "m_sf_own_regret": 0.0,
     "has_sf_p0_frac": 0.0, "has_sf_p0_regret_frac": 0.0,
+  # ALWAYS-ON SF-label contamination detector (see TrainMetrics). Healthy is
+  # EXACTLY 0.000000, so any non-zero value is an incident, not a threshold
+  # call. Never read it without `sf_multipv_checked_frac`: 0.0 there means the
+  # batch carried no `has_sf_multipv_raw` field and the rate measured nothing.
+    "sf_labelled_no_multipv_frac": 0.0, "sf_multipv_checked_frac": 0.0,
   # SF target rebuild coverage (train.rebuild_sf_targets). 0.0 with the flag
   # off; non-zero is the proof the flip reached the batch pipeline. The
   # masked_p0/_volatility pair are PRE-mask presence fractions — the outage
@@ -903,6 +908,12 @@ def _train_metrics_dict(metrics) -> dict:
         "m_sf_own_regret": float(metrics.m_sf_own_regret),
         "has_sf_p0_frac": float(metrics.has_sf_p0_frac),
         "has_sf_p0_regret_frac": float(metrics.has_sf_p0_regret_frac),
+        # Desync alarm over the rows training actually consumed. Unlike the
+        # sf_rebuild_* pair below it is computed unconditionally, from the
+        # batch's own presence flags, so it is readable on every iteration
+        # rather than only while a rebuild experiment runs.
+        "sf_labelled_no_multipv_frac": float(metrics.sf_labelled_no_multipv_frac),
+        "sf_multipv_checked_frac": float(metrics.sf_multipv_checked_frac),
         # Rebuild coverage. `sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac`
         # is a Stockfish-DESYNC signal, not a coverage cost: both divide by all
         # batch rows and a healthy labelled row always carries both fields, so
@@ -991,6 +1002,14 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
     "test_sf_rebuild_policy_frac", "test_sf_rebuild_wdl_frac",
     "test_sf_rebuild_masked_frac",
     "test_sf_rebuild_masked_p0_frac", "test_sf_rebuild_masked_volatility_frac",
+  # The holdout's own SF-label contamination reading. It is NOT redundant with
+  # the train-side twin: the holdout is a FROZEN set, so its rate is fixed at
+  # the contamination the set was cut with and does not decay as the replay
+  # window turns over. A non-zero value here says the ruler itself was cut
+  # from poisoned data — which happened (`scratchpad/split/eval_shards`, 14.10 %
+  # rejected, docs/experiment_ledger.md 2026-08-01) and was found only by
+  # re-gating the pool offline, long after the numbers were published.
+    "test_sf_labelled_no_multipv_frac", "test_sf_multipv_checked_frac",
 )
 
 
@@ -1065,6 +1084,12 @@ def _test_and_drift_dict(
             "test_sf_rebuild_masked_volatility_frac": float(
                 tm.sf_rebuild_masked_volatility_frac
             ),
+            # Contamination of the FROZEN holdout set itself. Exactly 0.000000
+            # on a sound set; anything else means the ruler was cut from
+            # poisoned shards and every `test_*` SF-derived column above is
+            # scored against detached labels.
+            "test_sf_labelled_no_multipv_frac": float(tm.sf_labelled_no_multipv_frac),
+            "test_sf_multipv_checked_frac": float(tm.sf_multipv_checked_frac),
         })
     return test_dict
 

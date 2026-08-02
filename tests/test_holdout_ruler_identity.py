@@ -433,8 +433,26 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # this is another declared false positive of the same shape as #283's.
 #   full_pass  2efe658b4e778870 -> bed3d8e3799e997d
 #   sampled    d6f7cabecd8e6f67 -> 610f05cf817b4783
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:bed3d8e3799e997d"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:610f05cf817b4783"
+#
+# Moved again 2026-08-01 by the always-on SF-label contamination column: a
+# single line leaves `_prepare_host_arrays`, which no longer prunes
+# `has_sf_multipv_raw` from the H2D payload when `sf_policy_sparse_ce` is off.
+# That frame is in BOTH lists, so both ids move.
+#
+# THIRD declared false positive, and this one is proved rather than argued:
+# `has_sf_multipv_raw` is consumed by exactly one loss term,
+# `sparse_sf_policy_ce`, which is reached only when `sf_sparse_params is not
+# None` (i.e. `sf_policy_sparse_ce` ON — a config in which nothing was pruned
+# before either) and which returns an all-zero eligibility mask unless
+# `sf_multipv_raw` is ALSO present, and that block is still pruned. Pinned by
+# `tests/test_sf_no_multipv_metric.py::
+# test_adding_the_presence_flag_does_not_move_the_loss`, which runs
+# `compute_loss` with and without the vector and requires every scalar in
+# `total` to be bitwise equal. The measurement did not move; the source did.
+#   full_pass  bed3d8e3799e997d -> b8482e83d3b1c61f
+#   sampled    610f05cf817b4783 -> 71ac6f0457876d02
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:b8482e83d3b1c61f"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:71ac6f0457876d02"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:

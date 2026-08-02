@@ -20416,3 +20416,297 @@ Concern withdrawn.
 `MUTED_EXIT = 4` was checked for the same defect and **verified clear**:
 repo-wide grep plus `crontab -l` shows nothing consumes exit 4 — `ratchet_slope.py`
 is hand-run and reaches no retry loop.
+
+---
+
+## 2026-08-01 — PRE-REGISTRATION: an ALWAYS-ON no-MultiPV column, because the only in-loop desync tripwire is gated behind a flag that is in no config file
+
+**Type: observer change.** No loss weight, no target, no config key, no gradient
+moves. The yardstick below is therefore about the INSTRUMENT, not about Elo — per
+the method rules, an Elo yardstick on an observer change is unfalsifiable at
+~0.02 Elo/iter and would only launder the change through a number that cannot
+resolve it.
+
+### Hypothesis
+
+The share of SF-**labelled** rows carrying no `sf_multipv_raw` block is a
+zero-floored contamination fingerprint (established twice: 2 878 620 labelled
+rows across four separated quiet stretches at exactly 0.000000, and 11.05 M rows
+/ 6 535 shards in PR #302). Reported unconditionally from the training batch it
+becomes an in-loop desync alarm with **no threshold to argue about**: healthy is
+exactly 0, so any non-zero reading is an incident.
+
+Today there is no such column. `sf_rebuild_policy_frac` − `sf_rebuild_wdl_frac`
+is definitionally the same signal but is **structurally 0.0 in production**:
+`rebuild_sf_targets` defaults False and appears in NO config file, so the pair
+reads byte-identically to a perfectly healthy window and always has. That is why
+a 25-day, at-least-three-episode Stockfish desync was found by hand from shard
+files in retrospect and by nothing in the loop.
+`train/target_builder.py::SfRebuildCoverage.metric_kwargs` says so in its own
+docstring and names the fix — *"a presence-flag column reported unconditionally
+by the trainer; it costs one metric field and a `progress.csv` schema
+rotation"*. This entry pre-registers exactly that.
+
+### What ships
+
+Two columns, both computed in `train/losses.py::compute_loss` from tensors that
+are already in the batch, both reported on the train row and (as `test_*`) on
+the holdout row:
+
+| column | numerator | DENOMINATOR |
+|---|---|---|
+| `sf_labelled_no_multipv_frac` | batch rows with `has_sf_wdl` set **and** `has_sf_multipv_raw` clear | batch rows with `has_sf_wdl` set |
+| `sf_multipv_checked_frac` | batch rows with `has_sf_wdl` set (0 when the batch carries no `has_sf_multipv_raw` field at all) | **all** rows of the batch |
+
+The denominator is stated once, at the point of definition, and it is
+`has_sf_wdl` alone — **not** `net_mask * has_sf_wdl`, and **not** all batch rows
+— so the live column and `eval/value_optimism.py::sf_multipv_missing_rate` (the
+offline gate that selected the 122 quarantined shards) divide by the same
+population and can be compared without rescaling. The sibling
+`sf_rebuild_*_frac` pair is the counter-example this rule is written from: it
+divides by all rows of the rebuilt batch, so its 0.191973 and the 0.207466 four
+lines away in the same docstring describe different populations.
+
+`sf_multipv_checked_frac` exists because `has_sf_multipv_raw` is an OPTIONAL
+shard field. Without it a batch that never carried the field would report a
+perfect `sf_labelled_no_multipv_frac == 0.0` while measuring nothing — the
+identical failure to the one being fixed. **Read the pair; a rate of 0.0 under a
+checked-frac of 0.0 is not a pass, it is a blind instrument.**
+
+### ONE deciding yardstick — exact command
+
+```
+PYTHONPATH=. nice -n 19 python3 scripts/sf_no_multipv_probe.py \
+  --poisoned-dir data/desync_quarantine_20260801 \
+  --clean-dir 'runs/pbt2_small/replay/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/replay_shards' \
+  --clean-index-range 33118:33387 \
+  --limit 24 --batch-size 512
+```
+
+The probe drives the **production metric path end to end** — real shard on disk →
+`Trainer._prepare_host_arrays` (including the payload prune that would have
+dropped the field) → `collate_arrays` → `compute_loss` → `_extract_loss_scalars`
+→ `_loss_sums_to_metric_kwargs` → `TrainMetrics` — and reads
+`sf_labelled_no_multipv_frac` off the returned `TrainMetrics`. It is the same
+call `eval_full_pass` makes for the `test_*` row. Read-only: it opens shards
+`mode="r"` and writes nothing.
+
+Arms, and why each selector is what it is:
+
+* **Poisoned**: all 122 shards of `data/desync_quarantine_20260801`. Selector is
+  "the whole directory" — no per-shard choice.
+* **Clean**: shard index range **33118–33387** of the live window. Selector is a
+  contiguous ID band fixed in advance, taken from the 2026-08-01 addendum's
+  pre-episode stretch (270 shards / 474 278 labelled rows / 0.000000). ⚑ Stated
+  plainly: that band was established on the SAME axis this metric computes, so
+  this arm proves *the live path agrees with the offline reading on the same
+  rows* — it does not independently re-establish that the rows are clean. It is
+  a plumbing control, and that is the claim being made.
+
+### Pre-committed SUCCESS (all four, judged on the command's own printout)
+
+1. **Positive control fires.** Poisoned arm `sf_labelled_no_multipv_frac` in
+   **[0.19, 0.23]**. The all-122-shard whole-directory truth is **0.207461**
+   (43 413 / 209 259, counted directly off the zarrs 2026-08-01); the band allows
+   for the probe reading a shard subset under `--limit`.
+2. **Negative control is EXACT.** Clean arm `sf_labelled_no_multipv_frac ==
+   0.0` exactly — `== 0.0`, not `< 1e-6`. Every clean stretch on disk reads
+   exactly zero and the column must too.
+3. **The instrument is not blind in either arm.** `sf_multipv_checked_frac >
+   0.5` on BOTH arms. This is the clause that makes clauses 1-2 mean something:
+   without it a metric that silently lost its input passes clause 2.
+4. **Cost is stated, not buried.** The PR reports measured per-step overhead of
+   the two columns as a fraction of the training step, from a timed
+   before/after on the same machine.
+
+### Pre-committed KILL
+
+* Positive arm reads **< 0.05** — the alarm does not fire on real poisoned data.
+  Revert the metric; the batch pipeline is dropping the field somewhere the code
+  reading suggested it does not.
+* Clean arm reads **non-zero**. Either the plumbing is wrong or the floor is not
+  zero; either way the "any non-zero is an incident" alert rule is unsupportable
+  and the change must not ship with it.
+* Measured overhead **> 0.5 %** of the training step. This runs every step; a
+  detector that costs half a percent of throughput forever needs a different
+  design (host-side, once per batch build), not a waiver.
+
+### ⚑ The first live reading will NOT be 0.000000, and that is not a false alarm
+
+Measured 2026-08-01 over the whole current live window (713 shards, 1 264 058
+labelled rows, direct zarr read): **252 no-PV rows, rate 1.99e-4, spread over 72
+shards, none of them exactly zero-free.** Max shard rate **0.008032** — which is
+precisely the quarantine gate's kept maximum, because `sf_multipv_miss_max: 0.01`
+kept the sub-threshold tail of the 07-30/31 episode on purpose. The 72 shards run
+33454-33716, mtimes 07-30 13:41 → 07-31 04:48.
+
+So on the first restart onto this code the column reads **~2e-4, not 0**, until
+that band ages out of the 1.5 M FIFO (~34 h; last of them written 07-31 04:48).
+Recording it here so the first operator to see it does not read a real residue as
+a plumbing bug and mute the alarm — the failure mode this whole change exists to
+prevent.
+
+### Confounds
+
+None on the training path: no target, weight or config key changes. The only
+production-path edit is that `has_sf_multipv_raw` — a `(B,)` float32 vector,
+2 KB at `batch_size: 512` — is no longer pruned from the H2D payload when
+`sf_policy_sparse_ce` is off. `sf_multipv_raw` itself, the `(B, 40, 4)` int32
+block that the prune exists for, is still dropped. Priced in the cost clause
+above.
+
+### Revert point
+
+Weights are untouched, so no salvage snapshot is required by rule 2. The revert
+is `git revert` of the PR plus one restart; the columns then vanish and
+`progress.csv` rotates again on the next schema change, which is the mechanism's
+normal behaviour (`tune/harness.py::_rotate_progress_csv_if_schema_changed`).
+
+---
+
+## 2026-08-01 — VERDICT on the always-on no-MultiPV column: all four criteria PASS, but criterion 1 FAILED on the command as written and the command — not the criterion — was wrong
+
+Judged the same session, against the rule as pre-committed above. Both readings
+are reported; the failing one is not deleted.
+
+### The failure
+
+The yardstick command carried `--limit 24`, a stride subsample of the 122
+quarantined shards. It read:
+
+```
+poisoned  shards=  24 rows=    47585  sf_labelled_no_multipv_frac=0.182063  sf_multipv_checked_frac=0.936577
+clean     shards=  24 rows=    41033  sf_labelled_no_multipv_frac=0.000000  sf_multipv_checked_frac=0.997051
+[FAIL] positive control fires: 0.182063 in [0.19, 0.23]
+```
+
+**Criterion 1 failed by 0.0079.** The band was centred on 0.207461, which is a
+WHOLE-DIRECTORY quantity (43 413 no-PV / 209 259 labelled, counted directly off
+the zarrs). The quarantined shards are extremely heterogeneous — per-shard rate
+ranges 0.013 to 0.31 in a 4-shard spot check — so 24 of 122 does not estimate
+that mean to ±0.02. The pre-registration's parenthetical *"the band allows for
+the probe reading a shard subset under `--limit`"* was an assumption, not a
+measurement, and it was wrong.
+
+Same family as the 2026-08-01 "SUCCESS CRITERION 1 FAILED on its first real run"
+entry above: **the window was correct, the instrument that judged it was not.**
+
+### The correction, and why it is not band-widening
+
+The band is untouched. What changed is the population the command reads: the
+target number 0.207461 is defined over all 122 shards, so the criterion can only
+be judged over all 122 shards. `--limit` now defaults to **0 (whole arm)** and
+the yardstick command drops it. Re-run:
+
+```
+PYTHONPATH=. nice -n 19 python3 scripts/sf_no_multipv_probe.py \
+  --poisoned-dir data/desync_quarantine_20260801 \
+  --clean-dir 'runs/pbt2_small/replay/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/replay_shards' \
+  --clean-index-range 33118:33387 --limit 0 --batch-size 512
+```
+
+```
+poisoned  shards= 122 rows=   226141  sf_labelled_no_multipv_frac=0.207461  sf_multipv_checked_frac=0.925347
+clean     shards= 270 rows=   475713  sf_labelled_no_multipv_frac=0.000000  sf_multipv_checked_frac=0.996983
+
+[PASS] positive control fires: 0.207461 in [0.19, 0.23]
+[PASS] negative control is EXACTLY zero: 0.0 == 0.0
+[PASS] poisoned arm was actually inspected: checked 0.925347 > 0.5
+[PASS] clean arm was actually inspected: checked 0.996983 > 0.5
+```
+
+### What that printout actually establishes
+
+1. **0.207461 — to all six decimals** of the number counted independently off
+   the raw zarrs (43 413 / 209 259) before any of this code existed. The live
+   metric path and a direct array count are the same measurement, not two
+   measurements that happen to be close.
+2. **0.925347 falls out as `sf_multipv_checked_frac`** — the same value the
+   `sf_rebuild_wdl_frac` docstring reports for this shard set, arrived at
+   through a completely different code path (unconditional presence counting vs
+   the rebuild accumulator). An unplanned cross-check that both denominators
+   are the population each claims.
+3. **Exactly 0.000000 over 475 713 rows / 270 shards** on the clean arm — not
+   "below 1e-6". The zero floor survives the trip through
+   `_prepare_host_arrays`, the payload prune, `collate_arrays`, `compute_loss`
+   and the ratio-of-sums pooling.
+
+### Criterion 4 — measured cost
+
+Per microbatch, at `batch_size: 512` on the production GPU, each component timed
+in isolation (2 000 iterations after 200 warm-up, `nice -n 19`):
+
+| component | cost |
+|---|---|
+| `sf_multipv_presence_counts` (2 elementwise + 2 reductions on `(512,)`) | 86.2 µs |
+| 3 extra scalars in `_extract_loss_scalars`'s existing `stack().tolist()` | 52.6 µs |
+| H2D of the `(512,)` float32 presence flag no longer pruned (2 048 B) | 29.8 µs |
+| **total** | **168.7 µs** |
+
+Against the production microbatch — `train_time_s` median **107.13 s** over
+**82.5** steps on the live `progress.csv`, i.e. **1.298 s/microbatch** — that is
+**0.013 %**, and **0.0022 %** of the 628.9 s iteration. Kill threshold was
+0.5 %; this is ~38x under it. The figure is an upper bound in two ways: the
+components are timed serially rather than overlapped on the CUDA stream, and
+the 86 µs is kernel-launch-bound (four launches), not work-bound.
+
+### Mutation results — five, each killed by the test that names the term
+
+| mutation | dies on |
+|---|---|
+| denominator → all batch rows | `test_the_column_fires_on_poisoned_rows_at_the_exact_count`, `..._denominator_is_labelled_rows_...`, `..._unlabelled_rows_...`, `..._full_pass_publishes_...` |
+| restore `arrs.pop("has_sf_multipv_raw")` under `sf_policy_sparse_ce: false` | `test_the_payload_prune_keeps_the_presence_flag_with_sparse_ce_off`, `..._is_not_gated_on_rebuild_sf_targets`, `..._full_pass_publishes_...` |
+| absent presence field returns the labelled count (reads CLEAN, not UNMEASURED) | `test_a_batch_without_the_presence_field_reads_unmeasured_not_clean` |
+| ratio wired to `batch_rows` instead of `sf_multipv_checked_rows` | `test_checked_frac_reports_the_labelled_share_of_the_batch`, `..._full_pass_publishes_...`, `..._row_weighted_across_ragged_batches` |
+| numerator hard-wired to zero (the "constant detector") | four tests, including both exact-count ones |
+
+The denominator test is built so labelled / network-turn-and-labelled / all-rows
+give **three different** answers (0.375 / 0.500 / 0.250) and the numerator with
+the label ignored gives a fourth. An earlier draft had two of them collide at
+0.25, which would have pinned the disjunction and not the term.
+
+### Not covered, stated
+
+* **No live iteration has emitted these columns.** By the audit's own rule this
+  is `CODE-ONLY` until a `progress.csv` row carries them. Promote by checking a
+  post-restart row for `sf_labelled_no_multipv_frac` **and**
+  `sf_multipv_checked_frac ≈ 0.99`; a checked-frac of 0.0 means the column is
+  blind, not clean.
+* **The clean arm is a plumbing control**, as pre-registered: shard band
+  33118-33387 was established on the SAME axis, so this proves the live path
+  agrees with the offline reading on those rows, not that the rows are clean by
+  an independent oracle.
+* **The metric measures the TRAINED batch, not the window.** The full-pass path
+  used by the probe and by `test_*` reads rows uniformly; the TRAIN row's
+  batches are WDL-rebalanced and priority-weighted, so the train-side rate is
+  the contamination of the rows the loss actually consumed and can differ from
+  the window's raw rate. That is the quantity worth alarming on, and the column
+  name says "labelled rows", not "window".
+* **Lower bound, not the poisoned share.** Unchanged from PR #302: a desynced
+  engine strips the block on only ~59 % of the labels it poisons.
+
+### ⚑ OPERATOR-VISIBLE SIDE EFFECT: one best-model handover at the deploying restart
+
+The holdout ruler id MOVES:
+
+```
+full_pass  bed3d8e3799e997d -> b8482e83d3b1c61f
+sampled    610f05cf817b4783 -> 71ac6f0457876d02
+```
+
+One line leaves `Trainer._prepare_host_arrays` — it no longer prunes
+`has_sf_multipv_raw` from the H2D payload — and that frame is in BOTH
+`measured_by` lists. So `holdout_generation` bumps at the next restart and the
+running trial **hands over its best-model record**, adopting the current
+`test_loss` instead of comparing against the pre-restart one. Expect it, and do
+not read the handover as a regression.
+
+**The MEASUREMENT did not move**, and unlike the two earlier declared false
+positives of this shape (PR #283 and its review follow-up, both argued from
+source) this one is proved:
+`tests/test_sf_no_multipv_metric.py::test_adding_the_presence_flag_does_not_move_the_loss`
+runs `compute_loss` on one batch with and without the vector and requires
+**every** returned scalar — not just `total` — to be bitwise equal. The vector
+feeds exactly one loss term, `sparse_sf_policy_ce`, which additionally needs
+`sf_multipv_raw` (still pruned) and is reached only when `sf_policy_sparse_ce`
+is on, a configuration in which nothing was pruned before either.
