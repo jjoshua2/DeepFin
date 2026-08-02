@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
@@ -481,6 +482,113 @@ _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
 }) | _CONSTRUCTION_ONLY_REPLAY_KEYS
 
 
+# Yaml keys the validator still ACCEPTS and `TrialConfig` still parses, but
+# which no production code path consumes. This is not the construction-only
+# class: those reach a constructor and are merely frozen after it. These reach
+# NOTHING, so their value is read back correctly from the trial's own config
+# while the object that would use it never sees the number at all.
+#
+# `replay_sf_gap_priority_signed` (backlog #106): allow-listed at
+# `utils/config_yaml.py:277`, parsed at `trial_config.py:727`, supported by
+# `DiskReplayBuffer.sf_gap_priority_signed` — and never passed. The production
+# construction site (`trainable_init.py`, `DiskReplayBuffer(...)`) passes only
+# `sf_gap_priority_weight`, and the per-iteration live push
+# (`trainable.py`) pushes only the same four live knobs. Its real consumers are
+# both OFFLINE — `scripts/retarget_retrain.py` and
+# `scripts/holdout_policy_screen.py` — which is why the key is refused here
+# rather than deleted from `TrialConfig`.
+#
+# Each key maps to the ONE value that is inert, i.e. the value the production
+# object actually runs at. That value is tolerated: deleting a key from a live
+# yaml is itself a reload risk (the validator is all-or-nothing), so an
+# operator must be able to leave it in place. Any other value is refused
+# loudly, on the precedent of `promotion_gate.gate_config_from_dict`'s
+# `gate_games` check — silently accepting it is the failure this repo keeps
+# paying for.
+_DEAD_CONFIG_KEY_INERT_VALUES: dict[str, object] = {
+    "replay_sf_gap_priority_signed": False,
+}
+
+
+def dead_config_key_inert_values() -> dict[str, object]:
+    """The dead keys with the ONE value each that is inert, for reporting tools.
+
+    ``dead_config_keys()`` answers "is this key dead"; this answers "is this
+    VALUE the harmless one", which a provenance report needs in order to stay
+    quiet on a yaml that merely leaves the key in place at its realized default.
+    """
+    return dict(_DEAD_CONFIG_KEY_INERT_VALUES)
+
+
+def dead_config_key_violations(
+    config: Mapping[str, object],
+) -> list[tuple[str, object, object]]:
+    """Dead keys in *config* set to something other than their inert value.
+
+    ⚑ THE SINGLE PREDICATE. ``reject_dead_config_keys`` (which raises at
+    startup) and ``scripts/audit_realized_config.py`` (which reports) both go
+    through this function rather than each re-deriving "is this value live".
+    Two implementations that agree today drift the moment a dead key is added
+    whose inert value is not falsey, and then the audit would call safe a value
+    the trial refuses to start on — a guard disagreeing with the criterion it
+    guards.
+
+    ``bool(...)`` rather than ``!=``: yaml spells the same intent ``true`` /
+    ``True`` / ``1`` / ``yes``, and a ``1 != False`` comparison would flag a
+    value the consumer would have treated as identical to the inert one.
+
+    Returns ``(key, value, inert)`` triples so a caller can name all three.
+    """
+    return [
+        (key, config[key], inert)
+        for key, inert in _DEAD_CONFIG_KEY_INERT_VALUES.items()
+        if key in config and bool(config[key]) != bool(inert)
+    ]
+
+
+def reject_dead_config_keys(config: Mapping[str, object]) -> None:
+    """Raise on a yaml key that is parsed but reaches no production consumer.
+
+    Called from the production replay-buffer construction path, so the refusal
+    happens at STARTUP, before any training compute. The live-reload path
+    cannot reach here — it warns and declines to apply instead (see
+    ``_reload_yaml_into_config``), because crashing a running trial on a yaml
+    edit would crash-loop under ``train.sh``'s auto-resume.
+    """
+    for key, value, inert in dead_config_key_violations(config):
+        raise ValueError(
+            f"{key}={value!r} is parsed but reaches no production code path: "
+            f"the trial builds its DiskReplayBuffer without it "
+            f"(trainable_init.py) and never pushes it on live reload "
+            f"(trainable.py), so the only value this run can realize is "
+            f"{inert!r}. Its only consumers are the offline "
+            f"scripts/retarget_retrain.py and scripts/holdout_policy_screen.py. "
+            f"Refusing rather than accepting a knob that reads back correctly "
+            f"and does nothing; the gap-priority family was KILLED by "
+            f"experiment #104 (docs/experiment_ledger.md), so re-enabling it "
+            f"needs a ledger entry and a deliberate wiring change, not a yaml "
+            f"line."
+        )
+
+
+def dead_config_keys() -> frozenset[str]:
+    """Yaml keys that reach NO production consumer at any value.
+
+    A FOURTH reload class, distinct from all three in
+    ``restart_required_config_keys()``. Those are declined live because
+    applying them would be unsafe or could not act until a restart; a dead key
+    is declined live and then REFUSED at the restart
+    (``reject_dead_config_keys``). So "not overlaid" is true of both, and
+    "a restart will apply it" is true only of the others.
+
+    Exported so a provenance tool can say which one it is looking at. Without
+    it, a set-but-declined dead key falls through every branch and is reported
+    as a healthy live-reloadable key whose yaml and realized values agree —
+    the exact verdict shape PR #303 removed for construction-only keys.
+    """
+    return frozenset(_DEAD_CONFIG_KEY_INERT_VALUES)
+
+
 def construction_only_config_keys() -> frozenset[str]:
     """Yaml keys that reach ONLY a constructor, so a live edit cannot act.
 
@@ -522,11 +630,19 @@ def restart_required_config_keys() -> frozenset[str]:
     property of the trial's own ``pb2_bounds_*`` entries rather than of the key,
     so callers must exclude them separately.
 
-    "Not in here" means the reloader OVERLAYS the yaml value into ``config``.
-    It does not mean a running component re-read it — that is a per-key fact
-    about consumers, and ``construction_only_config_keys()`` is the part of it
-    already proven. A tool that reads "overlaid" as "in effect" will report a
-    knob as healthy precisely when it is inert.
+    "Not in here" means the reloader overlays the yaml value into ``config``
+    **unless the key is dead** — see ``dead_config_keys()``. A dead key is
+    declined on live reload like a restart-required one, but it is deliberately
+    NOT in this set, because a restart does not apply it either: it makes the
+    trial REFUSE to start. Reporting it as restart-required would tell an
+    operator to do the one thing that turns a silent no-op into a crash.
+    Callers that branch on this set must handle that class separately;
+    ``scripts/audit_realized_config.py`` takes it as its own injected argument.
+
+    Being overlaid still does not mean a running component re-read it — that is
+    a per-key fact about consumers, and ``construction_only_config_keys()`` is
+    the part of it already proven. A tool that reads "overlaid" as "in effect"
+    will report a knob as healthy precisely when it is inert.
     """
     return (
         _TOPOLOGY_KEYS
@@ -581,6 +697,25 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
                 log.warning(
                     "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
                     k, config.get(k), v,
+                )
+                continue
+  # A dead key gets its own message, NOT the "requires restart" one above:
+  # restarting does not make it work, it makes the trial refuse to start
+  # (``reject_dead_config_keys``). Telling an operator to restart into a hard
+  # error would be the same lie in a different place. Declining to apply also
+  # keeps the poison out of `config`, so the trial keeps running on the value
+  # it has actually been running on.
+            if (
+                live_reload
+                and k in _DEAD_CONFIG_KEY_INERT_VALUES
+                and bool(v) != bool(_DEAD_CONFIG_KEY_INERT_VALUES[k])
+            ):
+                log.warning(
+                    "YAML reload: %s=%r reaches no production code path and is "
+                    "NOT applied — a restart will REFUSE to start with this "
+                    "value, not honour it. Set it back to %r. See "
+                    "reject_dead_config_keys.",
+                    k, v, _DEAD_CONFIG_KEY_INERT_VALUES[k],
                 )
                 continue
             # Opening-asset PATHS are captured by the server process at launch

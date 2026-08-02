@@ -299,3 +299,220 @@ def test_export_swa_still_strips_the_compile_prefix_under_swa(tmp_path):
     pub = torch.load(str(tmp_path / "published.pt"), map_location="cpu", weights_only=False)
 
     assert not [k for k in pub["model"] if "_orig_mod." in k]
+
+
+# ---------------------------------------------------------------------------
+# rl_loop_audit J10 / backlog #57: the publish must SAY which weights it shipped.
+#
+# J10 records that `export_swa` emits `self.model` today (production runs
+# `swa_start: -1`) but would emit `_swa_model.module` with SWA on, while the
+# ratchet arena reads the raw model out of `checkpoint_*/trainer.pt` -- measured
+# in repro, those differ in 86/86 tensors. The verdict was reached by READING
+# the branch. Nothing in the artifact said which side of it ran, so the fact had
+# to be re-derived from the config every time anyone asked, and a future change
+# to the branch could invalidate it silently.
+#
+# The line closes that: source, step, tensor count, unique-storage parameter
+# count and a content digest, printed on every publish. The digest is what makes
+# it an IDENTITY claim rather than a label -- it is recomputable from the
+# published file by anyone holding it, which is exactly the observation that
+# proves the line describes the bytes that shipped.
+#
+# ⚑ ASSERTED ON STDOUT, NOT ON caplog, AND THAT IS THE POINT. The trial actor
+# installs no logging handler (`_set_log_level` sets a level and nothing else),
+# so an INFO record falls to `logging.lastResort` at WARNING+ and is discarded.
+# `caplog` installs the handler production lacks, so a caplog assertion proves
+# the record was EMITTED and says nothing about whether anyone can SEE it --
+# which is the exact "accepted then silently ignored" shape this PR exists to
+# close, and the first version of this test had it. `capsys` observes the line
+# the way an operator reading the trial's stdout does.
+# ---------------------------------------------------------------------------
+
+
+def _export_log_fields(captured_stdout: str) -> dict[str, str]:
+    """Parse the `k=v` tail of the single export_swa provenance line."""
+    hits = [
+        line for line in captured_stdout.splitlines()
+        if line.startswith("[trial] export_swa: wrote ")
+    ]
+    assert len(hits) == 1, f"expected exactly one provenance line, got {hits}"
+    fields = {}
+    for part in hits[0].split():
+        if "=" in part:
+            key, _, value = part.partition("=")
+            fields[key] = value
+    return fields
+
+
+def test_the_provenance_line_survives_a_process_with_no_logging_handler() -> None:
+    """The production configuration, reproduced: level set, handler absent.
+
+    This is the regression that motivated the print(). `_set_log_level` sets a
+    LEVEL on the `chess_anti_engine` logger and installs nothing; no other
+    package code or Ray hook attaches a handler to that process. Under exactly
+    that setup an INFO record is dropped by `logging.lastResort` (WARNING+)
+    while a WARNING gets through -- so a logger-based provenance line would be
+    invisible on the very path it was written for.
+    """
+    import io
+    import logging as _logging
+    from contextlib import redirect_stderr
+
+    root, pkg = _logging.getLogger(), _logging.getLogger("chess_anti_engine")
+    saved = (root.handlers[:], pkg.handlers[:], pkg.level)
+    try:
+        root.handlers, pkg.handlers = [], []
+        pkg.setLevel(_logging.INFO)  # what _set_log_level does, and all it does
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            _logging.getLogger("chess_anti_engine.train.trainer").info("INFO-PROBE")
+            _logging.getLogger("chess_anti_engine.train.trainer").warning("WARN-PROBE")
+        assert "WARN-PROBE" in buf.getvalue(), "lastResort should pass WARNING"
+        assert "INFO-PROBE" not in buf.getvalue(), (
+            "INFO reached output, so this test no longer describes production "
+            "-- a handler has appeared; re-check whether print() is still needed"
+        )
+    finally:
+        root.handlers, pkg.handlers, pkg.level = saved[0], saved[1], saved[2]
+
+
+def test_export_swa_logs_a_digest_that_matches_the_published_file(tmp_path, capsys):
+    """The claim must be checkable against the artifact, not merely printed."""
+    from chess_anti_engine.train.trainer import (
+        state_dict_digest,
+        state_dict_unique_param_count,
+    )
+
+    trainer = _trained_trainer(tmp_path, swa=False, steps=4)
+    pub_path = tmp_path / "published.pt"
+    trainer.export_swa(pub_path)
+
+    fields = _export_log_fields(capsys.readouterr().out)
+    published = torch.load(str(pub_path), map_location="cpu", weights_only=False)["model"]
+
+    assert fields["source"] == "model"
+    assert fields["swa_enabled"] == "False"
+    assert fields["digest"] == state_dict_digest(published)
+    assert int(fields["tensors"]) == len(published)
+    assert int(fields["params"]) == state_dict_unique_param_count(published)
+    assert int(fields["step"]) == int(trainer.step)
+
+
+def test_export_swa_log_names_the_swa_branch_and_its_digest_differs(tmp_path, capsys):
+    """The line must distinguish the two sources, which is the whole of J10.
+
+    Both halves in one test on purpose: `source=swa_model.module` is only worth
+    anything if the digest ALSO moves, otherwise the label could be right while
+    the branch shipped the other object.
+    """
+    from chess_anti_engine.train.trainer import state_dict_digest
+
+    trainer = _trained_trainer(tmp_path, swa=True)
+    # Force the two apart rather than hoping a few steps of SGD did it: with a
+    # tiny net and a tiny buffer the running average can land on the current
+    # weights, and a test that only sometimes has two distinct objects to tell
+    # apart is a test that only sometimes checks anything.
+    with torch.no_grad():
+        for param in trainer.model.parameters():
+            param.add_(1.0)
+    raw_digest = state_dict_digest(_unprefixed(trainer.model.state_dict()))
+    swa_digest = state_dict_digest(_unprefixed(trainer._swa_model.module.state_dict()))
+    assert raw_digest != swa_digest, "test setup failed to separate the two nets"
+
+    pub_path = tmp_path / "published.pt"
+    trainer.export_swa(pub_path)
+
+    fields = _export_log_fields(capsys.readouterr().out)
+    assert fields["source"] == "swa_model.module"
+    assert fields["swa_enabled"] == "True"
+    assert fields["digest"] == swa_digest
+    assert fields["digest"] != raw_digest, (
+        "SWA export digest equals the raw model's -- the log would be labelling "
+        "a branch it did not take"
+    )
+    published = torch.load(str(pub_path), map_location="cpu", weights_only=False)["model"]
+    assert fields["digest"] == state_dict_digest(published)
+
+
+def test_export_swa_provenance_line_fires_on_the_real_publish_path(tmp_path, capsys):
+    """The production caller, not a direct `export_swa` call.
+
+    `_publish_distributed_trial_state` is what writes `publish/latest_model.pt`
+    for the selfplay fleet. A test that only calls `export_swa` directly proves
+    the function logs; it does not prove the line appears where an operator
+    would look for it.
+    """
+    from chess_anti_engine.model import ModelConfig
+    from chess_anti_engine.train.trainer import state_dict_digest
+    from chess_anti_engine.tune.distributed_runtime import _publish_distributed_trial_state
+
+    trainer = _trained_trainer(tmp_path, swa=False, steps=2)
+    model_cfg = ModelConfig(
+        kind="transformer", embed_dim=32, num_layers=1, num_heads=2, ffn_mult=2,
+        use_smolgen=False, use_nla=False, use_qk_rmsnorm=False,
+        use_gradient_checkpointing=False,
+    )
+    _publish_distributed_trial_state(
+        trainer=trainer,
+        config={"selfplay_batch": 16, "max_plies": 240, "mcts": "gumbel"},
+        model_cfg=model_cfg,
+        server_root=tmp_path / "server",
+        trial_id="trial_00000",
+        training_iteration=3,
+        trainer_step=int(trainer.step),
+        sf_nodes=1000,
+        mcts_simulations=64,
+    )
+
+    out = capsys.readouterr().out
+    fields = _export_log_fields(out)
+    published_path = tmp_path / "server" / "trials" / "trial_00000" / "publish" / "latest_model.pt"
+    published = torch.load(str(published_path), map_location="cpu", weights_only=False)["model"]
+    assert fields["digest"] == state_dict_digest(published)
+    # The PATH must be the published artifact, not some other export: the line
+    # is only useful if it names the file the workers will download.
+    assert f"[trial] export_swa: wrote {published_path} " in out
+
+
+def test_unique_param_count_does_not_double_count_tied_weights():
+    """The count must obey CLAUDE.md's rule, not `sum(numel())`.
+
+    The production net shares ONE smolgen generator across 16 `state_dict`
+    keys, so the naive sum reads 78,812,768 against a true 63,084,128. A
+    provenance line reporting the naive number would be a count that does not
+    mean what its name says, in the one place this line exists to make
+    unambiguous.
+    """
+    from chess_anti_engine.train.trainer import state_dict_unique_param_count
+
+    shared = torch.zeros(4, 5)
+    sd = {"a": shared, "b": shared, "c": torch.zeros(3)}
+    assert sum(v.numel() for v in sd.values()) == 43
+    assert state_dict_unique_param_count(sd) == 23
+
+    # ...and the dedup must key on STORAGE, not on object identity. Two views
+    # of one buffer are distinct objects sharing one allocation, which is what
+    # CLAUDE.md's "count unique untyped_storage().data_ptr()" rule is for; an
+    # `id()`-keyed version passes the case above and fails here.
+    base = torch.zeros(10)
+    viewed = {"a": base, "b": base.view(2, 5)}
+    assert len({id(v) for v in viewed.values()}) == 2
+    assert state_dict_unique_param_count(viewed) == 10
+
+
+def test_digest_is_key_order_independent_but_value_sensitive():
+    """It must survive re-keying and must not survive a weight change.
+
+    Both directions, because a digest that changes on re-ordering would flag
+    every harmless dict rebuild, and one that ignores values could not tell the
+    SWA average from the raw model at all.
+    """
+    from chess_anti_engine.train.trainer import state_dict_digest
+
+    a = {"x": torch.ones(2, 2), "y": torch.zeros(3)}
+    reordered = {"y": a["y"], "x": a["x"]}
+    assert state_dict_digest(a) == state_dict_digest(reordered)
+
+    changed = {"x": torch.ones(2, 2), "y": torch.zeros(3)}
+    changed["y"][0] = 1.0
+    assert state_dict_digest(a) != state_dict_digest(changed)

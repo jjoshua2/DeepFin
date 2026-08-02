@@ -16,7 +16,10 @@ from chess_anti_engine.moves import (
     MODEL_POLICY_SIZE,
     build_policy_gather_tables,
 )
-from chess_anti_engine.utils.architecture import normalize_phase_piece_thresholds
+from chess_anti_engine.utils.architecture import (
+    DEFAULT_PHASE_PIECE_THRESHOLDS,
+    normalize_phase_piece_thresholds,
+)
 
 _VOLATILITY_HEAD_NEUTRAL_OUTPUT = 0.01
 _ARC_POS_CHANNELS = 64
@@ -682,7 +685,9 @@ class TransformerConfig:
     phase_output_adapter: bool = False
     phase_output_adapter_dim: int = 64
     phase_smolgen: bool = False
-    phase_piece_thresholds: tuple[int, int] | list[int] | str | None = (13, 22)
+    phase_piece_thresholds: tuple[int, int] | list[int] | str | None = (
+        DEFAULT_PHASE_PIECE_THRESHOLDS
+    )
 
 
 def _resolve_ffn_mults(

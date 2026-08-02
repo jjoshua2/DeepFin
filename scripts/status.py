@@ -227,9 +227,9 @@ def main() -> None:
             frac_sp  = float(r.get("frac_is_selfplay_batch", 0.0))
             pol_sp   = float(r.get("policy_loss_selfplay", 0.0))
             pol_cur  = float(r.get("policy_loss_curriculum", 0.0))
-            pol_o    = float(r.get("policy_loss_open", 0.0))
-            pol_m    = float(r.get("policy_loss_mid", 0.0))
-            pol_e    = float(r.get("policy_loss_end", 0.0))
+            pol_o    = float(r.get("policy_loss_phase_open", 0.0))
+            pol_m    = float(r.get("policy_loss_phase_mid", 0.0))
+            pol_e    = float(r.get("policy_loss_phase_end", 0.0))
             # Zero means "no tagged samples in this batch yet" — show as dash.
             def _f(v: float, width: int = 7) -> str:
                 return f"{v:>{width}.3f}" if v > 0 else ("-" * (width - 3)).rjust(width)

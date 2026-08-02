@@ -11,6 +11,7 @@ from chess_anti_engine.model import (
     build_model,
     load_state_dict_tolerant,
     model_config_from_manifest_dict,
+    DEFAULT_PHASE_PIECE_THRESHOLDS,
     normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
     normalize_phase_piece_thresholds,
@@ -136,7 +137,7 @@ def main() -> None:
     ap.add_argument(
         "--phase-piece-thresholds",
         type=_parse_phase_piece_thresholds,
-        default=(13, 22),
+        default=DEFAULT_PHASE_PIECE_THRESHOLDS,
         help="Comma-separated end/mid root piece thresholds, e.g. 13,22.",
     )
     ap.add_argument("--use-nla", action="store_true")

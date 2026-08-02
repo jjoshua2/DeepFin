@@ -16,6 +16,7 @@ from chess_anti_engine.encoding.features import (
 from chess_anti_engine.encoding.lc0 import LC0_HISTORY_LEGACY, normalize_lc0_history_encoding
 from chess_anti_engine.moves import MODEL_POLICY_ENCODING
 from chess_anti_engine.utils.architecture import (
+    DEFAULT_PHASE_PIECE_THRESHOLDS,
     normalize_embed_dim_by_layer,
     normalize_ffn_mult_by_layer,
     normalize_phase_piece_thresholds,
@@ -80,7 +81,7 @@ class ModelConfig:
     phase_output_adapter: bool = False
     phase_output_adapter_dim: int = 64
     phase_smolgen: bool = False
-    phase_piece_thresholds: tuple[int, int] = (13, 22)
+    phase_piece_thresholds: tuple[int, int] = DEFAULT_PHASE_PIECE_THRESHOLDS
 
 
 def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
@@ -143,7 +144,7 @@ def model_config_from_manifest_dict(mc: dict) -> ModelConfig:
         phase_output_adapter=bool(mc.get("phase_output_adapter", False)),
         phase_output_adapter_dim=int(mc.get("phase_output_adapter_dim", 64)),
         phase_smolgen=bool(mc.get("phase_smolgen", False)),
-        phase_piece_thresholds=normalize_phase_piece_thresholds(mc.get("phase_piece_thresholds", (13, 22))),
+        phase_piece_thresholds=normalize_phase_piece_thresholds(mc.get("phase_piece_thresholds")),
     )
 
 
@@ -310,7 +311,7 @@ def model_config_from_flat_config(
         phase_output_adapter_dim=int(cfg.get("phase_output_adapter_dim", 64)),
         phase_smolgen=bool(cfg.get("phase_smolgen", False)),
         phase_piece_thresholds=normalize_phase_piece_thresholds(
-            cfg.get("phase_piece_thresholds", (13, 22))
+            cfg.get("phase_piece_thresholds")
         ),
     )
 
