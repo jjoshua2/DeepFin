@@ -191,6 +191,13 @@ class RowSet:
     ply: np.ndarray
     is_selfplay: np.ndarray
     source: str
+    # Whether ``is_selfplay`` was MEASURED or merely defaulted. A row source
+    # that did not carry the field yields all-False, which is indistinguishable
+    # from "every row is curriculum" — so ``--split-selfplay`` refuses rather
+    # than reporting a population split it did not observe. ``game_id`` needs
+    # no such flag: it is required at every entry point, because it is
+    # load-bearing for EVERY CI rather than for one optional flag.
+    population_known: bool = True
 
     def __len__(self) -> int:
         return int(self.p_sf.shape[0])
@@ -200,6 +207,7 @@ class RowSet:
             x=self.x[idx], p_sf=self.p_sf[idx], outcome=self.outcome[idx],
             game_id=self.game_id[idx], ply=self.ply[idx],
             is_selfplay=self.is_selfplay[idx], source=self.source,
+            population_known=self.population_known,
         )
 
 
@@ -276,6 +284,7 @@ def load_rows_from_shards(
         game_id=np.concatenate(cols["game_id"]), ply=np.concatenate(cols["ply"]),
         is_selfplay=np.concatenate(cols["is_selfplay"]),
         source=f"shards:{shard_dir}",
+        population_known="is_selfplay" not in absent,
     )
 
 
@@ -284,19 +293,50 @@ def load_rows_from_npz(path: str) -> RowSet:
 
     The contract is exactly this script's own ``--dump --dump-x`` output, so a
     dump is a valid row source and a run can be reproduced without re-reading
-    the shards. ``x`` is REQUIRED — without the planes there is no forward
-    pass, and a dump that carried only the previous run's predictions would let
-    a stale net's numbers be re-reported under a new checkpoint's name.
+    the shards.
+
+    THREE REQUIRED KEYS, each because defaulting it corrupts a number silently:
+
+    * ``x`` — without the planes there is no forward pass, and a bank carrying
+      only the previous run's predictions would let a stale net's numbers be
+      re-reported under a new checkpoint's name.
+    * ``p_sf`` — the oracle label IS the stratum; there is nothing to select on
+      without it.
+    * ``game_id`` — **the CLUSTER**. This one used to default to
+      ``np.arange(n)``, i.e. one game per row, which does not fail, does not
+      warn, and silently turns every game-clustered CI in the output into a
+      ROW-level bootstrap. Rows inside a game are consecutive plies of one
+      position sequence, so that CI is several times too tight — the
+      anti-conservative direction, and exactly how a null gets published as a
+      finding. ``test_ci_resamples_games_not_rows`` measures the gap at >3x on
+      correlated rows. A bank with no cluster identity cannot be scored
+      honestly by this tool, so it is refused rather than scored wrongly.
+
+    ``outcome``, ``ply`` and ``is_selfplay`` may be absent. Their defaults
+    degrade VISIBLY: a missing ``outcome`` shows as ``n_used == 0`` and NaN on
+    the outcome columns, and a missing ``is_selfplay`` makes
+    ``--split-selfplay`` refuse (see ``population_known``) instead of reporting
+    everything as curriculum.
     """
     with np.load(path) as z:
         keys = set(z.files)
-        missing = {"x", "p_sf"} - keys
+        missing = {"x", "p_sf", "game_id"} - keys
         if missing:
             raise SystemExit(
-                f"{path}: missing {sorted(missing)}; a row source needs the input "
-                "planes and the oracle label (re-dump with --dump-x)"
+                f"{path}: missing {sorted(missing)}. A row source needs the input "
+                "planes (x), the oracle label (p_sf) and the game cluster "
+                "(game_id) — game_id is what every CI resamples, and defaulting "
+                "it to one-game-per-row would silently report row-level "
+                "bootstraps that are several times too tight. Re-dump with "
+                "--dump-x; scorer-written banks always carry all three."
             )
         n = int(z["p_sf"].shape[0])
+        game_id = np.asarray(z["game_id"], dtype=np.int64)
+        if game_id.shape != (n,):
+            raise SystemExit(
+                f"{path}: game_id has shape {game_id.shape!r}, expected ({n},) "
+                "— one cluster id per row"
+            )
         return RowSet(
             x=np.asarray(z["x"], dtype=np.float32),
             p_sf=_norm3(np.asarray(z["p_sf"])),
@@ -304,10 +344,7 @@ def load_rows_from_npz(path: str) -> RowSet:
                 np.asarray(z["outcome"], dtype=np.int16) if "outcome" in keys
                 else np.full(n, NO_OUTCOME, np.int16)
             ),
-            game_id=(
-                np.asarray(z["game_id"], dtype=np.int64) if "game_id" in keys
-                else np.arange(n, dtype=np.int64)
-            ),
+            game_id=game_id,
             ply=(
                 np.asarray(z["ply"], dtype=np.int32) if "ply" in keys
                 else np.zeros(n, np.int32)
@@ -317,6 +354,7 @@ def load_rows_from_npz(path: str) -> RowSet:
                 else np.zeros(n, bool)
             ),
             source=f"npz:{path}",
+            population_known="is_selfplay" in keys,
         )
 
 
@@ -914,6 +952,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.shard_dir else load_rows_from_npz(args.npz)
     )
+    # Checked HERE, before the checkpoint load and the forward pass: a run that
+    # discovers its requested split is unmeasurable only after paying for
+    # inference has wasted the whole run. Everything a flag needs is knowable
+    # from the row source alone, so it is settled at the row source.
+    if args.split_selfplay and not rows.population_known:
+        raise SystemExit(
+            f"--split-selfplay: {rows.source} carries no is_selfplay field, so "
+            "every row would default to curriculum and the 'selfplay' half "
+            "would print as empty — a population split nobody observed"
+        )
 
     model = load_model_from_checkpoint(args.checkpoint, device=args.device)
     model.eval()

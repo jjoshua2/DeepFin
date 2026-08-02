@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -214,8 +216,107 @@ def test_npz_row_source_refuses_a_dump_without_planes(tmp_path: Path) -> None:
     would report a NEW checkpoint's name over the OLD checkpoint's numbers.
     """
     path = tmp_path / "nox.npz"
-    np.savez_compressed(path, p_sf=np.full((3, 3), 1 / 3, np.float32))
-    with pytest.raises(SystemExit, match="re-dump with --dump-x"):
+    np.savez_compressed(
+        path, p_sf=np.full((3, 3), 1 / 3, np.float32),
+        game_id=np.zeros(3, np.int64),
+    )
+    with pytest.raises(SystemExit, match=r"Re-dump with --dump-x"):
+        load_rows_from_npz(str(path))
+
+
+def _bank(path: Path, n: int = 6, *, game_id: bool = True,
+          is_selfplay: bool = True) -> Path:
+    """A minimal well-formed bank, with optional keys omitted on request."""
+    payload: dict[str, np.ndarray] = {
+        "x": np.zeros((n, 4, 8, 8), np.float32),
+        "p_sf": np.full((n, 3), 1 / 3, np.float32),
+    }
+    if game_id:
+        payload["game_id"] = np.repeat(np.arange(n // 3 or 1, dtype=np.int64), 3)[:n]
+    if is_selfplay:
+        payload["is_selfplay"] = np.zeros(n, bool)
+    # Same stub dodge as the script: numpy types savez_compressed's second
+    # positional as ``allow_pickle``, so a **kwargs expansion trips the checker.
+    saver: Callable[..., Any] = np.savez_compressed
+    saver(path, **payload)
+    return path
+
+
+def test_npz_row_source_refuses_a_bank_with_no_game_clusters(tmp_path: Path) -> None:
+    """A bank with no ``game_id`` must be REFUSED, not scored.
+
+    MUTATION: restore the old default, ``np.arange(n)`` when the key is absent.
+    That is one game per row, so every "game-clustered" CI in the output
+    becomes a ROW-level bootstrap — several times too tight on rows that are
+    consecutive plies of one game (`test_ci_resamples_games_not_rows` measures
+    >3x). It does not raise, does not warn, and the output is
+    indistinguishable from an honest run: the anti-conservative direction, and
+    exactly how a null gets published as a finding.
+
+    Scored via the module's own reader; the CLI path is covered below.
+    """
+    path = _bank(tmp_path / "nogid.npz", game_id=False)
+    with pytest.raises(SystemExit, match="game_id"):
+        load_rows_from_npz(str(path))
+
+    # ...and the same bank WITH clusters loads, so the guard is specific to the
+    # missing key and is not just refusing everything.
+    ok = load_rows_from_npz(str(_bank(tmp_path / "gid.npz")))
+    assert len(ok) == 6
+    assert np.unique(ok.game_id).size == 2
+
+
+def test_npz_guard_fires_on_the_cli_path_before_any_model_is_loaded(
+    tmp_path: Path,
+) -> None:
+    """THE guard has to fire where production enters, not only in the helper.
+
+    ``main`` loads rows BEFORE the checkpoint, so pointing it at a
+    cluster-less bank plus a checkpoint path that does not exist must fail on
+    the bank. If it ever failed on the missing checkpoint instead, the guard
+    would be sitting behind the expensive step and a real run would have paid
+    a full forward pass before finding out — or, worse, a valid checkpoint
+    would have carried it straight past.
+
+    MUTATION: remove the ``game_id`` requirement -> this raises about the
+    checkpoint (or scores the bank) and the match below fails.
+    """
+    path = _bank(tmp_path / "nogid.npz", game_id=False)
+    with pytest.raises(SystemExit, match="game_id"):
+        main(["--npz", str(path), "--checkpoint", str(tmp_path / "no_such.pt")])
+
+
+def test_split_selfplay_refuses_a_source_that_never_observed_the_population(
+    tmp_path: Path,
+) -> None:
+    """MUTATION: drop the ``population_known`` check in ``main``.
+
+    A bank with no ``is_selfplay`` defaults to all-False, so the split would
+    print a full 'curriculum' table and an empty 'selfplay' one — a population
+    split nobody measured, in the one comparison whose whole point is that the
+    PID-handicapped opponent plays in only one of the two populations.
+    """
+    path = _bank(tmp_path / "nopop.npz", is_selfplay=False)
+    assert load_rows_from_npz(str(path)).population_known is False
+    with pytest.raises(SystemExit, match="no is_selfplay field"):
+        main([
+            "--npz", str(path), "--split-selfplay",
+            "--checkpoint", str(tmp_path / "no_such.pt"),
+        ])
+    # A bank that DOES carry it is not refused by this guard.
+    assert load_rows_from_npz(str(_bank(tmp_path / "pop.npz"))).population_known is True
+
+
+def test_npz_row_source_rejects_a_mis_shaped_game_id(tmp_path: Path) -> None:
+    """MUTATION: drop the shape check. A scalar or wrong-length ``game_id``
+    would broadcast or mis-align, silently clustering the wrong rows."""
+    path = tmp_path / "badgid.npz"
+    np.savez_compressed(
+        path, x=np.zeros((6, 4, 8, 8), np.float32),
+        p_sf=np.full((6, 3), 1 / 3, np.float32),
+        game_id=np.zeros(3, np.int64),
+    )
+    with pytest.raises(SystemExit, match="one cluster id per row"):
         load_rows_from_npz(str(path))
 
 
