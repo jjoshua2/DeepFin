@@ -20994,3 +20994,118 @@ None taken, and none needed: the shipped default is bit-for-bit the current
 code and no config references the key, so the revert is `git revert` of the PR
 with no data-window consequence. A revert point becomes REQUIRED for the flip,
 not for this.
+
+## 2026-08-02 — CORRECTION to the entry above: the shard-recency underflow finding is TWO failures three orders of magnitude apart, and one leg of it does not exist
+
+Review round on PR #312 (Codex plus an independent reviewer, reached
+independently) raised: at extreme-but-valid non-default exponents the shard
+draw weights underflow/overflow in float64, old shards become permanently
+ineligible, and `rng.choice(replace=False)` breaks. The reviewer put the
+threshold at "above α ≈ 111 at n = 834, all but the newest weights underflow to
+exactly 0 and `rng.choice` raises inside the prefetch thread".
+
+**The finding is real and is now fixed. The threshold as stated was wrong, and
+the first version of the regression test asserted it AS REPORTED and FAILED** —
+which is the only reason the conflation was caught rather than shipped as a
+docstring. Measured on the pre-fix expression `(rank/n)**α`, binary-searched:
+
+| window | oldest weight becomes exactly 0.0 | `count_nonzero(p) < refresh_shards` (the raise) |
+|---|---|---|
+| n = 834 (live), 5 picks | α ≈ **110.5** | α ≈ **154,987** |
+| n = 12, 5 picks | α ≈ **299.9** | α ≈ **1,838** |
+
+So α ≈ 111 is where **ONE** shard — the oldest — becomes undrawable. Not "all
+but the newest", and **no exception**: the draw keeps working and a shard sits
+in the window that can never be sampled. That silent half is the worse one and
+was the part worth fixing. The `rng.choice` raise needs α ~1.5e5 at the live
+window.
+
+**The OVERFLOW leg does not apply to this code at all.** `(rank/n)**α` is
+bounded by 1 for every α ≥ 0, verified at α = 1e6 (`max == 1.0`). Overflow
+would apply to a raw `rank**α`, which the buffer has never used. Recorded
+because "the report named three failure modes and two were real" is the kind of
+thing that otherwise gets cited later as three.
+
+### What shipped
+
+* Weights computed in **log space** (`α·log(rank)`, max subtracted, exp), so
+  the dynamic range is linear in α rather than exponential in it, and the
+  post-shift maximum is exactly 1.0 — which is what makes the sum provably in
+  `[1, n]`.
+* **Floor at the smallest positive normal float64** before normalizing, so
+  every shard keeps a strictly positive probability for any finite α. Floored
+  mass is ≤ n·2.2e-308 ≈ 2e-305, ~300 orders of magnitude below the printed
+  table's last digit.
+* **`MAX_SHARD_RECENCY_EXPONENT = 50.0`**, DERIVED not picked: 708.396/ln(1e6)
+  = 51.28 rounded down, i.e. at a window 1200× the live one nothing underflows
+  even before the floor. ⚑ The bound is **not** the crash fix — the floor is,
+  unconditionally. The bound exists because past the underflow point every
+  larger α produces the same "newest shard, p = 1 − 1e-305" draw, so the yaml
+  value would read back correctly while selecting a REGIME rather than a value.
+  A test re-derives the inequality rather than pinning the constant.
+* **Negative α stays refused**, deliberately: oldest-heavy is not a hypothesis
+  anyone has proposed (arm G is about α ∈ [0, 1]). The log form is correct for
+  it, so enabling it is a one-line relaxation behind a ledger entry.
+
+### The α = 1.0 byte-identity was RE-PROVEN after the restructure, not asserted
+
+The default branch was left untouched and deliberately not routed through the
+log-space form. Re-run after the rewrite, and independently of pytest: weight
+vector byte-identical (`.tobytes()`) at n ∈ {1, 2, 7, 12, 64, 834, 5000}; and
+through `rng.choice`, identical indices AND identical `bit_generator.state` at
+(n, k) = (12, 5), (834, 5), (40, 6).
+
+⚑ Banked method point from the review: **`state_after_open` is identical even at
+α = 0.0**, because `rng.choice` consumes the same variates regardless of `p`.
+An RNG-state assertion ALONE therefore cannot detect a distribution change —
+it is necessary, not sufficient — which is why the test asserts the drawn
+indices *and* the state.
+
+### Two more corrections the same round produced
+
+**The printed decile table is now REALIZED, not analytic, whenever a window
+exists.** The continuum form is visibly wrong at small n: at n = 40 the oldest
+decile is 0.0122 realized against 0.0100 analytic, and `mean_rank_pct` 0.675
+against 0.667 — both above the printed precision. A fresh trial (no shards)
+still prints the continuum form, labelled `source=analytic n_shards=0` so the
+two can never be confused, and `floored=K` reports whether the floor engaged.
+
+**The without-replacement caveat was also cited with the wrong sign and
+magnitude.** The review reported the realized multi-pick mean recency as 0.821
+against 0.667 printed, at n = 40 with 6 picks. Measured over 4000 draws:
+
+| n / picks | printed marginal | realized | delta |
+|---|---|---|---|
+| 834 / 5 (production) | 0.667 | 0.669 | **+0.002** |
+| 40 / 6 | 0.675 | 0.666 | −0.009 |
+| 10 / 6 | 0.700 | 0.652 | −0.048 |
+| 6 / 6 | 0.722 | 0.583 | −0.139 |
+
+The gap is **downward and small**, not upward and large, and it is material
+only once the picks are a large fraction of the window — a draw that takes most
+of the shards leaves recency little to select among, so it is pulled toward the
+window's unweighted mean. At production shape the printed number IS the draw to
+three decimals. Both ends are pinned by a test so the docstring cannot rot back.
+
+### Coverage gap closed
+
+Every test in the module set `deterministic_refresh=True`, which SUPPRESSES the
+prefetch thread — so the knob was proven only on the synchronous path, not the
+one production usually takes. Added a test that drives the real thread's
+generator (`deterministic_refresh=False`) and requires the drawn distribution
+to move with α (mean recency 0.60–0.74 at α = 1.0 vs 0.44–0.56 at α = 0.0, and
+a ≥ 0.08 separation), plus an assertion that the thread is actually alive in
+that configuration — otherwise the test would be the synchronous path again
+under a different name.
+
+### Operational note, no code change
+
+`scripts/holdout_policy_screen.py --override replay_shard_recency_exponent=...`
+is REFUSED: the guard requires the key to pre-exist in the flattened yaml, and
+no config carries it (verified — `k in flat` is False against
+`configs/pbt2_small.yaml`). That is the guard working as designed ("refusing a
+silently-ignored knob") and it fails loudly, so arm-G-era use wants a rig-local
+yaml copy carrying the key rather than a change here.
+
+Still no config carries the key; still no verdict; the flip still needs its own
+entry once arm G reads out.

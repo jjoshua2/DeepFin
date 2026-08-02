@@ -27,8 +27,12 @@ import pytest
 from chess_anti_engine.replay.buffer import ReplaySample
 from chess_anti_engine.replay.disk_buffer import (
     DEFAULT_SHARD_RECENCY_EXPONENT,
+    MAX_SHARD_RECENCY_EXPONENT,
     DiskReplayBuffer,
+    _SHARD_DRAW_WEIGHT_FLOOR,
     shard_draw_decile_mass,
+    shard_draw_decile_mass_realized,
+    shard_draw_floored_count,
     shard_draw_weights,
 )
 from chess_anti_engine.tune.trainable_config_ops import (
@@ -263,17 +267,21 @@ def test_realized_decile_mass_matches_the_analytic_cumulative_form() -> None:
     )
 
 
-@pytest.mark.parametrize("bad", [-0.5, float("nan"), float("inf")])
+@pytest.mark.parametrize("bad", [-0.5, float("nan"), float("inf"), 400.0, 50.0001])
 def test_a_nonsense_exponent_fails_at_construction_not_mid_run(
     tmp_path: Path, bad: float,
 ) -> None:
-    """MUTATION: delete the validation call from ``__init__``.
+    """MUTATION: delete the validation call from ``__init__``, or drop the
+    upper bound from ``validate_shard_recency_exponent``.
 
-    A negative or non-finite exponent reaches ``rng.choice`` as a NaN
-    probability vector, whose failure surfaces inside the prefetch THREAD --
-    where the exception is swallowed and the symptom is a shuffle pool that
-    silently stops refreshing. Failing in the constructor puts the offending
-    config value in a message an operator sees at startup.
+    A bad exponent reaches ``rng.choice`` as a probability vector it refuses,
+    and the refusal surfaces inside the prefetch THREAD -- where the exception
+    is swallowed and the symptom is a shuffle pool that silently stops
+    refreshing. Failing in the constructor puts the offending config value in a
+    message an operator sees at startup.
+
+    ``400.0`` is the Codex/review finding's value and is refused for a reason
+    the next test constructs rather than asserts.
     """
     with pytest.raises(ValueError, match="recency exponent"):
         DiskReplayBuffer(
@@ -283,6 +291,274 @@ def test_a_nonsense_exponent_fails_at_construction_not_mid_run(
             read_only=False,
             shard_recency_exponent=bad,
         )
+
+
+def test_the_underflow_the_bound_refuses_is_real_and_would_break_the_draw() -> None:
+    """The finding, CONSTRUCTED rather than described — and it is TWO failures
+    at very different exponents, not one.
+
+    MUTATION: raise ``MAX_SHARD_RECENCY_EXPONENT`` past either threshold, or
+    delete the floor from ``shard_draw_weights``.
+
+    ⚑ Written this way because the first draft of this test asserted the
+    finding AS REPORTED -- "above alpha ~= 111 at n = 834 all but the newest
+    weight underflow to 0 and ``rng.choice`` raises" -- and FAILED, because
+    that conflates two thresholds three orders of magnitude apart. Measured on
+    the pre-fix expression:
+
+    * the OLDEST weight reaches exactly 0.0 at alpha ~= 110.5 (n = 834) /
+      ~= 300 (n = 12). One shard, not "all but the newest". No exception: the
+      draw keeps working and that shard is simply PERMANENTLY INELIGIBLE. This
+      is the silent half, and the worse one.
+    * ``count_nonzero(p) < refresh_shards``, which is what actually makes
+      ``rng.choice(replace=False)`` raise, needs alpha ~= 154,987 at n = 834 /
+      ~= 1,838 at n = 12.
+
+    OVERFLOW, the third leg of the report, cannot occur in the shipped form at
+    all: ``(rank / n) ** alpha`` is bounded by 1 for every alpha >= 0. It would
+    apply to a raw ``rank ** alpha``, which this code has never used. Asserted
+    below so the claim is checked rather than reasoned about.
+    """
+    n_shards = 12
+
+    def _legacy(alpha: float) -> np.ndarray:
+        """The pre-fix expression, verbatim."""
+        w = (np.arange(1, n_shards + 1, dtype=np.float64) / n_shards) ** alpha
+        return w / w.sum()
+
+    # (a) the SILENT failure: one shard becomes undrawable, no exception.
+    quiet = _legacy(400.0)
+    assert quiet[0] == 0.0, quiet
+    assert int(np.count_nonzero(quiet)) == n_shards - 1, quiet
+    drawn = np.random.default_rng(0).choice(n_shards, size=5, replace=False, p=quiet)
+    assert 0 not in drawn.tolist(), drawn  # ineligible, and nothing said so
+
+    # (b) the LOUD failure, three orders of magnitude further out.
+    loud = _legacy(3000.0)
+    assert int(np.count_nonzero(loud)) < 5, loud
+    with pytest.raises(ValueError, match="Fewer non-zero entries in p than size"):
+        np.random.default_rng(0).choice(n_shards, size=5, replace=False, p=loud)
+
+    # (c) overflow is not reachable in this form, at any exponent.
+    assert float(_legacy(1e6).max()) <= 1.0
+
+    # (d) answer one: neither value can reach the buffer.
+    for alpha in (400.0, 3000.0):
+        assert alpha > MAX_SHARD_RECENCY_EXPONENT
+        with pytest.raises(ValueError, match="recency exponent"):
+            shard_draw_weights(n_shards, alpha)
+
+    # (e) answer two: the floor would have held at BOTH, which is what makes
+    # the bound a policy choice rather than the only thing standing between
+    # this code and the failures. Computed through the same log-space path the
+    # production branch uses, with validation bypassed exactly as a relaxed
+    # bound would bypass it.
+    from chess_anti_engine.replay.disk_buffer import _shard_draw_log_weights
+
+    for alpha in (400.0, 3000.0, 1e6):
+        raw = np.exp(_shard_draw_log_weights(n_shards, alpha))
+        floored = np.maximum(raw, _SHARD_DRAW_WEIGHT_FLOOR)
+        floored = floored / floored.sum()
+        assert int(np.count_nonzero(floored)) == n_shards, (alpha, floored)
+        picked = np.random.default_rng(0).choice(
+            n_shards, size=5, replace=False, p=floored,
+        )
+        assert len(set(picked.tolist())) == 5, (alpha, picked)
+
+
+def test_the_bound_is_derived_from_the_log_space_form_not_picked() -> None:
+    """MUTATION: change ``MAX_SHARD_RECENCY_EXPONENT`` without changing the
+    reference window it was derived from.
+
+    The bound's justification is an inequality, so the inequality is the test:
+    at the bound, a window of ``_BOUND_REFERENCE_N_SHARDS`` shards still
+    produces NO underflow, i.e. the floor never engages and every weight is a
+    normal float64. Pinning the number alone would let the comment's derivation
+    rot away from the constant it claims to explain.
+    """
+    from chess_anti_engine.replay.disk_buffer import _BOUND_REFERENCE_N_SHARDS
+
+    assert MAX_SHARD_RECENCY_EXPONENT * np.log(_BOUND_REFERENCE_N_SHARDS) <= -np.log(
+        _SHARD_DRAW_WEIGHT_FLOOR,
+    )
+    # ... and it is not slack by an order of magnitude, or "derived" would be
+    # doing no work: doubling it must break the same inequality.
+    assert 2.0 * MAX_SHARD_RECENCY_EXPONENT * np.log(_BOUND_REFERENCE_N_SHARDS) > -np.log(
+        _SHARD_DRAW_WEIGHT_FLOOR,
+    )
+    # The live window is ~834 shards; the bound must clear that with room.
+    assert MAX_SHARD_RECENCY_EXPONENT * np.log(834) < -np.log(_SHARD_DRAW_WEIGHT_FLOOR)
+
+
+@pytest.mark.parametrize("alpha", [0.0, 0.25, 0.5, 2.0, 10.0, MAX_SHARD_RECENCY_EXPONENT])
+@pytest.mark.parametrize("n_shards", [1, 2, 7, 834])
+def test_every_valid_exponent_yields_a_usable_probability_vector(
+    alpha: float, n_shards: int,
+) -> None:
+    """MUTATION: delete the ``np.maximum(..., _SHARD_DRAW_WEIGHT_FLOOR)`` line.
+
+    The invariants ``rng.choice`` actually requires, asserted over the whole
+    valid domain rather than at one convenient point: finite, strictly
+    positive everywhere (else a without-replacement draw can run out of
+    eligible shards), and summing to 1 within numpy's own ``sqrt(eps)``
+    tolerance -- the same tolerance ``choice`` checks, so passing here means
+    passing there.
+    """
+    weights = shard_draw_weights(n_shards, alpha)
+    assert weights.shape == (n_shards,)
+    assert np.all(np.isfinite(weights)), weights
+    assert np.all(weights > 0.0), weights
+    assert abs(float(weights.sum()) - 1.0) < np.sqrt(np.finfo(np.float64).eps)
+    # The draw numpy would refuse if any of the above were false.
+    n_pick = min(n_shards, 5)
+    drawn = np.random.default_rng(3).choice(
+        n_shards, size=n_pick, replace=False, p=weights,
+    )
+    assert len(set(drawn.tolist())) == n_pick, drawn
+
+
+def test_the_floor_engages_where_it_must_and_costs_nothing_that_shows() -> None:
+    """MUTATION: floor at ``1e-6`` instead of ``np.finfo(float64).tiny``.
+
+    Both halves of the floor's contract. It must ENGAGE where float64 runs out
+    -- reachable inside the valid exponent domain only on a window far larger
+    than the bound's reference, which is exactly the belt-and-braces case the
+    bound leaves to it -- and the mass it invents must be far below anything
+    observable, or the floor would be silently reshaping the draw it exists to
+    protect.
+    """
+    n_shards, alpha = 2_000_000, MAX_SHARD_RECENCY_EXPONENT
+    assert alpha * np.log(n_shards) > -np.log(_SHARD_DRAW_WEIGHT_FLOOR)
+
+    floored = shard_draw_floored_count(n_shards, alpha)
+    assert floored > 0, "the floor never engaged; this case no longer tests it"
+
+    weights = shard_draw_weights(n_shards, alpha)
+    assert np.all(weights > 0.0)
+    # Everything the floor invented, summed: ~300 orders of magnitude below the
+    # printed table's last digit (1e-4).
+    assert float(weights[:floored].sum()) < 1e-300
+
+    # And the default path never floors, because its weights are the integers.
+    assert shard_draw_floored_count(834, DEFAULT_SHARD_RECENCY_EXPONENT) == 0
+    # Nor does anything production can configure, at the live window size.
+    assert shard_draw_floored_count(834, MAX_SHARD_RECENCY_EXPONENT) == 0
+
+
+def test_the_maximum_valid_exponent_still_loads_distinct_shards_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """Codex's regression shape, at the most extreme exponent a config can set.
+
+    MUTATION: delete the floor, or revert ``shard_draw_weights`` to
+    ``(ranks / n) ** alpha`` AND raise the bound.
+
+    The unit-level invariants above are asserted on the weight vector; this one
+    goes through ``_load_refresh_chunks`` -- the function the prefetch thread
+    calls -- and requires ``refresh_shards`` DISTINCT shards to come back. At
+    alpha = 50 over 12 shards the oldest weight is ~1e-54 of the newest, so
+    this is a genuinely degenerate draw that must still work rather than a
+    nominal one.
+    """
+    n_shards, n_pick = 12, 5
+    buf = _buffer_with_shards(
+        tmp_path, n_shards=n_shards, exponent=MAX_SHARD_RECENCY_EXPONENT,
+    )
+    picked: list[int] = []
+    loaded = buf._load_refresh_chunks(
+        shard_paths=buf._snapshot_shards(),
+        refresh_shards=n_pick,
+        rng=np.random.default_rng(4),
+        chosen_out=picked,
+    )
+    assert len(loaded) == n_pick, len(loaded)
+    assert len(set(picked)) == n_pick, picked
+    # Degenerate in the expected DIRECTION: an extreme exponent must land on
+    # the newest end, or the draw is broken in a way count alone cannot see.
+    assert min(picked) >= n_shards - n_pick, picked
+
+
+def test_the_exponent_reaches_the_prefetch_THREAD_not_only_the_sync_path(
+    tmp_path: Path,
+) -> None:
+    """MUTATION: read ``DEFAULT_SHARD_RECENCY_EXPONENT`` instead of
+    ``self._shard_recency_exponent`` inside ``_load_refresh_chunks``.
+
+    ⚑ Every other test in this file sets ``deterministic_refresh=True``, which
+    SUPPRESSES the prefetch thread and routes every refresh down the
+    synchronous path. Production runs the opposite way: the thread is live and
+    wins most races, drawing from ``_prefetch_rng``. So without this test the
+    knob is proven only on the path production does not usually take -- the
+    "the worker never sees it" gap, which is this repo's signature defect
+    wearing a passing test suite.
+
+    Drives the real thread (``deterministic_refresh=False``), collects the
+    shards it chose, and requires the distribution to move with alpha. The
+    assertion is on the SEPARATION between two alphas rather than on an
+    absolute mean, so it does not depend on how many races the thread happened
+    to win.
+    """
+
+    def _thread_drawn_mean_recency(exponent: float) -> float:
+        n_shards = 20
+        buf = DiskReplayBuffer(
+            10**6,
+            shard_dir=tmp_path / f"t{exponent}",
+            rng=np.random.default_rng(0),
+            read_only=False,
+            shuffle_cap=8,
+            shard_size=4,
+            refresh_interval=1,
+            refresh_shards=3,
+            shard_recency_exponent=exponent,
+            deterministic_refresh=False,
+        )
+        buf.add_many([_sample() for _ in range(4 * n_shards)])
+        assert buf._prefetch_thread is None or not buf._deterministic_refresh
+        shard_paths = buf._snapshot_shards()
+        assert len(shard_paths) == n_shards
+
+        # Call the draw with the thread's OWN generator, the way _prefetch_loop
+        # does, so this measures the stream production's thread actually uses.
+        ranks: list[int] = []
+        for _ in range(200):
+            picked: list[int] = []
+            buf._load_refresh_chunks(
+                shard_paths=shard_paths,
+                refresh_shards=1,
+                rng=buf._prefetch_rng,
+                chosen_out=picked,
+            )
+            ranks.extend(picked)
+        buf.close()
+        assert len(ranks) == 200
+        return float(np.mean([(r + 1) / n_shards for r in ranks]))
+
+    linear = _thread_drawn_mean_recency(1.0)
+    uniform = _thread_drawn_mean_recency(0.0)
+
+    # 2/3 vs 1/2 in expectation; 200 draws gives sd ~0.017 on each, so a 0.08
+    # separation is ~3 sd of the difference and not a coin flip.
+    assert linear - uniform > 0.08, (linear, uniform)
+    assert 0.60 < linear < 0.74, linear
+    assert 0.44 < uniform < 0.56, uniform
+
+    # And the thread really is the live path in this configuration -- if
+    # `deterministic_refresh` were on, the above would be testing the
+    # synchronous path again under a different name.
+    buf = DiskReplayBuffer(
+        10**6,
+        shard_dir=tmp_path / "thread_live",
+        rng=np.random.default_rng(0),
+        read_only=False,
+        refresh_interval=1,
+        refresh_shards=1,
+        deterministic_refresh=False,
+    )
+    buf._ensure_prefetch_thread()
+    assert buf._prefetch_thread is not None
+    assert buf._prefetch_thread.is_alive()
+    buf.close()
 
 
 # ---------------------------------------------------------------------------
@@ -323,10 +599,91 @@ def test_construction_prints_the_realized_exponent_and_decile_table(
     line = lines[0]
 
     assert "recency_exponent=0.2500" in line, line
+    # A fresh dir tracks no shards, so the continuum form is the only honest
+    # answer and the line must SAY that rather than imply a measurement.
+    assert "source=analytic n_shards=0" in line, line
     # (α+1)/(α+2) at α=0.25.
     assert "mean_rank_pct=0.556" in line, line
     for mass in shard_draw_decile_mass(0.25):
         assert f"{mass:.4f}" in line, (line, mass)
+
+
+def test_a_resumed_buffer_prints_the_REALIZED_table_not_the_continuum_form(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MUTATION: drop the ``n_shards > 0`` branch and always print the analytic
+    table.
+
+    The construction line's job is to report what the sampler does. Once a
+    window exists, the continuum limit is no longer that: at n = 12 each shard
+    is 1/12 of the window, the decile bins are ragged, and the realized table
+    differs from ``shard_draw_decile_mass`` by ~0.02 in places -- visible at the
+    printed precision, so the distinction is not academic. The realized form
+    also carries any flooring, which the analytic form structurally cannot.
+    """
+    shard_dir = tmp_path / "replay"
+    seed = _buffer_with_shards(tmp_path, n_shards=12, exponent=0.25)
+    seed.close()
+    capsys.readouterr()
+
+    reopened = DiskReplayBuffer(
+        10**6,
+        shard_dir=shard_dir,
+        rng=np.random.default_rng(0),
+        read_only=True,
+        shard_recency_exponent=0.25,
+    )
+    out = capsys.readouterr().out
+    lines = [ln for ln in out.splitlines() if ln.startswith("[disk_buf] shard draw:")]
+    assert len(lines) == 1, out
+    line = lines[0]
+
+    n_shards = len(reopened._shard_paths)
+    assert n_shards == 12, n_shards
+    assert f"source=realized n_shards={n_shards} floored=0" in line, line
+
+    realized = shard_draw_decile_mass_realized(shard_draw_weights(n_shards, 0.25))
+    analytic = shard_draw_decile_mass(0.25)
+    assert np.max(np.abs(realized - analytic)) > 1e-4, (realized, analytic)
+    for mass in realized:
+        assert f"{mass:.4f}" in line, (line, mass)
+    # The number that would be printed by the branch this test forbids.
+    assert "mean_rank_pct=0.556" not in line, line
+
+
+def test_the_printed_marginal_is_the_without_replacement_mean_at_scale() -> None:
+    """The print's one honest-reading caveat, measured instead of asserted.
+
+    MUTATION: none available in production code — this pins a CLAIM the
+    docstring of ``_report_shard_recency_draw`` makes, which is exactly the
+    kind of statement this repo keeps finding to be false.
+
+    ⚑ The review that surfaced it reported the gap as large and UPWARD (0.821
+    realized against 0.667 printed, at n = 40 with 6 picks). Reproducing it
+    gave −0.009, i.e. small and DOWNWARD, and the sign is not a detail: a
+    without-replacement draw that takes a large fraction of the window is
+    pulled toward the window's unweighted mean, because there is little left
+    for recency to select among. The docstring now states the measured
+    direction; this test keeps it that way.
+    """
+    rng = np.random.default_rng(0)
+
+    def _gap(n_shards: int, n_pick: int) -> float:
+        weights = shard_draw_weights(n_shards, 1.0)
+        ranks = np.arange(1, n_shards + 1, dtype=np.float64) / n_shards
+        marginal = float((ranks * weights).sum())
+        realized = float(np.mean([
+            np.mean((rng.choice(n_shards, size=n_pick, replace=False, p=weights) + 1)
+                    / n_shards)
+            for _ in range(2000)
+        ]))
+        return realized - marginal
+
+    # Production shape: the printed number IS the draw, to 3 decimals.
+    assert abs(_gap(834, 5)) < 0.01
+    # Nearly-exhausted window: materially below, never above.
+    small = _gap(6, 6)
+    assert small < -0.10, small
 
 
 def test_the_production_construction_site_passes_the_key(tmp_path: Path) -> None:

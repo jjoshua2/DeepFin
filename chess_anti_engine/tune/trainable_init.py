@@ -671,6 +671,12 @@ def _init_replay_buffers(
         f"tracked_shards={len(buf._shard_paths)} total_pos={buf._total_positions} "
         f"shuffle_cap={buf._shuffle_cap} shuffle_cap_eff={buf._effective_shuffle_cap()} "
         f"refresh_interval={buf._refresh_interval} refresh_shards={buf._refresh_shards} "
+  # Read off the CONSTRUCTED buffer for the same reason as the two above, and
+  # placed on THIS line rather than only on the buffer's own `[disk_buf] shard
+  # draw` line because audit_realized_config.py names this print as the
+  # effect-level observable for construction-only keys -- so a new key of that
+  # class has to appear where the audit already points.
+        f"shard_recency_exponent={buf._shard_recency_exponent} "
         f"upgrade_v1_planes={tc.replay_upgrade_v1_planes}"
     )
     holdout_buf = ArrayReplayBuffer(tc.holdout_capacity, rng=rng)
