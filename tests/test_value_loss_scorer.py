@@ -1,0 +1,507 @@
+"""Tests for the losing-position value-error scorer.
+
+Each test names the mutation it catches. The standing bias for this file: the
+defect to catch is not an arithmetic slip, it is a number that stops meaning
+what its name says — a stratum secretly chosen by the net, a CI that ignores
+the game clustering, or a negative control that cannot fail.
+"""
+from __future__ import annotations
+
+import inspect
+import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+import torch
+
+from chess_anti_engine.eval.value_optimism import cluster_bootstrap_ci
+from scripts.value_loss_scorer import (
+    NO_OUTCOME,
+    QUANTILES,
+    RowSet,
+    _synthetic_rows,
+    build_report,
+    load_rows_from_npz,
+    load_rows_from_shards,
+    main,
+    select_oracle_lost,
+    shuffle_model_weights,
+    to_probs,
+    write_dump,
+)
+
+SLOPE = 0.01
+DRAW_WIDTH = 60.0
+
+
+def _rows(n_games: int = 24, plies: int = 10) -> RowSet:
+    return _synthetic_rows(n_games=n_games, plies=plies, seed=5)
+
+
+def test_tool_self_test_passes() -> None:
+    """The shipped negative controls must actually run and pass.
+
+    MUTATION: any of the six self-test checks breaks -> ``main`` returns 1.
+    This is what makes "the control ships as a test" true rather than a claim
+    in a docstring.
+    """
+    assert main(["--self-test"]) == 0
+
+
+def test_selection_cannot_see_the_net() -> None:
+    """THE structural rule: the stratum filter takes no model-derived input.
+
+    MUTATION: add a ``net_probs``/``q`` parameter to ``select_oracle_lost`` and
+    let any criterion read it. The signature check below fails immediately,
+    before the arithmetic gets a chance to look reasonable.
+
+    Conditioning the denominator on the thing under test is the failure this
+    guards: the resulting "error rate among positions the net thinks it is
+    losing" is uncomparable to anything, including itself at another
+    checkpoint.
+    """
+    params = set(inspect.signature(select_oracle_lost).parameters)
+    assert params == {
+        "p_sf", "loss_prob_min", "sf_cp_max", "slope", "draw_width_cp",
+    }, params
+
+    rows = _rows()
+    mask = select_oracle_lost(
+        rows.p_sf, loss_prob_min=0.75, sf_cp_max=None,
+        slope=SLOPE, draw_width_cp=DRAW_WIDTH,
+    )
+    assert 0 < int(mask.sum()) < len(rows)
+    # Every selected row genuinely clears the bar, and no unselected one does.
+    assert np.all(rows.p_sf[mask, 2] >= 0.75)
+    assert np.all(rows.p_sf[~mask, 2] < 0.75)
+
+
+def test_selection_threshold_binds_in_both_directions() -> None:
+    """MUTATION: use ``>`` where the docstring says "at or above", or compare
+    against ``p_sf[:, 0]``. Both change which rows are in the denominator."""
+    p_sf = np.array([
+        [0.00, 0.00, 1.00],
+        [0.20, 0.05, 0.75],  # exactly at the bar -> IN
+        [0.30, 0.00, 0.70],  # below -> OUT
+        [1.00, 0.00, 0.00],
+    ])
+    mask = select_oracle_lost(
+        p_sf, loss_prob_min=0.75, sf_cp_max=None,
+        slope=SLOPE, draw_width_cp=DRAW_WIDTH,
+    )
+    assert mask.tolist() == [True, True, False, False]
+
+
+def test_cp_bar_narrows_the_stratum_and_ands_with_the_prob_bar() -> None:
+    """MUTATION: OR the two criteria instead of ANDing them, or ignore
+    ``sf_cp_max`` entirely -- the stratum silently widens."""
+    rows = _rows()
+    kw = {"loss_prob_min": 0.75, "slope": SLOPE, "draw_width_cp": DRAW_WIDTH}
+    wide = select_oracle_lost(rows.p_sf, sf_cp_max=None, **kw)
+    narrow = select_oracle_lost(rows.p_sf, sf_cp_max=-300.0, **kw)
+    assert int(narrow.sum()) < int(wide.sum())
+    assert np.all(wide[narrow]), "the cp bar must only ever remove rows"
+
+
+def test_ci_resamples_games_not_rows() -> None:
+    """MUTATION: pass row indices as ``game_id`` (i.e. drop the clustering).
+
+    Rows inside one game are consecutive plies of one position sequence. The
+    scorer's CIs are only honest if the cluster is the game; a row-level
+    bootstrap on the same values reports a materially tighter interval, and a
+    tighter interval is how a null result gets published as a finding.
+    """
+    rng = np.random.default_rng(0)
+    n_games, plies = 20, 25
+    per_game = rng.normal(0.0, 1.0, size=n_games)
+    values = np.repeat(per_game, plies) + rng.normal(0.0, 0.05, size=n_games * plies)
+    gid = np.repeat(np.arange(n_games), plies)
+
+    clustered = cluster_bootstrap_ci(
+        values, gid, n_boot=2000, rng=np.random.default_rng(1),
+    )
+    row_level = cluster_bootstrap_ci(
+        values, np.arange(values.size), n_boot=2000, rng=np.random.default_rng(1),
+    )
+    width = lambda ci: ci[1] - ci[0]  # noqa: E731
+    assert width(clustered) > 3.0 * width(row_level), (clustered, row_level)
+
+
+def test_contrast_null_is_zero_only_for_the_control_column() -> None:
+    """The lesson this instrument is built around, as an assertion.
+
+    Under a destroyed position<->prediction association ONLY ``net_score`` has
+    a null of zero. ``d_score`` is a difference against a reference that varies
+    by stratum, so its shuffle null is large and positive -- reading it against
+    zero calls a destroyed association a finding.
+
+    MUTATION: point the negative control at ``d_score`` (i.e. assert it too
+    contains zero here) and the test fails, which is the point.
+    """
+    rows = _rows(n_games=40, plies=12)
+    mask = select_oracle_lost(
+        rows.p_sf, loss_prob_min=0.75, sf_cp_max=None,
+        slope=SLOPE, draw_width_cp=DRAW_WIDTH,
+    )
+    q = rows.p_sf.copy()
+    q[mask, 0] += 0.2
+    q[mask, 2] -= 0.2
+    q = np.clip(q, 1e-6, None)
+    q /= q.sum(axis=1, keepdims=True)
+
+    perm = np.random.default_rng(4).permutation(len(rows))
+    report, _ = build_report(
+        rows, q[perm], loss_prob_min=0.75, sf_cp_max=None,
+        slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=600, seed=0,
+    )
+    by_col = {c.column: c for c in report.contrasts}
+    assert not by_col["net_score"].excludes_zero, by_col["net_score"]
+    assert by_col["d_score"].excludes_zero, by_col["d_score"]
+    assert by_col["d_score"].delta > 0.3
+
+
+def test_shuffle_model_weights_permutes_and_reports_how_many() -> None:
+    """MUTATION: return a constant, or skip tensors so nothing moves.
+
+    A control that silently permutes nothing is a control that cannot fail;
+    the CLI refuses to run when the count comes back below 2.
+    """
+    torch.manual_seed(0)
+    net = torch.nn.Sequential(torch.nn.Linear(8, 8), torch.nn.Linear(8, 3))
+    before = [p.detach().clone() for p in net.parameters()]
+    touched = shuffle_model_weights(net, seed=3)
+    after = list(net.parameters())
+
+    assert touched == sum(1 for p in before if p.numel() >= 2)
+    changed = [i for i, (a, b) in enumerate(zip(before, after))
+               if not torch.equal(a, b.detach())]
+    assert len(changed) >= 2
+    # A permutation preserves the multiset of values in every tensor.
+    for a, b in zip(before, after):
+        assert torch.allclose(
+            torch.sort(a.reshape(-1)).values, torch.sort(b.detach().reshape(-1)).values,
+        )
+
+
+def test_to_probs_detects_logits_and_probabilities() -> None:
+    """MUTATION: assume one convention. A logit head read as probabilities (or
+    the reverse) silently reports a different head."""
+    probs = np.array([[0.2, 0.3, 0.5], [0.1, 0.1, 0.8]])
+    assert np.allclose(to_probs(probs), probs)
+
+    # Exact softmax values, not just "normalised and correctly ranked": a
+    # clamp-then-renormalise read of these logits also sums to 1 and ranks the
+    # same way, so a shape-only assertion cannot tell the two apart.
+    logits = np.array([[2.0, 0.0, -1.0], [-3.0, 1.0, 4.0]])
+    expected = np.exp(logits) / np.exp(logits).sum(axis=1, keepdims=True)
+    out = to_probs(logits)
+    assert np.allclose(out, expected)
+    assert np.allclose(out.sum(axis=1), 1.0)
+    assert np.argmax(out, axis=1).tolist() == [0, 2]
+    # ...and the clamp-then-renormalise reading is genuinely different here.
+    clamped = np.clip(logits, 0.0, None)
+    clamped = clamped / clamped.sum(axis=1, keepdims=True)
+    assert not np.allclose(out, clamped)
+
+    with pytest.raises(ValueError, match="expected"):
+        to_probs(np.zeros((4, 2)))
+
+
+def test_npz_row_source_refuses_a_dump_without_planes(tmp_path: Path) -> None:
+    """MUTATION: default ``x`` to zeros when absent.
+
+    A dump with no planes cannot be re-scored; silently substituting zeros
+    would report a NEW checkpoint's name over the OLD checkpoint's numbers.
+    """
+    path = tmp_path / "nox.npz"
+    np.savez_compressed(
+        path, p_sf=np.full((3, 3), 1 / 3, np.float32),
+        game_id=np.zeros(3, np.int64),
+    )
+    with pytest.raises(SystemExit, match=r"Re-dump with --dump-x"):
+        load_rows_from_npz(str(path))
+
+
+def _bank(path: Path, n: int = 6, *, game_id: bool = True,
+          is_selfplay: bool = True) -> Path:
+    """A minimal well-formed bank, with optional keys omitted on request."""
+    payload: dict[str, np.ndarray] = {
+        "x": np.zeros((n, 4, 8, 8), np.float32),
+        "p_sf": np.full((n, 3), 1 / 3, np.float32),
+    }
+    if game_id:
+        payload["game_id"] = np.repeat(np.arange(n // 3 or 1, dtype=np.int64), 3)[:n]
+    if is_selfplay:
+        payload["is_selfplay"] = np.zeros(n, bool)
+    # Same stub dodge as the script: numpy types savez_compressed's second
+    # positional as ``allow_pickle``, so a **kwargs expansion trips the checker.
+    saver: Callable[..., Any] = np.savez_compressed
+    saver(path, **payload)
+    return path
+
+
+def test_npz_row_source_refuses_a_bank_with_no_game_clusters(tmp_path: Path) -> None:
+    """A bank with no ``game_id`` must be REFUSED, not scored.
+
+    MUTATION: restore the old default, ``np.arange(n)`` when the key is absent.
+    That is one game per row, so every "game-clustered" CI in the output
+    becomes a ROW-level bootstrap — several times too tight on rows that are
+    consecutive plies of one game (`test_ci_resamples_games_not_rows` measures
+    >3x). It does not raise, does not warn, and the output is
+    indistinguishable from an honest run: the anti-conservative direction, and
+    exactly how a null gets published as a finding.
+
+    Scored via the module's own reader; the CLI path is covered below.
+    """
+    path = _bank(tmp_path / "nogid.npz", game_id=False)
+    with pytest.raises(SystemExit, match="game_id"):
+        load_rows_from_npz(str(path))
+
+    # ...and the same bank WITH clusters loads, so the guard is specific to the
+    # missing key and is not just refusing everything.
+    ok = load_rows_from_npz(str(_bank(tmp_path / "gid.npz")))
+    assert len(ok) == 6
+    assert np.unique(ok.game_id).size == 2
+
+
+def test_npz_guard_fires_on_the_cli_path_before_any_model_is_loaded(
+    tmp_path: Path,
+) -> None:
+    """THE guard has to fire where production enters, not only in the helper.
+
+    ``main`` loads rows BEFORE the checkpoint, so pointing it at a
+    cluster-less bank plus a checkpoint path that does not exist must fail on
+    the bank. If it ever failed on the missing checkpoint instead, the guard
+    would be sitting behind the expensive step and a real run would have paid
+    a full forward pass before finding out — or, worse, a valid checkpoint
+    would have carried it straight past.
+
+    MUTATION: remove the ``game_id`` requirement -> this raises about the
+    checkpoint (or scores the bank) and the match below fails.
+    """
+    path = _bank(tmp_path / "nogid.npz", game_id=False)
+    with pytest.raises(SystemExit, match="game_id"):
+        main(["--npz", str(path), "--checkpoint", str(tmp_path / "no_such.pt")])
+
+
+def test_split_selfplay_refuses_a_source_that_never_observed_the_population(
+    tmp_path: Path,
+) -> None:
+    """MUTATION: drop the ``population_known`` check in ``main``.
+
+    A bank with no ``is_selfplay`` defaults to all-False, so the split would
+    print a full 'curriculum' table and an empty 'selfplay' one — a population
+    split nobody measured, in the one comparison whose whole point is that the
+    PID-handicapped opponent plays in only one of the two populations.
+    """
+    path = _bank(tmp_path / "nopop.npz", is_selfplay=False)
+    assert load_rows_from_npz(str(path)).population_known is False
+    with pytest.raises(SystemExit, match="no is_selfplay field"):
+        main([
+            "--npz", str(path), "--split-selfplay",
+            "--checkpoint", str(tmp_path / "no_such.pt"),
+        ])
+    # A bank that DOES carry it is not refused by this guard.
+    assert load_rows_from_npz(str(_bank(tmp_path / "pop.npz"))).population_known is True
+
+
+def test_dump_of_an_unmeasured_population_reloads_as_unmeasured(
+    tmp_path: Path,
+) -> None:
+    """A bank must not invent a population its SOURCE never observed.
+
+    ``load_rows_from_npz`` derives ``population_known`` from PRESENCE of the
+    ``is_selfplay`` key, so ``write_dump`` writing the all-False placeholder
+    unconditionally flipped the flag False -> True across a round trip. The
+    reload then PASSED ``--split-selfplay`` and printed a full 'curriculum'
+    table with an empty 'selfplay' one — precisely the output the guard
+    exists to prevent, reached through the documented "a dump is a valid row
+    source" path.
+
+    MUTATION: put ``is_selfplay`` back in ``write_dump``'s payload
+    unconditionally. Both halves below fail.
+    """
+    n = 6
+    rows = RowSet(
+        x=np.zeros((n, 4, 8, 8), np.float32),
+        p_sf=np.full((n, 3), 1 / 3, np.float64),
+        outcome=np.zeros(n, np.int16),
+        game_id=np.repeat(np.arange(2, dtype=np.int64), 3),
+        ply=np.arange(n, dtype=np.int32),
+        is_selfplay=np.zeros(n, bool),
+        source="shards:legacy-untagged",
+        population_known=False,
+    )
+    path = tmp_path / "unmeasured.npz"
+    write_dump(str(path), rows, rows.p_sf.copy(), np.zeros(n, bool),
+               with_x=True, meta={})
+
+    with np.load(path) as z:
+        assert "is_selfplay" not in set(z.files), "an unmeasured field was banked"
+    back = load_rows_from_npz(str(path))
+    assert back.population_known is False
+
+    # ...and the guard still fires on the RELOAD, not just on the original.
+    with pytest.raises(SystemExit, match="no is_selfplay field"):
+        main([
+            "--npz", str(path), "--split-selfplay",
+            "--checkpoint", str(tmp_path / "no_such.pt"),
+        ])
+
+    # A source that DID measure the population still round-trips as measured,
+    # so the fix is not just "never write the key".
+    measured = RowSet(
+        x=rows.x, p_sf=rows.p_sf, outcome=rows.outcome, game_id=rows.game_id,
+        ply=rows.ply, is_selfplay=np.array([True] * 3 + [False] * 3),
+        source="shards:tagged", population_known=True,
+    )
+    ok = tmp_path / "measured.npz"
+    write_dump(str(ok), measured, measured.p_sf.copy(), np.zeros(n, bool),
+               with_x=True, meta={})
+    with np.load(ok) as z:
+        assert "is_selfplay" in set(z.files)
+    reloaded = load_rows_from_npz(str(ok))
+    assert reloaded.population_known is True
+    assert reloaded.is_selfplay.tolist() == [True] * 3 + [False] * 3
+
+
+def _write_shard(root: Path, index: int, n: int, *, is_selfplay: bool) -> None:
+    """A minimal zarr shard the scorer's loader accepts."""
+    import zarr
+
+    g = zarr.open(str(root / f"shard_{index:06d}.zarr"), mode="w")
+    g["x"] = np.zeros((n, 4, 8, 8), np.float32)
+    g["sf_wdl"] = np.full((n, 3), 1 / 3, np.float32)
+    g["has_sf_wdl"] = np.ones(n, bool)
+    g["is_network_turn"] = np.ones(n, bool)
+    g["game_id"] = np.repeat(np.arange(max(1, n // 3), dtype=np.int64), 3)[:n]
+    g["ply_index"] = np.arange(n, dtype=np.int32)
+    g["wdl_target"] = np.zeros(n, np.int8)
+    if is_selfplay:
+        g["is_selfplay"] = np.zeros(n, bool)
+
+
+def test_shard_source_reports_whether_the_population_was_measured(
+    tmp_path: Path,
+) -> None:
+    """The SHARD path is the production entry point; pin its flag too.
+
+    MUTATION (this one survived the previous round): hardcode
+    ``population_known=True`` in ``load_rows_from_shards``. Legacy shards
+    written before the field existed are real, and under that mutation they
+    would silently split into a full 'curriculum' table and an empty
+    'selfplay' one.
+    """
+    tagged, untagged = tmp_path / "tagged", tmp_path / "untagged"
+    tagged.mkdir()
+    untagged.mkdir()
+    _write_shard(tagged, 1, 6, is_selfplay=True)
+    _write_shard(untagged, 1, 6, is_selfplay=False)
+
+    assert load_rows_from_shards(str(tagged)).population_known is True
+    rows = load_rows_from_shards(str(untagged))
+    assert rows.population_known is False
+    assert len(rows) == 6
+
+    # ...and the CLI guard fires on that shard read, before any model load.
+    with pytest.raises(SystemExit, match="no is_selfplay field"):
+        main([
+            "--shard-dir", str(untagged), "--split-selfplay",
+            "--checkpoint", str(tmp_path / "no_such.pt"),
+        ])
+
+
+def test_npz_row_source_rejects_a_float_game_id(tmp_path: Path) -> None:
+    """MUTATION: drop the integer-dtype check.
+
+    A float id of the right shape casts silently — 1.5 and 1.7 both become 1,
+    MERGING two clusters. The CI moves conservatively so no verdict is
+    inflated, but ``n_games`` is printed beside it as if measured, and a
+    reported cluster count that is not the cluster count is a metric that does
+    not mean what its name says.
+    """
+    path = tmp_path / "floatgid.npz"
+    np.savez_compressed(
+        path, x=np.zeros((4, 4, 8, 8), np.float32),
+        p_sf=np.full((4, 3), 1 / 3, np.float32),
+        game_id=np.array([1.5, 1.7, 2.5, 2.9]),
+    )
+    with pytest.raises(SystemExit, match="expected an integer type"):
+        load_rows_from_npz(str(path))
+
+
+def test_npz_row_source_rejects_a_mis_shaped_game_id(tmp_path: Path) -> None:
+    """MUTATION: drop the shape check. A scalar or wrong-length ``game_id``
+    would broadcast or mis-align, silently clustering the wrong rows."""
+    path = tmp_path / "badgid.npz"
+    np.savez_compressed(
+        path, x=np.zeros((6, 4, 8, 8), np.float32),
+        p_sf=np.full((6, 3), 1 / 3, np.float32),
+        game_id=np.zeros(3, np.int64),
+    )
+    with pytest.raises(SystemExit, match="one cluster id per row"):
+        load_rows_from_npz(str(path))
+
+
+def test_dump_round_trips_as_a_row_source(tmp_path: Path) -> None:
+    """MUTATION: drop a column from ``write_dump``, or write ``x`` only under a
+    flag the loader does not require -- the banked file stops being re-usable."""
+    rows = _rows(n_games=6, plies=5)
+    q = rows.p_sf.copy()
+    mask = select_oracle_lost(
+        rows.p_sf, loss_prob_min=0.75, sf_cp_max=None,
+        slope=SLOPE, draw_width_cp=DRAW_WIDTH,
+    )
+    path = tmp_path / "dump.npz"
+    write_dump(str(path), rows, q, mask, with_x=True, meta={"k": 1})
+
+    again = load_rows_from_npz(str(path))
+    assert len(again) == len(rows)
+    assert np.allclose(again.x, rows.x)
+    assert np.allclose(again.p_sf, rows.p_sf)
+    assert np.array_equal(again.game_id, rows.game_id)
+    assert np.array_equal(again.outcome, rows.outcome)
+    meta = json.loads(Path(str(path) + ".meta.json").read_text("utf-8"))
+    assert meta["k"] == 1
+
+
+def test_rows_without_an_outcome_are_excluded_from_outcome_columns_only() -> None:
+    """The only rows dropped from a column are dropped by a POSITION-level
+    fact (this row carries no result), never by anything the net emits.
+
+    MUTATION: drop the whole row when the outcome is missing -- the sf-relative
+    columns would then be computed on a different, outcome-selected sample.
+    """
+    rows = _rows(n_games=8, plies=6)
+    half = np.zeros(len(rows), bool)
+    half[::2] = True
+    outcome = rows.outcome.copy()
+    outcome[half] = NO_OUTCOME
+    partial = RowSet(
+        x=rows.x, p_sf=rows.p_sf, outcome=outcome, game_id=rows.game_id,
+        ply=rows.ply, is_selfplay=rows.is_selfplay, source="t",
+    )
+    report, _ = build_report(
+        partial, rows.p_sf.copy(), loss_prob_min=0.75, sf_cp_max=None,
+        slope=SLOPE, draw_width_cp=DRAW_WIDTH, n_boot=200, seed=0,
+    )
+    total = report.lost.n + report.rest.n
+    assert total == len(rows)
+    assert report.lost.n_outcome < report.lost.n
+    # THE assertion: the sf-relative columns keep EVERY eligible row, and only
+    # the outcome columns shrink. Without the per-column denominator this test
+    # could not tell "computed on all rows" from "computed on the outcome-
+    # carrying half", since both produce a finite mean.
+    for st in (report.lost, report.rest):
+        assert st.n_used["e2_sf"] == st.n
+        assert st.n_used["d_score"] == st.n
+        assert st.n_used["net_score"] == st.n
+        assert st.n_used["e2_out"] == st.n_outcome
+        assert st.n_used["d_score_out"] == st.n_outcome
+        assert 0 < st.n_used["e2_out"] < st.n
+    assert np.isfinite(report.lost.means["e2_sf"])
+    assert np.isfinite(report.lost.means["e2_out"])
+    assert len(report.lost.quantiles["e2_out"]) == len(QUANTILES)

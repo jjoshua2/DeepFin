@@ -4,6 +4,8 @@ These tests lock down behavior prior to the Phase 5 refactor of play_batch.
 """
 from __future__ import annotations
 
+import logging
+import re
 import threading
 import time
 from concurrent.futures import Future
@@ -571,3 +573,71 @@ def test_tb_adjudicate_gate_reads_state_game(monkeypatch):
         game=GameConfig(max_plies=2, selfplay_fraction=1.0, syzygy_adjudicate=False),
     )
     assert calls, "TB gate must call adjudicate when state.game.syzygy_adjudicate is True"
+
+
+def _parse_exit_line(message: str) -> dict[str, int]:
+    """The three counters off a ``play_batch exit:`` log line."""
+    return {
+        k: int(v)
+        for k, v in re.findall(r"(\w+)=(\d+)", message.split("play_batch exit:", 1)[1])
+    }
+
+
+def test_play_batch_exit_line_reports_in_flight_without_claiming_abandonment(caplog):
+    """The teardown counter must not assert a fate ``play_batch`` cannot see.
+
+    ``play_batch`` returns BEFORE the caller suspends anything, so at this line
+    the in-flight games are candidates for ``selfplay/resume.py`` to persist,
+    not losses. The old name ``in_flight_abandoned`` said otherwise and was
+    logged beside ``suspended games=20`` for the same games on 2026-07-30.
+
+    MUTATION A: rename the token back to ``in_flight_abandoned`` -- the
+    "abandoned" assertion below fires.
+    MUTATION B: drop the pointer to the resume line -- a reader is left with a
+    number and no way to complete it.
+    MUTATION C: report ``0`` (or ``games_completed``) instead of
+    ``started - completed`` -- the identity and the ``> 0`` assertion fire.
+    """
+    model = UniformPolicyValueModel().eval()
+    rng = np.random.default_rng(11)
+    steps: list[int] = []
+    completed: list[CompletedGameBatch] = []
+
+    def _on_step() -> None:
+        steps.append(1)
+
+    # Stop while every slot still has a long game running, so the teardown
+    # genuinely has in-flight games to report. A test that tore down an idle
+    # loop would read 0 and could not tell the three mutations apart.
+    def _stop() -> bool:
+        return len(steps) >= 2
+
+    with caplog.at_level(logging.INFO, logger="chess_anti_engine.worker"):
+        play_batch(
+            model, device="cpu", rng=rng,
+            stockfish=FakeStockfish([0.0, 1.0, 0.0]),
+            games=3,
+            target_games=0,
+            stop_fn=_stop,
+            on_step=_on_step,
+            on_game_complete=completed.append,
+            temp=TemperatureConfig(temperature=1.0),
+            search=SearchConfig(simulations=1, playout_cap_fraction=1.0, fast_simulations=1),
+            opening=OpeningConfig(random_start_plies=0),
+            diff_focus=DiffFocusConfig(enabled=False),
+            game=GameConfig(max_plies=400, selfplay_fraction=1.0),
+        )
+
+    lines = [r.getMessage() for r in caplog.records if "play_batch exit:" in r.getMessage()]
+    assert len(lines) == 1, lines
+    line = lines[0]
+
+    counts = _parse_exit_line(line)
+    assert set(counts) == {"completed", "started", "in_flight_at_exit"}, counts
+    assert counts["in_flight_at_exit"] == counts["started"] - counts["completed"]
+    assert counts["in_flight_at_exit"] > 0, "test must exercise a live teardown"
+
+    # The name may not claim the games were lost, and the line must say where
+    # the other half of the answer lives.
+    assert "abandoned=" not in line
+    assert "selfplay resume: suspended games=" in line
