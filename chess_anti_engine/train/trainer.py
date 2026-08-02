@@ -838,6 +838,45 @@ class TrainMetrics:
     m_sf_own_regret: float = 0.0
     has_sf_p0_frac: float = 0.0
     has_sf_p0_regret_frac: float = 0.0
+  # ALWAYS-ON SF-label contamination detector. `sf_labelled_no_multipv_frac`
+  # is the share of the iteration's SF-LABELLED rows that carry no
+  # `sf_multipv_raw` block — the Stockfish UCI desync fingerprint, whose value
+  # on healthy data is EXACTLY 0.000000 (11.05M labelled rows across every
+  # clean stretch on disk, PR #302). Because the floor is exactly zero the
+  # alert rule needs no threshold: any non-zero reading is an incident.
+  # Denominator is stated once, in `losses.sf_multipv_presence_counts`, and it
+  # is `has_sf_wdl` rows — the same population the offline gate
+  # `eval/value_optimism.py::sf_multipv_missing_rate` divides by.
+  #
+  # It reads the batch's own `has_` vectors and consults NO flag, which is the
+  # whole point: the pre-existing signal (`sf_rebuild_policy_frac` below
+  # `sf_rebuild_wdl_frac`) is definitionally the same measurement but only
+  # exists while `rebuild_sf_targets` is on, and that key defaults False and
+  # is in no config file — so it read 0.0, indistinguishable from healthy,
+  # through three separate desync episodes spanning 25 days.
+  #
+  # ⚑ NEVER READ THE RATE WITHOUT `sf_multipv_checked_frac`, which reports that
+  # same denominator as a share of all batch rows. (The RATE's own denominator
+  # is the SF-labelled rows, above — not all batch rows.)
+  # `has_sf_multipv_raw` is an OPTIONAL shard field, so a batch that lost it
+  # reports rate 0.0 — which is also what perfect health reports. checked_frac
+  # 0.0 means UNMEASURED, and it reads 0.0 in two cases that are operationally
+  # identical: the field was absent from the batch, OR the batch held no
+  # SF-labelled rows at all. Either way nothing was inspected. On the
+  # production window it sits at the SF-labelled share of the batch (~0.99 on
+  # the 2026-08-01 live window).
+  #
+  # ⚑⚑ THE `test_` TWINS WILL NOT READ ZERO ON THE FIRST LIVE ROW, AND THAT IS
+  # NOT A PLUMBING BUG. The frozen holdout bundled with the checkpoints is
+  # itself desync-contaminated: 194 no-PV rows out of 1915 labelled over 2000
+  # rows, byte-identical across checkpoint_000474/476/478, so
+  # `test_sf_labelled_no_multipv_frac` = 0.101305 and
+  # `test_sf_multipv_checked_frac` = 0.957500 — about 500x the train row's
+  # ~2e-4 post-quarantine residue. Unlike the train row it does NOT age out:
+  # the holdout is FROZEN, so it stays at 0.101305 until the set is re-cut.
+  # Do not read it as a wiring fault and mute the column.
+    sf_labelled_no_multipv_frac: float = 0.0
+    sf_multipv_checked_frac: float = 0.0
   # SF target rebuild coverage (train.rebuild_sf_targets). All 0.0 when the
   # flag is off, so a non-zero value IS the proof the flip reached the batch
   # pipeline — the transition log only proves the config push, and
@@ -967,6 +1006,13 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
     "m_sf_own_regret": ("sf_own_regret_sum", "sf_own_regret_rows"),
     "has_sf_p0_frac": ("sf_own_rows", "net_rows"),
     "has_sf_p0_regret_frac": ("sf_own_regret_rows", "net_rows"),
+  # Contamination detector. Row-weighted for the same reason: the SF-labelled
+  # count varies batch to batch, so a mean of per-batch rates is the wrong
+  # estimator. `sf_multipv_checked_rows` is BOTH the rate's denominator and the
+  # checked-frac's numerator — one quantity, so the pair cannot disagree about
+  # how many rows were actually inspected.
+    "sf_labelled_no_multipv_frac": ("sf_no_multipv_rows", "sf_multipv_checked_rows"),
+    "sf_multipv_checked_frac": ("sf_multipv_checked_rows", "batch_rows"),
 }
 
 # The compute_loss scalars consumed by ``_ratio_metric_kwargs``. They are
@@ -2199,12 +2245,25 @@ class Trainer:
                 arrs, params=self.categorical_target_params,
             )
         if not self.sf_policy_sparse_ce:
-            # Keep the default H2D payload identical to the pre-sparse-CE
-            # pipeline: the int rows only ride to the GPU when the sparse
-            # loss consumes them. (Dropped AFTER the rebuild hook, which
-            # also reads them.)
+            # Keep the H2D payload small: the (B, 40, 4) int32 candidate block
+            # only rides to the GPU when the sparse loss consumes it. (Dropped
+            # AFTER the rebuild hook, which also reads it.)
+            #
+            # Its `has_` flag is NOT dropped with it, and that is deliberate.
+            # It is a (B,) float32 vector — 2 KB at batch_size 512, 0.017 % of
+            # the `x` tensor alone (512x175x8x8 float16 = 11.5 MB), and the
+            # smallest payload any batch field has — and it is the whole input to
+            # `sf_labelled_no_multipv_frac`, the always-on desync detector.
+            # Pruning it here would gate that column behind
+            # `sf_policy_sparse_ce`, which defaults False and is in no config
+            # file: the column would read 0.0 in production, which is also what
+            # a healthy window reads. That is precisely the defect
+            # `sf_rebuild_policy_frac` already has and the reason a 25-day
+            # desync went unseen in-loop. `sparse_sf_policy_ce` tolerates the
+            # flag arriving without its block (it needs `sf_multipv_raw` too
+            # and returns an all-zero eligibility mask when any input is
+            # missing), so the loss path is unchanged either way.
             arrs.pop("sf_multipv_raw", None)
-            arrs.pop("has_sf_multipv_raw", None)
         arrs = select_input_history_arrays(
             arrs,
             input_history_encoding=self._input_history_encoding,
