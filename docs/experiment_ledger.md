@@ -18399,6 +18399,8 @@ this codebase's signature defect in mild form. Now:
   it never had a prefetch thread. `scripts/e2e_strength_test.py` generates its own
   selfplay against a wall-clock deadline and is not a paired ruler; left alone.
 
+⚠ **SUPERSEDED — the "73 of 75" observation below is WITHDRAWN as evidence of effect; see "Correction to point 2 of the amendment above" ~50 lines down. It does not discriminate: the control with the flag forced OFF agrees just as well.**
+
 Observation that the wiring TAKES EFFECT, not just that it was typed: two independent
 invocations of `scripts/retarget_retrain.py`, same args, 13 minutes apart, one paying the
 max-autotune compile and one hitting the cache (**473s vs 36s wall — the exact load
@@ -20775,3 +20777,112 @@ and labelled-AND-net (3) four different numbers; the mutation now fails naming
 pinned on a fixture where the candidate denominators disagree** — the live
 shards are `is_network_turn == 1.0` on every row, which is exactly why the
 collision was invisible.
+
+---
+
+## 2026-08-01 — REVIEW CLOSE-OUT of `892842e4e` ("wire deterministic_refresh into the tracked ruler"): the ENFORCED pairing was still breakable, and the proof-of-effect probe was a silent no-op in the venv
+
+REQUEST-CHANGES review of `892842e4e` raised five findings. Verdicts and the
+evidence for each. **Self-authored PR, no independent review** — recorded here
+because an unlabelled self-review is the thing this repo bans, not the
+occasional labelled one.
+
+Context for why this is not cosmetic: training is PAUSED and every restart
+decision now rests on OFFLINE measurement. The sibling rig's run-to-run
+non-determinism is **0.0131 nats** on bit-identical programs, seed-only control
+spans **0.0640**, against a pre-committed materiality bar of **0.05**. A ruler
+that promises pairing and does not deliver it decides whether a verdict means
+anything. Nothing in the training loop's CORRECTNESS is at stake — the pool and
+rng are never checkpointed, GPBT is pinned off, the promotion gate runs off
+`ArrayReplayBuffer` — only bit-for-bit reproducibility of the offline rulers,
+which production never claimed.
+
+**F2 (material) — FIXED. The "ENFORCED" pairing broke on a pool that changed
+between arms.** `892842e4e` upgraded `scripts/retarget_retrain.py`'s docstring
+from "intended" to enforced on the strength of `deterministic_refresh=True`
+alone. That flag removes the refresh RACE; it does not make the arms share a
+POOL. `_scan_existing_shards` runs per variant inside `_run_variant`, variants
+run sequentially, and each is a full `--steps 800` retrain — so a `--replay-dir`
+that is the live window or a salvage pool being topped up (the script's own
+comment says that is the routine case) hands arm 2 a different pool. Same seed,
+different rows, silently unpaired. Measured with the flag ON, same seed, 800
+steps: **+1 shard → 617/800 sampled rows differ (77.1%); −1 shard → 343/800
+(42.9%).**
+
+Fix: `main()` snapshots the shard list ONCE with `iter_shard_paths` before any
+arm runs and passes it down; `_run_variant` compares the constructed buffer's
+OWN `_snapshot_shards()` against it and `SystemExit`s naming DE-PAIRED. It runs
+BEFORE the empty-pool check (a pool emptied mid-sweep is a pairing failure, not
+a "wrong --replay-dir") and before `train_steps`, so nothing trains on a
+de-paired pool. Comparing the buffer's list rather than a second `glob` is the
+point: two independent re-globs agree even when the buffer filtered.
+
+Mutation-tested three ways, all against `tests/test_retarget_retrain.py`:
+- delete the guard CALL from `_run_variant` → `test_the_shard_guard_runs_on_the_real_call_path` FAILS;
+- make `_assert_shards_unchanged` return unconditionally (accepted-and-ignored, this repo's signature defect) → 5 tests FAIL;
+- re-glob per arm instead of snapshotting once in `main()` → `test_main_snapshots_the_pool_ONCE_for_the_whole_sweep` FAILS.
+
+That third mutation is the one worth keeping. A per-arm re-glob leaves the
+guard present, reached, and **unable to fire** — it would compare each arm
+against a snapshot taken microseconds before that same arm's own scan. The
+test pins it by making the fake pool GROW on every scan and requiring both arms
+to receive arm 1's list.
+
+The failure is also constructed for real, not only with fakes:
+`test_the_snapshot_source_matches_what_the_buffer_scans` writes real shards,
+snapshots, builds arm 1's real `DiskReplayBuffer` (guard passes), writes one
+more shard, builds arm 2's real buffer, and requires the abort.
+
+**F1 (material) — FIXED, comment only, behaviour deliberately unchanged.**
+`scripts/profile_training.py`'s justification for staying racy claimed "no
+number here depends on WHICH rows were drawn". False: the script prints 12 loss
+means over the drawn rows. The DECISION is still right — the script exists for
+timing fidelity and pinning the refresh onto the sampling thread would report
+steps/s slower than the loop being profiled — so only the justification was
+narrowed, to what is actually true: those losses do move run to run, every row
+is synthetic (`_make_sample` draws Gaussian planes and a uniform-random
+policy/WDL target), so they describe noise rather than the net and are not a
+ruler; only the timings are read.
+
+**F3 — ALREADY CLOSED UPSTREAM at `origin/main`; no change made.** The finding
+(deleting `deterministic_refresh=True` leaves the suite green) was true of
+`892842e4e`. `5777e0906` — "#299 review F1-F4", landed 2026-08-01, twelve hours
+after the reviewed commit — added
+`test_the_buffer_is_built_with_a_deterministic_refresh`. Verified rather than
+assumed: on a clean `origin/main` worktree, deleting the `deterministic_refresh=True`
+line fails that test naming the term (`AssertionError: retarget_retrain builds
+its replay buffer WITHOUT deterministic_refresh=True ... kwargs: [...]`). A
+reasoned no, not a skip.
+
+**F4 — FIXED, and the instrument was worse than "fragile".** The observer the
+correction below cites as its discriminating evidence lived at
+`scratchpad/probe_site/usercustomize.py`. `site.py` imports `usercustomize`
+only when `site.ENABLE_USER_SITE` is true. Measured:
+`/usr/bin/python3` → **True**, `.venv/bin/python` → **False**. So under the
+documented `PYTHONPATH=. python3 scripts/...` with the project venv the probe
+never loaded and printed NOTHING, and "no `[probe_site]` line" was
+indistinguishable from "no buffer was constructed" — an absence that reads as
+evidence.
+
+Made to work under the venv rather than merely self-announcing, because a
+working instrument beats a loud broken one: the module is now
+`scripts/probe_site/sitecustomize.py`, tracked (it was untracked scratch that
+the ledger cited as an instrument), and `sitecustomize` is imported by `site.py`
+unconditionally, ahead of the `ENABLE_USER_SITE` branch. Both belts kept
+anyway: a banner prints at IMPORT time before anything can fail, so a missing
+banner means the probe did not load and nothing after it is a measurement; and
+the exit line says `buffers=[]  <-- NO buffer was constructed` rather than
+going quiet. `tests/test_probe_site_observer.py` runs it under `sys.executable`
+— whatever interpreter the suite uses, venv included — so a rename back to
+`usercustomize.py` fails there, and pins the `PROBE_FORCE_RACE=1`
+counterfactual, i.e. that the probe can print `deterministic_refresh=False
+prefetch_thread=True` and is not a check that cannot fail.
+
+⚠ The 07-31 `[probe_site]` readings themselves STAND: those runs used
+`python3` = `/usr/bin/python3` (ENABLE_USER_SITE true), which is why they
+printed at all. The defect was reproducibility for whoever ran it next under
+the documented interpreter, not the recorded numbers.
+
+**F5 — FIXED.** The withdrawn "73 of 75 metrics bit-for-bit" claim now carries
+a SUPERSEDED marker at the claim itself, pointing at the retraction ~50 lines
+below. One inserted line, `git diff --numstat` = `2 0`, nothing rewritten.

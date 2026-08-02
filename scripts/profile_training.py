@@ -119,8 +119,14 @@ def main() -> None:
         # timing, and the async shuffle refresh is part of what production
         # actually does: pinning the refresh onto the sampling thread would
         # make the reported steps/s slower than the loop being profiled. The
-        # draw sequence being load-dependent costs a profiler nothing, because
-        # no number here depends on WHICH rows were drawn.
+        # The draw sequence being load-dependent costs a PROFILER nothing.
+        # It is not free of consequence: the loss block printed at the end of
+        # this script (policy/wdl/sf_move/... , 12 numbers) is computed over
+        # the drawn rows and DOES move run to run. Those numbers are not a
+        # ruler and must never be compared across runs or against a real
+        # training run — every row here is synthetic (`_make_sample` draws
+        # Gaussian planes and a uniform-random policy/WDL target), so the
+        # losses describe noise, not the net. Only the timings are read.
     )
     samples = [_make_sample(rng) for _ in range(args.num_samples)]
     buf.add_many(samples)
