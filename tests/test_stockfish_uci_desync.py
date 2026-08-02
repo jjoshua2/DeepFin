@@ -26,10 +26,12 @@ import logging
 import os
 import stat
 import sys
+from concurrent.futures import Future
 from types import SimpleNamespace
 from typing import Any
 
 import chess
+import numpy as np
 import pytest
 
 from chess_anti_engine.moves.encode import legal_move_indices
@@ -317,7 +319,11 @@ def _emit(caplog, *, n, **per_row):
 @pytest.mark.usefixtures("fresh_counters")
 def test_health_line_is_info_when_the_label_path_is_clean(caplog):
     n = stockfish_turn._SF_LABEL_REPORT_EVERY
-    # The measured clean baseline: no_legal_pv 0.0008, bestmove_illegal 0.079.
+    # A BELOW-THRESHOLD reading, which is not the same as a clean one. This was
+    # written as "the measured clean baseline: no_legal_pv 0.0008" -- that 0.0008
+    # was residual contamination in the set chosen as the baseline. The
+    # structural rate is exactly 0.000000 (see _SF_NO_LEGAL_PV_WARN_RATE). What
+    # this test pins is only that a sub-threshold rate does not escalate.
     rec = _emit(caplog, n=n, no_legal_pv=3, bestmove_illegal=int(0.079 * n))
     assert rec.levelno == logging.INFO
 
@@ -673,3 +679,104 @@ def test_search_re_raises_a_base_exception_and_still_replaces(tmp_path):
         assert pool.submit("C").result().bestmove_uci == "C"
     finally:
         pool.close()
+
+
+# ── the WIRING from each swallow site to the counter ────────────────────────
+#
+# The escalation RULE is pinned above (test_a_single_abandoned_search_escalates
+# calls the reporter directly). What was NOT pinned is that the two places which
+# swallow a label exception actually REACH the reporter. Deleting either
+# `_report_sf_label_health(failed=1)` call failed no test, on the label path's
+# primary post-fix evidence -- the "a value is accepted and then silently
+# ignored" shape this repo keeps producing.
+#
+# ⚑ These assert on the COUNTER, never on the returned `failed`. The return is a
+# separate local that keeps incrementing with the reporting call deleted, so a
+# test written against it passes under exactly the mutation it exists to catch.
+
+
+def _pending_whose_label_raises(record: Any) -> Any:
+    """A pending label whose future is already failed.
+
+    `escalated_from_res=None` matters: with an original result present,
+    `_resolve_pending_label_result` swallows the failure and returns the
+    airbag instead, so the except branch under test never runs.
+    """
+    fut: Future[Any] = Future()
+    fut.set_exception(RuntimeError("stockfish went away mid-search"))
+    return stockfish_turn._PendingSfLabel(
+        future=fut,
+        record=record,
+        turn=True,
+        legal_indices=np.asarray([0], dtype=np.int32),
+        escalated_from_res=None,
+    )
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_a_swallowed_poll_failure_reaches_the_health_counter():
+    record: Any = object()
+    # A stand-in, not a SelfplayState: these two functions touch only
+    # `pending_sf_labels` on the failure path, and building a real state would
+    # drag in the whole selfplay session for no added coverage.
+    state: Any = SimpleNamespace(
+        pending_sf_labels=[_pending_whose_label_raises(record)],
+    )
+
+    attached, failed = stockfish_turn.poll_async_sf_labels(state)
+
+    assert (attached, failed) == (0, 1)
+    assert stockfish_turn._sf_label_counts["failed"] == 1, (
+        "poll_async_sf_labels swallowed the label exception without reaching "
+        "_report_sf_label_health -- the operator's only post-fix signal that an "
+        "abandoned search happened is gone, while the returned `failed` still "
+        "reads 1 and looks fine"
+    )
+    assert stockfish_turn._sf_label_counts["labelled"] == 1, (
+        "a failed label must still count toward the report window's denominator"
+    )
+    assert state.pending_sf_labels == [], "the failed entry must not be retried forever"
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_a_swallowed_finalize_failure_reaches_the_health_counter():
+    record: Any = object()
+    # A stand-in, not a SelfplayState: these two functions touch only
+    # `pending_sf_labels` on the failure path, and building a real state would
+    # drag in the whole selfplay session for no added coverage.
+    state: Any = SimpleNamespace(
+        pending_sf_labels=[_pending_whose_label_raises(record)],
+    )
+
+    attached, failed = stockfish_turn.flush_async_sf_labels_for_records(state, [record])
+
+    assert (attached, failed) == (0, 1)
+    assert stockfish_turn._sf_label_counts["failed"] == 1, (
+        "flush_async_sf_labels_for_records swallowed the label exception "
+        "without reaching _report_sf_label_health; this is the finalize path, "
+        "the last chance to label a row before it is emitted to replay"
+    )
+    assert stockfish_turn._sf_label_counts["labelled"] == 1
+
+
+@pytest.mark.usefixtures("fresh_counters")
+def test_the_health_line_binds_each_number_to_its_own_name(caplog):
+    """Four DISTINCT values, so a swapped format arg cannot pass.
+
+    The other health tests drive counters that coincide (labelled == n, and
+    single-field arms leave the rest at 0), which makes several of the six
+    format arguments interchangeable without any assertion noticing.
+    """
+    n = stockfish_turn._SF_LABEL_REPORT_EVERY
+    rec = _emit(caplog, n=n, no_legal_pv=7, bestmove_illegal=11, failed=3)
+    msg = rec.getMessage()
+
+    for field, value in (
+        ("labelled", n), ("no_legal_pv", 7), ("bestmove_illegal", 11), ("failed", 3),
+    ):
+        assert f"{field}={value}" in msg, (
+            f"{field} did not report {value} in {msg!r} -- the format arguments "
+            f"are positional, so a reordering silently relabels the numbers"
+        )
+    assert f"({7 / n:.4f})" in msg, "the no_legal_pv RATE must use labelled as denominator"
+    assert rec.levelno == logging.WARNING
