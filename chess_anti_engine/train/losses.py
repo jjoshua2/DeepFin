@@ -14,14 +14,59 @@ from chess_anti_engine.moves import COMPACT_POLICY_SIZE, POLICY_SIZE
 from chess_anti_engine.moves.torch_maps import compact_to_full_index_for as _compact_to_full_index_for
 from chess_anti_engine.train.constants import REGRET_TO_Q_SCALE, future_regret_field_names
 
-# Phase buckets for per-phase loss reporting. `moves_left` is plies-remaining /
-# max_plies so 1.0 = opening, 0.0 = endgame. Thresholds calibrated from
-# empirical P33/P67 of recent selfplay shards (data is skewed toward shorter
-# games due to adjudication, so a naive 0.33/0.66 split puts ~11% in open
-# and ~51% in mid). Re-derive periodically — `scripts/eval_phase_thresholds`
-# (or the inline grep in trainable_phases) when the distribution drifts.
-_PHASE_OPEN_THRESHOLD = 0.45
-_PHASE_END_THRESHOLD = 0.31
+# Game-phase buckets for per-phase loss reporting, by PIECE COUNT — the same
+# definition and the same constant as `eval/audit.py`'s per-phase deep-SF
+# regret, so a training column and an audit column now name the same set of
+# positions.
+#
+# ⚑⚑ THIS USED TO BUCKET ON `moves_left`, AND THAT WAS AN INSTRUMENT BUG, NOT A
+# DISTRIBUTION. `selfplay/finalize.py:924` writes `moves_left` as
+# ``(total_plies_played - ply_index) / max_plies`` — the divisor is the
+# CONFIGURED PLY CAP (`max_plies: 450` in production), not the game's own
+# length — so the quantity is "plies REMAINING as a share of the cap" and says
+# nothing about the board. A row at ply 2 of a 60-ply adjudicated game scored
+# 0.129 and was labelled `end`. The old cuts (0.45 / 0.31, calibrated
+# 2026-04-25 in commit 0fcf899e4 and correct then) had drifted to P99.4 / P96.4
+# of the realized distribution, which put 96.4 % of rows in `end`: measured
+# 2026-08-02 over the whole live window (713 shards, 1,273,501 rows,
+# `runs/pbt2_small/replay/train_trial_13a9f_.../replay_shards`) at
+# 0.61 % / 3.03 % / 96.37 %, median `moves_left` 0.113, implied median game
+# length 123 plies. Re-deriving the two thresholds would have restored three
+# equal buckets of a quantity that still is not game phase — the failure mode
+# this repo keeps paying for, a metric that does not mean what its name says,
+# with healthy-looking numbers on top. Under the piece-count definition below
+# the same window reads 30.7 / 32.4 / 36.9.
+#
+# ⚑ THE COLUMNS WERE RENAMED IN THE SAME COMMIT — `wdl_loss_open` ->
+# `wdl_loss_phase_open`, and likewise for `policy_loss_*` and the `test_`
+# twins. A ruler change must invalidate its records: the old and new columns
+# measure different sets of rows, so they must not share a name that lets them
+# be plotted as one series.
+#
+# `moves_left` is untouched as a TARGET (the `moves_left` head still regresses
+# it); only the reporting split moved off it. NOTE for anyone who returns to
+# that field: `finalize.py:924` divides by an ABSOLUTE game total, while the
+# Python fallback in `selfplay/network_turn.py:558` sets `ply_index` RELATIVE
+# to the search root where the production C path (`mcts/_mcts_tree.c:4734`)
+# sets it ABSOLUTE. That mismatch no longer touches this split.
+from chess_anti_engine.utils.architecture import DEFAULT_PHASE_PIECE_THRESHOLDS
+
+# Deliberately the module constant and NOT `model_cfg.phase_piece_thresholds`:
+# that knob shapes the model's own phase adapter, and letting the reporting
+# split follow it would silently break comparability with `eval/audit.py`,
+# which is the entire reason for bucketing this way.
+_PHASE_END_MAX_PIECES, _PHASE_MID_MAX_PIECES = DEFAULT_PHASE_PIECE_THRESHOLDS
+
+# Planes 0:12 are the current position's 12 piece-occupancy planes in every
+# shipping LC0 encoding (legacy and root-history), so their sum is the exact
+# root piece count. Same slice and same assumption as
+# `model/transformer.py::_phase_indices_from_input`.
+_PIECE_PLANE_COUNT = 12
+
+# The suffixes from `_phase_split_masks` that partition by game phase. Only
+# these get row-count columns: `selfplay`/`curriculum` split on a boolean flag
+# whose balance is already reported by `frac_is_selfplay` / `frac_tagged`.
+_PHASE_BUCKET_SUFFIXES = ("phase_open", "phase_mid", "phase_end")
 
 
 def masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
@@ -285,25 +330,49 @@ def _future_regret_tensor(batch: dict[str, torch.Tensor], source: str) -> tuple[
     )
 
 
+def piece_counts_from_input(x: torch.Tensor) -> torch.Tensor:
+    """Root piece count per row, from the 12 piece-occupancy planes.
+
+    Rounded before comparison because the planes travel through fp16/bf16
+    autocast on the eval path, where a 32-piece sum can land at 31.9995 and a
+    bare ``> 22`` on the raw sum would still be right but a ``<= 13`` boundary
+    row would not be.
+
+    ``flatten(1)`` rather than ``sum(dim=(1, 2, 3))``: production ``x`` is
+    (B, planes, 8, 8), but compute_loss is also called on reduced synthetic
+    batches, and a hard-coded rank makes this raise ``IndexError`` there — a
+    reporting-only split must never be able to take down the loss.
+    """
+    return torch.round(x[:, :_PIECE_PLANE_COUNT].float().flatten(1).sum(dim=1))
+
+
 def _phase_split_masks(
     *,
     has_is_selfplay: torch.Tensor,
     is_selfplay: torch.Tensor,
-    has_moves_left: torch.Tensor,
-    moves_left_val: torch.Tensor,
+    piece_counts: torch.Tensor,
 ) -> tuple[tuple[str, torch.Tensor], ...]:
-    """selfplay/curriculum + opening/midgame/endgame masks for split loss reporting."""
+    """selfplay/curriculum + opening/midgame/endgame masks for split loss reporting.
+
+    The phase masks PARTITION every row — there is no ``has_`` gate, because
+    every row carries its own board planes. The previous `moves_left` version
+    needed one and silently dropped any row whose shard lacked that optional
+    field.
+    """
     sp_mask = has_is_selfplay * is_selfplay
     cur_mask = has_is_selfplay - sp_mask
-    open_mask = has_moves_left * (moves_left_val > _PHASE_OPEN_THRESHOLD).to(torch.float32)
-    end_mask = has_moves_left * (moves_left_val < _PHASE_END_THRESHOLD).to(torch.float32)
-    mid_mask = has_moves_left - open_mask - end_mask
+  # Identical predicate to `eval.audit.phase_bucket`: end is `<= low`, open is
+  # `> high`, mid is the remainder. Written as the same two comparisons rather
+  # than as a call so the tensor path stays free of host round-trips.
+    end_mask = (piece_counts <= _PHASE_END_MAX_PIECES).to(torch.float32)
+    open_mask = (piece_counts > _PHASE_MID_MAX_PIECES).to(torch.float32)
+    mid_mask = 1.0 - end_mask - open_mask
     return (
         ("selfplay", sp_mask),
         ("curriculum", cur_mask),
-        ("open", open_mask),
-        ("mid", mid_mask),
-        ("end", end_mask),
+        ("phase_open", open_mask),
+        ("phase_mid", mid_mask),
+        ("phase_end", end_mask),
     )
 
 
@@ -661,8 +730,7 @@ def compute_loss(
     is_sp_bool = _get_mask(batch, "is_selfplay", default=0.0).to(torch.float32)
     split_masks = _phase_split_masks(
         has_is_selfplay=has_is_sp, is_selfplay=is_sp_bool,
-        has_moves_left=has_moves_left,
-        moves_left_val=_get_mask(batch, "moves_left", default=1.0).to(torch.float32),
+        piece_counts=piece_counts_from_input(batch["x"]),
     )
   # Split reductions use the TRAINED per-sample value loss (blended soft CE),
   # not the one-hot diagnostic — before 2026-07-26 these were the diagnostic,
@@ -671,7 +739,15 @@ def compute_loss(
     split_losses: dict[str, torch.Tensor] = {}
     for suffix, m in split_masks:
         split_losses[f"policy_loss_{suffix}"] = masked_mean(pol_ce, pol_base * m)
-        split_losses[f"wdl_loss_{suffix}"] = masked_mean(blended_wdl_ce, net_mask * m)
+        wdl_bucket_mask = net_mask * m
+        split_losses[f"wdl_loss_{suffix}"] = masked_mean(blended_wdl_ce, wdl_bucket_mask)
+  # The DENOMINATOR of the line above, emitted as a raw row count. Without it
+  # `wdl_loss_open` cannot be told apart from `wdl_loss_end`: `masked_mean`
+  # clamps its denominator to 1.0, so a bucket holding zero rows reports 0.0,
+  # which reads as the best possible value. Summed (not averaged) across the
+  # iteration's microbatches — see `_RAW_COUNT_METRIC_FIELDS` in train/trainer.py.
+        if suffix in _PHASE_BUCKET_SUFFIXES:
+            split_losses[f"wdl_rows_{suffix}"] = wdl_bucket_mask.to(torch.float32).sum()
 
     total = (
         float(w_policy) * m_policy

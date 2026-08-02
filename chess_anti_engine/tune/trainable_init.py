@@ -47,6 +47,7 @@ from chess_anti_engine.tune.replay_exchange import (
 from chess_anti_engine.tune.trainable_config_ops import (
     _TRAINER_WEIGHT_KEYS,
     _apply_lr_gamma_weights,
+    reject_dead_config_keys,
 )
 from chess_anti_engine.tune.trainable_metrics import _count_jsonl_rows
 from chess_anti_engine.tune.trial_config import RestoreResult, TrialConfig
@@ -602,6 +603,12 @@ def _init_replay_buffers(
     Returns ``(buf, holdout_buf, current_window, replay_shard_dir,
     selfplay_shards_dir)``.
     """
+  # Refuse a yaml knob that this constructor would silently drop, BEFORE any
+  # shard seeding: the argument list below is exactly where
+  # `replay_sf_gap_priority_signed` goes missing, so the check belongs on this
+  # path and not in a startup banner that a resume could skip.
+    reject_dead_config_keys(config)
+
     current_window = tc.replay_window_start
     replay_shard_dir = _trial_replay_shard_dir(config=config, trial_dir=trial_dir)
     selfplay_shards_dir = work_dir / "selfplay_shards"

@@ -857,8 +857,13 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "policy_loss_selfplay": 0.0, "policy_loss_curriculum": 0.0,
     "wdl_loss_selfplay": 0.0, "wdl_loss_curriculum": 0.0,
     "frac_is_selfplay_batch": 0.0, "frac_tagged_batch": 0.0,
-    "policy_loss_open": 0.0, "policy_loss_mid": 0.0, "policy_loss_end": 0.0,
-    "wdl_loss_open": 0.0, "wdl_loss_mid": 0.0, "wdl_loss_end": 0.0,
+    "policy_loss_phase_open": 0.0, "policy_loss_phase_mid": 0.0, "policy_loss_phase_end": 0.0,
+    "wdl_loss_phase_open": 0.0, "wdl_loss_phase_mid": 0.0, "wdl_loss_phase_end": 0.0,
+  # Denominators of the three columns above. `masked_mean` clamps its
+  # denominator to 1.0, so an empty bucket reports a loss of 0.0 and nothing
+  # else can say so — see train/losses.py.
+    "wdl_loss_phase_n_open": 0.0, "wdl_loss_phase_n_mid": 0.0,
+    "wdl_loss_phase_n_end": 0.0,
     "grad_norm_mean": 0.0, "grad_norm_median": 0.0, "grad_norm_p95": 0.0,
     "grad_norm_max": 0.0, "grad_clip_rate": 0.0, "grad_adaptive_clip_rate": 0.0,
     "grad_hard_clip_rate": 0.0, "grad_norm_samples": 0,
@@ -942,12 +947,19 @@ def _train_metrics_dict(metrics) -> dict:
         "wdl_loss_curriculum": float(metrics.wdl_loss_curriculum),
         "frac_is_selfplay_batch": float(metrics.frac_is_selfplay),
         "frac_tagged_batch": float(metrics.frac_tagged),
-        "policy_loss_open": float(metrics.policy_loss_open),
-        "policy_loss_mid": float(metrics.policy_loss_mid),
-        "policy_loss_end": float(metrics.policy_loss_end),
-        "wdl_loss_open": float(metrics.wdl_loss_open),
-        "wdl_loss_mid": float(metrics.wdl_loss_mid),
-        "wdl_loss_end": float(metrics.wdl_loss_end),
+        "policy_loss_phase_open": float(metrics.policy_loss_phase_open),
+        "policy_loss_phase_mid": float(metrics.policy_loss_phase_mid),
+        "policy_loss_phase_end": float(metrics.policy_loss_phase_end),
+        "wdl_loss_phase_open": float(metrics.wdl_loss_phase_open),
+        "wdl_loss_phase_mid": float(metrics.wdl_loss_phase_mid),
+        "wdl_loss_phase_end": float(metrics.wdl_loss_phase_end),
+        # Rows each of the three losses above was averaged over, summed across
+        # the iteration. Without these a bucket that collected NO rows is
+        # indistinguishable from one with a perfect loss, because `masked_mean`
+        # clamps its denominator to 1.0 and publishes 0.0.
+        "wdl_loss_phase_n_open": float(metrics.wdl_loss_phase_n_open),
+        "wdl_loss_phase_n_mid": float(metrics.wdl_loss_phase_n_mid),
+        "wdl_loss_phase_n_end": float(metrics.wdl_loss_phase_n_end),
         # Grad-norm / clipping, aggregated over every step of the iteration.
         # Previously TensorBoard-only, at a 1-in-10 subsample, in event files
         # that rotate per Ray session — so no ledger yardstick could cite them
@@ -993,7 +1005,8 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
     "test_categorical_loss", "test_volatility_loss", "test_sf_volatility_loss",
     "test_moves_left_loss", "test_wdl_brier", "test_wdl_ece",
     "test_policy_loss_selfplay", "test_policy_loss_curriculum",
-    "test_policy_loss_open", "test_policy_loss_mid", "test_policy_loss_end",
+    "test_policy_loss_phase_open", "test_policy_loss_phase_mid",
+    "test_policy_loss_phase_end",
   # The RULER-side rebuild coverage. `eval_full_pass` pins the SF target
   # rebuild off, so these are 0.0 by construction and a non-zero value means
   # the frozen holdout rebuilt its own targets -- the alarm that
@@ -1074,9 +1087,9 @@ def _test_and_drift_dict(
             "test_wdl_ece": float(tm.wdl_ece),
             "test_policy_loss_selfplay": float(tm.policy_loss_selfplay),
             "test_policy_loss_curriculum": float(tm.policy_loss_curriculum),
-            "test_policy_loss_open": float(tm.policy_loss_open),
-            "test_policy_loss_mid": float(tm.policy_loss_mid),
-            "test_policy_loss_end": float(tm.policy_loss_end),
+            "test_policy_loss_phase_open": float(tm.policy_loss_phase_open),
+            "test_policy_loss_phase_mid": float(tm.policy_loss_phase_mid),
+            "test_policy_loss_phase_end": float(tm.policy_loss_phase_end),
             # Ruler alarm: 0.0 by construction (the full pass pins the SF
             # target rebuild off), so non-zero means the frozen holdout
             # rebuilt its own targets and `test_loss` changed meaning.

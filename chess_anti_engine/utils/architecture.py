@@ -97,14 +97,26 @@ def normalize_embed_dim_by_layer(
     return vals
 
 
+# The project's ONE definition of a game phase, as piece counts:
+# ``end`` is ``count <= 13``, ``open`` is ``count > 22``, ``mid`` is the rest.
+#
+# Lives here — in the dependency-free architecture helpers — rather than in
+# either consumer, because both `eval/audit.py` (per-phase deep-SF regret) and
+# `train/losses.py` (per-phase loss split) bucket against it and the two are
+# only comparable while they agree. It was previously written out twice in this
+# function and a third time in `eval/audit.py`; a rule stated three times is a
+# rule stated inconsistently.
+DEFAULT_PHASE_PIECE_THRESHOLDS: tuple[int, int] = (13, 22)
+
+
 def normalize_phase_piece_thresholds(value: Any = None) -> tuple[int, int]:
     """Normalize phase buckets as ``(end_max_pieces, mid_max_pieces)``."""
     if value is None:
-        return (13, 22)
+        return DEFAULT_PHASE_PIECE_THRESHOLDS
     if isinstance(value, str):
         raw = value.strip()
         if raw.lower() in ("", "none", "null"):
-            return (13, 22)
+            return DEFAULT_PHASE_PIECE_THRESHOLDS
         parts: Iterable[Any] = raw.replace(";", ",").split(",")
     elif isinstance(value, (int, float, bool)):
         raise ValueError("phase_piece_thresholds must be a sequence, not a scalar")

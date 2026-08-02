@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import math
 import threading
@@ -912,13 +913,31 @@ class TrainMetrics:
   # the selfplay workers stopped recording sf_p0 rows.
     sf_rebuild_masked_p0_frac: float = 0.0
     sf_rebuild_masked_volatility_frac: float = 0.0
-  # Per-game-phase loss split (bucketed by moves_left).
-    policy_loss_open: float = 0.0
-    policy_loss_mid: float = 0.0
-    policy_loss_end: float = 0.0
-    wdl_loss_open: float = 0.0
-    wdl_loss_mid: float = 0.0
-    wdl_loss_end: float = 0.0
+  # Per-game-phase loss split, bucketed by PIECE COUNT on the same constant
+  # `eval/audit.py` uses, so these columns and the audit's per-phase deep-SF
+  # regret name the same positions.
+  #
+  # ⚑ RENAMED FROM `*_loss_{open,mid,end}` IN THE SAME COMMIT THAT CHANGED THE
+  # DEFINITION. Until 2026-08-02 the split bucketed on `moves_left` =
+  # plies-remaining / `max_plies` (the CAP), which is not a board property at
+  # all and put 96.37 % of the live window in `end`. The old and new columns
+  # measure different sets of rows, so they deliberately do not share a name —
+  # see train/losses.py for the measurement.
+    policy_loss_phase_open: float = 0.0
+    policy_loss_phase_mid: float = 0.0
+    policy_loss_phase_end: float = 0.0
+    wdl_loss_phase_open: float = 0.0
+    wdl_loss_phase_mid: float = 0.0
+    wdl_loss_phase_end: float = 0.0
+  # Rows each `wdl_loss_phase_{open,mid,end}` was actually averaged over,
+  # summed across the iteration's microbatches. Raw COUNTS, not rates: a rate
+  # would need a denominator to divide by and the whole point is that the
+  # denominator is the thing that goes missing. `masked_mean` clamps its
+  # denominator to 1.0, so a bucket that collected NO rows publishes 0.0 — the
+  # best possible loss — and no other column can contradict it.
+    wdl_loss_phase_n_open: float = 0.0
+    wdl_loss_phase_n_mid: float = 0.0
+    wdl_loss_phase_n_end: float = 0.0
   # Value-head calibration (populated on holdout eval).
     wdl_brier: float = 0.0
     wdl_ece: float = 0.0
@@ -1015,14 +1034,32 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
     "sf_multipv_checked_frac": ("sf_multipv_checked_rows", "batch_rows"),
 }
 
-# The compute_loss scalars consumed by ``_ratio_metric_kwargs``. They are
-# already SUMS over the batch's rows, so they accumulate unweighted; every
-# other scalar is a per-batch MEAN and must be weighted by the batch's row
-# count before it can be pooled across ragged batches (see
-# ``Trainer._compute_metrics``). Weighting these would scale numerator and
-# denominator by the same factor per batch and so silently change the ratio.
+# TrainMetrics field -> the compute_loss scalar reported VERBATIM, with no
+# division at all. `_loss_sums_to_metric_kwargs` divides every other key by the
+# step count and `_ratio_metric_kwargs` divides one sum by another; a row COUNT
+# needs neither, and passing it through either path would turn "how many rows
+# were in this bucket over the iteration" into rows-per-step or a ratio.
+#
+# These are the denominators of `wdl_loss_{open,mid,end}` (rl_loop_audit /
+# backlog #124). `masked_mean` clamps its denominator to 1.0, so a bucket with
+# zero rows publishes a loss of 0.0 — the best possible value — and no other
+# column can contradict it. The counts make that state legible.
+_RAW_COUNT_METRIC_FIELDS: dict[str, str] = {
+    "wdl_loss_phase_n_open": "wdl_rows_phase_open",
+    "wdl_loss_phase_n_mid": "wdl_rows_phase_mid",
+    "wdl_loss_phase_n_end": "wdl_rows_phase_end",
+}
+
+# The compute_loss scalars consumed by ``_ratio_metric_kwargs`` and
+# ``_raw_count_metric_kwargs``. They are already SUMS over the batch's rows, so
+# they accumulate unweighted; every other scalar is a per-batch MEAN and must be
+# weighted by the batch's row count before it can be pooled across ragged
+# batches (see ``Trainer._compute_metrics``). Weighting these would scale
+# numerator and denominator by the same factor per batch and so silently change
+# the ratio.
 _RAW_SUM_LOSS_KEYS: frozenset[str] = frozenset(
-    key for pair in _RATIO_METRIC_FIELDS.values() for key in pair
+    [key for pair in _RATIO_METRIC_FIELDS.values() for key in pair]
+    + list(_RAW_COUNT_METRIC_FIELDS.values()),
 )
 
 
@@ -1140,7 +1177,23 @@ def _loss_sums_to_metric_kwargs(sums: dict[str, float], n: float) -> dict[str, f
         if field in _TRAIN_METRICS_FIELDS:
             out[field] = v / n
     out.update(_ratio_metric_kwargs(sums))
+    out.update(_raw_count_metric_kwargs(sums))
     return out
+
+
+def _raw_count_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
+    """Row-count metrics passed through with no division of any kind.
+
+    An absent key is reported as 0.0 rather than omitted: these columns are read
+    as "how many rows landed here", and a missing column and a zero column mean
+    the same thing to the reader, while omitting it would let the field's
+    dataclass default supply the same 0.0 anyway with no record of which path
+    produced it.
+    """
+    return {
+        field: float(sums.get(sum_key, 0.0))
+        for field, sum_key in _RAW_COUNT_METRIC_FIELDS.items()
+    }
 
 
 def _ratio_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
@@ -1157,6 +1210,57 @@ def _ratio_metric_kwargs(sums: dict[str, float]) -> dict[str, float]:
         den = float(sums[den_key])
         out[field] = float(sums[num_key]) / den if den > 0.0 else 0.0
     return out
+
+
+def state_dict_unique_param_count(sd: Mapping[str, Any]) -> int:
+    """Parameters in *sd*, counting each STORAGE once.
+
+    ``sum(v.numel())`` over `state_dict` entries double-counts weight tying: the
+    production net shares one smolgen generator across 16 keys, so the naive sum
+    reads 78,812,768 against a true 63,084,128 (CLAUDE.md, rl_loop_audit J11).
+    A published-model log line that reported the naive number would be a count
+    that does not mean what its name says, in the very place this log exists to
+    make unambiguous.
+    """
+    seen: set[int] = set()
+    total = 0
+    for value in sd.values():
+        if not isinstance(value, torch.Tensor):
+            continue
+        ptr = value.untyped_storage().data_ptr()
+        if ptr in seen:
+            continue
+        seen.add(ptr)
+        total += int(value.numel())
+    return total
+
+
+def state_dict_digest(sd: Mapping[str, Any]) -> str:
+    """Short content hash over every tensor in *sd*, key order independent.
+
+    Hashes the VALUES (plus each key, dtype and shape), so it changes when the
+    weights change and matches when two artifacts carry the same weights under
+    different names. That is the property the publish log needs: it is what
+    distinguishes ``self.model`` from ``self._swa_model.module`` — measured in
+    repro, those differ in 86/86 tensors under SWA — and what lets a reader
+    tie a published file to the checkpoint it claims to be.
+
+    Not `sha256_file` on the written path: this must describe the object that
+    was exported, not the bytes torch happened to serialize, so a future change
+    to the container format cannot make the identity silently drift.
+    """
+    digest = hashlib.sha256()
+    for key in sorted(sd):
+        value = sd[key]
+        if not isinstance(value, torch.Tensor):
+            continue
+        digest.update(key.encode("utf-8"))
+        digest.update(str(value.dtype).encode("utf-8"))
+        digest.update(str(tuple(value.shape)).encode("utf-8"))
+        digest.update(
+            value.detach().to("cpu").contiguous().view(torch.uint8).numpy().tobytes(),
+        )
+    return digest.hexdigest()[:16]
 
 
 def strip_compile_prefix(sd: Mapping[str, Any]) -> dict[str, Any]:
@@ -3481,8 +3585,10 @@ class Trainer:
                 device=torch.device(self.device),
             )
         if self._swa_model is None:
+            source = "model"
             raw_state = self.model.state_dict()
         else:
+            source = "swa_model.module"
             raw_state = self._swa_model.module.state_dict()
             logging.getLogger(__name__).warning(
                 "export_swa: SWA is ENABLED, so %s carries the SWA average while "
@@ -3501,3 +3607,10 @@ class Trainer:
                 **dataclasses.asdict(self._model_config),
             }
         atomic_write(path, lambda tmp: torch.save(export, str(tmp)))
+        logging.getLogger(__name__).info(
+            "export_swa: wrote %s source=%s step=%d tensors=%d params=%d "
+            "digest=%s swa_enabled=%s",
+            path, source, int(self.step), len(state_dict),
+            state_dict_unique_param_count(state_dict),
+            state_dict_digest(state_dict), self._swa_model is not None,
+        )

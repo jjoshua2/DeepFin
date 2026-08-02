@@ -451,8 +451,31 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # `total` to be bitwise equal. The measurement did not move; the source did.
 #   full_pass  bed3d8e3799e997d -> b8482e83d3b1c61f
 #   sampled    610f05cf817b4783 -> 71ac6f0457876d02
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:b8482e83d3b1c61f"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:71ac6f0457876d02"
+#
+# Moved again 2026-08-02 by the per-phase loss split (backlog #124). It used to
+# bucket on `moves_left` = plies-remaining / `max_plies` -- the CAP, 450, not
+# the game's length -- which put 96.37% of the live window in `end` and made
+# `wdl_loss_open` / `_mid` a long-games-only subsample wearing a phase name. It
+# now buckets by PIECE COUNT on `eval/audit.py`'s own constant, and the columns
+# are renamed accordingly. `compute_loss` and `_build_metrics` both change, so
+# both ids move.
+#
+# FOURTH declared false positive, proved the same way as the third rather than
+# argued: `batch["x"]` feeds exactly one thing inside `compute_loss` -- this
+# split -- so rewriting the piece planes without touching `outputs` isolates it
+# completely. `tests/test_phase_loss_buckets.py::
+# test_the_phase_split_cannot_perturb_the_trained_loss` performs that
+# intervention and requires that EVERY scalar which moves has `phase_` in its
+# name and that `total` is bitwise equal. The measurement did not move; the
+# source did, and the reported column names did.
+#
+# ⚑ OPERATOR-VISIBLE: `holdout_generation` bumps at the deploying restart, so
+# the running trial HANDS OVER its best-model record once, adopting the current
+# loss instead of comparing to it. Expected, and recorded in the ledger entry.
+#   full_pass  b8482e83d3b1c61f -> 3a336231d9b5fce5
+#   sampled    71ac6f0457876d02 -> 9f9c078dd590db13
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:3a336231d9b5fce5"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:9f9c078dd590db13"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
