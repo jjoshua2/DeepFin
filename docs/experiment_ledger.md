@@ -23735,3 +23735,316 @@ ABSOLUTE, and `finalize.py:924` divides against an absolute total. Left alone
 here: a `.c` change forces the extension-rebuild pairing rule, and after this
 change the mismatch no longer touches the phase split. It still touches the
 `moves_left` TARGET on any row produced by the Python path.
+
+## ⚑⚑ VERDICT 2026-08-02 — THE "UNEXPLAINED" GLOBAL TERM IS REAL, IS **~69–78% OF THE POST-EXIT RATE, NOT MORE**, AND IT DEGRADES MATERIAL **NO NET IN THIS LINEAGE EVER TRAINED ON**. Pre-registered rule returns **CANNOT RESOLVE** — H1/H2/H3 are all refuted as stated, and the number they were arguing over does not exist: the frozen audit set's "2× faster" decay is **NOT significant** (audit − never-seen = +0.0095 cp/iter [−0.0005, +0.0200] **ns**) and is confined entirely to iterations 0–218. The right model is **ADDITIVE**: post-exit decay = a global term (+0.0080 cp/iter) **plus** a window-exit increment (+0.0036 cp/iter, 31%). Decay is **RANKING, not mass** — top-1 worsens, target-agreement falls, and **entropy DROPS 0.07–0.09 nats**: the net becomes *more confidently wrong*.
+
+Read-only, GPU-light (16 arms × 40k rows of single-forward inference at batch 128,
+`nice -n 19`, ≤6 GB via `--gpu-mem-fraction 0.18`, shared with the live rig, no
+production file touched). Drivers and per-position dumps banked at
+`scratchpad/neverseen_20260802/`: `PREREG.md` (written before any checkpoint was scored
+on any `N*` set), `build_sets.py`, `sweep.py`, `analyse.py`, `robust.py`,
+`sets/*.npz` (4 × 10,000 rows), `dumps/*.npz` (16 arms × 4 sets of per-position
+top-1 / soft / argmax / entropy / CE), `results.json`, `robust.json`,
+`audit_vs_never.json`, `build.log`, `sweep1.log`, `sweep2.log`, `analyse.log`,
+`robust.log`. Every CI below is recomputable from the banked dumps without a GPU.
+
+### The question this closes
+
+The 08-02 forgetting-curve entry proved the hinge and then flagged one term it could not
+place: the frozen audit set, **never in any replay window and therefore unable to
+hinge**, degraded +9.04 cp "monotonically" at ≈2× any set's post-exit rate — but on the
+**FEN-only** input path. Three accounts were pre-registered (`PREREG.md`): H1 unified
+forgetting (never-in-window ≈ post-exit rate), H2 a separate faster global drift
+(never-in-window > post-exit), H3 ruler artifact (stored-plane never-in-window rate
+materially BELOW the audit's).
+
+### The instrument — deliberately the same one, so the rates are comparable
+
+Identical to the forgetting curve in every measurement detail: raw-policy top-1 cp
+regret against `sf_p0_regret` rebuilt from the previous full ply's `sf_multipv_raw`, one
+deterministic forward per row on the row's **stored production `x` planes** (175, WITH
+move history — the FEN-only defect of `rl_loop_audit.md` M10 does not apply), batch
+**pinned at 128**, PRIMARY row filter `n_covered == n_legal` (position-level). Slopes are
+per-row OLS on iteration, mean over rows, 95% percentile bootstrap over 10,000 resamples
+**clustered by `game_id`**, seed 0.
+
+**All slopes are computed on the COMMON 12-point grid** `boot512 / 025 / 070 / 122 /
+172 / 218 / 308 / 360 / 409 / 425 / 450 / 477`, because that is every grid point the
+frozen audit set also has a dump for. iter475 / iter478 were scored on the `N*` sets and
+are reported, but never enter a slope.
+
+### ⚑ "Never in 13a9f's window" is VERIFIED, at the index level, not by a basename join
+
+- `params.json`: `salvage_seed_pool_dir = data/salvage/swap_512x16_20260711` — exactly
+  shards **030602–031416**.
+- That bundle's `seeds/slot_000/trainer.pt` is **bit-for-bit the boot512 snapshot**
+  (`scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt`): identical SHA-256 over
+  all 496 sorted state-dict tensors, both `step=56000`. So "boot512" really is trial
+  13a9f's iteration-0 net and the seed pool really is what it had already trained on.
+- The trial then wrote **031417 … 033951** of its own. Every directly observed 13a9f
+  window (seed pool + five snapshots + the live replay dir) lies inside
+  **[030602, 033951]**.
+- ⇒ any shard **< 030602** or **> 033951** from a non-13a9f directory was never in its
+  window. All four `N*` sets satisfy the index bound as well as the directory bound.
+  (⚑ indices COLLIDE across lineages — 13a9f restarted numbering at 031417 while the
+  previous lineage had already reached 034676.)
+- Same-lineage continuity for the pre-boot sets is **proved, not assumed**:
+  `shard_030602.zarr` in `scaleup_512x16_window_20260707` and in `swap_512x16_20260711`
+  have an **identical SHA-256 over the `x` array**. One numbering stream runs
+  028830 (07-02) → 030748 (07-07) → 031416 (07-11) → 032048 (07-14) → 034676 (07-25).
+
+### The row-sets
+
+| set | source bundle | shards used | rows / games | written | in 13a9f window? | **trained by boot512?** |
+|---|---|---|---|---|---|---|
+| `N1_jul06` | `scaleup_512x16_window_20260707` | 030560–030601 (42) | 10,000 / 2,662 | 07-06 | NEVER | YES (ancestor window, just below the seed-pool floor) |
+| `N2_jul04` | `scaleup_512x16_window_20260707` | 029941–029984 (44) | 10,000 / 2,542 | 07-04 | NEVER | YES, exited earlier |
+| `N3_jul02` | `prechange_20260702_ckpt479` | 028830–029077 (248) | 10,000 / 2,448 | 07-02 | NEVER | YES, exited earliest |
+| `N4_jul25` | `pre_durable_deploy_20260726` | 034000–034064 (65) | 10,000 / 2,960 | 07-24/25 | NEVER | **NO — written 13–14 days AFTER the boot512 snapshot (mtime 2026-07-11 04:04:50). No net in this lineage ever trained on it.** |
+
+No-PV rate **0.0000** on all four (desync-clean). 100% `is_selfplay`. Piece-count
+buckets near-balanced (2,741–3,950 per bucket).
+
+**An older set is NOT REACHABLE.** Every `data/best_pools/*` bundle is April/May and
+stores `x` as **(N, 146, 8, 8)** with a 4672-wide policy — the v1 legacy format these
+175-plane / `lc0_1858` nets cannot consume. The age ladder tops out at 07-02.
+
+### THE CURVE — mean raw-policy top-1 cp regret (lower = better)
+
+| ckpt | N1 jul06 | N2 jul04 | N3 jul02 | **N4 jul25 (never trained)** | audit (FEN-only) |
+|---|---|---|---|---|---|
+| boot512 | 31.060 | 30.906 | 31.925 | 39.891 | 48.327 |
+| iter025 | 31.067 | 30.387 | 31.597 | 39.886 | 49.286 |
+| iter070 | 31.697 | 31.629 | 32.306 | 41.069 | 50.006 |
+| iter122 | 31.857 | 32.275 | 33.042 | 41.156 | 52.937 |
+| iter172 | 32.963 | 32.913 | 32.849 | 41.046 | 54.620 |
+| iter218 | 33.808 | 33.335 | 32.985 | 41.937 | 57.786 |
+| iter308 | 34.921 | 34.140 | 34.655 | 42.811 | 55.559 |
+| iter360 | 34.650 | 34.837 | 34.422 | 43.799 | 56.047 |
+| iter409 | 35.677 | 35.793 | 35.046 | 43.727 | 56.688 |
+| iter425 | 35.448 | 34.715 | 34.638 | 44.262 | 58.979 |
+| iter450 | 34.982 | 35.195 | 34.006 | 44.190 | 57.090 |
+| iter477 | 35.334 | 34.948 | 34.682 | 44.039 | 57.365 |
+| iter478 | 35.773 | 35.491 | 34.526 | 43.489 | — |
+| `shuffled` | 205.21 | 198.86 | 193.37 | 192.21 | 194.98 |
+| `uniform` | 225.03 | 218.76 | 212.41 | 206.56 | — |
+
+**No U-shape anywhere.** Every never-in-window set degrades from iteration 0, exactly as
+the audit set does — which is what H1 predicted qualitatively. The quantitative test is
+below and it does not go H1's way.
+
+### THE SLOPE TABLE (cp per iteration, + = worse; 95% game-clustered bootstrap)
+
+| set | rate | span | rel. rate ×1e-4 /iter | boot level |
+|---|---|---|---|---|
+| `N1_jul06` | **+0.01003** [+0.00750, +0.01250] | 0→477 | 3.23 | 31.06 |
+| `N2_jul04` | **+0.01002** [+0.00746, +0.01256] | 0→477 | 3.24 | 30.91 |
+| `N3_jul02` | **+0.00647** [+0.00407, +0.00887] | 0→477 | 2.03 | 31.92 |
+| **`N4_jul25`** | **+0.00952** [+0.00668, +0.01251] | 0→477 | 2.39 | 39.89 |
+| `S1_exit065` post-exit | +0.01347 [+0.01074, +0.01621] | 25→477 | 4.62 | 29.15 |
+| `S2_exit155` post-exit | +0.01119 [+0.00789, +0.01463] | 122→477 | 3.00 | 37.27 |
+| `S3_exit200` post-exit | +0.01195 [+0.00811, +0.01592] | 172→477 | 3.33 | 35.89 |
+| `S4_exit275` post-exit | +0.00952 [+0.00504, +0.01395] | 218→477 | 2.70 | 35.22 |
+| frozen audit (FEN-only) | +0.01851 [+0.00826, +0.02901] | 0→477 | 3.83 | 48.33 |
+
+Pooled: **`rho_never` = +0.00901 [+0.00771, +0.01031]**, **`rho_post` = +0.01153
+[+0.00974, +0.01336]**, ratio **0.781**, difference **−0.00252 [−0.00475, −0.00031]**.
+
+### THE PRE-REGISTERED VERDICT: **CANNOT RESOLVE** — and why that is the informative answer
+
+Evaluated exactly as written in `PREREG.md`:
+
+| clause | value | outcome |
+|---|---|---|
+| `rho_never` in `[0.5, 1.5] × rho_post` | ratio 0.781 | **satisfied** |
+| **H2** `rho_never > 1.5 × rho_post`, CI of `never − 1.5·post` excludes 0 | −0.00829 [−0.01132, −0.00532] | **REFUTED, decisively and in the wrong direction** |
+| **H1** CI of `never − post` includes 0 | −0.00252 [−0.00475, −0.00031] excludes 0 | **fails** (never is significantly BELOW post) |
+| **H3** CI of `audit − never` excludes 0, audit higher | +0.00950 [−0.00045, +0.01995] **ns** | **fails** |
+
+⇒ **CANNOT RESOLVE**, by the exact branch pre-registered for "point estimate in range,
+difference CI excluding 0 on the low side". Recorded as the verdict. But the three
+hypotheses were competing to explain a **gap that the data says is not there**:
+
+**⚑ The audit set is NOT significantly faster than never-in-window stored-plane material
+at all.** +0.0095 cp/iter apart with a CI spanning zero. The "≈2×, on a different ruler"
+line in the forgetting-curve entry was a comparison of two point estimates, one of which
+(n=4,000 positions, position-level bootstrap) has a ±0.010 cp/iter CI. **It never had the
+power to be a 2×.**
+
+### POST-HOC (declared, run after the verdict was recorded): the gap is REAL and it is an ADDITIVE decomposition
+
+The pre-registered estimator compares slopes over different spans (never = 0→477, post
+= `c_pre`→477) and the curves are visibly non-linear, so `robust.py` recomputes the
+never-in-window rate over each exiting set's OWN post-exit span:
+
+| span | `rho_post` | `rho_never` (same span) | ratio | never − post |
+|---|---|---|---|---|
+| 25→477 | +0.01347 | +0.00902 | 0.669 | −0.00446 [−0.00760, −0.00141] SIG |
+| 122→477 | +0.01119 | +0.00826 | 0.738 | −0.00293 [−0.00681, +0.00077] ns |
+| 172→477 | +0.01195 | +0.00787 | 0.658 | −0.00408 [−0.00850, +0.00045] ns |
+| 218→477 | +0.00952 | +0.00666 | 0.699 | −0.00286 [−0.00784, +0.00213] ns |
+| **pooled** | **+0.01153** [+0.00970,+0.01335] | **+0.00795** [+0.00698,+0.00890] | **0.689** | **−0.00358 [−0.00564, −0.00156] SIG** |
+
+Span-matching makes the gap **larger**, not smaller. So:
+
+> **post-exit decay (0.0115 cp/iter) = GLOBAL term (0.0080, 69%) + WINDOW-EXIT increment
+> (0.0036, 31%).**
+
+Over the 477 iterations that is ≈ **+3.8 cp of purely global degradation** on any fixed
+material, plus ≈ **+1.7 cp extra** on material that was in the window and left — which
+is what the exiting sets' +2.80…+5.67 cp post-exit deltas are made of.
+
+### ⚑⚑ THE DECISIVE ARM: `N4_jul25`, WHICH NO NET IN THIS LINEAGE EVER TRAINED ON
+
+`N4` was written 07-24/25 by the abandoned lineage, **13–14 days after the boot512
+snapshot**, and 13a9f never held it. It has nothing to forget. It decays anyway:
+
+- `rho(N4)` = **+0.00952 [+0.00668, +0.01251]** cp/iter, **SIG > 0**.
+- `rho(N4) − rho_post_pool` = −0.00201 [−0.00551, +0.00147] — **not distinguishable from
+  the post-exit rate**.
+- And its rate is **flat in time** (early [0,218] +0.00861, late [218,477] +0.00896)
+  while every previously-trained set **decelerates** (N1 0.01252→0.00564,
+  N2 0.01306→0.00715, N3 0.00625→0.00488).
+
+**This kills the mechanism H1 was proposing** — "the whole lineage is the post-exit
+phase of pre-boot material it is shedding". The degradation is not shedding of anything
+memorised; it hits material no net ever saw, at an undiminishing rate. What is
+degrading is **generalisation**, not memory.
+
+Consistent with that, the age ladder (secondary S2) does **not** order by age:
+N1 (07-06) 0.01003, N2 (07-04) 0.01002, N3 (07-02) **0.00647**, N4 (never trained)
+0.00952. The oldest previously-trained set is the SLOWEST — it has already been
+forgotten — while the never-trained set is near the top.
+
+### Where the audit set's excess actually lives — it is EARLY, and then it stops
+
+| span | never-seen pooled | audit (FEN-only) | audit − never |
+|---|---|---|---|
+| full 0→477 | +0.00901 [+0.00771,+0.01033] | +0.01851 [+0.00865,+0.02885] | +0.00950 [−0.00045,+0.01995] **ns** |
+| early 0→218 | +0.01011 [+0.00754,+0.01268] | **+0.04214** [+0.01709,+0.06979] | **+0.03203 [+0.00702,+0.06005] SIG** |
+| late 218→477 | +0.00666 [+0.00424,+0.00899] | +0.00241 [−0.01829,+0.02099] | −0.00424 [−0.02513,+0.01448] ns |
+
+The audit set loses ~9.5 cp in the first 218 iterations and is **flat for the remaining
+259**. The stored-plane sets decay throughout. **That is a SHAPE mismatch, not a level
+mismatch**, and it is a second, independent reason (after M10's 117/175 zero planes) not
+to read absolute bars off the FEN-only path. In RELATIVE terms the two rulers agree far
+better than the absolute numbers suggest: 3.83e-4/iter (audit) vs 3.41e-4 (post-exit
+pool) vs 2.72e-4 (never-seen pool) — **most of the audit's apparent 2× is a LEVEL
+effect** (it sits at 48 cp; the shard sets sit at 31–40 cp). ⚠ This relative reading was
+motivated by already-visible levels and is declared in `PREREG.md` as suggestive, not
+blind.
+
+### RANKING vs MASS — it is RANKING, on every set, and the net gets MORE CONFIDENT
+
+boot512 → iter477, paired per position, game-clustered:
+
+| set | Δtop-1 cp | Δsoft cp | Δ(soft−top1) | Δentropy nats | Δ CE(target) | Δ agreement | read |
+|---|---|---|---|---|---|---|---|
+| N1_jul06 | **+4.274** [+2.99,+5.53] | +3.842 | −0.432 ns | **−0.0684** | +0.2804 | **−0.0864** (0.580→0.494) | RANKING |
+| N2_jul04 | **+4.041** [+2.77,+5.29] | +3.407 | −0.635 ns | **−0.0724** | +0.2871 | **−0.0814** (0.568→0.487) | RANKING |
+| N3_jul02 | **+2.757** [+1.56,+3.97] | +2.157 | −0.600 ns | **−0.0826** | +0.1483 | **−0.0228** (0.465→0.443) | RANKING |
+| N4_jul25 | **+4.148** [+2.62,+5.70] | +2.714 | −1.434 SIG | **−0.0871** | +0.1455 | **−0.0129** (0.416→0.403) | RANKING |
+
+Every Δtop-1 is significantly positive, every target-agreement significantly falls, and
+**entropy FALLS by 0.068–0.087 nats on all four while the ranking gets worse**. The
+mass-excess term (`soft − top1`) is flat or **negative**. So the global degradation is
+**not** entropy spreading and **not** loss of calibration in the "flatter, hedged"
+sense — the net is concentrating probability harder onto moves that are increasingly the
+wrong ones. The exiting sets show the same signature over their post-exit span
+(Δmass −1.08 … −2.88, all negative).
+
+⚑ Note the split inside the never-seen family: N1/N2 lose ~8 points of target agreement
+(like the exiting sets) while N3/N4 lose only 1–2 points yet still lose 2.8–4.1 cp of
+top-1. On the oldest and the never-trained material the net does not disagree with the
+target much more often — its disagreements just get **more expensive**.
+
+### CONTROLS — all three pass
+
+1. **Negative control.** `shuffled477` and `uniform`-over-legal against the pre-committed
+   2× bar: N1 5.74× / 6.29×, N2 5.56× / 6.11×, N3 5.52× / 6.06×, N4 4.34× / 4.67×,
+   audit 3.31×. **PASS on every comparison.**
+2. **Rebuild verification.** N1/N2/N3 carry a stored `sf_p0_regret`; the rebuild was
+   checked against it on **49,430 scanned rows** spanning 07-02 … 07-06,
+   **max |rebuilt − stored| = 0.000e+00**. This extends the forgetting-curve entry's
+   1,355-row verification to the oldest era used. N4 has no stored array (as the S2–S4
+   forget-curve sets did) and uses the verified rebuild alone.
+3. **Independent-number reproduction.** The teacher-vs-student entry recorded, on the
+   adjacent band 030602–031416 at batch **256**: teacher 29.88 / boot512 30.57 /
+   iter478 35.44. On `N1_jul06` (immediately-adjacent index band, same lineage, batch
+   **128**): **teacher 29.78 / boot512 31.06 / iter478 35.77**;
+   `teacher − boot512 = −1.277 [−2.528, −0.088]` (pre-committed window [−2.2, +0.8],
+   **PASS**) and `iter478 − boot512 = +4.713 [+3.423, +6.005]` (window [+3.0, +7.0],
+   **PASS**). Two independently-built instruments land within ~0.6 cp.
+
+### WHAT THIS DOES TO THE REMEDY LIST
+
+- **Rehearsal / anchor data is now capped at ~31% of the post-exit rate.** It addresses
+  the window-exit increment (+0.0036 cp/iter) and **cannot touch the global term**
+  (+0.0080 cp/iter), which degrades material no net ever trained on. Any rehearsal
+  proposal must be priced against ≈1.7 cp of the ≈5.5 cp, not against all of it.
+- **An optimizer/CALIBRATION intervention is mis-targeted.** H2's calibration limb is
+  refuted by the ranking-vs-mass split: entropy goes DOWN, mass-excess goes DOWN. There
+  is no hedging/flattening to correct. Anything aimed at temperature, entropy bonus or
+  probability calibration is fixing a symptom that is moving the other way.
+- **H3 shrinks the problem only in the sense that the "2×" was never real.** The audit
+  set does not carry a separate faster process; but its degradation has a **different
+  SHAPE** (all of it before iter 218, flat after), so it remains unusable as an absolute
+  bar — a second strike against the FEN-only path on top of M10.
+- **What the shape actually points at.** A steady, non-decelerating loss of
+  generalisation on never-trained material, accompanied by *rising* confidence and by
+  simultaneous memorisation of the in-window rows
+  ([[policy_head_memorises_the_window]], 12.81 cp sign flip), is the signature of
+  over-fitting at the trunk, not of forgetting and not of a bad teacher. It lines up
+  with the 08-02 capacity result (63M turns UP at ~3.1 views/row; production runs 5.0).
+
+### WHAT WOULD DECIDE THE REMAINING QUESTION (pre-registerable, offline, no live change)
+
+Score the **capacity-ladder arms** (6.2M / 20M / 63M, already trained and banked from the
+08-02 capacity entry) on `N4_jul25` — the never-trained-by-anyone set — with this exact
+instrument, and fit the same OLS slope across their step grid. Pre-committed rule: if the
+6.2M arm's `N4` slope is ≥50% below the 63M arm's with a non-overlapping game-clustered
+CI, the global term is an over-parameterised-memorisation effect and the remedy is
+capacity/views, not rehearsal and not the optimizer. If the slopes match, the global term
+is optimizer-state drift and survives a size change. This is the one comparison that
+separates them, it needs no restart, and it costs ~4 GPU-minutes per arm.
+
+### VERIFIED (artifact for each)
+
+- `salvage_seed_pool_dir` in the trial's `params.json`; the seed pool's `trainer.pt` is
+  **bit-for-bit boot512** (SHA-256 over 496 sorted state-dict tensors, `step=56000`).
+- Every observed 13a9f window inside [030602, 033951]; all four `N*` bands outside it by
+  index **and** by directory.
+- Same-lineage continuity of the pre-boot bundles: identical SHA-256 of the `x` array for
+  `shard_030602.zarr` in the 07-07 and 07-11 bundles.
+- `N4`'s never-trained status from file mtimes (07-24/25) vs the boot512 snapshot's mtime
+  (2026-07-11 04:04:50).
+- `sf_p0_regret` rebuild = stored, max |dev| **0.000e+00** on 49,430 rows, 07-02…07-06.
+- 63,084,128 unique-storage params asserted at load on all 15 model arms.
+- No-PV rate **0.0000** and `is_selfplay` 100% on all four sets; 10,000 rows /
+  2,448–2,960 games each.
+- Audit dumps key-aligned across all 12 checkpoints (4,000 positions, 0 duplicate keys).
+- Negative control passes at 3.31–6.29× a 2× bar.
+
+### ASSUMED / NOT ESTABLISHED
+
+- **No arena, no Elo.** Per-position cp regret only. The 0.0080 cp/iter global term is
+  not priced in Elo.
+- **Selfplay rows only.** `sf_p0_regret` needs two consecutive stored full-sim plies;
+  curriculum rows are structurally unmeasurable this way.
+- **Cross-set ABSOLUTE levels are not comparable** (different generating nets, PID
+  difficulty, opening composition, SF node budget). Every claim is WITHIN a set ACROSS
+  checkpoints; the verdict compares SLOPES for exactly that reason.
+- **`N4_jul25` comes from the abandoned lineage's later nets**, so its absolute level
+  (39.9 cp at boot512) is not comparable to N1–N3; its slope is.
+- **The span-matched decomposition is POST-HOC**, declared as such, run after the
+  pre-registered verdict was written to `results.json`. It sharpens the gap; it did not
+  create it (the pre-registered full-grid comparison already had `never − post` SIG
+  negative).
+- **The relative-rate reading (S1) is not blind** — it was motivated by absolute levels
+  visible before the sets were built, and is flagged in `PREREG.md`.
+- The audit comparison is cross-ruler (FEN-only vs stored planes) AND cross-sample by
+  construction; that asymmetry is the thing being measured and no absolute audit bar is
+  claimed.
+- **The 12-point grid is coarse**, so "early vs late" is located to ±25–50 iterations.
+- **No intervention was run.** A rate decomposition is not a mechanism. The capacity
+  cross-check above is the pre-registerable next step, not a result.
