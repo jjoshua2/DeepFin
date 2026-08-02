@@ -21972,3 +21972,374 @@ re-running): `scratchpad/vp_timing_20260802/dumps/{vfull,pfull}_*.jsonl`
 (26 files), plus `PREREG.md`, `ckpt_verify.json`, `results.json`, `lead.json`,
 `value.log`, `policy.log`, and the drivers `run_value.sh` / `run_policy.sh` /
 `raw_policy_regret.py` / `analyse.py` / `lead.py` / `make_shuffled.py`.
+
+### FORENSIC RECONSTRUCTION — what the training regime actually was in iters 0-30 of lineage 13a9f (2026-08-02)
+
+**Question.** The 08-02 paired-CI series (ledger commit `ead2067ec`, dumps
+`scratchpad/vp_timing_20260802/`) puts value regret at **+4.66 cp [+0.02, +9.43]
+SIG at iter025** with ~13% of the replay window turned over, i.e. before selfplay
+feedback can be the cause. What was the regime? Reconstructed READ-ONLY from
+`runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/`
+(rotated `progress.1785134613.csv` = iters 1-80; `result.json` carries the
+per-iteration realized `config`), the salvage bundles, and the boot512 bootstrap
+logs. **"The yaml says" is kept strictly separate from "the log shows" below.**
+
+---
+
+#### FIRST: the fact being explained is weaker than the brief states
+
+Read off `scratchpad/vp_timing_20260802/results.json`, not off the summary:
+
+| series | iter025 | iter070 |
+|---|---|---|
+| `value_vs_base` (VALUE yardstick) | **+4.664 [+0.022, +9.425] SIG** | **+1.784 [−2.85, +6.42] ns** |
+| `policy_vs_base` = raw top-1, the PRE-REGISTERED PRIMARY | **+0.301 [−2.79, +3.38] ns** | +0.076 [−3.27, +3.37] ns |
+| `policy_exp_vs_base` = `cand.raw.exp`, the SECONDARY | +2.012 [+1.18, +2.93] SIG | +2.927 SIG |
+
+Three corrections that change what has to be explained:
+
+1. **The value series is NOT monotone.** iter070 is not significant. Under
+   `PREREG.md`'s own turn-point definition (*earliest grid point significant AND
+   significant at every later point*), **T_V is iter122, not iter025.** The
+   iter025 point has a CI lower bound of **0.022 cp**.
+2. **The policy PRIMARY is not significant at iter025.** "Policy already
+   drifting" rests entirely on the secondary `cand.raw.exp`.
+3. **The cross-era anchor lands on top of iter025.** `v1donor` (the 46M 384x12
+   era net) scores **+5.235 [−0.64, +10.96] ns** on the same value ruler — i.e.
+   iter025's +4.66 is statistically indistinguishable from the value regret of
+   the net that GENERATED the replay window. Suggestive for cause (1) below;
+   NS and cross-architecture, so it cannot carry the claim alone.
+
+So the target is: *a marginal value excursion and a secondary-instrument policy
+drift by iter 25*, not an established double regression.
+
+---
+
+#### TIMELINE, iters 1-30 (all values from `progress.1785134613.csv` / `result.json`)
+
+| iter | LR (trough / base) | grad regime | window | ingest | steps | views | notable |
+|---|---|---|---|---|---|---|---|
+| 1 | `opt_lr` 6.000e-05, base_lrs `[6e-4, 3e-5, 3e-5, 3e-5]` | **NOT INSTRUMENTED** | 1,500,000 | 10,710 | 53 | 2.534 | boot from salvage; `policy_loss_curriculum` **1.2888 = run minimum**; PID inherits nodes 698,289 / regret 0.0393 / ema_wr 0.5695; realized curriculum score 0.392 |
+| 2 | identical | — | 1,500,000 | 8,487 | 42 | 2.534 | **AIRBAG FIRES**: `pid_regret_reason=airbag`, cap 0.05, regret 0.03963 → 0.08963 in one step (the maximum). Curriculum score 0.364 |
+| 3-26 | identical every row | — | 1,500,000 every row | 6.5k-8.6k | 33-43 | 2.50-2.57 | regret `fit_capped` in 0.087-0.098 (per-iter cap 0.0027); `pid_nodes_reason=not_active` throughout ⇒ `sf_nodes` pinned 698,289; 4 workers; `backpressure_paused_percent` 0.0; `distributed_stale_games` 0 |
+| 27 | identical | — | 1,500,000 | 7,205 | 36 | 2.558 | **`opening_fen_dole_per_iter` 1 → 0** (seeding off). Iteration takes **1903 s** vs ~560 s baseline, `ingest_ms` 1.80M — the worker-session restart |
+| 28-29 | identical | — | 1,500,000 | 10,252 / 23,021 | 51 / 113 | 2.547 / 2.513 | `ingest_frac_selfplay` **1.000** both iters; `pid_curriculum_{w,d,l}` = **0/0/0**; `pid_regret_reason=not_active`, `pid_active_levers=none` — **the PID was blind.** Independently reproduces the ledger's own C6 table |
+| 30 | identical | — | 1,500,000 | 11,392 | 56 | 2.517 | `ingest_frac_selfplay` 0.9998; curriculum backlog still empty (1/0/0) |
+
+Cumulative ingest iters 1-25 = **194,222 rows** against a window pinned at
+1,500,000 in every single row ⇒ **12.9% fresh at the iter025 readout.**
+Corroborated independently by shards: the iter-41 bundle
+(`data/salvage/pre_audit_window_20260726/seeds/slot_000/replay_shards`) holds
+820 shards of which only **255 (31%)** carry indices above the boot maximum
+31416 — and shard-count over-states row share because fresh shards are smaller.
+
+`iterations_since_restore` runs **1, 2, 3 … 34 monotone**: there was **no
+restart, no checkpoint-index ratchet and no worker death anywhere in iters
+0-34.** The window was at its 1.5M cap from iteration 1 and never moved.
+
+---
+
+#### 1. REALIZED PER-GROUP LR — the "LR insult" is REFUTED by a positive artifact
+
+- **The 3e-4 launch never ran.** A first trial `967b1_00000_0_lr=0.0003` started
+  2026-07-26 05:58:44 and **died before iteration 1**:
+  `runs/pbt2_small/tune/train_trial_967b1_00000_0_lr=0.0003_2026-07-26_05-58-44/error.txt`
+  — `trainable_init.py:111 guard_warm_start_lr` raised
+  *"warm start from salvage pool would run a net converged at peak_lr 3e-05 at
+  lr 0.0003 (10.0x, limit 2.0x)"*. Its `result.json` is **0 bytes** ⇒ zero
+  optimizer steps. `warm_start_lr_max_ratio: 2.0` (PR #247) did its job. 13a9f
+  relaunched 06:02:14 at `lr: 3e-05`.
+- **Log, not yaml:** `opt_lr` = **6.000000000000001e-05** and `peak_lr` =
+  **3e-05** in **all 80 rows** of `progress.1785134613.csv` (single distinct
+  value each). Per `tune/trainable_report.py:1304-1306`, `opt_lr` is
+  `trainer.opt.param_groups[0]["lr"]` sampled AFTER the train phase — the
+  `sqrt_release` **trough**, not the LR the trunk trains at.
+- **Optimizer state, iter 41** (`data/salvage/pre_audit_window_20260726/seeds/slot_000/trainer.pt`,
+  `step` 58327, `peak_lr` 3e-05):
+  `scheduler.base_lrs = [0.0006, 3e-05, 3e-05, 3e-05]`,
+  `_last_lr = [6e-05, 3e-06, 3e-06, 3e-06]`, `last_epoch = 40` (one scheduler
+  step per ITERATION). `lr_T0: 999999` ⇒ base_lrs cannot decay, so these are the
+  base_lrs for iters 1-40 as well. **This is exactly boot512's donor regime as
+  this ledger records it** (`[6e-4, 3e-5, 3e-5, 3e-5]`).
+- **Realized trunk LR:** `opt_lr_mean` 5.0e-04 / `opt_lr_max` 6.0e-04 in every
+  row that has the column (iter 81+), confirming the memory note that `peak_lr`
+  is the AUX base and the matrix/trunk group runs at ~5.3e-4 mean
+  (6e-4 x ~0.88 ramp mean). Those columns did not exist in iters 0-30, but
+  `base_lrs` did and they pin the same answer.
+- **Param groups at iter 41:** g0 Aurora **48 tensors, weight_decay 1e-4**;
+  g1 empty; g2 143 tensors wd 1e-4; g3 290 tensors wd 0 (481 tensors total).
+  **⚑ `matrix_weight_decay: 0` did NOT reach the Aurora group** — g0 carries
+  `aux_weight_decay` 1e-4. This is [[matrix_weight_decay_is_decorative]]
+  observed on THIS lineage, live for iters 0-64 until PR #260. Magnitude bounds
+  it out as a cause: lr x wd ~ 5.3e-8/step, ~1e-4 relative shrink over the ~1000
+  steps of iters 1-25. **Verified, not causal — but it means "production
+  optimizer scope" in this window was not what the config said.**
+
+**Verdict: the LR-insult hypothesis is DISFAVOURED and specifically refuted.**
+There is no LR anomaly in iters 0-30 to blame: the guard rejected the only
+candidate insult before it could take a step, and the realized base_lrs equal
+the donor's.
+
+---
+
+#### 2. GRADIENT REGIME — NOT MEASURABLE for iters 0-30, and that is the finding
+
+- `progress.1785134613.csv` has **264 columns and none of them is a grad
+  column**. `grad_norm_{mean,median,p95,max}`, `grad_{clip,adaptive_clip,hard_clip}_rate`,
+  `grad_nonfinite_skip_rate`, `grad_norm_{aurora,adamw}` all land with PR #260
+  (`git log -S grad_norm_median` → `5e2b1ef9`, 2026-07-26) and **first appear in
+  `result.json` at iteration 81** (2026-07-27 02:43). **Iters 0-80 have no
+  gradient instrument at all.** zclip's adaptive EMA is not checkpointed either,
+  so nothing survives to reconstruct it.
+- What IS established for iters 0-30:
+  - `zclip_max_norm` = **5.0** in the iter-1 realized `config` and unchanged
+    through iter 122 (→ 6.5 at iter 123, 2026-07-27 11:12). `grad_clip` 10.0.
+  - **The clip scope INCLUDED the Aurora matrix group.** `trainer.py:997-1001`:
+    *"since 2026-07-27 the clip scope excludes the scale-invariant matrix group
+    ... the series it reads steps down ~4.4% at that deploy."* So in iters 0-30
+    the 5.0 cap was compared against a whole-model norm, making the effective
+    AdamW-group threshold ~5.0/1.046 = **~4.78, about 4.5% TIGHTER than
+    nominal**.
+  - **First measurement, iter 81:** median **5.102**, p95 6.016, hard-clip
+    **65.5%**, adaptive 0.0%. The median is already above BOTH the 5.0 cap and
+    the pre-committed `GRAD_NORM_MEDIAN_WATCH = 4.75` (`trainer.py:993-1003`,
+    "the hard cap is acting as an LR cap, not a tail guard").
+  - The measured series ratchets: median 5.10 (81) → 7.00 (250) → 8.21 (350) →
+    8.82 (478); hard-clip 0.655 → 0.865 → 1.000 → 1.000.
+- **Backward extrapolation** of that slope (~+0.0094 median/iter) puts iter 1 at
+  ~4.4-4.7 — below the 5.0 cap, implying a **partial** (tens of percent) rather
+  than 100% hard-clip regime in iters 0-30, i.e. **the regime DRIFTED INTO
+  direction-only descent rather than starting there.**
+  **⚑ This is EXTRAPOLATION, not measurement, and it is the one question this
+  reconstruction cannot close from artifacts.** It is also not closable
+  retroactively — gradients are not checkpointed. It CAN be measured offline:
+  replay the boot-era window through `boot_snap_recheck_0711_0404.pt` at the
+  recorded base_lrs and read `grad_norm_median` / hard-clip rate directly.
+
+---
+
+#### 3. LOSS COMPOSITION — every weight constant; one signal moves, and it is diagnostic
+
+- **Constant across all of iters 1-30** (`progress.1785134613.csv`, one distinct
+  value each): `w_wdl` 1.0, `w_soft` 1.0, `w_categorical` 0.3, `w_sf_move` 0.02,
+  `sf_wdl_frac` 0.45, `selfplay_fraction` 0.5, `feature_dropout_p` 0.1,
+  `sf_wdl_conf_power` 1.0, `sf_wdl_draw_scale` 0.55, `sf_wdl_temperature` 1.0,
+  `diff_focus` 4.8 / 3.8 / 4.0 / 0.09.
+- **Realized-config diff over iters 1-40** (`result.json` per-row `config`): the
+  **only** keys that ever change are `opening_fen_list_path` (the retire_N seed
+  rotation) and `opening_fen_dole_per_iter` 1 → 0 at iter 27. **No loss weight,
+  LR, optimizer, or data-pipeline key moves.** "A loss-weight change vs the
+  previous era" is REFUTED as an in-window cause.
+- `batch_size` 512; `train_views_actual` 2.50-2.57 (vs 5.013 realized at iter
+  478 — the loop was running at HALF today's reuse); `train_steps_used` 33-53.
+- **⚑ THE ONE LOSS SIGNAL THAT MOVES, and it is asymmetric:**
+
+  | metric | iter 1 | mean 1-10 | mean 21-30 | mean 71-80 | argmin |
+  |---|---|---|---|---|---|
+  | `policy_loss_curriculum` | **1.2888** | 1.3532 | 1.4478 | 1.4965 | **iter 1 (run minimum)** |
+  | `policy_loss_selfplay` | 1.3906 | 1.4046 | 1.3948 | 1.4243 | iter 33 |
+  | `wdl_loss_curriculum` | 0.9897 | ~0.999 | ~1.000 | — | flat |
+  | `wdl_loss` (all) | 0.7233 | 0.7314 | 0.7412 | 0.7844 | iter 3 |
+
+  The drift in iters 0-30 is **policy-specific AND curriculum-row-specific**.
+  Part of the curriculum rise is exposure — fresh rows are unseen and
+  [[policy_head_memorises_the_window]] says unseen rows read ~0.31 nats high.
+  **What makes it more than exposure is the asymmetry against
+  `wdl_loss_curriculum`: same rows, same freshness, FLAT.** An exposure term
+  lifts both heads; this lifts only policy.
+- `frac_is_selfplay_batch` falls 0.910 (iter 1) → 0.821-0.856 (iters 25-30) —
+  the batch is ~14-18% curriculum rows, so the moving signal sits on a minority
+  row class.
+
+---
+
+#### 4. WHAT WAS IN THE WINDOW AT BOOT — **100% old-era, and that is measured, not inferred**
+
+The restart vehicle was `data/salvage/swap_512x16_20260711`
+(`startup_source = salvage` in every row of iters 1-80).
+
+- Its window: **815 shards, indices 30602-31416, mtimes 2026-07-06 23:06 →
+  2026-07-11 07:25** (`.../seeds/slot_000/replay_shards`).
+- The 512x16 swap happened **2026-07-11 13:05** (bundle `README.md` /
+  directory mtime). **Every shard in the boot window predates the swap.**
+- The bundle README's own step 1 says the window was hardlinked from *"the
+  CURRENT live trial's replay_shards"* at swap time — i.e. the 46M 384x12 net's
+  own selfplay.
+
+**⚑ ANSWER, stated explicitly as requested: at 13a9f iteration 1 the replay
+window was 100% old-era 46M-384x12-net selfplay, already 15 days stale, and it
+was still ≥87.1% old-era at the iter025 readout** (194,222 rows ingested against
+a 1,500,000-row window pinned at cap). A fresh 512x16 net was trained on a
+weaker net's search targets and game outcomes for its entire first 25
+iterations.
+
+Two things that must be said alongside it, or this is over-claimed:
+- **boot512 was itself produced on 46M-era data** — its bootstrap ran on 1402
+  shards / 2,591,168 positions
+  (`runs/scaleup_512x16_bootstrap/cont_0710_2120_lr0.00003_noplateau.log`,
+  `{"event":"live_follow_ready", "shards":1402, "positions":2591168}`), also
+  from the 46M loop. So "old era" is not a NEW insult at iteration 1. **What
+  changed is the size and reuse** (2.59M positions with `target_reuse: 1.0`
+  offline, vs a 1.5M window at 2.5 views) **and the arrival of a
+  differently-shaped curriculum stream** (next section).
+- The bundle's shards are a LATER slice than the bootstrap pool, so the two
+  corpora overlap but are not identical. Fraction of overlap not measured.
+
+---
+
+#### 5. THE PID STATE WAS INHERITED FROM THE 46M NET AND WAS WRONG BY ~0.20 WINRATE
+
+`data/salvage/swap_512x16_20260711/seeds/slot_000/pid_state.json` (copied from
+`recover_ckpt751_20260711`, i.e. the 46M trial's controller):
+`nodes 698289`, `wdl_regret 0.039324554`, `ema_winrate 0.5695`.
+
+Reality on the first two iterations (`pid_curriculum_{w,d,l}`):
+
+| iter | W/D/L | score |
+|---|---|---|
+| 1 | 17 / 35 / 36 | **0.392** |
+| 2 | 22 / 138 / 90 | **0.364** |
+
+The controller responded exactly as designed: **`pid_regret_reason = airbag` at
+iter 2, cap 0.05, regret 0.03963 → 0.08963 in a single step** (the maximum
+allowed), then `fit_capped` creeping inside 0.087-0.098 for iters 3-32 against a
+per-iteration cap of ~0.0027. `pid_nodes_reason = not_active` for **all** of
+iters 1-32 — the nodes lever never engaged, so `sf_nodes` stayed pinned at
+**698,289** the whole time.
+
+**Consequence for the training distribution:** from iteration 2 onward every
+fresh curriculum row was generated against a 698k-node Stockfish handicapped to
+**2.3x the eased regret** of anything in the boot window (0.0896 vs 0.0393).
+That is a position/target-distribution shift applied from step ~100, and it
+lands on precisely the row class whose policy loss is the only one that moves.
+
+---
+
+#### 6. RESTART / ANOMALY TIMELINE, iters 0-30
+
+- **No restarts** — `iterations_since_restore` 1…34 monotone. 4 workers every
+  iteration; `backpressure_paused_percent` 0.0; `distributed_stale_games` 0
+  through iter 28. Iterations run a steady ~500-670 s.
+- **Iter 27, 1903 s** (`ingest_ms` 1.80M): the `opening_fen_dole_per_iter` 1 → 0
+  worker-session restart.
+- **Iters 28-29: the curriculum stream went to ZERO.** `ingest_frac_selfplay`
+  1.000 / 1.000, `pid_curriculum_{w,d,l}` 0/0/0, `pid_active_levers = none`.
+  Recovery is not complete until iter 32 (52/4/12). This independently
+  reproduces the ledger's own C6 correction from the per-iteration rows.
+- **Iters 33-34: 3112 s and 3234 s** with 136 and 1293 stale games — concurrent
+  load (the 07-26 200-game `CONC=4` ratchet arena this ledger records as costing
+  ~23 iterations). Outside 0-30, but it contaminates any iter-33+ baseline.
+- **The holdout is NOT a ruler in this window.** `holdout_frozen` 0,
+  `holdout_generation` 0, `test_size` grows 0 → 2000 across iters 1-14
+  (`freeze_holdout_at: 2000` only deploys at the iter-41 restart). So
+  `test_wdl_loss` 0.776 (iter 4) → 0.8535 (iter 21) → 0.8079 (iter 30) is read
+  off a churning set and is **not evidence of anything**.
+- `pid_ema_winrate` falls 0.5607 → 0.5135 over iters 1-27. **Do NOT read this as
+  degradation**: it is a post-restart series and
+  [[winrate_spike_restart_sampling_bias]] says post-restart winrate is
+  length-truncated ~+0.110 too high. The decline is consistent with the bias
+  decaying. DISQUALIFIED.
+
+---
+
+#### RANKED CAUSES
+
+**1. FAVOURED — the window was 100% old-era 46M-net data and stayed ≥87% old-era
+through iter 25.**
+*For:* measured shard index/mtime range vs the swap date (§4); ingest arithmetic
+(12.9% fresh at iter 25); the 08-02 composition arms already measured STALENESS
+as harmful; the drift is policy-specific and curriculum-specific (§3), which is
+what a stale SEARCH TARGET predicts and what a stale VALUE label does not
+(`sf_wdl` is external ground truth and does not go stale); iter025's value
+regret (+4.66) is statistically indistinguishable from the 46M-era net's own
+(+5.24), i.e. the net looks like it regressed toward the generator of its data.
+*Against:* boot512 was itself trained on 46M-era data, so "old era" is not a NEW
+insult at iteration 1; and the v1donor coincidence is NS and cross-architecture.
+*Not settleable from artifacts.* Needs an intervention: train boot512 forward
+the same number of steps on a window that is 100% fresh, same seed, same views.
+
+**2. FAVOURED (second) — the inherited PID state made the curriculum stream a
+distribution the window contains none of.**
+*For:* fully verified (§5) — inherited `ema_winrate` 0.5695 vs realized 0.36-0.39,
+airbag at maximum step on iteration 2, regret held at ~2.3x the boot-window
+value for 30 iterations, nodes pinned at 698,289 with the lever `not_active`.
+Applied from iteration ~2, i.e. "from the first steps", which is what the brief
+asks for. Lands on the exact row class whose policy loss is the only one moving.
+*Against:* curriculum rows are only ~14-18% of the batch, so the mechanism must
+be efficient to explain a whole-head regression; and part of the
+`policy_loss_curriculum` rise is exposure to unseen rows.
+*Cheap next test:* split the 08-02 value-regret dumps by position phase against
+`pid_curriculum` composition, or re-run the iter025 checkpoint against a
+curriculum-only vs selfplay-only slice.
+
+**3. DISFAVOURED — REFUTED: LR insult.** The 3e-4 launch was rejected before
+iteration 1 by `guard_warm_start_lr` (967b1 `error.txt`, `result.json` 0 bytes);
+`opt_lr` is one constant across all 80 rows; the iter-41 optimizer state carries
+base_lrs **exactly** equal to the donor's `[6e-4, 3e-5, 3e-5, 3e-5]`. There is
+no LR anomaly to blame. **Say so — do not leave this hanging.**
+
+**4. DISFAVOURED — REFUTED: loss-weight / config change vs the previous era.**
+The per-iteration realized `config` in `result.json` changes only
+`opening_fen_list_path` and `opening_fen_dole_per_iter` across iters 1-40.
+
+**5. OPEN, CANNOT CLOSE FROM ARTIFACTS — zclip as an LR cap in disguise.** The
+instrument did not exist before iter 81 and the adaptive state is not
+checkpointed. Established: cap 5.0, scope included the matrix group (effective
+AdamW threshold ~4.78), and by the FIRST measured iteration the median was
+already past the pre-committed watch line with 65% of steps hard-clipped.
+Extrapolation says iters 0-30 were partial, not 100% — so the regime **drifted
+into** direction-only descent rather than starting there. **Extrapolation, not
+measurement.** Resolvable offline, not retroactively.
+
+**6. NEW, not on the candidate list — `matrix_weight_decay: 0` was decorative
+for iters 0-64.** The Aurora group carried `weight_decay` 1e-4 (§1). Bounded out
+as a cause by magnitude (~1e-4 relative shrink over iters 1-25), but it is a
+live instance of the signature defect inside the exact window under
+investigation, and it means the optimizer scope in this window was not what the
+config claimed.
+
+---
+
+#### VERIFIED (artifact cited above for each)
+
+Boot vehicle and `startup_source: salvage`; boot window = 815 shards, idx
+30602-31416, all pre-swap; 12.9% window turnover at iter 25; 255/820 new shards
+at iter 41; `opt_lr` 6.000e-05 and `peak_lr` 3e-05 constant over iters 1-80;
+base_lrs `[6e-4, 3e-5, 3e-5, 3e-5]` and `_last_lr` `[6e-5, 3e-6, 3e-6, 3e-6]` at
+iter 41; `last_epoch` 40 = one scheduler step per iteration; param-group sizes
+48/0/143/290 and Aurora `weight_decay` 1e-4; the 3e-4 launch rejected pre-iter-1;
+all loss weights constant; realized-config diff over iters 1-40 = seed path +
+dole only; `train_views_actual` 2.50-2.57; window pinned at 1,500,000 every row;
+no restarts iters 1-34; the iter-27 worker restart and the iters-28-29 curriculum
+drought; `policy_loss_curriculum` minimum at iteration 1; grad columns absent
+before iter 81 and median 5.102 / hard-clip 65.5% at iter 81; `zclip_max_norm`
+5.0 → 6.5 at iter 123; PID state inherited at nodes 698,289 / ema_wr 0.5695 and
+the airbag firing at iter 2; the 08-02 CIs quoted in the opening table.
+
+#### ASSUMED / NOT ESTABLISHED
+
+That the gradient regime in iters 0-30 was a partial rather than a 100% hard
+clip (**backward extrapolation of the iters-81+ series only — no instrument
+existed**). That the boot window's 815 shards overlap boot512's own 1402-shard
+bootstrap pool (both are 46M-era and time-adjacent; overlap fraction not
+measured). That `boot_snap_recheck_0711_0404.pt` is bit-identical to the trainer
+weights 13a9f resumed (`step` 56000 → 58327 at iter 41 is consistent with 40
+iterations x ~40 steps, but no hash was compared). That `policy_loss_curriculum`'s
+rise is degradation rather than pure exposure to unseen rows — the flat
+`wdl_loss_curriculum` argues against pure exposure but does not exclude a mixed
+effect. That the iters-33-34 slowdown is the ratchet arena (timing is
+consistent; not confirmed from the arena log). **No claim here is a strength
+measurement**: the only strength reading in this window is the ledger's own
+iter-25 ratchet, −12.2 Elo [−61.5, +36.7] vs boot512 = parity.
+
+#### WHAT WOULD DECIDE IT
+
+Two offline runs from `boot_snap_recheck_0711_0404.pt`, identical seed / steps /
+views / base_lrs, differing in ONE factor each, both scored on the frozen
+value_regret + `audit_targets` rulers with paired CIs vs boot512:
+(a) 100%-old-era window (reproduces iters 0-25) vs a window of equal size drawn
+only from post-swap shards — decides cause 1;
+(b) the same old-era window with `grad_norm_median` / hard-clip rate INSTRUMENTED
+at the iters-0-30 clip scope and cap — closes cause 5 with a measurement instead
+of an extrapolation.
+
