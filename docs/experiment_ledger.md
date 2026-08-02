@@ -21717,3 +21717,53 @@ reference DOWN is a different control, not run.
   stored-referenced ladder's slope there is 0.017/doubling near its turning point, which
   would imply ~5 doublings rather than ~1 — a factor-of-5 spread this rig cannot
   resolve); and whether any of this predicts Elo.
+
+---
+
+## 2026-08-02 — PRE-REGISTRATION: `train_views_per_ingested_position` 5.0 → 4.3
+
+**Status: PRE-REGISTERED, NOT LIVE.** Training is paused; this cannot deploy until the
+live branch is squared with `origin/main` (33 files behind as of 2026-08-02).
+
+**Hypothesis.** Views/row is at or just above its optimum, and 4.3 is inside the same
+flat basin while matching KataGo's proven ~4 rather than our own noisy argmin.
+
+**Evidence (offline L-wide ladder, 63.08M net, rows/param 0.0182 vs live 0.0202 —
+i.e. within 1.1x of production's data economy, unlike the earlier capacity rig's L at
+0.00297).** Held-out policy excess, both seeds:
+
+| views | s0 | s1 | mean |
+|---|---|---|---|
+| 3.854 | 1.1288 | 1.1232 | 1.1260 |
+| 4.326 | 1.1229 | 1.1162 | 1.1196 |
+| 4.798 | 1.1271 | 1.1125 | 1.1198 |
+| 5.270 | 1.1255 | 1.1128 | **1.1192** |
+| 5.781 | 1.1290 | 1.1161 | 1.1226 |
+
+The floor is a PLATEAU from ~4.3 to ~5.3; those three points sit within **0.0007 nats**
+of each other, far below the seed floor. The seeds disagree about the argmin's location
+(4.33 vs 4.80) while agreeing on the rebound's magnitude (+0.0605 / +0.0608 by views
+9.12). **3.854 is the first rung measurably worse on BOTH seeds (+0.007 on the mean).**
+
+**⚑ THIS IS A CHANGE MADE ON PRIOR, NOT ON EVIDENCE, AND IT CANNOT READ OUT.** The
+4.3-vs-5.0 difference is below this rig's own seed floor. No honest verdict will come
+back from any instrument we have. It is being made because an externally proven
+configuration is a better bet than our own argmin, given that this rig is
+fixed-corpus and from-scratch while the live loop is a growing stream. Recording it as
+such rather than inventing a yardstick it cannot pass.
+
+**Target 4.3, NOT 4.0** — 4.0 sits on the plateau's edge, and realized views drift from
+the configured knob (live realized 5.013).
+
+**Deciding yardstick (a GUARD, not a success test).** Realized `train_views_actual`
+must land in [4.0, 4.6] on the first 5 new iterations:
+`grep -h train_views_actual runs/pbt2_small/tune/*/progress.csv`
+**Kill rule:** realized views outside [4.0, 4.6], or `policy_loss` worsening by more
+than 0.02 nats against the pre-change 5-iteration mean → revert to 5.0.
+
+**Confounds.** None intended; this must be the ONLY data-affecting change in its
+window. Note the whole ladder ran inside the zclip regime recorded the same day (every
+production step normalized to exactly 6.5), so LR was not re-tuned at any rung.
+
+**No throughput argument.** Training is 15.9% of a 665s iteration and throughput is
+views-neutral; this buys no extra fresh data.
