@@ -20886,3 +20886,79 @@ the documented interpreter, not the recorded numbers.
 **F5 — FIXED.** The withdrawn "73 of 75 metrics bit-for-bit" claim now carries
 a SUPERSEDED marker at the claim itself, pointing at the retraction ~50 lines
 below. One inserted line, `git diff --numstat` = `2 0`, nothing rewritten.
+
+---
+
+## INSTRUMENT 2026-08-02 — `scripts/value_loss_scorer.py`, value error on ORACLE-LOST rows
+
+Not an experiment: a packaged instrument, plus two rename/persistence fixes
+bundled with it. No training-affecting change, so no hypothesis/kill rule — but
+the instrument's own null is pre-registered here, because the trap it sits on is
+one this ledger has been caught by before.
+
+**WHAT IT MEASURES.** Per-row value-head error on replay rows the ORACLE calls
+lost for the side to move (stored `sf_wdl` P(loss) ≥ a bar, and/or the same
+label's cp below a bar). Selection is POSITION-level and never touches the net.
+The `rest` stratum is scored by the identical instrument and the number to read
+is the CONTRAST. Every CI resamples GAMES (`game_id`, the loop's own content
+hash of the whole game), reusing `eval/value_optimism.cluster_bootstrap_ci` so
+the two level instruments cannot drift apart. Banks a per-position npz that is
+itself a valid `--npz` row source.
+
+**⚑ PRE-REGISTERED NULLS — DO NOT READ AN ERROR COLUMN AGAINST ZERO.** Under a
+destroyed position↔prediction association only `net_score` (the net's own
+level) has a null of zero. Every error column is a difference against a
+reference that varies BY STRATUM — the oracle score is ~0.05 where it says lost
+and ~0.58 elsewhere — so a stratum-blind head reads as hugely "optimistic" in
+the lost stratum. Measured on 600 rows of `data/c17_ab/pre` at
+`ck_2026-08-01_iter478.pt`, CPU, `--n-boot 1000`:
+
+| contrast (lost − rest) | real net | `--shuffle-rows` | `--shuffle-weights` |
+|---|---|---|---|
+| `net_score` | **−0.4544** [−0.5235, −0.3896] | −0.0346 [−0.0746, +0.0131] **CONTAINS 0** | +0.0018 [+0.0008, +0.0026] (0.4% of real) |
+| `d_score` | +0.0740 [+0.0388, +0.1101] | **+0.4938** | **+0.5302** |
+| `d_loss` | −0.0986 [−0.1609, −0.0389] | **−0.5902** | **−0.6182** |
+| `d_cp` | +543 [+412, +674] | **+826** | **+853** |
+
+A weight shuffle is still a deterministic function of the input, so its null is
+SMALL, not zero — read the control as a FRACTION of the measured effect.
+`--self-test` T3/T4 pin both halves; T4's bar is "the control kills ≥90%".
+
+**FIRST READING (descriptive, n=600, one 43-shard pool — NOT a verdict).** The
+population asymmetry is the thing to follow up. On CURRICULUM rows the head
+reads `d_score` **+0.199** in the lost stratum against +0.071 elsewhere
+(contrast **+0.128** [+0.075, +0.173]) and `d_loss` **−0.325** against −0.123
+(contrast **−0.202** [−0.269, −0.109]) — it under-calls the loss by 33 points
+where the oracle says lost. On SELFPLAY rows the same two contrasts are
+**+0.058** [+0.042, +0.077] and **−0.067** [−0.090, −0.048], i.e. 2–3× smaller. That is the
+direction the PID-handicap chain predicts — the handicapped opponent plays ONLY
+in curriculum games — and it is exactly the split `scripts/value_optimism.py`'s
+head/target arm structurally cannot see (that arm needs consecutive-ply pairing,
+which curriculum games produce at 0.00%). ⚠ `d_cp` is 16.6% clamp-pinned
+overall and 34.9% in the curriculum-lost stratum; the cp column is reported with
+its clamp rate for exactly this reason and must not be quoted as a level.
+
+**NOT ESTABLISHED.** One shard pool, 600 rows, 25 lost-stratum games, single
+checkpoint, no second pool, no arena. Nothing here is a verdict about the head
+or the handicap; it is the instrument's first exercise and its null table.
+
+**ALSO IN THIS BUNDLE.**
+* `PromotionGate.state_dict()` now persists `cur_wdl_regret` /
+  `prev_wdl_regret` / `regret_fit_slope`. They were recorded at runtime and
+  dropped at every restart, so a restored window silently carried NaN confounds.
+  No current consumer reads them off the gate (the confound leg fits from
+  `progress.csv`), so nothing already recorded changes; the persisted rows
+  simply stop lying about being the gate's state. NaN is written as `null`
+  (strict JSON) and a legacy file with no confound keys loads as NaN, never 0.0.
+* **⚑ RULER RENAME.** `play_batch exit: … in_flight_abandoned=N` →
+  `in_flight_at_exit=N`. The number is unchanged; the NAME was wrong. Since
+  in-flight resume landed, suspension happens in the caller AFTER this line, so
+  play_batch cannot know the fate — 2026-07-30 logged `in_flight_abandoned=24`
+  beside `suspended games=20` for the same games (see the note ~line 2178, and
+  PR #149's pre-registered yardstick ~line 11576, both of which read this
+  token). Renamed outright rather than aliased: it feeds no metric series, no
+  CSV column and no test — the only consumers were this ledger's two mentions
+  and `scratchpad/verify_deploy.sh` (untracked). **Logs written before
+  2026-08-02 carry the OLD token; any grep spanning the rename must match
+  both.** True waste = `in_flight_at_exit` − the resume line's `suspended`,
+  plus whatever the next session's `resumed` fails to restore.

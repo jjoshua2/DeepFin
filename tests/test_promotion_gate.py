@@ -933,6 +933,123 @@ def test_gate_state_round_trips_across_a_restart() -> None:
     assert revived.decide().elo_hi == pytest.approx(g.decide().elo_hi)
 
 
+def _confounded_sample(i: int) -> AnchoredSample:
+    """One anchored row carrying MEASURED confound inputs, all three distinct."""
+    return AnchoredSample(
+        iteration=i,
+        cur_w=120, cur_d=40, cur_l=37,
+        prev_w=20, prev_d=8, prev_l=10,
+        cur_wdl_regret=0.0890 + 0.0001 * i,
+        prev_wdl_regret=0.0975 - 0.0002 * i,
+        regret_fit_slope=-3.25 + 0.01 * i,
+    )
+
+
+def test_gate_state_dict_covers_every_anchored_sample_field() -> None:
+    """THE STRUCTURAL RULE: ``state_dict`` persists EVERY ``AnchoredSample``
+    field, enumerated from the dataclass rather than listed by hand.
+
+    MUTATION: delete any one key from the ``samples`` dict comprehension in
+    ``PromotionGate.state_dict``. A hand-written key list is exactly how the
+    three confound fields came to be recorded at runtime and dropped at every
+    restart, and a test that names them one by one would not have caught the
+    NEXT field added to the dataclass. This one fails on that field's first
+    commit.
+    """
+    g = _gate(mode=MODE_SHADOW)
+    g.observe(_confounded_sample(0))
+    persisted = g.state_dict()["samples"]
+    assert isinstance(persisted, list)
+    assert persisted
+    expected = {f.name for f in dataclasses.fields(AnchoredSample)}
+    for row in persisted:
+        assert isinstance(row, dict)
+        assert set(row) == expected, f"missing {expected - set(row)}"
+
+
+def test_gate_state_round_trips_the_confound_fields_through_json() -> None:
+    """MUTATION: drop ``cur_wdl_regret``/``prev_wdl_regret``/
+    ``regret_fit_slope`` from ``state_dict``, or read them back with a 0.0
+    default in ``load_state_dict``.
+
+    ``confound_elo`` is the product of all three, so a single dropped field
+    silently turns a measured PID-lag offset into NaN (dropped) or into a
+    fabricated 0.0 (defaulted) on every restored row. Round-tripping through
+    real ``json.dumps``/``json.loads`` is the point: the gate's state reaches
+    disk as JSON text, not as a Python object.
+    """
+    g = _gate(mode=MODE_SHADOW)
+    for i in range(4):
+        g.observe(_confounded_sample(i))
+
+    text = json.dumps(g.state_dict())
+    revived = _gate(mode=MODE_SHADOW)
+    revived.load_state_dict(json.loads(text))
+
+    assert len(revived.samples) == len(g.samples)
+    for before, after in zip(g.samples, revived.samples):
+        assert after == before
+        assert after.confound_elo == pytest.approx(before.confound_elo)
+    # ...and the offsets are actually non-trivial, so "all NaN" cannot pass.
+    assert all(math.isfinite(s.confound_elo) for s in revived.samples)
+    assert len({round(s.confound_elo, 6) for s in revived.samples}) == 4
+
+
+def test_gate_state_writes_strict_json_and_keeps_nan_as_nan() -> None:
+    """NaN means "not measured" and must survive as NaN, in STRICT JSON.
+
+    MUTATION A: return ``float(v)`` from ``_json_float`` instead of ``None``
+    for non-finite input -- ``json.dumps`` then emits the bare ``NaN`` token,
+    which is not JSON and which the strict parse below rejects.
+    MUTATION B: default the ``_f`` reader to 0.0 -- an unmeasured difficulty
+    gap becomes a measured zero, i.e. the gate would report "this sample
+    carries no PID-lag confound" about a sample nobody measured.
+    """
+    def _strict(_name: str) -> float:
+        raise AssertionError("gate_state.json must not contain NaN/Infinity tokens")
+
+    g = _gate(mode=MODE_SHADOW)
+    g.observe(_confounded_sample(0))
+    g.observe(AnchoredSample(iteration=1, cur_w=1, prev_w=1))  # confound all NaN
+
+    text = json.dumps(g.state_dict())
+    revived = _gate(mode=MODE_SHADOW)
+    revived.load_state_dict(json.loads(text, parse_constant=_strict))
+
+    assert revived.samples[0] == g.samples[0]
+    unmeasured = revived.samples[1]
+    assert math.isnan(unmeasured.cur_wdl_regret)
+    assert math.isnan(unmeasured.prev_wdl_regret)
+    assert math.isnan(unmeasured.regret_fit_slope)
+    assert math.isnan(unmeasured.confound_elo)
+
+
+def test_gate_state_written_before_the_confound_fields_loads_as_unmeasured() -> None:
+    """A pre-existing ``gate_state.json`` has no confound keys at all.
+
+    It must load as NaN ("nobody measured this"), never as 0.0 ("measured, and
+    the gap was zero"). The counts still restore, so an in-flight run's window
+    is not thrown away by the upgrade.
+    """
+    legacy = {
+        "holds": 2, "hold_active": True,
+        "samples": [{
+            "iteration": 7,
+            "cur_w": 100, "cur_d": 40, "cur_l": 57,
+            "prev_w": 20, "prev_d": 8, "prev_l": 10,
+        }],
+    }
+    g = _gate(mode=MODE_SHADOW)
+    g.load_state_dict(json.loads(json.dumps(legacy)))
+    assert g.holds == 2
+    assert g.hold_active is True
+    s = g.samples[0]
+    assert (s.cur_w, s.cur_d, s.cur_l) == (100, 40, 57)
+    assert math.isnan(s.cur_wdl_regret)
+    assert math.isnan(s.prev_wdl_regret)
+    assert math.isnan(s.regret_fit_slope)
+
+
 # --------------------------------------------------------------------------
 # 7. the documented resolving power must stay true
 # --------------------------------------------------------------------------
