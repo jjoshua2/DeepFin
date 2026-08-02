@@ -24736,3 +24736,36 @@ matching the neighbouring `[trial]` convention, asserted with `capsys` on the
 real `_publish_distributed_trial_state` path, and a companion test reproduces
 the handler-free configuration and requires INFO to be dropped — so if a handler
 ever appears, the test says so rather than the print silently becoming redundant.
+
+## 2026-08-02 — STANDING GATE ENTRY: `train.rebuild_sf_targets` (task #55 — written BEFORE any flip, as the protocol requires)
+
+**Status: default OFF, never flipped live (PR #283).** What it does: at sample time,
+`rebuild_sf_targets_in_arrays` (`train/target_builder.py:479`) re-derives the SF policy
+targets of every drawn batch from the stored `sf_multipv_raw` + `sf_label_meta`, so a
+retuned SF-target parameter applies to the WHOLE window at draw time instead of only to
+fresh rows. It mutates no shard — a yaml revert is a TRUE revert, which most
+data-affecting changes here are not.
+
+This entry is not a launch pre-registration; it is the gate any future flip must clear.
+A flip without its own entry satisfying ALL of the following is a protocol violation:
+
+1. **Name the ONE parameter delta the rebuild carries** (e.g. an `sf_policy_temp`
+   retune) and change nothing else in the window. The rebuild retargets ~the whole
+   window in one step — it is maximally exposed to the one-change-per-readout rule.
+2. **Audit-first**: the rebuilt target must beat the current target on the frozen
+   deep-SF audit set via the offline twin (`scripts/retarget_retrain.py`) BEFORE any
+   live flip. A candidate that loses the direct audit dies without training compute.
+3. **Desync precondition**: verify presence-rate exactly 0.0000 on the live window
+   first. The 2026-07-29 readout stands: on desynced rows the stored raws ARE the
+   desynced engine's answer to the wrong position — a rebuild re-parameterises the
+   corruption (faithfully rebuildable fraction of affected rows: 0%).
+4. **Cross-ply trap**: a row's `sf_multipv_raw` is the PREVIOUS ply's table
+   (`sf_p0_*` from t-1, `sf_volatility` from t+6). Only the audited
+   `target_builder.py` path may be used — no hand-rolled rebuild.
+5. **Proof of effect on the first new iteration**: the `RebuildCoverage` accumulator
+   must report nonzero rows rebuilt in the trial's own output. A flag accepted and
+   silently ignored is this codebase's signature defect; absence of the coverage line
+   = not in effect, per config_change_may_not_be_in_effect.
+6. **Kill rule template**: pre-commit a paired sf_p0-regret (policy) or value_regret
+   bound; readout is day-plus with paired CIs. Revert = flip OFF (clean, draw-time).
+
