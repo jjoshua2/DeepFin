@@ -22584,3 +22584,311 @@ in-window/out-of-window gap measured here predicts (a) improves and (b) does not
 if (b) also improves, the retention failure is a property of the live loop's
 window turnover rather than of the head, and the lever is window/views, not
 capacity.
+
+## 2026-08-02 — VERDICT: L arm at raised rows/param (pre-registration at "PRE-REGISTRATION: separate 'fewer parameters' from 'more rows per parameter'", this file, 2026-08-02)
+
+**VERDICT (by the pre-committed rule, nothing else): UNRESOLVED.**
+B (mean rebound over seeds) = **+0.0878** [s0 +0.0878, s1 +0.0878], inside the
+pre-committed dead zone (+0.0739, +0.1500). Neither branch bar is met:
+`B <= +0.0739` False; `B >= +0.1500` False. Both 5F margins pass trivially
+(F = |s0-s1| of rebound = 0.0001; 5F = 0.0004; bit-identical rerun floor 0.0000).
+
+Readout validity gates: ALL PASSED.
+- desync fingerprint 0.000000 on train AND held; game_id overlap train↔held = 0.
+- rows written 1,145,716 == pre-pass exactly; params 63,084,128 by unique storage.
+- ruler vs production `eval_full_pass().policy_loss`: |diff| 3.252e-05 (rig fp32,
+  production bf16; gate <= 1e-3).
+- replication of sibling L seed 0 on the sibling's own corpus: |delta| = 0.00e+00
+  at all four checked points, reproduced twice — same rig, arm-vs-arm comparison valid.
+- negative control (policy targets permuted across rows, arm L, wide corpus): held
+  excess worse by min +793 nats at every matched checkpoint (bar: >= +0.30) — control
+  FAILED as required. Note: the cross-row shuffle also breaks target legality, so this
+  is a label-dependence proof, not a calibrated chance bar.
+
+Numbers (held-out policy excess over floor, nats; held set byte-identical to the
+sibling's, so LEVELS are comparable across all arms):
+- L-wide (63.08M, rows/param 0.01816 = 6.11x sibling L, 89.9% of live 0.0202):
+  min 1.1229 @ views 4.326 (s0) / 1.1125 @ 4.798 (s1); final(11.52) 1.2107 / 1.2003;
+  REBOUND +0.0878 both seeds. Sibling anchors: L(0.00297) +0.2295, M(0.00958) +0.0739,
+  S(0.03038) +0.0000. Log-interp rows/param prediction at 0.01816 was +0.0329.
+- Interpretation constraint: the rebound COLLAPSED 0.2295 -> 0.0878 with 6.1x data at
+  FIXED params — rows/param is clearly the dominant driver — but it did NOT fall to the
+  ratio-matched prediction (+0.033) and sits slightly ABOVE the 19.6M net's rebound at
+  its own (lower) ratio. A residual same-params effect of ~+0.05-0.06 nats of rebound
+  survives the data increase. The pre-committed rule anticipated exactly this middle
+  ground and it landed there: UNRESOLVED, and honestly so.
+
+Secondary findings (coordinator-requested, NOT part of the verdict rule):
+- **LEVELS: L-wide is the BEST of all four arms at EVERY rung 0.47–11.52 views/row**,
+  by 0.24–0.43 nats. No crossover exists anywhere on the ladder. Even at final
+  views 11.52 (deep in its rebound) L-wide's 1.2055 beats S's best-ever 1.4336 by 0.23.
+  At this data rate "shrink the net" is not supported by levels.
+- **Turning point moves LATER with more data**: views_at_min 3.12 (rows/param 0.00297)
+  -> 4.56 (0.01816), shift +1.44. Still (just) below production's views/row 5.0; at
+  live 0.0202 the turn is plausibly at or past 5.0, but that is extrapolation.
+- Caveat that must ride with any live inference: this is a FIXED-CORPUS FROM-SCRATCH
+  regime; the live loop is a growing stream with fresh rows always arriving. A rebound
+  produced by recycling a frozen corpus may not exist there. Held-out policy CE only —
+  says nothing about Elo/strength on its own.
+
+Confounds: as pre-registered (6.11x more optimizer steps at fixed chunk_steps=176 so
+the LR sawtooth is preserved; level comparability rests on the byte-identical held set;
+exposure recency identical across arms by construction — all arms train only on the
+same-era wide/sibling corpora and the held set is game-disjoint by the mix64 split).
+Artifacts: /tmp/claude-1000/-home-josh-projects-chess/f2207141-e3db-40fc-82c8-a50dd9d223f1/scratchpad/rowsparam/
+(runs run_LW_s0, run_LW_s1, run_LWSHUF_s0; analyzer analyze_rp.py; corpus_wide).
+
+
+## 2026-08-02 — VALUE teacher-vs-student and the value memorisation wedge: SAME DEFECT SHAPE AS POLICY
+
+**Status: MEASURED (offline, no training compute, no production change).**
+Companion to the 08-02 policy readout (ledger commit 6642e79e9). Pre-registration:
+`scratchpad/value_teacher_20260802/PREREG.md`, written before any arm was scored;
+one amendment, dated and reasoned, is inside it. Dumps banked at
+`scratchpad/value_teacher_20260802/{live,out}.npz` (+ `.meta.json`), scripts
+`measure.py` / `analyse.py`, results `results_sf020.json`.
+
+### Question and answer in one line
+
+The policy result was: **the teacher is ~10.3 cp BETTER than the net everywhere,
+yet 478 iterations produced a 12.8 cp memorisation wedge.** The value head shows
+**the same shape**: the value target is above the head, and the head's apparent
+progress is concentrated on the rows it is currently training on — including a
+**sign flip** out of window.
+
+### The realized value target, reconstructed (not assumed)
+
+`losses.py:418-503`, with `use_adjusted_wdl_target: false`, both
+`sf_search_dampen_*: 0.0`, `sf_wdl_temperature: 1.0`:
+
+```
+target = 0.35*onehot(wdl_target) + 0.45*norm(sf_wdl) + 0.20*norm(search_wdl)
+```
+
+- `sf_wdl_frac = 0.45` is **VERIFIED from a log line**: the trainer's realized value
+  is a progress.csv column and reads **0.45 on all 478 rows** of the lineage
+  (`progress.1785134613.csv` iters 1-80 through `progress.csv` iters 411-478).
+  The yaml's nominal `sf_wdl_frac: 0.50` is never realized — `wdl_regret` has
+  stayed in 0.0647-0.0823, below `sf_wdl_floor_at_regret: 0.10`, so
+  `_dynamic_sf_wdl_weight` pins the blend to the `sf_wdl_frac_floor: 0.45`.
+  **Anyone quoting 0.50 for the last 478 iterations is quoting a knob, not the run.**
+- `search_wdl_frac = 0.20` is **ASSUMED** — it is in `TRAINER_WEIGHT_KEYS` (re-applied
+  from the live yaml every iteration) but **has no progress.csv column**, so there is
+  no log line to prove it. Every headline was recomputed at 0.35 (the documented
+  revert pair) and moves by <0.0003 in E2; the verdicts are insensitive.
+- `sf_wdl_conf_power` / `sf_wdl_draw_scale` were checked and touch only
+  `_compute_sf_wdl_mask`, i.e. the auxiliary `sf_eval` head's mask. They are **not**
+  in the blend. (`losses.py:539-544`.)
+
+### Instrument
+
+Rows: stored replay rows with their own `x` (175,8,8) planes — mean **62.4/175**
+zero planes live, 71.4/175 out-of-window, so the FEN-only ruler defect (117/175)
+does not apply. Filters, all position-level: `is_network_turn` (the mask the wdl
+loss uses) AND `has_sf_wdl` AND `has_search_wdl` AND `has_sf_multipv_raw` (the SF
+desync screen). Metric: **E2 = (S_arm − S_truth)², S = p_W + 0.5·p_D** — proper,
+so no arm can win it by sharpening or hedging; not Brier, not ECE. Companions:
+game-clustered concordance (calibration-immune) and E2 after an optimal affine
+refit. cp-equivalent is a presentation transform at the label's own logistic
+slope, **1 cp = 0.0013213 in S** (756.9 cp per unit S). Batch 256, `use_amp=True`
+`amp_dtype=auto`, `model.eval()`, forward-only, `nice -n 19`.
+
+Row sets, both read-only:
+| set | source | n rows | games | selfplay | noPV |
+|---|---|---|---|---|---|
+| **LIVE** (in window) | live trial `replay_shards`, 713 shards, idx 033118-033951, written 07-30..08-01 | 155,257 | 8,855 | 0.680 | 0.000213 |
+| **OUT** (aged out) | `data/salvage/pre_sf_reallocation_ck148_20260722/.../replay_shards`, 643 shards idx<33118 (032475-033117), written 07-19..07-22 | 154,286 | 10,355 | 0.503 | 0.000253 |
+
+**⚑ `data/scaleup_pool_512x16` was REJECTED as the out-of-window set** — its
+31417-32456 range reads **8.1% no-PV** and its 07-14/07-15 shards up to **63%**,
+i.e. it is squarely inside the SF-desync episode. A desynced engine returns the
+previous query's answer, which would have poisoned both the 45% SF component of
+the teacher AND the SF ground truth. Whoever reaches for that pool next should
+screen it first.
+
+**The exposure structure is cleaner than the policy version's.** Both sets were
+written AFTER the boot512 snapshot (mtime 2026-07-11 04:04:50) — the earliest OUT
+shard by 8.7 days — so **boot512 is unexposed to BOTH sets** and the
+difference-in-differences isolates iter478's exposure recency alone. The policy
+wedge's 46M-era arm had boot512 exposed to 100% of the out-of-window rows.
+
+### ⚑ There is no uncontaminated ground truth for the target on a stored row
+
+Every component of the realized target is one of the two available truths:
+the outcome is **35%** of it, `sf_wdl` is **45%** of it. Scoring the realized
+target against either is partly scoring a component against itself — and it shows:
+`E2(iter478) − E2(target)` reads **+0.0572** against outcome truth, which is a
+measurement of the 35% self-inclusion, not of teaching quality. The deciding
+teacher arm is therefore **`teacher_no_outcome` = (0.45·sf + 0.20·search)/0.65**,
+the target with its outcome component removed and renormalised. It is a strictly
+handicapped version of the real target, so every "teacher above the head" result
+below is **a-fortiori**.
+
+### V1 — THE VALUE TARGET IS ABOVE THE HEAD (verdict: TEACHER ABOVE, pre-committed rule)
+
+LIVE rows, outcome truth, game-clustered 95% CI, n=155,257 / 8,855 games:
+
+| contrast | E2 | cp-equiv (ΔRMSE) | |
+|---|---|---|---|
+| `E2(iter478) − E2(teacher_no_outcome)` | **+0.00538 [+0.00486, +0.00589]** | **+6.69 cp** | SIG |
+| `E2(boot512) − E2(teacher_no_outcome)` | **+0.00980 [+0.00925, +0.01035]** | **+12.06 cp** | SIG |
+| `E2(iter478) − E2(sf_only)` | +0.00310 [+0.00238, +0.00383] | | SIG |
+| `E2(iter478) − E2(search_only)` | +0.00177 [+0.00147, +0.00208] | | SIG |
+
+So the value teacher has **~6.7 cp-equivalent of headroom over today's head** and
+12.1 cp over the unexposed boot512 — the same order as the policy target's
+10.27 cp. **The teacher is not the problem for value either.**
+
+**And it is not a calibration artifact.** Three independent checks:
+- **Concordance** (monotone-invariant, so immune to any miscalibration), selfplay
+  rows. LIVE: `teacher_no_outcome` **0.8522 [0.8459, 0.8593]**, `iter478`
+  **0.8351 [0.8290, 0.8420]**, `boot512` **0.8259 [0.8194, 0.8325]**; the paired
+  difference `C(teacher) − C(iter478)` = **+0.01681 [+0.01509, +0.01906]** SIG.
+  OUT: teacher 0.8776, iter478 0.8586, boot512 0.8599; paired
+  `C(teacher) − C(iter478)` = **+0.01916 [+0.01725, +0.02097]** SIG — the teacher's
+  ranking lead is if anything **wider** on rows the head no longer sees. The
+  teacher ranks positions better, not merely scales better.
+- **Affine recalibration** buys the head almost nothing: E2 0.09510 → E2_recal
+  0.09501 for iter478 (0.09953 → 0.09945 for boot512). The heads are already
+  near-optimally affine-calibrated **against the outcome**; their known
+  under-confidence is measured against the *SF label*, not against the result.
+- **Dispersion decomposition** (`D1 = D1_perm − 2ΔCov`): `D1_perm = −0.01148
+  [−0.01203, −0.01091]` — the teacher is genuinely **sharper**, and that sharpness
+  *costs* it 0.0115 of E2 — yet it still wins by +0.00538, because its covariance
+  with the outcome is **+0.01686** better. The teacher's advantage survives paying
+  a sharpness penalty.
+
+**The one place the head has caught up:** LIVE **curriculum** rows,
+`iter478 − teacher = +0.00009 [−0.00099, +0.00116]` — not significant. On
+in-window curriculum rows the value head is level with its target. On in-window
+**selfplay** rows it is +0.00786 [+0.00732, +0.00840] behind.
+
+### V2 — THE VALUE WEDGE IS CONFIRMED, AND IT FLIPS SIGN (pre-committed primary: selfplay rows, outcome truth)
+
+`Δ(set) = E2(boot512) − E2(iter478)`; positive = iter478 better.
+
+| rows | Δ = boot512 − iter478 | cp-equiv | verdict |
+|---|---|---|---|
+| **LIVE, selfplay** (iter478 trains on them now) | **+0.00328 [+0.00289, +0.00366]** | +3.82 cp | iter478 looks BETTER |
+| **OUT, selfplay** (aged out ≥ 8 days) | **−0.00073 [−0.00110, −0.00035]** | −0.86 cp | iter478 is **WORSE** |
+| **WEDGE** | **+0.00400 [+0.00347, +0.00454]** | **+4.68 cp** | **CONFIRMED** |
+
+**A sign flip on the same net, same ruler, same metric, driven only by whether the
+rows are currently in the replay window** — the value analogue of the policy
+result's +7.94 / −4.87 flip. 478 iterations of training bought iter478 nothing
+over the boot net on value, on rows it is no longer being shown.
+
+Robustness of the wedge — **four metrics, four confirmations, three with the flip**:
+- **Not calibration.** On affinely-recalibrated E2 (discrimination only) the wedge
+  is **+0.00442 [+0.00389, +0.00495]** — slightly *larger*, not smaller.
+- **Calibration-immune ranking.** Paired concordance, selfplay rows:
+  `C(iter478) − C(boot512)` = **+0.00953 [+0.00792, +0.01086]** on LIVE and
+  **−0.00135 [−0.00261, −0.00024]** on OUT. Both CIs exclude 0, with opposite
+  signs — **the sign flip reproduces on a metric that cannot be moved by any
+  monotone miscalibration.**
+- **Second, independent truth.** Against the SF cp-logistic label the wedge is
+  **+0.00196 [+0.00172, +0.00220]** with the same sign flip (LIVE +0.00117
+  [+0.00100,+0.00134], OUT −0.00079 [−0.00097,−0.00062]).
+- Secondary splits: curriculum wedge +0.00294 [+0.00227, +0.00360] (positive but
+  **no sign flip** — both sets favour iter478); all-rows +0.00284 [+0.00241,
+  +0.00326]. The flip is a **selfplay-row** phenomenon.
+
+**Timing of the eviction, from the trial's own iteration clock:** the OUT shards
+sit below the live window's minimum index, and the live window's oldest shard
+(033118) was written 2026-07-30 01:09. The first training iteration at or after
+that timestamp is **iteration 315**, so the OUT rows had left the window at least
+**163 iterations** before iter478. They were in the window (and trained on) for
+roughly iterations 1-315 of this trial.
+
+### Negative controls
+
+| control | result | |
+|---|---|---|
+| NC1 `shuffled` worse than every real arm | `E2(shuffled) − E2(iter478)` = +0.2755 [+0.2717, +0.2794] | **PASS** |
+| NC2 `const_prior` worse than both heads | vs iter478 +0.0670 [+0.0648, +0.0692]; vs boot512 +0.0626 [+0.0603, +0.0649] | **PASS** |
+| NC3 heads ≫ 0.5 concordance; controls not | heads 0.826/0.835 SIG > 0.5 ✓; `const_prior` C = 0.5000 exactly ✓; **`shuffled` C = 0.5224 [0.5164, 0.5289] — CI EXCLUDES 0.5** | **PARTIAL FAIL** |
+| **NC4a** permuted-truth concordance = 0.5 | every arm, both sets, CI **contains** 0.5: LIVE teacher 0.4988 [0.4950,0.5023], iter478 0.4994 [0.4954,0.5031], boot512 0.4994 [0.4951,0.5027], sf_only 0.4989; OUT all four 0.5007-0.5014 with CIs spanning 0.5 | **PASS** |
+| NC4 (original) label permutation on E2 | **withdrawn as a gate before any headline was computed** — see the amendment; replaced by NC4a above and NC4b (the dispersion decomposition) | amended |
+
+**⚑ NC3's failure, stated plainly and not rescued.** A weight-shuffled net is
+**not** a zero-information control here: it retains **2.2 pp of concordance above
+chance** from architecture and input structure alone. The pre-registered clause
+said it must not exceed 0.5 significantly; it does. Consequence, applied
+honestly: the concordance metric carries a ~2.2 pp architectural floor, so
+concordance readings must be compared **arm-to-arm**, never to 0.5 — and note the
+teacher-vs-iter478 concordance gap (1.7 pp) is *smaller than that floor*, which is
+why the concordance result is quoted only as a paired contrast and the PRIMARY
+verdict rests on E2 (NC1/NC2/NC4b), not on NC3.
+
+**⚑ Why NC4 was withdrawn (before any headline number, from a 4-shard smoke run).**
+A label permutation is **not a null for a squared-error metric**: for truth `y'`
+independent of the row, `E[(S−y')²] = Var(y) + E[(S−ȳ)²]`, so the permuted contrast
+converges to the difference in the arms' *dispersion*, not to zero. The smoke run
+returned −0.0106 with a CI excluding 0 — which says the teacher is sharper, not
+that the instrument leaks. The naive fix (permutation on recalibrated E2) was
+**rejected as a gate that cannot fail**: after an affine refit against an
+independent truth the optimum is `a=0, b=ȳ` for every arm, so the contrast is
+identically 0 by construction. The replacement, NC4b, is used as a decomposition
+rather than a pass/fail, and it is what produced the sharpness-penalty finding
+above.
+
+### Verified vs assumed
+
+**Verified from code or a log line:** the blend formula and every coefficient
+except one; `sf_wdl_frac = 0.45` over all 478 iterations; POV of `wdl_target`,
+`sf_wdl` (`flip_wdl_pov`) and `search_wdl_est`, each confirmed empirically by
+pairwise Q-correlations of +0.63 to +0.94 in both eras and +0.91/+0.92 for the net
+arms; both checkpoints and the shuffled net at **63,084,128** unique-storage params
+with three distinct state-dict hashes; the desync rates; the write times that make
+boot512 unexposed to both sets; head output is **logits** (softmax applied).
+
+**Assumed:** `search_wdl_frac = 0.20` (no log column exists — sensitivity run at
+0.35 changes nothing). That the OUT rows left the window "≥ 8 days / ~100+
+iterations" before iter478 is an inference from shard write times and index
+ordering, not from a log of window eviction.
+
+### Comparison to the policy result — same defect shape, smaller amplitude
+
+**Same shape.** Both heads have a target that is genuinely better than they are
+(policy 10.27 cp, value ~6.7 cp-equivalent); both show an in-window/out-of-window
+sign flip on the boot-vs-iter478 contrast (policy +7.94/−4.87 cp, value
++3.82/−0.86 cp-equivalent); in both cases the gap is discrimination, not
+calibration or imputation. This is the **same absorption failure**: the improvement
+operator produces a better target, the head fits it where it is being shown the
+rows, and the fit does not survive the rows leaving the window. **The
+"converged on a compressed target" reading is not supported** — the value head is
+not at its target's floor, it is 6.7 cp-equivalent below a *handicapped* version of
+that target, and its own concordance is 1.7 pp below it.
+
+**Different amplitude, and this is the one number to keep.** The value wedge
+(+4.68 cp-equivalent) is about **a third** of the policy wedge (12.81 cp), and
+value's out-of-window position is only −0.86 cp-equivalent versus policy's
+−4.87 cp. So value degrades the same way but less, which sits oddly beside the
+frozen-audit reading that value degraded MORE (+13.36 cp vs +8.45 cp). The two are
+not directly comparable — different ruler, different positions, different units —
+and reconciling them is open work, but the honest summary is: **on stored rows the
+value head's memorisation wedge is real, is smaller than policy's, and cannot by
+itself account for value being the worse-degraded head on the frozen audit.**
+
+### Confounds
+
+- Outcome truth is the SELFPLAY result under a PID handicap (`wdl_regret ≈ 0.079`),
+  with 75% of plies fast-ply labelled, and it carries 0.35 of the production
+  target. Measured as it is, deliberately; it is not an objective-eval claim.
+- `search_wdl` is the net's OWN search root, so `teacher_no_outcome` contains a
+  net-derived component. **The conclusion does not rest on it:** `sf_only`, which
+  contains no net-derived signal at all, still beats both heads on LIVE rows
+  (`E2(iter478) − E2(sf_only)` = +0.00310 [+0.00238, +0.00383] SIG,
+  `E2(boot512) − E2(sf_only)` correspondingly larger). The blended teacher is
+  better still (E2 0.08973 vs sf_only 0.09201), i.e. mixing in the net's own
+  search *helps* the target — which is itself evidence that search is producing
+  value information the head is not keeping.
+- LIVE and OUT differ in selfplay fraction (0.680 vs 0.503), which is exactly why
+  the primary wedge is pre-registered on selfplay rows only.
+- Era and exposure-recency are confounded for iter478 by construction. boot512's
+  symmetric non-exposure to both sets is what makes the difference-in-differences
+  interpretable, and is the improvement over the policy version of this test.
+- The trainer's own phase split is nearly degenerate on these rows: 149,463 of
+  155,257 LIVE rows fall in the `end` bucket (`moves_left < 0.31`), so
+  `wdl_loss_open`/`_mid` are computed on ~4% of the data. Worth knowing before
+  anyone reads those columns.
