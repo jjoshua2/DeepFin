@@ -260,8 +260,10 @@ def test_the_two_shard_lists_are_KEYWORD_ONLY() -> None:
     parameter RENAME, which keyword-only cannot prevent.
     """
     with pytest.raises(TypeError):
-        rr._assert_shards_unchanged(  # pyright: ignore[reportCallIssue]
-            _shards("shard_000001.zarr"), _shards("shard_000002.zarr"), name="x",
+        rr._assert_shards_unchanged(
+            _shards("shard_000001.zarr"),  # pyright: ignore[reportCallIssue]
+            _shards("shard_000002.zarr"),
+            name="x",
         )
 
 

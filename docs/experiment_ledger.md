@@ -20929,28 +20929,44 @@ reachable bug. Same honesty the sibling test already applies to the
 buffer-filter justification ("describes a case which cannot arise — but the
 choice is still right").
 
-**Mutation table — 9 mutations, 9 killed**, each by tests that name it
-(`tests/test_retarget_retrain.py`, 25 tests, clean run green):
+**Mutation table — 11 mutations, 10 killed + 1 made UNEXPRESSIBLE**
+(`tests/test_retarget_retrain.py`, 28 tests, clean run green):
 
-| # | mutation | tests that FAIL |
+| # | mutation | outcome |
 |---|---|---|
-| M1 | `main()` pre-globs and hands it to arm 1 (revert the fix) | `..._makes_arm1s_pool_the_reference_and_never_pre_globs` |
-| M2 | `if not snapshot: return` in the helper | `..._fires_against_an_EMPTY_reference`, `..._EMPTY_reference_still_gates_the_real_call_path` |
-| M3 | `if not shard_snapshot:` instead of `is None` at the call site | `..._EMPTY_reference_still_gates_the_real_call_path` |
-| M4 | swap the two lists at the call site | `..._runs_on_the_real_call_path` |
-| M5 | swap the helper's parameter names | `..._argument_ORDER_is_pinned`, `..._fires_against_an_EMPTY_reference`, `..._runs_on_the_real_call_path` |
-| M6 | delete the guard call | 4 tests |
-| M7 | helper returns unconditionally | 11 tests |
-| M8 | `main()` never adopts arm 1's pool | `..._makes_arm1s_pool_the_reference_and_never_pre_globs` |
-| M9 | arm 1 reports a re-glob instead of its buffer scan | 4 tests incl. `..._adopts_its_OWN_scan_and_does_not_check_it_against_a_glob` |
+| M1 | `main()` pre-globs and hands it to arm 1 (revert the fix) | 2 tests FAIL |
+| M2 | `if not snapshot: return` in the helper | 2 tests FAIL |
+| M3 | `if not shard_snapshot:` instead of `is None` at the call site | 1 test FAILS |
+| M4 | pass the two lists positionally, swapped, at the call site | **`TypeError` — not expressible** (see below) |
+| M5 | the two params trade ROLES in the helper body | 3 tests FAIL incl. `..._argument_ORDER_is_pinned` |
+| M6 | delete the guard call | 4 tests FAIL |
+| M7 | helper returns unconditionally | 11 tests FAIL |
+| M8 | `main()` never adopts arm 1's pool | 2 tests FAIL |
+| M9 | arm 1 reports a re-glob instead of its buffer scan | 4 tests FAIL |
+| M10 | `shard_snapshot` gains a `= None` default | 1 test FAILS |
+| M11 | adopt via `.get("shard_pool", [])` instead of subscript | 1 test FAILS |
 
-M4 and M5 are the coverage gap this review opened with: **every** #307 test
-passed the two same-typed `list[Path]` positionally and required only SOME
-abort, which a swapped call still produces — with added and removed inverted
-and the counts the wrong way round, sending the operator hunting a shard that
-was deleted when one was in fact added. The direction is now asserted from the
-message text at both the helper and the production call path. M2/M3 are the
-other gap: `[]` was never exercised as a reference.
+⚑ **M4 is not "killed" — it is unexpressible.** Both shard lists are now
+keyword-only, so the positional swap #307 allowed raises
+`TypeError: _assert_shards_unchanged() takes 0 positional arguments but 2 were
+given` at the call. The 4 tests that go red do so on that `TypeError`, not on a
+misdirected message. That is the stronger outcome: a defect the signature
+forbids beats one the tests catch.
+
+⚠ Keyword-only cannot stop a RENAME, so M5 was redefined. Merely REORDERING two
+keyword-only parameters is a semantic no-op — the first attempt at M5 did that
+and survived all 28 tests, correctly, because it changed nothing. The real
+mutation swaps what the two names MEAN inside the body, and
+`..._argument_ORDER_is_pinned` catches it by asserting the direction of the
+added/removed report rather than merely that an abort happened.
+
+M10/M11 close the two "kills zero tests" gaps a reviewer found: a default on
+`shard_snapshot` silently gives a forgetful caller arm-1 semantics (gate off),
+and `.get(..., [])` turns a lost field into a false `(0 shards at start, N now)`
+abort instead of a loud `KeyError`. The third candidate in that family —
+`main()`'s adopt-site falsy test — was deliberately NOT pinned: given the
+correction above it is unreachable, and M10 covers the same family at the site
+where it can actually bite.
 
 **What proves the fix is on the production path**, not just in the tests: arm 1
 now prints `shard reference = this arm's own scan, N shards under <dir>` from
