@@ -23544,3 +23544,194 @@ all ten comparisons, so the ruler resolves a few-cp question on these rows.
   follow-up this points at is the recency draw (`disk_buffer.py:976-978`, uniform vs
   linear vs tunable exponent) — construction-time only, needs a restart, and it is the
   one knob that moves `2f − f²` directly.
+
+## 2026-08-02 — boot512 WAS desync-contaminated at birth, but NOT by the range that prompted the question: 1.41 % of its SF-labelled training rows, all of it the 07-05 episode, and EXACTLY ZERO from shards 31417-32456
+
+Task #123. Read-only; `data/` and `runs/` were not written.
+
+### Verdict
+
+**The named range contributed nothing, and the contamination that IS there is
+an order of magnitude smaller than the number that prompted the question.**
+
+`data/scaleup_pool_512x16/replay_shards` indices **31417-32456** read
+**8.022 % no-PV** (1 014 shards, 1 837 669 labelled rows, 147 422 no-PV —
+reproducing the 8.1 % figure). **boot512 never saw one row of it.** Its visible
+shard set stops at index **31416**; the contaminated range begins at 31417. The
+boundary is exact, not approximate.
+
+What boot512 DID inherit is the **07-05 episode**, which the 2026-08-01
+day-bucket entry already recorded but nobody had connected to the bootstrap:
+
+| quantity | value |
+|---|---|
+| **share of boot512's trained SF-LABELLED rows carrying a desynced label** | **1.413 %** |
+| share of ALL its trained rows | 1.388 % |
+| hard bracket, independent of any step weighting | **[0.684 %, 2.224 %]** |
+| rows implicated | ~255 600 of 18 086 400 sampled |
+| of the 32 792 no-PV rows in its visible pool, from 07-05 | **31 351 (95.6 %)** |
+
+The rate **declines monotonically through the run** — 1.70 % in the first phase
+down to 0.79 % in the last — because the 07-05 mass is FIXED at 32 792 rows
+while clean shards kept arriving. So the contamination was worst exactly where
+it matters most: the earliest, highest-LR phases.
+
+### Method (and what is verified vs assumed)
+
+**Instrument.** The shipped no-PV detector: `has_sf_wdl & ~has_sf_multipv_raw`
+(`eval/value_optimism.py::sf_multipv_missing_rate`). Healthy is EXACTLY
+0.000000. Swept over **all 4 428 shards** of the pool — 100 % coverage, where
+the 2026-08-01 day-bucket sweep read every 2nd shard. Pool totals: 8 151 687
+rows, 8 011 156 labelled, **180 728 no-PV (2.256 %)**.
+
+**Replication of the earlier sweep at 2x coverage** (day buckets, mtime): 07-05
+**8.43 %** (prev 8.36 %), 07-12 1.53 % (1.50), 07-13 **15.54 %** (15.44), 07-14
+13.30 % (13.47), 07-15 **32.67 %** (34.12), and 07-06 / 07-07 / 07-08 / 07-09 /
+07-19 **exactly 0.000000**. The episodic shape holds.
+
+**Which weights are boot512** — VERIFIED from the file, not inferred.
+`scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt` carries
+`step = 56000` (mtime 2026-07-11 04:04:50); its 07-10 22:32 sibling carries
+`step = 45000`. `trainer_best_eval.pt`, the `init_checkpoint` of the final
+phase, carries `step = 44000`. So boot512 is **phase step 12000 of
+`cont_0710_2120_lr0.00003_noplateau`** — that phase ran to 19 180, and
+`cont_0711_0757` (13 100 further steps, ending at the `trainer.pt` step 76180)
+is entirely AFTER boot512 and irrelevant to it.
+
+**Usage weighting.** `scripts/offline_replay_epoch.py::_LiveShardSampler.
+sample_batch_arrays` draws a shard with probability **proportional to its row
+count** (`rng.choice(len(paths), p=positions/positions.sum())`) and mixes the
+batch across the LRU cache by the same weights, so the marginal probability of
+a trained row is `rows_s / total_rows` over whichever shards were present. The
+contaminated share at time t is therefore `noPV(N_t) / rows(N_t)`, and the
+run-level figure is that quantity integrated over the 383 + 499 + ... logged
+`live_progress` reports of the ten chained phase logs, weighted by the samples
+in each interval.
+
+**Shard presence** was reconstructed as *the first N shards in MTIME order*,
+with N taken from each report's own `shards` field. **This is VERIFIED, not
+assumed**: the reconstruction reproduces the log's `positions` field EXACTLY at
+four separate points of the final phase — 2658 -> 4 891 977, 2660 -> 4 895 977,
+2662 -> 4 899 090, 2668 -> 4 910 223. (Index order does NOT work; the pool
+contains hash-suffixed shard names and is not index-monotone in arrival.) Early
+reports disagree by <= 0.11 % of positions (1402 shards -> 2 588 393 measured vs
+2 591 168 logged), consistent with one or two shards later removed. That error
+is two orders below the effect.
+
+**Rate-insensitivity to the lineage detail.** The `cont_*` chain restarts from
+`trainer_best_eval.pt` several times, so ~10 % of the logged steps were
+discarded and are not in boot512's lineage. This does not move the FRACTION:
+discarded steps drew from the same shard distribution as retained ones. The
+hard bracket above is the point — every prefix set boot512 could have trained
+on reads between 0.684 % (N=2668) and 2.224 % (N=808), so no step-weighting
+choice can put the answer outside it.
+
+### Caveat on the denominator — this is a LOWER bound
+
+The no-PV instrument sees only rows that lost their WHOLE MultiPV block. A
+desynced engine strips the block on ~59 % of the labels it poisons; the rest
+keep a wrong block and are invisible to this detector. The live-window
+comparison in the 2026-08-01 entry put the identified-detached rate at 1.32x
+the no-PV rate (3.92 % vs 2.96 %). Applying that ratio gives **~1.9 %** as the
+corresponding all-detached figure for boot512. Still under 2 %.
+
+### What this does and does not license
+
+**Does:** retire the worry that boot512 is a poisoned anchor. At 1.4 % (or 1.9 %
+all-detached) of SF-labelled rows, on a target where `sf_wdl` is 45 % of the WDL
+blend, boot512 is a usable baseline and the many `vs_boot512` paired readouts do
+not need re-reading on this ground.
+
+**Does not:** clear the OFFLINE work that used this pool AFTER 07-11. Any arm
+drawing from shards 31417-32456 sat in an 8.0 % episode with 07-13/14/15 shards
+running 13-33 %, and the 2026-08-02 value-teacher entry's rejection of this pool
+as an out-of-window set was correct. Screen with
+`scripts/quarantine_desync_shards.py --shard-dir data/scaleup_pool_512x16/replay_shards`
+before reaching for it.
+
+**Open, and NOT answered here:** whether the 07-05 episode also touched the
+46M-era lineage, and whether boot512's 1.4 % is large enough to matter at all —
+that needs an intervention (retrain the same phase on the desync-screened
+subset), not another measurement. Priced as a separate item; nothing here is a
+verdict about learning quality.
+
+## 2026-08-02 — RULER CHANGE: the per-phase loss split was never a phase split, and every historical `wdl_loss_open` / `_mid` / `_end` reading is void
+
+Backlog #124. Code in PR (branch `backlog/small-items-20260802`); this entry is
+the invalidation notice the change requires.
+
+### What the columns were actually measuring
+
+`train/losses.py::_phase_split_masks` bucketed on `moves_left`, which
+`selfplay/finalize.py:924` writes as
+`(total_plies_played - ply_index) / max_plies`. **The divisor is the CONFIGURED
+PLY CAP — `max_plies: 450` in production — not the game's own length.** So the
+coordinate is "plies remaining as a share of the cap" and carries no
+information about the board: a row at ply 2 of a 60-ply adjudicated game scored
+0.129 and was filed under `end`.
+
+Measured over the WHOLE live window (713 shards, 1 273 501 rows,
+`runs/pbt2_small/replay/train_trial_13a9f_.../replay_shards`):
+
+| bucket | old predicate | rows | piece-count predicate |
+|---|---|---|---|
+| `open` | **0.605 %** | 7 702 | **30.70 %** |
+| `mid` | **3.027 %** | 38 547 | **32.35 %** |
+| `end` | **96.368 %** | 1 227 252 | **36.95 %** |
+
+median `moves_left` 0.113, p99 0.409; implied median game length 123 plies
+against the 450 cap. The 0.45 / 0.31 cuts sat at roughly P99.4 / P96.4 of the
+realized distribution.
+
+**The thresholds were correct when set.** Commit `0fcf899e4` (2026-04-25)
+recalibrated them from 0.66/0.33 to 0.45/0.31 and measured 33/34/33 at the
+time, with a comment saying to re-derive when the distribution drifts. It
+drifted. **Re-deriving would have been the wrong repair** — current P33/P67 are
+0.076/0.158, so new cuts would have restored three equal buckets of a quantity
+that is still not game phase, i.e. hidden the defect behind healthy-looking
+numbers. That is this repo's signature failure with a fresh coat of paint.
+
+### The change
+
+- The split now buckets by **piece count**, on
+  `utils/architecture.DEFAULT_PHASE_PIECE_THRESHOLDS = (13, 22)` — the SAME
+  OBJECT `eval/audit.py::PHASE_THRESHOLDS` uses, imported rather than re-typed.
+  So a training per-phase column and the audit's per-phase deep-SF regret now
+  name the same set of positions, which they never did before. Agreement with
+  `eval.audit.phase_bucket` is asserted per count over 2..32.
+- **The columns are RENAMED, deliberately**: `wdl_loss_open` ->
+  `wdl_loss_phase_open`, same for `_mid` / `_end`, for `policy_loss_*`, and for
+  the `test_` twins. A ruler change must invalidate its records; the old and new
+  columns measure different row sets and must not share a name that lets them be
+  plotted as one series.
+- New **`wdl_loss_phase_n_open/_mid/_end`** row counts. `masked_mean` clamps its
+  denominator to 1.0, so a bucket holding ZERO rows publishes a loss of 0.0 —
+  the best possible value — and nothing else in the row could contradict it.
+  These are the only columns that can.
+- `moves_left` is untouched as a TARGET; only the reporting split moved off it.
+
+### Invalidation
+
+**Void:** every `wdl_loss_open` / `wdl_loss_mid` / `policy_loss_open` /
+`policy_loss_mid` reading in this ledger and in every `progress.csv` to date.
+They were computed on ~3.6 % of the window and, worse, on a sample selected by
+GAME LENGTH — long games only — which is not a neutral slice of anything. The
+`_end` columns are ~96 % of the data and therefore approximately duplicate
+`wdl_loss` / `policy_loss`; they are not wrong so much as redundant.
+
+**One direct citation to retract:** the entry at ledger line ~15098 reading
+`wdl_loss_open` +0.00069/iter RISING as a corroborating signal. That series is a
+long-games-only subsample and cannot corroborate anything; the entry's
+independent frozen-audit-set evidence is untouched.
+
+**Not affected:** anything judged on `value_regret`, `audit_targets`,
+`arena_standard`, held-out CE, or the whole-batch `wdl_loss` / `policy_loss`.
+
+### Adjacent defect found, documented, NOT fixed
+
+`selfplay/network_turn.py:558` (Python fallback) sets `ply_index` RELATIVE to
+the search root, while the production C path (`mcts/_mcts_tree.c:4734`) sets it
+ABSOLUTE, and `finalize.py:924` divides against an absolute total. Left alone
+here: a `.c` change forces the extension-rebuild pairing rule, and after this
+change the mismatch no longer touches the phase split. It still touches the
+`moves_left` TARGET on any row produced by the Python path.
