@@ -23041,3 +23041,31 @@ log including all sixteen running blocks and the printed search shape),
 rather than `runs/arena_results.jsonl` because `runs/` was read-only for this
 task — **fold this row into `runs/arena_results.jsonl` when convenient**, it is a
 full-sample row and the four truncated ratchet rows there are not.
+
+#### ⚑ The shape-matched second run was STARTED AND ABANDONED — it is NOT a result
+
+A `--search-shape training` twin of the run above (same pairing, same 32 sims,
+same seed/openings, `--games 1000`) was launched at 14:03:48 and **killed at
+14:15 having produced ZERO complete pairs**. It is not reported as a number
+because there is no number: the log
+(`scratchpad/arena_13a9f_20260802/arena_training_sims32.ABORTED.log`) ends after
+the startup block, before the first 50-game report.
+
+**Why it was killed, recorded because it is a resource-etiquette lesson, not a
+technical one.** Another agent's `absorb_20260802` driver had been polling
+`[driver] waiting for the card` since **13:26:50** and started **14:03:53 — five
+seconds after the play-shape arena exited**, having explicitly waited for a free
+GPU. The training-shape twin then launched on top of it, taking the card to
+**31.4 GB of 32.6 GB** and dropping its own throughput to zero reports in eleven
+minutes. Killing it returned the card to 22.7 GB and lifted the other job's
+utilisation from 22% to 55%. (Their `[driver] FATAL: A_s0 died before chunk 1`
+is a **driver bookkeeping false alarm**, not a crash and not caused by this —
+the very next line adopts the still-running pid, and there is no OOM or CUDA
+error anywhere in their logs.)
+
+**So the shape caveat above stands UNRESOLVED and must not be quietly dropped:**
+the −48.6 Elo is a **play-shape** number, and this repo has one recorded instance
+(ledger 2026-07-28) of a rung whose sign flipped between the two shapes. The
+training-shape replication is the single highest-value follow-up to this entry,
+it needs ~50 minutes of *uncontended* GPU, and `launch_training.sh` in the banked
+directory will run it as-is.
