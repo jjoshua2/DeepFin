@@ -48,7 +48,6 @@ from chess_anti_engine.utils.config_yaml import _FLAT_ALLOWLIST
 from scripts.audit_realized_config import classify_config_provenance
 
 _REPO = Path(__file__).resolve().parents[1]
-_INIT_SRC = _REPO / "chess_anti_engine" / "tune" / "trainable_init.py"
 
 # Replay-buffer constructor arguments that are NOT construction-bound, because
 # some per-iteration consumer re-reads them. Each entry names the file and the
@@ -132,16 +131,42 @@ def _tc_attrs_in_call(call: ast.Call) -> set[str]:
     return found
 
 
+def _ctor_name(func: ast.expr) -> str | None:
+    """The constructor's name whether called bare or through a module.
+
+    ``ast.Name`` alone misses ``replay.DiskReplayBuffer(...)``, which is the
+    same construction wearing an import style.
+    """
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
 def _replay_buffer_constructor_keys() -> dict[str, set[str]]:
-    """AST: {constructor name -> config keys it is handed off the TrialConfig}."""
-    tree = ast.parse(_INIT_SRC.read_text(encoding="utf-8"))
+    """AST over the WHOLE package: {constructor -> keys handed off TrialConfig}.
+
+    ⚑ This scanned only ``trainable_init.py`` until 2026-08-01. An independent
+    review killed that version by adding a live ``DiskReplayBuffer(...)`` call
+    in ``trainable_phases.py`` and watching the suite pass anyway -- a second
+    construction site was invisible, so the guard could not fail for the very
+    shape it exists to catch. Scoping a guard to the one file where the defect
+    was first found is how it stops generalising.
+    """
     out: dict[str, set[str]] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+    for path in sorted((_REPO / "chess_anti_engine").rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:  # pragma: no cover - a broken file fails elsewhere
             continue
-        if node.func.id not in ("DiskReplayBuffer", "ArrayReplayBuffer"):
-            continue
-        out.setdefault(node.func.id, set()).update(_tc_attrs_in_call(node))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _ctor_name(node.func)
+            if name not in ("DiskReplayBuffer", "ArrayReplayBuffer"):
+                continue
+            out.setdefault(name, set()).update(_tc_attrs_in_call(node))
     return out
 
 
