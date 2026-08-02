@@ -19,6 +19,8 @@ so that a live yaml edit to it cannot silently no-op.
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
@@ -418,7 +420,8 @@ def test_every_valid_exponent_yields_a_usable_probability_vector(
 
 
 def test_the_floor_engages_where_it_must_and_costs_nothing_that_shows() -> None:
-    """MUTATION: floor at ``1e-6`` instead of ``np.finfo(float64).tiny``.
+    """MUTATION, verified: delete the ``np.maximum(..., _SHARD_DRAW_WEIGHT_FLOOR)``
+    line — this test then fails on ``np.all(weights > 0.0)``.
 
     Both halves of the floor's contract. It must ENGAGE where float64 runs out
     -- reachable inside the valid exponent domain only on a window far larger
@@ -426,9 +429,26 @@ def test_the_floor_engages_where_it_must_and_costs_nothing_that_shows() -> None:
     bound leaves to it -- and the mass it invents must be far below anything
     observable, or the floor would be silently reshaping the draw it exists to
     protect.
+
+    ⚑ n = 3,000,000 is not a round number, it is the THRESHOLD, and this test
+    used 2,000,000 and was vacuous. Measured: at n = 2e6 the un-floored minimum
+    is 8.882e-316 -- subnormal but NONZERO -- so ``weights > 0.0`` held with the
+    floor deleted, and ``shard_draw_floored_count`` recomputes ``raw < floor``
+    independently so it reported engagement that the weights had not received.
+    At n = 3e6 the un-floored minimum is exactly 0.0. The assertion below pins
+    that, so a future edit cannot drift the case back into the subnormal regime
+    where the floor is unobservable.
     """
-    n_shards, alpha = 2_000_000, MAX_SHARD_RECENCY_EXPONENT
+    n_shards, alpha = 3_000_000, MAX_SHARD_RECENCY_EXPONENT
     assert alpha * np.log(n_shards) > -np.log(_SHARD_DRAW_WEIGHT_FLOOR)
+
+    from chess_anti_engine.replay.disk_buffer import _shard_draw_log_weights
+
+    unfloored = np.exp(_shard_draw_log_weights(n_shards, alpha))
+    assert float(unfloored.min()) == 0.0, (
+        "without the floor the smallest weight is still representable, so "
+        f"`weights > 0` cannot detect a deleted floor here: min={unfloored.min()!r}"
+    )
 
     floored = shard_draw_floored_count(n_shards, alpha)
     assert floored > 0, "the floor never engaged; this case no longer tests it"
@@ -492,14 +512,29 @@ def test_the_exponent_reaches_the_prefetch_THREAD_not_only_the_sync_path(
     "the worker never sees it" gap, which is this repo's signature defect
     wearing a passing test suite.
 
-    Drives the real thread (``deterministic_refresh=False``), collects the
-    shards it chose, and requires the distribution to move with alpha. The
-    assertion is on the SEPARATION between two alphas rather than on an
-    absolute mean, so it does not depend on how many races the thread happened
-    to win.
+    ⚑⚑ THE FIRST VERSION OF THIS TEST DID NOT DO THAT, and said it did. It
+    called ``_load_refresh_chunks`` 200 times from the TEST's own thread while
+    merely asserting a thread existed, so rewriting ``_prefetch_loop`` to a
+    hardcoded ``arange`` draw left it green -- the exact "gate that cannot
+    fail" this file is otherwise full of warnings about. Its liveness check,
+    ``buf._prefetch_thread is None or not buf._deterministic_refresh``, was a
+    tautology: the second disjunct is true by construction because the buffer
+    is built with ``deterministic_refresh=False``. It also shared
+    ``_prefetch_rng`` -- one unsynchronised numpy Generator -- between the test
+    thread and the live prefetch thread.
+
+    This version SPIES on ``_load_refresh_chunks`` and counts only the calls
+    made ON the prefetch thread with the prefetch generator, then drives
+    ``sample_batch_arrays`` (the production entry point) until enough of those
+    accumulate. Nothing in the test draws shards itself.
+
+    KILLING MUTATION, verified: make ``_prefetch_loop`` bypass
+    ``_load_refresh_chunks`` and pick shards with its own ``np.arange`` draw.
+    The spy then records zero thread draws and this test fails on the
+    ``observed >= want`` assertion.
     """
 
-    def _thread_drawn_mean_recency(exponent: float) -> float:
+    def _thread_drawn_ranks(exponent: float, want: int = 200) -> list[int]:
         n_shards = 20
         buf = DiskReplayBuffer(
             10**6,
@@ -509,56 +544,82 @@ def test_the_exponent_reaches_the_prefetch_THREAD_not_only_the_sync_path(
             shuffle_cap=8,
             shard_size=4,
             refresh_interval=1,
-            refresh_shards=3,
+            refresh_shards=1,
             shard_recency_exponent=exponent,
             deterministic_refresh=False,
         )
         buf.add_many([_sample() for _ in range(4 * n_shards)])
-        assert buf._prefetch_thread is None or not buf._deterministic_refresh
-        shard_paths = buf._snapshot_shards()
-        assert len(shard_paths) == n_shards
+        assert len(buf._snapshot_shards()) == n_shards
 
-        # Call the draw with the thread's OWN generator, the way _prefetch_loop
-        # does, so this measures the stream production's thread actually uses.
+  # The thread is created in __init__; assert it is REALLY running rather
+  # than restating the constructor argument.
+        assert buf._prefetch_thread is not None
+        assert buf._prefetch_thread.is_alive()
+
+        real = buf._load_refresh_chunks
+        lock = threading.Lock()
         ranks: list[int] = []
-        for _ in range(200):
-            picked: list[int] = []
-            buf._load_refresh_chunks(
-                shard_paths=shard_paths,
-                refresh_shards=1,
-                rng=buf._prefetch_rng,
-                chosen_out=picked,
-            )
-            ranks.extend(picked)
-        buf.close()
-        assert len(ranks) == 200
-        return float(np.mean([(r + 1) / n_shards for r in ranks]))
 
-    linear = _thread_drawn_mean_recency(1.0)
-    uniform = _thread_drawn_mean_recency(0.0)
+        def _spy(
+            *,
+            shard_paths: list[Path],
+            refresh_shards: int,
+            rng: np.random.Generator,
+            context: str = "shuffle refresh",
+            chosen_out: list[int] | None = None,
+        ) -> list[dict[str, np.ndarray]]:
+  # `_prefetch_loop` passes no chosen_out, so the spy supplies its own
+  # list per call -- never shared, so the concurrent sampling-thread
+  # calls cannot interleave into it.
+            mine: list[int] = [] if chosen_out is None else chosen_out
+            loaded = real(
+                shard_paths=shard_paths,
+                refresh_shards=refresh_shards,
+                rng=rng,
+                context=context,
+                chosen_out=mine,
+            )
+  # THE discriminating filter: this call happened on the prefetch thread.
+  # The synchronous path reaches the same function from the sampling
+  # thread with `self.rng`, and counting those would make the test pass
+  # on exactly the path it exists to exclude.
+            if threading.current_thread() is buf._prefetch_thread:
+                assert rng is buf._prefetch_rng, "thread drew from the wrong stream"
+                with lock:
+                    ranks.extend(mine)
+            return loaded
+
+        buf._load_refresh_chunks = _spy
+
+        deadline = time.monotonic() + 60.0
+        while True:
+            with lock:
+                observed = len(ranks)
+            if observed >= want or time.monotonic() > deadline:
+                break
+            buf.sample_batch_arrays(4, wdl_balance=False)
+
+        buf.close()
+        with lock:
+            drawn = list(ranks)
+        assert len(drawn) >= want, (
+            f"only {len(drawn)} of {want} draws came from the prefetch thread; "
+            "the thread is not reaching _load_refresh_chunks, so this test is "
+            "not measuring the production prefetch path"
+        )
+        return drawn
+
+    def _mean_recency(ranks: list[int]) -> float:
+        return float(np.mean([(r + 1) / 20 for r in ranks]))
+
+    linear = _mean_recency(_thread_drawn_ranks(1.0))
+    uniform = _mean_recency(_thread_drawn_ranks(0.0))
 
     # 2/3 vs 1/2 in expectation; 200 draws gives sd ~0.017 on each, so a 0.08
     # separation is ~3 sd of the difference and not a coin flip.
     assert linear - uniform > 0.08, (linear, uniform)
     assert 0.60 < linear < 0.74, linear
     assert 0.44 < uniform < 0.56, uniform
-
-    # And the thread really is the live path in this configuration -- if
-    # `deterministic_refresh` were on, the above would be testing the
-    # synchronous path again under a different name.
-    buf = DiskReplayBuffer(
-        10**6,
-        shard_dir=tmp_path / "thread_live",
-        rng=np.random.default_rng(0),
-        read_only=False,
-        refresh_interval=1,
-        refresh_shards=1,
-        deterministic_refresh=False,
-    )
-    buf._ensure_prefetch_thread()
-    assert buf._prefetch_thread is not None
-    assert buf._prefetch_thread.is_alive()
-    buf.close()
 
 
 # ---------------------------------------------------------------------------
