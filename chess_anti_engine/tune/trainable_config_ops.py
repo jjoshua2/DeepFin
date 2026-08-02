@@ -433,6 +433,12 @@ _CONSTRUCTION_ONLY_REPLAY_KEYS = frozenset({
     "shuffle_buffer_size",        # -> shuffle_cap, disk_buffer.py:249
     "shuffle_refresh_interval",   # -> refresh_interval, disk_buffer.py:251
     "shuffle_refresh_shards",     # -> refresh_shards, disk_buffer.py:252
+    # -> shard_recency_exponent. Same class as the two above and for a stronger
+    # reason than "the constructor is the only reader": it is the SHAPE of the
+    # shuffle-refresh shard draw, so a mid-run edit would split one replay
+    # window across two sampling regimes -- the same argument that froze
+    # shuffle_draw_cap_frac / shuffle_wl_max_ratio below.
+    "replay_shard_recency_exponent",
     # ⚑ THESE TWO WERE A REAL CHOICE, not a classification. Unlike the three
     # above (consumed inside the buffer's own construction), draw_cap_frac and
     # wl_max_ratio are plain public attributes read PER BATCH DRAW

@@ -20886,3 +20886,111 @@ the documented interpreter, not the recorded numbers.
 **F5 — FIXED.** The withdrawn "73 of 75 metrics bit-for-bit" claim now carries
 a SUPERSEDED marker at the claim itself, pointing at the retraction ~50 lines
 below. One inserted line, `git diff --numstat` = `2 0`, nothing rewritten.
+
+## 2026-08-02 — INFRASTRUCTURE, NOT AN EXPERIMENT: `replay_shard_recency_exponent`, a knob on the shard-recency draw whose default is byte-identical to the code it replaces
+
+**No verdict is claimed here and no behaviour changes.** This entry exists so
+that the knob's arrival is on the record BEFORE the experiment that would flip
+it, rather than being discovered later in a diff.
+
+### What the draw is today
+
+`chess_anti_engine/replay/disk_buffer.py::_load_refresh_chunks` picks the
+shuffle-refresh shards with weight ∝ rank, oldest rank 1:
+
+```python
+weights = np.arange(1, n_shards + 1, dtype=np.float64)
+weights /= weights.sum()
+chosen_idxs = rng.choice(n_shards, size=n_pick, replace=False, p=weights)
+```
+
+Linear in recency. At the live scale (834 tracked shards) the newest shard is
+drawn 834× as often as the oldest; the mean drawn shard sits at the 2/3 recency
+percentile, i.e. mean sampled row age ≈ ⅓ of the window span. The same draw
+seeds the hot pool at open (`_seed_shuffle_pool`), so it sets both the
+steady-state and the post-restart sampling distribution.
+
+### What ships
+
+`replay_shard_recency_exponent` (float, default **1.0**): weight ∝ rank**α.
+α = 1.0 is today's draw, α = 0.0 is uniform over the window, α > 1 sharpens
+onto the newest shards. Threaded exactly like the neighbouring
+`shuffle_refresh_*` construction params — yaml allowlist → `TrialConfig` →
+`DiskReplayBuffer(...)` in `trainable_init._init_replay_buffers` — and also
+into the two offline rigs that already mirror those params
+(`scripts/retarget_retrain.py`, `scripts/holdout_policy_screen.py`), so a rig
+arm cannot silently draw differently from the run it stands in for.
+
+Classified **construction-only** (`trainable_config_ops`
+`_CONSTRUCTION_ONLY_REPLAY_KEYS`). It is the SHAPE of the sampling
+distribution, so a mid-run edit would split one replay window across two
+sampling regimes — the same argument that froze `shuffle_draw_cap_frac` and
+`shuffle_wl_max_ratio`. A live yaml edit therefore WARNS "requires restart"
+and is not applied, instead of landing in the result row as a value the buffer
+is not running.
+
+### Why the default is safe to ship into a live run
+
+The claim is IDENTITY, not similarity, and it is tested as such:
+
+* `shard_draw_weights(n, 1.0)` is compared to an inline copy of the two lines
+  above with `.tobytes()`, at n ∈ {1, 2, 7, 64, 834}. α = 1.0 takes its own
+  branch precisely so the default does not depend on whether
+  `np.power(x, 1.0)` returns `x` bit-for-bit, which is a libm/numpy-version
+  property rather than a promise.
+* End-to-end through the production `_load_refresh_chunks`: same seed in, same
+  shard indices out, **and `rng.bit_generator.state` identical afterwards**.
+  That second half is the one an indices-only assertion misses — the refresh
+  draw shares `self.rng` with every later row-level sample, so a draw picking
+  the same shards while consuming a different number of variates would still
+  redirect the rest of the run's sampling.
+
+### Proof of effect
+
+`DiskReplayBuffer.__init__` prints ONE line, `print` not `log.info` (the Ray
+trial actor installs no logging handler; INFO from this module reaches no file
+and no console on the production path, so an INFO-level proof line's presence
+and absence are indistinguishable):
+
+```
+[disk_buf] shard draw: recency_exponent=1.0000 (1.0=linear/production, 0.0=uniform) decile_mass_oldest_to_newest=[0.0100 0.0300 ... 0.1900] newest_decile=0.1900 oldest_decile=0.0100 mean_rank_pct=0.667
+```
+
+Analytic, not measured: a fresh trial has no shards yet and a resumed one has a
+window that changes size every iteration, while the SHAPE of the draw depends
+on neither. Decile j spans `(j/10)**(α+1) - ((j-1)/10)**(α+1)`; for α = 1 the
+newest-fraction-f cumulative is the closed form `2f - f²`, which the tests
+check the realized sampler against at 200k draws. `mean_rank_pct` is
+`(α+1)/(α+2)` — 0.667 today, the same 2/3 the `[disk_buf] shuffle seed` line
+already prints as its steady-state reference, and 0.500 under a uniform draw.
+
+The mutation was RUN, not asserted: swapping the `print` for `log.info` fails
+`test_construction_prints_the_realized_exponent_and_decile_table` with
+`assert 0 == 1` on the captured stdout, and reverting restores 16/16 green. A
+`caplog` version of that test would have PASSED under the mutation, because
+pytest attaches a handler production does not have.
+
+### The deciding instrument is PENDING — nothing is pre-registered here
+
+Whether the recency weighting is itself accelerating the forgetting measured
+over this run (window-exit hinge; never-in-window audit set degraded +9.04cp
+MONOTONE, so churn is not the whole −48.6 Elo) is the offline absorption rig's
+**arm G**, which has not read out. This entry pre-registers NO threshold and
+NO direction, because a knob added before its verdict must not smuggle in the
+verdict's shape.
+
+`test_no_live_config_ships_the_key_yet` asserts the key appears in NO file
+under `configs/`, so every run — production and every `exp_*` — keeps drawing
+linearly until someone deliberately adds the line. When arm G reads out, the
+flip gets its OWN entry with a hypothesis, one deciding yardstick as an exact
+command, and a pre-committed kill rule, applied at a restart (the key is
+construction-only, so a live edit cannot deploy it anyway). Note the standing
+caveat: a yaml revert would not be a rollback, since the replay window holds
+~a day of data drawn under whichever exponent was live.
+
+### Revert point
+
+None taken, and none needed: the shipped default is bit-for-bit the current
+code and no config references the key, so the revert is `git revert` of the PR
+with no data-window consequence. A revert point becomes REQUIRED for the flip,
+not for this.

@@ -81,6 +81,88 @@ _SCALAR_METADATA_FIELDS = (
 # Lookup: value field name → has-flag field name (derived from shard.py's canonical pairs).
 _VALUE_TO_FLAG = dict(_OPTIONAL_STORAGE_PAIRS)
 
+# The shard-recency draw exponent that reproduces the pre-2026-08-02 code
+# exactly: weight ∝ rank, oldest rank 1. Named so the one value that must not
+# drift is written once and referenced everywhere that claims to preserve it.
+DEFAULT_SHARD_RECENCY_EXPONENT = 1.0
+_DRAW_DECILES = 10
+
+
+def validate_shard_recency_exponent(recency_exponent: float) -> float:
+    """Return the exponent as a float, or raise naming the offending value.
+
+    Separate from the weight computation so the CONSTRUCTOR can reject a bad
+    yaml value at startup. A negative or non-finite exponent otherwise first
+    bites inside the prefetch thread, on the first refresh, as a NaN
+    probability vector handed to ``rng.choice`` — where the exception is
+    swallowed and the only symptom is a shuffle pool that quietly stops being
+    refreshed.
+    """
+    alpha = float(recency_exponent)
+    if not np.isfinite(alpha) or alpha < 0.0:
+        raise ValueError(
+            f"shard recency exponent must be finite and >= 0, got {recency_exponent!r}; "
+            "1.0 = the production linear-recency draw, 0.0 = uniform over the window"
+        )
+    return alpha
+
+
+def shard_draw_weights(n_shards: int, recency_exponent: float) -> np.ndarray:
+    """Normalized shard-draw probabilities, OLDEST first: ``w_i ∝ rank_i**α``.
+
+    ``rank`` is ``1..n_shards`` oldest→newest, so α = 1.0 is the linear recency
+    weighting the refresh draw has always used (at production scale, 834
+    tracked shards, the newest shard is drawn 834× as often as the oldest and
+    the mean sampled shard sits at the 2/3 recency percentile). α = 0.0 is
+    uniform over the window; α > 1 sharpens onto the newest shards.
+
+    ⚑ α = 1.0 takes its own branch and is BYTE-IDENTICAL to the code this
+    replaced, which is the whole point of the default. It is not a
+    micro-optimisation and must not be folded into the general expression: it
+    is what lets the knob ship into a live run whose sampling distribution is
+    an open experimental question (rig arm G) without perturbing it. Folding it
+    away would make the default depend on whether ``np.power(x, 1.0)`` returns
+    ``x`` bit-for-bit, which is a libm/numpy-version property, not a promise.
+    ``tests/test_replay_shard_recency_exponent.py`` pins the equality against
+    an inline copy of the original two lines.
+
+    The general branch normalizes the base into ``(0, 1]`` BEFORE
+    exponentiating. Mathematically the scaling cancels in the normalization;
+    numerically it means a large α underflows harmless small weights toward 0
+    instead of overflowing ``rank**α`` to ``inf`` and handing ``rng.choice`` a
+    vector of NaNs. The newest rank is exactly 1.0 in that basis, so the sum is
+    always ≥ 1 and the division is always safe.
+    """
+    alpha = validate_shard_recency_exponent(recency_exponent)
+    ranks = np.arange(1, int(n_shards) + 1, dtype=np.float64)
+    if alpha == DEFAULT_SHARD_RECENCY_EXPONENT:
+        weights = ranks
+    else:
+        weights = (ranks / float(max(int(n_shards), 1))) ** alpha
+    weights /= weights.sum()
+    return weights
+
+
+def shard_draw_decile_mass(recency_exponent: float) -> np.ndarray:
+    """Analytic draw mass per window decile, OLDEST decile first.
+
+    The continuum limit of :func:`shard_draw_weights`: with density ∝ f**α over
+    the window fraction f (0 = oldest, 1 = newest), the mass below f is
+    ``f**(α+1)``, so decile j spans ``(j/10)**(α+1) - ((j-1)/10)**(α+1)``. For
+    the production α = 1.0 the cumulative mass of the NEWEST fraction f is
+    ``1 - (1-f)**2 = 2f - f²`` — the closed form the realized-draw test checks
+    the sampler against.
+
+    Analytic rather than measured because this is printed at construction, when
+    a fresh trial has no shards yet and a resumed one has a window whose size
+    changes every iteration; the shape of the draw does not depend on either,
+    and a decile table that silently reported "no shards" would be exactly the
+    unreadable observability this line exists to avoid.
+    """
+    alpha = validate_shard_recency_exponent(recency_exponent)
+    edges = np.arange(0, _DRAW_DECILES + 1, dtype=np.float64) / float(_DRAW_DECILES)
+    return np.diff(edges ** (alpha + 1.0))
+
 
 def _batch_dims(arrs: dict[str, np.ndarray]) -> tuple[int, int, int]:
     x = arrs["x"]
@@ -207,6 +289,7 @@ class DiskReplayBuffer:
         shard_size: int = 1000,
         refresh_interval: int = 5,
         refresh_shards: int = 3,
+        shard_recency_exponent: float = DEFAULT_SHARD_RECENCY_EXPONENT,
         draw_cap_frac: float = 0.90,
         wl_max_ratio: float = 1.5,
         input_planes: int | None = None,
@@ -250,6 +333,11 @@ class DiskReplayBuffer:
         self._shard_size = int(shard_size)
         self._refresh_interval = int(refresh_interval)
         self._refresh_shards = int(refresh_shards)
+  # Validated HERE, not on the first refresh: see validate_shard_recency_exponent.
+        self._shard_recency_exponent = validate_shard_recency_exponent(
+            shard_recency_exponent,
+        )
+        self._report_shard_recency_draw()
         self._prefetch_rng = np.random.default_rng(int(rng.integers(0, 2**32 - 1)))
   # OFF in production; ON makes the draw sequence a pure function of the seed.
   #
@@ -814,9 +902,11 @@ class DiskReplayBuffer:
 
         The draw is ``_load_refresh_chunks`` itself, asked for the same
         ``2 * refresh_shards`` shards the old slice took: same shard COUNT,
-        same wall time, zero extra I/O, but weighted linearly in recency, so
-        the seeded rows land near the 2/3 mean percentile the steady state
-        already samples at instead of at 1.0.
+        same wall time, zero extra I/O, but recency-weighted, so the seeded
+        rows land at whatever mean percentile the steady state already samples
+        at instead of at 1.0. That percentile is 2/3 at the default recency
+        exponent and ``(α+1)/(α+2)`` in general; the point of routing the seed
+        through the same function is that it tracks the knob automatically.
 
         ONE call of ``2 * refresh_shards``, not two of ``refresh_shards``. Two
         calls are independent draws, so they can pick the same shard twice --
@@ -863,7 +953,10 @@ class DiskReplayBuffer:
         downstream records where its rows came from. ``mean_recency`` is the
         row-weighted mean of ``(rank + 1) / n_shards`` over the seeded shards,
         oldest-first. Read it as ~1.0 = newest-only (the pre-fix defect, back),
-        ~0.667 = the steady-state recency-weighted draw.
+        ~0.667 = the steady-state recency-weighted draw AT THE DEFAULT recency
+        exponent; under another exponent the reference is the
+        ``mean_rank_pct`` the ``[disk_buf] shard draw`` line printed at
+        construction, not 0.667.
         """
         ranks = np.asarray(picked, dtype=np.float64)
         rows = np.asarray(rows_per_pick, dtype=np.float64)
@@ -876,6 +969,37 @@ class DiskReplayBuffer:
             f"[disk_buf] shuffle seed: rows={seeded_rows} pool={self._shuffle_len()} "
             f"shards={len(picked)}/{n_shards} mean_recency={mean_recency:.3f} "
             f"(1.0=newest-only, {2 / 3:.3f}=steady-state refresh draw)",
+            flush=True,
+        )
+
+    def _report_shard_recency_draw(self) -> None:
+        """One line at construction proving WHICH recency draw this buffer runs.
+
+        ``print``, not ``log.info``, and that is not a style choice: the Ray
+        trial actor installs no logging handler, so INFO from this module
+        reaches no file and no console on the production path — a proof-of-
+        effect line that logs at INFO proves nothing, because its absence and
+        its presence look identical. Every other buffer-side observation on
+        this path (``[disk_buf] shuffle seed``, the empty-refresh alarm) is a
+        ``print`` for the same reason.
+
+        The numbers are analytic, not measured (see
+        :func:`shard_draw_decile_mass`), so this states the draw the buffer
+        WILL run rather than one it has run. ``mean_rank_pct`` is the mean
+        recency percentile of a drawn shard, ``(α+1)/(α+2)`` — 0.667 at the
+        production α = 1.0, which is the same 2/3 the ``shuffle seed`` line
+        prints as its steady-state reference, and 0.500 under a uniform draw.
+        """
+        alpha = self._shard_recency_exponent
+        deciles = shard_draw_decile_mass(alpha)
+        table = " ".join(f"{m:.4f}" for m in deciles)
+        mean_rank_pct = (alpha + 1.0) / (alpha + 2.0)
+        print(
+            f"[disk_buf] shard draw: recency_exponent={alpha:.4f} "
+            f"(1.0=linear/production, 0.0=uniform) "
+            f"decile_mass_oldest_to_newest=[{table}] "
+            f"newest_decile={deciles[-1]:.4f} oldest_decile={deciles[0]:.4f} "
+            f"mean_rank_pct={mean_rank_pct:.3f}",
             flush=True,
         )
 
@@ -973,8 +1097,11 @@ class DiskReplayBuffer:
         if n_pick <= 0:
             return []
 
-        weights = np.arange(1, n_shards + 1, dtype=np.float64)
-        weights /= weights.sum()
+  # `shard_paths` is oldest-first (iter_shard_paths sorts by shard index), so
+  # rank 1 is the oldest shard in the window. At the default exponent this is
+  # the same `np.arange(1, n+1)` vector it always was, drawn from the same rng
+  # in the same one call -- see shard_draw_weights.
+        weights = shard_draw_weights(n_shards, self._shard_recency_exponent)
         chosen_idxs = rng.choice(n_shards, size=n_pick, replace=False, p=weights)
 
         loaded: list[dict[str, np.ndarray]] = []

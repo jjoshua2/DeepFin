@@ -637,6 +637,7 @@ def _init_replay_buffers(
         shard_size=tc.shard_size,
         refresh_interval=tc.shuffle_refresh_interval,
         refresh_shards=tc.shuffle_refresh_shards,
+        shard_recency_exponent=tc.replay_shard_recency_exponent,
         draw_cap_frac=tc.shuffle_draw_cap_frac,
         wl_max_ratio=tc.shuffle_wl_max_ratio,
         sf_gap_priority_weight=tc.replay_sf_gap_priority_weight,
