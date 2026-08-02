@@ -24163,3 +24163,262 @@ metric is one query against them. At 63M params a full 25-point grid is 6.3 GB �
 - Corpus retention is not guaranteed — both corpora live under `/tmp/claude-1000/…`,
   30 GB that a cleanup would remove, and rebuilding them is additional cost not counted
   above.
+
+## ⚑⚑ VERDICT 2026-08-02 — VALUE FORGETTING CURVE: **THE VALUE HEAD HAS THE SAME TREADMILL SHAPE AS POLICY, AND IT IS SMALLER — 0.67× [0.54, 0.84] OF POLICY'S POST-EXIT DECAY ON THE SAME ROWS.** All four exiting row-sets hinge at their own window-exit (4/4, vs policy's 3/4 — value additionally hinges on S1 where policy failed the rate test), the never-exited control does the mirror image, and the five minima order by exit date. The decay is **RANKING, not calibration**: an in-sample affine refit removes **none** of it (`ΔE2_recal` = `ΔE2` to within noise) and concordance falls significantly on every exiting set while it RISES on the control. ⚠ The pre-registered gate returns **CANNOT RESOLVE by the letter** — NC-V3 required the weight-shuffled arm's concordance CI to contain 0.5 and it does not (C = 0.509–0.515) — but that bar was mis-specified by me: a random-features net is a weak, genuine predictor, the effect **replicates independently** in the value_teacher run (C = 0.522 LIVE / 0.534 OUT, measured before this rig existed and visible to me when I wrote the prereg), and the true null (whole-game label permutation) **passes on every arm on every set**.
+
+Rig: `scratchpad/value_forget_20260802/` (`PREREG.md`, `build_value_sets.py`,
+`sweep_value.py`, `analyse.py`, `followups.py`, `results.json`, `followups.json`,
+per-row dumps in `dumps/`). Companion to the policy curve at
+"VERDICT 2026-08-02 — FORGETTING CURVE" (this file) — **same rows, same checkpoints,
+same estimator family**, so every value-vs-policy contrast below is PAIRED per position.
+
+### THE ROWS ARE THE POLICY RUN'S ROWS, AND THE JOIN IS PROVEN
+
+The five era row-sets were reused **unchanged** — same shard bands, same 10,000 rows,
+same order, same `n_covered == n_legal` position-level filter, no resampling. Those npz
+banked no value fields, so `wdl_target` / `sf_wdl` / `search_wdl` / `has_*` were
+re-extracted for the same rows from the same shards.
+
+`(shard_index, game_id, ply_index)` is **not** a key — it collides inside a shard (2
+rows in S1) — so the join is made on the row's own `x`: a candidate is accepted only if
+its `175×8×8` float16 block is **bit-identical** (compared as `uint16`, no cast) to the
+block the policy set banked, ties among bit-identical duplicates broken by the ascending
+source-row order `build_sets.py` emitted. **50,000 / 50,000 rows bit-exact, injective on
+every shard.** Confirmed independently on a field never used to make the join: the banked
+`teacher` column (argmax `policy_target` over the legal mask), recomputed from the joined
+source row, agrees on **50,000 / 50,000**. All five sets: `is_network_turn` 10,000/10,000,
+`is_selfplay` 10,000/10,000, `has_search_wdl` 10,000/10,000, `has_sf_wdl` ≥ 9,970/10,000.
+
+### THE CURVE (mean `E2 = (S_arm − S_outcome)²`, lower = better; `S = p_W + 0.5·p_D`)
+
+| ckpt | S1 exit 60 | S2 exit 154 | S3 exit 199 | S4 exit 273 | S5 never |
+|---|---|---|---|---|---|
+| boot512 | 0.10691 | 0.11622 | 0.11857 | 0.12268 | 0.10927 |
+| iter025 | **0.10662** | 0.11520 | 0.11845 | 0.12258 | 0.10945 |
+| iter070 | 0.10754 | **0.11408** | 0.11700 | 0.12228 | 0.10966 |
+| iter122 | 0.10791 | 0.11415 | 0.11606 | 0.12188 | 0.10967 |
+| iter172 | 0.10850 | 0.11453 | **0.11544** | 0.11987 | 0.10934 |
+| iter218 | 0.10856 | 0.11511 | 0.11607 | **0.11927** | 0.10961 |
+| iter308 | 0.10946 | 0.11551 | 0.11673 | 0.12000 | 0.10914 |
+| iter360 | 0.10978 | 0.11568 | 0.11655 | 0.12031 | 0.10687 |
+| iter409 | 0.11007 | 0.11573 | 0.11697 | 0.12084 | 0.10607 |
+| iter425 | 0.11020 | 0.11615 | 0.11676 | 0.12102 | 0.10616 |
+| iter450 | 0.11014 | 0.11570 | 0.11655 | 0.12081 | **0.10579** |
+| iter475 | 0.11028 | 0.11590 | 0.11660 | 0.12103 | 0.10580 |
+| iter477 | 0.11048 | 0.11594 | 0.11671 | 0.12118 | 0.10609 |
+| iter478 | 0.11057 | 0.11607 | 0.11674 | 0.12133 | 0.10635 |
+| shuffled | 0.41861 | 0.42467 | 0.41783 | 0.41857 | 0.41915 |
+| const_prior | 0.18264 | 0.19596 | 0.18856 | 0.19339 | 0.18363 |
+
+Every column turns. The minima are **iter 25 / 70 / 172 / 218 / 450** against exits
+**60 / 154 / 199 / 273 / never** — non-decreasing in exit order, and `argmin(S5)` last.
+The concordance table has the same shape (S1 0.8158 → 0.8055, S5 0.8099 → 0.8197).
+
+### HINGE TEST (pre-registered, `c_pre` identical to the policy run, game-clustered)
+
+| set | `D_pre` (E2) | `D_post` (E2) | `D_post − D_pre` | raw | rate | **value hinge** | policy hinge |
+|---|---|---|---|---|---|---|---|
+| S1 exit 60 | −0.000284 [−0.00064,+0.00007] | **+0.003943** [+0.00317,+0.00472] | +0.004227 [+0.00332,+0.00513] | ✓ | ✓ | **YES** | no (rate failed) |
+| S2 exit 154 | −0.002066 [−0.00273,−0.00142] | **+0.001920** [+0.00124,+0.00259] | +0.003986 [+0.00294,+0.00506] | ✓ | ✓ | **YES** | yes |
+| S3 exit 199 | −0.003132 [−0.00380,−0.00246] | **+0.001299** [+0.00066,+0.00193] | +0.004431 [+0.00341,+0.00545] | ✓ | ✓ | **YES** | yes |
+| S4 exit 273 | −0.003405 [−0.00416,−0.00263] | **+0.002063** [+0.00145,+0.00269] | +0.005468 [+0.00438,+0.00657] | ✓ | ✓ | **YES** | yes |
+| **S5 never** | −0.000126 [−0.00084,+0.00058] | **−0.002795** [−0.00336,−0.00224] | −0.002670 [−0.00367,−0.00168] | ✗ | ✗ | **NO** | no |
+
+Control S5 is the mirror image on the value head exactly as on the policy head: flat
+while the material was still in the future, then **better** once it entered the window.
+
+Pooled `D_post` over S1–S4 = **+0.00231 in E2 units** — the same order as the
+value_teacher entry's selfplay LIVE-vs-OUT wedge (**+0.00400** [+0.00347, +0.00454]),
+which is the same metric in the same units measured on a different rig, different rows
+and a different contrast. The two agree that the value head's window-linked term is real
+and is a few thousandths of E2.
+
+### AMPLITUDE — value vs policy, PAIRED on the same rows and the same game clusters
+
+`D_post` converted to cp-equivalent via the label logistic (`1 cp = 1.3213e-3` in `S`,
+the constant the value_teacher entry already uses), applied to `ΔRMSE` only. **It is a
+presentation transform, not a measurement.**
+
+| set | value `D_post` cp-eq | policy `D_post` cp | ratio value/policy | frac of own best-ever gain (value \| policy) |
+|---|---|---|---|---|
+| S1 | +4.529 [+3.65,+5.39] | +5.674 [+4.36,+7.04] | 0.798 [0.587, 1.086] | 13.89 \| 53.06 ⚠ |
+| S2 | +2.141 [+1.39,+2.88] | +3.621 [+2.31,+4.93] | 0.591 [0.349, 0.998] | 0.899 \| 0.881 |
+| S3 | +1.443 [+0.73,+2.15] | +3.388 [+2.11,+4.72] | 0.426 [0.205, 0.788] | 0.415 \| 1.381 |
+| S4 | +2.251 [+1.59,+2.93] | +2.798 [+1.57,+4.03] | 0.804 [0.482, 1.514] | 0.606 \| 0.965 |
+| **pooled S1–S4** | **+2.591 [+2.22,+2.97]** | **+3.870 [+3.22,+4.51]** | **0.669 [0.536, 0.841]** | — |
+| S5 (control) | −3.223 [−3.86,−2.59] | −10.911 [−12.34,−9.50] | 0.295 [0.229, 0.370] | — |
+
+⚠ S1's dimensionless form is unusable **for both heads**: boot512 was trained on S1's
+pool, so its best-ever gain there is near zero (0.00029 E2 for value, 0.107 cp for
+policy) and both fractions blow up. The three unbiased sets give value/policy fractions
+of **1.02 / 0.30 / 0.63** — the same story as the cp-eq ratio, without the transform.
+
+**The pooled ratio's CI excludes 1.** On identical rows, identical checkpoints and
+identical spans, the value head gives back about **two-thirds** of what the policy head
+gives back after material leaves the window.
+
+### RANKING vs CALIBRATION — it is RANKING, on every exiting set
+
+| set (`c_pre`→478) | `ΔE2` | `ΔE2` after optimal affine refit | `ΔC` (concordance LOST) |
+|---|---|---|---|
+| S1 | +0.003943 [+0.00317,+0.00472] | **+0.003924** [+0.00311,+0.00474] | **+0.01033** [+0.00798,+0.01273] |
+| S2 | +0.001920 [+0.00124,+0.00259] | **+0.002039** [+0.00134,+0.00273] | **+0.00536** [+0.00355,+0.00715] |
+| S3 | +0.001299 [+0.00066,+0.00193] | **+0.001205** [+0.00055,+0.00185] | **+0.00315** [+0.00116,+0.00521] |
+| S4 | +0.002063 [+0.00145,+0.00269] | **+0.002030** [+0.00139,+0.00268] | **+0.00540** [+0.00355,+0.00734] |
+| S5 (control) | −0.002795 | −0.003303 | **−0.00872** [−0.01039,−0.00693] (C IMPROVES) |
+
+A two-parameter affine recalibration fitted **in sample** removes essentially none of the
+gap on any set — on S2 it makes it slightly worse. Concordance, which no monotone
+miscalibration can touch, falls significantly on all four exiting sets and rises on the
+control. **The value head forgets WHICH side stands better; it is not drifting in
+confidence.** This is the value-side twin of the policy finding "decay is RANKING, not
+mass, and the net becomes more confidently wrong", and it means any temperature /
+calibration / sharpness intervention aimed at the value head is aimed at the wrong thing
+— the same conclusion `value_head_calibrated_not_broken` and
+`value_head_converged_on_a_compressed_target` already reached from a different direction.
+
+### THE DISCRIMINATOR: value's turning points sit EARLIER than policy's
+
+| set | entry | exit | **value argmin** | policy argmin | value closer to |
+|---|---|---|---|---|---|
+| S1 | 0 | 60 | 25 | 25 | ENTRY (tie-ish: 25 vs 0 / 60) |
+| S2 | 7 | 154 | **70** | 122 | **ENTRY** |
+| S3 | 42 | 199 | 172 | 172 | EXIT |
+| S4 | 111 | 273 | 218 | 218 | EXIT |
+| S5 | 321 | never | 450 | 450 | n/a |
+
+On the two late sets value and policy turn at the same grid point and both sit at EXIT.
+On S2 the value minimum is one grid point earlier than policy's and lands nearer ENTRY —
+though iter070 (0.11408) and iter122 (0.11415) differ by 7e-5, i.e. the S2 value argmin
+is **not** robustly distinguishable between those two points at this grid resolution.
+The honest reading: the ordering condition passes, but the value head's evidence for
+"argmin ≈ exit" rather than "argmin ≈ entry" is weaker than policy's, and the 12-point
+grid locates every turning point only to ±25–50 iterations.
+
+### CONTROLS
+
+- **NC-V1 (gating, E2, PASS 5/5).** `shuffled` and `const_prior` are each significantly
+  worse than **all 14** lineage checkpoints on **all 5** sets (game-clustered paired CI
+  on every one of the 140 differences excludes 0).
+- **NC-V2 (reported, pre-declared NON-gating).** The policy prereg's "≥2× the largest
+  lineage value" bar: shuffled scores **3.41–3.82×** and passes anyway. The prereg states
+  in advance why it is not the gate for E2 (E2's floor is `Var(S_out) ≈ 0.183`, not 0).
+- **NC-V3 (gating, concordance) — FAILED, and the failure is mine, not the ruler's.**
+  I required `C(shuffled)` not to exceed 0.5 significantly. It does: **0.509–0.515**, CI
+  above 0.5 on S2 and S3. By the letter, the pre-registered verdict is **CANNOT
+  RESOLVE**. Adjudication, declared post-hoc:
+  - **NC-V4 (the true null) PASSES on every arm on every set.** Whole-game label
+    permutation (seed 7, block order permuted, within-game structure preserved) puts
+    every arm's `C` CI across 0.5 — shuffled 0.493–0.505, iter478 0.498–0.507. The
+    pairing, clustering and bootstrap machinery does not manufacture concordance.
+  - **The shuffled arm's small positive C REPLICATES independently.** The value_teacher
+    run measured `C(shuffled)` = **0.5224 [0.5164, 0.5289]** on LIVE and **0.5335
+    [0.5262, 0.5417]** on OUT, on different rows with a different estimator, and its own
+    NC3 was worded the same way and was equally violated there. A weight-permuted net is
+    a **random-features predictor**, not an information-free one: material count and
+    gross structure survive the permutation. **The bar was wrong, and it was already
+    falsified in a run I had read before writing the prereg.**
+  - Consequence: the E2-based hinge verdict, whose gate NC-V1 passed unanimously, stands.
+    The concordance results are used as a ranking-vs-calibration *split*, where the arms
+    compared are lineage checkpoints 30 points above chance, not as a resolution gate.
+- **Anchor (a) — my E2 estimator vs the published value_teacher numbers, on THEIR banked
+  dump.** boot512 `0.099529170` vs `0.099529170` (|Δ| 2.5e-13); iter478 `0.095104383` vs
+  `0.095104383` (|Δ| 5.7e-12); shuffled |Δ| 1.6e-9 against a pre-committed 1e-9 bar —
+  **fails the bar by 6e-10 absolute / 4.3e-9 relative, which is float32 summation order,
+  not a discrepancy.** The two decisive arms clear the bar by three orders of magnitude.
+- **Anchor (b) — my own forward pass vs theirs on the 1,091 rows shared between S5_never
+  and their LIVE set** (matched on `(shard_idx, game_id, ply_index)`; `wdl_target`
+  identical on all 1,091, which re-proves the join against an independently built row
+  list). Pre-committed `mean|ΔS| < 5e-4` **PASSES** on all three arms (7.4e-5 / 1.1e-4 /
+  2.3e-4). Pre-committed `max|ΔS| < 5e-3` **fails** (4.1e-3 / 6.5e-3 / 9.8e-3) — and that
+  bar was **below the instrument's own noise floor**, proven by intervention rather than
+  asserted: re-running **the same checkpoint on the same rows** at batch 128 instead of
+  256 moves individual rows by up to **1.6e-2 – 3.2e-2** with mean 9.6e-4. The
+  cross-run agreement is therefore *tighter than the net agrees with itself* under a
+  batch change. A max-|Δ| bar cannot be used on a bf16-autocast forward path.
+- **Batch sensitivity at the level that matters is negligible**: iter478 at 128 vs 256
+  moves mean `E2` by ≤1.0e-5, i.e. **≤0.011 cp-eq**, against hinge effects of 1.4–4.5
+  cp-eq. Pinned at **256** (the value_teacher setting) for every checkpoint and set.
+
+### PHASE SPLIT (secondary)
+
+`D_post` by piece count: **mid-game decays hardest on 4 of 5 sets**; openings decay
+LEAST on S2/S3/S4 (S1 +0.0036 open vs +0.0046 mid; S4 +0.0012 open vs +0.0028 mid). Same
+direction as the policy run, where "openings decay hardest" was likewise REFUTED.
+
+### WHAT THIS DOES TO THE AMPLITUDE PUZZLE
+
+The puzzle was: value degraded MORE than policy on the frozen deep-SF audit (+13.36 vs
++8.45 cp) yet the value memorisation wedge came out SMALLER (~4.7 cp vs policy's ~12.8).
+This rig says the wedge asymmetry is the **robust** half. On identical rows, identical
+checkpoints and a paired bootstrap, value's window-linked post-exit decay is **0.669×
+[0.536, 0.841]** policy's — smaller, with the CI excluding 1, and smaller again in the
+transform-free "fraction of own best-ever gain" form. Two independent rigs (the LIVE-vs-
+OUT wedge and this exit-timed hinge) now agree that the value head's **treadmill term is
+about two-thirds to one-third of policy's**.
+
+So the puzzle does not need a new mechanism; it needs the two numbers to stop being
+compared. **Value's degradation has the SAME SHAPE as policy's** — hinged at window
+exit, ordered by exit date, mirror-imaged on the never-exited control, and driven by
+ranking rather than calibration — and it is SMALLER on the window-linked component. The
+audit-set ordering (value worse) is therefore a claim about the **global** term, and it
+is made on the FEN-only path whose defects are already twice-documented (M10's 117/175
+zero planes; and the global-term entry's finding that the audit's excess decay is
+confined to iterations 0–218 and is a LEVEL effect). **A cp number off the frozen audit
+and a cp-eq number off stored planes are not the same ruler and must not be differenced.**
+
+### THE MISSING PIECE, AND IT IS CHEAP
+
+The policy side resolved global-vs-window-linked with `N1..N4` — bands no net in this
+lineage ever trained on — and found post-exit decay = **69% global + 31% window-exit**.
+**That decomposition does not yet exist for value.** S5_never cannot supply it: it is
+*inside* the window, so its in-window learning masks any global term (indeed value on S5
+improves). The exact next measurement, pre-registerable and needing no restart: run
+`build_value_sets.py` over the four `N*` bands, score the same 14 checkpoints' `wdl`
+head, and fit the same OLS slope. If value's global term is ~69% of its post-exit rate
+like policy's, the two heads share one defect and the remedy is the same one; if value's
+global share is much larger, the audit ordering is explained and value has an extra
+problem the policy head does not. Cost ≈ 4 GPU-minutes per arm on the existing rig.
+
+### VERIFIED (artifact for each)
+
+- Join: **50,000/50,000** rows bit-exact on `x` (uint16 compare), **50,000/50,000**
+  independent agreement on the never-used-for-joining `teacher` column, injective per
+  shard. `sets/summary.json`.
+- 63,084,128 unique-storage params asserted at load on all 15 model arms; head output
+  branch recorded (`logits` → softmax) in `dumps/meta.json`.
+- All 5 sets 100% `is_network_turn`, 100% `is_selfplay`, 100% `has_search_wdl`,
+  ≥99.70% `has_sf_wdl`; 10,000 rows / 2,504–2,776 games each.
+- `Var(S_out)` per set matches `E2(const_prior)` to 5 decimals on all 5 sets — the E2
+  estimator is arithmetically consistent with the label marginals.
+- Anchor (a): estimator reproduces published `E2` to 2.5e-13 / 5.7e-12 on the decisive
+  arms. Anchor (b): 1,091 shared rows, `wdl_target` identical, mean|ΔS| ≤ 2.3e-4.
+- Batch-composition noise floor measured by direct intervention (same net, same rows,
+  128 vs 256): mean|ΔS| 9.6e-4, max 1.6e-2–3.2e-2.
+- NC-V1 140/140 paired CIs; NC-V4 85/85 arm×set permutation CIs contain 0.5.
+
+### ASSUMED / NOT ESTABLISHED
+
+- **Pre-registered gate returns CANNOT RESOLVE**; the verdict above rests on NC-V1 plus
+  the post-hoc NC-V4 adjudication. Stated first, not buried.
+- **No arena, no Elo.** Per-row proper-score and concordance only.
+- **Selfplay rows only** — inherited from the policy rig (`sf_p0_regret` needs two
+  consecutive stored full-sim plies). Curriculum rows are absent from BOTH curves.
+- **The OUTCOME truth is the PID-handicapped, fast-ply-labelled selfplay result**, not
+  objective chess truth. It is the target the trainer uses; that is the point, and it is
+  not an objective-eval claim.
+- **The global/window-exit split is NOT measured for value** (above). Every `D_post`
+  here is the SUM of both terms, so "0.669× policy" is a ratio of sums, not of the
+  window-linked components alone.
+- **Cross-set ABSOLUTE levels are not comparable** (different generating nets, PID
+  difficulty, opening composition). Claims are WITHIN a set, ACROSS checkpoints or heads.
+- **The cp-eq transform is a presentation device.** The dimensionless
+  fraction-of-own-gain form is reported alongside precisely so the conclusion does not
+  depend on it; S1's dimensionless form is unusable (near-zero denominator).
+- **S1 sits inside boot512's own bootstrap pool**, biasing it toward showing decay; the
+  verdict needs ≥3 of 4 and S2–S4 carry no such bias.
+- **12-point grid** — argmins locate to ±25–50 iterations, and S2's value argmin is a
+  coin flip between iter070 and iter122 (Δ = 7e-5 E2).
+- Value forwards ran at batch **256**, policy forwards at batch **128**. No contrast
+  differences raw forwards across the two, and the value-side batch effect on mean E2 is
+  ≤0.011 cp-eq, but the two sweeps are not byte-identical instruments.
