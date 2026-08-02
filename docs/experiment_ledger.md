@@ -21428,3 +21428,292 @@ independence, so the CI comes out **too narrow**, in the direction that makes ev
 verdict look stronger. The pairing was verified to hold on the real evalA (177,256 rows /
 10,278 games) and evalB (101,804 rows / 5,266 games), so **no published interval changes**;
 what changed is that it is now enforced instead of assumed.
+
+## ⚑⚑ CALIBRATION (2026-08-02) — THE HELD-OUT POLICY CE RULER, IN UNITS OF SEARCH BUDGET
+
+**Not an experiment.** No training ran, nothing was changed, training stayed DOWN. This
+is an INSTRUMENT CALIBRATION, so it carries no kill threshold. What it carries instead
+is a set of checks that ABORT rather than warn, and an explicit list of what it does not
+establish.
+
+### Why
+
+Every number in the 08-02 screen is quoted in nats against a **seed floor** (+0.00187).
+A noise floor says an effect is RESOLVABLE. It cannot say whether it is LARGE. And the
+screen's only negative control is a label shuffle, which permutes `policy_target` across
+rows so the mass lands on moves that are **illegal** in the new position —
+`apply_policy_mask_to_logits` sends those logits to −1e9, so the control is destroyed by
+legality violation. It certifies wiring. It cannot price a defect that produces a
+**legal but wrong** target (a POV flip, an off-by-one move encoding, a target paired to
+the wrong ply of the same game), and this repo has shipped that shape.
+
+So the scale is built from real distributions with a **known ordering**: the same
+positions' targets at different search budgets, from the banked iter-478 net
+(`data/salvage/post_quarantine_20260801`).
+
+### The ladder — 4,568 rows / 260 games, reference `sims_512`
+
+`CE(A || B) = -sum_a B[a] log A[a]`: A is the prediction, B the reference, matching
+production's `soft_cross_entropy(logits, target)` order. `excess` subtracts the
+reference's own entropy (H = 0.56537).
+
+| sims | CE vs ref | **excess** | 95% CI (game-clustered) | top-1 vs ref | H(target) |
+|---|---|---|---|---|---|
+| 1 | 2.86141 | **2.29604** | [2.22355, 2.37110] | 0.3621 | 1.20248 |
+| 2 | 2.29785 | **1.73248** | [1.67229, 1.79289] | 0.4790 | 1.06229 |
+| 4 | 2.12297 | **1.55760** | [1.49883, 1.61565] | 0.5339 | 0.94477 |
+| 8 | 1.86970 | **1.30433** | [1.24186, 1.36600] | 0.5812 | 0.69574 |
+| 16 | 1.61729 | **1.05193** | [0.99196, 1.11076] | 0.6278 | 0.73760 |
+| 32 | 1.42610 | **0.86073** | [0.79527, 0.92743] | 0.6482 | 0.83009 |
+| 64 | 1.36761 | **0.80224** | [0.73808, 0.86491] | 0.6743 | 0.80414 |
+| 128 | 1.27815 | **0.71278** | [0.64610, 0.78073] | 0.7139 | 0.74876 |
+| **256** (production) | 1.16155 | **0.59618** | [0.52129, 0.67412] | 0.7712 | 0.66993 |
+| 512 (reference) | 0.56537 | 0.00000 | — | 1.0000 | 0.56537 |
+
+**MONOTONE** — excess falls strictly at every rung.
+
+**Where the net sits.** The net's raw policy has excess **0.79735** [0.74607, 0.85046],
+i.e. between `sims_64` (0.80224) and `sims_128` (0.71278), essentially AT the 64-sim
+rung. Production trains it toward a 256-sim target.
+
+### The conversion, and why there are two of them
+
+⚑ **The last interval is not a doubling estimate.** `excess` is distance to the
+reference, so the reference's own excess is 0 BY CONSTRUCTION and `256->512` inherits
+that zero. Quoting it would report a self-distance as a search effect — with a 1024-sim
+reference the same interval would read smaller. Only INTERIOR differences are used, and
+the log-linear fit excludes the reference rung.
+
+| interval | nats |
+|---|---|
+| 1->2 | +0.56356 |
+| 2->4 | +0.17488 |
+| 4->8 | +0.25327 |
+| 8->16 | +0.25241 |
+| 16->32 | +0.19119 |
+| 32->64 | +0.05849 |
+| 64->128 | +0.08946 |
+| **128->256 (production's anchor)** | **+0.11660** |
+| ~~256->512~~ | ~~+0.59618~~ INVALID, self-distance |
+
+log-linear fit, reference rung excluded: **0.19688 nats/doubling**.
+
+**A second estimator that needs no currency bridge.** The ladder above is
+target-to-target; the 08-02 effects are net-to-target. Converting between them assumes
+1 nat of target-to-target distance equals 1 nat of net-to-target loss, which is an
+assumption, not a measurement. `CE(net raw || sims_k)` has the net on the left and a
+search target on the right at every rung — the 08-02 currency exactly:
+
+| sims | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| excess | 0.812 | 0.649 | 0.607 | 0.489 | 0.380 | **0.276** | 0.316 | 0.381 | 0.541 | 0.797 |
+
+This one is **U-shaped with a minimum at `sims_32`**, and every rung is measured the same
+way so all intervals are valid. Its anchor `128->256` is **0.15960 nats/doubling**.
+(Read with care: CE penalizes the net for being flatter than a sharp target, so the
+minimum is partly sharpness-matching, not a claim that the net "is" a 32-sim player.)
+
+### The 08-02 effects, restated
+
+| effect | nats | **A: doublings (bridge-free)** | B: doublings (target-quality) |
+|---|---|---|---|
+| `A0_CONTROL` total degradation, 40 iters | +0.09227 | **0.58** | 0.79 |
+| staleness (`A3`-`A0`) | +0.08950 | **0.56** | 0.77 |
+| repeats (`A6`-`A0`) | +0.06030 | **0.38** | 0.52 |
+| breadth (`A2`-`A3`) | +0.00810 | **0.05** | 0.07 |
+| seed floor (`A0b`-`A0`) | +0.00187 | **0.01** | 0.02 |
+
+**To one significant figure, which is all this instrument supports: the entire
+40-iteration degradation the 08-02 control measured is worth about ONE doubling of
+search budget** — roughly the difference between a 128-sim and a 256-sim target. Breadth
+is worth about 1/20th of a doubling, which is a quantitative restatement of the ledger's
+"the more-distinct-positions lever is dead."
+
+⚑ **Direction, stated because it is easy to get backwards.** A SMALLER nats-per-doubling
+makes any fixed effect look like MORE doublings. The production (unpinned) ladder has the
+shallower slope, so it yields the LARGEST doubling-equivalents; a fixed-shape ladder
+would yield ~3x smaller ones. "Conservative" is the wrong word for it in this direction.
+
+### What was checked, and aborts if it fails
+
+- **Positions.** 4,568 rows / 260 games, sampled **BY GAME** out of a reconstruction of
+  the 08-02 screen's `evalA`. The reconstruction reproduces the ledger to the row:
+  **177,256 rows / 10,278 games, desync fraction exactly 0.000000**. (The 08-02 rig's
+  own manifest was session scratch and is gone; `evalA` was rebuilt from its stated
+  definition — the newest 100 desync-clean shards of the post-quarantine window — and
+  the exact match is the evidence it is the same set.)
+- **Game disjointness.** Calibration games ∩ `A0_CONTROL` train-pool games = **0**,
+  printed and asserted. A sweep of all **22,961** shards under `data/` found 177 shards
+  carrying a calibration game — **every one of them a copy of the live window** inside
+  `post_quarantine_20260801` (91) and `pre_restart_bundle_20260731` (86). No INDEPENDENT
+  historical pool carries these games, which is what holds them out of `A1_BIG` as well
+  as `A0`. `game_id` is a blake2b hash of (opening source, start FEN, full move trace,
+  result, ply count), so a shared id is the same game, not a recycled counter.
+- **Board reconstruction.** Shards store planes, not FENs, so every root had to be
+  decoded. Each rebuilt `CBoard`'s legal move set is checked against the shard's own
+  `legal_mask`: **0 mismatches on every row scored**, and a mismatch is a `SystemExit`.
+  Two real bugs were caught by exactly this check and would otherwise have been silent:
+  the four castling planes are **us-Q, us-K, them-Q, them-K** (not K/Q/K/Q), and
+  `CBoard.legal_move_indices()` speaks the FULL 4672 action space while `legal_mask` and
+  `policy_target` speak COMPACT lc0_1858.
+- **Net.** 63,084,128 trainable params by **unique storage** — exact.
+- **Ruler vs production.** `Trainer.eval_full_pass().policy_loss` = **1.1641179**; the
+  merged screen's bf16 probe **1.1640642** (delta **+5.37e-05**, inside its 1e-4 abort
+  bound and consistent with the documented first-call warm-up artefact); its fp32 probe
+  **1.1638396** (delta +2.78e-04, the documented structural bf16-vs-fp32 gap). **This
+  calibration's own plain-numpy CE on the identical 37,510 rows is 1.1638395 — 8.9e-08
+  from the screen's fp32 probe.** The ladder speaks production's `policy_loss`.
+
+### Realized search shape — printed from the run, not asserted
+
+`topk=16 c_scale=0.1 c_visit=50 c_visit_root=-1 c_scale_root=-1 q_visit_exp=1.0
+q_visit_exp_root=99 c_puct=2.5 fpu_reduction=1.2 vloss_weight=1 target_batch=0
+syzygy_in_search=true`, root Gumbel noise OFF.
+
+These are the TRAINING knobs (`gumbel_c_scale: 0.1`, linear root), not the arena's
+(0.025 / LOG root / topk 32). `network_turn.py` builds its `GumbelConfig` with exactly
+five keyword arguments and leaves every descent and root-transform knob at the dataclass
+default, so `GumbelConfig()`'s defaults ARE the RL shape — those sentinels are the
+production values, not placeholders.
+
+**Noise.** The ladder runs `add_noise=False`. That is a smaller deviation than it
+sounds: `gumbel_scale` decays to 0.0 by move 15, and **87.6%** of the calibration rows
+are past that, so the majority of the stored targets were themselves noise-free.
+
+### ⚑ The root is history-faithful; the leaves are not
+
+`CBoard` builds history only through `push_index`, and the moves that produced a stored
+row's 7 history slots are not on disk — so a rebuilt root carries `hist_len == 0`, and
+without history 117 of 175 planes go to zero
+(`frozen_rulers_score_fen_only_inputs`).
+
+The rig therefore does NOT re-encode the root. It computes the root's policy and WDL
+from **the row's own stored planes** and hands them to the search as
+`pre_pol_logits`/`pre_wdl_logits` — the same call shape `network_turn.py` itself uses.
+So the root prior, the Gumbel candidate set and the root value are bit-faithful. What
+stays degraded is LEAF encoding at depth d, which carries d real slots (rebuilt by
+`push_index` as the search descends) and 7−d empty ones.
+
+**Not reproduced, and stated rather than hidden:** production reuses the search tree
+across plies, so its 256-sim target is built on a WARM subtree while every rung here is
+a COLD search. That is the leading candidate explanation for the residual gap between
+the stored target and this rig's own 256-sim target.
+
+### ⚑⚑ THE VALIDITY CHECK THAT FAILS, AND IT IS THE IMPORTANT ONE
+
+Scored against production's **real stored `policy_target`** instead of this rig's own
+top rung, the ladder is **NOT monotone**. It improves to `sims_128` and then REVERSES:
+
+| sims | 1 | 8 | 32 | 64 | **128** | 256 | 512 | **net raw** |
+|---|---|---|---|---|---|---|---|---|
+| excess vs STORED | 2.114 | 1.061 | 0.654 | 0.640 | **0.623** | 0.804 | 1.480 | **0.583** |
+
+Two things follow, and neither is a nuisance:
+
+1. **Above ~128 sims this rig's extra search moves AWAY from the target production
+   actually stores.** So the `128->256` anchor is measuring rig degradation as much as
+   target quality, and the conversion above must be read as an order of magnitude.
+2. **The net's raw policy (0.583) is closer to production's stored target than ANY
+   searched rung this rig can produce (best 0.623).** The mechanism is legible: the raw
+   policy is the ONLY quantity here computed on the row's full stored planes, while
+   every search leaf is encoded from a history-less rebuilt board. That points at LEAF
+   HISTORY, not tree reuse, as the dominant rig-vs-production error.
+
+The stored target also sits **off** this ladder entirely: excess 1.223 against the
+rig's `sims_512` reference, between the rig's `sims_8` and `sims_16` rungs. The
+reference is "the best cold, history-degraded search this rig can build", not
+production's target. The ladder is internally valid; its ZERO POINT is not production's.
+
+### Rig reproducibility floor — measured here, not inherited
+
+A second full run of the same 640 rows in the same order at a different `--board-batch`
+(20 vs 32). ⚠ A different SEED is a null perturbation: with `add_noise=False` the search
+RNG is never drawn and the seed floor reads exactly 0.000000 — an instrument certifying
+itself.
+
+| sims | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 |
+|---|---|---|---|---|---|---|---|---|---|
+| \|delta excess\| | 0.026 | 0.055 | 0.042 | 0.081 | **0.093** | 0.063 | 0.023 | 0.028 | 0.061 |
+
+**The floor is 0.093 nats — the same size as the +0.0923 effect being converted**, and it
+is partly SYSTEMATIC, not noise: the larger batch reads higher at all 9 rungs, and the
+game-clustered CI excludes zero at `sims_8`, `16` and `32`. The `128->256` per-doubling
+itself reads 0.040 vs 0.074 across the two runs, CI on the difference
+[-0.180, +0.100] — **unresolved at 640 rows.**
+
+⚑ And neither batch shape is production's: the C17 entry measured production's realized
+`n_boards ~= 1` (23.5 of every 24 games per thread blocked on a pending Stockfish move).
+
+### Two mechanism findings that fall out of the ladder
+
+**1. `sims_1` is NOT "the raw policy with no search" — it is a value-based re-ranking of
+it.** The consistency check the design called for FAILS, loudly and informatively:
+`sims_1` excess **2.29604** vs net raw **0.79735**, |delta| **1.499 nats**, top-1
+agreement between them only **0.3343**. They are not averaged.
+
+The mechanism is confirmed, not assumed. `gumbel_c.py` builds the returned target in
+PYTHON from the C tree via `_completed_q_transform(..., root=True)` over ALL legal
+moves. At one visit `completed = q` for the single visited action and `mixed_value` for
+every other legal move, then min-max normalized and scaled by
+`q_scale = c_scale*(c_visit + max_visit) = 0.1*(50+1) = 5.1`. So
+`log p_sims1 - log p_raw` must take EXACTLY TWO values per row. Measured over 4,568 rows:
+**3,958 rows show exactly two levels, and the gap is 5.1000 on every one of them,
+min = max** — the formula confirmed to 15 digits off the data.
+
+At one visit `mixed_value = (root_Q + q_visited)/2`, so "visited action at the bottom"
+reduces exactly to `q_visited < root_Q`. That happens on **68.5%** of rows (mean H
+**1.716**); the other 31.5% collapse to near-one-hot (mean H **0.052**). Mean H(raw) is
+1.230, so the mixture nearly cancels in the mean — the target is not uniformly softened,
+it is bimodally shattered.
+
+**2. The value term's weight GROWS along the ladder, but far less than the formula
+suggests, and pinning it makes every rung WORSE.** `max_visit` at the root is nowhere
+near the sim count, because sequential halving spreads visits (320 rows):
+
+| sims | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| realized `max_visit` | 1 | 1 | 2 | 3 | 4 | 6 | 16 | 32 | 63 | 126 |
+| realized `q_scale` | 5.10 | 5.10 | 5.20 | 5.30 | 5.41 | 5.60 | 6.62 | 8.19 | **11.34** | 17.64 |
+
+So 3.46x across the whole ladder (not the 6x that `max_visit = sims` would give), and
+essentially FLAT across sims 1..32.
+
+A SHAPE CONTROL isolates it: the improved policy is rebuilt from the **same searched
+tree** with sigma pinned to the reference rung's per-row value, so nothing about the
+search changes — only the transform. (Pinning via config would also change
+`gss_score_and_halve`, i.e. which candidates survive, and would not be a shape control at
+all.) The rebuild is GATED: it must reproduce the runner's own shipped `probs` to 2e-6 or
+the run aborts, otherwise the pinned arm would differ in two terms rather than one.
+
+| sims | 1 | 8 | 32 | 128 | 256 |
+|---|---|---|---|---|---|
+| excess, unpinned | 2.072 | 1.259 | 0.785 | 0.646 | 0.481 |
+| excess, pinned to reference sigma | 7.665 | 4.315 | 1.960 | 1.123 | 0.658 |
+| reshaping | -5.593 | -3.056 | -1.175 | -0.477 | -0.178 |
+
+**Pinning makes every rung worse, at every budget.** The production transform is
+self-scaling — little search means little value weight — and that self-scaling keeps each
+rung's target CLOSER to the reference than a fixed large sigma would. The worry that the
+ladder's fall is partly the reference drifting into value-dominance is therefore not
+supported; a fixed-shape ladder would be STEEPER (0.42-1.18 nats/doubling vs 0.07-0.27),
+so the production ladder gives the LARGEST doubling-equivalents. Stated with the
+direction of pinning: rungs were pinned UP to the reference's sigma; pinning the
+reference DOWN is a different control, not run.
+
+### What this does NOT establish
+
+- **It is cross-entropy, not Elo.** A target-quality scale in search units is a far
+  better unit than raw nats, but no game was played and nothing here is a strength
+  measurement. `arena_standard.py` remains the only instrument that answers that.
+- **The zero point is not production's target** (previous section). The conversion is
+  order-of-magnitude.
+- **The rig floor is the same size as the effect being converted**, and partly
+  systematic in a knob (`board-batch`) whose production value neither run used.
+- **Leaf encodings are history-degraded**; only the root is faithful. Tree reuse is not
+  reproduced at all.
+- **UNCHECKED, and "unchecked" is not "clean":** whether the ladder's shape survives at
+  production's `n_boards ~= 1`; whether a 1024-sim reference would move the anchor;
+  whether the sims<=128 region alone would give a different conversion (the
+  stored-referenced ladder's slope there is 0.017/doubling near its turning point, which
+  would imply ~5 doublings rather than ~1 — a factor-of-5 spread this rig cannot
+  resolve); and whether any of this predicts Elo.
