@@ -22886,6 +22886,279 @@ its state, the attribution axis is `refresh_lag` in seconds against the
 reference lag, `confound` reads `UNMEASURED` with `n=0`, and the command refuses
 to return 0 while it does.
 
+## 2026-08-03 — B6/B7/B1 + K5 of the wave-3/4 audit: a wedged inference slot is evicted and stops reading as throughput, walker virtual loss is released when the evaluator raises, and the shared broker refuses a transport it cannot serve
+
+**Not an experiment.** No config key, no loss weight, no target semantics, no
+change to a single training row on the current settings. Two of the four items
+are on the production selfplay path but neither alters what is computed when
+nothing fails; the third is behind a flag that is OFF; the fourth is a guard.
+Recorded here because three of them are the house signature defect — a value
+accepted and then silently ignored — and because B7 changes what a *failed*
+search leaves behind, which is a real state change to a persistent object.
+
+Source: `scratchpad/code_audit_20260803/SHARED_BROKER_AUDIT.md` (B1, B6, B7) and
+`WORKER_AUDIT.md` (K5), CPU-only repros, plus three reviewer follow-ups the #321
+and #322 merges left in COVERAGE.md's deferred table (task #137).
+
+**B6 — a dead slot was handed out forever, and its failures were counted as
+served throughput. PRODUCTION-REACHABLE.** Production builds
+`MultiSlotInferenceClient` at 4 slots per worker
+(`distributed_inference_slots_per_worker: 4`) with `request_timeout_s`
+defaulted to 30 s. `_release_client` ran from a `finally` and did two
+unconditional things: put the slot straight back on the availability queue, and
+increment `lifetime_requests`/`lifetime_positions`/`slot_requests[idx]` — for a
+request that raised. Measured with 3 live slots and 1 whose shared memory never
+exists (`sb_multislot_wedge_accounting.py`), 12 requests of 2 rows:
+
+```
+12 sequential requests: 9 ok, 3 failed, wall=2.45s
+per-slot request counts   : [3, 3, 3, 3]
+per-slot total roundtrip_s: [0.02, 0.0, 0.0, 2.43]
+stats['lifetime_requests']  = 12   (actually served: 9)
+stats['lifetime_positions'] = 24  (actually evaluated: 18)
+stats keys naming errors/failures/timeouts: []
+```
+
+⚑ **The severity is diagnosis, not correctness.** The failing request does
+raise and `worker.py` resets the client. What was broken is that the ONLY
+production surface — the 60-second `broker client stats:` line — read exactly
+one per-slot array, `slot_requests`, in which the dead slot is `3` like every
+healthy one. `slot_roundtrip_s` carried the 100× separation that identifies the
+wedge instantly; it was computed, exported in `stats`, and **read by nothing**.
+Meanwhile `pos_s` and `rows_per_req` came from `lifetime_positions`, so a broker
+stall printed full throughput for rows no model ever saw.
+
+Now: per-slot consecutive-failure tracking with quarantine after N (default 2)
+consecutive failures, re-probed on an exponential backoff (5 s doubling to 60 s,
+reset by any success) — **a probe, not an execution**, because a transient stall
+must not permanently shrink the worker's capacity. `lifetime_positions` and
+`lifetime_legal_*` count only rows a model evaluated; `lifetime_requests` stays
+ATTEMPTS and `lifetime_served_requests`/`lifetime_failed_requests` split it, so
+every key means what its name says. The worker's line now reads `slot_served`
+(so `slots_active` can read 3/4), prints `slot_rt_ms_max` always, and prints
+`failed_req=` / `slots_quarantined=` only when non-zero — same rule as
+`stale_responses_rejected`, so the healthy line is unchanged and any hit is a
+grep result.
+
+⚑ **The early return is NOT a blind spot, and an earlier draft of this entry
+said it was.** `delta_requests` counts ATTEMPTS, so a window in which every
+request failed still reaches the log; the gate is unchanged from main. What is
+true is narrower: once served/failed exist as separate counters, the obvious
+refactor is to key the gate on `delta_served`, and THAT would go silent for
+exactly the stall the line exists to show. So the gate is left alone and
+`test_a_window_where_every_request_failed_still_logs` pins it against that
+refactor. The first draft shipped a defensive `or delta_failed > 0` clause which
+the reviewer showed was provably inert (reverting it passes all five tests); the
+clause is removed and the claim corrected here.
+
+**B7 — virtual loss leaked permanently whenever the evaluator raised.
+PRODUCTION-REACHABLE on the UCI/arena (ruler) path.** The pairing is split
+across two C calls with a network call in between:
+
+```
+_, path, legal, term_q = tree.walker_descend_puct(...)   # APPLIES vloss
+pol, wdl = evaluator.evaluate_encoded(xs)                # <-- can raise
+tree.walker_integrate_leaf(path, legal, ...)             # REMOVES vloss
+```
+
+`WalkerPool._descend_until_done` had no `try/finally` around that span.
+`tree.remove_vloss_path` existed, was exported, and was **called from nowhere in
+`chess_anti_engine/`**. The tree is caller-owned and outlives the failed run
+(`SearchWorker._tree` persists across chunks and plies — the warm-tree reuse
+PLAY_PATH F1 documents), so the leak biased selection away from those subtrees
+for the rest of the game, invisibly, since nothing reads virtual loss back out.
+The raising evaluator is the documented one: this path calls a broker client and
+`TimeoutError` is I1's own failure mode. Banked, `sb_cwalk_vloss_leak_on_eval_error.py`:
+
+```
+--- control: evaluator never fails -> vloss must return to zero ---
+  leaked virtual loss: total=0 over 0 nodes   (expect 0 / 0)
+--- evaluator raises TimeoutError after the first few batches ---
+  [0..4] leaked: 48 / 32 / 16 / 16 / 16     (re-run: 48, 8, 8, 16, 8)
+```
+
+⚑ **Three is not the total — the Gumbel C path is a FOURTH instance, already
+mitigated by a different strategy.** `MCTSTree_start_gumbel_sims` memsets the
+whole `virtual_loss` array at the start of every search when `vloss_weight > 0`,
+and its own comment names this exact hazard ("a search ABANDONED between start
+and the final continue ... leaves its penalties behind"). A leak there is
+therefore cleared by the NEXT search on that tree rather than at the point of
+failure. **That strategy is not available to the three sites fixed here**:
+WalkerPool and MultiGpuPucvPool run N threads against ONE shared tree, so a
+blanket memset would wipe a concurrent walker's in-flight vloss — which is why
+those need the targeted per-path release. Recorded so "all three sites" is never
+later read as "three is the total".
+
+Fixed at **all three** unmitigated sites with the same shape, not only the
+reproduced one:
+`WalkerPool._descend_until_done`, `PucvChunker.run` (audit called this PLAUSIBLE
+and never ran it — it is now reproduced and fixed), and
+`MultiGpuPucvPool._pipeline_until_done`. The release lives in one place,
+`chess_anti_engine/mcts/vloss.py`, which is the first caller of
+`remove_vloss_path` in the package. After: **0 leaked on 5/5 failed runs, and
+0 on the clean control** — the control is load-bearing, because a cleanup that
+fired unconditionally would also read as "no leak" while corrupting a healthy
+search. Only the UN-integrated tail is released; `walker_integrate_leaf` removes
+vloss for what it consumes, and releasing twice would push a concurrent walker's
+in-flight count down past the C floor at 0.
+
+**B1 — the shared broker served DENSE_F32 to every request regardless of mode.
+LATENT (flag OFF), and the fix is a refusal, not an implementation.**
+`SharedSlotBroker._process_parallel` never read `slot.request_mode`. Because
+`_InferenceSlot` aliases the regions (`input`/`input_bf16_bits` share
+`input_offset`; `policy`/`policy_i32`/`policy_u16` share `policy_offset`), a
+bf16-bits payload was read as float32, the model ran on garbage, and the client
+decoded a dense f32 answer as bf16 — measured as an in-range plausible WDL and a
+policy of alternating `3.85e-13` / `0.488` where every entry should have been
+`~0.51`. No exception, no counter, no log line. **Both production transports
+send modes with no dispatch here** (`MultiSlotInferenceClient` hardcodes
+`supports_compact_root_policy` and `supports_input_bf16_bits` to True), so the
+only mode that worked is the one no production client sends — and every existing
+shared-broker test set `request_mode = _MODE_DENSE_F32`, i.e. the only working
+mode was the only tested one.
+
+⚑ **Deliberately NOT implementing the other two modes.** The shared broker is
+OFF (`distributed_inference_shared_broker: false`, yaml:862) and the per-trial
+`SlotBroker` implements all three. Adding untested dispatch to a dead path buys
+nothing; converting silent corruption into the existing release-for-retry path
+(→ loud client-side `TimeoutError`) buys the whole finding. The refusal releases
+only the offending slots (a mixed batch still serves its dense clients), logs
+throttled at 30 s for the same reason the no-model branch is, and increments
+`unsupported_mode_requests` — the count is NOT throttled, because a refusal
+nobody can count is indistinguishable from one that never fires.
+
+⚑ **That counter initially had NO reader — the signature defect inside the fix
+for the signature defect** (reviewer finding). It is now appended to the shared
+broker's own 10-second serve-loop report, non-zero only. That is the only
+process that can read it: it lives on `SharedSlotBroker`, so the worker's
+`broker client stats:` line is a different process entirely and cannot. Fixing
+that exposed a second instance in the same line — `_total_positions` is summed
+BEFORE `_process_parallel`, so refused rows counted as served pos/s, which is
+B6(c) verbatim in the sibling path. `_process_parallel` now returns the refused
+ROW count and the serve loop subtracts it.
+
+⚑ **THE B6(c) FAMILY IS OPEN, NOT CLOSED — there is a THIRD instance, in the
+PRODUCTION broker, and it is deliberately NOT fixed here.**
+`SlotBroker.serve_forever:2662-2663` adds `sum(s.batch_size for s in ready)` to
+`metrics["positions"]` BEFORE calling `_process_batch`, which releases slots
+unanswered on three paths — `BrokerModelUnavailable` (`:2054`), a generic batch
+failure (`:2073`), and malformed legal metadata (`:2254`) — so the per-trial
+broker's own positions metric counts rows it declined to evaluate, exactly like
+the two instances above. Pre-existing, untouched by this PR, and left alone
+because it is the live production broker and this PR's readout window is already
+spoken for; **tracked as coordinator task #142 for the next inference-adjacent
+PR.** Recorded so the paragraph above is never read as "the family is closed":
+the pattern is a serve loop that counts work at DISPATCH time and a callee that
+can decline it, and this repo now has three known instances of it.
+
+**K5 — the third plane-count leg.** `_check_manifest_compat` validated the
+manifest against ITSELF; #321 added client-vs-manifest at the chokepoint a
+production selfplay worker actually reaches. The CLI arg
+`--inference-slot-input-planes` (argparse default 146 = v1, production 175) was
+still in no comparison. Its value comes from `config["input_extra_features"]`
+(`distributed_runtime.py:890`) while the manifest's comes from
+`model_cfg.input_extra_features` (`:384`) — two sources of truth nothing
+compared. Now all three must agree, client leg first (its message names the
+width the segment was actually built with), and the CLI leg is inert when no
+slot name is configured so a local-inference worker is not killed for a flag
+that sizes nothing.
+
+**Task #137 follow-ups, all three taken.**
+
+- ⚑ **`test_both_slot_prefix_derivations_agree` was a THIRD copy of the
+  formula.** It re-derived `cae{V}-{h:08x}` by hand, so sabotaging either
+  implementation left it green — the exact failure mode the test was written to
+  prevent. There is now ONE derivation, `inference.trial_slot_prefix()`;
+  `distributed_runtime._trial_slot_prefix` and
+  `SharedSlotBroker._register_new_trial` both delegate; and the test calls the
+  REAL `_register_new_trial` and reads the segment names it actually created. A
+  second test performs the sabotage and requires the launcher side to follow.
+- **CORRECTION to the #321 entry above.** It states the plane-count guard covers
+  "all 7 evaluator-sourced call sites". That was **7 of the 8** — `puct_c.py`'s
+  LEAF in-place branch (`get_input_buffer` → `batch_encode`, directly below the
+  guarded ROOT branch) had no guard. It has one now, and a test reaches it via a
+  wide-root/narrow-leaf evaluator, since the root check would otherwise fire
+  first.
+- **F1's last rung.** `_run` computed `expect_planes` from the same
+  `input_extra_features` it passed to the encoders, so pinning that argument at
+  the top of `_run` moved the expectation with it and every test stayed green —
+  an expectation derived from the value under test. `run()` now computes it and
+  passes it down, and the test performs that exact mutation and requires a
+  Failure.
+
+**Deploy.** Nothing here is live until a restart, and nothing here needs one
+urgently: on a healthy fleet every change is a no-op. B7's behaviour differs only
+after an evaluator raises; B6's counters differ only after a request fails; B1 is
+unreachable at the current flag; K5 fires only on a skew that would already be
+returning all-zero policy/WDL. The one operator-visible change on a healthy run
+is the new always-on `slot_rt_ms_max=` field in `broker client stats:`.
+
+**No yardstick, no kill rule, because there is no hypothesis** — this is
+remediation of measured defects, and each one's proof is its repro going from
+red to green plus a mutation that turns the new test red. Mutation results are in
+the PR body.
+
+⚑ **METHOD, from the mutation sweep — an end-state total cannot detect a
+floored double-decrement.** 22 mutations were run; 21 died immediately and one
+SURVIVED: "release the WHOLE batch instead of the un-integrated tail".
+`remove_vloss_path` floors at 0, so releasing a path whose vloss
+`walker_integrate_leaf` had ALREADY removed still ends at 0 on an idle tree —
+every assertion of the form "sum the virtual loss afterwards and require 0"
+passes under the defect. It is not harmless: the decrement lands on shared
+ancestors and steals a CONCURRENT walker's in-flight vloss, biasing selection
+back toward the subtree everyone is already in, which is exactly the state
+virtual loss exists to prevent. The test now counts the release CALLS
+(`released N paths for M un-integrated leaves`) instead of summing the result,
+and the mutation dies. **Generalise: when the quantity under test is clamped,
+the clamp is a censoring instrument — measure the operation, not the residue.**
+
+⚑ **CORRECTION to B6(a) above, made before the PR was reviewed.** The entry
+(and the audit) describe the wedged slot as costing "every fourth request a
+30 s stall, forever". Tracing the escape path shows that is bounded in
+production by something else: `play_batch` has NO exception handling, so a
+broker `TimeoutError` propagates out of `_dispatch_selfplay_one_shard` and
+`_reset_inference_client` nulls and rebuilds the entire client. **In a
+sequential shape the reset fires before a second strike and the new quarantine
+never engages.** What it does cover is the concurrent shape — 32 selfplay
+threads against 4 slots, so many requests are in flight when a slot wedges and
+several fail before the unwind reaches the reset. The eviction is kept because
+it costs nothing on a healthy run and the forever-wedge returns the moment any
+future call site swallows a per-request failure, but **the eviction is not what
+makes B6 worth fixing: the accounting and the visibility are.** That matches the
+audit's own severity ("not a correctness bug ... it is a diagnosis bug"), which
+this entry had drifted away from while describing the fix.
+
+⚑ **SEMANTIC DRIFT in two existing metrics, and one counter that is not
+cumulative.** Splitting served from attempted moved denominators without
+renaming the fields, so a reader comparing a `broker client stats:` line across
+this deploy is comparing two definitions:
+
+- `slot_req_skew` and `slots_active` now denominate on **served** requests
+  (`slot_served`), not attempts. That is the point — a wedged slot taking
+  attempts and serving nothing used to read as active — but a skew value from
+  before the restart is not comparable to one after it.
+- `avg_rows_per_request` / `rows_per_req` now divide by **served** requests, so
+  the value rises slightly on any window that contained failures. It was
+  previously deflated by counting attempts in the denominator and (separately)
+  inflated by counting unserved rows in the numerator.
+- `failed_req_total` is per-CLIENT-OBJECT, not per-session: `_reset_inference_client`
+  nulls and rebuilds the client, so the total restarts at 0 on every broker
+  recovery. Read the `+N` delta, not the total, when judging how bad a stall was.
+
+⚑ **DISCLOSURE — this entry was amended in place after its independent review
+(#325 comment 5172094351, verdict CONFIRM with five non-blocking findings), on
+the #324 precedent that a PR's own not-yet-merged append may be corrected rather
+than appended to.** What changed, so the diff is not the only record: the
+early-return claim above was WRONG and is rewritten (the reviewer proved the
+clause it described was inert); the B1 refusal counter is no longer described as
+observable-in-principle because it now has an actual reader; the Gumbel fourth
+instance was added; the mutation count 21 -> 22; this drift note is new. A
+later amendment (delta re-review, comment 5172343930) added the third-instance
+paragraph naming `SlotBroker.serve_forever:2662` and task #142 — docs only, no
+code or test changed with it. The
+B6(a) scope correction further up was made BEFORE review, by me, and is
+unrelated to these findings. Nothing measured changed — no number in this entry
+was re-derived, and none moved.
 #### WAVE-4 PR G — the polar-convergence INSTRUMENT (M4-1 / audit I3), plus M4-2 and M4-3
 
 **Not training-affecting.** No optimizer numerics change: `aurora_polar_steps`,
@@ -22969,18 +23242,70 @@ matrix group in the arm and reproduces ~0.02-0.06 in the control".
    squares by sv_ratio and 2.9x by orth_err. Not my call — recorded for the A/B
    coordinator, who owns the arm.)
 
+**AMENDED IN PLACE, 2026-08-03, PR #327 review round — my first restatement
+of this gate repeated the very slippage it was correcting.** I replaced B8's
+retracted Gaussian bar with centres taken from B3's 16-tensor GROUP MEANS
+(square `sv_ratio` 0.021 -> ~0.25, `orth_err` 0.108 -> ~0.044, "few-percent
+band"), while the column this PR ships samples ONE designated tensor — the
+first square of the Aurora group, index 0. The independent reviewer measured
+that tensor through the production `_aurora_update` and it reads **0.0273 /
+0.2114 at 8 steps** and **0.3275 / 0.0614 at 12** — `orth_err` at 1.95x the
+centre I pre-committed. Reproduced here exactly. **A correctly installed
+instrument on a correctly applied arm would have failed my gate, for the wrong
+reason.**
+
+Note the failure class precisely, because it is not the usual one: this was
+never *a gate that cannot fail*. The primary binary leg
+(`aurora_polar_steps_configured` 8 vs 12) was sound as written and remains
+untouched. What was wrong is that the CONFIRMING leg was stated in a statistic
+the column does not compute, so it would have fired on the wrong hypothesis —
+"the arm did not take effect" — when the true reading was "the arm took effect
+and this tensor is simply not the group average".
+
+Why one tensor is not the group: across the 16 square tensors at PE-8 the
+spread is **0.0005-0.0455 on `sv_ratio` (94x)** and **0.0794-0.2114 on
+`orth_err` (2.7x)**. No single-tensor column can be held to a mean of that
+population. The **arm/control RATIO on the SAME designated tensor** is the
+statistic that survives the choice: PE-12/PE-8 on `sv_ratio` spans
+**11.40-12.36 across every possible designation — a 1.08x spread**. That is
+why the confirming leg below is primarily a paired ratio and only secondarily
+an absolute.
+
+All of it is now pinned as shipped tests rather than as prose
+(`test_the_designated_square_tensor_reads_its_own_pinned_values`,
+`test_the_group_mean_is_not_a_bar_a_one_tensor_column_can_meet`,
+`test_the_paired_arm_over_control_ratio_survives_the_choice_of_tensor`), and
+the `polar_convergence` docstring carries the designated-tensor numbers instead
+of the group means it first quoted.
+
 **Restated instrument gate for the A8 A/B, pre-committed here** (fp32 CPU
-references; production runs fp16 on CUDA, which B3 measured as reproducing fp32
-to 3 decimals on the production row, and live momentum is not the 478 snapshot,
-so read these as centres with a few-percent band):
+references on `checkpoint_000478`; production runs fp16 on CUDA, which B3
+measured as reproducing fp32 to 3 decimals on the production row, and live
+momentum is not the 478 snapshot — so the ABSOLUTES below are expectations, and
+only the ratio and the binary leg are bars):
 
 * **PRIMARY, binary:** `aurora_polar_steps_configured` == 12.0 on every arm row
   and == 8.0 on every control row, with `aurora_polar_sv_samples` == 2.0 and
   `aurora_polar_sv_errors` == 0.0. If this does not hold the change did not
-  reach the optimizer and no verdict is readable.
-* **CONFIRMING, quantitative, median over the first 5 live iterations:**
-  square `sv_ratio` 0.021 -> ~0.25 and `orth_err` 0.108 -> ~0.044; rect
-  `sv_ratio` 0.39 -> ~1.00 and `orth_err` 0.037 -> ~0.000.
+  reach the optimizer and no verdict is readable. **Unchanged by this
+  amendment — it was always the sound leg.**
+* **PRIMARY CONFIRMING — PAIRED, arm/control on the same designated tensor,**
+  medians over the first 5 live iterations of each arm:
+  * square `sv_ratio` ratio **>= 8.0** (measured centre 12.07, full
+    across-tensor range 11.40-12.36, so the bar clears the loosest designation
+    by 1.4x);
+  * square `orth_err` ratio **<= 0.70** (measured centre 0.42, range
+    0.290-0.544);
+  * rect `sv_ratio` in the ARM **>= 0.99** and `orth_err` **<= 0.005** — an
+    absolute, and admissible as one because PE-12 drives every rectangular
+    tensor to exactly 1.0000 / 0.0000 on the production path (all 4 sampled).
+    ⚑ B8's original ">=0.99 on the matrix group" bar is reachable on the RECT
+    group and NOT on the square group; that is the second half of the
+    correction recorded above.
+* **SUPPORTING, not a bar** (expected designated-tensor readings, quoted so a
+  wildly different row is noticed): square 0.0273 / 0.2114 in the control and
+  0.3275 / 0.0614 in the arm; rect 0.3714 / 0.0381 in the control and
+  1.0000 / 0.0000 in the arm.
 * The kill/success rules of B8 (held_ce_excess, inw/oow top1, cost bar) are
   unchanged and are not this PR's to set.
 

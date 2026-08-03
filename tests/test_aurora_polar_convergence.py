@@ -23,6 +23,13 @@ bar. Four properties are:
    and `train_steps` -> `TrainMetrics` -> `_train_metrics_dict` carries every
    key. Drop the splat anywhere in that chain and `test_train_steps_*` or
    `test_progress_report_*` fails.
+5. **The column's own statistic is pinned separately from the group mean.**
+   B3's table is a MEAN over 16 square tensors; the column samples ONE. Those
+   differ by 1.95x on `orth_err`, and the first version of this PR's ledger
+   gate quoted the mean at a one-tensor column -- a bar a correctly installed
+   instrument would have failed for the wrong reason (PR #327 review). The
+   designated tensor's own readings and the across-tensor spread are pinned
+   here so that gate cannot be re-derived from the wrong population.
 
 The fixture is spectra, not tensors, because the Polar Express iterate is
 orthogonally equivariant (`scripts/extract_aurora_momentum_spectra.py` states
@@ -42,6 +49,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from chess_anti_engine.train import aurora as aurora_mod
 from chess_anti_engine.train import trainer as trainer_mod
 from chess_anti_engine.train.aurora import (
     AuroraWithAuxAdam,
@@ -160,6 +168,70 @@ def test_polar_convergence_reproduces_addendum_ii_b3(shape_class: str, steps: in
     ref_ratio, ref_orth = _B3_REFERENCE[(shape_class, steps)]
     assert sv_ratio == pytest.approx(ref_ratio, abs=_B3_TOLERANCE)
     assert orth_err == pytest.approx(ref_orth, abs=_B3_TOLERANCE)
+
+
+# --- 1b. the statistic the COLUMN computes, which is not the group mean ------
+
+# The DESIGNATED square tensor -- group index 0, the one `step()` samples --
+# through the production `_aurora_update`, on checkpoint_000478's momentum.
+# These are the numbers a live row carries. They are NOT `_B3_REFERENCE`'s
+# group means, and the gap is the whole reason this block exists.
+_DESIGNATED_SQUARE: dict[int, tuple[float, float]] = {
+    8: (0.0273, 0.2114),
+    12: (0.3275, 0.0614),
+}
+
+
+def _designated_square() -> torch.Tensor:
+    spectra, shapes = _load_fixture()
+    square = sorted(name for name, shape in shapes.items() if shape[0] == shape[1])
+    return _reconstruct(spectra[square[0]], shapes[square[0]], 12345)
+
+
+@pytest.mark.parametrize("steps", sorted(_DESIGNATED_SQUARE))
+def test_the_designated_square_tensor_reads_its_own_pinned_values(steps: int) -> None:
+    # PR #327 review, blocking finding. The ledger gate first quoted B3's
+    # 16-tensor MEANS (0.0209 / 0.1082 at 8 steps) as centres for a column that
+    # samples ONE tensor. This tensor reads 0.2114 on `orth_err` at 8 steps --
+    # 1.95x that centre -- so a correctly installed instrument on a correctly
+    # applied arm would have failed the gate for the wrong reason.
+    reading = polar_convergence(_production_update(_designated_square(), steps))
+
+    expected = _DESIGNATED_SQUARE[steps]
+    assert reading[0] == pytest.approx(expected[0], abs=_B3_TOLERANCE)
+    assert reading[1] == pytest.approx(expected[1], abs=_B3_TOLERANCE)
+
+
+def test_the_group_mean_is_not_a_bar_a_one_tensor_column_can_meet() -> None:
+    # State the blocking finding as an assertion rather than as prose, so a
+    # future reader cannot re-derive the gate from B3's means without this
+    # failing first.
+    at8 = _DESIGNATED_SQUARE[8]
+    assert at8[1] > _B3_REFERENCE[("square", 8)][1] * 1.5
+
+    squares = _real_momentum()["square"]
+    orth_at8 = [polar_convergence(_production_update(m, 8))[1] for m in squares]
+    ratio_at8 = [polar_convergence(_production_update(m, 8))[0] for m in squares]
+    assert max(orth_at8) / min(orth_at8) > 2.0
+    assert max(ratio_at8) / min(ratio_at8) > 50.0
+
+
+def test_the_paired_arm_over_control_ratio_survives_the_choice_of_tensor() -> None:
+    # Why the ledger gate's confirming leg is a RATIO on one tensor rather than
+    # an absolute. Measured across all 16 squares: PE-12/PE-8 on `sv_ratio`
+    # spans 11.40-12.36 (1.08x) while the PE-8 absolute spans 94x. The gate's
+    # bar is >= 8.0, which the loosest tensor here clears by 1.4x.
+    squares = _real_momentum()["square"]
+    paired = [
+        polar_convergence(_production_update(m, 12))[0]
+        / polar_convergence(_production_update(m, 8))[0]
+        for m in squares
+    ]
+
+    assert max(paired) / min(paired) < 1.20
+    assert min(paired) > 8.0
+    assert min(paired) == pytest.approx(11.40, abs=0.05)
+    assert max(paired) == pytest.approx(12.36, abs=0.05)
 
 
 def test_the_reference_actually_discriminates_eight_from_twelve_steps() -> None:
@@ -424,6 +496,49 @@ def test_train_steps_carries_polar_stats_into_train_metrics(
     # multiplied by, so that LR has to be on the same row.
     assert metrics.aurora_uw_lr > 0.0
     assert metrics.aurora_uw_count == pytest.approx(2.0)
+
+
+def test_a_failed_sample_is_counted_and_named_but_an_oom_is_re_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    # PR #327 review, non-blocking note, taken. `RuntimeError` is both what
+    # torch.linalg raises on a non-converged decomposition AND what an
+    # exhausted allocator raises. Counting the first is right; counting the
+    # second would turn "the run is out of memory" into an incremented integer
+    # and let the step proceed. So OOM propagates, everything else is counted
+    # WITH its exception class in the log -- a bare counter is not diagnosable.
+    trainer = _make_trainer(tmp_path)
+    _stub_losses(trainer, monkeypatch)
+    opt = cast(AuroraWithAuxAdam, trainer.opt)
+
+    def boom_linalg(update: torch.Tensor) -> tuple[float, float]:
+        del update
+        raise RuntimeError("linalg.svd: failed to converge")
+
+    monkeypatch.setattr(aurora_mod, "polar_convergence", boom_linalg)
+    with caplog.at_level("WARNING"):
+        trainer._run_optimizer_step(
+            step_sums={}, step_acc_sums={}, step_opt_stats={},
+            buf=cast(Any, None), batch_size=1,
+            collect_optimizer_stats=True,
+            batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
+        )
+    assert opt.last_polar_stats["aurora_polar_sv_errors"] == pytest.approx(2.0)
+    assert opt.last_polar_stats["aurora_polar_sv_samples"] == pytest.approx(0.0)
+    assert "RuntimeError" in caplog.text
+
+    def boom_oom(update: torch.Tensor) -> tuple[float, float]:
+        del update
+        raise torch.cuda.OutOfMemoryError("CUDA out of memory")
+
+    monkeypatch.setattr(aurora_mod, "polar_convergence", boom_oom)
+    with pytest.raises(torch.cuda.OutOfMemoryError):
+        trainer._run_optimizer_step(
+            step_sums={}, step_acc_sums={}, step_opt_stats={},
+            buf=cast(Any, None), batch_size=1,
+            collect_optimizer_stats=True,
+            batch_iter=iter([{"x": torch.zeros((1, 4, 8, 8))}] * trainer.accum_steps),
+        )
 
 
 def test_progress_report_carries_the_polar_and_uw_columns() -> None:

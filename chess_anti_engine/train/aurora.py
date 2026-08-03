@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable
 from itertools import repeat
@@ -262,12 +263,21 @@ def polar_convergence(update: Tensor) -> tuple[float, float]:
     table's real-momentum reference values at 8 and 12 polar steps.
 
     A perfectly converged polar factor reads ``(1.0, 0.0)``. Production's
-    `aurora_polar_steps: 8` reads ~0.02 / ~0.11 on the square `out_proj`
-    momentum of `checkpoint_000478`: the iteration's amplification budget is
-    short of what that momentum's conditioning needs (M4-1), so the update it
-    applies is a partially-preconditioned step rather than an orthogonal one.
-    Nothing measured this for the life of the run, which is why the number is
-    an instrument here and not a fix.
+    `aurora_polar_steps: 8` reads **0.0273 / 0.2114** on the DESIGNATED square
+    tensor of `checkpoint_000478` (group index 0, the tensor `step()` actually
+    samples): the iteration's amplification budget is short of what that
+    momentum's conditioning needs (M4-1), so the update it applies is a
+    partially-preconditioned step rather than an orthogonal one. Nothing
+    measured this for the life of the run, which is why the number is an
+    instrument here and not a fix.
+
+    ⚑ Those are ONE TENSOR's readings, not the 16-tensor group means
+    (0.0209 / 0.1082) that `MODEL_OPT_AUDIT.md` B3 tabulates. Across the 16
+    square tensors the PE-8 spread is 0.0005-0.0455 on ``sv_ratio`` (94x) and
+    0.0794-0.2114 on ``orth_err`` (2.7x), so a group mean is NOT a bar this
+    column can be held to. The arm/control RATIO on the same designated tensor
+    is the stable statistic -- 11.40-12.36 on ``sv_ratio`` across every
+    possible designation, a 1.08x spread -- and is what the ledger gate uses.
 
     Both readings are invariant to a positive rescale of ``update``, so the
     trailing ``sqrt(rows/cols)`` factor and any ``aurora_uw_floor`` scaling
@@ -573,8 +583,24 @@ class AuroraWithAuxAdam(torch.optim.Optimizer):
   # decomposition fails to converge. Counted rather than raised: this is a
   # diagnostic, and `aurora_polar_sv_errors` on the row is what says the
   # reading is missing instead of merely zero.
-                            except (RuntimeError, ValueError):
+  #
+  # OOM is NOT that. `RuntimeError` is also what an exhausted allocator
+  # raises, and this is a diagnostic allocating a float64 copy of a
+  # 512-wide matrix on a card the training step is already filling --
+  # swallowing that would turn "the run is out of memory" into a silently
+  # incremented counter and let the step proceed into whatever fails
+  # next. Re-raise it, and name the class for everything else so a
+  # non-zero counter is diagnosable from the log instead of being a
+  # bare integer.
+                            except torch.cuda.OutOfMemoryError:
+                                raise
+                            except (RuntimeError, ValueError) as exc:
                                 polar_errors += 1
+                                logging.getLogger(__name__).warning(
+                                    "polar-convergence sample failed on a %s tensor "
+                                    "(%s: %s); reporting aurora_polar_sv_errors",
+                                    shape_class, type(exc).__name__, exc,
+                                )
                     if self._coalesce_finite_checks:
                         finite_checks.append(torch.isfinite(update).all())
                         pending_updates.append((param, update))
