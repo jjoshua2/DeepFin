@@ -888,6 +888,9 @@ static PyObject* PyCBoard_get_occ_black(PyCBoard *self, void *closure) {
 static PyObject* PyCBoard_get_zobrist_hash(PyCBoard *self, void *closure) {
     return PyLong_FromUnsignedLongLong(self->board.hash);
 }
+static PyObject* PyCBoard_get_transposition_key(PyCBoard *self, void *closure) {
+    return PyLong_FromUnsignedLongLong(cboard_transposition_key(&self->board));
+}
 static PyObject* PyCBoard_get_hist_len(PyCBoard *self, void *closure) {
     return PyLong_FromLong(self->board.hist_len);
 }
@@ -954,7 +957,10 @@ static PyGetSetDef PyCBoard_getset[] = {
     {"kings", (getter)PyCBoard_get_kings, NULL, "Kings bitboard", NULL},
     {"occ_white", (getter)PyCBoard_get_occ_white, NULL, "White occupancy", NULL},
     {"occ_black", (getter)PyCBoard_get_occ_black, NULL, "Black occupancy", NULL},
-    {"zobrist_hash", (getter)PyCBoard_get_zobrist_hash, NULL, "Zobrist hash of current position", NULL},
+    {"zobrist_hash", (getter)PyCBoard_get_zobrist_hash, NULL, "Zobrist hash of current position (repetition key; EP-blind by design)", NULL},
+    {"transposition_key", (getter)PyCBoard_get_transposition_key, NULL,
+     "Search transposition key: zobrist_hash plus the EP file when an EP capture "
+     "is available. Two boards sharing it have the same legal move set.", NULL},
     {"hist_len", (getter)PyCBoard_get_hist_len, NULL, "Number of history entries", NULL},
     {"hash_stack_len", (getter)PyCBoard_get_hash_stack_len, NULL, "Number of hash stack entries", NULL},
     {"ply", (getter)PyCBoard_get_ply, NULL, "Half-moves from game start", NULL},

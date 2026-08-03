@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import logging as _logging
 import os
+import sys as _sys
+import time as _time
 from collections.abc import Sequence
 from typing import Literal, cast, overload
 
@@ -181,8 +183,11 @@ def reset_duplicate_stats() -> None:
 # start_gumbel_sims with them raises a cryptic mid-search TypeError. CANONICAL
 # definition (uci/search.py imports it) so the guard covers EVERY C-path consumer —
 # selfplay/training and eval call run_gumbel_root_many_c directly, not just UCI.
-# See _mcts_tree.c PyInit (ABI_VERSION).
-_REQUIRED_MCTS_ABI = 2
+# See _mcts_tree.c PyInit (ABI_VERSION). Raised to 3 for the audit-W1 fix: an
+# un-rebuilt .so still keys the transposition table on the ep-blind repetition
+# hash and copies donor child action lists unverified, which injects illegal
+# moves into the tree. That failure is SILENT, so it gets the loud guard.
+_REQUIRED_MCTS_ABI = 3
 
 # Mirrors the VLOSS_MODE_* defines in _mcts_tree.c (205-206). LEGACY scores a
 # pending leaf as a loss (parallel-PUCT pessimism); VIRTUAL_MEAN scores it at
@@ -230,6 +235,77 @@ def _mark_pipeline_tree_warned() -> None:
 def _mark_legal_bf16_temp_warned() -> None:
     global _LEGAL_BF16_TEMP_WARNED
     _LEGAL_BF16_TEMP_WARNED = True
+
+
+# Audit W2. Counts reused-root candidates rejected because their child set did
+# not cover the actions we were about to search. Process-cumulative so a run can
+# be asked "did this ever fire?" — a guard nobody can observe is a guard nobody
+# knows is dead. Read with root_coverage_miss_count().
+_ROOT_COVERAGE_MISSES = 0
+_ROOT_COVERAGE_WARNED = False
+
+
+def _warn_root_coverage_miss() -> None:
+    global _ROOT_COVERAGE_MISSES, _ROOT_COVERAGE_WARNED
+    _ROOT_COVERAGE_MISSES += 1
+    if not _ROOT_COVERAGE_WARNED:
+        _ROOT_COVERAGE_WARNED = True
+        _log.warning(
+            "gumbel: discarded a reused root whose child set did not cover the "
+            "search actions (audit W2); rebuilding the root. Further "
+            "occurrences are counted, not logged."
+        )
+
+
+def root_coverage_miss_count() -> int:
+    """Reused roots rejected by the coverage check since process start."""
+    return _ROOT_COVERAGE_MISSES
+
+
+# Operator surface for the two audit-W1/W2 guards. A counter no production path
+# reads is the same defect the guards exist to fix — a value accepted and then
+# silently ignored — so the shared C-path entry point emits a line whenever
+# either guard has fired since the last report.
+#
+# stderr, NOT stdout: this path is also the UCI engine's search, whose stdout is
+# the protocol channel; an unsolicited line there desynchronises the GUI. Both
+# production consumers capture stderr into their logs — the selfplay workers via
+# `stderr=subprocess.STDOUT` (`tune/distributed_runtime.py`) and the trial itself
+# via `> "$LOG" 2>&1` (`scripts/train.sh`) — and the trial actor has no logging
+# handler, so a `_log.info` would reach nothing.
+#
+# Zero cost when the guards are silent: the interval check is one monotonic()
+# compare, and the counters are not even read until it elapses.
+_TT_HEALTH_INTERVAL_S = 60.0
+_tt_health_next_check = 0.0
+_tt_health_reported = (0, 0)
+
+
+def _report_guard_health() -> None:
+    global _tt_health_next_check, _tt_health_reported
+    now = _time.monotonic()
+    if now < _tt_health_next_check:
+        return
+    _tt_health_next_check = now + _TT_HEALTH_INTERVAL_S
+
+    try:
+        reject = int(_mcts_tree_ext.tt_stats()["reject"])
+    except (AttributeError, KeyError, TypeError):
+        return  # pre-fix .so; the ABI guard above already covers that case
+    current = (reject, _ROOT_COVERAGE_MISSES)
+    if current == (0, 0) or current == _tt_health_reported:
+        return
+    _tt_health_reported = current
+    print(
+        f"[mcts] search guards FIRED since process start: "
+        f"tt_donor_reject={current[0]} root_coverage_miss={current[1]}. "
+        "tt_donor_reject>0 means the transposition key no longer implies the "
+        "legal move set (audit W1); root_coverage_miss>0 means a carried tree "
+        "root was discarded (audit W2). Neither corrupts the search — both mean "
+        "something upstream changed.",
+        file=_sys.stderr,
+        flush=True,
+    )
 
 
 def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]:
@@ -378,9 +454,14 @@ def run_gumbel_root_many_c(
     if _abi < _REQUIRED_MCTS_ABI:
         raise RuntimeError(
             f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
-            "(missing the start_gumbel_sims root-scale args); rebuild the C extension: "
-            "python setup.py build_ext --inplace"
+            "(missing the start_gumbel_sims root-scale args and/or the audit-W1 "
+            "transposition-key fix); rebuild the C extension: "
+            "python3 scripts/build_production_extensions.py"
         )
+  # Operator surface for the audit-W1/W2 guards. Here rather than in a caller
+  # because this is the choke point EVERY C-path consumer goes through —
+  # selfplay, training-time eval and UCI all land on this function.
+    _report_guard_health()
     if int(vloss_mode) == VLOSS_MODE_VIRTUAL_MEAN:
         # `tree_gumbel_select_child` (_mcts_tree.c:2941-2944) mirrors
         # `tree_select_child`'s VIRTUAL_MEAN accounting for the CHILD term and
@@ -411,7 +492,6 @@ def run_gumbel_root_many_c(
             "run_gumbel_root_many (mcts/gumbel.py) when volatility_q_scale/"
             "volatility_fpu are non-zero"
         )
-    import time as _time
     _t_init = 0.0
     _t_prepare = 0.0
     _t_gpu = 0.0
@@ -707,12 +787,21 @@ def run_gumbel_root_many_c(
             _reused = False
             if root_node_ids is not None and root_node_ids[i] >= 0:
                 rid = root_node_ids[i]
-                if tree.is_expanded(rid) and (
-                    allowed_root_indices_batch is None
-                    or _expanded_root_covers_actions(tree, rid, legal_idx)
+                # The coverage check runs on EVERY reuse, including selfplay
+                # (audit W2). It used to be short-circuited by
+                # `allowed_root_indices_batch is None`, which selfplay always
+                # is — so the only path that carries a tree across plies was
+                # the only path the check never ran on. A reused root whose
+                # child set is missing an action we are about to search makes
+                # tree_gumbel_collect_leaf bail at depth 1 (`child_id < 0`),
+                # silently spending the whole simulation on the root.
+                if tree.is_expanded(rid) and _expanded_root_covers_actions(
+                    tree, rid, legal_idx
                 ):
                     root_ids[i] = rid
                     _reused = True
+                elif tree.is_expanded(rid):
+                    _warn_root_coverage_miss()
 
             if not _reused:
                 rid = tree.add_root(1, float(root_qs[i]))
