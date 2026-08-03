@@ -21734,3 +21734,101 @@ real lineage, so its noise floor, its per-iteration cost on the production net,
 and the hinge's amplitude on these columns are all unmeasured. Nothing here is
 evidence about forgetting; it is the instrument and its wiring proofs. The first
 five iterations after arming are a shakedown, not a readout.
+---
+
+## 2026-08-03 — F11: the trainer's private policy-index LUT moves to `torch_maps`; the holdout ruler id MOVES, the MEASUREMENT does not
+
+**VERDICT: CODE-ONLY, no experiment.** Not a training-affecting change in the
+sense rule 1 covers — it changes no target, no loss weight, no sampling and no
+number the trainer computes — but it has one **operator-visible side effect**
+that this file exists to record, so it gets an entry rather than a silent merge.
+
+**What changed.** `train/trainer.py` defined `_policy_index_lut` /
+`_policy_index_lut_for`, a module-private `lru_cache` over
+`COMPACT_TO_FULL_POLICY` / `FULL_TO_COMPACT_POLICY` — exactly the duplicate
+`moves/torch_maps.py` exists to prevent (CLAUDE.md: "Use the shared
+device-cached lookups in `moves/torch_maps.py` — don't add per-module
+`lru_cache` copies"), found by the 2026-08-03 play-path code audit as F11. It
+was also strictly worse than the shared one: it keyed on `target.device.index`
+raw, without `torch_maps._device_key`'s cuda-index normalisation, so
+`torch.device("cuda")` and `torch.device("cuda", 0)` allocated two separate
+copies of BOTH tables for the same physical GPU.
+`Trainer._policy_accuracy_stats._align_index` now calls
+`torch_maps.policy_index_remap_table(source_width, dst_width, device)` once,
+instead of carrying its own copy of the width -> table dispatch. Routing through
+the existing helper rather than just swapping the two `lut = ...` lines is the
+review outcome recorded under "the MEASUREMENT did not move" below, and it is
+why this entry's ids differ from the ones circulated during review.
+
+### ⚑ OPERATOR-VISIBLE SIDE EFFECT: one best-model handover at the deploying restart
+
+```
+full_pass  3a336231d9b5fce5 -> 025b6ef8e537ffcb
+sampled    9f9c078dd590db13 -> 408bcad98fb150b4
+```
+
+`_align_index` is a closure inside `_policy_accuracy_stats`, one of the frames
+`eval_ruler_id_for`'s `call_closure` walks from `_compute_metrics`, and
+`digest_source` hashes SOURCE — so a value-identical refactor still moves the
+fingerprint, and it moves BOTH ids (the frame is in both `measured_by` lists).
+`holdout_generation` therefore bumps at the next restart and the running trial
+**hands over its best-model record**, adopting the current `test_loss` instead
+of comparing against the pre-restart one. Expect it; do not read the handover as
+a regression.
+
+**RESTART-GATED — and not for the reason it is tempting to give.** The id is
+NOT read once when the trainer is constructed: `eval_ruler_id_for` is called
+inside `_compute_metrics`, on **every evaluation**. The gate is that a running
+process holds the module source it imported at start, so `digest_source` keeps
+hashing the OLD code until the process restarts onto this checkout. Same
+conclusion — merging changes nothing on the live run, the handover happens at
+the next restart and not before — but a file that exists to stop exactly this
+class of wrong-mechanism claim should not contain one. Judge the deploy from the
+first post-restart `progress.csv` row (`holdout_generation` incremented exactly
+once).
+
+**The MEASUREMENT did not move, and this one is proved rather than argued** —
+the fifth declared false positive of this shape, and the standard the earlier
+ones (PR #283 and its review follow-up) did not meet. The first version of this
+entry claimed that standard and did not meet it either, which is worth recording
+because it is the failure this file keeps cataloguing: the review of #318 took
+the round-trip test at its word ("would catch the two directions having been
+silently swapped"), then **transposed the two branch bodies in `_align_index`**
+so `full -> compact` called `compact_to_full_index` and vice versa. Both symbol
+names were still present, so the source-grep test was blind, the round-trip test
+operates on the two shared tables directly and cannot see which one the trainer
+calls in which branch, and **all four tests passed**. Only the ruler-id pin
+noticed — a source hash, i.e. a tripwire, not a semantic control.
+
+Closed rather than re-worded, because the ids were moving in this PR anyway and
+so the refactor was free exactly once: the duplicated width dispatch is deleted,
+`_align_index` calls `torch_maps.policy_index_remap_table`, and there is no
+longer a pair of branch bodies to transpose. What now backs the claim:
+
+1. the deleted private helper's exact body is reconstructed and required to
+   match the shared tables on dtype, device, shape and **element-wise** values;
+2. BOTH the pre- and post-refactor `_align_index` bodies are run over in-range,
+   negative and out-of-range ids in both width directions, and required to agree
+   on the mapped indices **and** the validity masks (so the refactor itself is
+   pinned as value-identical, including the `mapped >= 0` term the
+   compact -> full branch used not to carry — the `compact_to_full` table's
+   minimum is asserted to be >= 0, which is why unifying them was safe);
+3. the width-pair -> table binding is asserted by **behaviour**, so swapping the
+   two returns inside `policy_index_remap_table` fails. Verified by running that
+   mutation: two tests go red.
+
+Same `torch.long`, same source arrays, same values. So `test_loss` means the
+same thing on both sides of the handover and records stay comparable across it —
+which is the only reason a moved ruler id is acceptable at all.
+
+**Revert point.** None taken: no weights, optimizer, PID or replay state is
+touched, and reverting is `git revert` plus one more handover at the following
+restart. `PRODUCTION_FULL_PASS_RULER` / `PRODUCTION_SAMPLED_RULER` in
+`tests/test_holdout_ruler_identity.py` are updated in the same commit, per that
+test's own maintenance contract (cited by name, not line number, because the
+line number has already rotted once in this entry's lifetime).
+
+**Confounds.** Split out of PR #317 (the play-path audit's safe subset)
+precisely so #317 stays ruler-neutral; it is the only change in its PR, so a
+handover observed at a restart carrying both PRs is attributable here and
+nowhere else.

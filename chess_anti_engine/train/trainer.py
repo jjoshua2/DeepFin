@@ -9,7 +9,6 @@ import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -53,12 +52,8 @@ from chess_anti_engine.train.target_builder import (
     rebuild_categorical_target_in_arrays,
     rebuild_sf_targets_in_arrays,
 )
-from chess_anti_engine.moves import (
-    COMPACT_POLICY_SIZE,
-    COMPACT_TO_FULL_POLICY,
-    FULL_TO_COMPACT_POLICY,
-    POLICY_SIZE,
-)
+from chess_anti_engine.moves import POLICY_SIZE
+from chess_anti_engine.moves import torch_maps
 from chess_anti_engine.replay.augment import (
     maybe_mirror_batch_arrays,
     maybe_mirror_samples,
@@ -231,31 +226,6 @@ class _SqrtReleaseLRScheduler:
         last_lr = [float(v) for v in state_dict.get("_last_lr", base_lrs)]
         self._last_lr = last_lr if len(last_lr) == len(base_lrs) else list(base_lrs)
         self.last_epoch = int(state_dict.get("last_epoch", self.last_epoch))
-
-
-@lru_cache(maxsize=16)
-def _policy_index_lut(
-    lut_name: str,
-    *,
-    device_type: str,
-    device_index: int | None,
-) -> torch.Tensor:
-    if lut_name == "full_to_compact":
-        values = FULL_TO_COMPACT_POLICY
-    elif lut_name == "compact_to_full":
-        values = COMPACT_TO_FULL_POLICY
-    else:
-        raise ValueError(f"unknown policy index LUT {lut_name!r}")
-    device = torch.device(device_type) if device_index is None else torch.device(device_type, device_index)
-    return torch.as_tensor(values, dtype=torch.long, device=device)
-
-
-def _policy_index_lut_for(target: torch.Tensor, lut_name: str) -> torch.Tensor:
-    return _policy_index_lut(
-        lut_name,
-        device_type=target.device.type,
-        device_index=target.device.index,
-    )
 
 
 def _metadata_strings(
@@ -2916,21 +2886,34 @@ class Trainer:
         def _align_index(
             target: torch.Tensor, *, source_width: int, dst_width: int,
         ) -> tuple[torch.Tensor, torch.Tensor]:
-            if source_width == dst_width:
+  # ONE dispatch, in torch_maps, which owns both the width->table binding and
+  # the ONE device cache for these tables (CLAUDE.md: "Use the shared
+  # device-cached lookups in moves/torch_maps.py -- don't add per-module
+  # lru_cache copies"). This module used to carry a private lru_cache over
+  # the same two arrays, keyed on target.device.index RAW, so
+  # torch.device("cuda") and ("cuda", 0) allocated two separate copies of
+  # both tables; torch_maps._device_key normalises that away.
+  #
+  # The width dispatch lives there too, deliberately: duplicating it here
+  # meant the branch->direction binding could be swapped with both symbol
+  # names still present, which no test in this repo could see (a reviewer
+  # swapped the two branch bodies and every value-identity test passed --
+  # only the ruler-id source hash noticed, and a source hash is a tripwire,
+  # not a semantic control). With one dispatch there is no pair of branches
+  # to swap, and the binding is asserted directly in
+  # tests/test_trainer_policy_index_lut.py.
+            lut = torch_maps.policy_index_remap_table(
+                source_width, dst_width, target.device,
+            )
+            if lut is None:  # widths already agree
                 return target, torch.ones_like(target, dtype=torch.bool)
-            if source_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
-                lut = _policy_index_lut_for(target, "full_to_compact")
-                valid = (target >= 0) & (target < POLICY_SIZE)
-                safe_target = target.clamp(0, POLICY_SIZE - 1).to(torch.long)
-                mapped = lut.index_select(0, safe_target)
-                return mapped, valid & (mapped >= 0)
-            if source_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
-                lut = _policy_index_lut_for(target, "compact_to_full")
-                valid = (target >= 0) & (target < COMPACT_POLICY_SIZE)
-                safe_target = target.clamp(0, COMPACT_POLICY_SIZE - 1).to(torch.long)
-                mapped = lut.index_select(0, safe_target)
-                return mapped, valid
-            raise ValueError(f"policy index width {source_width} is incompatible with logits width {dst_width}")
+            valid = (target >= 0) & (target < source_width)
+            safe_target = target.clamp(0, source_width - 1).to(torch.long)
+            mapped = lut.index_select(0, safe_target)
+  # `full_to_compact` stores -1 for "no compact move"; `compact_to_full` is
+  # total (min 0), so the extra term is a no-op on that direction rather
+  # than a behaviour change -- asserted, not assumed.
+            return mapped, valid & (mapped >= 0)
 
         def _policy_width_from_batch(*keys: str) -> int:
             for key in keys:
