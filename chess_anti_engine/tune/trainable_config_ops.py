@@ -492,26 +492,6 @@ _CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
     "era_probe_rows",
 })
 
-# `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is
-# already built), but IS applied during startup/resume before the trainer
-# exists — so it is restart-required for a running trial like the rest.
-#
-# The gate_* keys are the same shape: `PromotionGate` is constructed ONCE from
-# the launch config (trainable.py), so a live edit to any of them would sit in
-# the config dict doing nothing until the next restart. `gate_games` is the
-# dangerous one — it raises at startup, so an operator editing it live gets
-# neither the old behaviour nor the error, just silence. Listing them here
-# turns that silence into a WARNING on the iteration the edit lands, which is
-# the whole difference between "restart required" and "quietly ignored".
-# Window shape is deliberately construction-time as well: changing
-# window_iters mid-window redefines what a half-filled window means.
-#
-# `gate_threshold` / `gate_interval` / `gate_mcts_sims` are NOT here any more
-# (audit G3-11): they are DEAD, not construction-only, and the two classes are
-# disjoint by design -- a restart applies a construction-only key and REFUSES a
-# dead one, so listing a dead key here would tell an operator to restart into a
-# hard error. `gate_games` stays: it is not in the dead set, because it raises
-# with its own message from `gate_config_from_dict`.
 # The same class as the replay/probe sets above, found one file further out
 # (audit T2): keys whose only consumer runs in ``train_trial`` BEFORE the
 # iteration loop. The classification had been finished for the replay buffer
@@ -574,6 +554,26 @@ _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "pause_file",
 })
 
+# `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is
+# already built), but IS applied during startup/resume before the trainer
+# exists — so it is restart-required for a running trial like the rest.
+#
+# The gate_* keys are the same shape: `PromotionGate` is constructed ONCE from
+# the launch config (trainable.py), so a live edit to any of them would sit in
+# the config dict doing nothing until the next restart. `gate_games` is the
+# dangerous one — it raises at startup, so an operator editing it live gets
+# neither the old behaviour nor the error, just silence. Listing them here
+# turns that silence into a WARNING on the iteration the edit lands, which is
+# the whole difference between "restart required" and "quietly ignored".
+# Window shape is deliberately construction-time as well: changing
+# window_iters mid-window redefines what a half-filled window means.
+#
+# `gate_threshold` / `gate_interval` / `gate_mcts_sims` are NOT here any more
+# (audit G3-11): they are DEAD, not construction-only, and the two classes are
+# disjoint by design -- a restart applies a construction-only key and REFUSES a
+# dead one, so listing a dead key here would tell an operator to restart into a
+# hard error. `gate_games` stays: it is not in the dead set, because it raises
+# with its own message from `gate_config_from_dict`.
 _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
     "lr_schedule",
     "gate_games",
