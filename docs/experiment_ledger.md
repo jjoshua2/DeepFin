@@ -23250,3 +23250,81 @@ as a comparison against it. **A number produced before the instrument exists is
 not a baseline for that instrument.** Re-derive every banked figure from the
 shipped code path once it exists, and diff it against the exploratory one
 deliberately.
+
+### ⚑⚑ THE HOLDOUT RULER IDENTITY MOVES WITH THIS PR (amended in place, round-2 review)
+
+Round-2 review of PR #326 found CI red on `tests/test_holdout_ruler_identity.py
+::test_the_production_ruler_id_is_pinned`. Round 1 missed it because that suite
+was not in the set I ran — the pin exists exactly so this cannot merge silently,
+and it worked.
+
+**Why it moved.** The three lines that derive `sf_eval_pv_orphan` /
+`sf_eval_pv_checked` live in `Trainer._prepare_host_arrays`, which is one of the
+19 frames `eval_ruler_id_for` digests, and it is in BOTH the full-pass and the
+sampled `measured_by` lists. So both ids move:
+
+```
+full_pass  025b6ef8e537ffcb -> 44755941fd0bf0c8
+sampled    408bcad98fb150b4 -> bbae91591858d35c
+```
+
+**The MEASUREMENT is neutral, and this is measured, not argued.** The two new
+arrays have exactly one consumer, `losses.sf_eval_pv_orphan_counts`; its sums
+leave `compute_loss` as `sf_eval_pv_orphan_rows` / `sf_eval_pv_checked_rows` and
+are mapped by `_RATIO_METRIC_FIELDS` onto two observation fields. Nothing enters
+`total`, so nothing enters `loss` or `test_loss`. Control: a production full
+pass over `shard_033130.zarr`, run twice — as shipped, and with the three lines
+patched out (`main`'s behaviour) — comparing all **87** scalar `TrainMetrics`
+fields. **`loss` bit-identical at 7.238113220214844**, and the only field that
+differs is `sf_eval_pv_checked_frac` (0.0 → 0.9975), i.e. the new instrument
+coming alive. This is the sixth declared false positive of the pin and the first
+one with a numeric control attached rather than a source-level argument.
+
+⚑ **OPERATOR-VISIBLE AT THE NEXT RESTART.** `tune/trainable.py:399-409` sees the
+mismatch, bumps `holdout_generation`, and `_update_best_model` takes its
+ruler-changed branch: the running trial **hands over its best-model record
+once**, adopting the current loss instead of comparing to it. Expected, not a
+defect. Restart-gated — a running process keeps hashing the module source it
+loaded, so nothing happens until the restart that loads this checkout.
+
+⚑ **Per the standing rule (`A RULER CHANGE MUST INVALIDATE ITS RECORDS`):
+holdout-series records are NOT comparable across this boundary.** `test_loss`
+before and after the deploying restart are measurements by two ids. The
+neutrality control above says the numbers should in fact agree; that is a
+prediction the next restart can check, not a licence to splice the series.
+
+⚑ Round 2 also relayed a `sampled` id that did not reproduce
+(`c2fe2306f2e41035`). Both constants here were re-derived from a **pristine
+checkout of the pushed commit** and confirmed by running the suite green;
+`bbae91591858d35c` is what `Trainer.eval_ruler_id_for(batch_size=512, steps=5,
+mirror_prob=0.0, full_pass=False)` returns, which is the exact call the pin
+asserts. Pinning an unverified constant is the same class of error as banking an
+unverified calibration.
+
+### The instrument's first catch: the FROZEN HOLDOUT is contaminated on the VALUE half too
+
+Found by the round-2 reviewer, re-measured here independently with the shipped
+`sf_eval_pv_orphan_flags` on `checkpoint_000478/holdout.npz`:
+
+| | value | of |
+|---|---|---|
+| labelled (`has_sf_wdl`) | 1,915 | 2,000 rows |
+| policy `no_pv` (already known) | 194 | 0.101305 |
+| **value orphan** | **86 / 1,721 checked** | **0.049971** |
+| intersection of the two | **0** | disjoint, as designed |
+| union | **280** | **0.146214 of labelled** |
+
+The value half reads **5× the 0.01 bar**, and because the two sets are disjoint
+the ruler has **14.6 % of its labelled rows detached on one half or the other** —
+which coheres with the standing 14.1 % contamination figure for the holdout pool
+rather than duplicating it.
+
+**What this changes.** The known statement was "the frozen holdout is 10.13 %
+contaminated on the policy half". It is now: **the frozen holdout is 14.6 %
+contaminated across both halves, and the extra 5.0 % is on `sf_wdl` — the half
+that carries 0.45 of the value target.** Every `test_*` value-derived column on
+the current holdout is scored against a set with that much detached labelling.
+This does not move any verdict in this entry; it raises the priority of re-cutting
+the holdout from post-quarantine shards, which was already the stated fix for the
+policy half and is now the fix for both. Recorded here rather than as a separate
+entry because the measurement is this PR's own instrument, on its first use.

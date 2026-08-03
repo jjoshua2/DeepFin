@@ -509,8 +509,28 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # recomputed on EVERY evaluation (`trainer.py`, in `_compute_metrics`). The
 # gate is that a running process holds the old module source, so `digest_source`
 # keeps hashing the old code until the process restarts onto this checkout.
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:025b6ef8e537ffcb"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:408bcad98fb150b4"
+# Moved again 2026-08-03 by the VALUE-half SF-label detector (PR #326): three
+# lines enter `_prepare_host_arrays` to derive `sf_eval_pv_orphan` /
+# `sf_eval_pv_checked` from `sf_multipv_raw` + `sf_label_meta` BEFORE the H2D
+# payload prune drops the first and while the second is still in `arrs` at all.
+# That frame is in BOTH lists, so both ids move.
+#   full_pass  025b6ef8e537ffcb -> 44755941fd0bf0c8
+#   sampled    408bcad98fb150b4 -> bbae91591858d35c
+#
+# SIXTH declared false positive, and MEASURED rather than argued. The two new
+# arrays are read by exactly one consumer, `losses.sf_eval_pv_orphan_counts`,
+# whose two sums leave `compute_loss` as `sf_eval_pv_orphan_rows` /
+# `sf_eval_pv_checked_rows` and are mapped by `_RATIO_METRIC_FIELDS` to the
+# observation fields `sf_eval_pv_orphan_frac` / `sf_eval_pv_checked_frac`.
+# Nothing reaches `total`, so nothing reaches `loss` or `test_loss`. The
+# control that proves it: a production full pass over `shard_033130.zarr` run
+# twice, once as shipped and once with the three lines patched out (i.e.
+# `main`'s behaviour), comparing all 87 scalar `TrainMetrics` fields --
+# `loss` bit-identical at 7.238113220214844, and the ONLY field that differs is
+# `sf_eval_pv_checked_frac` (0.0 -> 0.9975), which is the new instrument coming
+# alive. Records stay comparable across the handover.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:44755941fd0bf0c8"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:bbae91591858d35c"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:
