@@ -12,7 +12,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
-from chess_anti_engine.config_keys import TRAINER_WEIGHT_KEYS
+from chess_anti_engine.config_keys import is_inert_dead_config_value, TRAINER_WEIGHT_KEYS
 from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.selfplay.budget import progressive_mcts_simulations
 from chess_anti_engine.selfplay.config import (
@@ -613,21 +613,15 @@ def dead_config_key_violations(
 ) -> list[tuple[str, object, object]]:
     """Dead keys in *config* set to something other than their inert value.
 
-    ⚑ THE SINGLE PREDICATE. ``reject_dead_config_keys`` (which raises at
-    startup) and ``scripts/audit_realized_config.py`` (which reports) both go
-    through this function rather than each re-deriving "is this value live".
-    Two implementations that agree today drift the moment a dead key is added
-    whose inert value is not falsey, and then the audit would call safe a value
-    the trial refuses to start on — a guard disagreeing with the criterion it
-    guards.
-
-    ``bool(...)`` rather than ``!=`` FOR BOOLEAN KEYS ONLY: yaml spells the
-    same intent ``true`` / ``True`` / ``1`` / ``yes``, and a ``1 != False``
-    comparison would flag a value the consumer would have treated as identical
-    to the inert one. A NUMERIC dead key is compared numerically, because
-    ``bool()`` collapses every non-zero number onto one class and would make
-    ``gate_interval: 5`` indistinguishable from the inert ``1`` -- a predicate
-    that cannot see the value it exists to refuse.
+    ⚑ THE SINGLE TABLE, walked with the SINGLE PREDICATE
+    (``config_keys.is_inert_dead_config_value``, which lives in the
+    dependency-free key module so the reporting script can import it at module
+    scope rather than inside its per-key loop). ``reject_dead_config_keys``
+    raises at startup on exactly this list; ``scripts/audit_realized_config.py``
+    reports on exactly this predicate. Two implementations that agree today
+    drift the moment a dead key is added whose inert value is not falsey, and
+    then the audit would call safe a value the trial refuses to start on — a
+    guard disagreeing with the criterion it guards.
 
     Returns ``(key, value, inert)`` triples so a caller can name all three.
     """
@@ -638,20 +632,6 @@ def dead_config_key_violations(
     ]
 
 
-def is_inert_dead_config_value(value: object, inert: object) -> bool:
-    """Whether *value* is the one harmless value for a dead key.
-
-    ⚑ THE SINGLE PREDICATE, exported so ``scripts/audit_realized_config.py``
-    reads it rather than re-deriving it. The audit says "safe" and the trial
-    says "refuse" about the same value only if both compute the answer here.
-    They briefly did not, and the disagreement was invisible while every dead
-    key happened to be inert at ``False``.
-    """
-    if isinstance(inert, bool):
-        return bool(value) == bool(inert)
-    if isinstance(inert, (int, float)) and isinstance(value, (int, float)):
-        return float(value) == float(inert)
-    return value == inert
 
 
 def reject_dead_config_keys(config: Mapping[str, object]) -> None:
@@ -779,17 +759,22 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
         for k, v in fresh.items():
             if k in searched or k.startswith("pb2_bounds_"):
                 continue
-  # A dead key gets its own message, NOT the "requires restart" one below:
-  # restarting does not make it work, it makes the trial refuse to start
-  # (``reject_dead_config_keys``). Telling an operator to restart into a hard
-  # error would be the same lie in a different place. Declining to apply also
-  # keeps the poison out of `config`, so the trial keeps running on the value
-  # it has actually been running on.
-  #
-  # FIRST, because three of these keys are ALSO in _LIVE_RELOAD_SKIPPED_KEYS
-  # (they are gate_* keys, frozen at construction like the rest of the family)
-  # and would otherwise take the restart-required branch and be told to do the
-  # one thing that turns a silent no-op into a crash.
+            # A dead key gets its own message, NOT the "requires restart" one
+            # below: restarting does not make it work, it makes the trial
+            # refuse to start (``reject_dead_config_keys``). Telling an
+            # operator to restart into a hard error would be the same lie in a
+            # different place. Declining to apply also keeps the poison out of
+            # `config`, so the trial keeps running on the value it has actually
+            # been running on.
+            #
+            # FIRST, ahead of the skipped-keys branch, and it stays first even
+            # though this diff removed the three gate_* keys from
+            # `_LIVE_RELOAD_SKIPPED_KEYS`: the ordering is what makes
+            # `dead_config_keys() & restart_required_config_keys()` free to be
+            # empty. Were a future dead key also declared restart-required,
+            # this branch is the one that must win -- the other tells an
+            # operator to do the one thing that turns a silent no-op into a
+            # crash. `tests/test_dead_config_keys.py` pins both halves.
             if (
                 live_reload
                 and k in _DEAD_CONFIG_KEY_INERT_VALUES

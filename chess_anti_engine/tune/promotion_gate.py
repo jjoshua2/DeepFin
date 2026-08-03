@@ -726,9 +726,14 @@ class GateDecision:
     # VERDICT to the ACTUATION.
     hold_effective: bool = False
     # Cumulative count of iterations where the gate wanted to hold and had no
-    # anchor to hold on. Cumulative rather than per-iteration so a single
-    # sampled row answers "has this ever happened", which is the question an
-    # operator has after the fact.
+    # anchor it would serve -- EITHER no anchor file at all OR a present anchor
+    # the controller refused (unstamped, older than ``gate_max_hold_iters``, or
+    # too many failed refreshes). Two operator actions in one counter,
+    # deliberately, because both mean "the brake did nothing"; read
+    # ``gate_anchor_age_iters`` / ``gate_anchor_refresh_failures`` beside it to
+    # tell them apart. Cumulative rather than per-iteration so a single sampled
+    # row answers "has this ever happened", which is the question an operator
+    # has after the fact.
     fallback_missing: int = 0
     # Iterations since the anchor was last refreshed from a promoted export,
     # NaN when unknown. Load-bearing since the refresh was restricted to
@@ -1262,6 +1267,12 @@ def gate_metrics(decision: GateDecision, *, strict: bool = True) -> dict[str, fl
   # anyway". ``gate_fallback_missing`` counts the second case, so the two are
   # distinguishable from the csv alone -- they used to be identical in it.
         "gate_hold_effective": float(1.0 if decision.hold_effective else 0.0),
+  # TWO OPERATOR ACTIONS IN ONE COUNTER, deliberately, because both mean "the
+  # brake did nothing this iteration": no anchor file at all, and a present
+  # anchor the controller refused (unstamped, older than gate_max_hold_iters,
+  # or too many failed refreshes). ``gate_anchor_age_iters`` and
+  # ``gate_anchor_refresh_failures`` are what tell the two apart -- both NaN/0
+  # in the first case, populated in the second.
         "gate_fallback_missing": float(decision.fallback_missing),
   # Iterations since the anchor last tracked a promoted export. The anchor is
   # deliberately NOT refreshed on a hold, a release or a NOT_RUN (G3-8), so
@@ -1354,9 +1365,28 @@ READOUT_EXIT_PROMOTE = 0
 READOUT_EXIT_HOLD = 1
 READOUT_EXIT_KILL = 2
 READOUT_EXIT_CONFOUND_UNMEASURED = 5
+READOUT_EXIT_IDENTITY_UNEVALUATED = 6
+
+# The axes a promote-or-hold is not allowed to be read off without. Each has its
+# own exit code, because "which axis has no measurement" is the actionable half.
+# ITERATION ORDER IS THE PRECEDENCE when more than one is missing, and the
+# identity axis is deliberately first: it is the leg with no statistics in it,
+# so an unevaluated identity means the csv's schema is wrong, while an
+# unmeasured confound means one producer field is not plumbed. Fix the reader
+# before the writer. Whichever is reported, neither can exit 0.
+_MANDATORY_AXES: dict[str, int] = {
+    "anchored_games_vs_pooled": READOUT_EXIT_IDENTITY_UNEVALUATED,
+    "confound": READOUT_EXIT_CONFOUND_UNMEASURED,
+}
 
 # Rows the confound fit needs before it says anything at all.
 _CONFOUND_MIN_ROWS = 3
+
+# The attribution axis's tolerance, on the SHARE. Hoisted to a constant because
+# the shard re-derivation's phase-stability refusal is keyed to it: a guard must
+# share the criterion's instrument, and "stable enough to paste into the
+# reference" has to mean "the phase cannot move this leg's verdict".
+_SHARE_TOLERANCE = 0.06
 
 
 @dataclass(frozen=True)
@@ -1380,21 +1410,49 @@ def readout_exit_code(r: ShadowReadout) -> int:
     exit 0 -- ``promote_to_enforce``, the pre-registered signal to set
     ``gate_mode: enforce`` -- while the PID-confound leg, the deciding KILL
     rule the ledger registered for exactly this promotion, was measuring
-    nothing at all, because the server compactor drops
-    ``ShardMeta.opponent_wdl_regret_limit`` before it ever reaches the gate.
-    Every one of the 109 live rows carrying the column has
+    nothing at all, because the server compactor rebuilt ``ShardMeta`` without
+    ``opponent_wdl_regret_limit`` and the value never reached the gate. Every
+    one of the 109 live rows carrying the column reads
     ``gate_sample_confound_elo = NaN``.
+
+    The producer half is fixed (#323) and is DEPLOY-GATED ON A SERVER RESTART:
+    the compactor runs in the server process, so a running server keeps the old
+    module. This axis therefore stays UNMEASURED until the server restarts and
+    a full window of new shards lands, and the exit code is what says so
+    instead of a promote.
 
     So a window whose confound axis has fewer than ``_CONFOUND_MIN_ROWS``
     measurements cannot exit 0 or 1. It gets its own code and its own message,
     because "promote" and "the instrument's other half is not plumbed" must not
     be the same observation. A KILL still outranks it: a failing leg is a
     plumbing fact about THIS window and is read first.
+
+    THE SAME RULE, ONE AXIS OVER (review R3). ``anchored_games_vs_pooled`` is
+    the leg this module calls "THE ONE LEG WITH NO STATISTICS IN IT", and it is
+    SKIPPED on any csv whose rows carry no ``pid_curriculum_*`` -- a rotated
+    file from an earlier report schema, which this repo produces every few days.
+    Exit 0 with the exact-integer identity never evaluated is the same
+    OR-over-axes trap, so it gets code 6.
+
+    WHICH SKIPPED STATES ARE EXEMPT, AND WHY, stated rather than left implicit:
+
+    * ``cadence`` SKIPPED (no ``time_this_iter_s``) does NOT block, because the
+      attribution axis is still evaluated in that case -- against the raw
+      reference share, with ``(cadence unknown)`` printed on the failure and a
+      deliberately loose absolute count band. The axis has a measurement; it is
+      a weaker one, and it says so.
+    * ``refresh_lag`` SKIPPED only happens when the cadence leg FAILED, which is
+      already a kill.
     """
     if r.verdict == READOUT_KILL:
         return READOUT_EXIT_KILL
-    if not r.confound_is_measured:
-        return READOUT_EXIT_CONFOUND_UNMEASURED
+    states = {leg.name: leg.state for leg in r.legs}
+    for axis, code in _MANDATORY_AXES.items():
+        if axis == "confound":
+            if not r.confound_is_measured:
+                return code
+        elif states.get(axis) not in (LEG_PASS, LEG_FAIL, LEG_HOLD):
+            return code
     return READOUT_EXIT_HOLD if r.verdict == READOUT_HOLD else READOUT_EXIT_PROMOTE
 
 
@@ -1864,7 +1922,8 @@ def shadow_readout_verdict(
         # No `time_this_iter_s` in the rows. Fall back to the raw reference
         # share and SAY SO on a failure, rather than pretending to a
         # cadence-corrected comparison that was never made.
-        expected_share, share_tol, share_note = ref.prev_share, 0.06, " (cadence unknown)"
+        expected_share, share_tol, share_note = (
+            ref.prev_share, _SHARE_TOLERANCE, " (cadence unknown)")
         _leg("cadence", LEG_SKIPPED, "no time_this_iter_s in the rows")
     else:
         ratio = mean_secs / ref.mean_iter_seconds
@@ -1890,7 +1949,7 @@ def shadow_readout_verdict(
             f"[{_CADENCE_RATIO_MIN}, {_CADENCE_RATIO_MAX}]",
         )
         expected_share = ref.refresh_lag_seconds / mean_secs
-        share_tol, share_note = 0.06, ""
+        share_tol, share_note = _SHARE_TOLERANCE, ""
     # The cadence-free form of what the attribution leg compares, REPORTED
     # rather than left implicit: `prev` games are the fleet's model-refresh
     # lag, and `prev_share` is that lag divided by the cadence.
@@ -1926,11 +1985,15 @@ def shadow_readout_verdict(
         # the reference window's own throughput regimes differ by 1.4x.
         rate = (mean_cur + mean_prev) / mean_secs
         rate_ok = 0.5 <= rate / ref.games_per_second <= 2.0
+        # The FAIL detail keeps the leg name as its first token because
+        # ``failed_legs`` carries these strings and callers match on that
+        # prefix; the PASS detail does not, or the printed table repeats
+        # itself (review N5).
         _leg(
             "games_per_second", LEG_PASS if rate_ok else LEG_FAIL,
-            f"games_per_second {rate:.4f} is "
-            f"{rate / ref.games_per_second:.2f}x the reference "
-            f"{ref.games_per_second} (band 0.5-2.0)",
+            (f"games_per_second {rate:.4f} is " if not rate_ok else f"{rate:.4f} = ")
+            + f"{rate / ref.games_per_second:.2f}x the reference "
+            f"{ref.games_per_second:.4f} (band 0.5-2.0)",
         )
     else:
         # No cadence column: fall back to a deliberately loose absolute band,
@@ -1987,22 +2050,29 @@ def shadow_readout_verdict(
         _leg("refresh_lag", LEG_SKIPPED,
              "cadence outside the trusted band; not evaluated")
     else:
+        # Guarded because the reference lag is operator-settable
+        # (--refresh-lag-seconds) and a 0 there would divide here: no input
+        # may make the deciding command RAISE instead of deciding.
+        ratio_txt = (
+            f"({measured_lag / ref.refresh_lag_seconds:.2f}x)"
+            if ref.refresh_lag_seconds > 0.0
+            else "(reference lag is 0, so no ratio)"
+        )
+        advice = (
+            " -- a fleet whose model-refresh lag MOVED and a split that "
+            "mis-attributes shards are the same number here; check the "
+            "anchored_games_vs_pooled leg above and re-derive the reference "
+            "from shards (gate_shadow_readout.py --rederive-reference) "
+            "before reading this as an attribution failure"
+            if share_gap > share_tol else ""
+        )
         _leg(
             "refresh_lag", LEG_FAIL if share_gap > share_tol else LEG_PASS,
-            f"refresh_lag {measured_lag:.1f}s vs reference "
-            f"{ref.refresh_lag_seconds:.1f}s "
-            f"({measured_lag / ref.refresh_lag_seconds:.2f}x): prev_share "
-            f"{prev_share:.4f} vs expected {expected_share:.4f} "
-            f"+/-{share_tol}{share_note}"
-            + (
-                " -- a fleet whose model-refresh lag MOVED and a split that "
-                "mis-attributes shards are the same number here; check the "
-                "anchored_games_vs_pooled leg above and re-derive the "
-                "reference from shards (gate_shadow_readout.py "
-                "--rederive-reference) before reading this as an attribution "
-                "failure"
-                if share_gap > share_tol else ""
-            ),
+            (f"refresh_lag {measured_lag:.1f}s" if share_gap > share_tol
+             else f"{measured_lag:.1f}s")
+            + f" vs reference {ref.refresh_lag_seconds:.1f}s {ratio_txt}: "
+            f"prev_share {prev_share:.4f} vs expected {expected_share:.4f} "
+            f"+/-{share_tol}{share_note}" + advice,
         )
     # -- deciding leg: instrument-sensitive --------------------------------
     # 4.56 is the sd of the 95%-overlapping WINDOW column. If the readout is
@@ -2258,9 +2328,47 @@ class ShardArm:
     losses: int
 
 
+# THE BIN EDGES ARE A CHOICE, AND THE ANSWER MOVES WITH IT (review R1).
+#
+# The reconstruction bins shards into iterations by ``generated_at_unix``. On a
+# ``_compacted`` shard that stamp is the SERVER's flush time, while the loop
+# attributes a shard at INGEST -- a shard flushed at the end of iteration N is
+# ingested in N+1, where its sha is the ``prev`` one. So zero shift is not a
+# privileged alignment; it is what you get only if flush time == play time ==
+# accept time.
+#
+# Measured on the live trial, shifting the edges INSIDE one 625 s iteration:
+#
+#     shift    0 s: prev_share 0.1771     distinct model_steps per bin {1:1, 2:67}
+#     shift -150 s: prev_share 0.4275     distinct model_steps per bin {1:1, 2:67}
+#     shift -300 s: prev_share 0.6272     distinct model_steps per bin {1:3, 2:65}
+#
+# The internal structure at -150 s is IDENTICAL to the one at 0 s, so nothing
+# inside the reconstruction can say which alignment is right, and the resulting
+# 0.177-0.428 band spans BOTH readings of the very disagreement this command
+# exists to adjudicate. A point estimate here would be an artifact wearing the
+# clothes of a measurement.
+#
+# So the command sweeps the phase and reports the band, and refuses to emit a
+# constant whose band is wider than the leg's own tolerance -- the same 0.06
+# the attribution axis is judged against, because a guard must share the
+# criterion's instrument.
+_REDERIVE_PHASE_SHIFTS: tuple[float, ...] = (-0.5, -0.25, 0.0, 0.25, 0.5)
+# Fields whose band is reported, and the ones the refusal is keyed to.
+_REDERIVE_SWEPT_FIELDS: tuple[str, ...] = (
+    "mean_games_cur", "mean_games_prev", "prev_share", "refresh_lag_seconds",
+    "mean_delta_elo", "sd_delta_elo", "mean_iter_seconds",
+)
+
+
 @dataclass(frozen=True)
 class RederivedReference:
-    """What a shard window says the reference constants are TODAY."""
+    """What a shard window says the reference constants are TODAY.
+
+    The point estimates are at ZERO bin shift. ``bands`` carries each field's
+    range over the phase sweep and is the number to read: see
+    ``_REDERIVE_PHASE_SHIFTS``.
+    """
 
     n_iterations: int
     n_usable: int
@@ -2272,9 +2380,52 @@ class RederivedReference:
     refresh_lag_seconds: float
     mean_delta_elo: float
     sd_delta_elo: float
+    # field -> (lo, hi) over the phase sweep. Empty when no sweep was run.
+    bands: Mapping[str, tuple[float, float]] = field(default_factory=dict)
+    shifts: tuple[float, ...] = ()
+
+    def band(self, name: str) -> tuple[float, float]:
+        return self.bands.get(name, (float("nan"), float("nan")))
+
+    def spread(self, name: str) -> float:
+        lo, hi = self.band(name)
+        return hi - lo
+
+    @property
+    def prev_share_is_phase_stable(self) -> bool:
+        """Whether the split survives the alignment being unknown.
+
+        Keyed to ``_SHARE_TOLERANCE`` -- the attribution axis's own tolerance --
+        so "stable enough to paste into the reference" means exactly "the phase
+        cannot move the leg's verdict".
+        """
+        spread = self.spread("prev_share")
+        return not math.isnan(spread) and spread <= _SHARE_TOLERANCE
 
     def as_offline_reference_source(self) -> str:
-        """The constants, formatted as the dataclass body they replace."""
+        """The constants, formatted as the dataclass body they replace.
+
+        REFUSES when the split is phase-unstable. The pre-registered step is
+        "resolve the disagreement from shards"; handing back a `prev_share`
+        that a quarter-iteration shift moves by more than the leg's whole
+        tolerance would satisfy that step with an artifact.
+        """
+        if not self.prev_share_is_phase_stable:
+            lo, hi = self.band("prev_share")
+            spread = self.spread("prev_share")
+            return (
+                "    REFUSED: prev_share is phase-unstable over the "
+                f"bin-edge sweep ({lo:.4f}..{hi:.4f}, spread {spread:.4f} > "
+                f"the leg's own {_SHARE_TOLERANCE} tolerance).\n"
+                "    Nothing here may be pasted into OfflineReference: the "
+                "split fields (mean_games_cur/prev, prev_share, "
+                f"refresh_lag) are all derived from an alignment this\n"
+                "    reconstruction cannot pin, and the delta fields are "
+                f"computed from the same split arms.\n"
+                "    Resolve the alignment first -- attribute shards at "
+                "INGEST (the loop's own event) rather than at the "
+                f"compactor's flush stamp -- then re-run.\n"
+            )
         return (
             "    mean_games_cur: float = "
             f"{self.mean_games_cur:.1f}\n"
@@ -2290,8 +2441,19 @@ class RederivedReference:
 def rederive_reference_from_shards(
     iterations: Sequence[tuple[float, float]],
     shards: Sequence[ShardArm],
+    *,
+    bin_shift_fraction: float = 0.0,
 ) -> RederivedReference:
     """Rebuild the reference constants from shard metadata and iteration bins.
+
+    ⚑ THE SPLIT THIS PRODUCES IS PHASE-DEPENDENT AND THE DEPENDENCE IS LARGE.
+    ``bin_shift_fraction`` moves every bin's edges by that fraction of its own
+    iteration, and on live data a -0.24 shift moves ``prev_share`` from 0.177
+    to 0.428 with the reconstruction's internal structure unchanged. Use
+    ``rederive_reference_with_phase_sweep`` -- which reports the band and
+    refuses to emit a constant when it is wider than the attribution leg's own
+    tolerance -- rather than reading a single call's point estimate. See
+    ``_REDERIVE_PHASE_SHIFTS`` for why zero shift is not privileged.
 
     ``iterations`` are ``(end_unix, iter_seconds)`` pairs -- ``timestamp`` and
     ``time_this_iter_s`` from ``progress.csv``, which is used ONLY for the bin
@@ -2309,7 +2471,11 @@ def rederive_reference_from_shards(
     the same rule ``AnchoredSample.usable`` applies.
     """
     by_bin: list[list[ShardArm]] = [[] for _ in iterations]
-    edges = [(end - max(0.0, secs), end) for end, secs in iterations]
+    shift = float(bin_shift_fraction)
+    edges = [
+        (end - max(0.0, secs) + shift * secs, end + shift * secs)
+        for end, secs in iterations
+    ]
     for sh in shards:
         for i, (lo, hi) in enumerate(edges):
             if lo <= sh.generated_at_unix < hi:
@@ -2362,16 +2528,73 @@ def rederive_reference_from_shards(
     )
 
 
-def read_shard_arms(shard_root: Path) -> list[ShardArm]:
+def rederive_reference_with_phase_sweep(
+    iterations: Sequence[tuple[float, float]],
+    shards: Sequence[ShardArm],
+    *,
+    shifts: Sequence[float] = _REDERIVE_PHASE_SHIFTS,
+) -> RederivedReference:
+    """The zero-shift reconstruction, with every field's phase band attached.
+
+    THE POINT OF THE SWEEP is that the reconstruction has no way to know which
+    alignment of bin edges to shard timestamps is the right one, and the answer
+    moves by more than the leg's whole tolerance across the alignments it
+    cannot distinguish (review R1, and ``_REDERIVE_PHASE_SHIFTS``). Reporting
+    the point estimate alone would hand an operator an artifact to paste into a
+    pre-registered constant.
+
+    ``mean_iter_seconds`` and the row counts come from ``iterations`` and are
+    phase-invariant by construction; everything else is derived from the split
+    and is not.
+    """
+    base = rederive_reference_from_shards(iterations, shards)
+    swept = [
+        rederive_reference_from_shards(iterations, shards, bin_shift_fraction=f)
+        for f in shifts
+    ]
+    bands: dict[str, tuple[float, float]] = {}
+    for name in _REDERIVE_SWEPT_FIELDS:
+        vals = [
+            float(getattr(r, name)) for r in swept
+            if not math.isnan(float(getattr(r, name)))
+        ]
+        bands[name] = (
+            (min(vals), max(vals)) if vals else (float("nan"), float("nan"))
+        )
+    return replace(base, bands=bands, shifts=tuple(float(f) for f in shifts))
+
+
+# Subtrees under a trial's ``processed/`` that are NOT part of the reference.
+# ``_quarantine`` holds shards the loop REJECTED and never counted; on the live
+# trial that is 5 shards / 136 curriculum games (review R2). A reconstruction
+# that includes games the loop threw away is not the independent reconstruction
+# its docstring claims to be, and it is contaminated in the direction nobody
+# would check.
+_SHARD_EXCLUDED_DIRS: frozenset[str] = frozenset({"_quarantine"})
+
+
+def read_shard_arms(
+    shard_root: Path, *, exclude_dirs: frozenset[str] = _SHARD_EXCLUDED_DIRS,
+) -> tuple[list[ShardArm], dict[str, int]]:
     """Every ``.zattrs`` under *shard_root*, as :class:`ShardArm` records.
 
     ``wins`` / ``draws`` / ``losses`` on a shard are the CURRICULUM (vs
     Stockfish) results -- they sum to ``curriculum_games`` -- which is the
     population the anchored A/B is drawn from. Shards with no curriculum game
     are dropped rather than counted as zeros.
+
+    Returns ``(arms, counts_by_subtree)``; the second element names which
+    subtree each shard came from and how many were excluded, so the caller can
+    PRINT what it read instead of the operator having to infer it.
     """
     out: list[ShardArm] = []
+    counts: dict[str, int] = {}
     for attrs_path in sorted(shard_root.rglob(".zattrs")):
+        rel = attrs_path.relative_to(shard_root).parts
+        subtree = rel[0] if len(rel) > 1 else "."
+        if exclude_dirs & set(rel):
+            counts[f"EXCLUDED {subtree}"] = counts.get(f"EXCLUDED {subtree}", 0) + 1
+            continue
         try:
             raw = json.loads(attrs_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -2389,7 +2612,8 @@ def read_shard_arms(shard_root: Path) -> list[ShardArm]:
             model_sha256=str(raw.get("model_sha256", "")),
             wins=w, draws=d, losses=l,
         ))
-    return out
+        counts[subtree] = counts.get(subtree, 0) + 1
+    return out, counts
 
 
 def read_iteration_bins(path: str | Path) -> list[tuple[float, float]]:
@@ -2442,8 +2666,10 @@ class GateHoldController:
     # thing standing between a stale ~252 MB export and the whole selfplay
     # fleet, reconstructed from nothing.
     anchor_refresh_failures: int = 0
-    # Cumulative iterations where the gate wanted to hold and had no anchor to
-    # hold on, so it published normally. Reported as ``gate_fallback_missing``.
+    # Cumulative iterations where the gate wanted to hold and had no anchor it
+    # would serve -- absent OR present-and-distrusted, see the identically
+    # named field on ``GateDecision`` -- so it published normally. Reported as
+    # ``gate_fallback_missing``.
     fallback_missing: int = 0
     # The verdict the last completed iteration produced, or None before the
     # gate has issued one. The publish at the TOP of iteration N is governed by
@@ -2640,6 +2866,21 @@ class GateHoldController:
         now also refuses on AGE: an anchor older than ``gate_max_hold_iters``
         would roll the fleet back further than the mechanism is designed to,
         whether it got old by failing to copy or by never being promoted.
+
+        NO VERDICT YET IS *NOT* A PROMOTE (review R4). An earlier revision
+        returned True here, reasoning that a controller with no verdict has
+        none to withhold on and that it would last one iteration per process.
+        Both halves were wrong in the direction that matters: the ``not
+        is_file()`` branch above ALREADY covers bootstrap, so this branch is
+        only reachable when an anchor exists -- and then the first publish of
+        every process rewrote it from the current (possibly demoted, possibly
+        just-refused-as-stale) export and re-stamped it at the current
+        iteration. That is G3-8 restored once per restart, and ``train.sh``
+        auto-resume restarts on every crash. Worse, ``note_anchor_refreshed``
+        clears ``anchor_stamp_ok`` and zeroes ``anchor_age_iters``, so the AGE
+        guard could never observe staleness that predates a restart -- a guard
+        whose only escape hatch is the event that fires it most often.
+        Returning False costs nothing: the next genuine promote re-anchors.
         """
         if self.promoted_model_path is None:
             return False
@@ -2647,7 +2888,7 @@ class GateHoldController:
             return True
         d = self.last_decision
         if d is None:
-            return True
+            return False
         return d.decision == DECISION_PROMOTE and not d.would_demote
 
     def note_anchor_refresh_failed(self, exc: BaseException) -> None:
@@ -2785,6 +3026,13 @@ def write_anchor_stamp(
     copy it describes, so a stamp that fails to write counts as a failed
     refresh. A stamped anchor whose stamp is a lie would be worse than an
     unstamped one, and an unstamped one is refused.
+
+    The write is NOT atomic, and that is the fail-closed direction: a stamp
+    truncated by a kill mid-write is not valid json, so ``read_anchor_stamp``
+    returns None, ``anchor_is_trustworthy`` is False, and the brake refuses the
+    anchor until the next genuine PROMOTE re-stamps it. A temp-file rename
+    would instead preserve the PREVIOUS stamp beside a possibly-newer model
+    file, which is the lying-stamp case this refuses to create.
     """
     anchor_stamp_path(anchor).write_text(
         json.dumps(

@@ -60,8 +60,10 @@ from chess_anti_engine.tune.promotion_gate import (
     gate_config_from_dict,
     gate_metrics,
     read_anchor_stamp,
+    read_shard_arms,
     readout_exit_code,
     rederive_reference_from_shards,
+    rederive_reference_with_phase_sweep,
     resolve_gate_hold_path,
     shadow_readout_from_csv,
     shadow_readout_verdict,
@@ -69,9 +71,11 @@ from chess_anti_engine.tune.promotion_gate import (
     ShardArm,
     READOUT_EXIT_CONFOUND_UNMEASURED,
     READOUT_EXIT_HOLD,
+    READOUT_EXIT_IDENTITY_UNEVALUATED,
     READOUT_EXIT_KILL,
     READOUT_EXIT_PROMOTE,
     LEG_PASS,
+    LEG_SKIPPED,
     LEG_UNMEASURED,
 )
 from chess_anti_engine.tune.trainable_phases import (
@@ -651,8 +655,18 @@ def test_hold_reaches_the_publish_call_and_the_anchor_survives(
     assert trainer.exports == 1
     assert promoted.read_bytes() == b"trainer-export-1"
 
-    # Release: the next unheld publish exports again and re-anchors.
-    published = _publish_iter(tmp_path, trainer, hold=None, promoted=promoted)
+    # Release: the next unheld publish exports again, and re-anchors ONLY
+    # because a genuine promote says so. `_publish_iter` builds a controller
+    # with no verdict, and a controller with no verdict does NOT re-anchor an
+    # anchor that already exists (audit G3-8 / review R4) -- otherwise every
+    # process restart would re-anchor to the current export once.
+    ctrl = GateHoldController(gate=_gate(mode=MODE_SHADOW),
+                              promoted_model_path=promoted)
+    ctrl.on_decision(GateDecision(
+        decision=DECISION_PROMOTE, reason="promote_no_regression",
+        mode=MODE_SHADOW, games_cur=197, games_prev=38))
+    published = _publish_iter(tmp_path, trainer, hold=None, promoted=promoted,
+                              controller=ctrl)
     assert published.read_bytes() == b"trainer-export-2"
     assert promoted.read_bytes() == b"trainer-export-2"
 
@@ -663,7 +677,9 @@ def test_hold_reaches_the_publish_call_and_the_anchor_survives(
     # bytes that were never promoted.
     other = tmp_path / "some_other_export.pt"
     other.write_bytes(b"not-the-anchor")
-    published = _publish_iter(tmp_path, trainer, hold=other, promoted=promoted)
+    ctrl.hold_path = other
+    published = _publish_iter(tmp_path, trainer, hold=other, promoted=promoted,
+                              controller=ctrl)
     assert published.read_bytes() == b"not-the-anchor"
     assert promoted.read_bytes() == b"trainer-export-2", (
         "the promoted anchor must never be refreshed while a hold is on"
@@ -1978,8 +1994,8 @@ def test_the_documented_yardstick_is_actually_runnable(
     from scripts.gate_shadow_readout import main
 
     codes = (READOUT_EXIT_PROMOTE, READOUT_EXIT_HOLD, READOUT_EXIT_KILL,
-             READOUT_EXIT_CONFOUND_UNMEASURED)
-    assert sorted(codes) == [0, 1, 2, 5], codes
+             READOUT_EXIT_CONFOUND_UNMEASURED, READOUT_EXIT_IDENTITY_UNEVALUATED)
+    assert sorted(codes) == [0, 1, 2, 5, 6], codes
     # 3 (did not run) and 4 (no such file) must stay reserved for the
     # script's own preconditions.
     assert 3 not in codes, codes
@@ -1990,14 +2006,17 @@ def test_the_documented_yardstick_is_actually_runnable(
     for documented in ("promote_to_enforce (0)", "hold_in_shadow     (1)",
                        "kill               (2)", "not run            (3)",
                        "no such file       (4)",
-                       "confound unmeasured (5)"):
+                       "confound unmeasured (5)",
+                       "identity not evaluated (6)"):
         assert documented in help_text, documented
 
     def write(p: Path, samples: list[AnchoredSample], *, shift: float = 0.0,
-              confound: bool = True) -> None:
+              confound: bool = True, pooled: bool = True) -> None:
         cols = ["training_iteration", "gate_delta_elo", "gate_sample_games_cur",
                 "gate_sample_games_prev", "gate_sample_delta_elo",
                 "time_this_iter_s"]
+        if pooled:
+            cols += ["pid_curriculum_w", "pid_curriculum_d", "pid_curriculum_l"]
         if confound:
             cols.append("gate_sample_confound_elo")
         with p.open("w", newline="") as fh:
@@ -2014,6 +2033,12 @@ def test_the_documented_yardstick_is_actually_runnable(
                         if (s.cur_games and s.prev_games) else float("nan")),
                     "time_this_iter_s": OFFLINE.mean_iter_seconds,
                 }
+                if pooled:
+                    # The exact-integer identity: an accepted shard increments
+                    # an arm AND the pool in the same branch of _process_shard.
+                    row["pid_curriculum_w"] = s.cur_w + s.prev_w
+                    row["pid_curriculum_d"] = s.cur_d + s.prev_d
+                    row["pid_curriculum_l"] = s.cur_l + s.prev_l
                 if confound:
                     # A predicted PID-lag offset with spread and no relation to
                     # the delta beside it: the fit is well posed and the slope
@@ -2058,14 +2083,18 @@ def test_the_documented_yardstick_is_actually_runnable(
         w = csv.DictWriter(fh, fieldnames=[
             "gate_sample_games_cur", "gate_sample_games_prev",
             "gate_sample_delta_elo", "time_this_iter_s",
+            "pid_curriculum_w", "pid_curriculum_d", "pid_curriculum_l",
             "gate_sample_confound_elo"])
         w.writeheader()
         for i in range(3):
+            cur, prev = round(OFFLINE.mean_games_cur), round(OFFLINE.mean_games_prev)
             w.writerow({
-                "gate_sample_games_cur": round(OFFLINE.mean_games_cur),
-                "gate_sample_games_prev": round(OFFLINE.mean_games_prev),
+                "gate_sample_games_cur": cur,
+                "gate_sample_games_prev": prev,
                 "gate_sample_delta_elo": 44.0 * (1 if i % 2 else -1),
                 "time_this_iter_s": OFFLINE.mean_iter_seconds,
+                "pid_curriculum_w": cur + prev, "pid_curriculum_d": 0,
+                "pid_curriculum_l": 0,
                 "gate_sample_confound_elo": _WOBBLE[i] * 100.0,
             })
     monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py", str(short)])
@@ -2081,6 +2110,7 @@ def test_the_documented_yardstick_is_actually_runnable(
         w = csv.DictWriter(fh, fieldnames=[
             "gate_sample_games_cur", "gate_sample_games_prev",
             "gate_sample_delta_elo", "time_this_iter_s",
+            "pid_curriculum_w", "pid_curriculum_d", "pid_curriculum_l",
             "gate_sample_confound_elo"])
         w.writeheader()
         for i, s in enumerate(_redeal(rng, x, "coin") for x in _live_samples()):
@@ -2091,6 +2121,12 @@ def test_the_documented_yardstick_is_actually_runnable(
                     s.delta * ELO_PER_SCORE_AT_HALF
                     if (s.cur_games and s.prev_games) else float("nan")),
                 "time_this_iter_s": OFFLINE.mean_iter_seconds,
+                # A coin-shuffle moves games BETWEEN arms and conserves the
+                # pool, which is exactly why the identity leg cannot catch it
+                # and the share leg can.
+                "pid_curriculum_w": s.cur_w + s.prev_w,
+                "pid_curriculum_d": s.cur_d + s.prev_d,
+                "pid_curriculum_l": s.cur_l + s.prev_l,
                 "gate_sample_confound_elo": _WOBBLE[i % len(_WOBBLE)] * 100.0,
             })
     monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py", str(path),
@@ -2101,8 +2137,9 @@ def test_the_documented_yardstick_is_actually_runnable(
     # EXIT 5 = the PID-confound axis has no measurement. THE POINT OF THE
     # WHOLE PER-AXIS RULE: this csv is the reference reconstruction that exits
     # 0 above, byte-for-byte, minus the confound column -- which is the shape
-    # every live progress.csv has had for 109 of 109 rows, because the server
-    # compactor drops ShardMeta.opponent_wdl_regret_limit. The verdict is
+    # every live progress.csv row written so far has, because the server
+    # compactor rebuilt ShardMeta without opponent_wdl_regret_limit (#323 fixes
+    # the producer; it is deploy-gated on a server restart). The verdict is
     # still promote_to_enforce; the command must NOT say 0.
     noconf = tmp_path / "noconfound.csv"
     write(noconf, _live_samples(), confound=False)
@@ -2116,6 +2153,30 @@ def test_the_documented_yardstick_is_actually_runnable(
     assert READOUT_PROMOTE in out, "the verdict itself is unchanged"
     assert "CONFOUND UNMEASURED" in out, out
     assert LEG_UNMEASURED in out, out
+
+    # EXIT 6 = the pooled-identity axis was never evaluated. Same OR-over-axes
+    # rule as 5, on the leg the module calls "the one with no statistics in
+    # it", and reachable on any csv rotated from an earlier report schema.
+    nopooled = tmp_path / "nopooled.csv"
+    write(nopooled, _live_samples(), pooled=False)
+    monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py", str(nopooled),
+                                     "--last-n", str(_N_LIVE)])
+    assert main() == 6, (
+        "a window whose exact-integer identity was skipped must not share an "
+        "exit code with promote"
+    )
+    out = capsys.readouterr().out
+    assert READOUT_PROMOTE in out, "the verdict itself is unchanged"
+    assert "POOLED IDENTITY NOT EVALUATED" in out, out
+
+    # ...and --refresh-lag-seconds 0 is REFUSED rather than dividing by zero
+    # inside the leg's own message: no input may make this command raise.
+    monkeypatch.setattr("sys.argv", ["gate_shadow_readout.py", str(path),
+                                     "--refresh-lag-seconds", "0"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2, "argparse refuses, the module does not divide"
+    capsys.readouterr()
 
     # A missing file exits 4 and says where to look, rather than traceback-ing
     # out of a command the ledger pre-committed to. FOUR, not 2: it used to
@@ -3186,6 +3247,12 @@ def test_a_failing_anchor_refresh_is_visible_and_stops_the_brake(
     anchor = tmp_path / "gate_promoted_model.pt"
     anchor.write_bytes(b"good-old-export")
     ctrl = GateHoldController(gate=gate, promoted_model_path=anchor)
+    # A refresh is only DUE after a genuine promote once an anchor exists
+    # (G3-8 / review R4), which is the state this scenario is about: the gate
+    # is promoting and the copy is what fails.
+    ctrl.on_decision(GateDecision(
+        decision=DECISION_PROMOTE, reason="promote_no_regression",
+        mode=MODE_ENFORCE, games_cur=197, games_prev=38))
     trainer = _MarkerTrainer()
 
     real_copyfile = phases.shutil.copyfile
@@ -4081,11 +4148,16 @@ def test_a_window_with_no_confound_measurement_can_never_exit_zero() -> None:
     ``promote_to_enforce``, the signal to set ``gate_mode: enforce`` -- while
     the PID-confound leg, the deciding KILL rule the ledger registered for
     exactly this promotion, measures nothing at all.
-    ``gate_sample_confound_elo`` is NaN on 109 of 109 live rows because the
-    server compactor rebuilds ``ShardMeta`` without
-    ``opponent_wdl_regret_limit``.
+    ``gate_sample_confound_elo`` is NaN on 109 of 109 rows written so far
+    because the server compactor rebuilt ``ShardMeta`` without
+    ``opponent_wdl_regret_limit`` (fixed by #323, deploy-gated on a server
+    restart -- so this leg stays unmeasured until one happens AND a full window
+    of new shards lands).
     """
-    healthy = [(197, 38, 44.0 * (1 if i % 2 else -1), 721.0) for i in range(40)]
+    # Every OTHER axis measured, including the pooled identity -- otherwise
+    # this would exit 6 and test the wrong refusal (review R3).
+    healthy = [(197, 38, 44.0 * (1 if i % 2 else -1), 721.0, 235.0)
+               for i in range(40)]
     r = shadow_readout_verdict(healthy, last_n=40)
     assert r.verdict == READOUT_PROMOTE, "every other axis passes"
     assert r.n_confound == 0
@@ -4100,15 +4172,15 @@ def test_a_window_with_no_confound_measurement_can_never_exit_zero() -> None:
 
     # A KILL still outranks it: a failing leg is a plumbing fact about THIS
     # window and must be read first.
-    broken = [(197, 250, 44.0 * (1 if i % 2 else -1), 721.0) for i in range(40)]
+    broken = [(197, 250, 44.0 * (1 if i % 2 else -1), 721.0, 447.0)
+              for i in range(40)]
     r_kill = shadow_readout_verdict(broken, last_n=40)
     assert r_kill.verdict == READOUT_KILL
     assert readout_exit_code(r_kill) == READOUT_EXIT_KILL
 
     # ...and once the column carries numbers, the axis is measured and the
     # command can promote.
-    with_conf = [(*row, 235.0, 5.0 * ((i % 5) - 2))
-                 for i, row in enumerate(healthy)]
+    with_conf = [(*row, 5.0 * ((i % 5) - 2)) for i, row in enumerate(healthy)]
     r_ok = shadow_readout_verdict(with_conf, last_n=40)
     assert r_ok.n_confound == 40
     assert readout_exit_code(r_ok) == READOUT_EXIT_PROMOTE
@@ -4187,7 +4259,7 @@ def test_the_readout_help_names_the_rederivation_and_the_exit_code() -> None:
     src = (Path(__file__).resolve().parents[1]
            / "scripts" / "gate_shadow_readout.py").read_text("utf-8")
     assert "--refresh-lag-seconds" in src
-    assert "rederive_reference_from_shards" in src
+    assert "rederive_reference_with_phase_sweep" in src
 
 
 def test_the_loop_body_hands_the_controller_to_the_gating_phase() -> None:
@@ -4233,3 +4305,257 @@ def test_the_loop_body_hands_the_controller_to_the_gating_phase() -> None:
     create_kwargs = {kw.arg: ast.unparse(kw.value) for kw in create[0].keywords if kw.arg}
     assert "current_iteration" in create_kwargs, create_kwargs
     assert "state" in create_kwargs, create_kwargs
+
+
+# --------------------------------------------------------------------------
+# 18. REVIEW ROUND (PR #324): the re-derivation's own uncertainty, the
+#     mandatory-axis rule, and the anchor's first publish after a restart
+# --------------------------------------------------------------------------
+def test_the_rederivation_refuses_a_phase_unstable_split() -> None:
+    """MUTATION (review R1): drop the phase sweep and emit the point estimate.
+
+    THE RECONSTRUCTION CANNOT PIN ITS OWN BIN EDGES. ``generated_at_unix`` on a
+    ``_compacted`` shard is the SERVER's flush stamp, while the loop attributes
+    at INGEST -- a shard flushed at the end of iteration N is ingested in N+1,
+    where its sha is ``prev``. On live data a quarter-iteration shift moves
+    ``prev_share`` from 0.177 to 0.428 with the reconstruction's internal
+    structure unchanged, so its own uncertainty SPANS both readings of the
+    disagreement the ledger pre-registers it to adjudicate.
+
+    A tool that hands an operator a constant it cannot support is worse than no
+    tool: the pre-registered step "resolve this from shards" would be satisfied
+    by an artifact. So the sweep is the output, and the constants block refuses.
+    """
+    # A fleet whose prev-arm shards arrive in the first `lag` seconds. Shifting
+    # the bin edges re-assigns them wholesale, which is the instability.
+    cadence, lag, n = 600.0, 180.0, 30
+    iterations = [(1_000_000.0 + (i + 1) * cadence, cadence) for i in range(n)]
+    shards: list[ShardArm] = []
+    for i, (end, secs) in enumerate(iterations):
+        start = end - secs
+        shards.extend(
+            ShardArm(start + t, model_step=i, model_sha256="p",
+                     wins=5, draws=1, losses=4)
+            for t in range(0, int(lag), 30)
+        )
+        shards.extend(
+            ShardArm(start + t + 1, model_step=i + 1, model_sha256="c",
+                     wins=5, draws=1, losses=4)
+            for t in range(int(lag), int(secs), 30)
+        )
+
+    swept = rederive_reference_with_phase_sweep(iterations, shards)
+    lo, hi = swept.band("prev_share")
+    assert hi - lo > 0.06, (
+        f"this construction must BE phase-unstable ({lo:.4f}..{hi:.4f}), or the "
+        "test cannot see the refusal"
+    )
+    assert swept.prev_share_is_phase_stable is False
+    body = swept.as_offline_reference_source()
+    assert body.strip().startswith("REFUSED"), body
+    assert "prev_share:" not in body, "no constant may be emitted"
+    assert "phase-unstable" in body
+    # The bands are REPORTED for every swept field, so the operator can see
+    # which of the seven numbers this command can and cannot deliver.
+    for name in ("mean_games_cur", "mean_games_prev", "prev_share",
+                 "refresh_lag_seconds", "mean_delta_elo", "sd_delta_elo",
+                 "mean_iter_seconds"):
+        band_lo, band_hi = swept.band(name)
+        assert band_hi >= band_lo, name
+    # `mean_iter_seconds` comes from progress.csv's own timestamps and is
+    # phase-invariant by construction: the same rows are read at every shift.
+    assert swept.spread("mean_iter_seconds") == pytest.approx(0.0, abs=1e-9)
+
+    # ...and a fleet whose split does NOT move with the phase still emits.
+    steady = [
+        ShardArm(1_000_000.0 + (i + 1) * cadence - secs / 2.0,
+                 model_step=i + 1, model_sha256="c", wins=5, draws=1, losses=4)
+        for i, (_, secs) in enumerate(iterations)
+    ] + [
+        ShardArm(1_000_000.0 + (i + 1) * cadence - secs / 2.0 + 1.0,
+                 model_step=i, model_sha256="p", wins=5, draws=1, losses=4)
+        for i, (_, secs) in enumerate(iterations)
+    ]
+    calm = rederive_reference_with_phase_sweep(iterations, steady)
+    assert calm.prev_share_is_phase_stable is True, calm.band("prev_share")
+    assert "prev_share:" in calm.as_offline_reference_source()
+
+
+def test_the_rederivation_excludes_quarantined_shards(tmp_path: Path) -> None:
+    """MUTATION (review R2): rglob the whole tree again.
+
+    ``--help`` tells the operator to pass ``.../trials/<trial>/processed``,
+    which holds ``_compacted/`` AND ``_quarantine/``. The quarantined shards
+    are ones the loop REJECTED and never counted -- on the live trial, 5 shards
+    / 136 curriculum games -- so including them makes the "independent
+    reconstruction" a mixture of what the loop used and what it threw away.
+    """
+    root = tmp_path / "processed"
+    for sub, wins in (("_compacted", 7), ("_quarantine", 99)):
+        d = root / sub / "s.zarr"
+        d.mkdir(parents=True)
+        (d / ".zattrs").write_text(json.dumps({
+            "generated_at_unix": 1_000_000.0, "model_step": 5,
+            "model_sha256": "abc", "wins": wins, "draws": 0, "losses": 0,
+        }), encoding="utf-8")
+
+    arms, counts = read_shard_arms(root)
+    assert [a.wins for a in arms] == [7], "the quarantined shard must not count"
+    assert counts["_compacted"] == 1
+    assert counts["EXCLUDED _quarantine"] == 1, counts
+
+    # The exclusion is a named set, not a hardcoded string buried in a filter.
+    everything, _ = read_shard_arms(root, exclude_dirs=frozenset())
+    assert sorted(a.wins for a in everything) == [7, 99]
+
+
+def test_the_rederivation_refusal_does_not_exit_zero(tmp_path: Path) -> None:
+    """MUTATION (review R1): ``return 0`` at the end of ``_rederive``.
+
+    The refusal prints, so a human reading the terminal is safe either way. The
+    caller this protects is the one that captures the output: a wrapper testing
+    the status would be told the constants are good in exactly the case where
+    the tool declined to emit any. ⚑ An exit code is an OR over axes -- assert
+    the AXIS STATE, and "the sweep resolved" is the axis here.
+
+    7 is deliberately outside the verdict range: this mode judges no window, so
+    mapping non-zero onto "the gate says kill" would be wrong twice over.
+    """
+    from scripts import gate_shadow_readout
+
+    cadence, lag, n = 600.0, 180.0, 12
+    csv_path = tmp_path / "progress.csv"
+    rows = ["timestamp,time_this_iter_s,training_iteration"]
+    rows += [
+        f"{1_000_000.0 + (i + 1) * cadence},{cadence},{i + 1}" for i in range(n)
+    ]
+    csv_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    root = tmp_path / "processed" / "_compacted"
+    root.mkdir(parents=True)
+    k = 0
+    for i in range(n):
+        start = 1_000_000.0 + i * cadence
+        for t in range(0, int(cadence), 30):
+            prev = t < lag
+            d = root / f"s{k}.zarr"
+            k += 1
+            d.mkdir()
+            (d / ".zattrs").write_text(json.dumps({
+                "generated_at_unix": start + t + (0.0 if prev else 1.0),
+                "model_step": i if prev else i + 1,
+                "model_sha256": "p" if prev else "c",
+                "wins": 5, "draws": 1, "losses": 4,
+            }), encoding="utf-8")
+
+    code = gate_shadow_readout._rederive(csv_path, tmp_path / "processed")
+    assert code == gate_shadow_readout._REDERIVE_UNRESOLVED, code
+    assert code != 0
+    # ...and it is not confusable with a verdict or with a missing axis.
+    assert code not in {
+        READOUT_EXIT_PROMOTE, READOUT_EXIT_HOLD, READOUT_EXIT_KILL,
+        READOUT_EXIT_CONFOUND_UNMEASURED, READOUT_EXIT_IDENTITY_UNEVALUATED,
+        gate_shadow_readout._NOT_RUN, gate_shadow_readout._NO_FILE,
+    }
+    # The documented table names it, so an operator can look 7 up.
+    assert "rederive unresolved (7)" in (gate_shadow_readout.__doc__ or "")
+
+    # ...and the code is CONDITIONAL, not a constant refusal: a fleet whose
+    # split survives the sweep still exits 0. Without this half, hardcoding 7
+    # would pass -- an instrument that always refuses is as useless as one that
+    # never does, and only this direction gets noticed by nobody.
+    calm_root = tmp_path / "calm" / "_compacted"
+    calm_root.mkdir(parents=True)
+    for i in range(n):
+        mid = 1_000_000.0 + i * cadence + cadence / 2.0
+        for j, (step, sha) in enumerate(((i + 1, "c"), (i, "p"))):
+            d = calm_root / f"s{i}_{j}.zarr"
+            d.mkdir()
+            (d / ".zattrs").write_text(json.dumps({
+                "generated_at_unix": mid + j,
+                "model_step": step, "model_sha256": sha,
+                "wins": 5, "draws": 1, "losses": 4,
+            }), encoding="utf-8")
+    assert gate_shadow_readout._rederive(csv_path, tmp_path / "calm") == 0
+
+
+def test_a_skipped_pooled_identity_cannot_exit_zero() -> None:
+    """MUTATION (review R3): let ``readout_exit_code`` ignore the axis states.
+
+    Same OR-over-axes trap this PR closes for ``confound``, one axis over, on
+    the leg the module itself calls "THE ONE LEG WITH NO STATISTICS IN IT". A
+    csv with no ``pid_curriculum_*`` -- a file rotated from an earlier report
+    schema, which this repo produces every few days -- skips the exact-integer
+    identity, and exit 0 would say the instrument was checked.
+    """
+    rows = [(197, 38, 44.0 * (1 if i % 2 else -1), 721.0, float("nan"),
+             5.0 * ((i % 5) - 2)) for i in range(40)]
+    r = shadow_readout_verdict(rows, last_n=40)
+    assert r.verdict == READOUT_PROMOTE
+    assert r.confound_is_measured is True, "the OTHER mandatory axis is fine"
+    assert [leg.state for leg in r.legs
+            if leg.name == "anchored_games_vs_pooled"] == [LEG_SKIPPED]
+    assert readout_exit_code(r) == READOUT_EXIT_IDENTITY_UNEVALUATED
+
+    # Both axes unmeasured: the identity is the more fundamental fact and is
+    # reported first. Pinned so the precedence is a decision, not an accident.
+    both = [(197, 38, 44.0 * (1 if i % 2 else -1), 721.0) for i in range(40)]
+    assert readout_exit_code(shadow_readout_verdict(both, last_n=40)) == (
+        READOUT_EXIT_IDENTITY_UNEVALUATED)
+
+    # A SKIPPED cadence axis is explicitly EXEMPT, and the docstring says why:
+    # the attribution axis is still evaluated in that case, against the raw
+    # reference share, and says so on a failure.
+    no_cadence = [(197, 38, 44.0 * (1 if i % 2 else -1), float("nan"), 235.0,
+                   5.0 * ((i % 5) - 2)) for i in range(40)]
+    r_nc = shadow_readout_verdict(no_cadence, last_n=40)
+    assert [leg.state for leg in r_nc.legs if leg.name == "cadence"] == [LEG_SKIPPED]
+    assert readout_exit_code(r_nc) == READOUT_EXIT_PROMOTE
+    assert "cadence" in (readout_exit_code.__doc__ or "")
+
+
+def test_the_first_publish_of_a_process_does_not_re_anchor(tmp_path: Path) -> None:
+    """MUTATION (review R4): ``if d is None: return True``.
+
+    That branch is only reachable when an anchor ALREADY EXISTS -- the
+    ``not is_file()`` branch above it covers bootstrap -- so returning True
+    meant the first unheld publish of every process rewrote the anchor from the
+    current (possibly demoted, possibly just-refused-as-stale) export and
+    re-stamped it at the current iteration. ``train.sh`` auto-resume restarts
+    on every crash, so that is G3-8 restored once per restart; and because
+    ``note_anchor_refreshed`` clears the stamp flag and zeroes the age, the AGE
+    guard could never observe staleness that predates a restart.
+    """
+    anchor = tmp_path / "gate_promoted_model.pt"
+    ctrl = GateHoldController(gate=_gate(mode=MODE_ENFORCE),
+                              promoted_model_path=anchor)
+    # Bootstrap: no file yet, so the first publish creates it.
+    assert ctrl.anchor_refresh_is_due() is True
+    anchor.write_bytes(b"an-anchor")
+    write_anchor_stamp(anchor, iteration=100, trainer_step=1,
+                       model_sha256="abc", trial_id="t0")
+
+    # A fresh process: an anchor on disk and no verdict yet.
+    revived = GateHoldController.create(
+        _gate(mode=MODE_ENFORCE), durable_dir=tmp_path, current_iteration=101,
+    )
+    assert revived.last_decision is None
+    assert revived.anchor_refresh_is_due() is False, (
+        "the first publish after a restart must not re-anchor to the current "
+        "export"
+    )
+    # ...and the age guard can still see staleness that predates the restart.
+    stale = GateHoldController.create(
+        _gate(mode=MODE_ENFORCE), durable_dir=tmp_path, current_iteration=200,
+    )
+    assert stale.anchor_is_trustworthy is False
+
+    # The next genuine promote is what re-anchors, and nothing else does.
+    revived.on_decision(GateDecision(
+        decision=DECISION_NOT_RUN, reason="insufficient_iters",
+        mode=MODE_ENFORCE))
+    assert revived.anchor_refresh_is_due() is False
+    revived.on_decision(GateDecision(
+        decision=DECISION_PROMOTE, reason="promote_no_regression",
+        mode=MODE_ENFORCE, games_cur=197, games_prev=38))
+    assert revived.anchor_refresh_is_due() is True

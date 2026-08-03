@@ -202,6 +202,47 @@ def test_live_reload_declines_the_value_and_says_a_restart_will_refuse(
     assert "requires restart" not in hits[0]
 
 
+def test_live_reload_declines_a_NUMERIC_dead_key_too(tmp_path, caplog) -> None:
+    """The same branch, driven by a key whose inert value is not falsey.
+
+    The test above uses a boolean dead key, where ``bool(value) !=
+    bool(inert)`` and ``value != inert`` agree, so it cannot see whether the
+    live-reload branch shares the startup refusal's type-aware predicate.
+    ``gate_interval`` is inert at ``1``: a truthiness-only comparison calls
+    ``5`` identical to it and the branch is never entered, which is exactly the
+    silent overlay this module exists to prevent. It is also the ONLY case
+    where the reload's ordering matters -- these three keys were in the
+    restart-required skip set before this change, and a reordering would send
+    the operator the "requires restart" lie for a value a restart refuses.
+    """
+    key = "gate_interval"
+    yaml_path = tmp_path / "live.yaml"
+    yaml_path.write_text(f"{key}: 5\n", encoding="utf-8")
+    config: dict = {key: 1}
+
+    with caplog.at_level(logging.WARNING):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    assert config[key] == 1, "the dead value must NOT be overlaid"
+    hits = [
+        r.getMessage() for r in caplog.records
+        if key in r.getMessage() and "reaches no production code path" in r.getMessage()
+    ]
+    assert len(hits) == 1, caplog.text
+    assert "REFUSE to start" in hits[0]
+    assert "requires restart" not in hits[0]
+    # And the inert value passes through the branch without a warning, so an
+    # operator can leave the corpse in the yaml at its realized value.
+    caplog.clear()
+    yaml_path.write_text(f"{key}: 1\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    assert not [
+        r for r in caplog.records
+        if key in r.getMessage() and "reaches no production code path" in r.getMessage()
+    ], caplog.text
+
+
 def test_startup_reload_still_applies_it_so_the_refusal_can_fire(tmp_path) -> None:
     """The non-live overlay must NOT swallow the value.
 

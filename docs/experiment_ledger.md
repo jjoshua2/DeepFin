@@ -22397,6 +22397,207 @@ worktree's extensions were rebuilt and the whole verification re-run on the
 merged tree rather than assuming the merge was inert — the same rule as
 `c_extension_rebuild_after_pull`, applied to a PR's own evidence.
 
+---
+
+## GATE-BLOCKING FIX 2026-08-03 — the server's upload compactor drops 8 of 56 `ShardMeta` fields, including BOTH inputs to the promotion gate's PID-confound instrument (audit wave 3, K1 / G3-1)
+
+**Type: correctness fix, no training-target change. Deploy-gated on a server
+restart** (the compactor runs in the server process; a running server keeps the
+old module — `running_scripts_keep_the_old_file`).
+
+**The defect.** `_flush_buffered_upload_to_inbox` (`server/app.py`) rebuilt
+`ShardMeta` from a hand-written kwarg list that set 48 of the dataclass's 56
+fields. The other 8 silently took their dataclass defaults, and
+`_BufferedUploadAccumulator` had no slot for four of them at all, so the loss
+happened at ACCUMULATE time, not just at flush. Compaction is unconditional
+(`compact_target_positions = max(1, ...)`, and the live trial's `processed/`
+holds only `_compacted/`), so this is **100% of production shards**:
+
+| dropped field | was | consumer that died |
+|---|---|---|
+| `opponent_wdl_regret_limit` | `None` on 447/447 ingested shards | the gate's confound leg |
+| `sf_nodes` | `None` | per-shard difficulty provenance |
+| `sf_d6_sum` / `sf_d6_n` | `None` | `sf_eval_delta6` (`0.0` on every live row) |
+| `run_id` | `None` | trial provenance on a compacted shard |
+| `policy_encoding` / `policy_size` | rewritten by the shard writer | — (no live effect) |
+| `version` | writer-owned; correct as-is | — |
+
+Downstream: `_process_shard`'s `if shard_regret is not None:` never fired,
+`gate_{cur,prev}_regret_games` stayed 0, `_arm_mean_regret` returned NaN,
+`AnchoredSample.confound_elo` propagated it, and `_confound_fit` saw n=0.
+**`gate_sample_confound_elo` was NaN on 109 of 109 live rows** (iters 370–478).
+The ledger's blocking finding (1) — "the anchored delta may be a CONTROLLED
+VARIABLE of the PID" — is recorded above as CLOSED AS BUILT with the kill rule
+"|corr(predicted confound, measured delta)| ≥ 0.5 → do NOT enable". That rule
+has only ever been evaluated over an empty set. **It is not closed; this fix is
+what makes it evaluable.** The 24/24 mutations that were killed in that review
+were all run against shards that HAD the field — the reviewer exercised the
+consumer with an input the producer's output never carried.
+
+The same paragraph's claim that "difficulty is part of upload-buffer identity
+(flush on change)" is true of the WORKER's buffer and was false of the SERVER's:
+the compaction merge key was `(trial, model_sha, history|repfix)` and omitted
+difficulty entirely.
+
+**The fix.**
+1. All 8 fields carried, each with explicit aggregation semantics.
+   `sf_d6_sum`/`sf_d6_n` join the summed classes. `opponent_wdl_regret_limit`,
+   `sf_nodes`, `policy_encoding` and `policy_size` become
+   `_COMPACTION_IDENTITY_FIELDS`: part of the merge key (matching the worker's
+   flush-on-change semantics) AND asserted uniform inside the accumulator, with
+   both sides coerced through one helper so the guard cannot disagree with the
+   criterion. `run_id` is set from the accumulator's trial, which the upload
+   route has already proved equal to any non-empty shard `run_id`. `version`,
+   `username`, `generated_at_unix` and `positions` are writer-owned by
+   construction — a compacted shard is a NEW shard, written by this process,
+   from these samples, possibly merging several uploaders.
+2. The kwarg list is GONE. The flush builds its kwargs from
+   `_SHARD_META_FIELD_KINDS`, a table that must classify every `ShardMeta`
+   field; `server/app.py` raises at IMPORT if the table and the dataclass
+   disagree. A hand-written list cannot fail on an ABSENT key, which is the
+   entire mechanism of this defect.
+3. An upload whose identity values cannot be typed is REJECTED (the existing
+   `{"stored": False, "rejected": True}` shape), and the equivalent pending
+   shard is quarantined on recovery — rather than 500-ing the keying or being
+   silently dropped.
+
+**Why 110 green tests missed it.**
+`tests/test_promotion_gate.py::test_ingest_splits_anchored_counts_by_publishing_model`
+hand-writes shards into the inbox with `meta["opponent_wdl_regret_limit"]`
+already set. The whole suite tested the CONSUMER against an input the PRODUCER
+never emitted. `tests/test_shard_meta_compaction_completeness.py` closes that:
+it enumerates `dataclasses.fields(ShardMeta)` (never a hand-list — a diff-based
+check is blind to exactly the absent key that caused this), gives every field a
+distinguishable non-default value, drives it through the real
+accumulate→flush path, and separately walks worker producer → HTTP upload →
+compactor → `_ingest_distributed_selfplay`.
+
+**Mutation results** (all run; each is the defect being re-introduced):
+
+```
+M1  omit sf_d6_n from the flush build         -> 3 tests red
+M2  omit opponent_wdl_regret_limit from flush -> 2 tests red
+        ...and tests/test_promotion_gate.py stays 110/110 GREEN, which is
+        the direct demonstration of why the old suite could not see K1
+M3  add an unclassified field to ShardMeta    -> server.app raises at IMPORT
+M4  drop difficulty from the merge key        -> 1 test red
+```
+
+**VERIFICATION OBSERVABLE for the restart** (do NOT read an exit code — an exit
+code is an OR over axes, and the readout's prev_share leg can fail or pass
+independently of this):
+
+1. **First post-restart ingested shard.** On the first compacted shard written
+   after the server restarts onto this code, `opponent_wdl_regret_limit` must be
+   a finite float and `sf_nodes` a positive int:
+   ```
+   PYTHONPATH=. python3 -c "import glob,json,sys; p=sorted(glob.glob('runs/pbt2_small/server/trials/*/processed/_compacted/*.zarr/.zattrs'))[-1]; d=json.load(open(p)); print(p, d.get('opponent_wdl_regret_limit'), d.get('sf_nodes'), d.get('sf_d6_n')); sys.exit(0 if isinstance(d.get('opponent_wdl_regret_limit'), float) else 1)"
+   ```
+   PASS = a float, not `None`. This reads out in ONE compaction window (~90s),
+   long before any training row.
+2. **Within 3 iterations**, `gate_sample_confound_elo` must be finite on every
+   new `progress.csv` row, and `sf_eval_delta6` must be non-zero. Assert the
+   AXIS STATE, not the readout's exit status:
+   ```
+   PYTHONPATH=. python3 scripts/gate_shadow_readout.py <trial>/progress.csv
+   ```
+   and require **`n_confound >= 3`** over the window before ANY verdict on
+   blocking finding (1) is recorded. `confound=unreported` is a FAILED
+   instrument, not a passing leg.
+3. **KILL for this fix**: if the first post-restart compacted shard still shows
+   `None`, the fix is not in effect — check the server was restarted onto this
+   commit (`merged_on_live_branch_still_never_ran`), not just that the PR
+   merged.
+
+Note this fix does not by itself re-open the gate: it makes the gate's
+pre-registered confound KILL rule *readable*. The rule must then actually be run
+over a full 40-row window before the gate is enabled.
+
+**Revert point.** None taken. No weights, optimizer, PID or replay state is
+touched. The only behaviour changes on a production path are (a) compacted
+shards carry 8 more meta fields, (b) the compaction merge key gains 4
+dimensions — difficulty ships in the same `recommended_worker` manifest as the
+model sha, which is already in the key, so expected extra fragmentation is
+~zero, and idle accumulators still age-flush at `upload_compact_max_age_seconds`
+(90s), so the key cannot grow unbounded — and (c) two new upload-rejection
+reasons that are unreachable from any shard our own worker writes. Revert is
+`git revert`.
+
+**Confounds.** Historical shards already in the replay window keep their `None`
+difficulty forever; `_process_shard` correctly treats absent as UNKNOWN (a `0.0`
+regret would read as unhandicapped Stockfish), so the confound leg's denominator
+grows only from post-restart shards. Any confound readout taken before the
+window has turned over is measured on a partial sample — state `n_confound` with
+the number.
+
+**Review status.** UNREVIEWED at open. Reviewer ≠ author.
+
+**CORRECTION (post-review, appended — the entry above is left as written).** The
+Risk paragraph's "expected extra fragmentation is ~zero" was WRONG, and the
+independent reviewer measured the real figure. The premise (difficulty and model
+sha ship in one `recommended_worker` manifest, and the sha is already in the key)
+is right; the conclusion does not follow, because the worker does not apply them
+atomically. `worker.py:1968-1969` runs `_reco_changed` — which live-applies the
+new regret and does NOT flush the upload buffer, since
+`opponent_wdl_regret_limit`/`sf_nodes` are in `_RECO_LIVE_KEYS` — BEFORE
+`_swap_model_from_manifest`, which is what flushes. Every iteration therefore has
+a real **(old sha, NEW regret)** window that merged under the old key and now
+forms its own accumulator.
+
+Measured on the live baseline (447 compacted shards, 13.06 h, 70 distinct shas =
+1/iteration): **only 7.6% of live compacted shards reach the 2000-position
+target — 92.4% flush on the 90 s AGE timer.** That is why key width matters at
+all here: with age-dominated flushing, an extra key dimension does not merely
+re-partition a size-bounded group, it subtracts positions from the shard that
+window would otherwise have produced. Simulation driving the real
+`_upload_identity_acc_key` against the old key, parameterised from those live
+numbers, gives **+70 shards over 70 iterations = exactly +1 compacted shard per
+iteration** (all 4 workers cross the transition together and share the one extra
+accumulator), flat in the size of the decoupling window ⇒ **+15.7% shard count,
+roughly −17% mean shard size**, extra shard <200 positions at a realistic 5-15 s
+download+compile window.
+
+This is the fix working, not a side effect — those games really were played at a
+different difficulty, and merging them is the "shard whose stated difficulty is
+true of neither half" the entry above exists to prevent. Bounded (one extra
+accumulator per iteration; idle accumulators still age-flush at
+`upload_compact_max_age_seconds`), total ingested positions unchanged, and the
+gate's regret is games-weighted (`distributed_runtime.py:1660-1670`) so
+more/smaller shards do not bias it. Live shards already range down to 3
+positions, so nothing downstream carries a minimum-size assumption.
+
+**ADDED DEPLOY OBSERVABLE (4), to be read alongside (1)-(3) above.** Confirm the
+magnitude instead of assuming it. Over the first full post-restart hour, compare
+compacted-shard count and mean size against the pre-restart baseline
+(447 shards / 1396.7 p mean / 1441 p median over 13.06 h):
+
+```
+PYTHONPATH=. python3 -c "import glob,json; ps=glob.glob('runs/pbt2_small/server/trials/*/processed/_compacted/*.zarr/.zattrs'); ns=[json.load(open(p)).get('positions') or 0 for p in ps]; ns=[n for n in ns if n]; print('shards',len(ns),'mean',sum(ns)/len(ns),'median',sorted(ns)[len(ns)//2],'under200',sum(n<200 for n in ns))"
+```
+
+EXPECTED: shards/hour up ~15%, mean size down ~17%, and roughly one sub-200p
+shard per iteration appearing where there were none. **This is a PASS, not a
+regression** — read it as confirmation the difficulty split is live. A shard rate
+UNCHANGED from baseline means the difficulty dimension is not actually splitting
+anything, i.e. observable (1) should be re-checked before believing the
+confound column.
+
+**Also corrected (F2, docstring only, no behaviour change).**
+`_upload_identity_acc_key`'s claim that key and guard "cannot disagree" is false
+for exactly one value: the key compares by `repr()` and `_absorb_identity` by
+`!=`, which disagree on NaN (same key, unequal values ⇒ the second upload raises,
+and there is no try/except around `add_upload`, so it would surface as an HTTP
+500). Unreachable in production — `distributed_runtime.py:413` maps a non-finite
+or negative `wdl_regret` to `None` before it can reach a worker, and NaN >= 0.0
+is False. The docstring now says exactly that, and says not to close the gap by
+relaxing the assert: a NaN difficulty is a broken reading, and rejecting the
+upload is the correct outcome if one ever gets that far.
+
+**Review status (updated).** APPROVED by an independent reviewer (reviewer ≠
+author), PR #323, who reproduced all four author mutations and added a fifth
+(dropping `policy_encoding`/`policy_size` from the key goes red — the key really
+is the protection for those two, as claimed). Both findings above were theirs.
+
 #### FIX (B), audit wave 3 — the gate's internals and the shadow readout's per-AXIS rule (G3-2..G3-8, G3-11)
 
 The second of the two PRs the wave-3 routing named. (A) carries the server
@@ -22543,3 +22744,108 @@ the inert ones and `reject_dead_config_keys(flat_yaml)` is asserted to pass on
 `cur=0` row — costs one dead row per restart, no fix attempted); G3-9 (TOCTOU,
 PLAUSIBLE, unreproduced); G3-10 (`gate.holds` not reset when `create()` releases
 an anchorless hold — one line, but a behaviour change nobody asked for).
+
+##### CORRECTION, 2026-08-03 (PR #324 review round) — RETRACTING "on the shard side the lag never moved"
+
+The entry above is left as written; this paragraph corrects it. **The sentence
+"on the shard side the lag never moved, and the in-loop split attributes ~45%
+more games to `prev` than the shard binning does" is WITHDRAWN as unsupported,
+and so is every number in the `--rederive-reference` block it summarises.** The
+reviewer of PR #324 showed that the reconstruction's `prev_share` is not a
+measurement at all: shifting the iteration bin edges by a quarter of an
+iteration — an alignment the reconstruction has no way to pin — moved it from
+0.1771 to 0.4275 with the shard set and its internal structure unchanged. The
+disagreement the sentence adjudicated (0.1802 shard vs 0.2612 in-loop) is
+strictly inside the reconstruction's own phase uncertainty, so it read a
+choice of bin edge as a finding. ⚑ This is the [A STEP IS NOT A RAMP]
+failure in a new costume: a number that reproduces is not thereby a
+measurement, and here it reproduces only because the same arbitrary phase was
+used twice.
+
+`--rederive-reference` now sweeps the bin-edge phase over
+`[-0.5, -0.25, 0, +0.25, +0.5]` of an iteration, reports every field as a BAND,
+and REFUSES to emit an `OfflineReference` body when `prev_share`'s band exceeds
+the attribution leg's own 0.06 tolerance — with its own exit code (7), because
+a refusal that exits 0 is a silent accept for anything that captures the output.
+Real output on the live trial, 2026-08-03, post-fix:
+
+```
+$ CUDA_VISIBLE_DEVICES= PYTHONPATH=. python3 scripts/gate_shadow_readout.py \
+    runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/progress.csv \
+    --rederive-reference runs/pbt2_small/server/trials/13a9f_00000/processed
+re-derived from 430 shards ... binned against 68 iterations
+  subtrees read: EXCLUDED _quarantine=5, _compacted=430
+  usable bins (both arms non-empty): 67
+
+  field                point estimate   shipped     phase band (shifts [-0.5,-0.25,0,0.25,0.5])
+  mean_games_cur              197.9       196.8   [47.2, 197.9]
+  mean_games_prev              43.5        38.3   [43.5, 219.8]
+  prev_share                 0.1802      0.1629   [0.1802, 0.8232]  <-- UNRESOLVED, spans the leg's own tolerance
+  mean_iter_seconds           625.6       721.0   [625.6, 906.8]
+  refresh_lag                 112.7       117.5   [112.7, 746.4]
+  mean_delta_elo              -7.83       -4.33   [-24.83, -0.81]
+  sd_delta_elo                45.16       45.56   [35.01, 73.31]
+
+OfflineReference body these imply:
+    REFUSED: prev_share is phase-unstable over the bin-edge sweep
+    (0.1802..0.8232, spread 0.6429 > the leg's own 0.06 tolerance).
+    ...
+    Resolve the alignment first -- attribute shards at INGEST (the loop's own
+    event) rather than at the compactor's flush stamp -- then re-run.
+EXIT=7
+```
+
+Two of those numbers survive the sweep and one changed for a real reason. The
+row counts and `mean_iter_seconds` come from `progress.csv`'s own timestamps and
+are phase-invariant (spread exactly 0.0), so **`mean_iter_seconds` 625.6 s vs the
+shipped 721.0 s stands**: the loop genuinely got faster since 2026-06, which is
+also why the `cadence` leg passes at 0.88x. The shard count fell 435 -> 430
+because `read_shard_arms` now EXCLUDES `_quarantine/` — those 5 shards
+(136 curriculum games) are ones the loop REJECTED and never counted, so
+including them made the "independent reconstruction" a mixture of what the loop
+used and what it threw away.
+
+**The pre-registered next step is therefore unchanged in obligation and changed
+in method:** the `refresh_lag` FAIL still may not be read as an attribution
+failure, and `OfflineReference` still may not move — but the resolution now
+requires attributing shards at the loop's INGEST event rather than at the
+server's flush stamp. Until a reconstruction exists that pins its own alignment,
+there is NO shard-side reading of the lag, in either direction. The in-loop
+0.2612 is the only measurement on the table, and it cannot separate a moved lag
+from a mis-attributed split by itself — which is exactly why the leg is named
+for the quantity and reports both readings.
+
+Also corrected: the mutation count in the entry above ("all 11 mutations were
+KILLED") was wrong at the time of writing — round 1 ran and killed 12 (M1-M12),
+independently re-killed by the reviewer. The review round adds M13-M18, all
+KILLED, for 18 total; the test each mutation is killed by is in the PR #324
+body. One of those rows was also wrong: M7 as first written renamed the leg key
+AND its message, and the test it was credited to
+(`test_the_attribution_axis_names_the_refresh_lag_and_reports_both`) reads the
+MESSAGE — a key-only rename passes it. The mutation is killed by
+`test_the_readout_reports_every_axis_state_not_only_the_failures`, which is the
+test that asserts the axis NAME, and M7 is now run as the key-only rename.
+
+And the readout block quoted in the entry above was reformatted for width, which
+dropped the `FAILED:` clause from the header line and truncated three leg
+details. ⚑ BANK THE DUMP. The verbatim output, same command, 2026-08-03:
+
+```
+kill  rows=40 usable=40 (1.000)  games_cur=182.9 games_prev=64.7 prev_share=0.2612  cadence=635s expected_prev_share=0.1850 refresh_lag=166s/ref117s  delta mean=-2.16 sd=33.22  confound=unreported  FAILED: refresh_lag 165.8s vs reference 117.5s (1.41x): prev_share 0.2612 vs expected 0.1850 +/-0.06 -- a fleet whose model-refresh lag MOVED and a split that mis-attributes shards are the same number here; check the anchored_games_vs_pooled leg above and re-derive the reference from shards (gate_shadow_readout.py --rederive-reference) before reading this as an attribution failure
+legs:
+  PASS       cadence                  635s = 0.88x the reference 721s, inside [0.6, 3.0]
+  PASS       anchored_games_vs_pooled cur+prev == pid_curriculum_w+d+l on 40/40 rows
+  PASS       usable_frac              1.000 >= 0.85 (40/40 rows)
+  PASS       games_per_second         0.3899 = 1.20x the reference 0.3261 (band 0.5-2.0)
+  FAIL       refresh_lag              refresh_lag 165.8s vs reference 117.5s (1.41x): prev_share 0.2612 vs expected 0.1850 +/-0.06 -- a fleet whose model-refresh lag MOVED and a split that mis-attributes shards are the same number here; check the anchored_games_vs_pooled leg above and re-derive the reference from shards (gate_shadow_readout.py --rederive-reference) before reading this as an attribution failure
+  PASS       sd_delta_elo             33.22 inside (20, 70)
+  PASS       |mean_delta_elo|         2.16 <= 15
+  PASS       window_length            40 rows >= the pre-registered 40
+  UNMEASURED confound                 n=0 of 40 usable rows carry gate_sample_confound_elo -- the PID-confound leg, which the ledger pre-registered as the deciding KILL rule for enabling this gate, has NO measurement. Do not read a promote off this window
+EXIT=2
+```
+
+The pre-committed reading is unchanged and still SUCCESS: every axis prints with
+its state, the attribution axis is `refresh_lag` in seconds against the
+reference lag, `confound` reads `UNMEASURED` with `n=0`, and the command refuses
+to return 0 while it does.

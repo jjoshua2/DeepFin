@@ -30,10 +30,14 @@ WHAT IT READS
     ALONE would have made the same command exit 0 -- the pre-registered signal
     to set ``gate_mode: enforce`` -- while the PID-confound axis, the deciding
     KILL rule the ledger registered for exactly this promotion, measured
-    nothing at all. ``gate_sample_confound_elo`` is NaN on 109 of 109 live rows
-    because the server's upload compactor rebuilds ``ShardMeta`` without
-    ``opponent_wdl_regret_limit``. A window whose confound axis has fewer than
-    3 measurements therefore CANNOT exit 0 or 1; it gets exit 5.
+    nothing at all. ``gate_sample_confound_elo`` is NaN on 109 of 109 rows
+    written so far, because the server's upload compactor rebuilt ``ShardMeta``
+    without ``opponent_wdl_regret_limit``. That producer is fixed (#323), but
+    the fix is DEPLOY-GATED ON A SERVER RESTART -- the compactor runs in the
+    server process, so a running server keeps the old module -- and the axis
+    stays unmeasured until the server restarts and a full window of new shards
+    lands. A window whose confound axis has fewer than 3 measurements CANNOT
+    exit 0 or 1; it gets exit 5.
 
 ⚑ THE REFERENCE MUST BE RE-DERIVED BEFORE ``gate_mode`` LEAVES ``off``
     Every leg is stated relative to ``OfflineReference``, measured over live
@@ -42,21 +46,29 @@ WHAT IT READS
     manifest yet, so it is a model-refresh LAG -- roughly constant in SECONDS,
     not as a share -- and the axis is reported in seconds for that reason.
 
-    On the current trial the two available readings of that lag DISAGREE:
-    ``progress.csv`` implies ~166 s over the last 40 rows, while an
-    independent shard re-derivation over the same trial implies ~113 s, which
-    is essentially the calibration value. A moved lag and a mis-attributed
-    split are the same number in ``progress.csv`` and cannot be separated from
-    it, so the disagreement is exactly what has to be resolved before any
-    constant moves.
+    On the current trial ``progress.csv`` implies ~166 s over the last 40 rows
+    against the reference's 117.5 s. A moved lag and a mis-attributed split are
+    the same number in ``progress.csv`` and cannot be separated from it, so
+    that disagreement is exactly what has to be resolved before any constant
+    moves -- and it can only be resolved from the SHARD side.
 
-    ``--rederive-reference SHARD_ROOT`` is the independent side, read from the
+    ``--rederive-reference SHARD_ROOT`` is that independent side, read from the
     shard ``.zattrs`` the reference was originally built from and NOT from the
     gate's own columns (a control conditioned on its own outcome cannot fail).
-    It prints constants; it applies nothing. Record them in
-    ``docs/experiment_ledger.md`` and paste them into ``OfflineReference`` in
-    the same change, at restart prep -- never mid-window, and never after
-    reading a verdict you did not like.
+    ⚑ IT CURRENTLY REFUSES, AND THE REFUSAL IS THE FINDING. Shards carry the
+    SERVER's flush stamp while the loop attributes at INGEST, so binning them
+    against iteration boundaries has a free phase, and on the live trial a
+    quarter-iteration shift moves the reconstructed ``prev_share`` further than
+    the attribution leg's whole tolerance. The command therefore sweeps the
+    phase, prints every field as a BAND, and declines to emit constants (exit
+    7) rather than hand back a number a bin edge chose. An earlier ledger entry
+    read one phase of this reconstruction as a measurement and stated a
+    conclusion from it; that sentence is retracted in the ledger.
+
+    When a reconstruction that pins its own alignment exists, it prints
+    constants and applies nothing: record them in ``docs/experiment_ledger.md``
+    and paste them into ``OfflineReference`` in the same change, at restart prep
+    -- never mid-window, and never after reading a verdict you did not like.
 
 THE COLUMN TO WATCH IN SHADOW MODE IS ``gate_would_demote``
     ``gate_decision == 1`` is NOT "the gate is happy". It is emitted for four
@@ -118,6 +130,17 @@ WHAT THE VERDICT MEANS (and the exit code)
                             for enabling this gate was evaluated over an empty
                             set. NOT a kill: nothing is broken in this window.
                             The producer is -- see ``ShardMeta``.
+    identity not evaluated (6) the rows carry no ``pid_curriculum_w/d/l``, so
+                            the exact-integer pooled identity -- the one leg
+                            with no statistics in it -- was skipped. Same
+                            OR-over-axes rule as 5, one axis over. Reachable on
+                            any csv rotated from an earlier report schema.
+    rederive unresolved (7) ``--rederive-reference`` only, and no verdict on
+                            any window: the reconstruction's ``prev_share``
+                            moved further across the bin-edge phase sweep than
+                            the attribution leg's own tolerance, so the tool
+                            emitted a refusal instead of constants. A caller
+                            that captures the output must not paste it.
 
     PYTHONPATH=. python3 scripts/gate_shadow_readout.py runs/pbt2_small/<trial>/progress.csv
 """
@@ -126,6 +149,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -134,16 +158,50 @@ from chess_anti_engine.tune.promotion_gate import (
     CONFOUND_Z,
     OFFLINE,
     READOUT_EXIT_CONFOUND_UNMEASURED,
+    READOUT_EXIT_IDENTITY_UNEVALUATED,
     read_iteration_bins,
     read_shard_arms,
     readout_exit_code,
-    rederive_reference_from_shards,
+    rederive_reference_with_phase_sweep,
     shadow_readout_from_csv,
 )
 
 _NOT_RUN, _NO_FILE = 3, 4
+# --rederive-reference only. Deliberately outside the verdict range 0..2 and
+# the axis codes 5..6: it is not a verdict on a training window at all, and a
+# caller that maps "non-zero" onto "the gate says kill" would be wrong twice.
+_REDERIVE_UNRESOLVED = 7
+
+
+def _positive_seconds(raw: str) -> float:
+    """A refresh lag argparse will accept: strictly positive, finite.
+
+    The module carries an explicit invariant that no input may make the
+    deciding command RAISE instead of deciding, and ``--refresh-lag-seconds 0``
+    used to divide by zero inside the leg's own message (review N1). Refused
+    here as well as guarded there, because a zero reference lag is not a lag.
+    """
+    val = float(raw)
+    if not math.isfinite(val) or val <= 0.0:
+        raise argparse.ArgumentTypeError(
+            f"refresh lag must be a positive number of seconds, got {raw!r}"
+        )
+    return val
+
+
 _SAMPLE_COLUMNS = ("gate_sample_games_cur", "gate_sample_games_prev",
                    "gate_sample_delta_elo")
+
+
+_FIELD_LABELS = (
+    ("mean_games_cur", "mean_games_cur", "{:.1f}", "mean_games_cur"),
+    ("mean_games_prev", "mean_games_prev", "{:.1f}", "mean_games_prev"),
+    ("prev_share", "prev_share", "{:.4f}", "prev_share"),
+    ("mean_iter_seconds", "mean_iter_seconds", "{:.1f}", "mean_iter_seconds"),
+    ("refresh_lag_seconds", "refresh_lag", "{:.1f}", "refresh_lag_seconds"),
+    ("mean_delta_elo", "mean_delta_elo", "{:.2f}", "mean_delta_elo"),
+    ("sd_delta_elo", "sd_delta_elo", "{:.2f}", "sd_delta_elo"),
+)
 
 
 def _rederive(progress_csv: Path, shard_root: Path) -> int:
@@ -152,35 +210,55 @@ def _rederive(progress_csv: Path, shard_root: Path) -> int:
         print(f"no such shard directory: {shard_root}")
         return _NO_FILE
     bins = read_iteration_bins(progress_csv)
-    shards = read_shard_arms(shard_root)
-    r = rederive_reference_from_shards(bins, shards)
-    print(
+    shards, subtrees = read_shard_arms(shard_root)
+    r = rederive_reference_with_phase_sweep(bins, shards)
+    read_note = ", ".join(f"{k}={v}" for k, v in sorted(subtrees.items())) or "nothing"
+    lines = [
         f"re-derived from {r.n_shards} shards under {shard_root} binned against "
-        f"{r.n_iterations} iterations of {progress_csv}\n"
-        f"  usable bins (both arms non-empty): {r.n_usable}\n"
-        f"  mean_games_cur    {r.mean_games_cur:.1f}   "
-        f"(shipped {OFFLINE.mean_games_cur})\n"
-        f"  mean_games_prev   {r.mean_games_prev:.1f}   "
-        f"(shipped {OFFLINE.mean_games_prev})\n"
-        f"  prev_share        {r.prev_share:.4f}   "
-        f"(shipped {OFFLINE.prev_share})\n"
-        f"  mean_iter_seconds {r.mean_iter_seconds:.1f}   "
-        f"(shipped {OFFLINE.mean_iter_seconds})\n"
-        f"  refresh_lag       {r.refresh_lag_seconds:.1f}s  "
-        f"(shipped {OFFLINE.refresh_lag_seconds:.1f}s)\n"
-        f"  mean_delta_elo    {r.mean_delta_elo:.2f}   "
-        f"(shipped {OFFLINE.mean_delta_elo})\n"
-        f"  sd_delta_elo      {r.sd_delta_elo:.2f}   "
-        f"(shipped {OFFLINE.sd_delta_elo})\n"
-        "\nOfflineReference body these imply:\n"
-        f"{r.as_offline_reference_source()}"
-        "\nNOTHING WAS APPLIED. These are read from shard .zattrs -- an "
-        "independent\nreconstruction that never touches the gate's own split, "
-        "which is what makes\nthe attribution axis a control at all. Record "
-        "them in docs/experiment_ledger.md\nand edit OfflineReference in the "
-        "same change, at restart prep."
-    )
-    return 0
+        f"{r.n_iterations} iterations of {progress_csv}",
+        f"  subtrees read: {read_note}",
+        f"  usable bins (both arms non-empty): {r.n_usable}",
+        "",
+        "  field                point estimate   shipped     phase band "
+        f"(bin-edge shifts {list(r.shifts)} of an iteration)",
+    ]
+    for attr, label, fmt, ref_attr in _FIELD_LABELS:
+        lo, hi = r.band(attr)
+        ref = getattr(OFFLINE, ref_attr, float("nan"))
+        flag = ""
+        if attr == "prev_share" and not r.prev_share_is_phase_stable:
+            flag = "  <-- UNRESOLVED, spans the leg's own tolerance"
+        lines.append(
+            f"  {label:<18} {fmt.format(getattr(r, attr)):>14}   "
+            f"{fmt.format(float(ref)):>9}   "
+            f"[{fmt.format(lo)}, {fmt.format(hi)}]{flag}"
+        )
+    lines += [
+        "",
+        "⚑ THE BIN EDGES ARE A CHOICE. `generated_at_unix` on a _compacted shard",
+        "  is the SERVER's flush stamp; the loop attributes at INGEST, and a shard",
+        "  flushed at the end of iteration N is ingested in N+1 where its sha is",
+        "  `prev`. Nothing in this reconstruction can pin the alignment, so every",
+        "  split-derived number above is reported as a band, not a measurement.",
+        "  The row counts and `mean_iter_seconds` come from progress.csv's own",
+        "  timestamps and are phase-invariant; everything else is not.",
+        "",
+        "OfflineReference body these imply:",
+        r.as_offline_reference_source(),
+        "NOTHING WAS APPLIED. These are read from shard .zattrs -- an independent",
+        "reconstruction that never touches the gate's own split, which is what",
+        "makes the attribution axis a control at all. Record them in",
+        "docs/experiment_ledger.md and edit OfflineReference in the same change,",
+        "at restart prep.",
+    ]
+    print("\n".join(lines))
+    # ⚑ A REFUSAL THAT EXITS 0 IS A SILENT ACCEPT. This mode judges no window,
+    # so 0 would be the natural "it ran" -- but the one thing a caller does
+    # with this subcommand is capture its output to paste into
+    # ``OfflineReference``, and a wrapper that checks the status would be told
+    # the constants are good precisely when the tool declined to emit any.
+    # Same rule as the readout's own axes: assert the AXIS STATE.
+    return 0 if r.prev_share_is_phase_stable else _REDERIVE_UNRESOLVED
 
 
 def main() -> int:
@@ -199,7 +277,7 @@ def main() -> int:
              "shipped gate_min_games_per_side)",
     )
     ap.add_argument(
-        "--refresh-lag-seconds", type=float, default=None,
+        "--refresh-lag-seconds", type=_positive_seconds, default=None,
         help="evaluate the attribution axis against THIS fleet refresh lag "
              f"instead of the shipped reference's {OFFLINE.refresh_lag_seconds:.1f} s. "
              "Use only with a lag re-derived from shards "
@@ -284,6 +362,20 @@ def main() -> int:
     print("legs:")
     print(r.per_leg_report())
     code = readout_exit_code(r)
+    if code == READOUT_EXIT_IDENTITY_UNEVALUATED:
+        print(
+            f"\nPOOLED IDENTITY NOT EVALUATED (exit "
+            f"{READOUT_EXIT_IDENTITY_UNEVALUATED}): the rows carry no "
+            "pid_curriculum_w/d/l,\n"
+            "  so `gate_sample_games_cur + prev == pid_curriculum_w+d+l` -- the "
+            "one leg with\n"
+            "  no statistics in it, and the only one that catches shard loss or "
+            "an\n"
+            "  unrecognised sha outright -- was never checked. That is the same "
+            "OR-over-axes\n"
+            "  trap as the confound axis, so it does not share an exit code with "
+            "promote."
+        )
     if code == READOUT_EXIT_CONFOUND_UNMEASURED:
         # THE HARD ASSERTION. Not a kill and not a hold: the window is fine and
         # an axis of the rule has no data behind it. Saying so in its own exit
