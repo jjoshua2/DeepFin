@@ -405,6 +405,13 @@ def score_probe_set(
     over per-batch means: the policy denominator is the number of rows with
     ``sf_p0_regret``, which varies between batches, so a mean of means would
     be a different estimator that silently up-weights sparse batches.
+
+    Runs in fp32 with NO autocast, unlike the training step. Deliberate, and it
+    costs about 2x the forward: an amp ruler's reading moves with the autocast
+    dtype, so a future amp change would put a step in every probe column that
+    had nothing to do with the net. It also means the probe's ABSOLUTE level is
+    not the number the trainer's own loss sees — the probe is for the trend and
+    for the era/in-window contrast, and neither depends on that offset.
     """
     t0 = time.perf_counter()
     n = int(probe.n_rows)
