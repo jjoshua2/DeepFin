@@ -463,6 +463,52 @@ static int tree_grow_nodes(TreeData *t) {
 }
 
 
+/* Transposition-table instrumentation. Process-cumulative and deliberately
+ * NOT tree state: `reset_compact` swaps the TreeData wholesale, and a counter
+ * that vanished on every reset could not answer "did the guard ever fire?".
+ * Read from Python via `tt_stats()`. */
+static uint64_t g_tt_probe_hits = 0;    /* probe returned an expanded donor */
+static uint64_t g_tt_reuse = 0;         /* donor child set verified, reused */
+static uint64_t g_tt_reject = 0;        /* donor child set REJECTED (audit W1) */
+
+static inline void tt_stat_bump(uint64_t *counter) {
+    __atomic_fetch_add(counter, 1, __ATOMIC_RELAXED);
+}
+
+static int cmp_int32_asc(const void *a, const void *b) {
+    int32_t x = *(const int32_t *)a, y = *(const int32_t *)b;
+    return (x > y) - (x < y);
+}
+
+/* Does the donor node's child action list equal `own` (the recipient leaf's own
+ * legal move set)? Order-insensitive: a donor expanded from Python's root path
+ * carries ascending indices, a donor expanded in C carries generator order.
+ *
+ * This is the belt-and-braces half of the audit W1 fix. The transposition key
+ * (cboard_transposition_key) is now exact for the legal move set, but a key is
+ * a claim and this is the check: any future key deficiency degrades to a
+ * missed transposition instead of an illegal move injected into the tree. */
+static int tt_donor_actions_match(const TreeData *t, int32_t donor,
+                                  const int *own, int n_own) {
+    int32_t n_ch = t->num_children[donor];
+    if (n_ch != n_own) return 0;
+    if (n_ch == 0) return 1;
+    if (n_ch > 256) return 0;  /* cannot happen in chess (max 218); refuse anyway */
+
+    const int32_t *donor_actions = t->child_action + t->children_offset[donor];
+    int in_order = 1;
+    for (int32_t c = 0; c < n_ch; c++) {
+        if (donor_actions[c] != (int32_t)own[c]) { in_order = 0; break; }
+    }
+    if (in_order) return 1;
+
+    int32_t a[256], b[256];
+    for (int32_t c = 0; c < n_ch; c++) { a[c] = donor_actions[c]; b[c] = (int32_t)own[c]; }
+    qsort(a, (size_t)n_ch, sizeof(int32_t), cmp_int32_asc);
+    qsort(b, (size_t)n_ch, sizeof(int32_t), cmp_int32_asc);
+    return memcmp(a, b, (size_t)n_ch * sizeof(int32_t)) == 0;
+}
+
 /* Hash table: probe for existing node with given Zobrist hash. Returns node_id or -1.
  *
  * Thread-safety: acquire-load on hash_table[slot] pairs with release-store
@@ -1646,33 +1692,54 @@ static int32_t gss_prepare_batch(
             continue;
         }
 
-        /* Transposition check */
+        /* Transposition check.
+         *
+         * A hit installs the donor's child ACTION LIST on this leaf permanently
+         * (the leaf is marked expanded and never re-expanded), so the donor must
+         * have exactly this position's legal moves. Two guards, in order:
+         *   1. the key includes ep capture rights (cboard_transposition_key) —
+         *      the hash alone does not, which is audit W1;
+         *   2. the donor's action list is verified against this leaf's own
+         *      generated legal set, so a key that is still incomplete for some
+         *      future reason costs a transposition, never a phantom move.
+         * The halfmove clock and repetition history remain outside the key: they
+         * cannot change the legal move set, only the VALUE, and the pre-existing
+         * Q-reuse across them is unchanged by this fix. */
         if (!__atomic_load_n(&t->expanded[leaf_id], __ATOMIC_ACQUIRE)) {
-            int32_t existing = tree_ht_probe(t, cb.hash);
+            const uint64_t tt_key = cboard_transposition_key(&cb);
+            int32_t existing = tree_ht_probe(t, tt_key);
             if (existing >= 0 && existing != leaf_id &&
                 __atomic_load_n(&t->expanded[existing], __ATOMIC_ACQUIRE)) {
-                int32_t n_ch = t->num_children[existing];
-                if (n_ch > 0) {
-                    int32_t ex_off = t->children_offset[existing];
-                    int32_t legal_buf[256];
-                    double prior_buf[256];
-                    int32_t n_copy = (n_ch <= 256) ? n_ch : 256;
-                    for (int32_t c = 0; c < n_copy; c++) {
-                        legal_buf[c] = t->child_action[ex_off + c];
-                        prior_buf[c] = t->prior[t->child_node[ex_off + c]];
+                tt_stat_bump(&g_tt_probe_hits);
+                int own_legal[256];
+                int n_own = cboard_legal_move_indices(&cb, own_legal, /*sorted=*/0);
+                if (tt_donor_actions_match(t, existing, own_legal, n_own)) {
+                    tt_stat_bump(&g_tt_reuse);
+                    int32_t n_ch = t->num_children[existing];
+                    if (n_ch > 0) {
+                        int32_t ex_off = t->children_offset[existing];
+                        int32_t legal_buf[256];
+                        double prior_buf[256];
+                        for (int32_t c = 0; c < n_ch; c++) {
+                            legal_buf[c] = t->child_action[ex_off + c];
+                            prior_buf[c] = t->prior[t->child_node[ex_off + c]];
+                        }
+                        tree_expand(t, leaf_id, legal_buf, prior_buf, n_ch);
+                    } else {
+                        __atomic_store_n(&t->expanded[leaf_id], 1, __ATOMIC_RELEASE);
                     }
-                    tree_expand(t, leaf_id, legal_buf, prior_buf, n_copy);
-                } else {
-                    __atomic_store_n(&t->expanded[leaf_id], 1, __ATOMIC_RELEASE);
+                    int32_t existing_n = atomic_load_i32(&t->N[existing]);
+                    double q = (existing_n > 0)
+                        ? (atomic_load_double(&t->W[existing]) / (double)existing_n)
+                        : 0.0;
+                    tree_backprop(t, path_buf, path_len, q);
+                    tree_ht_insert(t, tt_key, leaf_id);
+                    if (cache_ok) tree_cb_cache_put(t, leaf_id, &cb);
+                    continue;
                 }
-                int32_t existing_n = atomic_load_i32(&t->N[existing]);
-                double q = (existing_n > 0)
-                    ? (atomic_load_double(&t->W[existing]) / (double)existing_n)
-                    : 0.0;
-                tree_backprop(t, path_buf, path_len, q);
-                tree_ht_insert(t, cb.hash, leaf_id);
-                if (cache_ok) tree_cb_cache_put(t, leaf_id, &cb);
-                continue;
+                /* Donor's child set is not this position's legal set — refuse
+                 * the transposition and fall through to a real evaluation. */
+                tt_stat_bump(&g_tt_reject);
             }
         }
 
@@ -2002,7 +2069,9 @@ static inline int32_t stored_append_leaf(StoredPrepState *s, TreeData *t,
     int32_t li = s->n_leaves;
     s->leaf_cboards[li] = *cb;
     s->leaf_ids[li] = leaf_id;
-    s->hashes[li] = cb->hash;
+    /* Transposition key, not the repetition hash — must match what
+     * gss_prepare_batch probes with (audit W1). */
+    s->hashes[li] = cboard_transposition_key(cb);
 
     s->legal_offset[li] = s->legal_flat_used;
     s->legal_count[li] = count;
@@ -5508,7 +5577,33 @@ static PyObject *py_set_history_rep_fix(PyObject *Py_UNUSED(self), PyObject *arg
     Py_RETURN_NONE;
 }
 
+/* tt_stats() -> dict. Process-cumulative transposition-table counters, so the
+ * audit-W1 guard can be observed rather than assumed:
+ *   probe_hits — probes that found an expanded donor
+ *   reuse      — donors whose child set matched and was copied
+ *   reject     — donors REFUSED because their child set was not this
+ *                position's legal set (must be 0 on a sound key)
+ * `reset` clears them; without an argument the call is read-only. */
+static PyObject *py_tt_stats(PyObject *Py_UNUSED(self), PyObject *args, PyObject *kwargs) {
+    static char *kwlist[] = {"reset", NULL};
+    int reset = 0;
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|p", kwlist, &reset)) return NULL;
+    unsigned long long hits = __atomic_load_n(&g_tt_probe_hits, __ATOMIC_RELAXED);
+    unsigned long long reuse = __atomic_load_n(&g_tt_reuse, __ATOMIC_RELAXED);
+    unsigned long long rej = __atomic_load_n(&g_tt_reject, __ATOMIC_RELAXED);
+    if (reset) {
+        __atomic_store_n(&g_tt_probe_hits, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_tt_reuse, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&g_tt_reject, 0, __ATOMIC_RELAXED);
+    }
+    return Py_BuildValue("{s:K,s:K,s:K}",
+                         "probe_hits", hits, "reuse", reuse, "reject", rej);
+}
+
 static PyMethodDef module_methods[] = {
+    {"tt_stats", (PyCFunction)(void (*)(void))py_tt_stats, METH_VARARGS | METH_KEYWORDS,
+     "tt_stats(reset=False) -> dict with probe_hits/reuse/reject counts for the "
+     "Gumbel transposition table (audit W1 guard observability)."},
     {"set_history_rep_fix", py_set_history_rep_fix, METH_O,
      "set_history_rep_fix(enabled) -> None. Toggle the lc0-root per-slot "
      "repetition-plane fix in the batch encoders (gated candidate; default off)."},
@@ -5575,8 +5670,12 @@ PyMODINIT_FUNC PyInit__mcts_tree(void) {
     /* Capability marker, bumped whenever the C ABI changes in a way Python must
      * detect at import (so an un-rebuilt .so fails fast with a clear rebuild error
      * instead of a cryptic mid-search failure). 1 = node_capacity()/headroom; 2 =
-     * start_gumbel_sims c_scale_root/q_visit_exp_root root-scale args. */
-    if (PyModule_AddIntConstant(m, "ABI_VERSION", 2) < 0) {
+     * start_gumbel_sims c_scale_root/q_visit_exp_root root-scale args; 3 =
+     * ep-aware transposition key + donor child-set verification (audit W1) and
+     * the tt_stats() counters. 3 is a CORRECTNESS bump, not a signature one:
+     * the guard exists so a process that starts on a stale .so dies with the
+     * rebuild command instead of silently running the corrupting search. */
+    if (PyModule_AddIntConstant(m, "ABI_VERSION", 3) < 0) {
         Py_DECREF(m);
         return NULL;
     }

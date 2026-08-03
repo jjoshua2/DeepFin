@@ -21835,6 +21835,154 @@ nowhere else.
 
 ---
 
+## 2026-08-03 — W1/W2: the Gumbel transposition table keys on a position-only hash and permanently corrupts node child sets (CORRECTNESS FIX, deploy-gated on an extension rebuild + restart)
+
+**What was wrong.** `tree_ht_probe`/`tree_ht_insert` keyed on `CBoard.hash`,
+which is the **repetition** key: `cboard_compute_hash` excludes en passant by
+design (and the halfmove clock and repetition history never entered it either).
+The sole consumer, `gss_prepare_batch` — the production Gumbel path, selfplay
+AND UCI — does not merely reuse a donor's value on a hit: it **copies the donor
+node's child ACTION LIST** and installs it via `tree_expand`, after which the
+leaf is marked expanded and never re-expanded. So a position whose only
+difference from the donor is an ep right inherits the donor's moves forever.
+
+Both directions occur, and the dangerous one dominates. Measured on the audit's
+fuzzer (8 positions × 3 seeds × {512,1024} sims, **32,076 expanded nodes**):
+**67 nodes carrying an ILLEGAL ep move, 3 nodes missing a legal one**; worst
+single tree 42/1025 = 4.1 %. Selecting an injected ep index reaches
+`cboard_push_index` with `is_ep` false (no ep right) and the "there is a pawn on
+the source square" guard satisfied, so it executes a **diagonal pawn move onto
+an empty square**. The board stays self-consistent, nothing raises, and the
+entire subtree below is a position that cannot arise in chess — encoded, sent to
+the net, and backpropped into the real tree's statistics.
+
+**W2.** `_expanded_root_covers_actions` (`gumbel_c.py`), the check that would
+catch a stale root child set, was short-circuited by
+`allowed_root_indices_batch is None`. Only `uci/search.py` ever passes that
+argument, so **the one path that carries a tree across plies (selfplay) was the
+one path the check never ran on** — the by-now familiar shape of a gate that
+cannot fail.
+
+**Fix, in two layers (both needed, and the second is proved not decorative).**
+
+1. `cboard_transposition_key()` = `CBoard.hash` XOR an ep-file Zobrist, mixed in
+   only when a pawn of the side to move actually attacks the ep square (the same
+   test the FEN writer already used, now shared). `cboard_compute_hash` is
+   **deliberately unchanged**: it has other consumers whose semantics want
+   ep-exclusion — `hash_stack`/`hist_hash` repetition detection, the encoder's
+   repetition planes, and `pos_hash` values **persisted** in selfplay resume
+   records (`selfplay/resume.py`). `ZOBRIST_EP` is drawn LAST in `init_zobrist`
+   so every pre-existing Zobrist value is bit-identical and in-flight resume
+   state stays valid.
+2. At the copy site, the donor's action list is verified against the recipient
+   leaf's own generated legal set; on mismatch the transposition is refused and
+   the leaf gets a real evaluation. This converts **any** future key deficiency
+   from corruption into a missed hit.
+
+**Yardstick, pre-committed: the audit fuzzer at ≥32k expanded nodes must report
+0 illegal and 0 missing children.** Result: 32,079 checked, **0 / 0** (baseline
+rebuilt from the same `origin/main` commit: 32,076 → 67 / 3). Shipped as
+`tests/test_mcts_transposition_key.py`; **each of its three parametrisations is
+individually RED on the pre-fix build** (22 / 2 / 1 corrupt nodes), which needed
+a per-position search shape — the same FEN at a different seed builds a clean
+tree, and a parametrisation that cannot fail is decoration.
+
+**Negative control (the layer-2 claim is measured, not asserted).** With the key
+deliberately reverted to `b->hash` and layer 2 left in place: **78 donors
+REJECTED, invariant still 0 / 0**, and identical NN-row count. So layer 2 alone
+is sufficient for correctness, and layer 1 converts those 78 rejects into 78
+distinct table entries at no cost.
+
+**Cost, stated honestly.** Over 66 searches: TT `probe_hits` 3,141, `reuse`
+3,141, `reject` 0 — the table is not gutted. NN rows evaluated 37,656 → 37,700
+(**+0.117 %**), all of it on ep-capable positions (the ep-free subset is
+byte-identical). Wall clock is **not resolvable** at this noise level on a
+loaded box (baseline 1.22–1.59 s, fixed 1.39–1.58 s over 3 runs each) — reported
+as inconclusive rather than dressed up. Correctness wins regardless.
+
+**The W2 change is pinned in BOTH directions.** Making the coverage check
+unconditional could equally well have disabled tree carry outright, and every
+other test here would still have passed — the only symptom would be a slower
+search throwing its tree away every ply. So a selfplay-shaped carry (persistent
+tree, root advanced by `find_child`, `allowed_root_indices_batch=None`) asserts
+**4/4 carried plies reuse their root** with zero coverage misses. Verified
+falsifiable by mutation: forcing `_reused = False` makes it read 0/4.
+
+**Bit-identity on clean paths.** 18/18 searches over positions where no ep right
+can arise are bit-identical (probs and value), as are 43/48 ep-capable searches.
+The 5 that differ are exactly the trees where a real ep transposition was
+previously merged.
+
+**Observability, because a guard nobody can read is a guard nobody knows is
+dead.** `_mcts_tree.tt_stats(reset=False)` returns
+`{probe_hits, reuse, reject}` process-cumulative (NOT tree state — `reset_compact`
+swaps the `TreeData` wholesale), and `gumbel_c.root_coverage_miss_count()` counts
+W2 rejections, with a one-shot WARNING on the first. A nonzero `reject` in
+production means the key is incomplete again; it must read 0.
+
+**And that surface is READ by production, which is the whole point.** The first
+version of this fix exposed both counters and stopped there — the guard against
+the "value accepted and then silently ignored" defect, itself accepted and
+silently ignored. `run_gumbel_root_many_c` — the choke point every C-path
+consumer goes through, selfplay, training-time eval and UCI alike — now emits an
+operator line whenever either counter has moved since the last report:
+`[mcts] search guards FIRED since process start: tt_donor_reject=N root_coverage_miss=M`.
+On **stderr**, not stdout, because this same function is the UCI engine's search
+and stdout is the protocol channel; both production consumers capture stderr into
+their logs (`stderr=subprocess.STDOUT` in `tune/distributed_runtime.py`,
+`> "$LOG" 2>&1` in `scripts/train.sh`), and the trial actor has no logging handler
+so `_log.info` would have reached nothing. Rate-limited to one poll per 60 s and
+silent unless a count changed, so the cost when the guards are quiet is one
+`monotonic()` compare per search — the counters are not even read. Pinned by
+four tests, including a forced W2 miss observed through `capsys` on the real
+production entry point.
+
+**DEPLOY IS GATED ON THE EXTENSION REBUILD.** This is `.c`/`.h`. Merging changes
+nothing on the live run: the running process holds the `.so` it started with.
+Deploy = `python3 scripts/build_production_extensions.py` (NOT `pip install -e .`)
+followed by a restart, and the fix is in effect only from the first selfplay
+worker that starts after it.
+
+**The stale-`.so` case is made LOUD rather than left to discipline.**
+`ABI_VERSION` 2 → 3 and `_REQUIRED_MCTS_ABI` 2 → 3, so new Python on an
+un-rebuilt extension raises at `run_gumbel_root_many_c` / UCI-search construction
+with the rebuild command, instead of quietly running the corrupting search. This
+is the only reason the correctness claim is checkable at all from outside: a
+pulled-but-not-rebuilt tree cannot pretend to carry the fix. Second proof, from
+the feature's own surface: `_mcts_tree.tt_stats()` exists only on a rebuilt `.so`,
+and a nonzero `reject` on it means the key regressed.
+
+**Training-data-affecting.** Every phantom subtree contributed visits to the
+Gumbel target that produced a training row, so the policy targets written before
+the deploying restart contain this contamination and those after it do not. The
+replay window holds ~a day of pre-fix rows; expect no clean step at the restart.
+Rate bound from the fuzzer: 67 corrupt nodes / 32,076 expanded ≈ **0.21 % of
+expanded nodes**, concentrated in ep-rich openings, so the expected effect on any
+day-scale learning metric is far below this project's ~2.74 Elo/day instrument
+resolution. **Do NOT read a strength change at the deploying restart as this
+fix.** It is shipped because it is wrong, not because it is measurable.
+
+**Revert point.** None taken: no weights, optimizer, PID or replay state is
+touched. Reverting is `git revert` plus the same rebuild + restart.
+
+**Confounds.** None from this PR alone; it is the only change in it. If it
+restarts alongside anything else, that overlap belongs in the other entry's
+Confounds line.
+
+**Not fixed here, recorded so it is not mistaken for fixed.** The halfmove clock
+and repetition history are still outside the key. They cannot change the legal
+move set — only the VALUE — so a leaf can still inherit Q from a transposition
+with a different draw horizon. That is a pre-existing bias toward draws in the
+reused value, unchanged by this PR and deliberately out of its scope. Second,
+`walker`/`batch_descend_puct`/pucv never probe the table at all, so multi-GPU
+pucv forgoes transposition entirely — a real asymmetry between the two engines
+this project ships, also untouched. Third, the review of this PR found a
+realloc-dangle in the children pool that is **shared with `main` and predates
+this work**; it is recorded here as a known pre-existing defect and deliberately
+not bundled into a correctness fix that is trying to stay reviewable.
+
+---
+
 ## GATE PROMOTION 2026-08-03 — E1-E4 of the encoding audit: the C-vs-Python plane oracle enters CI in the production regime, and three "value accepted then ignored" sites get an observation that can fail
 
 **Not an experiment.** No training-affecting change, no config key, no loss
