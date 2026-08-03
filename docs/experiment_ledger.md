@@ -23068,3 +23068,19 @@ virtual loss exists to prevent. The test now counts the release CALLS
 (`released N paths for M un-integrated leaves`) instead of summing the result,
 and the mutation dies. **Generalise: when the quantity under test is clamped,
 the clamp is a censoring instrument — measure the operation, not the residue.**
+
+⚑ **CORRECTION to B6(a) above, made before the PR was reviewed.** The entry
+(and the audit) describe the wedged slot as costing "every fourth request a
+30 s stall, forever". Tracing the escape path shows that is bounded in
+production by something else: `play_batch` has NO exception handling, so a
+broker `TimeoutError` propagates out of `_dispatch_selfplay_one_shard` and
+`_reset_inference_client` nulls and rebuilds the entire client. **In a
+sequential shape the reset fires before a second strike and the new quarantine
+never engages.** What it does cover is the concurrent shape — 32 selfplay
+threads against 4 slots, so many requests are in flight when a slot wedges and
+several fail before the unwind reaches the reset. The eviction is kept because
+it costs nothing on a healthy run and the forever-wedge returns the moment any
+future call site swallows a per-request failure, but **the eviction is not what
+makes B6 worth fixing: the accounting and the visibility are.** That matches the
+audit's own severity ("not a correctness bug ... it is a diagnosis bug"), which
+this entry had drifted away from while describing the fix.
