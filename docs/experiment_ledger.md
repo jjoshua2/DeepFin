@@ -22908,8 +22908,10 @@ tripwire — `_report_sf_label_health`'s `no_legal_pv` live, and
 **unconditionally**, before and independently of that stamp.
 
 Measured on the 122 shards the 2026-08-01 quarantine removed (226,141 rows,
-209,263 labelled): of the 43,417 rows the policy tripwire flagged, **43,413
-(0.9999) still carried `has_sf_wdl = 1`**, and **0 of them were malformed.**
+**209,259** labelled, i.e. carrying `has_sf_wdl` — the policy detector's own
+denominator): of the **43,413** rows the policy tripwire flagged, **43,413
+(0.9999 of the 43,417 that carry `sf_label_meta`) still carried
+`has_sf_wdl = 1`**, and **0 of them were malformed.**
 
 ### What the detector sees
 
@@ -22918,10 +22920,20 @@ when the record-level SF eval that became its `sf_wdl` does not match the top
 surviving MultiPV line. On a healthy row those two stored numbers are the same
 number **by construction**, not by empirical agreement: `res.cp`/`res.mate` are
 `_SearchInfoAccumulator.cp_pv1`/`mate_pv1` (`stockfish/uci.py:169-179, 195-196`),
-and the same accumulator files the rank-1 line into `res.pvs[0]`. They can
-differ only when rank 1's move failed `_collect_sparse_pv_rows`' legality filter
-and was dropped — i.e. the score that became the value label belongs to a move
-that is not playable in the queried position.
+and the same accumulator files the rank-1 line into `res.pvs[0]`. They differ
+when rank 1's line was dropped by `_collect_sparse_pv_rows` — i.e. the score
+that became the value label belongs to a move that is not playable in the
+queried position.
+
+⚑ **The prose above is stronger than the code enforces, so state the gap.** The
+drop test is `a < 0 or a not in legal_set`, so UNMAPPABLE is a second route
+beside illegal. And `cp_pv1` is updated by ANY `multipv 1` line carrying a
+score while `pvs[1]` is written only by lines that also carry a `pv` token
+(`uci.py:162-179`), so a scored rank-1 line with no PV — or no rank-1 PV line
+at all, leaving `pvs[0]` as rank 2 — would split the pair with no drop
+involved. Real Stockfish ships `pv` on every scored MultiPV line and this was
+**never observed**: 0 orphans over the 474,278 labelled rows of the pre-episode
+range. Unobserved, not impossible.
 
 ⚑ **Its population is DISJOINT from the policy detector's numerator.** That one
 counts rows with NO MultiPV block; this one is only computable on rows that HAVE
@@ -22929,18 +22941,25 @@ one. It is the first instrument that looks INSIDE the set the policy detector
 passes — the ~41 % desync pass-through `sf_multipv_presence_counts`' docstring
 has priced since PR #302 and nothing measured.
 
-| population | policy `no_pv` | value `orphan` |
-|---|---|---|
-| 122 quarantined shards, 209,263 labelled | 0.207476 | **0.119118** |
-| post-quarantine window, 1,264,058 labelled | 0.000199 | 0.000176 |
-| its 640 policy-clean shards, 1,128,248 | 0.000000 | 0.000032 |
-| pre-episode range 33118:33387, 475,713 rows | **0.000000** | **0.000000** |
+⚑ **THE TABLE BELOW WAS CORRECTED IN PLACE — see "Corrected numbers" at the
+end of this entry.** Every rate here is now produced by the SHIPPED
+`sf_eval_pv_orphan_flags`, over `has_sf_wdl` rows.
 
-Combined with `no_legal_pv` it flags **0.2936 of labelled rows** on the
-quarantined set against 0.2075 for the policy half alone — **41.5 % more rows
-detected**, and ~83 % of the ~0.35 true poisoned share the module's own ~0.59
-pass-through calibration implies, against ~59 % before. That the two independent
-routes agree on ~0.59 is a check on the calibration, not a new estimate of it.
+| population | labelled | policy `no_pv` | value `orphan` / `checked` |
+|---|---|---|---|
+| 122 quarantined shards | 209,259 | 43,413 → 0.207461 | 19,468 / 165,846 → **0.117386** |
+| post-quarantine window | 1,264,058 | 252 → 0.000199 | 210 / 1,263,806 → 0.000166 |
+| its 640 policy-clean shards | 1,128,248 | 0 → 0.000000 | 34 / 1,128,248 → 3.0e-5 |
+| pre-episode ids 33118:33387 | 474,278 | 0 → **0.000000** | 0 / 474,278 → **0.000000** |
+
+Combined with `no_legal_pv` it flags **62,881 of 209,259 labelled rows =
+0.300494** on the quarantined set against **0.207461** for the policy half alone
+— **+44.8 % more rows detected**, and **~85 %** of the ~0.352 true poisoned
+share the module's own ~0.59 pass-through calibration implies, against ~59 %
+before. The two counts are disjoint by construction AND observed disjoint
+(intersection exactly 0), which is what licenses adding them. That the two
+independent routes agree on ~0.59 is a check on the calibration, not a new
+estimate of it.
 
 **`sf_wdl_degenerate_frac`.** `sf_wdl` present but not a usable distribution
 (non-finite / out of [0,1] / not summing to 1 / exactly uniform). Reported
@@ -22965,26 +22984,35 @@ appears. **Never sum it with the policy rate; they count the same rows.**
 paragraph above. The two numbers a later reader should quote:
 
 * **`sf_eval_pv_orphan_frac` = 0.000000 exactly**, over **270 shards /
-  475,713 rows** of the **pre-episode range 33118:33387** — every id strictly
-  below the first quarantined id (33388). Read **through the production path**
-  (`scripts/sf_no_multipv_probe.py`, shard → `_prepare_host_arrays` → collate →
-  `compute_loss` → `TrainMetrics`), not off a side scan.
-* **3.2e-5** over the **640 policy-clean post-quarantine shards** (1,128,248
-  rows) — **33 rows in 25 shards, and this is RESIDUE, not a background.**
+  475,713 rows (474,278 labelled)** of the **pre-episode range 33118:33387** —
+  every id strictly below the first quarantined id (33388). Read **through the
+  production path** (`scripts/sf_no_multipv_probe.py`, shard →
+  `_prepare_host_arrays` → collate → `compute_loss` → `TrainMetrics`), not off
+  a side scan. On the live 4096-row report window this is 115/115 windows at
+  exactly 0.
+* **3.0e-5** over the **640 policy-clean post-quarantine shards** (1,136,262
+  rows, **1,128,248 labelled**) — **34 rows in 25 shards, and this is RESIDUE,
+  not a background.**
 
 ⚑ **PROVENANCE, STATED BECAUSE THE LAST DETECTOR'S BASELINE WAS CONTAMINATED**
-(PR #304's "clean 0.0008"). The 3.2e-5 is not quoted as the floor, and the
+(PR #304's "clean 0.0008"). The 3.0e-5 is not quoted as the floor, and the
 0.000000 is derived from shards written BEFORE the episode rather than from a
 set selected by the policy gate — which is the mistake #304 had to retract.
-Two independent arguments that the 33 rows are burst-edge residue:
+Two independent arguments that the 34 rows are burst-edge residue:
 
 * **Position.** All 25 flagged shard ids (33461–33713) lie inside the episode's
   id span; the pre-episode 270 shards contain zero. Distance to the nearest
   quarantined id: observed median **25** against **49.7 ± 15.0** for a uniform
   draw of 25 from the same policy-clean pool, 2000 draws, **p = 0.0145**.
-* **Direction.** **33 of 33** run in the eval-better-than-best-surviving-line
+  (An independent reviewer's re-run at another seed reads 50.4 ± 14.8,
+  p = 0.0155 — the same statistic, and the seed sensitivity is the honest
+  width of this leg.)
+* **Direction.** **34 of 34** run in the eval-better-than-best-surviving-line
   direction the dropped-rank-1 mechanism predicts. A benign stale-score artifact
-  would be sign-symmetric; one-sided 33/33 is p = 2⁻³³.
+  would be sign-symmetric; one-sided 34/34 is p = 2⁻³⁴. Across the WHOLE
+  post-quarantine arm the same test reads **208 better / 0 worse** of 210
+  orphans (the 2 remainder are mate-vs-mate pairs that tie under the
+  effective-cp proxy, not counter-examples).
 
 The p = 0.0145 alone would be weak. The structural argument is the load-bearing
 one and the two statistics agree with it.
@@ -22993,10 +23021,15 @@ one and the two statistics agree with it.
 
 1. **A desynced search whose rank-1 move is coincidentally legal here** keeps a
    matching pair and passes. Same coincidental-legality escape the policy half
-   has; this does not remove it, it narrows it.
-2. **A cp TIE between rank 1 and the top surviving line** passes. This is why
-   the reading is 0.119 where the pass-through share is nearer 0.145 of labelled
-   rows — the detector catches roughly two thirds of the population it can see.
+   has; this does not remove it, it narrows it. Note also that the drop test is
+   `a < 0 or a not in legal_set`, so UNMAPPABLE is a second route beside
+   illegal, and a scored rank-1 line that carried no `pv` token would split the
+   pair with no drop at all — never observed over 474,278 clean labelled rows,
+   but unobserved is not impossible.
+2. **A (cp, mate) TIE between rank 1 and the top surviving line** passes. The
+   19,468 flagged rows are 0.0930 of the quarantined labelled rows against a
+   pass-through share of ~0.144, so the detector catches **~65 %** of the
+   population it can see.
 3. **Rows with no MultiPV block at all are not counted here.** They are the
    policy detector's numerator. The two rates must be read together and never
    summed onto a shared denominator.
@@ -23014,11 +23047,21 @@ one and the two statistics agree with it.
    which is data-affecting and needs its own pre-registered readout. The numbers
    above are banked here so that change can be written without re-measuring.
 7. **The RATE alert in `scripts/loop_health.py` is NOT armed**, only the
-   BLINDNESS alert (`sf_eval_pv_checked_frac == 0.0` on a trained iteration).
-   Same reason as the policy twin: with 33 residue rows still in the window the
-   rate fires on arrival and gets muted. Promotion trigger, train row only:
-   arm it once a live row reads `sf_eval_pv_orphan_frac == 0.0` with
-   `sf_eval_pv_checked_frac` at its production level.
+   BLINDNESS alert. Same reason as the policy twin: with 34 residue rows still
+   in the window the rate fires on arrival and gets muted. Promotion trigger,
+   train row only: arm it once a live row reads `sf_eval_pv_orphan_frac == 0.0`
+   with `sf_eval_pv_checked_frac` at its production level.
+
+   ⚑ The BLINDNESS alert IS armed on **both arms** — train and holdout —
+   matching the policy half. First draft armed only the train arm while the
+   docstring claimed "same rule", and the `test_sf_eval_pv_*` columns shipped
+   into `_TEST_METRIC_KEYS` read by nothing. Decided (not deferred): **arm the
+   holdout arm**, because the ruler's own value labels being detached is a live
+   failure mode — the frozen holdout is already 10.13 % contaminated on the
+   POLICY half, found only by re-gating offline long after the numbers were
+   published — and because a published-but-unread value column is the P2
+   asymmetry reproduced one layer up, in the thing that reads the columns.
+   `test_both_halves_of_the_blindness_alert_have_both_arms` asserts all four.
 
 ### Threshold
 
@@ -23133,3 +23176,77 @@ reading yet. On resume, the first `progress.csv` row is the check: expect
 `sf_eval_pv_checked_frac` near the SF-labelled share of the batch and
 `sf_eval_pv_orphan_frac` at or near 0. **A zero on the orphan column with a zero
 on the checked column is UNMEASURED and must not be recorded as clean.**
+
+### ⚑⚑ CORRECTED NUMBERS (amended in place before merge, 2026-08-03)
+
+**This entry's calibration table originally quoted a scan that is NOT the
+predicate this PR ships.** An independent review of PR #326 caught it. The entry
+above is amended in place rather than appended-to because it had not merged yet
+and a ledger table that states two different rulers three screens apart is worse
+than one that states the right one — but the amendment is disclosed here rather
+than made silently, per the #324 precedent.
+
+**What was wrong, and why it matters.** The entry says its numbers are banked
+"so that change can be written without re-measuring", and scope item 6 defers
+the third quarantine-gate axis *on their strength*. A follow-up would have
+pre-registered `SF_EVAL_PV_ORPHAN_MAX` against a ruler that does not exist —
+the `A RULER CHANGE MUST INVALIDATE ITS RECORDS` shape, and the same shape as
+PR #304's retracted "clean 0.0008" that this very entry was written to avoid.
+
+**Two distinct causes, both found and reproduced, not guessed at:**
+
+1. **Mate-scored rows were excluded from BOTH numerator and denominator.** The
+   scratch scan carried `valid = (r0_idx >= 0) & (m_cp != SF_CP_SENTINEL) &
+   (r0_cp != SF_CP_SENTINEL)`. On the quarantined shards that dropped **14,568**
+   mate-scored rows from the denominator (165,846 → 151,278) and hid **1,448**
+   genuine orphans from the numerator (19,468 → 18,020) — the sentinel-vs-
+   non-sentinel pairs, i.e. exactly the rows where a dropped rank 1 replaced a
+   mate score with a cp score or the reverse. `18,020 / 151,278 = 0.119118`
+   reproduces the banked figure to all six digits; the shipped predicate, which
+   compares the (cp, mate) PAIR over every checked row, gives
+   `19,468 / 165,846 = 0.117386`.
+2. **"Labelled" meant `has_sf_label_meta`, not `has_sf_wdl`.** 4 quarantined
+   rows carry the meta block without a value label, so the policy rate read
+   `43,417 / 209,263 = 0.207476` instead of the detector's own denominator
+   `43,413 / 209,259 = 0.207461`.
+
+**Everything downstream of those two:**
+
+| quantity | was | is (shipped predicate) |
+|---|---|---|
+| quarantined orphan rate | 0.119118 | **0.117386** |
+| quarantined policy `no_pv` | 0.207476 | **0.207461** |
+| quarantined labelled | 209,263 | **209,259** |
+| combined detection | 0.2936 / +41.5 % | **0.300494 / +44.8 %** |
+| share of true poisoned caught | ~83 % | **~85 %** |
+| post-quarantine window orphan | 0.000176 | **0.000166** |
+| policy-clean residue | 33 rows, 3.2e-5 | **34 rows, 3.0e-5** |
+| residue sign test | 33/33, p = 2⁻³³ | **34/34, p = 2⁻³⁴** |
+| pass-through share caught | "roughly two thirds" | **~65 %** |
+
+**Unchanged, and re-derived rather than assumed:** the 4096-row report-window
+calibration (`policy-clean max 0.001465`, 257/275 exactly zero; quarantined
+median 0.102205, 49/51 fire) — that scan already compared the pair without the
+sentinel filter, so it was the shipped semantics all along. Re-run with the
+shipped function to confirm, and it added a clean data point: **115/115
+pre-episode windows read exactly 0.** The threshold does not move; `[0.10, 0.14]`
+still contains 0.117386, so the probe's pre-registered band does not move either.
+The residue clustering (25 shards, ids 33461–33713, median distance 25,
+p = 0.0145) is unchanged.
+
+**Which run produced which table, so the next reader can tell them apart.** The
+corrected table is `sf_eval_pv_orphan_flags` imported and applied directly to
+the shard arrays, cross-checked against `scripts/sf_no_multipv_probe.py` driving
+the full production path, and independently against a reviewer's from-scratch
+scan that imports no project code (agreement to the row: 19,468 / 165,846 /
+43,413 / 0 intersection). The superseded numbers came from
+`scratchpad/study_head_agreement.py`, which was exploratory and is not shipped.
+
+**The general lesson, which is the reusable part.** The PR's own verification
+block printed `sf_eval_pv_orphan_frac=0.117386` two screens below a table
+asserting 0.119118 and the author did not notice, because the exploratory scan
+came first and the production reading was read as confirmation of it rather than
+as a comparison against it. **A number produced before the instrument exists is
+not a baseline for that instrument.** Re-derive every banked figure from the
+shipped code path once it exists, and diff it against the exploratory one
+deliberately.

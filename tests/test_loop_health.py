@@ -177,6 +177,44 @@ def test_a_blind_value_half_detector_is_silent_when_absent_or_dark() -> None:
     assert not any("sf_eval_pv_checked_frac=0.0 on a trained iteration" in a for a in dark)
 
 
+def test_a_blind_value_half_HOLDOUT_detector_alerts() -> None:
+    """The ruler's own value labels can be detached, and the frozen set has
+    form: it is already 10.13 % contaminated on the POLICY half. A column that
+    ships into `_TEST_METRIC_KEYS` and is read by nothing is P2 one layer up."""
+    alerts, _ = _check({**LIVE_WITH_COLUMN, "test_sf_eval_pv_checked_frac": 0.0})
+    assert any("test_sf_eval_pv_checked_frac=0.0" in a for a in alerts)
+
+
+def test_a_dark_holdout_does_not_read_as_a_blind_value_half_detector() -> None:
+    alerts, _ = _check(
+        {**LIVE_WITH_COLUMN, "test_size": 0, "test_sf_eval_pv_checked_frac": 0.0},
+    )
+    assert not any("test_sf_eval_pv_checked_frac" in a for a in alerts)
+
+
+def test_both_halves_of_the_blindness_alert_have_both_arms() -> None:
+    """The claim `loop_health`'s docstring makes, asserted.
+
+    Four checks: {policy, value} x {train, holdout}. Deleting any one of them
+    leaves a published column that nothing reads, which is the failure this
+    whole PR is about.
+    """
+    row = {
+        **LIVE_WITH_COLUMN,
+        "sf_multipv_checked_frac": 0.0, "test_sf_multipv_checked_frac": 0.0,
+        "sf_eval_pv_checked_frac": 0.0, "test_sf_eval_pv_checked_frac": 0.0,
+    }
+    alerts = loop_health.blind_desync_detector_alerts(row)
+    assert len(alerts) == 4, f"expected all four arms to fire, got {alerts}"
+    for key in (
+        "sf_multipv_checked_frac=0.0 on a trained iteration",
+        "test_sf_multipv_checked_frac=0.0",
+        "sf_eval_pv_checked_frac=0.0 on a trained iteration",
+        "test_sf_eval_pv_checked_frac=0.0",
+    ):
+        assert any(key in a for a in alerts), f"{key} arm is missing"
+
+
 def test_an_absent_column_is_silent() -> None:
     """Every result.json row written before the column shipped lacks it. A
     missing key is a schema fact, not a blindness reading — if this fired the

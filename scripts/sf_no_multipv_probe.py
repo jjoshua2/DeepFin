@@ -50,16 +50,21 @@ CHECKED_MIN = 0.5
 # The VALUE half (2026-08-03, `sf_eval_pv_orphan_frac`). Same construction, own
 # band: the value check runs on the rows the POLICY check passes, so its
 # poisoned reading is a different number, not a copy of the one above.
-# Pre-registered off the direct zarr scan banked in the ledger — quarantined
-# 0.119118, policy-clean post-quarantine 0.000032.
+# Pre-registered off the scan banked in the ledger, re-derived 2026-08-03 with
+# the SHIPPED `replay/shard.py::sf_eval_pv_orphan_flags` — quarantined 0.117386
+# (19,468 orphans / 165,846 checked), policy-clean post-quarantine 3.0e-5. ⚑ The
+# first draft of these constants quoted 0.119118 / 3.2e-5, from a scratch scan
+# that excluded mate-scored rows from BOTH numerator and denominator; that scan
+# is not this predicate. The band was not moved — 0.117386 sits inside it either
+# way — only its stated provenance.
 ORPHAN_POISONED_MIN = 0.10
 ORPHAN_POISONED_MAX = 0.14
 # ⚑ NOT "exactly zero", unlike the policy arm, and the difference is the
 # finding rather than a slack bar. The clean arm here is a RANGE of live
 # shards, and the value check sees desync pass-through that the policy check
 # structurally cannot — so a clean arm that reads exactly 0.0 on the policy
-# column can still hold burst-edge residue on this one (33 rows over the 640
-# policy-clean window shards, 3.2e-5). The bar is set an order of magnitude
+# column can still hold burst-edge residue on this one (34 rows over the 640
+# policy-clean window shards, 3.0e-5). The bar is set an order of magnitude
 # under the residue-free expectation and two orders under the poisoned band; a
 # reading between them is a real signal about the "clean" arm, not a failure of
 # the detector, and must be investigated rather than absorbed by widening this.

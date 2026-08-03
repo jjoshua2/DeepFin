@@ -34,10 +34,12 @@ ALERT (exit 1) — needs action:
     at a healthy-looking 0.0 through three desync episodes over 25 days because
     `rebuild_sf_targets` defaults False. NOT armed on the RATE yet — see the
     NOTE block below for why and what promotes it.
-  - sf_eval_pv_checked_frac == 0.0 on an iteration that trained: the same
-    alert for the VALUE half of the SF label (`sf_wdl`, 0.45 of the value
-    target), which had no detector at all before 2026-08-03. Same two-state
-    ambiguity, same rule.
+  - sf_eval_pv_checked_frac == 0.0 on an iteration that trained (and
+    test_sf_eval_pv_checked_frac when a holdout eval ran): the same alert for
+    the VALUE half of the SF label (`sf_wdl`, 0.45 of the value target), which
+    had no detector at all before 2026-08-03. Same two-state ambiguity, same
+    rule, and BOTH arms — the policy half has both, and a value column that
+    ships into the ruler row but is read by nothing is the P2 asymmetry again.
   - --max-age-min M (opt-in): the newest row's timestamp is older than M
     minutes — result.json has stopped advancing (stall / no-games drought).
   - the daily strength ratchet's newest day wrote no ratchet.csv row at all
@@ -68,8 +70,8 @@ from post-quarantine shards is what would clear it.
 
 The VALUE-half rate (`sf_eval_pv_orphan_frac > 0`) is held back on the SAME
 terms, and the decision is stated rather than deferred: its structural floor is
-also exactly 0.000000, but the post-quarantine window still carries 33
-burst-edge orphan rows over 640 policy-clean shards (3.2e-5), so arming it
+also exactly 0.000000, but the post-quarantine window still carries 34
+burst-edge orphan rows over 640 policy-clean shards (3.0e-5), so arming it
 today fires on arrival for the same aging-out reason. SAME PROMOTION TRIGGER,
 train row only: arm it once a live row reads `sf_eval_pv_orphan_frac == 0.0`
 with `sf_eval_pv_checked_frac` at its production level (~0.99 of batch rows;
@@ -133,6 +135,9 @@ def blind_desync_detector_alerts(row: dict) -> list[str]:
       NaN (never equal to 0.0) — but the eval is legitimately dark for the two
       iterations after every restart, so this is pinned on the row's own
       evidence that a pass ran rather than on NaN behaviour.
+
+    Four checks, not two: the POLICY half and the VALUE half each get a train
+    arm and a holdout arm, on identical terms.
     """
     out: list[str] = []
 
@@ -184,6 +189,25 @@ def blind_desync_detector_alerts(row: dict) -> list[str]:
             "host flags were never derived). sf_eval_pv_orphan_frac"
             f"={_f('sf_eval_pv_orphan_frac')} above it is UNMEASURED, not clean, "
             "and sf_wdl is 0.45 of the trained value target"
+        )
+
+  # BOTH arms, matching the policy half. The columns already ship into
+  # `_TEST_METRIC_KEYS`, so leaving the holdout arm unread would publish a
+  # value-half number that nothing consumes — a small instance of the exact
+  # asymmetry P2 exists to end, one layer up in the thing that reads the
+  # columns. The holdout is the ruler, and the ruler's own value labels being
+  # detached is the failure mode that made the frozen set 10.13% contaminated
+  # on the POLICY half without anyone noticing until it was re-gated offline.
+    test_value_checked = _f("test_sf_eval_pv_checked_frac")
+    if (
+        test_value_checked is not None and test_size is not None
+        and test_size > 0 and test_value_checked == 0.0
+    ):
+        out.append(
+            "test_sf_eval_pv_checked_frac=0.0 on an iteration that scored "
+            f"{int(test_size)} holdout rows — the ruler's own VALUE-half desync "
+            "detector is blind, so test_sf_eval_pv_orphan_frac says nothing "
+            "about whether the frozen set's sf_wdl labels are detached"
         )
     return out
 

@@ -864,9 +864,11 @@ class TrainMetrics:
   # passes: it fires when the record-level SF eval that BECAME this row's
   # `sf_wdl` disagrees with the top surviving MultiPV line, which on a healthy
   # row is impossible — both are the same accumulator field. Measured
-  # 2026-08-03: 0.119118 over the 122 quarantined shards, 0.000032 over the 640
-  # policy-clean post-quarantine shards (1,128,248 rows), floor exactly
-  # 0.000000. Its denominator is rows carrying ALL THREE blocks, published as
+  # 2026-08-03 THROUGH THIS COLUMN: 0.117386 over the 122 quarantined shards
+  # (19,468 orphans of 165,846 checked), 3.0e-5 over the 640 policy-clean
+  # post-quarantine shards (34 rows, 1,128,248 labelled), and exactly 0.000000
+  # over the 474,278 labelled rows of the pre-episode range 33118:33387, which
+  # is the floor. Its denominator is rows carrying ALL THREE blocks, published as
   # `sf_eval_pv_checked_frac` — read them together, exactly as with the policy
   # pair, because a rate over zero checked rows is UNMEASURED, not clean.
   #

@@ -529,11 +529,22 @@ def sf_eval_pv_orphan_flags(
     ``sf_label_meta`` eval and the stored ``sf_multipv_raw`` row 0 carry the
     SAME (cp, mate) pair BY CONSTRUCTION — not by empirical agreement.
 
-    They can only differ when rank 1's move failed the legality filter in
-    ``_collect_sparse_pv_rows`` and was dropped, leaving a lower-ranked line at
-    row 0. That is a Stockfish answering a DIFFERENT position: the score that
-    became this row's value label belongs to a move that is not legal here.
-    ORPHANED is the name — the eval outlived the PV it came from.
+    They differ when rank 1's line was dropped by ``_collect_sparse_pv_rows``,
+    leaving a lower-ranked line at row 0. That is a Stockfish answering a
+    DIFFERENT position: the score that became this row's value label belongs to
+    a move that is not playable here. ORPHANED is the name — the eval outlived
+    the PV it came from.
+
+    ⚑ Two smaller routes, so the prose does not claim more than the code
+    enforces. ``_collect_sparse_pv_rows`` drops a line on ``a < 0 or a not in
+    legal_set``, so UNMAPPABLE is a second route beside illegal. And ``cp_pv1``
+    is updated by ANY ``multipv 1`` info line carrying a score while
+    ``self.pvs[1]`` is written only by lines that also carry a ``pv`` token
+    (``stockfish/uci.py:162-179``), so a rank-1 score with no PV — or no rank-1
+    PV line at all, leaving ``pvs[0]`` as rank 2 — would also split the pair
+    with no drop involved. Real Stockfish ships ``pv`` on every scored MultiPV
+    line and this was never observed: 0 orphans over the 474,278 labelled rows
+    of the pre-episode range. It is not proven impossible, only unobserved.
 
     **Why it is not a second copy of the policy detector.** The policy-side
     fingerprint (``train/losses.py::sf_multipv_presence_counts``) fires when NO
@@ -542,30 +553,36 @@ def sf_eval_pv_orphan_flags(
     DISJOINT and this one is exactly the population the policy detector
     declares healthy — the ~41 % desync pass-through that
     ``sf_multipv_presence_counts``' docstring prices and nothing measured.
-    Measured 2026-08-03 (numbers and provenance in docs/experiment_ledger.md):
 
-    ======================================  ==========  =============
-    population                              policy no_pv  value orphan
-    ======================================  ==========  =============
-    122 quarantined shards (209,263 rows)     0.207476     0.119118
-    post-quarantine window (1,264,058 rows)   0.000199     0.000176
-    its 640 policy-clean shards (1,128,248)   0.000000     0.000032
-    ======================================  ==========  =============
+    Measured 2026-08-03 **through this function**, on ``has_sf_wdl`` rows (the
+    policy detector's own denominator). Provenance and the corrected-numbers
+    note in docs/experiment_ledger.md — an earlier draft of this table quoted a
+    scan that excluded mate-scored rows and its numbers are NOT these:
+
+    ==========================================  ============  ============
+    population                                  policy no_pv  value orphan
+    ==========================================  ============  ============
+    122 quarantined shards (209,259 labelled)       0.207461      0.117386
+    post-quarantine window (1,264,058 labelled)     0.000199      0.000166
+    its 640 policy-clean shards (1,128,248 lab.)    0.000000      0.000030
+    pre-episode ids 33118:33387 (474,278 lab.)      0.000000      0.000000
+    ==========================================  ============  ============
 
     **Floor.** Exactly 0.000000, and structurally so per the paragraph above.
-    The 3.2e-5 on the policy-clean subset is 33 rows in 25 shards, and it is
+    The 3.0e-5 on the policy-clean subset is 34 rows in 25 shards, and it is
     burst-edge RESIDUE rather than a background: those 25 shard ids sit a median
     of 25 from the nearest quarantined id against 49.7 +/- 15.0 for a uniform
-    draw from the same pool (p = 0.0145), and 33 of 33 run in the
+    draw from the same pool (p = 0.0145), and 34 of 34 run in the
     eval-better-than-best-surviving-line direction the dropped-rank-1 mechanism
     predicts, where a benign stale-score artifact would be sign-symmetric.
     Do not restate it as "the normal background" — that is the PR #304 mistake.
 
     **What it cannot see.** (a) A desynced search whose rank-1 move happens to
     be legal here keeps a matching pair and passes — the same coincidental-
-    legality escape the policy half has. (b) A cp TIE between rank 1 and the
-    top surviving line passes; ties are why this reads 0.119 where the true
-    pass-through share is nearer 0.145 of labelled rows. (c) Rows with no
+    legality escape the policy half has. (b) A (cp, mate) TIE between rank 1 and
+    the top surviving line passes; ties are why the 19,468 flagged rows are
+    0.0930 of the quarantined labelled rows against a pass-through share of
+    ~0.144, i.e. it catches ~65 % of the population it can see. (c) Rows with no
     MultiPV block at all are NOT counted here (they are the policy detector's
     numerator), so the two rates must be read together and never summed onto a
     shared denominator. (d) It says nothing about whether the eval was RIGHT,

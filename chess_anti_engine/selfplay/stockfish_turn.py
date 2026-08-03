@@ -144,11 +144,14 @@ _SF_BESTMOVE_ILLEGAL_CONTEXT_RATE = 0.25
 #
 # ⚑ 2 of those 51 windows read BELOW the bar. This is a SECOND view, not a
 # superset of the policy one: a desynced search whose rank-1 move is
-# coincidentally legal here, or whose cp ties the top surviving line, passes.
-# Combined with `no_legal_pv` it flags 0.2936 of labelled rows on the
-# quarantined set against 0.2075 for the policy half alone — 41.5% more, and
-# ~83% of the ~0.35 true poisoned share the module's own ~0.59 pass-through
-# calibration implies, against ~59% before.
+# coincidentally legal here, or whose (cp, mate) ties the top surviving line,
+# passes.
+# Combined with `no_legal_pv` it flags 62,881 of the 209,259 labelled rows on
+# the quarantined set — 0.300494 against 0.207461 for the policy half alone,
+# i.e. +44.8% more rows detected, and ~85% of the ~0.352 true poisoned share
+# the module's own ~0.59 pass-through calibration implies, against ~59% before.
+# The two counts are DISJOINT by construction and observed disjoint (0 overlap),
+# which is what licenses adding them.
 _SF_EVAL_PV_ORPHAN_WARN_RATE = 0.01
 
 _sf_label_lock = threading.Lock()

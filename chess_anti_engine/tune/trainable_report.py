@@ -850,8 +850,9 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "sf_labelled_no_multipv_frac": 0.0, "sf_multipv_checked_frac": 0.0,
   # VALUE half of the same always-on detector (see TrainMetrics).
   # `sf_eval_pv_orphan_frac` is the one with power: it inspects the rows the
-  # policy column PASSES, floor exactly 0.000000, 0.119118 on the 122
-  # quarantined shards. Read it with `sf_eval_pv_checked_frac` — zero there
+  # policy column PASSES, floor exactly 0.000000 (474,278 pre-episode labelled
+  # rows), 0.117386 on the 122 quarantined shards. Read it with
+  # `sf_eval_pv_checked_frac` — zero there
   # means nothing was inspected. `sf_wdl_degenerate_frac` reads 0.0 on
   # poisoned data too and is a producer tripwire, not a desync one;
   # `sf_wdl_orphaned_frac` is `sf_labelled_no_multipv_frac`'s twin by design
