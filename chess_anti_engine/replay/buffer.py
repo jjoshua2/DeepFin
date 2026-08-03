@@ -7,6 +7,74 @@ import numpy as np
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.replay.sample import ReplaySample as ReplaySample
 
+# Scalar encoding-identity markers. Two chunks that disagree on any of these
+# describe DIFFERENT input or policy encodings, so the rows cannot be merged
+# into one array without picking a winner. `samples_to_arrays` hard-fails on a
+# mixed batch "so the buffer's scalar-metadata merge can hard-fail on mixed
+# chunks" (replay/shard.py) and `_scalar_metadata_string` raises
+# `mixed replay metadata ...` downstream -- but nothing reached that guard from
+# here, because the merge below homogenised the markers to one value first.
+# `_history_rep_fix` is mapped rather than merely compared: shard.py
+# materializes it on every write path and documents "a missing shard attr
+# provably means the flag was off", so an ABSENT marker beside a "true" one is
+# a mixed set, not an unknown. The two encoding-NAME markers have no such
+# default (`_scalar_metadata_string` returns None for an absent key and
+# `_policy_encoding_for_size` infers from the width), so absence there is
+# ignored exactly as it is downstream.
+_REP_FIX_MARKER_KEY = "_history_rep_fix"
+_ENCODING_NAME_MARKER_KEYS: tuple[str, ...] = (
+    "_input_history_encoding",
+    "_policy_encoding",
+)
+
+
+def _refuse_mixed_identity_markers(
+    selected: list[tuple[dict[str, np.ndarray], np.ndarray]],
+) -> None:
+    """Raise when the selected chunks disagree about an encoding identity.
+
+    The failure this prevents is not a crash, it is a silent agreement: the
+    row-merge below broadcasts each chunk's scalar marker over that chunk's
+    rows and then the shard sidecar promotes row 0's value to the whole set,
+    so a holdout holding both `history_rep_fix` true and false chunks saved
+    and reloaded as uniformly true. The set that does that is the best-model
+    ruler's own (M4-3), and `history_rep_fix` changes the repetition planes
+    under an unchanged encoding NAME -- there is no other signal that the
+    ruler is scoring two encodings at once.
+
+    Raises with the same message shape as `shard._scalar_metadata_string`, so
+    the guard here and the guard the merge used to hide read identically.
+    """
+    if len(selected) <= 1:
+        return
+
+    def _values(rows: dict[str, np.ndarray], key: str) -> set[str]:
+        if key not in rows:
+            return set()
+        arr = np.asarray(rows[key])
+        return {str(v) for v in arr.reshape(-1).tolist() if str(v)}
+
+    for key in _ENCODING_NAME_MARKER_KEYS:
+        values: set[str] = set()
+        for rows, _ in selected:
+            values |= _values(rows, key)
+        if len(values) > 1:
+            raise ValueError(f"mixed replay metadata {key}: {sorted(values)}")
+
+  # Compared through the SAME predicate the reader uses
+  # (`shard.history_rep_fix_from_arrays`: strip, lower, == "true"), so the
+  # guard cannot fire on a spelling the reader treats as identical.
+    rep_fix: set[str] = set()
+    for rows, _ in selected:
+        found = _values(rows, _REP_FIX_MARKER_KEY)
+        rep_fix |= {
+            "true" if v.strip().lower() == "true" else "false" for v in found
+        } or {"false"}
+    if len(rep_fix) > 1:
+        raise ValueError(
+            f"mixed replay metadata {_REP_FIX_MARKER_KEY}: {sorted(rep_fix)}",
+        )
+
 
 def balance_wdl(
     samples: list[ReplaySample],
@@ -216,8 +284,21 @@ class ArrayReplayBuffer:
             for k, v in dense_rows.items():
                 if k not in proto:
                     proto[k] = v
+        _refuse_mixed_identity_markers(selected)
+  # Widen each field's dtype across ALL selected chunks rather than taking
+  # the prototype's. numpy's fixed-width string dtypes TRUNCATE on
+  # assignment, so a `<U4` prototype ("true") silently stored the scalar
+  # marker "false" as "fals" -- which then read back as rep_fix=False from a
+  # chunk that had it ON. `np.result_type` is a no-op for the numeric
+  # fields, whose dtypes are fixed by the shard schema.
+        dtypes: dict[str, np.dtype] = {}
+        for dense_rows, _ in selected:
+            for k, v in dense_rows.items():
+                arr_dtype = np.asarray(v).dtype
+                prev = dtypes.get(k)
+                dtypes[k] = arr_dtype if prev is None else np.result_type(prev, arr_dtype)
         out = {
-            k: np.zeros((idx.shape[0], *proto[k].shape[1:]), dtype=proto[k].dtype)
+            k: np.zeros((idx.shape[0], *proto[k].shape[1:]), dtype=dtypes[k])
             for k in sorted(all_keys) if k in proto
         }
         for dense_rows, mask in selected:

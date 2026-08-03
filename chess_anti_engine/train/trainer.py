@@ -778,6 +778,10 @@ class TrainMetrics:
     train_steps_done: int = 0
     train_samples_seen: int = 0
     aurora_uw_floor: float = 0.0
+  # The matrix-group LR the effective-ratio pair below was multiplied by.
+  # Sampled at the sqrt_release sawtooth FLOOR (M4-2) -- ~10x under a typical
+  # step -- so the pair is only readable against this column.
+    aurora_uw_lr: float = 0.0
     aurora_uw_count: float = 0.0
     aurora_uw_ratio_min: float = 0.0
     aurora_uw_ratio_p10: float = 0.0
@@ -787,6 +791,21 @@ class TrainMetrics:
     aurora_uw_floored_frac: float = 0.0
     aurora_uw_effective_ratio_min: float = 0.0
     aurora_uw_effective_ratio_median: float = 0.0
+  # Polar residual of the update Aurora applied, sampled on ONE designated
+  # tensor per shape class per iteration (`train.aurora.polar_convergence`).
+  # `_sv_ratio_*` is sigma_min/sigma_max (1.0 = a true orthogonal step) and
+  # `_orth_err_*` is ||QQ^T - I||_F/sqrt(n) (0.0 = converged); both are read
+  # AGAINST `aurora_polar_steps_configured`, which is the step count that
+  # produced them. `aurora_polar_sv_samples` is 2 when both shape classes
+  # were sampled -- below 2, a 0.0 ratio means "not measured", not
+  # "degenerate". M4-1 / audit I3.
+    aurora_polar_steps_configured: float = 0.0
+    aurora_polar_sv_samples: float = 0.0
+    aurora_polar_sv_errors: float = 0.0
+    aurora_polar_sv_ratio_square: float = 0.0
+    aurora_polar_sv_ratio_rect: float = 0.0
+    aurora_polar_orth_err_square: float = 0.0
+    aurora_polar_orth_err_rect: float = 0.0
   # Per-source loss split (observation-only; only meaningful once shards carry is_selfplay).
     policy_loss_selfplay: float = 0.0
     policy_loss_curriculum: float = 0.0
@@ -3164,6 +3183,12 @@ class Trainer:
         set_collect_uw_stats = getattr(self.opt, "set_collect_uw_stats", None)
         if callable(set_collect_uw_stats):
             set_collect_uw_stats(bool(collect_optimizer_stats))
+  # Polar residual rides the same one-step-per-iteration gate. It is
+  # scale-invariant and carries no `lr` factor, so unlike the uw-effective
+  # pair (M4-2) sampling at the sawtooth floor does not bias it.
+        set_collect_polar_stats = getattr(self.opt, "set_collect_polar_stats", None)
+        if callable(set_collect_polar_stats):
+            set_collect_polar_stats(bool(collect_optimizer_stats))
         self.opt.step()
         opt_step_time_s = time.perf_counter() - opt_step_start
         if update_lr:
@@ -3281,6 +3306,7 @@ class Trainer:
             **_grad_clip_metric_kwargs(grad_norms, clip_counts, aurora_grad_norms),
             **self._sf_rebuild_coverage.drain(),
             **getattr(self.opt, "last_uw_stats", {}),
+            **getattr(self.opt, "last_polar_stats", {}),
         )
         self._warn_if_grad_norm_median_past_watch(metrics)
         self._log_metrics(metrics, "train_avg")

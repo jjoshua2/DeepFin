@@ -22885,3 +22885,134 @@ The pre-committed reading is unchanged and still SUCCESS: every axis prints with
 its state, the attribution axis is `refresh_lag` in seconds against the
 reference lag, `confound` reads `UNMEASURED` with `n=0`, and the command refuses
 to return 0 while it does.
+
+#### WAVE-4 PR G — the polar-convergence INSTRUMENT (M4-1 / audit I3), plus M4-2 and M4-3
+
+**Not training-affecting.** No optimizer numerics change: `aurora_polar_steps`,
+the Polar Express coefficients, `aurora_polar_safety`, the normalisation and the
+`pp_*` loop are untouched. This PR only observes, and adds one guard on the
+holdout merge. The A8 A/B decides the step count; this is the ruler it reads.
+
+**The instrument.** `train/aurora.py::polar_convergence(update)` returns
+`(sv_ratio, orth_err)` for one applied Aurora update:
+`sv_ratio = sigma_min/sigma_max` and `orth_err = ||QQ^T - I||_F / sqrt(n)` on the
+same matrix rescaled to unit spectral norm and oriented wide. These are exactly
+Addendum II B3's `full` and `orth` columns. Both are invariant to a positive
+rescale, so the trailing `sqrt(rows/cols)` and any `aurora_uw_floor` scaling do
+not move them — "measured on the applied update" and "measured on the polar
+factor" are the same measurement, and the square branch makes that an identity
+rather than an approximation.
+
+Deviation from I3's sketch, stated: I3 proposed "a few power iterations — no
+SVD". It is a float64 `svdvals` instead. The interesting singular values sit 6+
+orders of magnitude below `sigma_max` (real momentum kappa 4.8e4–5.7e6), and B2
+MEASURED a 12-iteration power estimate landing BELOW `sigma_max` on 11 of 20
+real tensors. An estimator that cannot resolve the quantity is not a cheaper
+version of it. At the sampling cadence below the exact decomposition is ~2 SVDs
+of a 512-wide matrix per ~665 s iteration.
+
+**Sampling cadence and determinism.** One designated tensor per shape class per
+iteration: the FIRST square and the FIRST non-square parameter of the Aurora
+group in group order, on the single step where `Trainer.train_steps` already
+sets `collect_optimizer_stats` (`train_steps_done + 1 >= requested_steps`). No
+rng is consulted and there is no sampling seed — the same two tensors are
+measured every iteration, so the series is one tensor paired against itself.
+Unlike the uw-effective pair (M4-2) the reading carries no `lr` factor and is
+scale-invariant, so sampling at the sqrt_release sawtooth floor does not bias it.
+
+**Columns** (progress.csv, via TrainMetrics; the schema change rotates
+progress.csv once at the restart that picks it up, per the harness's own
+rotation path): `aurora_polar_sv_ratio_square`, `aurora_polar_sv_ratio_rect`,
+`aurora_polar_orth_err_square`, `aurora_polar_orth_err_rect`,
+`aurora_polar_steps_configured`, `aurora_polar_sv_samples`,
+`aurora_polar_sv_errors`. `aurora_polar_steps_configured` is read off the
+optimizer's own param group DURING the step, not off the yaml, so it is the
+proof-of-effect column for any `aurora_polar_steps` change — per *a yaml edit +
+restart may NOT be in effect*. `aurora_polar_sv_samples` is 2 when both shape
+classes were sampled; below 2, a 0.0 ratio means NOT MEASURED, not degenerate.
+
+**Calibration (shipped as `tests/test_aurora_polar_convergence.py`).** Pinned
+against Addendum II B3 on `checkpoint_000478`'s real Aurora momentum, all eight
+cells reproduced to four decimals (tolerance 5e-4):
+
+| group | steps | sv_ratio | orth_err |
+|---|---|---|---|
+| square (16 `out_proj`) | 8 | 0.0209 | 0.1082 |
+| square | 12 | 0.2489 | 0.0439 |
+| rect (4 `ffn`) | 8 | 0.0604 | 0.0800 |
+| rect | 12 | 0.6220 | 0.0257 |
+
+The fixture is the 20 momentum SPECTRA (83 kB,
+`tests/data/aurora_polar_momentum_spectra.npz`, emitted by
+`scripts/extract_aurora_momentum_spectra.py`), not the 23 MB of tensors: the PE
+iterate is orthogonally equivariant, so a matrix rebuilt from a banked spectrum
+reproduces the polar-path readings exactly — verified across three
+reconstruction seeds and both float32 and float64.
+
+**⚑ Two corrections to A8/B8's pre-committed instrument gate, both measured
+here.** B8 wrote the gate as "`aurora_polar_sv_ratio` reads >=0.99 median on the
+matrix group in the arm and reproduces ~0.02-0.06 in the control".
+
+1. **>=0.99 is unreachable in the arm on the SQUARE group.** PE-12 on real
+   square momentum reads **0.2489**, not >=0.99. The 0.99 came from A6's
+   Gaussian-surrogate cell (fp16 0.998) — the surrogate B0 retracted. Read as
+   written, the gate FAILS the arm for a reason that has nothing to do with
+   whether the arm took effect.
+2. **The RECT control value 0.0604 is off the polar-only path, not
+   production's.** Production feeds the rectangular branch a ROW-NORMALISED
+   matrix `pp_iterations` times. Measured on the same real tensors through
+   `_aurora_update`: rect reads **0.3926 / orth 0.0374 at 8 steps** and
+   **1.0000 / 0.0000 at 12**. Comparing a live `aurora_polar_sv_ratio_rect`
+   against 0.0604 would report a large change where there is none. (This also
+   bears on B5's "square-only is not supported": on the path production
+   actually runs, the rect group at 8 steps is 19x better converged than the
+   squares by sv_ratio and 2.9x by orth_err. Not my call — recorded for the A/B
+   coordinator, who owns the arm.)
+
+**Restated instrument gate for the A8 A/B, pre-committed here** (fp32 CPU
+references; production runs fp16 on CUDA, which B3 measured as reproducing fp32
+to 3 decimals on the production row, and live momentum is not the 478 snapshot,
+so read these as centres with a few-percent band):
+
+* **PRIMARY, binary:** `aurora_polar_steps_configured` == 12.0 on every arm row
+  and == 8.0 on every control row, with `aurora_polar_sv_samples` == 2.0 and
+  `aurora_polar_sv_errors` == 0.0. If this does not hold the change did not
+  reach the optimizer and no verdict is readable.
+* **CONFIRMING, quantitative, median over the first 5 live iterations:**
+  square `sv_ratio` 0.021 -> ~0.25 and `orth_err` 0.108 -> ~0.044; rect
+  `sv_ratio` 0.39 -> ~1.00 and `orth_err` 0.037 -> ~0.000.
+* The kill/success rules of B8 (held_ce_excess, inw/oow top1, cost bar) are
+  unchanged and are not this PR's to set.
+
+**M4-2 — `aurora_uw_effective_ratio_*` is 10x low by construction.** Not
+redefined: moving the sample step would silently re-base the historical series
+(*a ruler change must invalidate its records*). Instead `aurora_uw_lr` — the
+group `lr` the pair was multiplied by — is emitted beside it, and the whole
+family is promoted to progress.csv. It was TensorBoard-only: the fields existed
+on `TrainMetrics` but `_train_metrics_dict` never listed them, so no ledger
+yardstick could cite them, the same defect the grad-norm family had. De-scale
+with `opt_lr_mean / aurora_uw_lr` before reading the pair as "how big is one
+step".
+
+**M4-3 — the holdout merge homogenised encoding-identity markers.**
+`ArrayReplayBuffer._gather_rows` now (a) widens each field's dtype across ALL
+selected chunks instead of taking the prototype's, killing the `<U4` truncation
+that stored `"false"` as `"fals"`, and (b) refuses a set whose chunks disagree
+about `_history_rep_fix` / `_input_history_encoding` / `_policy_encoding`, with
+the same `mixed replay metadata ...` message `shard._scalar_metadata_string`
+already raises and through the same predicate `history_rep_fix_from_arrays`
+uses. An ABSENT `_history_rep_fix` counts as `"false"` because shard.py
+documents that it does. **Reachability, measured read-only:**
+`checkpoint_000476/477/478`'s live `holdout.npz` all carry `_history_rep_fix`
+uniformly `"true"` and `_input_history_encoding` uniformly
+`"lc0_root_legacy_meta"`, so the new raise cannot fire on a resume from today's
+state; it is armed for the next encoding flip. Negative control shipped:
+`tests/test_holdout_encoding_marker_merge.py` requires the mixed export to
+FAIL, and 5 of its 8 tests are red against `origin/main`.
+
+**Yardstick for this PR.** It is an instrument, so there is no Elo claim and no
+kill rule on play strength. The pass condition is the calibration above plus
+proof-of-effect on the first live iteration: `aurora_polar_sv_samples` == 2.0,
+`aurora_polar_sv_errors` == 0.0 and `aurora_polar_steps_configured` == 8.0 on a
+production restart that has not changed the step count. If those three read
+otherwise, the instrument is not installed and the A8 A/B must not be launched.
