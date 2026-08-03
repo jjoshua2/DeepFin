@@ -258,6 +258,8 @@ _TUNE_KEYS = (
     "eval_games", "eval_sf_nodes", "eval_mcts_simulations",
     "holdout_fraction", "holdout_capacity", "test_steps",
     "freeze_holdout_at", "reset_holdout_on_drift", "drift_threshold", "drift_sample_size",
+    "era_probe_path", "era_probe_inwindow_path", "era_probe_rows",
+    "era_probe_interval", "era_probe_batch_size",
     "search_feature_dropout_p", "search_w_volatility",
     "search_diff_focus", "search_loss_weights", "search_categorical_bins",
     "search_smolgen", "search_nla",

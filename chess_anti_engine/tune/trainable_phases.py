@@ -2,6 +2,7 @@
 
 Each function represents one phase of the main trial loop:
   * _run_puzzle_eval_if_due — puzzle-suite evaluation on a schedule
+  * _run_era_probes_if_due — era / in-window forgetting probes on a schedule
   * _run_eval_games        — fixed-strength eval games
   * _run_net_gating        — anchored promotion-gate verdict (plays no games)
   * _run_training_and_gating — step budget, training, gating, holdout eval
@@ -25,6 +26,13 @@ from typing import Any
 import numpy as np
 import torch
 
+from chess_anti_engine.eval.era_probe import (
+    ProbeReading,
+    ProbeSet,
+    probe_metric_defaults,
+    probe_metrics,
+    score_probe_set,
+)
 from chess_anti_engine.replay.shard import (
     iter_shard_paths,
     load_shard_arrays,
@@ -212,6 +220,55 @@ def _run_puzzle_eval_if_due(
         "puzzle_correct": pr.correct,
         "puzzle_total": pr.total,
     }
+
+
+def _run_era_probes_if_due(
+    model: torch.nn.Module,
+    probes: dict[str, ProbeSet],
+    *,
+    tc: TrialConfig,
+    device: str,
+    iteration_zero_based: int,
+) -> dict:
+    """Score the frozen era / in-window row sets. Returns report columns.
+
+    Runs on the post-training weights of THIS iteration, at the same point in
+    the loop as the puzzle canary, so the number in row N is row N's model —
+    unlike ``test_*``, which the async holdout eval publishes one iteration
+    late.
+
+    The cost bound is structural, not a promise: one forward per set per due
+    iteration over the set's configured row cap, no backward, no optimizer,
+    ``inference_mode``. At the production shape (2048 rows, batch 512, two
+    sets) that is 8 forwards against ~88 full training steps. ``probe_ms`` is
+    published so the bound is checkable on the row rather than argued here.
+
+    Failure is non-fatal and LOUD. A probe that raises must not take down a
+    training iteration — but a probe that silently stops reporting is the exact
+    failure mode this instrument exists to end, so the exception is printed
+    with its traceback and the columns fall back to nan (visibly absent),
+    never to a stale value.
+    """
+    if not probes or int(tc.era_probe_interval) <= 0:
+        return probe_metric_defaults()
+    if int(iteration_zero_based) % int(tc.era_probe_interval) != 0:
+        return probe_metric_defaults()
+    readings: dict[str, ProbeReading] = {}
+    for label, probe in probes.items():
+        try:
+            readings[label] = score_probe_set(
+                model, probe, device=device, batch_size=tc.era_probe_batch_size,
+            )
+        except Exception:
+            print(
+                f"[probe] {label}: scoring RAISED at iteration "
+                f"{int(iteration_zero_based) + 1}; probe_{label}_* read nan for "
+                f"this row (the probe is an instrument, not a training input — "
+                f"the iteration is unaffected)",
+                flush=True,
+            )
+            traceback.print_exc()
+    return probe_metrics(readings)
 
 
 def _run_eval_games(
@@ -1074,6 +1131,7 @@ def _finalize_iteration(
     status_csv_path: Path,
     tune_report_fn,
     puzzle_suite,
+    era_probes: dict[str, ProbeSet],
     ds: DifficultyState,
     distributed_pause_started_at: float | None,
     distributed_pause_active: bool,
@@ -1146,6 +1204,12 @@ def _finalize_iteration(
         tc=tc, device=device, rng=rng,
         iteration_zero_based=iteration_zero_based,
     )
+  # Era-forgetting probes (the leading indicator the 07-31 slide lacked).
+    probe_dict = _run_era_probes_if_due(
+        trainer.model, era_probes,
+        tc=tc, device=device,
+        iteration_zero_based=iteration_zero_based,
+    )
     _write_rng_state_sidecar(ckpt_dir=ckpt_dir, rng=rng)
 
     pause_metrics = _iteration_pause_metrics(
@@ -1166,7 +1230,7 @@ def _finalize_iteration(
     report_dict = _build_report_dict(
         tc=tc, trainer=trainer,
         pr=pid_result, sp=sp, tr=tr, drift=drift,
-        eval_dict=eval_dict, puzzle_dict=puzzle_dict,
+        eval_dict=eval_dict, puzzle_dict=puzzle_dict, probe_dict=probe_dict,
         wdl_regret_used=wdl_regret_used,
         sf_nodes_used=sf_nodes_used,
         pause_metrics=pause_metrics,

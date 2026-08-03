@@ -664,10 +664,15 @@ def classify_config_provenance(
                 # coincide (trainable.py:520 overlays before :634 constructs) is
                 # sound, but it is an inference; this script has no evidence of
                 # it. `ok` would restate exactly the false reassurance the whole
-                # entry exists to remove. The effect-level observable is the
-                # buffer-init print (trainable_init.py, commit 786205c26), which
-                # reads shuffle_cap/refresh_interval off the CONSTRUCTED object;
-                # it first appears at the next restart.
+                # entry exists to remove. The effect-level observable is a
+                # startup print that reads the value off the CONSTRUCTED object
+                # rather than off config, and it first appears at the next
+                # restart: `[trial] buffer init:` for the replay knobs
+                # (trainable_init.py, commit 786205c26) and `[probe] <label> set
+                # loaded:` for the era-probe set identity, which prints the
+                # DIGEST of the rows it actually loaded. Every key of this class
+                # needs one; a construction-only key with no such print is
+                # unauditable by construction.
                 report.append(
                     f"  note(ctor)  {key}: row={live!r} matches the yaml; "
                     f"params.json={params[key]!r} is the trial's ORIGINAL "

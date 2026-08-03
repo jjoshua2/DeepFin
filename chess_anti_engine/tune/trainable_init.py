@@ -1,10 +1,11 @@
 """Restore / bootstrap / replay-buffer initialization for the Ray Tune trainable.
 
-Three phases that run once at trial startup (before the main loop):
+Four phases that run once at trial startup (before the main loop):
   * _restore_checkpoint_or_salvage — Ray ckpt or salvage seed pool or fresh
   * _maybe_load_bootstrap          — pre-trained weights for fresh starts
   * _init_replay_buffers           — replay + holdout buffers, seeded
                                      from warmstart / shared / exploit
+  * _init_era_probes               — the two FROZEN era-forgetting row sets
 """
 from __future__ import annotations
 
@@ -15,6 +16,12 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.eval.era_probe import (
+    PROBE_ERA,
+    PROBE_INWINDOW,
+    ProbeSet,
+    load_probe_set,
+)
 from chess_anti_engine.model import (
     load_state_dict_tolerant,
     reinit_volatility_head_parameters_,
@@ -690,6 +697,56 @@ def _init_replay_buffers(
     _restore_holdout_buffer(tc=tc, restore=restore, holdout_buf=holdout_buf)
 
     return buf, holdout_buf, current_window, replay_shard_dir, selfplay_shards_dir
+
+
+def _init_era_probes(*, tc: TrialConfig) -> dict[str, ProbeSet]:
+    """Load the two frozen era-forgetting row sets. Empty dict == probes off.
+
+    Called ONCE per trial process, which is what makes the three keys behind it
+    construction-only (see ``trainable_config_ops``). The loader prints one
+    line per set with the set's DIGEST and row count, read off the loaded
+    arrays rather than off config — the effect-level observable an operator
+    checks on the first row after a restart, exactly as ``[trial] buffer init:``
+    is for the replay knobs.
+
+    Deliberately NOT lazily constructed inside the iteration loop the way the
+    prefetcher and async eval are. Those flip a behaviour on; this decides WHAT
+    a published column is measured over, and a column that silently changes
+    ruler mid-run is the failure the classification exists to prevent. A probe
+    added by a live yaml edit would produce a column whose early rows are nan
+    and whose later rows are a different measurement, with nothing in the file
+    to mark the seam.
+
+    Never raises: ``load_probe_set`` returns None with a printed reason for
+    every failure, and a missing probe costs the run nothing but the column.
+    """
+    probes: dict[str, ProbeSet] = {}
+    planes = input_plane_count(tc.input_extra_features)
+    width = policy_size_for_encoding(tc.policy_encoding)
+    for label, raw_path in (
+        (PROBE_ERA, tc.era_probe_path),
+        (PROBE_INWINDOW, tc.era_probe_inwindow_path),
+    ):
+        loaded = load_probe_set(
+            raw_path, label=label, max_rows=tc.era_probe_rows,
+            expected_planes=planes, expected_policy_size=width,
+            expects_relations=bool(tc.use_dynamic_relations),
+        )
+        if loaded is not None:
+            probes[label] = loaded
+    if probes and len(probes) < 2:
+        # The PAIR is the instrument; one leg alone reads as "the net moved"
+        # and cannot separate forgetting from ordinary progress. Still worth
+        # running -- a lone era curve is the hinge signal the 07-31 run lacked
+        # -- but the operator must not read the level as the signature.
+        print(
+            f"[probe] only {sorted(probes)} configured: probe_gap_* will read "
+            f"nan. The DIVERGENCE of the era/in-window pair is the treadmill "
+            f"fingerprint; a single set's level moves with anything that moves "
+            f"the net.",
+            flush=True,
+        )
+    return probes
 
 
 def _restore_holdout_buffer(
