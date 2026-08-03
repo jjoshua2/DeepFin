@@ -22775,45 +22775,81 @@ $ CUDA_VISIBLE_DEVICES= PYTHONPATH=. python3 scripts/gate_shadow_readout.py \
     --rederive-reference runs/pbt2_small/server/trials/13a9f_00000/processed
 re-derived from 430 shards ... binned against 68 iterations
   subtrees read: EXCLUDED _quarantine=5, _compacted=430
-  usable bins (both arms non-empty): 67
+  usable bins (both arms non-empty): 67 at zero shift
 
-  field                point estimate   shipped     phase band (shifts [-0.5,-0.25,0,0.25,0.5])
-  mean_games_cur              197.9       196.8   [47.2, 197.9]
-  mean_games_prev              43.5        38.3   [43.5, 219.8]
-  prev_share                 0.1802      0.1629   [0.1802, 0.8232]  <-- UNRESOLVED, spans the leg's own tolerance
-  mean_iter_seconds           625.6       721.0   [625.6, 906.8]
-  refresh_lag                 112.7       117.5   [112.7, 746.4]
-  mean_delta_elo              -7.83       -4.33   [-24.83, -0.81]
-  sd_delta_elo                45.16       45.56   [35.01, 73.31]
+  usable bins per shift (a shift below 50% of the best is DEGENERATE and does not set the band):
+    -0.50: 67  -0.25: 67  +0.00: 67  +0.25: 13 DEGENERATE  +0.50: 66
+
+  field                point estimate   shipped     phase band (4 non-degenerate of the bin-edge shifts [-0.5, -0.25, 0.0, 0.25, 0.5] of an iteration)
+  mean_games_cur              197.9       196.8   [79.4, 197.9]
+  mean_games_prev              43.5        38.3   [43.5, 156.7]
+  prev_share                 0.1802      0.1629   [0.1802, 0.6638]  <-- UNRESOLVED, spans the leg's own tolerance
+  mean_iter_seconds           625.6       721.0   [625.6, 665.7]
+  refresh_lag                 112.7       117.5   [112.7, 441.9]
+  mean_delta_elo              -7.83       -4.33   [-7.83, -0.81]
+  sd_delta_elo                45.16       45.56   [35.01, 45.16]
 
 OfflineReference body these imply:
     REFUSED: prev_share is phase-unstable over the bin-edge sweep
-    (0.1802..0.8232, spread 0.6429 > the leg's own 0.06 tolerance).
+    (0.1802..0.6638, spread 0.4836 > the leg's own 0.06 tolerance, over 4
+    non-degenerate shifts).
     ...
-    Resolve the alignment first -- attribute shards at INGEST (the loop's own
-    event) rather than at the compactor's flush stamp -- then re-run.
+    RE-RUNNING THIS COMMAND CANNOT RESOLVE IT. The free phase is a property of
+    the input -- shards carry the compactor's flush stamp, the loop attributes
+    at INGEST -- so every fleet whose refresh lag is a real fraction of an
+    iteration reads as unstable here. The resolution is to attribute shards at
+    the loop's own INGEST event and re-derive from THAT.
 EXIT=7
 ```
 
-Two of those numbers survive the sweep and one changed for a real reason. The
-row counts and `mean_iter_seconds` come from `progress.csv`'s own timestamps and
-are phase-invariant (spread exactly 0.0), so **`mean_iter_seconds` 625.6 s vs the
-shipped 721.0 s stands**: the loop genuinely got faster since 2026-06, which is
-also why the `cadence` leg passes at 0.88x. The shard count fell 435 -> 430
-because `read_shard_arms` now EXCLUDES `_quarantine/` — those 5 shards
-(136 curriculum games) are ones the loop REJECTED and never counted, so
-including them made the "independent reconstruction" a mixture of what the loop
-used and what it threw away.
+⚠ **Two things in the block above were wrong in the first draft of this
+correction and are fixed here rather than left to be re-derived** (PR #324
+review round 2):
+
+1. **The band was banked off a COLLAPSED shift.** The quoted `prev_share` upper
+   bound 0.8232 came from the `+0.25` shift, where only 13 of 68 bins still hold
+   two models — that shift measures the binning falling apart, not the split. A
+   shift keeping under half the best shift's usable bins is now excluded from
+   the band and printed as `DEGENERATE`, and the per-shift counts are printed so
+   no future endpoint can be banked without its n. The verdict is unchanged: the
+   four surviving shifts still span 0.1802-0.6638, **eight times** the leg's
+   tolerance. The exclusion is by SAMPLE SIZE, never by the value — filtering on
+   the share itself would condition the control on its own outcome — and because
+   narrowing a band can only move a verdict toward "stable", a sweep with fewer
+   than three surviving shifts now refuses on that ground alone.
+2. **`mean_iter_seconds` is NOT phase-invariant, and the first draft's claim
+   that its spread was "exactly 0.0" was false.** The seconds come from
+   `progress.csv`, but the MEAN is taken over the USABLE bins, and usability is
+   exactly what the phase moves — the real band is [625.6, 665.7] (and was
+   [625.6, 906.8] before the degenerate shift was excluded). The test pinning the
+   claim used a synthetic fleet where every bin is usable at every shift, so it
+   confirmed its own premise; it now uses a fleet whose usability varies with the
+   shift and asserts the spread is NOT zero. **Nothing this reconstruction
+   produces is phase-invariant.**
+
+**`mean_iter_seconds` 625.6 s vs the shipped 721.0 s still stands, on a
+different instrument:** the readout's own `cadence` leg averages
+`time_this_iter_s` over the csv rows and never bins a shard, and it reads 635 s
+= 0.88x the reference over the last 40 iterations. That is the independent
+support; the reconstruction's 625.6 is consistent with it but is not itself
+evidence. The shard count fell 435 -> 430 because `read_shard_arms` now EXCLUDES
+`_quarantine/` — those 5 shards (136 curriculum games) are ones the loop
+REJECTED and never counted, so including them made the "independent
+reconstruction" a mixture of what the loop used and what it threw away.
 
 **The pre-registered next step is therefore unchanged in obligation and changed
 in method:** the `refresh_lag` FAIL still may not be read as an attribution
 failure, and `OfflineReference` still may not move — but the resolution now
 requires attributing shards at the loop's INGEST event rather than at the
-server's flush stamp. Until a reconstruction exists that pins its own alignment,
-there is NO shard-side reading of the lag, in either direction. The in-loop
-0.2612 is the only measurement on the table, and it cannot separate a moved lag
-from a mis-attributed split by itself — which is exactly why the leg is named
-for the quantity and reports both readings.
+server's flush stamp. ⚑ **RE-RUNNING `--rederive-reference` LATER CANNOT
+PRODUCE CONSTANTS.** The free phase is a property of the input, not of this
+window: any fleet whose refresh lag is a real fraction of an iteration reads as
+unstable here, so the refusal is STRUCTURAL and no amount of waiting for a
+cleaner window changes it. Until a reconstruction that attributes at INGEST
+exists, there is NO shard-side reading of the lag, in either direction. The
+in-loop 0.2612 is the only measurement on the table, and it cannot separate a
+moved lag from a mis-attributed split by itself — which is exactly why the leg
+is named for the quantity and reports both readings.
 
 Also corrected: the mutation count in the entry above ("all 11 mutations were
 KILLED") was wrong at the time of writing — round 1 ran and killed 12 (M1-M12),

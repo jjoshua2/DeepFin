@@ -65,10 +65,16 @@ WHAT IT READS
     read one phase of this reconstruction as a measurement and stated a
     conclusion from it; that sentence is retracted in the ledger.
 
-    When a reconstruction that pins its own alignment exists, it prints
-    constants and applies nothing: record them in ``docs/experiment_ledger.md``
-    and paste them into ``OfflineReference`` in the same change, at restart prep
-    -- never mid-window, and never after reading a verdict you did not like.
+    ⚑ THE REFUSAL IS STRUCTURAL: RE-RUNNING THIS LATER CANNOT FIX IT. The free
+    phase belongs to the input, not to the window -- any fleet whose refresh lag
+    is a real fraction of an iteration reads as unstable here, so waiting for a
+    cleaner window buys nothing. The resolution is to attribute shards at the
+    loop's own INGEST event and re-derive from THAT.
+
+    When such a reconstruction exists it prints constants and applies nothing:
+    record them in ``docs/experiment_ledger.md`` and paste them into
+    ``OfflineReference`` in the same change, at restart prep -- never mid-window,
+    and never after reading a verdict you did not like.
 
 THE COLUMN TO WATCH IN SHADOW MODE IS ``gate_would_demote``
     ``gate_decision == 1`` is NOT "the gate is happy". It is emitted for four
@@ -159,6 +165,7 @@ from chess_anti_engine.tune.promotion_gate import (
     OFFLINE,
     READOUT_EXIT_CONFOUND_UNMEASURED,
     READOUT_EXIT_IDENTITY_UNEVALUATED,
+    _REDERIVE_MIN_USABLE_FRACTION as _MIN_USABLE_FRACTION,
     read_iteration_bins,
     read_shard_arms,
     readout_exit_code,
@@ -217,10 +224,22 @@ def _rederive(progress_csv: Path, shard_root: Path) -> int:
         f"re-derived from {r.n_shards} shards under {shard_root} binned against "
         f"{r.n_iterations} iterations of {progress_csv}",
         f"  subtrees read: {read_note}",
-        f"  usable bins (both arms non-empty): {r.n_usable}",
+        f"  usable bins (both arms non-empty): {r.n_usable} at zero shift",
+        "",
+        # ⚑ A BAND ENDPOINT IS ONLY AS GOOD AS THE n IT CAME FROM (review B2).
+        # The live sweep's widest point kept 13 of 68 bins; printing the counts
+        # is what lets a reader see that before reading the band.
+        "  usable bins per shift (a shift below "
+        f"{int(100 * _MIN_USABLE_FRACTION)}% of the best is DEGENERATE and "
+        "does not set the band):",
+        "    " + "  ".join(
+            f"{shift:+.2f}: {n}{' DEGENERATE' if degen else ''}"
+            for shift, n, degen in r.shift_usable
+        ),
         "",
         "  field                point estimate   shipped     phase band "
-        f"(bin-edge shifts {list(r.shifts)} of an iteration)",
+        f"({r.n_band_shifts} non-degenerate of the bin-edge shifts "
+        f"{list(r.shifts)} of an iteration)",
     ]
     for attr, label, fmt, ref_attr in _FIELD_LABELS:
         lo, hi = r.band(attr)
@@ -239,9 +258,17 @@ def _rederive(progress_csv: Path, shard_root: Path) -> int:
         "  is the SERVER's flush stamp; the loop attributes at INGEST, and a shard",
         "  flushed at the end of iteration N is ingested in N+1 where its sha is",
         "  `prev`. Nothing in this reconstruction can pin the alignment, so every",
-        "  split-derived number above is reported as a band, not a measurement.",
-        "  The row counts and `mean_iter_seconds` come from progress.csv's own",
-        "  timestamps and are phase-invariant; everything else is not.",
+        "  number above is reported as a band, not a measurement -- INCLUDING",
+        "  `mean_iter_seconds`, whose seconds come from progress.csv but whose",
+        "  mean is taken over the USABLE bins, and usability is what the phase",
+        "  moves. The cadence reading that does not depend on this alignment is",
+        "  the readout's own `cadence` leg, which never bins a shard.",
+        "",
+        "⚑ RE-RUNNING THIS COMMAND CANNOT RESOLVE THE REFUSAL. The free phase is",
+        "  a property of the input, not of this window: any fleet whose refresh",
+        "  lag is a real fraction of an iteration reads as unstable here. The",
+        "  resolution is to attribute shards at the loop's own INGEST event and",
+        "  re-derive from THAT -- not to run this again later.",
         "",
         "OfflineReference body these imply:",
         r.as_offline_reference_source(),

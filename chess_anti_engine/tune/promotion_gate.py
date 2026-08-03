@@ -2355,10 +2355,40 @@ class ShardArm:
 # criterion's instrument.
 _REDERIVE_PHASE_SHIFTS: tuple[float, ...] = (-0.5, -0.25, 0.0, 0.25, 0.5)
 # Fields whose band is reported, and the ones the refusal is keyed to.
+#
+# ⚑ ``mean_iter_seconds`` IS IN THIS LIST AND ITS BAND IS NOT ZERO. An earlier
+# revision claimed it was "phase-invariant by construction" because it comes
+# from ``progress.csv``'s own timestamps. The seconds do, but the AVERAGE is
+# taken over the USABLE bins, and which bins are usable is exactly what the
+# phase moves -- on the live trial the band is [625.6, 906.8]. The claim was
+# pinned by a test whose synthetic fleet made every bin usable at every shift,
+# so it confirmed its own premise (review B1). Nothing this reconstruction
+# produces is phase-invariant; the honest independent reading of the cadence is
+# the readout's own ``cadence`` leg, which averages ``time_this_iter_s`` over
+# the csv rows and never bins a shard at all.
 _REDERIVE_SWEPT_FIELDS: tuple[str, ...] = (
     "mean_games_cur", "mean_games_prev", "prev_share", "refresh_lag_seconds",
     "mean_delta_elo", "sd_delta_elo", "mean_iter_seconds",
 )
+
+# A shift whose usable-bin count falls below this fraction of the BEST shift's
+# is not measuring the same population -- it is measuring the binning falling
+# apart -- and is excluded from the band (review B2). On the live trial the
+# +0.25 shift keeps 13 of 68 bins and produced the banked upper bound 0.8232;
+# the non-degenerate shifts still span 0.1802-0.6638, eight times the leg's
+# tolerance, so the refusal does not rest on the degenerate point.
+#
+# ⚑ THE CRITERION IS SAMPLE SIZE, NOT THE VALUE. Excluding a shift because its
+# ``prev_share`` is extreme would be conditioning the control on its own
+# outcome. ``n_usable`` is a structural property of the binning, decided before
+# any share is read, and the excluded shifts are PRINTED with their counts
+# rather than dropped silently.
+_REDERIVE_MIN_USABLE_FRACTION = 0.5
+# ...and the exclusion must not be able to manufacture stability: a band over
+# fewer than three surviving shifts cannot show that the phase does not matter,
+# so it refuses instead. Without this, a sweep whose only wide points were
+# degenerate would emit constants BECAUSE the binning fell apart.
+_REDERIVE_MIN_STABLE_SHIFTS = 3
 
 
 @dataclass(frozen=True)
@@ -2383,6 +2413,11 @@ class RederivedReference:
     # field -> (lo, hi) over the phase sweep. Empty when no sweep was run.
     bands: Mapping[str, tuple[float, float]] = field(default_factory=dict)
     shifts: tuple[float, ...] = ()
+    # (shift, n_usable, is_degenerate) per swept shift, in sweep order. The
+    # counts are REPORTED, not just used: a band is only as good as the number
+    # of bins each of its endpoints was computed from, and that was invisible
+    # in the first revision (review B2).
+    shift_usable: tuple[tuple[float, int, bool], ...] = ()
 
     def band(self, name: str) -> tuple[float, float]:
         return self.bands.get(name, (float("nan"), float("nan")))
@@ -2392,14 +2427,27 @@ class RederivedReference:
         return hi - lo
 
     @property
+    def n_band_shifts(self) -> int:
+        """Shifts that actually contributed to the bands."""
+        return sum(1 for _, _, degen in self.shift_usable if not degen)
+
+    @property
     def prev_share_is_phase_stable(self) -> bool:
         """Whether the split survives the alignment being unknown.
 
         Keyed to ``_SHARE_TOLERANCE`` -- the attribution axis's own tolerance --
         so "stable enough to paste into the reference" means exactly "the phase
         cannot move the leg's verdict".
+
+        FAIL-CLOSED ON A THIN SWEEP. Degenerate shifts are excluded from the
+        band, so a sweep could in principle be narrowed into "stability" by its
+        own points falling apart. Fewer than ``_REDERIVE_MIN_STABLE_SHIFTS``
+        surviving shifts therefore reads as unstable: a band over two points is
+        not evidence that the phase does not matter.
         """
         spread = self.spread("prev_share")
+        if self.shift_usable and self.n_band_shifts < _REDERIVE_MIN_STABLE_SHIFTS:
+            return False
         return not math.isnan(spread) and spread <= _SHARE_TOLERANCE
 
     def as_offline_reference_source(self) -> str:
@@ -2413,18 +2461,35 @@ class RederivedReference:
         if not self.prev_share_is_phase_stable:
             lo, hi = self.band("prev_share")
             spread = self.spread("prev_share")
+            thin = (
+                "    The sweep is also too thin to judge: fewer than "
+                f"{_REDERIVE_MIN_STABLE_SHIFTS} shifts survived the "
+                "usable-bin floor, and a band over two points cannot show "
+                "that the phase does not matter.\n"
+                if self.shift_usable
+                and self.n_band_shifts < _REDERIVE_MIN_STABLE_SHIFTS
+                else ""
+            )
             return (
                 "    REFUSED: prev_share is phase-unstable over the "
                 f"bin-edge sweep ({lo:.4f}..{hi:.4f}, spread {spread:.4f} > "
-                f"the leg's own {_SHARE_TOLERANCE} tolerance).\n"
+                f"the leg's own {_SHARE_TOLERANCE} tolerance, over "
+                f"{self.n_band_shifts} non-degenerate shifts).\n"
+                + thin +
                 "    Nothing here may be pasted into OfflineReference: the "
                 "split fields (mean_games_cur/prev, prev_share, "
-                f"refresh_lag) are all derived from an alignment this\n"
+                "refresh_lag) are all derived from an alignment this\n"
                 "    reconstruction cannot pin, and the delta fields are "
-                f"computed from the same split arms.\n"
-                "    Resolve the alignment first -- attribute shards at "
-                "INGEST (the loop's own event) rather than at the "
-                f"compactor's flush stamp -- then re-run.\n"
+                "computed from the same split arms.\n"
+                "    RE-RUNNING THIS COMMAND CANNOT RESOLVE IT. The free "
+                "phase is a property of the input -- shards carry the "
+                "compactor's flush stamp, the loop attributes at INGEST --\n"
+                "    so every fleet whose refresh lag is a real fraction of "
+                "an iteration reads as unstable here. The resolution is to "
+                "attribute shards at the loop's own\n"
+                "    INGEST event and re-derive from THAT; until such a "
+                "reconstruction exists there is no shard-side reading of the "
+                "lag, in either direction.\n"
             )
         return (
             "    mean_games_cur: float = "
@@ -2543,25 +2608,42 @@ def rederive_reference_with_phase_sweep(
     the point estimate alone would hand an operator an artifact to paste into a
     pre-registered constant.
 
-    ``mean_iter_seconds`` and the row counts come from ``iterations`` and are
-    phase-invariant by construction; everything else is derived from the split
-    and is not.
+    NOTHING HERE IS PHASE-INVARIANT, including ``mean_iter_seconds`` (review
+    B1): the seconds come from ``progress.csv``, but the mean is taken over the
+    USABLE bins and usability is what the phase moves. The cadence reading that
+    does not depend on this alignment is the readout's own ``cadence`` leg.
+
+    A shift that keeps fewer than ``_REDERIVE_MIN_USABLE_FRACTION`` of the best
+    shift's usable bins is EXCLUDED from the bands and reported as degenerate:
+    it measures the binning falling apart rather than the split (review B2).
+    The exclusion is by sample size, never by the value it would contribute.
     """
     base = rederive_reference_from_shards(iterations, shards)
     swept = [
         rederive_reference_from_shards(iterations, shards, bin_shift_fraction=f)
         for f in shifts
     ]
+    best_usable = max((r.n_usable for r in swept), default=0)
+    floor = _REDERIVE_MIN_USABLE_FRACTION * float(best_usable)
+    degenerate = [r.n_usable < floor for r in swept]
+    contributing = [r for r, degen in zip(swept, degenerate, strict=True) if not degen]
+
     bands: dict[str, tuple[float, float]] = {}
     for name in _REDERIVE_SWEPT_FIELDS:
         vals = [
-            float(getattr(r, name)) for r in swept
+            float(getattr(r, name)) for r in contributing
             if not math.isnan(float(getattr(r, name)))
         ]
         bands[name] = (
             (min(vals), max(vals)) if vals else (float("nan"), float("nan"))
         )
-    return replace(base, bands=bands, shifts=tuple(float(f) for f in shifts))
+    return replace(
+        base, bands=bands, shifts=tuple(float(f) for f in shifts),
+        shift_usable=tuple(
+            (float(f), int(r.n_usable), bool(degen))
+            for f, r, degen in zip(shifts, swept, degenerate, strict=True)
+        ),
+    )
 
 
 # Subtrees under a trial's ``processed/`` that are NOT part of the reference.

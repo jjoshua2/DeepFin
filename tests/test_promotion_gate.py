@@ -4362,9 +4362,41 @@ def test_the_rederivation_refuses_a_phase_unstable_split() -> None:
                  "mean_iter_seconds"):
         band_lo, band_hi = swept.band(name)
         assert band_hi >= band_lo, name
-    # `mean_iter_seconds` comes from progress.csv's own timestamps and is
-    # phase-invariant by construction: the same rows are read at every shift.
-    assert swept.spread("mean_iter_seconds") == pytest.approx(0.0, abs=1e-9)
+    # ⚑ NOT EVEN `mean_iter_seconds` IS PHASE-INVARIANT (review B1). An earlier
+    # revision asserted its spread was exactly 0 "because the seconds come from
+    # progress.csv", and pinned that with a fleet where every bin is usable at
+    # every shift -- a test that confirmed its own premise. The mean is taken
+    # over the USABLE bins, and usability is precisely what the phase moves, so
+    # the claim is asserted here against a fleet where it varies. It is checked
+    # in the `!= 0` direction on purpose: a future change that makes the
+    # cadence genuinely phase-free must come with the doc lines it invalidates.
+    # Iterations of two different lengths, where the LONG ones hold their prev
+    # arm late in the bin: a leftward shift pushes that arm out, those bins stop
+    # being usable, and the surviving mean is over the short ones alone.
+    vary_iters: list[tuple[float, float]] = []
+    clock = 1_000_000.0
+    for i in range(30):
+        secs = 600.0 if i < 20 else 1200.0
+        clock += secs
+        vary_iters.append((clock, secs))
+    varying: list[ShardArm] = []
+    for i, (end, secs) in enumerate(vary_iters):
+        start = end - secs
+        prev_at = start + (0.9 if i >= 20 else 0.1) * secs
+        varying.append(ShardArm(start + 0.1 * secs, model_step=i + 1,
+                                model_sha256="c", wins=5, draws=1, losses=4))
+        varying.append(ShardArm(prev_at + 1.0, model_step=i,
+                                model_sha256="p", wins=5, draws=1, losses=4))
+    vary_swept = rederive_reference_with_phase_sweep(vary_iters, varying)
+    usable_counts = {n for _, n, _ in vary_swept.shift_usable}
+    assert len(usable_counts) > 1, (
+        f"this fleet must have phase-dependent usability ({usable_counts}), or "
+        "the assertion below cannot see what it is for"
+    )
+    assert vary_swept.spread("mean_iter_seconds") != pytest.approx(0.0, abs=1e-9), (
+        "the cadence is averaged over the usable bins, so when usability moves "
+        "with the phase so does it -- the invariance claim was false"
+    )
 
     # ...and a fleet whose split does NOT move with the phase still emits.
     steady = [
@@ -4379,6 +4411,85 @@ def test_the_rederivation_refuses_a_phase_unstable_split() -> None:
     calm = rederive_reference_with_phase_sweep(iterations, steady)
     assert calm.prev_share_is_phase_stable is True, calm.band("prev_share")
     assert "prev_share:" in calm.as_offline_reference_source()
+
+
+def test_a_collapsed_shift_does_not_set_the_band_and_cannot_buy_stability() -> None:
+    """MUTATION (review B2): band over ALL shifts, or drop the thin-sweep guard.
+
+    A shift whose bins mostly hold ONE model measures the binning falling apart,
+    not the split, and it was setting a band endpoint the refusal was then
+    banked on. Live: the +0.25 shift kept 13 of 68 bins and produced the quoted
+    upper bound 0.8232. The verdict does not change (the surviving shifts still
+    span eight times the tolerance) -- but a number that goes in the ledger has
+    to come from the population it claims to describe.
+
+    ⚑ THE EXCLUSION IS BY SAMPLE SIZE, NEVER BY THE VALUE. `n_usable` is fixed
+    by the binning before any share is read; filtering on the share itself would
+    be conditioning the control on its own outcome. And because narrowing a band
+    can only ever move a verdict TOWARD "stable", the second half of this test
+    is the one that matters: the exclusion must not be able to buy stability.
+    """
+    # Every bin publishes a new model 25% of the way in -- so a +0.25 shift
+    # aligns each bin with exactly one model and collapses it. Every 8th bin
+    # publishes at 35% instead, leaving a handful of two-model bins at that
+    # shift: a small, unrepresentative sample with an extreme share.
+    cadence, n = 600.0, 40
+    iterations = [(1_000_000.0 + (i + 1) * cadence, cadence) for i in range(n)]
+    shards: list[ShardArm] = []
+    for i, (end, secs) in enumerate(iterations):
+        start = end - secs
+        frac = 0.35 if i % 8 == 0 else 0.25
+        for k in range(20):
+            t = k * secs / 20.0
+            step = i if t < frac * secs else i + 1
+            shards.append(ShardArm(
+                start + t, model_step=step,
+                model_sha256="p" if step == i else "c",
+                wins=5, draws=1, losses=4,
+            ))
+
+    swept = rederive_reference_with_phase_sweep(iterations, shards)
+    counts = {shift: (n_use, degen) for shift, n_use, degen in swept.shift_usable}
+    assert counts[0.25][1] is True, f"+0.25 must collapse: {counts}"
+    assert all(not degen for shift, (_, degen) in counts.items() if shift != 0.25), counts
+    assert swept.n_band_shifts == 4
+
+    # The collapsed shift's own value is OUTSIDE the band it no longer sets.
+    collapsed = rederive_reference_from_shards(
+        iterations, shards, bin_shift_fraction=0.25)
+    lo, hi = swept.band("prev_share")
+    assert not lo <= collapsed.prev_share <= hi, (
+        f"the collapsed shift ({collapsed.prev_share:.4f}) must fall outside "
+        f"[{lo:.4f}, {hi:.4f}], or this test cannot see the exclusion"
+    )
+    assert collapsed.n_usable < swept.n_usable / 2
+
+    # ...and the verdict is unchanged: the surviving shifts are still wide.
+    assert swept.prev_share_is_phase_stable is False
+    assert "non-degenerate" in swept.as_offline_reference_source()
+
+    # THE GUARD THAT MATTERS. A band computed over two surviving shifts is not
+    # evidence that the phase does not matter, however narrow it is -- otherwise
+    # a sweep could be declared stable BECAUSE most of its points collapsed.
+    thin = dataclasses.replace(
+        swept,
+        bands={**swept.bands, "prev_share": (0.20, 0.20)},
+        shift_usable=((-0.5, 40, False), (-0.25, 2, True), (0.0, 40, False),
+                      (0.25, 2, True), (0.5, 2, True)),
+    )
+    assert thin.spread("prev_share") == pytest.approx(0.0), "a zero-width band"
+    assert thin.prev_share_is_phase_stable is False, (
+        "two surviving shifts cannot establish stability"
+    )
+    body = thin.as_offline_reference_source()
+    assert body.strip().startswith("REFUSED")
+    assert "too thin to judge" in body
+    # The same band over enough shifts DOES emit, so the guard is not a
+    # permanent refusal wearing a reason.
+    wide = dataclasses.replace(thin, shift_usable=tuple(
+        (s, 40, False) for s in (-0.5, -0.25, 0.0, 0.25, 0.5)))
+    assert wide.prev_share_is_phase_stable is True
+    assert "prev_share:" in wide.as_offline_reference_source()
 
 
 def test_the_rederivation_excludes_quarantined_shards(tmp_path: Path) -> None:
@@ -4409,7 +4520,7 @@ def test_the_rederivation_excludes_quarantined_shards(tmp_path: Path) -> None:
     assert sorted(a.wins for a in everything) == [7, 99]
 
 
-def test_the_rederivation_refusal_does_not_exit_zero(tmp_path: Path) -> None:
+def test_the_rederivation_refusal_does_not_exit_zero(tmp_path: Path, capsys) -> None:
     """MUTATION (review R1): ``return 0`` at the end of ``_rederive``.
 
     The refusal prints, so a human reading the terminal is safe either way. The
@@ -4450,6 +4561,14 @@ def test_the_rederivation_refusal_does_not_exit_zero(tmp_path: Path) -> None:
 
     code = gate_shadow_readout._rederive(csv_path, tmp_path / "processed")
     assert code == gate_shadow_readout._REDERIVE_UNRESOLVED, code
+    # ⚑ A BAND ENDPOINT IS ONLY AS GOOD AS ITS n (review B2). The per-shift
+    # usable-bin counts are PRINTED, so a reader can see how many bins each end
+    # of the band was computed from before banking either.
+    printed = capsys.readouterr().out
+    assert "usable bins per shift" in printed
+    for shift in (-0.5, -0.25, 0.0, 0.25, 0.5):
+        assert f"{shift:+.2f}:" in printed, printed
+    assert "DEGENERATE" in printed, "the flag must be legible in the output"
     assert code != 0
     # ...and it is not confusable with a verdict or with a missing axis.
     assert code not in {
