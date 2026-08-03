@@ -22166,3 +22166,16 @@ reviewer's own re-run reproduced the E1 negative control, both E2 mutations and
 the E4 puct mutation, and instrumented the C setter to confirm the gate really
 drives 175 planes in both production history modes with the flag pushed into
 both extensions.
+
+Two things after that round, both worth recording because they are the same
+class again. First, re-reading the F2 fix found that
+`_require_slot_planes_match_manifest` read only the **dict** form of
+`manifest["model_config"]`, while `_swap_model_from_manifest` also accepts a
+**`ModelConfig` instance** — the object form fell through to the "cannot check"
+branch and downgraded the raise to a one-shot warning. A guard that quietly
+stops guarding on one of its two real inputs; fixed and mutation-pinned. Second,
+#320 (Gumbel transposition key) merged mid-review and changes `.c`/`.h`, so every
+number measured before that merge was measured against a stale `.so`. The
+worktree's extensions were rebuilt and the whole verification re-run on the
+merged tree rather than assuming the merge was inert — the same rule as
+`c_extension_rebuild_after_pull`, applied to a PR's own evidence.
