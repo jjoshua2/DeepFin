@@ -566,18 +566,84 @@ def test_slot_name_carries_the_protocol_version() -> None:
     assert prefix != legacy
 
 
-def test_both_slot_prefix_derivations_agree() -> None:
+def test_both_slot_prefix_derivations_agree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The launcher tells workers one name and the shared broker creates another.
 
-    They are separate code paths (`distributed_runtime._trial_slot_prefix` and
-    `SharedSlotBroker._register_new_trial`) that must produce byte-identical
-    names. If they drift, every worker times out against a slot nobody created
-    -- silent from the broker's side, since it just never sees a request.
+    If they drift, every worker times out against a slot nobody created --
+    silent from the broker's side, since it just never sees a request.
+
+    The first version of this test re-derived the formula by hand, so it was a
+    THIRD copy: sabotaging either implementation left it green (PR #322
+    reviewer). Both sites now delegate to ``inference.trial_slot_prefix`` and
+    this test calls the REAL ones -- including the broker's
+    ``_register_new_trial``, whose name is otherwise only observable through
+    the shared-memory segments it creates.
     """
-    from chess_anti_engine.tune._utils import stable_seed_u32
     from chess_anti_engine.tune.distributed_runtime import _trial_slot_prefix
 
+    created: list[str] = []
+
+    class _FakeShm:
+        def __init__(self, *, name: str, create: bool = False, size: int = 0) -> None:
+            if not create:
+                raise FileNotFoundError(name)
+            created.append(name)
+            self.name = name
+            self.buf = memoryview(bytearray(max(size, 1)))
+
+        def close(self) -> None:
+            pass
+
+        def unlink(self) -> None:
+            pass
+
+    class _FakeSlot:
+        def __init__(self, shm: object, layout: object, owns: bool = False) -> None:
+            assert shm is not None
+            assert layout is not None
+            assert owns
+            self.state = 0
+            self.batch_size = 0
+
+        def write_protocol_header(self) -> None:
+            pass
+
+    monkeypatch.setattr(inf, "SharedMemory", _FakeShm)
+    monkeypatch.setattr(inf, "_InferenceSlot", _FakeSlot)
+
     for trial_id in ("13a9f_00000", "9c36d_00000", "x"):
-        h = stable_seed_u32(f"slot-prefix-v{inf.SLOT_PROTOCOL_VERSION}", trial_id)
-        shared_broker_name = f"cae{inf.SLOT_PROTOCOL_VERSION}-{h:08x}"
-        assert _trial_slot_prefix(trial_id=trial_id) == shared_broker_name
+        created.clear()
+        broker = object.__new__(inf.SharedSlotBroker)
+        broker.slots_per_trial = 2
+        broker._layout = inf._SlotLayout.compute(8, 175)
+        broker._trial_slots = {}
+        broker._all_slots = []
+        inf.SharedSlotBroker._register_new_trial(broker, trial_id)
+
+        assert len(created) == 2, created
+        # The broker's realized segment names, not a re-derivation of them.
+        broker_prefix = created[0].rsplit("-", 1)[0]
+        assert created == [f"{broker_prefix}-0", f"{broker_prefix}-1"]
+        assert _trial_slot_prefix(trial_id=trial_id) == broker_prefix
+
+
+def test_slot_prefix_agreement_test_is_sabotage_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutating the shared helper must turn the agreement test RED.
+
+    The failure this guards against is precise: a test that re-derives the
+    formula agrees with itself no matter what either caller does. Patch the one
+    helper to a wrong value and require the launcher side to follow it -- if it
+    does not, the launcher is still carrying its own copy.
+    """
+    from chess_anti_engine.tune import distributed_runtime as dr
+
+    monkeypatch.setattr(inf, "trial_slot_prefix", lambda *, trial_id: "SABOTAGED")
+    monkeypatch.setattr(dr, "trial_slot_prefix", inf.trial_slot_prefix)
+    assert dr._trial_slot_prefix(trial_id="13a9f_00000") == "SABOTAGED", (
+        "distributed_runtime._trial_slot_prefix does not delegate to the shared "
+        "helper -- it is re-deriving the name, which is how the two sides drift"
+    )

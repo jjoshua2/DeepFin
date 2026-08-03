@@ -262,6 +262,17 @@ def run_mcts_many_c(
         n_leaves = len(leaf_data)
         if _inplace and use_cboard and n_leaves <= _max_batch_eval:
             leaf_xs = eval_impl.get_input_buffer(n_leaves, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            # The EIGHTH evaluator-sourced encode site, and the one PR #321
+            # missed while its ledger entry claimed "all 7" (that entry is
+            # corrected in this PR's ledger note). Same hazard as the root
+            # branch above: the buffer's plane count comes from the
+            # evaluator/model, the C encoder trusts the buffer and never sees
+            # cfg.input_extra_features, so a skew silently encodes a different
+            # feature version mid-search (audit E4).
+            check_encode_buffer_planes(
+                leaf_xs, cfg.input_extra_features,
+                where="run_mcts_many_c leaf inplace",
+            )
             _leaf_cbs: list[CBoard] = []
             for ld in leaf_data:
                 cb = ld[3]

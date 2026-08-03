@@ -101,6 +101,46 @@ def test_oracle_pins_the_planes_it_actually_compared() -> None:
     ) is None
 
 
+def test_the_expectation_does_not_come_from_the_value_under_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review F1, last rung: pinning ``input_extra_features`` at the top of
+    ``_run`` used to stay GREEN.
+
+    ``_run`` computed ``expect_planes`` from the same argument it passed to the
+    encoders, so a mutation moved both together and the oracle happily compared
+    146 planes to 146 planes while the caller had asked for 175. An expectation
+    derived from the value under test is not an expectation. ``run`` now
+    computes it and passes it down; this test performs that exact mutation and
+    requires a Failure.
+    """
+    real_run = _MOD._run
+
+    def sabotaged(*, input_extra_features: str, **kwargs: object) -> object:
+        # The mutation: the version is accepted and then ignored inside _run.
+        assert input_extra_features == PROD_EXTRA_FEATURES
+        return real_run(input_extra_features="v1", **kwargs)
+
+    monkeypatch.setattr(_MOD, "_run", sabotaged)
+    failure = _MOD.run(
+        games=1, seed=5, max_plies=6, encode_every=1,
+        input_extra_features=PROD_EXTRA_FEATURES, history_rep_fix=True,
+    )
+    monkeypatch.setattr(_MOD, "_run", real_run)
+    assert failure is not None, (
+        "pinning input_extra_features inside _run produced no failure — "
+        "expect_planes is still being derived from the mutated value"
+    )
+    assert "did not reach the encoder" in str(failure)
+    assert str(PROD_PLANES) in str(failure)
+
+    # Control: unsabotaged, the same call must pass.
+    assert _MOD.run(
+        games=1, seed=5, max_plies=6, encode_every=1,
+        input_extra_features=PROD_EXTRA_FEATURES, history_rep_fix=True,
+    ) is None
+
+
 def test_differential_fuzz_state_parity_smoke() -> None:
     """State parity (legal moves, bitboards, clocks, terminal flags) is a hard
     invariant between the C board and python-chess — assert it over many plies."""

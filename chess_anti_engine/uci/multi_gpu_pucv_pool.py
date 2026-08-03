@@ -35,6 +35,7 @@ from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
 from chess_anti_engine.mcts.puct_vl import _PLANES, _alloc_buffers
+from chess_anti_engine.mcts.vloss import release_batch_rows
 
 _log = logging.getLogger(__name__)
 
@@ -428,59 +429,73 @@ class MultiGpuPucvPool:
         max_batch = 0
         wait_seconds = 0.0
         wall_start = time.perf_counter()
-        while not stop_event.is_set() or pending is not None:
-  # Greedy budget grab: take up to ``gather`` tokens. Faster GPUs
-  # naturally take more leaves over the search.
-            n = 0
-            if not stop_event.is_set():
-                while n < gather and budget.acquire(blocking=False):
-                    n += 1
-            if n == 0 and pending is None:
-                break
+  # buf index -> row count for a batch whose vloss is applied and not yet
+  # integrated. batch_descend_puct applies it, batch_integrate_leaves
+  # removes it, and the evaluator between them can raise; the tree outlives
+  # this call, so an unguarded escape biases it permanently
+  # (SHARED_BROKER_AUDIT B7 -- reproduced on the WalkerPool twin).
+        outstanding: dict[int, int] = {}
+        try:
+            while not stop_event.is_set() or pending is not None:
+      # Greedy budget grab: take up to ``gather`` tokens. Faster GPUs
+      # naturally take more leaves over the search.
+                n = 0
+                if not stop_event.is_set():
+                    while n < gather and budget.acquire(blocking=False):
+                        n += 1
+                if n == 0 and pending is None:
+                    break
 
-            if n > 0:
-                next_local = 0 if pending is None else 1 - int(pending[1])
-                next_slot = next_local  # slot 0/1 on this worker's evaluator
-                inp = evaluator.get_input_buffer(n, slot=next_slot)
-                inp_np = inp.numpy() if hasattr(inp, "numpy") else inp
-                enc_view = np.asarray(inp_np).reshape(n, int(cfg.input_planes), 8, 8)
-                b = bufs[next_local]
-                rel = b["rel"] if cfg.compute_relations else None
-                tree.batch_descend_puct(
-                    root_id, root_cb, n, c_puct, fpu_root, fpu_red, vloss,
-                    enc_view,
-                    b["leaf_ids"], b["path_buf"], b["path_lens"],
-                    b["legal_buf"], b["legal_lens"],
-                    b["term_qs"], b["is_term"], vloss_mode,
-                    b["cache_keys"] if self._cache is not None else None,
-                    rel,
-                )
-                batches += 1
-                leaves += n
-                max_batch = max(max_batch, n)
-                n_term = int(b["is_term"][:n].sum())
-                terminal_leaves += n_term
-                next_handle = self._prepare_submit(
-                    evaluator, next_slot, next_local, n, enc_view, b, rel,
-                    n_term=n_term,
-                )
-            else:
-                next_handle = None
+                if n > 0:
+                    next_local = 0 if pending is None else 1 - int(pending[1])
+                    next_slot = next_local  # slot 0/1 on this worker's evaluator
+                    inp = evaluator.get_input_buffer(n, slot=next_slot)
+                    inp_np = inp.numpy() if hasattr(inp, "numpy") else inp
+                    enc_view = np.asarray(inp_np).reshape(n, int(cfg.input_planes), 8, 8)
+                    b = bufs[next_local]
+                    rel = b["rel"] if cfg.compute_relations else None
+                    tree.batch_descend_puct(
+                        root_id, root_cb, n, c_puct, fpu_root, fpu_red, vloss,
+                        enc_view,
+                        b["leaf_ids"], b["path_buf"], b["path_lens"],
+                        b["legal_buf"], b["legal_lens"],
+                        b["term_qs"], b["is_term"], vloss_mode,
+                        b["cache_keys"] if self._cache is not None else None,
+                        rel,
+                    )
+                    outstanding[next_local] = n
+                    batches += 1
+                    leaves += n
+                    max_batch = max(max_batch, n)
+                    n_term = int(b["is_term"][:n].sum())
+                    terminal_leaves += n_term
+                    next_handle = self._prepare_submit(
+                        evaluator, next_slot, next_local, n, enc_view, b, rel,
+                        n_term=n_term,
+                    )
+                else:
+                    next_handle = None
 
-            if pending is not None:
-                b_cur, p_n, pol, wdl, submit_t = self._finish_pending(
-                    pending, bufs,
-                )
-                if submit_t > 0.0:
-                    wait_seconds += time.perf_counter() - submit_t
-                tree.batch_integrate_leaves(
-                    p_n,
-                    b_cur["path_buf"], b_cur["path_lens"],
-                    b_cur["legal_buf"], b_cur["legal_lens"],
-                    b_cur["is_term"], pol, wdl, vloss,
-                )
+                if pending is not None:
+                    b_cur, p_n, pol, wdl, submit_t = self._finish_pending(
+                        pending, bufs,
+                    )
+                    if submit_t > 0.0:
+                        wait_seconds += time.perf_counter() - submit_t
+                    tree.batch_integrate_leaves(
+                        p_n,
+                        b_cur["path_buf"], b_cur["path_lens"],
+                        b_cur["legal_buf"], b_cur["legal_lens"],
+                        b_cur["is_term"], pol, wdl, vloss,
+                    )
+                    outstanding.pop(int(pending[1]), None)
 
-            pending = next_handle
+                pending = next_handle
+        finally:
+            for buf_idx, n_rows in outstanding.items():
+                release_batch_rows(
+                    tree, bufs[buf_idx], n_rows, vloss_weight=vloss,
+                )
 
         self._worker_stats[idx] = MultiGpuPucvWorkerStats(
             worker_index=idx,
