@@ -370,10 +370,12 @@ the sample columns are the ones a decision rule must be written against.
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import math
 import statistics
-from collections.abc import Iterable, Sequence
+import time
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -430,6 +432,13 @@ ELO_PER_SCORE_AT_HALF = 400.0 / (math.log(10.0) * 0.25)
 # harder to fire, never easier.
 _POOLED_GAME_SCORE_SD = 0.3447
 
+# How many ulps of the window's own scale still count as "no spread at all".
+# 4096 is ~5,000x the largest float round-trip residue observed over 40,000
+# fuzzed identical-delta windows and ~1e-11 of the smallest spread two distinct
+# W/D/L splits can produce, so the two populations it separates are ten orders
+# of magnitude apart. See ``_window_is_degenerate``.
+_DEGENERATE_SE_ULPS = 4096.0
+
 # One-sided normal quantiles. A t-table would be more correct at small window
 # sizes; ``_t_quantile`` widens these for small df instead of adding a scipy
 # dependency to the training loop.
@@ -478,6 +487,46 @@ def _arm_score_var(w: int, d: int, l: int) -> float:
     mean = (int(w) + 0.5 * int(d)) / n
     mean_sq = (int(w) * 1.0 + int(d) * 0.25) / n
     return max(0.0, mean_sq - mean * mean)
+
+
+def _window_is_degenerate(deltas: Sequence[float], se: float) -> bool:
+    """Whether this window's spread is a float artefact rather than a measurement.
+
+    THE TEST USED TO BE ``se <= 0.0`` AND IT MISSED 51.2% OF THE WINDOWS IT WAS
+    WRITTEN FOR (audit G3-3). ``se`` is ``sqrt(var/n)`` with
+    ``var = sum((d - mean)**2)/(n-1)``, and for K copies of one float ``d`` the
+    computed ``mean = fl(K*d/K)`` is only SOMETIMES exactly ``d``: when the
+    summation does not round-trip, every residual is a fraction of an ulp, the
+    variance is ~1e-34 and ``se`` comes out at ~1e-17 -- strictly positive, so
+    the guard passed and the gate then demoted on a CI of width zero
+    (``elo_lo == elo_hi == -192.3590``), which is precisely the certainty claim
+    the guard exists to refuse. Fuzzed over 40,000 realistic ``(w,d,l)`` window
+    shapes, 20,466 of them produced ``se > 0`` from identical deltas.
+
+    Two ways in, because either alone is a rule that can be fooled:
+
+    * ``len(set(deltas)) == 1`` -- the direct statement of "a stuck counter",
+      exact and independent of any tolerance;
+    * ``se`` at or below a SCALE-AWARE floor. The floor is derived from the
+      deltas themselves (``math.ulp`` of the largest magnitude in the window)
+      rather than being a fixed literal, because a literal that is right at
+      score-delta 0.14 is wrong by orders of magnitude at another scale, and a
+      threshold that does not track its data is how a guard silently stops
+      guarding.
+
+    ``_DEGENERATE_SE_ULPS`` is the headroom, and
+    ``test_the_degenerate_variance_floor_separates_float_noise_from_real_spread``
+    pins BOTH margins: the observed round-trip residue sits ~3 orders of
+    magnitude BELOW this floor, and the smallest spread REAL data can produce
+    (two distinct win/draw/loss splits differ by at least ~1/(n_cur*n_prev),
+    i.e. ~2e-5 in score, ~4e-6 in ``se``) sits ~10 orders of magnitude ABOVE it.
+    Nothing in between is reachable, which is why a floor is safe here at all.
+    """
+    if len({float(d) for d in deltas}) <= 1:
+        return True
+    scale = max((abs(float(d)) for d in deltas), default=0.0)
+    floor = _DEGENERATE_SE_ULPS * math.ulp(scale) if scale > 0.0 else 0.0
+    return se <= floor
 
 
 def _t_quantile(alpha: float, df: int) -> float:
@@ -664,6 +713,33 @@ class GateDecision:
     # ``GateHoldController.on_decision``. Nonzero means the fallback export the
     # next hold would publish is that many iterations stale.
     anchor_refresh_failures: int = 0
+    # -- DID THE BRAKE ACTUALLY ENGAGE (audit G3-4) -------------------------
+    # ``acted`` says the gate DECIDED to hold. It does not say the fleet was
+    # held: ``resolve_gate_hold_path`` degrades to None when the anchor is not
+    # on disk and publishes normally, and before this field the two cases were
+    # byte-identical in every metric row (``gate_decision=0``,
+    # ``gate_reason_code=5``, ``gate_holds=1`` in BOTH) with the only witness a
+    # stdout line in the Ray actor log that no csv consumer reads. A hold that
+    # never reached the publish path still burns the ``max_hold_iters`` budget
+    # and reported as a successful brake -- the module's own founding defect
+    # (``gate_passed: 1`` at ``gate_games: 0``) one level down, moved from the
+    # VERDICT to the ACTUATION.
+    hold_effective: bool = False
+    # Cumulative count of iterations where the gate wanted to hold and had no
+    # anchor to hold on. Cumulative rather than per-iteration so a single
+    # sampled row answers "has this ever happened", which is the question an
+    # operator has after the fact.
+    fallback_missing: int = 0
+    # Iterations since the anchor was last refreshed from a promoted export,
+    # NaN when unknown. Load-bearing since the refresh was restricted to
+    # genuine promotes (audit G3-8): the anchor now legitimately stops moving
+    # during a hold or a NOT_RUN stretch, so its AGE is the channel by which it
+    # can become older than the longest hold the gate is allowed to impose.
+    anchor_age_iters: float = float("nan")
+    # Cumulative failed writes of ``gate_state.json`` (audit G3-6). A failed
+    # write leaves the persisted window one iteration behind and the restart
+    # that follows silently resumes on it.
+    state_write_failures: int = 0
 
     @property
     def reason_code(self) -> int:
@@ -825,9 +901,31 @@ class PromotionGate:
     # promoted anchor with them, while ``holds`` still reads "N deep" -- so an
     # enforce-mode hold would be bounded by restart cadence, not max_hold_iters.
     hold_active: bool = False
+    # Failed writes of ``gate_state.json`` this process (audit G3-6). NOT
+    # persisted, for the obvious reason that the file it would be persisted in
+    # is the one that failed to write -- the log line and the
+    # ``gate_state_write_failures`` metric are the record.
+    state_write_failures: int = 0
 
     def __post_init__(self) -> None:
         self.cfg.validate()
+
+    def note_state_write_failed(self, exc: BaseException, *, path: Path) -> None:
+        """The gate-state write raised. Record it LOUDLY; never re-raise.
+
+        Same judgement as ``GateHoldController.note_anchor_refresh_failed``:
+        an optional alarm must not take a training run down, but it must not be
+        silent either. A failed write leaves the persisted window and hold
+        latch one iteration behind, and the restart that follows resumes on
+        that -- silently, until this counter existed.
+        """
+        self.state_write_failures += 1
+        log.error(
+            "promotion-gate state write FAILED %d time(s) this process (%s): "
+            "%s: %s. gate_state.json is now stale, so a restart would restore "
+            "an older window and hold latch than the gate is actually in.",
+            self.state_write_failures, path, type(exc).__name__, exc,
+        )
 
     def observe(self, sample: AnchoredSample) -> None:
         """Record one iteration's anchored counts (cheap; always safe to call)."""
@@ -949,7 +1047,7 @@ class PromotionGate:
         var = sum((d - mean) ** 2 for d in deltas) / (n - 1)
         se = math.sqrt(var / n)
 
-        if se <= 0.0:
+        if _window_is_degenerate(deltas, se):
             # Every iteration produced an identical delta. Real data cannot do
             # this; a stuck counter can. Refusing beats emitting a zero-width
             # interval that claims certainty (the L11 lesson, in a new place).
@@ -1158,6 +1256,21 @@ def gate_metrics(decision: GateDecision, *, strict: bool = True) -> dict[str, fl
   # hold would publish is that many iterations stale. Used to be a silently
   # suppressed OSError.
         "gate_anchor_refresh_failures": float(decision.anchor_refresh_failures),
+  # THE ACTUATION, not the verdict. 1.0 only when this decision both held AND
+  # resolved to an anchor the next publish will serve; 0.0 covers "did not
+  # hold" and "held with no fallback, so the fleet got the demoted net
+  # anyway". ``gate_fallback_missing`` counts the second case, so the two are
+  # distinguishable from the csv alone -- they used to be identical in it.
+        "gate_hold_effective": float(1.0 if decision.hold_effective else 0.0),
+        "gate_fallback_missing": float(decision.fallback_missing),
+  # Iterations since the anchor last tracked a promoted export. The anchor is
+  # deliberately NOT refreshed on a hold, a release or a NOT_RUN (G3-8), so
+  # this is the number that says how far back a hold would roll the fleet.
+        "gate_anchor_age_iters": float(decision.anchor_age_iters),
+  # Failed ``gate_state.json`` writes. Used to be a bare
+  # ``contextlib.suppress(Exception)`` two functions from the site where
+  # exactly that pattern had already been fixed.
+        "gate_state_write_failures": float(decision.state_write_failures),
     }
 
 
@@ -1217,6 +1330,72 @@ def gate_config_from_dict(config: dict) -> GateConfig:
 READOUT_PROMOTE = "promote_to_enforce"
 READOUT_HOLD = "hold_in_shadow"
 READOUT_KILL = "kill"
+
+# Per-leg states. The readout used to report only the legs that FIRED, so a
+# reader could tell which legs failed and could not tell which ones were
+# evaluated at all -- and "not evaluated" is the state the confound leg has
+# been in for 109 of 109 live rows (audit G3-1). An exit code is an OR over
+# axes; the axis states are what the pre-registered rule is actually about.
+LEG_PASS = "PASS"
+LEG_FAIL = "FAIL"
+LEG_HOLD = "HOLD"
+LEG_SKIPPED = "SKIPPED"
+# The axis that HAS no measurement, distinct from one that was skipped by a
+# guard: skipped means "this window cannot evaluate it", unmeasured means "the
+# column carries no data at all", which is a producer defect, not a window
+# property.
+LEG_UNMEASURED = "UNMEASURED"
+
+# Exit codes of ``scripts/gate_shadow_readout.py``, here rather than in the
+# script so the ledger's pre-committed command, the CLI and the tests cannot
+# drift. 3 (never ran) and 4 (no such file) belong to the script's own
+# preconditions and are documented there.
+READOUT_EXIT_PROMOTE = 0
+READOUT_EXIT_HOLD = 1
+READOUT_EXIT_KILL = 2
+READOUT_EXIT_CONFOUND_UNMEASURED = 5
+
+# Rows the confound fit needs before it says anything at all.
+_CONFOUND_MIN_ROWS = 3
+
+
+@dataclass(frozen=True)
+class ReadoutLeg:
+    """One axis of the readout, with the state it is actually in."""
+
+    name: str
+    state: str
+    detail: str
+
+    def __str__(self) -> str:
+        return f"  {self.state:<10} {self.name:<24} {self.detail}"
+
+
+def readout_exit_code(r: ShadowReadout) -> int:
+    """The command's exit code -- per AXIS STATE, never a bare verdict.
+
+    ⚑ AN EXIT CODE IS AN *OR* OVER AXES, and this one carried a specific trap
+    (ledger, audit wave 3, K1 x G3-2). The ``prev_share`` leg false-killed on
+    the production fleet; fixing that leg ALONE would make the same command
+    exit 0 -- ``promote_to_enforce``, the pre-registered signal to set
+    ``gate_mode: enforce`` -- while the PID-confound leg, the deciding KILL
+    rule the ledger registered for exactly this promotion, was measuring
+    nothing at all, because the server compactor drops
+    ``ShardMeta.opponent_wdl_regret_limit`` before it ever reaches the gate.
+    Every one of the 109 live rows carrying the column has
+    ``gate_sample_confound_elo = NaN``.
+
+    So a window whose confound axis has fewer than ``_CONFOUND_MIN_ROWS``
+    measurements cannot exit 0 or 1. It gets its own code and its own message,
+    because "promote" and "the instrument's other half is not plumbed" must not
+    be the same observation. A KILL still outranks it: a failing leg is a
+    plumbing fact about THIS window and is read first.
+    """
+    if r.verdict == READOUT_KILL:
+        return READOUT_EXIT_KILL
+    if not r.confound_is_measured:
+        return READOUT_EXIT_CONFOUND_UNMEASURED
+    return READOUT_EXIT_HOLD if r.verdict == READOUT_HOLD else READOUT_EXIT_PROMOTE
 
 
 @dataclass(frozen=True)
@@ -1464,10 +1643,47 @@ class ShadowReadout:
     # reason ``failed_legs`` is: "not promoted" with no reason attached is how
     # an operator ends up re-running the command until it says what they want.
     hold_legs: tuple[str, ...] = ()
+    # EVERY axis with the state it is in, including the ones that passed and
+    # the ones that were never evaluated. ``failed_legs`` / ``hold_legs`` are
+    # views of this and stay for the callers that read them.
+    legs: tuple[ReadoutLeg, ...] = ()
+    # The reference refresh lag the attribution axis was measured against, and
+    # the lag this window actually shows. Both in seconds, which is the
+    # cadence-free form -- see ``OfflineReference.refresh_lag_seconds``.
+    refresh_lag_seconds: float = float("nan")
+    ref_refresh_lag_seconds: float = float("nan")
+
+    @property
+    def confound_is_measured(self) -> bool:
+        """Whether the PID-confound axis has any measurement behind it at all.
+
+        NOT a statement about the slope: it is a statement about whether a
+        number exists to fit. Zero is the value it has had on every live row
+        ever written (audit G3-1).
+        """
+        return self.n_confound >= _CONFOUND_MIN_ROWS
+
+    def per_leg_report(self) -> str:
+        """Every axis and its state, one per line. The thing to actually read."""
+        conf_state = LEG_PASS if self.confound_is_measured else LEG_UNMEASURED
+        conf_detail = (
+            f"n={self.n_confound} mean={self.mean_confound_elo:.2f} "
+            f"slope={self.confound_slope:.3f}+/-{self.confound_slope_se:.3f} "
+            f"(needs ~{self.confound_rows_needed} rows to decide)"
+            if self.confound_is_measured else
+            f"n={self.n_confound} of {self.n_usable} usable rows carry "
+            "gate_sample_confound_elo -- the PID-confound leg, which the ledger "
+            "pre-registered as the deciding KILL rule for enabling this gate, "
+            "has NO measurement. Do not read a promote off this window"
+        )
+        legs = [*self.legs, ReadoutLeg("confound", conf_state, conf_detail)]
+        return "\n".join(str(leg) for leg in legs)
 
     def __str__(self) -> str:
         cad = (f"  cadence={self.mean_iter_seconds:.0f}s "
-               f"expected_prev_share={self.expected_prev_share:.4f}"
+               f"expected_prev_share={self.expected_prev_share:.4f} "
+               f"refresh_lag={self.refresh_lag_seconds:.0f}s"
+               f"/ref{self.ref_refresh_lag_seconds:.0f}s"
                if not math.isnan(self.mean_iter_seconds) else "  cadence=unknown")
         why = (f"  FAILED: {', '.join(self.failed_legs)}" if self.failed_legs
                else f"  HOLD: {', '.join(self.hold_legs)}" if self.hold_legs
@@ -1620,6 +1836,11 @@ def shadow_readout_verdict(
             prev_share=0.0, mean_delta_elo=float("nan"),
             sd_delta_elo=float("nan"),
             failed_legs=("usable_rows>=2",),
+            legs=(ReadoutLeg(
+                "usable_rows>=2", LEG_FAIL,
+                f"{n_usable} of {n_rows} rows are usable; nothing else was "
+                "evaluated",
+            ),),
         )
 
     conf = _confound_fit([(r[2], r[5]) for r in usable])
@@ -1633,47 +1854,70 @@ def shadow_readout_verdict(
     # -- the cadence adjustment, and its own leg ---------------------------
     secs = [r[3] for r in usable if not math.isnan(r[3]) and r[3] > 0.0]
     mean_secs = statistics.mean(secs) if secs else float("nan")
-    failed: list[str] = []
+    legs: list[ReadoutLeg] = []
+
+    def _leg(name: str, state: str, detail: str) -> None:
+        legs.append(ReadoutLeg(name, state, detail))
+
     share_leg_valid = True
     if math.isnan(mean_secs):
         # No `time_this_iter_s` in the rows. Fall back to the raw reference
         # share and SAY SO on a failure, rather than pretending to a
         # cadence-corrected comparison that was never made.
         expected_share, share_tol, share_note = ref.prev_share, 0.06, " (cadence unknown)"
+        _leg("cadence", LEG_SKIPPED, "no time_this_iter_s in the rows")
     else:
         ratio = mean_secs / ref.mean_iter_seconds
         # Outside the band the share model is not trusted, so the share leg is
         # NOT EVALUATED rather than evaluated against an extrapolation. The
         # verdict is already `kill` on the cadence leg, so nothing is missed --
         # what this buys is that the operator reads one unambiguous finding
-        # ("your cadence moved") instead of that finding plus a `prev_share`
+        # ("your cadence moved") instead of that finding plus a `refresh_lag`
         # failure that means "the model you were told not to trust here says
         # your attribution is broken".
         share_leg_valid = _CADENCE_RATIO_MIN <= ratio <= _CADENCE_RATIO_MAX
-        if not share_leg_valid:
-            failed.append(
-                f"cadence {mean_secs:.0f}s is {ratio:.2f}x the reference "
-                f"{ref.mean_iter_seconds:.0f}s, outside "
-                f"[{_CADENCE_RATIO_MIN}, {_CADENCE_RATIO_MAX}] -- the "
-                "prev-share model is not trusted here, so the prev_share leg "
-                "was NOT evaluated; this is a CADENCE finding, NOT an "
-                "attribution finding"
-            )
+        _leg(
+            "cadence", LEG_PASS if share_leg_valid else LEG_FAIL,
+            f"cadence {mean_secs:.0f}s is {ratio:.2f}x the reference "
+            f"{ref.mean_iter_seconds:.0f}s, outside "
+            f"[{_CADENCE_RATIO_MIN}, {_CADENCE_RATIO_MAX}] -- the "
+            "prev-share model is not trusted here, so the refresh_lag leg "
+            "was NOT evaluated; this is a CADENCE finding, NOT an "
+            "attribution finding"
+            if not share_leg_valid else
+            f"{mean_secs:.0f}s = {ratio:.2f}x the reference "
+            f"{ref.mean_iter_seconds:.0f}s, inside "
+            f"[{_CADENCE_RATIO_MIN}, {_CADENCE_RATIO_MAX}]",
+        )
         expected_share = ref.refresh_lag_seconds / mean_secs
         share_tol, share_note = 0.06, ""
+    # The cadence-free form of what the attribution leg compares, REPORTED
+    # rather than left implicit: `prev` games are the fleet's model-refresh
+    # lag, and `prev_share` is that lag divided by the cadence.
+    measured_lag = prev_share * mean_secs
 
     # -- deciding legs: attribution-sensitive, near-noiseless --------------
     if pooled_mismatch:
         c, p, pooled = pooled_mismatch[0]
-        failed.append(
+        _leg(
+            "anchored_games_vs_pooled", LEG_FAIL,
             f"anchored_games_vs_pooled: {len(pooled_mismatch)} of {n_usable} "
             f"rows have gate_sample_games_cur+prev != pid_curriculum_w+d+l "
             f"(first: {c}+{p}={c + p} vs {pooled}) -- the split and the pool it "
             "was split from disagree, so games were lost or bucketed to neither "
-            "arm. This is an exact integer identity, not a statistic"
+            "arm. This is an exact integer identity, not a statistic",
         )
-    if frac < 0.85:
-        failed.append(f"usable_frac {frac:.3f} < 0.85")
+    elif any(math.isnan(r[4]) for r in usable):
+        _leg("anchored_games_vs_pooled", LEG_SKIPPED,
+             "some rows carry no pid_curriculum_w/d/l")
+    else:
+        _leg("anchored_games_vs_pooled", LEG_PASS,
+             f"cur+prev == pid_curriculum_w+d+l on {n_usable}/{n_usable} rows")
+    _leg(
+        "usable_frac", LEG_FAIL if frac < 0.85 else LEG_PASS,
+        f"usable_frac {frac:.3f} < 0.85" if frac < 0.85
+        else f"{frac:.3f} >= 0.85 ({n_usable}/{n_rows} rows)",
+    )
     if not math.isnan(mean_secs):
         # Absolute counts scale with cadence, so an absolute band on them is
         # the same false alarm prev_share used to carry -- at 1.5x cadence a
@@ -1681,51 +1925,117 @@ def shadow_readout_verdict(
         # Compare the cadence-normalised rate instead, with a factor-2 band:
         # the reference window's own throughput regimes differ by 1.4x.
         rate = (mean_cur + mean_prev) / mean_secs
-        if not (0.5 <= rate / ref.games_per_second <= 2.0):
-            failed.append(
-                f"games_per_second {rate:.4f} is "
-                f"{rate / ref.games_per_second:.2f}x the reference "
-                f"{ref.games_per_second} (band 0.5-2.0)"
-            )
-    elif not (0.25 <= (mean_cur + mean_prev) / (
-            ref.mean_games_cur + ref.mean_games_prev) <= 4.0):
+        rate_ok = 0.5 <= rate / ref.games_per_second <= 2.0
+        _leg(
+            "games_per_second", LEG_PASS if rate_ok else LEG_FAIL,
+            f"games_per_second {rate:.4f} is "
+            f"{rate / ref.games_per_second:.2f}x the reference "
+            f"{ref.games_per_second} (band 0.5-2.0)",
+        )
+    else:
         # No cadence column: fall back to a deliberately loose absolute band,
         # because without cadence the count carries no information about
         # anything except gross breakage.
-        failed.append(
+        ratio_abs = (mean_cur + mean_prev) / (
+            ref.mean_games_cur + ref.mean_games_prev)
+        _leg(
+            "anchored games/iteration",
+            LEG_PASS if 0.25 <= ratio_abs <= 4.0 else LEG_FAIL,
             f"anchored games/iteration {mean_cur + mean_prev:.1f} vs reference "
             f"{ref.mean_games_cur + ref.mean_games_prev:.1f} (band 0.25-4.0x,"
-            " cadence unknown)"
+            " cadence unknown)",
         )
-    if share_leg_valid and abs(prev_share - expected_share) > share_tol:
-        failed.append(
-            f"prev_share {prev_share:.4f} vs expected {expected_share:.4f}"
-            f" +/-{share_tol}{share_note}"
+    # -- THE ATTRIBUTION AXIS, NAMED FOR WHAT IT MEASURES (audit G3-2) -----
+    # It used to be called `prev_share` and its failure message named only the
+    # share, which the module's own docstring tells an operator to read as
+    # "your split is mis-attributing shards". It fires on today's production
+    # csv, and that reading is NOT established:
+    #
+    #   * the pooled-count identity -- the one leg with no statistics in it --
+    #     passes 109 of 109 live rows. That proves no game was LOST or bucketed
+    #     to neither arm. It does NOT prove the attribution is right: a
+    #     coin-shuffle of the labels preserves the pooled sum exactly, which is
+    #     why the reshuffle control moves the SHARE and not this identity;
+    #   * the audit read the mover as the fleet's own model-refresh lag,
+    #     117.5 s at calibration against 166 s over the live last-40 window, at
+    #     0.88x the reference cadence -- inside the trusted band, so the
+    #     cadence leg stays silent and the whole discrepancy lands on a leg
+    #     whose name blames the split;
+    #   * an independent shard re-derivation over the same trial
+    #     (`rederive_reference_from_shards`, 435 compacted shards binned
+    #     against 68 iterations) gives a refresh lag of 112.7 s and a
+    #     prev_share of 0.1802, i.e. essentially the calibration value. The two
+    #     sources DISAGREE, and which one is right is not settled here.
+    #
+    # THE TWO CAUSES ARE NOT SEPARABLE FROM progress.csv, and pretending
+    # otherwise would be the worse defect. `refresh_lag = prev_share *
+    # cadence` is an identity, not an independent measurement, so a fleet
+    # whose lag moved and a splitter that mislabels shards produce the same
+    # number here. The discriminator has to come from outside the gate's own
+    # split -- the shard `.zattrs` re-derivation this module ships as
+    # `rederive_reference_from_shards`, which is what `OfflineReference` was
+    # built from in the first place, and which must never be re-based on
+    # `gate_sample_*` (a control conditioned on its own outcome cannot fail).
+    #
+    # So the leg keeps its threshold and its fail-closed direction EXACTLY as
+    # pre-registered (the comparison below is algebraically the one it always
+    # made) and changes only what it is called and what it reports: both lags
+    # in seconds, and an explicit instruction not to read it as an attribution
+    # finding until the reference has been re-derived at the current lag.
+    share_gap = abs(prev_share - expected_share)
+    if not share_leg_valid:
+        _leg("refresh_lag", LEG_SKIPPED,
+             "cadence outside the trusted band; not evaluated")
+    else:
+        _leg(
+            "refresh_lag", LEG_FAIL if share_gap > share_tol else LEG_PASS,
+            f"refresh_lag {measured_lag:.1f}s vs reference "
+            f"{ref.refresh_lag_seconds:.1f}s "
+            f"({measured_lag / ref.refresh_lag_seconds:.2f}x): prev_share "
+            f"{prev_share:.4f} vs expected {expected_share:.4f} "
+            f"+/-{share_tol}{share_note}"
+            + (
+                " -- a fleet whose model-refresh lag MOVED and a split that "
+                "mis-attributes shards are the same number here; check the "
+                "anchored_games_vs_pooled leg above and re-derive the "
+                "reference from shards (gate_shadow_readout.py "
+                "--rederive-reference) before reading this as an attribution "
+                "failure"
+                if share_gap > share_tol else ""
+            ),
         )
     # -- deciding leg: instrument-sensitive --------------------------------
     # 4.56 is the sd of the 95%-overlapping WINDOW column. If the readout is
     # ever wired to that column again this leg is what says so.
-    if not (20.0 < sd_d < 70.0):
-        failed.append(f"sd_delta_elo {sd_d:.2f} outside (20, 70)")
+    _leg(
+        "sd_delta_elo", LEG_PASS if 20.0 < sd_d < 70.0 else LEG_FAIL,
+        f"sd_delta_elo {sd_d:.2f} outside (20, 70)" if not 20.0 < sd_d < 70.0
+        else f"{sd_d:.2f} inside (20, 70)",
+    )
     # -- offset leg: the PID-lag bias must not dominate ---------------------
     if abs(mean_d) > 25.0:
-        failed.append(f"|mean_delta_elo| {abs(mean_d):.2f} > 25")
+        _leg("|mean_delta_elo|", LEG_FAIL,
+             f"|mean_delta_elo| {abs(mean_d):.2f} > 25")
+    elif abs(mean_d) > 15.0:
+        # -- hold legs: nothing is broken, but this window cannot promote --
+        _leg("|mean_delta_elo|", LEG_HOLD,
+             f"|mean_delta_elo| {abs(mean_d):.2f} > 15 -- the anchored offset is "
+             "larger than expected; extend the window")
+    else:
+        _leg("|mean_delta_elo|", LEG_PASS, f"{abs(mean_d):.2f} <= 15")
 
-    # -- hold legs: nothing is broken, but this window cannot promote ------
-    holds: list[str] = []
     if n_rows < _READOUT_MIN_ROWS:
-        holds.append(
+        _leg(
+            "window_length", LEG_HOLD,
             f"window_too_short: {n_rows} rows < the pre-registered "
             f"{_READOUT_MIN_ROWS}. Every leg above passes trivially on a "
             "window this short, and progress.csv is rotated whenever the "
             "report schema changes, so a short window means 'keep watching', "
-            "never 'promote'"
+            "never 'promote'",
         )
-    if abs(mean_d) > 15.0:
-        holds.append(
-            f"|mean_delta_elo| {abs(mean_d):.2f} > 15 -- the anchored offset is "
-            "larger than expected; extend the window"
-        )
+    else:
+        _leg("window_length", LEG_PASS,
+             f"{n_rows} rows >= the pre-registered {_READOUT_MIN_ROWS}")
     # The PID-lag leg. HOLD, never kill, and one-sided: it fires only when the
     # regression of the anchored delta on the predicted confound is
     # SIGNIFICANTLY positive, which is the direction that means "this gate is
@@ -1737,19 +2047,22 @@ def shadow_readout_verdict(
     # stated limitation, not a tuned threshold. Pass --last-n to read a longer
     # window once one exists.
     if (
-        conf.n >= 3
+        conf.n >= _CONFOUND_MIN_ROWS
         and not math.isnan(conf.slope_se)
         and conf.slope - CONFOUND_Z * conf.slope_se > CONFOUND_SLOPE_MAX
     ):
-        holds.append(
+        _leg(
+            "confound_slope", LEG_HOLD,
             f"confound_slope {conf.slope:.3f} +/- {conf.slope_se:.3f} over "
             f"{conf.n} rows is significantly above {CONFOUND_SLOPE_MAX} -- the "
             "anchored delta is tracking the PID's difficulty step, not the "
             "model. The gate must not be promoted to enforce while its own "
             "statistic is a controller output; see 'THE PID LAG DOES NOT "
-            "CANCEL'"
+            "CANCEL'",
         )
 
+    failed = [leg.detail for leg in legs if leg.state == LEG_FAIL]
+    holds = [leg.detail for leg in legs if leg.state == LEG_HOLD]
     if failed:
         verdict = READOUT_KILL
     elif holds:
@@ -1764,7 +2077,9 @@ def shadow_readout_verdict(
         n_confound=conf.n, mean_confound_elo=conf.mean_x,
         confound_slope=conf.slope, confound_slope_se=conf.slope_se,
         confound_rows_needed=conf.rows_needed,
-        failed_legs=tuple(failed), hold_legs=tuple(holds),
+        failed_legs=tuple(failed), hold_legs=tuple(holds), legs=tuple(legs),
+        refresh_lag_seconds=measured_lag,
+        ref_refresh_lag_seconds=ref.refresh_lag_seconds,
     )
 
 
@@ -1894,6 +2209,7 @@ def shadow_readout_rows_from_csv(
 
 def shadow_readout_from_csv(
     path: str | Path, *, min_games_per_side: int = 15, last_n: int = 40,
+    ref: OfflineReference = OFFLINE,
 ) -> ShadowReadout:
     """The shadow window's ONE deciding rule, applied to a ``progress.csv``.
 
@@ -1907,8 +2223,189 @@ def shadow_readout_from_csv(
     with Path(path).open(newline="") as fh:
         rows = shadow_readout_rows_from_csv(csv.DictReader(fh))
     return shadow_readout_verdict(
-        rows, min_games_per_side=min_games_per_side, last_n=last_n,
+        rows, min_games_per_side=min_games_per_side, last_n=last_n, ref=ref,
     )
+
+
+# --------------------------------------------------------------------------
+# Re-deriving the reference the attribution axis is measured against.
+# --------------------------------------------------------------------------
+# WHY THIS EXISTS, AND WHY IT MAY NOT READ THE GATE'S OWN COLUMNS.
+#
+# ``OfflineReference`` was built by binning processed shard ``.zattrs`` against
+# ``progress.csv`` and splitting each iteration's curriculum games by
+# ``model_sha256``. That is an INDEPENDENT reconstruction: it never touches the
+# in-loop splitter the readout then checks. Re-deriving the reference from
+# ``gate_sample_games_cur/prev`` instead would be much easier and would destroy
+# the leg -- the control would be conditioned on its own outcome, and a
+# splitter defect present in both windows would cancel exactly. So the
+# re-derivation reads shards, like the original, and nothing here consumes a
+# ``gate_*`` column.
+#
+# It is a REPORT, never an input to a verdict: it prints constants for an
+# operator to record in the ledger and paste into ``OfflineReference`` at
+# restart prep. A reference that moves silently under a running rule is a ruler
+# that moved with the model.
+@dataclass(frozen=True)
+class ShardArm:
+    """One shard's curriculum result, as the compactor writes it to ``.zattrs``."""
+
+    generated_at_unix: float
+    model_step: int
+    model_sha256: str
+    wins: int
+    draws: int
+    losses: int
+
+
+@dataclass(frozen=True)
+class RederivedReference:
+    """What a shard window says the reference constants are TODAY."""
+
+    n_iterations: int
+    n_usable: int
+    n_shards: int
+    mean_games_cur: float
+    mean_games_prev: float
+    prev_share: float
+    mean_iter_seconds: float
+    refresh_lag_seconds: float
+    mean_delta_elo: float
+    sd_delta_elo: float
+
+    def as_offline_reference_source(self) -> str:
+        """The constants, formatted as the dataclass body they replace."""
+        return (
+            "    mean_games_cur: float = "
+            f"{self.mean_games_cur:.1f}\n"
+            f"    mean_games_prev: float = {self.mean_games_prev:.1f}\n"
+            f"    prev_share: float = {self.prev_share:.4f}\n"
+            f"    mean_delta_elo: float = {self.mean_delta_elo:.2f}\n"
+            f"    sd_delta_elo: float = {self.sd_delta_elo:.2f}\n"
+            f"    n_usable: int = {self.n_usable}\n"
+            f"    mean_iter_seconds: float = {self.mean_iter_seconds:.1f}\n"
+        )
+
+
+def rederive_reference_from_shards(
+    iterations: Sequence[tuple[float, float]],
+    shards: Sequence[ShardArm],
+) -> RederivedReference:
+    """Rebuild the reference constants from shard metadata and iteration bins.
+
+    ``iterations`` are ``(end_unix, iter_seconds)`` pairs -- ``timestamp`` and
+    ``time_this_iter_s`` from ``progress.csv``, which is used ONLY for the bin
+    edges and the cadence, never for a gate column. ``shards`` are the
+    ``.zattrs`` of the processed/compacted shards.
+
+    Within each bin the arms are split the way the loop splits them: the
+    HIGHEST ``model_step`` present is the current model, the next-highest is
+    the previous one, and anything older is dropped -- the in-loop
+    ``accepted_model_shas`` set has exactly two elements. The split is by
+    ``model_step`` rather than by publish order because the step is stamped on
+    the shard itself, so the reconstruction needs nothing from the publisher.
+
+    A bin with only one model present contributes no anchored sample, which is
+    the same rule ``AnchoredSample.usable`` applies.
+    """
+    by_bin: list[list[ShardArm]] = [[] for _ in iterations]
+    edges = [(end - max(0.0, secs), end) for end, secs in iterations]
+    for sh in shards:
+        for i, (lo, hi) in enumerate(edges):
+            if lo <= sh.generated_at_unix < hi:
+                by_bin[i].append(sh)
+                break
+
+    samples: list[tuple[AnchoredSample, float]] = []
+    for (_, secs), bucket in zip(iterations, by_bin, strict=True):
+        if not bucket:
+            continue
+        steps = sorted({s.model_step for s in bucket}, reverse=True)
+        cur_step = steps[0]
+        prev_step = steps[1] if len(steps) > 1 else None
+        cur = [s for s in bucket if s.model_step == cur_step]
+        prev = [s for s in bucket if s.model_step == prev_step]
+        samples.append((
+            AnchoredSample(
+                iteration=-1,
+                cur_w=sum(s.wins for s in cur), cur_d=sum(s.draws for s in cur),
+                cur_l=sum(s.losses for s in cur),
+                prev_w=sum(s.wins for s in prev), prev_d=sum(s.draws for s in prev),
+                prev_l=sum(s.losses for s in prev),
+            ),
+            float(secs),
+        ))
+
+    usable = [(s, t) for s, t in samples if s.cur_games and s.prev_games]
+    if len(usable) < 2:
+        nan = float("nan")
+        return RederivedReference(
+            n_iterations=len(iterations), n_usable=len(usable),
+            n_shards=len(shards), mean_games_cur=nan, mean_games_prev=nan,
+            prev_share=nan, mean_iter_seconds=nan, refresh_lag_seconds=nan,
+            mean_delta_elo=nan, sd_delta_elo=nan,
+        )
+    mean_cur = statistics.mean([s.cur_games for s, _ in usable])
+    mean_prev = statistics.mean([s.prev_games for s, _ in usable])
+    share = (
+        sum(s.prev_games for s, _ in usable)
+        / sum(s.cur_games + s.prev_games for s, _ in usable)
+    )
+    cadence = statistics.mean([t for _, t in usable])
+    deltas = [elo_from_score_delta(s.delta) for s, _ in usable]
+    return RederivedReference(
+        n_iterations=len(iterations), n_usable=len(usable), n_shards=len(shards),
+        mean_games_cur=mean_cur, mean_games_prev=mean_prev, prev_share=share,
+        mean_iter_seconds=cadence, refresh_lag_seconds=share * cadence,
+        mean_delta_elo=statistics.mean(deltas),
+        sd_delta_elo=statistics.stdev(deltas),
+    )
+
+
+def read_shard_arms(shard_root: Path) -> list[ShardArm]:
+    """Every ``.zattrs`` under *shard_root*, as :class:`ShardArm` records.
+
+    ``wins`` / ``draws`` / ``losses`` on a shard are the CURRICULUM (vs
+    Stockfish) results -- they sum to ``curriculum_games`` -- which is the
+    population the anchored A/B is drawn from. Shards with no curriculum game
+    are dropped rather than counted as zeros.
+    """
+    out: list[ShardArm] = []
+    for attrs_path in sorted(shard_root.rglob(".zattrs")):
+        try:
+            raw = json.loads(attrs_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(raw, dict):
+            continue
+        w, d, l = (int(raw.get(k, 0) or 0) for k in ("wins", "draws", "losses"))
+        if w + d + l <= 0:
+            continue
+        gen, step = raw.get("generated_at_unix"), raw.get("model_step")
+        if not isinstance(gen, (int, float)) or not isinstance(step, (int, float)):
+            continue
+        out.append(ShardArm(
+            generated_at_unix=float(gen), model_step=int(step),
+            model_sha256=str(raw.get("model_sha256", "")),
+            wins=w, draws=d, losses=l,
+        ))
+    return out
+
+
+def read_iteration_bins(path: str | Path) -> list[tuple[float, float]]:
+    """``(end_unix, iter_seconds)`` per row of a ``progress.csv``."""
+    out: list[tuple[float, float]] = []
+    with Path(path).open(newline="") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                end = float(row.get("timestamp") or "nan")
+                secs = float(row.get("time_this_iter_s") or "nan")
+            except ValueError:
+                continue
+            if math.isnan(end) or math.isnan(secs) or secs <= 0.0:
+                continue
+            out.append((end, secs))
+    return out
 
 
 @dataclass
@@ -1938,24 +2435,92 @@ class GateHoldController:
     # (an optional alarm must not kill a training run), reported as
     # ``gate_anchor_refresh_failures``, and load-bearing via
     # ``anchor_is_trustworthy``.
+    #
+    # IT IS PERSISTED (audit G3-5). It used to live only in this object, so the
+    # restart that ``train.sh`` auto-resume performs after an ENOSPC crash reset
+    # it to 0 and re-armed an arbitrarily old anchor as trustworthy -- the one
+    # thing standing between a stale ~252 MB export and the whole selfplay
+    # fleet, reconstructed from nothing.
     anchor_refresh_failures: int = 0
+    # Cumulative iterations where the gate wanted to hold and had no anchor to
+    # hold on, so it published normally. Reported as ``gate_fallback_missing``.
+    fallback_missing: int = 0
+    # The verdict the last completed iteration produced, or None before the
+    # gate has issued one. The publish at the TOP of iteration N is governed by
+    # iteration N-1's verdict, so this is exactly the decision that says
+    # whether this publish is held -- and, since G3-8, whether the anchor may
+    # be refreshed from it.
+    last_decision: GateDecision | None = None
+    # The iteration the anchor on disk was written at, read from its stamp
+    # sidecar. None when there is no anchor or no stamp.
+    anchor_iteration: int | None = None
+    # Whether the anchor on disk carries a stamp this run is willing to serve.
+    # False after a stamp that is missing (a file from before stamping, or from
+    # a previous era left behind by an off -> on cycle) or older than the
+    # longest hold the gate is allowed to impose.
+    anchor_stamp_ok: bool = True
+    # Iterations since the anchor was last refreshed, filled by ``on_decision``
+    # when it is told the current iteration. NaN when unknown.
+    anchor_age_iters: float = float("nan")
 
     @classmethod
-    def create(cls, gate: PromotionGate, *, durable_dir: Path) -> GateHoldController:
+    def create(
+        cls,
+        gate: PromotionGate,
+        *,
+        durable_dir: Path,
+        state: Mapping[str, object] | None = None,
+        current_iteration: int | None = None,
+    ) -> GateHoldController:
         """Build at trial startup, restoring a hold that survived a restart.
 
         The anchor path is None while the gate is off, which is what keeps a
         disabled feature from copying a ~252 MB export every iteration. A
         restored hold with no anchor on disk is released rather than trusted.
+
+        ``state`` is the ``hold`` sub-object of ``gate_state.json``; its
+        counters are restored rather than reset, because a counter that dies
+        with the process cannot make a persistent failure legible across the
+        restart that failure causes.
+
+        THE ANCHOR MUST PROVE ITS AGE (audit G3-5). ``.is_file()`` was the
+        whole admission test, so any ``gate_promoted_model.pt`` left in
+        ``durable_dir`` -- by an ENOSPC episode, or by an earlier era of the
+        run, since nothing deletes the file when ``gate_mode`` goes back to
+        ``off`` -- was re-armed as the model a hold would serve to the entire
+        fleet. The stamp written beside it names the iteration, step, trial and
+        source sha it was copied from, and an anchor whose stamp is absent or
+        older than ``gate_max_hold_iters`` is refused here. It costs nothing:
+        the next genuine promote rewrites both file and stamp.
         """
         promoted = (
             durable_dir / "gate_promoted_model.pt" if gate.cfg.mode != MODE_OFF else None
         )
-        hold = (
-            promoted
-            if (gate.hold_active and promoted is not None and promoted.is_file())
-            else None
+        stamp = read_anchor_stamp(promoted)
+        anchor_iteration = None if stamp is None else stamp.iteration
+        age = (
+            float(current_iteration - anchor_iteration)
+            if (current_iteration is not None and anchor_iteration is not None)
+            else float("nan")
         )
+        on_disk = promoted is not None and promoted.is_file()
+        # No anchor on disk is not a distrusted anchor: there is nothing to
+        # distrust, and the first promoted export creates both file and stamp.
+        stamp_ok = not on_disk or (
+            stamp is not None
+            and not (not math.isnan(age) and abs(age) > gate.cfg.max_hold_iters)
+        )
+        if on_disk and not stamp_ok:
+            log.error(
+                "promotion-gate anchor %s is present but its stamp is %s -- "
+                "refusing to serve it. An unstamped or stale anchor is exactly "
+                "what an off -> on cycle leaves behind, and a hold would "
+                "publish it to the whole fleet. The next promoted export "
+                "re-creates it.",
+                promoted,
+                "MISSING" if stamp is None else f"{age:.0f} iterations old",
+            )
+        hold = promoted if (gate.hold_active and on_disk and stamp_ok) else None
         if gate.hold_active:
             print(
                 f"[gate] resuming with the fleet HELD: holds={gate.holds} "
@@ -1964,11 +2529,44 @@ class GateHoldController:
             )
         if gate.hold_active and hold is None:
             log.warning(
-                "promotion gate resumed with hold_active but no anchor on disk; "
-                "releasing the hold",
+                "promotion gate resumed with hold_active but no usable anchor "
+                "on disk; releasing the hold",
             )
             gate.hold_active = False
-        return cls(gate=gate, promoted_model_path=promoted, hold_path=hold)
+        ctrl = cls(
+            gate=gate, promoted_model_path=promoted, hold_path=hold,
+            anchor_iteration=anchor_iteration, anchor_stamp_ok=stamp_ok,
+            anchor_age_iters=age,
+        )
+        ctrl.load_state_dict(state)
+        return ctrl
+
+    def state_dict(self) -> dict[str, object]:
+        """The controller's own persistent counters.
+
+        Separate from ``PromotionGate.state_dict`` because they belong to the
+        actuator, not to the window. Both go into ``gate_state.json``.
+        """
+        return {
+            "anchor_refresh_failures": int(self.anchor_refresh_failures),
+            "fallback_missing": int(self.fallback_missing),
+        }
+
+    def load_state_dict(self, state: Mapping[str, object] | None) -> None:
+        if not state:
+            return
+        for key in ("anchor_refresh_failures", "fallback_missing"):
+            raw = state.get(key)
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                setattr(self, key, max(0, int(raw)))
+        if self.anchor_refresh_failures:
+            log.warning(
+                "promotion-gate anchor refresh was failing when this trial last "
+                "stopped: %d consecutive failures restored from gate_state.json "
+                "(gate_max_hold_iters=%d). The counter is NOT reset by a "
+                "restart.",
+                self.anchor_refresh_failures, self.gate.cfg.max_hold_iters,
+            )
 
     def note_published(self) -> None:
         """Record whether the publish that just happened served the anchor.
@@ -1999,7 +2597,7 @@ class GateHoldController:
         """
         return not (self._this_publish_held or self._prev_publish_held)
 
-    def note_anchor_refreshed(self) -> None:
+    def note_anchor_refreshed(self, *, iteration: int | None = None) -> None:
         """The promoted anchor was rewritten from this iteration's export."""
         if self.anchor_refresh_failures:
             log.warning(
@@ -2007,6 +2605,50 @@ class GateHoldController:
                 "failures", self.anchor_refresh_failures,
             )
         self.anchor_refresh_failures = 0
+        # A freshly written anchor carries a freshly written stamp, so whatever
+        # was wrong with the old one is gone.
+        self.anchor_stamp_ok = True
+        if iteration is not None:
+            self.anchor_iteration = int(iteration)
+            self.anchor_age_iters = 0.0
+
+    def anchor_refresh_is_due(self) -> bool:
+        """Whether this publish may overwrite the promoted anchor.
+
+        THE ANCHOR IS "LAST PROMOTED", NOT "LAST PUBLISHED" (audit G3-8). The
+        condition used to be "we are not holding this iteration", which is true
+        on a ``DECISION_NOT_RUN`` (short window, thin iterations, degenerate
+        variance), true on a shadow-suppressed demote, and true on the RELEASE
+        iteration -- where the fallback was overwritten with the very weights
+        the preceding hold existed to keep off the fleet. "Holds the selfplay
+        fleet on the last promoted export" then meant "on last iteration's
+        export", and the documented partial braking was a one-iteration-lag
+        filter that re-poisoned itself at every release.
+
+        So the refresh needs a POSITIVE verdict: the gate's most recent
+        decision must be a promote that no demote leg fired on. Two exceptions,
+        both bounded:
+
+        * no anchor on disk yet -- there is nothing to protect and a gate with
+          no fallback cannot brake at all, so the first publish creates it;
+        * no verdict yet (startup, before the first ``on_decision``) -- the
+          controller has no verdict to withhold on. This lasts exactly one
+          iteration per process.
+
+        The cost is that the anchor legitimately stops moving for as long as
+        the gate declines to promote, which is why ``anchor_is_trustworthy``
+        now also refuses on AGE: an anchor older than ``gate_max_hold_iters``
+        would roll the fleet back further than the mechanism is designed to,
+        whether it got old by failing to copy or by never being promoted.
+        """
+        if self.promoted_model_path is None:
+            return False
+        if not self.promoted_model_path.is_file():
+            return True
+        d = self.last_decision
+        if d is None:
+            return True
+        return d.decision == DECISION_PROMOTE and not d.would_demote
 
     def note_anchor_refresh_failed(self, exc: BaseException) -> None:
         """The refresh raised. Record it LOUDLY; never re-raise.
@@ -2039,36 +2681,151 @@ class GateHoldController:
         makes about a MISSING anchor, taken on the fail-open side because a
         stale anchor, unlike a missing one, cannot be distinguished from a good
         one at publish time.
+
+        THREE WAYS AN ANCHOR GOES BAD, and all three are the same judgement:
+        the copy keeps failing (``anchor_refresh_failures``), the file on disk
+        cannot prove when it was written (``anchor_stamp_ok``), or it was
+        written too long ago (``anchor_age_iters``). The last one only became
+        reachable when the refresh was restricted to genuine promotes (G3-8) --
+        before that the anchor could not be old, only wrong.
         """
+        if not self.anchor_stamp_ok:
+            return False
+        if (
+            not math.isnan(self.anchor_age_iters)
+            and abs(self.anchor_age_iters) > self.gate.cfg.max_hold_iters
+        ):
+            return False
         return self.anchor_refresh_failures <= self.gate.cfg.max_hold_iters
 
-    def on_decision(self, decision: GateDecision) -> GateDecision:
+    def on_decision(
+        self, decision: GateDecision, *, iteration: int | None = None,
+    ) -> GateDecision:
         """Apply a verdict to the NEXT publish, and report the anchor's health.
 
-        Returns the decision with ``anchor_refresh_failures`` filled in, so the
-        number reaches ``progress.csv`` instead of living only in this object.
+        Returns the decision with the actuator's own state filled in --
+        ``anchor_refresh_failures``, ``hold_effective``, ``fallback_missing``
+        and ``anchor_age_iters`` -- so those numbers reach ``progress.csv``
+        instead of living only in this object. ``hold_effective`` is the one
+        that answers the question the verdict cannot: a hold that resolved to
+        no fallback published the demoted net anyway, and used to be
+        byte-identical in the metrics to one that braked (G3-4).
         """
+        if iteration is not None and self.anchor_iteration is not None:
+            self.anchor_age_iters = float(int(iteration) - self.anchor_iteration)
         if decision.acted and not self.anchor_is_trustworthy:
             log.error(
-                "promotion gate wanted to HOLD but the promoted anchor has "
-                "failed to refresh %d consecutive times (> gate_max_hold_iters "
-                "%d); publishing normally rather than rolling the fleet back "
-                "to an export that old",
-                self.anchor_refresh_failures, self.gate.cfg.max_hold_iters,
+                "promotion gate wanted to HOLD but the promoted anchor is not "
+                "trustworthy (%d consecutive refresh failures, stamp_ok=%s, "
+                "age=%.0f iterations, gate_max_hold_iters=%d); publishing "
+                "normally rather than rolling the fleet back to an export that "
+                "old",
+                self.anchor_refresh_failures, self.anchor_stamp_ok,
+                self.anchor_age_iters, self.gate.cfg.max_hold_iters,
             )
             self.hold_path = None
         else:
             self.hold_path = resolve_gate_hold_path(
                 decision, gate_promoted_model_path=self.promoted_model_path,
             )
+        if decision.acted and self.hold_path is None:
+            self.fallback_missing += 1
+        self.last_decision = decision
         return replace(
-            decision, anchor_refresh_failures=int(self.anchor_refresh_failures),
+            decision,
+            anchor_refresh_failures=int(self.anchor_refresh_failures),
+            hold_effective=bool(decision.acted and self.hold_path is not None),
+            fallback_missing=int(self.fallback_missing),
+            anchor_age_iters=float(self.anchor_age_iters),
         )
 
     def on_aborted_iteration(self) -> None:
         """Age an active hold on an iteration that produced no verdict."""
         if not self.gate.advance_hold_without_decision():
             self.hold_path = None
+
+
+@dataclass(frozen=True)
+class AnchorStamp:
+    """Provenance of the promoted anchor on disk.
+
+    The anchor is a ~252 MB copy of an export, and before this stamp existed
+    the only thing recorded about it was that it was a file. ``.is_file()`` was
+    the whole admission test, so an anchor from a previous era of the run --
+    left behind because nothing deletes it when ``gate_mode`` returns to
+    ``off`` -- was re-armed as trustworthy by the next ``off -> on`` cycle
+    (audit G3-5). What a hold serves to the fleet is now something the
+    controller can name: which iteration and step it came from, which trial
+    wrote it, and the sha of the bytes it was copied from.
+    """
+
+    iteration: int
+    trainer_step: int
+    model_sha256: str
+    trial_id: str
+    written_at_unix: float
+
+
+def anchor_stamp_path(anchor: Path) -> Path:
+    """The stamp sidecar for an anchor file."""
+    return anchor.with_suffix(anchor.suffix + ".stamp.json")
+
+
+def write_anchor_stamp(
+    anchor: Path,
+    *,
+    iteration: int,
+    trainer_step: int,
+    model_sha256: str,
+    trial_id: str,
+) -> None:
+    """Record what the anchor at *anchor* is. Raises like any other write.
+
+    Deliberately NOT suppressed: it is written by the same ``try`` block as the
+    copy it describes, so a stamp that fails to write counts as a failed
+    refresh. A stamped anchor whose stamp is a lie would be worse than an
+    unstamped one, and an unstamped one is refused.
+    """
+    anchor_stamp_path(anchor).write_text(
+        json.dumps(
+            {
+                "iteration": int(iteration),
+                "trainer_step": int(trainer_step),
+                "model_sha256": str(model_sha256),
+                "trial_id": str(trial_id),
+                "written_at_unix": float(time.time()),
+            },
+            indent=2, sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+def read_anchor_stamp(anchor: Path | None) -> AnchorStamp | None:
+    """The anchor's stamp, or None when it is absent or unreadable.
+
+    Unreadable and absent are the same answer on purpose: both mean "this file
+    cannot say when it was written", and the consequence is the same refusal.
+    """
+    if anchor is None:
+        return None
+    path = anchor_stamp_path(anchor)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    it, step = raw.get("iteration"), raw.get("trainer_step")
+    if not isinstance(it, (int, float)) or isinstance(it, bool):
+        return None
+    return AnchorStamp(
+        iteration=int(it),
+        trainer_step=int(step) if isinstance(step, (int, float)) else -1,
+        model_sha256=str(raw.get("model_sha256", "")),
+        trial_id=str(raw.get("trial_id", "")),
+        written_at_unix=float(raw.get("written_at_unix", 0.0) or 0.0),
+    )
 
 
 def resolve_gate_hold_path(

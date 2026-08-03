@@ -582,7 +582,10 @@ def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
 
     import yaml as _yaml
 
-    from chess_anti_engine.tune.trainable_config_ops import restart_required_config_keys
+    from chess_anti_engine.tune.trainable_config_ops import (
+        dead_config_keys,
+        restart_required_config_keys,
+    )
     from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 
     production = Path(__file__).resolve().parents[1] / "configs" / "pbt2_small.yaml"
@@ -638,6 +641,12 @@ def test_restart_required_keys_match_the_reloader(tmp_path) -> None:
     # Only keys with a value that can be perturbed are observable; the yaml
     # carries a few keys declared with no value at all (`kind:`), and those say
     # nothing either way.
+    # DEAD keys are the fourth class and are excluded here by the same rule
+    # `restart_required_config_keys`'s docstring states: the reloader declines
+    # them exactly like a restart-required key, but a restart REFUSES them
+    # rather than applying them, so reporting them in this set would send an
+    # operator into the one action that turns a silent no-op into a crash.
+    observed_restart_required -= dead_config_keys()
     declared = restart_required_config_keys() & exercised
     assert observed_restart_required == declared, (
         "restart_required_config_keys() disagrees with what the reloader does; "

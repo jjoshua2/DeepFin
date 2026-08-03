@@ -505,9 +505,16 @@ _CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
 # the whole difference between "restart required" and "quietly ignored".
 # Window shape is deliberately construction-time as well: changing
 # window_iters mid-window redefines what a half-filled window means.
+#
+# `gate_threshold` / `gate_interval` / `gate_mcts_sims` are NOT here any more
+# (audit G3-11): they are DEAD, not construction-only, and the two classes are
+# disjoint by design -- a restart applies a construction-only key and REFUSES a
+# dead one, so listing a dead key here would tell an operator to restart into a
+# hard error. `gate_games` stays: it is not in the dead set, because it raises
+# with its own message from `gate_config_from_dict`.
 _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
     "lr_schedule",
-    "gate_games", "gate_threshold", "gate_interval", "gate_mcts_sims",
+    "gate_games",
     "gate_mode", "gate_window_iters", "gate_min_iters",
     "gate_min_games_per_side", "gate_demote_delta_elo", "gate_demote_step_elo",
     "gate_alpha", "gate_max_hold_iters",
@@ -537,8 +544,57 @@ _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
 # loudly, on the precedent of `promotion_gate.gate_config_from_dict`'s
 # `gate_games` check — silently accepting it is the failure this repo keeps
 # paying for.
+# `gate_threshold` / `gate_interval` / `gate_mcts_sims` (audit G3-11): the
+# corpses of the removed 1-sim-vs-Stockfish gate. `grep` finds each of them in
+# exactly three places -- the yaml allowlist, the live-reload skip set, and
+# `TrialConfig`, which parses them and never reads them. `gate_config_from_dict`
+# builds the anchored gate from the eight `gate_mode`-family keys and looks at
+# none of these. `gate_games` is the only one that refuses, and it refuses
+# because a non-zero value asks for BEHAVIOUR that was deleted; these three
+# were left "tolerated at any value" on the grounds that they are inert
+# scalars, which is true of the value and false of the operator's belief: a
+# `gate_interval: 5` starts a run, reads back correctly from the trial's own
+# config, and does nothing at all.
+#
+# Their inert values are the ones the production yaml ships (pbt2_small.yaml
+# :1077-1079), so this refusal cannot fire on the live config as it stands.
 _DEAD_CONFIG_KEY_INERT_VALUES: dict[str, object] = {
     "replay_sf_gap_priority_signed": False,
+    "gate_threshold": 0.50,
+    "gate_interval": 1,
+    "gate_mcts_sims": 1,
+}
+
+# Why each dead key is dead, in the words the refusal needs. Keyed by the same
+# names, and ``test_every_dead_config_key_explains_itself`` requires one per
+# key so a key cannot be added to the set above without saying what happened
+# to it.
+_DEAD_CONFIG_KEY_REASONS: dict[str, str] = {
+    "replay_sf_gap_priority_signed": (
+        "the trial builds its DiskReplayBuffer without it (trainable_init.py) "
+        "and never pushes it on live reload (trainable.py). Its only consumers "
+        "are the offline scripts/retarget_retrain.py and "
+        "scripts/holdout_policy_screen.py, and the gap-priority family was "
+        "KILLED by experiment #104 (docs/experiment_ledger.md), so re-enabling "
+        "it needs a ledger entry and a deliberate wiring change, not a yaml line"
+    ),
+    "gate_threshold": (
+        "it was the win-rate line of the REMOVED 1-sim vs-Stockfish gate. "
+        "Nothing reads it: the anchored gate demotes on gate_demote_delta_elo "
+        "against the previous MODEL, never on a score against a PID-controlled "
+        "opponent whose setpoint equalled this number"
+    ),
+    "gate_interval": (
+        "it was how often the REMOVED 1-sim vs-Stockfish gate ran. The "
+        "anchored gate judges EVERY iteration -- there is no interval to set, "
+        "and TrialConfig.gate_interval is parsed and read by nothing"
+    ),
+    "gate_mcts_sims": (
+        "it was the search width of the REMOVED 1-sim vs-Stockfish gate, and 1 "
+        "simulation is raw policy argmax rather than the quantity production "
+        "plays. The anchored gate plays no games at all: it splits the games "
+        "the loop already played by publishing model"
+    ),
 }
 
 
@@ -565,17 +621,37 @@ def dead_config_key_violations(
     the trial refuses to start on — a guard disagreeing with the criterion it
     guards.
 
-    ``bool(...)`` rather than ``!=``: yaml spells the same intent ``true`` /
-    ``True`` / ``1`` / ``yes``, and a ``1 != False`` comparison would flag a
-    value the consumer would have treated as identical to the inert one.
+    ``bool(...)`` rather than ``!=`` FOR BOOLEAN KEYS ONLY: yaml spells the
+    same intent ``true`` / ``True`` / ``1`` / ``yes``, and a ``1 != False``
+    comparison would flag a value the consumer would have treated as identical
+    to the inert one. A NUMERIC dead key is compared numerically, because
+    ``bool()`` collapses every non-zero number onto one class and would make
+    ``gate_interval: 5`` indistinguishable from the inert ``1`` -- a predicate
+    that cannot see the value it exists to refuse.
 
     Returns ``(key, value, inert)`` triples so a caller can name all three.
     """
     return [
         (key, config[key], inert)
         for key, inert in _DEAD_CONFIG_KEY_INERT_VALUES.items()
-        if key in config and bool(config[key]) != bool(inert)
+        if key in config and not is_inert_dead_config_value(config[key], inert)
     ]
+
+
+def is_inert_dead_config_value(value: object, inert: object) -> bool:
+    """Whether *value* is the one harmless value for a dead key.
+
+    ⚑ THE SINGLE PREDICATE, exported so ``scripts/audit_realized_config.py``
+    reads it rather than re-deriving it. The audit says "safe" and the trial
+    says "refuse" about the same value only if both compute the answer here.
+    They briefly did not, and the disagreement was invisible while every dead
+    key happened to be inert at ``False``.
+    """
+    if isinstance(inert, bool):
+        return bool(value) == bool(inert)
+    if isinstance(inert, (int, float)) and isinstance(value, (int, float)):
+        return float(value) == float(inert)
+    return value == inert
 
 
 def reject_dead_config_keys(config: Mapping[str, object]) -> None:
@@ -590,16 +666,9 @@ def reject_dead_config_keys(config: Mapping[str, object]) -> None:
     for key, value, inert in dead_config_key_violations(config):
         raise ValueError(
             f"{key}={value!r} is parsed but reaches no production code path: "
-            f"the trial builds its DiskReplayBuffer without it "
-            f"(trainable_init.py) and never pushes it on live reload "
-            f"(trainable.py), so the only value this run can realize is "
-            f"{inert!r}. Its only consumers are the offline "
-            f"scripts/retarget_retrain.py and scripts/holdout_policy_screen.py. "
-            f"Refusing rather than accepting a knob that reads back correctly "
-            f"and does nothing; the gap-priority family was KILLED by "
-            f"experiment #104 (docs/experiment_ledger.md), so re-enabling it "
-            f"needs a ledger entry and a deliberate wiring change, not a yaml "
-            f"line."
+            f"{_DEAD_CONFIG_KEY_REASONS.get(key, 'nothing reads it')}. The "
+            f"only value this run can realize is {inert!r}. Refusing rather "
+            f"than accepting a knob that reads back correctly and does nothing."
         )
 
 
@@ -710,6 +779,30 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
         for k, v in fresh.items():
             if k in searched or k.startswith("pb2_bounds_"):
                 continue
+  # A dead key gets its own message, NOT the "requires restart" one below:
+  # restarting does not make it work, it makes the trial refuse to start
+  # (``reject_dead_config_keys``). Telling an operator to restart into a hard
+  # error would be the same lie in a different place. Declining to apply also
+  # keeps the poison out of `config`, so the trial keeps running on the value
+  # it has actually been running on.
+  #
+  # FIRST, because three of these keys are ALSO in _LIVE_RELOAD_SKIPPED_KEYS
+  # (they are gate_* keys, frozen at construction like the rest of the family)
+  # and would otherwise take the restart-required branch and be told to do the
+  # one thing that turns a silent no-op into a crash.
+            if (
+                live_reload
+                and k in _DEAD_CONFIG_KEY_INERT_VALUES
+                and not is_inert_dead_config_value(v, _DEAD_CONFIG_KEY_INERT_VALUES[k])
+            ):
+                log.warning(
+                    "YAML reload: %s=%r reaches no production code path and is "
+                    "NOT applied — a restart will REFUSE to start with this "
+                    "value, not honour it. Set it back to %r. See "
+                    "reject_dead_config_keys.",
+                    k, v, _DEAD_CONFIG_KEY_INERT_VALUES[k],
+                )
+                continue
             if (
                 live_reload
                 and k in _LIVE_RELOAD_SKIPPED_KEYS
@@ -729,25 +822,6 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
                 log.warning(
                     "YAML reload: %s changed (%s -> %s) but requires restart — skipping",
                     k, config.get(k), v,
-                )
-                continue
-  # A dead key gets its own message, NOT the "requires restart" one above:
-  # restarting does not make it work, it makes the trial refuse to start
-  # (``reject_dead_config_keys``). Telling an operator to restart into a hard
-  # error would be the same lie in a different place. Declining to apply also
-  # keeps the poison out of `config`, so the trial keeps running on the value
-  # it has actually been running on.
-            if (
-                live_reload
-                and k in _DEAD_CONFIG_KEY_INERT_VALUES
-                and bool(v) != bool(_DEAD_CONFIG_KEY_INERT_VALUES[k])
-            ):
-                log.warning(
-                    "YAML reload: %s=%r reaches no production code path and is "
-                    "NOT applied — a restart will REFUSE to start with this "
-                    "value, not honour it. Set it back to %r. See "
-                    "reject_dead_config_keys.",
-                    k, v, _DEAD_CONFIG_KEY_INERT_VALUES[k],
                 )
                 continue
             # Opening-asset PATHS are captured by the server process at launch
