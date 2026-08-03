@@ -290,29 +290,37 @@ def test_movestogo_one_gets_almost_the_whole_clock() -> None:
     assert limits.deadline_ms <= 60_000
 
 
+# The unscaled allocation is far below either ceiling, so a bare assertion that
+# the deadline is under 50% cannot tell the two ceilings apart. Scale the budget
+# past both so the ceiling is the only thing setting the deadline — otherwise
+# these read as controls while testing nothing.
+_CEILING_BINDING_SCALE = 100.0
+
+
 def test_movestogo_above_one_keeps_the_half_clock_ceiling() -> None:
     """The ceiling still binds where it was designed to — a long horizon."""
     limits = limits_from_go(
         GoArgs(wtime_ms=60_000, movestogo=5),
         side_to_move_is_white=True,
         move_overhead_ms=0,
+        time_budget_scale=_CEILING_BINDING_SCALE,
     )
 
-    assert limits.deadline_ms is not None
-    assert limits.deadline_ms <= 0.5 * 60_000
+    assert limits.deadline_ms == int(0.5 * 60_000)
 
 
 def test_movestogo_zero_is_not_treated_as_the_last_move() -> None:
     """`movestogo 0` means "no repeating control", not "one move left" — the
-    allocation ignores it, so the long-horizon ceiling must still apply."""
+    allocation ignores it in favour of the long-horizon pieces estimate, so the
+    50% ceiling must still apply."""
     limits = limits_from_go(
         GoArgs(wtime_ms=60_000, movestogo=0),
         side_to_move_is_white=True,
         move_overhead_ms=0,
+        time_budget_scale=_CEILING_BINDING_SCALE,
     )
 
-    assert limits.deadline_ms is not None
-    assert limits.deadline_ms <= 0.5 * 60_000
+    assert limits.deadline_ms == int(0.5 * 60_000)
 
 
 def test_no_movestogo_keeps_the_half_clock_ceiling() -> None:
@@ -320,10 +328,10 @@ def test_no_movestogo_keeps_the_half_clock_ceiling() -> None:
         GoArgs(wtime_ms=60_000, winc_ms=600),
         side_to_move_is_white=True,
         move_overhead_ms=0,
+        time_budget_scale=_CEILING_BINDING_SCALE,
     )
 
-    assert limits.deadline_ms is not None
-    assert limits.deadline_ms <= 0.5 * 60_000
+    assert limits.deadline_ms == int(0.5 * 60_000)
 
 
 # --- U5: short / bare / bad FENs -------------------------------------------
