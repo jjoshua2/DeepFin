@@ -45,6 +45,7 @@ from chess_anti_engine.tune.trainable_config_ops import (
     _wait_if_paused,
 )
 from chess_anti_engine.tune.trainable_init import (
+    _init_era_probes,
     _init_replay_buffers,
     _maybe_load_bootstrap,
     _restore_checkpoint_or_salvage,
@@ -686,6 +687,11 @@ def train_trial(config: dict):
     eval_sf = _init_eval_stockfish(tc)
     pid = _init_pid(tc, config, restored_pid_state, sf)
     puzzle_suite = _load_puzzle_suite(tc)
+  # Loaded ONCE, here, before the first iteration: the whole point of the
+  # instrument is that a forgetting hinge shows up in days, which needs the
+  # column populated from row 1 rather than from whenever someone remembers.
+  # `_init_era_probes` prints each set's digest and row count.
+    era_probes = _init_era_probes(tc=tc)
 
     pause_marker_paths = _resolve_pause_marker_paths(tc=tc, trial_dir=trial_dir)
     # One-shot startup log so we can compare against the path graceful_restart
@@ -976,6 +982,7 @@ def train_trial(config: dict):
                 status_csv_path=_STATUS_CSV_PATH,
                 tune_report_fn=_tune_report,
                 puzzle_suite=puzzle_suite,
+                era_probes=era_probes,
                 ds=ds,
                 distributed_pause_started_at=distributed_pause_started_at,
                 distributed_pause_active=distributed_pause_active,

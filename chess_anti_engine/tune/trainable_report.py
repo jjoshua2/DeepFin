@@ -15,6 +15,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from chess_anti_engine.eval.era_probe import probe_metric_defaults
 from chess_anti_engine.tune._utils import (
     SIDECAR_PID_STATE,
     SIDECAR_RNG_STATE,
@@ -1137,6 +1138,7 @@ def _build_report_dict(
     drift: DriftMetrics,
     eval_dict: dict,
     puzzle_dict: dict,
+    probe_dict: dict | None = None,
     # Iteration context
     wdl_regret_used: float,
     sf_nodes_used: int,
@@ -1430,5 +1432,11 @@ def _build_report_dict(
         **eval_dict,
         **test_dict,
         **puzzle_dict,
+  # `probe_metric_defaults()` on None, never `**(probe_dict or {})`: Ray's CSV
+  # logger fixes the header from row 1 and a resume appends without re-heading,
+  # so a column set that depends on whether the probes are configured would
+  # misalign every later segment of progress.csv. The columns exist from row 1
+  # and read nan until a set is named.
+        **(probe_metric_defaults() if probe_dict is None else probe_dict),
         "curriculum_winrate_raw": float(pr.curriculum_winrate_raw) if pr.curriculum_winrate_raw is not None else 0.0,
     }

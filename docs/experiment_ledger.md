@@ -21281,3 +21281,162 @@ yaml copy carrying the key rather than a change here.
 
 Still no config carries the key; still no verdict; the flip still needs its own
 entry once arm G reads out.
+
+## INSTRUMENT 2026-08-03 — three per-iteration era-forgetting probes (`probe_era_*`, `probe_inwindow_*`, `probe_gap_*`), all default OFF
+
+Not an experiment. No hypothesis, no kill rule, no yardstick — there is nothing
+to decide, because nothing about training changes. Every knob defaults to the
+value that makes the probes inert (`era_probe_path` / `era_probe_inwindow_path`
+= `""`), no config file carries any of the five keys, and a test asserts none
+does. Recorded here because the ledger is where a RULER's identity is supposed
+to live, and this ships one.
+
+**WHY.** The run that ended 2026-07-31 lost **−48.6 Elo [−68.2, −29.4]** over
+three weeks with every live column flat, and the flatness is why the slide went
+unread until an offline arena found it. The shape that WAS there, established
+afterwards and recorded above, is the forgetting hinge: a fixed old-era row set
+decays from the iteration its content leaves the effective window, while
+in-window rows keep improving. Both halves of that were only ever measured
+offline, weeks late. This puts them on `progress.csv`, per iteration, so a hinge
+reads out in days.
+
+**THE THREE PROBES.**
+
+| column | what it is |
+|---|---|
+| `probe_era_policy_eregret` / `probe_era_value_err` | a FROZEN old-era row set, scored with the current weights |
+| `probe_inwindow_policy_eregret` / `probe_inwindow_value_err` | the same code on a set re-cut from the NEWEST shards, rebuilt at each restart |
+| `probe_gap_policy_eregret` / `probe_gap_value_err` | era − in-window, the treadmill's fingerprint |
+
+Plus `probe_era_n` / `probe_inwindow_n` (rows scored), `probe_*_policy_n` (rows
+carrying the policy ruler) and `probe_ms` (wall cost). Eleven columns, present
+from row 1 at nan whether or not a probe is configured — Ray's CSV logger fixes
+the header on row 1 and a resume appends without re-heading, so a
+conditionally-present column would misalign every later segment.
+
+**⚑ READ THE PAIR, NOT THE LEVEL.** Either level moves with anything that moves
+the net. Only their SEPARATION says an in-window gain is being paid for out of
+old-era competence. `probe_gap_*` reads nan unless both legs are configured, and
+the loader prints a warning when only one is.
+
+**THE EXPECTED-REGRET RULE, stated because it is a standing method rule.**
+`policy_eregret` is `sum_m p_own(m) * regret(m)` — the EXPECTATION under the
+net's own legal-masked prior, never the argmax's regret. On 2026-08-02 a paired
+within-position contrast read a real, significant history benefit as "absent"
+purely because the top-1 form carries a ±5.4cp median CI (the argmax moves on
+only ~19% of positions) against a 3–5cp effect. `regret(m)` is the stored
+`sf_p0_regret` — SF's normalized cp-loss at THIS position, the one-ply-shifted
+field — and NOT the row's own `sf_multipv_raw`, which is SF's read of the NEXT
+position in the opponent's perspective (labels are queried at P1). This is the
+same quantity `train/losses.py` minimises as `sf_own_regret` under
+`w_sf_own_regret`, so the probe reads the axis training pushes on.
+
+`value_err` is the value-side twin, `sum_c p(c) * |score(c) − score(target)|`
+with `score = (1.0, 0.5, 0.0)` — LINEAR in the predicted distribution, exactly
+as expected regret is linear in the policy. The collapsed form
+`|E[score] − target|` is refused and a test pins the separating case: a
+maximally hedged prediction `(0.5, 0, 0.5)` on a DRAW row scores **0.0** under
+the collapsed form (the win and loss mass cancel) and **0.5** under this one. A
+net that knows nothing must not read as perfect.
+
+**THE PROBE SET IS DESYNC-SCREENED.** `scripts/build_era_probe_set.py` runs
+every candidate shard through the shipped two-axis SF-desync gate and refuses
+any shard named by a `quarantine_manifest.json`. The gate is now ONE predicate,
+`eval/value_optimism.desync_reject_reason`, called by all three consumers
+(`quarantine_desync_shards.judge`, `scripts/value_optimism.py`, and the
+builder) — this closes the follow-up recorded in `quarantine_desync_shards`'s
+own docstring, where three copies existed and review demonstrated that breaking
+one (`> multipv_miss_max` → `> 999.0`, flipping 118 of 834 live shards) left the
+whole suite green. The screen is not decoration: the frozen holdout reads
+`test_sf_labelled_no_multipv_frac` 0.101305 and, being frozen, never ages out —
+an unscreened probe set would be a forgetting curve about detached labels.
+
+**SAMPLING.** Whole GAME clusters, keyed on `(shard, game_id)` and never on
+`game_id` alone (game ids collide across shards exactly as shard indices collide
+across lineages). `n_games`, not the row count, is the effective sample size and
+is recorded in the provenance sidecar so nobody quotes the row count as the
+denominator. Eligible rows are those carrying BOTH `sf_p0_regret` and
+`legal_mask` — a POSITION-level filter applied once at build time, identically
+to both legs, so it cannot condition a denominator on any outcome. It does
+restrict both sets to consecutive-full-ply selfplay rows (~24% of selfplay
+rows): the pair is comparable to each other and neither is a sample of the whole
+window. `--newest`/`--oldest` refuse to run over more than one `--shard-dir`,
+because a recency order over pooled lineages is undefined.
+
+**THE SET FREEZES.** Same convention as `build_audit_set.py`: new sampling is a
+new version at a new path, and overwriting needs `--force`. The three keys that
+decide WHICH rows are scored (`era_probe_path`, `era_probe_inwindow_path`,
+`era_probe_rows`) are classified CONSTRUCTION-ONLY, so a live yaml edit warns
+"requires restart" rather than silently splicing two rulers into one column
+whose header was fixed on row 1. `era_probe_interval` and `era_probe_batch_size`
+are deliberately NOT frozen — they throttle cost, not meaning, and a test pins
+that direction too (no generic test can: a key absent from the set is invisible
+to a test parametrised over it).
+
+**PROOF OF EFFECT.** The builder prints the set's digest and row count; the
+trial prints them again at load, read off the LOADED ARRAYS rather than off the
+config that named them. Equality of the two is the observation that proves the
+run is scoring the set that was screened, and it is checkable on the first row
+after a restart:
+
+```
+[era-probe] wrote data/era_probe/era_20260803.npz
+  label=era rows=2048 policy_rows=2048 games=51 (singletons 0) digest=<16 hex>
+[probe] era set loaded: path=... rows=2048/2048 policy_rows=2048 digest=<same> ...
+```
+
+A provenance SIDECAR (`<set>.npz.provenance.json`) carries the shard list, the
+lineage, the gate thresholds and the reject log, and records the digest; the
+loader RECHECKS it against the rows it loaded and refuses to believe a sidecar
+that describes a different set. A set with no sidecar loads with a printed
+warning that nothing screened it — "no provenance" must not look like "screened
+and sound". Every operator-facing line is `print()` on the `[trial]`/`[probe]`
+convention, never `logger.info`: the Ray trial actor installs no logging
+handler, which is the defect that blocked PR #310.
+
+**COST, BOUNDED STRUCTURALLY AND THEN MEASURED.** One forward per set per due
+iteration, no backward, no optimizer, under `inference_mode`, over a
+config-capped row set. At the shipped default (2048 rows, batch 512, two sets)
+that is 8 forwards against ~88 full training steps — under 1% of an iteration.
+`probe_ms` is published so the bound is an observation on the row and not a
+claim in this entry. `era_probe_interval` throttles further on a contended box
+without a restart.
+
+**THE PROBE ROWS NEVER TRAIN.** A frozen ruler that leaks into the replay window
+stops measuring forgetting and starts measuring memorisation, which is the exact
+confusion the instrument exists to resolve. `ProbeSet` holds its arrays
+privately and the only thing done with them is a forward pass; the test marks
+probe rows, scores them, and draws from `DiskReplayBuffer` until the marker
+would have had to appear — with the POSITIVE CONTROL inline (add the rows on
+purpose and the same detector must fire), so the assertion cannot pass against a
+buffer that returns anything at all.
+
+**MUTATIONS RUN, each killing the test named in its docstring.** Probe
+configured but never scored (`_run_era_probes_if_due` returns defaults) → 5
+failures. Metric computed but never published (drop `**probe_dict` from
+`_build_report_dict`) → 1. Expected regret → top-1 → 2. Legal mask removed → 1.
+Pooled denominator → mean-of-batch-means → 3. Linear value error → collapsed
+form → 1. Sidecar digest check deleted → 1. Loop stops passing `era_probes` → 1.
+The desync predicate forced to reject: every consumer follows.
+
+**HOW TO ARM IT AT THE RESTART** (nothing here is armed; the live yaml is
+untouched):
+
+```bash
+PYTHONPATH=. python3 scripts/build_era_probe_set.py \
+    --shard-dir <trial>/replay_shards --oldest 40 --rows 2048 --label era \
+    --out data/era_probe/era_<date>.npz
+PYTHONPATH=. python3 scripts/build_era_probe_set.py \
+    --shard-dir <trial>/replay_shards --newest 40 --rows 2048 --label inwindow \
+    --out data/era_probe/inwindow_<date>.npz --force
+```
+
+then set `era_probe_path` / `era_probe_inwindow_path` in the yaml AT A RESTART
+(construction-only), and verify on the FIRST new row that the printed digests
+match the builder's and that `probe_era_n` is the row count, not 0.
+
+**NOT ESTABLISHED.** No live reading exists. The probe has never run against a
+real lineage, so its noise floor, its per-iteration cost on the production net,
+and the hinge's amplitude on these columns are all unmeasured. Nothing here is
+evidence about forgetting; it is the instrument and its wiring proofs. The first
+five iterations after arming are a shakedown, not a readout.
