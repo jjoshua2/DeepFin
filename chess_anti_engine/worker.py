@@ -2791,7 +2791,16 @@ class WorkerSession:
         if client is None:
             return
         mc = manifest.get("model_config") or {}
-        declared = mc.get("input_extra_features") if isinstance(mc, dict) else None
+        # Both shapes reach here: the poll path gets the manifest dict, and
+        # _swap_model_from_manifest accepts a ModelConfig directly (worker.py's
+        # `isinstance(mc, ModelConfig)` branch). Reading only the dict form would
+        # silently downgrade the object form to the "cannot check" branch.
+        if isinstance(mc, ModelConfig):
+            declared = mc.input_extra_features
+        elif isinstance(mc, dict):
+            declared = mc.get("input_extra_features")
+        else:
+            declared = None
         if declared is None:
             # Production manifests always carry it (model_config_to_manifest_dict).
             # A manifest that does not is the one case this check cannot make, so

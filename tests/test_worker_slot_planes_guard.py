@@ -21,6 +21,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.worker import WorkerSession
 
 PROD_PLANES = 175
@@ -137,3 +138,18 @@ def test_manifest_without_an_encoding_warns_once_instead_of_skipping_silently(
             WorkerSession._sync_model(session, _manifest(task="selfplay", extra=None))
     hits = [r for r in caplog.records if "cannot verify inference slot width" in r.message]
     assert len(hits) == 1, [r.message for r in caplog.records]
+
+
+def test_manifest_carrying_a_modelconfig_object_is_checked_too() -> None:
+    """``_swap_model_from_manifest`` accepts ``model_config`` as a ModelConfig
+    instance, not only as a dict. Reading only the dict form would downgrade the
+    object form to the "cannot check" branch — a guard that quietly stops
+    guarding on one of its two real inputs."""
+    session = _session(client=_Client(V1_PLANES))
+    manifest = _manifest(task="selfplay", extra="v2_threats", sha="d" * 8)
+    manifest["model_config"] = ModelConfig(input_extra_features="v2_threats")
+    with pytest.raises(ValueError, match="inference slot is 146 input planes"):
+        WorkerSession._swap_model_from_manifest(session, manifest)
+
+    session = _session(client=_Client(PROD_PLANES))
+    WorkerSession._swap_model_from_manifest(session, manifest)
