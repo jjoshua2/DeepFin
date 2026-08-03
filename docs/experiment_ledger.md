@@ -26606,3 +26606,79 @@ Full write-up: `scratchpad/code_audit_20260803/PLAY_PATH_AUDIT.md` (9 repro scri
 - **F2 CONFIRMED: `c_puct`, `fpu_reduction`, `cpuct_factor`, `cpuct_base` cannot affect any Gumbel search** (PUCT descent gated on `full_tree == false`, which nothing sets; `cpuct_*` not even args of `start_gumbel_sims`) — yet `PLAY_SEARCH_DEFAULTS` publishes all four, `--cand-gumbel` advertises two, and `SideSearch.realized_gumbel()` prints them into the JSONL as *realized*. Perturbation to extremes: L1 0.000000, 0/4 moves changed, against positive controls that move it. **A Swiss over `c_puct` would return a clean reproducible null and read as a measurement.** Fix PR queued (delete from the shape surface + dead Python PUCT branch F12).
 - F4 latent: `tree_gumbel_select_child` lacks the VIRTUAL_MEAN parent branch its comment claims to mirror — inert today (no caller passes `vloss_mode=1` to Gumbel), guard queued. F5: `_use_pipeline` (n_boards≥64, async evaluator, in-process only) silently discards caller tree reuse. F7: `policy_temp != 1.0` silently disables compact-legal transport (~1.9× per-batch transport cost). F8 negative: bucket padding only 5.9-7.0% of rows — not a lever. F9: C17 virtual-loss batching claim survived an active falsification attempt at n_boards≈1.
 - Not covered (honesty): ~half of `_mcts_tree.c` (walker/PUCT/multi-GPU), v2_threats plane build + lc0_1858 mapping (NO C-vs-Python encoder differential — highest-value gap), `inference_threaded.py`/`inference_cache.py`/AOT selection.
+
+### ADDENDUM 3 — ARM H2 (in-training step-EMA): FAILS. The high-LR step-averaging
+### story is DEAD on a stationary corpus — but NOT because EMA is "a smaller LR".
+
+Pre-registration: PREREG.md amendment 5, written before launch. One arm-A run, EMA at
+two decays, updated every optimizer step from an optimizer POST-HOOK (not by calling
+`train_steps(steps=1)`, which would have given every step its own `sqrt_release` cycle).
+
+**Instrument validation, free and total:** H2's RAW arm reproduces `A_s0` **to every
+printed digit** at steps 5,632 and 7,040 — all three rulers and both CE columns
+(`oow` 36.274/36.491, `inw` 32.142/31.412, `era` 32.948/33.473). The EMA hook adds
+weights without perturbing the trajectory, so EMA-vs-raw is a genuine within-run
+contrast, and the rig is bit-reproducible across runs at fixed seed.
+
+**Proof of effect:** EMA weights diverge from raw as required (`rel_l2` > 0,
+`n_updates` == step count). ⚑ The first implementation computed divergence AFTER
+swapping the EMA weights in, so it compared the shadow against a model already holding
+the shadow and could only ever report `0.0` — a gate that cannot fail. Caught by the
+smoke run and fixed to measure before the swap.
+
+**EMA vs RAW, paired within run, game-clustered 95% CI** (negative = EMA better;
+bars `oow` 0.638, `inw` 0.307, `era` 0.394):
+
+| variant | step | `oow` | `inw` | `era` |
+|---|---|---|---|---|
+| ema500 | 7040 | −0.033 [−0.529, +0.462] | −0.036 | −0.214 |
+| ema500 | 8448 | −0.339 [−0.778, +0.095] | +0.263 | −0.038 |
+| **ema2000** | 7040 | **−0.654** [−1.218, −0.095] **S** | **+0.447** | **−0.919** [−1.528, −0.326] **S** |
+| **ema2000** | 8448 | **−0.871** [−1.439, −0.313] **S** | **+1.004** [+0.422, +1.604] **S** | −0.480 |
+
+**VERDICT: EMA DOES NOT WIN.**
+- `ema500` (~500-step window) does nothing: `oow` inside the noise bar at both steps.
+- `ema2000` clears the `oow` bar at both steps (−0.654, −0.871, both SIG) but **loses
+  `inw` beyond its bar at both** (+0.447 = 1.5x the bar; +1.004 = **3.3x** the bar and
+  significantly worse). The rule required the `oow` gain WITHOUT `inw` loss beyond
+  0.307. It fails that clause at both matched steps.
+
+Per the pre-registration: **the high-LR step-averaging story is DEAD on a stationary
+corpus.** EMA-publish does **NOT** go on the restart add-back list. Neither post-hoc
+checkpoint averaging (arm H, reversion-confounded) nor in-training step-EMA rescues
+generalisation here.
+
+**⚑ But the tempting interpretation — "EMA is just a smaller effective LR, same
+trade-off curve as the optimizer family" — is NOT supported by these numbers, and
+should not be carried into the restart reasoning.** Exchange rate, cp of `oow` gained
+per cp of `inw` given up:
+
+| arm | ratio |
+|---|---|
+| D (lr/3), the optimizer family | **+0.217** |
+| ema2000 @8448 | **+0.867** |
+| ema2000 @7040 | **+1.461** |
+
+EMA converts sacrificed in-window learning into out-of-window quality **4-6x more
+efficiently** than the LR cut does. If it were merely a smaller effective LR the ratios
+would coincide; they differ by most of an order of magnitude. Matched-learning control
+agrees — placing ema2000 on the raw run's OWN curve gives `d_oow` −0.521 / −0.534 and
+`d_era` −0.597 / −0.541, i.e. it sits slightly BELOW the curve on both axes, a modest
+but consistent bend of the same size class as arm F's (−0.805 / −0.874 on `era`).
+
+Two qualifications keep this from being a win. The matched-learning `d_oow`
+(−0.52/−0.53) is **inside the 0.638 `oow` bar**, so the out-of-window part is not
+claimable; only the `era` part clears its bar. And a bend that still costs 3.3 bars of
+in-window learning is not something to publish from.
+
+**What this actually licenses:** EMA is the second lever (with rehearsal, arm F) whose
+effect survives the matched-learning control that dissolved the entire optimizer
+family. Both fail their pre-registered tests on power, not on direction. If either is
+revisited it should be with more seeds and a denser eval grid — and the ~2,000-step
+window is the one worth revisiting, since ~500 steps does nothing and ~2,000 spans
+arm A's held-out optimum at step 4,224-5,632.
+
+**Deferred, not done:** the neutral frozen-audit ruler on the two EMA checkpoints. It
+needs the GPU, and the card is the capacity retrain's. `final.pt` is banked for both
+variants at `run_H2_s0_ema500/` and `run_H2_s0_ema2000/`; the command is the same
+`raw_policy_regret.py` invocation used for every other arm.
