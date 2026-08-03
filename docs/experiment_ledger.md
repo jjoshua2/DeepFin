@@ -28006,3 +28006,107 @@ now 4-for-4, but the powered *significance* claim the original arm-F verdict lac
 is still not available. **Closing it properly needs `A_s2` and `A_s3`, not more FE
 seeds** — a control-side gap, not a treatment-side one. Not queued: the low-dose wave
 (decee3589) is the higher-value use of the card and started at 15:39.
+
+#### AUDIT WAVE 4 (2026-08-03) — tune orchestration, model/optimizers, UCI match-play. New mandate: bugs + simplifications + improvement ideas
+
+Three parallel audits of the remaining never-read half (docs + repros in
+`scratchpad/code_audit_20260803/`: `TUNE_AUDIT.md` T1-T17, `MODEL_OPT_AUDIT.md`
+M4-1..6, `UCI_AUDIT.md` U1-U13; all audited `origin/main 1e6e55717`, CPU-only).
+With this, every production module has had a line-level pass; residual holes are
+declared per-doc (largest: Aurora's CUDA-graph path read but never executed).
+
+**M4-1 (HIGH, training-quality): Aurora's polar iteration under-converges on the
+16 square 512×512 `out_proj` tensors at production `aurora_polar_steps: 8`** —
+update σ_min/σ_max 0.248 (5-seed mean, fp32 = optimistic bound) vs 1.0000 on the
+48-group's 32 rectangular FFN tensors; 12 steps → 0.930, 16 → 1.0000. It is
+conditioning, not the branch (same matrix as 512×511 → 0.401). The attention
+output projections have received partially-preconditioned steps all run; no
+metric reports polar convergence. FOLLOW-UP IN FLIGHT: the Aurora paper claims
+PE-8 reaches ~2e-16 while the QUINTIC iteration has persistent 0.032 spectral
+error — our 0.036 relative error suggests the implementation may be running
+quintic-family coefficients, in which case swapping to true PE-8/CANS-12 at
+UNCHANGED cost is the fix candidate; coefficient identification + a
+pre-registration draft are being produced before any change. NOT slipped into
+the restart — it is a pre-registered experiment when it comes.
+- M4-2: `aurora_uw_effective_ratio_*` sampled only at the LR-sawtooth bottom —
+  10× low by construction, every iteration. M4-3: the holdout
+  `ArrayReplayBuffer` homogenises mixed encoding markers (a `<U4` prototype
+  truncates `'false'`→`'fals'`; mixed rep_fix reads all-True; sidecar round-trip
+  collapses to row 0's value) — on the best-model ruler's own set. M4-4:
+  `TransformerConfig.dropout` unreachable. M4-5: the shared `gen_weight` is
+  exactly scale-invariant under `center_rms` yet carries aux weight decay.
+  M4-6: async holdout eval reads live `_loss_kwargs` off-thread + different
+  compile mode; neither is in the ruler id.
+- Verified clean: 63,084,128 by unique storage reconfirmed; the gen_weight tie
+  SURVIVES a checkpoint round-trip; `matrix_weight_decay` genuinely re-applied
+  on load; the matrix-group LR sawtooth is intended by construction (granularity
+  filed as a decision, not a bug); `mlp_out` selects exactly what its name says.
+
+**U2 (match-play, the sharpest single item of the wave): ANY in-search exception
+ends as `next(iter(board.legal_moves))` — the first legal move in generation
+order** (measured: hangs a knight), while the root policy logits sit unused in
+memory. Exception sources feeding it exist (U1: positions python-chess calls
+over — halfmove≥100, 3-fold, insufficient material — crash the classic-Gumbel
+path with `node_id out of range` on PLAYABLE positions; B7 vloss leak; CUDA
+faults). Given the Cheese loss profile (80% of losses = ONE collapse), this
+mechanism must be excluded before any tuning: the ~5-line fix is root-policy
+argmax fallback + a `bestmove_fallback_used` counter, and the yardstick is an
+existence grep over banked match logs, not an A/B.
+- U3: `movestogo 1` gets HALF its clock (`_MAX_FRACTION_OF_REMAINING` applied
+  after division). U4: `optimum_fraction=0` (the documented A/B baseline) moves
+  THREE axes — never use it as a baseline arm; use
+  `abort_factor=1.0,time_budget_scale=1.0`. U5/U6: bad FEN → silent STARTPOS;
+  bad move list → silent truncation. U7: `Hash` advertised min 1024, enforced
+  at 1 (reuse dead, nodes 4× down at 1MB). U9: 9 of 21 advertised UCI options
+  inert at the 1-GPU default, 2 warn. U10: ponderhit rebuilds with
+  `copy(stack=False)` → 72/146 planes differ (history worth −3..−5cp). U12:
+  Gumbel path costs ~1.71 KB/node vs walker 0.06 — the sizing fact behind the
+  old tree-memory collapse. Time-management sweep instrument
+  (`scripts/validate_time_mgmt.py`) EXISTS and has never produced a ledger
+  verdict; the one recorded 30+10 game left +535s unspent.
+- Blast radius: W3/#135 DEPRIORITISED (1-GPU default hardcodes
+  VLOSS_MODE_LEGACY; root-parallel needs ≥2 devices and has no knob); I5/#136
+  MOOT at defaults (`eval_cache_entries: 0` — cache never constructed).
+
+**T1-T17 (tune orchestration): the defect surface is the config LIFECYCLE; the
+phase loop itself is the best code in the repo.** T1: `opp_strength_ema` —
+GPBT's own objective metric — is persisted, read at restore, and DISCARDED;
+6/6 live process segments re-seed the EMA from the instantaneous value on the
++0.110-biased post-restart row. T4: the live reload is ADD/UPDATE-only — a
+deleted/nulled key reverts NOTHING, silently; a rejected reload freezes the
+whole overlay at one log.warning (six raise sites enumerated). T5: keys stick
+across restarts — 7 ghost keys live today, including `salvage_seed_pool_dir` =
+the −494 Elo swap pool, which a checkpoint-less resume would silently
+warm-start from. T2: 10 more construction-only keys unclassified (the realized-
+config audit vouches for them wrongly); `iterations: 750` is per-PROCESS. T3:
+`backpressure_paused_*` structurally 0.0 (the pause flag is one yaml flip from
+live, so the dead column is one flip from mattering). T8: 1004 MB unpruned
+quarantine in a dead trial. T10: **salvage-export drops `gate_state.json` /
+`best.json` / `best/`** — revert points bank weights but not gate/ratchet
+state. GPBT verdict: genuinely inert, mechanism nailed (num_samples=1 ⇒
+_quantiles ([],[]) ⇒ exploit unreachable; live pickle shows 0 perturbations) —
+no half-alive path.
+
+**Simplification candidates (decided calls, not a deferral queue):** dead
+optimizers soda/cosmos/cosmos_fast (~824 LOC; KEEP muon as Aurora's ablation
+arm) · population/exploit half of replay_exchange.py (~500 LOC + 13 keys; 5
+shared_* columns 0.0 on 478/478 — gate behind num_samples>1 if not deleted) ·
+scheduler builders collapse (~125 LOC) · gate_* corpses (~25 LOC) ·
+TransformerConfig.dropout (~8 LOC) · replay/buffer.py::balance_wdl (46 LOC, no
+caller) · UCI ponder path (~150 LOC — reachable and BROKEN (U10), fix or
+hard-refuse `go ponder`).
+
+**Improvement shortlist (each with pre-committed yardstick in its doc):**
+U2 fallback (existence check) · time-management sweep (1 GPU-day, zero code,
+pre-registered command in UCI_AUDIT — baseline arm warning above) · realized
+search-shape print + walkers-1-vs-2 A/B · per-tensor polar steps or coefficient
+swap (awaiting M4-1 addendum) · polar-convergence metric in _uw_stats · live-
+reload observable (config_reload_seq; the silent-freeze class has cost ≥15.8
+days once) · restore opp_strength_ema (~5 LOC; negative control banked 6/6) ·
+derive the construction-only classification via ast (assert the axis state).
+
+Fix routing: wave-3 PRs (#323 merged, #324 in confirm) unchanged; wave-4
+remediation batches after #324 lands — (E) UCI safety (U2+U1+U5/U6+U7), (F)
+tune lifecycle (T1+T4 observable+T2), (G) model instruments (M4-2, M4-3,
+polar-convergence metric). P1-class decisions (difficulty scale) and the
+Aurora coefficient change remain pre-registration-gated.
