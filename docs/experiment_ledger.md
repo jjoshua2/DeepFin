@@ -23037,6 +23037,20 @@ BEFORE `_process_parallel`, so refused rows counted as served pos/s, which is
 B6(c) verbatim in the sibling path. `_process_parallel` now returns the refused
 ROW count and the serve loop subtracts it.
 
+⚑ **THE B6(c) FAMILY IS OPEN, NOT CLOSED — there is a THIRD instance, in the
+PRODUCTION broker, and it is deliberately NOT fixed here.**
+`SlotBroker.serve_forever:2662-2663` adds `sum(s.batch_size for s in ready)` to
+`metrics["positions"]` BEFORE calling `_process_batch`, which releases slots
+unanswered on three paths — `BrokerModelUnavailable` (`:2054`), a generic batch
+failure (`:2073`), and malformed legal metadata (`:2254`) — so the per-trial
+broker's own positions metric counts rows it declined to evaluate, exactly like
+the two instances above. Pre-existing, untouched by this PR, and left alone
+because it is the live production broker and this PR's readout window is already
+spoken for; **tracked as coordinator task #142 for the next inference-adjacent
+PR.** Recorded so the paragraph above is never read as "the family is closed":
+the pattern is a serve loop that counts work at DISPATCH time and a callee that
+can decline it, and this repo now has three known instances of it.
+
 **K5 — the third plane-count leg.** `_check_manifest_compat` validated the
 manifest against ITSELF; #321 added client-vs-manifest at the chokepoint a
 production selfplay worker actually reaches. The CLI arg
@@ -23138,7 +23152,10 @@ than appended to.** What changed, so the diff is not the only record: the
 early-return claim above was WRONG and is rewritten (the reviewer proved the
 clause it described was inert); the B1 refusal counter is no longer described as
 observable-in-principle because it now has an actual reader; the Gumbel fourth
-instance was added; the mutation count 21 -> 22; this drift note is new. The
+instance was added; the mutation count 21 -> 22; this drift note is new. A
+later amendment (delta re-review, comment 5172343930) added the third-instance
+paragraph naming `SlotBroker.serve_forever:2662` and task #142 — docs only, no
+code or test changed with it. The
 B6(a) scope correction further up was made BEFORE review, by me, and is
 unrelated to these findings. Nothing measured changed — no number in this entry
 was re-derived, and none moved.
