@@ -63,9 +63,14 @@ def test_telemetry_matches_an_exact_independent_count(
     assert abs(got - truth) < 0.01, f"telemetry {got:.3f} vs exact {truth:.3f}"
 
 
+# The (0, 1, 1) VIRTUAL_MEAN arm was dropped 2026-08-03: the Gumbel entry point
+# now refuses vloss_mode=1 because `tree_gumbel_select_child` mirrors that mode
+# for the child term only (play-path audit F4; see
+# tests/test_gumbel_c_leaf_duplication.py). Restore the arm in the commit that
+# mirrors the C parent branch -- its telemetry reading was 0.0000 vs 0.0061.
 @pytest.mark.parametrize(
     ("target_batch", "vloss_weight", "vloss_mode"),
-    [(1, 0, 0), (0, 1, 0), (0, 1, 1)],
+    [(1, 0, 0), (0, 1, 0)],
 )
 def test_telemetry_reads_zero_when_duplication_is_removed(
     monkeypatch: pytest.MonkeyPatch,

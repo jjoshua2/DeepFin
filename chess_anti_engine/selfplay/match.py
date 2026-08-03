@@ -139,7 +139,9 @@ def pick_moves_for_boards(
             )
         if gumbel_overrides:
             # Per-side gumbel knob overrides for config sweeps (arena_standard):
-            # c_scale, c_visit, c_visit_root, topk, c_puct, fpu_reduction, etc.
+            # c_scale, c_visit, c_visit_root, c_scale_root, topk, halving_div, etc.
+            # NOT c_puct/fpu_reduction/cpuct_*: inert in a Gumbel search, and
+            # arena_standard now refuses them (mcts.gumbel.INERT_GUMBEL_KNOBS).
             gumbel_cfg = dataclasses.replace(gumbel_cfg, **gumbel_overrides)
         if volatility_search_enabled(gumbel_cfg):
             warn_volatility_python_path()

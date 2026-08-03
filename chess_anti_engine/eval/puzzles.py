@@ -343,7 +343,8 @@ def run_puzzle_eval(
         rng = np.random.default_rng(42)
 
     model.eval()
-    # Gumbel search (uses the c_scale/c_visit/topk/c_puct/fpu knobs) when a
+    # Gumbel search (uses the c_scale/c_visit/c_visit_root/topk knobs; NOT
+    # c_puct/fpu_reduction -- see mcts.gumbel.INERT_GUMBEL_KNOBS) when a
     # GumbelConfig is supplied; else the legacy PUCT path. Both return actions at
     # result[1]. Force deterministic move selection (temp 0, no root noise) so the
     # screen measures strength, not exploration.

@@ -466,4 +466,51 @@ def test_the_realized_view_is_not_just_the_override_dict() -> None:
 
     assert set(side.gumbel) == {"c_scale", "topk"}
     assert set(side.realized_gumbel()) >= set(PLAY_SEARCH_DEFAULTS)
-    assert side.realized_gumbel()["fpu_reduction"] == GumbelConfig().fpu_reduction
+    # A knob the training shape never overrode still resolves to its realized
+    # value (the GumbelConfig default), which is the point of the view.
+    assert side.realized_gumbel()["c_visit"] == GumbelConfig().c_visit
+
+
+# --- F1: cold-vs-warm tree, play-path audit 2026-08-03 --------------------
+
+
+def test_every_arena_side_records_that_it_searches_a_cold_tree() -> None:
+    """Production selfplay carries the tree across plies; no arena does.
+
+    ``selfplay/network_turn.py:799-801`` passes ``tree``/``root_node_ids`` and
+    advances the root with ``find_child`` after each ply;
+    ``selfplay/match.pick_moves_for_boards`` — the ONLY search entry point this
+    script, ``chess_anti_engine/arena.py`` and the match scripts use — passes
+    neither. Measured (audit repro, 256 nominal sims): cold roots see 256
+    visits / max_visit 60 on every ply, warm ones 315-363 / 77-108, so the root
+    value transform ``q_scale = c_scale*(c_visit + max_visit)`` is up to +44%
+    sharper in production. ``matched_sims`` matches the nominal budget, not the
+    visit counts the returned policy is built from.
+
+    This PR records the divergence rather than closing it: a tree carry in
+    ``pick_moves_for_boards`` changes arena behaviour and needs its own
+    pre-registered readout.
+    """
+    for shape in SEARCH_SHAPES:
+        side = resolve_search_shape(shape)
+        assert side.tree_reuse == "cold", shape
+        assert "tree_reuse=cold" in side.describe(), shape
+        assert side.as_record()["tree_reuse"] == "cold", shape
+
+
+def test_pick_moves_for_boards_really_does_pass_no_tree() -> None:
+    """The claim the `tree_reuse=cold` label rests on, asserted at the source.
+
+    If someone gives ``pick_moves_for_boards`` a tree carry, this fails and the
+    label has to be re-derived rather than silently becoming a lie.
+    """
+    src = inspect.getsource(match_mod.pick_moves_for_boards)
+    assert "tree=" not in src
+    assert "root_node_ids" not in src
+
+
+def test_an_override_carries_the_tree_reuse_label_through() -> None:
+    base = resolve_search_shape("play")
+    side = apply_search_overrides(base, spec="topk=8", vloss_weight=1)
+    assert side.tree_reuse == base.tree_reuse
+    assert "tree_reuse=cold" in side.describe()
