@@ -22531,3 +22531,69 @@ window has turned over is measured on a partial sample — state `n_confound` wi
 the number.
 
 **Review status.** UNREVIEWED at open. Reviewer ≠ author.
+
+**CORRECTION (post-review, appended — the entry above is left as written).** The
+Risk paragraph's "expected extra fragmentation is ~zero" was WRONG, and the
+independent reviewer measured the real figure. The premise (difficulty and model
+sha ship in one `recommended_worker` manifest, and the sha is already in the key)
+is right; the conclusion does not follow, because the worker does not apply them
+atomically. `worker.py:1968-1969` runs `_reco_changed` — which live-applies the
+new regret and does NOT flush the upload buffer, since
+`opponent_wdl_regret_limit`/`sf_nodes` are in `_RECO_LIVE_KEYS` — BEFORE
+`_swap_model_from_manifest`, which is what flushes. Every iteration therefore has
+a real **(old sha, NEW regret)** window that merged under the old key and now
+forms its own accumulator.
+
+Measured on the live baseline (447 compacted shards, 13.06 h, 70 distinct shas =
+1/iteration): **only 7.6% of live compacted shards reach the 2000-position
+target — 92.4% flush on the 90 s AGE timer.** That is why key width matters at
+all here: with age-dominated flushing, an extra key dimension does not merely
+re-partition a size-bounded group, it subtracts positions from the shard that
+window would otherwise have produced. Simulation driving the real
+`_upload_identity_acc_key` against the old key, parameterised from those live
+numbers, gives **+70 shards over 70 iterations = exactly +1 compacted shard per
+iteration** (all 4 workers cross the transition together and share the one extra
+accumulator), flat in the size of the decoupling window ⇒ **+15.7% shard count,
+roughly −17% mean shard size**, extra shard <200 positions at a realistic 5-15 s
+download+compile window.
+
+This is the fix working, not a side effect — those games really were played at a
+different difficulty, and merging them is the "shard whose stated difficulty is
+true of neither half" the entry above exists to prevent. Bounded (one extra
+accumulator per iteration; idle accumulators still age-flush at
+`upload_compact_max_age_seconds`), total ingested positions unchanged, and the
+gate's regret is games-weighted (`distributed_runtime.py:1660-1670`) so
+more/smaller shards do not bias it. Live shards already range down to 3
+positions, so nothing downstream carries a minimum-size assumption.
+
+**ADDED DEPLOY OBSERVABLE (4), to be read alongside (1)-(3) above.** Confirm the
+magnitude instead of assuming it. Over the first full post-restart hour, compare
+compacted-shard count and mean size against the pre-restart baseline
+(447 shards / 1396.7 p mean / 1441 p median over 13.06 h):
+
+```
+PYTHONPATH=. python3 -c "import glob,json; ps=glob.glob('runs/pbt2_small/server/trials/*/processed/_compacted/*.zarr/.zattrs'); ns=[json.load(open(p)).get('positions') or 0 for p in ps]; ns=[n for n in ns if n]; print('shards',len(ns),'mean',sum(ns)/len(ns),'median',sorted(ns)[len(ns)//2],'under200',sum(n<200 for n in ns))"
+```
+
+EXPECTED: shards/hour up ~15%, mean size down ~17%, and roughly one sub-200p
+shard per iteration appearing where there were none. **This is a PASS, not a
+regression** — read it as confirmation the difficulty split is live. A shard rate
+UNCHANGED from baseline means the difficulty dimension is not actually splitting
+anything, i.e. observable (1) should be re-checked before believing the
+confound column.
+
+**Also corrected (F2, docstring only, no behaviour change).**
+`_upload_identity_acc_key`'s claim that key and guard "cannot disagree" is false
+for exactly one value: the key compares by `repr()` and `_absorb_identity` by
+`!=`, which disagree on NaN (same key, unequal values ⇒ the second upload raises,
+and there is no try/except around `add_upload`, so it would surface as an HTTP
+500). Unreachable in production — `distributed_runtime.py:413` maps a non-finite
+or negative `wdl_regret` to `None` before it can reach a worker, and NaN >= 0.0
+is False. The docstring now says exactly that, and says not to close the gap by
+relaxing the assert: a NaN difficulty is a broken reading, and rejecting the
+upload is the correct outcome if one ever gets that far.
+
+**Review status (updated).** APPROVED by an independent reviewer (reviewer ≠
+author), PR #323, who reproduced all four author mutations and added a fifth
+(dropping `policy_encoding`/`policy_size` from the key goes red — the key really
+is the protection for those two, as claimed). Both findings above were theirs.

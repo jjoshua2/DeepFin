@@ -596,8 +596,17 @@ def _upload_identity_acc_key(meta: dict[str, Any]) -> str:
     and a server that merged two difficulties under one model sha would hand
     the promotion gate a number that is true of neither half of the games.
     Coerced through the same helper the accumulator's uniformity assert uses,
-    so the key and the guard cannot disagree about whether two values are the
-    same value.
+    so the key and the guard agree about whether two values are the same value
+    — for every value a worker can send. The agreement is not total: this key
+    compares by ``repr()`` while ``_absorb_identity`` compares by ``!=``, and
+    the two disagree on NaN (same key, unequal values, so the assert would
+    raise on the second upload) and on ``0.0`` vs ``-0.0`` (different keys,
+    equal values, so the group splits harmlessly). Both are unreachable in
+    production: ``distributed_runtime.py`` maps a non-finite or negative
+    ``wdl_regret`` to ``None`` before it can reach a worker, so no shard can
+    carry a NaN regret limit. Do not close that gap by relaxing the assert to
+    a repr comparison — a NaN difficulty is a broken reading, and rejecting
+    the upload is the correct outcome if one ever gets that far.
     """
     raw = meta.get("input_history_encoding")
     history = "<missing>" if raw is None else str(raw)
