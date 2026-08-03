@@ -21281,3 +21281,131 @@ yaml copy carrying the key rather than a change here.
 
 Still no config carries the key; still no verdict; the flip still needs its own
 entry once arm G reads out.
+
+---
+
+## 2026-08-02 — INSTRUMENT PROMOTION (no experiment): audit-v2 enters the repo as `--input-encoding {fen_only,stored}`
+
+**Not an experiment. No hypothesis, no yardstick, no kill threshold, nothing
+launched.** The audit-v2 rig that produced the entries above lived in a
+scratchpad bank; this promotes it to `scripts/` + `chess_anti_engine/eval/` so
+the numbers the ledger already cites are reproducible from the repo. The
+verdicts above are unchanged by this and are NOT re-adjudicated here.
+
+### What landed
+
+| path | what |
+|---|---|
+| `chess_anti_engine/eval/audit_history.py` | `pov_flip_slot` / `child_input_planes`, the encoding switch, `MatchedAuditRows` |
+| `scripts/match_audit_rows.py` | position-key join -> the matched-rows index |
+| `scripts/verify_audit_history_transform.py` | the bit-exactness verifier + test-fixture emitter |
+| `scripts/score_audit_v2.py` | the 3-arm (`v1`/`v1_stm`/`v2`) per-position scorer |
+| `scripts/value_regret.py`, `scripts/audit_targets.py` | `--input-encoding`, default `fen_only` |
+| `tests/test_audit_history_encoding.py` + `tests/data/audit_history_pairs.npz` | 25 tests, 16 real stored pairs |
+
+### ⚑ RULE 1 — v1 AND v2 NUMBERS NEVER MIX
+
+`fen_only` and `stored` are DIFFERENT RULERS of the same set, and a ruler change
+invalidates its records. Every report line, dumped record and table row from
+either now carries its encoding (`[enc=... b=...]`, `[arm=v2 enc=stored ...]`,
+`(a) net raw policy [enc=stored]`). A figure without that tag cannot be placed
+in a table, a trend or a threshold. The ledger's published arm names `v1` /
+`v1_stm` / `v2` were deliberately NOT renamed — `v1 ≡ fen_only`,
+`v2 ≡ stored` — because renaming them would silently break every
+cross-reference in the entries above.
+
+`audit_targets.py` is the sharp edge: `--input-encoding` moves ONLY row (a),
+the net's raw policy. Rows (b)/(d)/(e) are searches that encode internally from
+the board and stay `fen_only` under both settings; row (c) is pure Stockfish.
+The report says so per row rather than in a header that would be false for four
+rows out of five. The root network WDL behind value row (iv) is likewise kept
+on the search's encoding, so (iv) never becomes a stored/FEN-only hybrid.
+
+### ⚑ RULE 2 — `value_regret.py` IS BATCH-SIZE DEPENDENT (new instrument trap)
+
+Measured 2026-08-02, same checkpoint, same positions, same encoding:
+
+| ckpt | `--batch-size 128` | `--batch-size 256` | delta |
+|---|---|---|---|
+| boot512 | 61.19 cp | 60.53 cp | **0.66 cp** |
+| iter477 | 74.35 cp | 74.64 cp | 0.29 cp |
+
+Mechanism is the one already flagged for raw policy regret (~0.8 cp between 64
+and 256): batch composition changes the GPU reduction order, and a 1-ply ARGMAX
+over child values turns a float-level wobble into a different chosen move.
+**0.66 cp exceeds several effects this ruler has been used to judge.** Pin the
+batch across every arm of a comparison and state it; it is now echoed on every
+line, and `score_audit_v2.py --value-batch` defaults to the PINNED 256 rather
+than to a value no banked readout used.
+
+### Verification, re-derived here rather than inherited
+
+- **Join**: 4000/4000 audit rows recovered, 1463 shards, 24 s.
+  `legal_move_sets_identical` true on 4000/4000 — the recovered row generates
+  the same legal moves as the audit FEN, which is what makes the per-UCI deep-SF
+  labels apply. History-plane occupancy 0.0 -> 0.713.
+- **`pov_flip_slot`**, FULL snapshot (the bank verified 4,077 pairs; this is all
+  of them): **396,733 pairs, 2,777,131/2,777,131 piece-history slots exact,
+  396,733/396,733 colour flags exact.** Repetition planes 2,776,608/2,777,131
+  (523 misses, 0.019% — repetitions older than the parent's 8-slot window, which
+  no shift can recover; measured, not assumed away).
+
+### ⚑ DEFECT FOUND AND FIXED IN THE BANKED RIG
+
+`match_audit_rows.py` reported a single boolean `meta_planes_104_111_identical`.
+It reads **false on a perfectly sound join**, because plane 108 is the colour
+flag and its differing on ~51% of rows IS audit-v2. A check that cannot fail for
+the reason its name implies is this codebase's signature defect, and the bank's
+README had already drifted to claiming something narrower (104..107) than what
+the code checked. Replaced with per-block fields that each name what they prove
+(`canonicalisation_castling_104_107_identical`, `rows_differing_stm_flag_108`,
+`rows_differing_ep_110`, ...) plus `legal_move_sets_identical`, which is the
+invariant that actually licenses the labels — and the script now EXITS NONZERO
+if it fails rather than printing a false and moving on. Two further guards
+added: shards not in the production layout are skipped and counted rather than
+silently spliced, and a non-canonical audit FEN is refused rather than quietly
+failing to match.
+
+### Wiring proof (the standing bias: a value accepted and then ignored)
+
+Three mutations, each run against the committed tests:
+
+| mutation | tests that FAILED |
+|---|---|
+| stored branch returns the FEN-only child (row accepted, ignored) | `test_value_regret_stored_feeds_spliced_history`, `test_value_regret_stored_differs_from_fen_only` |
+| `fen_only` branch splices plane 108 (default no longer bit-identical) | `test_fen_only_child_is_identity` x2 |
+| `audit_targets._net_candidates` ignores `stored_x` | `test_audit_targets_stored_encoding_reaches_the_raw_policy_forward` |
+
+⚑ The FIRST version of the fen_only mutation PASSED, and the reason is worth
+keeping: audit boards are white-to-move canonical, so every 1-ply child is black
+to move and already carries colour flag 1.0 — forcing it to 1.0 was a no-op on
+this set. The test now also runs on children that come out white to move.
+A default-preservation test that only sees one side of a flag proves nothing.
+
+### The matched-rows index is a BUILD ARTIFACT, not checked in
+
+Same treatment as `data/audit_set_v1.jsonl` and the shallow-SF cache, neither of
+which is tracked. ~3.8 MB, re-derives in 24 s:
+
+```
+PYTHONPATH=. python3 scripts/match_audit_rows.py \
+    --audit-set data/audit_set_v1.jsonl \
+    --snapshot runs/parallel_candidate_replay_snapshots/current_live_20260602_202037_v2threats
+```
+
+Default read path is `<audit-set>.matched_rows.npz`; a `stored` run without it
+exits with that exact command. **If that snapshot is ever pruned, the `stored`
+ruler becomes unreproducible** — it is the only surviving source of the history,
+and nothing in this PR protects it.
+
+### Known limits, stated rather than discovered later
+
+- A derived child does NOT get its own current-frame repetition plane (12): it
+  depends on positions older than the parent's window. 0.019% of slots.
+- `--input-encoding stored` refuses dynamic-relation checkpoints (relations are
+  rebuilt from the bare board and would contradict the spliced history) and
+  refuses checkpoints not on `lc0_root_legacy_meta` + `v2_threats`.
+- The VALUE ruler still has no smooth analogue of expected regret, so the
+  METHOD RULE above ("use EXPECTED, not top-1, for paired contrasts") can only
+  be honoured on the policy leg. Unchanged by this PR; building one remains the
+  prerequisite for any future value-vs-policy lead test.
