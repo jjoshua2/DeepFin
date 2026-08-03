@@ -25507,3 +25507,754 @@ survived their first run. Two were real gaps (above); one was a badly chosen
 mutation that did not actually break the property the test asserted. A surviving
 mutation means *either* the test is weak *or* the mutation missed — and the two
 must be told apart by reading, not assumed to be the first or the second.
+
+## 2026-08-02 — PRE-REGISTRATION (ARM H, stage 1): does post-hoc SWA/EMA weight averaging of lineage checkpoints beat raw iter477 on held-out rulers?
+
+**Status at write time: PRE-COMMITTED, NOT YET SCORED.** Written after the
+checkpoint inventory (properties of the FILES only) and before any average was
+built or scored on any ruler. Full text, with the averaging procedure and the
+per-file inventory: `scratchpad/swa_armH_20260802/PREREG.md` +
+`inventory.json`. This is the restart brief's "EMA/SWA published-model arm (H) —
+unspecced idea, needs a rig verdict first".
+
+**Hypothesis.** The loop is a proven treadmill (forgetting hinge, 5 sets; −48.6
+Elo [−68.2, −29.4] over 478 iterations). If consecutive checkpoints memorise
+DIFFERENT ~0.5-day windows, the window-specific component of their weights is
+approximately independent across checkpoints while the generalizing component is
+shared, so a uniform average over the last K cancels part of the churn:
+**SWA(last K) should beat raw iter477 on out-of-window/era material without
+losing more than the noise bar in-window.** Stage 1 is an OFFLINE screen; a
+PROMISING verdict buys an arena, nothing else.
+
+**Inventory (done first; dictates the candidate set).** 28 checkpoint files
+opened. Ray's pruning left a dense 5-iteration grid in
+`data/salvage/rolling/checkpoint_000{360..475}` (24 files) plus `iter477`
+(`scratchpad/strength_readout_0731/ck477`) and `iter478`. **All 496 keys, all
+63,084,128 unique-storage params, all 28 weight-fingerprints distinct, and NO
+file carries `_orig_mod.` or `module.` on any key.** The off-grid `iter409`
+ratchet snapshot is excluded so no region is double-weighted.
+
+**Arms (uniform average, ending at iter477).** `SWA2` {477,475} span 2 ·
+`SWA4` {477…465} span 12 · `SWA8` {477…445} span 32 · `SWA13` {477…420} span 57
+· `SWA25` {477…360} span 117. Window residency ≈ 148–167 iters, so the extreme
+members of SWA25 share ~21% of their FIFO and SWA2's share ~99%.
+
+**Instrument control, pre-committed:** `SWA_boot` = ½(iter477 + boot512), 477
+iterations apart. Weights from disconnected basins do not average.
+**Prediction: SWA_boot is materially WORSE than iter477** (Δ > +0.64 cp,
+corrected CI excluding 0). If it is not, the rulers cannot see a weight-space
+perturbation and the whole read is CANNOT RESOLVE.
+
+**Averaging (CPU, pure state_dict arithmetic).** Keys normalized through
+`strip_compile_prefix` (`replace(...,1)`, never `removeprefix` — `AveragedModel`
+NESTS the segment, PR #267/J9) although today's files carry no prefix;
+identical key sets and shapes asserted; float64 accumulate; the 16 tied
+`layer_smolgens.N.gen_weight.weight` keys asserted equal in every input AND in
+the average, and the tie restored on write; **unique-storage count of the LOADED
+model asserted at 63,084,128 and `load_state_dict_tolerant` asserted at 0
+missing / 0 unexpected on every input and on every average**; sha256 banked.
+
+**Rulers, with batches pinned.**
+- **PRIMARY (oow/era)** — audit-v2 stored-row encoding rig
+  (`audit_historyfill_20260802/score_audit_v2.py`, `matched_rows.npz`),
+  **arm `v2` only** (the `v1` FEN-only arm is a known-defective encoding, M10 —
+  recorded for the history-benefit column, never a decision ruler), n=3723
+  TB-excluded, 800 source games, **`--policy-batch 256 --value-batch 256`**
+  (`value_regret` is batch-size dependent ~0.66 cp). Heads: raw-prior
+  `policy_top1` and 1-ply `value_top1` deep-SF cp regret.
+- **IN-WINDOW** — `forget_curve_20260802/sets/S5_never.npz` (the only banked set
+  still resident at the pause), raw-policy top-1 `sf_p0` cp regret, **batch
+  pinned at 128**.
+- **ERA/CHURN side-sets** — `forget_curve_20260802/sets/S{1,2,3,4}`, the sets
+  that exited at ~65/155/200/275, same ruler, same batch 128.
+
+**Statistics.** Every contrast paired per position against raw iter477 on
+identical rows in identical order; 10,000-resample percentile bootstrap
+**clustered on `game_id`**, seed 20260802. Positive = worse.
+
+**Noise bar.** `B_oow = 0.64 cp`, `B_inw = 0.31 cp`, adopted from the banked
+08-02 regularization-bundle rig's measured seed-pair spreads (0.638 / 0.307 /
+0.394) — conservative here, since these arms carry no seed noise at all.
+**Rig-repeat determinism is MEASURED, not assumed:** iter477 is re-scored from
+scratch on the primary ruler and compared per position against the banked
+`lineage/score_iter477.json`; if the repeat |Δ| on either head exceeds `B_oow`
+the verdict is CANNOT RESOLVE.
+
+**Multiplicity.** 6 arms × 2 primary heads = 12 tests ⇒ the PROMISING call is
+gated on a **Bonferroni-corrected CI** (percentiles 0.208 / 99.792). Plain 95%
+CIs are reported and gate only the weaker WEAK call.
+
+**Kill/success rule, committed now.**
+- **PROMISING** (advance to a stage-2 arena) iff some `SWA_K` satisfies ALL of:
+  (1) `Δ ≤ −0.64 cp` on the audit-v2 `v2` arm on `policy_top1` OR `value_top1`,
+  with its **corrected** CI excluding 0; (2) `Δ ≤ +0.31 cp` on `S5_never`;
+  (3) neither primary head degrades by more than `+0.64 cp` with a corrected CI
+  excluding 0 (a policy gain bought with a value loss is not a promotion).
+- **WEAK** iff (1) holds only at plain 95%, with (2) and (3). Reported, not promoted.
+- **DEAD** otherwise.
+- **CANNOT RESOLVE** iff the determinism check or the `SWA_boot` control fails.
+
+**Churn-cancellation side-prediction (direction only, NO gate).** On the four
+window-EXITED sets `S1..S4` (post-exit decay `D_post` = +2.80 … +5.67 cp), SWA
+should recover part of that decay: `Δ < 0` on ≥3 of 4. On `S5_never` the same
+mechanism predicts SWA gives back part of the in-window memorisation, so `Δ ≥ 0`
+there is EXPECTED and is not evidence against the hypothesis unless it breaches
+`B_inw` (which is gate 2). This distinguishes "SWA cancels churn" from "SWA is
+just a smoother net".
+
+**Confounds / known limits.** (i) No arena, no Elo — and this lineage already
+produced one case where flat per-position signals hid a −48.6 Elo slide, so a
+PROMISING verdict is a licence to spend arena GPU and nothing more. (ii) The
+`S*` sets are selfplay rows only; curriculum rows are structurally unmeasurable
+by `sf_p0_regret`. (iii) Averaging across 117 iterations is not classical SWA
+(constant/cyclic high LR over a short tail); `SWA25` is expected to be the most
+likely to break. (iv) No BatchNorm in this architecture, so `update_bn` is a
+no-op and no data pass is done or claimed. (v) Stage 1 scores post-hoc averages
+of a 5-iteration grid; it does NOT test an ONLINE EMA, which sees every step.
+
+**Bank:** `scratchpad/swa_armH_20260802/` (`PREREG.md`, `inventory.py`,
+`inventory.json`, `build_avg.py`, `avg/`, `score.sh`, `dumps/`, `analyse.py`).
+
+### 2026-08-02 — VERDICT (ARM H, stage 1): **CANNOT RESOLVE** — the pre-committed instrument control FAILED, in the opposite direction to the one it was written to catch. Every SWA arm beats iter477, and the reason is almost certainly REVERSION, not churn cancellation.
+
+Reads out the pre-registration immediately above. Nothing in the plan changed
+between writing it and scoring. Bank: `scratchpad/swa_armH_20260802/`
+(`results.json` has every CI; `dumps/` has per-position dumps so every number
+below is recomputable on CPU with `analyse.py`, no GPU).
+
+#### Gate 1 — rig-repeat determinism: PASS, but by 0.008 cp, and this is a ruler finding
+
+`iter477` re-scored from scratch against its banked lineage dump, same rows,
+same batches, same code:
+
+| head | repeat Δ | 95% CI | rows differing |
+|---|---|---|---|
+| `policy_top1` | **+0.632 cp** | [−0.319, +1.970] ns | 41 / 3723 |
+| `value_top1`  | +0.446 cp | [−0.382, +1.515] ns | 85 / 3723 |
+
+The bar was 0.64 cp, so policy passes with 0.008 cp to spare. **The substantive
+reading is the CI, not the point estimate: both repeat contrasts are ns, so the
+paired bootstrap absorbs this noise correctly.** But note what produces it — two
+identical runs flip the argmax on ~1-2% of rows (bf16 autocast nondeterminism),
+and because top-1 regret is a step function with a heavy tail (max single-row
+|Δ| = 1711 cp), a handful of flips moves the mean by half a cp. **⚑ The audit-v2
+top-1 rulers have ~0.5 cp of pure run-to-run noise and a ±1-2 cp bootstrap
+resolution. Any future entry quoting a sub-cp difference on them is quoting
+noise.**
+
+#### Gate 2 — SWA_boot instrument control: **FAILED**
+
+Predicted: ½(iter477 + boot512) is materially WORSE than iter477 (disconnected
+basins do not average). Measured: it is the **best arm in the entire
+experiment** — `policy_top1` **−8.08 cp [−12.56, −3.83] SIG (Bonferroni)**,
+`value_top1` **−9.85 cp [−13.93, −5.95] SIG (Bonferroni)**.
+
+The failure is not the one the control was written to detect. The ruler is not
+insensitive — it is extremely sensitive. What the control actually proves is
+that **boot512 and iter477 are linearly mode-connected**: obvious in hindsight,
+since iter477 was fine-tuned FROM boot512 at `peak_lr` 3e-5 and never left the
+basin. Per the pre-committed rule the verdict is **CANNOT RESOLVE**, and it is
+recorded as such.
+
+#### The table (primary ruler: audit-v2 arm `v2`, n=3723, 800 games, batches 256/256; Δ vs raw iter477, negative = BETTER)
+
+| arm | span | POLICY top1 | Δ | VALUE top1 | Δ |
+|---|---|---|---|---|---|
+| iter477 (raw) | — | 56.26 | — | 72.88 | — |
+| `SWA2`  | 2 | 54.24 | −2.02 [−4.37, +0.16] ns | 69.30 | **−3.58 [−6.67, −0.94]** sig |
+| `SWA4`  | 12 | 53.45 | −2.81 [−5.83, +0.02] ns | 70.65 | −2.23 [−6.26, +1.70] ns |
+| `SWA8`  | 32 | 54.00 | −2.25 [−5.93, +1.32] ns | 69.08 | **−3.80 [−7.50, −0.40]** sig |
+| `SWA13` | 57 | 52.79 | **−3.47 [−7.11, −0.11]** sig | 68.43 | **−4.45 [−8.25, −0.94]** sig |
+| `SWA25` | 117 | 53.13 | −3.13 [−6.70, +0.22] ns | 67.55 | **−5.33 [−9.32, −1.61]** sig |
+| `SWA_boot` | (477↔0) | 48.18 | **−8.08 [−12.56, −3.83]** SIG* | 63.03 | **−9.85 [−13.93, −5.95]** SIG* |
+
+`SIG*` = survives Bonferroni over the 12-test family; `sig` = plain 95% only.
+**No SWA arm survives the correction; only the failed control does.**
+
+In-window ruler (`S5_never`, batch 128): **every SWA arm is at or better than
+iter477** — SWA2 −0.11, SWA4 −0.03, SWA8 −0.33, SWA13 −0.55, SWA25 −0.15, all
+inside the ±0.31 bar. `SWA_boot` is the only arm that pays in-window: **+3.83
+[+2.71, +5.00] SIG worse.** So gate 2 of the PROMISING rule passes for all five
+SWA arms and gate 3 passes for all five; only the corrected-CI leg of gate 1
+fails. Under the pre-registered ladder that reads **WEAK** — but the control
+failure supersedes it, and WEAK would in any case be reported, not promoted.
+
+Side-prediction (direction only): **HELD** — on the four window-EXITED sets, SWA
+recovers post-exit decay on 3/4 for SWA2/4/8/13 and **4/4** for SWA25. `S3_exit200`
+is the lone dissenter in every arm (+0.36 … +0.49).
+
+#### Why the honest reading is REVERSION, not cancellation (post-hoc, labelled)
+
+On a lineage that degrades monotonically, averaging with older checkpoints is
+partly just *reverting* toward older, stronger weights, and everything here
+lines up with that and not with cancellation:
+
+- the ladder is monotone in reach — the further back the span extends, the
+  better the score (value 72.88 → 69.30 → 70.65 → 69.08 → 68.43 → 67.55), and
+  `SWA_boot`, which reaches furthest, wins by the largest margin;
+- **`SWA25` performs like its OLDEST member**: vs `iter360` it reads
+  policy +0.25 [−3.51, +4.21] ns and value +0.16 [−3.52, +3.86] ns;
+- **no SWA arm significantly beats its own best scored member on either head**
+  (best case `SWA13` vs `iter475`, policy −0.56 ns);
+- `SWA_boot` — the largest reversion — is the only arm that loses in-window,
+  which is what reversion predicts and cancellation does not.
+
+The clean discriminator is not "does SWA beat iter477" (it does) but **"does SWA
+beat the single checkpoint at its own centroid iteration"** — pre-registered
+below as stage 1b.
+
+#### What this costs and what it buys
+
+`iter477` is a poor incumbent even locally: `iter475` reads 53.35 and `iter478`
+53.82 on the same ruler against iter477's 56.26 — a 2.9 cp swing between
+adjacent checkpoints. Part of every Δ above is simply not being iter477.
+
+The one result that is *not* explained by reversion is the shape: the five SWA
+arms take their out-of-window gains at **zero in-window cost** (all ≤ 0 on
+`S5_never`), while the reversion extreme pays +3.83. Whatever the mechanism, an
+average over a few tens of iterations sits in a regime where old-material
+competence is bought for free — which is exactly the trade the restart brief's
+arm-H idea wants. That is a reason to finish the mechanism question, not to
+promote the arm.
+
+#### Traps hit
+
+- **`_orig_mod.` prefix: checked, ABSENT.** All 28 inventoried files carry 496
+  keys with no `_orig_mod.` and no `module.` segment. Normalization ran through
+  `strip_compile_prefix` (`replace(...,1)`) anyway, so a future `AveragedModel`
+  input with the NESTED segment cannot slip past (PR #267 / J9).
+- **Weight tying survived**: the 16 `layer_smolgens.N.gen_weight.weight` keys
+  are equal in all 26 members and in every average, and the tie is restored on
+  write. Unique-storage count asserted at **63,084,128 on every input AND every
+  average**, `load_state_dict_tolerant(require_complete=True)` clean on all.
+  Averaging verified against an independent recomputation: max |Δ| **5.96e-08**.
+- **Ray pruning**: the paused trial dir is gone; what survives is
+  `data/salvage/rolling/checkpoint_000{360..475 step 5}` (24 files) plus
+  `iter477`/`iter478`. There is no consecutive-iteration grid anywhere — 5 is
+  the finest spacing available, which caps how "adjacent" any SWA arm can be.
+- **GPU contention**: the offline rig held the card at 84-95% throughout; free
+  memory oscillated 7,999-19,476 MiB. Every checkpoint was gated on ≥8,500 MiB
+  free at `--gpu-mem-fraction 0.15`, `nice -n 19`; no run was started below the
+  gate and nothing was pre-empted.
+
+
+## 2026-08-02 — PRE-REGISTRATION (ARM H, stage 1b): is the SWA gain CHURN CANCELLATION or just REVERSION toward older weights?
+
+**Status at write time: PRE-COMMITTED, NOT YET SCORED.** Written after stage 1
+read out (its numbers are visible and are quoted below) and **before any
+centroid-twin checkpoint had produced a single number** — `iter470` was mid-run
+with no output, `iter460` and `iter420` not started; none of the three has ever
+been scored on this ruler by anyone. Full text:
+`scratchpad/swa_armH_20260802/PREREG_1b.md`.
+
+**Why.** Stage 1's control failure showed boot512 and iter477 are linearly
+mode-connected, so on a monotonically degrading lineage every SWA arm is
+confounded: averaging with older checkpoints is partly just reverting to older,
+stronger weights. "Does SWA beat iter477" is therefore the wrong question — it
+does, and reversion alone predicts that. **The right question is whether SWA
+beats the single checkpoint it is centred on.**
+
+**Design.** For each arm let `c̄_K` = mean member iteration and the **centroid
+twin** = the raw 5-grid checkpoint nearest `c̄_K`:
+
+| arm | `c̄_K` | twin | already scored? |
+|---|---|---|---|
+| `SWA2` | 476.0 | `iter475` | yes (banked lineage sweep) |
+| `SWA4` | 471.8 | `iter470` | no — to score |
+| `SWA8` | 461.5 | `iter460` | no — to score |
+| `SWA13` | 448.6 | `iter450` | yes (banked) |
+| `SWA25` | 418.1 | `iter420` | no — to score |
+
+REVERSION predicts `SWA_K ≈ twin`; CANCELLATION predicts `SWA_K < twin` (the
+average beats any single point near its centre because it has cancelled
+window-specific memorisation each individual point carries). `SWA_boot`'s
+centroid (~iter 238) is off-grid, so it gets no twin and takes no part.
+
+**Instrument — unchanged.** audit-v2 arm `v2`, n=3723, 800 games,
+`--policy-batch 256 --value-batch 256 --gpu-mem-fraction 0.15`, `nice -n 19`,
+paired per position against the twin, 10k percentile bootstrap clustered on
+`game_id`, seed 20260802. Bar `B_oow = 0.64 cp`. Stage 1's measured rig-repeat
+noise (+0.632 / +0.446 cp, both ns) is the determinism reference and is NOT
+subtracted anywhere — the bootstrap absorbs it.
+
+**Kill/success rule, committed now.** Family = 5 arms × 2 heads.
+- **CANCELLATION** iff for **≥3 of 5** arms `Δ(SWA_K − twin) ≤ −0.64 cp` on at
+  least one head with its plain-95% CI excluding 0, **and** no arm degrades
+  against its twin by more than +0.64 cp with a 95% CI excluding 0. (Plain 95%:
+  requiring 3-of-5 agreement is itself the multiplicity control, and this stage
+  answers a mechanism question — it cannot promote anything.)
+- **REVERSION-ONLY** iff for **≥4 of 5** arms `Δ ≥ −0.64 cp` on BOTH heads.
+- **INCONCLUSIVE** otherwise.
+
+**Known limits, stated in advance.** Twins are the nearest grid point, off by up
+to 1.8 iterations, and adjacent checkpoints on this ruler differ by up to 2.9 cp
+(`iter475` 53.35 / `iter477` 56.26 / `iter478` 53.82) — a single twin is a noisy
+stand-in for "the trajectory at `c̄`", which is exactly why the rule requires
+agreement across arms rather than one decisive arm. Still no arena, still no Elo;
+a mechanism result is not a strength result and cannot promote arm H.
+
+### 2026-08-02 — VERDICT (ARM H, stage 1b): **INCONCLUSIVE** by the pre-committed rule — but the failure is structured, and the structure is a HEAD SPLIT: the POLICY gain is reversion, the VALUE gain is not.
+
+Reads out the pre-registration immediately above. Nothing changed between
+writing it and scoring; the three new twins (`iter470`, `iter460`, `iter420`)
+had produced no numbers when the rule was committed. Bank:
+`scratchpad/swa_armH_20260802/results_1b.json`, `analyse_1b.py` (CPU-only).
+
+#### The table (audit-v2 arm `v2`, n=3723, 800 games, batches 256/256; Δ = SWA − twin, NEGATIVE = SWA beats the single checkpoint at its own centre)
+
+| arm | centroid | twin | POLICY swa/twin | Δ policy | VALUE swa/twin | Δ value |
+|---|---|---|---|---|---|---|
+| `SWA2`  | 476.0 | `iter475` | 54.24 / 53.35 | +0.89 [−1.35, +3.26] ns | 69.30 / 71.56 | −2.26 [−5.16, +0.19] ns |
+| `SWA4`  | 471.8 | `iter470` | 53.45 / 52.55 | +0.90 [−2.42, +5.35] ns | 70.65 / 71.46 | −0.82 [−4.55, +2.75] ns |
+| `SWA8`  | 461.5 | `iter460` | 54.00 / 53.91 | +0.09 [−2.65, +2.83] ns | 69.08 / 72.91 | **−3.83 [−7.07, −0.71] sig** |
+| `SWA13` | 448.6 | `iter450` | 52.79 / 56.54 | **−3.75 [−6.78, −0.90] sig** | 68.43 / 70.50 | −2.07 [−5.07, +0.69] ns |
+| `SWA25` | 418.1 | `iter420` | 53.13 / 52.06 | +1.07 [−1.25, +3.63] ns | 67.55 / 68.10 | −0.55 [−3.58, +2.34] ns |
+
+Arms beating their twin by ≥0.64 cp with a 95% CI excluding 0: **2 of 5**
+(CANCELLATION needed ≥3). Arms within the bar of their twin on BOTH heads:
+**1 of 5** (REVERSION-ONLY needed ≥4). No arm degrades against its twin. So the
+rule fires **INCONCLUSIVE**, and that is the verdict of record.
+
+#### The structure the rule could not see (post-hoc, labelled as such)
+
+The two heads behave completely differently, and averaging them into a single
+"arms" count is what produced the null:
+
+- **POLICY — consistent with pure REVERSION.** Four of five arms are at or
+  *worse* than their centroid twin (+0.89, +0.90, +0.09, +1.07); the mean over
+  arms is ≈ −0.16 cp. The single significant win (`SWA13` −3.75) is against
+  `iter450`, which reads 56.54 — as bad as `iter477` itself and an outlier
+  against its neighbours `iter460` 53.91 and `iter470` 52.55. **That win is a
+  bad twin, not a good average.** This is exactly the noisy-twin weakness the
+  pre-registration flagged in advance.
+- **VALUE — NOT explained by reversion.** All five deltas are negative
+  (−2.26, −0.82, −3.83, −2.07, −0.55), mean **−1.90 cp**, one individually
+  significant. **⚠ No combined p-value is claimed**: the arms are NESTED
+  (`SWA2` ⊂ `SWA4` ⊂ `SWA8` ⊂ `SWA13` ⊂ `SWA25`) and scored on the same 3723
+  rows, so these are not five independent tests and a sign test would be
+  invalid. What is claimed is only the *direction*: on value, averaging beats
+  the trajectory point it is centred on, every time, at 5 different spans.
+
+This head split is mechanistically coherent with what is already banked: value's
+degradation is **all age-linked shedding of trained material** (N4/N3 flat in
+`neverseen_20260802`), while **69% of policy's post-exit decay is a
+generalisation-loss term** that touches material no net ever trained on. An
+average spanning many ages can plausibly recover shed-by-age competence; it
+cannot recover capability that was never learned or has been genuinely lost.
+**If that is right, arm H is a VALUE-head intervention, not a whole-model one.**
+
+#### What would settle it, and what should NOT be run
+
+Neither stage promotes arm H. **A stage-2 arena is NOT warranted on these
+results** and none was run.
+
+The binding weakness is not statistical power on the arms — it is that each arm
+is compared against ONE noisy twin, on a trajectory whose adjacent checkpoints
+swing up to 2.9 cp. The cheap fix is offline and needs no arena: **score the
+remaining ~20 `data/salvage/rolling` checkpoints on this same ruler** (≈4 min
+each at `--gpu-mem-fraction 0.15`, ≈80 min total, resumable, no arena) to get a
+dense trajectory, then compare each SWA arm against a LOCAL SMOOTH of the
+trajectory at its centroid instead of a single point. That converts every arm's
+twin contrast from n=1 to a fitted value and would move both heads out of the
+noise. Only if VALUE cancellation survives that is an arena worth its GPU — and
+then the right one is `SWA8` or `SWA13` vs `iter477`, paired UHO, matched sims
+32, judged on the Cheese tail, NOT a generic arena.
+
+#### Cross-reference for the restart decision
+
+`SWA_boot` = ½(iter477 + boot512) is not a candidate model, but its numbers bear
+directly on the restart brief's open "RESTART BASE" decision: halfway back to
+boot512 buys **−8.08 cp policy / −9.85 cp value** on never-in-window material and
+**−6.56 / −3.73 / −1.99 / −1.41 cp** on the four window-exited era sets, at a cost
+of **+3.83 cp on the material still in the window**. The old-material competence
+the lineage shed is still *reachable by weight-space interpolation* — it has not
+been destroyed. That is evidence about how recoverable the damage is, on a
+per-position ruler; it is NOT an Elo claim and must not be quoted as one.
+
+## 2026-08-02 — PRE-REGISTRATION (ARM H, stage 1c): re-adjudicate VALUE-beyond-reversion against a DENSE local smooth instead of an n=1 twin
+
+**Status at write time: PRE-COMMITTED, NOT YET SCORED.** Written before any of
+the 17 new trajectory checkpoints produced a number. At writing time the
+audit-v2 `v2` ruler covered exactly seven points of the 5-spaced rolling grid
+(`iter360, 420, 425, 450, 460, 470, 475`) plus `iter477`/`478`; the 17 files this
+stage adds — `iter365, 370, 375, 380, 385, 390, 395, 400, 405, 410, 415, 430,
+435, 440, 445, 455, 465` — **have never been scored on this ruler by anyone**.
+Full text: `scratchpad/swa_armH_20260802/PREREG_1c.md`.
+
+**Why.** Stage 1b's binding weakness was named in advance and then confirmed:
+each arm was compared against ONE centroid twin, and its single significant
+policy win was against `iter450` (56.54) — an outlier between `iter460` 53.91
+and `iter470` 52.55. One twin is an n=1 estimate of "the trajectory at `c̄`".
+The one directional claim stage 1b left standing was VALUE (all five arms beat
+their twin, mean −1.90 cp) against POLICY (four of five did not). This stage
+replaces the twin with a fitted value and asks whether VALUE survives.
+
+**Dense trajectory.** Every 5-spaced `data/salvage/rolling` checkpoint
+`iter360…475` (24) plus `iter477`, on the unchanged ruler: audit-v2 arm `v2`,
+n=3723, 800 games, `--policy-batch 256 --value-batch 256
+--gpu-mem-fraction 0.15`, `nice -n 19`, gated on ≥8,500 MiB free before every
+checkpoint, resumable. **Every member of every arm is then scored**, because
+each arm's members are exactly the grid points inside its span.
+
+**The smooth (fixed now).** Per position `p`, ordinary unweighted least-squares
+polynomial of `score_p(i)` over the grid iterations inside the arm's span,
+evaluated at `c̄_K` (the same centroid stage 1b used). **Degree 2 when the span
+holds ≥7 scored iterations, else degree 1** — degree 1 at the centre of a CURVED
+trajectory inherits curvature bias, and on a convex `T` that bias pushes `Δ_L`
+negative, i.e. would manufacture the result being tested for. No bandwidth
+parameter: the window is the arm's own span, unweighted, nothing tuned.
+
+| arm | span | grid pts | degree | decidable |
+|---|---|---|---|---|
+| `SWA2` | 475–477 | 2 | 1 | no |
+| `SWA4` | 465–477 | 4 | 1 | no |
+| `SWA8` | 445–477 | 8 | 2 | **yes** |
+| `SWA13` | 420–477 | 13 | 2 | **yes** |
+| `SWA25` | 360–477 | 25 | 2 | **yes** |
+
+**Contrasts.** Primary `Δ_L = SWA_K − L_K`, paired per position, 10k percentile
+bootstrap clustered on `game_id`, seed 20260802. Reported with NO gate:
+`Δ_M` vs mean-of-members (⚠ **Jensen-confounded** — on a convex `T`,
+mean-of-members exceeds `T(c̄)` with no cancellation at all, so the curvature gap
+`J_K = mean-of-members − L_K` is reported beside it), and `Δ_best` vs
+best-in-span (⚠ **comparator chosen by its own outcome**, so its CI is
+miscalibrated — but selection is toward the strongest opponent and `min` over
+noisy estimates is biased low, so the bias runs AGAINST cancellation: a
+significant negative is trustworthy, a null is not evidence of absence).
+
+**Bar `B = 0.64 cp`** — the larger of the two measured stage-1 rig-repeat point
+estimates (policy +0.632, value +0.446; both *ns* under this same clustered
+bootstrap). Applied only as a practical floor on the point estimate; the
+bootstrap absorbs the argmax-flip noise.
+
+**Multiplicity.** 3 decidable arms × 2 heads. The arms are **nested**
+(`SWA8 ⊂ SWA13 ⊂ SWA25`) and share all 3723 rows, so **no combined p-value is
+claimed**; the `≥2 of 3` requirement IS the multiplicity control, deliberately
+the same shape as stage 1b's `≥3 of 5`.
+
+**Kill/success rule, committed now — on `value_top1`:**
+- **VALUE-BEYOND-REVERSION CONFIRMED** iff ≥2 of the 3 decidable arms have
+  `Δ_L ≤ −0.64 cp` with 95% CI excluding 0, and no decidable arm has
+  `Δ_L ≥ +0.64 cp` with 95% CI excluding 0.
+- **DEAD** iff 0 of 3 reach it, or any decidable arm degrades significantly.
+- **STILL INCONCLUSIVE** iff exactly 1 of 3.
+
+`policy_top1` is scored under the **identical** rule and reported as a CONTRAST,
+not a second chance: stage 1b predicts policy will not confirm, and a stage where
+BOTH heads confirm would mean the smooth is manufacturing the effect.
+
+**Known limits, in advance.** Degree 2 still carries third-order bias, and over
+`SWA25`'s 117-iteration span that is not obviously negligible — the three
+decidable arms have spans 32 / 57 / 117, so a fit-order artifact should show a
+span-ordered pattern, and the raw dense trajectory is banked for any other
+smoother. Still a per-position cp-regret ruler on frozen positions: **no arena,
+no Elo**, and this lineage already produced one case where flat per-position
+signals hid a −48.6 Elo slide.
+
+#### 2026-08-02 — CORRECTION to the stage-1b table above: three centroid values were misprinted (the twin SELECTIONS were unaffected)
+
+Recomputed from the member lists while building stage 1c, which derives `c̄_K`
+from the membership rather than from a written-down number:
+
+| arm | `c̄_K` printed in stage 1b | `c̄_K` true | error | nearest grid pt | twin used |
+|---|---|---|---|---|---|
+| `SWA2`  | 476.0 | 476.00 | +0.00 | 475 | 475 ✓ |
+| `SWA4`  | 471.8 | 471.75 | −0.05 | 470 | 470 ✓ |
+| `SWA8`  | 461.5 | **462.12** | +0.62 | 460 | 460 ✓ |
+| `SWA13` | 448.6 | **449.77** | +1.17 | 450 | 450 ✓ |
+| `SWA25` | 418.1 | **419.88** | +1.78 | 420 | 420 ✓ |
+
+**Every twin was still the correct nearest grid point**, so no stage-1b number
+or verdict changes — the misprint is in the reported centroid column only. It is
+recorded rather than quietly fixed because a banked table is a record. Stage 1c
+computes `c̄_K` from the membership in code (`analyse_1c.py`), so the value
+cannot drift from the arm it describes again.
+
+## 2026-08-02 — CONFIG AUDIT: every key in `configs/pbt2_small.yaml` classified (INSTRUMENT, no training)
+
+Read-only keep/drop audit of the production config, to ground the "minimal verified core"
+restart in `scratchpad/restart_brief_20260802.md`. Not an experiment — no pre-registration
+needed, nothing was changed on the live tree.
+
+**319 keys: 118 LOAD-BEARING / 90 ACTIVE-UNREAD / 68 DECORATIVE / 43 OFF-INERT.**
+
+Full table (one row per key, with evidence and a restart recommendation), the falsifier for
+every DECORATIVE call, and a verified minimal-config proposal:
+`scratchpad/config_audit_20260802/CONFIG_AUDIT.md`.
+
+Instruments: `scripts/audit_realized_config.py --last 20 --reco-diff` (AUDIT OK, 0
+divergences), `restart_required_config_keys()`, and 478 rows of the trial's own
+`result.json` for realized time series. Realized values are read from the row config, never
+from `params.json` (rl_loop_audit J5).
+
+Findings that change a decision:
+
+- **⚠ `exploit_replay_*` is ARMED for the planned restart, not inert.** `cross_trial_restore`
+  is set whenever the restored checkpoint's `owner_trial_id` differs from the trial's
+  (`trainable_init.py:408`) — i.e. by a boot512/salvage restore into a new trial id. It then
+  runs `_prune_local_shards_keep_fraction(keep_recent=0.0, keep_older=0.0)` (wipe the whole
+  local replay dir) followed by `_copy_donor_shards_to_recipient(donor_shards=-1)` (import the
+  donor's entire window) — `replay_exchange.py:357,380`. That contradicts this ledger's own
+  −252 swap-gate reading on cross-era window reuse, and it is decided by config with no entry
+  behind it. **Decide it explicitly before restart** (`exploit_replay_donor_shards: 0`, or
+  `exploit_replay_refresh_enabled: false`).
+- **A dead key is not always a deletable key.** Verified by rebuilding `TrialConfig` without
+  each candidate: deleting the 10 inert `temperature*` lines turns stochastic play ON
+  (`temperature` defaults to 1.0, `temperature_endgame` 0.6, `temperature_decay_moves` 60);
+  deleting `mcts_start_simulations` drops start sims 256 → 50 (`progressive_mcts` is not
+  settable from yaml and defaults True); deleting `replay_window_growth[_frac]` gives
+  10000/None instead of 20000/1.0 on a fresh window. All three are DECORATIVE in effect and
+  load-bearing as PINS.
+- **Three corrections to the restart brief's DROP list.** `diff_focus` keys are decorative but
+  the FEATURE is not (rl_loop_audit H2: it is the source of the entire replay-priority spread,
+  CV 0.94) and deleting them disables nothing; `replay_sf_gap_priority_signed` is not in the
+  production yaml at all (the real target is `replay_sf_gap_priority_weight: 0`, `pmass_gap_share
+  == 0.0` on 478/478); `zclip_z_thresh` fires at a 6.25% median with a 0–61.8% range, not "3–9%".
+- **`sf_wdl_frac: 0.5` has never been in effect in this run** — `sf_wdl_frac == 0.45` on 478 of
+  478 rows because `wdl_regret` never reached the 0.10 knee (max 0.0984, i.e. within 1.6% of it).
+  Pin the yaml to 0.45 per the A5 rule, and note that one PID ease-step would otherwise change
+  the value target mid-run with nothing warning about it.
+- **`sf_nodes: 5000` is unreachable by construction** — `pid.py:487` clamps `initial_nodes` into
+  `[sf_pid_min_nodes, sf_pid_max_nodes]` = [50000, 1000000] even at cold boot.
+- **`train_steps: 800` and `train_window_fraction: 0.04` have never been read**: 0 of 478
+  iterations hit the ingest-drought fallback that is their only consumer, and max
+  `train_steps_used` over the run is 401.
+- **`lr_release_cycle_steps: 0` is not "off"** — it makes the WSD release cycle equal ONE
+  TRAINING ITERATION, so the LR sawtooths 6e-4 → 6e-5 within each of the 478 iterations
+  (rl_loop_audit I19 measured it). It belongs in the brief's KEEP table as a named mechanism.
+- **The 11-key `exploit_replay_*` block splits**: 6 per-iteration sharing keys are inert
+  (`shared_samples_ingested == 0` on 478/478); the other 5 are the hazard above.
+- **`w_volatility` / `w_sf_volatility` / `w_moves_left` contribute 0.005% / 0.003% / 0.001% of
+  `train_loss`** at iter 478, on heads with coverage 0.94 / 0.23 / 1.00 — so not a masking
+  artifact. Cheapest offline-screenable ablation in the file.
+
+Proposal: `scratchpad/config_audit_20260802/pbt2_small_minimal.yaml.PROPOSED` (29 keys deleted,
+each with its evidence inline; 2 pin-to-realized flips; 3 `# DECISION OWED` blocks). It is a
+document, NOT wired anywhere. `verify_proposal.py` rebuilds `TrialConfig`/`ModelConfig`/trainer
+kwargs from both files and prints `NO SEMANTIC DRIFT`; its one non-neutral edge is `lr_T0`/
+`lr_T_mult`, safe only while `lr_schedule` stays `sqrt_release`.
+
+### 2026-08-02 — VERDICT (ARM H, stage 1c): **VALUE-BEYOND-REVERSION DEAD.** The dense trajectory kills it. Stage 1b's value signal was the n=1 twin problem it was pre-registered as being at risk of. **ARM H IS CLOSED; the stage-2 arena is NOT run.**
+
+Reads out the pre-registration immediately above. All 17 new checkpoints scored,
+no `[STOP]`, nothing skipped. Bank: `scratchpad/swa_armH_20260802/`
+(`results_1c.json`, `analyse_1c.py`, `dumps/audit_iter*.json` — CPU-recomputable,
+no GPU).
+
+#### The dense trajectory (audit-v2 arm `v2`, n=3723, 800 games, batches 256/256), 25 points
+
+| | POLICY | VALUE |
+|---|---|---|
+| best point | **51.11 @ iter400** | **65.46 @ iter400** |
+| worst point | 56.54 @ iter450 | 72.91 @ iter460 |
+| `iter477` | 56.26 | 72.88 |
+| **adjacent-step \|Δ\|** | **median 0.98, max 3.50** | **median 1.72, max 4.77** |
+
+**⚑ This is the finding that settles the arm.** The trajectory is not a smooth
+decline with a little noise — adjacent checkpoints 5 iterations apart differ by
+a median of 1.0 cp (policy) and 1.7 cp (value), with excursions to 3.5 / 4.8 cp.
+Every stage-1b twin contrast was a draw from that. `SWA8`'s twin `iter460` reads
+72.91 on value — the WORST point in the whole 25-point scan — while `iter465`,
+also inside `SWA8`'s span, reads 68.14. The −3.83 cp "SWA8 beats its twin" of
+stage 1b was an outlier comparator, not an effect.
+
+#### The result (Δ_L = SWA − local smooth at its own centroid; negative = beats it)
+
+| arm | pts | deg | POLICY Δ_L | VALUE Δ_L | VALUE Δ vs best-in-span |
+|---|---|---|---|---|---|
+| `SWA2`  | 2 | 1 | −0.56 ns | −2.92 [−5.10,−1.00] *(under-determined, not counted)* | +? (iter475) −2.26 ns |
+| `SWA4`  | 4 | 1 | −0.45 ns | −0.37 ns *(under-determined, not counted)* | +2.50 ns |
+| **`SWA8`**  | 8 | 2 | +0.34 ns | **−1.04 [−3.49, +1.49] ns** | **+0.93 ns** |
+| **`SWA13`** | 13 | 2 | −1.00 ns | **−1.77 [−4.11, +0.48] ns** | **+0.33 ns** |
+| **`SWA25`** | 25 | 2 | +0.27 ns | **−1.14 [−3.15, +0.84] ns** | **+2.09 ns** |
+
+**Decidable arms beating the smooth by ≥0.64 cp with a 95% CI excluding 0:
+`value_top1` 0 of 3, `policy_top1` 0 of 3. Degradations: 0 of 3.** The
+pre-committed rule fires **DEAD** on the registered head, and DEAD on the policy
+contrast too.
+
+Only `SWA2` — 2 grid points, degree-1, **explicitly excluded from the count in
+advance as under-determined** — shows a significant value effect. With two
+points its "smooth" is just the mean of `iter475` and `iter477`, i.e. it is the
+mean-of-members contrast (Jensen gap exactly +0.00), so it says only that
+½(475+477) beats the average of their two scores. That is one comparator pair
+on the noisiest possible footing, and it is precisely why the degree rule was
+pre-registered.
+
+#### The known limits were checked, and neither is operative
+
+- **Third-order bias** (named in advance as the degree-2 fit's weakness):
+  degree-3 refits move nothing — POLICY +0.65/−0.97/+0.27 vs +0.34/−1.00/+0.27;
+  VALUE −1.00/−1.70/−1.13 vs −1.04/−1.77/−1.14. **Fit order is not driving the
+  result**, and there is no span-ordered pattern across spans 32/57/117.
+- **Jensen/curvature confound** on the mean-of-members contrast: gaps are
+  +0.44/−0.06/+0.25 (policy) and +0.77/+0.11/+0.35 (value), so `Δ_M ≈ Δ_L`
+  throughout and the confound was negligible in practice rather than assumed
+  away.
+
+#### What the whole arm amounts to
+
+**The average never beats the best single checkpoint in its own span** — on
+either head, on every arm: +1.45 / +0.98 / +2.02 (policy) and +0.93 / +0.33 /
++2.09 (value). And the strongest point found anywhere in the scan, `iter400`
+(51.11 / 65.46), beats **every** SWA average and beats `iter477` by 5.15 cp
+policy / 7.42 cp value on its own.
+
+So the three stages compose into one statement: **SWA beats `iter477` (stage 1,
+real), that gain is reversion toward older weights (stage 1b control failure:
+`SWA_boot` mode-connected and best of all), and there is no cancellation on top
+of the reversion once the comparator stops being a single noisy checkpoint
+(stage 1c).** Averaging is a mediocre way to move back along the trajectory;
+selecting a good earlier checkpoint is a better one.
+
+**ARM H (post-hoc SWA of lineage checkpoints) is CLOSED as a strength
+intervention. The stage-2 arena is gated on CONFIRMED and is therefore NOT RUN**
+— the spec stays banked and unexecuted at
+`scratchpad/swa_armH_20260802/ARENA_SPEC_stage2.md`. No arena GPU was spent on
+this arm at any stage. The restart brief's arm-H line should move from
+"unspecced idea, needs a rig verdict" to **DEAD (offline, 3 stages, no arena)**.
+
+#### What survives, and it is NOT arm H
+
+Two by-products are worth more than the arm was:
+
+1. **⚑ Checkpoint-to-checkpoint noise on this ruler is ~1-2 cp median and up to
+   4.8 cp at 5-iteration spacing.** Any lineage claim that compares two
+   individual checkpoints — including a "the net got worse between X and Y"
+   reading — needs either a span of many checkpoints or a smooth. Combined with
+   the stage-1 rig-repeat finding (~0.5 cp, ±1-2 cp bootstrap resolution),
+   **this ruler cannot resolve single-checkpoint differences below ~3 cp.**
+2. **Old-material competence in the 360-410 range is far better than at 477 and
+   is reachable**, both by picking a checkpoint (`iter400`: −5.15 policy /
+   −7.42 value vs iter477) and by weight-space interpolation (`SWA_boot`:
+   −8.08 / −9.85). Evidence for the restart brief's open RESTART BASE decision,
+   on a per-position ruler. **Not an Elo claim.**
+
+### ADDENDUM (same session) — second seeds, the negative control, and the sampler arm
+
+**Negative control PASSES by ~250x.** `SHUF_s0` (arm A, all eight policy-shaped
+targets permuted together across train rows) at 8,448 steps, paired vs its own step 0:
+`oow` **+161.908** [+157.695, +166.101], `inw` **+159.043**, `era` **+167.844**, all
+SIG POSITIVE. The pre-committed bar was merely "not significantly negative". The ruler
+cannot be moved by noise-shaped targets. Incidentally it hard-clips **100%** of steps
+at the same `zclip_max_norm` 6.5 where arm A clips 0% — the cap binds only when the
+gradient is garbage, which is further reason to read production's live 100%-hard-clip
+regime as a symptom rather than a knob.
+
+**Noise bar (pre-registered), from the A_s0/A_s1 pair over the two verdict steps:**
+`oow` **0.638 cp**, `inw` 0.307 cp, `era` **0.394 cp**. The per-step |s0 − s1| spread
+on `oow` GROWS with training (0.145, 0.335, 0.550, 0.235, 0.532, 0.744) — two runs
+differing only in seed diverge steadily on the held-out ruler, which is a floor on what
+any offline arm here can ever claim.
+
+**Seed agreement changed a verdict.** Full table, paired vs A at matched steps:
+
+| arm | `era` @7040 | `era` @8448 | `oow` @7040 | `oow` @8448 |
+|---|---|---|---|---|
+| C_s0 | −1.091 **S** | −1.087 **S** | −0.147 ns | −0.807 **S** |
+| C_s1 | −0.289 ns | −1.198 **S** | −0.135 ns | −0.224 ns |
+| D_s0 | −0.897 **S** | −1.125 **S** | +0.142 ns | −0.761 **S** |
+| D_s1 | −0.524 ns | −1.092 **S** | +0.113 ns | −0.086 ns |
+| B2_s0 | −0.263 ns | −0.038 ns | +0.008 ns | −0.335 S (below bar) |
+| G_s0 | +0.452 ns | +0.151 ns | −0.209 ns | −0.453 ns |
+| G_s1 | **+0.838 S** | +0.245 ns | +0.716 ns | +0.329 ns |
+
+- **PRIMARY: NO ARM BEATS A.** Every arm is null at 7,040 in both seeds. The only
+  significant `oow` points are seed-0-only at 8,448 and neither replicates (C_s1
+  −0.224, D_s1 −0.086, both inside the 0.638 bar). The single-seed result that cleared
+  both its CI and its noise bar was **not real** — which is precisely what the
+  pre-registered seed clause exists to catch.
+- **CO-PRIMARY: C and D forget less than A** by the rule as written (sustained
+  significance + sign agreement; all eight point estimates negative, −0.289 to
+  −1.198). Weaker than seed 0 alone implied: in seed 1 the 7,040 point is ns for both,
+  so "sustained at both steps" holds only in seed 0 — and at matched LEARNING the
+  advantage is −0.345 / −0.381, **below the 0.394 bar**.
+
+**ARM G — the sampler arm — is NULL by the pre-registered rule.** G replicates
+production's linear-recency shard draw exactly (gate checked on chunk 1: max decile
+error **0.1654 pp** vs a 0.5 pp bar, newest/oldest 712.0). Its era effect reaches
+significance at exactly one of four arm-steps (G_s1 @7040, +0.838 [+0.037, +1.635]) and
+is not sustained. **`g_G > 0` at both matched steps is NOT met: G does not forget
+significantly more than A.**
+
+Directionally, all four `era` point estimates are positive (+0.452, +0.151, +0.838,
++0.245; mean +0.42) — a 4/4 sign consistency worth one line and no more (sign test
+p=0.0625, one-tailed). G's `oow` signs DISAGREE across seeds (−0.209/−0.453 vs
++0.716/+0.329), so there is no out-of-window effect at all.
+
+⚑ Two honest caveats on G, both of which limit what a null here licenses. (1) The
+corpus is a **fixed 1.15M-row pool with the window frozen**; production's recency draw
+acts on a window that is continuously refilled, so the mechanism G can express here is
+only the static part of it. (2) At 48 chunks G's `inw` is +0.13 to +0.70 vs A (ns), so
+the two are at comparable learning — the matched-learning confound that dissolved C/D
+does NOT apply to G, which makes the null cleaner but also means the recency draw is
+not buying or costing learning either. **The live recency weighting is not exonerated;
+it is untested against a MOVING window, which is the only form in which it operates.**
+
+### ⚑⚑ NEUTRAL FIXED RULER — the rig reproduces the LIVE degradation, and it ranks the arms
+Frozen deep-SF audit, raw-policy top-1 on all 4,000 `data/audit_set_v1.jsonl`
+positions (`raw_policy_regret.py` == `audit_targets` `cand.raw`), final weights,
+paired by position, 10k-resample bootstrap. FEN-only inputs (117/175 planes zero), so
+RANKING claims only. This is the one ruler whose positions no lineage net generated.
+
+| arm | level | vs boot512 (positive = WORSE than the init) |
+|---|---|---|
+| boot512 | 47.93 | — |
+| **A_s0** (12,320 steps) | 55.88 | **+7.945** [+3.024, +13.676] SIG |
+| A_s1 (8,448) | 54.62 | +6.690 [+2.146, +11.957] SIG |
+| B2_s0 | 54.70 | +6.770 [+2.251, +11.955] SIG |
+| C_s0 / C_s1 | 51.71 / 51.77 | +3.778 ns / +3.838 ns |
+| D_s0 / D_s1 | 52.35 / 51.83 | +4.421 ns / +3.895 ns |
+| G_s0 / G_s1 | 55.97 / 55.94 | +8.033 SIG / +8.006 SIG |
+| SHUF_s0 | 204.67 | +156.735 SIG (control) |
+
+**⚑⚑ RIG VALIDATION AGAINST THE LIVE RUN.** Arm A degrades this ruler by **+7.945 cp**
+in 12,320 offline steps. The live lineage boot512 -> iter477 degrades the SAME ruler by
+**+8.45 cp** over 478 iterations. A fixed-pool offline sidecar reproduces the
+production degradation magnitude on an independent, neutral ruler to within 0.5 cp.
+Whatever this rig is doing, it is doing the same thing the live loop does.
+
+**Every arm is worse than its own initialisation on neutral positions.** Training on
+this window degrades general policy quality, full stop — the wedge is not an artefact
+of the `oow`/`era` rulers.
+
+**Ranking agrees with the era ruler**: C/D best (least degradation, and the only arms
+whose degradation is not significant), then B2 ~ A, then G worst. Two independent
+rulers, built from different pools by different code, order the arms identically.
+
+**C and D beat A on this ruler and it REPLICATES** — 7 of 8 seed-pairings SIG,
+−2.27 to −4.17 cp. This is the strongest arm effect in the experiment.
+⚑ But it is very likely the same rate confound. C/D reached `inw` ~33.5 at 8,448 steps
+where A reached 30.1; A's own audit degradation grows with steps (+6.690 at 8,448 ->
++7.945 at 12,320, ~+0.32 cp/1k steps), and extrapolating A back to the ~3,500 steps at
+which it had C/D's in-window level gives ~+2.8 cp, i.e. BETTER than C/D's +3.8 to
++4.4. **Not properly tested**: the audit was run on final weights only, so there is no
+matched-learning control on this ruler. Stated as an open item, not a win.
+
+**G is null here too**: G−A is ns in all four seed pairings (+0.061 to +1.343) against
+an A seed spread of +1.255. Three rulers now agree that the recency draw does nothing
+on a frozen window.
+
+### CORRECTION to this entry's RESULT 1
+I reported arm A as ending "significantly WORSE out-of-window". That holds for seed 0
+at the full 12,320 steps (+1.153 [+0.086, +2.189] S), but seed 1 was run to 8,448 only
+and the two seeds read **+0.923 and +0.179** there — a spread that IS the entire noise
+bar. The seed-robust claim is the weaker one: **out-of-window does not improve.** The
+degradation claim rests on one seed at a longer budget and is labelled as such.
+
+### FINAL ANSWER TO THE QUESTION THIS EXPERIMENT ASKED
+**No.** Nothing tested converts the teacher's signal into out-of-window gain. Six
+regimes — production replica, direction-only forced (hard-clip 0%->100%), 10x weight
+decay, label smoothing 0.05, 1/3 LR, and production's own recency sampler — all sit on
+one trade-off curve, losing **~0.23-0.27 cp of old-era competence per cp of in-window
+gain**, with the out-of-window term positive in every arm. The levers move how fast a
+run travels that curve; **none bends it**.
+
+The one durable, actionable number is the timing: arm A's held-out CE bottoms at
+**step 5,632 of 12,320** and its `oow` regret at **step 4,224**, after which both
+degrade while train loss keeps falling. On this data the useful step budget is roughly
+**half** what was run.
+
+Still unrun, and now the only live hypotheses: **arm F** (20% old-era rehearsal;
+UNBLOCKED by the provenance-field proof appended above) and any test of the recency
+draw against a **moving** window rather than a frozen one.
