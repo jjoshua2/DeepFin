@@ -27807,3 +27807,53 @@ low-dose edge — where the intervention barely perturbs training yet still reco
 ~1 cp of era — is the only place in three waves where the trade-off curve looks
 bent rather than slid along. It is n=1. It needs seeds before anyone believes it,
 including me.
+
+#### ADDENDUM — the declared-non-decisive neutral audit for arm FE
+
+Run on the same frozen deep-SF audit set with the same `raw_policy_regret.py`
+invocation as every prior arm, paired on all 4,000 positions, while the 6b seed
+extension held the card (batch 64 / mem-fraction 0.12 so that any OOM would take the
+audit and not the runs). Declared non-decisive in advance: FEN-only inputs, ranking
+only, level comparison on final weights with no matched-learning control.
+
+**`FE20_s0` raw needed no compute.** Its `final.pt` sha256 is identical to `F_s0`'s
+(`86b1f3a9…`), so its audit number is the one already banked: **52.79 cp**. This is
+the 6b bit-identity finding paying for itself — re-scoring would have burned GPU on
+weights already measured.
+
+| checkpoint | level |
+|---|---|
+| boot512 | 47.93 |
+| `F_s0` == `FE20_s0` raw | 52.79 |
+| **`FE20_s0_ema2000`** | **52.81** |
+| `H2_ema2000` (EMA solo) | 52.92 |
+| `A_s0` (control) | 55.88 |
+
+| paired contrast | delta cp | |
+|---|---|---|
+| **`FE20_s0_ema2000` − its own raw run** | **+0.015 [−2.940, +2.887]** | **ns** |
+| `H2_ema2000` − `A_s0` (EMA solo, same contrast without rehearsal) | **−2.959 [−5.394, −0.636]** | **SIG** |
+| `FE20_s0_ema2000` − `A_s0` | −3.071 [−6.501, +0.169] | ns |
+| `F_s0` − `A_s0` (rehearsal alone) | −3.085 [−6.750, +0.552] | ns |
+| `FE20_s0_ema2000` − boot512 | +4.875 [+0.109, +10.189] | SIG |
+
+**This is a third independent ruler confirming the substitution finding, and it puts
+it more starkly than the regret rulers did.** Adding EMA on top of rehearsal moves
+the neutral audit by **+0.015 cp — indistinguishable from zero**. The same EMA
+applied WITHOUT rehearsal moves the same ruler by **−2.959 cp, significantly**. The
+difference-in-differences is **+2.974**: on this ruler the cancellation is not the
+~50% seen on `oow`, it is **total**. The combined arm (−3.071) is statistically
+indistinguishable from rehearsal alone (−3.085) — EMA contributed nothing it did not
+already have.
+
+Two levers that each do something real, and that stack to exactly one of them. That
+is what "the exchange rate is a property of the loop" looks like from a third angle.
+
+Caveats kept: single seed; the vs-A contrasts are individually ns because the audit's
+paired CI is +-3-6 cp at n=4,000, so the load-bearing comparison is the marginal one
+(EMA's contribution with rehearsal, +0.015 ns, versus without, −2.959 SIG), not the
+absolute levels. And every FE checkpoint remains significantly worse than boot512.
+
+**Also owed and already delivered** (ledger 00be40af1): the H2 banked-EMA neutral
+audit — `H2_ema500` **53.92 cp** (−1.961 ns vs raw), `H2_ema2000` **52.92 cp**
+(−2.959 SIG vs raw). Both remain significantly worse than boot512 (+5.98, +4.99).
