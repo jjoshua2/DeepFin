@@ -35,6 +35,7 @@ from chess_anti_engine.inference import (
     MultiSlotInferenceClient,
     SlotInferenceClient,
     model_constant_source,
+    require_model_planes,
 )
 from chess_anti_engine.inference_threaded import ThreadedDispatcher
 from chess_anti_engine.moves import (
@@ -880,6 +881,10 @@ class WorkerSession:
             DirectGPUEvaluator | ThreadedDispatcher | AOTEvaluator | None
         ) = None
         self.inference_client = self._make_inference_client()
+        # One-shot warn latch for a manifest that names no encoding, so the
+        # slot-width check below cannot skip itself silently. See
+        # _require_slot_planes_match_manifest.
+        self._slot_planes_unknown_warned = False
         self.pause_selfplay_active = False
         self.manifest_state = _MANIFEST_STATE_ACTIVE
         self.manifest_state_elapsed_s: float | None = None
@@ -1391,6 +1396,18 @@ class WorkerSession:
     def _load_and_compile_model(self, path: Path, cfg: ModelConfig, *, label: str, sha_short: str) -> torch.nn.Module:
         """Build model, load checkpoint, optionally compile."""
         model = build_model(cfg)
+        # Slot width vs the model actually built here. NOT the production
+        # selfplay check: a worker with a broker client does not reach this
+        # function at all (see _require_slot_planes_match_manifest, which runs on
+        # the manifest path every selfplay worker takes). This covers the case
+        # where a local model IS built alongside a client — arena tasks — where
+        # the built model is the more specific source of truth than the manifest.
+        client = self.inference_client
+        if client is not None:
+            require_model_planes(
+                model, int(client.input_planes),
+                where="worker inference slot (local model)",
+            )
         ckpt = torch.load(str(path), map_location="cpu")
         sd = ckpt.get("model", ckpt)
         load_state_dict_tolerant(model, sd, label=label)
@@ -1838,6 +1855,9 @@ class WorkerSession:
         new_sha = str(manifest.get("model", {}).get("sha256", ""))
         if not new_sha or new_sha == self.model_sha:
             return
+        # The mid-batch tier-2 path also returns early for client-only workers
+        # (it only re-tags), so check the width here as well.
+        self._require_slot_planes_match_manifest(manifest)
         model_info = manifest.get("model") or {}
         model_step = int(manifest.get("trainer_step") or 0)
         if self.inference_client is not None:
@@ -2761,6 +2781,62 @@ class WorkerSession:
             return None
         return model_path
 
+    def _require_slot_planes_match_manifest(self, manifest: dict) -> None:
+        """Broker slot width vs the encoding the manifest declares for the model.
+
+        This runs on the path a PRODUCTION SELFPLAY worker actually takes.
+        ``_load_and_compile_model`` does not: with a broker client, ``_sync_model``
+        returns before loading (``need_local_model`` is False) and
+        ``_swap_model_from_manifest`` returns after only re-tagging, so a check
+        placed there fires on arena tasks and nowhere else (PR #321 review F2).
+
+        The hazard is ``INFERENCE_AUDIT`` I2: ``--inference-slot-input-planes``
+        defaults to the v1 146 while production is 175, a narrower client fits
+        inside the broker's larger segment, the protocol completes, and the
+        client reads policy/WDL out of the middle of the broker's INPUT region —
+        all-zero, silently. The manifest is the first thing a client-only worker
+        sees that knows the model's real width, so compare here.
+        """
+        client = self.inference_client
+        if client is None:
+            return
+        mc = manifest.get("model_config") or {}
+        # Both shapes reach here: the poll path gets the manifest dict, and
+        # _swap_model_from_manifest accepts a ModelConfig directly (worker.py's
+        # `isinstance(mc, ModelConfig)` branch). Reading only the dict form would
+        # silently downgrade the object form to the "cannot check" branch.
+        if isinstance(mc, ModelConfig):
+            declared = mc.input_extra_features
+        elif isinstance(mc, dict):
+            declared = mc.get("input_extra_features")
+        else:
+            declared = None
+        if declared is None:
+            # Production manifests always carry it (model_config_to_manifest_dict).
+            # A manifest that does not is the one case this check cannot make, so
+            # say so once rather than skipping in silence.
+            if not self._slot_planes_unknown_warned:
+                self._slot_planes_unknown_warned = True
+                self.log.warning(
+                    "manifest model_config declares no input_extra_features; "
+                    "cannot verify inference slot width (%d planes) against the "
+                    "model. A skew here returns all-zero policy/WDL silently.",
+                    int(client.input_planes),
+                )
+            return
+        want = int(input_plane_count(str(declared)))
+        got = int(client.input_planes)
+        if got != want:
+            raise ValueError(
+                f"inference slot is {got} input planes but the manifest declares "
+                f"input_extra_features={declared!r} = {want} planes. The broker "
+                "and this worker must be started with the same width "
+                "(--input-planes / --inference-slot-input-planes; the default is "
+                "the v1 146). A narrower client fits inside the broker's segment "
+                "and reads policy/WDL out of its input region — all-zero, with no "
+                "error (INFERENCE_AUDIT I2)."
+            )
+
     def _sync_model(self, manifest: dict) -> None:
         """Download + build + load + compile model if SHA changed."""
         task_type = str((manifest.get("task") or {"type": "selfplay"}).get("type", "selfplay")).lower()
@@ -2770,6 +2846,9 @@ class WorkerSession:
         model_sha = str(model_info.get("sha256") or "")
         if not model_sha:
             return
+        # Before the need_local_model early return below: a client-only selfplay
+        # worker never reaches the model load, and this is the check it needs.
+        self._require_slot_planes_match_manifest(manifest)
         model_step = int(manifest.get("trainer_step") or 0)
 
   # Store for use by other methods this iteration.

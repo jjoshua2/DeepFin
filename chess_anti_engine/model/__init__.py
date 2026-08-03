@@ -395,7 +395,10 @@ def _attach_runtime_model_metadata(model: torch.nn.Module, cfg: ModelConfig) -> 
     # GameConfig with the same trial value. Two models with different flag
     # values cannot share a process; cross-encoding arenas already run each
     # side as its own engine subprocess.
-    rep_fix.apply(bool(cfg.history_rep_fix))
+    # boards_discarded: a model is built before it evaluates anything, and the
+    # only in-process cross-flag case (an arena loading two checkpoints) rebuilds
+    # its CBoards per search call — see selfplay/match.py.
+    rep_fix.apply(bool(cfg.history_rep_fix), boards_discarded=True)
     return model
 
 

@@ -20,7 +20,7 @@ from typing import Any, cast
 import chess
 import numpy as np
 
-from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding import check_encode_buffer_planes, input_plane_count
 from chess_anti_engine.mcts._mcts_tree import batch_compute_relations
 from chess_anti_engine.encoding.features import extra_feature_plane_count
 from chess_anti_engine.encoding import encode_position
@@ -83,6 +83,22 @@ def _batch_encoder_pair(state: SelfplayState):
     if uses_lc0_root_history(hist_enc):
         return state.batch_enc_146_lc0_root, state.batch_enc_146_lc0_root_bf16
     return state.batch_enc_146, state.batch_enc_146_bf16
+
+
+def _check_root_buffer(buf: np.ndarray, state: SelfplayState, kind: str) -> None:
+    """The evaluator's pinned buffer must carry the game config's plane count.
+
+    On this branch the plane count comes from the evaluator/model; on the
+    ``np.empty`` branch below it comes from ``state.game.input_extra_features``.
+    The C batch encoder reads the feature version off the buffer and never sees
+    the config, so a disagreement encodes a different layout at one batch size
+    and not the other, silently (encoding audit E4). This is the selfplay
+    production path: every training row is written from these planes.
+    """
+    check_encode_buffer_planes(
+        buf, state.game.input_extra_features,
+        where=f"selfplay root inplace ({kind})",
+    )
 
 
 def _padded_batch_size(bsz: int) -> int:
@@ -340,10 +356,12 @@ def _evaluate_root_batch(
         if use_bf16_input and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
             buf = eval_impl.get_input_buffer_bf16_bits(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
             assert batch_enc_bf16 is not None
+            _check_root_buffer(buf, state, "bf16")
             batch_enc_bf16(cb_encode_list, buf)
         else:
             buf = eval_impl.get_input_buffer(padded_bsz)  # pyright: ignore[reportAttributeAccessIssue]
             assert batch_enc is not None
+            _check_root_buffer(buf, state, "fp32")
             batch_enc(cb_encode_list, buf)
         if state.game.record_relations:
             _rel = np.zeros((padded_bsz, 5, 64, 64), dtype=np.uint8)

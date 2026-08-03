@@ -22197,3 +22197,202 @@ this project ships, also untouched. Third, the review of this PR found a
 realloc-dangle in the children pool that is **shared with `main` and predates
 this work**; it is recorded here as a known pre-existing defect and deliberately
 not bundled into a correctness fix that is trying to stay reviewable.
+
+---
+
+## GATE PROMOTION 2026-08-03 — E1-E4 of the encoding audit: the C-vs-Python plane oracle enters CI in the production regime, and three "value accepted then ignored" sites get an observation that can fail
+
+**Not an experiment.** No training-affecting change, no config key, no loss
+weight, no data-pipeline semantics. Nothing here alters a single training row on
+the current settings; every fix is either a gate turned on, a keyword threaded,
+or a guard added. Recorded because the ledger is where the standing instruments
+are catalogued, and because three of the four items are the house signature
+defect (`docs/rl_loop_audit.md` M11's family) in fresh instances.
+
+Source: `scratchpad/code_audit_20260803/ENCODING_AUDIT.md` (CPU-only, `nice -n 19`).
+Its headline is a NEGATIVE result worth banking: **the C and Python encoders are
+bit-identical in the production regime at 175 planes**, with history, castling,
+EP and repetitions present — 1,654 real-game positions × 2 history modes ×
+2 rep-fix phases, 0 divergences, plus 552 boards × 3 encoders on the batch path.
+Nothing in the repo had ever measured that. This PR turns the one-off
+measurement into a standing gate.
+
+**E1 — the only C-vs-Python plane differential was off in every gate.**
+`scripts/fuzz_cboard_diff.py`'s encode oracle defaulted to `--encode-every 0`,
+`scripts/fuzz/run_fuzz.sh diff` never passed it, `tests/test_fuzz_smoke.py` set
+`encode_every=0` explicitly, and when asked for at all it hardcoded
+`input_extra_features="v1"` (146 planes) and never called `rep_fix.apply`. The
+reason was a **stale docstring** claiming the oracle "fails on default seeds
+until [`history_rep_fix`] lands". It landed **2026-06-17**
+(`configs/pbt2_small.yaml:197`); the gate was never re-enabled. So the regime
+carrying 100% of production traffic was the one regime nothing checked.
+Now: defaults are production (`v2_threats`/175, `history_rep_fix` on,
+`--encode-every 4`), `run_fuzz.sh diff` passes the cadence explicitly,
+`fuzz_batch_encode_diff.py` runs at 175 too, and `tests/test_fuzz_smoke.py`
+carries the CI gate. **Green on arrival** — 60 games at defaults, 0 divergences.
+
+**The gate ships with its negative control.** `--no-history-rep-fix` must FAIL,
+and does: plane 90, a slot-6 repetition plane, at game13 ply180. That test is in
+CI (`test_encode_oracle_catches_the_prefix_divergence`). Without it the gate
+would pass in both phases and prove nothing about whether the flag reaches the
+planes. A separate test pins the realized CLI defaults so a silent revert to
+v1/146 or `encode_every=0` goes red rather than quietly reducing the fuzzer to a
+state-parity check again.
+
+**E2 — the AOT verification gate encoded its "deployment input distribution" in
+the LEGACY history layout.** `scripts/build_aot_packages.py` threaded
+`input_extra_features` into `_real_position_batch` but never
+`input_history_encoding`, so `encode_positions_batch` fell back to legacy while
+the model is `lc0_root_legacy_meta`. Measured: **98 of 175 planes differ on ≥1
+row, 92.0 planes per row, 7.3% of cells** — and the plane COUNT is identical
+either way (112 + n_extra), so the buffer shape, the package signature and the
+verify comparison all succeeded on the wrong content. `verify_packages` decides
+whether a built AOT package is numerically equivalent to eager, including
+`argmax_min=0.90` on the policy; the AOT packages are the live worker inference
+path. Fixed by taking the encoding off the MODEL (`model_encoding_kwargs`)
+rather than adding a second forgettable keyword — the encoding is not a free
+parameter of this gate, and a keyword that can be forgotten is how this bug
+survived. ⚠ Precisely what that buys (review F5): the attributes are the values
+the model was CONSTRUCTED with, so they cannot drift from it the way a separately
+threaded keyword can. It is NOT an extra guard against a model of unknown
+encoding — `build_model` normalizes `None` to `legacy`/`v1`, so a real model
+always declares something and `model_encoding_kwargs`' `ValueError` is reachable
+only for objects it did not build. An earlier draft of this entry claimed the
+stronger thing.
+
+⚠ **The consequence was NOT measured.** Establishing whether a package's
+AOT-vs-eager verdict actually changes under the two input distributions needs
+the GPU, and this work was CPU-only. The claim is that the gate's own stated
+premise ("judged on the deployment input distribution") now holds — **not** that
+any shipped package was miscompiled or that any past PASS was wrong. Anyone who
+wants that number must run `--verify-only` on both encodings and compare.
+
+**E3 — `rep_fix`'s ordering contract had no guard.** The flag is a bare module
+global in each `.so`; a board pushed across a flip encodes repetition planes
+matching **NEITHER** regime: slots `[1,1,1,1,1,1,1,0]` under either clean value,
+`[1,0,1,0,1,0,1,0]` across the flip — half the slots silently blanked. `CBoard`
+is a C type with no `__dict__` and no weakref support, so the flag cannot be
+stamped per board from Python; the guard sits on the flip. `apply()` now raises
+`RepFixFlipError` on a value CHANGE unless the caller passes
+`boards_discarded=True`.
+
+⚠ **Honest limit on this guard: the three production callers are exempted**
+(`selfplay/manager.py` batch start, `selfplay/match.py` per move cycle,
+`build_model`), each with the observation that makes the exemption true recorded
+at the site. So on today's paths the guard **cannot fire** — it is latent, as the
+finding is. Its value is that a NEW caller, or the future long-lived-CBoard
+optimisation on the arena path that the audit names, fails loudly instead of
+mis-encoding. The audit's repro (`enc_repfix_midgame_flip.py`) now raises, and
+the same shape is a test.
+
+**E4 — the C batch encoders take the plane count from the OUTPUT BUFFER.**
+`n_extra = PyArray_DIM(out_arr, 1) - 112` at seven sites; the C shape check
+accepts either 146 or 175 and then trusts the buffer, so
+`cfg.input_extra_features` never reaches the C encoder. `mcts/puct_c.py`'s two
+branches disagreed about the source of truth (evaluator buffer when
+`n_boards <= _max_batch`, config otherwise) — the SAME run would encode
+differently depending on batch size. Latent today (config and model agree), so
+this is a guard, not a bugfix. `check_encode_buffer_planes` now asserts
+buffer-vs-config at all 7 evaluator-sourced call sites (`puct_c` ×1, `gumbel_c`
+×4 — root fp32, root bf16, split-leaf, leaf — and `selfplay/network_turn` ×2, the
+last being the path every training row is written from). Same family:
+`_CHANNELS = input_plane_count()` =
+**146** is the argparse default for `--input-planes` on both brokers and
+`--inference-slot-input-planes` on the worker, while production is 175;
+`require_model_planes` now compares against the model at both brokers' model
+load, and `_require_slot_planes_match_manifest` compares the slot width against
+the **manifest's** declared encoding on the worker's poll path.
+
+⚠ **The worker check was in the wrong place in the first version of this PR, and
+that is the more instructive half of it.** It sat in `_load_and_compile_model`,
+described here and in the PR as "the worker's single chokepoint". It is not one:
+with a broker client `_sync_model` returns before the load (`need_local_model =
+inference_client is None or task_type == "arena"`) and
+`_swap_model_from_manifest` returns after only re-tagging — so the check fired on
+arena tasks and **never on production selfplay**, i.e. never on the configuration
+whose hazard (`INFERENCE_AUDIT` I2, all-zero policy/WDL from a narrow client)
+motivated it. Caught by review F2, driving the two real methods with a stub. A
+guard placed where the code does not go is worse than no guard, because the next
+reader stops looking; `tests/test_worker_slot_planes_guard.py` now asserts the
+reachability itself, not just the comparison.
+
+**Yardstick.** Not applicable in the experiment sense; the deciding observation
+for a gate promotion is that the gate can fail. Each fix was mutation-tested:
+
+```
+# E1  encode oracle, production defaults + negative control
+PYTHONPATH=. python3 scripts/fuzz_cboard_diff.py --games 60             # exit 0
+PYTHONPATH=. python3 scripts/fuzz_cboard_diff.py --games 60 --no-history-rep-fix
+                                                                         # exit 1, plane 90
+# E1  pin input_extra_features="v1" inside _check_encode's loop -> 3 tests red
+#     (before review F1: 0 tests red, CLI still printed "v=v2_threats")
+# E2  drop input_history_encoding in _real_position_batch  -> 1 test red
+#     hardcode "legacy" in verify_packages                 -> 1 test red
+# E3  scratchpad/code_audit_20260803/enc_repfix_midgame_flip.py -> now RAISES
+#     match.py passes cboards= to the search               -> 1 test red (F4)
+# E4  delete the check in puct_c / gumbel_c / network_turn -> 1 test red each,
+#     and each shows the C encoder writing 146 planes and execution proceeding
+# F2  move the worker check back into _load_and_compile_model -> 4 tests red
+PYTHONPATH=. python3 -m pytest tests/test_fuzz_smoke.py \
+    tests/test_encode_buffer_plane_guard.py tests/test_build_aot_packages.py \
+    tests/test_history_rep_fix.py tests/test_worker_slot_planes_guard.py
+```
+
+**REVIEW ROUND (independent agent, reviewer ≠ author).** Verdict on the first
+push was REQUEST CHANGES, on two findings that were **both the exact defect class
+this entry is about — an observation that cannot fail**:
+
+- **F1** — the E1 gate pinned the module constants and the argparse defaults but
+  not whether the threaded value REACHED the encoder. The reviewer's mutation
+  (one line inside `_check_encode` re-binding `input_extra_features = "v1"`) left
+  all six tests green and the CLI still printing `v=v2_threats — no divergence`,
+  with the 29 v2_threats planes silently back out of the differential. That is
+  audit E1 verbatim, reintroduced by the PR that fixes it. Now `_run` computes
+  the expected plane count once, far from the encoder calls, and `_check_encode`
+  asserts the arrays it compared are that wide; the mutation turns 3 tests red
+  and makes the CLI exit 1.
+- **F2** — the worker guard was unreachable on production selfplay (above).
+
+Both were found by attacking placement and reachability, not by re-reading the
+diff — which is the argument for the reviewer-≠-author rule holding here. Three
+non-blocking items were also taken: the 6 untested `check_encode_buffer_planes`
+sites now have the two production ones pinned (`gumbel_c` root, `network_turn`
+root — the training-row path), E3's exemption PRECONDITION is pinned (match.py
+must pass no `cboards=`, so a future long-lived-CBoard change goes red instead of
+inheriting the keyword), and the two wording overclaims are corrected in place.
+
+**Revert point.** None taken. No weights, optimizer, PID or replay state is
+touched; nothing here reads or writes a training row. Revert is `git revert`.
+
+**Confounds.** None with any live readout. The only behaviour change on a
+production path is that four guards can now raise where they previously could
+not, and every one is proved inert on today's configuration: the plane-count
+guards compare two values that both derive from
+`config["input_extra_features"]` (`tune/distributed_runtime.py:541,889,1044,1106`
+and the manifest, written by `model_config_to_manifest_dict`), and no production
+caller flips `history_rep_fix` with a live board. The one new per-poll code path
+is an int comparison plus a **one-shot** warning for a manifest that declares no
+encoding — production manifests always declare one, so that branch should never
+be seen; if it is, the log line is the finding. The AOT verify change alters what
+`--verify` measures on, so any verify PASS/FAIL recorded before this commit is
+not comparable to one after it.
+
+**Review status.** UNREVIEWED at open; independently reviewed after the first
+push (REQUEST CHANGES, 2 blockers + 3 recommendations, all addressed above). The
+reviewer's own re-run reproduced the E1 negative control, both E2 mutations and
+the E4 puct mutation, and instrumented the C setter to confirm the gate really
+drives 175 planes in both production history modes with the flag pushed into
+both extensions.
+
+Two things after that round, both worth recording because they are the same
+class again. First, re-reading the F2 fix found that
+`_require_slot_planes_match_manifest` read only the **dict** form of
+`manifest["model_config"]`, while `_swap_model_from_manifest` also accepts a
+**`ModelConfig` instance** — the object form fell through to the "cannot check"
+branch and downgraded the raise to a one-shot warning. A guard that quietly
+stops guarding on one of its two real inputs; fixed and mutation-pinned. Second,
+#320 (Gumbel transposition key) merged mid-review and changes `.c`/`.h`, so every
+number measured before that merge was measured against a stale `.so`. The
+worktree's extensions were rebuilt and the whole verification re-run on the
+merged tree rather than assuming the merge was inert — the same rule as
+`c_extension_rebuild_after_pull`, applied to a PR's own evidence.

@@ -210,7 +210,7 @@ def _fresh_state(
     resume re-encodes through the same globals, so a direct state must set it
     too or the repetition planes would depend on test ordering.
     """
-    rep_fix.apply(bool(game.history_rep_fix))
+    rep_fix.apply(bool(game.history_rep_fix), boards_discarded=True)
     return SelfplayState.create(
         model=None, device="cpu", rng=np.random.default_rng(seed),
         stockfish=cast("Any", _NullStockfish()),
