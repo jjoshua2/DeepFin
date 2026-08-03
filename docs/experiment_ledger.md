@@ -27382,3 +27382,79 @@ single-seed ratio of the unstable kind above, and it does not enter the verdict.
 not meaningfully trade learning at all), `E` is reported as `n/a` rather than as a
 number. Below that the ratio is dominated by its denominator's error and the arm
 should be judged directly on the level contrasts instead.
+
+---
+
+### AUDIT 2026-08-03 — legality screen over stored policy targets: ZERO findings, and the screen is PROVABLY BLIND to the two defects it was aimed at
+
+**Full report:** `scratchpad/data_legality_scan_20260803/LEGALITY_SCAN.md`.
+Read-only, CPU-only. Verdict class: INSTRUMENT (no training change).
+
+**What ran.** Every stored policy target was checked against an independent
+oracle: rebuild the board from the row's own `x` planes
+(`eval/audit.py::decode_board_from_planes`), generate legal moves with
+**python-chess**, map them into the shard's id space via `moves/encode.py`. The
+stored `legal_mask` was never used as the oracle — it was scanned separately.
+
+**Scope.** 3,177 shards / **5,864,682 rows**, shard-mtime span 2026-07-02 →
+2026-08-01: the live replay window (trial `13a9f`, 713 shards, 1,273,501 rows,
+**exhaustive**) plus nine banked `data/salvage/` pools at stride 3, newest first.
+Keyed on resolved full paths — basenames collide across lineages.
+
+**Result — every class ZERO.** `policy_target`, `policy_soft_target` and
+`sf_p0_policy_target`: no mass on an illegal move at >1e-8, >1e-3 or argmax; no
+all-zero, NaN/inf, negative or unnormalized target. `sf_p0_regret`: no
+non-finite, none outside [0,1]. `x`-plane decode failed on 0 of 5.86M rows.
+95% upper bound on the `policy_target` illegal rate is **5.4e-7**. Per-day table
+in the report is uniformly zero, so there is nothing to date.
+
+**The one genuinely positive finding.** The stored `legal_mask` — produced by the
+**C** generator `CBoard.legal_move_indices()`, the same one the search expands
+nodes with — agrees with python-chess **exactly on all 5,864,360 rows carrying
+one**, in both directions (no missing legal move, no extra illegal one), across
+positions of which ~3.1% hold an en-passant square. "The production legal-move
+generator is wrong about ep / castling / promotion" is closed.
+
+**⚠⚠ THE ZERO IS NOT EVIDENCE ABOUT W1 OR I1.** `gumbel_c.py:1125-1156` builds
+the improved policy by scattering onto `np.nonzero(pri > 0)` — Python's own legal
+set — and only *looks up* the C tree's child actions through `action_to_slot`. An
+illegal action in a node's child set is never enumerated, so it cannot reach the
+target. `blindness_proof.py` demonstrates this on the production search: a root
+deliberately expanded with W1's donor child set (illegal action 2562 present,
+root not re-expanded) yields `probs mass on 2562 = 0.000000e+00`, clean
+`legal_mask`, legal played move — **indistinguishable from an uncorrupted root**.
+`i1_visibility.py` shows the same for I1: priors are gathered at
+`pol_logits[legal_idx]`, so even **all-NaN logits** come back finite, sum 1.0,
+fully legal. This screen therefore cannot detect W1's root manifestation, W1's
+interior visit-count distortion, or I1's stale-response poisoning. Anyone citing
+"we scanned for illegal targets and found none" must carry this caveat — it is a
+gate that cannot fail for those two causes.
+
+**Power caveat on the ep fingerprint.** `ep_power.py`: only **0.1323%** of live
+rows have a legal en-passant capture (3.10% have an ep square). Even if the
+target could carry an injected ep move, the reachable population is small.
+
+**Bonus screen that IS sensitive.** All-NaN logits are laundered into an
+*exactly uniform* legal target (entropy = log k exactly, vs 2.71 nats for a clean
+33-move row), which is a usable fingerprint. Over the live window: **0 exactly
+uniform** rows in 1,216,909 (support ≥ 3); 2 near-uniform (deficit < 1e-3), both
+ordinary 3-move positions. A real, narrow negative on the worst I1 case.
+
+**Rig soundness (banked, not asserted).** Positive control 150/150 (decoded
+board's legal set identical to the original's); out-of-set negative control
+150/150; live rows 0/200; **shuffled-labels control 199-200/200** — the screen
+fires when the labels are permuted. A mutation control ran `scan_shard.py`
+itself — the exact file that produced the rates — over a corrupted shard copy and
+recovered every injected class at its expected count (125 illegal-mass, 25
+argmax-illegal, 51 zero-sum, 25 NaN, 25 negative, 25 mask-disagree).
+
+**Rig correction made mid-run.** `sf_p0_regret` first flagged 285/285 — a 100%
+rate, which the method rules treat as the rig being wrong. It was:
+`finalize.py::_build_sf_p0_regret_vector` fills *every* index including illegal
+ones with the uncovered default by design, and the loss masks them. Check
+replaced with finiteness + range. `sf_policy_target`/`sf_legal_mask` (t+1
+opponent POV) and `future_policy_target`/`future_legal_mask` (t+2) were **not
+scanned** — a same-position check false-flags by construction
+(`trainer.py:2705-2711`). `sf_p0_policy_target` *was* scanned, and its 0/692,051
+rate independently confirms the P0/own-POV convention documented at
+`replay/sample.py:73-78`.
