@@ -94,6 +94,56 @@ _ALLOWED_CONSUMER_FILES = {
 }
 
 
+# Where each startup-only key is actually READ, one entry per key. The bare-word
+# scan above cannot be used for these: "iterations" appears in prose in a dozen
+# modules. This is the enumeration the scan enforces, so adding a reader without
+# updating it fails the test.
+_STARTUP_ONLY_READER_FILES: dict[str, set[str]] = {
+    # `iterations = tc.iterations` (the while bound, read once into a local) and
+    # the DRIVER-side `base_config.get("iterations")` that sizes ASHA's max_t at
+    # experiment creation. Neither runs per iteration.
+    "iterations": {
+        "chess_anti_engine/tune/trainable.py",
+        "chess_anti_engine/tune/harness.py",
+    },
+    "puzzle_epd": {"chess_anti_engine/tune/trainable.py"},
+    # `run.py` resolves its default (`base["eval_sf_nodes"] = args.sf_nodes`)
+    # while building the base config, once, before any trial exists — a CLI-time
+    # write, not a per-iteration read.
+    "eval_sf_nodes": {
+        "chess_anti_engine/tune/trainable.py",
+        "chess_anti_engine/run.py",
+    },
+    "sf_pid_enabled": {"chess_anti_engine/tune/trainable.py"},
+    # `_resolve_pause_marker_paths`, which the startup block calls once.
+    "pause_file": {"chess_anti_engine/tune/trainable_config_ops.py"},
+}
+
+# A config READ, as opposed to a mention: `tc.key`, `config["key"]`,
+# `config.get("key"`, and the `base_config`/`cfg` spellings of the same. Prose,
+# argparse `--flag` strings and yaml allowlist tuples do not match.
+def _config_read_pattern(key: str) -> re.Pattern[str]:
+    k = re.escape(key)
+    return re.compile(
+        rf"""(?:\b(?:tc|trial_config)\.{k}\b)"""
+        rf"""|(?:\.get\(\s*["']{k}["'])"""
+        rf"""|(?:\[\s*["']{k}["']\s*\])""",
+    )
+
+
+def _config_read_offenders(
+    key: str, *, sources: dict[str, str], allowed: set[str],
+) -> list[str]:
+    """Files that READ ``key`` and are neither a declared reader nor a parser."""
+    pattern = _config_read_pattern(key)
+    return sorted(
+        rel for rel, src in sources.items()
+        if rel not in _ALLOWED_CONSUMER_FILES
+        and rel not in allowed
+        and pattern.search(src)
+    )
+
+
 def _write_one_key_yaml(path: Path, key: str, value: object) -> None:
     """Write a yaml the live validator ACCEPTS, carrying only ``key``.
 
@@ -223,15 +273,15 @@ def test_construction_only_keys_have_no_live_consumer() -> None:
     only if the whole runtime package mentions it in the declaring, parsing,
     allowlisting and constructing files and nowhere else.
 
-    ``_STARTUP_ONLY_TRIAL_KEYS`` (audit T2) is exempted from THIS test and
-    proved by a stronger one. A filename allowlist is a proxy for "no live
-    consumer": these keys are consumed by helpers in ``trainable.py`` /
-    ``trainable_phases.py``, which the proxy cannot distinguish from a
-    per-iteration read. ``tests/test_startup_only_config_keys.py`` answers the
-    real question instead -- it derives from the AST which keys ``train_trial``
-    reads only OUTSIDE its iteration loop, and every key here must be in that
-    derivation. Skipping them here without that test would be a hole; with it,
-    the proxy is simply the weaker instrument.
+    ``_STARTUP_ONLY_TRIAL_KEYS`` (audit T2) is scanned too, by
+    ``_config_read_offenders`` below rather than by the bare-word regex: those
+    keys live in ``trainable.py``/``harness.py`` alongside prose that mentions
+    them, so word matching is unusable, while the *reader* files still have to
+    be enumerated. The first version of this PR exempted them from this test
+    entirely and hand-classified ``eval_games`` as startup-only -- and this test
+    is precisely the one that would have named ``trainable_phases.py`` and
+    stopped it (review B1). See
+    ``test_the_startup_only_scan_names_the_key_that_slipped_through``.
     """
     pkg = _REPO / "chess_anti_engine"
     sources = {
@@ -252,6 +302,44 @@ def test_construction_only_keys_have_no_live_consumer() -> None:
             f"{offenders} — if any of those reads it after startup, a live edit "
             "DOES take effect there and freezing the key breaks it"
         )
+
+    for key in sorted(_STARTUP_ONLY_TRIAL_KEYS):
+        allowed = _STARTUP_ONLY_READER_FILES.get(key)
+        assert allowed is not None, (
+            f"{key} is declared startup-only but names no reader file; add it to "
+            "_STARTUP_ONLY_READER_FILES with the ONE place that reads it"
+        )
+        offenders = _config_read_offenders(key, sources=sources, allowed=allowed)
+        assert not offenders, (
+            f"{key} is declared startup-only but is READ (not merely mentioned) "
+            f"in {offenders}, which is not among its declared readers "
+            f"{sorted(allowed)} — if any of those runs per iteration, a live "
+            "edit DOES take effect there and freezing the key breaks it"
+        )
+
+
+def test_the_startup_only_scan_names_the_key_that_slipped_through() -> None:
+    """NEGATIVE CONTROL on the guard above, and the B1 regression test.
+
+    An instrument is only worth having if it FAILS on the known-bad input. PR F
+    as first written froze ``eval_games`` as startup-only; the scan above,
+    handed that key with the same reader set the other startup-only keys get,
+    must name ``trainable_phases.py`` — the per-iteration ``games=tc.eval_games``
+    that made the freeze wrong. If this ever comes back empty, the guard has
+    stopped guarding and the hand-classification is unchecked again.
+    """
+    pkg = _REPO / "chess_anti_engine"
+    sources = {
+        p.relative_to(_REPO).as_posix(): p.read_text(encoding="utf-8")
+        for p in sorted(pkg.rglob("*.py"))
+    }
+    offenders = _config_read_offenders(
+        "eval_games",
+        sources=sources,
+        allowed={"chess_anti_engine/tune/trainable.py"},
+    )
+    assert "chess_anti_engine/tune/trainable_phases.py" in offenders, offenders
+    assert "eval_games" not in _STARTUP_ONLY_TRIAL_KEYS
 
 
 @pytest.mark.parametrize("key", sorted(construction_only_config_keys()))

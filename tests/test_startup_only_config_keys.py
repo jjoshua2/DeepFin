@@ -241,12 +241,13 @@ _UNCLASSIFIED_STARTUP_ONLY: tuple[tuple[str, frozenset[str]], ...] = (
     ),
 )
 
-# `eval_games` is classified by hand and NOT derived, on purpose: the loop does
-# read it (`tc.eval_games <= 0 or eval_sf is None`), so the screen sees a live
-# consumer. That read can only ever DISABLE, because `eval_sf` is built once at
-# startup and is None forever when the launch value was 0 -- enabling eval live
-# is the silent no-op, which is exactly the class being frozen.
-_CLASSIFIED_BUT_NOT_DERIVED = frozenset({"eval_games"})
+# ⚑ THERE IS NO HAND EXEMPTION HERE ANY MORE, AND THAT IS THE POINT.
+# The first version of this file carried `_CLASSIFIED_BUT_NOT_DERIVED =
+# {"eval_games"}`: the derivation refused to derive that key -- correctly, the
+# loop reads it -- and the exemption overrode the instrument by hand. The
+# override was wrong (review B1). An instrument you override by hand is an
+# instrument you do not have, so the two sets now have to reconcile with
+# nothing in between.
 
 
 def test_the_derivation_finds_the_keys_the_audit_found_by_hand() -> None:
@@ -294,7 +295,7 @@ def test_the_hand_maintained_startup_only_set_is_derivable() -> None:
     """The other direction: every key frozen by hand must be one the source
     actually shows is startup-only, so the set cannot grow by assertion."""
     derived = derive_startup_only_keys()
-    invented = _STARTUP_ONLY_TRIAL_KEYS - derived - _CLASSIFIED_BUT_NOT_DERIVED
+    invented = _STARTUP_ONLY_TRIAL_KEYS - derived
     assert not invented, (
         "declared startup-only but the source shows a live consumer: "
         f"{sorted(invented)}"

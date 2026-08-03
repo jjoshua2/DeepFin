@@ -12,10 +12,12 @@ function returns something.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 import torch
 from torch import nn
 
@@ -31,6 +33,11 @@ from chess_anti_engine.tune.trainable import (
     _startup_gate_state,
     _startup_opp_strength_ema,
 )
+from chess_anti_engine.tune.trainable_config_ops import (
+    _reload_yaml_into_config,
+    reset_yaml_reload_key_tracking,
+    seed_yaml_reload_baseline,
+)
 from chess_anti_engine.tune.trainable_init import (
     _apply_restored_trial_meta,
     _restore_from_salvage_pool,
@@ -42,7 +49,9 @@ from chess_anti_engine.tune.trial_config import RestoreResult
 # --- audit T1: the opponent-strength EMA ----------------------------------
 
 
-def _save_checkpoint(ckpt_dir: Path, *, opp_strength_ema: float) -> None:
+def _save_checkpoint(
+    ckpt_dir: Path, *, opp_strength_ema: float, yaml_keys: list[str] | None = None,
+) -> None:
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     _save_trial_checkpoint(
         trainer=SimpleNamespace(save=lambda p: Path(p).write_bytes(b"weights")),
@@ -61,6 +70,7 @@ def _save_checkpoint(ckpt_dir: Path, *, opp_strength_ema: float) -> None:
         holdout_generation=2,
         holdout_ruler="v1:full_pass:0123456789abcdef",
         opp_strength_ema=opp_strength_ema,
+        yaml_keys=yaml_keys or [],
         Checkpoint=SimpleNamespace(from_directory=lambda d: d),
     )
 
@@ -264,6 +274,9 @@ def test_an_exported_pool_restores_the_gate_window_end_to_end(tmp_path: Path) ->
             "salvage_seed_pool_dir": str(out_dir),
             "lr": 3e-5,
             "salvage_restore_full_trainer_state": False,
+  # Production's value (configs/pbt2_small.yaml). The EMA follows this switch —
+  # see test_the_salvage_ema_follows_the_pid_state_switch.
+            "salvage_restore_pid_state": True,
         },
         trainer=_TinyTrainer(),
         device="cpu",
@@ -298,3 +311,128 @@ def test_a_resume_never_takes_a_window_from_a_pool(tmp_path: Path) -> None:
     assert _startup_gate_state(
         gate_state_path=tmp_path / "absent.json", restore=RestoreResult(),
     ) == {}
+
+
+def test_a_corrupt_own_gate_file_is_not_treated_as_absence(tmp_path: Path) -> None:
+    """Review N3. ``load_optional_json`` cannot tell "no file" from "unreadable
+    file", and a crash mid-write produces the second. Keying the pool fallback
+    off its None would hand this trial another lineage's window at exactly the
+    moment its own state was damaged."""
+    own_path = tmp_path / DURABLE_GATE_STATE
+    own_path.write_text('{"matches": 41, "wind', encoding="utf-8")  # truncated
+
+    assert _startup_gate_state(
+        gate_state_path=own_path,
+        restore=RestoreResult(restored_gate_state=_GATE_STATE),
+    ) == {}
+
+
+def test_the_salvage_ema_follows_the_pid_state_switch(tmp_path: Path) -> None:
+    """Review N4. `opp_strength_ema` is opponent_strength smoothed, and
+    opponent_strength is difficulty x winrate. An operator who sets
+    `salvage_restore_pid_state: false` is dropping the donor's difficulty on
+    purpose; importing its EMA anyway would anchor the scheduler's objective for
+    ~10 iterations to a difficulty this process is not running."""
+    td, ckpt_dir = _trial_dir_with_durable_state(tmp_path)
+    trainer = _TinyTrainer()
+    torch.save({"model": trainer.model.state_dict(), "peak_lr": 3e-5}, ckpt_dir / "trainer.pt")
+    out_dir, entry = _export(tmp_path, td, ckpt_dir)
+    (out_dir / "manifest.json").write_text(
+        json.dumps({"metric": "training_iteration", "entries": [entry]}), encoding="utf-8",
+    )
+
+    def _restore(*, restore_pid: bool) -> RestoreResult:
+        trial_dir = tmp_path / f"trial_{restore_pid}" / "abcde_00000"
+        trial_dir.mkdir(parents=True)
+        rr = RestoreResult()
+        _restore_from_salvage_pool(
+            config={
+                "salvage_seed_pool_dir": str(out_dir),
+                "lr": 3e-5,
+                "salvage_restore_full_trainer_state": False,
+                "salvage_restore_pid_state": restore_pid,
+            },
+            trainer=_TinyTrainer(), device="cpu",
+            trial_id="abcde_00000", trial_dir=trial_dir, rr=rr,
+        )
+        return rr
+
+    assert _restore(restore_pid=True).opp_strength_ema == 327.19
+    # Not 0.0: None means "nothing restored", which is what makes the loop
+    # re-seed from its own first iteration instead of importing a stranger's.
+    assert _restore(restore_pid=False).opp_strength_ema is None
+
+
+# --- review B2: the delete observable across a restart --------------------
+
+
+def test_the_checkpoint_banks_the_yaml_key_set(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "chess_anti_engine.tune.trainable_report.save_holdout_rows", lambda **_kw: None,
+    )
+    ckpt_dir = tmp_path / "checkpoint_001985"
+    _save_checkpoint(ckpt_dir, opp_strength_ema=1.0, yaml_keys=["batch_size", "lr"])
+
+    meta = load_optional_json(ckpt_dir / SIDECAR_TRIAL_META)
+    assert meta is not None
+    assert meta["yaml_keys"] == ["batch_size", "lr"]
+
+    rr = RestoreResult()
+    _apply_restored_trial_meta(rr, meta)
+    assert rr.restored_yaml_keys == frozenset({"batch_size", "lr"})
+
+
+def test_a_key_deleted_while_the_trial_was_down_is_reported_at_startup(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """THE RESTART LEG (review B2). Pause -> delete the line -> restart is the
+    operator path that actually happens, and it was the one the warning could
+    not see: the startup reload seeds the in-process baseline from the NEW yaml,
+    while `--resume` hands back a saved trial config that still carries the
+    value. The banked key set is the missing baseline."""
+    reset_yaml_reload_key_tracking()
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text("train:\n  lr: 0.0007\n", encoding="utf-8")
+
+    # The restarted process: startup reload against the EDITED yaml, then the
+    # restored trial config, which still carries the deleted key's value.
+    config: dict = {"rebuild_sf_targets": True}
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        seed_yaml_reload_baseline(
+            yaml_path=str(yaml_path),
+            keys=frozenset({"lr", "rebuild_sf_targets"}),  # what the previous process ran
+            config=config,
+        )
+
+    messages = [r.getMessage() for r in caplog.records if "no longer set by" in r.getMessage()]
+    assert len(messages) == 1, messages
+    assert "rebuild_sf_targets" in messages[0]
+    assert "delete does not revert" in messages[0]
+    assert "the checkpoint this process resumed from" in messages[0]
+    # Observability only: the value is still in effect, exactly as before.
+    assert config["rebuild_sf_targets"] is True
+
+
+def test_the_startup_baseline_is_silent_when_nothing_was_deleted(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """NEGATIVE CONTROL for the restart leg: an ordinary restart onto an
+    unchanged yaml, a restart onto a yaml with a key ADDED, a fresh start and a
+    checkpoint that predates the banking must all stay quiet."""
+    reset_yaml_reload_key_tracking()
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text("train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n", encoding="utf-8")
+    config: dict = {}
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        seed_yaml_reload_baseline(
+            yaml_path=str(yaml_path), keys={"lr", "rebuild_sf_targets"}, config=config,
+        )
+        seed_yaml_reload_baseline(yaml_path=str(yaml_path), keys={"lr"}, config=config)
+        seed_yaml_reload_baseline(yaml_path=str(yaml_path), keys=frozenset(), config=config)
+        seed_yaml_reload_baseline(yaml_path=None, keys={"lr"}, config=config)
+
+    assert [r.getMessage() for r in caplog.records if "no longer set by" in r.getMessage()] == []
