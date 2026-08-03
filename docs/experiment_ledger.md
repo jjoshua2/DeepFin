@@ -27948,3 +27948,61 @@ from target aborts the run at chunk 1 (0.05 -> 13/256 = 0.0508 and 0.10 -> 26/25
 0.1016 both sit inside the band); any rehearsal/era-ruler game overlap aborts at
 startup; EMA divergence 0 at the first eval fails the wave. An individual run dies
 if its chunk-8 `oow` is worse than `A`'s by more than 3x the 0.638 bar.
+
+#### ADDENDUM — the 6b seed extension: LOOP-INVARIANT CONFIRMED at n=4, and a gap in 6b itself
+
+`FE20_s2` and `FE20_s3` completed. Per 6b the test was whether the 4-seed pooled
+signed `E` for `FE20_ema2000` stays within [0.7, 1.3] x the 4-seed best solo.
+
+| reading | E(raw) | E(ema2000) | best solo | **ratio** | verdict |
+|---|---|---|---|---|---|
+| n=2, pre-registered (seed-matched controls) | 0.983 | 0.992 | 0.983 | **1.009** | LOOP-INVARIANT |
+| n=4 (deviation below) | 0.808 | 0.877 | 0.808 | **1.085** | **LOOP-INVARIANT** |
+
+**Confirmed at double power.** The instructive part is that the absolute `E` moved a
+lot — raw 0.983 -> 0.808, ema2000 0.992 -> 0.877, both ~12-18% lower — while **the
+ratio the verdict actually rests on barely moved (1.009 -> 1.085)**. The level of
+the exchange rate is seed-sensitive; the *composition* question is not. That is the
+right robustness property for the claim being made, and it is the reason the
+pre-registration put the threshold on the ratio rather than on `E` itself.
+
+#### The gap: 6b added FE seeds without adding their controls
+
+**Amendment 6b was under-specified, and I did not catch it until execution.** Every
+matched-learning contrast is computed against arm A *at the same seed*, so the FE
+and A runs share a data order and that noise cancels. **`A_s2` and `A_s3` do not
+exist** — arm A was only ever run at seeds 0 and 1.
+
+Deviation taken, and labelled everywhere it is used: seeds 2 and 3 are contrasted
+against **both** `A_s0` and `A_s1`, and the two results averaged ("pooled-A
+control"). This halves the control's seed noise relative to picking one arbitrarily,
+but it does **not** recover the data-order cancellation a matched control provides.
+**The n=2 seed-matched reading therefore remains the pre-registered primary; the n=4
+reading is a supporting robustness check, not a replacement.**
+
+#### What that costs the powered F(0.20) replication — 6b's other stated purpose
+
+| seed | gave up `inw` | d_era @8448 | control |
+|---|---|---|---|
+| 0 | +0.979 | **−0.805 SIG** | seed-matched |
+| 1 | +0.729 | **−0.874 SIG** | seed-matched |
+| 2 | +1.142 | −0.844 **ambiguous** | pooled-A |
+| 3 | +0.755 | −0.390 ns | pooled-A |
+
+**Direction replicates 4 of 4** (all negative, all favourable). **Significance
+replicates cleanly only in the 2 seeds that have proper matched controls.** Seed 2
+is significant against one A control and not the other — precisely the ambiguity the
+missing control creates — and seed 3 is null against both.
+
+Note on presentation: the per-seed interval for a pooled-A contrast is an *average
+of two CI endpoints*, which is **not a valid confidence interval**. The `sig` flag
+reported is the conservative one (significant against BOTH controls), which is why
+seed 2 reads ambiguous even though its averaged endpoints happen to exclude 0. The
+averaged bounds are descriptive only.
+
+So 6b delivered its first purpose (E at n=4) and only **partially** its second: the
+mean F(0.20) era gain softens from −0.840 (n=2) to **−0.728 (n=4)**, the direction is
+now 4-for-4, but the powered *significance* claim the original arm-F verdict lacked
+is still not available. **Closing it properly needs `A_s2` and `A_s3`, not more FE
+seeds** — a control-side gap, not a treatment-side one. Not queued: the low-dose wave
+(decee3589) is the higher-value use of the card and started at 15:39.
