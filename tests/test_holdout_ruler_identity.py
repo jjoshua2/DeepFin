@@ -469,13 +469,34 @@ def test_the_trial_loop_bumps_before_the_best_model_comparison() -> None:
 # name and that `total` is bitwise equal. The measurement did not move; the
 # source did, and the reported column names did.
 #
+# Moved again 2026-08-03 by the F11 policy-index-LUT swap (play-path audit
+# 2026-08-03; this PR). `Trainer._policy_accuracy_stats` had a module-private
+# `lru_cache` over COMPACT_TO_FULL_POLICY / FULL_TO_COMPACT_POLICY -- the
+# duplicate `moves/torch_maps.py` exists to prevent (CLAUDE.md: "don't add
+# per-module `lru_cache` copies"), and strictly worse, because it keyed on
+# `target.device.index` raw and so allocated two copies of both tables for
+# `torch.device("cuda")` vs `("cuda", 0)`. The two `lut = ...` lines now call
+# `torch_maps.full_to_compact_index` / `compact_to_full_index`. Those lines sit
+# in `_align_index`, a closure inside `_policy_accuracy_stats`, which is one of
+# the frames `_compute_metrics` reaches -- and `digest_source` hashes SOURCE --
+# so both ids move.
+#
+# FIFTH declared false positive, proved rather than argued:
+# `tests/test_trainer_policy_index_lut.py` reconstructs the deleted helper's
+# exact body and requires dtype, device, shape and ELEMENT-WISE equality against
+# the shared tables, plus a round-trip over every real move (which would catch
+# the two directions having been swapped). Same `torch.long`, same source
+# arrays, same values -- the measurement cannot have moved, only the source hash.
+# Records stay comparable across the handover.
+#   full_pass  3a336231d9b5fce5 -> 104bee0152a72a68
+#   sampled    9f9c078dd590db13 -> 159e5e349a229400
+#
 # ⚑ OPERATOR-VISIBLE: `holdout_generation` bumps at the deploying restart, so
 # the running trial HANDS OVER its best-model record once, adopting the current
 # loss instead of comparing to it. Expected, and recorded in the ledger entry.
-#   full_pass  b8482e83d3b1c61f -> 3a336231d9b5fce5
-#   sampled    71ac6f0457876d02 -> 9f9c078dd590db13
-PRODUCTION_FULL_PASS_RULER = "v1:full_pass:3a336231d9b5fce5"
-PRODUCTION_SAMPLED_RULER = "v1:sampled:9f9c078dd590db13"
+# RESTART-GATED: merging this PR changes nothing until the run restarts onto it.
+PRODUCTION_FULL_PASS_RULER = "v1:full_pass:104bee0152a72a68"
+PRODUCTION_SAMPLED_RULER = "v1:sampled:159e5e349a229400"
 
 
 def test_the_production_ruler_id_is_pinned() -> None:

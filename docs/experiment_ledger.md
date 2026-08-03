@@ -21281,3 +21281,67 @@ yaml copy carrying the key rather than a change here.
 
 Still no config carries the key; still no verdict; the flip still needs its own
 entry once arm G reads out.
+
+---
+
+## 2026-08-03 — F11: the trainer's private policy-index LUT moves to `torch_maps`; the holdout ruler id MOVES, the MEASUREMENT does not
+
+**VERDICT: CODE-ONLY, no experiment.** Not a training-affecting change in the
+sense rule 1 covers — it changes no target, no loss weight, no sampling and no
+number the trainer computes — but it has one **operator-visible side effect**
+that this file exists to record, so it gets an entry rather than a silent merge.
+
+**What changed.** `train/trainer.py` defined `_policy_index_lut` /
+`_policy_index_lut_for`, a module-private `lru_cache` over
+`COMPACT_TO_FULL_POLICY` / `FULL_TO_COMPACT_POLICY` — exactly the duplicate
+`moves/torch_maps.py` exists to prevent (CLAUDE.md: "Use the shared
+device-cached lookups in `moves/torch_maps.py` — don't add per-module
+`lru_cache` copies"), found by the 2026-08-03 play-path code audit as F11. It
+was also strictly worse than the shared one: it keyed on `target.device.index`
+raw, without `torch_maps._device_key`'s cuda-index normalisation, so
+`torch.device("cuda")` and `torch.device("cuda", 0)` allocated two separate
+copies of BOTH tables for the same physical GPU. The two `lut = ...` lines in
+`Trainer._policy_accuracy_stats._align_index` now call
+`torch_maps.full_to_compact_index` / `compact_to_full_index`.
+
+### ⚑ OPERATOR-VISIBLE SIDE EFFECT: one best-model handover at the deploying restart
+
+```
+full_pass  3a336231d9b5fce5 -> 104bee0152a72a68
+sampled    9f9c078dd590db13 -> 159e5e349a229400
+```
+
+`_align_index` is a closure inside `_policy_accuracy_stats`, one of the frames
+`eval_ruler_id_for`'s `call_closure` walks from `_compute_metrics`, and
+`digest_source` hashes SOURCE — so a value-identical refactor still moves the
+fingerprint, and it moves BOTH ids (the frame is in both `measured_by` lists).
+`holdout_generation` therefore bumps at the next restart and the running trial
+**hands over its best-model record**, adopting the current `test_loss` instead
+of comparing against the pre-restart one. Expect it; do not read the handover as
+a regression.
+
+**RESTART-GATED.** Merging changes nothing on the live run: the id is read when
+the trainer is constructed, so the handover happens at the next restart onto
+this code and not before. Judge the deploy from the first post-restart
+`progress.csv` row (`holdout_generation` incremented exactly once).
+
+**The MEASUREMENT did not move, and this one is proved rather than argued** —
+the fifth declared false positive of this shape, and the standard the earlier
+ones (PR #283 and its review follow-up) did not meet.
+`tests/test_trainer_policy_index_lut.py` reconstructs the deleted helper's exact
+body and requires dtype, device, shape and **element-wise** equality against the
+shared tables, plus a round-trip over every real move (which is what would catch
+the two directions having been silently swapped). Same `torch.long`, same source
+arrays, same values. So `test_loss` means the same thing on both sides of the
+handover and records stay comparable across it — which is the only reason a
+moved ruler id is acceptable at all.
+
+**Revert point.** None taken: no weights, optimizer, PID or replay state is
+touched, and reverting is `git revert` plus one more handover at the following
+restart. The pins in `tests/test_holdout_ruler_identity.py:477-478` are updated
+in the same commit, per that test's own maintenance contract.
+
+**Confounds.** Split out of PR #317 (the play-path audit's safe subset)
+precisely so #317 stays ruler-neutral; it is the only change in its PR, so a
+handover observed at a restart carrying both PRs is attributable here and
+nowhere else.
