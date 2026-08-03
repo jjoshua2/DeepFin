@@ -27535,3 +27535,112 @@ tables bit-for-bit; `H2_s0` vs `A_s0` returns exactly 0.000 on all three rulers.
 cannot revive the primary cell — per-seed inw miss at 4.1× — and may only move
 pooled `E` to n=4 and give F(0.20) its missing power). Full 6-cell dose table
 follows when the queue drains.
+
+#### AUDIT WAVE 3 (2026-08-03) — worker.py, promotion gate, selfplay provenance, shared broker + concurrency. Two CRITICALs on the gate path; one ledger closure FALSE; one memory retraction REFUTED
+
+Four parallel line-level audits of the never-read half of the production loop.
+Docs + banked repros in `scratchpad/code_audit_20260803/`: `WORKER_AUDIT.md`
+(K1-K11), `GATE_AUDIT.md` (G3-1..G3-12), `SELFPLAY_AUDIT.md` (P1-P9),
+`SHARED_BROKER_AUDIT.md` (B1-B9). All audited `origin/main` post #320/#321/#322.
+
+**CORRECTION — the 2026-07-30 "BOTH BLOCKING FINDINGS CLOSED AS BUILT" paragraph
+(this file, :495-500) is FALSE for finding (1) on the production path.**
+Found independently by BOTH the gate audit (G3-1, from the consumer end) and the
+worker audit (K1, from the producer end): the worker stamps
+`opponent_wdl_regret_limit`/`sf_nodes` correctly on every raw shard (verified
+0.0817/698289 on a live worker shard), and the SERVER's upload compactor drops
+them — `_BufferedUploadAccumulator` (`server/app.py:281-341`) has no slot for
+them and `_flush_buffered_upload_to_inbox` (:434-489) rebuilds `ShardMeta`
+passing 48 of 56 fields. Compaction is unconditional ⇒ loss on 100% of
+production shards: `None` on 447/447 ingested shards (audit K) and 400/400
+(audit G3), `gate_sample_confound_elo` NaN on 109/109 live rows, 68/68
+iterations. The PID-confound HOLD leg — the deciding KILL rule this ledger
+pre-registered for gate enablement (:471-476) — **cannot fire, ever, as built**.
+The 24/24 mutation kills cited in the closure used hand-written inbox shards
+that bypassed the producer. Also dropped: `sf_d6_sum`/`sf_d6_n` (⇒
+`sf_eval_delta6` 0.0 on every live row); the server merge key omits difficulty
+(true of the worker buffer, false of the server). Negative control: the same
+compactor carries `input_history_encoding`/`history_rep_fix` faithfully 447/447.
+Root cause of the class: the reco layer has a completeness test; the
+shard-metadata layer has none (K11's clean negative is the same lesson).
+
+**⚑ EXIT-CODE TRAP (K1×G3-2 interaction), pre-committed here before any gate
+readout is re-run:** `gate_shadow_readout.py` currently exits 2 on the
+*prev_share* leg (G3-2: a FALSE kill — the mover is fleet refresh lag
+117.5→194.2 s, invisible to the cadence leg which passes only <584 s/iter, live
+635; the pooled-count identity passes 109/109). Fixing that leg alone makes the
+same run exit 0 **with the confound leg still measuring nothing**. The gate
+readout's success criterion is therefore re-specified: **assert `n_confound ≥ 3`
+in the readout output; never judge by exit code alone** (an exit code is an OR
+over axes). `OfflineReference` constants must be re-derived from current-lag
+shards before `gate_mode` leaves `off`.
+
+**P1 (HIGH) — REFUTATION of this file's/memory's 2026-07-28 retraction "the
+regret filter is FINE."** The retraction cited `_pv_wdl_score` — right helper,
+wrong call site. `_collect_sf_pv_candidates` takes the cp-logistic switch as a
+defaulted kwarg: the LABEL site (`stockfish_turn.py:1311`) passes it; the MOVE
+site (:1303) does not. The curriculum opponent's move filter scores with SF's
+NATIVE UCI_ShowWDL — one search, two scorers. Settled on production's own
+columns: stored `sf_played_rank` reproduced 99.89% by the native scorer vs
+69.16% by cp-logistic (8,328 curriculum rows). Consequence: regret 0.20→0.0075
+(the whole stage-1 travel) shrinks the acceptance set only 26% (9.27→6.90
+moves), not 62%; at the floor 35.1% of positions accept every MultiPV candidate
+— the difficulty lever is much weaker than designed. Confirms D17.
+**Load-bearing invariant re-verified and HOLDS: labels stay best-move based.**
+⚠ Any fix (passing the switch at the move site) RE-CALIBRATES the whole
+difficulty scale the PID was tuned against — it is a training-affecting change
+requiring its own pre-registered entry, not a hygiene fix.
+
+**Other production-reachable findings (fix routing at end):**
+- K2 (HIGH): model_sha/difficulty stamped at game COMPLETION; mean game in
+  flight 4,040 s vs 618 s median publish period ⇒ straddles ~6.5 publishes,
+  tagged with one. `distributed_stale_games`=0 in 66/68 iterations measures tag
+  lag, not weight staleness. Consumers: gate cur/prev split, prev-model cap,
+  stale-pause backpressure.
+- K3: `_check_model_freshness` compares the manifest to a tag assigned FROM the
+  manifest on the broker path — a check that cannot fail; no observation of
+  whether the broker actually swapped weights (slot protocol carries no model
+  identity).
+- K5: worker validates manifest plane count against itself, never against
+  `--inference-slot-input-planes` (default 146) — third leg of the I2 family;
+  #322 closed client/broker only.
+- P2 (HIGH): `sf_wdl` (0.45 of the value target) has NO detector in either
+  direction — the desync tripwire reads only the policy half; 99.99% of flagged
+  rows on the quarantined shards still carry has_sf_wdl=1.
+- P3: `pid._observation_se` data term unreachable (se ≡ max(0.01, 0.5/√n),
+  beaten on 95/200,000 batches); airbag trigger moves 0.313→0.435 on sample
+  size alone, hardest to fire exactly in the +0.110-biased post-restart window.
+- P4: nodes-lever inverse fit degenerate — last 12 steps are the blind ±5%
+  half-cap; `sf_pid_min_nodes` operator ratchet injected an uncontrolled ×4.15
+  x-jump; recency ages by deque INDEX not time.
+- G3-3: degenerate-variance guard (se<=0.0) bypassed by 51.2% of stuck-counter
+  windows (se~1e-17) ⇒ DEMOTE on a zero-width CI.
+- G3-7: every restart collapses `accepted_model_shas` to one sha ⇒ cur=0 rows
+  observed as valid (live iter 411: cur=0 prev=60).
+- G3-12: the restart's 11 new probe_* report keys rotate progress.csv ⇒ the
+  readout's 40-row precondition restarts (~7.4 h). Expected, not a defect —
+  recorded so it is not misread.
+- B6: MultiSlotInferenceClient never evicts a wedged slot and counts its failed
+  requests as throughput; `slot_roundtrip_s` (100× separation) computed,
+  exported, read by nothing. B7: walker vloss leaks on evaluator raise
+  (UCI/ruler path); `remove_vloss_path` called from nowhere.
+- Settled: production runs the PER-TRIAL SlotBroker; SharedSlotBroker OFF
+  (`distributed_inference_shared_broker: false`, yaml:862). B1: the shared
+  broker never reads `request_mode` (modes added to client+SlotBroker only) —
+  latent critical if the flag ever flips; every shared-broker test exercises
+  the one working mode. B8 negative: walkers serialize on the GIL; releasing it
+  would arm B9 (reserve() unenforced — PLAUSIBLE, needs ASan/TSan).
+
+**Clean negatives banked:** gate decision math sound (no NaN-demote, all-draws
+variance-floored, step leg cannot manufacture a promote); dole cap wired;
+harvested seeds row-level excludable; resume re-encode guard sound; reco
+transport complete over all get-sites; C legal-gen already exonerated.
+
+**Fix routing (reviewer≠author per PR):** (A) server compactor carries ALL
+ShardMeta fields + a test that enumerates the dataclass so an absent key cannot
+recur + difficulty into the merge key [K1/G3-1 — unblocks the gate decision].
+(B) gate internals: G3-3/4/5/6/8 + readout leg fix + n_confound≥3 assertion +
+OfflineReference re-derivation [G3-2]. (C) inference: B6/B7 + B1 loud-refuse +
+K5 [+ #137 items]. (D) P2 sf_wdl detector + P9 denominator. DECISIONS (not
+hygiene, need pre-registration): P1 move-site scorer, P3 SE floor, P4 nodes-fit
+reset, K2 per-ply stamping, K3 broker model identity.
