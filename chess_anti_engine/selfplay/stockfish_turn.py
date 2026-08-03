@@ -723,33 +723,25 @@ def _build_sf_policy_target(
 def _attach_sf_target_to_last_record(
     state: SelfplayState, idx: int,
     *, p_sf: np.ndarray, a_idx: int, res, legal_indices: np.ndarray,
-    turn: bool | None = None,
+    turn: bool,
     sf_wdl_use_cp_logistic: bool = False,
     sf_wdl_cp_slope: float = 0.010,
     sf_wdl_cp_draw_width: float = 60.0,
 ) -> None:
-    """Stamp SF policy target / move idx / wdl / legal_mask onto the latest
-    _NetRecord (idempotent: skipped if already populated)."""
+    """`_attach_sf_target_to_record` against the game's latest _NetRecord.
+
+    No-op when the game has no record yet; otherwise identical, including the
+    idempotency skip.
+    """
     if not state.samples_per_game[idx]:
         return
-    rec = state.samples_per_game[idx][-1]
-    if rec.sf_policy_target is not None or rec.sf_move_index is not None:
-        return
-    rec.sf_policy_target = p_sf
-    rec.sf_move_index = a_idx
-    rec.sf_wdl = _sf_result_wdl_for_record(
-        res,
+    _attach_sf_target_to_record(
+        state.samples_per_game[idx][-1],
+        p_sf=p_sf, a_idx=a_idx, res=res, legal_indices=legal_indices, turn=turn,
         sf_wdl_use_cp_logistic=sf_wdl_use_cp_logistic,
         sf_wdl_cp_slope=sf_wdl_cp_slope,
         sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
     )
-    if turn is not None:
-        _stamp_sparse_sf_labels(
-            rec, res, turn=bool(turn), legal_set={int(x) for x in legal_indices},
-        )
-    _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
-    _sf_mask[legal_indices] = 1
-    rec.sf_legal_mask = _sf_mask
 
 
 def _attach_sf_target_to_record(
@@ -759,11 +751,21 @@ def _attach_sf_target_to_record(
     a_idx: int,
     res,
     legal_indices: np.ndarray,
-    turn: bool | None = None,
+    # REQUIRED, and not `bool | None`. It used to default to None, with the
+    # sparse stamp below skipped in that case -- a caller that forgot it would
+    # emit a fully-labelled row carrying `has_sf_multipv_raw = 0`, which is the
+    # exact fingerprint `sf_multipv_presence_counts` reports as SF DESYNC
+    # CONTAMINATION. Both call sites always passed it, so the skip only ever
+    # existed to manufacture a false desync reading. Keep it un-defaulted.
+    turn: bool,
     sf_wdl_use_cp_logistic: bool = False,
     sf_wdl_cp_slope: float = 0.010,
     sf_wdl_cp_draw_width: float = 60.0,
 ) -> None:
+    """Stamp SF policy target / move idx / wdl / legal_mask onto *rec*.
+
+    Idempotent: a record that already carries an SF label is left alone.
+    """
     if rec.sf_policy_target is not None or rec.sf_move_index is not None:
         return
     rec.sf_policy_target = p_sf
@@ -774,10 +776,9 @@ def _attach_sf_target_to_record(
         sf_wdl_cp_slope=sf_wdl_cp_slope,
         sf_wdl_cp_draw_width=sf_wdl_cp_draw_width,
     )
-    if turn is not None:
-        _stamp_sparse_sf_labels(
-            rec, res, turn=bool(turn), legal_set={int(x) for x in legal_indices},
-        )
+    _stamp_sparse_sf_labels(
+        rec, res, turn=bool(turn), legal_set={int(x) for x in legal_indices},
+    )
     _sf_mask = np.zeros((POLICY_SIZE,), dtype=np.uint8)
     _sf_mask[legal_indices] = 1
     rec.sf_legal_mask = _sf_mask

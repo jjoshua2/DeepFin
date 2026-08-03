@@ -268,8 +268,15 @@ train:
   adjusted_wdl_regret_source: sum  # sum|d95|d98|max|h4|h6|h12|h24|h50; d95/d98 are per network record, h* are ply windows.
   adjusted_wdl_regret_scale: 1.0   # For sum/fp16 suffixes, prefer a smaller scale, discounted/horizon source, or positive cap.
   adjusted_wdl_regret_cap: 0.0     # Q-units; 0 disables cap and can saturate suffix-sum targets.
-  sf_wdl_conf_power: 1.0    # Confidence damping: scale SF-WDL by (1-draw_prob)^power.
-  sf_wdl_draw_scale: 0.55   # Pinned low-to-mid based on the healthier late-run settings.
+  # ⚑ BOTH knobs shape ONLY the auxiliary `sf_eval` head's row mask. They do
+  # NOT touch the WDL value target: its SF component is weighted by
+  # `sf_available * keep` (`losses.py`), which carries neither term. Verified
+  # bit-identical `wdl_ce` under both settings (2026-08-03 train/data audit C1,
+  # pinned by tests/test_sf_wdl_conf_knobs_are_aux_only.py). Names kept as-is
+  # because the live-yaml validator rejects unknown keys -- a rename is a
+  # restart-gated change, not a live one.
+  sf_wdl_conf_power: 1.0    # sf_eval row mask: scale by (1-draw_prob)^power. NOT the value blend.
+  sf_wdl_draw_scale: 0.55   # sf_eval row mask: rescale game-drawn rows. NOT the value blend.
   sf_wdl_floor_at_regret: 0.10  # Regret value at which SF WDL fraction hits the floor.
   sf_wdl_temperature: 1.0   # Keep training-time labels unchanged; tune softness in stored cp->WDL formula instead.
   sf_search_dampen_sf_low: 0.0  # Trust objective SF-low labels when search says winning; final outcomes can reflect curriculum weakness.

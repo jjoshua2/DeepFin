@@ -284,7 +284,18 @@ def _compute_sf_wdl_mask(
     conf_power: float,
     draw_scale: float,
 ) -> torch.Tensor:
-    """SF-WDL per-sample mask with optional confidence damping + draw rescale.
+    """Row mask for the AUXILIARY ``sf_eval`` head. NOT the WDL value target.
+
+    ⚑ Read this before tuning ``sf_wdl_conf_power`` / ``sf_wdl_draw_scale``.
+    The mask returned here has exactly ONE consumer, ``m_sf_eval``. The WDL
+    value target -- the load-bearing blend in ``compute_loss`` -- weights its
+    SF component by ``sf_effective = sf_available * keep``, and ``keep`` carries
+    only the ``sf_search_dampen_sf_*`` terms. Neither knob appears in that
+    expression, so neither can damp the value target: change either one and
+    ``wdl_ce`` is bit-identical while ``sf_eval_ce`` moves (a 0.1-weighted head,
+    ~0.006 % of total loss). Pinned by
+    ``tests/test_sf_wdl_conf_knobs_are_aux_only.py``; the name is kept because
+    it is a live yaml key and the live-yaml validator rejects unknown keys.
 
     Damping: ``(1 - draw_prob)^power`` zeros out high-draw rows where SF's
     label barely disagrees with a fresh-init model. Draw rescale boosts/cuts
@@ -680,7 +691,11 @@ def compute_loss(
 
   # Loss weights — float() casts defend against numpy scalars from Ray Tune config mutation
     w_sf_volatility = float(w_sf_volatility) if w_sf_volatility is not None else float(w_volatility)
-    m_sf_wdl_mask = _compute_sf_wdl_mask(
+  # Named for what it masks (the aux `sf_eval` head), not for the knobs that
+  # shape it: `sf_wdl_conf_power` / `sf_wdl_draw_scale` read as if they scale
+  # the SF component of the VALUE blend and they do not. See
+  # `_compute_sf_wdl_mask`'s docstring; the single consumer is `m_sf_eval`.
+    m_sf_eval_mask = _compute_sf_wdl_mask(
         net_mask=net_mask, has_sf_wdl=has_sf_wdl, sf_wdl_probs=sf_wdl_probs,
         wdl_target=batch["wdl_t"],
         conf_power=max(0.0, float(sf_wdl_conf_power)),
@@ -718,7 +733,7 @@ def compute_loss(
     m_wdl_onehot = masked_mean(wdl_onehot_ce, net_mask)
     m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
     m_sf_move = masked_mean(sf_move_ce, net_mask * has_sf_policy)
-    m_sf_eval = masked_mean(sf_eval_ce, m_sf_wdl_mask)
+    m_sf_eval = masked_mean(sf_eval_ce, m_sf_eval_mask)
     m_cat = masked_mean(cat_ce, net_mask * has_cat)
     m_vol = masked_mean(vol_loss, net_mask * has_vol)
     m_sf_vol = masked_mean(sf_vol_loss, net_mask * has_sf_vol)
