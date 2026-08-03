@@ -28203,3 +28203,48 @@ Killed on detection. Chunk-40 `wall_s` in the low-dose wave is contaminated by
 the AUDIT, not the arm; no FE verdict clause reads wall_s, so the verdict is
 unaffected. No GPU fp16 timing leg was run — matmul counts are the only cost
 metric of record.
+
+#### AMENDMENT — the low-dose wave needs `A_s2` and `A_s3`. Committed BEFORE any FE10 result was inspected.
+
+**Sequence, stated plainly because it is what makes this legitimate:** `FE10_s1` and
+`FE10_s2` finished at ~17:40. **I have not computed or looked at a single regret
+number from either.** This amendment is written from a purely structural argument
+about the controls, then committed, and only afterwards will the verdict be computed.
+
+**The problem.** Every matched-learning contrast is scored against arm A *at the same
+seed*, so the FE and A runs share a data order and that noise cancels. Arm A exists
+only at seeds 0 and 1. The low-dose wave runs `FE10` at seeds 1, 2, 3 — so
+**`FE10_s2` and `FE10_s3`, half the seeds the verdict rests on, have no matched
+control.** This is the same gap disclosed in the 6b addendum (fb5c42edc); I found it
+there *after* pre-registering this wave in decee3589, and it lands much harder here
+because the low-dose verdict actually depends on per-seed significance.
+
+**Why that is not survivable by falling back to pooled-A.** The pooled-A substitute
+is measurably conservative: on `FE20_s2` it produced an **ambiguous** reading —
+significant against one A control and not the other — where a matched control plausibly
+would have resolved it. Clause (a) of decee3589 requires era SIG at both steps in
+**>=3 of 4 seeds**. With 2 of the 4 seeds scored on a conservative instrument, **the
+rule could fail for a control-side reason while the treatment effect is real.** That is
+a verdict read off an instrument that is known to be degraded — the exact thing the
+audit's method rules forbid.
+
+**Action, pre-committed now:** run **`A_s2`** and **`A_s3`** (arm A, seeds 2 and 3,
+otherwise identical config), chained to start after the low-dose queue drains so they
+never take a slot from it. The low-dose verdict is then computed with **all four
+`FE10` seeds on seed-matched controls**.
+
+**Instrument asymmetry, disclosed in advance:** the new controls will run the denser
+eval grid (every 4 chunks from chunk 24, 10 eval points) while `A_s0`/`A_s1` used
+every 8. The matched-learning solver interpolates the control's in-window curve, so a
+denser control grid means *less* interpolation error. The effect is that seeds 2 and 3
+will be scored slightly more accurately than seeds 0 and 1 — a difference in precision,
+not in direction, and it cannot manufacture significance because `interp_frac` is
+reported for every contrast.
+
+**If `A_s2`/`A_s3` do not complete**, the verdict is reported on pooled-A with the
+conservatism stated as a limitation, and any FAIL of clause (a) is explicitly labelled
+**"fails on an instrument known to be conservative in 2 of 4 seeds"** rather than
+recorded as a clean negative. **A PASS under pooled-A would stand**, since a
+conservative instrument cannot manufacture significance — the asymmetry only matters
+in one direction, and pre-committing that asymmetry now is what stops it being used
+selectively later.
