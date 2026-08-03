@@ -40,6 +40,7 @@ class _Trainer:
     sf_wdl_frac = 0.5
     sf_wdl_conf_power = 1.0
     sf_wdl_draw_scale = 1.0
+    mirror_prob = 0.5
     sf_wdl_temperature = 1.0
     _feature_group_dropout: ClassVar[list[tuple[str, tuple[int, ...], float]]] = [
         ("king", (), 0.0),

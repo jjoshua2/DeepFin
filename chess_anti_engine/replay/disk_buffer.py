@@ -25,8 +25,9 @@ from .buffer import ReplaySample
 from .shard import (
     HISTORY_REP_FIX_ARRAY_KEY,
     INPUT_HISTORY_ENCODING_ARRAY_KEY,
+    NONZERO_DEFAULT_STORAGE_FIELDS,
     POLICY_ENCODING_ARRAY_KEY,
-    _OPTIONAL_STORAGE_PAIRS,
+    _REQUIRED_STORAGE_FIELDS,
     _SHARD_FIELDS,
     arrays_to_samples,
     delete_shard_path,
@@ -77,9 +78,6 @@ _SCALAR_METADATA_FIELDS = (
     # concatenate legacy and rep-fix chunks into one training window.
     HISTORY_REP_FIX_ARRAY_KEY,
 )
-
-# Lookup: value field name → has-flag field name (derived from shard.py's canonical pairs).
-_VALUE_TO_FLAG = dict(_OPTIONAL_STORAGE_PAIRS)
 
 # The shard-recency draw exponent that reproduces the pre-2026-08-02 code
 # exactly: weight ∝ rank, oldest rank 1. Named so the one value that must not
@@ -344,12 +342,14 @@ def _concat_sparse_batches(chunks: list[dict[str, np.ndarray]]) -> dict[str, np.
                 )
         merged = np.concatenate(parts, axis=0)
   # Keep required fields explicit; drop optional fields that are uniformly absent.
-        if any(name in chunk for chunk in chunks) or name in ("x", "policy_target", "wdl_target", "priority", "has_policy"):
-            out[name] = merged
-            continue
-  # Value arrays are only needed when the corresponding has_* flag is present.
-        flag_name = _VALUE_TO_FLAG.get(name)
-        if flag_name is not None and flag_name in out:
+  # (There used to be a second branch here retaining a uniformly-absent VALUE
+  # array when its `has_*` flag had already been written to `out`. It could
+  # never fire: `_ARRAY_FIELD_ORDER` is `_SHARD_FIELDS`, which emits `spec.arr`
+  # BEFORE `spec.flag` for every pair, so a value name is always decided while
+  # its own flag is still unwritten. It read as a safety net holding nothing;
+  # the ordering it depended on is now pinned by
+  # tests/test_replay_field_defaults.py.)
+        if any(name in chunk for chunk in chunks) or name in _REQUIRED_STORAGE_FIELDS:
             out[name] = merged
     for name in _SCALAR_METADATA_FIELDS:
         values: list[str | None] = []
@@ -1709,6 +1709,27 @@ class DiskReplayBuffer:
                 if k not in proto:
                     proto[k] = v
         n_out = int(idx.shape[0])
+  # The allocation below is `np.zeros` over the UNION of the selected chunks'
+  # keys, so a field one chunk carries and another lacks arrives as zeros for
+  # the second chunk's rows. For every optional field that is the schema's own
+  # default (absent flag == 0, absent target == zeros) and harmless. For the two
+  # fields whose schema default is NOT zeros it is silent corruption in the
+  # direction that cannot be seen: `has_policy = 0` deletes those rows from the
+  # main policy loss and its accuracy stats, and `policy_loss` then reports the
+  # survivors' mean with nothing counting the drop. Refuse instead of guessing.
+  # Unreachable today (both names are in `_REQUIRED_STORAGE_FIELDS`, every
+  # producer path emits them) -- this exists so that if it ever becomes
+  # reachable the run stops instead of quietly training on fewer rows than it
+  # reports. Cost: two `in` scans over the selected chunks, not the ~60 keys.
+        if len(selected) > 1:
+            for name in sorted(NONZERO_DEFAULT_STORAGE_FIELDS):
+                present = sum(1 for dense_rows, _ in selected if name in dense_rows)
+                if 0 < present < len(selected):
+                    raise ValueError(
+                        f"shuffle-buffer chunks disagree about {name!r} "
+                        f"({present}/{len(selected)} carry it); zero-filling it would "
+                        "silently change training rows -- refusing to sample",
+                    )
         out: dict[str, np.ndarray] = {}
         for k in sorted(all_keys):
             if k in proto:

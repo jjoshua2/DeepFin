@@ -21282,6 +21282,60 @@ yaml copy carrying the key rather than a change here.
 Still no config carries the key; still no verdict; the flip still needs its own
 entry once arm G reads out.
 
+---
+
+## 2026-08-03 — train/data code audit: (A) shipped as no-op hardening, (B) held at the restart boundary
+
+PR `fix/traindata-audit-20260803` lands only the half of
+`scratchpad/code_audit_20260803/TRAIN_DATA_AUDIT.md` that changes **no produced
+number**: the two `sf_wdl_*` knobs documented as aux-`sf_eval`-only (C1, they
+cannot touch the value blend — pinned by a bit-identical `wdl_ce` test), a loud
+refusal in `_gather_rows` when shuffle chunks disagree about `has_policy` /
+`priority` (C4, previously a silent zero-fill that deletes rows from the policy
+loss), the dead `_concat_sparse_batches` retention branch (C6), the dead
+`collate_arrays` `shape` spec (S1), the duplicated SF-label attach with its
+unreachable `turn=None` skip (S3, whose only reachable effect would have been a
+FALSE desync fingerprint), and `mirror_prob` reported into the realized-config
+row (S2 — it has no yaml key, so production runs at the constructor default
+0.5). A/B against `origin/main` on a seeded batch: `compute_loss` scalars, a
+`sample_batch_arrays` draw, `collate_arrays`, and the SF-label stamp are all
+bit-identical (digest `1d52e2ca…` / `dac016fd…`).
+
+**Held for the restart boundary — decisions owed, not deferrals:** (B1) **C3,
+the pooling family.** ~18 of 20 masked heads publish a MEAN OF PER-BATCH RATIOS
+(`_loss_sums_to_metric_kwargs` divides by step count; `_compute_metrics` weights
+by `n_rows`; neither is the mask count), and `masked_mean`'s denominator clamp
+makes an EMPTY bucket publish 0.0 — the best possible loss — with no row-count
+column able to contradict it outside the three phase buckets. Realized coverage
+runs 0.096 (`has_sf_p0_regret`) to 0.978 (`has_sf_policy`), and the
+selfplay/curriculum split swings 1–35 %, so both effects are live every
+iteration. Fixing it CHANGES the value of every affected column: a ruler change
+must invalidate its records, so `soft_policy_ce`, `future_policy_ce`,
+`categorical_ce`, `sf_move_ce`, `sf_eval_ce`, `volatility`, `sf_volatility` and
+the `*_selfplay` / `*_curriculum` twins recorded before the flip must not be
+plotted through it. Current behaviour is pinned by
+`tests/test_masked_pooling_characterization.py`, which is a CHARACTERIZATION of
+a known defect and is expected to fail when the fix lands. (B2) **C7**, dropping
+the SF label entirely when `_collect_sparse_pv_rows` returns None instead of
+fabricating a one-hot on `legal_indices[0]` — changes produced training rows;
+`origin/main` already counts the event (`no_legal_pv`), so it is observable
+before it is changed. (B3) **P1**, moving `_pad_x_planes` + `sparsify_chunk` off
+the sampling thread (~8.0 s/iter, not currently binding): pure functions, but
+the move changes when refresh chunks become visible and therefore which rows a
+given step draws. (B4) **P3**, one global gather index instead of per-chunk
+densify (~40 % of 17 ms/batch) — same reason, and it is not binding today.
+(B5) unverified lead 4, discarded non-finite steps still committing their loss
+into the reported columns. (B6) the C1 alternative — if damping the value
+target by SF draw confidence was ever the intent, that is a new training-affecting
+knob and needs its own entry with a yardstick, not a rename. (B7) **C2** is an
+ops precondition, not a fix: `git diff HEAD...origin/main -- chess_anti_engine/`
+must be empty before the next restart, or the live tree restarts onto the
+`moves_left` phase split that put ~96 % of rows in one bucket.
+
+No yardstick and no kill threshold here on purpose: nothing in (A) is an
+experiment, and nothing in (B) has been launched. Each (B) item needs its own
+entry with a pre-committed readout before it goes live.
+
 ## INSTRUMENT 2026-08-03 — three per-iteration era-forgetting probes (`probe_era_*`, `probe_inwindow_*`, `probe_gap_*`), all default OFF
 
 Not an experiment. No hypothesis, no kill rule, no yardstick — there is nothing
