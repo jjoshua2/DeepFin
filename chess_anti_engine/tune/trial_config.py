@@ -1093,7 +1093,15 @@ class RestoreResult:
     startup_source: StartupSource = "fresh"
     restored_pid_state: dict | None = None
     global_iter: int = 0
-    opp_strength_ema: float = 0.0
+  # None means "this restore carries no opponent-strength EMA", which is NOT
+  # the same as 0.0 and is why the field is optional. The loop treats 0.0 as
+  # "no EMA yet" and re-seeds from the instantaneous opponent_strength of the
+  # first post-restart iteration -- the single row the post-restart winrate
+  # truncation makes least trustworthy -- so a restore that unconditionally
+  # assigned its default wiped the restored value every restart (audit T1,
+  # 6/6 live process segments). Only a restore that actually found one (the
+  # checkpoint's trial_meta.json, or a PB2 donor's result row) sets it.
+    opp_strength_ema: float | None = None
     active_seed: int = 0
     seed_warmstart_used: bool = False
     seed_warmstart_slot: int = -1
@@ -1118,3 +1126,9 @@ class RestoreResult:
   # ruler change across the restart bumps the generation instead of hiding
   # inside it. "" on any checkpoint written before this was recorded.
     holdout_ruler: str = ""
+  # The promotion gate's `gate_state.json` as found in a salvage seed slot, for
+  # a trial whose own durable dir has none. None on every other path -- an
+  # ordinary `--resume` reads the trial's own file and never consults this
+  # (audit T10: a salvage restart used to start with an empty gate window while
+  # a resume kept it, with nothing saying the two differed).
+    restored_gate_state: dict | None = None

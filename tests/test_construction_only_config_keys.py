@@ -40,6 +40,7 @@ import pytest
 
 from chess_anti_engine.tune.trainable_config_ops import (
     _reload_yaml_into_config,
+    _STARTUP_ONLY_TRIAL_KEYS,
     construction_only_config_keys,
     restart_required_config_keys,
 )
@@ -221,6 +222,16 @@ def test_construction_only_keys_have_no_live_consumer() -> None:
     have a live consumer stops a working knob from reloading. A key qualifies
     only if the whole runtime package mentions it in the declaring, parsing,
     allowlisting and constructing files and nowhere else.
+
+    ``_STARTUP_ONLY_TRIAL_KEYS`` (audit T2) is exempted from THIS test and
+    proved by a stronger one. A filename allowlist is a proxy for "no live
+    consumer": these keys are consumed by helpers in ``trainable.py`` /
+    ``trainable_phases.py``, which the proxy cannot distinguish from a
+    per-iteration read. ``tests/test_startup_only_config_keys.py`` answers the
+    real question instead -- it derives from the AST which keys ``train_trial``
+    reads only OUTSIDE its iteration loop, and every key here must be in that
+    derivation. Skipping them here without that test would be a hole; with it,
+    the proxy is simply the weaker instrument.
     """
     pkg = _REPO / "chess_anti_engine"
     sources = {
@@ -228,7 +239,9 @@ def test_construction_only_keys_have_no_live_consumer() -> None:
         for p in sorted(pkg.rglob("*.py"))
     }
     assert len(sources) > 50, "package scan found almost nothing; the glob is wrong"
-    for key in sorted(construction_only_config_keys()):
+    scanned = construction_only_config_keys() - _STARTUP_ONLY_TRIAL_KEYS
+    assert "shuffle_buffer_size" in scanned, sorted(scanned)
+    for key in sorted(scanned):
         pattern = re.compile(rf"\b{re.escape(key)}\b")
         offenders = sorted(
             rel for rel, src in sources.items()

@@ -512,13 +512,75 @@ _CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
 # dead one, so listing a dead key here would tell an operator to restart into a
 # hard error. `gate_games` stays: it is not in the dead set, because it raises
 # with its own message from `gate_config_from_dict`.
+# The same class as the replay/probe sets above, found one file further out
+# (audit T2): keys whose only consumer runs in ``train_trial`` BEFORE the
+# iteration loop. The classification had been finished for the replay buffer
+# and the era probes and never swept over the rest of the startup block, so
+# ``scripts/audit_realized_config.py`` reached its live-reloadable branch for
+# these — the branch that reports "the running value is correct".
+#
+# ``tests/test_startup_only_config_keys.py`` DERIVES this class from the source
+# instead of restating it: reachability from the startup region of
+# ``train_trial``, minus everything the ``while`` loop can reach. A key added to
+# the schema tomorrow whose only reader is a startup helper fails that test
+# until it is classified here.
+#
+#   iterations      -- the `while` bound is read into a local ONCE
+#                      (trainable.py). Also, and separately worth knowing when
+#                      an operator edits it: it is a PER-PROCESS budget, not a
+#                      per-run one -- `completed_iterations` starts at 0 in
+#                      every process.
+#   puzzle_epd      -- `_load_puzzle_suite` loads the EPD file once. The
+#                      `puzzle_interval` / `puzzle_simulations` throttles ARE
+#                      live and deliberately stay live.
+#   eval_games      -- `_init_eval_stockfish` returns None for <= 0 at startup,
+#                      and `eval_sf` is never rebuilt. The loop's own
+#                      `tc.eval_games <= 0 or eval_sf is None` can therefore
+#                      only ever DISABLE: enabling eval live silently keeps
+#                      reporting eval_win/draw/loss = 0. Frozen so the enable
+#                      says "restart" instead of nothing.
+#   eval_sf_nodes   -- the eval engine's node limit, fixed when that engine is
+#                      constructed (or not constructed at all).
+#   sf_pid_enabled  -- `_init_pid` returns None when it is false at launch, and
+#                      `pid.refresh_live_params(config)` cannot resurrect a
+#                      controller that does not exist.
+#   pause_file      -- `_resolve_pause_marker_paths` resolves the marker list
+#                      once; the loop polls the resolved paths.
+#
+# NOT here, decided rather than overlooked:
+#   log_level       -- startup-only for the TRIAL's own logger, but it is in
+#                      `_WORKER_LAUNCH_CONFIG_KEYS`, so a live edit changes the
+#                      worker launch signature and the next relaunch honours
+#                      it. Freezing it would break a knob that works.
+#   the sf_pid_* lever gains -- genuinely construction-only inside
+#                      `pid_from_config` (only ~10 of the family are re-read by
+#                      `refresh_live_params`), and the derivation test flags
+#                      every one of them. Freezing ~30 knobs of the live
+#                      difficulty controller is a behaviour change to a running
+#                      experiment's control surface, not an observability fix,
+#                      so it belongs to its own ledger entry.
+#   tune_scheduler / pb2_perturbation_interval / tune_keep_last_experiments --
+#                      DRIVER-side keys (harness.py); the trial actor never
+#                      reads them. Calling them "restart required" here would
+#                      also be false for the first two: on `--resume` they come
+#                      back from `tuner.pkl`, so not even a restart applies them
+#                      (audit T6). They need the driver-side fix, not this set.
+_STARTUP_ONLY_TRIAL_KEYS = frozenset({
+    "iterations",
+    "puzzle_epd",
+    "eval_games",
+    "eval_sf_nodes",
+    "sf_pid_enabled",
+    "pause_file",
+})
+
 _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
     "lr_schedule",
     "gate_games",
     "gate_mode", "gate_window_iters", "gate_min_iters",
     "gate_min_games_per_side", "gate_demote_delta_elo", "gate_demote_step_elo",
     "gate_alpha", "gate_max_hold_iters",
-}) | _CONSTRUCTION_ONLY_REPLAY_KEYS | _CONSTRUCTION_ONLY_PROBE_KEYS
+}) | _CONSTRUCTION_ONLY_REPLAY_KEYS | _CONSTRUCTION_ONLY_PROBE_KEYS | _STARTUP_ONLY_TRIAL_KEYS
 
 
 # Yaml keys the validator still ACCEPTS and `TrialConfig` still parses, but
@@ -684,8 +746,16 @@ def construction_only_config_keys() -> frozenset[str]:
     Exported for tooling that reports on config provenance: a checker may say
     "the running value is correct" only about a key some live consumer
     re-reads, and this set is the one it must never say it about.
+
+    ``_STARTUP_ONLY_TRIAL_KEYS`` joined it in the audit-T2 sweep: same class,
+    same lie, one file further out (``train_trial``'s startup block rather than
+    a buffer constructor).
     """
-    return _CONSTRUCTION_ONLY_REPLAY_KEYS | _CONSTRUCTION_ONLY_PROBE_KEYS
+    return (
+        _CONSTRUCTION_ONLY_REPLAY_KEYS
+        | _CONSTRUCTION_ONLY_PROBE_KEYS
+        | _STARTUP_ONLY_TRIAL_KEYS
+    )
 
 
 def restart_required_config_keys() -> frozenset[str]:
@@ -733,6 +803,56 @@ def restart_required_config_keys() -> frozenset[str]:
     )
 
 
+# The flat key set the last SUCCESSFUL load of each yaml path produced. Keyed
+# by path because one trial process reloads exactly one yaml while the tests
+# drive several, and only written after `flatten_run_config_defaults` returns —
+# a rejected reload must not move the baseline, or the deletion it could not
+# see would be reported against the wrong iteration.
+_LAST_RELOAD_YAML_KEYS: dict[str, frozenset[str]] = {}
+
+
+def reset_yaml_reload_key_tracking() -> None:
+    """Forget every remembered key set. A fresh trial process starts empty."""
+    _LAST_RELOAD_YAML_KEYS.clear()
+
+
+def _warn_on_keys_dropped_from_yaml(*, yaml_path: str, fresh: Mapping[str, object], config: Mapping[str, object]) -> None:
+    """Name every key the yaml stopped setting while the trial still runs it.
+
+    The reload is ADD/UPDATE-only: it iterates the fresh yaml and writes
+    ``config[k] = v``, so there is no pass that could remove anything. Deleting
+    a line, and writing ``key: null`` (``flatten_run_config_defaults`` drops
+    None before the reloader sees it), are therefore both no-ops — and they are
+    no-ops the three loud branches below cannot report, because every one of
+    them keys off a key the fresh yaml still names (audit T4). An operator who
+    removes a line to turn an experiment off gets exactly the silence the
+    memory rule "a yaml edit may NOT be in effect" was written about.
+
+    This is OBSERVABILITY ONLY. Reverting the value would be a behaviour change
+    — the trial has been running on it, and the revert target (an argparse
+    default, or a value from a config that no longer exists) is not knowable
+    from the yaml — so it needs its own pre-registered entry. What is knowable,
+    and what this says, is that the deletion did nothing.
+    """
+    previous = _LAST_RELOAD_YAML_KEYS.get(yaml_path)
+    if previous is None:
+        return
+    missing = object()
+    for key in sorted(previous - frozenset(fresh)):
+        current = config.get(key, missing)
+        if current is missing:
+  # The yaml stopped naming a key the trial does not carry either: nothing
+  # is in effect, so nothing was silently kept.
+            continue
+        log.warning(
+            "YAML reload: %s is no longer set by %s but the trial is STILL "
+            "RUNNING %r — delete does not revert; write the old value "
+            "explicitly. (`%s: null` is dropped before the reloader sees it, "
+            "so it reads as a delete too.)",
+            key, yaml_path, current, key,
+        )
+
+
 def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload: bool = False) -> None:
     """Overlay YAML values into *config*, preserving PB2-searched keys.
 
@@ -750,6 +870,12 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
     try:
         from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
         fresh = flatten_run_config_defaults(load_yaml_file(yaml_path))
+  # Before the overlay, so `config` still holds the values this reload is
+  # about to leave in place, and after the parse, so a rejected reload leaves
+  # the baseline where it was.
+        if live_reload:
+            _warn_on_keys_dropped_from_yaml(yaml_path=yaml_path, fresh=fresh, config=config)
+        _LAST_RELOAD_YAML_KEYS[yaml_path] = frozenset(fresh)
   # Derive searched keys from the config's own bounds (stable), not YAML.
         searched = {
             k.removeprefix("pb2_bounds_")

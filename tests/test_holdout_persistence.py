@@ -441,6 +441,7 @@ def test_a_real_checkpoint_write_carries_rows_and_flags(tmp_path: Path) -> None:
         holdout_frozen=True,
         holdout_generation=2,
         holdout_ruler="v1:full_pass:0123456789abcdef",
+        opp_strength_ema=321.5,
         Checkpoint=SimpleNamespace(from_directory=lambda d: d),
     )
 

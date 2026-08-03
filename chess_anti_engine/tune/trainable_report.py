@@ -262,6 +262,7 @@ def _save_trial_checkpoint(
     holdout_frozen: bool,
     holdout_generation: int,
     holdout_ruler: str,
+    opp_strength_ema: float,
     Checkpoint,
 ):
     """Flush replay buffer and save a lightweight checkpoint.
@@ -276,6 +277,16 @@ def _save_trial_checkpoint(
     promotion across two rulers happened at iter 165. Storing it here — beside
     the generation and the rows, in the file both restore paths already read —
     is what lets the next restart notice.
+
+    `opp_strength_ema` rides here for the same reason and none other: it is the
+    scheduler's own objective metric (`GPBTPairwiseScheduler._metric`), it is
+    what salvage and the sibling-share ranking sort on, and until this it died
+    at every process start (audit T1). `best.json` also carries it, but that
+    file is only rewritten when a best-model candidate is ACCEPTED, so it can be
+    hundreds of iterations stale; trial_meta.json is rewritten with every
+    checkpoint. The value stored is the EMA in effect when the checkpoint was
+    written — this iteration's PID update runs after the save — so a resume
+    continues the series one update behind instead of restarting it.
     """
     buf.flush()
     trainer.save(ckpt_dir / "trainer.pt")
@@ -300,6 +311,7 @@ def _save_trial_checkpoint(
                 "holdout_frozen": bool(holdout_frozen),
                 "holdout_generation": int(holdout_generation),
                 "holdout_ruler": str(holdout_ruler),
+                "opp_strength_ema": float(opp_strength_ema),
             }, sort_keys=True, indent=2),
         )
     except (OSError, TypeError, ValueError) as exc:
