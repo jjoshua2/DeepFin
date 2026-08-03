@@ -26258,3 +26258,342 @@ degrade while train loss keeps falling. On this data the useful step budget is r
 Still unrun, and now the only live hypotheses: **arm F** (20% old-era rehearsal;
 UNBLOCKED by the provenance-field proof appended above) and any test of the recency
 draw against a **moving** window rather than a frozen one.
+
+### 2026-08-02 — VERDICT: **NO DECAY.** The history benefit does not fade — and on the sensitive statistic it is SIGNIFICANT AT ALL 14 CHECKPOINTS. ⚑ This RETRACTS the "iter477 cannot use history" claim in the entry above.
+
+Reads out the pre-registration immediately above. All 14 checkpoints scored
+(`sweep.log`: `exit=0 scored=14/14`), all 14 hash-verified beforehand.
+
+#### The pre-registered readout — H = v2 − v1 policy TOP-1 regret, n=3723, 800 games, 10k game-clustered resamples
+
+| ckpt | iter | H [95% CI] | | ckpt | iter | H [95% CI] |
+|---|---|---|---|---|---|---|
+| boot512 | 0 | **−5.23 [−9.08, −1.86] SIG** | | iter360 | 360 | −0.43 [−6.73, +6.16] ns |
+| iter025 | 25 | −2.51 [−6.49, +1.21] ns | | iter409 | 409 | −3.38 [−8.84, +1.98] ns |
+| iter070 | 70 | −3.17 [−7.26, +0.70] ns | | iter425 | 425 | −1.87 [−6.69, +2.56] ns |
+| iter122 | 122 | −0.97 [−4.43, +2.44] ns | | iter450 | 450 | +1.84 [−3.35, +7.54] ns |
+| iter172 | 172 | −2.83 [−6.68, +0.74] ns | | iter475 | 475 | −2.02 [−7.14, +3.55] ns |
+| iter218 | 218 | −3.74 [−8.95, +1.94] ns | | iter477 | 477 | +0.16 [−5.49, +6.26] ns |
+| iter308 | 308 | −2.48 [−7.78, +3.24] ns | | iter478 | 478 | −1.82 [−7.08, +3.82] ns |
+
+**PRIMARY: slope = +0.570 cp/100 iter [−0.636, +1.810] — CI CONTAINS 0 → NO DECAY.**
+By the pre-committed rule that ends it: *"the boot512-vs-iter477 contrast is an
+ENDPOINT artifact and neither shape question is answerable — report that and
+stop."* For completeness, both shape statistics were computed and both also
+read null, so nothing is being hidden by stopping:
+
+- **SHAPE-A** f(iter218) = 0.277 **[−2.940, +3.255]** — the CI spans the hinge
+  band, the monotone band, and far outside both. Uninformative.
+- **SHAPE-B** ΔBIC(linear − segmented) = **−3.44**, i.e. the segmented fit is
+  WORSE than a straight line (hinge needed ≥ +6). Breakpoint point-estimate 25,
+  bootstrap CI **[25, 477]** = the entire grid, and OUT of the pre-committed
+  [100, 240] band. Pre-committed reading: CANNOT RESOLVE, and explicitly **not**
+  reportable as confirming window-exit.
+
+**Answer to the standing question — none of the three.** Not window-exit
+(iter ~167), not monotone-from-boot, not a boot-era 0–25 step. There is no
+established decay for any story to explain. The post-hoc step test agrees:
+boot512 − mean(13 post-boot) = **−3.44 [−7.32, +0.19] ns**; boot512 → iter025
+alone **+2.71 [−0.31, +5.80] ns**; slope over the 13 post-boot points
+**+0.424 [−0.901, +1.801] ns**; pooled post-boot H vs 0 **−1.79 [−4.94, +1.46] ns**.
+**1 of 14 points is individually SIG — chance expectation at 5% is 0.7.**
+
+#### ⚑⚑ THE RETRACTION — and it is the important part
+
+The pre-registered statistic is **structurally underpowered**, and measuring it
+exposed why. Raw policy **top-1** is an argmax statistic: swapping the encoding
+changes the argmax on only **19.1% of positions** (effective n ≈ 712 of 3723);
+the other 80.9% contribute exactly 0. Median per-checkpoint 95% CI half-width is
+**±5.38 cp — larger than the entire 5.2 cp effect being chased.**
+
+Re-run on **expected** regret, which moves on **98.3%** of positions (secondary,
+NOT pre-registered, reported as such):
+
+| ckpt | H_exp | ckpt | H_exp | ckpt | H_exp |
+|---|---|---|---|---|---|
+| boot512 | **−4.73 [−6.42, −3.12]** | iter172 | **−4.84 [−6.87, −2.74]** | iter425 | **−3.80 [−6.94, −0.86]** |
+| iter025 | **−4.98 [−6.60, −3.42]** | iter218 | **−3.78 [−6.03, −1.32]** | iter450 | **−3.26 [−6.24, −0.09]** |
+| iter070 | **−5.22 [−7.00, −3.54]** | iter308 | **−3.48 [−6.21, −0.18]** | iter475 | **−3.01 [−5.67, −0.23]** |
+| iter122 | **−5.00 [−6.80, −3.21]** | iter360 | **−3.14 [−5.64, −0.50]** | iter477 | **−3.60 [−6.45, −0.87]** |
+| | | iter409 | **−4.82 [−7.66, −1.90]** | iter478 | **−3.61 [−6.50, −0.56]** |
+
+**All 14 SIG.** Slope +0.343 cp/100 iter [−0.227, +0.908] **ns**; step
+boot512 − post-boot mean −0.69 [−2.21, +0.82] **ns**.
+
+**So: the net uses move history, by 3–5 cp, at EVERY point in the lineage
+including iter477 and iter478. The capability was never lost.** The claim in the
+entry above — *"boot512 converts real history into 5.2 cp of policy accuracy;
+iter477 converts it into nothing"* — is **REFUTED**. It came from reading `ns`
+as `absent` on a statistic that cannot resolve 3.6 cp. That is this codebase's
+signature defect committed by me, in the same session, one entry earlier.
+
+#### What this does to the audit-v2 ARTIFACT verdict above
+
+The **structural** finding stands untouched: the v1 ruler really does feed 93
+dead planes and the wrong colour flag on 50.8% of rows, verified bit-exactly,
+and audit-v2 is the correct encoding. **But the correction is now known to be
+near-UNIFORM across the lineage (−3.0 to −5.2 cp at every checkpoint), so it
+largely CANCELS in a paired boot→477 delta** — exactly as the already-reported
+ruler effect on expected regret said: dE(v2) − dE(v1) = +1.13 [−1.68, +3.84] ns.
+
+Consequence, stated plainly: **fixing the ruler does not much change the
+measured lineage degradation.** The "asymmetry reverses sign" reading
+(A_v1 +5.85 → A_v2 −2.37) fired its pre-committed rule as written, but both
+terms are top-1 quantities at ±5.4 cp per-checkpoint resolution, and the value
+head has NO smooth analogue to cross-check against. **Downgrade it: do not carry
+"policy degrades more than value" into the restart brief as established.** What
+should be carried is the negative — *the frozen audit does not establish that
+either head leads*, which is also what the 08-02 lineage entry concluded by its
+own scale-free test (L = −0.010, ns).
+
+#### ⚑ METHOD RULE, general
+
+**For any within-position paired contrast, use EXPECTED regret, not top-1.**
+Top-1 discards ~81% of the sample on an encoding swap and inflates the CI past
+the effect size. The 08-02 lineage entry already noted expected regret "detects
+the same movement earlier; it is the more sensitive read of the same head" — that
+was right, and the pre-registration above ignored it. The VALUE ruler has no
+smooth analogue at all; building one (e.g. value-ranking correlation rather than
+argmax regret) is the prerequisite for any future value-vs-policy lead test.
+
+**Bank:** `audit_historyfill_20260802/` — `lineage/score_<ckpt>.json` (14),
+`analyze_lineage.py`, `lineage_analysis.log`, `posthoc_step.log`,
+`posthoc_expected.log`, `lineage_ckpt_verify.json`, `sweep_lineage.sh`,
+`sweep.log`. All statistics above re-derive on CPU with no GPU.
+
+## 🔬 2026-08-02 — PRE-REGISTERED LAUNCH: the capacity ladder is being RE-TRAINED with weights banked, to attribute POLICY's global (never-trained-material) decay term
+
+The entry immediately above recorded this test as **UNRUNNABLE**: the 08-02 `capsize`
+and `rowsparam` rigs banked `slope.jsonl` scalars and threw the nets away at process
+exit, so the pre-registered PARAMS / ROWS-PER-PARAM / OPTIMIZER-DRIFT rule had no
+instrument to run against. This entry launches the re-run. **The deciding rule is NOT
+re-opened** — it is the text already fixed at `scratchpad/capacity_n4_20260802/PREREG.md`,
+written before any arm had an `N4_jul25` number and unchanged since.
+
+### The question, restated
+
+The 08-02 never-seen entry split the lineage's per-position policy decay into a **global
+term** (+0.0080 cp/iter, **69%**) that degrades material *no net ever trained on*, and a
+**window-exit increment** (+0.0036 cp/iter, 31%). The global term is a loss of
+generalisation. This retrain asks whether it **scales with net size at matched data** —
+i.e. whether it is set by parameter count, by rows/param, or by neither.
+
+### What is being run, and what is different from last time
+
+Identical training to the original rigs — same preserved corpora, same seed, same
+`batch 256 / chunk_steps 176`, same 25-point views grid 0 → 11.53, same production loss,
+compile off. `diff` of the rig against the originals is **two hunks**, and neither is on
+the training path:
+
+1. **`torch.save` of the full `state_dict` at EVERY eval point** — the entire reason this
+   re-run exists. Written in `absorb.py`'s `final.pt` format
+   (`{"model": …, "arch": {…, "_schema_version": ARCH_SCHEMA_VERSION}}`) so
+   `load_model_from_checkpoint` reads it with no scorer change. Saved from the
+   pre-`Trainer` `model` object, **not** `trainer.model`, because `apply_compile`
+   *rebinds* `self.model`; a wrapper would prefix every key with `_orig_mod.` (PR #267's
+   defect). The rig **asserts** no `_orig_mod.`/`module.` key is ever banked rather than
+   assuming compile-off makes it impossible.
+2. **`--gpu-mem-fraction`**, so the run stays inside the headroom the absorption rig
+   leaves. Numerically inert: it can only turn an over-budget allocation into an OOM.
+
+| arm | params (unique storage) | train rows | rows/param | steps to 11.53 views | est. wall |
+|---|---|---|---|---|---|
+| S | 6,172,739 | 187,537 | 0.0303797 | 8,448 | ~53 min |
+| M | 19,577,669 | 187,537 | 0.0095811 | 8,448 | ~64 min |
+| L | 63,084,128 | 187,537 | 0.0029728 | 8,448 | ~80 min |
+| SHUF (negative control, S size, permuted labels) | 6,172,739 | 187,537 | — | 8,448 | ~53 min |
+| **L-wide** | 63,084,128 | **1,145,716** | **0.0181617** | **51,568** | ~415 min |
+| live production | 63,084,128 | — | 0.0202 | — | — |
+
+**L-wide is the arm that separates "params" from "rows/param" at FIXED params**: 6.11×
+sibling-L's rows/param, 89.9% of live's.
+
+### DEVIATIONS from PREREG.md, declared BEFORE launch
+
+Both are budget cuts, and both are stated here so neither can be read as a post-hoc
+choice. Neither touches the deciding rule.
+
+- **ONE SEED (0) per arm, not two.** PREREG's estimator pools seeds 0 and 1 with a
+  bootstrap that resamples games independently per seed; with one seed that reduces to
+  the single-seed game-clustered bootstrap it already specifies. Cost of the second seed
+  was ~4.5 GPU-h against a re-run already ~11 GPU-h serial on a shared card.
+  **Consequence, stated in advance: seed-to-seed variance is not measured, so a
+  between-arm difference of the size of the original rigs' seed spread cannot be
+  separated from initialisation noise.** The original runs' banked `views_at_min` gives
+  the scale of that spread (L 3.364/2.883, M 7.688/6.727, L-wide 4.326/4.798).
+- **The `LWSHUF` (L-wide label-shuffled) leg is NOT re-run** — 7 GPU-h for a second
+  negative control. The `SHUF` leg **is** re-run and must pass PREREG's clause in full.
+  Standing already-banked `N4_jul25` controls (`uniform` 206.56 cp, `shuffled477` 192.21
+  cp) apply unchanged, and every arm now additionally banks its **own views = 0
+  random-init checkpoint**, which is a per-size untrained control the original rigs could
+  not offer. **If the surviving control legs fail, the verdict is CANNOT RESOLVE** —
+  exactly as PREREG says.
+
+### ⚑ ONE PERMITTED ADDITION, pre-registered as a SECONDARY instrument
+
+At every banked eval point of every arm, also score the **frozen deep-SF audit ruler**
+(`scratchpad/vp_timing_20260802/raw_policy_regret.py --audit-set data/audit_set_v1.jsonl`,
+raw policy prior, batch 128 — the identical invocation the absorption rig used).
+
+**Rationale for adding it now:** ledger `720f11d95` showed the absorption rig's
+production-replica arm *reproduces the live lineage's frozen-audit degradation*
+(**+7.945 cp in 12,320 steps** vs live **+8.45 cp / 478 iters**). So the frozen audit is
+a demonstrated carrier of the global term, and this retrain can read the global term
+**directly, per net size**, on a ruler that shares no rows with either the arms' corpora
+or `N4_jul25`.
+
+**It is SECONDARY and it gates nothing.** The three-way decision is made on `rho_late`
+over `N4_jul25` exactly as PREREG specifies. The audit numbers are reported alongside; if
+they disagree with `N4_jul25` that disagreement is **reported**, not used to pick a
+verdict. Standing caveat carried: `data/audit_set_v1.jsonl` is **FEN-only**, so 117/175
+input planes are zero and it is a **ranking** cross-check — absolute bars off it are not
+comparable with `N4_jul25`'s stored-history rows.
+
+### Disjointness — RE-VERIFIED at run time, not assumed
+
+PREREG required this. Checked just now, on **both** axes, because shard indices collide
+across lineages and a basename join would be worthless:
+
+| | arms' corpora | `N4_jul25` |
+|---|---|---|
+| replay dir | `data/salvage/post_quarantine_20260801/seeds/slot_000/replay_shards` | `data/salvage/pre_durable_deploy_20260726/seeds/slot_000/replay_shards` |
+| shard index range | 033118 – 033940 (119 shards) | 034000 – 034064 (65 shards) |
+
+Different directory **and** non-overlapping index range; index-set intersection is
+**empty**. `N4_jul25` = 10,000 rows / 2,960 games, confirmed at load.
+
+Corpora re-verified present and intact before launch: `capsize_corpus` 10 G,
+`rowsparam_corpus_wide` 55 G. The wide corpus's `held` split was a symlink into
+`/tmp/claude-1000/…`; it has been repointed at the preserved copy after md5-verifying
+`x.npy`, `policy_target.npy` and `legal_mask.npy` byte-identical, so no arm now depends
+on a cleanable path.
+
+### GPU coordination
+
+The absorption rig owns the card (arm F, two concurrent trainers; H2 after). `gate.sh`
+requires **≤1 real `absorb.py` trainer AND ≥8.5 GB free**, re-checked before every arm and
+never mid-arm — a running arm is allowed to finish and the driver pauses *between* arms
+if the rig's second slot re-fills. The gate counts processes by `comm ~ ^python` plus a
+bare `absorb.py` argv entry, so the `bash -c`, `timeout` and `tail` wrappers that also
+carry the path in their command lines are not miscounted as trainers.
+
+### Kill / success rule — the PREREG's, unmodified
+
+Gate: every arm's `rho_late` CI computable, negative control passes. Then on
+`rho_late` = per-row OLS of `N4_jul25` top-1 cp regret over the **last 8 eval points**
+(views 7.9 → 11.53), 95% percentile bootstrap over 10,000 resamples **clustered by
+`game_id`**, seed 0, with `D_S` = `rho_late(S) − rho_late(L)` and
+`D_LW` = `rho_late(L-wide) − rho_late(L)`:
+
+- **ROWS/PARAM** iff `rho_late(S) ≤ 0.5 × rho_late(L)` with non-overlapping CIs, **and**
+  L-wide strictly between L and S with `D_LW`'s CI excluding 0, **and** `rho_pred(L-wide)`
+  (log-interpolation across `log(rows/param)` through L/M/S) inside L-wide's CI.
+- **PARAMS** iff the S clause holds but `D_LW`'s CI **includes** 0 despite 6.11× the
+  rows/param, and L-wide is significantly above `rho_pred`.
+- **OPTIMIZER-STATE DRIFT** iff the S clause fails.
+- **CANNOT RESOLVE** otherwise, including any arm whose `rho_late` CI includes 0.
+- SECONDARY step-axis (`cp / 1,000 steps`) reported for every arm; **if the step-axis and
+  views-axis rankings disagree the verdict is downgraded to CANNOT RESOLVE**, because then
+  this design does not separate data from steps.
+
+**Bank:** `scratchpad/capacity_n4_20260802/` — `rig/{slope,slope_wide}.py` (with the
+two-hunk diff against the originals), `driver.sh`, `gate.sh`, `score_n4.py`,
+`runs/run_*/ckpt/chunk_NNNN.pt` (**full weights, every eval point, sha256 recorded in
+`slope.jsonl`**), `runs/run_*/n4/chunk_NNNN.npz` (per-row dumps), `audit/`. Every
+statistic below re-derives on CPU from the dumps; every dump re-derives on GPU from the
+banked weights. **That is the point of this entry.**
+
+### ⚑ 2026-08-02, 21:4x — CLARIFICATION to the entry above, made BEFORE any control number exists
+
+Filed while arm S is training and the `SHUF` arm is ~3 h away, so this resolves an
+ambiguity in the pre-registered text rather than a number.
+
+PREREG's negative-control clause reads: the label-shuffled arm "must, **at every eval
+point**, score `N4_jul25` at **≥ 2×** the worst real arm's mean top-1 regret". That has two
+readings and they are not equivalent:
+
+- **LITERAL** — control point *k* vs the worst real arm at point *k*. **This cannot be
+  passed by any control that has ever been built.** Every arm in this rig trains *from
+  scratch*, so its chunk-0 point is an untrained net at ~180–200 cp — and so is the
+  control's. The ratio at chunk 0 is ~1.0 by construction, for a shuffled arm and an
+  honest arm alike. **A gate that cannot pass is as useless as [[a_gate_that_cannot_fail]]**,
+  and it tests nothing whatever about label shuffling.
+- **ADOPTED** — the control's **late window** (the last 8 eval points, the ones `rho_late`
+  is read on) vs the worst real arm's late window. This asks what a negative control
+  exists to ask: *did permuting the labels destroy the learning the real arms achieved,
+  in the window the deciding rule reads?* It is also the form the absorption rig's own
+  control took (SHUF 204.67 cp vs real arms ~52 cp on the frozen audit).
+
+The adopted reading gates; the literal ratio is **reported alongside** so the swap is
+visible rather than silent. The `rho_late`-must-be-`ns` half of the clause is unchanged
+and unaffected by either reading. This changes no other pre-registered rule.
+
+⚑ The general defect worth naming: PREREG wrote the control clause by analogy with rigs
+whose baseline was a *trained* net, and did not notice that a from-scratch ladder puts an
+untrained point on the grid where every arm — honest or shuffled — looks identical. **A
+control threshold stated as a ratio must name the window it is evaluated over.**
+
+### ADDENDUM 2 — ARM F (20% old-era rehearsal): FAILS its pre-registered test, and is
+### still the most promising lever found. Both halves reported.
+
+**Contamination hazard caught before launch.** `F_UNBLOCK.md` licensed the era ROWS; it
+said nothing about WHICH era rows. Measured: **58,290 of the 65,257 rows in
+`corpus_era/erareg` (89%) share a `game_id` with the era RULER.** Rehearsing from that
+pool would have made the era ruler an IN-WINDOW ruler for arm F alone — F would have
+posted a forgetting "win" earned by memorising the games it is scored on, and been the
+only arm with that advantage. Rehearsal instead draws from `corpus_frehearse`, built
+from the **652 era shards the ruler never touched** (ruler used stride-5 = 163 of 815)
+with ruler `game_id`s excluded on top: **120,000 rows / 5,795 games, 0 game overlap**,
+enforced by a runtime abort rather than trusted from the build.
+Mixer honours the proof's caveat — per-pool indices, identical `Corpus.gather` tail,
+field-by-field concatenation, **no per-row weight, no provenance tag, no new field**.
+Proof of effect: `realized_rehearsal_frac` **0.19922** from actual draw counts.
+
+**PRE-REGISTERED VERDICT: F does NOT forget less than A.** The rule required `g_F < 0`
+with CI excluding 0 at BOTH matched steps. Significance is **anti-correlated across
+seeds**:
+
+| | `era` @7040 | `era` @8448 | `oow` @7040 | `oow` @8448 | `inw` @8448 |
+|---|---|---|---|---|---|
+| F_s0 | **−1.448** [−2.233, −0.675] S | −0.745 [−1.542, +0.056] ns | −0.087 ns | −0.381 ns | +0.979 S |
+| F_s1 | −0.297 [−1.027, +0.413] ns | **−1.565** [−2.322, −0.822] S | +0.106 ns | −0.097 ns | +0.729 ns |
+
+Neither seed is sustained at both steps. **`oow`: all four null and inside the 0.638
+noise bar — F does not beat A out-of-window**, exactly as pre-registered.
+
+**BUT F IS THE ONLY ARM WHOSE FORGETTING ADVANTAGE SURVIVES THE MATCHED-LEARNING
+CONTROL** — the same post-hoc control that dissolved C and D entirely:
+
+| arm | d_era at matched `inw` | vs 0.394 bar | learning given up (`inw` vs A) |
+|---|---|---|---|
+| C | −0.345 | **below** | +3.428 |
+| D | −0.381 | **below** | +3.501 |
+| **F_s0** | **−0.805** | **above** | **+0.979** |
+| **F_s1** | **−0.874** | **above** | **+0.729** |
+
+C and D bought −1.1 cp of era at the cost of 3.4 cp of learning, and the advantage
+vanished once that was controlled for. F buys a comparable era gain for **~0.85 cp**
+of learning — a quarter the cost — and the gain **persists** at matched learning,
+consistently across both seeds. That is the first sign in this experiment of an arm
+bending the trade-off curve rather than sliding along it.
+
+**Neutral frozen-audit ruler** (paired, 4,000 positions): F_s0 +4.860 [+0.018, +10.321]
+SIG vs boot512, F_s1 +4.208 ns. F − A is negative in all four seed pairings (−1.830 to
+−3.737), SIG in 2 of 4. Level ranking across the whole experiment:
+**C 51.7 | D 52.1 | F 52.5 | B2 54.7 | A 55.2 | G 56.0 | boot512 47.9.**
+C/D edge F on level, but reached it by training ~3.4 cp less; F is within ~0.9 cp of
+A's learning. At comparable learning F is the best arm on this ruler.
+
+**The pre-registered prediction was right, and it constrains the mechanism.** I
+predicted F would improve `era` modestly at best and NOT improve `oow`, reasoning from
+G's null that the mechanism is INTERFERENCE rather than EXPOSURE. That is what
+happened. Quantitatively: A's total era degradation is ~2.07 cp; F recovers ~0.84 cp of
+it at matched learning, i.e. **20% rehearsal addresses at most ~40% of forgetting**.
+Exposure is part of the mechanism, but the majority is not — new-era gradients
+overwrite old-era structure regardless of how often the old rows are shown.
+
+**Status: F is a FAILED pre-registered test with a positive post-hoc signal.** It is
+not promotable on this evidence. What it justifies is a properly powered re-run —
+more seeds and a denser eval grid, since the failure mode was per-eval-point variance
+(F's era estimates swing 0.7-1.3 cp between adjacent points against a 0.394 bar), not
+a null. **Do not put rehearsal on the restart add-back list on this entry.**
