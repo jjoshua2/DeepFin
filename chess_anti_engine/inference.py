@@ -1488,6 +1488,29 @@ _OFF_LAYOUT_ID = 16
 SLOT_PROTOCOL_VERSION = 2
 _SLOT_MAGIC = 0x43414532  # b"CAE2"
 
+
+def trial_slot_prefix(*, trial_id: str) -> str:
+    """The ONE derivation of a trial's shared-memory slot name prefix.
+
+    The launcher tells workers a name and the shared broker creates one; they
+    must be byte-identical or every worker times out against a segment nobody
+    created — silent from the broker's side, since it simply never sees a
+    request. They used to be two hand-written copies of the same formula, and
+    the test that "checked they agree" was a third copy: mutating either
+    implementation left it green (PR #322 review). One function, two
+    delegating call sites, and a test that calls the real ones.
+
+    The version belongs in the NAME, not only in the header: see the
+    SLOT_PROTOCOL_VERSION comment above for why a header bump cannot make a
+    stale client refuse, and the name can.
+    """
+    from chess_anti_engine.tune._utils import (
+        stable_seed_u32,  # deferred: avoids a circular import
+    )
+
+    h = stable_seed_u32(f"slot-prefix-v{SLOT_PROTOCOL_VERSION}", trial_id)
+    return f"cae{SLOT_PROTOCOL_VERSION}-{h:08x}"
+
 # request_id 0 is reserved for "no request has been stamped" (a freshly created
 # or zeroed segment), so a client never treats a virgin slot as an echo.
 _REQUEST_ID_NONE = 0
@@ -3021,6 +3044,13 @@ class MultiSlotInferenceClient:
 
     Each underlying slot still serializes its own request/response protocol,
     but different selfplay threads can make progress through different slots.
+
+    A slot that keeps failing is QUARANTINED rather than handed straight back
+    out: production runs 4 slots at a 30 s request timeout, so one wedged slot
+    used to cost every fourth request a full 30 s stall, forever, with nothing
+    in the stats able to tell it from a healthy one (SHARED_BROKER_AUDIT B6).
+    Quarantine is temporary and re-probed on an exponential backoff — a
+    transient broker stall must not permanently shrink the worker's capacity.
     """
 
     def __init__(
@@ -3030,11 +3060,19 @@ class MultiSlotInferenceClient:
         max_batch: int,
         request_timeout_s: float = 30.0,
         input_planes: int = _CHANNELS,
+        slot_failure_threshold: int = 2,
+        slot_quarantine_s: float = 5.0,
+        slot_quarantine_max_s: float = 60.0,
     ) -> None:
         names = [str(n).strip() for n in slot_names if str(n).strip()]
         if not names:
             raise ValueError("MultiSlotInferenceClient requires at least one slot")
         self._request_timeout_s = max(0.001, float(request_timeout_s))
+        self._slot_failure_threshold = max(1, int(slot_failure_threshold))
+        self._slot_quarantine_s = max(0.0, float(slot_quarantine_s))
+        self._slot_quarantine_max_s = max(
+            self._slot_quarantine_s, float(slot_quarantine_max_s),
+        )
         self._clients = [
             SlotInferenceClient(
                 slot_name=name,
@@ -3057,10 +3095,27 @@ class MultiSlotInferenceClient:
         self._lifetime_roundtrip_s = 0.0
         self._inflight = 0
         self._max_inflight = 0
+        self._lifetime_failed_requests = 0
+        self._lifetime_failed_positions = 0
+        # slot_requests counts ATTEMPTS (unchanged meaning); slot_served and
+        # slot_failures split it, because attempts alone cannot distinguish a
+        # dead slot from a healthy one -- the audit measured [3, 3, 3, 3] with
+        # slot 3 serving nothing.
         self._slot_requests = [0 for _ in self._clients]
+        self._slot_served = [0 for _ in self._clients]
+        self._slot_failures = [0 for _ in self._clients]
+        self._slot_consecutive_failures = [0 for _ in self._clients]
+        self._slot_quarantines = [0 for _ in self._clients]
         self._slot_positions = [0 for _ in self._clients]
         self._slot_wait_s = [0.0 for _ in self._clients]
         self._slot_roundtrip_s = [0.0 for _ in self._clients]
+        # idx -> (client, monotonic re-probe deadline). Held here instead of on
+        # _available_clients, so a wedged slot stops being handed out; the
+        # deadline is what puts it back.
+        self._quarantined: dict[int, tuple[SlotInferenceClient, float]] = {}
+        self._slot_quarantine_backoff_s = [
+            self._slot_quarantine_s for _ in self._clients
+        ]
 
     @property
     def input_planes(self) -> int:
@@ -3078,8 +3133,14 @@ class MultiSlotInferenceClient:
             )
         idx, client, wait_s = self._acquire_client()
         t0 = time.perf_counter()
+        # Set BEFORE the call and cleared only on a normal return, so every
+        # abnormal exit (exception, GeneratorExit) is accounted as a failure
+        # rather than as served throughput.
+        failed = True
         try:
-            return client.evaluate_encoded(x)
+            out = client.evaluate_encoded(x)
+            failed = False
+            return out
         finally:
             self._release_client(
                 idx, client,
@@ -3087,6 +3148,7 @@ class MultiSlotInferenceClient:
                 legal=False,
                 wait_s=wait_s,
                 roundtrip_s=time.perf_counter() - t0,
+                failed=failed,
             )
 
     @property
@@ -3107,8 +3169,11 @@ class MultiSlotInferenceClient:
     ) -> tuple[np.ndarray, np.ndarray]:
         idx, client, wait_s = self._acquire_client()
         t0 = time.perf_counter()
+        failed = True
         try:
-            return client.evaluate_legal_bf16(x, legal_flat, legal_counts)
+            out = client.evaluate_legal_bf16(x, legal_flat, legal_counts)
+            failed = False
+            return out
         finally:
             self._release_client(
                 idx, client,
@@ -3116,6 +3181,7 @@ class MultiSlotInferenceClient:
                 legal=True,
                 wait_s=wait_s,
                 roundtrip_s=time.perf_counter() - t0,
+                failed=failed,
             )
 
     def _acquire_client(self) -> tuple[int, SlotInferenceClient, float]:
@@ -3126,26 +3192,66 @@ class MultiSlotInferenceClient:
         forever and the per-request broker timeout never runs. Cap wait at the
         same budget as a single request so the worker can raise, reset, or
         exit via the session liveness watchdog.
+
+        Quarantined slots are re-probed here: the wait is capped at the next
+        re-probe deadline so a pool that is entirely quarantined recovers as
+        soon as the first backoff expires instead of burning the whole acquire
+        budget waiting on a queue nothing will fill.
         """
         t0 = time.perf_counter()
         # Allow a little more than one request so a just-busy slot can free.
         acquire_timeout_s = max(0.05, float(self._request_timeout_s) * 2.0)
-        try:
-            idx, client = self._available_clients.get(timeout=acquire_timeout_s)
-        except queue.Empty as exc:
+        deadline = t0 + acquire_timeout_s
+        while True:
+            self._reinstate_due_slots()
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0.0:
+                break
+            probe_in = self._next_probe_wait_s()
+            wait_for = remaining if probe_in is None else min(remaining, max(0.01, probe_in))
+            try:
+                idx, client = self._available_clients.get(timeout=wait_for)
+            except queue.Empty:
+                continue
+            wait_s = time.perf_counter() - t0
             with self._stats_lock:
-                inflight = int(self._inflight)
-                available = int(self._available_clients.qsize())
-            raise TimeoutError(
-                f"inference slot acquire timed out after {acquire_timeout_s:.1f}s "
-                f"(slots={len(self._clients)} inflight={inflight} available={available}); "
-                "all slots held — broker stall or slot leak"
-            ) from exc
-        wait_s = time.perf_counter() - t0
+                self._inflight += 1
+                self._max_inflight = max(self._max_inflight, self._inflight)
+            return idx, client, wait_s
+
         with self._stats_lock:
-            self._inflight += 1
-            self._max_inflight = max(self._max_inflight, self._inflight)
-        return idx, client, wait_s
+            inflight = int(self._inflight)
+            available = int(self._available_clients.qsize())
+            quarantined = sorted(self._quarantined)
+        raise TimeoutError(
+            f"inference slot acquire timed out after {acquire_timeout_s:.1f}s "
+            f"(slots={len(self._clients)} inflight={inflight} available={available} "
+            f"quarantined={quarantined}); "
+            "all slots held or quarantined — broker stall or slot leak"
+        )
+
+    def _next_probe_wait_s(self) -> float | None:
+        """Seconds until the earliest quarantined slot is due, or None if none are."""
+        with self._stats_lock:
+            if not self._quarantined:
+                return None
+            soonest = min(until for _, until in self._quarantined.values())
+        return max(0.0, soonest - time.monotonic())
+
+    def _reinstate_due_slots(self) -> None:
+        """Return quarantined slots to the pool once their backoff has expired.
+
+        Quarantine must be a probe, not an execution: a broker restart or a
+        transient stall would otherwise shrink the worker to the slots that
+        happened to be idle at the time, permanently, and nothing in the loop
+        ever re-widens it.
+        """
+        now = time.monotonic()
+        with self._stats_lock:
+            due = [i for i, (_, until) in self._quarantined.items() if until <= now]
+            revived = [(i, self._quarantined.pop(i)[0]) for i in due]
+        for idx, client in revived:
+            self._available_clients.put((idx, client))
 
     def _release_client(
         self,
@@ -3156,20 +3262,65 @@ class MultiSlotInferenceClient:
         legal: bool,
         wait_s: float,
         roundtrip_s: float,
+        failed: bool = False,
     ) -> None:
+        """Account the request and hand the slot back — unless it must be quarantined.
+
+        A failed request evaluated no positions, so it must not land in the
+        lifetime totals the worker reports as throughput: during a broker stall
+        the 60-second `broker client stats:` line used to report full pos_s
+        while nothing at all was being served (SHARED_BROKER_AUDIT B6).
+        """
+        backoff = 0.0
+        quarantined_now = 0
+        total = len(self._clients)
         with self._stats_lock:
             self._lifetime_requests += 1
-            self._lifetime_positions += int(positions)
-            if legal:
-                self._lifetime_legal_requests += 1
-                self._lifetime_legal_positions += int(positions)
+            self._slot_requests[idx] += 1
             self._lifetime_wait_s += float(wait_s)
             self._lifetime_roundtrip_s += float(roundtrip_s)
-            self._slot_requests[idx] += 1
-            self._slot_positions[idx] += int(positions)
             self._slot_wait_s[idx] += float(wait_s)
             self._slot_roundtrip_s[idx] += float(roundtrip_s)
             self._inflight = max(0, self._inflight - 1)
+            quarantine = False
+            if failed:
+                self._lifetime_failed_requests += 1
+                self._lifetime_failed_positions += int(positions)
+                self._slot_failures[idx] += 1
+                self._slot_consecutive_failures[idx] += 1
+                if self._slot_consecutive_failures[idx] >= self._slot_failure_threshold:
+                    quarantine = self._slot_quarantine_s > 0.0
+            else:
+                self._lifetime_positions += int(positions)
+                if legal:
+                    self._lifetime_legal_requests += 1
+                    self._lifetime_legal_positions += int(positions)
+                self._slot_served[idx] += 1
+                self._slot_positions[idx] += int(positions)
+                # A success clears the strike count AND the backoff: the next
+                # wedge on this slot starts from the short quarantine again.
+                self._slot_consecutive_failures[idx] = 0
+                self._slot_quarantine_backoff_s[idx] = self._slot_quarantine_s
+            if quarantine:
+                backoff = min(
+                    self._slot_quarantine_backoff_s[idx], self._slot_quarantine_max_s,
+                )
+                self._quarantined[idx] = (client, time.monotonic() + backoff)
+                self._slot_quarantines[idx] += 1
+                self._slot_consecutive_failures[idx] = 0
+                self._slot_quarantine_backoff_s[idx] = min(
+                    max(backoff, self._slot_quarantine_s) * 2.0,
+                    self._slot_quarantine_max_s,
+                )
+                quarantined_now = len(self._quarantined)
+        if quarantine:
+            log.warning(
+                "inference slot %d quarantined for %.1fs after %d consecutive "
+                "failures (%d/%d slots now quarantined); it will be re-probed, "
+                "not dropped",
+                idx, backoff, self._slot_failure_threshold, quarantined_now, total,
+            )
+            return
         self._available_clients.put((idx, client))
 
     @property
@@ -3177,21 +3328,32 @@ class MultiSlotInferenceClient:
         with self._stats_lock:
             requests = int(self._lifetime_requests)
             positions = int(self._lifetime_positions)
+            served = requests - int(self._lifetime_failed_requests)
             return {
                 "slots": len(self._clients),
                 "available_slots": int(self._available_clients.qsize()),
                 "inflight": int(self._inflight),
                 "max_inflight": int(self._max_inflight),
+                # requests = ATTEMPTS; served/failed split it. positions counts
+                # only rows a model actually evaluated -- a timed-out request
+                # transported nothing and must never read as throughput (B6).
                 "lifetime_requests": requests,
+                "lifetime_served_requests": served,
+                "lifetime_failed_requests": int(self._lifetime_failed_requests),
+                "lifetime_failed_positions": int(self._lifetime_failed_positions),
                 "lifetime_positions": positions,
                 "lifetime_legal_requests": int(self._lifetime_legal_requests),
                 "lifetime_legal_positions": int(self._lifetime_legal_positions),
                 "lifetime_wait_s": float(self._lifetime_wait_s),
                 "lifetime_roundtrip_s": float(self._lifetime_roundtrip_s),
-                "avg_rows_per_request": positions / requests if requests else 0.0,
+                "avg_rows_per_request": positions / served if served else 0.0,
                 "avg_wait_ms": 1000.0 * self._lifetime_wait_s / requests if requests else 0.0,
                 "avg_roundtrip_ms": 1000.0 * self._lifetime_roundtrip_s / requests if requests else 0.0,
                 "slot_requests": list(self._slot_requests),
+                "slot_served": list(self._slot_served),
+                "slot_failures": list(self._slot_failures),
+                "slot_quarantines": list(self._slot_quarantines),
+                "slots_quarantined": len(self._quarantined),
                 "slot_positions": list(self._slot_positions),
                 "slot_wait_s": list(self._slot_wait_s),
                 "slot_roundtrip_s": list(self._slot_roundtrip_s),
@@ -3271,21 +3433,22 @@ class SharedSlotBroker:
       # released for retry come straight back round the serve loop, so an
       # unthrottled warning here would write thousands of lines a second.
         self._trial_no_model_warned_at: dict[str, float] = {}
+      # Same, for a request whose transport this broker has no dispatch for.
+        self._trial_bad_mode_warned_at: dict[str, float] = {}
+      # Lifetime count of requests refused for an unimplemented request_mode.
+      # A refusal nobody can count is indistinguishable from one that never
+      # fires, and this one is the difference between a loud timeout and a
+      # mis-decoded policy reaching MCTS (SHARED_BROKER_AUDIT B1).
+        self.unsupported_mode_requests = 0
         self._all_slots: list[tuple[str, _InferenceSlot]] = []
         # Monotonic start of the current no-work stretch (None = work flowing).
         self._idle_since: float | None = None
 
     def _register_new_trial(self, trial_id: str) -> None:
         """Allocate ``slots_per_trial`` shared-memory slots for a freshly seen trial."""
-        from chess_anti_engine.tune._utils import (
-            stable_seed_u32,  # deferred: avoids circular import
-        )
-        # Version-carrying name; MUST stay byte-identical to
-        # distributed_runtime._trial_slot_prefix, which is what the workers are
-        # told to attach to. See that function for why the version is in the
-        # NAME and not only in the header.
-        h = stable_seed_u32(f"slot-prefix-v{SLOT_PROTOCOL_VERSION}", trial_id)
-        slot_prefix = f"cae{SLOT_PROTOCOL_VERSION}-{h:08x}"
+        # Version-carrying name, derived by the SAME function the launcher uses
+        # to tell workers what to attach to. Never re-derive it here.
+        slot_prefix = trial_slot_prefix(trial_id=trial_id)
 
         slots: list[_InferenceSlot] = []
         for i in range(self.slots_per_trial):
@@ -3513,6 +3676,55 @@ class SharedSlotBroker:
             # Same contract and same reason as SlotBroker._process_batch_mode
             # (audit I1) -- this broker shares the slot protocol verbatim.
             request_ids = [int(slot.request_id) for slot in ready]
+            request_modes = [int(slot.request_mode) for slot in ready]
+            # The mode was never read here at all (SHARED_BROKER_AUDIT B1).
+            # This broker only implements dense-f32; a bf16-bits or compact
+            # request was decoded AS f32 (the slot regions alias) and answered
+            # with a dense f32 policy the client then re-read as bf16 -- a
+            # plausible in-range WDL and a garbage policy, no exception, no
+            # counter. Both production transports (evaluate_encoded's bf16 path
+            # and evaluate_legal_bf16) send exactly those modes, so this is the
+            # only branch that ever worked. Refuse loudly instead of
+            # implementing dispatch that production does not use: the shared
+            # broker is OFF (distributed_inference_shared_broker: false) and a
+            # silent wrong answer is the failure class this whole audit exists
+            # to delete.
+            unsupported = sorted({m for m in request_modes if m != _MODE_DENSE_F32})
+            if unsupported:
+                n_bad = sum(1 for m in request_modes if m != _MODE_DENSE_F32)
+                for slot, mode in zip(ready, request_modes, strict=True):
+                    if mode != _MODE_DENSE_F32:
+                        slot.state = _STATE_IDLE
+                # Throttled for the same reason as the no-model branch above:
+                # a released slot comes straight back round the serve loop, so
+                # an unthrottled line here writes thousands a second.
+                _now_nm = time.monotonic()
+                if _now_nm - self._trial_bad_mode_warned_at.get(trial_id, 0.0) >= 30.0:
+                    self._trial_bad_mode_warned_at[trial_id] = _now_nm
+                    log.error(
+                        "shared broker cannot serve request_mode(s) %s for trial "
+                        "%s: SharedSlotBroker._process_parallel implements only "
+                        "_MODE_DENSE_F32 (%d). _MODE_DENSE_BF16 (%d) and "
+                        "_MODE_LEGAL_BF16 (%d) have NO dispatch here -- serving "
+                        "them as dense f32 returns a mis-decoded policy with no "
+                        "error (SHARED_BROKER_AUDIT B1). Releasing %d slot(s) "
+                        "unanswered; the per-trial SlotBroker implements all "
+                        "three, this broker does not.",
+                        unsupported, trial_id, _MODE_DENSE_F32,
+                        _MODE_DENSE_BF16, _MODE_LEGAL_BF16, n_bad,
+                    )
+                self.unsupported_mode_requests += n_bad
+                kept = [
+                    (slot, req)
+                    for slot, req, mode in zip(
+                        ready, request_ids, request_modes, strict=True,
+                    )
+                    if mode == _MODE_DENSE_F32
+                ]
+                if not kept:
+                    continue
+                ready = [slot for slot, _ in kept]
+                request_ids = [req for _, req in kept]
             batch_sizes = [slot.batch_size for slot in ready]
             xs = [np.array(slot.input[:bsz], copy=True, order="C") for slot, bsz in zip(ready, batch_sizes, strict=True)]
             xb = np.concatenate(xs, axis=0)

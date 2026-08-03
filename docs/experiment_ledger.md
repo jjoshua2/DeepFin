@@ -22885,3 +22885,172 @@ The pre-committed reading is unchanged and still SUCCESS: every axis prints with
 its state, the attribution axis is `refresh_lag` in seconds against the
 reference lag, `confound` reads `UNMEASURED` with `n=0`, and the command refuses
 to return 0 while it does.
+
+## 2026-08-03 — B6/B7/B1 + K5 of the wave-3/4 audit: a wedged inference slot is evicted and stops reading as throughput, walker virtual loss is released when the evaluator raises, and the shared broker refuses a transport it cannot serve
+
+**Not an experiment.** No config key, no loss weight, no target semantics, no
+change to a single training row on the current settings. Two of the four items
+are on the production selfplay path but neither alters what is computed when
+nothing fails; the third is behind a flag that is OFF; the fourth is a guard.
+Recorded here because three of them are the house signature defect — a value
+accepted and then silently ignored — and because B7 changes what a *failed*
+search leaves behind, which is a real state change to a persistent object.
+
+Source: `scratchpad/code_audit_20260803/SHARED_BROKER_AUDIT.md` (B1, B6, B7) and
+`WORKER_AUDIT.md` (K5), CPU-only repros, plus three reviewer follow-ups the #321
+and #322 merges left in COVERAGE.md's deferred table (task #137).
+
+**B6 — a dead slot was handed out forever, and its failures were counted as
+served throughput. PRODUCTION-REACHABLE.** Production builds
+`MultiSlotInferenceClient` at 4 slots per worker
+(`distributed_inference_slots_per_worker: 4`) with `request_timeout_s`
+defaulted to 30 s. `_release_client` ran from a `finally` and did two
+unconditional things: put the slot straight back on the availability queue, and
+increment `lifetime_requests`/`lifetime_positions`/`slot_requests[idx]` — for a
+request that raised. Measured with 3 live slots and 1 whose shared memory never
+exists (`sb_multislot_wedge_accounting.py`), 12 requests of 2 rows:
+
+```
+12 sequential requests: 9 ok, 3 failed, wall=2.45s
+per-slot request counts   : [3, 3, 3, 3]
+per-slot total roundtrip_s: [0.02, 0.0, 0.0, 2.43]
+stats['lifetime_requests']  = 12   (actually served: 9)
+stats['lifetime_positions'] = 24  (actually evaluated: 18)
+stats keys naming errors/failures/timeouts: []
+```
+
+⚑ **The severity is diagnosis, not correctness.** The failing request does
+raise and `worker.py` resets the client. What was broken is that the ONLY
+production surface — the 60-second `broker client stats:` line — read exactly
+one per-slot array, `slot_requests`, in which the dead slot is `3` like every
+healthy one. `slot_roundtrip_s` carried the 100× separation that identifies the
+wedge instantly; it was computed, exported in `stats`, and **read by nothing**.
+Meanwhile `pos_s` and `rows_per_req` came from `lifetime_positions`, so a broker
+stall printed full throughput for rows no model ever saw.
+
+Now: per-slot consecutive-failure tracking with quarantine after N (default 2)
+consecutive failures, re-probed on an exponential backoff (5 s doubling to 60 s,
+reset by any success) — **a probe, not an execution**, because a transient stall
+must not permanently shrink the worker's capacity. `lifetime_positions` and
+`lifetime_legal_*` count only rows a model evaluated; `lifetime_requests` stays
+ATTEMPTS and `lifetime_served_requests`/`lifetime_failed_requests` split it, so
+every key means what its name says. The worker's line now reads `slot_served`
+(so `slots_active` can read 3/4), prints `slot_rt_ms_max` always, and prints
+`failed_req=` / `slots_quarantined=` only when non-zero — same rule as
+`stale_responses_rejected`, so the healthy line is unchanged and any hit is a
+grep result.
+
+⚑ **The early return was itself a blind spot.** `if delta_requests <= 0: return`
+plus served-only totals would have gone SILENT in exactly the window where every
+request failed — the stall the line exists to show. It now logs whenever
+anything happened, success or not, and a test pins that window.
+
+**B7 — virtual loss leaked permanently whenever the evaluator raised.
+PRODUCTION-REACHABLE on the UCI/arena (ruler) path.** The pairing is split
+across two C calls with a network call in between:
+
+```
+_, path, legal, term_q = tree.walker_descend_puct(...)   # APPLIES vloss
+pol, wdl = evaluator.evaluate_encoded(xs)                # <-- can raise
+tree.walker_integrate_leaf(path, legal, ...)             # REMOVES vloss
+```
+
+`WalkerPool._descend_until_done` had no `try/finally` around that span.
+`tree.remove_vloss_path` existed, was exported, and was **called from nowhere in
+`chess_anti_engine/`**. The tree is caller-owned and outlives the failed run
+(`SearchWorker._tree` persists across chunks and plies — the warm-tree reuse
+PLAY_PATH F1 documents), so the leak biased selection away from those subtrees
+for the rest of the game, invisibly, since nothing reads virtual loss back out.
+The raising evaluator is the documented one: this path calls a broker client and
+`TimeoutError` is I1's own failure mode. Banked, `sb_cwalk_vloss_leak_on_eval_error.py`:
+
+```
+--- control: evaluator never fails -> vloss must return to zero ---
+  leaked virtual loss: total=0 over 0 nodes   (expect 0 / 0)
+--- evaluator raises TimeoutError after the first few batches ---
+  [0..4] leaked: 48 / 32 / 16 / 16 / 16     (re-run: 48, 8, 8, 16, 8)
+```
+
+Fixed at **all three** sites with the same shape, not only the reproduced one:
+`WalkerPool._descend_until_done`, `PucvChunker.run` (audit called this PLAUSIBLE
+and never ran it — it is now reproduced and fixed), and
+`MultiGpuPucvPool._pipeline_until_done`. The release lives in one place,
+`chess_anti_engine/mcts/vloss.py`, which is the first caller of
+`remove_vloss_path` in the package. After: **0 leaked on 5/5 failed runs, and
+0 on the clean control** — the control is load-bearing, because a cleanup that
+fired unconditionally would also read as "no leak" while corrupting a healthy
+search. Only the UN-integrated tail is released; `walker_integrate_leaf` removes
+vloss for what it consumes, and releasing twice would push a concurrent walker's
+in-flight count down past the C floor at 0.
+
+**B1 — the shared broker served DENSE_F32 to every request regardless of mode.
+LATENT (flag OFF), and the fix is a refusal, not an implementation.**
+`SharedSlotBroker._process_parallel` never read `slot.request_mode`. Because
+`_InferenceSlot` aliases the regions (`input`/`input_bf16_bits` share
+`input_offset`; `policy`/`policy_i32`/`policy_u16` share `policy_offset`), a
+bf16-bits payload was read as float32, the model ran on garbage, and the client
+decoded a dense f32 answer as bf16 — measured as an in-range plausible WDL and a
+policy of alternating `3.85e-13` / `0.488` where every entry should have been
+`~0.51`. No exception, no counter, no log line. **Both production transports
+send modes with no dispatch here** (`MultiSlotInferenceClient` hardcodes
+`supports_compact_root_policy` and `supports_input_bf16_bits` to True), so the
+only mode that worked is the one no production client sends — and every existing
+shared-broker test set `request_mode = _MODE_DENSE_F32`, i.e. the only working
+mode was the only tested one.
+
+⚑ **Deliberately NOT implementing the other two modes.** The shared broker is
+OFF (`distributed_inference_shared_broker: false`, yaml:862) and the per-trial
+`SlotBroker` implements all three. Adding untested dispatch to a dead path buys
+nothing; converting silent corruption into the existing release-for-retry path
+(→ loud client-side `TimeoutError`) buys the whole finding. The refusal releases
+only the offending slots (a mixed batch still serves its dense clients), logs
+throttled at 30 s for the same reason the no-model branch is, and increments
+`unsupported_mode_requests` — the count is NOT throttled, because a refusal
+nobody can count is indistinguishable from one that never fires.
+
+**K5 — the third plane-count leg.** `_check_manifest_compat` validated the
+manifest against ITSELF; #321 added client-vs-manifest at the chokepoint a
+production selfplay worker actually reaches. The CLI arg
+`--inference-slot-input-planes` (argparse default 146 = v1, production 175) was
+still in no comparison. Its value comes from `config["input_extra_features"]`
+(`distributed_runtime.py:890`) while the manifest's comes from
+`model_cfg.input_extra_features` (`:384`) — two sources of truth nothing
+compared. Now all three must agree, client leg first (its message names the
+width the segment was actually built with), and the CLI leg is inert when no
+slot name is configured so a local-inference worker is not killed for a flag
+that sizes nothing.
+
+**Task #137 follow-ups, all three taken.**
+
+- ⚑ **`test_both_slot_prefix_derivations_agree` was a THIRD copy of the
+  formula.** It re-derived `cae{V}-{h:08x}` by hand, so sabotaging either
+  implementation left it green — the exact failure mode the test was written to
+  prevent. There is now ONE derivation, `inference.trial_slot_prefix()`;
+  `distributed_runtime._trial_slot_prefix` and
+  `SharedSlotBroker._register_new_trial` both delegate; and the test calls the
+  REAL `_register_new_trial` and reads the segment names it actually created. A
+  second test performs the sabotage and requires the launcher side to follow.
+- **CORRECTION to the #321 entry above.** It states the plane-count guard covers
+  "all 7 evaluator-sourced call sites". That was **7 of the 8** — `puct_c.py`'s
+  LEAF in-place branch (`get_input_buffer` → `batch_encode`, directly below the
+  guarded ROOT branch) had no guard. It has one now, and a test reaches it via a
+  wide-root/narrow-leaf evaluator, since the root check would otherwise fire
+  first.
+- **F1's last rung.** `_run` computed `expect_planes` from the same
+  `input_extra_features` it passed to the encoders, so pinning that argument at
+  the top of `_run` moved the expectation with it and every test stayed green —
+  an expectation derived from the value under test. `run()` now computes it and
+  passes it down, and the test performs that exact mutation and requires a
+  Failure.
+
+**Deploy.** Nothing here is live until a restart, and nothing here needs one
+urgently: on a healthy fleet every change is a no-op. B7's behaviour differs only
+after an evaluator raises; B6's counters differ only after a request fails; B1 is
+unreachable at the current flag; K5 fires only on a skew that would already be
+returning all-zero policy/WDL. The one operator-visible change on a healthy run
+is the new always-on `slot_rt_ms_max=` field in `broker client stats:`.
+
+**No yardstick, no kill rule, because there is no hypothesis** — this is
+remediation of measured defects, and each one's proof is its repro going from
+red to green plus a mutation that turns the new test red. Mutation results are in
+the PR body.

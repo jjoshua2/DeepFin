@@ -181,6 +181,13 @@ def run(
             games=games, seed=seed, max_plies=max_plies,
             encode_every=encode_every,
             input_extra_features=input_extra_features,
+            # Derived HERE, from the argument this function was given, and
+            # passed down. Computing it inside _run made the expectation a
+            # function of the value under test: pinning input_extra_features at
+            # the top of _run moved expect_planes with it and every test stayed
+            # green (PR #321 review F1, last rung). An independent source of
+            # truth is the whole point of an oracle.
+            expect_planes=int(input_plane_count(input_extra_features)),
         )
     finally:
         if prior is not None:
@@ -189,11 +196,11 @@ def run(
 
 def _run(
     *, games: int, seed: int, max_plies: int, encode_every: int,
-    input_extra_features: str,
+    input_extra_features: str, expect_planes: int,
 ) -> Failure | None:
-    # Computed ONCE, here, far from the encoder calls: _check_encode asserts the
-    # arrays it actually compared are this wide (review F1).
-    expect_planes = int(input_plane_count(input_extra_features))
+    # expect_planes is the CALLER's, computed from the version the caller asked
+    # for; nothing in this function may re-derive it (review F1). _check_encode
+    # asserts the arrays it actually compared are this wide.
     rng = random.Random(seed)
     for g in range(games):
         b = chess.Board()

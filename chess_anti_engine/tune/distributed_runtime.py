@@ -17,7 +17,7 @@ from typing import Any
 import numpy as np
 
 from chess_anti_engine.encoding import input_plane_count
-from chess_anti_engine.inference import SLOT_PROTOCOL_VERSION
+from chess_anti_engine.inference import trial_slot_prefix
 from chess_anti_engine.mcts.gumbel import SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.model import ModelConfig, model_config_to_manifest_dict
 from chess_anti_engine.moves import policy_size_for_encoding
@@ -922,9 +922,11 @@ def _trial_slot_prefix(*, trial_id: str) -> str:
     of phase — measured to return an all-zero policy and an all-zero WDL with no
     exception, which is exactly the poisoning this protocol version exists to
     delete. Versioning the name turns that into a FileNotFoundError -> TimeoutError.
+
+    Delegates to ``inference.trial_slot_prefix``: the broker creates the
+    segments this names, so the two must never be able to drift.
     """
-    h = stable_seed_u32(f"slot-prefix-v{SLOT_PROTOCOL_VERSION}", trial_id)
-    return f"cae{SLOT_PROTOCOL_VERSION}-{h:08x}"
+    return trial_slot_prefix(trial_id=trial_id)
 
 
 def _resolve_shared_cache_root(config: dict, server_root: Path) -> Path:
