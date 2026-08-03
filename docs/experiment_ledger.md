@@ -27499,3 +27499,39 @@ serve exactly two purposes:
 power and is reported as the wave's finding. If it leaves that band, the verdict is
 withdrawn and re-reported at n=4 — the n=2 reading below is superseded, not averaged
 with it.
+
+#### VERDICT (2026-08-03) — arm FE primary cell (0.20, ema2000): **FAIL stage 1**; exchange rate is a **LOOP INVARIANT**
+
+**Judged by the pre-registered rule (9c5c9a681, estimator per amendment 6a
+dfed54f54), matched-learning vs A, both seeds, both verdict steps.** The `era`
+clause passes on all four reads (−1.138/−1.303 @7040, −1.489/−1.004 @8448, all
+SIG past the 0.394 bar). The `oow` clause fails — every CI includes 0, none
+reaches the 0.638 bar. The `inw` give-back clause fails decisively:
++0.955/+1.342 @7040, +1.319/+1.195 @8448 against a 0.307 bar (**4.1×**).
+**Stage 1 failing means the remaining 5 cells are descriptive-only and NOTHING
+promotes from this wave** — exactly the outcome predicted in the
+pre-registration. The restart ships raw-publish, no rehearsal, no EMA.
+
+**Headline (the wave's real question): stacking the only two curve-benders does
+not change the price of era regret.** Pooled `E` at step 8,448, ratio of sums
+(amendment 6a): FE20 raw 0.983 (= F20, bit-identical per 6b); **FE20 ema2000
+0.992**; FE20 ema4000 0.688; ema2000 solo (H2) 0.539. `E(FE20,ema2000)/best
+solo = 1.009` → **LOOP-INVARIANT** (pre-registered band 0.7–1.3). ema4000 =
+0.700, sitting on the ANTI-COMPOSE boundary: more smoothing buys more era
+(−1.55) at disproportionate learning cost (2.26).
+
+**Mechanism: the interaction is real but self-cancelling.** Both pre-registered
+interaction predictions confirmed: H-strong FALSE (combined inw cost 1.257 >
+ema2000 solo 1.004); H-weak sub-additivity TRUE (1.257 < 1.858, ratio 0.676).
+Difference-in-differences: rehearsal cuts EMA's inw cost 60% (+0.403 vs +1.004)
+**and cuts its oow benefit 50%** (−0.439 vs −0.871); era DiD ≈ 0 (+0.082). The
+levers partially substitute; the ratio survives untouched. This is the stronger
+form of the invariance claim — not just "the level didn't move" but "the
+interaction exists and cancels in the ratio."
+
+**Instrument checks:** analysis instrument reproduces the published F and H2
+tables bit-for-bit; `H2_s0` vs `A_s0` returns exactly 0.000 on all three rulers.
+`FE35` pair running, `FE10` queued, then the 6b-chained `FE20_s2/s3` (which
+cannot revive the primary cell — per-seed inw miss at 4.1× — and may only move
+pooled `E` to n=4 and give F(0.20) its missing power). Full 6-cell dose table
+follows when the queue drains.
