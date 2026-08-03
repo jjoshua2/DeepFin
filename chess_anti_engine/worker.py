@@ -2080,7 +2080,17 @@ class WorkerSession:
             "legal_req=%.1f%% legal_pos=%.1f%% slots_active=%d/%d "
             "slot_req_skew=%d max_inflight=%d available=%d "
             "complete_gps=%.2f complete_pos_s=%.0f callback_busy=%.1f%% "
-            "upload_busy=%.1f%% active_threads=%d thread_game_skew=%d",
+            "upload_busy=%.1f%% active_threads=%d thread_game_skew=%d"
+            # Only when non-zero, so the healthy line is unchanged and any
+            # non-zero value is a grep hit rather than something to eyeball.
+            # Counts responses the client refused because the broker echoed a
+            # different request id -- i.e. the timeout/re-submit race (audit
+            # I1) actually occurred and was caught rather than silently
+            # feeding another position's policy into MCTS.
+            + (
+                f" stale_responses_rejected={int(ds.get('stale_responses_rejected', 0))}"
+                if int(ds.get("stale_responses_rejected", 0)) else ""
+            ),
             requests, delta_requests,
             float(delta_positions / max(1, delta_requests)),
             float(delta_requests / max(1e-6, elapsed_s)),
