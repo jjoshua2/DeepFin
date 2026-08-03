@@ -34,6 +34,10 @@ ALERT (exit 1) — needs action:
     at a healthy-looking 0.0 through three desync episodes over 25 days because
     `rebuild_sf_targets` defaults False. NOT armed on the RATE yet — see the
     NOTE block below for why and what promotes it.
+  - sf_eval_pv_checked_frac == 0.0 on an iteration that trained: the same
+    alert for the VALUE half of the SF label (`sf_wdl`, 0.45 of the value
+    target), which had no detector at all before 2026-08-03. Same two-state
+    ambiguity, same rule.
   - --max-age-min M (opt-in): the newest row's timestamp is older than M
     minutes — result.json has stopped advancing (stall / no-games drought).
   - the daily strength ratchet's newest day wrote no ratchet.csv row at all
@@ -61,6 +65,16 @@ PROMOTION TRIGGER, SCOPED TO THE TRAIN ROW ONLY: arm the rate alert once a live
 `sf_multipv_checked_frac ~ 0.99`. The `test_` twin CANNOT satisfy that trigger
 on the current holdout and must not be included in it; re-cutting the holdout
 from post-quarantine shards is what would clear it.
+
+The VALUE-half rate (`sf_eval_pv_orphan_frac > 0`) is held back on the SAME
+terms, and the decision is stated rather than deferred: its structural floor is
+also exactly 0.000000, but the post-quarantine window still carries 33
+burst-edge orphan rows over 640 policy-clean shards (3.2e-5), so arming it
+today fires on arrival for the same aging-out reason. SAME PROMOTION TRIGGER,
+train row only: arm it once a live row reads `sf_eval_pv_orphan_frac == 0.0`
+with `sf_eval_pv_checked_frac` at its production level (~0.99 of batch rows;
+the poisoned arm of `scripts/sf_no_multipv_probe.py` reads 0.733 because the
+no-PV rows fall out of this denominator by construction).
 
 Usage:
   PYTHONPATH=. python3 scripts/loop_health.py                    # newest trial, last 20 iters
@@ -153,6 +167,23 @@ def blind_desync_detector_alerts(row: dict) -> list[str]:
             f"{int(test_size)} holdout rows — the ruler's own desync detector is "
             "blind, so test_sf_labelled_no_multipv_frac says nothing about "
             "whether the frozen set is contaminated"
+        )
+
+  # The VALUE half, armed on exactly the same terms and for the same reason.
+  # `sf_eval_pv_orphan_frac` reads 0.0 both when the value labels are sound and
+  # when the host never derived the flags (a batch path that skipped
+  # `_prepare_host_arrays`, or a shard set without `sf_label_meta`), and only
+  # `sf_eval_pv_checked_frac` separates those. Leaving the value column
+  # unwatched while watching the policy one would recreate the P2 asymmetry
+  # this instrument exists to end.
+    value_checked = _f("sf_eval_pv_checked_frac")
+    if value_checked is not None and steps is not None and steps > 0 and value_checked == 0.0:
+        out.append(
+            "sf_eval_pv_checked_frac=0.0 on a trained iteration — the VALUE-half "
+            "desync detector inspected NOTHING (sf_label_meta absent, or the "
+            "host flags were never derived). sf_eval_pv_orphan_frac"
+            f"={_f('sf_eval_pv_orphan_frac')} above it is UNMEASURED, not clean, "
+            "and sf_wdl is 0.45 of the trained value target"
         )
     return out
 

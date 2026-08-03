@@ -22885,3 +22885,251 @@ The pre-committed reading is unchanged and still SUCCESS: every axis prints with
 its state, the attribution axis is `refresh_lag` in seconds against the
 reference lag, `confound` reads `UNMEASURED` with `n=0`, and the command refuses
 to return 0 while it does.
+
+---
+
+## DETECTOR 2026-08-03 — the SF label's VALUE half gets an instrument (audit wave 3, SELFPLAY_AUDIT P2), and the health line stops counting failures as labels (P9)
+
+**Not an experiment. No training-affecting knob moves.** Four new observation
+columns, one new live-log field, one corrected denominator. `git diff origin/main`
+touches no config, no loss weight and no target. Recorded here because the ledger
+is where a reading's provenance lives and because two of the numbers below are
+baselines that later readers will quote.
+
+### The defect (P2)
+
+`sf_wdl` carries realized `sf_wdl_frac` **0.45** of the trained value target
+(`docs/model_heads.md`; realized 0.45 in 478/478 iterations, floor-pinned).
+Until today it had **no detector in either direction.** The always-on desync
+tripwire — `_report_sf_label_health`'s `no_legal_pv` live, and
+`TrainMetrics.sf_labelled_no_multipv_frac` in-loop — reads the presence of
+`sf_multipv_raw`, which is the POLICY half of the label block.
+`_attach_sf_target_to_record:773` attaches `sf_wdl` from `res.cp`
+**unconditionally**, before and independently of that stamp.
+
+Measured on the 122 shards the 2026-08-01 quarantine removed (226,141 rows,
+209,263 labelled): of the 43,417 rows the policy tripwire flagged, **43,413
+(0.9999) still carried `has_sf_wdl = 1`**, and **0 of them were malformed.**
+
+### What the detector sees
+
+**`sf_eval_pv_orphan_frac` (the one with power).** A labelled row is ORPHANED
+when the record-level SF eval that became its `sf_wdl` does not match the top
+surviving MultiPV line. On a healthy row those two stored numbers are the same
+number **by construction**, not by empirical agreement: `res.cp`/`res.mate` are
+`_SearchInfoAccumulator.cp_pv1`/`mate_pv1` (`stockfish/uci.py:169-179, 195-196`),
+and the same accumulator files the rank-1 line into `res.pvs[0]`. They can
+differ only when rank 1's move failed `_collect_sparse_pv_rows`' legality filter
+and was dropped — i.e. the score that became the value label belongs to a move
+that is not playable in the queried position.
+
+⚑ **Its population is DISJOINT from the policy detector's numerator.** That one
+counts rows with NO MultiPV block; this one is only computable on rows that HAVE
+one. It is the first instrument that looks INSIDE the set the policy detector
+passes — the ~41 % desync pass-through `sf_multipv_presence_counts`' docstring
+has priced since PR #302 and nothing measured.
+
+| population | policy `no_pv` | value `orphan` |
+|---|---|---|
+| 122 quarantined shards, 209,263 labelled | 0.207476 | **0.119118** |
+| post-quarantine window, 1,264,058 labelled | 0.000199 | 0.000176 |
+| its 640 policy-clean shards, 1,128,248 | 0.000000 | 0.000032 |
+| pre-episode range 33118:33387, 475,713 rows | **0.000000** | **0.000000** |
+
+Combined with `no_legal_pv` it flags **0.2936 of labelled rows** on the
+quarantined set against 0.2075 for the policy half alone — **41.5 % more rows
+detected**, and ~83 % of the ~0.35 true poisoned share the module's own ~0.59
+pass-through calibration implies, against ~59 % before. That the two independent
+routes agree on ~0.59 is a check on the calibration, not a new estimate of it.
+
+**`sf_wdl_degenerate_frac`.** `sf_wdl` present but not a usable distribution
+(non-finite / out of [0,1] / not summing to 1 / exactly uniform). Reported
+because it is the check the audit named, and its verdict is **it has no power
+against desync whatsoever**: exactly 0 rows on the quarantined shards AND
+exactly 0 on the post-quarantine window, 1.47 M rows in total. A desynced engine
+returns a genuine search of another position, so its cp is an ordinary number
+and the logistic maps it to an ordinary distribution. **The label is well-formed
+and wrong.** Kept as a producer/parameter tripwire with a floor proven over
+1.47 M rows; do not read a 0.0 here as evidence about desync.
+
+**`sf_wdl_orphaned_frac`.** The blind spot itself, counted: policy-flagged rows
+carrying a well-formed value label. A near-twin of `sf_labelled_no_multipv_frac`
+by design (0.9999 on the quarantined set). Its value is that the audit's claim
+becomes machine-checked instead of documented — equality means every flagged row
+carries an unmarked value label, and a divergence is worth knowing the moment it
+appears. **Never sum it with the policy rate; they count the same rows.**
+
+### The measured clean baseline, and its provenance
+
+**Floor: exactly 0.000000, and structurally so** for the reason in the second
+paragraph above. The two numbers a later reader should quote:
+
+* **`sf_eval_pv_orphan_frac` = 0.000000 exactly**, over **270 shards /
+  475,713 rows** of the **pre-episode range 33118:33387** — every id strictly
+  below the first quarantined id (33388). Read **through the production path**
+  (`scripts/sf_no_multipv_probe.py`, shard → `_prepare_host_arrays` → collate →
+  `compute_loss` → `TrainMetrics`), not off a side scan.
+* **3.2e-5** over the **640 policy-clean post-quarantine shards** (1,128,248
+  rows) — **33 rows in 25 shards, and this is RESIDUE, not a background.**
+
+⚑ **PROVENANCE, STATED BECAUSE THE LAST DETECTOR'S BASELINE WAS CONTAMINATED**
+(PR #304's "clean 0.0008"). The 3.2e-5 is not quoted as the floor, and the
+0.000000 is derived from shards written BEFORE the episode rather than from a
+set selected by the policy gate — which is the mistake #304 had to retract.
+Two independent arguments that the 33 rows are burst-edge residue:
+
+* **Position.** All 25 flagged shard ids (33461–33713) lie inside the episode's
+  id span; the pre-episode 270 shards contain zero. Distance to the nearest
+  quarantined id: observed median **25** against **49.7 ± 15.0** for a uniform
+  draw of 25 from the same policy-clean pool, 2000 draws, **p = 0.0145**.
+* **Direction.** **33 of 33** run in the eval-better-than-best-surviving-line
+  direction the dropped-rank-1 mechanism predicts. A benign stale-score artifact
+  would be sign-symmetric; one-sided 33/33 is p = 2⁻³³.
+
+The p = 0.0145 alone would be weak. The structural argument is the load-bearing
+one and the two statistics agree with it.
+
+### What it structurally CANNOT see — stated, because P2 exists precisely because the last detector's blind spot was not
+
+1. **A desynced search whose rank-1 move is coincidentally legal here** keeps a
+   matching pair and passes. Same coincidental-legality escape the policy half
+   has; this does not remove it, it narrows it.
+2. **A cp TIE between rank 1 and the top surviving line** passes. This is why
+   the reading is 0.119 where the pass-through share is nearer 0.145 of labelled
+   rows — the detector catches roughly two thirds of the population it can see.
+3. **Rows with no MultiPV block at all are not counted here.** They are the
+   policy detector's numerator. The two rates must be read together and never
+   summed onto a shared denominator.
+4. **It says nothing about whether the eval was RIGHT** — only about whether its
+   own PV survived. A correctly-attached but badly-searched label is invisible
+   to it, as it is to everything else in the loop.
+5. **`sf_wdl_degenerate_frac` is not a desync detector** (see above), and the
+   `_emit_sf_refute_opp_record` site reports `eval_pv_checked = 0`, i.e.
+   UNMEASURED, because it stamps no sparse block. Inert in production
+   (`sf_refute_record_opp_rows` false); if that row type ever ships it needs its
+   own instrumentation, not a borrowed one.
+6. **The offline quarantine GATE is unchanged.** `eval/value_optimism.py` gains
+   no axis in this PR and `SF_MULTIPV_MISS_MAX` does not move. Decision, not a
+   deferral: adding a third gate axis changes which shards get quarantined,
+   which is data-affecting and needs its own pre-registered readout. The numbers
+   above are banked here so that change can be written without re-measuring.
+7. **The RATE alert in `scripts/loop_health.py` is NOT armed**, only the
+   BLINDNESS alert (`sf_eval_pv_checked_frac == 0.0` on a trained iteration).
+   Same reason as the policy twin: with 33 residue rows still in the window the
+   rate fires on arrival and gets muted. Promotion trigger, train row only:
+   arm it once a live row reads `sf_eval_pv_orphan_frac == 0.0` with
+   `sf_eval_pv_checked_frac` at its production level.
+
+### Threshold
+
+`_SF_EVAL_PV_ORPHAN_WARN_RATE = 0.01`, the SAME bar as the policy half, so the
+two halves of one label stay comparable on one instrument. Calibrated on the
+live 4096-label report window:
+
+| arm | windows | zero-windows | median | max |
+|---|---|---|---|---|
+| policy-clean post-quarantine | 275 | 257 | 0.000000 | **0.001465** |
+| 122 quarantined shards | 51 | 0 | **0.102205** | 0.726198 |
+
+6.8× headroom under the bar, 10× margin over it, 49 of 51 poisoned windows fire.
+⚑ **2 of the 51 read BELOW the bar.** This is a SECOND view, not a superset of
+the policy one.
+
+### P9 — the health line counted failures as labels
+
+`_report_sf_label_health` incremented `labelled` on **every** call, and both
+failure sites (`poll_async_sf_labels:1037`, `flush_async_sf_labels_for_records:1075`)
+call it with `failed=1` on a path where no row was labelled. So
+`no_legal_pv/labelled` and `bestmove_illegal/labelled` were damped by
+`F/(L+F)` — the third term of the very rule they feed. Fixed: `labelled` counts
+labels; a new `calls` counter drives the report window, so a window of pure
+failures still emits a line instead of going silent.
+
+**EFFECTIVE STRINGENCY IS UNCHANGED, AND NO THRESHOLD WAS RETUNED.** The two
+denominators differ only in windows with `failed > 0`, and `failed > 0` is an
+unconditional term of `unhealthy` — so every window whose rate the fix moves was
+already WARNING under both. The escalation VERDICT cannot have changed. What
+changed is the number a human reads. This is asserted, not argued:
+`test_the_corrected_denominator_cannot_change_the_escalation_verdict` fails the
+moment a later edit drops `failed > 0` from the rule.
+
+⚑ Two existing tests were **inverted** in the same commit. They asserted
+`labelled == 1` after a failure, i.e. they pinned the P9 dilution as intended
+behaviour. Anyone bisecting past this commit should expect that flip.
+
+### P9 follow-up (task #99): the two `failed=1` call sites
+
+**Verified pinned.** `test_a_swallowed_poll_failure_reaches_the_health_counter`
+and `test_a_swallowed_finalize_failure_reaches_the_health_counter` both assert
+on the COUNTER and not on the returned `failed` local, which is the distinction
+that makes them bite. No new pinning was needed; both were updated for the
+corrected denominator.
+
+### Verification
+
+* **Positive/negative control through the PRODUCTION path**, all 8 checks PASS
+  (`scripts/sf_no_multipv_probe.py`, now covering both halves):
+
+```
+poisoned  shards= 122 rows=   226141  sf_labelled_no_multipv_frac=0.207461  sf_multipv_checked_frac=0.925347  sf_eval_pv_orphan_frac=0.117386  sf_eval_pv_checked_frac=0.733374
+clean     shards= 270 rows=   475713  sf_labelled_no_multipv_frac=0.000000  sf_multipv_checked_frac=0.996983  sf_eval_pv_orphan_frac=0.000000  sf_eval_pv_checked_frac=0.996983
+
+[PASS] positive control fires: 0.207461 in [0.19, 0.23]
+[PASS] negative control is EXACTLY zero: 0.0 == 0.0
+[PASS] poisoned arm was actually inspected: checked 0.925347 > 0.5
+[PASS] clean arm was actually inspected: checked 0.996983 > 0.5
+[PASS] VALUE-half positive control fires: 0.117386 in [0.1, 0.14]
+[PASS] VALUE-half negative control is near zero: 0.000000 <= 0.0005
+[PASS] VALUE-half poisoned arm was actually inspected: orphan_checked 0.733374 > 0.5
+[PASS] VALUE-half clean arm was actually inspected: orphan_checked 0.996983 > 0.5
+```
+
+  `sf_eval_pv_checked_frac` reads 0.733 on the poisoned arm and 0.997 on the
+  clean one, and that gap is the detector working: the no-PV rows fall out of
+  the value denominator by construction.
+
+* **The negative control is shipped as a test**, both directions:
+  `test_a_pairing_PRESERVING_permutation_leaves_the_clean_rate_at_zero` (reorder
+  whole rows → exactly 0, so the detector is not reading row order) and
+  `test_a_pairing_BREAKING_shuffle_makes_the_clean_arm_fire` (shuffle the evals
+  against the PV blocks → flags exactly the rows that moved). Both over 5 seeds.
+  Fixtures are verbatim 48-row excerpts of `shard_033949.zarr` (quarantined) and
+  `shard_033130.zarr` (pre-episode), copied into the test rather than read from
+  a live path.
+
+* **Mutations, all KILLED:** (M1) always increment `labelled` → 5 tests fail;
+  (M2) orphan predicate can never fire → 9 fail; (M3) derive the flags AFTER the
+  `sf_multipv_raw` prune → `test_the_column_reaches_TrainMetrics_through_the_production_path[False]`
+  fails, which is the "gated behind a flag that is off in production" defect
+  reproduced deliberately; (M4) divide the orphan rate by `labelled` → the
+  dilution test fails; (M5) well-formedness always true → 2 fail.
+
+* `./scripts/lint.sh` with **no arguments**: `EXIT=0`, ruff `All checks passed`,
+  basedpyright `0 errors, 0 warnings, 0 notes`, vulture clean, `lint: OK`.
+
+* Tests green: `test_sf_value_half_detector.py` (new, 22), plus
+  `test_stockfish_uci_desync.py`, `test_sf_no_multipv_metric.py`,
+  `test_stockfish_label_gating.py`, `test_sparse_multipv_labels.py`,
+  `test_quarantine_desync_shards.py`, `test_compute_loss.py`, `test_losses.py`,
+  `test_phase_loss_buckets.py`, `test_wdl_loss_reporting.py`,
+  `test_trainable_report.py`, `test_report_counters.py`,
+  `test_replay_field_defaults.py`, `test_replay_shard_validation.py`,
+  `test_replay_disk_buffer.py`, `test_selfplay_sf_wdl_pov.py`,
+  `test_selfplay_result_labeling.py`, `test_selfplay_label_overlap.py`,
+  `test_sf_p0_teacher_metrics.py`, `test_loop_health.py`.
+
+### Cost
+
+Two (B,) float32 vectors added to the H2D payload — **4 KB at batch_size 512,
+0.03 % of the `x` tensor**. They are derived on the host in
+`_prepare_host_arrays` BEFORE the payload prune, because neither input reaches
+the GPU in production: `sf_multipv_raw` is pruned when `sf_policy_sparse_ce` is
+off (the default, and in no config file) and `sf_label_meta` is in no collate
+spec at all. Computing them after the prune is exactly how this column would
+have become another `sf_rebuild_policy_frac`, and M3 above is that mutation.
+
+**Readout obligation.** Training is PAUSED, so none of these columns has a live
+reading yet. On resume, the first `progress.csv` row is the check: expect
+`sf_eval_pv_checked_frac` near the SF-labelled share of the batch and
+`sf_eval_pv_orphan_frac` at or near 0. **A zero on the orphan column with a zero
+on the checked column is UNMEASURED and must not be recorded as clean.**

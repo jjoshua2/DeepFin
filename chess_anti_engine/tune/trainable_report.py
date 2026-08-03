@@ -848,6 +848,16 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
   # rows at all. `scripts/loop_health.py` alerts on that; the RATE alert is
   # deferred until a TRAIN row reads 0.0 (the `test_` twin cannot, see below).
     "sf_labelled_no_multipv_frac": 0.0, "sf_multipv_checked_frac": 0.0,
+  # VALUE half of the same always-on detector (see TrainMetrics).
+  # `sf_eval_pv_orphan_frac` is the one with power: it inspects the rows the
+  # policy column PASSES, floor exactly 0.000000, 0.119118 on the 122
+  # quarantined shards. Read it with `sf_eval_pv_checked_frac` — zero there
+  # means nothing was inspected. `sf_wdl_degenerate_frac` reads 0.0 on
+  # poisoned data too and is a producer tripwire, not a desync one;
+  # `sf_wdl_orphaned_frac` is `sf_labelled_no_multipv_frac`'s twin by design
+  # and must never be summed with it.
+    "sf_wdl_degenerate_frac": 0.0, "sf_wdl_orphaned_frac": 0.0,
+    "sf_eval_pv_orphan_frac": 0.0, "sf_eval_pv_checked_frac": 0.0,
   # SF target rebuild coverage (train.rebuild_sf_targets). 0.0 with the flag
   # off; non-zero is the proof the flip reached the batch pipeline. The
   # masked_p0/_volatility pair are PRE-mask presence fractions — the outage
@@ -927,6 +937,15 @@ def _train_metrics_dict(metrics) -> dict:
         # rather than only while a rebuild experiment runs.
         "sf_labelled_no_multipv_frac": float(metrics.sf_labelled_no_multipv_frac),
         "sf_multipv_checked_frac": float(metrics.sf_multipv_checked_frac),
+        # The same alarm on the VALUE half of the label, which carries 0.45 of
+        # the trained value target and had no detector at all until 2026-08-03.
+        # `sf_eval_pv_orphan_frac` sees the desync pass-through the policy
+        # column structurally cannot; the other two are a producer tripwire and
+        # the blind spot's own count. See TrainMetrics for what each floor is.
+        "sf_wdl_degenerate_frac": float(metrics.sf_wdl_degenerate_frac),
+        "sf_wdl_orphaned_frac": float(metrics.sf_wdl_orphaned_frac),
+        "sf_eval_pv_orphan_frac": float(metrics.sf_eval_pv_orphan_frac),
+        "sf_eval_pv_checked_frac": float(metrics.sf_eval_pv_checked_frac),
         # Rebuild coverage. `sf_rebuild_policy_frac` below `sf_rebuild_wdl_frac`
         # is a Stockfish-DESYNC signal, not a coverage cost: both divide by all
         # batch rows and a healthy labelled row always carries both fields, so
@@ -1034,6 +1053,10 @@ _TEST_METRIC_KEYS: tuple[str, ...] = (
   # rejected, docs/experiment_ledger.md 2026-08-01) and was found only by
   # re-gating the pool offline, long after the numbers were published.
     "test_sf_labelled_no_multipv_frac", "test_sf_multipv_checked_frac",
+  # VALUE half on the same frozen set, for the same reason: the holdout scores
+  # `sf_wdl`-derived quantities, so "was the ruler's own value label detached"
+  # is a question about the ruler and it needs its own column here.
+    "test_sf_eval_pv_orphan_frac", "test_sf_eval_pv_checked_frac",
 )
 
 
@@ -1124,6 +1147,15 @@ def _test_and_drift_dict(
             # must not be used as a reason to mute the column.
             "test_sf_labelled_no_multipv_frac": float(tm.sf_labelled_no_multipv_frac),
             "test_sf_multipv_checked_frac": float(tm.sf_multipv_checked_frac),
+            # Same question on the value half. The full-pass eval path reaches
+            # `_prepare_host_arrays` (`_full_pass_host_batch`), which is where
+            # the flags are derived, so this reads for real — but ONLY on the
+            # array path: the legacy `ReplaySample` list path
+            # (`_sample_batch_host`'s else branch) never touches that method
+            # and publishes `checked_frac` 0.0, i.e. UNMEASURED. Read the two
+            # together; the orphan rate above a zero checked_frac means nothing.
+            "test_sf_eval_pv_orphan_frac": float(tm.sf_eval_pv_orphan_frac),
+            "test_sf_eval_pv_checked_frac": float(tm.sf_eval_pv_checked_frac),
         })
     return test_dict
 

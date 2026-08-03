@@ -47,6 +47,24 @@ POISONED_MIN = 0.19
 POISONED_MAX = 0.23
 CHECKED_MIN = 0.5
 
+# The VALUE half (2026-08-03, `sf_eval_pv_orphan_frac`). Same construction, own
+# band: the value check runs on the rows the POLICY check passes, so its
+# poisoned reading is a different number, not a copy of the one above.
+# Pre-registered off the direct zarr scan banked in the ledger — quarantined
+# 0.119118, policy-clean post-quarantine 0.000032.
+ORPHAN_POISONED_MIN = 0.10
+ORPHAN_POISONED_MAX = 0.14
+# ⚑ NOT "exactly zero", unlike the policy arm, and the difference is the
+# finding rather than a slack bar. The clean arm here is a RANGE of live
+# shards, and the value check sees desync pass-through that the policy check
+# structurally cannot — so a clean arm that reads exactly 0.0 on the policy
+# column can still hold burst-edge residue on this one (33 rows over the 640
+# policy-clean window shards, 3.2e-5). The bar is set an order of magnitude
+# under the residue-free expectation and two orders under the poisoned band; a
+# reading between them is a real signal about the "clean" arm, not a failure of
+# the detector, and must be investigated rather than absorbed by widening this.
+ORPHAN_CLEAN_MAX = 0.0005
+
 
 @dataclass(frozen=True)
 class ArmReading:
@@ -63,14 +81,27 @@ class ArmReading:
     rows: float = 0.0
     checked: float = 0.0
     no_pv: float = 0.0
+  # VALUE half, reconstructed the same way from its OWN published pair
+  # (`sf_eval_pv_orphan_frac` over `sf_eval_pv_checked_frac`). Its checked
+  # count is a different population from the policy one — rows carrying all
+  # three blocks, versus rows carrying an SF eval — so it cannot share the
+  # field above without silently rescaling one of the two rates.
+    orphan_checked: float = 0.0
+    orphan: float = 0.0
 
-    def add(self, *, rows: int, no_multipv_frac: float, checked_frac: float) -> ArmReading:
+    def add(
+        self, *, rows: int, no_multipv_frac: float, checked_frac: float,
+        orphan_frac: float = 0.0, orphan_checked_frac: float = 0.0,
+    ) -> ArmReading:
         checked = checked_frac * float(rows)
+        orphan_checked = orphan_checked_frac * float(rows)
         return ArmReading(
             shards=self.shards + 1,
             rows=self.rows + float(rows),
             checked=self.checked + checked,
             no_pv=self.no_pv + no_multipv_frac * checked,
+            orphan_checked=self.orphan_checked + orphan_checked,
+            orphan=self.orphan + orphan_frac * orphan_checked,
         )
 
     @property
@@ -80,6 +111,14 @@ class ArmReading:
     @property
     def checked_frac(self) -> float:
         return self.checked / self.rows if self.rows > 0.0 else 0.0
+
+    @property
+    def orphan_frac(self) -> float:
+        return self.orphan / self.orphan_checked if self.orphan_checked > 0.0 else 0.0
+
+    @property
+    def orphan_checked_frac(self) -> float:
+        return self.orphan_checked / self.rows if self.rows > 0.0 else 0.0
 
 
 class _SliceBuf:
@@ -150,12 +189,16 @@ def _read_arm(
             rows=int(metrics.eval_rows),
             no_multipv_frac=float(metrics.sf_labelled_no_multipv_frac),
             checked_frac=float(metrics.sf_multipv_checked_frac),
+            orphan_frac=float(metrics.sf_eval_pv_orphan_frac),
+            orphan_checked_frac=float(metrics.sf_eval_pv_checked_frac),
         )
         if verbose:
             print(
                 f"  {path.name}  rows={metrics.eval_rows:5d}"
                 f"  no_multipv={metrics.sf_labelled_no_multipv_frac:.6f}"
-                f"  checked={metrics.sf_multipv_checked_frac:.6f}",
+                f"  checked={metrics.sf_multipv_checked_frac:.6f}"
+                f"  eval_pv_orphan={metrics.sf_eval_pv_orphan_frac:.6f}"
+                f"  orphan_checked={metrics.sf_eval_pv_checked_frac:.6f}",
             )
     return reading
 
@@ -220,7 +263,9 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"{name:9s} shards={arm.shards:4d} rows={arm.rows:9.0f}"
             f"  sf_labelled_no_multipv_frac={arm.no_multipv_frac:.6f}"
-            f"  sf_multipv_checked_frac={arm.checked_frac:.6f}",
+            f"  sf_multipv_checked_frac={arm.checked_frac:.6f}"
+            f"  sf_eval_pv_orphan_frac={arm.orphan_frac:.6f}"
+            f"  sf_eval_pv_checked_frac={arm.orphan_checked_frac:.6f}",
         )
 
     checks = [
@@ -243,6 +288,27 @@ def main(argv: list[str] | None = None) -> int:
             "clean arm was actually inspected",
             clean.checked_frac > CHECKED_MIN,
             f"checked {clean.checked_frac:.6f} > {CHECKED_MIN}",
+        ),
+        (
+            "VALUE-half positive control fires",
+            ORPHAN_POISONED_MIN <= poisoned.orphan_frac <= ORPHAN_POISONED_MAX,
+            f"{poisoned.orphan_frac:.6f} in "
+            f"[{ORPHAN_POISONED_MIN}, {ORPHAN_POISONED_MAX}]",
+        ),
+        (
+            "VALUE-half negative control is near zero",
+            clean.orphan_frac <= ORPHAN_CLEAN_MAX,
+            f"{clean.orphan_frac:.6f} <= {ORPHAN_CLEAN_MAX}",
+        ),
+        (
+            "VALUE-half poisoned arm was actually inspected",
+            poisoned.orphan_checked_frac > CHECKED_MIN,
+            f"orphan_checked {poisoned.orphan_checked_frac:.6f} > {CHECKED_MIN}",
+        ),
+        (
+            "VALUE-half clean arm was actually inspected",
+            clean.orphan_checked_frac > CHECKED_MIN,
+            f"orphan_checked {clean.orphan_checked_frac:.6f} > {CHECKED_MIN}",
         ),
     ]
     print("")

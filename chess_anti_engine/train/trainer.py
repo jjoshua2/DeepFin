@@ -60,7 +60,12 @@ from chess_anti_engine.replay.augment import (
 )
 from chess_anti_engine.replay.buffer import ReplayBuffer, ReplaySample
 from chess_anti_engine.replay.dataset import collate, collate_arrays
-from chess_anti_engine.replay.shard import INPUT_HISTORY_ENCODING_ARRAY_KEY
+from chess_anti_engine.replay.shard import (
+    INPUT_HISTORY_ENCODING_ARRAY_KEY,
+    SF_EVAL_PV_CHECKED_FIELD,
+    SF_EVAL_PV_ORPHAN_FIELD,
+    sf_eval_pv_orphan_flags,
+)
 
 from .aurora import AuroraWithAuxAdam
 from .compile_probe import CompileProbe, apply_compile
@@ -848,6 +853,37 @@ class TrainMetrics:
   # Do not read it as a wiring fault and mute the column.
     sf_labelled_no_multipv_frac: float = 0.0
     sf_multipv_checked_frac: float = 0.0
+  # ALWAYS-ON SF-label contamination detector, VALUE HALF (audit P2). The
+  # column above reads only the POLICY half of the SF label block; `sf_wdl` —
+  # realized `sf_wdl_frac` 0.45 of the trained value target — had no detector
+  # in EITHER direction until 2026-08-03, and 99.99 % of the rows the policy
+  # column flagged on the quarantined shards still carried one.
+  #
+  # `sf_eval_pv_orphan_frac` is the one with detection power, and it is the
+  # first instrument that looks INSIDE the population the policy column
+  # passes: it fires when the record-level SF eval that BECAME this row's
+  # `sf_wdl` disagrees with the top surviving MultiPV line, which on a healthy
+  # row is impossible — both are the same accumulator field. Measured
+  # 2026-08-03: 0.119118 over the 122 quarantined shards, 0.000032 over the 640
+  # policy-clean post-quarantine shards (1,128,248 rows), floor exactly
+  # 0.000000. Its denominator is rows carrying ALL THREE blocks, published as
+  # `sf_eval_pv_checked_frac` — read them together, exactly as with the policy
+  # pair, because a rate over zero checked rows is UNMEASURED, not clean.
+  #
+  # `sf_wdl_degenerate_frac` has NO power against desync and is not pretending
+  # to: it reads exactly 0 on the quarantined shards too, because a desynced
+  # engine's label is well-formed and wrong. It is a producer/parameter
+  # tripwire with a floor proven over 1.47 M rows.
+  #
+  # `sf_wdl_orphaned_frac` is the P2 blind spot counted rather than described:
+  # policy-flagged rows still carrying a well-formed value label. It is a
+  # near-twin of `sf_labelled_no_multipv_frac` BY DESIGN (0.9999 of flagged
+  # rows on the quarantined set) — the pair being equal is the finding. Never
+  # sum it with the policy rate; they count the same rows.
+    sf_wdl_degenerate_frac: float = 0.0
+    sf_wdl_orphaned_frac: float = 0.0
+    sf_eval_pv_orphan_frac: float = 0.0
+    sf_eval_pv_checked_frac: float = 0.0
   # SF target rebuild coverage (train.rebuild_sf_targets). All 0.0 when the
   # flag is off, so a non-zero value IS the proof the flip reached the batch
   # pipeline — the transition log only proves the config push, and
@@ -1009,6 +1045,16 @@ _RATIO_METRIC_FIELDS: dict[str, tuple[str, str]] = {
   # how many rows were actually inspected.
     "sf_labelled_no_multipv_frac": ("sf_no_multipv_rows", "sf_multipv_checked_rows"),
     "sf_multipv_checked_frac": ("sf_multipv_checked_rows", "batch_rows"),
+  # Value half. The first two divide by `sf_wdl_rows` — their OWN denominator,
+  # not the policy pair's `sf_multipv_checked_rows`, so a batch that lost
+  # `has_sf_multipv_raw` still reports them over the rows that have a value
+  # label. The eval-PV pair keeps its own `checked` count for the same reason
+  # the policy pair does: it is the blind-instrument column, and a rate above
+  # zero checked rows is unmeasured rather than clean.
+    "sf_wdl_degenerate_frac": ("sf_wdl_degenerate_rows", "sf_wdl_rows"),
+    "sf_wdl_orphaned_frac": ("sf_wdl_orphaned_rows", "sf_wdl_rows"),
+    "sf_eval_pv_orphan_frac": ("sf_eval_pv_orphan_rows", "sf_eval_pv_checked_rows"),
+    "sf_eval_pv_checked_frac": ("sf_eval_pv_checked_rows", "batch_rows"),
 }
 
 # TrainMetrics field -> the compute_loss scalar reported VERBATIM, with no
@@ -2328,6 +2374,24 @@ class Trainer:
             arrs = rebuild_categorical_target_in_arrays(
                 arrs, params=self.categorical_target_params,
             )
+  # The VALUE-half desync check, derived HERE because its two inputs
+  # (`sf_multipv_raw`, `sf_label_meta`) never reach the GPU: the first is
+  # pruned three lines below in production and the second is not in the collate
+  # spec at all. Deriving it before the prune turns 960 B/row + 24 B/row of raw
+  # blocks into two (B,) float32 vectors — 4 KB at batch_size 512, 0.03 % of
+  # the `x` tensor — so the check rides the same always-on channel as
+  # `sf_labelled_no_multipv_frac` instead of being gated behind
+  # `sf_policy_sparse_ce`, which defaults False and is in no config file. That
+  # gating is exactly how `sf_rebuild_policy_frac` came to read 0.0 through
+  # three desync episodes; see `replay/shard.py::sf_eval_pv_orphan_flags`.
+  #
+  # Placed before the mirror as well as before the prune: mirroring permutes
+  # move indices, and the (cp, mate) columns this compares are mirror-invariant,
+  # so the two orders agree — but only this one is also independent of the
+  # mirror ever learning to touch a score column.
+        orphaned, checked = sf_eval_pv_orphan_flags(arrs)
+        arrs[SF_EVAL_PV_ORPHAN_FIELD] = orphaned
+        arrs[SF_EVAL_PV_CHECKED_FIELD] = checked
         if not self.sf_policy_sparse_ce:
             # Keep the H2D payload small: the (B, 40, 4) int32 candidate block
             # only rides to the GPU when the sparse loss consumes it. (Dropped
