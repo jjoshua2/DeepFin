@@ -13,7 +13,11 @@ import chess
 import numpy as np
 import torch
 
-from chess_anti_engine.encoding import encode_positions_batch, input_plane_count
+from chess_anti_engine.encoding import (
+    check_encode_buffer_planes,
+    encode_positions_batch,
+    input_plane_count,
+)
 from chess_anti_engine.encoding.lc0 import (
     LC0_HISTORY_ROOT_LEGACY_META,
     normalize_lc0_history_encoding,
@@ -136,6 +140,14 @@ def run_mcts_many_c(
         wdl_logits_all = np.asarray(pre_wdl_logits, dtype=np.float32)
     elif _inplace and root_cboards is not None:
         root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+        # The buffer's plane count comes from the evaluator/model here and from
+        # cfg on the fallback branch below; the C encoder trusts the buffer and
+        # never sees cfg.input_extra_features. Same run, different batch size,
+        # silently different encoding if the two ever disagree (audit E4).
+        check_encode_buffer_planes(
+            root_buf, cfg.input_extra_features,
+            where="run_mcts_many_c root inplace",
+        )
         batch_encode(root_cboards, root_buf)
         pol_logits_all, wdl_logits_all = eval_impl.evaluate_inplace(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
     else:

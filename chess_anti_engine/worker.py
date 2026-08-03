@@ -35,6 +35,7 @@ from chess_anti_engine.inference import (
     MultiSlotInferenceClient,
     SlotInferenceClient,
     model_constant_source,
+    require_model_planes,
 )
 from chess_anti_engine.inference_threaded import ThreadedDispatcher
 from chess_anti_engine.moves import (
@@ -1391,6 +1392,18 @@ class WorkerSession:
     def _load_and_compile_model(self, path: Path, cfg: ModelConfig, *, label: str, sha_short: str) -> torch.nn.Module:
         """Build model, load checkpoint, optionally compile."""
         model = build_model(cfg)
+        # --inference-slot-input-planes defaults to the v1 146 while production
+        # is 175; the slot's shared-memory layout was sized from it before any
+        # model existed, and a client narrower than the broker reads policy/WDL
+        # out of the middle of the broker's INPUT region — all-zero, silently
+        # (encoding audit E4/E5, INFERENCE_AUDIT I2). The model is the first
+        # object that knows the real width, so compare here.
+        client = self.inference_client
+        if client is not None:
+            require_model_planes(
+                model, int(client.input_planes),
+                where="worker inference slot",
+            )
         ckpt = torch.load(str(path), map_location="cpu")
         sd = ckpt.get("model", ckpt)
         load_state_dict_tolerant(model, sd, label=label)

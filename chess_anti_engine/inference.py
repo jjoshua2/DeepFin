@@ -25,7 +25,7 @@ from chess_anti_engine.broker_hang import (
     BrokerHangWatchdog,
     resolve_hang_abort_seconds,
 )
-from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding import input_plane_count, model_input_plane_count
 from chess_anti_engine.model import (
     ModelConfig,
     build_model,
@@ -42,6 +42,12 @@ log = logging.getLogger(__name__)
 # Input/output tensor shape constants shared by evaluators, slot layouts and
 # pinned buffers. _CHANNELS is the v1 default (146 = 112 LC0 + 34 extra);
 # v2_threats paths pass their own channel count explicitly.
+#
+# A 175-plane production system that forgets one of the --input-planes /
+# --inference-slot-input-planes flags silently gets this 146 instead (encoding
+# audit E4). The default is kept — changing it would only move which
+# configuration is silently wrong — and every path that later meets a real model
+# calls require_model_planes, so the mismatch raises instead of running.
 _CHANNELS = input_plane_count()  # 146 = 112 LC0 + 34 v1 extra
 _BOARD_H = 8
 _BOARD_W = 8
@@ -74,6 +80,27 @@ class AsyncBatchEvaluator(BatchEvaluator, Protocol):
 def _policy_output(out: dict[str, torch.Tensor]) -> torch.Tensor:
     """Extract policy tensor from model output (handles both key conventions)."""
     return out["policy"] if "policy" in out else out["policy_own"]
+
+
+def require_model_planes(model: torch.nn.Module, channels: int, *, where: str) -> None:
+    """Fail loudly when a buffer/slot width disagrees with the model's encoding.
+
+    ``channels`` is a shared-memory or pinned-buffer width chosen before the
+    model was known — from ``--input-planes`` / ``--inference-slot-input-planes``,
+    whose default is the v1 146. The model declares its own encoding, so once it
+    exists the two can be compared; without this the broker allocates a
+    146-plane segment for a 175-plane net and the mismatch surfaces as garbage
+    or as a shape error far from its cause (encoding audit E4/E5).
+    """
+    want = int(model_input_plane_count(model))
+    if int(channels) != want:
+        raise ValueError(
+            f"{where}: buffer width is {int(channels)} input planes but the model "
+            f"declares input_extra_features="
+            f"{getattr(model, 'input_extra_features', None)!r} = {want} planes. "
+            "Pass the matching --input-planes / --inference-slot-input-planes "
+            "(the default is the v1 146)."
+        )
 
 
 def _policy_output_full(out: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -1630,6 +1657,9 @@ class SlotBroker:
         ckpt = torch.load(str(model_path), map_location="cpu")
         sd = ckpt.get("model", ckpt)
         raw_model = build_model(model_cfg)
+        require_model_planes(
+            raw_model, self._layout.channels, where="SlotBroker slot layout",
+        )
         load_state_dict_tolerant(raw_model, sd, label="broker-model")
         raw_model.to(self.device)
         raw_model.eval()
@@ -2329,6 +2359,11 @@ class SlotInferenceClient:
         self._request_timeout_s = max(0.001, float(request_timeout_s))
         self._lock = threading.Lock()
 
+    @property
+    def input_planes(self) -> int:
+        """Slot width in input planes — must match the broker's and the model's."""
+        return int(self._layout.channels)
+
     def _disconnect(self) -> None:
         shm = self._shm
         self._slot = None
@@ -2552,6 +2587,7 @@ class MultiSlotInferenceClient:
             )
             for name in names
         ]
+        self._input_planes = int(input_planes)
         self._available_clients: queue.Queue[tuple[int, SlotInferenceClient]] = queue.Queue()
         for idx, client in enumerate(self._clients):
             self._available_clients.put((idx, client))
@@ -2568,6 +2604,11 @@ class MultiSlotInferenceClient:
         self._slot_positions = [0 for _ in self._clients]
         self._slot_wait_s = [0.0 for _ in self._clients]
         self._slot_roundtrip_s = [0.0 for _ in self._clients]
+
+    @property
+    def input_planes(self) -> int:
+        """Slot width in input planes — must match the broker's and the model's."""
+        return self._input_planes
 
     def evaluate_encoded(
         self, x: np.ndarray, relations: np.ndarray | None = None,
@@ -2844,6 +2885,10 @@ class SharedSlotBroker:
     ) -> None:
         """Construct + register a fresh model instance + CUDA stream for a new trial."""
         model = build_model(model_cfg)
+        require_model_planes(
+            model, self._layout.channels,
+            where=f"SharedSlotBroker slot layout (trial {trial_id})",
+        )
         model.to(self.device)
         model.eval()
         if hasattr(model, "_inference_only"):

@@ -121,7 +121,14 @@ def pick_moves_for_boards(
     # (scripts/arena_standard.py matched_sims) alternate models per move
     # cycle, and the last build_model otherwise wins for both sides.
     # Idempotent and cheap when unchanged.
-    rep_fix.apply(bool(getattr(model, "history_rep_fix", False)))
+    # boards_discarded: every C search entry point rebuilds its CBoards from the
+    # python board at the start of each call (gumbel_c/puct_c ``CBoard.from_board``),
+    # so no board pushed under the other model's flag value outlives this apply.
+    # A future long-lived-CBoard optimisation on this path invalidates that and
+    # must revisit the guard rather than keep the keyword.
+    rep_fix.apply(
+        bool(getattr(model, "history_rep_fix", False)), boards_discarded=True,
+    )
     if str(mcts_type) == "gumbel":
         gumbel_cfg = GumbelConfig(
             simulations=int(mcts_simulations), temperature=float(temperature),

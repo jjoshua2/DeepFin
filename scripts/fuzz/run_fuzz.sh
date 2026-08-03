@@ -2,8 +2,10 @@
 # Fuzzing entry point for the CBoard C implementation.
 #
 #   ./scripts/fuzz/run_fuzz.sh libfuzzer [seconds]   # coverage-guided C fuzz (clang)
-#   ./scripts/fuzz/run_fuzz.sh diff [games]          # differential vs python-chess,
-#                                                    # under ASAN/UBSAN-built extensions
+#   ./scripts/fuzz/run_fuzz.sh diff [games] [encode-every]
+#                                                    # differential vs python-chess
+#                                                    # (state + encoded planes, production
+#                                                    # regime), under ASAN/UBSAN extensions
 #   ./scripts/fuzz/run_fuzz.sh batch [games]         # _mcts_tree batch encoders vs the
 #                                                    # single-board oracle, sanitized
 #
@@ -38,14 +40,20 @@ case "$MODE" in
     ;;
   diff)
     GAMES="${2:-500}"
-    run_sanitized_py scripts/fuzz_cboard_diff.py --games "$GAMES"
+    # --encode-every is passed explicitly (not left to the script default) so
+    # this entry point states the plane oracle it runs. The oracle used to be
+    # off here entirely, which left the production encoding regime checked by
+    # nothing (encoding audit E1). Override the cadence with a 3rd argument.
+    ENCODE_EVERY="${3:-4}"
+    run_sanitized_py scripts/fuzz_cboard_diff.py --games "$GAMES" \
+      --encode-every "$ENCODE_EVERY"
     ;;
   batch)
     GAMES="${2:-120}"
     run_sanitized_py scripts/fuzz_batch_encode_diff.py --games "$GAMES"
     ;;
   *)
-    echo "usage: $0 {libfuzzer [seconds] | diff [games] | batch [games]}" >&2
+    echo "usage: $0 {libfuzzer [seconds] | diff [games] [encode-every] | batch [games]}" >&2
     exit 2
     ;;
 esac

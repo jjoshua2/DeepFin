@@ -25,7 +25,7 @@ import torch
 from numpy.typing import NDArray
 
 from chess_anti_engine.encoding._lc0_ext import CBoard
-from chess_anti_engine.encoding import input_plane_count
+from chess_anti_engine.encoding import check_encode_buffer_planes, input_plane_count
 from chess_anti_engine.inference_dispatcher import supports_inplace_api
 from chess_anti_engine.mcts._mcts_tree import batch_compute_relations
 from chess_anti_engine.encoding.lc0 import (
@@ -537,9 +537,17 @@ def run_gumbel_root_many_c(
         if _has_input_bf16 and hasattr(eval_impl, "get_input_buffer_bf16_bits"):
             assert batch_enc_bf16 is not None
             root_buf = eval_impl.get_input_buffer_bf16_bits(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            check_encode_buffer_planes(
+                root_buf, cfg.input_extra_features,
+                where="run_gumbel_many_c root inplace bf16",
+            )
             batch_enc_bf16(root_cboards, root_buf)
         else:
             root_buf = eval_impl.get_input_buffer(n_boards, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            check_encode_buffer_planes(
+                root_buf, cfg.input_extra_features,
+                where="run_gumbel_many_c root inplace",
+            )
             batch_enc(root_cboards, root_buf)
         if cfg.compute_relations:
             _root_rel = np.empty((n_boards, 5, 64, 64), dtype=np.uint8)
@@ -802,6 +810,11 @@ def run_gumbel_root_many_c(
                 eval_impl.get_input_buffer(_leaf_cap, slot=g)  # pyright: ignore[reportAttributeAccessIssue]
                 for g in range(2)
             ]
+            for _buf in _enc_bufs:
+                check_encode_buffer_planes(
+                    _buf, cfg.input_extra_features,
+                    where="run_gumbel_many_c split leaf inplace",
+                )
         else:
             _enc_dtype = np.uint16 if _has_input_bf16 else np.float32
             _enc_bufs = [
@@ -1095,6 +1108,12 @@ def run_gumbel_root_many_c(
                 _enc_buf = eval_impl.get_input_buffer_bf16_bits(_cap, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
             else:
                 _enc_buf = eval_impl.get_input_buffer(_cap, slot=0)  # pyright: ignore[reportAttributeAccessIssue]
+            # Buffer-sourced plane count vs cfg's: the C encoder trusts the
+            # buffer and never sees cfg.input_extra_features (audit E4).
+            check_encode_buffer_planes(
+                _enc_buf, cfg.input_extra_features,
+                where="run_gumbel_many_c leaf inplace",
+            )
         else:
             _enc_dtype = np.uint16 if _use_input_bf16 else np.float32
             _enc_buf = np.empty(

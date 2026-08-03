@@ -5,9 +5,12 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
+from chess_anti_engine.moves import POLICY_SIZE
 from scripts.build_aot_packages import (
     _compare_bucket,
+    _real_position_batch,
     _softmax,
     build_arg_parser,
     format_summary_line,
@@ -142,3 +145,143 @@ def test_compare_bucket_fails_on_wdl_drift() -> None:
         pol_tol=2e-2, wdl_tol=6e-2, argmax_min=0.90,
     )
     assert not ok
+
+
+# ---------------------------------------------------------------------------
+# Verify-time input encoding (audit E2)
+# ---------------------------------------------------------------------------
+
+# configs/pbt2_small.yaml:70-71 — what the deployed model is built for.
+_PROD_HISTORY = "lc0_root_legacy_meta"
+_PROD_EXTRA = "v2_threats"
+
+
+def test_real_position_batch_honours_the_history_encoding() -> None:
+    """The history keyword must reach the encoder, not be accepted and dropped.
+
+    Mutation guard: delete ``input_history_encoding=...`` from the
+    ``encode_positions_batch`` call inside ``_real_position_batch`` and both
+    arms below become the legacy layout, so this test goes red. The plane COUNT
+    is identical either way (112 + n_extra), which is exactly why the buffer
+    shape, the package signature and the verify comparison could all succeed on
+    the wrong content (encoding audit E2 measured 98/175 planes differing).
+    """
+    prod = _real_position_batch(
+        8, input_extra_features=_PROD_EXTRA,
+        input_history_encoding=_PROD_HISTORY, seed=11,
+    )
+    legacy = _real_position_batch(
+        8, input_extra_features=_PROD_EXTRA,
+        input_history_encoding="legacy", seed=11,
+    )
+    assert prod.shape == legacy.shape == (8, 175, 8, 8)
+    assert not np.array_equal(prod, legacy)
+    # Same boards, same feature version: the difference is the history layout,
+    # and it is broad (not one stray plane).
+    differing = int(np.sum(np.any(prod != legacy, axis=(0, 2, 3))))
+    assert differing > 50, f"only {differing} planes differ — layouts too close"
+
+
+class _StubPackage:
+    """Stands in for a loaded AOTInductor package."""
+
+    def __init__(self, out: dict) -> None:
+        self._out = out
+        self.rebinds: list[tuple[dict, bool]] = []
+        self.fed: list[torch.Tensor] = []
+
+    def get_constant_fqns(self) -> list[str]:
+        return ["w"]
+
+    def load_constants(self, constants: dict, *, check_full_update: bool = True) -> None:
+        self.rebinds.append((constants, check_full_update))
+
+    def __call__(self, xt: torch.Tensor) -> dict:
+        self.fed.append(xt)
+        return self._out
+
+
+class _StubModel(torch.nn.Module):
+    """A model that declares production's encoding and records what it is fed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.w = torch.nn.Parameter(torch.zeros(1))
+        self.input_history_encoding = _PROD_HISTORY
+        self.input_extra_features = _PROD_EXTRA
+        self.policy_encoding = "lc0_1858"
+        self.seen: list[torch.Tensor] = []
+
+    def forward(self, xt: torch.Tensor) -> dict:
+        self.seen.append(xt)
+        n = int(xt.shape[0])
+        return {
+            "policy": torch.zeros((n, POLICY_SIZE), dtype=torch.float32),
+            "wdl": torch.zeros((n, 3), dtype=torch.float32),
+        }
+
+
+def test_verify_packages_encodes_in_the_models_own_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The gate must measure on the deployment input distribution.
+
+    ``verify_packages`` reads the encoding off the model rather than taking it
+    as a keyword, so there is nothing to forget. This asserts the realized
+    encoder call: swap the model's declared encoding and the bytes fed to the
+    package change with it.
+    """
+    import scripts.build_aot_packages as MOD
+
+    calls: list[dict] = []
+    real_batch = MOD._real_position_batch
+
+    def recording(n: int, **kwargs: object) -> np.ndarray:
+        calls.append(dict(kwargs))
+        return real_batch(n, **kwargs)  # pyright: ignore[reportArgumentType]
+
+    monkeypatch.setattr(MOD, "_real_position_batch", recording)
+    monkeypatch.setattr(MOD, "build_aot_constants", lambda *a, **k: {})
+    model = _StubModel()
+    stub_out = {
+        "policy": torch.zeros((2, POLICY_SIZE), dtype=torch.float32),
+        "wdl": torch.zeros((2, 3), dtype=torch.float32),
+    }
+    monkeypatch.setattr(MOD, "_aoti_load_package", lambda p: _StubPackage(stub_out))
+    (tmp_path / "chess_b2.pt2").write_bytes(b"x")
+
+    n_pass, n_fail, rows = MOD.verify_packages(
+        out_dir=tmp_path, model=model, buckets=[2], max_batch=2,
+        input_planes=175, pol_tol=2e-2, wdl_tol=8e-2, verify_n=1, seed=3,
+    )
+    assert (n_pass, n_fail) == (1, 0), rows
+    assert calls == [{
+        "input_extra_features": _PROD_EXTRA,
+        "input_history_encoding": _PROD_HISTORY,
+        "seed": 3,
+    }]
+    # And the model really saw production-encoded planes.
+    fed = model.seen[-1].float().numpy()
+    assert fed.shape == (2, 175, 8, 8)
+    legacy = _real_position_batch(
+        2, input_extra_features=_PROD_EXTRA,
+        input_history_encoding="legacy", seed=3,
+    )
+    assert not np.array_equal(fed, legacy.astype(np.float32))
+
+
+def test_verify_packages_refuses_a_model_that_does_not_declare_its_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guessing the layout is the failure mode; refusing is the fix."""
+    import scripts.build_aot_packages as MOD
+
+    model = _StubModel()
+    del model.input_history_encoding
+    (tmp_path / "chess_b2.pt2").write_bytes(b"x")
+    monkeypatch.setattr(MOD, "_aoti_load_package", lambda p: _StubPackage({}))
+    with pytest.raises(ValueError, match="input_history_encoding"):
+        MOD.verify_packages(
+            out_dir=tmp_path, model=model, buckets=[2], max_batch=2,
+            input_planes=175, pol_tol=2e-2, wdl_tol=8e-2, verify_n=1, seed=3,
+        )

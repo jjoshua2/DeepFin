@@ -29,6 +29,7 @@ import numpy as np
 import torch
 
 from chess_anti_engine.encoding import encode_positions_batch, input_plane_count
+from chess_anti_engine.encoding.model_inputs import model_encoding_kwargs
 from chess_anti_engine.inference import (
     _BATCH_BUCKETS,
     _aoti_load_package,
@@ -389,7 +390,11 @@ def _compare_bucket(
 
 
 def _real_position_batch(
-    n: int, *, input_extra_features: str | None, seed: int,
+    n: int,
+    *,
+    input_extra_features: str | None,
+    input_history_encoding: str | None,
+    seed: int,
 ) -> np.ndarray:
     """Encode ``n`` real board positions (random legal playouts from startpos).
 
@@ -397,6 +402,17 @@ def _real_position_batch(
     sparse ~binary planes (~8% nonzero). ``standard_normal`` noise drives
     activations far off-distribution and amplifies benign bf16 kernel-ordering
     divergence into spurious verify FAILs.
+
+    BOTH encoding keywords are required, and both are passed through. Only
+    ``input_extra_features`` used to be: ``encode_positions_batch`` then fell
+    back to the LEGACY history layout while the model is ``lc0_root_legacy_meta``
+    (docs/rl_loop_audit.md M11 / encoding audit E2). The plane COUNT is identical
+    either way (112 + n_extra), so the buffer shape, the package signature and
+    the verify comparison all succeeded on the wrong content: measured on 200
+    random-playout boards, 98 of 175 planes differ on at least one row, 92.0
+    planes differ per row, 7.3 % of cells. The verdict — including
+    ``argmax_min`` on the policy, the most distribution-sensitive metric here —
+    was being read off a distribution the net never sees in deployment.
     """
     import chess
 
@@ -410,7 +426,11 @@ def _real_position_batch(
                 break
             b.push(moves[int(rng.integers(0, len(moves)))])
         boards.append(b)
-    x = encode_positions_batch(boards, input_extra_features=input_extra_features)
+    x = encode_positions_batch(
+        boards,
+        input_extra_features=input_extra_features,
+        input_history_encoding=input_history_encoding,
+    )
     return np.ascontiguousarray(x, dtype=np.float32)
 
 
@@ -421,7 +441,6 @@ def verify_packages(
     buckets: Sequence[int],
     max_batch: int,
     input_planes: int,
-    input_extra_features: str | None,
     pol_tol: float,
     wdl_tol: float,
     verify_n: int,
@@ -437,10 +456,17 @@ def verify_packages(
     ``AOTEvaluator``, whose fixed ``_BATCH_BUCKETS`` ladder omits compiled-only
     sizes (e.g. 1190) and would fall back to a smaller package -> shape mismatch.
 
+    The verification inputs are encoded in ``model``'s OWN declared encoding,
+    read off the model rather than passed in: the encoding is not a free
+    parameter of this gate, and a keyword that can be forgotten is exactly how
+    the legacy-history bug (encoding audit E2) survived. ``model_encoding_kwargs``
+    refuses to guess when a model does not declare its encoding.
+
     Returns ``(verified_pass_count, failed_count, rows)`` where each row is
     ``(bucket, PASS|FAIL|SKIP, detail)``.
     """
     _ = int(max_batch), int(input_planes)  # kept for signature stability
+    encoding = model_encoding_kwargs(model)
     out = Path(out_dir)
     device = str(next(model.parameters()).device)
     # Complete constant source: params + ALL buffers (incl. non-persistent),
@@ -478,7 +504,8 @@ def verify_packages(
             for trial in range(int(verify_n)):
                 x = _real_position_batch(
                     b,
-                    input_extra_features=input_extra_features,
+                    input_extra_features=encoding["input_extra_features"],
+                    input_history_encoding=encoding["input_history_encoding"],
                     seed=int(seed) + trial,
                 )
                 xt = torch.from_numpy(x).to(device=device, dtype=torch.bfloat16)
@@ -699,9 +726,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 buckets=buckets,
                 max_batch=int(args.max_batch),
                 input_planes=input_planes,
-                input_extra_features=getattr(
-                    model_cfg, "input_extra_features", None,
-                ),
                 pol_tol=float(args.tol),
                 wdl_tol=float(args.wdl_tol),
                 verify_n=int(args.verify_n),

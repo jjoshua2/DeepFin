@@ -21832,3 +21832,132 @@ line number has already rotted once in this entry's lifetime).
 precisely so #317 stays ruler-neutral; it is the only change in its PR, so a
 handover observed at a restart carrying both PRs is attributable here and
 nowhere else.
+
+---
+
+## GATE PROMOTION 2026-08-03 — E1-E4 of the encoding audit: the C-vs-Python plane oracle enters CI in the production regime, and three "value accepted then ignored" sites get an observation that can fail
+
+**Not an experiment.** No training-affecting change, no config key, no loss
+weight, no data-pipeline semantics. Nothing here alters a single training row on
+the current settings; every fix is either a gate turned on, a keyword threaded,
+or a guard added. Recorded because the ledger is where the standing instruments
+are catalogued, and because three of the four items are the house signature
+defect (`docs/rl_loop_audit.md` M11's family) in fresh instances.
+
+Source: `scratchpad/code_audit_20260803/ENCODING_AUDIT.md` (CPU-only, `nice -n 19`).
+Its headline is a NEGATIVE result worth banking: **the C and Python encoders are
+bit-identical in the production regime at 175 planes**, with history, castling,
+EP and repetitions present — 1,654 real-game positions × 2 history modes ×
+2 rep-fix phases, 0 divergences, plus 552 boards × 3 encoders on the batch path.
+Nothing in the repo had ever measured that. This PR turns the one-off
+measurement into a standing gate.
+
+**E1 — the only C-vs-Python plane differential was off in every gate.**
+`scripts/fuzz_cboard_diff.py`'s encode oracle defaulted to `--encode-every 0`,
+`scripts/fuzz/run_fuzz.sh diff` never passed it, `tests/test_fuzz_smoke.py` set
+`encode_every=0` explicitly, and when asked for at all it hardcoded
+`input_extra_features="v1"` (146 planes) and never called `rep_fix.apply`. The
+reason was a **stale docstring** claiming the oracle "fails on default seeds
+until [`history_rep_fix`] lands". It landed **2026-06-17**
+(`configs/pbt2_small.yaml:197`); the gate was never re-enabled. So the regime
+carrying 100% of production traffic was the one regime nothing checked.
+Now: defaults are production (`v2_threats`/175, `history_rep_fix` on,
+`--encode-every 4`), `run_fuzz.sh diff` passes the cadence explicitly,
+`fuzz_batch_encode_diff.py` runs at 175 too, and `tests/test_fuzz_smoke.py`
+carries the CI gate. **Green on arrival** — 60 games at defaults, 0 divergences.
+
+**The gate ships with its negative control.** `--no-history-rep-fix` must FAIL,
+and does: plane 90, a slot-6 repetition plane, at game13 ply180. That test is in
+CI (`test_encode_oracle_catches_the_prefix_divergence`). Without it the gate
+would pass in both phases and prove nothing about whether the flag reaches the
+planes. A separate test pins the realized CLI defaults so a silent revert to
+v1/146 or `encode_every=0` goes red rather than quietly reducing the fuzzer to a
+state-parity check again.
+
+**E2 — the AOT verification gate encoded its "deployment input distribution" in
+the LEGACY history layout.** `scripts/build_aot_packages.py` threaded
+`input_extra_features` into `_real_position_batch` but never
+`input_history_encoding`, so `encode_positions_batch` fell back to legacy while
+the model is `lc0_root_legacy_meta`. Measured: **98 of 175 planes differ on ≥1
+row, 92.0 planes per row, 7.3% of cells** — and the plane COUNT is identical
+either way (112 + n_extra), so the buffer shape, the package signature and the
+verify comparison all succeeded on the wrong content. `verify_packages` decides
+whether a built AOT package is numerically equivalent to eager, including
+`argmax_min=0.90` on the policy; the AOT packages are the live worker inference
+path. Fixed by taking the encoding off the MODEL (`model_encoding_kwargs`)
+rather than adding a second forgettable keyword — the encoding is not a free
+parameter of this gate, and a keyword that can be forgotten is how this bug
+survived. `verify_packages` now refuses a model that does not declare its
+encoding.
+
+⚠ **The consequence was NOT measured.** Establishing whether a package's
+AOT-vs-eager verdict actually changes under the two input distributions needs
+the GPU, and this work was CPU-only. The claim is that the gate's own stated
+premise ("judged on the deployment input distribution") now holds — **not** that
+any shipped package was miscompiled or that any past PASS was wrong. Anyone who
+wants that number must run `--verify-only` on both encodings and compare.
+
+**E3 — `rep_fix`'s ordering contract had no guard.** The flag is a bare module
+global in each `.so`; a board pushed across a flip encodes repetition planes
+matching **NEITHER** regime: slots `[1,1,1,1,1,1,1,0]` under either clean value,
+`[1,0,1,0,1,0,1,0]` across the flip — half the slots silently blanked. `CBoard`
+is a C type with no `__dict__` and no weakref support, so the flag cannot be
+stamped per board from Python; the guard sits on the flip. `apply()` now raises
+`RepFixFlipError` on a value CHANGE unless the caller passes
+`boards_discarded=True`.
+
+⚠ **Honest limit on this guard: the three production callers are exempted**
+(`selfplay/manager.py` batch start, `selfplay/match.py` per move cycle,
+`build_model`), each with the observation that makes the exemption true recorded
+at the site. So on today's paths the guard **cannot fire** — it is latent, as the
+finding is. Its value is that a NEW caller, or the future long-lived-CBoard
+optimisation on the arena path that the audit names, fails loudly instead of
+mis-encoding. The audit's repro (`enc_repfix_midgame_flip.py`) now raises, and
+the same shape is a test.
+
+**E4 — the C batch encoders take the plane count from the OUTPUT BUFFER.**
+`n_extra = PyArray_DIM(out_arr, 1) - 112` at seven sites; the C shape check
+accepts either 146 or 175 and then trusts the buffer, so
+`cfg.input_extra_features` never reaches the C encoder. `mcts/puct_c.py`'s two
+branches disagreed about the source of truth (evaluator buffer when
+`n_boards <= _max_batch`, config otherwise) — the SAME run would encode
+differently depending on batch size. Latent today (config and model agree), so
+this is a guard, not a bugfix. `check_encode_buffer_planes` now asserts
+buffer-vs-config at every evaluator-sourced call site
+(`puct_c`, `gumbel_c` ×3, `selfplay/network_turn` — the last is the path every
+training row is written from). Same family: `_CHANNELS = input_plane_count()` =
+**146** is the argparse default for `--input-planes` on both brokers and
+`--inference-slot-input-planes` on the worker, while production is 175;
+`require_model_planes` now compares against the model at every point where one
+exists (both brokers at model load, the worker at its single
+`_load_and_compile_model` chokepoint).
+
+**Yardstick.** Not applicable in the experiment sense; the deciding observation
+for a gate promotion is that the gate can fail. Each fix was mutation-tested:
+
+```
+# E1  encode oracle, production defaults + negative control
+PYTHONPATH=. python3 scripts/fuzz_cboard_diff.py --games 60             # exit 0
+PYTHONPATH=. python3 scripts/fuzz_cboard_diff.py --games 60 --no-history-rep-fix
+                                                                         # exit 1, plane 90
+# E2  drop input_history_encoding in _real_position_batch  -> 1 test red
+#     hardcode "legacy" in verify_packages                 -> 1 test red
+# E3  scratchpad/code_audit_20260803/enc_repfix_midgame_flip.py -> now RAISES
+# E4  delete the check in puct_c.py -> test red, and the C encoder is shown
+#     writing 146 planes into the buffer and proceeding
+PYTHONPATH=. python3 -m pytest tests/test_fuzz_smoke.py \
+    tests/test_encode_buffer_plane_guard.py tests/test_build_aot_packages.py \
+    tests/test_history_rep_fix.py
+```
+
+**Revert point.** None taken. No weights, optimizer, PID or replay state is
+touched; nothing here reads or writes a training row. Revert is `git revert`.
+
+**Confounds.** None with any live readout: the only behaviour change on a
+production path is that three guards can now raise where they previously could
+not, and all three are proved inert on today's configuration (config and model
+agree on the feature version; no production caller flips `history_rep_fix` with
+a live board). The AOT verify change alters what `--verify` measures on, so any
+verify PASS/FAIL recorded before this commit is not comparable to one after it.
+
+**Review status: UNREVIEWED at open.**

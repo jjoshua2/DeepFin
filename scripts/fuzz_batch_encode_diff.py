@@ -21,7 +21,8 @@ reconstructions, copies of earlier positions) and asserts:
     ``relation_matrices`` oracle.
 
 Both ``history_rep_fix`` phases are exercised (the flag is applied before any
-board in the phase is constructed, per the rep_fix ordering contract).
+board in the phase is constructed, per the rep_fix ordering contract), at the
+production plane count (``--extra-features``, default ``v2_threats`` = 175).
 
 Output buffers are poisoned (NaN / sentinel bytes) before every batch call, so
 a row or plane the C side fails to write reads as a divergence instead of
@@ -47,7 +48,7 @@ from dataclasses import dataclass
 import chess
 import numpy as np
 
-from chess_anti_engine.encoding import rep_fix
+from chess_anti_engine.encoding import input_plane_count, rep_fix
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.encoding.features import relation_matrices
@@ -61,6 +62,12 @@ from chess_anti_engine.mcts._mcts_tree import (
     batch_encode_146_lc0_root_legacy_meta_bf16,
 )
 from chess_anti_engine.moves import move_to_index
+
+# Production feature version, from configs/pbt2_small.yaml:71 -> 175 planes.
+# This fuzzer used to pin "v1" (146) with hardcoded 146-wide buffers, so the 29
+# v2_threats planes had never been through the batch differential at all
+# (encoding audit E1). Overridable via --extra-features.
+PROD_EXTRA_FEATURES = "v2_threats"
 
 # (history mode for the single-board oracle, fp32 batch fn, bf16 batch fn).
 # The deprecated "legacy"/None mode is the plain batch_encode_146 pair.
@@ -103,25 +110,32 @@ class _PoolEntry:
     want_rel: np.ndarray
 
 
-def _make_entry(cb: CBoard, board: chess.Board, label: str) -> _PoolEntry:
+def _make_entry(
+    cb: CBoard, board: chess.Board, label: str, *, input_extra_features: str,
+) -> _PoolEntry:
     # Oracle outputs are computed once per entry: the snapshots are immutable,
     # so re-encoding them at every later checkpoint would only re-verify the
     # oracle against itself. Caching the creation-time truth also catches a
     # batch encoder that mutates its input CBoard — later batch rows would
     # drift from it, where a freshly recomputed oracle would drift along.
     want = {
-        mode: encode_cboard(cb, input_history_encoding=mode, input_extra_features="v1")
+        mode: encode_cboard(
+            cb, input_history_encoding=mode,
+            input_extra_features=input_extra_features,
+        )
         for mode, _, _ in _MODES
     }
     return _PoolEntry(cb, board, label, want, relation_matrices(board))
 
 
-def _check_batch(entries: list[_PoolEntry], ctx: str, moves: list[str]) -> Failure | None:
+def _check_batch(
+    entries: list[_PoolEntry], ctx: str, moves: list[str], *, n_planes: int,
+) -> Failure | None:
     cbs = [e.cb for e in entries]
     n = len(cbs)
 
     for mode, fn32, fn16 in _MODES:
-        out = np.full((n, 146, 8, 8), np.nan, dtype=np.float32)
+        out = np.full((n, n_planes, 8, 8), np.nan, dtype=np.float32)
         fn32(cbs, out)
         for i, e in enumerate(entries):
             want = e.want[mode]
@@ -133,7 +147,7 @@ def _check_batch(entries: list[_PoolEntry], ctx: str, moves: list[str]) -> Failu
                     f"first diff plane={int(bad[0][0])} ({len(bad)} cells)"
                 ), moves)
 
-        out16 = np.full((n, 146, 8, 8), 0xFFFF, dtype=np.uint16)
+        out16 = np.full((n, n_planes, 8, 8), 0xFFFF, dtype=np.uint16)
         fn16(cbs, out16)
         want16 = _f32_to_bf16_bits(out)
         if not np.array_equal(out16, want16):
@@ -159,16 +173,24 @@ def _check_batch(entries: list[_PoolEntry], ctx: str, moves: list[str]) -> Failu
 def run(
     *, games: int, seed: int, max_plies: int, check_every: int,
     batch_cap: int, history_rep_fix: bool,
+    input_extra_features: str = PROD_EXTRA_FEATURES,
 ) -> Failure | None:
     """Play random games; batch-encode mixed-provenance snapshots and compare."""
-    rep_fix.apply(bool(history_rep_fix))
+    # boards_discarded: every board this run touches is created below.
+    rep_fix.apply(bool(history_rep_fix), boards_discarded=True)
+    n_planes = int(input_plane_count(input_extra_features))
     rng = random.Random(seed)
-    tag = f"repfix={int(history_rep_fix)}"
+    tag = f"repfix={int(history_rep_fix)} v={input_extra_features}"
     for g in range(games):
         b = chess.Board()
         cb = CBoard.from_board(b)
         moves: list[str] = []
-        pool: list[_PoolEntry] = [_make_entry(cb.copy(), b.copy(), "startpos")]
+        pool: list[_PoolEntry] = [
+            _make_entry(
+                cb.copy(), b.copy(), "startpos",
+                input_extra_features=input_extra_features,
+            )
+        ]
         for ply in range(1, rng.randrange(2, max_plies + 1)):
             legal = list(b.legal_moves)
             if not legal:
@@ -182,13 +204,21 @@ def run(
             # Same position, three history-construction paths: the live
             # push-built board, a copy of it, and a from_board rebuild whose
             # history comes from python's _stack instead of C pushes.
-            pool.append(_make_entry(cb.copy(), b.copy(), f"push@{ply}"))
-            pool.append(_make_entry(CBoard.from_board(b), b.copy(), f"from_board@{ply}"))
+            pool.append(_make_entry(
+                cb.copy(), b.copy(), f"push@{ply}",
+                input_extra_features=input_extra_features,
+            ))
+            pool.append(_make_entry(
+                CBoard.from_board(b), b.copy(), f"from_board@{ply}",
+                input_extra_features=input_extra_features,
+            ))
             if len(pool) > batch_cap:
                 del pool[: len(pool) - batch_cap]
             entries = list(pool)
             rng.shuffle(entries)
-            fail = _check_batch(entries, f"{tag} game{g} ply{ply}", moves)
+            fail = _check_batch(
+                entries, f"{tag} game{g} ply{ply}", moves, n_planes=n_planes,
+            )
             if fail is not None:
                 return fail
     return None
@@ -201,6 +231,13 @@ def main() -> int:
     parser.add_argument("--max-plies", type=int, default=200)
     parser.add_argument("--check-every", type=int, default=8)
     parser.add_argument("--batch-cap", type=int, default=48)
+    parser.add_argument(
+        "--extra-features", type=str, default=PROD_EXTRA_FEATURES,
+        help=(
+            "input_extra_features for both the batch buffers and the oracle "
+            f"(default {PROD_EXTRA_FEATURES} = 175 planes, production)"
+        ),
+    )
     args = parser.parse_args()
     try:
         for flag in (False, True):
@@ -208,6 +245,7 @@ def main() -> int:
                 games=args.games, seed=args.seed, max_plies=args.max_plies,
                 check_every=args.check_every, batch_cap=args.batch_cap,
                 history_rep_fix=flag,
+                input_extra_features=str(args.extra_features),
             )
             if fail is not None:
                 print(f"DIVERGENCE FOUND\n{fail}", file=sys.stderr)
@@ -216,10 +254,11 @@ def main() -> int:
         # Restore the process-wide flag even on a divergence return or an
         # exception — in-process callers (the pytest smoke) must not inherit
         # a stale history_rep_fix=True.
-        rep_fix.apply(False)
+        rep_fix.apply(False, boards_discarded=True)
     print(
         f"OK: {args.games} games x both history_rep_fix phases "
-        f"(seed={args.seed:#x}, batch cap {args.batch_cap}) — "
+        f"(seed={args.seed:#x}, batch cap {args.batch_cap}, "
+        f"v={args.extra_features}) — "
         "batch encoders match the single-board oracle"
     )
     return 0

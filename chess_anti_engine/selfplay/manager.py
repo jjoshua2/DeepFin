@@ -314,7 +314,10 @@ def play_batch(
 
     # Apply the gated repetition-plane fix (process-global in the C encoders)
     # to match the configured value before any encoding happens this batch.
-    rep_fix.apply(bool(game.history_rep_fix))
+    # boards_discarded: this runs before SelfplayState.create, i.e. before any
+    # CBoard of this batch exists, and the previous batch's boards died with its
+    # state — so nothing pushed under an older flag value can survive here.
+    rep_fix.apply(bool(game.history_rep_fix), boards_discarded=True)
 
     state = SelfplayState.create(
         model=model,

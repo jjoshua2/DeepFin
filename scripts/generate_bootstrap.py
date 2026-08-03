@@ -137,7 +137,7 @@ def _worker_batch(args: tuple[int, int, str, EncodingSpec]) -> tuple[str, int, i
     """Play a batch of games, write shard to disk, return (path, n_positions, wins, draws, losses, n_games)."""
     start_seed, count, out_path, enc = args
     # Process-global encoder switch; each Pool worker is its own process.
-    rep_fix.apply(enc.history_rep_fix)
+    rep_fix.apply(enc.history_rep_fix, boards_discarded=True)
     all_samples: list[ReplaySample] = []
     wins = draws = losses = 0
     for i in range(count):
@@ -225,7 +225,7 @@ def main() -> None:
             path.unlink()
 
     enc = _encoding_spec(args)
-    rep_fix.apply(enc.history_rep_fix)
+    rep_fix.apply(enc.history_rep_fix, boards_discarded=True)
     print(
         f"Encoding: history={enc.input_history_encoding} "
         f"extra_features={enc.input_extra_features} rep_fix={enc.history_rep_fix}"

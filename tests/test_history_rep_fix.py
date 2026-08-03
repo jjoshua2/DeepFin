@@ -28,9 +28,9 @@ _DEEP_REP_GAME = ["h2h3", "a7a5", "f2f4", "a5a4", "g2g3", "g7g5", "b2b4", "e7e6"
 
 @pytest.fixture(autouse=True)
 def _reset_flag():
-    rep_fix.apply(False)
+    rep_fix.apply(False, boards_discarded=True)
     yield
-    rep_fix.apply(False)
+    rep_fix.apply(False, boards_discarded=True)
 
 
 def _build(moves: Sequence[str]) -> tuple[CBoard, chess.Board]:
@@ -68,7 +68,7 @@ def test_fix_on_matches_python_over_random_games():
 
     # Before any boards exist: per-slot recording follows the ordering
     # contract (apply before construction/push), like the production paths.
-    rep_fix.apply(True)
+    rep_fix.apply(True, boards_discarded=True)
     rng = random.Random(2024)
     for g in range(30):
         b = chess.Board()
@@ -240,7 +240,10 @@ def test_pick_moves_applies_model_rep_fix_flag(monkeypatch):
     from chess_anti_engine.selfplay import match as match_mod
 
     applied: list[bool] = []
-    monkeypatch.setattr(match_mod.rep_fix, "apply", lambda v: applied.append(bool(v)))
+    monkeypatch.setattr(
+        match_mod.rep_fix, "apply",
+        lambda v, **_kw: applied.append(bool(v)),
+    )
 
     rng = np.random.default_rng(0)
     for flag in (True, False):
@@ -257,7 +260,7 @@ def test_pick_moves_applies_model_rep_fix_flag(monkeypatch):
 def test_from_board_with_history_sets_per_slot_flags():
     """from_board (opening with move history) must also produce fix-on parity,
     exercising the from_board per-slot population path rather than push."""
-    rep_fix.apply(True)
+    rep_fix.apply(True, boards_discarded=True)
     # Build a board with a real repetition, then reconstruct via from_board so
     # the history comes from python's _stack, not from C pushes.
     b = chess.Board()
@@ -268,3 +271,79 @@ def test_from_board_with_history_sets_per_slot_flags():
         c = encode_cboard(cb, input_history_encoding=mode, input_extra_features="v1")
         p = encode_position(b, input_history_encoding=mode, input_extra_features="v1")
         assert np.array_equal(c, p), f"from_board fix-on diverged for {mode!r}"
+
+
+# ---------------------------------------------------------------------------
+# Ordering-contract guard (audit E3)
+# ---------------------------------------------------------------------------
+
+# The shuffle line from scratchpad/code_audit_20260803/enc_repfix_midgame_flip.py:
+# it repeats positions inside the 8-slot history window after an irreversible
+# move, so only the per-slot flags recorded at push time can see the repeats.
+_MIDGAME_FLIP_LINE = [
+    "e2e4", "e7e5", "g1f3", "b8c6", "f1c4", "g8f6", "b1c3", "f8c5",
+    "f3g5", "e8g8", "g5f3", "g8h8", "f3g5", "h8g8", "g5f3", "g8h8",
+    "f3g5", "h8g8", "g5f3", "g8h8",
+]
+
+
+def test_apply_is_idempotent_and_reports_current() -> None:
+    rep_fix.apply(True, boards_discarded=True)
+    assert rep_fix.current() is True
+    rep_fix.apply(True)  # same value: not a flip, no keyword needed
+    assert rep_fix.current() is True
+
+
+def test_midgame_flip_with_live_board_raises() -> None:
+    """The exact shape that produced a third, wrong repetition pattern.
+
+    Audit E3 measured slots ``[1,1,1,1,1,1,1,0]`` under either clean regime and
+    ``[1,0,1,0,1,0,1,0]`` when the flag alternated per ply on one live CBoard —
+    half the repetition slots silently blanked. The guard must refuse the flip
+    rather than encode that.
+    """
+    def play_flipping_the_flag_per_ply() -> None:
+        b = chess.Board()
+        cb = CBoard.from_board(b)
+        for i, u in enumerate(_MIDGAME_FLIP_LINE):
+            rep_fix.apply(i % 2 == 0)  # the per-move-cycle arena shape
+            m = chess.Move.from_uci(u)
+            cb.push_index(move_to_index(m, b))
+            b.push(m)
+
+    rep_fix.apply(True, boards_discarded=True)
+    with pytest.raises(rep_fix.RepFixFlipError, match="boards_discarded"):
+        play_flipping_the_flag_per_ply()
+    # The flag is still the value every push so far was made under.
+    assert rep_fix.current() is True
+
+
+def test_certified_flip_produces_a_clean_regime() -> None:
+    """A flip that really does discard its boards still yields a clean regime.
+
+    Guards the guard: ``boards_discarded=True`` must not be a no-op keyword, and
+    rebuilding the board after the flip must reproduce the fix-off encoding
+    exactly (the arena/selfplay pattern).
+    """
+    def build() -> np.ndarray:
+        b = chess.Board()
+        cb = CBoard.from_board(b)
+        for u in _MIDGAME_FLIP_LINE:
+            m = chess.Move.from_uci(u)
+            cb.push_index(move_to_index(m, b))
+            b.push(m)
+        return encode_cboard(
+            cb, input_history_encoding="lc0_root_legacy_meta",
+            input_extra_features="v2_threats",
+        )
+
+    rep_fix.apply(False, boards_discarded=True)
+    off = build()
+    rep_fix.apply(True, boards_discarded=True)
+    on = build()
+    rep_fix.apply(False, boards_discarded=True)
+    off_again = build()
+    assert np.array_equal(off, off_again)
+    # Both clean regimes agree on THIS line (audit E3): the finding is that the
+    # mid-game flip is a third answer, not that the two regimes differ here.
+    assert np.array_equal(off, on)
