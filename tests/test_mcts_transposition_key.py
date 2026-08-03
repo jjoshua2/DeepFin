@@ -33,11 +33,15 @@ POLICY_SIZE = 4672
 _EP_FEN = "rnbqkbnr/pppp1ppp/8/3Pp3/8/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 3"
 _NO_EP_FEN = "rnbqkbnr/pppp1ppp/8/3Pp3/8/8/PPP1PPPP/RNBQKBNR w KQkq - 0 3"
 
-# Positions that reach ep-capable nodes during search, from the audit sweep.
-_EP_RICH_FENS = (
-    "rnbqkb1r/pp2pppp/3p1n2/2pP4/8/2N2N2/PPP1PPPP/R1BQKB1R b KQkq - 0 5",
-    "r1bqkb1r/pp1ppppp/2n2n2/2p5/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 0 4",
-    "rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+# (fen, sims, seed) triples that are each individually RED on the pre-fix build.
+# A parametrisation that cannot fail is decoration, so the search shape is pinned
+# per position rather than shared: the same FEN at a different seed produces a
+# clean tree. Trailing number = corrupt nodes observed on `main` at that shape,
+# re-derivable with the walk below against an un-patched extension.
+_EP_RICH_CASES = (
+    ("rnbqkb1r/pp2pppp/3p1n2/2pP4/8/2N2N2/PPP1PPPP/R1BQKB1R b KQkq - 0 5", 512, 2),   # 22
+    ("r1bqkb1r/pp1ppppp/2n2n2/2p5/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 0 4", 1024, 1),  # 2
+    ("rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2", 512, 3),       # 1
 )
 
 
@@ -151,10 +155,12 @@ def _walk_violations(tree, root_id: int, root_board: chess.Board):
     return checked, violations
 
 
-@pytest.mark.parametrize("fen", _EP_RICH_FENS)
-def test_expanded_nodes_carry_their_own_legal_moves(monkeypatch, fen: str) -> None:
+@pytest.mark.parametrize(("fen", "sims", "seed"), _EP_RICH_CASES)
+def test_expanded_nodes_carry_their_own_legal_moves(
+    monkeypatch, fen: str, sims: int, seed: int
+) -> None:
     monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
-    tree, rid = _search_tree(fen, sims=512, seed=2)
+    tree, rid = _search_tree(fen, sims=sims, seed=seed)
     checked, violations = _walk_violations(tree, rid, chess.Board(fen))
     assert checked > 100, "search produced too few expanded nodes to be a test"
     assert not violations, "\n".join(violations[:5])
@@ -166,7 +172,8 @@ def test_transposition_guard_runs_and_passes(monkeypatch) -> None:
     carries ep rights."""
     monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
     _mcts_tree.tt_stats(reset=True)
-    _search_tree(_EP_RICH_FENS[0], sims=512, seed=2)
+    fen, sims, seed = _EP_RICH_CASES[0]
+    _search_tree(fen, sims=sims, seed=seed)
     stats = _mcts_tree.tt_stats()
     assert stats["probe_hits"] > 0, "no transposition hit — test is not exercising the guard"
     assert stats["reuse"] == stats["probe_hits"]
@@ -215,3 +222,155 @@ def test_reused_root_coverage_check_runs_without_allowed_indices(monkeypatch) ->
     assert root_coverage_miss_count() == before + 1
     actions, _ = tree.get_children_visits(new_root)
     assert {int(a) for a in actions} == set(legal.tolist())
+
+
+def test_selfplay_shaped_tree_carry_still_reuses_its_root(monkeypatch) -> None:
+    """Positive direction of W2. Making the coverage check unconditional must not
+    quietly disable tree carry: if reuse stopped happening altogether every other
+    test here would still pass, and the only symptom would be a slower search
+    that throws away its tree every ply.
+
+    This walks a selfplay-shaped carry — persistent tree, root advanced with
+    ``find_child`` on the played action, ``allowed_root_indices_batch=None``.
+    """
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    board = chess.Board(
+        "r1bqkb1r/pp1ppppp/2n2n2/2p5/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 0 4"
+    )
+    tree = _mcts_tree.MCTSTree()
+    cfg = GumbelConfig(
+        simulations=64, topk=8, c_scale=0.1, temperature=0.0, add_noise=False
+    )
+
+    root_ids: list[int] | None = None
+    misses_before = root_coverage_miss_count()
+    reused_plies = 0
+    for ply in range(5):
+        res = run_gumbel_root_many_c(
+            None,
+            [board],
+            device="cpu",
+            rng=np.random.default_rng(7),
+            cfg=cfg,
+            evaluator=_Ev(7),
+            tree=tree,
+            root_node_ids=root_ids,
+            allowed_root_indices_batch=None,
+            target_batch=0,
+            vloss_weight=1,
+        )
+        rid = int(res[5][0])
+        if root_ids is not None:
+            reused_plies += int(rid == root_ids[0])
+        action = int(res[1][0])
+        move = {int(move_to_index(mv, board)): mv for mv in board.legal_moves}[action]
+        board.push(move)
+        child = tree.find_child(rid, action)
+        assert child >= 0, f"played action has no child node at ply {ply}"
+        root_ids = [child]
+
+    assert reused_plies == 4, (
+        f"tree carry stopped reusing roots: only {reused_plies}/4 carried plies "
+        "reused their root"
+    )
+    assert root_coverage_miss_count() == misses_before, (
+        "the coverage check rejected a legitimately carried root"
+    )
+
+
+def _reset_guard_reporter(monkeypatch, *, misses: int = 0) -> None:
+    """Clear the reporter's rate limiter and both counters."""
+    monkeypatch.setattr(gumbel_c_mod, "_tt_health_next_check", 0.0)
+    monkeypatch.setattr(gumbel_c_mod, "_tt_health_reported", (0, 0))
+    monkeypatch.setattr(gumbel_c_mod, "_ROOT_COVERAGE_MISSES", misses)
+    _mcts_tree.tt_stats(reset=True)
+
+
+def _tiny_search() -> None:
+    cfg = GumbelConfig(
+        simulations=2, topk=2, c_scale=0.1, temperature=0.0, add_noise=False
+    )
+    run_gumbel_root_many_c(
+        None,
+        [chess.Board()],
+        device="cpu",
+        rng=np.random.default_rng(0),
+        cfg=cfg,
+        evaluator=_Ev(0),
+        target_batch=0,
+        vloss_weight=1,
+    )
+
+
+def test_guard_health_is_silent_when_nothing_fired(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    _reset_guard_reporter(monkeypatch)
+    _tiny_search()
+    assert "[mcts]" not in capsys.readouterr().err
+
+
+def test_root_coverage_miss_is_reported_on_the_production_path(
+    monkeypatch, capsys
+) -> None:
+    """A counter no production path reads is the defect these guards exist to
+    fix. The shared C-path entry point must actually emit the line."""
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    _reset_guard_reporter(monkeypatch)
+
+    board = chess.Board(_EP_FEN)
+    legal = np.array(sorted(_legal_set(board)), dtype=np.int32)
+    tree = _mcts_tree.MCTSTree()
+    stale_root = tree.add_root(1, 0.0)
+    subset = legal[:-1]
+    tree.expand(
+        stale_root,
+        subset,
+        np.full(subset.size, 1.0 / subset.size, dtype=np.float64),
+    )
+    cfg = GumbelConfig(
+        simulations=8, topk=4, c_scale=0.1, temperature=0.0, add_noise=False
+    )
+    run_gumbel_root_many_c(
+        None, [board], device="cpu", rng=np.random.default_rng(0), cfg=cfg,
+        evaluator=_Ev(1), tree=tree, root_node_ids=[stale_root],
+        allowed_root_indices_batch=None, target_batch=0, vloss_weight=1,
+    )
+    assert root_coverage_miss_count() == 1
+    capsys.readouterr()
+
+    # The reporter runs at search ENTRY, so the miss above is reported by the
+    # NEXT search; clear the rate limiter the way 60s of wall clock would.
+    monkeypatch.setattr(gumbel_c_mod, "_tt_health_next_check", 0.0)
+    _tiny_search()
+    err = capsys.readouterr().err
+    assert "[mcts] search guards FIRED" in err, err
+    assert "root_coverage_miss=1" in err, err
+
+
+def test_tt_reject_is_reported_on_the_production_path(monkeypatch, capsys) -> None:
+    """The reject counter reaches the operator too. Driven by patching the
+    counter SOURCE the production reporter reads, so this pins the wiring — the
+    ep-aware key means no real search can produce a reject to observe."""
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    _reset_guard_reporter(monkeypatch)
+    monkeypatch.setattr(
+        gumbel_c_mod._mcts_tree_ext,
+        "tt_stats",
+        lambda *a, **k: {"probe_hits": 9, "reuse": 4, "reject": 5},
+    )
+    _tiny_search()
+    err = capsys.readouterr().err
+    assert "[mcts] search guards FIRED" in err, err
+    assert "tt_donor_reject=5" in err, err
+
+
+def test_guard_health_reports_once_per_change(monkeypatch, capsys) -> None:
+    """Static counters must not spam every search."""
+    monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
+    _reset_guard_reporter(monkeypatch, misses=3)
+    _tiny_search()
+    assert "[mcts] search guards FIRED" in capsys.readouterr().err
+
+    monkeypatch.setattr(gumbel_c_mod, "_tt_health_next_check", 0.0)
+    _tiny_search()
+    assert "[mcts]" not in capsys.readouterr().err

@@ -21882,7 +21882,10 @@ cannot fail.
 **Yardstick, pre-committed: the audit fuzzer at ≥32k expanded nodes must report
 0 illegal and 0 missing children.** Result: 32,079 checked, **0 / 0** (baseline
 rebuilt from the same `origin/main` commit: 32,076 → 67 / 3). Shipped as
-`tests/test_mcts_transposition_key.py`; confirmed RED on the pre-fix build.
+`tests/test_mcts_transposition_key.py`; **each of its three parametrisations is
+individually RED on the pre-fix build** (22 / 2 / 1 corrupt nodes), which needed
+a per-position search shape — the same FEN at a different seed builds a clean
+tree, and a parametrisation that cannot fail is decoration.
 
 **Negative control (the layer-2 claim is measured, not asserted).** With the key
 deliberately reverted to `b->hash` and layer 2 left in place: **78 donors
@@ -21897,6 +21900,14 @@ byte-identical). Wall clock is **not resolvable** at this noise level on a
 loaded box (baseline 1.22–1.59 s, fixed 1.39–1.58 s over 3 runs each) — reported
 as inconclusive rather than dressed up. Correctness wins regardless.
 
+**The W2 change is pinned in BOTH directions.** Making the coverage check
+unconditional could equally well have disabled tree carry outright, and every
+other test here would still have passed — the only symptom would be a slower
+search throwing its tree away every ply. So a selfplay-shaped carry (persistent
+tree, root advanced by `find_child`, `allowed_root_indices_batch=None`) asserts
+**4/4 carried plies reuse their root** with zero coverage misses. Verified
+falsifiable by mutation: forcing `_reused = False` makes it read 0/4.
+
 **Bit-identity on clean paths.** 18/18 searches over positions where no ep right
 can arise are bit-identical (probs and value), as are 43/48 ep-capable searches.
 The 5 that differ are exactly the trees where a real ep transposition was
@@ -21908,6 +21919,23 @@ dead.** `_mcts_tree.tt_stats(reset=False)` returns
 swaps the `TreeData` wholesale), and `gumbel_c.root_coverage_miss_count()` counts
 W2 rejections, with a one-shot WARNING on the first. A nonzero `reject` in
 production means the key is incomplete again; it must read 0.
+
+**And that surface is READ by production, which is the whole point.** The first
+version of this fix exposed both counters and stopped there — the guard against
+the "value accepted and then silently ignored" defect, itself accepted and
+silently ignored. `run_gumbel_root_many_c` — the choke point every C-path
+consumer goes through, selfplay, training-time eval and UCI alike — now emits an
+operator line whenever either counter has moved since the last report:
+`[mcts] search guards FIRED since process start: tt_donor_reject=N root_coverage_miss=M`.
+On **stderr**, not stdout, because this same function is the UCI engine's search
+and stdout is the protocol channel; both production consumers capture stderr into
+their logs (`stderr=subprocess.STDOUT` in `tune/distributed_runtime.py`,
+`> "$LOG" 2>&1` in `scripts/train.sh`), and the trial actor has no logging handler
+so `_log.info` would have reached nothing. Rate-limited to one poll per 60 s and
+silent unless a count changed, so the cost when the guards are quiet is one
+`monotonic()` compare per search — the counters are not even read. Pinned by
+four tests, including a forced W2 miss observed through `capsys` on the real
+production entry point.
 
 **DEPLOY IS GATED ON THE EXTENSION REBUILD.** This is `.c`/`.h`. Merging changes
 nothing on the live run: the running process holds the `.so` it started with.
@@ -21948,4 +21976,7 @@ with a different draw horizon. That is a pre-existing bias toward draws in the
 reused value, unchanged by this PR and deliberately out of its scope. Second,
 `walker`/`batch_descend_puct`/pucv never probe the table at all, so multi-GPU
 pucv forgoes transposition entirely — a real asymmetry between the two engines
-this project ships, also untouched.
+this project ships, also untouched. Third, the review of this PR found a
+realloc-dangle in the children pool that is **shared with `main` and predates
+this work**; it is recorded here as a known pre-existing defect and deliberately
+not bundled into a correctness fix that is trying to stay reviewable.
