@@ -23054,3 +23054,17 @@ is the new always-on `slot_rt_ms_max=` field in `broker client stats:`.
 remediation of measured defects, and each one's proof is its repro going from
 red to green plus a mutation that turns the new test red. Mutation results are in
 the PR body.
+
+⚑ **METHOD, from the mutation sweep — an end-state total cannot detect a
+floored double-decrement.** 21 mutations were run; 20 died immediately and one
+SURVIVED: "release the WHOLE batch instead of the un-integrated tail".
+`remove_vloss_path` floors at 0, so releasing a path whose vloss
+`walker_integrate_leaf` had ALREADY removed still ends at 0 on an idle tree —
+every assertion of the form "sum the virtual loss afterwards and require 0"
+passes under the defect. It is not harmless: the decrement lands on shared
+ancestors and steals a CONCURRENT walker's in-flight vloss, biasing selection
+back toward the subtree everyone is already in, which is exactly the state
+virtual loss exists to prevent. The test now counts the release CALLS
+(`released N paths for M un-integrated leaves`) instead of summing the result,
+and the mutation dies. **Generalise: when the quantity under test is clamped,
+the clamp is a censoring instrument — measure the operation, not the residue.**
