@@ -2124,11 +2124,15 @@ class WorkerSession:
             "slot_served": slot_served,
             "slot_roundtrip_s": slot_roundtrip_s,
         }
-        # A window in which EVERY request failed has delta_requests > 0 and
-        # delta_served == 0; the old early-return keyed on served-only totals
-        # would have gone silent for exactly the stall this line exists to
-        # show. Log whenever anything happened, success or not.
-        if delta_requests <= 0 and delta_failed <= 0:
+        # delta_requests counts ATTEMPTS, so a window in which every request
+        # FAILED still has delta_requests > 0 and reaches the log -- the gate
+        # below is unchanged from main and no `or delta_failed` clause is
+        # needed to make that true. It is stated (and pinned by
+        # test_a_window_where_every_request_failed_still_logs) because the
+        # obvious refactor once served/failed exist is to key this on
+        # delta_served, which WOULD go silent for exactly the stall this line
+        # exists to show.
+        if delta_requests <= 0:
             return
 
         completion_stats = self._completion_telemetry_delta(elapsed_s)

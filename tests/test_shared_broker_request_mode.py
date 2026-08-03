@@ -29,6 +29,7 @@ the only mode that worked was the only mode tested.
 from __future__ import annotations
 
 import logging
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -178,3 +179,69 @@ def test_the_refusal_log_is_throttled() -> None:
     assert len(hits) == 1, hits
     # Throttling the LOG must not throttle the COUNT.
     assert broker.unsupported_mode_requests == 25
+
+
+def test_refused_rows_are_not_reported_as_served_throughput() -> None:
+    """``_process_parallel`` returns the refused ROW count.
+
+    The serve loop counts positions BEFORE calling it, so without the return the
+    broker's own `pos/s` would include rows it declined to evaluate — the same
+    "a failure reads as throughput" defect B6 fixed on the client side, in the
+    sibling path. Reviewer finding: the counter also needs a reader, and a
+    reader next to a lying number is not worth much.
+    """
+    broker = _broker()
+    refused = broker._process_parallel(
+        cast("Any", {"t0": [_StubSlot(_MODE_LEGAL_BF16, batch_size=5)]}),
+    )
+    assert refused == 5, "refused rows must be reported back to the serve loop"
+
+    # A served batch refuses nothing (the dummy model's forward raises, which is
+    # after the count is decided).
+    broker = _broker()
+    with pytest.raises(RuntimeError, match="forward reached"):
+        broker._process_parallel({"t0": [_StubSlot(_MODE_DENSE_F32)]})  # pyright: ignore[reportArgumentType]
+
+
+def test_a_mixed_batch_counts_only_the_unsupported_slot() -> None:
+    """Counts SLOTS, not rows.
+
+    The refused ROW count cannot be observed on a mixed batch here: the good
+    slot reaches the forward, which raises on the stub model, so
+    ``_process_parallel`` never returns. The row-count assertion is in
+    ``test_refused_rows_are_not_reported_as_served_throughput``, on an
+    all-refused batch that returns before the forward.
+    """
+    broker = _broker()
+    good = _StubSlot(_MODE_DENSE_F32, batch_size=4)
+    bad = _StubSlot(_MODE_LEGAL_BF16, batch_size=3)
+    with pytest.raises(RuntimeError, match="forward reached"):
+        broker._process_parallel({"t0": [good, bad]})  # pyright: ignore[reportArgumentType]
+    assert broker.unsupported_mode_requests == 1
+    assert bad.state == _STATE_IDLE
+    assert good.state != _STATE_IDLE
+
+
+def test_the_refusal_counter_has_a_reader() -> None:
+    """A counter with no reader is the defect this guard exists to fix.
+
+    ``unsupported_mode_requests`` shipped in the first draft of this PR with no
+    reader at all — the signature defect inside the fix for the signature
+    defect. Its reader is a print in ``serve_forever``, which is a serve loop
+    rather than a unit-testable function, so this is a STRUCTURAL gate: it fails
+    if the reader is deleted, which is the regression that matters. It cannot
+    check the line's formatting, and does not claim to.
+    """
+    import inspect
+
+    src = inspect.getsource(SharedSlotBroker.serve_forever)
+    assert "unsupported_mode_requests" in src, (
+        "the B1 refusal counter lost its only reader; a refusal nobody can "
+        "count is indistinguishable from one that never fires"
+    )
+    # And the refused rows must not be left in the served-throughput total.
+    assert "_process_parallel" in src
+    assert "_total_positions -=" in src, (
+        "refused rows are being counted as served pos/s again (B6(c) in the "
+        "sibling path)"
+    )

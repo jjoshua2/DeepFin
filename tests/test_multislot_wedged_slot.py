@@ -20,6 +20,7 @@ subject is the multiplexer's bookkeeping and rotation policy, and a fake makes
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Any
@@ -257,5 +258,33 @@ def test_concurrent_callers_still_see_consistent_totals() -> None:
         )
         assert st["lifetime_positions"] == st["lifetime_served_requests"] * 2
         assert st["inflight"] == 0
+    finally:
+        mc.close()
+
+
+def test_the_all_quarantined_window_reaches_a_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The periodic `broker client stats:` line cannot show this window.
+
+    Nothing completes while every slot is quarantined, so that line's delta gate
+    returns before printing and `slots_quarantined` never reaches an operator
+    through it. The count has to leave on the one event that DOES happen — the
+    failed acquire — or the worst state the eviction can reach is the one state
+    it cannot report.
+    """
+    mc, _ = _client(2, dead=(0, 1), slot_failure_threshold=1, slot_quarantine_s=5.0,
+                    request_timeout_s=0.05)
+    try:
+        _drive(mc, 2)  # quarantine both
+        caplog.clear()
+        with (
+            caplog.at_level(logging.WARNING, logger="chess_anti_engine.inference"),
+            pytest.raises(TimeoutError),
+        ):
+            mc.evaluate_encoded(np.zeros((1, PLANES, 8, 8), dtype=np.float32))
+        hits = [r for r in caplog.records if "slot acquire failed" in r.message]
+        assert hits, "the all-quarantined window left no log line"
+        assert "2/2 slot(s) quarantined" in hits[0].getMessage()
     finally:
         mc.close()

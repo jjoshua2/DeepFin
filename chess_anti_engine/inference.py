@@ -3223,6 +3223,16 @@ class MultiSlotInferenceClient:
             inflight = int(self._inflight)
             available = int(self._available_clients.qsize())
             quarantined = sorted(self._quarantined)
+        # The periodic `broker client stats:` line CANNOT show this window: no
+        # request completes, so its own delta gate returns before printing and
+        # slots_quarantined never reaches an operator through that channel. The
+        # count therefore has to leave here, on the one event that does happen.
+        log.warning(
+            "inference slot acquire failed: %d/%d slot(s) quarantined %s, "
+            "%d inflight, %d available -- the periodic stats line cannot show "
+            "this window because no request completed in it (audit B6)",
+            len(quarantined), len(self._clients), quarantined, inflight, available,
+        )
         raise TimeoutError(
             f"inference slot acquire timed out after {acquire_timeout_s:.1f}s "
             f"(slots={len(self._clients)} inflight={inflight} available={available} "
@@ -3643,9 +3653,17 @@ class SharedSlotBroker:
         self._trial_manifest_sigs[trial_id] = sig
         return True
 
-    def _process_parallel(self, ready_by_trial: dict[str, list[_InferenceSlot]]) -> None:
-        """Process all trials' batches in parallel using per-trial CUDA streams."""
+    def _process_parallel(self, ready_by_trial: dict[str, list[_InferenceSlot]]) -> int:
+        """Process all trials' batches in parallel using per-trial CUDA streams.
+
+        Returns the number of ROWS refused for an unimplemented ``request_mode``.
+        The serve loop counts positions BEFORE calling this, so without the
+        return its pos/s would count rows this broker declined to evaluate --
+        the same "a failure reads as throughput" defect B6 fixed on the client
+        side, in the sibling path.
+        """
         use_cuda = self.device.startswith("cuda")
+        refused_rows = 0
 
         # Host-side pack first; H2D + forward sit under the hang watchdog.
         packed: list[tuple[str, list[_InferenceSlot], list[int], list[int], np.ndarray]] = []
@@ -3694,6 +3712,7 @@ class SharedSlotBroker:
                 n_bad = sum(1 for m in request_modes if m != _MODE_DENSE_F32)
                 for slot, mode in zip(ready, request_modes, strict=True):
                     if mode != _MODE_DENSE_F32:
+                        refused_rows += int(slot.batch_size)
                         slot.state = _STATE_IDLE
                 # Throttled for the same reason as the no-model branch above:
                 # a released slot comes straight back round the serve loop, so
@@ -3731,7 +3750,7 @@ class SharedSlotBroker:
             packed.append((trial_id, ready, batch_sizes, request_ids, xb))
 
         if not packed:
-            return
+            return refused_rows
 
         hang_batch = sum(int(xb.shape[0]) for *_, xb in packed)
         # Token kept for the same reason as SlotBroker._process_batch_mode.
@@ -3789,11 +3808,13 @@ class SharedSlotBroker:
             forward_ok = True
         finally:
             self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
+        return refused_rows
 
     def serve_forever(self) -> None:
         _batch_count = 0
         _total_positions = 0
         _last_report = time.monotonic()
+        _last_unsupported = 0
         _last_scan = 0.0
         _report_interval = 10.0
         _scan_interval = 5.0
@@ -3853,18 +3874,33 @@ class SharedSlotBroker:
             for ready in ready_by_trial.values():
                 _batch_count += 1
                 _total_positions += sum(s.batch_size for s in ready)
-            self._process_parallel(ready_by_trial)
+  # Rows refused for an unimplemented request_mode were counted above
+  # but never evaluated; subtract them so pos/s means served rows.
+            _total_positions -= self._process_parallel(ready_by_trial)
 
   # Periodic metrics
             now = time.monotonic()
             if now - _last_report >= _report_interval and _batch_count > 0:
                 avg_pos = _total_positions / _batch_count
                 n_trials = len(self._trial_slots)
+  # The B1 refusal counter's ONE reader. Appended only when non-zero, so
+  # the healthy line is unchanged and any occurrence is a grep hit; a
+  # refusal nobody can count is indistinguishable from one that never
+  # fires, and this counter had no reader when the guard was written.
+                _unsupported = int(self.unsupported_mode_requests)
+                _refused_delta = _unsupported - _last_unsupported
+                _last_unsupported = _unsupported
                 print(
                     f"[shared-broker] {_batch_count} batches in {now - _last_report:.1f}s | "
                     f"avg {avg_pos:.1f} pos/batch | "
                     f"{_total_positions / (now - _last_report):.0f} pos/s | "
-                    f"{n_trials} trials",
+                    f"{n_trials} trials"
+                    + (
+                        f" | REFUSED {_refused_delta} request(s) for an "
+                        f"unimplemented request_mode ({_unsupported} total) -- "
+                        "this broker serves only dense f32 (audit B1)"
+                        if _refused_delta else ""
+                    ),
                     flush=True,
                 )
                 _batch_count = 0

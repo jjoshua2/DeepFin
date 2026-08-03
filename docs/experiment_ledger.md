@@ -22940,10 +22940,16 @@ every key means what its name says. The worker's line now reads `slot_served`
 `stale_responses_rejected`, so the healthy line is unchanged and any hit is a
 grep result.
 
-⚑ **The early return was itself a blind spot.** `if delta_requests <= 0: return`
-plus served-only totals would have gone SILENT in exactly the window where every
-request failed — the stall the line exists to show. It now logs whenever
-anything happened, success or not, and a test pins that window.
+⚑ **The early return is NOT a blind spot, and an earlier draft of this entry
+said it was.** `delta_requests` counts ATTEMPTS, so a window in which every
+request failed still reaches the log; the gate is unchanged from main. What is
+true is narrower: once served/failed exist as separate counters, the obvious
+refactor is to key the gate on `delta_served`, and THAT would go silent for
+exactly the stall the line exists to show. So the gate is left alone and
+`test_a_window_where_every_request_failed_still_logs` pins it against that
+refactor. The first draft shipped a defensive `or delta_failed > 0` clause which
+the reviewer showed was provably inert (reverting it passes all five tests); the
+clause is removed and the claim corrected here.
 
 **B7 — virtual loss leaked permanently whenever the evaluator raised.
 PRODUCTION-REACHABLE on the UCI/arena (ruler) path.** The pairing is split
@@ -22971,7 +22977,20 @@ The raising evaluator is the documented one: this path calls a broker client and
   [0..4] leaked: 48 / 32 / 16 / 16 / 16     (re-run: 48, 8, 8, 16, 8)
 ```
 
-Fixed at **all three** sites with the same shape, not only the reproduced one:
+⚑ **Three is not the total — the Gumbel C path is a FOURTH instance, already
+mitigated by a different strategy.** `MCTSTree_start_gumbel_sims` memsets the
+whole `virtual_loss` array at the start of every search when `vloss_weight > 0`,
+and its own comment names this exact hazard ("a search ABANDONED between start
+and the final continue ... leaves its penalties behind"). A leak there is
+therefore cleared by the NEXT search on that tree rather than at the point of
+failure. **That strategy is not available to the three sites fixed here**:
+WalkerPool and MultiGpuPucvPool run N threads against ONE shared tree, so a
+blanket memset would wipe a concurrent walker's in-flight vloss — which is why
+those need the targeted per-path release. Recorded so "all three sites" is never
+later read as "three is the total".
+
+Fixed at **all three** unmitigated sites with the same shape, not only the
+reproduced one:
 `WalkerPool._descend_until_done`, `PucvChunker.run` (audit called this PLAUSIBLE
 and never ran it — it is now reproduced and fixed), and
 `MultiGpuPucvPool._pipeline_until_done`. The release lives in one place,
@@ -23007,6 +23026,16 @@ only the offending slots (a mixed batch still serves its dense clients), logs
 throttled at 30 s for the same reason the no-model branch is, and increments
 `unsupported_mode_requests` — the count is NOT throttled, because a refusal
 nobody can count is indistinguishable from one that never fires.
+
+⚑ **That counter initially had NO reader — the signature defect inside the fix
+for the signature defect** (reviewer finding). It is now appended to the shared
+broker's own 10-second serve-loop report, non-zero only. That is the only
+process that can read it: it lives on `SharedSlotBroker`, so the worker's
+`broker client stats:` line is a different process entirely and cannot. Fixing
+that exposed a second instance in the same line — `_total_positions` is summed
+BEFORE `_process_parallel`, so refused rows counted as served pos/s, which is
+B6(c) verbatim in the sibling path. `_process_parallel` now returns the refused
+ROW count and the serve loop subtracts it.
 
 **K5 — the third plane-count leg.** `_check_manifest_compat` validated the
 manifest against ITSELF; #321 added client-vs-manifest at the chokepoint a
@@ -23056,7 +23085,7 @@ red to green plus a mutation that turns the new test red. Mutation results are i
 the PR body.
 
 ⚑ **METHOD, from the mutation sweep — an end-state total cannot detect a
-floored double-decrement.** 21 mutations were run; 20 died immediately and one
+floored double-decrement.** 22 mutations were run; 21 died immediately and one
 SURVIVED: "release the WHOLE batch instead of the un-integrated tail".
 `remove_vloss_path` floors at 0, so releasing a path whose vloss
 `walker_integrate_leaf` had ALREADY removed still ends at 0 on an idle tree —
@@ -23084,3 +23113,32 @@ future call site swallows a per-request failure, but **the eviction is not what
 makes B6 worth fixing: the accounting and the visibility are.** That matches the
 audit's own severity ("not a correctness bug ... it is a diagnosis bug"), which
 this entry had drifted away from while describing the fix.
+
+⚑ **SEMANTIC DRIFT in two existing metrics, and one counter that is not
+cumulative.** Splitting served from attempted moved denominators without
+renaming the fields, so a reader comparing a `broker client stats:` line across
+this deploy is comparing two definitions:
+
+- `slot_req_skew` and `slots_active` now denominate on **served** requests
+  (`slot_served`), not attempts. That is the point — a wedged slot taking
+  attempts and serving nothing used to read as active — but a skew value from
+  before the restart is not comparable to one after it.
+- `avg_rows_per_request` / `rows_per_req` now divide by **served** requests, so
+  the value rises slightly on any window that contained failures. It was
+  previously deflated by counting attempts in the denominator and (separately)
+  inflated by counting unserved rows in the numerator.
+- `failed_req_total` is per-CLIENT-OBJECT, not per-session: `_reset_inference_client`
+  nulls and rebuilds the client, so the total restarts at 0 on every broker
+  recovery. Read the `+N` delta, not the total, when judging how bad a stall was.
+
+⚑ **DISCLOSURE — this entry was amended in place after its independent review
+(#325 comment 5172094351, verdict CONFIRM with five non-blocking findings), on
+the #324 precedent that a PR's own not-yet-merged append may be corrected rather
+than appended to.** What changed, so the diff is not the only record: the
+early-return claim above was WRONG and is rewritten (the reviewer proved the
+clause it described was inert); the B1 refusal counter is no longer described as
+observable-in-principle because it now has an actual reader; the Gumbel fourth
+instance was added; the mutation count 21 -> 22; this drift note is new. The
+B6(a) scope correction further up was made BEFORE review, by me, and is
+unrelated to these findings. Nothing measured changed — no number in this entry
+was re-derived, and none moved.
