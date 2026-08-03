@@ -59,6 +59,48 @@ def test_prod_regime_is_what_the_fuzzer_defaults_to() -> None:
     assert defaults["history_rep_fix"] is True
 
 
+def test_oracle_pins_the_planes_it_actually_compared() -> None:
+    """The threaded feature version must REACH the encoder, not just be a default.
+
+    Review F1: pinning the module constants and the argparse defaults does not
+    observe whether ``input_extra_features`` survives the trip to
+    ``encode_cboard``/``encode_position``. One line inside ``_check_encode``
+    pinning it to ``"v1"`` used to drop the 29 v2_threats planes out of the only
+    C-vs-Python differential in the repo — every test green, CLI still printing
+    ``v=v2_threats``. That is audit E1 verbatim.
+
+    This drives ``_check_encode`` directly with a mismatched ``expect_planes``,
+    which is the state that mutation produces, and requires a Failure naming the
+    realized width. It goes red if the assertion is removed OR if the encoders
+    stop being asked for the version the caller requested.
+    """
+    import chess
+
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+
+    b = chess.Board()
+    cb = CBoard.from_board(b)
+    # v1 planes reaching a caller that asked for v2_threats — exactly what a
+    # shadowed input_extra_features inside the loop produces.
+    failure = _MOD._check_encode(
+        cb, b, "unit", [], input_extra_features="v1",
+        expect_planes=input_plane_count(PROD_EXTRA_FEATURES),
+    )
+    assert failure is not None, (
+        "the oracle compared 146 planes while the caller asked for 175 and "
+        "reported no failure — the feature version is accepted then ignored"
+    )
+    assert "did not reach the encoder" in str(failure)
+    assert "146" in str(failure)
+    assert "175" in str(failure)
+
+    # And the matched case must still pass, so the assertion is not a blanket no.
+    assert _MOD._check_encode(
+        cb, b, "unit", [], input_extra_features=PROD_EXTRA_FEATURES,
+        expect_planes=input_plane_count(PROD_EXTRA_FEATURES),
+    ) is None
+
+
 def test_differential_fuzz_state_parity_smoke() -> None:
     """State parity (legal moves, bitboards, clocks, terminal flags) is a hard
     invariant between the C board and python-chess — assert it over many plies."""

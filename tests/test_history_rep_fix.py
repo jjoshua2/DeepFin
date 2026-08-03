@@ -347,3 +347,57 @@ def test_certified_flip_produces_a_clean_regime() -> None:
     # Both clean regimes agree on THIS line (audit E3): the finding is that the
     # mid-game flip is a third answer, not that the two regimes differ here.
     assert np.array_equal(off, on)
+
+
+def test_match_path_passes_no_cboards_so_its_flip_exemption_holds(monkeypatch):
+    """Pin the PRECONDITION that makes ``boards_discarded=True`` true in match.py.
+
+    Review F4. ``pick_moves_for_boards`` flips the process-global flag per move
+    cycle, which is safe only because every C search entry point rebuilds its
+    CBoards from the python board at the start of the call — i.e. because match
+    passes no ``cboards=``. Nothing observed that. If a future long-lived-CBoard
+    optimisation starts handing the search a board that outlives the flip, the
+    keyword stays green and the repetition planes go silently wrong (the exact
+    scenario the E3 guard exists for), so pin it here instead: this test goes red
+    the moment match.py hands the search a pre-built board.
+
+    Both search families are checked, because the exemption is claimed for both.
+    """
+    import chess
+
+    from chess_anti_engine.selfplay import match as match_mod
+
+    calls: list[dict] = []
+
+    def _record(*args, **kwargs):
+        calls.append(dict(kwargs))
+        n = len(args[1])
+        return ([np.zeros(1)] * n, [0] * n, [0.0] * n, [np.zeros(1)] * n)
+
+    monkeypatch.setattr(match_mod, "_run_gumbel_root_many_c", _record)
+    monkeypatch.setattr(match_mod, "_run_mcts_many_c", _record)
+    monkeypatch.setattr(match_mod, "run_gumbel_root_many", _record)
+    monkeypatch.setattr(match_mod, "run_mcts_many", _record)
+
+    model = cast("Any", type("M", (), {
+        "input_history_encoding": "lc0_root_legacy_meta",
+        "input_extra_features": "v2_threats",
+        "policy_encoding": "lc0_1858",
+        "use_dynamic_relations": False,
+        "history_rep_fix": True,
+    })())
+    boards = [chess.Board()]
+    for mcts_type in ("gumbel", "puct"):
+        calls.clear()
+        match_mod.pick_moves_for_boards(
+            model, boards, device="cpu", rng=np.random.default_rng(0),
+            mcts_type=mcts_type, mcts_simulations=2, temperature=1.0,
+            c_puct=2.5, gumbel_add_noise=False,
+        )
+        assert calls, f"no search invoked for {mcts_type}"
+        assert "cboards" not in calls[0], (
+            f"{mcts_type}: match.py now hands the search a pre-built CBoard, so "
+            "the boards_discarded=True on its rep_fix.apply is no longer true — "
+            "a board pushed under the other model's flag can now survive the "
+            "flip and encode repetition planes matching neither regime (E3)"
+        )

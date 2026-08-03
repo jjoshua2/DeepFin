@@ -459,8 +459,14 @@ def verify_packages(
     The verification inputs are encoded in ``model``'s OWN declared encoding,
     read off the model rather than passed in: the encoding is not a free
     parameter of this gate, and a keyword that can be forgotten is exactly how
-    the legacy-history bug (encoding audit E2) survived. ``model_encoding_kwargs``
-    refuses to guess when a model does not declare its encoding.
+    the legacy-history bug (encoding audit E2) survived.
+
+    What that buys, precisely (PR #321 review F5): the attributes are the values
+    the model was CONSTRUCTED with, so they cannot drift from it the way a
+    separately-threaded keyword can. It is NOT an extra guard against a model of
+    unknown encoding — ``build_model`` normalizes ``None`` to ``legacy``/``v1``,
+    so a real model always declares something and ``model_encoding_kwargs``'
+    ``ValueError`` only fires for objects it did not build.
 
     Returns ``(verified_pass_count, failed_count, rows)`` where each row is
     ``(bucket, PASS|FAIL|SKIP, detail)``.

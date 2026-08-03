@@ -103,22 +103,47 @@ class _NarrowSlotEvaluator:
     ``get_input_buffer`` + ``evaluate_inplace`` + ``n_slots`` + ``_max_batch``.
     """
 
-    n_slots = 1
+    n_slots = 2
     _max_batch = 64
+    supports_input_bf16_bits = False
+    supports_legal_bf16 = False
 
     def __init__(self, planes: int) -> None:
         self._buf = np.zeros((self._max_batch, planes, 8, 8), dtype=np.float32)
 
+    # gumbel_c's in-place gate is supports_inplace_api(), which needs all three
+    # slot methods present; puct_c/network_turn need only get_input_buffer.
     def get_input_buffer(self, n: int, slot: int = 0) -> np.ndarray:
-        assert slot == 0
+        assert 0 <= slot < self.n_slots
         return self._buf[:n]
 
-    def evaluate_inplace(
-        self, n: int, slot: int = 0,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def get_input_buffer_bf16_bits(self, n: int, slot: int = 0) -> np.ndarray:
         raise AssertionError(
-            f"evaluate_inplace(n={n}, slot={slot}) must not be reached on a "
-            "plane-count mismatch"
+            f"bf16 slot requested (n={n}, slot={slot}); this stub declares "
+            "supports_input_bf16_bits=False and drives the fp32 branch"
+        )
+
+    def evaluate_inplace_async(
+        self, n: int, slot: int = 0, relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, None]:
+        raise AssertionError(
+            f"evaluate_inplace_async(n={n}, slot={slot}, "
+            f"relations={relations is not None}) reached after a 146-plane "
+            "encode under a v2_threats config"
+        )
+
+    def evaluate_inplace(
+        self, n: int, slot: int = 0, *, copy_out: bool = True,
+        relations: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        # Deliberately permissive signature: with the guard removed the C
+        # encoder writes 146 planes into this buffer WITHOUT COMPLAINT and
+        # execution arrives here, which is the finding. The stub must fail on
+        # that fact, not on an incidental TypeError.
+        raise AssertionError(
+            f"evaluate_inplace(n={n}, slot={slot}, copy_out={copy_out}, "
+            f"relations={relations is not None}) reached after a 146-plane "
+            "encode under a v2_threats config"
         )
 
     def evaluate_encoded(
@@ -149,3 +174,63 @@ def test_puct_c_inplace_branch_rejects_a_narrow_slot() -> None:
             rng=np.random.default_rng(0), cfg=cfg,
             evaluator=cast("Any", _NarrowSlotEvaluator(input_plane_count("v1"))),
         )
+
+
+def test_gumbel_c_root_inplace_branch_rejects_a_narrow_slot() -> None:
+    """The production search path (``mcts_type: gumbel``), same defect.
+
+    Review F3: only ``puct_c`` was pinned; ``gumbel_c`` is what production runs.
+    """
+    import chess
+
+    from chess_anti_engine.mcts.gumbel import GumbelConfig
+    from chess_anti_engine.mcts.gumbel_c import run_gumbel_root_many_c
+
+    cfg = GumbelConfig(
+        simulations=2, input_extra_features="v2_threats",
+        input_history_encoding="lc0_root_legacy_meta",
+    )
+    with pytest.raises(ValueError, match="run_gumbel_many_c root inplace"):
+        run_gumbel_root_many_c(
+            None, [chess.Board()], device="cpu",
+            rng=np.random.default_rng(0), cfg=cfg,
+            evaluator=cast("Any", _NarrowSlotEvaluator(input_plane_count("v1"))),
+        )
+
+
+def test_selfplay_root_inplace_branch_rejects_a_narrow_slot() -> None:
+    """``_evaluate_root_batch`` — the path EVERY TRAINING ROW is written from.
+
+    ``selfplay/network_turn.py:499/:624`` store the batch-encode output as the
+    row's ``x``, so a plane layout that is silently wrong here is written to the
+    shards and poisons training, search and every ruler at once. Drives the real
+    function with a game config declaring v2_threats and an evaluator whose
+    pinned slot is the v1 146.
+    """
+    import chess
+    from types import SimpleNamespace
+
+    from chess_anti_engine.encoding._lc0_ext import CBoard
+    from chess_anti_engine.mcts._mcts_tree import (
+        batch_encode_146_lc0_root_legacy_meta,
+    )
+    from chess_anti_engine.selfplay.network_turn import _evaluate_root_batch
+
+    state = SimpleNamespace(
+        evaluator=_NarrowSlotEvaluator(input_plane_count("v1")),
+        cboards=[CBoard.from_board(chess.Board())],
+        has_c_ply=False,
+        game=SimpleNamespace(
+            input_history_encoding="lc0_root_legacy_meta",
+            input_extra_features="v2_threats",
+            record_relations=False,
+        ),
+        batch_enc_146_lc0_root_legacy_meta=batch_encode_146_lc0_root_legacy_meta,
+        batch_enc_146_lc0_root_legacy_meta_bf16=None,
+        batch_enc_146=None,
+        batch_enc_146_bf16=None,
+        batch_enc_146_lc0_root=None,
+        batch_enc_146_lc0_root_bf16=None,
+    )
+    with pytest.raises(ValueError, match=r"selfplay root inplace \(fp32\)"):
+        _evaluate_root_batch(cast("Any", state), [0])

@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 import chess
 import numpy as np
 
-from chess_anti_engine.encoding import encode_position, rep_fix
+from chess_anti_engine.encoding import encode_position, input_plane_count, rep_fix
 from chess_anti_engine.encoding._lc0_ext import CBoard
 from chess_anti_engine.encoding.cboard_encode import encode_cboard
 from chess_anti_engine.moves import move_to_index
@@ -118,8 +118,19 @@ def _check_state(cb: CBoard, b: chess.Board, ctx: str, moves: list[str]) -> Fail
 
 def _check_encode(
     cb: CBoard, b: chess.Board, ctx: str, moves: list[str],
-    *, input_extra_features: str,
+    *, input_extra_features: str, expect_planes: int,
 ) -> Failure | None:
+    """Compare C vs Python planes, and pin WHICH planes were compared.
+
+    ``expect_planes`` is computed by the caller from the same
+    ``input_extra_features`` and is asserted against the realized arrays. Without
+    it the feature version is a value that can be accepted and then ignored: a
+    single line pinning ``input_extra_features`` to ``"v1"`` anywhere in this
+    function silently drops the 29 v2_threats planes out of the only C-vs-Python
+    differential in the repo while every test stays green and the CLI still
+    prints ``v=v2_threats`` (PR #321 review F1). That is audit E1 verbatim, and
+    it survived six weeks the first time.
+    """
     for hist in HISTORY_ENCODINGS:
         c_planes = encode_cboard(
             cb, input_history_encoding=hist,
@@ -129,6 +140,13 @@ def _check_encode(
             b, input_history_encoding=hist,
             input_extra_features=input_extra_features,
         )
+        for side, planes in (("C", c_planes), ("python", py_planes)):
+            if int(planes.shape[0]) != int(expect_planes):
+                return Failure(ctx, (
+                    f"oracle compared {int(planes.shape[0])} {side} planes, not "
+                    f"{int(expect_planes)}: the requested feature version "
+                    f"({input_extra_features!r}) did not reach the encoder"
+                ), moves)
         if c_planes.shape != py_planes.shape:
             return Failure(ctx, (
                 f"encode shape mismatch hist={hist!r} v={input_extra_features} "
@@ -173,6 +191,9 @@ def _run(
     *, games: int, seed: int, max_plies: int, encode_every: int,
     input_extra_features: str,
 ) -> Failure | None:
+    # Computed ONCE, here, far from the encoder calls: _check_encode asserts the
+    # arrays it actually compared are this wide (review F1).
+    expect_planes = int(input_plane_count(input_extra_features))
     rng = random.Random(seed)
     for g in range(games):
         b = chess.Board()
@@ -183,6 +204,7 @@ def _run(
             fail = _check_encode(
                 cb, b, f"game{g} ply0", moves,
                 input_extra_features=input_extra_features,
+                expect_planes=expect_planes,
             )
         if fail is not None:
             return fail
@@ -206,6 +228,7 @@ def _run(
                 fail = _check_encode(
                     cb, b, ctx, moves,
                     input_extra_features=input_extra_features,
+                    expect_planes=expect_planes,
                 )
             if fail is not None:
                 return fail

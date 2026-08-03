@@ -9,6 +9,15 @@
 #   ./scripts/fuzz/run_fuzz.sh batch [games]         # _mcts_tree batch encoders vs the
 #                                                    # single-board oracle, sanitized
 #
+# Cost at the defaults, measured UNSANITIZED on one core at nice 19 (the
+# sanitized build these run under is several times slower, plus one build_ext):
+#   diff  500 games, encode-every 4, v2_threats/175 : 18 s
+#   batch 120 games x 2 rep-fix phases, 175 planes  : 13 s  (146 was 13 s -- the
+#                                                     plane count is not the cost)
+# The encode oracle is what makes `diff` cost more than it used to; it was off
+# before, which is the whole point of turning it on. Neither entry point runs in
+# CI -- the CI budget is tests/test_fuzz_smoke.py, ~1 s.
+#
 # libFuzzer crashes land in scripts/fuzz/corpus/crash-*; reproduce with
 #   ./scripts/fuzz/cboard_fuzz <crash-file>
 set -euo pipefail
