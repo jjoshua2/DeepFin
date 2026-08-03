@@ -209,7 +209,6 @@ def main() -> None:
         "key": [p.key for p in positions],
         "game_id": [int(matched.game_id(p.key)) for p in positions],
         "phase": [int(p.phase) for p in positions],
-        "arms": {},
     }
     arms_out: dict[str, dict[str, object]] = {}
     out["arms"] = arms_out
