@@ -637,6 +637,8 @@ def test_the_probe_columns_reach_the_report_row() -> None:
         w_wdl=1.0, w_soft=1.0, w_sf_move=1.0, w_categorical=1.0,
         sf_wdl_frac=0.5, sf_wdl_temperature=1.0, sf_wdl_draw_scale=1.0,
         sf_wdl_conf_power=1.0,
+        # No yaml key; the result row is the only place it is legible (#316).
+        mirror_prob=0.5,
         _feature_group_dropout=[(f"g{i}", (), 0.0) for i in range(8)],
     )
     probe_dict = probe_metrics({PROBE_ERA: ProbeReading(
