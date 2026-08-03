@@ -26682,3 +26682,39 @@ arm A's held-out optimum at step 4,224-5,632.
 needs the GPU, and the card is the capacity retrain's. `final.pt` is banked for both
 variants at `run_H2_s0_ema500/` and `run_H2_s0_ema2000/`; the command is the same
 `raw_policy_regret.py` invocation used for every other arm.
+
+#### ADDENDUM 3a — the owed neutral frozen-audit on the H2 EMA checkpoints
+
+Run 2026-08-03 once the capacity retrain released the card (verified free: 29.8 GB,
+only its CPU-side scorer resident). Same `raw_policy_regret.py` invocation as every
+other arm, paired on all 4,000 audit positions. FEN-only inputs, so RANKING only.
+
+| checkpoint | level | vs RAW (`A_s0`, verified bit-identical to H2's raw arm) | vs boot512 |
+|---|---|---|---|
+| `H2_ema500` | **53.92 cp** | −1.961 [−4.818, +0.756] ns | +5.984 SIG |
+| `H2_ema2000` | **52.92 cp** | **−2.959 [−5.493, −0.672] SIG** | +4.986 SIG |
+| raw (`A_s0`) | 55.88 cp | — | +7.945 SIG |
+
+**It CORROBORATES the ema2000 `oow` reading on a third, independent ruler.** ema2000 is
+significantly better than the raw run it came from, on positions no lineage net
+generated, measured by a different script against a different label source. ema500
+remains null here too, consistent with its null on `oow` — the ~500-step window does
+nothing on any ruler.
+
+Efficiency corroborates as well. Audit improvement per cp of in-window learning
+surrendered: C_s0 −1.22, D_s0 −1.01, **F_s0 −3.15, ema2000 −2.95**. The same two
+levers that survived the matched-learning control are ~3x more efficient than the
+optimizer family on this ruler too — three independent rulers now agree on which arms
+are doing something different in kind.
+
+**It does NOT change the verdict.** The pre-registered rule was `oow` beyond its bar
+WITHOUT `inw` loss beyond its bar; ema2000 failed that clause at both matched steps
+(+0.447, +1.004 = 3.3x the bar) and the audit is a declared cross-check, "reported but
+not decisive". It also cannot be matched-learning-controlled — only final weights were
+scored, so the −2.959 is a matched-STEPS contrast and carries the same confound that
+dissolved C/D. **EMA-publish stays off the restart add-back list.**
+
+And both EMA variants remain **significantly worse than boot512** (+4.99, +5.98). EMA
+reduces the degradation; it does not rescue it. Full ranking, best to worst:
+boot512 47.93 | C 51.7 | D 51.8-52.4 | F 52.1-52.8 | **ema2000 52.92** | **ema500 53.92** |
+A_s1 54.62 | B2 54.70 | A_s0 55.88 | G 55.9-56.0 | SHUF 204.67.
