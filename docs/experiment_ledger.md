@@ -28145,3 +28145,61 @@ change ships: re-run on REAL out_proj momentum on GPU fp16 (Gaussian surrogates
 may overstate κ), the polar-convergence metric ships WITH the change (a guard
 must share the criterion's instrument), and the per-shape key is
 restart-gated (unknown key rejects the whole live reload).
+
+#### M4-1 ADDENDUM II (2026-08-03): REAL momentum overturns the Gaussian analysis — tight-safe normalization REJECTED, CANS DROPPED, recommendation = GLOBAL polar_steps 12 (which is the CODE DEFAULT; production's 8 is an unexplained override)
+
+Real Aurora momentum extracted from live `checkpoint_000478` (48 params, 0
+missing buffers). It is nothing like the Gaussian surrogates: κ 4.8e4–5.7e6
+(vs 1.7e3), ‖M‖_F/σ_max only 1.18–2.49 (vs 11.4), **stable rank 1.4–6.2** —
+momentum is nearly low-rank. TWO earlier audit claims RETRACTED: "rectangular
+~350× better conditioned" (false — real rect κ 4.8e4–8.6e4, same order as
+squares) and the 0.248 magnitude (real: 0.0209). The
+diff-the-file-you-measured rule biting the audit's own work.
+
+**The deciding cell: production PE-8's SIGNIFICANT-subspace ratio = 1.0000.**
+The top ~490 of 512 directions are already orthogonalized exactly; the entire
+deficit lives in ~20 directions below 1e-3·σ_max — the noise floor of a
+stable-rank-3 matrix. Effect-size expectations for any loss impact drop
+accordingly (consistent with the NorMuon prior; the stage-2 rig A/B keeps the
+null pre-declared plausible).
+
+- **Tight-safe σ_max normalization: REJECTED by its own pre-committed bar**
+  (0.0374 vs PE-12's 0.2489; needed ≥0.99×). The mechanism is real and the
+  FREE Gelfand k=2 bound saturates it exactly (identical to the exact-σ_max
+  oracle) — but on real momentum Frobenius is already nearly tight (slack
+  1.18–2.49× < one PE step's 1.875×). Pre-committing the bar before the
+  deciding cells is what made this a verdict rather than a negotiation.
+- **Square-only scoping: REJECTED** — a Gaussian artifact; ALL 48 tensors are
+  ill-conditioned on real data. The arm becomes GLOBAL `aurora_polar_steps: 12`
+  (+50% polar work — still negligible end-to-end; SF CPU is the binding
+  resource).
+- **CANS: DROPPED, not deferred** — won on Gaussians (1.0000 vs 0.357 at
+  matched 24 matmuls), INVERTED on real data (breaks the dominant subspace,
+  sig 0.4185, 6× production's orth error). Implemented from the paper's own
+  Prop 3.3/eq 4/Alg 1 with passing sanity checks.
+- **Safety results:** s < σ_max is a CLIFF (1.0001 → 0/16 non-finite; 1.1 →
+  16/16 NaN); power iteration measured BELOW σ_max on 11/20 real tensors
+  (unsafe-lower class confirmed empirically). Interaction rule: Frobenius →
+  safety 1.00 free; tight normalization → safety 1.01 LOAD-BEARING (0.09%
+  from the cliff); never both. Keep `polar_safety: 1.01` with the current
+  normalization.
+- **Gram-NS/QuACK deferral criterion corrected:** real rect κ 4.8e4–8.6e4 ⇒
+  Gram-squaring → 2.3e9–7.4e9 — inadmissible on BOTH shapes, not just squares.
+- **Provenance surprise: the code default for `aurora_polar_steps` is ALREADY
+  12; production's 8 is an unexplained yaml override from `ecd2101a0`.** The
+  restart's minimal-core config review should treat the 8 as a candidate DROP
+  (reverting to default 12), pending the A8 stage-2 rig verdict.
+
+A8 v2 (in the audit doc + PRECOMMIT_tight_safe_norm.md): stage 2 is a ONE-LINE
+yaml change on the rig (`aurora_polar_steps` is plumbed via
+trainer_kwargs_from_config), full command + I3 instrument gate (metric must
+read ≥0.99 in the arm or no verdict) + bars + null-plausible + revert point
+written; queue on the card after the FE low-dose wave drains.
+
+**Incident (disclosed by the auditor): the audit's four parallel CPU torch jobs
+perturbed the FE rig** — FE10_s1/s2 cadence +14.6%/+13.3% at chunk 40 despite
+nice 19 and zero GPU use (nice protects CPU priority, not memory bandwidth).
+Killed on detection. Chunk-40 `wall_s` in the low-dose wave is contaminated by
+the AUDIT, not the arm; no FE verdict clause reads wall_s, so the verdict is
+unaffected. No GPU fp16 timing leg was run — matmul counts are the only cost
+metric of record.
