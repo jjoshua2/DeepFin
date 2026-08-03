@@ -191,7 +191,7 @@ _REQUIRED_MCTS_ABI = 2
 VLOSS_MODE_LEGACY = 0
 VLOSS_MODE_VIRTUAL_MEAN = 1
 
-GumbelManyCResult =tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
+GumbelManyCResult = tuple[list[np.ndarray], list[int], list[float], list[np.ndarray], MCTSTree, list[int]]
 GumbelManyCDiagnosticsResult = tuple[
     list[np.ndarray],
     list[int],
@@ -1249,28 +1249,41 @@ def run_gumbel_root_many_c(
 
         best_a = int(remaining[0])
   # Gumbel sequential halving leaves the survivor at remaining[0]; map that
-  # back to its position in the full ``legal`` array (= imp_all), exactly as
-  # the Python reference does (gumbel.py). This used to be an inlined
+  # back to its position in the full ``legal`` array (= imp_all), as the
+  # Python reference does (gumbel.py). This used to be an inlined
   # re-implementation of the shared primitive whose degenerate fallback was
   # `best_a` and which exponentiated out of log space with no isfinite guard
   # (play-path audit 2026-08-03, F10).
-        argmax_idx = int(np.searchsorted(legal, best_a)) if legal.size > 0 else 0
-        action = sample_action_with_temperature(
-            rng, legal, imp_all, float(cfg.temperature), argmax_idx=argmax_idx,
-        )
+  #
+  # ONE searchsorted, IN-RANGE-CHECKED, reused by the value lookup below --
+  # which already carried that check, so the codebase has never treated
+  # `best_a in legal` as guaranteed. Unchecked, an out-of-range hit would
+  # silently select a DIFFERENT legal action, or IndexError when `best_a`
+  # exceeds every entry. It is unreachable by construction (the candidate set
+  # is drawn from the same pruned `legal_idx` the priors were written on, and
+  # a prior only leaves `legal` by underflowing to exactly 0.0, i.e. a >745
+  # float64 logit gap), so this is belt-and-braces, not a live path.
+        j_best = int(np.searchsorted(legal, best_a)) if legal.size > 0 else 0
+        best_in_legal = j_best < legal.size and int(legal[j_best]) == best_a
+        if best_in_legal:
+            action = sample_action_with_temperature(
+                rng, legal, imp_all, float(cfg.temperature), argmax_idx=j_best,
+            )
+        else:
+  # Pre-F10 behaviour at temperature <= 0. It also differs from pre-F10 at
+  # temperature > 0, which sampled from `legal` (and consumed an rng draw):
+  # a survivor outside the returned policy's support means the played-move
+  # and returned-policy criteria have already diverged (audit F3), so the
+  # draw carries no information and the survivor is the honest answer.
+            action = best_a
 
         probs_out[i] = probs
         actions_out[i] = action
 
   # Value from child
         slot = action_to_slot.get(best_a)
-        if slot is not None and int(child_visits[slot]) > 0:
-  # completed_q for best_a
-            j_best = np.searchsorted(legal, best_a)
-            if j_best < legal.size and int(legal[j_best]) == best_a:
-                values_out[i] = float(completed_q[j_best])
-            else:
-                values_out[i] = root_q_i
+        if slot is not None and int(child_visits[slot]) > 0 and best_in_legal:
+            values_out[i] = float(completed_q[j_best])
         else:
             values_out[i] = root_q_i
 

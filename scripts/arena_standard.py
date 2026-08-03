@@ -120,6 +120,12 @@ class SideSearch:
   # tree carry changes arena behaviour and needs its own pre-registered
   # readout. Constant today; a field so the JSONL record dates from before the
   # fix rather than being silent about it.
+  #
+  # ⚑ ABSENT != "cold". Every JSONL row written before 2026-08-03 lacks this
+  # key. A reader must treat a missing `tree_reuse` as UNKNOWN, never default
+  # it to "cold" -- those rows were cold in fact, but a default that silently
+  # answers for rows the field never covered is the `reco_diff misses absent
+  # keys` failure mode, and it would keep answering after tree carry lands.
     tree_reuse: str = "cold"
 
     def realized_gumbel(self) -> dict[str, float | int]:

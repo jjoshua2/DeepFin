@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -54,9 +55,10 @@ from chess_anti_engine.train.target_builder import (
 )
 from chess_anti_engine.moves import (
     COMPACT_POLICY_SIZE,
+    COMPACT_TO_FULL_POLICY,
+    FULL_TO_COMPACT_POLICY,
     POLICY_SIZE,
 )
-from chess_anti_engine.moves import torch_maps
 from chess_anti_engine.replay.augment import (
     maybe_mirror_batch_arrays,
     maybe_mirror_samples,
@@ -229,6 +231,31 @@ class _SqrtReleaseLRScheduler:
         last_lr = [float(v) for v in state_dict.get("_last_lr", base_lrs)]
         self._last_lr = last_lr if len(last_lr) == len(base_lrs) else list(base_lrs)
         self.last_epoch = int(state_dict.get("last_epoch", self.last_epoch))
+
+
+@lru_cache(maxsize=16)
+def _policy_index_lut(
+    lut_name: str,
+    *,
+    device_type: str,
+    device_index: int | None,
+) -> torch.Tensor:
+    if lut_name == "full_to_compact":
+        values = FULL_TO_COMPACT_POLICY
+    elif lut_name == "compact_to_full":
+        values = COMPACT_TO_FULL_POLICY
+    else:
+        raise ValueError(f"unknown policy index LUT {lut_name!r}")
+    device = torch.device(device_type) if device_index is None else torch.device(device_type, device_index)
+    return torch.as_tensor(values, dtype=torch.long, device=device)
+
+
+def _policy_index_lut_for(target: torch.Tensor, lut_name: str) -> torch.Tensor:
+    return _policy_index_lut(
+        lut_name,
+        device_type=target.device.type,
+        device_index=target.device.index,
+    )
 
 
 def _metadata_strings(
@@ -2892,20 +2919,13 @@ class Trainer:
             if source_width == dst_width:
                 return target, torch.ones_like(target, dtype=torch.bool)
             if source_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
-  # torch_maps owns the ONE device cache for these two tables (CLAUDE.md:
-  # "don't add per-module lru_cache copies"). The private copy that used
-  # to live in this module keyed on target.device.index raw, so
-  # torch.device("cuda") and ("cuda", 0) allocated two separate copies of
-  # both tables; torch_maps._device_key normalises that away. Same dtype
-  # (torch.long) and same source arrays, so the swap is value-identical --
-  # see tests/test_trainer_policy_index_lut.py.
-                lut = torch_maps.full_to_compact_index(target.device)
+                lut = _policy_index_lut_for(target, "full_to_compact")
                 valid = (target >= 0) & (target < POLICY_SIZE)
                 safe_target = target.clamp(0, POLICY_SIZE - 1).to(torch.long)
                 mapped = lut.index_select(0, safe_target)
                 return mapped, valid & (mapped >= 0)
             if source_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
-                lut = torch_maps.compact_to_full_index(target.device)
+                lut = _policy_index_lut_for(target, "compact_to_full")
                 valid = (target >= 0) & (target < COMPACT_POLICY_SIZE)
                 safe_target = target.clamp(0, COMPACT_POLICY_SIZE - 1).to(torch.long)
                 mapped = lut.index_select(0, safe_target)

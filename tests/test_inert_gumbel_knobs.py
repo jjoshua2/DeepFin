@@ -130,12 +130,34 @@ def test_a_live_knob_is_still_accepted() -> None:
 
 
 def test_the_cand_gumbel_help_no_longer_advertises_the_inert_knobs() -> None:
+    """The help must not SUGGEST a knob the parser will refuse.
+
+    Asserting only that the word "REJECTED" appears would pass with all four
+    names still listed as suggested overrides -- a test that cannot fail for
+    the reason it is named. So: locate the "REJECTED" sentence, and require
+    every inert name to appear ONLY at or after it.
+    """
     text = (REPO_ROOT / "scripts" / "arena_standard.py").read_text()
     start = text.index('"--cand-gumbel"')
-    help_block = text[start : start + 900]
-    # The names may appear in the "these are REJECTED" sentence, but not as a
-    # suggested override.
-    assert "REJECTED" in help_block
+    end = text.index("p.add_argument", start + 1)
+    help_block = text[start:end]
+
+    assert "REJECTED" in help_block, "the help no longer says the knobs are refused"
+    rejected_at = help_block.index("REJECTED")
+    # The sentence is written "c_puct/fpu_reduction/cpuct_factor/cpuct_base are
+    # REJECTED", so the names sit just before the word; take the sentence start.
+    sentence_at = help_block.rindex(". ", 0, rejected_at) if ". " in help_block[:rejected_at] else 0
+
+    for knob in sorted(INERT_GUMBEL_KNOBS):
+        assert knob in help_block, f"the help does not name {knob} as refused"
+        assert help_block.index(knob) >= sentence_at, (
+            f"--cand-gumbel's help still advertises {knob} as a usable override "
+            "before the sentence that says it is refused"
+        )
+
+    # ...and it must still advertise knobs that DO work.
+    for live in ("c_scale", "topk", "halving_div"):
+        assert help_block.index(live) < sentence_at, f"{live} dropped from the help"
 
 
 def test_nothing_sets_full_tree_false_anywhere_in_the_tree() -> None:

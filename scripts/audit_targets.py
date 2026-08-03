@@ -778,6 +778,28 @@ def main() -> None:
     ap.add_argument("--out-dir", type=Path, default=Path("runs"))
     args = ap.parse_args()
 
+  # Reject at PARSE time, not deep in the run. `_net_candidates` only forwards
+  # vloss_mode when vloss_weight > 0, and this script never prints or records
+  # vloss_mode, so `--vloss-mode 1` at the default `--vloss-weight 0` used to be
+  # accepted, dropped, and leave no trace -- the exact "value accepted and then
+  # silently ignored" pattern the rest of this PR removes, sitting in the flag
+  # it just re-documented. With a weight the search DOES raise, but only after
+  # the audit set, the checkpoint and the evaluator have loaded. Failing here
+  # makes the help text true for every flag combination and the failure cheap.
+  # Local import: this module keeps the mcts/C-extension import lazy.
+    from chess_anti_engine.mcts.gumbel_c import VLOSS_MODE_VIRTUAL_MEAN
+
+    if int(args.vloss_mode) == VLOSS_MODE_VIRTUAL_MEAN:
+        raise SystemExit(
+            "--vloss-mode 1 (VIRTUAL_MEAN) is refused: tree_gumbel_select_child "
+            "mirrors that mode for the CHILD term only, leaving parent_Q -- the FPU "
+            "for every unvisited child -- with legacy virtual-loss pessimism, so the "
+            "mode does not do what --vloss-mode's help describes (play-path audit "
+            "2026-08-03, F4). Comparing the two constructs through it would be a "
+            "verdict off a broken instrument. Re-enable in the commit that mirrors "
+            "the C parent branch."
+        )
+
     if args.sf_soft_nodes is None:
         args.sf_soft_nodes = {"low": 500_000, "high": 2_000_000}[args.sf_effort]
 

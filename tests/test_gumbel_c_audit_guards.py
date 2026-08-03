@@ -24,6 +24,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import logging
+import os
 
 import chess
 import numpy as np
@@ -120,6 +121,40 @@ def test_legacy_vloss_mode_is_untouched() -> None:
     )
     assert len(probs) == len(_FENS)
     assert all(0 <= int(a) < POLICY_SIZE for a in actions)
+
+
+def test_audit_targets_rejects_vloss_mode_1_at_parse_time() -> None:
+    """The reviewer's best catch, and the PR's own thesis turned on itself.
+
+    ``_net_candidates`` only forwards ``vloss_mode`` when ``vloss_weight > 0``,
+    and the script never prints or records it -- so ``--vloss-mode 1`` at the
+    DEFAULT ``--vloss-weight 0`` was accepted, dropped, and left no trace. That
+    is the "value accepted and then silently ignored" pattern this PR exists to
+    remove, sitting in the flag the PR just re-documented as raising. With a
+    weight it did raise, but only after the audit set, the checkpoint and the
+    evaluator had loaded.
+
+    Asserted as a subprocess against a checkpoint path that does not exist: if
+    the guard ever moves after the loads, the run dies on the missing file
+    instead and this fails.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [sys.executable, "scripts/audit_targets.py",
+         "--checkpoint", "/nonexistent/ckpt.pt", "--vloss-mode", "1"],
+        cwd=repo, capture_output=True, text=True, timeout=600, check=False,
+        env={**os.environ, "PYTHONPATH": str(repo)},
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    assert "F4" in output, output[-2000:]
+    assert "VIRTUAL_MEAN" in output
+    # It must have died on OUR guard, not on the missing checkpoint/audit set.
+    assert "FileNotFoundError" not in output, output[-2000:]
 
 
 def test_the_guard_fires_before_any_search_work() -> None:
