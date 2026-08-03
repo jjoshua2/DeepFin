@@ -27128,3 +27128,204 @@ than that starting point (−37.7).** There is no in-lineage checkpoint the base
 decision can be rescued with. **Base = boot512 + fresh window regeneration stands, and
 the success criterion the brief sets — "the loop only has to not lose to its own
 starting point" — is now measured on the shape the loop itself runs.**
+
+### PRE-REGISTRATION — ARM FE (rehearsal x EMA interaction sweep, and the powered F re-run)
+
+Written and committed **before any FE process was launched**. Rig, corpus, rulers,
+bars and analysis code are unchanged from waves 1-3; the only new code is the arm
+gate, a denser eval grid and weight banking (all smoke-verified below).
+
+#### What this wave is for
+
+Two levers survived wave 2's matched-LEARNING control and only those two: **F**
+(20% old-era rehearsal, era recovery ~0.84 cp for ~0.85 cp of surrendered
+in-window learning) and **ema2000** (in-training step-EMA, `oow` −0.654/−0.871 SIG
+but `inw` +1.004 = 3.3x its bar). Both then FAILED their pre-registered rules — F
+on power, ema2000 on the `inw` clause. FE crosses them.
+
+The headline question is not "does the combined arm promote" (see the prediction in
+§4, which is that it will not). It is: **is the observed exchange rate a property of
+the LEVER or of the LOOP?** Every intervention measured so far buys out-of-window /
+era regret at a fixed price in in-window learning — ~0.32 cp per cp for the
+optimizer family (C, D), ~0.99 cp per cp for F. If two mechanistically independent
+levers compose, the price should improve when they are stacked. If FE lands at the
+same price as the better solo lever, the exchange rate is a **loop invariant**, and
+no training-regime intervention will convert these targets into out-of-window
+improvement — which retires the whole "regularize or average your way out" family
+and points the restart at the target and the loop instead.
+
+#### Design
+
+5 runs; each run yields 3 readouts (its own raw + 2 EMA variants) from one
+trajectory, so the 6 promotion cells cost 5 runs, not 18.
+
+| run | rehearsal frac | seed | launch priority |
+|---|---|---|---|
+| `FE20_s0` | 0.20 | 0 | 1 |
+| `FE20_s1` | 0.20 | 1 | 2 |
+| `FE35_s0` | 0.35 | 0 | 3 |
+| `FE35_s1` | 0.35 | 1 | 4 |
+| `FE10_s0` | 0.10 | 0 | 5 |
+
+Priority is the coordinator's (0.20x2 > 0.35x2 > 0.10x1); anything cut is cut from
+the bottom. EMA decays **0.9995 (~2000 steps)** and **0.99975 (~4000 steps)** on
+every run; 0.998 (~500) is dropped as proven null on all three rulers plus the
+neutral audit. Rehearsal draws from `corpus_frehearse/erarehearse` — 120,000 rows /
+5,795 games from the 652 era shards the era ruler never touched, **0 game overlap**,
+runtime abort retained.
+
+Everything else is wave-1 identical: boot512 init, batch 256, 176 steps/chunk, 48
+chunks = **8,448 steps**, same frozen corpus, same three rulers, same
+game-clustered percentile bootstrap (10,000 resamples, seed 0), `nice -n 19`.
+
+**Two adjustments, with reasons, per the licence to adjust:**
+
+1. **Denser eval grid**: every 8 chunks to chunk 24, then **every 4** — eval points
+   0, 8, 16, 24, 28, 32, 36, 40, 44, 48 (10, vs F's 7). F's pre-registration failed
+   because its era estimate swung 0.7-1.3 cp between adjacent points against a 0.394
+   bar; halving the spacing over the second half is aimed squarely at that.
+2. **Verdict steps stay 7,040 and 8,448** (chunks 40/48), not 5,632/7,040. Reason:
+   the noise bars (`oow` 0.638, `inw` 0.307, `era` 0.394) were *derived from the A
+   seed pair at chunks 40 and 48*. Applying a bar at a step it was never measured at
+   would be a ruler change without a ruler re-measurement, and it would make the FE
+   table incomparable with the F and H2 tables it exists to be read against.
+   Weights are nonetheless **banked at chunks 32, 40 AND 48** for raw and both EMA
+   variants (45 checkpoints, ~11 GB), so 5,632 is available for any matched-learning
+   contrast and nothing depends on interpolation.
+
+**Contrast decomposition.** Each run's own `raw` is rehearsal-ONLY at that fraction,
+i.e. a powered arm-F replication. So:
+
+- rehearsal alone: `FE{f}_raw − A_raw` (across-run, paired by row)
+- EMA given rehearsal: `FE{f}_ema − FE{f}_raw` (**within-run**, same seed, same data
+  order — the tightest contrast in the wave)
+- combined: `FE{f}_ema − A_raw`
+- **interaction** (difference-in-differences):
+  `(FE20_ema2000 − FE20_raw) − (H2_ema2000 − A_raw)`
+
+#### 1. Promotion rule, and how bars apply to a two-lever arm
+
+A cell is `(fraction, decay)`; there are 6. The bars are per-RULER and do not
+change because an arm carries two levers — a two-lever arm is judged on its
+combined effect against the same bars, because the bars measure the rig's seed
+noise, not the arm's complexity.
+
+**A cell PROMOTES iff, at matched LEARNING, against `A_raw`:**
+- `oow` improves beyond **0.638 cp**, AND
+- `era` improves beyond **0.394 cp**, AND
+- `inw` does NOT degrade beyond **0.307 cp**, AND
+- each of the three holds at **both** verdict steps (7,040 and 8,448), AND
+- the paired game-clustered 95% CI excludes 0 for both `oow` and `era`, AND
+- the sign agrees across seeds 0 and 1.
+
+`FE10` has one seed, so it can never satisfy the seed-agreement clause: **`FE10` is
+dose-response evidence only and cannot promote.** Stated now, not after seeing it.
+
+**Multiplicity — fixed-sequence gatekeeping, NOT flat Bonferroni across 6.** Flat
+Bonferroni at 6 (or 12, counting two co-primary rulers) is the wrong instrument
+here: the cells are strongly dependent (two cells share every trajectory; 0.20 and
+0.35 share a mechanism), and at the effect sizes in play (0.5-1.5 cp against
+0.3-0.6 cp bars) a /12 correction guarantees no promotion regardless of truth,
+which is a gate that cannot pass. Instead:
+
+- **Stage 1 (gate):** ONE pre-specified primary cell — **(0.20, ema2000)** — tested
+  uncorrected at alpha=0.05. It is primary because 0.20 is the dose F actually
+  tested and ema2000 is the only decay that cleared any bar.
+- **Stage 2:** the remaining 5 cells are tested with **Holm** at alpha=0.05 **only
+  if stage 1 passes.**
+- If stage 1 fails, the other 5 cells are **descriptive only** — reported with
+  uncorrected CIs, explicitly labelled exploratory, and **no cell may promote from
+  this wave.**
+
+#### 2. Interaction hypothesis
+
+Does rehearsal reduce ema2000's in-window cost below its solo **+1.004 cp**?
+
+Mechanism against: both levers pay `inw` the same way — by reducing effective
+fitting of the memorisable window (rehearsal displaces main rows; EMA lags the
+trajectory). Costs should then roughly ADD. Mechanism for: EMA's cost is a *lag*
+cost proportional to how fast weights move, and rehearsal reduces the gradient's
+concentration on the recent window, so the trajectory should drift less per step
+and the average should lag less — sub-additive.
+
+- **H-strong** (the coordinator's question): combined `inw` cost < 1.004.
+  **PREDICTED FALSE** — rehearsal costs `inw` on its own (~0.85), so the combination
+  should not come in under the EMA-only cost.
+- **H-weak (sub-additivity):** combined `inw` cost < **1.854** (0.85 + 1.004).
+  **PREDICTED TRUE.**
+- **Refuted** if combined `inw` cost >= 1.854 (additive or super-additive), which
+  would say the two levers pay for the same thing twice and should never be stacked.
+
+#### 3. Dose-response reading for rehearsal
+
+Read off the three `FE{f}_raw` runs' era recovery at matched learning, as a fraction
+of A's total era degradation (~2.07 cp). F's estimate: 20% rehearsal recovers ~40%.
+
+- **SATURATING** iff recovery(0.20) >= 0.8 x recovery(0.35) AND recovery(0.10) >=
+  0.5 x recovery(0.35).
+- **MONOTONE-LINEAR** iff recovery(0.35)/recovery(0.10) >= 2.5 with the three
+  ordered.
+- Otherwise **UNRESOLVED** (report as such; do not pick post hoc).
+
+**PREDICTED: SATURATING**, on the exposure-minority prior — if 20% already reaches
+~40% and the remaining 60% is structure the rehearsal pool simply does not cover,
+more dose cannot buy it. The `inw` cost, by contrast, should be near-LINEAR in
+fraction, since each rehearsal row directly displaces a main row. If both predictions
+hold, **0.35 is strictly dominated by 0.20, and 0.10 may dominate both** — a
+directly actionable output for the restart even if nothing promotes.
+
+**3b. The exchange-rate test (the wave's real question).** Define
+`E = |d_era at matched learning| / (in-window learning surrendered)`, both in cp.
+Measured solos: C/D ~0.32, **F20 ~0.99**, ema2000 ~0.48-2.06 depending on step.
+
+- **COMPOSE** iff `E(FE20, ema2000) >= 1.3 x max(E_F20, E_ema2000)`.
+- **LOOP-INVARIANT** iff `E(FE20, ema2000)` is within [0.7, 1.3] x that max.
+- **ANTI-COMPOSE** iff below 0.7x.
+
+**PREDICTED: LOOP-INVARIANT.** If that lands, the price of out-of-window regret is a
+property of this loop and not of any lever in it, and the restart brief should stop
+buying levers.
+
+#### 4. Kill rule and the explicit "no cell promotes" outcome
+
+**Kill the wave** if any proof-of-effect fails: realized rehearsal fraction more
+than 1 pp from target in `step1_effect.json`; EMA `divergence.rel_l2` == 0 at the
+first eval after step 0; any rehearsal/era-ruler game overlap (already a runtime
+abort). **Kill an individual run** if its `oow` at chunk 8 is worse than `A_raw`'s
+chunk-8 `oow` by more than 3x the 0.638 bar.
+
+**Predicted outcome: the pre-registered rule FAILS on the `inw` clause**, exactly as
+ema2000 did solo — the combined cost should be ~1.5-1.9 cp against a 0.307 bar.
+Recording that prediction now is the point: it is why §3b, not §1, is the reading
+this wave is actually built to deliver.
+
+**If no cell promotes**, the verdict is recorded as: *the rehearsal x EMA
+interaction does not convert search-derived targets into out-of-window improvement
+at production LR.* Combined with the dead composition family, the dead optimizer
+family, and the dead capacity story, that closes the training-regime family
+entirely, and the restart brief should say so — a negative on the last two surviving
+levers is decision-grade, not a null result to be buried.
+
+#### 5. Neutral frozen-audit cross-check
+
+`raw_policy_regret.py` on the promoted cell's final weights, paired against `A_s0`
+and `boot512`, **declared non-decisive in advance** exactly as for H2 (FEN-only
+inputs, ranking claims only, level comparison on final weights with no
+matched-learning control available). If nothing promotes, the audit is run on
+`FE20_s0` raw and `FE20_s0_ema2000` anyway, for continuity with the H2 addendum.
+
+#### Proof-of-effect, verified before launch (smoke run `smoke_FE`, arm FE, frac 0.35)
+
+| check | result |
+|---|---|
+| `--ema-decays` on a non-EMA arm | rejected: "only for arms ('H2', 'FE')" |
+| arm FE without `--ema-decays` | rejected: "arm FE requires --ema-decays" |
+| arm FE without `--rehearsal-corpus` | rejected: "arm FE requires --rehearsal-corpus" |
+| realized rehearsal fraction, step 1 | 0.3438 at batch 64 (per-batch rounding; 0.3516 at batch 256) |
+| rehearsal game overlap with era ruler | **0** (5,795 games, 120,000 rows) |
+| rehearsal field set == train field set | True |
+| EMA divergence vs raw at 12 steps | `rel_l2` 1e-3, non-zero, `n_updates` 12 and 12 |
+| banking | `bank_chunk002.pt` written for raw, ema2000, ema4000 (241 MB each) |
+
+Both EMA labels derive from the decay (`ema2000`, `ema4000`), so a mis-typed decay
+renames the output directory rather than silently mislabelling a cell.
