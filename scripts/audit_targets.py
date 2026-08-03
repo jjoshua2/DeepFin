@@ -182,13 +182,12 @@ class _SearchProfile:
     c_visit_root: float
     c_scale_root: float
     q_visit_exp_root: float
-  # Descent knobs. PLAY and training disagree on all four, and they act on
-  # tree descent, so omitting them leaves a hybrid search that neither path
-  # actually runs.
-    c_puct: float
-    cpuct_factor: float
-    cpuct_base: float
-    fpu_reduction: float
+  # NOTE (play-path audit 2026-08-03, F2): c_puct / cpuct_factor / cpuct_base /
+  # fpu_reduction used to live here on the premise that "they act on tree
+  # descent, so omitting them leaves a hybrid search". That premise is FALSE
+  # for a Gumbel search -- the PUCT descent they drive is unreachable while
+  # GumbelConfig.full_tree is True, which it always is. Carrying them made the
+  # PLAY and training profiles look more different than they are.
   # Volatility-aware search. Both default OFF; when either is non-zero the
   # mechanism exists only on the PYTHON search path, and selfplay drops to it.
     volatility_q_scale: float = 0.0
@@ -229,8 +228,6 @@ def build_search_profiles(
             label=label, sims=sims, topk=rl_topk, c_scale=rl_c_scale,
             c_visit=rl.c_visit, c_visit_root=rl.c_visit_root,
             c_scale_root=rl.c_scale_root, q_visit_exp_root=rl.q_visit_exp_root,
-            c_puct=rl.c_puct, cpuct_factor=rl.cpuct_factor,
-            cpuct_base=rl.cpuct_base, fpu_reduction=rl.fpu_reduction,
           # Volatility search is an open, default-off flag family that the
           # audit-first rule still has to be able to judge. Carrying the
           # values means enabling them in the yaml changes the audited
@@ -246,20 +243,16 @@ def build_search_profiles(
     return {
         "search": _SearchProfile(
             label="PLAY (UCI/TCEC)", sims=int(play_sims),
-          # The PLAY row must be the WHOLE play shape. topk, c_puct,
-          # cpuct_factor and fpu_reduction all differ from the training
-          # defaults and all act on descent; taking only the root-transform
-          # subset left a hybrid neither path runs.
+          # The PLAY row must be the WHOLE play shape: topk differs from the
+          # training default and acts on descent, so taking only the
+          # root-transform subset left a hybrid neither path runs. (The PUCT
+          # knobs that used to be listed here are inert -- audit F2.)
             topk=int(play_topk if play_topk is not None else PLAY_SEARCH_DEFAULTS["topk"]),
             c_scale=float(PLAY_SEARCH_DEFAULTS["c_scale"]),
             c_visit=float(PLAY_SEARCH_DEFAULTS["c_visit"]),
             c_visit_root=float(PLAY_SEARCH_DEFAULTS["c_visit_root"]),
             c_scale_root=float(PLAY_SEARCH_DEFAULTS["c_scale_root"]),
             q_visit_exp_root=float(PLAY_SEARCH_DEFAULTS["q_visit_exp_root"]),
-            c_puct=float(PLAY_SEARCH_DEFAULTS["c_puct"]),
-            cpuct_factor=float(PLAY_SEARCH_DEFAULTS["cpuct_factor"]),
-            cpuct_base=float(PLAY_SEARCH_DEFAULTS["cpuct_base"]),
-            fpu_reduction=float(PLAY_SEARCH_DEFAULTS["fpu_reduction"]),
         ),
         "train": _rl("RL selfplay, full sims", rl_sims),
         "train_fast": _rl("RL selfplay, playout-capped fast sims", rl_fast_sims),
@@ -408,8 +401,6 @@ def _net_candidates(
             c_scale=p.c_scale, c_visit=p.c_visit,
             c_visit_root=p.c_visit_root, c_scale_root=p.c_scale_root,
             q_visit_exp_root=p.q_visit_exp_root,
-            c_puct=p.c_puct, cpuct_factor=p.cpuct_factor,
-            cpuct_base=p.cpuct_base, fpu_reduction=p.fpu_reduction,
             volatility_q_scale=p.volatility_q_scale,
             volatility_fpu=p.volatility_fpu,
             **kw,
@@ -851,10 +842,14 @@ def main() -> None:
                          "0 = LEGACY, the parallel-PUCT construct: the pending visit is "
                          "scored as a LOSS, biasing the child down. 1 = VIRTUAL_MEAN: it "
                          "is valued at the child's existing mean, so the visit count "
-                         "moves and the estimate does not. Gumbel's descent is already "
-                         "matching visits to the improved policy, so 1 is the "
-                         "better-motivated construct here; 0 is what every prior C17 "
-                         "measurement used.")
+                         "moves and the estimate does not. "
+                         "*** 1 CURRENTLY RAISES: tree_gumbel_select_child mirrors "
+                         "VIRTUAL_MEAN for the CHILD term only, leaving parent_Q -- the "
+                         "FPU for every unvisited child -- with legacy pessimism, so the "
+                         "mode does not do what this help says (play-path audit "
+                         "2026-08-03, F4). A comparison run made through it would be a "
+                         "verdict off a broken instrument. Re-enable in the commit that "
+                         "mirrors the C parent branch. ***")
     ap.add_argument("--vloss-weight", type=int, default=0,
                     help="C-search virtual-loss weight. 0 = production (none), so a leaf "
                          "already awaiting eval in the current batch carries no penalty and "
@@ -877,6 +872,28 @@ def main() -> None:
                          "expected/top1 regret) for offline slicing")
     ap.add_argument("--out-dir", type=Path, default=Path("runs"))
     args = ap.parse_args()
+
+  # Reject at PARSE time, not deep in the run. `_net_candidates` only forwards
+  # vloss_mode when vloss_weight > 0, and this script never prints or records
+  # vloss_mode, so `--vloss-mode 1` at the default `--vloss-weight 0` used to be
+  # accepted, dropped, and leave no trace -- the exact "value accepted and then
+  # silently ignored" pattern the rest of this PR removes, sitting in the flag
+  # it just re-documented. With a weight the search DOES raise, but only after
+  # the audit set, the checkpoint and the evaluator have loaded. Failing here
+  # makes the help text true for every flag combination and the failure cheap.
+  # Local import: this module keeps the mcts/C-extension import lazy.
+    from chess_anti_engine.mcts.gumbel_c import VLOSS_MODE_VIRTUAL_MEAN
+
+    if int(args.vloss_mode) == VLOSS_MODE_VIRTUAL_MEAN:
+        raise SystemExit(
+            "--vloss-mode 1 (VIRTUAL_MEAN) is refused: tree_gumbel_select_child "
+            "mirrors that mode for the CHILD term only, leaving parent_Q -- the FPU "
+            "for every unvisited child -- with legacy virtual-loss pessimism, so the "
+            "mode does not do what --vloss-mode's help describes (play-path audit "
+            "2026-08-03, F4). Comparing the two constructs through it would be a "
+            "verdict off a broken instrument. Re-enable in the commit that mirrors "
+            "the C parent branch."
+        )
 
     if args.sf_soft_nodes is None:
         args.sf_soft_nodes = {"low": 500_000, "high": 2_000_000}[args.sf_effort]

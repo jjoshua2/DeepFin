@@ -52,10 +52,7 @@ from chess_anti_engine.train.target_builder import (
     rebuild_categorical_target_in_arrays,
     rebuild_sf_targets_in_arrays,
 )
-from chess_anti_engine.moves import (
-    COMPACT_POLICY_SIZE,
-    POLICY_SIZE,
-)
+from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.moves import torch_maps
 from chess_anti_engine.replay.augment import (
     maybe_mirror_batch_arrays,
@@ -2889,28 +2886,34 @@ class Trainer:
         def _align_index(
             target: torch.Tensor, *, source_width: int, dst_width: int,
         ) -> tuple[torch.Tensor, torch.Tensor]:
-            if source_width == dst_width:
-                return target, torch.ones_like(target, dtype=torch.bool)
-            if source_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
-  # torch_maps owns the ONE device cache for these two tables (CLAUDE.md:
-  # "don't add per-module lru_cache copies"). The private copy that used
-  # to live in this module keyed on target.device.index raw, so
+  # ONE dispatch, in torch_maps, which owns both the width->table binding and
+  # the ONE device cache for these tables (CLAUDE.md: "Use the shared
+  # device-cached lookups in moves/torch_maps.py -- don't add per-module
+  # lru_cache copies"). This module used to carry a private lru_cache over
+  # the same two arrays, keyed on target.device.index RAW, so
   # torch.device("cuda") and ("cuda", 0) allocated two separate copies of
-  # both tables; torch_maps._device_key normalises that away. Same dtype
-  # (torch.long) and same source arrays, so the swap is value-identical --
-  # see tests/test_trainer_policy_index_lut.py.
-                lut = torch_maps.full_to_compact_index(target.device)
-                valid = (target >= 0) & (target < POLICY_SIZE)
-                safe_target = target.clamp(0, POLICY_SIZE - 1).to(torch.long)
-                mapped = lut.index_select(0, safe_target)
-                return mapped, valid & (mapped >= 0)
-            if source_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
-                lut = torch_maps.compact_to_full_index(target.device)
-                valid = (target >= 0) & (target < COMPACT_POLICY_SIZE)
-                safe_target = target.clamp(0, COMPACT_POLICY_SIZE - 1).to(torch.long)
-                mapped = lut.index_select(0, safe_target)
-                return mapped, valid
-            raise ValueError(f"policy index width {source_width} is incompatible with logits width {dst_width}")
+  # both tables; torch_maps._device_key normalises that away.
+  #
+  # The width dispatch lives there too, deliberately: duplicating it here
+  # meant the branch->direction binding could be swapped with both symbol
+  # names still present, which no test in this repo could see (a reviewer
+  # swapped the two branch bodies and every value-identity test passed --
+  # only the ruler-id source hash noticed, and a source hash is a tripwire,
+  # not a semantic control). With one dispatch there is no pair of branches
+  # to swap, and the binding is asserted directly in
+  # tests/test_trainer_policy_index_lut.py.
+            lut = torch_maps.policy_index_remap_table(
+                source_width, dst_width, target.device,
+            )
+            if lut is None:  # widths already agree
+                return target, torch.ones_like(target, dtype=torch.bool)
+            valid = (target >= 0) & (target < source_width)
+            safe_target = target.clamp(0, source_width - 1).to(torch.long)
+            mapped = lut.index_select(0, safe_target)
+  # `full_to_compact` stores -1 for "no compact move"; `compact_to_full` is
+  # total (min 0), so the extra term is a no-op on that direction rather
+  # than a behaviour change -- asserted, not assumed.
+            return mapped, valid & (mapped >= 0)
 
         def _policy_width_from_batch(*keys: str) -> int:
             for key in keys:

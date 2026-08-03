@@ -367,6 +367,30 @@ class TrialConfig:
     puzzle_interval: int = 1
     puzzle_simulations: int = 200
 
+  # --- Era-forgetting probes (chess_anti_engine/eval/era_probe.py) ---
+  # Two FROZEN row sets scored with the current weights every
+  # `era_probe_interval` iterations: one cut from an OLD era, one re-cut from
+  # the newest shards. Their divergence is the treadmill's fingerprint. Both
+  # default to "" = off, so the live yaml is untouched until an operator names
+  # a set built by scripts/build_era_probe_set.py.
+  #
+  # The two paths and the row cap are CONSTRUCTION-ONLY (see
+  # trainable_config_ops.construction_only_config_keys): the sets are loaded
+  # once at trial startup, so a live edit would read back correct from the
+  # trial's config while the probe kept scoring the launch-time set — the
+  # exact class of lie that classification exists to refuse. Changing which
+  # rows a column is measured over is a RULER change and must invalidate the
+  # column's history, which is a restart, not a reload.
+    era_probe_path: str = ""
+    era_probe_inwindow_path: str = ""
+    era_probe_rows: int = 2048
+  # Live-reloadable: read fresh off `tc` on the iteration they act on, so an
+  # operator can throttle or silence the probe on a contended box without a
+  # restart. `era_probe_interval <= 0` disables scoring (the sets stay loaded
+  # and the columns read nan).
+    era_probe_interval: int = 1
+    era_probe_batch_size: int = 512
+
   # --- Distributed ---
     distributed_workers_per_trial: int = 1
     distributed_server_root: str | None = None
@@ -763,6 +787,12 @@ class TrialConfig:
             puzzle_epd=_get("puzzle_epd", None),
             puzzle_interval=int(config.get("puzzle_interval", 1)),
             puzzle_simulations=int(config.get("puzzle_simulations", 200)),
+            era_probe_path=str(config.get("era_probe_path", "") or ""),
+            era_probe_inwindow_path=str(
+                config.get("era_probe_inwindow_path", "") or ""),
+            era_probe_rows=int(config.get("era_probe_rows", 2048)),
+            era_probe_interval=int(config.get("era_probe_interval", 1)),
+            era_probe_batch_size=int(config.get("era_probe_batch_size", 512)),
 
   # --- Distributed ---
             distributed_workers_per_trial=max(1, int(config.get("distributed_workers_per_trial", 1))),

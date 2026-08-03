@@ -219,22 +219,35 @@ def test_the_default_weight_never_touches_the_virtual_loss_array(
     )
 
 
-def test_virtual_mean_mode_is_reachable_and_differs_from_legacy(
+def test_virtual_mean_is_refused_until_the_c_parent_branch_is_mirrored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``vloss_mode=1`` must actually change descent, and still kill duplicates.
+    """Replaces ``test_virtual_mean_mode_is_reachable_and_differs_from_legacy``.
 
-    Until this landed, ``VLOSS_MODE_VIRTUAL_MEAN`` existed in ``_mcts_tree.c``
-    but was unreachable from the Gumbel path: ``tree_gumbel_select_child`` took
-    no mode argument and the leaf descent hardcoded ``VLOSS_MODE_LEGACY``. So
-    every Gumbel measurement of virtual loss was made with parallel-PUCT
-    pessimism -- the pending visit scored as a LOSS -- when the construct the
-    Gumbel descent actually wants is a pending VISIT valued at the child's own
-    mean, which moves the visit count without moving the estimate.
+    PR #279 threaded ``vloss_mode`` through to the Gumbel descent so the two
+    pending-visit constructs could be compared on the frozen set, and the old
+    test asserted the argument ARRIVED and moved the search. It does arrive.
+    What it does on arrival is only half of what #279 says it does.
 
-    A mode that is accepted and silently ignored is the exact defect C17 turned
-    out to be, so this asserts the two modes are distinguishable rather than
-    trusting that the argument arrived.
+    ``tree_gumbel_select_child`` (``_mcts_tree.c:2941-2944``) mirrors
+    ``tree_select_child:660-673``'s VIRTUAL_MEAN accounting for the CHILD term
+    (2991-3012) and NOT for the PARENT term, despite the comment at 2968-2983
+    claiming it mirrors it. So under VIRTUAL_MEAN the descent's ``parent_Q`` --
+    which is the FPU for every unvisited child (``cqs[i] = parent_Q``, 2990)
+    and the ``weighted_q`` fallback (3021) -- still carries exactly the
+    parallel-PUCT pessimism VIRTUAL_MEAN exists to remove. #279's own summary
+    ("the pending visit is valued at the child's existing mean, so N moves and
+    Q does not") is therefore false of the parent term.
+
+    Play-path audit 2026-08-03, F4. Nothing live passes ``vloss_mode=1`` to the
+    Gumbel path -- selfplay (``network_turn.py:805-806``) and UCI
+    (``uci/search.py:1853``) pass only ``target_batch``/``vloss_weight``, and
+    ``root_parallel_gumbel.py:230``'s ``vloss_mode: int = 1`` is consumed by
+    ``PucvChunker`` (PUCT) -- so the cost of refusing is one comparison
+    instrument (``audit_targets --vloss-mode 1``), not any production path. A
+    comparison run through a half-mirrored construct is a verdict off a broken
+    instrument, which this repo does not accept. Lift the guard, and restore
+    the old test, in the SAME commit that adds the C parent branch.
     """
     monkeypatch.setattr(gumbel_c_mod, "_COMPILED_BATCH_BUCKETS", ())
     boards = [chess.Board(f) for f in _FENS[:4]]
@@ -255,17 +268,15 @@ def test_virtual_mean_mode_is_reachable_and_differs_from_legacy(
             per_board.append(int(visits.sum()))
         return tuple(per_board), ev.rows - ev.distinct_rows
 
+    # LEGACY -- what every caller runs -- is untouched: still no duplicates,
+    # still the full budget.
     legacy_visits, legacy_dup = _run(1, 0)
-    mean_visits, mean_dup = _run(1, 1)
-
-    # Both modes must remove the duplication -- that is the point of either.
     assert legacy_dup == 0, f"legacy left {legacy_dup} duplicate rows"
-    assert mean_dup == 0, f"virtual-mean left {mean_dup} duplicate rows"
-    # ...and the budget is still fully spent under the new mode.
-    assert mean_visits == legacy_visits == (128,) * len(boards), (
-        f"virtual-mean spent {mean_visits} root visits vs legacy's {legacy_visits}"
-    )
-    # The modes differ only in how a PENDING visit is valued, so at weight 0
-    # they must be indistinguishable -- this is what makes the new argument
-    # safe to add to every existing caller.
-    assert _run(0, 0) == _run(0, 1), "vloss_mode is not inert at vloss_weight=0"
+    assert legacy_visits == (128,) * len(boards)
+
+    # VIRTUAL_MEAN is refused, at every virtual-loss weight -- including 0,
+    # where it used to be provably inert. An "inert" flag is exactly how a
+    # half-implemented construct survives to be switched on later.
+    for weight in (0, 1):
+        with pytest.raises(ValueError, match="F4"):
+            _run(weight, 1)

@@ -16,7 +16,6 @@ from chess_anti_engine.mcts.puct import (
     Node,
     _backprop,
     _expand_sparse,
-    _select_child,
     _terminal_value,
 )
 from chess_anti_engine.mcts.puct import (
@@ -79,6 +78,11 @@ SELFPLAY_GUMBEL_C_SCALE = 0.1
 # c_scale=0.025 +301 Elo @8k; c_visit_root=900 (inert under root-log, kept);
 # c_scale_root=7/q_visit_exp_root=-1 LOG root keeps q_scale ~100 from 256 to millions
 # of nodes instead of exploding (~25000 @1M) and reversing under more search.
+#
+# EVERY key here must be a knob a Gumbel search can actually act on. The four
+# PUCT knobs that used to live here (c_puct / cpuct_factor / cpuct_base /
+# fpu_reduction) were removed 2026-08-03: see INERT_GUMBEL_KNOBS below and
+# PLAY_PUCT_DEFAULTS for their new home.
 PLAY_SEARCH_DEFAULTS: dict[str, float | int] = {
     "c_scale": 0.025,
     "c_visit": 50.0,
@@ -86,7 +90,33 @@ PLAY_SEARCH_DEFAULTS: dict[str, float | int] = {
     "c_scale_root": 7.0,
     "q_visit_exp_root": -1.0,
     "topk": 32,
-    # Lc0 classic-search defaults (Oct 2025 engine flags page).
+}
+
+# GumbelConfig fields that PROVABLY cannot change a Gumbel search's output, and
+# so must never appear in a "realized Gumbel search config" (play-path audit
+# 2026-08-03, F2, repro `scratchpad/code_audit_20260803/repro_inert_knobs.py`:
+# perturbing each gives L1 0.000000 over the returned policy and 0/4 moves
+# changed, against positive controls topk/halving_div/policy_temp that move it).
+#
+# Why they are inert: the PUCT descent (`tree_select_child`, the ONLY consumer
+# of c_puct/fpu_reduction in the tree) is reached only when `sel->full_tree` is
+# false (`_mcts_tree.c:3160-3169`), and `GumbelConfig.full_tree` defaults True
+# with nothing anywhere setting it false. cpuct_factor/cpuct_base are not even
+# arguments of `start_gumbel_sims`; the C reads them off the tree via
+# `set_cpuct_scaling`, which only the PUCT entry points call.
+#
+# The fields stay on GumbelConfig because `uci/search.py` and `uci/walker_pool.py`
+# read them OFF the shared config object to drive their genuine PUCT walkers --
+# they are live there, and only there.
+INERT_GUMBEL_KNOBS: frozenset[str] = frozenset(
+    {"c_puct", "cpuct_factor", "cpuct_base", "fpu_reduction"}
+)
+
+# Lc0 classic-search defaults (Oct 2025 engine flags page) for the UCI engine's
+# PUCT descent -- the walker pool and the multi-GPU PUCV pool, which really do
+# consume these. NOT a Gumbel surface: do not merge back into
+# PLAY_SEARCH_DEFAULTS (tests/test_inert_gumbel_knobs.py fails if you do).
+PLAY_PUCT_DEFAULTS: dict[str, float] = {
     "c_puct": 1.75,
     "cpuct_factor": 3.89,
     "cpuct_base": 38739.0,
@@ -525,16 +555,12 @@ def _collect_forced_leaf(
     node = child
     path = [root, child]
     while node.expanded and node.children:
-        if cfg.full_tree:
-            _, node = _select_full_gumbel_child(node, cfg=cfg)
-        else:
-            _, node = _select_child(
-                node,
-                c_puct=float(cfg.c_puct),
-                fpu_reduction=float(cfg.fpu_reduction),
-                cpuct_factor=float(getattr(cfg, "cpuct_factor", 0.0) or 0.0),
-                cpuct_base=float(getattr(cfg, "cpuct_base", 38739.0) or 38739.0),
-            )
+  # Unconditionally the Gumbel descent: `cfg.full_tree` defaults True and
+  # nothing in the tree ever sets it false, so the PUCT arm that used to
+  # live here was dead code advertising c_puct/fpu_reduction as live
+  # Gumbel knobs (play-path audit 2026-08-03, F12). The PUCT descent is
+  # reached through mcts/puct*.py and uci/, not from here.
+        _, node = _select_full_gumbel_child(node, cfg=cfg)
         path.append(node)
   # Expanded nodes with children are never terminal — skip is_game_over()
   # here. Terminal detection happens after the loop exits.

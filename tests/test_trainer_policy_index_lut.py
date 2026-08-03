@@ -24,8 +24,10 @@ import torch
 
 from chess_anti_engine.moves import torch_maps
 from chess_anti_engine.moves.encode import (
+    COMPACT_POLICY_SIZE,
     COMPACT_TO_FULL_POLICY,
     FULL_TO_COMPACT_POLICY,
+    POLICY_SIZE,
 )
 from chess_anti_engine.train import trainer as trainer_mod
 
@@ -57,8 +59,16 @@ def test_the_shared_tables_are_value_identical_to_the_deleted_private_ones() -> 
     assert torch.equal(c2f_new, c2f_old)
 
 
-def test_the_two_tables_round_trip_on_every_real_move() -> None:
-    """Guards against having swapped the two directions during the edit."""
+def test_the_two_shared_tables_round_trip_on_every_real_move() -> None:
+    """Guards against the two SHARED TABLES having been swapped.
+
+    Deliberately narrow, and named for what it actually covers. It does NOT
+    see which table the trainer calls for which width pair — a reviewer swapped
+    the two branch bodies in `_align_index` (both symbol names still present)
+    and every test in this file passed. That hole is closed by construction
+    now: the width dispatch lives once, in
+    ``torch_maps.policy_index_remap_table``, and the test below asserts it.
+    """
     f2c = torch_maps.full_to_compact_index(torch.device("cpu"))
     c2f = torch_maps.compact_to_full_index(torch.device("cpu"))
 
@@ -69,6 +79,123 @@ def test_the_two_tables_round_trip_on_every_real_move() -> None:
     mapped = f2c.index_select(0, full)
     real = mapped >= 0
     assert torch.equal(c2f.index_select(0, mapped[real]), full[real])
+
+
+def test_the_width_pair_selects_the_table_that_actually_maps_it() -> None:
+    """The binding the round-trip test cannot see, asserted semantically.
+
+    `_align_index` no longer carries its own width dispatch — it calls
+    `policy_index_remap_table`, so there is no longer a pair of branch bodies
+    to transpose. This pins that single dispatch by BEHAVIOUR, not by which
+    symbol it names: map a known full-4672 index through the table the
+    (full -> compact) pair returns and require the compact index that the
+    encoding says it is, and conversely. Swapping the two returns inside
+    `policy_index_remap_table` fails this.
+    """
+    cpu = torch.device("cpu")
+    f2c_ref = torch_maps.full_to_compact_index(cpu)
+    c2f_ref = torch_maps.compact_to_full_index(cpu)
+
+    to_compact = torch_maps.policy_index_remap_table(POLICY_SIZE, COMPACT_POLICY_SIZE, cpu)
+    to_full = torch_maps.policy_index_remap_table(COMPACT_POLICY_SIZE, POLICY_SIZE, cpu)
+    assert to_compact is not None
+    assert to_full is not None
+
+    # Widths alone give it away: only the full->compact table is 4672 long.
+    assert to_compact.numel() == POLICY_SIZE == f2c_ref.numel()
+    assert to_full.numel() == COMPACT_POLICY_SIZE == c2f_ref.numel()
+
+    # ...and the VALUES map the way the encoding says, on every real move.
+    full_ids = torch.arange(POLICY_SIZE, dtype=torch.long)
+    got_compact = to_compact.index_select(0, full_ids)
+    real = got_compact >= 0
+    assert real.any()
+    assert torch.equal(to_full.index_select(0, got_compact[real]), full_ids[real]), (
+        "the (full -> compact) width pair does not return the table that maps "
+        "full indices to compact ones"
+    )
+
+    compact_ids = torch.arange(COMPACT_POLICY_SIZE, dtype=torch.long)
+    assert torch.equal(
+        to_compact.index_select(0, to_full.index_select(0, compact_ids)), compact_ids,
+    )
+
+    # Equal widths mean "no remap", not "identity table".
+    assert torch_maps.policy_index_remap_table(POLICY_SIZE, POLICY_SIZE, cpu) is None
+    with pytest.raises(ValueError, match="incompatible"):
+        torch_maps.policy_index_remap_table(POLICY_SIZE, 7, cpu)
+
+
+def test_align_index_is_value_identical_to_the_two_branch_version() -> None:
+    """The refactor that closed the hole must not have moved the numbers.
+
+    `_align_index` is a closure inside `Trainer._policy_accuracy_stats`, so it
+    cannot be imported. This reconstructs BOTH the pre-refactor two-branch body
+    and the post-refactor single-dispatch body and requires them to agree
+    element-wise on the mapped indices AND the validity mask, over in-range
+    ids, negatives, and out-of-range ids (the `clamp` path) in both directions.
+    """
+    cpu = torch.device("cpu")
+
+    def _old(target: torch.Tensor, *, source_width: int, dst_width: int):
+        if source_width == dst_width:
+            return target, torch.ones_like(target, dtype=torch.bool)
+        if source_width == POLICY_SIZE and dst_width == COMPACT_POLICY_SIZE:
+            lut = torch_maps.full_to_compact_index(target.device)
+            valid = (target >= 0) & (target < POLICY_SIZE)
+            safe = target.clamp(0, POLICY_SIZE - 1).to(torch.long)
+            mapped = lut.index_select(0, safe)
+            return mapped, valid & (mapped >= 0)
+        if source_width == COMPACT_POLICY_SIZE and dst_width == POLICY_SIZE:
+            lut = torch_maps.compact_to_full_index(target.device)
+            valid = (target >= 0) & (target < COMPACT_POLICY_SIZE)
+            safe = target.clamp(0, COMPACT_POLICY_SIZE - 1).to(torch.long)
+            mapped = lut.index_select(0, safe)
+            return mapped, valid
+        raise ValueError("width mismatch")
+
+    def _new(target: torch.Tensor, *, source_width: int, dst_width: int):
+        lut = torch_maps.policy_index_remap_table(source_width, dst_width, target.device)
+        if lut is None:
+            return target, torch.ones_like(target, dtype=torch.bool)
+        valid = (target >= 0) & (target < source_width)
+        safe = target.clamp(0, source_width - 1).to(torch.long)
+        mapped = lut.index_select(0, safe)
+        return mapped, valid & (mapped >= 0)
+
+    cases = [
+        (POLICY_SIZE, COMPACT_POLICY_SIZE),
+        (COMPACT_POLICY_SIZE, POLICY_SIZE),
+        (POLICY_SIZE, POLICY_SIZE),
+        (COMPACT_POLICY_SIZE, COMPACT_POLICY_SIZE),
+    ]
+    for source_width, dst_width in cases:
+        target = torch.cat([
+            torch.arange(source_width, dtype=torch.long),       # every in-range id
+            torch.tensor([-1, -7, source_width, source_width + 99], dtype=torch.long),
+        ]).to(cpu)
+        old_mapped, old_valid = _old(target, source_width=source_width, dst_width=dst_width)
+        new_mapped, new_valid = _new(target, source_width=source_width, dst_width=dst_width)
+        assert torch.equal(old_mapped, new_mapped), (source_width, dst_width)
+        assert torch.equal(old_valid, new_valid), (source_width, dst_width)
+        assert old_mapped.dtype == new_mapped.dtype
+
+    # The `valid & (mapped >= 0)` term that the compact->full branch did not
+    # carry is a no-op there, which is WHY unifying them was safe. Assert the
+    # premise rather than trusting it.
+    assert int(torch_maps.compact_to_full_index(cpu).min()) >= 0
+    assert int(torch_maps.full_to_compact_index(cpu).min()) < 0
+
+
+def test_the_trainer_no_longer_carries_its_own_width_dispatch() -> None:
+    """The structural half of F-1: no second pair of branches to transpose."""
+    src = inspect.getsource(trainer_mod)
+    code = "\n".join(
+        line for line in src.splitlines() if not line.strip().startswith("#")
+    )
+    assert "policy_index_remap_table" in code
+    assert "torch_maps.full_to_compact_index" not in code
+    assert "torch_maps.compact_to_full_index" not in code
 
 
 def test_an_unindexed_cuda_device_shares_the_indexed_one_s_cache_entry(
@@ -116,5 +243,4 @@ def test_the_private_lut_is_gone_from_the_trainer() -> None:
     )
     assert "_policy_index_lut" not in code
     assert "lru_cache" not in code, "no private device cache may come back"
-    assert "torch_maps.full_to_compact_index" in src
-    assert "torch_maps.compact_to_full_index" in src
+    assert "torch_maps.policy_index_remap_table" in src

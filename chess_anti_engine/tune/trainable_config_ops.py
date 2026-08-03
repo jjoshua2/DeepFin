@@ -466,6 +466,32 @@ _CONSTRUCTION_ONLY_REPLAY_KEYS = frozenset({
     "holdout_capacity",
 })
 
+# The era-forgetting probes' SET IDENTITY. `_init_era_probes` loads both frozen
+# npz files once per trial process (trainable_init.py) and the loop then scores
+# the loaded arrays; nothing re-reads these three keys afterwards, so a live
+# edit would land in `config`, echo back correct in the result row, and leave
+# the probe scoring the launch-time set.
+#
+# The classification is stronger than "only a constructor reads it", and the
+# reason is the standing rule that a ruler change must invalidate its records:
+# `probe_era_policy_eregret` is only comparable across iterations because the
+# rows behind it did not move. A mid-run repoint would silently splice two
+# rulers into one column of progress.csv, whose header is fixed from row 1 and
+# whose segments append across restarts — the reader has no way to see the
+# seam. A restart is the honest way to change a ruler, and the loader prints
+# the new set's digest when it happens.
+#
+# `era_probe_interval` and `era_probe_batch_size` are deliberately NOT here:
+# both are read off the freshly reloaded TrialConfig on the iteration they act
+# on (trainable_phases._run_era_probes_if_due), so a live edit DOES take effect
+# and freezing them would break a working throttle. Neither changes what is
+# measured, only how often and in what chunk size.
+_CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
+    "era_probe_path",
+    "era_probe_inwindow_path",
+    "era_probe_rows",
+})
+
 # `lr_schedule` is skipped by the live reload alone (the trainer's scheduler is
 # already built), but IS applied during startup/resume before the trainer
 # exists — so it is restart-required for a running trial like the rest.
@@ -485,7 +511,7 @@ _LIVE_RELOAD_SKIPPED_KEYS = frozenset({
     "gate_mode", "gate_window_iters", "gate_min_iters",
     "gate_min_games_per_side", "gate_demote_delta_elo", "gate_demote_step_elo",
     "gate_alpha", "gate_max_hold_iters",
-}) | _CONSTRUCTION_ONLY_REPLAY_KEYS
+}) | _CONSTRUCTION_ONLY_REPLAY_KEYS | _CONSTRUCTION_ONLY_PROBE_KEYS
 
 
 # Yaml keys the validator still ACCEPTS and `TrialConfig` still parses, but
@@ -610,7 +636,7 @@ def construction_only_config_keys() -> frozenset[str]:
     "the running value is correct" only about a key some live consumer
     re-reads, and this set is the one it must never say it about.
     """
-    return _CONSTRUCTION_ONLY_REPLAY_KEYS
+    return _CONSTRUCTION_ONLY_REPLAY_KEYS | _CONSTRUCTION_ONLY_PROBE_KEYS
 
 
 def restart_required_config_keys() -> frozenset[str]:

@@ -64,6 +64,7 @@ from chess_anti_engine.eval.value_optimism import (
     SF_LABEL_ATTACHMENT_MIN,
     SF_MULTIPV_MISS_MAX,
     AxisReading,
+    desync_reject_reason,
     sf_label_attachment_corr,
     sf_multipv_missing_rate,
 )
@@ -147,18 +148,14 @@ def judge(path: Path) -> ShardVerdict:
     A non-"ok" status on either axis is a REJECT, not a pass: a gate that could
     not evaluate a shard has not cleared it.
 
-    ⚑ This rule is a THIRD copy. ``scripts/value_optimism.py`` applies the same
-    reject rule inline, and ``tests/test_quarantine_desync_shards.py`` pins this
-    copy against the axis functions and thresholds imported from
-    ``chess_anti_engine.eval.value_optimism`` — **it does not import, execute or
-    observe ``scripts/value_optimism.py`` at all, so a drift in THAT copy passes
-    the whole suite.** Demonstrated in review: changing its
-    ``multipv.value > multipv_miss_max`` to ``> 999.0`` disables the shipped
-    scorer's multipv axis, flips 118 of the 834 live shards, and every test here
-    still passes. The only real fix is one shared predicate next to the
-    thresholds in ``eval/value_optimism.py``, which this change is barred from
-    editing; it is the recorded follow-up, and until it lands the copies are
-    genuinely unpinned against each other.
+    ⚑ The rule USED to be a third copy of itself, restated inline here. The
+    recorded follow-up — one shared predicate next to the thresholds in
+    ``eval/value_optimism.py`` — has landed as ``desync_reject_reason``, and
+    this function now calls it, as do ``scripts/value_optimism.py`` and
+    ``scripts/build_era_probe_set.py``. Do not restate the comparison here
+    again: the failure it caused was demonstrated in review (changing the
+    scorer's copy to ``> 999.0`` disabled its multipv axis, flipped 118 of 834
+    live shards, and the whole suite still passed).
     """
     z = zarr.open_group(str(path), mode="r")
     keys = set(z.array_keys())
@@ -219,15 +216,9 @@ def judge(path: Path) -> ShardVerdict:
             reject=False, reason="zero-row index reservation", is_marker=True,
         )
 
-    reason = ""
-    if att_st != "ok":
-        reason = f"attachment {att_st}"
-    elif att < SF_LABEL_ATTACHMENT_MIN:
-        reason = f"attachment {att:+.4f} < {SF_LABEL_ATTACHMENT_MIN}"
-    elif miss_st != "ok":
-        reason = f"multipv-miss {miss_st}"
-    elif miss > SF_MULTIPV_MISS_MAX:
-        reason = f"multipv-miss {miss:.6f} > {SF_MULTIPV_MISS_MAX}"
+    reason = desync_reject_reason(
+        attachment=AxisReading(att, att_st), multipv=AxisReading(miss, miss_st),
+    )
     return ShardVerdict(
         name=path.name, index=shard_index(path), rows=rows,
         labelled=int(labelled.sum()), multipv_miss=miss, multipv_status=miss_st,

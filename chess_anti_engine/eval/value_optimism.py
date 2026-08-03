@@ -396,6 +396,46 @@ def sf_bestmove_is_first_legal_rate(
     return AxisReading(float((smi[ok] == first_legal).mean()))
 
 
+def desync_reject_reason(
+    *,
+    attachment: AxisReading,
+    multipv: AxisReading,
+    attachment_min: float = SF_LABEL_ATTACHMENT_MIN,
+    multipv_miss_max: float = SF_MULTIPV_MISS_MAX,
+) -> str:
+    """The shipped two-axis SF-desync verdict. Empty string == accept.
+
+    ⚑ THIS IS THE ONE COPY. It used to be three: an inline branch in
+    ``scripts/value_optimism.py``, a re-implementation in
+    ``scripts/quarantine_desync_shards.py::judge``, and a test that pinned only
+    the second against the axis functions here. ``quarantine_desync_shards``'s
+    own docstring recorded the consequence: an independent review changed the
+    scorer's ``multipv.value > multipv_miss_max`` to ``> 999.0``, disabling its
+    multipv axis and flipping 118 of 834 live shards, and the whole suite still
+    passed. Every new consumer must call THIS, never restate it — a guard that
+    does not share the criterion's instrument is not a guard.
+
+    An UNUSABLE reading on either axis is a REJECT, not a pass: a gate that
+    could not evaluate a shard has not cleared it. ``usable`` rather than
+    ``status == "ok"`` because a finite check has to happen somewhere, and the
+    only two places it could live are here and in every caller.
+
+    The bestmove-is-first-legal axis is deliberately absent. It is a
+    DIAGNOSTIC (``SF_DESYNC_MAX`` defaults to 1.0 = never reject) because its
+    sound maximum and corrupt minimum are 0.0009 apart; folding it in here
+    would make it look enforced.
+    """
+    if not attachment.usable:
+        return attachment.describe("attachment")
+    if attachment.value < float(attachment_min):
+        return f"attachment {attachment.value:+.4f} < {attachment_min}"
+    if not multipv.usable:
+        return multipv.describe("multipv-miss")
+    if multipv.value > float(multipv_miss_max):
+        return f"multipv-miss {multipv.value:.6f} > {multipv_miss_max}"
+    return ""
+
+
 @dataclass(frozen=True)
 class OptimismRows:
     """Per-row inputs to the scorer, all aligned and already POV-consistent.

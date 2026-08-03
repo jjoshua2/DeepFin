@@ -491,8 +491,18 @@ def test_close_discards_late_prefetch_results(tmp_path) -> None:
         return [arrs]
 
     buf._load_refresh_chunks = _slow_load_refresh_chunks
-    buf._schedule_refresh_prefetch()
-    assert started.wait(timeout=1.0)
+    # The prefetch loop refills whenever the slot is empty, including on plain
+    # 0.1s timeout ticks — so during the add_many/flush setup above the REAL
+    # loader may already have filled the slot, in which case a single
+    # _schedule_refresh_prefetch() is a no-op and the stub never runs (the
+    # pre-fix 1-in-4 flake on a loaded box). Drain the slot and re-arm until
+    # the stub is the load that actually happens.
+    deadline = time.monotonic() + 15.0
+    while not started.is_set() and time.monotonic() < deadline:
+        buf._take_prefetched_refresh()
+        buf._schedule_refresh_prefetch()
+        started.wait(timeout=0.1)
+    assert started.is_set()
 
     buf.close()
     release.set()
