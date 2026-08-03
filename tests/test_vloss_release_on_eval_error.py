@@ -20,6 +20,7 @@ while corrupting a healthy search.
 """
 from __future__ import annotations
 
+import logging
 import threading
 
 import chess
@@ -319,3 +320,26 @@ def test_multi_gpu_pucv_pool_releases_vloss_when_the_evaluator_raises() -> None:
         pool.close()
     total, nonzero = _total_vloss(tree)
     assert (total, nonzero) == (0, 0), f"leaked {total} over {nonzero} nodes"
+
+
+def test_the_release_is_observable_when_it_fires(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The fix only ever runs while an exception is unwinding, so without a log
+    line there is no trace that it took effect on the production path.
+
+    Paired with its negative control: a clean run must stay silent, or the line
+    is noise rather than a signal.
+    """
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.mcts.vloss"):
+        _run_walkers(ok_calls=10_000, walkers=4, gather=4, sims=200)
+    assert not [r for r in caplog.records if "released virtual loss" in r.message], (
+        "a healthy search must not log a release"
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.mcts.vloss"):
+        _run_walkers(ok_calls=2, walkers=4, gather=8, sims=400)
+    hits = [r for r in caplog.records if "released virtual loss" in r.message]
+    assert hits, "the release fired but left no observable trace"
+    assert "B7" in hits[0].message

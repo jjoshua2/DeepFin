@@ -57,6 +57,17 @@ def release_paths(tree: Any, paths: Sequence[Any], *, vloss_weight: int) -> int:
             _log.exception("failed to release virtual loss on a pending path")
         else:
             released += 1
+    if released:
+        # A guard nobody can observe is indistinguishable from one that never
+        # fires, and this one only ever runs on a path that is already
+        # unwinding an exception -- so there is no other trace that it worked.
+        # Bounded by the failure rate: the pools set stop_event on the first
+        # error, so a broker outage costs roughly one line per walker thread.
+        _log.warning(
+            "released virtual loss on %d un-integrated leaf path(s) after a "
+            "failed descend/evaluate/integrate cycle (SHARED_BROKER_AUDIT B7)",
+            released,
+        )
     return released
 
 
