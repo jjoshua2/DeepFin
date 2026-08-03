@@ -27644,3 +27644,34 @@ OfflineReference re-derivation [G3-2]. (C) inference: B6/B7 + B1 loud-refuse +
 K5 [+ #137 items]. (D) P2 sf_wdl detector + P9 denominator. DECISIONS (not
 hygiene, need pre-registration): P1 move-site scorer, P3 SE floor, P4 nodes-fit
 reset, K2 per-ply stamping, K3 broker model identity.
+
+#### CORRECTION 6c (2026-08-03) — the pooled-E numerator must be SIGNED. Post-hoc, disclosed.
+
+Amendment 6a defined `E = sum_seeds |d_era| / sum_seeds (inw given up)`. The
+absolute value is **wrong**, and `FE35_s1` is the case that exposes it: its era
+effect at 8,448 is **+0.029**, i.e. rehearsal at 0.35 made forgetting slightly
+WORSE in that seed. `|+0.029|` enters the numerator as a 0.029 cp *gain*. An
+estimator that scores a loss as a win is the "gate that cannot fail" defect in
+miniature, so it is corrected to the signed form:
+
+    E = sum_seeds (-d_era) / sum_seeds (inw given up)
+
+where `d_era` is negative for improvement, so a seed that degrades now correctly
+subtracts. Also retained from 6a: `E` at 8,448 only, and `n/a` when the arm gave up
+under 0.30 cp.
+
+**This is a POST-HOC correction — I had already seen the FE35 numbers when I found
+it.** Stating the impact so it cannot be read as outcome-shopping:
+
+- **The primary cell is unaffected.** Every `d_era` for `FE20_ema2000` is negative
+  at both steps and both seeds, so signed and absolute forms are identical and the
+  headline `E = 0.992`, ratio **1.009**, LOOP-INVARIANT, stands exactly as reported.
+- The correction is likewise inert for `FE20_raw`, `FE20_ema4000`, and every
+  `FE35` EMA cell — all of their per-seed era effects are negative.
+- It changes exactly one number: **`FE35_raw`**, whose pooled `E` moves from 0.450
+  (absolute) to **0.429** (signed). The correction makes the 0.35 dose look
+  *slightly worse*, not better, which is the opposite direction from any incentive
+  to fiddle it.
+
+The rule stands as corrected for the remaining `FE10` and seed-2/3 readouts, which
+had not been computed when this was written.
