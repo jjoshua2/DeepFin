@@ -34,6 +34,7 @@ def _fake_trainer() -> Any:
         sf_wdl_temperature=1.0,
         sf_wdl_draw_scale=1.0,
         sf_wdl_conf_power=1.0,
+        mirror_prob=0.5,
         # (name, groups, effective_p) per group; only [i][2] is read.
         _feature_group_dropout=[(f"g{i}", (), 0.0) for i in range(8)],
     )

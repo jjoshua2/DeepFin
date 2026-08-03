@@ -1408,6 +1408,16 @@ def _build_report_dict(
         "fdp_outposts":    float(trainer._feature_group_dropout[4][2]),
         "selfplay_fraction": tc.selfplay_fraction,
         "optimizer_name": tc.optimizer,
+        # `mirror_prob` has NO yaml key: `trainer_kwargs_from_config` never
+        # reads one, so production runs at the constructor default and a
+        # left-right mirror of ~half of every training batch was invisible to
+        # `audit_realized_config.py` and to the 319-key config audit. Reported
+        # (not plumbed) so the realized value is auditable from the row --
+        # adding the yaml key is restart-gated, since the live-yaml validator
+        # rejects a key the running code does not define.
+        "mirror_prob": float(trainer.mirror_prob),
+        # BOTH of these shape only the AUXILIARY `sf_eval` head's row mask.
+        # Neither touches the WDL value target (docs/model_heads.md).
         "sf_wdl_conf_power": float(trainer.sf_wdl_conf_power),
         "sf_wdl_draw_scale": float(trainer.sf_wdl_draw_scale),
         "sf_wdl_temperature": float(trainer.sf_wdl_temperature),
