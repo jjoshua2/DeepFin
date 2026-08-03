@@ -199,6 +199,18 @@ _SHARD_FIELDS: tuple[str, ...] = (
 )
 
 
+# Stored fields whose "missing" default is NOT zeros. Both are required fields,
+# and for both the zero value is a MEANINGFUL, wrong one: `has_policy = 0` drops
+# the row from the main policy loss and its accuracy stats with nothing counting
+# the drop, and `priority = 0` makes the row unsamplable under priority draws.
+# Any code path that synthesizes a missing field with a bare `np.zeros` is a
+# silent-corruption site for exactly these two names -- see `_gather_rows` in
+# replay/disk_buffer.py, which refuses rather than guesses. Kept honest by
+# tests/test_replay_field_defaults.py, which re-derives it from
+# `zeros_for_storage_field` itself.
+NONZERO_DEFAULT_STORAGE_FIELDS: frozenset[str] = frozenset({"priority", "has_policy"})
+
+
 def zeros_for_storage_field(
     name: str,
     *,
@@ -617,8 +629,17 @@ def prune_storage_arrays(arrs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         flag = np.asarray(arrs.get(flag_name, np.zeros((out["x"].shape[0],), dtype=np.uint8)), dtype=np.uint8)
         if np.any(flag):
             out[flag_name] = flag
-            if value_name in arrs:
-                out[value_name] = np.asarray(arrs[value_name])
+            # UNCONDITIONAL on purpose. This used to be `if value_name in arrs`,
+            # which reads as "the value array is optional next to a set flag" --
+            # it is not, and persisting `has_X = 1` with X absent is a false
+            # NEGATIVE generator: compute_loss takes the target-absent branch
+            # (loss == 0) while the head's mask still counts the row, so a dead
+            # head reports as a perfectly-fit one. `validate_arrays` above
+            # already raises ("<flag> is set but <arr> is missing") on that
+            # input, so this indexing cannot KeyError from any caller that has
+            # not first weakened the validator -- and if one does, a KeyError
+            # here is the loud failure, not a silently mislabelled shard.
+            out[value_name] = np.asarray(arrs[value_name])
     # Preserve every scalar encoding-identity marker (history encoding, rep-fix);
     # dropping one makes pruned shards reload with the flag defaulted off and
     # silently mix encodings across a training window (the mixed-value guard in
