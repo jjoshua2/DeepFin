@@ -66,3 +66,13 @@ accurate fit to its target, not under-fitting — the head sharpens only as the
 net's real conversion ability improves. Don't chase value-head sharpness
 against a deep-SF ruler; that comparison is a category error. `value_sf_eval`
 is a weak auxiliary channel, not a substitute.
+
+**`sf_wdl_conf_power` and `sf_wdl_draw_scale` are NOT blend knobs.** Despite the
+`sf_wdl` prefix, both feed exactly one mask (`_compute_sf_wdl_mask` in
+`losses.py`) whose only consumer is the auxiliary `sf_eval` head. The blend's SF
+component is weighted by `sf_available * keep`, and `keep` carries only the
+`sf_search_dampen_sf_low/high` terms (both 0.0 in production). Change either
+knob and `wdl_ce` is bit-identical; only `sf_eval_ce` moves (~0.006 % of total
+loss). There is **no** knob that damps the SF component of the value target by
+SF's own draw confidence — adding one is a training-affecting change and needs a
+ledger entry. Pinned by `tests/test_sf_wdl_conf_knobs_are_aux_only.py`.

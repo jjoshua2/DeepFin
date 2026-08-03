@@ -84,6 +84,24 @@ full-strength game outcomes on the positions that have them):
 
 as Brier score and expected calibration error.
 
+  !! `--input-encoding` CHANGES THE RULER, AND ONLY FOR ROW (a).
+  `fen_only` (DEFAULT, bit-identical to every historical run) builds the net's
+  input from `chess.Board(fen)` with an empty move stack, which under the
+  production 175-plane encoding leaves 93 planes structurally zero and pins the
+  colour flag to the wrong value on ~51% of rows. `stored` is audit-v2: row (a)
+  is scored on the real production input recovered by
+  scripts/match_audit_rows.py.
+  Rows (b)/(d)/(e) are SEARCHES. They build their own encodings inside the C
+  tree from the board, so no stored root can reach them, and they stay
+  `fen_only` under both settings; row (c) is pure Stockfish and has no encoding
+  at all. That is stated on every table row rather than left to be inferred —
+  a report whose header said "stored" while four of five rows were FEN-only
+  would be exactly the defect this flag exists to remove. The root network WDL
+  behind value row (iv) is likewise kept on the SEARCH's encoding, so (iv) is
+  never a hybrid of a stored forward and a FEN-only search.
+  ⚑ A RULER CHANGE INVALIDATES ITS RECORDS: never put a `stored` (a) next to a
+  `fen_only` (a) in one table, trend or threshold.
+
 Shallow SF results are cached to <audit>.shallow_sf.jsonl (append-only,
 resumable) so reruns against new checkpoints don't repay the CPU bill.
 GPU use is the batched forwards + search only; --max-positions and
@@ -115,6 +133,15 @@ from chess_anti_engine.eval.audit import (
     move_regrets,
     wdl_brier,
     wdl_ece,
+)
+from chess_anti_engine.eval.audit_history import (
+    INPUT_ENCODINGS,
+    INPUT_ENCODING_DEFAULT,
+    STORED_EXTRA_FEATURES,
+    STORED_HISTORY_ENCODING,
+    MatchedAuditRows,
+    default_matched_rows_path,
+    normalize_input_encoding,
 )
 from chess_anti_engine.moves import COMPACT_TO_FULL_POLICY, POLICY_SIZE, policy_batch_to_full_if_needed
 from chess_anti_engine.moves.encode import uci_to_policy_index
@@ -305,12 +332,20 @@ def _net_candidates(
     target_batch: int = 0,
     vloss_weight: int = 0,
     vloss_mode: int = 0,
+    stored_x: np.ndarray | None = None,
 ) -> tuple[list[np.ndarray], dict[str, list[np.ndarray]], dict[str, list[float]], list[np.ndarray]]:
     """(raw-policy probs, {profile: search visit probs}, {profile: root Q}).
 
     Every profile is run over the same batches against the same evaluator, so
     the raw forward and the model load are paid once no matter how many search
-    shapes are being priced. Probs are aligned with _legal_full_indices order."""
+    shapes are being priced. Probs are aligned with _legal_full_indices order.
+
+    ``stored_x`` is the audit-v2 stored production row per board, aligned with
+    ``boards``. When given, and ONLY then, the raw-policy candidate is read off
+    an EXTRA forward over those rows; the searches and the root WDL keep the
+    FEN-only encoding they build internally, so no candidate becomes a hybrid
+    of the two. When it is None this function is byte-for-byte the pre-audit-v2
+    code path."""
     import torch
 
     from chess_anti_engine.encoding.cboard_encode import CBoard, encode_cboard
@@ -330,6 +365,22 @@ def _net_candidates(
     extra = str(getattr(model, "input_extra_features", "v1"))
     pol_enc = str(getattr(model, "policy_encoding", "lc0_1858"))
     use_rel = bool(getattr(model, "use_dynamic_relations", False))
+    if stored_x is not None:
+        # Stored rows are bytes written under one specific layout; feeding them
+        # to a model that declares another would produce a number that silently
+        # means nothing.
+        if (hist, extra) != (STORED_HISTORY_ENCODING, STORED_EXTRA_FEATURES):
+            raise SystemExit(
+                f"--input-encoding stored requires a checkpoint encoded as "
+                f"{STORED_HISTORY_ENCODING}/{STORED_EXTRA_FEATURES}; this one "
+                f"declares {hist}/{extra}"
+            )
+        if use_rel:
+            raise SystemExit(
+                "--input-encoding stored does not support dynamic-relation "
+                "checkpoints: the relation tensor is rebuilt from the bare board "
+                "and would contradict the stored history planes"
+            )
     evaluator = LocalModelEvaluator(model, device=device)
     rng = np.random.default_rng(seed)
   # add_noise=False on every profile: root Gumbel noise (`gumbel_scale` 0.75
@@ -444,6 +495,14 @@ def _net_candidates(
             else:
                 pol_logits, net_wdl = evaluator.evaluate_encoded(xs, relations=rels)
         net_wdl = _wdl_softmax(net_wdl)
+        if stored_x is not None:
+            # Row (a) only. A second forward rather than replacing `xs` above,
+            # so `net_wdl` — and therefore value candidate (iv) — stays on the
+            # same encoding as the search whose root Q it is combined with.
+            with torch.no_grad():
+                pol_logits, _ = evaluator.evaluate_encoded(
+                    np.asarray(stored_x[start:start + batch_size], dtype=np.float32),
+                )
         pol_logits = np.asarray(pol_logits, dtype=np.float32)
         if pol_logits.shape[1] != POLICY_SIZE:
             pol_logits = policy_batch_to_full_if_needed(pol_logits, policy_encoding=pol_enc, fill_value=-1e9)
@@ -681,10 +740,29 @@ def _shape_stats(probs: list[np.ndarray]) -> tuple[float, float, float, float]:
     )
 
 
-def _policy_table(agg: dict, group_names: list[str]) -> str:
+def candidate_labels(input_encoding: str) -> dict[str, str]:
+    """Candidate labels with each row's OWN input encoding baked in.
+
+    Only row (a) reads `--input-encoding`; the searches encode internally from
+    the board and Stockfish has no net input at all. A header naming one
+    encoding for the whole report would be false for four of five rows, so the
+    encoding is carried per row instead.
+    """
+    labels: dict[str, str] = {}
+    for cand, label in _CANDIDATE_NAMES.items():
+        if cand == "sf_soft":
+            labels[cand] = f"{label} [no net input]"
+        elif cand == "raw":
+            labels[cand] = f"{label} [enc={input_encoding}]"
+        else:
+            labels[cand] = f"{label} [enc=fen_only, search-internal]"
+    return labels
+
+
+def _policy_table(agg: dict, group_names: list[str], labels: dict[str, str]) -> str:
     lines = ["| candidate | " + " | ".join(f"{g} E[regret] / top-1 (n)" for g in group_names) + " |"]
     lines.append("|" + "---|" * (len(group_names) + 1))
-    for cand, label in _CANDIDATE_NAMES.items():
+    for cand, label in labels.items():
         cells = []
         for g in group_names:
             v = agg.get((g, cand))
@@ -702,7 +780,24 @@ def main() -> None:
     ap.add_argument("--config", type=Path, default=Path("configs/pbt2_small.yaml"),
                     help="production config for target-construction params")
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--batch-size", type=int, default=256)
+    ap.add_argument("--batch-size", type=int, default=256,
+                    help="net forward batch. Raw policy regret is BATCH-SIZE "
+                         "DEPENDENT (~0.8 cp between 64 and 256); pin it across "
+                         "every arm of a comparison. Echoed in the report header.")
+    ap.add_argument("--input-encoding", choices=INPUT_ENCODINGS,
+                    default=INPUT_ENCODING_DEFAULT,
+                    help="input encoding for row (a), the net's raw policy. "
+                         "'fen_only' (DEFAULT, bit-identical to every historical "
+                         "run) rebuilds it from chess.Board(fen), leaving 93 of 175 "
+                         "planes zero and the colour flag wrong on ~51%% of rows. "
+                         "'stored' is audit-v2: the real production input. Rows "
+                         "(b)/(d)/(e) are searches that encode internally and stay "
+                         "fen_only either way; every table row says which it used. "
+                         "⚑ DIFFERENT RULERS — never mix them in one table.")
+    ap.add_argument("--matched-rows", type=Path, default=None,
+                    help="matched-rows index for --input-encoding stored "
+                         "(default: <audit-set>.matched_rows.npz); built by "
+                         "scripts/match_audit_rows.py, not checked in")
     ap.add_argument("--sims", type=int, default=256)
     ap.add_argument("--policy-temp", type=float, default=1.0,
                     help="prior temperature on policy logits before gumbel search "
@@ -821,11 +916,35 @@ def main() -> None:
     sf_wdl_frac = float(flat.get("sf_wdl_frac", 0.0))
     search_wdl_frac = float(flat.get("search_wdl_frac", 0.0))
 
+    encoding = normalize_input_encoding(args.input_encoding)
     positions = load_audit_set(args.audit_set)
     if args.max_positions > 0:
         positions = positions[: args.max_positions]
+
+    stored_x: np.ndarray | None = None
+    if encoding == "stored":
+        matched = MatchedAuditRows(
+            args.matched_rows or default_matched_rows_path(args.audit_set)
+        )
+        n_before = len(positions)
+        positions = [p for p in positions if p.key in matched]
+        if not positions:
+            raise SystemExit(
+                "no audit position has a stored row; the matched-rows index does "
+                "not cover this audit set"
+            )
+        # The other two callers reach this through `require_model_compatible`;
+        # this script loads its checkpoint deeper in the call stack, so it runs
+        # the index-side half here and the model-side half in `_net_candidates`.
+        matched.require_index_layout()
+        stored_x = np.stack([matched.stored_row(p.key) for p in positions])
+        print(f"[audit] input-encoding=stored: {matched.path} covers "
+              f"{matched.n_matched}/{matched.n_audit_rows} audit rows; dropped "
+              f"{n_before - len(positions)} unmatched ({len(positions)} kept). "
+              f"⚑ RULER CHANGE — row (a) is NOT comparable to a fen_only run.")
     boards = [chess.Board(p.fen) for p in positions]
-    print(f"[audit] {len(positions)} positions from {args.audit_set}")
+    print(f"[audit] [enc={encoding} b={args.batch_size}] {len(positions)} positions "
+          f"from {args.audit_set}")
 
     shallow = _shallow_sf_records(
         positions,
@@ -865,6 +984,7 @@ def main() -> None:
         target_batch=int(args.target_batch),
         vloss_weight=int(args.vloss_weight),
         vloss_mode=int(args.vloss_mode),
+        stored_x=stored_x,
     )
     search_probs = search_by_profile["search"]
   # The production WDL blend's search component comes from the RL search, so
@@ -933,6 +1053,14 @@ def main() -> None:
             gap = criticality_gap(pos.move_cp)
             per_pos_dump.append({
                 "key": pos.key, "phase": pos.phase, "source": pos.source,
+                # A dump is a report: carry the ruler it was made with, or a
+                # downstream join can silently mix two encodings.
+                "input_encoding": {
+                    c: (encoding if c == "raw" else
+                        None if c == "sf_soft" else "fen_only")
+                    for c in cands
+                },
+                "batch_size": int(args.batch_size),
                 # null (not inf -> non-standard JSON "Infinity") for <2-move positions
                 "gap_cp": float(gap) if np.isfinite(gap) else None,
                 "n_legal": len(legal_ucis),
@@ -986,6 +1114,7 @@ def main() -> None:
               f"({len(per_pos_dump)} rows)")
 
     agg = _aggregate(policy_rows, "cand")
+    cand_labels = candidate_labels(encoding)
     group_names = ["overall", *PHASE_NAMES, *SOURCE_NAMES]
     deep = np.stack(deep_wdls)
 
@@ -1011,7 +1140,7 @@ def main() -> None:
         "| search profile | entropy (nats) | mean top-1 | eff. support | frac top-1 >= 0.99 |",
         "|---|---|---|---|---|",
     ]
-    for name, label in _CANDIDATE_NAMES.items():
+    for name, label in cand_labels.items():
         rows = shape_probs.get(name) or []
         if not rows:
             continue
@@ -1044,6 +1173,11 @@ def main() -> None:
     report = (
         f"# Target audit @ {sha}\n\n"
         f"- audit set: {args.audit_set} ({len(deep_wdls)} scored positions)\n"
+        f"- input encoding: **{encoding}** (row (a) only; batch-size "
+        f"{args.batch_size}). Rows (b)/(d)/(e) encode inside the search and are "
+        f"always fen_only; row (c) has no net input. ⚑ A RULER CHANGE INVALIDATES "
+        f"ITS RECORDS — do not put row (a) from a `stored` run in a table with "
+        f"row (a) from a `fen_only` run.\n"
         f"- checkpoint: {args.checkpoint}\n"
         f"- search: PLAY {args.sims} sims / RL train {rl_sims} full + {rl_fast_sims} fast "
         f"(playout_cap_fraction {full_share}); shallow SF: {args.sf_soft_nodes} nodes "
@@ -1077,7 +1211,7 @@ def main() -> None:
         f"Same-material comparisons (search shape vs search shape, checkpoint vs "
         f"checkpoint) are sound; \"the SF target beats the training target\" is a "
         f"calibration reading, NOT a teaching verdict.\n\n"
-        f"{_policy_table(agg, group_names)}\n\n"
+        f"{_policy_table(agg, group_names, cand_labels)}\n\n"
         f"## Target distribution shape (the stored policy target's sharpness)\n\n"
         f"Row (d) is the distribution the policy head is trained on; row (c) is "
         f"the SF teacher it is blended against. Shape is a property of the "

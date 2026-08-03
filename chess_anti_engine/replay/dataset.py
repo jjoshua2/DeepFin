@@ -7,8 +7,6 @@ from .buffer import ReplaySample
 from .shard import (
     LEGAL_MASK_FIELDS,
     LEGAL_MASK_HAS_FIELDS,
-    SF_MULTIPV_RAW_COLS,
-    SF_MULTIPV_RAW_MAX,
 )
 
 
@@ -38,27 +36,27 @@ def _transfer_array(value: np.ndarray, *, dtype: np.dtype | type) -> np.ndarray:
     return np.asarray(arr, dtype=target)
 
 
-def _zeros_tensor(
-    shape: tuple[int, ...],
-    *,
-    dtype: torch.dtype,
-    device: str,
-) -> torch.Tensor:
-    return torch.zeros(shape, dtype=dtype, device=device)
-
-
 def _to_optional_tensor(
     arrs: dict[str, np.ndarray],
     key: str,
     *,
-    shape: tuple[int, ...],
     dtype_np: np.dtype | type,
     dtype_torch: torch.dtype,
     device: str,
 ) -> torch.Tensor:
+    """Convert a present optional field. The caller has already checked presence.
+
+    This used to zero-fill when the value was None, under a per-field ``shape``
+    spec -- ~55 lines of shapes (including a hard-coded ``(n, 32)`` that looked
+    like it pinned the categorical width) that nothing could ever read, because
+    every call site is guarded by ``if src_key in arrs``. A None value parked
+    under a present key is a producer bug, and zero-filling it would hand the
+    trainer a full batch of absent targets wearing a set ``has_`` flag; say so
+    instead.
+    """
     arr = arrs.get(key)
     if arr is None:
-        return _zeros_tensor(shape, dtype=dtype_torch, device=device)
+        raise ValueError(f"replay batch key {key!r} is present but None")
     source = _transfer_array(arr, dtype=dtype_np)
     return _to_tensor(source, device=device, dtype=dtype_torch)
 
@@ -188,8 +186,6 @@ def collate(samples: list[ReplaySample], *, device: str) -> dict[str, torch.Tens
 
 def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, torch.Tensor]:
     x = _transfer_array(arrs["x"], dtype=np.float32)
-    n = int(x.shape[0])
-
     policy_t = _transfer_array(arrs["policy_target"], dtype=np.float32)
     wdl_t = _transfer_array(arrs["wdl_target"], dtype=np.int64)
 
@@ -208,69 +204,69 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
         out["relations"] = _to_tensor(np.asarray(arrs["relations"], dtype=np.uint8), device=device)
 
     optional_specs = (
-        ("sf_wdl", (n, 3), np.float32, torch.float32),
-        ("has_sf_wdl", (n,), np.float32, torch.float32),
-        ("search_wdl", (n, 3), np.float32, torch.float32),
-        ("has_search_wdl", (n,), np.float32, torch.float32),
-        ("future_sf_regret_sum", (n,), np.float32, torch.float32),
-        ("has_future_sf_regret_sum", (n,), np.float32, torch.float32),
-        ("future_sf_regret_d95", (n,), np.float32, torch.float32),
-        ("has_future_sf_regret_d95", (n,), np.float32, torch.float32),
-        ("future_sf_regret_d98", (n,), np.float32, torch.float32),
-        ("has_future_sf_regret_d98", (n,), np.float32, torch.float32),
-        ("future_sf_regret_max", (n,), np.float32, torch.float32),
-        ("has_future_sf_regret_max", (n,), np.float32, torch.float32),
-        ("future_sf_regret_h4", (n,), np.float32, torch.float32),
-        ("has_future_sf_regret_h4", (n,), np.float32, torch.float32),
-        ("future_sf_regret_h6", (n,), np.float32, torch.float32),
-        ("has_future_sf_regret_h6", (n,), np.float32, torch.float32),
-        ("future_sf_regret_h12", (n,), np.float32, torch.float32),
-        ("has_future_sf_regret_h12", (n,), np.float32, torch.float32),
-        ("future_sf_regret_h24", (n,), np.float32, torch.float32),
-        ("has_future_sf_regret_h24", (n,), np.float32, torch.float32),
-        ("future_sf_regret_h50", (n,), np.float32, torch.float32),
-        ("has_future_sf_regret_h50", (n,), np.float32, torch.float32),
-        ("future_sf_regret_count", (n,), np.int32, torch.int32),
-        ("has_future_sf_regret_count", (n,), np.float32, torch.float32),
-        ("sf_move_index", (n,), np.int64, torch.int64),
-        ("has_sf_move", (n,), np.float32, torch.float32),
+        ("sf_wdl", np.float32, torch.float32),
+        ("has_sf_wdl", np.float32, torch.float32),
+        ("search_wdl", np.float32, torch.float32),
+        ("has_search_wdl", np.float32, torch.float32),
+        ("future_sf_regret_sum", np.float32, torch.float32),
+        ("has_future_sf_regret_sum", np.float32, torch.float32),
+        ("future_sf_regret_d95", np.float32, torch.float32),
+        ("has_future_sf_regret_d95", np.float32, torch.float32),
+        ("future_sf_regret_d98", np.float32, torch.float32),
+        ("has_future_sf_regret_d98", np.float32, torch.float32),
+        ("future_sf_regret_max", np.float32, torch.float32),
+        ("has_future_sf_regret_max", np.float32, torch.float32),
+        ("future_sf_regret_h4", np.float32, torch.float32),
+        ("has_future_sf_regret_h4", np.float32, torch.float32),
+        ("future_sf_regret_h6", np.float32, torch.float32),
+        ("has_future_sf_regret_h6", np.float32, torch.float32),
+        ("future_sf_regret_h12", np.float32, torch.float32),
+        ("has_future_sf_regret_h12", np.float32, torch.float32),
+        ("future_sf_regret_h24", np.float32, torch.float32),
+        ("has_future_sf_regret_h24", np.float32, torch.float32),
+        ("future_sf_regret_h50", np.float32, torch.float32),
+        ("has_future_sf_regret_h50", np.float32, torch.float32),
+        ("future_sf_regret_count", np.int32, torch.int32),
+        ("has_future_sf_regret_count", np.float32, torch.float32),
+        ("sf_move_index", np.int64, torch.int64),
+        ("has_sf_move", np.float32, torch.float32),
         # Sparse MultiPV rows: only present when the trainer requests them
         # (train.sf_policy_sparse_ce) — _sample_batch_host drops them
         # otherwise so the default H2D payload is unchanged.
-        ("sf_multipv_raw", (n, SF_MULTIPV_RAW_MAX, SF_MULTIPV_RAW_COLS), np.int32, torch.int32),
-        ("has_sf_multipv_raw", (n,), np.float32, torch.float32),
-        ("sf_policy_t", (n, policy_t.shape[1]), np.float32, torch.float32, "sf_policy_target"),
-        ("has_sf_policy", (n,), np.float32, torch.float32),
-        ("moves_left", (n,), np.float32, torch.float32),
-        ("has_moves_left", (n,), np.float32, torch.float32),
-        ("is_network_turn", (n,), np.bool_, torch.bool),
-        ("is_selfplay", (n,), np.bool_, torch.bool),
-        ("has_is_selfplay", (n,), np.float32, torch.float32),
-        ("categorical_t", (n, 32), np.float32, torch.float32, "categorical_target"),
-        ("has_categorical", (n,), np.float32, torch.float32),
-        ("policy_soft_t", (n, policy_t.shape[1]), np.float32, torch.float32, "policy_soft_target"),
-        ("has_policy_soft", (n,), np.float32, torch.float32),
-        ("future_policy_t", (n, policy_t.shape[1]), np.float32, torch.float32, "future_policy_target"),
-        ("has_future", (n,), np.float32, torch.float32),
-        ("sf_p0_policy_t", (n, policy_t.shape[1]), np.float32, torch.float32, "sf_p0_policy_target"),
-        ("has_sf_p0", (n,), np.float32, torch.float32),
-        ("sf_p0_regret_t", (n, policy_t.shape[1]), np.float32, torch.float32, "sf_p0_regret"),
-        ("has_sf_p0_regret", (n,), np.float32, torch.float32),
-        ("volatility_t", (n, 3), np.float32, torch.float32, "volatility_target"),
-        ("has_volatility", (n,), np.float32, torch.float32),
-        ("sf_volatility_t", (n, 3), np.float32, torch.float32, "sf_volatility_target"),
-        ("has_sf_volatility", (n,), np.float32, torch.float32),
-        *[(k, (n, policy_t.shape[1]), np.float32, torch.float32) for k in LEGAL_MASK_FIELDS],
-        *[(k, (n,), np.float32, torch.float32) for k in LEGAL_MASK_HAS_FIELDS],
+        ("sf_multipv_raw", np.int32, torch.int32),
+        ("has_sf_multipv_raw", np.float32, torch.float32),
+        ("sf_policy_t", np.float32, torch.float32, "sf_policy_target"),
+        ("has_sf_policy", np.float32, torch.float32),
+        ("moves_left", np.float32, torch.float32),
+        ("has_moves_left", np.float32, torch.float32),
+        ("is_network_turn", np.bool_, torch.bool),
+        ("is_selfplay", np.bool_, torch.bool),
+        ("has_is_selfplay", np.float32, torch.float32),
+        ("categorical_t", np.float32, torch.float32, "categorical_target"),
+        ("has_categorical", np.float32, torch.float32),
+        ("policy_soft_t", np.float32, torch.float32, "policy_soft_target"),
+        ("has_policy_soft", np.float32, torch.float32),
+        ("future_policy_t", np.float32, torch.float32, "future_policy_target"),
+        ("has_future", np.float32, torch.float32),
+        ("sf_p0_policy_t", np.float32, torch.float32, "sf_p0_policy_target"),
+        ("has_sf_p0", np.float32, torch.float32),
+        ("sf_p0_regret_t", np.float32, torch.float32, "sf_p0_regret"),
+        ("has_sf_p0_regret", np.float32, torch.float32),
+        ("volatility_t", np.float32, torch.float32, "volatility_target"),
+        ("has_volatility", np.float32, torch.float32),
+        ("sf_volatility_t", np.float32, torch.float32, "sf_volatility_target"),
+        ("has_sf_volatility", np.float32, torch.float32),
+        *[(k, np.float32, torch.float32) for k in LEGAL_MASK_FIELDS],
+        *[(k, np.float32, torch.float32) for k in LEGAL_MASK_HAS_FIELDS],
     )
     for spec in optional_specs:
-        if len(spec) == 4:
-            out_key, shape, np_dtype, torch_dtype = spec
+        if len(spec) == 3:
+            out_key, np_dtype, torch_dtype = spec
             src_key = out_key
         else:
-            out_key, shape, np_dtype, torch_dtype, src_key = spec
+            out_key, np_dtype, torch_dtype, src_key = spec
         if src_key in arrs:
             out[out_key] = _to_optional_tensor(
-                arrs, src_key, shape=shape, dtype_np=np_dtype, dtype_torch=torch_dtype, device=device
+                arrs, src_key, dtype_np=np_dtype, dtype_torch=torch_dtype, device=device
             )
     return out
