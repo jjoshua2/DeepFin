@@ -27337,3 +27337,48 @@ Full write-ups + repros: `scratchpad/code_audit_20260803/{ENCODING,C_WALKER,INFE
 - **⚑⚑ W1 CRITICAL (CONFIRMED, live on production Gumbel — selfplay AND UCI): the transposition table corrupts node child sets.** TT keys on `CBoard.hash` = pieces+STM+castling only (`cboard_compute_hash` explicitly EXCLUDES en passant); `gss_prepare_batch` (_mcts_tree.c:1649-1676) copies a same-hash donor's child ACTION LIST and installs it permanently. Fuzzer over 32,076 expanded nodes from real C Gumbel searches: **67 nodes carry an ILLEGAL ep move** (worst tree 4.1% of expanded nodes), 3 nodes MISSING a legal move; selecting an injected ep index pushes a diagonal pawn move onto an empty square — the whole subtree is a phantom position, encoded, evaluated, backpropped. Every violation pinned to a same-hash donor with ep=None. **Fix PR in flight; deploy requires extension rebuild + restart.** W2: the `_expanded_root_covers_actions` gate is short-circuited exactly on the selfplay tree-reuse path (allowed_root_indices_batch is None). W3 (match play, NOT yet fixed): `vloss_mode=1` pinned by root_parallel_gumbel guts the search invisibly — 68.6% duplicate rows/batch, 2.8× fewer distinct nodes at identical compute, `nodes`/`nps` byte-identical between modes (reports sims, not nodes). W5 negative: batch_integrate_leaves routing + cache scatter-back CORRECT. Temperature/move-15 determinism verified exact; C temperature_resample dead in production.
 - **ENCODING: the C and Python encoders are BIT-IDENTICAL in the production regime** (175/v2_threats + lc0_root_legacy_meta + history_rep_fix, 1,654 positions with real history × 3 modes × both versions) — first time measured. 722,888 lc0_1858↔4672 round-trips clean incl. promotions/castling/EP; PR #314's 93-dead-planes accounting confirmed exactly. Defects are COVERAGE: E1 the only C-vs-Py plane oracle is off in every gate (stale docstring; passes today when enabled — fix PR turns it into CI); E2 AOT package verification encodes its distribution in the LEGACY history layout (98/175 planes differ; one keyword); E3 rep_fix flag-ordering has no guard (latent); E4 C encoders infer plane count from the buffer, config never compared (latent). ⚠ our `lc0_1858` is NOT Leela's kMoveStrs promotion ordering — `onnx/load.py` handles it; live trap for BT4 distillation.
 - **INFERENCE: I1 (CONFIRMED, both transports): the slot protocol has NO request identity** — a client that times out (hardcoded 30s) and re-submits is served the PREVIOUS request's policy/WDL; on compact-legal the row is partially reinterpreted metadata bytes = plausible-looking policy from a different position, recordable as training data. Precondition (client reset) documented in-source as observed 2026-07-24; RATE UNMEASURED (log grep in flight). Fix PR in flight (request id/epoch in header; wire-format change, workers+broker restart together). I2: connect never validates layout vs shm size → all-zero policy on plane skew (latent; guard in PR). I3: hang watchdog inert until first successful forward AND excludes _ensure_model — cannot fire on the documented boot-into-wedged-dxg scenario. I4: AOT constants rebound check_full_update=False, nothing binds package↔model. I6: broker busy-spins ~83% of a core at idle. I5 (deferred, separate decision): EncodedEvalCache transparently BYPASSED on the compact UCI path (0 hits/0 misses reads as clean); both cache keys otherwise sound. Gather policy clean; ThreadedDispatcher not on the production selfplay path.
+
+#### PREREG AMENDMENT 6a (2026-08-03) — the exchange-rate estimator, fixed BEFORE the FE readout
+
+Written while the FE20 pair was still training, from validating the analysis code
+against the ALREADY-PUBLISHED F and H2 tables. No FE contrast has been computed.
+
+`analyse_FE.py` reproduces both prior tables exactly — `F_s0` d_era −0.805 at
++0.979 given up, `F_s1` −0.874 at +0.729, the whole H2 within-run table, and
+`H2_s0` vs `A_s0` returns 0.000 on every ruler (they are the same trajectory,
+independently confirming that identity). The instrument is sound.
+
+**But it shows the pre-registered §3b statistic is not.** `E` is a ratio whose
+denominator is a small difference of two noisy levels, so it explodes when the
+denominator is small:
+
+| arm | step | gave up `inw` | d_era | E |
+|---|---|---|---|---|
+| F_s0 | 7040 | +0.387 | −1.169 | **3.02** |
+| F_s0 | 8448 | +0.979 | −0.805 | 0.82 |
+| F_s1 | 7040 | +0.939 | −0.294 | 0.31 |
+| F_s1 | 8448 | +0.729 | −0.874 | 1.20 |
+
+A statistic that swings 0.31 to 3.02 across seeds and steps of the *same arm*
+cannot adjudicate a pre-registered 1.3x / 0.7x threshold. Applying it as written
+would be reading noise.
+
+**Fix, pre-committed now:** `E` is computed **at step 8,448 only** (where the
+denominator is largest and best determined), and **pooled across seeds as a ratio
+of sums**, not as a mean of per-seed ratios:
+
+    E = sum_seeds |d_era| / sum_seeds (inw given up)
+
+Pooled this way the published solo values are stable and reproduce the addendum:
+**F20 = (0.805+0.874)/(0.979+0.729) = 0.98**; ema2000 (one seed) = 0.54. The
+COMPOSE / LOOP-INVARIANT / ANTI-COMPOSE thresholds (1.3x, 0.7x of the best solo)
+are unchanged and are now applied to this pooled estimator against
+**max(E_F20, E_ema2000) = 0.98**.
+
+`FE10` has one seed, so its `E` is reported with the explicit caveat that it is a
+single-seed ratio of the unstable kind above, and it does not enter the verdict.
+
+**Also pre-committed:** where `inw given up` is below **0.30 cp** (i.e. the arm did
+not meaningfully trade learning at all), `E` is reported as `n/a` rather than as a
+number. Below that the ratio is dominated by its denominator's error and the arm
+should be judged directly on the level contrasts instead.
