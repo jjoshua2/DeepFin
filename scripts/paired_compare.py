@@ -33,7 +33,9 @@ a disagreement is REFUSED, because a paired delta across two rulers measures
 the ruler rather than the checkpoints. An unstamped dump counts as
 ``input_encoding=fen_only`` — every dump predating the audit-v2 flag is, by
 construction — so legacy-vs-``stored`` is refused too; only ``batch_size`` is
-warn-only when absent. See ``require_same_ruler``.
+warn-only when absent. The inferred stamp adopts the counterpart's SHAPE, since
+``audit_targets`` stamps one encoding per candidate where ``value_regret``
+stamps a scalar. See ``require_same_ruler`` and ``_match_stamp_shape``.
 
 Sign convention: delta = A - B per position. For regret-style metrics (lower
 is better), a NEGATIVE mean delta means A is better.
@@ -187,6 +189,41 @@ def _declared(dump: Dump, field: str) -> tuple[set[str], bool]:
     return ({inferred}, True) if inferred is not None else (set(), False)
 
 
+def _match_stamp_shape(inferred: set[str], other: set[str]) -> set[str]:
+    """Re-express an INFERRED scalar stamp in the counterpart's shape.
+
+    The two producers stamp different shapes: ``value_regret.py`` writes one
+    scalar encoding per record, while ``audit_targets.py`` writes one encoding
+    PER CANDIDATE (a dict), because its ``--input-encoding`` moves only row (a)
+    and the search rows are always ``fen_only``. `INFERRED_WHEN_ABSENT` can only
+    name the scalar, and a scalar never equals a dict — so without this an
+    unstamped ``audit_targets`` dump would be refused against a fresh
+    DEFAULT-encoding one, i.e. the same ruler on both sides.
+
+    That is not hypothetical: 103 banked unstamped ``audit_targets`` dumps exist
+    under ``scratchpad/``, and several documented ledger readouts join exactly
+    that pair. An unstamped dump predates ``--input-encoding`` entirely, so
+    every one of its candidates was ``fen_only``; expanding to the counterpart's
+    key set says precisely that. Candidates the counterpart records as ``null``
+    (``sf_soft``, which has no net input) stay ``null``, so they need no special
+    case and cannot manufacture a disagreement.
+
+    A ``stored`` counterpart still differs on ``raw`` and is still refused.
+    """
+    if len(inferred) != 1 or len(other) != 1:
+        return inferred
+    inf = json.loads(next(iter(inferred)))
+    oth = json.loads(next(iter(other)))
+    if not isinstance(oth, dict) or isinstance(inf, dict):
+        return inferred
+    return {
+        json.dumps(
+            {k: (None if v is None else inf) for k, v in oth.items()},
+            sort_keys=True,
+        )
+    }
+
+
 def require_same_ruler(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
     """Refuse to join two dumps made with different rulers.
 
@@ -208,6 +245,12 @@ def require_same_ruler(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
                 )
         va, a_inferred = _declared(a, field)
         vb, b_inferred = _declared(b, field)
+        # An inferred stamp has to be compared in the SHAPE the other side
+        # actually writes, or the two producers can never agree.
+        if a_inferred:
+            va = _match_stamp_shape(va, vb)
+        if b_inferred:
+            vb = _match_stamp_shape(vb, va)
         if not va or not vb:
             print(
                 f"[paired-compare] WARNING: '{field}' not declared by "

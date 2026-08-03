@@ -21394,6 +21394,8 @@ Three mutations, each run against the committed tests:
 | `audit_targets._net_candidates` ignores `stored_x` | `test_audit_targets_stored_encoding_reaches_the_raw_policy_forward` |
 | **F** — `score_audit_v2.root_planes` `v1` arm returns the STORED row | `test_score_audit_v2_v1_arm_is_the_fen_only_identity` x6, `test_score_audit_v2_v2_arm_is_the_stored_encoding` x6 |
 | **G** — `match_audit_rows.require_canonical` never flags anything | `test_require_canonical_refuses_a_black_to_move_audit_board` |
+| **H** — the inferred stamp keeps the scalar shape (the false-refusal above) | `test_unstamped_audit_targets_dump_compares_to_a_default_run` |
+| **I** — the shape expansion fills `null` candidates | `test_unstamped_audit_targets_dump_compares_to_a_default_run`, `test_match_stamp_shape_preserves_null_candidates` |
 
 ⚑ **F and G were found by the independent reviewer, not by me, and F is the
 serious one.** `score_audit_v2.py` is the file that produced every published
@@ -21425,6 +21427,23 @@ itself, and warns (rather than refusing) when a dump is too old to declare
 either. Mutating the gate to a no-op fails 5 tests; renaming the stamp in
 `value_regret.py` fails `test_value_regret_dump_carries_its_ruler`, which pins
 the field names against the producer rather than assuming them.
+
+⚑ **AND THE INFERRED STAMP MUST ADOPT THE COUNTERPART'S SHAPE.** The two
+producers stamp differently: `value_regret.py` writes a scalar, `audit_targets.py`
+writes one encoding PER CANDIDATE (a dict), because its `--input-encoding` moves
+only row (a). The first cut of the inference below could only name the scalar,
+and a scalar never equals a dict — so it FALSE-REFUSED an unstamped
+`audit_targets` dump against a fresh DEFAULT-encoding one: same ruler on both
+sides, no override flag. Not hypothetical — 103 banked unstamped `audit_targets`
+dumps exist under `scratchpad/` and several documented readouts join exactly
+that pair, so every one of them would have needed a GPU re-run. Caught by the
+reviewer, not by me; my test for this case only ever fed the scalar producer.
+`_match_stamp_shape` expands the inferred scalar to the counterpart's key set
+(`sf_soft` stays `null`, so it cannot manufacture a disagreement), and a
+`stored` counterpart still differs on `raw` and is still refused. **⚑ The
+general lesson: a gate with TWO producers needs a test per producer. The gap was
+a shape the gate's tests never fed it — the same defect the stamping exists to
+prevent, one level up.**
 
 ⚑ **An unstamped dump counts as `input_encoding=fen_only`, and that is the
 point.** Every dump written before this PR is `fen_only` by construction, since

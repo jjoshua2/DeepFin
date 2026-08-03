@@ -439,3 +439,144 @@ def test_value_regret_dump_carries_its_ruler() -> None:
     src = (Path(vr.__file__).read_text(encoding="utf-8"))
     for field in pc.RULER_FIELDS:
         assert f'"{field}": ' in src, field
+
+
+# ---------------------------------------------------------------------------
+# The gate has TWO producers, and they stamp DIFFERENT SHAPES
+# ---------------------------------------------------------------------------
+#
+# `value_regret.py` writes one scalar encoding per record. `audit_targets.py`
+# writes one encoding PER CANDIDATE (a dict), because its --input-encoding moves
+# only row (a) while the search rows are always fen_only. The first version of
+# the unstamped-dump inference only ever compared the scalar shape, so it
+# FALSE-REFUSED an unstamped audit_targets dump against a fresh default-encoding
+# one -- same ruler on both sides, no override flag -- which is the join behind
+# several banked ledger readouts.
+#
+# The gap was a PRODUCER the gate's tests never fed it, which is the same shape
+# as the defect the stamping exists to prevent. So these build the stamp from
+# audit_targets' OWN candidate list rather than hardcoding it: add or rename a
+# candidate and the tests follow the producer.
+
+
+def _audit_targets_stamp(encoding: str) -> dict[str, str | None]:
+    """The `input_encoding` dict `audit_targets.py --dump-per-position` writes.
+
+    Mirrors the producer at `audit_targets.py` (row (a) takes the flag, the
+    searches encode internally and are always fen_only, `sf_soft` has no net
+    input at all), keyed off `_CANDIDATE_NAMES` so it cannot drift from it.
+    """
+    import scripts.audit_targets as at
+
+    return {
+        c: (encoding if c == "raw" else None if c == "sf_soft" else "fen_only")
+        for c in at._CANDIDATE_NAMES
+    }
+
+
+def _audit_rows(encoding: str | None) -> list[dict]:
+    import scripts.audit_targets as at
+
+    rows: list[dict] = []
+    for i in range(5):
+        row: dict = {
+            "key": f"k{i}", "phase": 1, "source": 0,
+            "cand": {c: {"exp": float(i)} for c in at._CANDIDATE_NAMES},
+        }
+        if encoding is not None:
+            row["input_encoding"] = _audit_targets_stamp(encoding)
+            row["batch_size"] = 256
+        rows.append(row)
+    return rows
+
+
+def test_audit_targets_stamp_is_a_dict_not_a_scalar() -> None:
+    """Pin the shape difference the gate has to cope with.
+
+    If this ever becomes a scalar the inference below is dead weight; if the
+    scalar producer becomes a dict, `INFERRED_WHEN_ABSENT` needs revisiting.
+    """
+    import scripts.value_regret as vr
+
+    stamp = _audit_targets_stamp("fen_only")
+    assert isinstance(stamp, dict)
+    assert stamp["raw"] == "fen_only"
+    assert stamp["sf_soft"] is None
+    # ...and the other producer really does write a bare scalar.
+    src = Path(vr.__file__).read_text(encoding="utf-8")
+    assert '"input_encoding": encoding,' in src
+
+
+def test_unstamped_audit_targets_dump_compares_to_a_default_run(tmp_path, capsys) -> None:
+    """THE regression: same ruler, dict vs inferred scalar, must NOT refuse.
+
+    103 banked unstamped audit_targets dumps exist under scratchpad/ and several
+    documented ledger readouts join exactly this pair. Refusing it would make
+    those readouts unreproducible without re-running the old checkpoint on GPU.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    legacy = load_dump(
+        _write_jsonl(tmp_path / "a.jsonl", _audit_rows(None)),
+        join_key="key", field="cand.search.exp",
+    )
+    fresh = load_dump(
+        _write_jsonl(tmp_path / "b.jsonl", _audit_rows("fen_only")),
+        join_key="key", field="cand.search.exp",
+    )
+
+    require_same_ruler(legacy, fresh, label_a="LEGACY", label_b="NEW")
+    out = capsys.readouterr().out
+    assert "REFUSING" not in out
+    assert "inferred" in out
+
+
+def test_unstamped_audit_targets_dump_is_still_refused_against_stored(
+    tmp_path,
+) -> None:
+    """The inference must not buy the false-accept back.
+
+    Expanding the inferred scalar to the counterpart's shape has to keep row
+    (a) discriminating -- that is the only row --input-encoding moves.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    legacy = load_dump(
+        _write_jsonl(tmp_path / "a.jsonl", _audit_rows(None)),
+        join_key="key", field="cand.raw.exp",
+    )
+    stored = load_dump(
+        _write_jsonl(tmp_path / "b.jsonl", _audit_rows("stored")),
+        join_key="key", field="cand.raw.exp",
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        require_same_ruler(legacy, stored, label_a="LEGACY", label_b="NEW")
+    assert "REFUSING TO JOIN" in str(exc.value)
+    assert "stored" in str(exc.value)
+
+
+def test_match_stamp_shape_leaves_a_scalar_counterpart_alone() -> None:
+    """value_regret-vs-value_regret must keep comparing scalars."""
+    from scripts.paired_compare import _match_stamp_shape
+
+    scalar = {json.dumps("fen_only")}
+    assert _match_stamp_shape(scalar, scalar) == scalar
+    # Ambiguous input (a dump that mixes shapes) is left untouched rather than
+    # guessed at; require_same_ruler has already refused that case upstream.
+    assert _match_stamp_shape(scalar, {json.dumps("a"), json.dumps("b")}) == scalar
+
+
+def test_match_stamp_shape_preserves_null_candidates() -> None:
+    """`sf_soft` has no net input on either side and must stay null.
+
+    If the expansion filled it with "fen_only" the two sides would disagree on
+    a candidate that has no encoding at all.
+    """
+    from scripts.paired_compare import _match_stamp_shape
+
+    other = {json.dumps(_audit_targets_stamp("fen_only"), sort_keys=True)}
+    got = json.loads(next(iter(_match_stamp_shape({json.dumps("fen_only")}, other))))
+    assert got["sf_soft"] is None
+    assert got["raw"] == "fen_only"
+    assert got == _audit_targets_stamp("fen_only")
