@@ -95,7 +95,10 @@ def emit_handshake(options: EngineOptions) -> None:
     static, ``readyok`` still waits for real readiness)."""
     for line in format_id_lines(_ENGINE_NAME, _ENGINE_AUTHOR):
         _println(line)
-    _println(f"option name Hash type spin default {options.hash_mb} min 1024 max 524288")
+    _println(
+        f"option name Hash type spin default {options.hash_mb} "
+        f"min {_MIN_HASH_MB} max 524288"
+    )
     _println(f"option name Threads type spin default {options.threads} min 1 max 64")
     _println(f"option name LeafGather type spin default {options.leaf_gather} min 1 max 64")
     _println(f"option name UseVL type check default {'true' if options.use_vl else 'false'}")
@@ -154,6 +157,11 @@ def emit_handshake(options: EngineOptions) -> None:
 # stale bestmove against the next board — a cold CUDA-graph compile on
 # the first search is ~3-4s on its own.
 _JOIN_TIMEOUT_S = 30.0
+
+# Advertised (and now enforced) floor for the `Hash` UCI option, in MB. Keep this
+# in step with the `min` field `emit_handshake` prints — the two disagreeing is
+# exactly the defect this constant closes.
+_MIN_HASH_MB = 1024
 
 
 @dataclass
@@ -320,6 +328,10 @@ class Engine:
   # ``_handle_isready`` re-warms the configured path before ``readyok``
   # so the first real ``go`` never pays cold capture on the clock.
         self._warmup_dirty = False
+  # Times this process answered a `go` from the bestmove fallback instead of a
+  # searched tree. Surfaced as an `info string` on every increment so a match
+  # log carries the evidence; see the `bestmove_fallback_used` property.
+        self._bestmove_fallback_used = 0
         self._board = chess.Board()
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -414,7 +426,14 @@ class Engine:
         else:
             try:
                 start = chess.Board(cmd.fen)
-            except ValueError:
+            except ValueError as exc:
+  # Falling back to the start position is a silent wrong-position answer: the
+  # engine then returns a confidently-scored move for a board the caller never
+  # asked about. Say so — EPD/puzzle/blind-spot drivers feed arbitrary FENs.
+                _println(
+                    f"info string position: rejected FEN {cmd.fen!r} ({exc}); "
+                    "using the start position"
+                )
                 self._board = chess.Board()
                 self._pending_fen = None
                 self._pending_moves = []
@@ -425,11 +444,18 @@ class Engine:
         new_board = start.copy(stack=False)
         parsed: list[chess.Move] = []
         for uci in cmd.moves:
+  # A bad move truncates the game and the engine then searches a position n
+  # plies behind the real one, emitting a move that is very likely illegal
+  # there — a forfeit, delivered silently. Diagnose every truncation.
             try:
                 mv = chess.Move.from_uci(uci)
             except ValueError:
+                self._warn_moves_truncated(cmd.moves, parsed, uci, "not valid UCI")
                 break
             if mv not in new_board.legal_moves:
+                self._warn_moves_truncated(
+                    cmd.moves, parsed, uci, f"illegal in {new_board.fen()}",
+                )
                 break
             new_board.push(mv)
             parsed.append(mv)
@@ -440,6 +466,17 @@ class Engine:
         self._pending_moves = parsed
   # Any popped-ponder state from a prior `go ponder` is invalid now.
         self._popped_ponder_move = None
+
+    @staticmethod
+    def _warn_moves_truncated(
+        sent: tuple[str, ...], parsed: list[chess.Move], offender: str, why: str,
+    ) -> None:
+        """Report that ``position ... moves`` stopped early at ``offender``."""
+        _println(
+            f"info string position: ignored {len(sent) - len(parsed)} of "
+            f"{len(sent)} move(s) from {offender!r} onward ({why}); "
+            "searching the truncated position"
+        )
 
     def _sync_tree_root(self, target_moves: list[chess.Move]) -> None:
         """Descend (or reset) the worker's tree so its root matches
@@ -585,9 +622,22 @@ class Engine:
             return None
 
     def _set_hash(self, value: str) -> None:
-        n = self._parse_clamped_int(value, lo=1)
-        if n is None:
+        try:
+            requested = int(value)
+        except ValueError:
             return
+  # The handshake advertises `min 1024` but enforcement used to floor at 1, so a
+  # GUI's conventional `Hash 256` was accepted and then quietly crippled the
+  # engine: `advance_root` refuses cross-move reuse once the tree passes
+  # `max_tree_bytes // 2`, and the initial reserve alone is ~8.6 MB — so any
+  # Hash below ~17 MB kills reuse from move one and throttles every chunk.
+  # Advertisement and enforcement now agree, and a clamp is announced.
+        n = max(_MIN_HASH_MB, requested)
+        if n != requested:
+            _println(
+                f"info string Hash {requested} is below the advertised minimum "
+                f"{_MIN_HASH_MB}; using {n}"
+            )
         self._options.hash_mb = n
         self._worker.set_max_tree_mb(n)
 
@@ -1353,10 +1403,51 @@ class Engine:
                 is_ponder=is_ponder,
             )
             _println(f"info string search error: {exc!r}")
-            fallback = _legal_fallback_move(board, limits.searchmoves)
+            fallback, source = self._bestmove_fallback(board, limits.searchmoves)
+            self._bestmove_fallback_used += 1
+            _println(
+                f"info string bestmove_fallback_used={self._bestmove_fallback_used} "
+                f"source={source} move={fallback} exception={type(exc).__name__}"
+            )
             return SearchResult(
                 bestmove_uci=fallback, ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
             )
+
+    def _bestmove_fallback(
+        self, board: chess.Board, searchmoves: tuple[str, ...],
+    ) -> tuple[str, str]:
+        """``(uci, source)`` for a bestmove the search could not produce.
+
+        ``SearchWorker`` caches the root NN eval before the first chunk runs, so
+        on essentially every in-search failure the net's own prior over root
+        moves is already in memory and free to read. Prefer its argmax;
+        ``next(iter(board.legal_moves))`` is python-chess square order —
+        effectively a random move (the measured case hangs a knight), and it is
+        the terminal handler for a claimable-draw root, a walker raise, a
+        transient CUDA fault and an OOM alike.
+
+        The worker's answer is re-validated here rather than trusted: a fallback
+        that is illegal in the real position is a forfeit, which is strictly
+        worse than the random move it replaces.
+        """
+        try:
+            candidate = self._worker.root_policy_bestmove(board, searchmoves=searchmoves)
+        except Exception as exc:
+            _println(f"info string root-policy fallback unavailable: {exc!r}")
+            candidate = None
+        if isinstance(candidate, str) and _is_playable_fallback(board, candidate, searchmoves):
+            return candidate, "root_policy"
+        return _legal_fallback_move(board, searchmoves), "first_legal"
+
+    @property
+    def bestmove_fallback_used(self) -> int:
+        """How many times this process answered a `go` from the fallback path.
+
+        Monotonic for the life of the engine (a GUI plays many games in one
+        process), so it is a session total, not a per-game one. Zero is the only
+        healthy value; every increment is one move the search did not produce.
+        """
+        return self._bestmove_fallback_used
 
     def _emit_gil_profile(self, *, nodes: int, elapsed_s: float, is_ponder: bool) -> None:
         probe = self._gil_probe
@@ -1425,6 +1516,19 @@ class Engine:
                 _println("info string search stop timed out; thread still running")
             else:
                 self._search_thread = None
+
+
+def _is_playable_fallback(
+    board: chess.Board, uci: str, searchmoves: tuple[str, ...],
+) -> bool:
+    """True when ``uci`` is legal here and honours a ``searchmoves`` filter."""
+    try:
+        move = chess.Move.from_uci(uci)
+    except ValueError:
+        return False
+    if move not in board.legal_moves:
+        return False
+    return not searchmoves or uci in searchmoves
 
 
 def _legal_fallback_move(board: chess.Board, searchmoves: tuple[str, ...]) -> str:

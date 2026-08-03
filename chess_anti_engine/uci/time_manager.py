@@ -16,6 +16,10 @@ _MIN_DEADLINE_MS = 20
 # We never spend more than this fraction of remaining time on a single move,
 # regardless of increment or movestogo claims.
 _MAX_FRACTION_OF_REMAINING = 0.5
+# Ceiling for the LAST move of a `movestogo` allotment, where a fresh allotment
+# arrives immediately afterwards so there is nothing left to save for. Still
+# below 1.0 so a GUI clock skew / pipe latency cannot flag us on the handover.
+_LAST_MOVE_FRACTION_OF_REMAINING = 0.95
 # Lc0-style allocation: divide the (reserved) base over an AGGRESSIVE estimate of
 # the moves left, planning to deplete it by the hard middlegame, and rely on the
 # visit-margin abort to bank most of that budget back on the many easy/booked
@@ -155,7 +159,22 @@ def limits_from_go(
                 budget = time_budget_scale * (
                     usable / moves_left + _INCREMENT_SPEND_FRACTION * inc_v
                 )
-            ceiling = remaining * _MAX_FRACTION_OF_REMAINING
+  # The ceiling exists to stop a LONG-HORIZON estimate from dumping the clock
+  # into one move. `movestogo <= 1` is definitionally not that case: a fresh
+  # allotment arrives right after this move, so halving the budget here threw
+  # away half the thinking time on the most time-pressured move of a repeating
+  # control. Raise the ceiling for the last move of an allotment; the reserve
+  # and the move-overhead subtraction below still keep it off the flag.
+  # `> 0` matters: `movestogo 0` is a GUI saying "no repeating control", and the
+  # allocation above already ignores it in favour of the long-horizon pieces
+  # estimate — exactly the case the ceiling is FOR.
+            last_of_allotment = (
+                args.movestogo is not None and 0 < args.movestogo <= 1
+            )
+            ceiling = remaining * (
+                _LAST_MOVE_FRACTION_OF_REMAINING if last_of_allotment
+                else _MAX_FRACTION_OF_REMAINING
+            )
             deadline_ms = max(_MIN_DEADLINE_MS, int(min(budget, ceiling)))
 
   # Reserve time for UCI command + GUI overhead (bestmove emission, pipe
