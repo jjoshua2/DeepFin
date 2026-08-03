@@ -27675,3 +27675,135 @@ it.** Stating the impact so it cannot be read as outcome-shopping:
 
 The rule stands as corrected for the remaining `FE10` and seed-2/3 readouts, which
 had not been computed when this was written.
+
+### VERDICT — ARM FE (rehearsal x EMA): NO CELL PROMOTES. The exchange rate is a LOOP
+### INVARIANT at the verdict cell — but the LOW-DOSE EDGE broke the pattern.
+
+Pre-registered 9c5c9a681, estimator fixed 6a/dfed54f54, F-replication gap 6b/faf809288,
+signed-E correction 6c/eab182419. Reading is n=2 per dose; the 6b seed extension
+(`FE20_s2`, `FE20_s3`) was still running when this was written and can only revise §3.
+
+#### 1. The pre-registered promotion rule: FAIL, exactly as predicted before launch
+
+Primary cell **(0.20, ema2000)**, matched learning vs A, both seeds, both steps:
+
+| | gave up `inw` (bar 0.307) | `oow` (bar 0.638) | `era` (bar 0.394) |
+|---|---|---|---|
+| s0 @7040 | +0.955 | −0.370 ns | **−1.138 S** |
+| s1 @7040 | +1.342 | −0.478 ns | **−1.303 S** |
+| s0 @8448 | +1.319 | −0.561 ns | **−1.489 S** |
+| s1 @8448 | +1.195 | −0.166 ns | **−1.004 S** |
+
+`era` passes on all four. `oow` fails — no CI excludes 0, none reaches the bar.
+`inw` fails at **4.1x** its bar. **Stage 1 fails, so by the pre-registered
+gatekeeping the other 5 cells are DESCRIPTIVE ONLY and nothing promotes.**
+
+Across all 6 cells and all 5 raw arms, **not one clears the `oow` bar at both steps
+and both seeds**. The only two significant `oow` results in the wave are
+`FE20_s1_ema4000` (−0.644, its seed-mate is −0.453 ns) and `FE35_s1` raw at
+**+0.951 S — significantly WORSE**.
+
+#### 2. All six cells, matched learning @8448 (descriptive)
+
+| cell | `inw` cost | `oow` | `era` | E |
+|---|---|---|---|---|
+| (0.10, ema2000) | +1.027 | −0.330 ns | **−1.540 S** | 1.50 * |
+| (0.10, ema4000) | +2.097 | −0.038 ns | **−1.554 S** | 0.74 * |
+| **(0.20, ema2000)** | +1.257 | −0.363 ns | **−1.246 S** | **0.99** |
+| (0.20, ema4000) | +2.230 | −0.549 mixed | **−1.535 S** | 0.69 |
+| (0.35, ema2000) | +2.271 | −0.256 ns | **−1.032 S** | 0.45 |
+| (0.35, ema4000) | +3.083 | −0.296 ns | **−1.341 S** | 0.44 |
+
+`*` single seed, caveated per 6a, does not enter any verdict.
+
+**ema4000 is refuted as an upgrade over ema2000.** It was added to test whether
+longer smoothing keeps buying `oow` without proportionally more `inw` cost. It does
+not: at every dose it costs ~1 cp more learning for no reliable `oow` gain, and its
+E is lower at every dose. The 4000-step window is dead.
+
+#### 3. THE HEADLINE — E is loop-invariant at the verdict cell
+
+Pooled at 8,448, signed, ratio of sums:
+
+| | E | vs best solo (0.983) | |
+|---|---|---|---|
+| FE20 raw (= F20) | 0.983 | — | solo reference |
+| ema2000 solo (H2) | 0.539 | — | solo reference |
+| **(0.20, ema2000)** | **0.992** | **1.009** | **LOOP-INVARIANT** |
+
+**Stacking two mechanistically independent levers moved the price of era regret by
+1%.** The mechanism is visible in the difference-in-differences (within-run, 8448):
+
+| ruler | EMA with rehearsal | EMA alone | DiD |
+|---|---|---|---|
+| `oow` | −0.439 | −0.871 | **+0.432** |
+| `inw` | +0.403 | +1.004 | **−0.602** |
+| `era` | −0.398 | −0.480 | +0.082 |
+
+Rehearsal makes EMA's `inw` cost **60% cheaper** — the sub-additivity is real and
+significant — **and cuts its `oow` benefit by 50%**. The levers do not compose; they
+**partially substitute**, and the ratio survives untouched. That is a far stronger
+form of the invariance claim than any level comparison: the price held while the
+mechanism underneath it was substantially rearranged.
+
+Interaction hypotheses, both as predicted: **H-strong FALSE** (combined cost 1.257 >
+ema2000's solo 1.004); **H-weak sub-additivity TRUE** (1.257 < 1.858, ratio 0.676).
+
+#### 4. Dose-response: SATURATING by the letter, INVERTED in fact
+
+Rehearsal-only arms, matched learning @8448:
+
+| dose | era recovery | `inw` cost | E |
+|---|---|---|---|
+| **0.10** | **+1.039** | **+0.107** | n/a (gave up <0.30) |
+| 0.20 | +0.839 | +0.854 | 0.98 |
+| 0.35 | +0.614 | +1.430 | 0.43 |
+
+Both SATURATING clauses pass, so the pre-registered reading is SATURATING. **But the
+criterion understates what happened.** It was written expecting a rising-then-flat
+curve; the data falls monotonically — recovery **decreases** with dose (1.04 > 0.84 >
+0.61) while cost **rises** (0.11 < 0.85 < 1.43), and E orders strictly 1.50 > 0.99 >
+0.45. **0.35 is not merely dominated, it is actively harmful**: `FE35_s1` gave up
+1.66 cp of learning, recovered nothing on era (+0.029), and was significantly worse
+out-of-window (+0.951 S). More rehearsal is worse rehearsal, on every axis, monotonically.
+
+#### 5. THE ONE RESULT THAT DOES NOT FIT — and it is the most promising in the experiment
+
+**`FE10` raw (10% rehearsal, no EMA) is the first arm in this entire experiment to
+buy significant forgetting recovery essentially for free.**
+
+| | gave up `inw` (bar 0.307) | `oow` (bar 0.638) | `era` (bar 0.394) |
+|---|---|---|---|
+| @7040 | **+0.073 — INSIDE the bar** | −0.015 ns | **−1.253 S** |
+| @8448 | **+0.107 — INSIDE the bar** | −0.652 ns [−1.343, +0.053] | **−1.039 S** |
+
+It **passes the `inw` clause** — the clause every other arm in three waves has
+failed — and clears `era` at both steps. Its `oow` point estimate at 8,448 (−0.652)
+is the first in the experiment to exceed the 0.638 bar, though its CI still includes 0.
+
+It cannot promote, for reasons fixed before launch, not after: `FE10` was allocated
+one seed (I ranked it lowest priority) and the pre-registration states a single-seed
+arm can never satisfy seed agreement. Its E is `n/a` under 6a's own floor, because
+the denominator (0.107) is exactly the small-denominator case that floor exists to
+suppress. **Both guards fired correctly, and both now stand between us and the
+single most interesting number in the wave.** That is the design's fault, not the
+result's.
+
+The same edge shows in the cells: **(0.10, ema2000) is the only cell reading
+COMPOSE** (E 1.50, ratio 1.525) — single seed, caveated, excluded from the verdict,
+but pointing the same way as the raw arm.
+
+#### 6. What this closes and what it opens
+
+**Closed.** At doses 0.20 and 0.35 the exchange rate is a property of the LOOP, not
+of the lever: two independent mechanisms stack to a 1% change while their internals
+rearrange by 50-60%. Combined with the dead composition, optimizer and capacity
+families, the "regularize or average your way out at production dose" story is over.
+`ema4000` is dead. Rehearsal above ~0.2 is dead and at 0.35 is harmful.
+
+**Open, and this is the actionable output.** The invariance was established at the
+doses the wave sampled heavily and **broke at the dose it sampled once**. The
+low-dose edge — where the intervention barely perturbs training yet still recovers
+~1 cp of era — is the only place in three waves where the trade-off curve looks
+bent rather than slid along. It is n=1. It needs seeds before anyone believes it,
+including me.
