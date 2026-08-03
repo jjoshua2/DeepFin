@@ -4188,3 +4188,48 @@ def test_the_readout_help_names_the_rederivation_and_the_exit_code() -> None:
            / "scripts" / "gate_shadow_readout.py").read_text("utf-8")
     assert "--refresh-lag-seconds" in src
     assert "rederive_reference_from_shards" in src
+
+
+def test_the_loop_body_hands_the_controller_to_the_gating_phase() -> None:
+    """MUTATION: ``gate_hold=gate_hold`` -> ``gate_hold=None`` at the call site.
+
+    The controller's counters (``anchor_refresh_failures``,
+    ``fallback_missing``) are persisted by ``_run_net_gating``, which is the one
+    place ``gate_state.json`` is written. Passing ``None`` keeps every test
+    green -- the argument is required, so it cannot be forgotten, but it CAN be
+    satisfied with nothing -- while the counters silently go back to dying with
+    the process, which is audit G3-5 restored.
+
+    ``on_decision`` is also told the iteration, or ``gate_anchor_age_iters``
+    stays NaN forever and the AGE half of ``anchor_is_trustworthy`` becomes a
+    guard that cannot fire.
+    """
+    body = _train_trial_body()
+    phase = [
+        n for n in ast.walk(body)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        and n.func.id == "_run_training_and_gating"
+    ]
+    assert len(phase) == 1, phase
+    passed = {
+        kw.arg: ast.unparse(kw.value) for kw in phase[0].keywords if kw.arg
+    }
+    assert passed.get("gate_hold") == "gate_hold", passed
+
+    decision_call = _calls_on(body, "gate_hold", "on_decision")[0]
+    kwargs = {kw.arg: ast.unparse(kw.value) for kw in decision_call.keywords if kw.arg}
+    assert "iteration" in kwargs, ast.unparse(decision_call)
+    assert "iteration_idx" in kwargs["iteration"], kwargs
+
+    # ...and the controller is built AFTER the restore, because the stamp check
+    # needs the iteration this process is resuming at.
+    create = [
+        n for n in ast.walk(body)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "create"
+        and ast.unparse(n.func).endswith("GateHoldController.create")
+    ]
+    assert len(create) == 1, create
+    create_kwargs = {kw.arg: ast.unparse(kw.value) for kw in create[0].keywords if kw.arg}
+    assert "current_iteration" in create_kwargs, create_kwargs
+    assert "state" in create_kwargs, create_kwargs
