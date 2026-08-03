@@ -9,11 +9,13 @@ import time
 import uuid
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
 import torch
 
+from chess_anti_engine.broker_hang import HANG_ABORT_EXIT_CODE, BrokerHangWatchdog
 from chess_anti_engine.inference import (
     _MAX_CONSECUTIVE_BATCH_FAILURES,
     _MODE_DENSE_BF16,
@@ -25,6 +27,7 @@ from chess_anti_engine.inference import (
     LocalModelEvaluator,
     SlotBroker,
     SlotInferenceClient,
+    _idle_backoff,
     _InferenceSlot,
     _SlotLayout,
 )
@@ -36,6 +39,9 @@ def test_slot_inference_client_sends_dense_bf16_bits() -> None:
     slot_name = f"cae-bf16-{uuid.uuid4().hex}"
     layout = _SlotLayout.compute(8)
     shm = SharedMemory(name=slot_name, create=True, size=layout.total_bytes)
+    # Stand-in brokers must stamp the segment header the real broker stamps, or
+    # the client refuses to attach (audit I2).
+    _InferenceSlot(shm, layout, owns=False).write_protocol_header()
     done = threading.Event()
     x = np.arange(2 * 146 * 8 * 8, dtype=np.uint16).reshape(2, 146, 8, 8)
 
@@ -77,6 +83,9 @@ def test_slot_inference_client_sends_compact_legal_bf16_request() -> None:
     slot_name = f"cae-legal-bf16-{uuid.uuid4().hex}"
     layout = _SlotLayout.compute(8)
     shm = SharedMemory(name=slot_name, create=True, size=layout.total_bytes)
+    # Stand-in brokers must stamp the segment header the real broker stamps, or
+    # the client refuses to attach (audit I2).
+    _InferenceSlot(shm, layout, owns=False).write_protocol_header()
     done = threading.Event()
     x = np.arange(2 * 146 * 8 * 8, dtype=np.uint16).reshape(2, 146, 8, 8)
     legal_counts = np.array([2, 1], dtype=np.int32)
@@ -412,15 +421,11 @@ def test_slot_inference_broker_roundtrip(tmp_path: Path) -> None:
 
 def test_slot_inference_client_times_out_if_broker_never_responds() -> None:
     slot_name = f"cae-timeout-{uuid.uuid4().hex}"
-    shm = SharedMemory(name=slot_name, create=True, size=64 * 146 * 8 * 8 * 4 + 64 * 4672 * 4 + 64 * 3 * 4 + 8)
+    _timeout_layout = _SlotLayout.compute(64)
+    shm = SharedMemory(name=slot_name, create=True, size=_timeout_layout.total_bytes)
     try:
-        from chess_anti_engine.inference import (
-            _STATE_REQUEST,
-            _InferenceSlot,
-            _SlotLayout,
-        )
-
-        slot = _InferenceSlot(shm, _SlotLayout.compute(64), owns=False)
+        slot = _InferenceSlot(shm, _timeout_layout, owns=False)
+        slot.write_protocol_header()
         slot.state = _STATE_REQUEST
         client = SlotInferenceClient(slot_name=slot_name, max_batch=64, request_timeout_s=0.01)
         try:
@@ -616,6 +621,7 @@ def test_slot_inference_client_waits_for_slot_creation() -> None:
         try:
             layout = _SlotLayout.compute(8)
             slot = _InferenceSlot(shm, layout, owns=False)
+            slot.write_protocol_header()
             slot.state = 0
             deadline = time.monotonic() + 2.0
             while time.monotonic() < deadline:
@@ -649,6 +655,7 @@ def test_slot_inference_client_reconnects_after_slot_recreation() -> None:
     layout = _SlotLayout.compute(8)
     old_shm = SharedMemory(name=slot_name, create=True, size=layout.total_bytes)
     old_slot = _InferenceSlot(old_shm, layout, owns=False)
+    old_slot.write_protocol_header()
     old_slot.state = 0
     old_slot.batch_size = 0
 
@@ -665,6 +672,7 @@ def test_slot_inference_client_reconnects_after_slot_recreation() -> None:
                 new_shm = SharedMemory(name=slot_name, create=True, size=layout.total_bytes)
                 try:
                     new_slot = _InferenceSlot(new_shm, layout, owns=False)
+                    new_slot.write_protocol_header()
                     new_slot.state = 0
                     new_slot.batch_size = 0
                     restarted.set()
@@ -1070,8 +1078,10 @@ def test_process_batch_releases_slots_instead_of_dying_on_a_failing_batch(
         slot = broker._slots[0]
         _submit_compact_legal(slot, counts=[2, 2], flat=[0, 5, 7, 4671])
 
-        def _boom(ready: list[_InferenceSlot], *, mode: int) -> None:
-            del ready, mode
+        def _boom(
+            ready: list[_InferenceSlot], *, mode: int, request_ids: list[int],
+        ) -> None:
+            del ready, mode, request_ids
             raise ValueError("could not broadcast input array")
 
         broker._process_batch_mode = _boom
@@ -1094,8 +1104,10 @@ def test_process_batch_gives_up_after_persistent_failures(tmp_path: Path) -> Non
         slot = broker._slots[0]
         _submit_compact_legal(slot, counts=[2, 2], flat=[0, 5, 7, 4671])
 
-        def _boom(ready: list[_InferenceSlot], *, mode: int) -> None:
-            del ready, mode
+        def _boom(
+            ready: list[_InferenceSlot], *, mode: int, request_ids: list[int],
+        ) -> None:
+            del ready, mode, request_ids
             raise ValueError("dead cuda context")
 
         broker._process_batch_mode = _boom
@@ -1121,5 +1133,154 @@ def test_process_batch_resets_the_failure_counter_after_a_good_batch(
 
         assert slot.state == _STATE_RESPONSE
         assert broker._consecutive_batch_failures == 0
+    finally:
+        broker.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Hang-watchdog coverage over model load (audit I3) and the idle poll ladder
+# (audit I6). Both are broker-loop properties, so they live here rather than in
+# the torch-free tests/test_broker_hang.py.
+# ---------------------------------------------------------------------------
+
+
+def test_a_hang_inside_ensure_model_now_trips_the_watchdog(tmp_path: Path) -> None:
+    """_ensure_model used to run entirely outside the instrumented window.
+
+    torch.load, .to(device), the AOT load_constants loop and torch.compile all
+    happen in there, and they are the CUDA calls most likely to block forever on
+    a cold boot into a wedged WSL2-dxg bridge -- the exact scenario
+    broker_hang.py's docstring names. The watchdog started only after all of it
+    and was inert until the first SUCCESSFUL forward, so it could never fire.
+    """
+    broker = _compact_legal_broker(tmp_path, "hangload")
+    exits: list[int] = []
+    try:
+        wd = BrokerHangWatchdog(
+            threshold_s=0.05,
+            boot_threshold_s=0.05,
+            poll_interval_s=0.01,
+            exit_fn=exits.append,
+        )
+        broker._hang_watchdog = wd
+        wd.start()
+
+        wedged = threading.Event()
+
+        def _wedged_ensure_model() -> None:
+            wedged.set()
+            time.sleep(2.0)  # a wedged CUDA call: no exception, no return
+
+        broker._ensure_model = _wedged_ensure_model  # type: ignore[method-assign]
+        slot = broker._slots[0]
+        _submit_compact_legal(slot, counts=[2, 2], flat=[0, 5, 7, 4671])
+
+        t = threading.Thread(
+            target=lambda: broker._process_batch([slot]), daemon=True,
+        )
+        t.start()
+        assert wedged.wait(timeout=2.0)
+
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and not exits:
+            time.sleep(0.02)
+        assert exits == [HANG_ABORT_EXIT_CODE], (
+            "a hang inside _ensure_model must reach the watchdog"
+        )
+        assert not wd.armed, "a model load completing does not prove the context is alive"
+        wd.stop()
+        t.join(timeout=3.0)
+    finally:
+        broker.shutdown()
+
+
+def test_idle_backoff_ladder_keeps_the_loaded_path_hot() -> None:
+    """Rung 0 must be the pre-fix behaviour verbatim (audit I6).
+
+    The gather-window batching regime is load-bearing, so the fix may only
+    change what happens once the whole fleet has gone quiet.
+    """
+    assert _idle_backoff(0.0) == (200, 0.00002)
+    assert _idle_backoff(0.004) == (200, 0.00002)
+    # Deeper rungs sleep longer and poll less, and are monotone in both.
+    prev_polls, prev_sleep = _idle_backoff(0.0)
+    for idle_s in (0.006, 0.06, 0.6, 60.0):
+        polls, sleep_s = _idle_backoff(idle_s)
+        assert sleep_s >= prev_sleep
+        assert polls <= prev_polls
+        prev_polls, prev_sleep = polls, sleep_s
+    assert _idle_backoff(1e9)[1] <= 0.01, "idle sleep must stay bounded"
+
+
+def test_wait_for_ready_slots_returns_immediately_and_resets_the_ladder(
+    tmp_path: Path,
+) -> None:
+    """A request arriving after a drought must not pay the deep-rung sleep."""
+    broker = _compact_legal_broker(tmp_path, "idlereset")
+    try:
+        # Simulate a long drought, then an arrival.
+        broker._idle_since = time.monotonic() - 60.0
+        assert _idle_backoff(60.0)[1] > 0.00002  # we really are deep in the ladder
+        slot = broker._slots[0]
+        slot.state = _STATE_REQUEST
+
+        t0 = time.perf_counter()
+        assert broker._wait_for_ready_slots() is True
+        assert time.perf_counter() - t0 < 0.05
+        assert broker._idle_since is None, "an arrival must reset the ladder to rung 0"
+
+        slot.state = _STATE_IDLE
+        assert broker._wait_for_ready_slots() is False
+        assert broker._idle_since is not None
+    finally:
+        broker.shutdown()
+
+
+def test_broker_keeps_the_watchdog_token_across_a_forward(tmp_path: Path) -> None:
+    """The PRODUCTION call sites must pass the token, not just the API support it.
+
+    `tests/test_broker_hang.py::test_oldest_inflight_is_actually_the_oldest`
+    passes tokens explicitly, so it pins the watchdog API and says nothing about
+    the broker. With the token dropped, `mark_forward_done` falls back to
+    popping the OLDEST forward -- a completing newer batch deletes a wedged
+    older one's start time and the critical log names the wrong batch. Serial
+    today; this is the trap audit I3-H2 describes, pinned at the caller.
+    """
+    broker = _compact_legal_broker(tmp_path, "hangtoken")
+    try:
+        starts: list[int] = []
+        dones: list[int | None] = []
+        real = broker._hang_watchdog
+
+        class _RecordingWatchdog:
+            def mark_forward_start(self, batch_size: int) -> int:
+                token = real.mark_forward_start(batch_size)
+                starts.append(token)
+                return token
+
+            def mark_forward_done(self, *, success: bool = True, token: int | None = None) -> None:
+                dones.append(token)
+                real.mark_forward_done(success=success, token=token)
+
+            def stage(self, label: str):
+                return real.stage(label)
+
+            def __getattr__(self, name: str):
+                return getattr(real, name)
+
+        # Duck-typed on purpose (see the __getattr__ passthrough): the point is
+        # to observe the token, not to be a BrokerHangWatchdog.
+        broker._hang_watchdog = cast(
+            "BrokerHangWatchdog", cast("object", _RecordingWatchdog()),
+        )
+        slot = broker._slots[0]
+        _submit_compact_legal(slot, counts=[2, 2], flat=[0, 5, 7, 4671])
+        broker._process_batch([slot])
+
+        assert starts, "no forward was marked"
+        assert dones == starts, (
+            f"mark_forward_done did not receive mark_forward_start's token "
+            f"(started {starts}, completed {dones})"
+        )
     finally:
         broker.shutdown()
