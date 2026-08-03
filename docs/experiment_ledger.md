@@ -23160,6 +23160,629 @@ B6(a) scope correction further up was made BEFORE review, by me, and is
 unrelated to these findings. Nothing measured changed — no number in this entry
 was re-derived, and none moved.
 
+## DETECTOR 2026-08-03 — the SF label's VALUE half gets an instrument (audit wave 3, SELFPLAY_AUDIT P2), and the health line stops counting failures as labels (P9)
+
+**Not an experiment. No training-affecting knob moves.** Four new observation
+columns, one new live-log field, one corrected denominator. `git diff origin/main`
+touches no config, no loss weight and no target. Recorded here because the ledger
+is where a reading's provenance lives and because two of the numbers below are
+baselines that later readers will quote.
+
+### The defect (P2)
+
+`sf_wdl` carries realized `sf_wdl_frac` **0.45** of the trained value target
+(`docs/model_heads.md`; realized 0.45 in 478/478 iterations, floor-pinned).
+Until today it had **no detector in either direction.** The always-on desync
+tripwire — `_report_sf_label_health`'s `no_legal_pv` live, and
+`TrainMetrics.sf_labelled_no_multipv_frac` in-loop — reads the presence of
+`sf_multipv_raw`, which is the POLICY half of the label block.
+`_attach_sf_target_to_record:773` attaches `sf_wdl` from `res.cp`
+**unconditionally**, before and independently of that stamp.
+
+Measured on the 122 shards the 2026-08-01 quarantine removed (226,141 rows,
+**209,259** labelled, i.e. carrying `has_sf_wdl` — the policy detector's own
+denominator): of the **43,413** rows the policy tripwire flagged, **43,413
+(0.9999 of the 43,417 that carry `sf_label_meta`) still carried
+`has_sf_wdl = 1`**, and **0 of them were malformed.**
+
+### What the detector sees
+
+**`sf_eval_pv_orphan_frac` (the one with power).** A labelled row is ORPHANED
+when the record-level SF eval that became its `sf_wdl` does not match the top
+surviving MultiPV line. On a healthy row those two stored numbers are the same
+number **by construction**, not by empirical agreement: `res.cp`/`res.mate` are
+`_SearchInfoAccumulator.cp_pv1`/`mate_pv1` (`stockfish/uci.py:169-179, 195-196`),
+and the same accumulator files the rank-1 line into `res.pvs[0]`. They differ
+when rank 1's line was dropped by `_collect_sparse_pv_rows` — i.e. the score
+that became the value label belongs to a move that is not playable in the
+queried position.
+
+⚑ **The prose above is stronger than the code enforces, so state the gap.** The
+drop test is `a < 0 or a not in legal_set`, so UNMAPPABLE is a second route
+beside illegal. And `cp_pv1` is updated by ANY `multipv 1` line carrying a
+score while `pvs[1]` is written only by lines that also carry a `pv` token
+(`uci.py:162-179`), so a scored rank-1 line with no PV — or no rank-1 PV line
+at all, leaving `pvs[0]` as rank 2 — would split the pair with no drop
+involved. Real Stockfish ships `pv` on every scored MultiPV line and this was
+**never observed**: 0 orphans over the 474,278 labelled rows of the pre-episode
+range. Unobserved, not impossible.
+
+⚑ **Its population is DISJOINT from the policy detector's numerator.** That one
+counts rows with NO MultiPV block; this one is only computable on rows that HAVE
+one. It is the first instrument that looks INSIDE the set the policy detector
+passes — the ~41 % desync pass-through `sf_multipv_presence_counts`' docstring
+has priced since PR #302 and nothing measured.
+
+⚑ **THE TABLE BELOW WAS CORRECTED IN PLACE — see "Corrected numbers" at the
+end of this entry.** Every rate here is now produced by the SHIPPED
+`sf_eval_pv_orphan_flags`, over `has_sf_wdl` rows.
+
+| population | labelled | policy `no_pv` | value `orphan` / `checked` |
+|---|---|---|---|
+| 122 quarantined shards | 209,259 | 43,413 → 0.207461 | 19,468 / 165,846 → **0.117386** |
+| post-quarantine window | 1,264,058 | 252 → 0.000199 | 210 / 1,263,806 → 0.000166 |
+| its 640 policy-clean shards | 1,128,248 | 0 → 0.000000 | 34 / 1,128,248 → 3.0e-5 |
+| pre-episode ids 33118:33387 | 474,278 | 0 → **0.000000** | 0 / 474,278 → **0.000000** |
+
+Combined with `no_legal_pv` it flags **62,881 of 209,259 labelled rows =
+0.300494** on the quarantined set against **0.207461** for the policy half alone
+— **+44.8 % more rows detected**, and **~85 %** of the ~0.352 true poisoned
+share the module's own ~0.59 pass-through calibration implies, against ~59 %
+before. The two counts are disjoint by construction AND observed disjoint
+(intersection exactly 0), which is what licenses adding them. That the two
+independent routes agree on ~0.59 is a check on the calibration, not a new
+estimate of it.
+
+**`sf_wdl_degenerate_frac`.** `sf_wdl` present but not a usable distribution
+(non-finite / out of [0,1] / not summing to 1 / exactly uniform). Reported
+because it is the check the audit named, and its verdict is **it has no power
+against desync whatsoever**: exactly 0 rows on the quarantined shards AND
+exactly 0 on the post-quarantine window, 1.47 M rows in total. A desynced engine
+returns a genuine search of another position, so its cp is an ordinary number
+and the logistic maps it to an ordinary distribution. **The label is well-formed
+and wrong.** Kept as a producer/parameter tripwire with a floor proven over
+1.47 M rows; do not read a 0.0 here as evidence about desync.
+
+**`sf_wdl_orphaned_frac`.** The blind spot itself, counted: policy-flagged rows
+carrying a well-formed value label. A near-twin of `sf_labelled_no_multipv_frac`
+by design (0.9999 on the quarantined set). Its value is that the audit's claim
+becomes machine-checked instead of documented — equality means every flagged row
+carries an unmarked value label, and a divergence is worth knowing the moment it
+appears. **Never sum it with the policy rate; they count the same rows.**
+
+### The measured clean baseline, and its provenance
+
+**Floor: exactly 0.000000, and structurally so** for the reason in the second
+paragraph above. The two numbers a later reader should quote:
+
+* **`sf_eval_pv_orphan_frac` = 0.000000 exactly**, over **270 shards /
+  475,713 rows (474,278 labelled)** of the **pre-episode range 33118:33387** —
+  every id strictly below the first quarantined id (33388). Read **through the
+  production path** (`scripts/sf_no_multipv_probe.py`, shard →
+  `_prepare_host_arrays` → collate → `compute_loss` → `TrainMetrics`), not off
+  a side scan. On the live 4096-row report window this is 115/115 windows at
+  exactly 0.
+* **3.0e-5** over the **640 policy-clean post-quarantine shards** (1,136,262
+  rows, **1,128,248 labelled**) — **34 rows in 25 shards, and this is RESIDUE,
+  not a background.**
+
+⚑ **PROVENANCE, STATED BECAUSE THE LAST DETECTOR'S BASELINE WAS CONTAMINATED**
+(PR #304's "clean 0.0008"). The 3.0e-5 is not quoted as the floor, and the
+0.000000 is derived from shards written BEFORE the episode rather than from a
+set selected by the policy gate — which is the mistake #304 had to retract.
+Two independent arguments that the 34 rows are burst-edge residue:
+
+* **Position.** All 25 flagged shard ids (33461–33713) lie inside the episode's
+  id span; the pre-episode 270 shards contain zero. Distance to the nearest
+  quarantined id: observed median **25** against **49.7 ± 15.0** for a uniform
+  draw of 25 from the same policy-clean pool, 2000 draws, **p = 0.0145**.
+  (An independent reviewer's re-run at another seed reads 50.4 ± 14.8,
+  p = 0.0155 — the same statistic, and the seed sensitivity is the honest
+  width of this leg.)
+* **Direction.** **34 of 34** run in the eval-better-than-best-surviving-line
+  direction the dropped-rank-1 mechanism predicts. A benign stale-score artifact
+  would be sign-symmetric; one-sided 34/34 is p = 2⁻³⁴. Across the WHOLE
+  post-quarantine arm the same test reads **208 better / 0 worse** of 210
+  orphans (the 2 remainder are mate-vs-mate pairs that tie under the
+  effective-cp proxy, not counter-examples).
+
+The p = 0.0145 alone would be weak. The structural argument is the load-bearing
+one and the two statistics agree with it.
+
+### What it structurally CANNOT see — stated, because P2 exists precisely because the last detector's blind spot was not
+
+1. **A desynced search whose rank-1 move is coincidentally legal here** keeps a
+   matching pair and passes. Same coincidental-legality escape the policy half
+   has; this does not remove it, it narrows it. Note also that the drop test is
+   `a < 0 or a not in legal_set`, so UNMAPPABLE is a second route beside
+   illegal, and a scored rank-1 line that carried no `pv` token would split the
+   pair with no drop at all — never observed over 474,278 clean labelled rows,
+   but unobserved is not impossible.
+2. **A (cp, mate) TIE between rank 1 and the top surviving line** passes. The
+   19,468 flagged rows are 0.0930 of the quarantined labelled rows against a
+   pass-through share of ~0.144, so the detector catches **~65 %** of the
+   population it can see.
+3. **Rows with no MultiPV block at all are not counted here.** They are the
+   policy detector's numerator. The two rates must be read together and never
+   summed onto a shared denominator.
+4. **It says nothing about whether the eval was RIGHT** — only about whether its
+   own PV survived. A correctly-attached but badly-searched label is invisible
+   to it, as it is to everything else in the loop.
+5. **`sf_wdl_degenerate_frac` is not a desync detector** (see above), and the
+   `_emit_sf_refute_opp_record` site reports `eval_pv_checked = 0`, i.e.
+   UNMEASURED, because it stamps no sparse block. Inert in production
+   (`sf_refute_record_opp_rows` false); if that row type ever ships it needs its
+   own instrumentation, not a borrowed one.
+6. **The offline quarantine GATE is unchanged.** `eval/value_optimism.py` gains
+   no axis in this PR and `SF_MULTIPV_MISS_MAX` does not move. Decision, not a
+   deferral: adding a third gate axis changes which shards get quarantined,
+   which is data-affecting and needs its own pre-registered readout. The numbers
+   above are banked here so that change can be written without re-measuring.
+7. **The RATE alert in `scripts/loop_health.py` is NOT armed**, only the
+   BLINDNESS alert. Same reason as the policy twin: with 34 residue rows still
+   in the window the rate fires on arrival and gets muted. Promotion trigger,
+   train row only: arm it once a live row reads `sf_eval_pv_orphan_frac == 0.0`
+   with `sf_eval_pv_checked_frac` at its production level.
+
+   ⚑ The BLINDNESS alert IS armed on **both arms** — train and holdout —
+   matching the policy half. First draft armed only the train arm while the
+   docstring claimed "same rule", and the `test_sf_eval_pv_*` columns shipped
+   into `_TEST_METRIC_KEYS` read by nothing. Decided (not deferred): **arm the
+   holdout arm**, because the ruler's own value labels being detached is a live
+   failure mode — the frozen holdout is already 10.13 % contaminated on the
+   POLICY half, found only by re-gating offline long after the numbers were
+   published — and because a published-but-unread value column is the P2
+   asymmetry reproduced one layer up, in the thing that reads the columns.
+   `test_both_halves_of_the_blindness_alert_have_both_arms` asserts all four.
+
+### Threshold
+
+`_SF_EVAL_PV_ORPHAN_WARN_RATE = 0.01`, the SAME bar as the policy half, so the
+two halves of one label stay comparable on one instrument. Calibrated on the
+live 4096-label report window:
+
+| arm | windows | zero-windows | median | max |
+|---|---|---|---|---|
+| policy-clean post-quarantine | 275 | 257 | 0.000000 | **0.001465** |
+| 122 quarantined shards | 51 | 0 | **0.102205** | 0.726198 |
+
+6.8× headroom under the bar, 10× margin over it, 49 of 51 poisoned windows fire.
+⚑ **2 of the 51 read BELOW the bar.** This is a SECOND view, not a superset of
+the policy one.
+
+### P9 — the health line counted failures as labels
+
+`_report_sf_label_health` incremented `labelled` on **every** call, and both
+failure sites (`poll_async_sf_labels:1037`, `flush_async_sf_labels_for_records:1075`)
+call it with `failed=1` on a path where no row was labelled. So
+`no_legal_pv/labelled` and `bestmove_illegal/labelled` were damped by
+`F/(L+F)` — the third term of the very rule they feed. Fixed: `labelled` counts
+labels; a new `calls` counter drives the report window, so a window of pure
+failures still emits a line instead of going silent.
+
+**EFFECTIVE STRINGENCY IS UNCHANGED, AND NO THRESHOLD WAS RETUNED.** The two
+denominators differ only in windows with `failed > 0`, and `failed > 0` is an
+unconditional term of `unhealthy` — so every window whose rate the fix moves was
+already WARNING under both. The escalation VERDICT cannot have changed. What
+changed is the number a human reads. This is asserted, not argued:
+`test_the_corrected_denominator_cannot_change_the_escalation_verdict` fails the
+moment a later edit drops `failed > 0` from the rule.
+
+⚑ Two existing tests were **inverted** in the same commit. They asserted
+`labelled == 1` after a failure, i.e. they pinned the P9 dilution as intended
+behaviour. Anyone bisecting past this commit should expect that flip.
+
+### P9 follow-up (task #99): the two `failed=1` call sites
+
+**Verified pinned.** `test_a_swallowed_poll_failure_reaches_the_health_counter`
+and `test_a_swallowed_finalize_failure_reaches_the_health_counter` both assert
+on the COUNTER and not on the returned `failed` local, which is the distinction
+that makes them bite. No new pinning was needed; both were updated for the
+corrected denominator.
+
+### Verification
+
+* **Positive/negative control through the PRODUCTION path**, all 8 checks PASS
+  (`scripts/sf_no_multipv_probe.py`, now covering both halves):
+
+```
+poisoned  shards= 122 rows=   226141  sf_labelled_no_multipv_frac=0.207461  sf_multipv_checked_frac=0.925347  sf_eval_pv_orphan_frac=0.117386  sf_eval_pv_checked_frac=0.733374
+clean     shards= 270 rows=   475713  sf_labelled_no_multipv_frac=0.000000  sf_multipv_checked_frac=0.996983  sf_eval_pv_orphan_frac=0.000000  sf_eval_pv_checked_frac=0.996983
+
+[PASS] positive control fires: 0.207461 in [0.19, 0.23]
+[PASS] negative control is EXACTLY zero: 0.0 == 0.0
+[PASS] poisoned arm was actually inspected: checked 0.925347 > 0.5
+[PASS] clean arm was actually inspected: checked 0.996983 > 0.5
+[PASS] VALUE-half positive control fires: 0.117386 in [0.1, 0.14]
+[PASS] VALUE-half negative control is near zero: 0.000000 <= 0.0005
+[PASS] VALUE-half poisoned arm was actually inspected: orphan_checked 0.733374 > 0.5
+[PASS] VALUE-half clean arm was actually inspected: orphan_checked 0.996983 > 0.5
+```
+
+  `sf_eval_pv_checked_frac` reads 0.733 on the poisoned arm and 0.997 on the
+  clean one, and that gap is the detector working: the no-PV rows fall out of
+  the value denominator by construction.
+
+* **The negative control is shipped as a test**, both directions:
+  `test_a_pairing_PRESERVING_permutation_leaves_the_clean_rate_at_zero` (reorder
+  whole rows → exactly 0, so the detector is not reading row order) and
+  `test_a_pairing_BREAKING_shuffle_makes_the_clean_arm_fire` (shuffle the evals
+  against the PV blocks → flags exactly the rows that moved). Both over 5 seeds.
+  Fixtures are verbatim 48-row excerpts of `shard_033949.zarr` (quarantined) and
+  `shard_033130.zarr` (pre-episode), copied into the test rather than read from
+  a live path.
+
+* **Mutations, all KILLED:** (M1) always increment `labelled` → 5 tests fail;
+  (M2) orphan predicate can never fire → 9 fail; (M3) derive the flags AFTER the
+  `sf_multipv_raw` prune → `test_the_column_reaches_TrainMetrics_through_the_production_path[False]`
+  fails, which is the "gated behind a flag that is off in production" defect
+  reproduced deliberately; (M4) divide the orphan rate by `labelled` → the
+  dilution test fails; (M5) well-formedness always true → 2 fail.
+
+* `./scripts/lint.sh` with **no arguments**: `EXIT=0`, ruff `All checks passed`,
+  basedpyright `0 errors, 0 warnings, 0 notes`, vulture clean, `lint: OK`.
+
+* Tests green: `test_sf_value_half_detector.py` (new, 22), plus
+  `test_stockfish_uci_desync.py`, `test_sf_no_multipv_metric.py`,
+  `test_stockfish_label_gating.py`, `test_sparse_multipv_labels.py`,
+  `test_quarantine_desync_shards.py`, `test_compute_loss.py`, `test_losses.py`,
+  `test_phase_loss_buckets.py`, `test_wdl_loss_reporting.py`,
+  `test_trainable_report.py`, `test_report_counters.py`,
+  `test_replay_field_defaults.py`, `test_replay_shard_validation.py`,
+  `test_replay_disk_buffer.py`, `test_selfplay_sf_wdl_pov.py`,
+  `test_selfplay_result_labeling.py`, `test_selfplay_label_overlap.py`,
+  `test_sf_p0_teacher_metrics.py`, `test_loop_health.py`.
+
+### Cost
+
+Two (B,) float32 vectors added to the H2D payload — **4 KB at batch_size 512,
+0.03 % of the `x` tensor**. They are derived on the host in
+`_prepare_host_arrays` BEFORE the payload prune, because neither input reaches
+the GPU in production: `sf_multipv_raw` is pruned when `sf_policy_sparse_ce` is
+off (the default, and in no config file) and `sf_label_meta` is in no collate
+spec at all. Computing them after the prune is exactly how this column would
+have become another `sf_rebuild_policy_frac`, and M3 above is that mutation.
+
+**Readout obligation.** Training is PAUSED, so none of these columns has a live
+reading yet. On resume, the first `progress.csv` row is the check: expect
+`sf_eval_pv_checked_frac` near the SF-labelled share of the batch and
+`sf_eval_pv_orphan_frac` at or near 0. **A zero on the orphan column with a zero
+on the checked column is UNMEASURED and must not be recorded as clean.**
+
+### ⚑⚑ CORRECTED NUMBERS (amended in place before merge, 2026-08-03)
+
+**This entry's calibration table originally quoted a scan that is NOT the
+predicate this PR ships.** An independent review of PR #326 caught it. The entry
+above is amended in place rather than appended-to because it had not merged yet
+and a ledger table that states two different rulers three screens apart is worse
+than one that states the right one — but the amendment is disclosed here rather
+than made silently, per the #324 precedent.
+
+**What was wrong, and why it matters.** The entry says its numbers are banked
+"so that change can be written without re-measuring", and scope item 6 defers
+the third quarantine-gate axis *on their strength*. A follow-up would have
+pre-registered `SF_EVAL_PV_ORPHAN_MAX` against a ruler that does not exist —
+the `A RULER CHANGE MUST INVALIDATE ITS RECORDS` shape, and the same shape as
+PR #304's retracted "clean 0.0008" that this very entry was written to avoid.
+
+**Two distinct causes, both found and reproduced, not guessed at:**
+
+1. **Mate-scored rows were excluded from BOTH numerator and denominator.** The
+   scratch scan carried `valid = (r0_idx >= 0) & (m_cp != SF_CP_SENTINEL) &
+   (r0_cp != SF_CP_SENTINEL)`. On the quarantined shards that dropped **14,568**
+   mate-scored rows from the denominator (165,846 → 151,278) and hid **1,448**
+   genuine orphans from the numerator (19,468 → 18,020) — the sentinel-vs-
+   non-sentinel pairs, i.e. exactly the rows where a dropped rank 1 replaced a
+   mate score with a cp score or the reverse. `18,020 / 151,278 = 0.119118`
+   reproduces the banked figure to all six digits; the shipped predicate, which
+   compares the (cp, mate) PAIR over every checked row, gives
+   `19,468 / 165,846 = 0.117386`.
+2. **"Labelled" meant `has_sf_label_meta`, not `has_sf_wdl`.** 4 quarantined
+   rows carry the meta block without a value label, so the policy rate read
+   `43,417 / 209,263 = 0.207476` instead of the detector's own denominator
+   `43,413 / 209,259 = 0.207461`.
+
+**Everything downstream of those two:**
+
+| quantity | was | is (shipped predicate) |
+|---|---|---|
+| quarantined orphan rate | 0.119118 | **0.117386** |
+| quarantined policy `no_pv` | 0.207476 | **0.207461** |
+| quarantined labelled | 209,263 | **209,259** |
+| combined detection | 0.2936 / +41.5 % | **0.300494 / +44.8 %** |
+| share of true poisoned caught | ~83 % | **~85 %** |
+| post-quarantine window orphan | 0.000176 | **0.000166** |
+| policy-clean residue | 33 rows, 3.2e-5 | **34 rows, 3.0e-5** |
+| residue sign test | 33/33, p = 2⁻³³ | **34/34, p = 2⁻³⁴** |
+| pass-through share caught | "roughly two thirds" | **~65 %** |
+
+**Unchanged, and re-derived rather than assumed:** the 4096-row report-window
+calibration (`policy-clean max 0.001465`, 257/275 exactly zero; quarantined
+median 0.102205, 49/51 fire) — that scan already compared the pair without the
+sentinel filter, so it was the shipped semantics all along. Re-run with the
+shipped function to confirm, and it added a clean data point: **115/115
+pre-episode windows read exactly 0.** The threshold does not move; `[0.10, 0.14]`
+still contains 0.117386, so the probe's pre-registered band does not move either.
+The residue clustering (25 shards, ids 33461–33713, median distance 25,
+p = 0.0145) is unchanged.
+
+**Which run produced which table, so the next reader can tell them apart.** The
+corrected table is `sf_eval_pv_orphan_flags` imported and applied directly to
+the shard arrays, cross-checked against `scripts/sf_no_multipv_probe.py` driving
+the full production path, and independently against a reviewer's from-scratch
+scan that imports no project code (agreement to the row: 19,468 / 165,846 /
+43,413 / 0 intersection). The superseded numbers came from
+`scratchpad/study_head_agreement.py`, which was exploratory and is not shipped.
+
+**The general lesson, which is the reusable part.** The PR's own verification
+block printed `sf_eval_pv_orphan_frac=0.117386` two screens below a table
+asserting 0.119118 and the author did not notice, because the exploratory scan
+came first and the production reading was read as confirmation of it rather than
+as a comparison against it. **A number produced before the instrument exists is
+not a baseline for that instrument.** Re-derive every banked figure from the
+shipped code path once it exists, and diff it against the exploratory one
+deliberately.
+
+### ⚑⚑ THE HOLDOUT RULER IDENTITY MOVES WITH THIS PR (amended in place, round-2 review)
+
+Round-2 review of PR #326 found CI red on `tests/test_holdout_ruler_identity.py
+::test_the_production_ruler_id_is_pinned`. Round 1 missed it because that suite
+was not in the set I ran — the pin exists exactly so this cannot merge silently,
+and it worked.
+
+**Why it moved.** The three lines that derive `sf_eval_pv_orphan` /
+`sf_eval_pv_checked` live in `Trainer._prepare_host_arrays`, which is one of the
+19 frames `eval_ruler_id_for` digests, and it is in BOTH the full-pass and the
+sampled `measured_by` lists. So both ids move:
+
+```
+full_pass  025b6ef8e537ffcb -> 44755941fd0bf0c8
+sampled    408bcad98fb150b4 -> bbae91591858d35c
+```
+
+**The MEASUREMENT is neutral, and this is measured, not argued.** The two new
+arrays have exactly one consumer, `losses.sf_eval_pv_orphan_counts`; its sums
+leave `compute_loss` as `sf_eval_pv_orphan_rows` / `sf_eval_pv_checked_rows` and
+are mapped by `_RATIO_METRIC_FIELDS` onto two observation fields. Nothing enters
+`total`, so nothing enters `loss` or `test_loss`. Control: a production full
+pass over `shard_033130.zarr`, run twice — as shipped, and with the three lines
+patched out (`main`'s behaviour) — comparing all **87** scalar `TrainMetrics`
+fields. **`loss` bit-identical at 7.238113220214844**, and the only field that
+differs is `sf_eval_pv_checked_frac` (0.0 → 0.9975), i.e. the new instrument
+coming alive. This is the sixth declared false positive of the pin and the first
+one with a numeric control attached rather than a source-level argument.
+
+⚑ **OPERATOR-VISIBLE AT THE NEXT RESTART.** `tune/trainable.py:399-409` sees the
+mismatch, bumps `holdout_generation`, and `_update_best_model` takes its
+ruler-changed branch: the running trial **hands over its best-model record
+once**, adopting the current loss instead of comparing to it. Expected, not a
+defect. Restart-gated — a running process keeps hashing the module source it
+loaded, so nothing happens until the restart that loads this checkout.
+
+⚑ **Per the standing rule (`A RULER CHANGE MUST INVALIDATE ITS RECORDS`):
+holdout-series records are NOT comparable across this boundary.** `test_loss`
+before and after the deploying restart are measurements by two ids. The
+neutrality control above says the numbers should in fact agree; that is a
+prediction the next restart can check, not a licence to splice the series.
+
+⚑ Round 2 also relayed a `sampled` id that did not reproduce
+(`c2fe2306f2e41035`). Both constants here were re-derived from a **pristine
+checkout of the pushed commit** and confirmed by running the suite green;
+`bbae91591858d35c` is what `Trainer.eval_ruler_id_for(batch_size=512, steps=5,
+mirror_prob=0.0, full_pass=False)` returns, which is the exact call the pin
+asserts. Pinning an unverified constant is the same class of error as banking an
+unverified calibration.
+
+### The instrument's first catch: the FROZEN HOLDOUT is contaminated on the VALUE half too
+
+Found by the round-2 reviewer, re-measured here independently with the shipped
+`sf_eval_pv_orphan_flags` on `checkpoint_000478/holdout.npz`:
+
+| | value | of |
+|---|---|---|
+| labelled (`has_sf_wdl`) | 1,915 | 2,000 rows |
+| policy `no_pv` (already known) | 194 | 0.101305 |
+| **value orphan** | **86 / 1,721 checked** | **0.049971** |
+| intersection of the two | **0** | disjoint, as designed |
+| union | **280** | **0.146214 of labelled** |
+
+The value half reads **5× the 0.01 bar**, and because the two sets are disjoint
+the ruler has **14.6 % of its labelled rows detached on one half or the other** —
+which coheres with the standing 14.1 % contamination figure for the holdout pool
+rather than duplicating it.
+
+**What this changes.** The known statement was "the frozen holdout is 10.13 %
+contaminated on the policy half". It is now: **the frozen holdout is 14.6 %
+contaminated across both halves, and the extra 5.0 % is on `sf_wdl` — the half
+that carries 0.45 of the value target.** Every `test_*` value-derived column on
+the current holdout is scored against a set with that much detached labelling.
+This does not move any verdict in this entry; it raises the priority of re-cutting
+the holdout from post-quarantine shards, which was already the stated fix for the
+policy half and is now the fix for both. Recorded here rather than as a separate
+entry because the measurement is this PR's own instrument, on its first use.
+#### WAVE-4 PR G — the polar-convergence INSTRUMENT (M4-1 / audit I3), plus M4-2 and M4-3
+
+**Not training-affecting.** No optimizer numerics change: `aurora_polar_steps`,
+the Polar Express coefficients, `aurora_polar_safety`, the normalisation and the
+`pp_*` loop are untouched. This PR only observes, and adds one guard on the
+holdout merge. The A8 A/B decides the step count; this is the ruler it reads.
+
+**The instrument.** `train/aurora.py::polar_convergence(update)` returns
+`(sv_ratio, orth_err)` for one applied Aurora update:
+`sv_ratio = sigma_min/sigma_max` and `orth_err = ||QQ^T - I||_F / sqrt(n)` on the
+same matrix rescaled to unit spectral norm and oriented wide. These are exactly
+Addendum II B3's `full` and `orth` columns. Both are invariant to a positive
+rescale, so the trailing `sqrt(rows/cols)` and any `aurora_uw_floor` scaling do
+not move them — "measured on the applied update" and "measured on the polar
+factor" are the same measurement, and the square branch makes that an identity
+rather than an approximation.
+
+Deviation from I3's sketch, stated: I3 proposed "a few power iterations — no
+SVD". It is a float64 `svdvals` instead. The interesting singular values sit 6+
+orders of magnitude below `sigma_max` (real momentum kappa 4.8e4–5.7e6), and B2
+MEASURED a 12-iteration power estimate landing BELOW `sigma_max` on 11 of 20
+real tensors. An estimator that cannot resolve the quantity is not a cheaper
+version of it. At the sampling cadence below the exact decomposition is ~2 SVDs
+of a 512-wide matrix per ~665 s iteration.
+
+**Sampling cadence and determinism.** One designated tensor per shape class per
+iteration: the FIRST square and the FIRST non-square parameter of the Aurora
+group in group order, on the single step where `Trainer.train_steps` already
+sets `collect_optimizer_stats` (`train_steps_done + 1 >= requested_steps`). No
+rng is consulted and there is no sampling seed — the same two tensors are
+measured every iteration, so the series is one tensor paired against itself.
+Unlike the uw-effective pair (M4-2) the reading carries no `lr` factor and is
+scale-invariant, so sampling at the sqrt_release sawtooth floor does not bias it.
+
+**Columns** (progress.csv, via TrainMetrics; the schema change rotates
+progress.csv once at the restart that picks it up, per the harness's own
+rotation path): `aurora_polar_sv_ratio_square`, `aurora_polar_sv_ratio_rect`,
+`aurora_polar_orth_err_square`, `aurora_polar_orth_err_rect`,
+`aurora_polar_steps_configured`, `aurora_polar_sv_samples`,
+`aurora_polar_sv_errors`. `aurora_polar_steps_configured` is read off the
+optimizer's own param group DURING the step, not off the yaml, so it is the
+proof-of-effect column for any `aurora_polar_steps` change — per *a yaml edit +
+restart may NOT be in effect*. `aurora_polar_sv_samples` is 2 when both shape
+classes were sampled; below 2, a 0.0 ratio means NOT MEASURED, not degenerate.
+
+**Calibration (shipped as `tests/test_aurora_polar_convergence.py`).** Pinned
+against Addendum II B3 on `checkpoint_000478`'s real Aurora momentum, all eight
+cells reproduced to four decimals (tolerance 5e-4):
+
+| group | steps | sv_ratio | orth_err |
+|---|---|---|---|
+| square (16 `out_proj`) | 8 | 0.0209 | 0.1082 |
+| square | 12 | 0.2489 | 0.0439 |
+| rect (4 `ffn`) | 8 | 0.0604 | 0.0800 |
+| rect | 12 | 0.6220 | 0.0257 |
+
+The fixture is the 20 momentum SPECTRA (83 kB,
+`tests/data/aurora_polar_momentum_spectra.npz`, emitted by
+`scripts/extract_aurora_momentum_spectra.py`), not the 23 MB of tensors: the PE
+iterate is orthogonally equivariant, so a matrix rebuilt from a banked spectrum
+reproduces the polar-path readings exactly — verified across three
+reconstruction seeds and both float32 and float64.
+
+**⚑ Two corrections to A8/B8's pre-committed instrument gate, both measured
+here.** B8 wrote the gate as "`aurora_polar_sv_ratio` reads >=0.99 median on the
+matrix group in the arm and reproduces ~0.02-0.06 in the control".
+
+1. **>=0.99 is unreachable in the arm on the SQUARE group.** PE-12 on real
+   square momentum reads **0.2489**, not >=0.99. The 0.99 came from A6's
+   Gaussian-surrogate cell (fp16 0.998) — the surrogate B0 retracted. Read as
+   written, the gate FAILS the arm for a reason that has nothing to do with
+   whether the arm took effect.
+2. **The RECT control value 0.0604 is off the polar-only path, not
+   production's.** Production feeds the rectangular branch a ROW-NORMALISED
+   matrix `pp_iterations` times. Measured on the same real tensors through
+   `_aurora_update`: rect reads **0.3926 / orth 0.0374 at 8 steps** and
+   **1.0000 / 0.0000 at 12**. Comparing a live `aurora_polar_sv_ratio_rect`
+   against 0.0604 would report a large change where there is none. (This also
+   bears on B5's "square-only is not supported": on the path production
+   actually runs, the rect group at 8 steps is 19x better converged than the
+   squares by sv_ratio and 2.9x by orth_err. Not my call — recorded for the A/B
+   coordinator, who owns the arm.)
+
+**AMENDED IN PLACE, 2026-08-03, PR #327 review round — my first restatement
+of this gate repeated the very slippage it was correcting.** I replaced B8's
+retracted Gaussian bar with centres taken from B3's 16-tensor GROUP MEANS
+(square `sv_ratio` 0.021 -> ~0.25, `orth_err` 0.108 -> ~0.044, "few-percent
+band"), while the column this PR ships samples ONE designated tensor — the
+first square of the Aurora group, index 0. The independent reviewer measured
+that tensor through the production `_aurora_update` and it reads **0.0273 /
+0.2114 at 8 steps** and **0.3275 / 0.0614 at 12** — `orth_err` at 1.95x the
+centre I pre-committed. Reproduced here exactly. **A correctly installed
+instrument on a correctly applied arm would have failed my gate, for the wrong
+reason.**
+
+Note the failure class precisely, because it is not the usual one: this was
+never *a gate that cannot fail*. The primary binary leg
+(`aurora_polar_steps_configured` 8 vs 12) was sound as written and remains
+untouched. What was wrong is that the CONFIRMING leg was stated in a statistic
+the column does not compute, so it would have fired on the wrong hypothesis —
+"the arm did not take effect" — when the true reading was "the arm took effect
+and this tensor is simply not the group average".
+
+Why one tensor is not the group: across the 16 square tensors at PE-8 the
+spread is **0.0005-0.0455 on `sv_ratio` (94x)** and **0.0794-0.2114 on
+`orth_err` (2.7x)**. No single-tensor column can be held to a mean of that
+population. The **arm/control RATIO on the SAME designated tensor** is the
+statistic that survives the choice: PE-12/PE-8 on `sv_ratio` spans
+**11.40-12.36 across every possible designation — a 1.08x spread**. That is
+why the confirming leg below is primarily a paired ratio and only secondarily
+an absolute.
+
+All of it is now pinned as shipped tests rather than as prose
+(`test_the_designated_square_tensor_reads_its_own_pinned_values`,
+`test_the_group_mean_is_not_a_bar_a_one_tensor_column_can_meet`,
+`test_the_paired_arm_over_control_ratio_survives_the_choice_of_tensor`), and
+the `polar_convergence` docstring carries the designated-tensor numbers instead
+of the group means it first quoted.
+
+**Restated instrument gate for the A8 A/B, pre-committed here** (fp32 CPU
+references on `checkpoint_000478`; production runs fp16 on CUDA, which B3
+measured as reproducing fp32 to 3 decimals on the production row, and live
+momentum is not the 478 snapshot — so the ABSOLUTES below are expectations, and
+only the ratio and the binary leg are bars):
+
+* **PRIMARY, binary:** `aurora_polar_steps_configured` == 12.0 on every arm row
+  and == 8.0 on every control row, with `aurora_polar_sv_samples` == 2.0 and
+  `aurora_polar_sv_errors` == 0.0. If this does not hold the change did not
+  reach the optimizer and no verdict is readable. **Unchanged by this
+  amendment — it was always the sound leg.**
+* **PRIMARY CONFIRMING — PAIRED, arm/control on the same designated tensor,**
+  medians over the first 5 live iterations of each arm:
+  * square `sv_ratio` ratio **>= 8.0** (measured centre 12.07, full
+    across-tensor range 11.40-12.36, so the bar clears the loosest designation
+    by 1.4x);
+  * square `orth_err` ratio **<= 0.70** (measured centre 0.42, range
+    0.290-0.544);
+  * rect `sv_ratio` in the ARM **>= 0.99** and `orth_err` **<= 0.005** — an
+    absolute, and admissible as one because PE-12 drives every rectangular
+    tensor to exactly 1.0000 / 0.0000 on the production path (all 4 sampled).
+    ⚑ B8's original ">=0.99 on the matrix group" bar is reachable on the RECT
+    group and NOT on the square group; that is the second half of the
+    correction recorded above.
+* **SUPPORTING, not a bar** (expected designated-tensor readings, quoted so a
+  wildly different row is noticed): square 0.0273 / 0.2114 in the control and
+  0.3275 / 0.0614 in the arm; rect 0.3714 / 0.0381 in the control and
+  1.0000 / 0.0000 in the arm.
+* The kill/success rules of B8 (held_ce_excess, inw/oow top1, cost bar) are
+  unchanged and are not this PR's to set.
+
+**M4-2 — `aurora_uw_effective_ratio_*` is 10x low by construction.** Not
+redefined: moving the sample step would silently re-base the historical series
+(*a ruler change must invalidate its records*). Instead `aurora_uw_lr` — the
+group `lr` the pair was multiplied by — is emitted beside it, and the whole
+family is promoted to progress.csv. It was TensorBoard-only: the fields existed
+on `TrainMetrics` but `_train_metrics_dict` never listed them, so no ledger
+yardstick could cite them, the same defect the grad-norm family had. De-scale
+with `opt_lr_mean / aurora_uw_lr` before reading the pair as "how big is one
+step".
+
+**M4-3 — the holdout merge homogenised encoding-identity markers.**
+`ArrayReplayBuffer._gather_rows` now (a) widens each field's dtype across ALL
+selected chunks instead of taking the prototype's, killing the `<U4` truncation
+that stored `"false"` as `"fals"`, and (b) refuses a set whose chunks disagree
+about `_history_rep_fix` / `_input_history_encoding` / `_policy_encoding`, with
+the same `mixed replay metadata ...` message `shard._scalar_metadata_string`
+already raises and through the same predicate `history_rep_fix_from_arrays`
+uses. An ABSENT `_history_rep_fix` counts as `"false"` because shard.py
+documents that it does. **Reachability, measured read-only:**
+`checkpoint_000476/477/478`'s live `holdout.npz` all carry `_history_rep_fix`
+uniformly `"true"` and `_input_history_encoding` uniformly
+`"lc0_root_legacy_meta"`, so the new raise cannot fire on a resume from today's
+state; it is armed for the next encoding flip. Negative control shipped:
+`tests/test_holdout_encoding_marker_merge.py` requires the mixed export to
+FAIL, and 5 of its 8 tests are red against `origin/main`.
+
+**Yardstick for this PR.** It is an instrument, so there is no Elo claim and no
+kill rule on play strength. The pass condition is the calibration above plus
+proof-of-effect on the first live iteration: `aurora_polar_sv_samples` == 2.0,
+`aurora_polar_sv_errors` == 0.0 and `aurora_polar_steps_configured` == 8.0 on a
+production restart that has not changed the step count. If those three read
+otherwise, the instrument is not installed and the A8 A/B must not be launched.
+
 #### PR F (2026-08-03) — tune lifecycle: T1 opp_strength_ema restore, T4 reload-delete observable, T2 derived startup-only class, T10 salvage gate state
 
 Wave-4 remediation batch F, routed by the AUDIT WAVE 4 entry (fae465951) from

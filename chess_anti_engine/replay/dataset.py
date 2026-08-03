@@ -7,6 +7,8 @@ from .buffer import ReplaySample
 from .shard import (
     LEGAL_MASK_FIELDS,
     LEGAL_MASK_HAS_FIELDS,
+    SF_EVAL_PV_CHECKED_FIELD,
+    SF_EVAL_PV_ORPHAN_FIELD,
 )
 
 
@@ -235,6 +237,13 @@ def collate_arrays(arrs: dict[str, np.ndarray], *, device: str) -> dict[str, tor
         # otherwise so the default H2D payload is unchanged.
         ("sf_multipv_raw", np.int32, torch.int32),
         ("has_sf_multipv_raw", np.float32, torch.float32),
+        # The VALUE-half desync flags, derived on the host from
+        # `sf_multipv_raw` + `sf_label_meta` (neither of which rides to the GPU
+        # in production) by `Trainer._prepare_host_arrays`. Two (B,) float32
+        # vectors, so the check reaches `compute_loss` without carrying the
+        # 960 B/row candidate block. See `replay/shard.py::sf_eval_pv_orphan_flags`.
+        (SF_EVAL_PV_ORPHAN_FIELD, np.float32, torch.float32),
+        (SF_EVAL_PV_CHECKED_FIELD, np.float32, torch.float32),
         ("sf_policy_t", np.float32, torch.float32, "sf_policy_target"),
         ("has_sf_policy", np.float32, torch.float32),
         ("moves_left", np.float32, torch.float32),
