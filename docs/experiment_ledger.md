@@ -27458,3 +27458,44 @@ scanned** — a same-position check false-flags by construction
 (`trainer.py:2705-2711`). `sf_p0_policy_target` *was* scanned, and its 0/692,051
 rate independently confirms the P0/own-POV convention documented at
 `replay/sample.py:73-78`.
+
+#### PREREG AMENDMENT 6b (2026-08-03) — the "powered F re-run" did NOT happen; repairing it
+
+**Finding, verified by hash.** `FE20_s0`'s raw arm is **bit-identical to `F_s0`** and
+`FE20_s1`'s to `F_s1` — every per-row dump array equal at both verdict steps, and the
+same `final.pt` sha256 (`86b1f3a9aaa037df`, `9d326a5f747c9826`). That is the correct
+and expected behaviour: arm FE at frac 0.20 seed 0 IS arm F at frac 0.20 seed 0, and
+the EMA post-hook is a pure observer that maintains shadow copies without touching
+the optimizer, the RNG or the sampler.
+
+**As a control this is a strong positive result** — it proves the rig is fully
+deterministic and that adding EMA tracking provably does not perturb the trajectory
+it is tracking, which is exactly the "does the knob take effect / does the observer
+disturb the system" question this codebase's signature defect lives in.
+
+**But it means the wave did not deliver the powered F re-run it was also supposed
+to deliver.** `FE20`'s raw arms are not a replication of F — they are the *same two
+trajectories recomputed*, so they add exactly zero power to the F(0.20) estimate,
+which still rests on n=2 seeds. Only NEW SEEDS can add power. (`FE35` and `FE10`
+raw arms are unaffected: no prior F exists at those doses, so those are genuinely new.)
+
+**Repair, pre-committed before any seed-2/3 contrast is computed:** append
+**`FE20_s2` and `FE20_s3`** (arm FE, frac 0.20, seeds 2 and 3, identical config) to
+the end of the queue, to run only after the entire pre-registered queue has drained
+and only while the card would otherwise be idle. Their raw arms are the genuine
+powered F(0.20) replication; their EMA variants extend the primary cell from 2 seeds
+to 4.
+
+**What they may and may not change.** They CANNOT revive the primary cell: it failed
+the `inw` clause at 1.257 cp against a 0.307 bar (4.1x), a margin no plausible seed
+draw closes, and that clause is judged per-seed anyway. They are pre-committed to
+serve exactly two purposes:
+1. the pooled exchange rate `E` (the wave's headline) moves from n=2 to n=4 seeds;
+2. the F(0.20) era estimate gets the power the original arm-F pre-registration
+   lacked, which is the specific deficit that made F's verdict a FAIL-on-power.
+
+**Pre-committed reading:** if the 4-seed pooled `E` for `FE20_ema2000` stays within
+[0.7, 1.3] x the 4-seed best solo, the LOOP-INVARIANT verdict is confirmed at double
+power and is reported as the wave's finding. If it leaves that band, the verdict is
+withdrawn and re-reported at n=4 — the n=2 reading below is superseded, not averaged
+with it.
