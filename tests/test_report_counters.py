@@ -22,7 +22,7 @@ from chess_anti_engine.tune.trial_config import (
 )
 
 
-def _fake_trainer() -> Any:
+def _fake_trainer(*, mirror_prob: float = 0.5) -> Any:
     """Minimum trainer surface _build_report_dict reads (loss weights + LR)."""
     return SimpleNamespace(
         opt=SimpleNamespace(param_groups=[{"lr": 3e-4}]),
@@ -34,16 +34,16 @@ def _fake_trainer() -> Any:
         sf_wdl_temperature=1.0,
         sf_wdl_draw_scale=1.0,
         sf_wdl_conf_power=1.0,
-        mirror_prob=0.5,
+        mirror_prob=mirror_prob,
         # (name, groups, effective_p) per group; only [i][2] is read.
         _feature_group_dropout=[(f"g{i}", (), 0.0) for i in range(8)],
     )
 
 
-def _report(sp: SelfplayResult) -> dict:
+def _report(sp: SelfplayResult, *, mirror_prob: float = 0.5) -> dict:
     return _build_report_dict(
         tc=TrialConfig(),
-        trainer=_fake_trainer(),
+        trainer=_fake_trainer(mirror_prob=mirror_prob),
         pr=PidResult(),
         sp=sp,
         tr=TrainingResult(),
@@ -92,3 +92,27 @@ def test_matching_games_is_reported_under_its_new_name() -> None:
     row = _report(SelfplayResult(matching_games=445))
     assert row["matching_games"] == 445
     assert "games_generated" not in row
+
+
+def test_mirror_prob_reaches_the_result_row() -> None:
+    """`mirror_prob` has no yaml key, so the ROW is the only place it is legible.
+
+    `_build_report_dict` is the last point where the dict can be edited: its
+    return value is handed to `tune_report_fn` (== `ray.tune.report`, wired at
+    trainable.py:977) at trainable_phases.py:1184, with only an `.update()` of
+    the replay-priority stats in between. So a column missing here is a column
+    missing from the Ray result row.
+
+    Without this assertion the reporting line can be deleted with every test
+    still green -- which is the failure this whole item exists to prevent: a
+    value that is accepted and then silently not observed.
+    """
+    row = _report(SelfplayResult())
+    assert "mirror_prob" in row
+    assert row["mirror_prob"] == 0.5
+
+
+def test_mirror_prob_reports_the_trainers_realized_value() -> None:
+    """Not a constant that happens to match the constructor default."""
+    assert _report(SelfplayResult(), mirror_prob=0.25)["mirror_prob"] == 0.25
+    assert _report(SelfplayResult(), mirror_prob=0.0)["mirror_prob"] == 0.0

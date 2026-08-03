@@ -22,7 +22,13 @@ Two defects, one root:
    was applied to 2 of ~20 masked heads (`_RATIO_METRIC_FIELDS`).
 
 When either is fixed, these tests fail. That failure is the reminder to
-invalidate the old records, not a regression.
+invalidate the old records, not a regression. Defect 1 is covered by
+`test_masked_mean_publishes_zero_for_an_empty_bucket` and
+`test_uncovered_head_reports_zero_loss_not_absence`; defect 2 by
+`test_train_path_pools_a_masked_head_by_step_count_not_by_row_count` and
+`test_only_the_two_sf_p0_heads_are_pooled_as_ratios_of_sums`, which assert on
+the trainer helpers that actually publish the pooled number -- a demonstration
+over `masked_mean` alone would stay green through the pooling fix.
 """
 
 from __future__ import annotations
@@ -31,6 +37,10 @@ import torch
 
 from chess_anti_engine.moves import POLICY_SIZE
 from chess_anti_engine.train.losses import compute_loss, masked_mean, masked_sum_and_count
+from chess_anti_engine.train.trainer import (
+    _RATIO_METRIC_FIELDS,
+    _loss_sums_to_metric_kwargs,
+)
 
 
 def test_masked_mean_publishes_zero_for_an_empty_bucket() -> None:
@@ -92,3 +102,41 @@ def test_mean_of_per_batch_means_is_not_the_pooled_mean() -> None:
 
     assert published == 3.0  # (1.0 + 5.0) / 2 -- each batch weighted equally
     assert pooled == 1.8     # 9 / 5 -- each ROW weighted equally
+
+
+# --- the pooling half, asserted on the instrument that publishes it ---------
+# The three tests above cover `masked_mean`'s denominator clamp only. The
+# POOLING estimator lives in the trainer, not in losses.py, and a guard must
+# share the criterion's instrument: without the two tests below, B1's pooling
+# fix could land while `compute_loss` still publishes per-batch means and this
+# file would stay GREEN -- the reminder to invalidate the records never firing.
+
+
+def test_train_path_pools_a_masked_head_by_step_count_not_by_row_count() -> None:
+    """`sf_volatility_loss` is a MEAN OF PER-BATCH RATIOS over the iteration.
+
+    Two microbatches whose masked means are 1.0 and 5.0 publish 3.0 regardless
+    of how many rows each contributed. When the fix lands, `sf_volatility` moves
+    into a (sum, count) pair and this division by the STEP COUNT disappears.
+    """
+    n_micro = 2.0
+    sums = {"sf_volatility": 1.0 + 5.0}  # accumulated per-batch masked means
+
+    out = _loss_sums_to_metric_kwargs(sums, n_micro)
+
+    assert out["sf_volatility_loss"] == 3.0
+    # No row count travels with it, so nothing published can contradict the 3.0.
+    assert "sf_volatility_rows" not in out
+    assert not any(k.startswith("sf_volatility") and k.endswith("_rows") for k in out)
+
+
+def test_only_the_two_sf_p0_heads_are_pooled_as_ratios_of_sums() -> None:
+    """The row-weighted correction exists and is applied to 2 loss heads.
+
+    `_RATIO_METRIC_FIELDS` also carries `*_frac` coverage columns and the
+    desync-contamination detector; the LOSS entries are the ones this
+    characterization is about. Extending them is exactly the B1 fix, so this
+    assertion is the tripwire: it fails the moment another head is corrected.
+    """
+    loss_heads = {k for k in _RATIO_METRIC_FIELDS if k.startswith("m_")}
+    assert loss_heads == {"m_sf_own", "m_sf_own_regret"}

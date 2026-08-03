@@ -65,8 +65,18 @@ def test_shard_field_order_emits_value_array_before_its_flag() -> None:
         assert order[spec.arr] < order[spec.flag], spec.arr
 
 
-def test_gather_rows_refuses_chunks_that_disagree_about_has_policy(tmp_path) -> None:
-    """Union zero-fill on `has_policy` deletes rows from the policy loss silently."""
+@pytest.mark.parametrize(
+    ("field", "silent_damage"),
+    [
+        # Both members of NONZERO_DEFAULT_STORAGE_FIELDS, because they fail
+        # DIFFERENTLY downstream and a guard that covers one is not a guard.
+        ("has_policy", "rows dropped from the policy loss and its accuracy stats"),
+        ("priority", "rows made unsamplable under a priority draw"),
+    ],
+)
+def test_gather_rows_refuses_chunks_that_disagree(tmp_path, field, silent_damage) -> None:
+    """Union zero-fill on either field changes training rows with nothing counting it."""
+    assert field in {"has_policy", "priority"}, silent_damage
     buf = db.DiskReplayBuffer(
         100,
         shard_dir=tmp_path / "replay",
@@ -78,10 +88,10 @@ def test_gather_rows_refuses_chunks_that_disagree_about_has_policy(tmp_path) -> 
     buf._append_shuffle_arrays(_arrays(4))
     buf._append_shuffle_arrays(_arrays(4))
     assert len(buf._shuffle_buf) == 2
-    del buf._shuffle_buf[1]["has_policy"]
+    del buf._shuffle_buf[1][field]
 
     spanning = np.array([0, 5], dtype=np.int64)  # one row from each chunk
-    with pytest.raises(ValueError, match="disagree about 'has_policy'"):
+    with pytest.raises(ValueError, match=f"disagree about '{field}'"):
         buf._gather_rows(spanning)
 
 
@@ -102,15 +112,23 @@ def test_gather_rows_is_unaffected_when_every_chunk_carries_the_field(tmp_path) 
 
     assert out["has_policy"].shape == (2,)
     assert np.all(out["has_policy"] == 1)
+    assert out["priority"].shape == (2,)
 
 
 def test_prune_storage_arrays_refuses_a_set_flag_with_no_value_array() -> None:
     """`has_X = 1` with X absent reads downstream as a perfectly-fit head.
 
     The loss takes the target-absent branch (numerator structurally zero) while
-    the head's mask still counts the row. Enforced by `validate_arrays`; pinned
-    here because `prune_storage_arrays` is the write-side funnel where a
-    producer bug would otherwise be made durable.
+    the head's mask still counts the row.
+
+    ⚠ WHAT THIS DOES AND DOES NOT PIN. The raise comes from `validate_arrays`,
+    which `prune_storage_arrays` calls on its input two lines earlier -- NOT
+    from this PR's change (making the value assignment unconditional). Restoring
+    the old `if value_name in arrs:` conditional leaves this test GREEN, because
+    validation has already rejected the only input that could reach it. The
+    conditional was misleading, not load-bearing; what is pinned here is the
+    end-to-end invariant at the write-side funnel, which is the property worth
+    keeping either way.
     """
     arrs = _arrays(4)
     arrs["has_sf_p0"] = np.ones((4,), dtype=np.uint8)  # flag set, target missing
