@@ -41,7 +41,7 @@ What a derived child does NOT get: its own current-frame repetition plane (12).
 That depends on positions older than the parent's 8-slot window, which no shift
 can recover; it stays at whatever `encode_cboard` produced for the bare pushed
 board (0). The snapshot verification measures the size of this gap directly --
-4 misses in 28,539 slots.
+**523 misses in 2,777,131 slots (0.019%)** over the full 1463-shard snapshot.
 """
 from __future__ import annotations
 
@@ -67,6 +67,10 @@ INPUT_ENCODING_DEFAULT: Final[str] = "fen_only"
 STORED_HISTORY_ENCODING: Final[str] = LC0_HISTORY_ROOT_LEGACY_META
 STORED_EXTRA_FEATURES: Final[str] = "v2_threats"
 STORED_PLANES: Final[int] = 175
+_STORED_LAYOUT: Final[dict[str, str]] = {
+    "input_history_encoding": STORED_HISTORY_ENCODING,
+    "input_extra_features": STORED_EXTRA_FEATURES,
+}
 
 # lc0 root layout: 8 slots x 13 planes (6 us, 6 them, 1 repetition), then the
 # metadata block at 104 (4 castling planes, then the colour flag at 108).
@@ -297,27 +301,14 @@ class MatchedAuditRows:
             raise KeyError(f"no stored row matched audit position {key!r}")
         return i
 
-    def require_model_compatible(self, enc_kwargs: dict[str, str]) -> None:
-        """Fail loudly when the checkpoint's encoding is not the stored one.
+    def require_index_layout(self) -> None:
+        """Fail loudly when the INDEX was not built from the stored layout.
 
-        Stored rows are bytes written under one specific layout. Feeding them
-        to a model that declares a different history encoding or feature set
-        would produce a number that silently means nothing, so this refuses
-        rather than warns.
+        Needs no model, so every caller can run it — including
+        `scripts/audit_targets.py`, which loads its checkpoint deeper in the
+        call stack than it loads the index.
         """
-        want = {
-            "input_history_encoding": STORED_HISTORY_ENCODING,
-            "input_extra_features": STORED_EXTRA_FEATURES,
-        }
-        bad = {k: v for k, v in want.items() if str(enc_kwargs.get(k)) != v}
-        if bad:
-            raise SystemExit(
-                "--input-encoding stored requires a checkpoint encoded as "
-                f"{want}; this checkpoint declares "
-                f"{ {k: enc_kwargs.get(k) for k in want} }"
-            )
-        # The index itself records what it was built from. Older indexes
-        # predate the field; say so instead of assuming.
+        want = _STORED_LAYOUT
         recorded = {
             "input_history_encoding": self.input_history_encoding,
             "input_extra_features": self.input_extra_features,
@@ -329,14 +320,32 @@ class MatchedAuditRows:
             )
             return
         mismatch = {
-            k: recorded[k] for k, v in want.items()
-            if recorded[k] is not None and recorded[k] != v
+            k: recorded[k] for k in want
+            if recorded[k] is not None and recorded[k] != want[k]
         }
         if mismatch:
             raise SystemExit(
                 f"matched-rows index {self.path} was built from {mismatch}, "
                 f"which is not the production stored layout {want}"
             )
+
+    def require_model_compatible(self, enc_kwargs: dict[str, str]) -> None:
+        """Fail loudly when the checkpoint's encoding is not the stored one.
+
+        Stored rows are bytes written under one specific layout. Feeding them
+        to a model that declares a different history encoding or feature set
+        would produce a number that silently means nothing, so this refuses
+        rather than warns. Also checks the index's own provenance.
+        """
+        want = _STORED_LAYOUT
+        bad = {k: v for k, v in want.items() if str(enc_kwargs.get(k)) != v}
+        if bad:
+            raise SystemExit(
+                "--input-encoding stored requires a checkpoint encoded as "
+                f"{want}; this checkpoint declares "
+                f"{ {k: enc_kwargs.get(k) for k in want} }"
+            )
+        self.require_index_layout()
 
 
 def _npz_str(data: object, key: str) -> str | None:

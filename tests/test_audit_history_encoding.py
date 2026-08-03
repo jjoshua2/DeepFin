@@ -172,9 +172,12 @@ def test_pov_flip_slot_negative_control() -> None:
             if np.array_equal(parent[src_lo:src_hi][:12], child[dst_lo:dst_hi][:12]):
                 unflipped_hits += 1
     total = len(pairs) * (N_SLOTS - 1)
-    assert unflipped_hits < total, (
-        "the un-flipped shift matches every slot, so the fixture cannot "
-        "discriminate a POV flip from a plain shift"
+    # Measured on the checked-in fixture: 3/112. `< total` would leave ~97%
+    # slack and still pass on a fixture degenerate enough to be useless, so
+    # pin the DISCRIMINATION this test is named for, not merely its sign.
+    assert unflipped_hits < total // 4, (
+        f"the un-flipped shift matched {unflipped_hits}/{total} slots; the "
+        "fixture cannot discriminate a POV flip from a plain shift"
     )
 
 
@@ -456,3 +459,140 @@ def test_audit_targets_labels_every_row_with_its_own_encoding() -> None:
         for cand in ("search", "train", "train_fast"):
             assert "[enc=fen_only, search-internal]" in labels[cand]
         assert "[no net input]" in labels["sf_soft"]
+
+
+# ---------------------------------------------------------------------------
+# 5. score_audit_v2 — the rig that produced the LEDGER'S PUBLISHED NUMBERS
+# ---------------------------------------------------------------------------
+#
+# This file has its own arm dispatcher, so its `v1` BASELINE arm is a branch a
+# silent regression would zero out: point `v1` at the stored row and every
+# v1-vs-v2 contrast reads exactly 0.00 while the run, the tests and the lint
+# gate all look healthy. That is mutation B's failure shape one file over, and
+# these are the tests that make it fail.
+
+
+def _score_arm_inputs(fen: str, parent: np.ndarray):
+    """(root fen planes, child fen planes, stored parent) for one position."""
+    board = chess.Board(fen)
+    root_fen = np.asarray(
+        encode_cboard(CBoard.from_board(board), **ENC_KWARGS), dtype=np.float32,
+    )
+    board.push(next(iter(board.legal_moves)))
+    child_fen = np.asarray(
+        encode_cboard(CBoard.from_board(board), **ENC_KWARGS), dtype=np.float32,
+    )
+    return root_fen, child_fen, parent
+
+
+@pytest.mark.parametrize("fen", IDENTITY_FENS)
+def test_score_audit_v2_v1_arm_is_the_fen_only_identity(fen: str) -> None:
+    """The BASELINE arm must be the untouched FEN-only encoding.
+
+    Kills the mutation that makes `v1` return the stored row: the contrast
+    would read 0.00 everywhere and nothing else in the repo would notice.
+    """
+    import scripts.score_audit_v2 as sa
+
+    root_fen, child_fen, parent = _score_arm_inputs(fen, _fixture_pairs()[0][0])
+    assert np.array_equal(sa.root_planes("v1", root_fen, parent), root_fen)
+    assert np.array_equal(sa.child_planes("v1", child_fen, parent), child_fen)
+
+
+@pytest.mark.parametrize("fen", IDENTITY_FENS)
+def test_score_audit_v2_v2_arm_is_the_stored_encoding(fen: str) -> None:
+    import scripts.score_audit_v2 as sa
+
+    root_fen, child_fen, parent = _score_arm_inputs(fen, _fixture_pairs()[0][0])
+    assert np.array_equal(sa.root_planes("v2", root_fen, parent), parent)
+    assert np.array_equal(
+        sa.child_planes("v2", child_fen, parent),
+        child_input_planes(parent, child_fen),
+    )
+    # ...and the v2 arm is not accidentally the v1 arm.
+    assert not np.array_equal(sa.root_planes("v2", root_fen, parent), root_fen)
+
+
+def test_score_audit_v2_v1_stm_arm_touches_only_the_colour_flag() -> None:
+    """The attribution arm must not drift into either neighbour.
+
+    Its whole job is to separate the colour flag from the history frames, so
+    a version that also spliced history would silently answer a different
+    question — and would still produce plausible numbers.
+    """
+    import scripts.score_audit_v2 as sa
+
+    exact_hits = 0
+    for parent, _child in _fixture_pairs():
+        root_fen, child_fen, _ = _score_arm_inputs(FENS[1], parent)
+        for got, base in (
+            (sa.root_planes("v1_stm", root_fen, parent), root_fen),
+            (sa.child_planes("v1_stm", child_fen, parent), child_fen),
+        ):
+            differing = set(np.flatnonzero((got != base).any(axis=(1, 2))).tolist())
+            assert differing <= {STM_PLANE}, differing
+            exact_hits += int(differing == {STM_PLANE})
+    # The fixture spans both colour-flag directions, so the arm must actually
+    # HAVE changed the flag somewhere; a no-op would satisfy the subset check.
+    assert exact_hits > 0
+
+
+def test_score_audit_v2_arm_tags_name_the_encoding() -> None:
+    """`arm_tag` is the provenance stamp printed on every published line."""
+    import scripts.score_audit_v2 as sa
+
+    assert sa.arm_tag("v1", 256, 256) == "[arm=v1 enc=fen_only pb=256 vb=256]"
+    assert sa.arm_tag("v2", 256, 256) == "[arm=v2 enc=stored pb=256 vb=256]"
+    assert sa.arm_tag("v1_stm", 128, 64) == (
+        "[arm=v1_stm enc=fen_only+true_stm pb=64 vb=128]"
+    )
+    assert set(sa.ARM_ENCODING) == {"v1", "v1_stm", "v2"}
+    assert sa.ARM_ENCODING["v1"] == "fen_only"
+    assert sa.ARM_ENCODING["v2"] == "stored"
+
+
+def test_score_audit_v2_refuses_an_arm_with_no_encoding() -> None:
+    import scripts.score_audit_v2 as sa
+
+    with pytest.raises(ValueError, match="no --input-encoding equivalent"):
+        sa._require_encoding("v1_stm")
+
+
+# ---------------------------------------------------------------------------
+# 6. match_audit_rows.require_canonical
+# ---------------------------------------------------------------------------
+
+
+def test_require_canonical_refuses_a_black_to_move_audit_board() -> None:
+    """The fingerprint join assumes white-to-move canonical audit boards.
+
+    Without this guard a black-to-move row would simply never match and would
+    be reported as an unmatched row — a silent shortfall rather than an error.
+    """
+    import scripts.match_audit_rows as mar
+
+    with pytest.raises(SystemExit, match="not side-to-move canonical"):
+        mar.require_canonical([
+            chess.Board(FENS[0]), chess.Board(BLACK_TO_MOVE_FENS[0]),
+        ])
+
+
+def test_require_canonical_accepts_the_real_audit_shape() -> None:
+    import scripts.match_audit_rows as mar
+
+    mar.require_canonical([chess.Board(f) for f in FENS])
+
+
+def test_board_fingerprint_separates_distinct_positions() -> None:
+    """A fingerprint that collided everywhere would make the join meaningless."""
+    import scripts.match_audit_rows as mar
+
+    prints = {mar.board_fingerprint(chess.Board(f)) for f in IDENTITY_FENS}
+    assert len(prints) == len(IDENTITY_FENS)
+    # Colour/castling/EP are NOT in the fingerprint by design (it is a superset
+    # filter refined by the position-key compare), so the two starting-position
+    # spellings must collide — pinning that the join cannot rely on it alone.
+    assert mar.board_fingerprint(chess.Board(chess.STARTING_FEN)) == (
+        mar.board_fingerprint(chess.Board(BLACK_TO_MOVE_FENS[0].replace("4P3", "8")
+                                          .replace("PPPP1PPP", "PPPPPPPP")))
+    )

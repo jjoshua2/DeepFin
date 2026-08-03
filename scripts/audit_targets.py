@@ -916,6 +916,10 @@ def main() -> None:
                 "no audit position has a stored row; the matched-rows index does "
                 "not cover this audit set"
             )
+        # The other two callers reach this through `require_model_compatible`;
+        # this script loads its checkpoint deeper in the call stack, so it runs
+        # the index-side half here and the model-side half in `_net_candidates`.
+        matched.require_index_layout()
         stored_x = np.stack([matched.stored_row(p.key) for p in positions])
         print(f"[audit] input-encoding=stored: {matched.path} covers "
               f"{matched.n_matched}/{matched.n_audit_rows} audit rows; dropped "

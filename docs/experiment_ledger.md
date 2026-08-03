@@ -21287,10 +21287,16 @@ entry once arm G reads out.
 ## 2026-08-02 — INSTRUMENT PROMOTION (no experiment): audit-v2 enters the repo as `--input-encoding {fen_only,stored}`
 
 **Not an experiment. No hypothesis, no yardstick, no kill threshold, nothing
-launched.** The audit-v2 rig that produced the entries above lived in a
-scratchpad bank; this promotes it to `scripts/` + `chess_anti_engine/eval/` so
-the numbers the ledger already cites are reproducible from the repo. The
-verdicts above are unchanged by this and are NOT re-adjudicated here.
+launched.** The audit-v2 rig that produced the 2026-08-02 audit-v2 entries lived
+in a scratchpad bank; this promotes it to `scripts/` + `chess_anti_engine/eval/`
+so the numbers the ledger already cites are reproducible from the repo. Those
+verdicts are unchanged by this and are NOT re-adjudicated here.
+
+⚑ **Cross-reference note.** This entry lands on `main` via PR #314. The
+audit-v2 entries it refers to ("the entries above") are on the LIVE branch
+`ops/live-20260725` — the 2026-08-02 pre-registration, verdict, lineage and SWA
+entries around lines 25180 / 25259 / 25376 / 25511 — and do not exist on `main`
+until the branches meet. Read this entry against the live branch until then.
 
 ### What landed
 
@@ -21340,10 +21346,21 @@ than to a value no banked readout used.
 
 ### Verification, re-derived here rather than inherited
 
-- **Join**: 4000/4000 audit rows recovered, 1463 shards, 24 s.
-  `legal_move_sets_identical` true on 4000/4000 — the recovered row generates
-  the same legal moves as the audit FEN, which is what makes the per-UCI deep-SF
-  labels apply. History-plane occupancy 0.0 -> 0.713.
+- **Join**: 4000/4000 audit rows recovered, 1463 shards, 24 s. Canonicalisation
+  proof: current-frame piece planes and castling planes 104..107 bit-identical
+  to the FEN-only encoding. History-plane occupancy 0.0 -> 0.713.
+- **⚑ Correction to how `legal_move_sets_identical` was first described here.**
+  It reads true on 4000/4000, but it is NOT independent validation of the join:
+  the join already accepts a row only when `position_key(decode(row))` equals
+  the audit `key`, and `position_key` determines legal moves, so for any row
+  that passed the join the check is IMPLIED. What it independently proves is
+  that the audit set's own `key` agrees with its own `fen` (the legal moves are
+  compared against `Board(fen)` while the join matched on `key`) — a guard on
+  AUDIT-SET SELF-CONSISTENCY, which is worth having because a set whose `key`
+  and `fen` disagreed would attach every per-UCI label to the wrong position.
+  Calling it "the invariant that licenses the labels" overstated it, and doing
+  so in a PR largely about checks that cannot fail for the reason their name
+  implies is exactly the error this record exists to catch.
 - **`pov_flip_slot`**, FULL snapshot (the bank verified 4,077 pairs; this is all
   of them): **396,733 pairs, 2,777,131/2,777,131 piece-history slots exact,
   396,733/396,733 colour flags exact.** Repetition planes 2,776,608/2,777,131
@@ -21375,6 +21392,19 @@ Three mutations, each run against the committed tests:
 | stored branch returns the FEN-only child (row accepted, ignored) | `test_value_regret_stored_feeds_spliced_history`, `test_value_regret_stored_differs_from_fen_only` |
 | `fen_only` branch splices plane 108 (default no longer bit-identical) | `test_fen_only_child_is_identity` x2 |
 | `audit_targets._net_candidates` ignores `stored_x` | `test_audit_targets_stored_encoding_reaches_the_raw_policy_forward` |
+| **F** — `score_audit_v2.root_planes` `v1` arm returns the STORED row | `test_score_audit_v2_v1_arm_is_the_fen_only_identity` x6, `test_score_audit_v2_v2_arm_is_the_stored_encoding` x6 |
+| **G** — `match_audit_rows.require_canonical` never flags anything | `test_require_canonical_refuses_a_black_to_move_audit_board` |
+
+⚑ **F and G were found by the independent reviewer, not by me, and F is the
+serious one.** `score_audit_v2.py` is the file that produced every published
+`arm v2` number and it had NO tests; pointing its `v1` BASELINE at the stored
+row makes every v1-vs-v2 contrast read exactly **0.00** with the whole suite and
+the lint gate still green. That is the same failure shape as mutation B, one
+file over, in the one file whose entire job is the contrast. Fixed twice over:
+the `v1`/`v2` branches now DELEGATE to the shared encoding switch instead of
+carrying a second copy, and the arms are pinned by test — including that
+`v1_stm` differs from `fen_only` at *exactly* plane 108 and nowhere else, so the
+attribution arm cannot drift into either neighbour.
 
 ⚑ The FIRST version of the fen_only mutation PASSED, and the reason is worth
 keeping: audit boards are white-to-move canonical, so every 1-ply child is black
@@ -21395,6 +21425,17 @@ itself, and warns (rather than refusing) when a dump is too old to declare
 either. Mutating the gate to a no-op fails 5 tests; renaming the stamp in
 `value_regret.py` fails `test_value_regret_dump_carries_its_ruler`, which pins
 the field names against the producer rather than assuming them.
+
+⚑ **An unstamped dump counts as `input_encoding=fen_only`, and that is the
+point.** Every dump written before this PR is `fen_only` by construction, since
+`stored` did not exist to produce one. Treating absence as "unknown" left the
+single join the gate exists to stop — a legacy `fen_only` dump against a new
+`stored` one — on the warn path with exit 0, i.e. the highest-risk comparison
+was the one it did not refuse, while the stamped-vs-stamped case it did refuse
+is the one a careful operator was least likely to get wrong. `batch_size` is
+NOT inferred: old dumps genuinely varied (the standing VALUE yardstick pins
+`--batch-size 128` against a CLI default of 256), so a guess there would refuse
+legitimate comparisons.
 
 ### The matched-rows index is a BUILD ARTIFACT, not checked in
 

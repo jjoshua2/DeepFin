@@ -24,7 +24,17 @@ Both are echoed on every report line for exactly that reason.
    the INPUT the value head is scored on. `fen_only` rebuilds each child from
    `chess.Board(fen)` with an empty move stack, which under the production
    175-plane encoding leaves 93 planes structurally zero and pins the colour
-   flag to the wrong value on ~51% of rows. `stored` feeds the real production
+   flag to the wrong value on ~51% of rows.
+   ⚑ TWO DIFFERENT PLANE COUNTS APPEAR IN THIS FILE AND BOTH ARE RIGHT.
+   **93** is the count of planes that are zero on EVERY row by construction of
+   the FEN-only encoding (the 91 history planes 13..103, the current-frame
+   repetition plane 12, and the colour flag 108) — measured on the 4000-row
+   audit set, where the same count under `stored` is 0. The **117** quoted in
+   the note at the bottom of this file, and in docs/rl_loop_audit.md M35, is a
+   different quantity: the mean number of all-zero planes in a SINGLE row,
+   which also counts planes that are empty because of the position rather than
+   the encoding. On this audit set that per-row mean is 127.8 for `fen_only`
+   against 62.4 for `stored`. `stored` feeds the real production
    history (audit-v2, see chess_anti_engine/eval/audit_history.py). These are
    DIFFERENT RULERS: a ruler change invalidates its records, so a `stored`
    number must never be put in a table, trend or threshold with a `fen_only`
@@ -350,10 +360,12 @@ def main() -> None:
               "level — is the head optimistic about losing positions — use "
               "scripts/value_optimism.py, which scores production input planes.")
         if encoding == "fen_only":
-            print("  ⚑ At --input-encoding fen_only the inputs above leave 117 of 175 "
-                  "planes zero, which compromises ABSOLUTE cp levels (docs/rl_loop_audit.md "
-                  "M10). --input-encoding stored removes that specific defect; it does not "
-                  "make the two sets of numbers comparable to each other.")
+            print("  ⚑ At --input-encoding fen_only these inputs have 93 planes zero on "
+                  "EVERY row by construction (127.8 all-zero per row on this set vs 62.4 "
+                  "under stored; docs/rl_loop_audit.md M35 quotes 117 for the per-row "
+                  "figure on its own position set). That compromises ABSOLUTE cp levels. "
+                  "--input-encoding stored removes that specific defect; it does not make "
+                  "the two sets of numbers comparable to each other.")
 
 
 if __name__ == "__main__":

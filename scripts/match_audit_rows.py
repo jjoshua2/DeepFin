@@ -33,9 +33,18 @@ over 1463 shards, 4000/4000 matched in 24 s:
     — the recovered row's current-frame piece planes and castling planes are
     bit-identical to the FEN-only encoding, so side-to-move canonicalisation is
     preserved exactly. Both true; either being false is an exit code.
-  - `legal_move_sets_identical` — the load-bearing one. The deep-SF labels are
-    per-UCI, so what has to hold is that the recovered row generates the SAME
-    legal moves as the audit FEN, not that every plane agrees. True on 4000/4000.
+  - `legal_move_sets_identical` — true on 4000/4000. ⚑ READ THIS PRECISELY.
+    The join already accepts a row only when `position_key(decode(row))` equals
+    the audit row's `key`, and `position_key` (placement/turn/castling/ep)
+    determines legal moves — so for a row that passed the join, this check is
+    IMPLIED and cannot fail on the join's account. What it independently proves
+    is that the audit set's own `key` agrees with its own `fen`, since the
+    legal moves are compared against `chess.Board(fen)` while the join matched
+    on `key`. It is a guard on AUDIT-SET SELF-CONSISTENCY — worth having,
+    because a set whose `key` and `fen` disagreed would silently attach the
+    wrong per-UCI labels — but it is NOT independent validation of the join.
+    The join's own evidence is the canonicalisation pair below plus the
+    duplicate-multiplicity and match counts.
   - the planes that are EXPECTED to differ, each reported as a row fraction
     rather than folded into one boolean: the colour flag (108, 0.508 — this IS
     audit-v2), current-frame repetition (12, 0.006), rule50 (109, 0.002), EP
@@ -267,10 +276,12 @@ def main() -> None:
         b = np.asarray(x_stored[found][:, planes], dtype=np.float32)
         return float((a != b).any(axis=(1, 2, 3)).mean())
 
-    # The join is only sound if the recovered row is the SAME POSITION the deep
-    # SF labels were computed on. The labels are per-UCI, so the invariant that
-    # actually matters is that the stored row generates the same legal moves as
-    # the audit FEN — not that every metadata plane agrees. Two blocks are
+    # Guard on AUDIT-SET SELF-CONSISTENCY, not on the join. The join already
+    # required position_key(decode(row)) == audit["key"], and position_key
+    # determines legal moves, so this can only fire when the audit set's own
+    # `key` and `fen` disagree — in which case the per-UCI labels would be
+    # attached to a different position than the one scored. Cheap, and the
+    # thing it catches is unrecoverable downstream. Two blocks are
     # EXPECTED to disagree and their disagreement is the point of audit-v2:
     # the colour flag (plane 108, wrong on ~51% of FEN-only rows) and the
     # repetition/history planes. A handful of rows also differ on EP (110):
@@ -354,13 +365,15 @@ def main() -> None:
     report_path.write_text(json.dumps(report, indent=1), encoding="utf-8")
     print(json.dumps(report, indent=1))
     print(f"[match] index -> {out_path}\n[match] report -> {report_path}")
-    # A join that recovered a DIFFERENT position would make every stored-encoding
-    # number meaningless while still looking like a successful build, so this is
-    # an exit code, not a printed warning.
+    # An audit set whose `key` and `fen` disagree would attach every per-UCI
+    # label to the wrong position while still looking like a successful build,
+    # so this is an exit code, not a printed warning.
     if legal_mismatch:
         raise SystemExit(
             f"{len(legal_mismatch)} matched rows generate a different legal-move "
-            "set than their audit FEN; the deep-SF labels do not apply to them"
+            "set than their audit FEN — the audit set's own 'key' and 'fen' "
+            "disagree on those rows, so the per-UCI deep-SF labels belong to a "
+            "different position than the one being scored"
         )
     if not report["canonicalisation_current_frame_identical"]:
         raise SystemExit("recovered rows are not side-to-move canonical")

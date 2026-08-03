@@ -70,8 +70,9 @@ from chess_anti_engine.eval.audit import (
 from chess_anti_engine.eval.audit_history import (
     STM_PLANE,
     MatchedAuditRows,
-    child_input_planes,
+    child_planes_for_encoding,
     default_matched_rows_path,
+    root_input_planes,
 )
 from chess_anti_engine.inference import LocalModelEvaluator
 from chess_anti_engine.moves import POLICY_SIZE, policy_batch_to_full_if_needed
@@ -102,25 +103,44 @@ def _piece_count(fen: str) -> int:
 
 
 def root_planes(arm: str, fen_planes: np.ndarray, stored: np.ndarray) -> np.ndarray:
-    if arm == "v1":
-        return fen_planes
+    """Root input for `arm`.
+
+    `v1` and `v2` DELEGATE to the shared encoding switch rather than
+    reimplementing it: a second copy of those two branches is a second place a
+    silent regression can live, and the `v1` BASELINE going wrong would make
+    every v1-vs-v2 contrast read 0.00 while the run looked healthy.
+    `v1_stm` is the only branch that is genuinely local — it is an attribution
+    arm with no `--input-encoding` twin.
+    """
     if arm == "v1_stm":
         out = np.array(fen_planes, copy=True)
         out[STM_PLANE] = stored[STM_PLANE]
         return out
-    return np.array(stored, dtype=np.float32, copy=True)
+    return root_input_planes(
+        encoding=_require_encoding(arm), fen_planes=fen_planes, stored_planes=stored,
+    )
 
 
 def child_planes(
     arm: str, child_fen_planes: np.ndarray, stored_parent: np.ndarray,
 ) -> np.ndarray:
-    if arm == "v1":
-        return child_fen_planes
+    """1-ply child input for `arm`. Same delegation as `root_planes`."""
     if arm == "v1_stm":
         out = np.array(child_fen_planes, copy=True)
         out[STM_PLANE] = 1.0 - float(stored_parent[STM_PLANE, 0, 0])
         return out
-    return child_input_planes(stored_parent, child_fen_planes)
+    return child_planes_for_encoding(
+        encoding=_require_encoding(arm),
+        child_fen_planes=child_fen_planes,
+        stored_parent=stored_parent,
+    )
+
+
+def _require_encoding(arm: str) -> str:
+    enc = ARM_ENCODING.get(arm)
+    if enc is None:
+        raise ValueError(f"arm {arm!r} has no --input-encoding equivalent")
+    return enc
 
 
 def main() -> None:

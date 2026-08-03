@@ -361,8 +361,8 @@ def test_a_dump_that_mixes_rulers_within_itself_is_refused(tmp_path) -> None:
         require_same_ruler(a, b, label_a="A", label_b="B")
 
 
-def test_unstamped_dumps_warn_rather_than_refuse(tmp_path, capsys) -> None:
-    """Dumps predating provenance must still compare, loudly."""
+def test_two_unstamped_dumps_still_compare(tmp_path, capsys) -> None:
+    """Dumps predating provenance must still compare — both are fen_only."""
     from scripts.paired_compare import load_dump, require_same_ruler
 
     a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [{"fen": "p", "value": 1.0}]))
@@ -370,8 +370,61 @@ def test_unstamped_dumps_warn_rather_than_refuse(tmp_path, capsys) -> None:
 
     require_same_ruler(a, b, label_a="A", label_b="B")
     out = capsys.readouterr().out
+    assert "inferred" in out
+    # batch_size is genuinely unknown on an old dump and stays warn-only.
     assert "WARNING" in out
-    assert "input_encoding" in out
+    assert "batch_size" in out
+
+
+def test_legacy_unstamped_vs_stored_is_refused(tmp_path) -> None:
+    """THE join this gate exists to stop.
+
+    Every dump written before audit-v2 is fen_only by construction, so an
+    unstamped dump is not "unknown" — it is a declaration. Treating it as
+    unknown let old-fen_only vs new-stored proceed with exit 0, which is the
+    comparison an operator is most likely to attempt and least likely to
+    notice.
+    """
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    legacy = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        {"fen": "p", "value": 1.0},
+    ]))
+    stored = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 2.0, input_encoding="stored", batch_size=256),
+    ]))
+
+    with pytest.raises(SystemExit) as exc:
+        require_same_ruler(legacy, stored, label_a="LEGACY", label_b="NEW")
+    assert "REFUSING TO JOIN" in str(exc.value)
+    assert "INFERRED" in str(exc.value)
+
+
+def test_legacy_unstamped_vs_new_fen_only_still_compares(tmp_path, capsys) -> None:
+    """The inference must not break the comparison it is allowed to make."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    legacy = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        {"fen": "p", "value": 1.0},
+    ]))
+    new = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 2.0, input_encoding="fen_only", batch_size=256),
+    ]))
+
+    require_same_ruler(legacy, new, label_a="LEGACY", label_b="NEW")
+    assert "input_encoding" in capsys.readouterr().out
+
+
+def test_batch_size_is_never_inferred() -> None:
+    """Old dumps really did vary on batch size, so a guess would be wrong.
+
+    The ledger's standing VALUE yardstick pins --batch-size 128 while the CLI
+    default is 256; inferring either would refuse a legitimate comparison.
+    """
+    from scripts.paired_compare import INFERRED_WHEN_ABSENT
+
+    assert "batch_size" not in INFERRED_WHEN_ABSENT
+    assert INFERRED_WHEN_ABSENT["input_encoding"] == json.dumps("fen_only")
 
 
 def test_value_regret_dump_carries_its_ruler() -> None:

@@ -30,8 +30,10 @@ groups the per-phase breakdown.
 ⚑ THE TWO DUMPS MUST COME FROM THE SAME RULER. Both sides' ruler stamps
 (``input_encoding``, ``batch_size``) are compared before anything is joined and
 a disagreement is REFUSED, because a paired delta across two rulers measures
-the ruler rather than the checkpoints. A dump too old to carry the stamps is
-warned about instead — see ``require_same_ruler``.
+the ruler rather than the checkpoints. An unstamped dump counts as
+``input_encoding=fen_only`` — every dump predating the audit-v2 flag is, by
+construction — so legacy-vs-``stored`` is refused too; only ``batch_size`` is
+warn-only when absent. See ``require_same_ruler``.
 
 Sign convention: delta = A - B per position. For regret-style metrics (lower
 is better), a NEGATIVE mean delta means A is better.
@@ -161,6 +163,29 @@ def load_dump(
 # of that size is one this tool is routinely asked to adjudicate.
 RULER_FIELDS: tuple[str, ...] = ("input_encoding", "batch_size")
 
+# ⚑ ABSENCE IS INFORMATIVE FOR `input_encoding`, AND ONLY FOR IT.
+# Every dump written before the audit-v2 flag existed is `fen_only` BY
+# CONSTRUCTION, because `stored` did not exist to produce one. Treating an
+# unstamped dump as "unknown" would let the single join this gate exists to
+# stop — a legacy fen_only dump against a new stored one — take the warn path
+# and exit 0, which is the join an operator is most likely to attempt and least
+# likely to notice. So an unstamped dump DECLARES fen_only.
+#
+# `batch_size` gets no such default: old dumps genuinely varied (the ledger's
+# standing VALUE yardstick pins --batch-size 128 while the CLI default is 256),
+# so inferring one would be a guess rather than a deduction, and a wrong guess
+# here refuses a legitimate comparison.
+INFERRED_WHEN_ABSENT: dict[str, str] = {"input_encoding": json.dumps("fen_only")}
+
+
+def _declared(dump: Dump, field: str) -> tuple[set[str], bool]:
+    """(values the dump declares for `field`, whether they were INFERRED)."""
+    values = dump.provenance.get(field, set())
+    if values:
+        return values, False
+    inferred = INFERRED_WHEN_ABSENT.get(field)
+    return ({inferred}, True) if inferred is not None else (set(), False)
+
 
 def require_same_ruler(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
     """Refuse to join two dumps made with different rulers.
@@ -168,9 +193,10 @@ def require_same_ruler(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
     Carrying the ruler on every record is only half the rule — a stamp nothing
     reads is a value accepted and then ignored. This is the half that can fail.
 
-    A dump that predates provenance stamping declares nothing; that is warned
-    about, not refused, so existing dumps still compare. The moment BOTH sides
-    declare, disagreement is fatal.
+    For `input_encoding`, a dump with no stamp is read as `fen_only` (see
+    INFERRED_WHEN_ABSENT), so legacy-vs-legacy still compares and
+    legacy-vs-`stored` is REFUSED. For `batch_size`, an unstamped dump is
+    genuinely unknown and is warned about rather than refused.
     """
     for field in RULER_FIELDS:
         for name, dump in ((label_a, a), (label_b, b)):
@@ -180,8 +206,8 @@ def require_same_ruler(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
                     f"({sorted(dump.provenance[field])}) — this dump mixes two "
                     "rulers within itself and cannot be compared to anything."
                 )
-        va = a.provenance.get(field, set())
-        vb = b.provenance.get(field, set())
+        va, a_inferred = _declared(a, field)
+        vb, b_inferred = _declared(b, field)
         if not va or not vb:
             print(
                 f"[paired-compare] WARNING: '{field}' not declared by "
@@ -191,14 +217,24 @@ def require_same_ruler(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
             )
             continue
         if va != vb:
+            how = {
+                label_a: " (INFERRED from an unstamped dump)" if a_inferred else "",
+                label_b: " (INFERRED from an unstamped dump)" if b_inferred else "",
+            }
             raise SystemExit(
-                f"REFUSING TO JOIN: {label_a} has {field}={sorted(va)[0]} and "
-                f"{label_b} has {field}={sorted(vb)[0]}. These are DIFFERENT "
-                "RULERS of the same positions; a ruler change invalidates its "
-                "records, so the paired delta between them measures the ruler, "
-                "not the checkpoints. Re-run one side to match the other."
+                f"REFUSING TO JOIN: {label_a} has {field}={sorted(va)[0]}"
+                f"{how[label_a]} and {label_b} has {field}={sorted(vb)[0]}"
+                f"{how[label_b]}. These are DIFFERENT RULERS of the same "
+                "positions; a ruler change invalidates its records, so the "
+                "paired delta between them measures the ruler, not the "
+                "checkpoints. Re-run one side to match the other."
             )
-        print(f"[paired-compare] ruler {field}={sorted(va)[0]} (both sides)")
+        source = (
+            " (inferred: neither dump is stamped)" if a_inferred and b_inferred
+            else " (one side inferred from an unstamped dump)"
+            if a_inferred or b_inferred else " (both sides)"
+        )
+        print(f"[paired-compare] ruler {field}={sorted(va)[0]}{source}")
 
 
 def report(a: Dump, b: Dump, *, label_a: str, label_b: str, n_boot: int) -> None:
