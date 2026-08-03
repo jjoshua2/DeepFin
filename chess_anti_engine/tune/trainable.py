@@ -597,12 +597,6 @@ def train_trial(config: dict):
   # back on by editing the yaml.
     gate = PromotionGate(cfg=gate_config_from_dict(config))
     gate.load_state_dict(_gate_state)
-  # Every piece of gate-side mutable loop state lives in this object, not in
-  # locals: the anchor path (None while the gate is off, so a disabled feature
-  # copies nothing), the hold path, the restart restore, the retry ageing and
-  # the sign-validity history. Six loose locals here were individually mutable
-  # and individually untested.
-    gate_hold = GateHoldController.create(gate, durable_dir=durable_dir)
 
     best_state_path = durable_dir / "best.json"
     best_dir = durable_dir / "best"
@@ -631,6 +625,26 @@ def train_trial(config: dict):
 
   # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
     tc = TrialConfig.from_dict(config)
+
+  # Every piece of gate-side mutable loop state lives in this object, not in
+  # locals: the anchor path (None while the gate is off, so a disabled feature
+  # copies nothing), the hold path, the restart restore, the retry ageing and
+  # the sign-validity history. Six loose locals here were individually mutable
+  # and individually untested.
+  #
+  # Constructed AFTER the restore, because it needs the resumed iteration: the
+  # anchor on disk is admitted only if its stamp says it was written within
+  # gate_max_hold_iters of where this process is starting. Without that, an
+  # off -> on cycle re-arms whatever gate_promoted_model.pt an earlier era left
+  # in durable_dir and a hold publishes it to the whole fleet (audit G3-5). Its
+  # counters come from the same gate_state.json the window does, so a restart
+  # no longer resets anchor_refresh_failures to zero.
+    _hold_state = _gate_state.get("hold")
+    gate_hold = GateHoldController.create(
+        gate, durable_dir=durable_dir,
+        state=_hold_state if isinstance(_hold_state, dict) else None,
+        current_iteration=int(global_iter),
+    )
 
     buf, holdout_buf, current_window, replay_shard_dir, selfplay_shards_dir = _init_replay_buffers(
         tc=tc, config=config, restore=restore,
@@ -885,6 +899,7 @@ def train_trial(config: dict):
                 gate=gate,
                 gate_match_idx=gate_match_idx,
                 gate_state_path=gate_state_path,
+                gate_hold=gate_hold,
                 distributed_server_root=distributed_server_root,
                 iteration_idx=iteration_idx,
                 iteration_zero_based=iteration_zero_based,
@@ -900,7 +915,9 @@ def train_trial(config: dict):
   # `hold` that never reaches `on_decision` is the mutation
   # `test_the_loop_body_calls_on_decision_with_the_verdict_and_keeps_it`
   # exists to catch.
-            tr.gate_decision = gate_hold.on_decision(tr.gate_decision)
+            tr.gate_decision = gate_hold.on_decision(
+                tr.gate_decision, iteration=int(iteration_idx),
+            )
   # Before the checkpoint is written and before the best-model comparison
   # reads the generation: the number that arrived in `tr.test_metrics` has to
   # be judged against the generation of the ruler that produced IT.

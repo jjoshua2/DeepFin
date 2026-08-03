@@ -22597,3 +22597,291 @@ upload is the correct outcome if one ever gets that far.
 author), PR #323, who reproduced all four author mutations and added a fifth
 (dropping `policy_encoding`/`policy_size` from the key goes red — the key really
 is the protection for those two, as claimed). Both findings above were theirs.
+
+#### FIX (B), audit wave 3 — the gate's internals and the shadow readout's per-AXIS rule (G3-2..G3-8, G3-11)
+
+The second of the two PRs the wave-3 routing named. (A) carries the server
+compactor (K1/G3-1) and is not touched here. **Nothing in this entry changes a
+training target, a loss, a decision threshold or the pre-registered rule
+semantics.** `gate_mode` is still `off` in the production yaml, so the gate's
+own decision path stays inert; what changes is what it will record and refuse
+when it first fires, and what the pre-committed readout says when it is run.
+
+**Hypothesis.** Every finding below is a defect in the INSTRUMENT rather than in
+the loop, so the deciding question is not "did the model improve" but "does the
+observation this instrument produces mean what its name says, and what
+observation would prove it took effect".
+
+**Yardstick (exact command), run on the live trial before the change and after:**
+
+```
+CUDA_VISIBLE_DEVICES= PYTHONPATH=. python3 scripts/gate_shadow_readout.py \
+  runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/progress.csv
+```
+
+**Pre-committed reading of it.** The exit code alone is NOT the criterion (⚑ an
+exit code is an OR over axes). SUCCESS = the per-leg table names every axis with
+its state, the attribution axis is reported as `refresh_lag` in seconds against
+the reference lag, and `confound` reads `UNMEASURED` with `n=0` — i.e. the
+command now refuses to return 0 while the PID-confound leg has no data. FAILURE
+= any axis silently absent from the table, or a bare exit 0 while
+`n_confound < 3`.
+
+**Readout, 2026-08-03, on `progress.csv` iters 439-478 (last 40):**
+
+```
+kill  rows=40 usable=40 (1.000)  games_cur=182.9 games_prev=64.7 prev_share=0.2612
+      cadence=635s expected_prev_share=0.1850 refresh_lag=166s/ref117s
+      delta mean=-2.16 sd=33.22  confound=unreported
+legs:
+  PASS       cadence                  635s = 0.88x the reference 721s, inside [0.6, 3.0]
+  PASS       anchored_games_vs_pooled cur+prev == pid_curriculum_w+d+l on 40/40 rows
+  PASS       usable_frac              1.000 >= 0.85 (40/40 rows)
+  PASS       games_per_second         0.3899 = 1.20x the reference (band 0.5-2.0)
+  FAIL       refresh_lag              165.8s vs reference 117.5s (1.41x)
+  PASS       sd_delta_elo             33.22 inside (20, 70)
+  PASS       |mean_delta_elo|         2.16 <= 15
+  PASS       window_length            40 rows >= the pre-registered 40
+  UNMEASURED confound                 n=0 of 40 usable rows carry gate_sample_confound_elo
+EXIT=2
+```
+
+VERDICT: **success by the pre-committed rule.** The exit code is unchanged at 2
+— deliberately: the leg's threshold and its fail-closed direction are exactly as
+pre-registered, and re-basing a constant to make a failing rule pass is not a fix
+that belongs in the same change as the fix to the rule's reporting.
+
+**⚑ NEW AND UNRESOLVED — the two readings of the refresh lag DISAGREE.** The
+audit read G3-2's mover as the fleet's model-refresh lag (117.5 s -> 166-194 s).
+An independent re-derivation from shard `.zattrs` — the same construction
+`OfflineReference` was originally built from, and the one this PR ships as
+`--rederive-reference` — says otherwise over the SAME trial:
+
+```
+$ ... gate_shadow_readout.py <trial>/progress.csv \
+      --rederive-reference runs/pbt2_small/server/trials/13a9f_00000/processed
+re-derived from 435 shards binned against 68 iterations; usable bins 67
+  mean_games_cur    197.9   (shipped 196.8)     prev_share        0.1802 (shipped 0.1629)
+  mean_games_prev    43.5   (shipped  38.3)     refresh_lag       112.7s (shipped 117.5s)
+  mean_iter_seconds 625.6   (shipped 721.0)     mean_delta_elo    -7.83  (shipped  -4.33)
+                                                sd_delta_elo      45.16  (shipped  45.56)
+```
+
+Total anchored volume agrees (241.4 vs the in-loop 247.6, 2.5%); the SPLIT does
+not (prev_share 0.1802 vs 0.2612). So on the shard side the lag never moved, and
+the in-loop split attributes ~45% more games to `prev` than the shard binning
+does. That is either a binning artefact of the reconstruction (shards are binned
+by `generated_at_unix` against iteration boundaries; the original reconstruction
+warned this is per-row unreliable and only claimed aggregate accuracy) or a real
+attribution difference. **It is NOT settled, and the whole point of the axis
+rename is that `progress.csv` cannot settle it**: `refresh_lag = prev_share x
+cadence` is an identity, so a moved lag and a mislabelled split are the same
+number there. The pooled-count identity passing 109/109 proves no game was LOST;
+it does not prove the labels are right, because a coin-shuffle preserves that
+sum exactly. **Pre-registered before the next reading: resolve this disagreement
+from shards BEFORE any `OfflineReference` constant moves, record both readings
+here, and never re-base the reference on `gate_sample_*` — a control conditioned
+on its own outcome cannot fail.**
+
+**What changed, by finding.** Each is mutation-checked (mutation -> the named
+test must FAIL); all 11 mutations were KILLED.
+
+- **G3-2** the attribution leg is now the `refresh_lag` axis: same comparison,
+  same 0.06 tolerance, same fail-closed direction, but named for the quantity it
+  measures, reporting both lags in seconds, and saying in the failure message
+  that it cannot distinguish a moved lag from a mis-attributed split. The readout
+  reports EVERY axis with its state (PASS/FAIL/HOLD/SKIPPED/UNMEASURED).
+- **G3-2 x K1 exit-code trap** — `readout_exit_code` gives a window with
+  `n_confound < 3` its own exit code (5) and its own message. A window with no
+  confound measurement can no longer exit 0 or 1; a KILL still outranks it.
+  `--refresh-lag-seconds` and `--rederive-reference` exist, and `--help`
+  documents the re-derivation obligation.
+- **G3-3** `degenerate_variance` tested `se <= 0.0` and missed 51.2% of stuck
+  windows (float round-trip leaves se ~1e-17, and the gate then DEMOTED on a
+  zero-width CI). Now an identical-values short-circuit plus a scale-aware floor
+  derived from the deltas' own magnitudes (`_DEGENERATE_SE_ULPS` ulps of the
+  window's scale); the audit's 40,000-window fuzz is a test and both margins are
+  pinned. ⚠ `test_a_hold_erases_its_own_evidence` was DRIVING THE ACTUATOR
+  THROUGH THIS BUG — its "sustained regression" was a constant delta — and now
+  uses the existing `_WOBBLE` fixed-spread idiom. Held fraction 66.7%, inside
+  the documented 55-66%, so the module's braking claim is unchanged.
+- **G3-4** new columns `gate_hold_effective` / `gate_fallback_missing`: "held,
+  fallback present" and "held, fallback MISSING -> published anyway" used to be
+  byte-identical in the metrics.
+- **G3-5** `anchor_refresh_failures` is persisted (restored from
+  `gate_state.json`, so the auto-resume after an ENOSPC crash no longer resets
+  the one thing standing between a stale export and the fleet), and the anchor
+  now carries a stamp (iteration / step / source sha / trial) written in the same
+  `try` as the copy. An unstamped or `> gate_max_hold_iters`-old anchor is
+  refused at startup, which closes the `off -> on` re-arming trap.
+- **G3-6** the `gate_state.json` write is catch+count+`log.error` +
+  `gate_state_write_failures`, not `contextlib.suppress(Exception)`.
+- **G3-8** the anchor refreshes only on a GENUINE promote (plus the initial
+  create and the pre-first-verdict publish). It was refreshed on NOT_RUN, on a
+  shadow-suppressed demote and on the RELEASE iteration — where it was
+  overwritten with the very weights the hold existed to keep off the fleet. New
+  consequence, and it is deliberate: the anchor can now legitimately go stale, so
+  `anchor_is_trustworthy` also refuses on AGE, reported as
+  `gate_anchor_age_iters`.
+- **G3-11** `gate_threshold` / `gate_interval` / `gate_mcts_sims` join
+  `_DEAD_CONFIG_KEY_INERT_VALUES` at the values the production yaml ships
+  (0.50 / 1 / 1), so a non-inert value is refused at startup instead of starting
+  a run and doing nothing. This forced the shared dead-key predicate to become
+  type-aware — `bool(5) == bool(1)`, so truthiness could not see the value it
+  exists to refuse — and `scripts/audit_realized_config.py` now imports that one
+  predicate instead of re-deriving it. The three keys left
+  `_LIVE_RELOAD_SKIPPED_KEYS`: dead and restart-required are disjoint classes,
+  and a restart REFUSES a dead key rather than applying it.
+
+**Production-visible effects at the next restart, both expected:** (1) four new
+`gate_*` report keys ROTATE `progress.csv` (G3-12, same mechanism as the 11
+`probe_*` keys); (2) `reject_dead_config_keys` now refuses a non-inert
+`gate_interval`/`gate_threshold`/`gate_mcts_sims` — the shipped yaml's values are
+the inert ones and `reject_dead_config_keys(flat_yaml)` is asserted to pass on
+`configs/pbt2_small.yaml` by a test, so the live config starts.
+
+**Not in scope, deliberately:** G3-1/K1 (PR A); G3-7 (the restart's degenerate
+`cur=0` row — costs one dead row per restart, no fix attempted); G3-9 (TOCTOU,
+PLAUSIBLE, unreproduced); G3-10 (`gate.holds` not reset when `create()` releases
+an anchorless hold — one line, but a behaviour change nobody asked for).
+
+##### CORRECTION, 2026-08-03 (PR #324 review round) — RETRACTING "on the shard side the lag never moved"
+
+The entry above is left as written; this paragraph corrects it. **The sentence
+"on the shard side the lag never moved, and the in-loop split attributes ~45%
+more games to `prev` than the shard binning does" is WITHDRAWN as unsupported,
+and so is every number in the `--rederive-reference` block it summarises.** The
+reviewer of PR #324 showed that the reconstruction's `prev_share` is not a
+measurement at all: shifting the iteration bin edges by a quarter of an
+iteration — an alignment the reconstruction has no way to pin — moved it from
+0.1771 to 0.4275 with the shard set and its internal structure unchanged. The
+disagreement the sentence adjudicated (0.1802 shard vs 0.2612 in-loop) is
+strictly inside the reconstruction's own phase uncertainty, so it read a
+choice of bin edge as a finding. ⚑ This is the [A STEP IS NOT A RAMP]
+failure in a new costume: a number that reproduces is not thereby a
+measurement, and here it reproduces only because the same arbitrary phase was
+used twice.
+
+`--rederive-reference` now sweeps the bin-edge phase over
+`[-0.5, -0.25, 0, +0.25, +0.5]` of an iteration, reports every field as a BAND,
+and REFUSES to emit an `OfflineReference` body when `prev_share`'s band exceeds
+the attribution leg's own 0.06 tolerance — with its own exit code (7), because
+a refusal that exits 0 is a silent accept for anything that captures the output.
+Real output on the live trial, 2026-08-03, post-fix:
+
+```
+$ CUDA_VISIBLE_DEVICES= PYTHONPATH=. python3 scripts/gate_shadow_readout.py \
+    runs/pbt2_small/tune/train_trial_13a9f_00000_0_lr=0.0000_2026-07-26_06-02-14/progress.csv \
+    --rederive-reference runs/pbt2_small/server/trials/13a9f_00000/processed
+re-derived from 430 shards ... binned against 68 iterations
+  subtrees read: EXCLUDED _quarantine=5, _compacted=430
+  usable bins (both arms non-empty): 67 at zero shift
+
+  usable bins per shift (a shift below 50% of the best is DEGENERATE and does not set the band):
+    -0.50: 67  -0.25: 67  +0.00: 67  +0.25: 13 DEGENERATE  +0.50: 66
+
+  field                point estimate   shipped     phase band (4 non-degenerate of the bin-edge shifts [-0.5, -0.25, 0.0, 0.25, 0.5] of an iteration)
+  mean_games_cur              197.9       196.8   [79.4, 197.9]
+  mean_games_prev              43.5        38.3   [43.5, 156.7]
+  prev_share                 0.1802      0.1629   [0.1802, 0.6638]  <-- UNRESOLVED, spans the leg's own tolerance
+  mean_iter_seconds           625.6       721.0   [625.6, 665.7]
+  refresh_lag                 112.7       117.5   [112.7, 441.9]
+  mean_delta_elo              -7.83       -4.33   [-7.83, -0.81]
+  sd_delta_elo                45.16       45.56   [35.01, 45.16]
+
+OfflineReference body these imply:
+    REFUSED: prev_share is phase-unstable over the bin-edge sweep
+    (0.1802..0.6638, spread 0.4836 > the leg's own 0.06 tolerance, over 4
+    non-degenerate shifts).
+    ...
+    RE-RUNNING THIS COMMAND CANNOT RESOLVE IT. The free phase is a property of
+    the input -- shards carry the compactor's flush stamp, the loop attributes
+    at INGEST -- so every fleet whose refresh lag is a real fraction of an
+    iteration reads as unstable here. The resolution is to attribute shards at
+    the loop's own INGEST event and re-derive from THAT.
+EXIT=7
+```
+
+⚠ **Two things in the block above were wrong in the first draft of this
+correction and are fixed here rather than left to be re-derived** (PR #324
+review round 2):
+
+1. **The band was banked off a COLLAPSED shift.** The quoted `prev_share` upper
+   bound 0.8232 came from the `+0.25` shift, where only 13 of 68 bins still hold
+   two models — that shift measures the binning falling apart, not the split. A
+   shift keeping under half the best shift's usable bins is now excluded from
+   the band and printed as `DEGENERATE`, and the per-shift counts are printed so
+   no future endpoint can be banked without its n. The verdict is unchanged: the
+   four surviving shifts still span 0.1802-0.6638, **eight times** the leg's
+   tolerance. The exclusion is by SAMPLE SIZE, never by the value — filtering on
+   the share itself would condition the control on its own outcome — and because
+   narrowing a band can only move a verdict toward "stable", a sweep with fewer
+   than three surviving shifts now refuses on that ground alone.
+2. **`mean_iter_seconds` is NOT phase-invariant, and the first draft's claim
+   that its spread was "exactly 0.0" was false.** The seconds come from
+   `progress.csv`, but the MEAN is taken over the USABLE bins, and usability is
+   exactly what the phase moves — the real band is [625.6, 665.7] (and was
+   [625.6, 906.8] before the degenerate shift was excluded). The test pinning the
+   claim used a synthetic fleet where every bin is usable at every shift, so it
+   confirmed its own premise; it now uses a fleet whose usability varies with the
+   shift and asserts the spread is NOT zero. **Nothing this reconstruction
+   produces is phase-invariant.**
+
+**`mean_iter_seconds` 625.6 s vs the shipped 721.0 s still stands, on a
+different instrument:** the readout's own `cadence` leg averages
+`time_this_iter_s` over the csv rows and never bins a shard, and it reads 635 s
+= 0.88x the reference over the last 40 iterations. That is the independent
+support; the reconstruction's 625.6 is consistent with it but is not itself
+evidence. The shard count fell 435 -> 430 because `read_shard_arms` now EXCLUDES
+`_quarantine/` — those 5 shards (136 curriculum games) are ones the loop
+REJECTED and never counted, so including them made the "independent
+reconstruction" a mixture of what the loop used and what it threw away.
+
+**The pre-registered next step is therefore unchanged in obligation and changed
+in method:** the `refresh_lag` FAIL still may not be read as an attribution
+failure, and `OfflineReference` still may not move — but the resolution now
+requires attributing shards at the loop's INGEST event rather than at the
+server's flush stamp. ⚑ **RE-RUNNING `--rederive-reference` LATER CANNOT
+PRODUCE CONSTANTS.** The free phase is a property of the input, not of this
+window: any fleet whose refresh lag is a real fraction of an iteration reads as
+unstable here, so the refusal is STRUCTURAL and no amount of waiting for a
+cleaner window changes it. Until a reconstruction that attributes at INGEST
+exists, there is NO shard-side reading of the lag, in either direction. The
+in-loop 0.2612 is the only measurement on the table, and it cannot separate a
+moved lag from a mis-attributed split by itself — which is exactly why the leg
+is named for the quantity and reports both readings.
+
+Also corrected: the mutation count in the entry above ("all 11 mutations were
+KILLED") was wrong at the time of writing — round 1 ran and killed 12 (M1-M12),
+independently re-killed by the reviewer. The review round adds M13-M18, all
+KILLED, for 18 total; the test each mutation is killed by is in the PR #324
+body. One of those rows was also wrong: M7 as first written renamed the leg key
+AND its message, and the test it was credited to
+(`test_the_attribution_axis_names_the_refresh_lag_and_reports_both`) reads the
+MESSAGE — a key-only rename passes it. The mutation is killed by
+`test_the_readout_reports_every_axis_state_not_only_the_failures`, which is the
+test that asserts the axis NAME, and M7 is now run as the key-only rename.
+
+And the readout block quoted in the entry above was reformatted for width, which
+dropped the `FAILED:` clause from the header line and truncated three leg
+details. ⚑ BANK THE DUMP. The verbatim output, same command, 2026-08-03:
+
+```
+kill  rows=40 usable=40 (1.000)  games_cur=182.9 games_prev=64.7 prev_share=0.2612  cadence=635s expected_prev_share=0.1850 refresh_lag=166s/ref117s  delta mean=-2.16 sd=33.22  confound=unreported  FAILED: refresh_lag 165.8s vs reference 117.5s (1.41x): prev_share 0.2612 vs expected 0.1850 +/-0.06 -- a fleet whose model-refresh lag MOVED and a split that mis-attributes shards are the same number here; check the anchored_games_vs_pooled leg above and re-derive the reference from shards (gate_shadow_readout.py --rederive-reference) before reading this as an attribution failure
+legs:
+  PASS       cadence                  635s = 0.88x the reference 721s, inside [0.6, 3.0]
+  PASS       anchored_games_vs_pooled cur+prev == pid_curriculum_w+d+l on 40/40 rows
+  PASS       usable_frac              1.000 >= 0.85 (40/40 rows)
+  PASS       games_per_second         0.3899 = 1.20x the reference 0.3261 (band 0.5-2.0)
+  FAIL       refresh_lag              refresh_lag 165.8s vs reference 117.5s (1.41x): prev_share 0.2612 vs expected 0.1850 +/-0.06 -- a fleet whose model-refresh lag MOVED and a split that mis-attributes shards are the same number here; check the anchored_games_vs_pooled leg above and re-derive the reference from shards (gate_shadow_readout.py --rederive-reference) before reading this as an attribution failure
+  PASS       sd_delta_elo             33.22 inside (20, 70)
+  PASS       |mean_delta_elo|         2.16 <= 15
+  PASS       window_length            40 rows >= the pre-registered 40
+  UNMEASURED confound                 n=0 of 40 usable rows carry gate_sample_confound_elo -- the PID-confound leg, which the ledger pre-registered as the deciding KILL rule for enabling this gate, has NO measurement. Do not read a promote off this window
+EXIT=2
+```
+
+The pre-committed reading is unchanged and still SUCCESS: every axis prints with
+its state, the attribution axis is `refresh_lag` in seconds against the
+reference lag, `confound` reads `UNMEASURED` with `n=0`, and the command refuses
+to return 0 while it does.

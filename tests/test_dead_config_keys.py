@@ -202,6 +202,47 @@ def test_live_reload_declines_the_value_and_says_a_restart_will_refuse(
     assert "requires restart" not in hits[0]
 
 
+def test_live_reload_declines_a_NUMERIC_dead_key_too(tmp_path, caplog) -> None:
+    """The same branch, driven by a key whose inert value is not falsey.
+
+    The test above uses a boolean dead key, where ``bool(value) !=
+    bool(inert)`` and ``value != inert`` agree, so it cannot see whether the
+    live-reload branch shares the startup refusal's type-aware predicate.
+    ``gate_interval`` is inert at ``1``: a truthiness-only comparison calls
+    ``5`` identical to it and the branch is never entered, which is exactly the
+    silent overlay this module exists to prevent. It is also the ONLY case
+    where the reload's ordering matters -- these three keys were in the
+    restart-required skip set before this change, and a reordering would send
+    the operator the "requires restart" lie for a value a restart refuses.
+    """
+    key = "gate_interval"
+    yaml_path = tmp_path / "live.yaml"
+    yaml_path.write_text(f"{key}: 5\n", encoding="utf-8")
+    config: dict = {key: 1}
+
+    with caplog.at_level(logging.WARNING):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+
+    assert config[key] == 1, "the dead value must NOT be overlaid"
+    hits = [
+        r.getMessage() for r in caplog.records
+        if key in r.getMessage() and "reaches no production code path" in r.getMessage()
+    ]
+    assert len(hits) == 1, caplog.text
+    assert "REFUSE to start" in hits[0]
+    assert "requires restart" not in hits[0]
+    # And the inert value passes through the branch without a warning, so an
+    # operator can leave the corpse in the yaml at its realized value.
+    caplog.clear()
+    yaml_path.write_text(f"{key}: 1\n", encoding="utf-8")
+    with caplog.at_level(logging.WARNING):
+        _reload_yaml_into_config(config, str(yaml_path), live_reload=True)
+    assert not [
+        r for r in caplog.records
+        if key in r.getMessage() and "reaches no production code path" in r.getMessage()
+    ], caplog.text
+
+
 def test_startup_reload_still_applies_it_so_the_refusal_can_fire(tmp_path) -> None:
     """The non-live overlay must NOT swallow the value.
 
@@ -333,13 +374,37 @@ def test_the_audit_and_the_refusal_share_ONE_predicate() -> None:
             f"{value!r}: audit findings={len(findings)} but refusal={refused}"
         )
 
-    # And the invariant the old two-implementation version silently relied on,
-    # asserted for EVERY dead key rather than for the one that exists today.
+    # ...and the same agreement asserted for EVERY dead key rather than for
+    # the one that exists today, at its inert value and at one that is not.
+    #
+    # This USED TO BE `assert not bool(inert)` for every key -- a tripwire for
+    # the bool()-only predicate, which agreed with the refusal only while every
+    # inert value was falsey. The gate_* corpses (audit G3-11) are inert at
+    # 1 / 0.50, where truthiness cannot tell `gate_interval: 5` from the inert
+    # `1`, so the tripwire's premise is gone and the agreement itself is
+    # asserted instead -- over a value that IS the inert one and a value that
+    # is not, for each key.
     for key, inert in dead_config_key_inert_values().items():
-        assert not bool(inert), (
-            f"{key} is inert at a TRUTHY value; re-check every bool(...) "
-            f"comparison that assumed otherwise"
-        )
+        if isinstance(inert, bool):
+            live = not inert
+        elif isinstance(inert, (int, float)):
+            live = type(inert)(inert + 1)
+        else:
+            live = f"{inert}_CHANGED"
+        for value, expect_refusal in ((inert, False), (live, True)):
+            _, findings = _classify({}, {key: value}, {"lr": 3e-5})
+            try:
+                reject_dead_config_keys({key: value})
+                refused = False
+            except ValueError:
+                refused = True
+            assert refused is expect_refusal, (
+                f"{key}={value!r}: refusal={refused}, expected {expect_refusal}"
+            )
+            assert bool(findings) == refused, (
+                f"{key}={value!r}: audit findings={len(findings)} but "
+                f"refusal={refused}"
+            )
 
 
 def test_the_shared_predicate_holds_for_a_key_that_is_inert_at_TRUE(
@@ -392,3 +457,63 @@ def test_the_audit_binds_the_dead_set_to_the_real_one() -> None:
     # ...and swept over the UNION, not the intersection: the live-ADD case has
     # no realized value at all.
     assert "for key in sorted(set(flat_yaml) | set(realized)):" in src
+
+
+def test_the_removed_1sim_gate_knobs_are_refused_at_a_live_value() -> None:
+    """MUTATION (audit G3-11): drop the three ``gate_*`` corpses from the set.
+
+    ``gate_interval`` / ``gate_threshold`` / ``gate_mcts_sims`` are the knobs
+    of the REMOVED 1-sim vs-Stockfish gate. Each appears in exactly three
+    places -- the yaml allowlist, the live-reload skip set, and ``TrialConfig``,
+    which parses them and never reads them -- and ``gate_config_from_dict``
+    looks at none of them. Only ``gate_games`` refused, and it refused because
+    a non-zero value asks for BEHAVIOUR that was deleted; these three were left
+    "tolerated at any value" on the grounds that they are inert scalars, which
+    is true of the value and false of the operator's belief. ``gate_interval: 5``
+    started a run, read back correctly from the trial's own config, and did
+    nothing at all.
+
+    THE TRUTHINESS TRAP IS THE POINT: their inert values are 1 / 0.50 / 1, so a
+    ``bool(value) != bool(inert)`` predicate cannot tell ``gate_interval: 5``
+    from the inert ``1``. That is why the shared predicate is type-aware.
+    """
+    from chess_anti_engine.tune.trainable_config_ops import (
+        dead_config_key_inert_values,
+        reject_dead_config_keys,
+        restart_required_config_keys,
+    )
+
+    inert = dead_config_key_inert_values()
+    for key, live in (("gate_interval", 5), ("gate_threshold", 0.55),
+                      ("gate_mcts_sims", 32)):
+        assert key in inert, key
+        # The inert value is tolerated: deleting a key from a live yaml is
+        # itself a reload risk, so an operator must be able to leave it.
+        reject_dead_config_keys({key: inert[key]})
+        with pytest.raises(ValueError, match=key) as exc:
+            reject_dead_config_keys({key: live})
+        assert key in str(exc.value)
+        assert "REMOVED 1-sim" in str(exc.value), (
+            "the refusal must say what happened to the knob, not merely that "
+            "it is dead"
+        )
+        # A dead key is NOT restart-required: a restart refuses it rather than
+        # applying it, and saying otherwise sends an operator into a crash.
+        assert key not in restart_required_config_keys(), key
+        # ...while a truthiness-only predicate would call 5 and 1 the same.
+        assert bool(live) == bool(inert[key]), (
+            "if this ever stops holding, this test has stopped covering the "
+            "trap it was written for"
+        )
+
+    # gate_games keeps its OWN refusal, with its own message, and is therefore
+    # deliberately not in the dead set.
+    assert "gate_games" not in inert
+
+    # THE PRODUCTION YAML MUST STILL START. Its three values are the inert ones.
+    from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
+    flat = flatten_run_config_defaults(load_yaml_file(
+        str(_REPO / "configs" / "pbt2_small.yaml")))
+    reject_dead_config_keys(flat)
+    for key in ("gate_interval", "gate_threshold", "gate_mcts_sims"):
+        assert key in flat, f"{key} is in the shipped yaml; keep it inert there"

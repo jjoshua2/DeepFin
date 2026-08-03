@@ -55,6 +55,7 @@ import time
 from pathlib import Path
 from collections.abc import Callable, Iterable, Mapping
 
+from chess_anti_engine.config_keys import is_inert_dead_config_value
 from chess_anti_engine.tune.result_keys import row_counter, row_counter_opt
 from chess_anti_engine.utils.config_yaml import SELFPLAY_CONFIG_KEYS
 from scripts.loop_health import load_rows, parse_outcome_stats
@@ -612,7 +613,12 @@ def classify_config_provenance(
         source = "yaml" if key in flat_yaml else "running"
         value = flat_yaml[key] if key in flat_yaml else realized[key]
         inert = dead_inert.get(key, False)
-        if bool(value) == bool(inert):
+        # ⚑ THE SINGLE PREDICATE, imported rather than re-derived: a guard
+        # must share the criterion's instrument. `bool(value) == bool(inert)`
+        # lived here and agreed with the refusal only while every dead key was
+        # inert at False; the gate_* corpses are inert at 1 / 0.50, where
+        # truthiness cannot tell `gate_interval: 5` from the inert `1`.
+        if is_inert_dead_config_value(value, inert):
             continue
         report.append(f"  DEAD-KEY {key}: {source}={value!r} inert={inert!r}")
         findings.append(

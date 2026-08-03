@@ -60,6 +60,7 @@ from chess_anti_engine.tune.promotion_gate import (
     GateHoldController,
     PromotionGate,
     gate_metrics,
+    write_anchor_stamp,
 )
 from chess_anti_engine.tune.replay_exchange import _share_top_replay_each_iteration
 from chess_anti_engine.tune.trainable_config_ops import _play_batch_kwargs
@@ -159,14 +160,36 @@ def _publish_iteration_model(
   # ``GateHoldController.anchor_is_trustworthy`` stops braking on an export the
   # controller can no longer vouch for, which is the same refusal the raise
   # implements, on the fail-open side.
-    if gate_hold_model_path is None and gate_promoted_model_path is not None:
+  # ...and it refreshes on a PROMOTE, not on every unheld iteration (audit
+  # G3-8). "we are not holding this iteration" was the whole condition, which
+  # is also true on a DECISION_NOT_RUN, on a shadow-suppressed demote, and on
+  # the RELEASE iteration -- where the fallback was overwritten with the very
+  # weights the preceding hold existed to keep off the fleet. The anchor was
+  # therefore "last published", one iteration back, while the docstring and the
+  # ledger both called it "the last promoted export" and read it as a ratchet.
+  # ``GateHoldController.anchor_refresh_is_due`` owns the predicate.
+    anchor = gate_promoted_model_path
+    if (
+        anchor is not None
+        and gate_hold_model_path is None
+        and (hold is None or hold.anchor_refresh_is_due())
+    ):
         try:
-            _tmp = gate_promoted_model_path.with_suffix(
-                gate_promoted_model_path.suffix + ".tmp",
-            )
-            gate_promoted_model_path.parent.mkdir(parents=True, exist_ok=True)
+            _tmp = anchor.with_suffix(anchor.suffix + ".tmp")
+            anchor.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(publish_dir / "latest_model.pt", _tmp)
-            _tmp.replace(gate_promoted_model_path)
+            _tmp.replace(anchor)
+  # The stamp is written in the SAME try as the copy it describes: a stamp
+  # that fails to write must count as a failed refresh, because an anchor
+  # whose stamp is a lie is worse than one with no stamp, and one with no
+  # stamp is refused at the next startup.
+            write_anchor_stamp(
+                anchor,
+                iteration=int(iteration_idx),
+                trainer_step=int(getattr(trainer, "step", 0)),
+                model_sha256=str(published_model_sha),
+                trial_id=str(trial_id),
+            )
         except OSError as exc:
             if hold is not None:
                 hold.note_anchor_refresh_failed(exc)
@@ -177,7 +200,7 @@ def _publish_iteration_model(
                 )
         else:
             if hold is not None:
-                hold.note_anchor_refreshed()
+                hold.note_anchor_refreshed(iteration=int(iteration_idx))
   # Roll the held-flag history for the sign-validity check. Must happen on
   # EVERY publish, held or not, or the transition becomes invisible.
     if hold is not None:
@@ -341,6 +364,7 @@ def _run_net_gating(
     ds: DifficultyState,
     gate_match_idx: int, gate_state_path: Path,
     iteration_idx: int,
+    hold: GateHoldController | None = None,
 ) -> tuple[GateDecision, int]:
     """Judge this iteration's anchored current-vs-previous-model A/B.
 
@@ -381,14 +405,42 @@ def _run_net_gating(
         gate.observe(AnchoredSample(iteration=int(iteration_idx)))
     decision = gate.apply(gate.decide())
     gate_match_idx += 1
-    with contextlib.suppress(Exception):
+  # THE STATE WRITE IS COUNTED, NOT SUPPRESSED (audit G3-6). This was a bare
+  # ``contextlib.suppress(Exception)`` two functions from the site whose own
+  # comment reads "THE FAILURE HERE USED TO BE SILENT ... a full durable_dir
+  # therefore left the anchor frozen at an arbitrarily old export with no log
+  # line, no metric and no way to notice ... Instead the outcome is RECORDED".
+  # The identical reasoning applies here and had not been carried across: a
+  # failed write leaves gate_state.json on the PREVIOUS iteration's window and
+  # hold latch, and the restart that follows resumes on it.
+  #
+  # It still must not raise -- the gate is an optional alarm and an ENOSPC must
+  # not take a training run down -- and the breadth (``Exception``, so a
+  # non-serialisable field in ``state_dict`` lands here too) is deliberate. The
+  # difference is that the breadth is now paid for by a counter and a log line
+  # rather than by silence.
+    try:
         atomic_write_text(
             gate_state_path,
             json.dumps(
-                {"matches": int(gate_match_idx), **gate.state_dict()},
+                {
+                    "matches": int(gate_match_idx),
+                    **gate.state_dict(),
+  # The actuator's counters, which used to die with the process: a
+  # restart reset ``anchor_refresh_failures`` to 0 and re-armed a stale
+  # anchor as trustworthy (audit G3-5). They are as of the last
+  # completed ``on_decision``, which is the previous iteration -- this
+  # write happens before this iteration's verdict is applied.
+                    "hold": {} if hold is None else hold.state_dict(),
+                },
                 indent=2, sort_keys=True,
             ),
         )
+    except Exception as exc:  # counted and reported, never re-raised
+        gate.note_state_write_failed(exc, path=gate_state_path)
+    decision = dataclasses.replace(
+        decision, state_write_failures=int(gate.state_write_failures),
+    )
     with contextlib.suppress(Exception):
         for name, val in gate_metrics(decision).items():
             trainer.writer.add_scalar(
@@ -472,6 +524,7 @@ def _run_training_and_gating(
     gate: PromotionGate,
     gate_match_idx: int,
     gate_state_path: Path,
+    gate_hold: GateHoldController | None,
     distributed_server_root: Path,
     iteration_idx: int,
     iteration_zero_based: int,
@@ -496,7 +549,7 @@ def _run_training_and_gating(
     gate_decision, gate_match_idx = _run_net_gating(
         trainer, gate=gate, sp=sp, ds=ds,
         gate_match_idx=gate_match_idx, gate_state_path=gate_state_path,
-        iteration_idx=int(iteration_idx),
+        iteration_idx=int(iteration_idx), hold=gate_hold,
     )
 
     if not skip_train:
