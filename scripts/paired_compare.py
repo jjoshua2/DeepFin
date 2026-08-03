@@ -27,6 +27,12 @@ and check it against the input files before trusting a verdict. Duplicate join
 keys are refused outright — see ``load_dump``. ``phase`` (int index or string)
 groups the per-phase breakdown.
 
+⚑ THE TWO DUMPS MUST COME FROM THE SAME RULER. Both sides' ruler stamps
+(``input_encoding``, ``batch_size``) are compared before anything is joined and
+a disagreement is REFUSED, because a paired delta across two rulers measures
+the ruler rather than the checkpoints. A dump too old to carry the stamps is
+warned about instead — see ``require_same_ruler``.
+
 Sign convention: delta = A - B per position. For regret-style metrics (lower
 is better), a NEGATIVE mean delta means A is better.
 """
@@ -81,6 +87,9 @@ class Dump(NamedTuple):
 
     rows: dict[str, tuple[float, str]]
     unusable: int
+    # RULER PROVENANCE: field -> the distinct values seen across the dump's
+    # rows. Empty when the dump predates provenance stamping.
+    provenance: dict[str, set[str]]
 
 
 def load_dump(
@@ -112,9 +121,15 @@ def load_dump(
     rows: dict[str, tuple[float, str]] = {}
     duplicates: list[str] = []
     unusable = 0
+    provenance: dict[str, set[str]] = {f: set() for f in RULER_FIELDS}
     with open(path, encoding="utf-8") as f:
         for line in f:
             r = json.loads(line)
+            for pf in RULER_FIELDS:
+                if pf in r:
+                    # json.dumps so a dict-valued stamp (audit_targets records
+                    # one encoding per candidate) compares by value, not by id.
+                    provenance[pf].add(json.dumps(r[pf], sort_keys=True))
             k = r.get(join_key)
             v = get_field(r, field)
             if k is None or not isinstance(v, (int, float)) or not math.isfinite(v):
@@ -134,7 +149,56 @@ def load_dump(
             f"key — de-duplicate the dump (or pass the right --join-key) and "
             f"re-run. Refusing rather than silently dropping them."
         )
-    return Dump(rows, unusable)
+    return Dump(rows, unusable, provenance)
+
+
+# Stamps that identify WHICH RULER produced a dump. A change to any of them
+# invalidates the dump's records, so two dumps that disagree cannot be joined.
+# `input_encoding` distinguishes the audit-v2 stored encoding from the FEN-only
+# one (93 planes of difference); `batch_size` matters because both the value
+# and raw-policy regret rulers are batch-size dependent (0.66 cp between 128
+# and 256 for value, ~0.8 cp between 64 and 256 for policy) and a paired delta
+# of that size is one this tool is routinely asked to adjudicate.
+RULER_FIELDS: tuple[str, ...] = ("input_encoding", "batch_size")
+
+
+def require_same_ruler(a: Dump, b: Dump, *, label_a: str, label_b: str) -> None:
+    """Refuse to join two dumps made with different rulers.
+
+    Carrying the ruler on every record is only half the rule — a stamp nothing
+    reads is a value accepted and then ignored. This is the half that can fail.
+
+    A dump that predates provenance stamping declares nothing; that is warned
+    about, not refused, so existing dumps still compare. The moment BOTH sides
+    declare, disagreement is fatal.
+    """
+    for field in RULER_FIELDS:
+        for name, dump in ((label_a, a), (label_b, b)):
+            if len(dump.provenance.get(field, set())) > 1:
+                raise SystemExit(
+                    f"{name}: rows disagree on '{field}' "
+                    f"({sorted(dump.provenance[field])}) — this dump mixes two "
+                    "rulers within itself and cannot be compared to anything."
+                )
+        va = a.provenance.get(field, set())
+        vb = b.provenance.get(field, set())
+        if not va or not vb:
+            print(
+                f"[paired-compare] WARNING: '{field}' not declared by "
+                f"{label_a if not va else label_b} — cannot verify both sides "
+                "used the same ruler. Re-dump with a current scorer to make "
+                "this checkable."
+            )
+            continue
+        if va != vb:
+            raise SystemExit(
+                f"REFUSING TO JOIN: {label_a} has {field}={sorted(va)[0]} and "
+                f"{label_b} has {field}={sorted(vb)[0]}. These are DIFFERENT "
+                "RULERS of the same positions; a ruler change invalidates its "
+                "records, so the paired delta between them measures the ruler, "
+                "not the checkpoints. Re-run one side to match the other."
+            )
+        print(f"[paired-compare] ruler {field}={sorted(va)[0]} (both sides)")
 
 
 def report(a: Dump, b: Dump, *, label_a: str, label_b: str, n_boot: int) -> None:
@@ -219,12 +283,12 @@ def main() -> None:
                          "(audit_targets dumps: e.g. 'cand.search.exp')")
     ap.add_argument("--n-boot", type=int, default=10_000)
     args = ap.parse_args()
-    report(
-        load_dump(args.dump_a, join_key=args.join_key, field=args.field),
-        load_dump(args.dump_b, join_key=args.join_key, field=args.field),
-        label_a=args.label_a or args.dump_a, label_b=args.label_b or args.dump_b,
-        n_boot=args.n_boot,
-    )
+    dump_a = load_dump(args.dump_a, join_key=args.join_key, field=args.field)
+    dump_b = load_dump(args.dump_b, join_key=args.join_key, field=args.field)
+    label_a = args.label_a or args.dump_a
+    label_b = args.label_b or args.dump_b
+    require_same_ruler(dump_a, dump_b, label_a=label_a, label_b=label_b)
+    report(dump_a, dump_b, label_a=label_a, label_b=label_b, n_boot=args.n_boot)
 
 
 if __name__ == "__main__":

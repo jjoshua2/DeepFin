@@ -21382,6 +21382,20 @@ to move and already carries colour flag 1.0 — forcing it to 1.0 was a no-op on
 this set. The test now also runs on children that come out white to move.
 A default-preservation test that only sees one side of a flag proves nothing.
 
+### RULE 1 IS A GATE, NOT ONLY A LABEL
+
+`scripts/paired_compare.py` is where every ledger verdict's paired delta is
+computed, and it joins two dumps by position key while ignoring everything else
+in the record — so it would happily join a `fen_only` dump to a `stored` one and
+report the RULER as if it were the checkpoint difference. A stamp nothing reads
+is a value accepted and then ignored, so the stamps are now CHECKED:
+`require_same_ruler` compares `input_encoding` and `batch_size` across the two
+dumps and REFUSES on disagreement, refuses a dump that mixes rulers within
+itself, and warns (rather than refusing) when a dump is too old to declare
+either. Mutating the gate to a no-op fails 5 tests; renaming the stamp in
+`value_regret.py` fails `test_value_regret_dump_carries_its_ruler`, which pins
+the field names against the producer rather than assuming them.
+
 ### The matched-rows index is a BUILD ARTIFACT, not checked in
 
 Same treatment as `data/audit_set_v1.jsonl` and the shallow-SF cache, neither of

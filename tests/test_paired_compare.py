@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -284,3 +285,104 @@ def test_duplicate_detection_ignores_rows_that_never_entered_the_index(tmp_path)
 
     assert set(d.rows) == {"a"}
     assert d.unusable == 2
+
+
+# ---------------------------------------------------------------------------
+# Ruler provenance: the two dumps must have been made by the SAME ruler
+# ---------------------------------------------------------------------------
+#
+# `--input-encoding fen_only` and `stored` are different rulers of the same
+# positions (93 planes of difference), and both regret rulers are batch-size
+# dependent. Stamping every dumped record with its ruler is only half the rule;
+# a stamp nothing reads is a value accepted and then ignored. These pin the
+# half that can fail.
+
+
+def _stamped(fen: str, value: float, **stamps) -> dict:
+    return {"fen": fen, "value": value, "phase": 1, **stamps}
+
+
+def test_joining_two_encodings_is_refused(tmp_path) -> None:
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=256),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 20.0, input_encoding="stored", batch_size=256),
+    ]))
+
+    with pytest.raises(SystemExit) as exc:
+        require_same_ruler(a, b, label_a="A", label_b="B")
+    assert "REFUSING TO JOIN" in str(exc.value)
+    assert "input_encoding" in str(exc.value)
+
+
+def test_joining_two_batch_sizes_is_refused(tmp_path) -> None:
+    """0.66 cp of ruler drift is larger than deltas this tool adjudicates."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 10.0, input_encoding="fen_only", batch_size=128),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 20.0, input_encoding="fen_only", batch_size=256),
+    ]))
+
+    with pytest.raises(SystemExit, match="batch_size"):
+        require_same_ruler(a, b, label_a="A", label_b="B")
+
+
+def test_matching_rulers_pass_and_are_printed(tmp_path, capsys) -> None:
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    rows = [_stamped("p", 1.0, input_encoding="stored", batch_size=256)]
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", rows))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", rows))
+
+    require_same_ruler(a, b, label_a="A", label_b="B")
+    out = capsys.readouterr().out
+    assert "input_encoding=\"stored\"" in out
+    assert "batch_size=256" in out
+
+
+def test_a_dump_that_mixes_rulers_within_itself_is_refused(tmp_path) -> None:
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [
+        _stamped("p", 1.0, input_encoding="fen_only", batch_size=256),
+        _stamped("q", 2.0, input_encoding="stored", batch_size=256),
+    ]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [
+        _stamped("p", 1.0, input_encoding="fen_only", batch_size=256),
+    ]))
+
+    with pytest.raises(SystemExit, match="mixes two rulers within itself"):
+        require_same_ruler(a, b, label_a="A", label_b="B")
+
+
+def test_unstamped_dumps_warn_rather_than_refuse(tmp_path, capsys) -> None:
+    """Dumps predating provenance must still compare, loudly."""
+    from scripts.paired_compare import load_dump, require_same_ruler
+
+    a = load_dump(_write_jsonl(tmp_path / "a.jsonl", [{"fen": "p", "value": 1.0}]))
+    b = load_dump(_write_jsonl(tmp_path / "b.jsonl", [{"fen": "p", "value": 2.0}]))
+
+    require_same_ruler(a, b, label_a="A", label_b="B")
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "input_encoding" in out
+
+
+def test_value_regret_dump_carries_its_ruler() -> None:
+    """The stamp the gate reads is the one the scorer actually writes.
+
+    A gate reading a field no scorer emits would pass everything forever, so
+    the field NAMES are pinned against the producer rather than assumed.
+    """
+    import scripts.paired_compare as pc
+    import scripts.value_regret as vr
+
+    src = (Path(vr.__file__).read_text(encoding="utf-8"))
+    for field in pc.RULER_FIELDS:
+        assert f'"{field}": ' in src, field
