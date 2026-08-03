@@ -173,10 +173,15 @@ def _candidate_shards(
 def _eligible_rows(arrs: dict[str, Any]) -> np.ndarray:
     """Boolean mask of rows this probe can score.
 
-    Both flags are required, not just the regret one: with no legal mask the
-    policy softmax spreads over illegal moves whose stored regret is 0, which
-    makes the expected regret read LOWER than the net earns — an optimistic
-    bias pointing the same way a hinge would have to move to be visible.
+    Both flags are required, not just the regret one. With no legal mask the
+    policy softmax spreads onto illegal indices, and those are not zero-regret:
+    ``_build_sf_p0_regret_vector`` pre-fills every uncovered index with
+    ``(worst_regret + 1) / 2 >= 0.5`` and only then overwrites the listed moves,
+    so illegal indices measure mean **0.8302** against **0.3272** on legal ones
+    (2578 rows of ``data/c17_ab/pre``). A maskless row therefore reads HIGHER
+    than the net earns, not lower — a large PESSIMISTIC bias. (This comment
+    previously claimed the opposite sign and a zero-regret premise; corrected in
+    PR #315 review by measuring the shards.)
     """
     has_reg = np.asarray(arrs.get("has_sf_p0_regret", ()), dtype=np.uint8).astype(bool)
     if has_reg.size == 0:

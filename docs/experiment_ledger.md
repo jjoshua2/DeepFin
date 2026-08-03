@@ -21287,8 +21287,12 @@ entry once arm G reads out.
 Not an experiment. No hypothesis, no kill rule, no yardstick — there is nothing
 to decide, because nothing about training changes. Every knob defaults to the
 value that makes the probes inert (`era_probe_path` / `era_probe_inwindow_path`
-= `""`), no config file carries any of the five keys, and a test asserts none
-does. Recorded here because the ledger is where a RULER's identity is supposed
+= `""`), no config file carries any of the five keys, and
+`test_no_config_ships_any_of_the_five_probe_keys` asserts none does over every
+`configs/*.yaml`. ⚑ That test did NOT exist when this entry was first written
+and the clause was an unbacked control sitting in the canonical record — the
+"a rule in a doc is not a control" failure, in the one file where it must never
+appear. Caught in review (PR #315, finding 4) and written. Recorded here because the ledger is where a RULER's identity is supposed
 to live, and this ships one.
 
 **WHY.** The run that ended 2026-07-31 lost **−48.6 Elo [−68.2, −29.4]** over
@@ -21317,7 +21321,22 @@ conditionally-present column would misalign every later segment.
 **⚑ READ THE PAIR, NOT THE LEVEL.** Either level moves with anything that moves
 the net. Only their SEPARATION says an in-window gain is being paid for out of
 old-era competence. `probe_gap_*` reads nan unless both legs are configured, and
-the loader prints a warning when only one is.
+the loader prints a warning when only one is. Stronger still: `probe_gap_*`
+carries an unmeasured POSITION-DIFFICULTY offset between two different row sets,
+so its level is not a quantity at all — only its TREND is interpretable.
+
+**⚑⚑ THE ERA SET IS NOT HELD OUT, AND THE PRE-HINGE SEGMENT WILL MISLEAD ANYONE
+WHO THINKS IT IS.** "The probe rows never train" (below) says the probe INJECTS
+nothing. It does NOT say the era rows are outside training. `--oldest N` over a
+live shard dir returns the oldest still-RETAINED shards, which are still IN the
+window at build time — so for the first stretch `probe_era_*` is reading rows
+the trainer is drawing from, and it is EXPECTED TO IMPROVE. That is the
+mechanism, not a fault: the hinge is the TURN at the iteration those shards
+exit, and the pre-exit segment is the baseline the turn is measured against.
+Reading the early era curve as "old-era competence is fine" is the misread this
+paragraph exists to prevent, and it is the reading a restart-day operator is
+most likely to reach for. (Raised as a non-blocking note in the PR #315 review;
+recorded here because post-restart interpretation depends on it.)
 
 **THE EXPECTED-REGRET RULE, stated because it is a standing method rule.**
 `policy_eregret` is `sum_m p_own(m) * regret(m)` — the EXPECTATION under the
@@ -21357,7 +21376,19 @@ across lineages). `n_games`, not the row count, is the effective sample size and
 is recorded in the provenance sidecar so nobody quotes the row count as the
 denominator. Eligible rows are those carrying BOTH `sf_p0_regret` and
 `legal_mask` — a POSITION-level filter applied once at build time, identically
-to both legs, so it cannot condition a denominator on any outcome. It does
+to both legs, so it cannot condition a denominator on any outcome. The legal
+mask is required because an unmasked softmax spreads onto illegal indices, and
+those are NOT zero-regret: `_build_sf_p0_regret_vector` pre-fills every
+uncovered index with `(worst_regret + 1) / 2 >= 0.5`, measured at mean **0.8302**
+against **0.3272** on legal moves over 2578 rows of `data/c17_ab/pre`. So a
+maskless row reads HIGHER than the net earns — a large PESSIMISTIC bias.
+⚑ The PR's original comments asserted the opposite (illegal regret 0, optimistic
+bias); review measured the shards and inverted it. The conclusion never
+depended on the direction, but the wrong premise is what gets confirmed rather
+than caught next time. Enforcement is now per-ROW as well as per-field: a row
+with `has_legal_mask` clear is dropped from the policy denominator at load with
+a printed count, because `apply_policy_mask_to_logits` multiplies the mask by
+that flag and would otherwise score the row fully unmasked, silently. It does
 restrict both sets to consecutive-full-ply selfplay rows (~24% of selfplay
 rows): the pair is comparable to each other and neither is a sample of the whole
 window. `--newest`/`--oldest` refuse to run over more than one `--shard-dir`,
@@ -21414,10 +21445,19 @@ buffer that returns anything at all.
 **MUTATIONS RUN, each killing the test named in its docstring.** Probe
 configured but never scored (`_run_era_probes_if_due` returns defaults) → 5
 failures. Metric computed but never published (drop `**probe_dict` from
-`_build_report_dict`) → 1. Expected regret → top-1 → 2. Legal mask removed → 1.
+`_build_report_dict`) → 1. Expected regret → top-1 → 2. Legal mask removed → 2.
 Pooled denominator → mean-of-batch-means → 3. Linear value error → collapsed
 form → 1. Sidecar digest check deleted → 1. Loop stops passing `era_probes` → 1.
-The desync predicate forced to reject: every consumer follows.
+Per-row `has_legal_mask` intersection deleted → 1. A probe key added to
+`configs/pbt2_small.yaml` → 1. The desync predicate forced to reject: every
+consumer follows.
+
+⚑ The legal-mask test's FIXTURE was itself wrong until the review round: it
+zero-filled illegal indices, which quietly encoded the inverted premise above,
+and the mutation still killed it — so a passing mutation was not evidence the
+test asserted the right thing. The fixture now carries production's
+`>= 0.5` fill and the test asserts the measured direction (a net that is
+PERFECT on its legal moves reads 0.0 masked and ~0.748 unmasked).
 
 **HOW TO ARM IT AT THE RESTART** (nothing here is armed; the live yaml is
 untouched):

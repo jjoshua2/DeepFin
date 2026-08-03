@@ -57,12 +57,31 @@ per iteration, each of which is a forward AND a backward AND an optimizer step
 — so both probes together are well under 1% of an iteration. ``probe_ms`` is
 published so the claim is an observation and not this docstring.
 
-**These rows never train.** A ``ProbeSet`` holds its arrays privately and the
-only thing this module does with them is a forward pass; no path here appends
-to a replay buffer, and ``tests/test_era_forgetting_probe.py`` proves it by
-marking probe rows and drawing from the sampler until the marker would have
-had to appear (with the positive control that the same detector fires when the
-rows ARE added).
+**These rows never train — and that is NOT the same as held out.** Two separate
+statements, and conflating them will misread the whole pre-hinge segment:
+
+  * *The probe injects nothing.* A ``ProbeSet`` holds its arrays privately and
+    the only thing this module does with them is a forward pass; no path here
+    appends to a replay buffer, and ``tests/test_era_forgetting_probe.py``
+    proves it by marking probe rows and drawing from the sampler until the
+    marker would have had to appear (with the positive control that the same
+    detector fires when the rows ARE added).
+  * *The era set is NOT held out.* It is cut from shards that are, at build
+    time, still IN the replay window — ``--oldest N`` over a live shard dir
+    returns the oldest still-RETAINED shards, not shards that have aged out.
+    So until those shards leave the window, ``probe_era_*`` is reading rows the
+    trainer is drawing from: it is an IN-WINDOW MEMORISATION reading, and it is
+    expected to IMPROVE. That is not a fault — it is the mechanism. The hinge
+    is the turn, at the iteration the era shards exit, and the pre-exit segment
+    is the baseline the turn is measured against. Reading the early era curve
+    as "old-era competence is fine" is the misread this paragraph exists to
+    prevent.
+
+⚑ ``probe_gap_*`` carries an unmeasured POSITION-DIFFICULTY offset: the two legs
+are different row sets, so their level difference is not zero even for a net
+that has forgotten nothing. Only the gap's TREND is interpretable. This is
+stronger than "read the pair, not the level" — it says the pair's level is not
+a quantity at all.
 """
 from __future__ import annotations
 
@@ -110,10 +129,26 @@ PROBE_SET_FIELDS: tuple[str, ...] = (
 )
 
 # Fields whose absence makes the probe set unusable rather than degraded.
-# The legal mask is in here rather than treated as optional on purpose: with no
-# mask the softmax spreads over illegal moves, whose stored regret is 0, so a
-# maskless set reports a SMALLER expected regret than the net earns — a silent
-# optimistic bias in the exact direction that would hide a hinge.
+#
+# The legal mask is in here rather than treated as optional because an unmasked
+# softmax spreads probability onto illegal indices, and those indices are NOT
+# zero-regret. ``_build_sf_p0_regret_vector``
+# (chess_anti_engine/selfplay/finalize.py) pre-fills EVERY uncovered index with
+# ``default_regret = (worst_regret + 1) / 2``, which is >= 0.5 by construction,
+# and only then overwrites the moves SF actually listed. Measured over 2578 rows
+# of ``data/c17_ab/pre`` carrying both flags:
+#
+#   illegal indices: mean 0.8302, min 0.5000, max 1.0000, frac == 0 -> 0.0000
+#   legal indices:   mean 0.3272, min 0.0000, frac == 0 -> 0.0594
+#
+# So a maskless set reads HIGHER than the net earns — a PESSIMISTIC bias, and a
+# large one. (An earlier revision of this comment asserted the opposite: that
+# illegal regret is 0 and the bias is optimistic. That was wrong in both the
+# premise and the sign; caught in review on PR #315 by measuring the shards
+# instead of reading the comment.) The conclusion is unchanged and does not
+# depend on the direction — a ruler whose level is set by which illegal moves a
+# net happens to like is not a ruler — but the wrong premise is exactly what
+# gets confirmed rather than caught next time someone reasons from it.
 PROBE_SET_REQUIRED_FIELDS: tuple[str, ...] = (
     "x", "policy_target", "wdl_target", "legal_mask", "has_legal_mask",
     "sf_p0_regret", "has_sf_p0_regret",
@@ -353,9 +388,46 @@ def load_probe_set(
         if k in arrs
     }
     n_rows = _row_count(rows)
-    n_policy = int(np.count_nonzero(np.asarray(rows["has_sf_p0_regret"]).astype(bool)))
+    # The digest identifies the FILE's rows, so it is taken BEFORE the
+    # eligibility intersection below — otherwise a set whose rows are all fine
+    # would still have to match a digest computed from a modified copy.
     digest = probe_set_digest(rows)
     provenance = _load_provenance(p, label=label, digest=digest, truncated=keep < n_all)
+
+    # ⚑ PER-ROW, not just per-field. Requiring the `legal_mask` FIELD is not
+    # enough: `apply_policy_mask_to_logits` multiplies the mask by the row's
+    # `has_legal_mask`, so a row with that flag clear is scored with a fully
+    # UNMASKED softmax and nothing downstream can tell. That is not a small
+    # error — uncovered indices are pre-filled with `(worst_regret + 1)/2 >= 0.5`
+    # (selfplay/finalize.py::_build_sf_p0_regret_vector), so the illegal mass
+    # such a row spreads onto measures 0.83 mean against 0.33 on its legal moves
+    # (2578 rows, data/c17_ab/pre). One maskless row lands ~0.5 of expected
+    # regret into the mean.
+    #
+    # Intersected rather than refused: the VALUE ruler needs no legal mask, so
+    # such a row is perfectly good for `value_err` and merely ineligible for the
+    # policy one. Dropping it from the policy denominator alone loses nothing
+    # and makes `probe_*_policy_n` mean exactly what its name says. A
+    # builder-cut set cannot reach this path — `_eligible_rows` already requires
+    # both flags — so the intersection is a no-op there and the digest above
+    # still matches the builder's.
+    has_reg = np.asarray(rows["has_sf_p0_regret"]).astype(bool)
+    has_mask = np.asarray(rows["has_legal_mask"]).astype(bool)
+    n_maskless = int(np.count_nonzero(has_reg & ~has_mask))
+    if n_maskless:
+        rows["has_sf_p0_regret"] = (has_reg & has_mask).astype(
+            np.asarray(rows["has_sf_p0_regret"]).dtype,
+        )
+        print(
+            f"[probe] {label}: WARNING {n_maskless} of {n_rows} rows carry "
+            f"sf_p0_regret with has_legal_mask CLEAR; they are excluded from "
+            f"probe_{label}_policy_eregret (an unmasked softmax spreads onto "
+            f"illegal indices whose stored regret is ~0.83, not 0, so scoring "
+            f"them would bias the mean UPWARD). Rebuild with "
+            f"scripts/build_era_probe_set.py, which filters on both flags.",
+            flush=True,
+        )
+    n_policy = int(np.count_nonzero(np.asarray(rows["has_sf_p0_regret"]).astype(bool)))
 
     # PROOF OF EFFECT for the construction-only config keys behind this: the
     # digest and the row count are read off the LOADED ARRAYS, not off the

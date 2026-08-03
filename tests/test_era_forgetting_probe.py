@@ -92,16 +92,28 @@ def _probe_arrays(
     regret: np.ndarray | None = None,
     wdl_target: np.ndarray | None = None,
     has_regret: np.ndarray | None = None,
+    has_mask: np.ndarray | None = None,
+    illegal_regret: float = 0.75,
     marker: float = 0.0,
 ) -> dict[str, np.ndarray]:
     """A minimal probe-set array dict. `marker` stamps a detectable value into
-    an otherwise-unused input plane, for the sampler-isolation test."""
+    an otherwise-unused input plane, for the sampler-isolation test.
+
+    ⚑ `illegal_regret` defaults to 0.75, NOT 0. Production fills every index
+    the MultiPV did not cover — which is every illegal move — with
+    `(worst_regret + 1) / 2 >= 0.5` (selfplay/finalize.py), measured at mean
+    0.8302 over 2578 real rows. An earlier revision of this fixture zero-filled
+    them, which quietly encoded the inverted premise that review caught in the
+    production comments (PR #315, finding 2): a fixture that disagrees with the
+    data cannot catch a ruler that disagrees with the data.
+    """
     x = np.zeros((n, PLANES, 8, 8), dtype=np.float16)
     if marker:
         x[:, PLANES - 1, 7, 7] = marker
     legal = np.zeros((n, POLICY), dtype=np.uint8)
     legal[:, :N_LEGAL] = 1
-    reg = np.zeros((n, POLICY), dtype=np.float16)
+    reg = np.full((n, POLICY), np.float16(illegal_regret), dtype=np.float16)
+    reg[:, :N_LEGAL] = 0.0
     if regret is not None:
         reg[:, :N_LEGAL] = np.asarray(regret, dtype=np.float16)
     return {
@@ -112,7 +124,10 @@ def _probe_arrays(
             else np.asarray(wdl_target, dtype=np.int8)
         ),
         "legal_mask": legal,
-        "has_legal_mask": np.ones(n, dtype=np.uint8),
+        "has_legal_mask": (
+            np.ones(n, dtype=np.uint8) if has_mask is None
+            else np.asarray(has_mask, dtype=np.uint8)
+        ),
         "sf_p0_regret": reg,
         "has_sf_p0_regret": (
             np.ones(n, dtype=np.uint8) if has_regret is None
@@ -243,31 +258,105 @@ def test_policy_regret_is_the_expectation_and_not_the_argmax(tmp_path: Path) -> 
     assert reading.policy_eregret != pytest.approx(top1, abs=1e-3)
 
 
-def test_illegal_mass_cannot_deflate_the_expected_regret(tmp_path: Path) -> None:
+def test_illegal_mass_cannot_inflate_the_expected_regret(tmp_path: Path) -> None:
     """MUTATION: drop the ``apply_policy_mask_to_logits`` call in
     ``score_probe_set`` and softmax the raw logits.
 
-    Illegal moves carry regret 0 in the stored vector, so an unmasked softmax
-    parks probability on them and the expected regret reads LOWER than the net
-    earns — an optimistic bias pointing exactly the way a forgetting hinge
-    would have to move to be visible. The fixture puts most of the raw mass on
-    illegal actions so the two readings cannot coincide.
-    """
-    regret = np.array([[0.0, 1.0, 1.0, 1.0]], dtype=np.float32)
-    logits = np.zeros((1, POLICY), dtype=np.float32)   # uniform over 1858
-    logits[0, :N_LEGAL] = 0.0
+    ⚑ THE SIGN, measured rather than assumed. Uncovered indices — every illegal
+    move — are pre-filled with ``(worst_regret + 1) / 2 >= 0.5``
+    (``selfplay/finalize.py::_build_sf_p0_regret_vector``), measured at mean
+    0.8302 against 0.3272 on legal moves over 2578 rows of
+    ``data/c17_ab/pre``. So an unmasked softmax reads HIGHER than the net
+    earns, not lower: the bias is PESSIMISTIC and large. An earlier revision of
+    this test asserted the opposite direction off a zero-filled fixture and
+    still passed the mutation — which is exactly why the fixture now carries
+    production's fill.
 
-    arrs = _probe_arrays(n=1, regret=regret)
+    The net here is PERFECT on the legal moves (regret 0 on all four), so the
+    masked reading is 0.0 and the unmasked one is ~0.748 — a perfect net
+    reported as a bad one, on every set, forever.
+    """
+    regret = np.zeros((1, N_LEGAL), dtype=np.float32)
+    logits = np.zeros((1, POLICY), dtype=np.float32)   # uniform over all 1858
+
+    arrs = _probe_arrays(n=1, regret=regret, illegal_regret=0.75)
     probe = _load(_write_probe_set(tmp_path / "p.npz", arrs))
     reading = score_probe_set(
         _FixedNet(logits, np.zeros((1, 3), dtype=np.float32)),
         probe, device="cpu", batch_size=8,
     )
-    # Masked: uniform over 4 legal moves -> 3/4.
-    assert reading.policy_eregret == pytest.approx(0.75, abs=1e-4)
-    # Unmasked would be uniform over 1858 -> 3/1858, three orders of magnitude
-    # smaller, i.e. a net that looks near-perfect on every set forever.
-    assert reading.policy_eregret > 0.5
+    assert reading.policy_eregret == pytest.approx(0.0, abs=1e-5)
+    # Unmasked: (POLICY - N_LEGAL) * 0.75 / POLICY.
+    unmasked = (POLICY - N_LEGAL) * 0.75 / POLICY
+    assert unmasked > 0.7, "fixture too weak to separate the two forms"
+    assert reading.policy_eregret != pytest.approx(unmasked, abs=1e-2)
+
+
+def test_a_row_whose_legal_mask_flag_is_clear_leaves_the_policy_denominator(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """MUTATION: delete the ``has_reg & has_mask`` intersection in
+    ``load_probe_set``.
+
+    Requiring the ``legal_mask`` FIELD is not enough. ``apply_policy_mask_to_logits``
+    multiplies the mask by the row's own ``has_legal_mask``, so a row with that
+    flag clear is scored with a fully UNMASKED softmax and nothing downstream
+    can tell — and per the test above that inflates the reading by ~0.75 of
+    expected regret for that row. The builder filters on both flags, so only a
+    hand-cut, converted or salvaged set can reach this; the sidecar warning is
+    about PROVENANCE and would not catch a shape problem.
+
+    Row 0 is maskless and, if scored, would drag the mean up; row 1 is clean
+    and perfect. The intersection must leave a denominator of 1 and a reading
+    of exactly row 1's.
+    """
+    regret = np.zeros((2, N_LEGAL), dtype=np.float32)
+    arrs = _probe_arrays(
+        n=2, regret=regret, illegal_regret=0.75,
+        has_mask=np.array([0, 1], dtype=np.uint8),
+    )
+    probe = _load(_write_probe_set(tmp_path / "p.npz", arrs))
+    assert probe.n_rows == 2
+    assert probe.n_policy_rows == 1, "the maskless row is still in the denominator"
+    out = capsys.readouterr().out
+    assert "1 of 2 rows carry sf_p0_regret with has_legal_mask CLEAR" in out
+
+    logits = np.zeros((2, POLICY), dtype=np.float32)   # uniform over all 1858
+    reading = score_probe_set(
+        _FixedNet(logits, np.zeros((2, 3), dtype=np.float32)),
+        probe, device="cpu", batch_size=4,
+    )
+    # Only row 1, masked, perfect -> 0.0. Scoring row 0 unmasked would give
+    # ~0.374 (its ~0.748 halved by the two-row denominator).
+    assert reading.n_policy_rows == 1
+    assert reading.policy_eregret == pytest.approx(0.0, abs=1e-5)
+    # The VALUE ruler is unaffected: it needs no legal mask, so both rows count.
+    assert reading.n_rows == 2
+    assert np.isfinite(reading.value_err)
+
+
+def test_a_builder_cut_set_is_untouched_by_the_mask_intersection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The intersection must be a NO-OP on a set the builder produced, or it
+    would change the digest and break the proof-of-effect match against the
+    sidecar. ``_eligible_rows`` already requires both flags, so there is
+    nothing to intersect."""
+    d = tmp_path / "replay_shards"
+    d.mkdir()
+    _write_shard(d, 100, n=200, games=5)
+    out_path = tmp_path / "era.npz"
+    r = _build("--shard-dir", str(d), "--out", str(out_path), "--rows", "120")
+    assert r.returncode == 0, r.stderr
+    built = next(
+        t for t in r.stdout.split() if t.startswith("digest=")
+    ).split("=", 1)[1]
+
+    probe = _load(out_path)
+    printed = capsys.readouterr().out
+    assert "has_legal_mask CLEAR" not in printed
+    assert probe.digest == built
+    assert probe.n_policy_rows == probe.n_rows
 
 
 def test_the_policy_mean_pools_across_batches_instead_of_averaging_batch_means(
@@ -602,6 +691,41 @@ def test_the_trial_loop_hands_the_probes_to_the_reporting_phase() -> None:
         encoding="utf-8")
     assert "probe_dict = _run_era_probes_if_due(" in phases
     assert "probe_dict=probe_dict," in phases
+
+
+def test_no_config_ships_any_of_the_five_probe_keys() -> None:
+    """The control the PR body and the ledger entry both CLAIM. It did not
+    exist until review asked for it (PR #315, finding 4).
+
+    "No config carries the key" was true by grep and false as a guarantee: an
+    unbacked control stated in ``docs/experiment_ledger.md`` is precisely the
+    "a rule in a doc is not a control" failure, and the ledger is the one place
+    it must never appear. Arming a probe is a RULER decision that belongs to a
+    restart with its own ledger note, not to a config line riding in on the PR
+    that added the machinery.
+
+    Scans every ``configs/*.yaml``, not just the production one: an
+    ``exp_*.yaml`` that armed a probe would put the columns on a different
+    run's rows while this test watched only ``pbt2_small``.
+    """
+    keys = (
+        "era_probe_path", "era_probe_inwindow_path", "era_probe_rows",
+        "era_probe_interval", "era_probe_batch_size",
+    )
+    configs = sorted((_REPO / "configs").glob("*.yaml"))
+    assert configs, "no configs found; the glob is wrong and this test is vacuous"
+    offenders = sorted(
+        f"{p.name}:{key}"
+        for p in configs
+        for key in keys
+        if key in p.read_text(encoding="utf-8")
+    )
+    assert not offenders, (
+        f"{offenders} — arming an era probe changes what a published column is "
+        "measured over. That is a restart-time ruler decision with its own "
+        "ledger note, not a config line riding in on the PR that added the "
+        "machinery."
+    )
 
 
 def test_the_throttle_keys_are_live_and_the_ruler_keys_are_not() -> None:
