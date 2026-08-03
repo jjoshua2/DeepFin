@@ -2055,7 +2055,17 @@ class WorkerSession:
         legal_positions = int(ds.get("lifetime_legal_positions", 0))
         wait_s = float(ds.get("lifetime_wait_s", 0.0))
         roundtrip_s = float(ds.get("lifetime_roundtrip_s", 0.0))
+        served_requests = int(ds.get("lifetime_served_requests", requests))
+        failed_requests = int(ds.get("lifetime_failed_requests", 0))
+        # SHARED_BROKER_AUDIT B6: a wedged slot is INVISIBLE in slot_requests
+        # (attempts are uniform across live and dead slots -- measured
+        # [3, 3, 3, 3] with slot 3 serving nothing). slot_served separates
+        # them, and slot_roundtrip_s -- computed since forever and read by
+        # nothing until now -- carries the 100x separation that identifies
+        # WHICH slot is stalling.
         slot_requests = [int(x) for x in ds.get("slot_requests", [])]
+        slot_served = [int(x) for x in ds.get("slot_served", slot_requests)]
+        slot_roundtrip_s = [float(x) for x in ds.get("slot_roundtrip_s", [])]
 
         prev_requests = int(prev.get("requests", 0))
         prev_positions = int(prev.get("positions", 0))
@@ -2063,7 +2073,13 @@ class WorkerSession:
         prev_legal_positions = int(prev.get("legal_positions", 0))
         prev_wait_s = float(prev.get("wait_s", 0.0))
         prev_roundtrip_s = float(prev.get("roundtrip_s", 0.0))
+        prev_served_requests = int(prev.get("served_requests", 0))
+        prev_failed_requests = int(prev.get("failed_requests", 0))
         prev_slot_requests = [int(x) for x in prev.get("slot_requests", [0] * len(slot_requests))]
+        prev_slot_served = [int(x) for x in prev.get("slot_served", [0] * len(slot_served))]
+        prev_slot_roundtrip_s = [
+            float(x) for x in prev.get("slot_roundtrip_s", [0.0] * len(slot_roundtrip_s))
+        ]
 
         delta_requests = max(0, requests - prev_requests)
         delta_positions = max(0, positions - prev_positions)
@@ -2071,13 +2087,28 @@ class WorkerSession:
         delta_legal_positions = max(0, legal_positions - prev_legal_positions)
         delta_wait_s = max(0.0, wait_s - prev_wait_s)
         delta_roundtrip_s = max(0.0, roundtrip_s - prev_roundtrip_s)
-        slot_deltas = [
+        delta_served = max(0, served_requests - prev_served_requests)
+        delta_failed = max(0, failed_requests - prev_failed_requests)
+        slot_attempt_deltas = [
             max(0, count - (prev_slot_requests[idx] if idx < len(prev_slot_requests) else 0))
             for idx, count in enumerate(slot_requests)
+        ]
+        slot_deltas = [
+            max(0, count - (prev_slot_served[idx] if idx < len(prev_slot_served) else 0))
+            for idx, count in enumerate(slot_served)
         ]
         active_slot_deltas = [count for count in slot_deltas if count > 0]
         active_slots = len(active_slot_deltas)
         slot_skew = max(active_slot_deltas) - min(active_slot_deltas) if active_slot_deltas else 0
+        # Worst per-slot mean roundtrip in this window. A wedged slot reads
+        # ~request_timeout_s here while healthy ones read single-digit ms.
+        slot_rt_ms = [
+            1000.0
+            * max(0.0, rt - (prev_slot_roundtrip_s[idx] if idx < len(prev_slot_roundtrip_s) else 0.0))
+            / max(1, slot_attempt_deltas[idx] if idx < len(slot_attempt_deltas) else 0)
+            for idx, rt in enumerate(slot_roundtrip_s)
+        ]
+        slot_rt_ms_max = max(slot_rt_ms) if slot_rt_ms else 0.0
 
         self._last_broker_client_stats_log_s = float(now_s)
         self._last_broker_client_stats_snapshot = {
@@ -2087,8 +2118,20 @@ class WorkerSession:
             "legal_positions": legal_positions,
             "wait_s": wait_s,
             "roundtrip_s": roundtrip_s,
+            "served_requests": served_requests,
+            "failed_requests": failed_requests,
             "slot_requests": slot_requests,
+            "slot_served": slot_served,
+            "slot_roundtrip_s": slot_roundtrip_s,
         }
+        # delta_requests counts ATTEMPTS, so a window in which every request
+        # FAILED still has delta_requests > 0 and reaches the log -- the gate
+        # below is unchanged from main and no `or delta_failed` clause is
+        # needed to make that true. It is stated (and pinned by
+        # test_a_window_where_every_request_failed_still_logs) because the
+        # obvious refactor once served/failed exist is to key this on
+        # delta_served, which WOULD go silent for exactly the stall this line
+        # exists to show.
         if delta_requests <= 0:
             return
 
@@ -2098,7 +2141,7 @@ class WorkerSession:
             "req_s=%.1f pos_s=%.0f wait_ms=%.2f roundtrip_ms=%.2f "
             "wait_thread_busy=%.1f%% roundtrip_thread_busy=%.1f%% "
             "legal_req=%.1f%% legal_pos=%.1f%% slots_active=%d/%d "
-            "slot_req_skew=%d max_inflight=%d available=%d "
+            "slot_req_skew=%d slot_rt_ms_max=%.0f max_inflight=%d available=%d "
             "complete_gps=%.2f complete_pos_s=%.0f callback_busy=%.1f%% "
             "upload_busy=%.1f%% active_threads=%d thread_game_skew=%d"
             # Only when non-zero, so the healthy line is unchanged and any
@@ -2110,20 +2153,33 @@ class WorkerSession:
             + (
                 f" stale_responses_rejected={int(ds.get('stale_responses_rejected', 0))}"
                 if int(ds.get("stale_responses_rejected", 0)) else ""
+            )
+            # Same rule for the B6 counters: absent on a healthy run, and a
+            # grep hit the moment a slot starts failing. failed_req is the
+            # number rows_per_req/pos_s above deliberately EXCLUDE.
+            + (
+                f" failed_req=+{int(delta_failed)}"
+                f" failed_req_total={int(failed_requests)}"
+                if delta_failed or failed_requests else ""
+            )
+            + (
+                f" slots_quarantined={int(ds.get('slots_quarantined', 0))}"
+                if int(ds.get("slots_quarantined", 0)) else ""
             ),
             requests, delta_requests,
-            float(delta_positions / max(1, delta_requests)),
+            float(delta_positions / max(1, delta_served)),
             float(delta_requests / max(1e-6, elapsed_s)),
             float(delta_positions / max(1e-6, elapsed_s)),
             float(1000.0 * delta_wait_s / max(1, delta_requests)),
             float(1000.0 * delta_roundtrip_s / max(1, delta_requests)),
             float(100.0 * delta_wait_s / max(1e-6, elapsed_s)),
             float(100.0 * delta_roundtrip_s / max(1e-6, elapsed_s)),
-            float(100.0 * delta_legal_requests / max(1, delta_requests)),
+            float(100.0 * delta_legal_requests / max(1, delta_served)),
             float(100.0 * delta_legal_positions / max(1, delta_positions)),
             active_slots,
             int(ds.get("slots", 0)),
             int(slot_skew),
+            float(slot_rt_ms_max),
             int(ds.get("max_inflight", 0)),
             int(ds.get("available_slots", 0)),
             *completion_stats,
@@ -2796,21 +2852,30 @@ class WorkerSession:
         client reads policy/WDL out of the middle of the broker's INPUT region —
         all-zero, silently. The manifest is the first thing a client-only worker
         sees that knows the model's real width, so compare here.
+
+        THREE numbers must agree, not two (WORKER_AUDIT K5). The CLI arg
+        ``--inference-slot-input-planes`` is a third source of truth: the
+        manifest's width comes from ``model_cfg.input_extra_features``
+        (``distributed_runtime.py:384``) while the launcher's CLI value comes
+        from ``config["input_extra_features"]`` (``:890``) — two keys nothing
+        compared. In the launched fleet they happen to be equal, so this leg is
+        a cross-check that fires the moment that stops being true; the client
+        leg is the one that fires for a hand-launched worker.
+        ``_check_manifest_compat`` validates only the manifest against ITSELF
+        and never sees either.
+
+        Client leg first: when both disagree it is the more informative error
+        (it names the width the shared-memory segment was actually built with).
         """
+        self._require_client_slot_planes_match_manifest(manifest)
+        self._require_cli_slot_planes_match_manifest(manifest)
+
+    def _require_client_slot_planes_match_manifest(self, manifest: dict) -> None:
+        """The realized client's slot width vs the manifest. See the caller."""
         client = self.inference_client
         if client is None:
             return
-        mc = manifest.get("model_config") or {}
-        # Both shapes reach here: the poll path gets the manifest dict, and
-        # _swap_model_from_manifest accepts a ModelConfig directly (worker.py's
-        # `isinstance(mc, ModelConfig)` branch). Reading only the dict form would
-        # silently downgrade the object form to the "cannot check" branch.
-        if isinstance(mc, ModelConfig):
-            declared = mc.input_extra_features
-        elif isinstance(mc, dict):
-            declared = mc.get("input_extra_features")
-        else:
-            declared = None
+        declared = self._manifest_declared_extra_features(manifest)
         if declared is None:
             # Production manifests always carry it (model_config_to_manifest_dict).
             # A manifest that does not is the one case this check cannot make, so
@@ -2835,6 +2900,48 @@ class WorkerSession:
                 "the v1 146). A narrower client fits inside the broker's segment "
                 "and reads policy/WDL out of its input region — all-zero, with no "
                 "error (INFERENCE_AUDIT I2)."
+            )
+
+    @staticmethod
+    def _manifest_declared_extra_features(manifest: dict) -> str | None:
+        """The manifest's declared encoding version, or None if it carries none.
+
+        Both shapes reach here: the poll path gets the manifest dict, and
+        ``_swap_model_from_manifest`` accepts a ``ModelConfig`` directly.
+        Reading only the dict form would silently downgrade the object form to
+        the "cannot check" branch.
+        """
+        mc = manifest.get("model_config") or {}
+        if isinstance(mc, ModelConfig):
+            return str(mc.input_extra_features)
+        if isinstance(mc, dict):
+            value = mc.get("input_extra_features")
+            return None if value is None else str(value)
+        return None
+
+    def _require_cli_slot_planes_match_manifest(self, manifest: dict) -> None:
+        """``--inference-slot-input-planes`` vs the manifest (WORKER_AUDIT K5).
+
+        The third leg. Only meaningful when a slot name was configured — with
+        no broker the flag sizes nothing, and a local-inference worker that
+        left it at the v1 default must not be killed for it.
+        """
+        if not str(getattr(self.args, "inference_slot_name", "") or "").strip():
+            return
+        declared = self._manifest_declared_extra_features(manifest)
+        if declared is None:
+            return  # already warned once by the client leg
+        want = int(input_plane_count(declared))
+        got = int(self.args.inference_slot_input_planes)
+        if got != want:
+            raise ValueError(
+                f"--inference-slot-input-planes is {got} but the manifest declares "
+                f"input_extra_features={declared!r} = {want} planes. The launcher's "
+                "CLI value and the manifest's model_config are two different "
+                "sources of truth (config['input_extra_features'] vs "
+                "model_cfg.input_extra_features) and nothing compared them "
+                "(WORKER_AUDIT K5); a skew reads policy/WDL out of the broker's "
+                "input region — all-zero, with no error (INFERENCE_AUDIT I2)."
             )
 
     def _sync_model(self, manifest: dict) -> None:

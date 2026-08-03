@@ -143,6 +143,12 @@ class _StubSlot:
     def __init__(self, batch_size: int = 2) -> None:
         self.state = _STATE_REQUEST
         self.batch_size = batch_size
+        # Dense f32 is the only mode SharedSlotBroker implements, and it now
+        # READS the field (audit B1). Without it these slots would be refused
+        # for an unservable transport before ever reaching the branch under
+        # test -- green, and testing nothing.
+        self.request_mode = _MODE_DENSE_F32
+        self.request_id = 1
         self.policy = np.full((batch_size, 8), _SENTINEL, dtype=np.float32)
         self.wdl = np.full((batch_size, 3), _SENTINEL, dtype=np.float32)
         self.input = np.zeros((batch_size, 4), dtype=np.float32)
@@ -159,6 +165,8 @@ def _shared_broker_skeleton(models: dict[str, object]) -> SharedSlotBroker:
     broker = object.__new__(SharedSlotBroker)
     broker._trial_models = models  # pyright: ignore[reportAttributeAccessIssue]
     broker._trial_no_model_warned_at = {}
+    broker._trial_bad_mode_warned_at = {}
+    broker.unsupported_mode_requests = 0
     broker.device = "cpu"
     return broker
 

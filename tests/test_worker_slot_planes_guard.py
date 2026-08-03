@@ -35,10 +35,25 @@ class _Client:
         self.input_planes = int(planes)
 
 
-def _session(*, client: _Client | None) -> Any:
+class _Args:
+    """The CLI surface the guard reads. ``inference_slot_input_planes`` is the
+    third source of truth (WORKER_AUDIT K5): the launcher derives it from
+    ``config['input_extra_features']`` while the manifest derives its width from
+    ``model_cfg.input_extra_features``, and nothing compared them."""
+
+    def __init__(self, *, cli_planes: int, slot_name: str = "cae2-deadbeef-0") -> None:
+        self.inference_slot_input_planes = int(cli_planes)
+        self.inference_slot_name = slot_name
+
+
+def _session(*, client: _Client | None, cli_planes: int | None = None,
+             slot_name: str = "cae2-deadbeef-0") -> Any:
     session = object.__new__(WorkerSession)
     session.log = logging.getLogger("test.worker_slot_planes")
     session.inference_client = cast("Any", client)
+    if cli_planes is None:
+        cli_planes = client.input_planes if client is not None else PROD_PLANES
+    session.args = cast("Any", _Args(cli_planes=cli_planes, slot_name=slot_name))
     session._slot_planes_unknown_warned = False
     session.model_sha = ""
     session.model_step = 0
@@ -122,7 +137,38 @@ def test_matching_width_passes_on_every_entry_point() -> None:
 
 def test_no_client_is_not_an_error() -> None:
     """A worker with a local model has no slot to disagree with."""
-    session = _session(client=None)
+    session = _session(client=None, cli_planes=V1_PLANES, slot_name="")
+    session._ensure_local_model_at_sha = Mock(return_value=None)
+    WorkerSession._sync_model(session, _manifest(task="selfplay", extra="v2_threats"))
+
+
+def test_the_cli_arg_is_compared_too_not_just_the_client() -> None:
+    """WORKER_AUDIT K5: all THREE numbers must agree.
+
+    The client leg alone cannot see this: here the client and the manifest
+    match, and only ``--inference-slot-input-planes`` disagrees. In the
+    launched fleet the CLI value and the client's width come from the same
+    place, which is exactly why nothing noticed they were never compared.
+    """
+    session = _session(client=_Client(PROD_PLANES), cli_planes=V1_PLANES)
+    with pytest.raises(ValueError, match=r"--inference-slot-input-planes is 146"):
+        WorkerSession._sync_model(session, _manifest(task="selfplay", extra="v2_threats"))
+    session._ensure_local_model_at_sha.assert_not_called()
+
+
+def test_the_cli_leg_also_guards_the_mid_batch_swap() -> None:
+    session = _session(client=_Client(PROD_PLANES), cli_planes=V1_PLANES)
+    with pytest.raises(ValueError, match="WORKER_AUDIT K5"):
+        WorkerSession._swap_model_from_manifest(
+            session, _manifest(task="selfplay", extra="v2_threats", sha="e" * 8),
+        )
+    assert session.model_sha == ""
+
+
+def test_the_cli_leg_is_inert_without_a_configured_slot() -> None:
+    """A local-inference worker that left the flag at its v1 default sizes
+    nothing with it, and must not be killed for it."""
+    session = _session(client=None, cli_planes=V1_PLANES, slot_name="")
     session._ensure_local_model_at_sha = Mock(return_value=None)
     WorkerSession._sync_model(session, _manifest(task="selfplay", extra="v2_threats"))
 

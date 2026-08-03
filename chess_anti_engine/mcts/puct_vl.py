@@ -29,9 +29,13 @@ from chess_anti_engine.encoding._lc0_ext import CBoard as _CBoard
 from chess_anti_engine.encoding.features import RELATION_COUNT
 from chess_anti_engine.inference_cache import PucvEvalCache, PucvEvalCacheStats
 from chess_anti_engine.mcts._mcts_tree import MCTSTree
+from chess_anti_engine.mcts.vloss import MAX_PATH, release_batch_rows
 
 # Stride constants matching the C extension's per-leaf write layout.
-_MAX_PATH = 512
+# _MAX_PATH lives in mcts.vloss because the failure-path release needs the same
+# stride to slice a pending path back out of path_buf; one definition, so a
+# future MCTS_MAX_PATH change cannot leave the cleanup indexing the old layout.
+_MAX_PATH = MAX_PATH
 _MAX_LEGAL = 256
 _PLANES = 146
 
@@ -135,6 +139,38 @@ class PucvChunker:
         # Apply visit-dependent Cpuct scaling to this tree (no-op when factor=0).
         tree.set_cpuct_scaling(self._cpuct_factor, self._cpuct_base)
 
+        # buf_idx -> row count for batches whose vloss is APPLIED and not yet
+        # integrated. The evaluator sits between those two C calls and can
+        # raise (broker TimeoutError); without the finally below, that vloss
+        # stays on a tree the caller reuses for the rest of the game
+        # (SHARED_BROKER_AUDIT B7).
+        outstanding: dict[int, int] = {}
+
+        try:
+            sims = self._run_pipelined(
+                tree, root_id, root_cboard, target_sims, outstanding,
+            )
+        finally:
+            for buf_idx, n_rows in outstanding.items():
+                release_batch_rows(
+                    tree, self._bufs[buf_idx], n_rows, vloss_weight=self._vloss,
+                )
+        return sims
+
+    def _run_pipelined(
+        self,
+        tree: MCTSTree,
+        root_id: int,
+        root_cboard: _CBoard,
+        target_sims: int,
+        outstanding: dict[int, int],
+    ) -> int:
+        """The descend/evaluate/integrate pipeline. See ``run`` for the contract.
+
+        ``outstanding`` is owned by ``run``'s ``finally``: every entry added
+        here has vloss on the tree, and is removed only once
+        ``batch_integrate_leaves`` (which removes vloss itself) has returned.
+        """
         ev = self._ev
         gather = self._gather
         sims = 0
@@ -166,6 +202,7 @@ class PucvChunker:
                     b["cache_keys"] if self._cache is not None else None,
                     rel,
                 )
+                outstanding[next_buf_idx] = n
                 if self._cache is None:
                     if rel is None:
                         handle = ev.evaluate_inplace_async(n, slot=next_slot)
@@ -193,6 +230,7 @@ class PucvChunker:
                     b_cur["legal_buf"], b_cur["legal_lens"],
                     b_cur["is_term"], pol, wdl, self._vloss,
                 )
+                outstanding.pop(pending_buf_idx, None)
 
             if next_handle is not None:
                 pending_slot = next_slot
