@@ -21956,3 +21956,96 @@ training metric, so there is nothing for them to confound. I5 (the
 path) are deliberately **not** in this PR.
 
 **UNREVIEWED at open.**
+
+## 2026-08-03 — CORRECTION to the entry above: "restart-gated in BOTH directions" was FALSE in the dangerous direction, and the header could never have made it true
+
+The entry above (inference audit I1–I4, I6 / PR #322) says:
+
+> A v1 client attaching to a v2 broker's segment now fails loudly with
+> `SlotProtocolMismatch` instead of reading garbage … the restart is required in
+> **both** directions, because a v2 broker and a v1 client cannot talk.
+
+**The second half of that is wrong, and it is wrong in the direction that
+poisons data.** The independent reviewer of #322 measured it with two worktrees
+— an `origin/main` client and a PR-head broker on the same named slot:
+
+```
+# broker: PR head            client: origin/main
+[broker] slots ready n=1 planes=8 layout_id=0xdbbd9102 proto_v=2
+v1 client _HEADER_BYTES=8
+RETURNED policy[:4]=[0. 0. 0. 0.] wdl=[0. 0. 0.]
+EXPECTED (if the protocol were honoured) policy==42.0 wdl==42.0
+```
+
+All-zero policy and all-zero WDL, **no exception** — the exact I2 outcome the PR
+exists to delete, reintroduced by the fix, in the one deploy shape the entry
+declared safe.
+
+**Why the claim was never reachable, which is the part worth keeping.** A guard
+in a header can only be executed by a peer that has the code to execute it. A v1
+client runs v1 `_connect` (`main:inference.py:2340-2359`): no size check, no
+magic, no layout id — there is nothing there to fail. And because the v2 header
+grew at the **front** (`_HEADER_BYTES` 8 → 24) while `state@0`, `mode@1`,
+`batch_size@4` kept their offsets, the state machine still completes; the two
+sides simply read and write 16 bytes out of phase. **A version bump can never
+make an old peer refuse. Only a new peer can refuse.** The same reasoning
+applies to any future bump of this protocol and to every other
+version-in-a-payload scheme in this repo.
+
+**Reachability was not theoretical.** The slot name is derived, not negotiated —
+`cae-{stable_seed_u32("slot-prefix", trial_id):08x}` — and therefore *stable
+across restarts for the same trial_id*. A worker that survived a restart, or one
+launched from a checkout that had not pulled (this repo has
+`stale_worker_ingest_wedge_on_resume` for exactly that), reconnects **by name**
+on its next `_disconnect`/`_connect` cycle and is served zeros into MCTS and
+into the shards.
+
+**Fixed rather than merely documented.** The protocol version is now in the slot
+NAME as well as the header — `stable_seed_u32(f"slot-prefix-v{VERSION}", …)` and
+a `cae{VERSION}-` prefix, in both `distributed_runtime._trial_slot_prefix` and
+`SharedSlotBroker._register_new_trial`, pinned equal by a test. A stale v1 worker
+now looks up a name that does not exist, gets `FileNotFoundError` →
+`TimeoutError`, and never maps a v2 segment. **The name is the backward-safety
+mechanism; the header is only the forward one.** Both must be bumped together.
+
+**The accurate statement, replacing the one above:** the NEW client refuses
+loudly in both skew directions; an OLD client cannot refuse at all, so backward
+safety comes from the versioned slot name and from never restarting the broker
+ahead of its workers. The old-broker/new-client direction is loud but slow — the
+size check is classed `still_settling`, so it retries to `request_timeout_s`
+(30 s per request in production) before raising: a warn-loop, not a hard stop.
+
+**Also corrected in the same commit** (all from the same review):
+
+- **`--hang-abort-seconds 0` no longer disabled the watchdog.** Arming from
+  process start resolved the boot window independently, so a broker told *not*
+  to hang-abort still started the thread and still `os._exit(42)`-ed at 1800 s
+  while unarmed — the escape hatch is reached for precisely when the watchdog is
+  misfiring. The gate now lives inside `resolve_boot_hang_abort_seconds`, not at
+  the two construction sites, because a rule duplicated across call sites is how
+  one of them ends up without it. Help text corrected on both clauses.
+- **"token-keyed dict so oldest is oldest" was true of the API and false of both
+  callers.** The token was discarded and `mark_forward_done` called without it,
+  so the no-token fallback popped the *oldest* forward: a completing newer batch
+  deleted a wedged older one's start time and the critical log named the wrong
+  batch. Two lines; now pinned at the **caller**, and the pin is
+  sabotage-verified (dropping the token turns the test red).
+- The plane-count refusal is a **per-batch** error, not the "startup error" its
+  comment claimed (50 consecutive failures to exit the broker), and a stale
+  rejection landing on the deadline no longer reports itself as a broker
+  shutdown.
+
+**⚑ `stale_responses_rejected` is a LOWER BOUND, not a count.** It lives on the
+`SlotInferenceClient` instance, and the recovery that *creates* the race
+(`worker._reset_inference_client`) destroys the client. A rejection observed and
+then reset before the next 60 s `broker client stats:` line is lost. **Do not
+read a zero as "the race did not happen"** — read a non-zero as proof that it
+did. The rate bound remains `grep -c 'resetting client'` over live worker logs.
+
+**Method note, since this file exists to catalogue this class.** The false claim
+was not a typo: it was a plausible mechanism asserted without being executed,
+in a PR whose entire subject is guards that are present but do not take effect.
+The author wrote the guard, verified the *new* side of it, and then described
+the *old* side from the design rather than from a run. **A cross-version claim
+requires running the old version** — the reviewer's two-worktree measurement is
+the standard, and one worktree can never meet it.

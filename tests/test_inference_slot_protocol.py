@@ -537,3 +537,47 @@ def test_broker_stamps_magic_and_layout_id_into_every_slot(tmp_path: Path) -> No
                 shm.close()
     finally:
         broker.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Backward-safety of the wire-format bump (PR #322 review, blocking finding)
+# ---------------------------------------------------------------------------
+
+
+def test_slot_name_carries_the_protocol_version() -> None:
+    """The version must be in the NAME, not only in the header.
+
+    An old client runs OLD code and has no validation to fail. The v2 header
+    grew at the FRONT while state@0 / mode@1 / batch_size@4 kept their offsets,
+    so an origin/main client on a v2 segment completes the handshake 16 bytes
+    out of phase and returns an all-zero policy and WDL with no exception --
+    measured, across two worktrees. A version bump cannot make an old peer
+    refuse; it can only make the name it looks for not exist.
+    """
+    from chess_anti_engine.tune.distributed_runtime import _trial_slot_prefix
+
+    prefix = _trial_slot_prefix(trial_id="abc123_00000")
+    assert prefix.startswith(f"cae{inf.SLOT_PROTOCOL_VERSION}-"), prefix
+    # The pre-bump name for the same trial must NOT be produced, or a stale
+    # worker would still find a segment to map.
+    from chess_anti_engine.tune._utils import stable_seed_u32
+
+    legacy = f"cae-{stable_seed_u32('slot-prefix', 'abc123_00000'):08x}"
+    assert prefix != legacy
+
+
+def test_both_slot_prefix_derivations_agree() -> None:
+    """The launcher tells workers one name and the shared broker creates another.
+
+    They are separate code paths (`distributed_runtime._trial_slot_prefix` and
+    `SharedSlotBroker._register_new_trial`) that must produce byte-identical
+    names. If they drift, every worker times out against a slot nobody created
+    -- silent from the broker's side, since it just never sees a request.
+    """
+    from chess_anti_engine.tune._utils import stable_seed_u32
+    from chess_anti_engine.tune.distributed_runtime import _trial_slot_prefix
+
+    for trial_id in ("13a9f_00000", "9c36d_00000", "x"):
+        h = stable_seed_u32(f"slot-prefix-v{inf.SLOT_PROTOCOL_VERSION}", trial_id)
+        shared_broker_name = f"cae{inf.SLOT_PROTOCOL_VERSION}-{h:08x}"
+        assert _trial_slot_prefix(trial_id=trial_id) == shared_broker_name

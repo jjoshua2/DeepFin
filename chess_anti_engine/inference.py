@@ -22,6 +22,8 @@ import numpy as np
 import torch
 
 from chess_anti_engine.broker_hang import (
+    BOOT_HANG_ABORT_ENV as _BOOT_HANG_ABORT_ENV,
+    DEFAULT_BOOT_HANG_ABORT_S as _DEFAULT_BOOT_HANG_ABORT_S,
     DEFAULT_HANG_ABORT_S as _DEFAULT_HANG_ABORT_S,
     HANG_ABORT_ENV as _HANG_ABORT_ENV,
     BrokerHangWatchdog,
@@ -1354,6 +1356,13 @@ class AOTEvaluator:
 # pending" implies the payload is the pending request's. Reading the tag last
 # would invert that and let a torn read pass as a match.
 #
+# WHAT MAKES THE ORDER SAFE, precisely: there is no fence here. Program order in
+# CPython plus x86-64's store ordering (TSO -- stores are not reordered with
+# other stores, loads not with other loads) is what carries it, and this stack
+# is x86-64 only. The same source on a weakly-ordered target (arm64, POWER)
+# would need explicit barriers; the guarantee above would silently stop holding
+# rather than fail a test. Do not port the protocol without revisiting this.
+#
 # WHY magic/layout_id exist (audit I2). Both sides compute _SlotLayout.compute()
 # independently and never exchanged the result. A client with a SMALLER plane
 # count than the broker still fits every numpy view inside the larger segment,
@@ -1431,10 +1440,25 @@ _OFF_LAYOUT_ID = 16
 
 # Bumped whenever the wire format changes. Broker and clients are launched
 # together by distributed_runtime, so a format change is deployable as long as
-# the whole fleet restarts -- a client from the previous generation attaching to
-# a new broker's segment sees a magic/layout mismatch and refuses loudly rather
-# than reading garbage.
-_SLOT_PROTOCOL_VERSION = 2
+# the whole fleet restarts.
+#
+# **The header guards protect only the NEW side, and the earlier version of this
+# comment claimed otherwise.** A client from a previous generation runs OLD
+# code, which has no size/magic/layout validation to fail; and because the v2
+# header grew at the FRONT while state@0 / mode@1 / batch_size@4 kept their
+# offsets, the state machine still completes with the two sides 16 bytes out of
+# phase. Measured across two worktrees, an origin/main client on a v2 broker's
+# segment returned an ALL-ZERO policy and an ALL-ZERO WDL with no exception --
+# exactly the poisoning this protocol version exists to delete. A version bump
+# can never make an old peer refuse; only a NEW peer can refuse.
+#
+# What actually makes the old-client direction safe is that the version is in
+# the slot NAME as well as the header (distributed_runtime._trial_slot_prefix
+# and SharedSlotBroker._register_new_trial). A stale worker then looks up a name
+# that does not exist and gets FileNotFoundError -> TimeoutError instead of
+# mapping a v2 segment. **Both must be bumped together**, and the name is the
+# one that matters for backward safety.
+SLOT_PROTOCOL_VERSION = 2
 _SLOT_MAGIC = 0x43414532  # b"CAE2"
 
 # request_id 0 is reserved for "no request has been stamped" (a freshly created
@@ -1474,7 +1498,7 @@ class _SlotLayout:
         plane-count or max_batch skew cannot present as a compatible slot.
         """
         payload = (
-            f"cae-slot-v{_SLOT_PROTOCOL_VERSION}"
+            f"cae-slot-v{SLOT_PROTOCOL_VERSION}"
             f"|mb={self.max_batch}|ch={self.channels}"
             f"|io={self.input_offset}|ib={self.input_bytes}"
             f"|po={self.policy_offset}|pb={self.policy_bytes}"
@@ -1670,7 +1694,7 @@ class SlotBroker:
         self.adaptive_idle_ms = float(adaptive_idle_ms)
         self._hang_watchdog = BrokerHangWatchdog(
             threshold_s=float(hang_abort_seconds),
-            boot_threshold_s=resolve_boot_hang_abort_seconds(),
+            boot_threshold_s=resolve_boot_hang_abort_seconds(float(hang_abort_seconds)),
         )
         # Started HERE, not in serve_forever: everything below this line in
         # __init__ (AOT package load/replay, pinned-buffer allocation) is a CUDA
@@ -1803,7 +1827,7 @@ class SlotBroker:
             f"[broker] slots ready n={len(self._slots)} "
             f"planes={self._layout.channels} "
             f"layout_id={self._layout.identity():#010x} "
-            f"proto_v={_SLOT_PROTOCOL_VERSION} "
+            f"proto_v={SLOT_PROTOCOL_VERSION} "
             f"since_boot_s={time.perf_counter() - self._boot_t0:.2f}",
             flush=True,
         )
@@ -1857,8 +1881,15 @@ class SlotBroker:
         # and — when AOT is on — the compiled packages were all sized from the
         # broker's --input-planes; the model about to be served is sized by the
         # manifest. A disagreement means every request is read at the wrong
-        # offsets and every forward is fed the wrong shape, so it must be a
-        # startup error, not a silent all-zero policy.
+        # offsets and every forward is fed the wrong shape, so it must raise
+        # rather than serve a silent all-zero policy.
+        #
+        # This is a PER-BATCH error, not a startup one: _ensure_model is only
+        # reachable from _process_batch_mode, so the raise is caught by
+        # _process_batch, logged with a traceback, the slots are released for
+        # retry, and it takes _MAX_CONSECUTIVE_BATCH_FAILURES (50) consecutive
+        # batches to exit the broker. Loud and self-limiting, but it is not a
+        # refusal to boot -- do not read it as one.
         model_planes = int(input_plane_count(model_cfg.input_extra_features))
         if model_planes != int(self._layout.channels):
             raise SlotProtocolMismatch(
@@ -2240,7 +2271,11 @@ class SlotBroker:
         _t_forward0 = time.perf_counter()
         # Hang window covers H2D + forward + device sync — any of these can
         # block forever on a dead CUDA/WSL2 context without raising.
-        self._hang_watchdog.mark_forward_start(total)
+        # Keep the token. Without it mark_forward_done falls back to popping the
+        # OLDEST forward, so a completing newer batch would delete a wedged older
+        # one's start time and the abort log would name the wrong batch. Serial
+        # today, but the fallback is the trap audit I3-H2 describes.
+        hang_token = self._hang_watchdog.mark_forward_start(total)
         forward_ok = False
         try:
             xt = pin_input[:forward_total].to(self.device, non_blocking=True)
@@ -2402,7 +2437,7 @@ class SlotBroker:
                 _timing["scatter_s"] += time.perf_counter() - _t_scatter0
             forward_ok = True
         finally:
-            self._hang_watchdog.mark_forward_done(success=forward_ok)
+            self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
 
   # -- main loop --
 
@@ -2663,14 +2698,21 @@ class SlotInferenceClient:
         and WDL out of the middle of the broker's input region: all-zero policy,
         all-zero WDL, no exception.
 
-        ``still_settling`` marks the two checks a client can lose to the
-        broker's own slot creation rather than to a real mismatch. A creating
-        process does ``shm_open`` then ``ftruncate`` then stamps the header, so
-        a client attaching inside that window legitimately sees a zero-length
-        segment or an unstamped one -- the same class as "the slot does not
-        exist yet", which ``_connect`` already retries. A layout-id mismatch is
-        NOT in that class: magic is written last and is the publish barrier, so
-        seeing valid magic means the layout id beside it is final.
+        ``still_settling`` marks a reason a client can lose to the broker's own
+        slot creation rather than to a real mismatch: a creating process stamps
+        the header only after the segment exists, so a client attaching inside
+        that window legitimately sees an unstamped one -- the same class as "the
+        slot does not exist yet", which ``_connect`` already retries. A layout-id
+        mismatch is NOT in that class: magic is written last and is the publish
+        barrier, so seeing valid magic means the layout id beside it is final.
+
+        The size branch is marked settling too, but note it does NOT actually
+        cover the ``ftruncate`` window: ``SharedMemory(name=..., create=False)``
+        mmaps the fd and raises ``ValueError: cannot mmap an empty file`` before
+        this function runs, and ``_connect`` only catches ``FileNotFoundError``
+        (unchanged from before this guard existed). In practice the size branch
+        fires only for a genuinely undersized segment -- an OLD broker serving a
+        NEW client -- where retrying to the deadline is merely slow, not wrong.
         """
         want = self._layout.total_bytes
         if int(shm.size) < want:
@@ -2686,7 +2728,7 @@ class SlotInferenceClient:
         if magic != _SLOT_MAGIC:
             return (
                 f"inference broker slot {self._slot_name!r} has magic {magic:#010x}, "
-                f"expected {_SLOT_MAGIC:#010x} (protocol v{_SLOT_PROTOCOL_VERSION}); "
+                f"expected {_SLOT_MAGIC:#010x} (protocol v{SLOT_PROTOCOL_VERSION}); "
                 "broker and workers must be launched from the same code generation",
                 True,
             )
@@ -2859,6 +2901,7 @@ class SlotInferenceClient:
     ) -> tuple[np.ndarray, np.ndarray]:
         deadline = time.monotonic() + self._request_timeout_s
         last_timeout = False
+        last_stale = False
         while True:
             slot = self._connect(deadline=deadline)
 
@@ -2869,6 +2912,7 @@ class SlotInferenceClient:
   # but recover if the broker went away and the slot had to be recreated.
             spins = 0
             retry = False
+            last_stale = False
             while True:
   # slot.state is shared-memory; at runtime the broker writes
   # other state values concurrently, so we wrap in int() to keep
@@ -2884,6 +2928,7 @@ class SlotInferenceClient:
                         # has been overwritten by the answer, so the slot must
                         # be re-armed from scratch rather than re-waited.
                         self.stale_responses_rejected += 1
+                        last_stale = True
                         log.warning(
                             "inference slot %s returned a stale response "
                             "(echoed request_id=%d, expected %d); discarding and "
@@ -2917,6 +2962,16 @@ class SlotInferenceClient:
                 if last_timeout:
                     raise TimeoutError(
                         f"inference broker timed out after {self._request_timeout_s:.3f}s"
+                    )
+                if last_stale:
+                    # Distinct from the shutdown message below: recovery is the
+                    # same, but this is the ONE log line describing the race
+                    # this identity check exists for, and calling it a shutdown
+                    # would send the next reader looking at the wrong thing.
+                    raise TimeoutError(
+                        f"inference broker returned a stale response and the retry "
+                        f"did not fit in {self._request_timeout_s:.3f}s "
+                        f"({self.stale_responses_rejected} rejected on this client)"
                     )
                 raise RuntimeError("inference broker shut down while request was in flight")
             if retry:
@@ -3153,7 +3208,7 @@ class SharedSlotBroker:
         self.batch_wait_ms = float(batch_wait_ms)
         self._hang_watchdog = BrokerHangWatchdog(
             threshold_s=float(hang_abort_seconds),
-            boot_threshold_s=resolve_boot_hang_abort_seconds(),
+            boot_threshold_s=resolve_boot_hang_abort_seconds(float(hang_abort_seconds)),
         )
         self._stop = False
 
@@ -3184,8 +3239,12 @@ class SharedSlotBroker:
         from chess_anti_engine.tune._utils import (
             stable_seed_u32,  # deferred: avoids circular import
         )
-        h = stable_seed_u32("slot-prefix", trial_id)
-        slot_prefix = f"cae-{h:08x}"
+        # Version-carrying name; MUST stay byte-identical to
+        # distributed_runtime._trial_slot_prefix, which is what the workers are
+        # told to attach to. See that function for why the version is in the
+        # NAME and not only in the header.
+        h = stable_seed_u32(f"slot-prefix-v{SLOT_PROTOCOL_VERSION}", trial_id)
+        slot_prefix = f"cae{SLOT_PROTOCOL_VERSION}-{h:08x}"
 
         slots: list[_InferenceSlot] = []
         for i in range(self.slots_per_trial):
@@ -3418,7 +3477,8 @@ class SharedSlotBroker:
             return
 
         hang_batch = sum(int(xb.shape[0]) for *_, xb in packed)
-        self._hang_watchdog.mark_forward_start(hang_batch)
+        # Token kept for the same reason as SlotBroker._process_batch_mode.
+        hang_token = self._hang_watchdog.mark_forward_start(hang_batch)
         forward_ok = False
         try:
             trial_data: list[tuple[str, list[_InferenceSlot], list[int], list[int], torch.Tensor]] = [
@@ -3471,7 +3531,7 @@ class SharedSlotBroker:
                     start = end
             forward_ok = True
         finally:
-            self._hang_watchdog.mark_forward_done(success=forward_ok)
+            self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
 
     def serve_forever(self) -> None:
         _batch_count = 0
@@ -3572,9 +3632,14 @@ def _add_hang_abort_arg(ap: argparse.ArgumentParser) -> None:
         type=float,
         default=_DEFAULT_HANG_ABORT_S,
         help=(
-            "Hard-exit (code 42) if a GPU forward stays in flight longer than this "
-            "after the first successful batch. 0 disables. Env "
-            f"{_HANG_ABORT_ENV} overrides when set. Default: {_DEFAULT_HANG_ABORT_S:g}."
+            "Hard-exit (code 42) if GPU work stays in flight longer than this. "
+            "Covers model load, AOT package load and pinned allocation as well as "
+            "the forward. Before the first SUCCESSFUL forward a longer cold-start "
+            f"window applies instead ({_BOOT_HANG_ABORT_ENV}, default "
+            f"{_DEFAULT_BOOT_HANG_ABORT_S:g}s), so a slow first compile cannot "
+            "false-fire. 0 disables the watchdog entirely, cold window included. "
+            f"Env {_HANG_ABORT_ENV} overrides when set. "
+            f"Default: {_DEFAULT_HANG_ABORT_S:g}."
         ),
     )
 

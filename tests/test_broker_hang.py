@@ -23,19 +23,47 @@ from chess_anti_engine.broker_hang import (
 
 
 def test_resolve_boot_hang_abort_seconds_env_overrides_default() -> None:
-    assert resolve_boot_hang_abort_seconds(env={}) == DEFAULT_BOOT_HANG_ABORT_S
-    assert resolve_boot_hang_abort_seconds(900.0, env={}) == 900.0
+    assert resolve_boot_hang_abort_seconds(300.0, env={}) == DEFAULT_BOOT_HANG_ABORT_S
+    assert resolve_boot_hang_abort_seconds(300.0, 900.0, env={}) == 900.0
     assert resolve_boot_hang_abort_seconds(
-        env={"CAE_BROKER_BOOT_HANG_ABORT_S": "60"},
+        300.0, env={"CAE_BROKER_BOOT_HANG_ABORT_S": "60"},
     ) == 60.0
     # Empty / whitespace does not override, matching the steady-state resolver.
     assert resolve_boot_hang_abort_seconds(
-        900.0, env={"CAE_BROKER_BOOT_HANG_ABORT_S": "  "},
+        300.0, 900.0, env={"CAE_BROKER_BOOT_HANG_ABORT_S": "  "},
     ) == 900.0
     # 0 disables the cold-start window explicitly.
     assert resolve_boot_hang_abort_seconds(
-        env={"CAE_BROKER_BOOT_HANG_ABORT_S": "0"},
+        300.0, env={"CAE_BROKER_BOOT_HANG_ABORT_S": "0"},
     ) == 0.0
+
+
+def test_disabling_the_watchdog_also_disables_the_cold_start_window() -> None:
+    """`--hang-abort-seconds 0` must turn the whole feature off (PR #322 review).
+
+    Arming from process start (audit I3) resolved the boot window independently,
+    so a broker told NOT to hang-abort still started the thread and still
+    os._exit(42)-ed at 1800s while unarmed. That is the escape hatch someone
+    reaches for precisely when the watchdog is misfiring.
+    """
+    for env in ({}, {"CAE_BROKER_BOOT_HANG_ABORT_S": "60"}):
+        assert resolve_boot_hang_abort_seconds(0.0, env=env) == 0.0
+        assert resolve_boot_hang_abort_seconds(-1.0, env=env) == 0.0
+    # A disabled pair really is inert on the object, not merely zero-valued.
+    clock = [0.0]
+    exits: list[int] = []
+    wd = BrokerHangWatchdog(
+        threshold_s=0.0,
+        boot_threshold_s=resolve_boot_hang_abort_seconds(0.0, env={}),
+        exit_fn=exits.append,
+        clock=lambda: clock[0],
+    )
+    wd.start()
+    assert wd._thread is None, "start() must be a no-op when both windows are off"
+    wd.mark_forward_start(1)
+    clock[0] = 10_000.0
+    assert not wd.check_once()
+    assert exits == []
 
 
 def test_should_hang_abort_decision_matrix() -> None:

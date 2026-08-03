@@ -61,11 +61,28 @@ def resolve_hang_abort_seconds(
 
 
 def resolve_boot_hang_abort_seconds(
+    hang_abort_seconds: float,
     default_seconds: float = DEFAULT_BOOT_HANG_ABORT_S,
     *,
     env: Mapping[str, str] | None = None,
 ) -> float:
-    """Resolve the cold-start threshold; ``CAE_BROKER_BOOT_HANG_ABORT_S`` overrides."""
+    """Resolve the cold-start threshold; ``CAE_BROKER_BOOT_HANG_ABORT_S`` overrides.
+
+    **Returns 0.0 (disabled) whenever the steady-state threshold is disabled.**
+    ``--hang-abort-seconds 0`` / ``CAE_BROKER_HANG_ABORT_S=0`` is the documented
+    escape hatch for "do not hang-abort this broker", and it is what someone
+    reaches for precisely when the watchdog is misfiring. Arming from process
+    start (audit I3) turned that off by accident: the boot window was resolved
+    independently, so a broker told not to hang-abort still started the thread
+    and still ``os._exit(42)``-ed at 1800 s while unarmed.
+
+    The gate lives HERE rather than at each construction site on purpose --
+    there are two brokers, and a rule duplicated across call sites is how one of
+    them ends up without it. ``hang_abort_seconds`` is positional so a new
+    caller cannot omit it.
+    """
+    if float(hang_abort_seconds) <= 0.0:
+        return 0.0
     env_map = os.environ if env is None else env
     raw = env_map.get(BOOT_HANG_ABORT_ENV)
     if raw is not None and str(raw).strip() != "":

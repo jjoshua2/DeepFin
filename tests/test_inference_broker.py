@@ -9,6 +9,7 @@ import time
 import uuid
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
@@ -1231,5 +1232,55 @@ def test_wait_for_ready_slots_returns_immediately_and_resets_the_ladder(
         slot.state = _STATE_IDLE
         assert broker._wait_for_ready_slots() is False
         assert broker._idle_since is not None
+    finally:
+        broker.shutdown()
+
+
+def test_broker_keeps_the_watchdog_token_across_a_forward(tmp_path: Path) -> None:
+    """The PRODUCTION call sites must pass the token, not just the API support it.
+
+    `tests/test_broker_hang.py::test_oldest_inflight_is_actually_the_oldest`
+    passes tokens explicitly, so it pins the watchdog API and says nothing about
+    the broker. With the token dropped, `mark_forward_done` falls back to
+    popping the OLDEST forward -- a completing newer batch deletes a wedged
+    older one's start time and the critical log names the wrong batch. Serial
+    today; this is the trap audit I3-H2 describes, pinned at the caller.
+    """
+    broker = _compact_legal_broker(tmp_path, "hangtoken")
+    try:
+        starts: list[int] = []
+        dones: list[int | None] = []
+        real = broker._hang_watchdog
+
+        class _RecordingWatchdog:
+            def mark_forward_start(self, batch_size: int) -> int:
+                token = real.mark_forward_start(batch_size)
+                starts.append(token)
+                return token
+
+            def mark_forward_done(self, *, success: bool = True, token: int | None = None) -> None:
+                dones.append(token)
+                real.mark_forward_done(success=success, token=token)
+
+            def stage(self, label: str):
+                return real.stage(label)
+
+            def __getattr__(self, name: str):
+                return getattr(real, name)
+
+        # Duck-typed on purpose (see the __getattr__ passthrough): the point is
+        # to observe the token, not to be a BrokerHangWatchdog.
+        broker._hang_watchdog = cast(
+            "BrokerHangWatchdog", cast("object", _RecordingWatchdog()),
+        )
+        slot = broker._slots[0]
+        _submit_compact_legal(slot, counts=[2, 2], flat=[0, 5, 7, 4671])
+        broker._process_batch([slot])
+
+        assert starts, "no forward was marked"
+        assert dones == starts, (
+            f"mark_forward_done did not receive mark_forward_start's token "
+            f"(started {starts}, completed {dones})"
+        )
     finally:
         broker.shutdown()
