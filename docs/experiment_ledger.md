@@ -26718,3 +26718,413 @@ And both EMA variants remain **significantly worse than boot512** (+4.99, +5.98)
 reduces the degradation; it does not rescue it. Full ranking, best to worst:
 boot512 47.93 | C 51.7 | D 51.8-52.4 | F 52.1-52.8 | **ema2000 52.92** | **ema500 53.92** |
 A_s1 54.62 | B2 54.70 | A_s0 55.88 | G 55.9-56.0 | SHUF 204.67.
+
+## ⛔ 2026-08-03 — VERDICT: **CANNOT RESOLVE**, and for the informative reason: the from-scratch capacity ladder **does not contain the global term at all**. The rebound is WITHIN-DISTRIBUTION only.
+
+The re-run pre-registered two entries above completed: 5 arms, 25 eval points each, **125
+checkpoints banked** (~21 GB), scored on `N4_jul25` and on the frozen deep-SF audit.
+Training ran 21:27 → 05:04 (7.6 h wall, gate-clean throughout).
+
+### First, the thing that makes the rest trustworthy: the re-run IS the original experiment
+
+Every arm reproduced the 08-02 rig **bit-identically** — `max |re-run − original|` of
+`held_excess` over all 25 eval points = **0.000e+00** for S, L, M **and** SHUF, and every
+arm landed on its pre-registered `views_at_min` exactly (S 11.532 = *no rebound*, L 3.364,
+M 7.688, L-wide 4.326). So the banked weights are the artifacts the original rigs threw
+away, not a similar-looking re-run. All 125 checkpoints sha256-verified.
+
+### PRIMARY readout — `rho_late` on `N4_jul25` (cp per view/row, game-clustered 95% CI)
+
+Negative control **PASSES**: SHUF late-window 185.48 cp vs worst real arm 71.93 cp,
+**ratio 2.58** (≥2.00 required), `rho_late` +0.5318 [−0.2219, +1.2796] **ns**.
+
+| arm | params | rows/param | `rho_late` (views axis) | | `rho_late` (cp/1k steps) | late-window LEVEL |
+|---|---|---|---|---|---|---|
+| S | 6.17 M | 0.03038 | **−0.8642 [−1.2705, −0.4630]** | SIG | −1.1797 [−1.7343, −0.6320] | 66.67 cp |
+| M | 19.58 M | 0.00958 | +0.0519 [−0.3907, +0.4974] | ns | +0.0708 [−0.5333, +0.6790] | 69.24 cp |
+| L | 63.08 M | 0.00297 | −0.2481 [−0.6796, +0.1690] | ns | −0.3386 [−0.9277, +0.2307] | 71.93 cp |
+| **L-wide** | 63.08 M | **0.01816** | −0.2869 [−0.6241, +0.0528] | ns | −0.0641 [−0.1394, +0.0118] | **52.10 cp** |
+
+`D_S` = −0.6161 [−1.1866, −0.0199] (excludes 0) · `D_LW` = −0.0388 [−0.6050, +0.5152]
+(includes 0) · `rho_pred(L-wide)` = −0.4558, **inside** L-wide's CI.
+
+**VERDICT = CANNOT RESOLVE**, fired by the pre-registered clause *"any arm whose
+`rho_late` CI includes 0 — no term to attribute"*: three of four arms are flat, and the
+one significant arm (S) is **improving**, not degrading. **A second pre-registered
+downgrade trigger fired independently**: the views-axis ranking `[S, LW, L, M]` disagrees
+with the step-axis ranking `[S, L, LW, M]`, which by itself forces CANNOT RESOLVE.
+
+### ⚑⚑ WHY it cannot resolve — the rebound does NOT reach never-trained material
+
+This is the finding, and it is not a null result:
+
+| arm | held-out CE **rebound** (rig's own ruler) | rise from min on **`N4_jul25`** |
+|---|---|---|
+| S | **+0.0000 nats** (no rebound) | **+0.00 cp** |
+| M | +0.0658 nats | +1.72 cp |
+| L | **+0.2227 nats** (largest) | **+0.32 cp** |
+| L-wide | +0.0878 nats | +1.29 cp |
+
+The 08-02 capacity verdict is fully reproduced on its own ruler — the held-out policy-CE
+rebound is real, large, and ordered by size. **On material the nets never trained on, the
+same checkpoints barely move.** L rebounds hardest in-distribution (+0.2227 nats) and is
+the *flattest* on `N4_jul25` (+0.32 cp). The from-scratch rebound is therefore a
+**within-distribution** phenomenon — the net gets worse at held-out rows *drawn from the
+corpus it is memorising*, not at material outside it.
+
+**Consequence for the never-seen entry's decomposition:** the live lineage's global term
+(+0.0080 cp/iter on never-trained material, **69%** of the decay) is **NOT reproduced by
+this rig**, so this rig cannot attribute it to params, rows/param, or optimizer drift. The
+three remedies remain untested, and — this is the actionable part — **the capacity ladder
+is the wrong instrument for them.** Any future attribution needs a rig that first
+demonstrates it *carries* the global term (the absorption rig's production-replica arm
+does; these from-scratch arms do not).
+
+### What IS strongly established here (post-hoc, descriptive — NOT the pre-registered quantity)
+
+Paired game-clustered contrasts of the late-window LEVEL, same bootstrap draws:
+
+- **L-wide − L = −19.83 cp [−21.78, −17.91] SIG** — at **identical parameter count**,
+  6.11× the distinct rows buys ~20 cp of never-seen-material accuracy.
+- S − L = −5.26 cp [−7.02, −3.52] SIG · M − L = −2.69 cp [−4.36, −1.02] SIG.
+
+⚑ **The level is NOT a function of rows/param.** L-wide's rows/param (0.01816) sits
+*between* M's and S's, yet its level (52.10 cp) is ~15 cp below both. What separates it is
+**absolute distinct rows** — 1,145,716 vs 187,537. At fixed params, *data volume* moves
+never-seen generalisation far more than the rows-per-param ratio does. That is a different
+axis from the one PREREG was built to test, and it is the one that moved.
+
+### ⚑⚑ The SECONDARY instrument FAILED ITS OWN NEGATIVE CONTROL — its readings are discarded
+
+The frozen deep-SF audit was added as a pre-registered secondary that **gates nothing**.
+That precaution paid for itself:
+
+- SHUF audit late-window **203.97 cp vs worst real arm 110.78 → ratio 1.84**, below the
+  2.00 the same control clause requires; **and** its `rho_late` is **−1.8756 [−3.6419,
+  −0.1629] SIG**. A net trained on **permuted labels** shows a *significant trend* on this
+  ruler.
+- Therefore the audit's headline reading — L-wide `rho_late` **+1.9963 [+0.6862, +3.3666]
+  SIG**, the only arm that looked like it was degrading — **is not a verdict**, per the
+  standing rule that a reading off a stage failing its invariant is not a reading. It is
+  reported and set aside.
+
+Had the addition been allowed to gate, it would have delivered a confident, wrong
+"L-wide degrades" story off an instrument that cannot tell a trained net from a
+label-shuffled one over 8 points.
+
+### Declared deviations, carried into the verdict as caveats
+
+- **One seed (0) per arm**, declared before launch. Seed-to-seed variance is unmeasured, so
+  a between-arm difference the size of the original rigs' seed spread cannot be separated
+  from initialisation noise. This bites hardest on `D_S`, whose CI [−1.1866, −0.0199]
+  barely excludes 0 — **treat `D_S` as suggestive, not established.**
+- **No `LWSHUF` leg.** The surviving `SHUF` leg passed on the primary axis, and every arm's
+  own views=0 random-init checkpoint is banked as a per-size untrained control.
+- The arms are 4-hour from-scratch runs on fixed corpora, not the RL flywheel. No arena, no
+  Elo. This limit is now load-bearing rather than incidental: it is *why* the global term
+  is absent.
+
+### VERIFIED
+
+- Disjointness re-checked at run time on **both** axes (never by basename): arms' corpora
+  = `post_quarantine_20260801/…` shards 033118–033940; `N4_jul25` =
+  `pre_durable_deploy_20260726/…` shards 034000–034064. Index-set intersection **empty**.
+- Estimator tested against synthetic data with a known slope before use: exact recovery
+  (2.96e-14), noise matching the analytic OLS slope sd, game-clustering widening CIs 2.78×
+  vs iid, ~nominal false-positive rate over 200 true-zero trials.
+- The hoisted audit scorer is **bit-identical** to `raw_policy_regret.py`:
+  `max|dexp| = max|dtop1| = 0.000e+00` over all 4,000 positions.
+- Banked checkpoint format round-trips through the production `load_model_from_checkpoint`
+  at all three arm sizes with `max|dW| = 0` and correct unique-storage param counts
+  (63,084,128 / 19,577,669 / 6,172,739).
+
+### NOT ESTABLISHED
+
+- Nothing about params vs rows/param vs optimizer drift as the driver of the **global
+  term**. The term is absent from these arms; the question is untouched, not answered.
+- The −19.83 cp L-wide level advantage is **not** a slope result and says nothing about
+  decay over time. It is a statement about where a net lands, not where it is heading.
+- Whether the live loop's global term would respond to any of the three remedies.
+
+**Bank:** `scratchpad/capacity_n4_20260802/` — `rig/{slope,slope_wide}.py` (two-hunk diff
+vs the originals), `driver.sh`, `gate.sh`, `chain.sh`, `score_all.sh`, `score_n4.py`,
+`score_audit.py`, `analyse.py`, `analyse.log`, `results.json`,
+`runs/run_*/ckpt/chunk_NNNN.pt` (**125 full checkpoints, sha256 in `slope.jsonl`**),
+`runs/run_*/n4/*.npz` + `runs/run_*/audit/*.npz` (per-row dumps). Every number above
+re-derives on CPU from the dumps; every dump re-derives on GPU from the banked weights.
+**The re-run cost 7.6 h precisely because the last rig banked scalars instead of nets —
+this one will not have to be paid again.**
+
+## ⚑⚑ VERDICT 2026-08-03 — RESTART BASE, ARENA (b): **iter400 IS ALSO SIGNIFICANTLY WEAKER THAN boot512 IN PLAY. −37.7 Elo [−57.6, −18.0], 1000 games, CI ENTIRELY BELOW ZERO. THE BASE DECISION DOES NOT REOPEN — the default `boot512 + fresh window regeneration` STANDS.** The arm-H dense scan's ruler edge (iter400 beats iter477 by 5.15 cp policy / 7.42 cp value, and beats every SWA average) is real on that ruler and does **not** translate into play strength against the lineage origin.
+
+Reads out the pre-committed rule in `scratchpad/restart_brief_20260802.md` ("Base
+decision", line 84): *"if it also beats boot512 in PLAY, the base decision reopens
+(start from iter400 = keep 400 iterations of learning, restart the data schedule).
+A ruler edge is NOT a play edge — the arena decides… If boot512 wins or the CI spans
+0, the default base stands."* boot512 wins with the CI entirely below zero, so the
+default stands. Nothing in the plan changed between launch and read.
+
+### Why this spec, and why it is comparable to the −48.6
+
+Deliberately the SAME spec as the 2026-08-02 `Elo(iter477 − boot512) = −48.6` run
+(this file, "PLAY-STRENGTH GROUND TRUTH"), reusing its banked driver verbatim:
+matched_sims 32, `--search-shape play`, 1000 games / 500 paired UHO openings, seed 42,
+32 concurrent games, `--compile off`, same book, `opening_plies 16`, `max_plies 300`,
+Syzygy OFF. The only deviation is `--max-seconds 5400` instead of 3600 — the prior run
+used 3106 s of its 3600 s cap and this one used 2710 s, so **the cap never bound in
+either run** (`truncated=False` both times) and it cannot have touched the sample.
+
+`config_hash` is **6dd68d4a613d on both runs**, i.e. the production yaml the arena
+records is byte-for-byte the one the −48.6 was measured under.
+
+### The result
+
+| | value |
+|---|---|
+| **Elo (iter400 − boot512)** | **−37.67** |
+| **95% CI (pentanomial)** | **[−57.57, −18.01]** |
+| games / pairs | **1000 / 500**, `truncated=False` (2709.6 s of a 5400 s cap) |
+| pentanomial (candidate POV) | WW **68**, WD_DW **49**, DD_WL **205**, LD_DL **63**, LL **115** |
+| score | **0.4460 ± 0.0143** (SE) |
+| W/D/L (candidate POV) | **383 / 118 / 491** over 992 naturally-decided games, **+8** drawn by the 300-ply cap |
+
+Point estimate across the twenty running blocks: −88.7, −52.1, −74.5, −41.8, −46.2,
+−40.6, −36.9, −42.8, −40.1, −30.7, −39.3, −42.6, −38.2, −36.3, −33.0, −31.7, −34.6,
+−35.3, −35.8, −37.7 — stable inside −31…−43 from ~75 pairs onward, so this is not a
+tail that happened to land negative.
+
+**Cross-check that the observer and the arena agree:** (383 + 118/2 + 8/2)/1000 =
+**0.44600** vs the arena's reported **0.44600**.
+
+### Realized configuration — PRINTED from the run, not asserted
+
+```
+[arena] SEARCH candidate: shape=play vloss_weight=3 target_batch=0 c_puct=1.75
+  c_scale=0.025 c_scale_root=7.0 c_visit=50.0 c_visit_root=900.0
+  cpuct_base=38739.0 cpuct_factor=3.89 fpu_reduction=0.33 q_visit_exp_root=-1.0
+  topk=32 [mcts.gumbel PLAY_SEARCH_DEFAULTS + PLAY_SEARCH_VLOSS_WEIGHT]
+[arena] SEARCH reference: <identical>
+[arena] matched_sims: candidate=32 sims/move, reference=32 sims/move, temp=0.1, noise=True
+[arena] ROLLING pool: keep 32 games active
+```
+
+Byte-identical to the printed block of the −48.6 run. `git_sha`
+**00be40af130db0787267aeefb1763f254acc0064**, `config_hash` **6dd68d4a613d**, seed 42,
+`compile=off -> EAGER`, device cuda. `--search-shape` is a required argument with no
+default, so no silent shape could be substituted; the YAML-clobbers-CLI check passes
+(the log prints `candidate=32 sims/move, reference=32 sims/move`, which is what the
+command line asked for).
+
+### Checkpoint identity — verified, not assumed
+
+| name | path | weight hash (first 4 KB/key) | full weight hash | step | unique-storage params |
+|---|---|---|---|---|---|
+| boot512 | `scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt` | `5f61a6b85cd3d3cd` | `cb69a232531b1343` | 56000 | **63,084,128** |
+| **iter400** | `data/salvage/rolling/checkpoint_000400/trainer.pt` | `087f9f9c74106fbf` | `22acb04e6401f863` | **87409** | **63,084,128** |
+| iter477 (context) | `scratchpad/strength_readout_0731/ck477/trainer.pt` | `cd5e47b4d31a75f4` | `1429d18e2d8fcefa` | 94062 | **63,084,128** |
+
+Counted by unique `untyped_storage().data_ptr()`, never `sum(numel())` (the naive sum
+reads 78,812,768 for all three). **boot512's and iter477's short hashes reproduce the
+08-02 run's `ckpt_verify.json` exactly**, so this arena's reference net is provably the
+same net the −48.6 was measured against. iter400 is the exact file the arm-H dense scan
+scored (`scratchpad/swa_armH_20260802/inventory.json`, name `iter400`, step 87409 — the
+step matches; its inventory fingerprint uses a different digest recipe so the hex
+strings are not comparable). All three were copied out of the tree to
+`scratchpad/arena_20260803/ckpt/` before use and loaded through the arena's own
+`load_model_from_checkpoint` with **no `Tolerant load` line**, so neither side is a
+partially fresh-initialised net.
+
+### Game lengths and adjudication
+
+mean **119.2** played plies, median **110.0**, p05 41 / p25 76 / p75 154 / p95 230,
+min 12, max 300. Only **8 of 1000 games (0.8%)** failed to finish naturally and were
+scored as draws by the `--max-plies 300` cap (the −48.6 run had 14); Syzygy
+adjudication was OFF. **Adjudication touches too little of the sample to carry the
+−37.7.** No time forfeits are possible in `matched_sims` — it runs in-process at a
+fixed simulation budget with no clock.
+
+### What this establishes, and what it does NOT
+
+**Establishes.** Against the lineage origin, on the same search, openings, budget and
+book, `iter400` is **37.7 Elo weaker** with the CI excluding zero by 18 Elo. **The
+"old-material competence in iters 360-410 is reachable" finding (arm H stage 1c) does
+not buy playing strength back**: on the audit-v2 per-position ruler iter400 is the best
+point in the whole 25-point scan, and it still loses a 500-pair match to boot512.
+Checkpoint selection inside the lineage is not an escape from the treadmill.
+
+**Does NOT establish.**
+- **It does not establish iter400 > iter477 in play.** This arena and the 08-02 one
+  share a reference and a seed but not their games, so the difference
+  **+10.94 Elo [−16.8, +38.6]** (conservative, treating the two as independent;
+  SE 9.89 and 10.09) is **not significant**. The ruler's 5-7 cp iter400-over-iter477
+  edge remains unreplicated in play, and a direct iter400-vs-iter477 arena was not run.
+  What IS established is that both are well below boot512.
+- **This is 32 sims**, in the **play** shape, on a **COLD tree** (`PLAY_PATH_AUDIT`
+  F1 — production selfplay searches a warm one). The ranking is safe because both arms
+  are cold and both are at the same budget; a "this reproduces the training-target
+  regime" claim is not.
+- It does not localise the loss to policy vs value, and it does not date the turn.
+- **boot512-as-lineage-origin is inherited, not re-proven here** — same caveat as the
+  08-02 entry.
+
+### Consequence for the restart
+
+**Base = boot512 + fresh window regeneration, unchanged.** The conditional branch in
+the restart brief ("the base decision reopens") is **closed** — no iter400 base, and
+no reason to reopen it for any other in-lineage checkpoint chosen on a cp ruler, since
+the best one on that ruler loses this match. `exploit_replay_*` cross-trial restore
+stays disabled (blocker #4); the swap gate's −252 for cross-era window reuse is
+untouched by this result.
+
+**Banked** at `scratchpad/arena_20260803/`: `arena_results.jsonl`,
+`logs/arena_b_iter400_vs_boot512_play_sims32.log`,
+`lengths_b_iter400_vs_boot512_play_sims32.json`, `ckpt_verify.json`, and the drivers
+`verify.py` / `run_arena.py` (byte-identical copy of the 08-02 observer) /
+`launch_b_iter400.sh` / `report.py`. Written to a scratch JSONL rather than
+`runs/arena_results.jsonl` because `runs/` was read-only for this task — fold both of
+today's rows in when convenient.
+
+## ⚑⚑ VERDICT 2026-08-03 — ARENA (a), THE TRAINING-SHAPE TWIN (owed since 08-02): **THE SHAPE CAVEAT IS DISCHARGED. THE SIGN DOES NOT FLIP. Elo(iter477 − boot512) on the TRAINING search shape = −54.6 [−74.0, −35.6], 1000 games, CI ENTIRELY BELOW ZERO** — same direction, same size class as the play-shape **−48.6 [−68.2, −29.4]**, difference **−6.04 Elo [−33.3, +21.2] ns**. The −48.6 was not an artifact of measuring the shipped play shape rather than the shape production selfplay runs.
+
+Discharges the explicit debt left open by the 08-02 entry ("PLAY-STRENGTH GROUND
+TRUTH… the shape caveat above stands UNRESOLVED and must not be quietly dropped… the
+training-shape replication is the single highest-value follow-up to this entry, it
+needs ~50 minutes of *uncontended* GPU, and `launch_training.sh` in the banked
+directory will run it as-is"). It was run as-is: the banked
+`scratchpad/arena_13a9f_20260802/launch_training.sh` settings verbatim, the same
+byte-identical `run_arena.py` observer, only the paths and `--max-seconds` changed
+(5400 vs 3600; the run used 2581 s, so the cap never bound — `truncated=False`).
+
+**Pre-committed interpretation rule** — the same one the play-shape run was judged by
+(that entry, "Pre-committed interpretation rule"): primary = pentanomial
+Elo(iter477) − Elo(boot512) at sims 32 with 95% CI. CI entirely below 0 ⇒ real play
+strength lost. CI entirely above 0 ⇒ search absorbs the prior damage. CI spanning 0 ⇒
+report the bound only. **The CI is entirely below zero: real strength lost, on the
+training shape too.**
+
+The secondary question this arena exists for — the ledger's 2026-07-28 precedent of a
+rung reading **−52.5 Elo on one shape and +5.8 on the other** — is answered: **no sign
+flip, and no material size difference.** Both shapes agree to within their noise.
+
+### The result
+
+| | training shape (this run) | play shape (08-02) |
+|---|---|---|
+| **Elo (iter477 − boot512)** | **−54.65** | −48.61 |
+| **95% CI (pentanomial)** | **[−74.01, −35.61]** | [−68.15, −29.37] |
+| games / pairs | **1000 / 500**, `truncated=False` (2580.6 s of 5400 s) | 1000 / 500 (3106 s of 3600 s) |
+| pentanomial (cand POV) | WW **44**, WD_DW **80**, DD_WL **163**, LD_DL **102**, LL **111** | WW 58, WD_DW 55, DD_WL 186, LD_DL 92, LL 109 |
+| score | **0.4220 ± 0.0137** | 0.4305 ± 0.0139 |
+| W/D/L (cand POV) | **311 / 215 / 467** over 993 decided, **+7** ply-capped | 342 / 163 / 481 over 986, +14 ply-capped |
+
+**Shape contrast: −6.04 Elo [−33.3, +21.2]**, computed conservatively as if the two
+runs were independent (SE 9.80 and 9.89; they share the reference net, the seed and
+the opening set but not their games, so this over-states the interval). **Not
+significant** — the two shapes are one result, not two.
+
+The one visible shape effect is on the DRAW RATE, not on strength: the training shape
+(c_scale 0.1, topk 16, LINEAR root, vloss 1) draws **215 of 993** decided games vs the
+play shape's 163, and its pentanomial mass shifts out of `DD_WL` (186 → 163) into the
+split bins (`WD_DW` 55 → 80, `LD_DL` 92 → 102). A sharper root exploration and a
+narrower top-k make more games decisive on one board of a pair and fewer decisive on
+both.
+
+Point estimate across the twenty running blocks: −53.3, −72.1, −82.2, −85.9, −63.3,
+−72.4, −68.5, −60.6, −59.3, −67.7, −59.1, −56.5, −58.5, −57.9, −57.2, −54.8, −57.0,
+−56.9, −56.1, −54.6 — monotone convergence from a pessimistic small-sample start,
+settled inside −54…−59 from ~250 pairs on.
+
+**Cross-check that the observer and the arena agree:** (311 + 215/2 + 7/2)/1000 =
+**0.42200** vs the arena's reported **0.42200**.
+
+### Realized configuration — PRINTED from the run, and it is genuinely the OTHER shape
+
+```
+[arena] SEARCH candidate: shape=training vloss_weight=1 target_batch=0 c_puct=2.5
+  c_scale=0.1 c_scale_root=-1.0 c_visit=50.0 c_visit_root=-1.0 cpuct_base=38739.0
+  cpuct_factor=0.0 fpu_reduction=1.2 q_visit_exp_root=99.0 topk=16
+  [pbt2_small.yaml -> reco -> worker SearchConfig]
+[arena] SEARCH reference: <identical>
+[arena] matched_sims: candidate=32 sims/move, reference=32 sims/move, temp=0.1, noise=True
+[arena] ROLLING pool: keep 32 games active
+```
+
+`c_scale 0.1` / `topk 16` / linear root (`c_scale_root -1`, `q_visit_exp_root 99`) /
+`vloss_weight 1`, sourced from the production yaml — i.e. **provably not** the play
+block (`c_scale 0.025` / `topk 32` / LOG root / `vloss 3`) that the 08-02 run printed.
+`git_sha` **00be40af130db0787267aeefb1763f254acc0064**, `config_hash` **6dd68d4a613d**
+— *the same config hash as the 08-02 play run*, so the yaml the training shape is read
+out of is the one that was live for the −48.6. `--search-shape` is required with no
+default; the printed `candidate=32 sims/move, reference=32 sims/move` matches the
+command line, so the YAML-clobbers-CLI check passes.
+
+⚠ Per `PLAY_PATH_AUDIT` F2, `c_puct` / `fpu_reduction` / `cpuct_factor` / `cpuct_base`
+are printed here but are **provably inert in all Gumbel searches** — they are not part
+of what distinguishes these two shapes and must not be read as such.
+
+### Checkpoint identity — verified, not assumed
+
+| name | path | weight hash (first 4 KB/key) | full weight hash | step | unique-storage params |
+|---|---|---|---|---|---|
+| boot512 | `scratchpad/scaleup/gateread/boot_snap_recheck_0711_0404.pt` | `5f61a6b85cd3d3cd` | `cb69a232531b1343` | 56000 | **63,084,128** |
+| iter477 | `scratchpad/strength_readout_0731/ck477/trainer.pt` | `cd5e47b4d31a75f4` | `1429d18e2d8fcefa` | 94062 | **63,084,128** |
+
+Both short hashes **reproduce the 08-02 run's `ckpt_verify.json` exactly**, so this is
+the same pair, byte for byte, that produced the −48.6 — which is what makes the shape
+contrast a clean one-factor comparison. Counted by unique
+`untyped_storage().data_ptr()`; full-tensor hashes differ, so the nets are genuinely
+different. Loaded through the arena's own `load_model_from_checkpoint` with **no
+`Tolerant load` line** on either side.
+
+### Game lengths and adjudication
+
+mean **121.2** played plies, median **112.0**, p05 47 / p25 75 / p75 151 / p95 237,
+min 12, max 300. **7 of 1000 games (0.7%)** were drawn by the `--max-plies 300` cap
+(play shape: 14); Syzygy OFF; no clock, so no time forfeits are possible in
+`matched_sims`. Length distributions are near-identical between the shapes
+(mean 121.2 vs 124.4), so the draw-rate difference is not a length artifact.
+
+### What this establishes, and what it does NOT
+
+**Establishes.** The lineage's −48.6 Elo loss is **shape-independent**. Measured in the
+shape production selfplay actually runs, on the same nets, budget, book and openings,
+iter477 is **54.6 Elo weaker** than boot512 with the CI excluding zero by 36 Elo. The
+2026-07-28 shape-flip precedent does not apply to this pairing, and no future reading
+of the −48.6 needs the "but it is the play shape" hedge.
+
+**Does NOT establish.**
+- **It still does not reproduce the training-TARGET regime.** Per `PLAY_PATH_AUDIT`
+  F1 every arena searches a **COLD** tree while production selfplay searches a warm
+  one (warm `max_visit` +28–80% ⇒ stored target up to +44% sharper). Matching the
+  shape does not fix the tree-reuse mismatch. Both arms are cold, so the **ranking**
+  stands; "this arena reproduces the target production stores" does not.
+- **This is 32 sims.** The Elo-vs-sims exchange rate for this pairing remains
+  unmeasured on both shapes; the pre-agreed 256-sim confirmatory is still unrun.
+- It does not localise the loss to policy vs value and does not date the turn.
+- The two shape numbers are **not paired**; the −6.04 contrast is a conservative
+  unpaired estimate, and a genuinely paired shape contrast (same games, both shapes)
+  was not run and is not needed for the sign question it was asked to settle.
+
+### Relation to the four old ratchet rows
+
+`runs/arena_results.jsonl`'s four boot512-referenced rows were **all training-shape and
+all wall-clock truncated** (57 pairs: −39.8 [−91.4, +10.1]; 13 pairs: −110.5). This run
+is the full-sample training-shape number they were reaching for and **supersedes all
+four** for the endpoint question — and it lands between their two point estimates.
+
+**Banked** at `scratchpad/arena_20260803/`: `arena_results.jsonl` (both of today's
+rows), `logs/arena_a_iter477_vs_boot512_training_sims32.log`,
+`lengths_a_iter477_vs_boot512_training_sims32.json`, `ckpt_verify.json`, and the
+drivers `verify.py` / `run_arena.py` / `launch_a_training_twin.sh` / `report.py`.
+Written to a scratch JSONL because `runs/` was read-only for this task — fold both
+rows into `runs/arena_results.jsonl` when convenient.
+
+### ⚑ Consequence for the restart, read together with arena (b) above
+
+The two arenas run today say the same thing from two directions: **the lineage is
+genuinely, shape-independently weaker than its own starting point (−54.6 training /
+−48.6 play), and its best checkpoint on the audit-v2 ruler (`iter400`) is ALSO weaker
+than that starting point (−37.7).** There is no in-lineage checkpoint the base
+decision can be rescued with. **Base = boot512 + fresh window regeneration stands, and
+the success criterion the brief sets — "the loop only has to not lose to its own
+starting point" — is now measured on the shape the loop itself runs.**
