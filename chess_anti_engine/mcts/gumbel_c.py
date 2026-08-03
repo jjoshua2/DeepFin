@@ -181,8 +181,11 @@ def reset_duplicate_stats() -> None:
 # start_gumbel_sims with them raises a cryptic mid-search TypeError. CANONICAL
 # definition (uci/search.py imports it) so the guard covers EVERY C-path consumer —
 # selfplay/training and eval call run_gumbel_root_many_c directly, not just UCI.
-# See _mcts_tree.c PyInit (ABI_VERSION).
-_REQUIRED_MCTS_ABI = 2
+# See _mcts_tree.c PyInit (ABI_VERSION). Raised to 3 for the audit-W1 fix: an
+# un-rebuilt .so still keys the transposition table on the ep-blind repetition
+# hash and copies donor child action lists unverified, which injects illegal
+# moves into the tree. That failure is SILENT, so it gets the loud guard.
+_REQUIRED_MCTS_ABI = 3
 
 # Mirrors the VLOSS_MODE_* defines in _mcts_tree.c (205-206). LEGACY scores a
 # pending leaf as a loss (parallel-PUCT pessimism); VIRTUAL_MEAN scores it at
@@ -230,6 +233,31 @@ def _mark_pipeline_tree_warned() -> None:
 def _mark_legal_bf16_temp_warned() -> None:
     global _LEGAL_BF16_TEMP_WARNED
     _LEGAL_BF16_TEMP_WARNED = True
+
+
+# Audit W2. Counts reused-root candidates rejected because their child set did
+# not cover the actions we were about to search. Process-cumulative so a run can
+# be asked "did this ever fire?" — a guard nobody can observe is a guard nobody
+# knows is dead. Read with root_coverage_miss_count().
+_ROOT_COVERAGE_MISSES = 0
+_ROOT_COVERAGE_WARNED = False
+
+
+def _warn_root_coverage_miss() -> None:
+    global _ROOT_COVERAGE_MISSES, _ROOT_COVERAGE_WARNED
+    _ROOT_COVERAGE_MISSES += 1
+    if not _ROOT_COVERAGE_WARNED:
+        _ROOT_COVERAGE_WARNED = True
+        _log.warning(
+            "gumbel: discarded a reused root whose child set did not cover the "
+            "search actions (audit W2); rebuilding the root. Further "
+            "occurrences are counted, not logged."
+        )
+
+
+def root_coverage_miss_count() -> int:
+    """Reused roots rejected by the coverage check since process start."""
+    return _ROOT_COVERAGE_MISSES
 
 
 def _zero_root_output(value: float) -> tuple[np.ndarray, int, float, np.ndarray]:
@@ -378,8 +406,9 @@ def run_gumbel_root_many_c(
     if _abi < _REQUIRED_MCTS_ABI:
         raise RuntimeError(
             f"compiled _mcts_tree ABI_VERSION={_abi} < required {_REQUIRED_MCTS_ABI} "
-            "(missing the start_gumbel_sims root-scale args); rebuild the C extension: "
-            "python setup.py build_ext --inplace"
+            "(missing the start_gumbel_sims root-scale args and/or the audit-W1 "
+            "transposition-key fix); rebuild the C extension: "
+            "python3 scripts/build_production_extensions.py"
         )
     if int(vloss_mode) == VLOSS_MODE_VIRTUAL_MEAN:
         # `tree_gumbel_select_child` (_mcts_tree.c:2941-2944) mirrors
@@ -707,12 +736,21 @@ def run_gumbel_root_many_c(
             _reused = False
             if root_node_ids is not None and root_node_ids[i] >= 0:
                 rid = root_node_ids[i]
-                if tree.is_expanded(rid) and (
-                    allowed_root_indices_batch is None
-                    or _expanded_root_covers_actions(tree, rid, legal_idx)
+                # The coverage check runs on EVERY reuse, including selfplay
+                # (audit W2). It used to be short-circuited by
+                # `allowed_root_indices_batch is None`, which selfplay always
+                # is — so the only path that carries a tree across plies was
+                # the only path the check never ran on. A reused root whose
+                # child set is missing an action we are about to search makes
+                # tree_gumbel_collect_leaf bail at depth 1 (`child_id < 0`),
+                # silently spending the whole simulation on the root.
+                if tree.is_expanded(rid) and _expanded_root_covers_actions(
+                    tree, rid, legal_idx
                 ):
                     root_ids[i] = rid
                     _reused = True
+                elif tree.is_expanded(rid):
+                    _warn_root_coverage_miss()
 
             if not _reused:
                 rid = tree.add_root(1, float(root_qs[i]))

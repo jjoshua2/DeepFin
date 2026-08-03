@@ -102,6 +102,13 @@ static void init_attack_tables(void) {
 static uint64_t ZOBRIST_PIECE[12][64];  /* [piece_color_idx][sq] */
 static uint64_t ZOBRIST_TURN;
 static uint64_t ZOBRIST_CASTLING[16];   /* indexed by 4-bit castling */
+/* En-passant file. NOT part of CBoard.hash (see cboard_compute_hash) — used
+ * only by cboard_transposition_key for search transposition tables, whose
+ * entries must agree on the legal move set. Drawn AFTER the tables above so
+ * every pre-existing Zobrist value stays bit-identical: CBoard.hash is
+ * persisted in selfplay resume records (`selfplay/resume.py` pos_hash checks),
+ * and perturbing it would invalidate in-flight resume state. */
+static uint64_t ZOBRIST_EP[8];          /* indexed by file of ep_square */
 static int zobrist_initialized = 0;
 
 /* Simple xorshift64 PRNG for deterministic Zobrist values */
@@ -124,6 +131,9 @@ static void init_zobrist(void) {
     ZOBRIST_TURN = zobrist_rand64();
     for (int c = 0; c < 16; c++)
         ZOBRIST_CASTLING[c] = zobrist_rand64();
+    /* Appended last on purpose — keeps every value above bit-identical. */
+    for (int f = 0; f < 8; f++)
+        ZOBRIST_EP[f] = zobrist_rand64();
     zobrist_initialized = 1;
 }
 
@@ -693,9 +703,52 @@ static uint64_t cboard_compute_hash(const CBoard *b) {
     }
     if (b->turn == BLACK_C) h ^= ZOBRIST_TURN;
     h ^= ZOBRIST_CASTLING[b->castling & 0xF];
-    /* EP excluded from hash — improves transposition/cache hit rate.
-     * Repetition detection already strips EP separately. */
+    /* EP excluded from hash — this hash is the REPETITION key, where FIDE
+     * (and python-chess is_repetition()) treat an unusable ep right as
+     * irrelevant, and it is persisted in selfplay resume records. Anything
+     * that needs "same legal move set" must use cboard_transposition_key
+     * below instead; keying a search transposition table on this hash
+     * silently equates positions with different legal moves (audit W1). */
     return h;
+}
+
+/* Is the ep right on this board actually exercisable — i.e. does a pawn of the
+ * side to move stand on a square from which it attacks ep_square? A set
+ * ep_square with no such pawn does not change the legal move set at all, which
+ * is why both the FEN writer and the transposition key ignore it.
+ *
+ * Deliberately pseudo-legal: a pinned capturer answers 1 here and splits one
+ * extra transposition entry. That costs a hit, never correctness. */
+static inline int cboard_ep_capture_available(const CBoard *b) {
+    if (b->ep_square < 0 || b->ep_square >= 64) return 0;
+    uint64_t ep_bit = 1ULL << b->ep_square;
+    uint64_t attackers;
+    if (b->turn == WHITE_C) {
+        /* White to move, so black just pushed; white pawns capture upward. */
+        attackers = ((ep_bit >> 7) & 0xFEFEFEFEFEFEFEFEULL)
+                  | ((ep_bit >> 9) & 0x7F7F7F7F7F7F7F7FULL);
+    } else {
+        attackers = ((ep_bit << 7) & 0x7F7F7F7F7F7F7F7FULL)
+                  | ((ep_bit << 9) & 0xFEFEFEFEFEFEFEFEULL);
+    }
+    uint64_t our_pawns = b->bb[PAWN] & b->occ[b->turn];
+    return (our_pawns & attackers) ? 1 : 0;
+}
+
+/* Key for search transposition tables: CBoard.hash plus the en-passant file
+ * when an ep capture is actually available. Two boards sharing this key have
+ * the same pieces, side to move, castling rights AND ep capture rights, so
+ * they have the same legal move set.
+ *
+ * NOT sufficient for reusing a *value*: the halfmove clock and the repetition
+ * history still do not enter, so draw-adjacent positions still share a key.
+ * Consumers that copy a child action list must therefore also verify it
+ * (see gss_prepare_batch). */
+static inline uint64_t cboard_transposition_key(const CBoard *b) {
+    uint64_t k = b->hash;
+    if (cboard_ep_capture_available(b))
+        k ^= ZOBRIST_EP[sq_file(b->ep_square)];
+    return k;
 }
 
 /* Find which piece type is on a square (for 'us' side) */
@@ -1370,30 +1423,11 @@ static int cboard_to_fen(const CBoard *b, char *buf, int buf_size) {
         if (b->castling & 8) buf[pos++] = 'q';
     }
     buf[pos++] = ' ';
-    if (b->ep_square >= 0) {
-        /* Only emit EP if an enemy pawn can actually capture there */
-        int ep = b->ep_square;
-        uint64_t ep_bit = 1ULL << ep;
-        /* Pawns that could capture on ep_square: for white pawns attacking up,
-         * black pawns attacking down */
-        uint64_t attackers;
-        if (b->turn == WHITE_C) {
-            /* White to move, so black just pushed. White pawns capture ep. */
-            attackers = ((ep_bit >> 7) & 0xFEFEFEFEFEFEFEFEULL)
-                      | ((ep_bit >> 9) & 0x7F7F7F7F7F7F7F7FULL);
-        } else {
-            /* Black to move, white just pushed. Black pawns capture ep. */
-            attackers = ((ep_bit << 7) & 0x7F7F7F7F7F7F7F7FULL)
-                      | ((ep_bit << 9) & 0xFEFEFEFEFEFEFEFEULL);
-        }
-        /* "them" is the side that just moved; "turn" side has pawns that capture */
-        uint64_t our_pawns = b->bb[PAWN] & b->occ[b->turn];
-        if (our_pawns & attackers) {
-            buf[pos++] = 'a' + sq_file(ep);
-            buf[pos++] = '1' + sq_rank(ep);
-        } else {
-            buf[pos++] = '-';
-        }
+    /* Only emit EP if a pawn of the side to move can actually capture there —
+     * the same test the transposition key uses. */
+    if (cboard_ep_capture_available(b)) {
+        buf[pos++] = 'a' + sq_file(b->ep_square);
+        buf[pos++] = '1' + sq_rank(b->ep_square);
     } else {
         buf[pos++] = '-';
     }
