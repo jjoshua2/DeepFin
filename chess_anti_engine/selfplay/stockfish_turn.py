@@ -44,10 +44,19 @@ _LOG = logging.getLogger("chess_anti_engine.selfplay")
 
 _multipv_truncation_warned = False
 
-# One health line per this many LABELLED rows. Only rows that actually receive
-# an SF label count: a curriculum MOVE query produces no training row, so
-# including it would measure something the line is not named after. ~17
-# labels/s live, so roughly one line every four minutes.
+# One health line per this many REPORTER CALLS. Only label events reach the
+# reporter: a curriculum MOVE query produces no training row, so including it
+# would measure something the line is not named after. ~17 labels/s live, so
+# roughly one line every four minutes.
+#
+# ⚑ THE WINDOW COUNTS CALLS; THE RATES DIVIDE BY `labelled`, AND THE TWO ARE
+# NOT THE SAME NUMBER. Until 2026-08-03 they were: every call incremented
+# `labelled`, including the two failure sites that label no row at all
+# (audit P9), so `no_legal_pv/labelled` and `bestmove_illegal/labelled` were
+# diluted by the failure count — the third term of the very rule they feed.
+# The window still advances on failures, deliberately: a window that is ALL
+# failures must still emit a line, and pinning it to `labelled` would make a
+# total label outage silent.
 _SF_LABEL_REPORT_EVERY = 4096
 
 # THE detector. Fraction of labelled rows on which not ONE of Stockfish's
@@ -110,14 +119,131 @@ _SF_NO_LEGAL_PV_WARN_RATE = 0.01
 # in the position it was misfiled against.
 _SF_BESTMOVE_ILLEGAL_CONTEXT_RATE = 0.25
 
+# THE OTHER HALF OF THE LABEL. `no_legal_pv` above reads the POLICY block; this
+# reads the record-level SF eval that becomes `rec.sf_wdl` — realized
+# `sf_wdl_frac` 0.45 of the trained value target, and until 2026-08-03 carrying
+# no detector in either direction (SELFPLAY_AUDIT P2). It fires when that eval's
+# own PV was dropped as illegal, leaving the score attached to a move that is
+# not playable in the queried position. Definition and floor:
+# `replay/shard.py::sf_eval_pv_orphan_flags`.
+#
+# ⚑ THE TWO POPULATIONS ARE DISJOINT. `no_legal_pv` counts rows with NO MultiPV
+# block; this is only computable on rows that HAVE one. So this rate inspects
+# exactly the set the policy detector passes, and the two must never be summed
+# onto a shared denominator.
+#
+# THE BAR IS 0.01, THE SAME AS THE POLICY HALF, AND THAT IS A CHOICE. One bar
+# keeps the two halves of one label directly comparable on one instrument.
+# Calibration on the live 4096-label window (2026-08-03, numbers and provenance
+# in docs/experiment_ledger.md):
+#
+#   policy-clean post-quarantine, 275 windows : max 0.001465, 257 read EXACTLY 0
+#                                               -> 6.8x headroom under the bar
+#   122 quarantined shards, 51 windows        : median 0.102205, mean 0.143583
+#                                               -> 49 of 51 windows fire
+#
+# ⚑ 2 of those 51 windows read BELOW the bar. This is a SECOND view, not a
+# superset of the policy one: a desynced search whose rank-1 move is
+# coincidentally legal here, or whose (cp, mate) ties the top surviving line,
+# passes.
+# Combined with `no_legal_pv` it flags 62,881 of the 209,259 labelled rows on
+# the quarantined set — 0.300494 against 0.207461 for the policy half alone,
+# i.e. +44.8% more rows detected, and ~85% of the ~0.352 true poisoned share
+# the module's own ~0.59 pass-through calibration implies, against ~59% before.
+# The two counts are DISJOINT by construction and observed disjoint (0 overlap),
+# which is what licenses adding them.
+_SF_EVAL_PV_ORPHAN_WARN_RATE = 0.01
+
 _sf_label_lock = threading.Lock()
 _sf_label_counts = {
-    "labelled": 0, "failed": 0, "bestmove_illegal": 0, "no_legal_pv": 0,
+    "calls": 0, "labelled": 0, "failed": 0, "bestmove_illegal": 0,
+    "no_legal_pv": 0, "eval_pv_orphan": 0, "eval_pv_checked": 0,
+    "wdl_degenerate": 0, "wdl_orphaned": 0,
 }
+
+
+def _sf_wdl_is_wellformed(wdl: np.ndarray | None) -> bool:
+    """Is an attached ``sf_wdl`` a usable (W, D, L) distribution?
+
+    Deliberately the same predicate as ``train/losses.py::sf_wdl_wellformed``,
+    which is the shard-side twin. It is stated twice because the two run on
+    different objects (a live record's array vs a collated batch tensor) and a
+    shared helper would have to launder one into the other; the tolerances are
+    pinned equal by test, not by hope.
+    """
+    if wdl is None:
+        return False
+    v = np.asarray(wdl, dtype=np.float64)
+    if v.shape != (3,) or not np.isfinite(v).all():
+        return False
+    if (v < -1e-6).any() or (v > 1.0 + 1e-6).any():
+        return False
+    if abs(float(v.sum()) - 1.0) > 1e-3:
+        return False
+    return not bool((np.abs(v - 1.0 / 3.0) < 1e-4).all())
+
+
+def _sf_eval_pv_orphaned(rec) -> bool:
+    """Does the record's stored SF eval disagree with its stored top PV?
+
+    Reads the STORED ``sf_label_meta`` / ``sf_multipv_raw``, never a
+    recomputation — the same rule ``no_legal_pv`` follows, so this live counter
+    and ``TrainMetrics.sf_eval_pv_orphan_frac`` are one measurement rather than
+    two descriptions that can drift. False when either block is absent: an
+    unmeasurable row is not a clean one, and the count of measurable rows is
+    reported next to the rate for exactly that reason.
+    """
+    raw = getattr(rec, "sf_multipv_raw", None)
+    meta = getattr(rec, "sf_label_meta", None)
+    if raw is None or meta is None:
+        return False
+    raw_arr = np.asarray(raw)
+    meta_arr = np.asarray(meta)
+    if raw_arr.ndim != 2 or raw_arr.shape[0] < 1 or raw_arr.shape[1] < 3:
+        return False
+    if meta_arr.ndim != 1 or meta_arr.shape[0] < 4 or int(raw_arr[0, 0]) < 0:
+        return False
+    return (
+        int(raw_arr[0, 1]) != int(meta_arr[2])
+        or int(raw_arr[0, 2]) != int(meta_arr[3])
+    )
+
+
+def _sf_value_half_counts(rec) -> dict[str, int]:
+    """The four VALUE-half arguments to ``_report_sf_label_health`` for *rec*.
+
+    One place, so the two label call sites cannot instrument the value half
+    differently — which is how the POLICY half ended up with a live counter and
+    the value half with nothing (SELFPLAY_AUDIT P2).
+
+    ``eval_pv_checked`` is the count of rows the orphan comparison is DEFINED
+    on, and it is 1 only when both stored blocks are present. It is reported
+    rather than assumed for the reason the module keeps re-learning: a rate
+    over an unmeasured population reads exactly like a clean one.
+    """
+    wdl = getattr(rec, "sf_wdl", None)
+    wellformed = _sf_wdl_is_wellformed(wdl)
+    checked = (
+        getattr(rec, "sf_multipv_raw", None) is not None
+        and getattr(rec, "sf_label_meta", None) is not None
+    )
+    return {
+        "eval_pv_orphan": int(_sf_eval_pv_orphaned(rec)),
+        "eval_pv_checked": int(checked),
+        "wdl_degenerate": int(wdl is not None and not wellformed),
+  # The blind spot itself: the POLICY block is gone and a well-formed value
+  # label rode through anyway, at 0.45 of the value target with nothing
+  # marking it.
+        "wdl_orphaned": int(
+            getattr(rec, "sf_multipv_raw", None) is None and wellformed,
+        ),
+    }
 
 
 def _report_sf_label_health(
     *, failed: int = 0, bestmove_illegal: int = 0, no_legal_pv: int = 0,
+    eval_pv_orphan: int = 0, eval_pv_checked: int = 0,
+    wdl_degenerate: int = 0, wdl_orphaned: int = 0,
 ) -> None:
     """Accumulate label-path health and emit one line per report window.
 
@@ -134,39 +260,89 @@ def _report_sf_label_health(
     ``no_legal_pv`` is read from the STORED ``sf_multipv_raw``, so this live
     counter and the offline shard check are the same measurement by
     construction rather than by agreement between two descriptions of one.
+    ``eval_pv_orphan`` follows the same rule against the STORED
+    ``sf_label_meta`` / ``sf_multipv_raw`` pair.
 
     ``failed`` participates in the escalation deliberately: post-fix an
     abandoned search is the incident itself, and the whole point of the repair
     is that its firing is visible rather than inferred.
+
+    ⚑ ``failed`` IS NOT A LABEL, AND SINCE 2026-08-03 IT IS NOT COUNTED AS ONE
+    (audit P9). Both failure sites call this with ``failed=1`` on a path where
+    no row was labelled; incrementing ``labelled`` there put the failure count
+    into the denominator of ``no_legal_pv/labelled`` and
+    ``bestmove_illegal/labelled``, damping both by ``F/(L+F)``. The report
+    WINDOW still advances on every call (``calls``), so a window of pure
+    failures still emits a line instead of going silent.
+
+    The escalation VERDICT is unchanged by that fix and cannot have changed:
+    the only windows where the two denominators differ are windows with
+    ``failed > 0``, and ``failed > 0`` is itself an unconditional term of
+    ``unhealthy``. So every window whose rates the fix moves was already
+    WARNING under both denominators. What changes is the number a human reads,
+    which is now the rate over rows that actually got a label. No threshold was
+    retuned; the effective stringency is identical.
+
+    ``eval_pv_orphan`` / ``wdl_degenerate`` / ``wdl_orphaned`` are the VALUE
+    half (P2). Only the first escalates — see ``_SF_EVAL_PV_ORPHAN_WARN_RATE``
+    for its bar and for the two things it cannot see. ``wdl_degenerate`` reads
+    exactly 0 on known-poisoned data and is a producer tripwire, not a desync
+    one; ``wdl_orphaned`` is ``no_legal_pv``'s twin by design and counts the
+    blind spot rather than detecting anything new. Neither is worth an alarm on
+    its own and neither is in ``unhealthy``.
     """
     with _sf_label_lock:
-        _sf_label_counts["labelled"] += 1
+        _sf_label_counts["calls"] += 1
+  # A failure labels no row, so it is not in the label denominator. Guarded on
+  # `failed` rather than on the caller's intent because the two failure sites
+  # pass nothing else -- if a future site passes both, the row is a failure.
+        if not failed:
+            _sf_label_counts["labelled"] += 1
         _sf_label_counts["failed"] += int(failed)
         _sf_label_counts["bestmove_illegal"] += int(bestmove_illegal)
         _sf_label_counts["no_legal_pv"] += int(no_legal_pv)
-        if _sf_label_counts["labelled"] % _SF_LABEL_REPORT_EVERY:
+        _sf_label_counts["eval_pv_orphan"] += int(eval_pv_orphan)
+        _sf_label_counts["eval_pv_checked"] += int(eval_pv_checked)
+        _sf_label_counts["wdl_degenerate"] += int(wdl_degenerate)
+        _sf_label_counts["wdl_orphaned"] += int(wdl_orphaned)
+        if _sf_label_counts["calls"] % _SF_LABEL_REPORT_EVERY:
             return
         counts = dict(_sf_label_counts)
         _sf_label_counts.update(
-            labelled=0, failed=0, bestmove_illegal=0, no_legal_pv=0,
+            calls=0, labelled=0, failed=0, bestmove_illegal=0, no_legal_pv=0,
+            eval_pv_orphan=0, eval_pv_checked=0, wdl_degenerate=0,
+            wdl_orphaned=0,
         )
     labelled = max(1, counts["labelled"])
     no_pv_rate = counts["no_legal_pv"] / labelled
     illegal_rate = counts["bestmove_illegal"] / labelled
+  # Its OWN denominator: rows where BOTH blocks were stored, which is the only
+  # population the comparison is defined on. Dividing by `labelled` would let
+  # the no-PV rows -- which by construction can never be orphans -- dilute the
+  # rate by exactly the amount the policy detector already reported.
+    eval_pv_checked = max(1, counts["eval_pv_checked"])
+    orphan_rate = counts["eval_pv_orphan"] / eval_pv_checked
     unhealthy = (
         no_pv_rate > _SF_NO_LEGAL_PV_WARN_RATE
+        or orphan_rate > _SF_EVAL_PV_ORPHAN_WARN_RATE
         or counts["failed"] > 0
         or illegal_rate > _SF_BESTMOVE_ILLEGAL_CONTEXT_RATE
     )
     _LOG.log(
         logging.WARNING if unhealthy else logging.INFO,
-        "sf label health: labelled=%d no_legal_pv=%d (%.4f) bestmove_illegal=%d "
-        "(%.3f) failed=%d — no_legal_pv above %.3f means Stockfish is answering "
-        "a DIFFERENT position than the one queried (a desynced engine), so the "
-        "whole SF label block on those rows is detached from its row",
-        counts["labelled"], counts["no_legal_pv"], no_pv_rate,
+        "sf label health: calls=%d labelled=%d no_legal_pv=%d (%.4f) "
+        "bestmove_illegal=%d (%.3f) failed=%d eval_pv_orphan=%d (%.4f of %d "
+        "checked) wdl_degenerate=%d wdl_orphaned=%d — no_legal_pv above %.3f "
+        "means Stockfish is answering a DIFFERENT position than the one "
+        "queried (a desynced engine), so the whole SF label block on those "
+        "rows is detached from its row; eval_pv_orphan above %.3f says the "
+        "same thing about the VALUE half (sf_wdl, 0.45 of the value target) "
+        "on rows the no_legal_pv check PASSES",
+        counts["calls"], counts["labelled"], counts["no_legal_pv"], no_pv_rate,
         counts["bestmove_illegal"], illegal_rate, counts["failed"],
-        _SF_NO_LEGAL_PV_WARN_RATE,
+        counts["eval_pv_orphan"], orphan_rate, counts["eval_pv_checked"],
+        counts["wdl_degenerate"], counts["wdl_orphaned"],
+        _SF_NO_LEGAL_PV_WARN_RATE, _SF_EVAL_PV_ORPHAN_WARN_RATE,
     )
 
 
@@ -853,10 +1029,13 @@ def _process_sf_label_result_for_record(
         )
     if will_attach:
         # Read the STORED value, not a recomputation of it — the shard-side
-        # check reads the same field, so the two cannot drift apart.
+        # check reads the same field, so the two cannot drift apart. Same rule
+        # for the three VALUE-half counts: `rec.sf_wdl` and the stored
+        # meta/raw pair, never `res`.
         _report_sf_label_health(
             bestmove_illegal=int(bestmove_illegal),
             no_legal_pv=int(rec.sf_multipv_raw is None),
+            **_sf_value_half_counts(rec),
         )
 
 
@@ -1168,6 +1347,13 @@ def _emit_sf_refute_opp_record(
     # below), so unlike the other two sites the stored field cannot be read back —
     # `not cand_idxs` is the same event at its only available site. It is also
     # inert in production: sf_refute_record_opp_rows is false.
+    #
+    # For the same reason the VALUE-half counts are all left at 0 here rather
+    # than faked from `res`: with no stored meta/raw pair the orphan comparison
+    # is UNDEFINED, and `eval_pv_checked = 0` is the honest report of that. The
+    # `sf_wdl` on this row is also attached AFTER this call, so there is
+    # nothing well-formed to judge yet. If this row type ever ships, it needs
+    # its own instrumentation, not a borrowed one.
     _report_sf_label_health(
         bestmove_illegal=int(bestmove_illegal),
         no_legal_pv=int(not cand_idxs),
@@ -1334,11 +1520,11 @@ def _process_sf_results(
             # so counting it would put a denominator in "sf label health" that
             # is not labels. Reads the stored field, like the async path.
             if state.samples_per_game[idx]:
+                _labelled_rec = state.samples_per_game[idx][-1]
                 _report_sf_label_health(
                     bestmove_illegal=int(bestmove_illegal),
-                    no_legal_pv=int(
-                        state.samples_per_game[idx][-1].sf_multipv_raw is None,
-                    ),
+                    no_legal_pv=int(_labelled_rec.sf_multipv_raw is None),
+                    **_sf_value_half_counts(_labelled_rec),
                 )
 
         # SF opponent when curriculum OR mid SF-refute phase (selfplay-tagged).

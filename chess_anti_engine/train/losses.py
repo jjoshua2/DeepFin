@@ -167,6 +167,111 @@ def sf_multipv_presence_counts(
     return masked_sum_and_count(missing, has_sf_wdl)
 
 
+def sf_wdl_wellformed(sf_wdl: torch.Tensor | None) -> torch.Tensor | None:
+    """Per-row 1.0/0.0: is this ``sf_wdl`` a usable (W, D, L) distribution?
+
+    Degenerate means non-finite, outside [0, 1], not summing to 1, or exactly
+    uniform. Kept as its own function because it is the ONE test the P2 audit
+    named that the desync does not move, and a reader needs to be able to see
+    that the thing being counted is a well-formedness test and nothing cleverer.
+    """
+    if sf_wdl is None or sf_wdl.ndim != 2 or sf_wdl.shape[-1] != 3:
+        return None
+    v = sf_wdl.to(torch.float32)
+    finite = torch.isfinite(v).all(dim=-1)
+    in_range = ((v >= -1e-6) & (v <= 1.0 + 1e-6)).all(dim=-1)
+    sums_to_one = (v.sum(dim=-1) - 1.0).abs() <= 1e-3
+    uniform = ((v - 1.0 / 3.0).abs() < 1e-4).all(dim=-1)
+    return (finite & in_range & sums_to_one & ~uniform).to(torch.float32)
+
+
+def sf_wdl_health_counts(
+    batch: dict[str, torch.Tensor], *, has_sf_wdl: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """(degenerate rows, orphaned rows, sf_wdl rows) for this batch, as 0-d sums.
+
+    The VALUE half of the SF label had no detector in either direction until
+    2026-08-03 (SELFPLAY_AUDIT P2), while carrying realized ``sf_wdl_frac``
+    0.45 of the trained value target. These two counts close the two directions
+    the audit named; the third value is their shared denominator.
+
+    **DENOMINATOR: rows with ``has_sf_wdl`` set** — the same population
+    ``sf_multipv_presence_counts`` divides by, and published in its own right
+    (``sf_wdl_rows``) rather than borrowed from ``sf_multipv_checked_rows``.
+    Borrowing would make both value-side rates go blind the moment the POLICY
+    field went missing from the batch, which is the one circumstance under
+    which they matter most.
+
+    ``degenerate`` — ``sf_wdl`` present but not a usable distribution. State
+    plainly what this is worth as a desync detector: **nothing.** Measured
+    2026-08-03 it is exactly 0 rows on the 122 quarantined shards (209,259
+    labelled) AND exactly 0 on the 1,264,058-row post-quarantine window. A
+    desynced engine returns a real search of another position, so its cp is an
+    ordinary number and the logistic maps it to an ordinary distribution: the
+    label is WELL-FORMED AND WRONG. The count is kept because its floor is a
+    proven exact zero over 1.47 M rows, which makes it a cheap tripwire for a
+    different class — a cp→WDL parameter, POV or dtype change reaching the
+    writer — and because "we looked and it is not this" is the finding.
+
+    ``orphaned`` — the P2 blind spot itself, counted: rows the POLICY detector
+    flagged (no MultiPV block) that nonetheless carry a well-formed ``sf_wdl``,
+    which trains at 0.45 weight with nothing marking it. On the quarantined
+    shards this was 43,413 of 43,417 flagged rows (0.9999). It is deliberately
+    a near-twin of ``sf_no_multipv_rows``: publishing both makes the audit's
+    claim machine-checked rather than documented. Equality means every flagged
+    row carried an unmarked value label; a divergence would mean some flagged
+    rows at least carry a marker, and that is worth knowing the moment it
+    changes. It is NOT an independent detector and must not be summed with the
+    policy rate.
+    """
+    wdl_rows = has_sf_wdl.to(torch.float32).sum()
+    wellformed = sf_wdl_wellformed(batch.get("sf_wdl"))
+    if wellformed is None:
+  # No sf_wdl column: nothing to judge. Report zero rows so the rates read
+  # UNMEASURED via `sf_wdl_rows` rather than reading a clean 0.0 over a
+  # denominator that still counts rows.
+        zero = has_sf_wdl.new_zeros(())
+        return zero, zero.clone(), zero.clone()
+    degenerate = ((1.0 - wellformed) * has_sf_wdl.to(torch.float32)).sum()
+    has_raw = batch.get("has_sf_multipv_raw")
+    if has_raw is None:
+        return degenerate, has_sf_wdl.new_zeros(()), wdl_rows
+    missing = 1.0 - has_raw.to(torch.float32)
+    orphaned = (missing * wellformed * has_sf_wdl.to(torch.float32)).sum()
+    return degenerate, orphaned, wdl_rows
+
+
+def sf_eval_pv_orphan_counts(
+    batch: dict[str, torch.Tensor],
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """(orphaned rows, checked rows) for the value-half desync check, as 0-d sums.
+
+    Both are computed on the HOST by ``Trainer._prepare_host_arrays``, because
+    the two shard fields the predicate needs — ``sf_multipv_raw`` and
+    ``sf_label_meta`` — do not reach the GPU in production. The definition, the
+    calibration and the honest list of what it cannot see all live in ONE
+    place, ``replay/shard.py::sf_eval_pv_orphan_flags``; this only reduces.
+
+    ⚑ ``checked`` is the denominator AND the blind-instrument column, same
+    contract as ``sf_multipv_checked_rows``: it is zero when the host never
+    derived the flags (a caller that skipped ``_prepare_host_arrays``) and when
+    no row carried all three blocks. A rate above a zero ``checked`` means
+    nothing was inspected — never "clean".
+
+    ⚑ This population is DISJOINT from ``sf_multipv_presence_counts``'
+    numerator by construction: that one counts rows with no MultiPV block, this
+    one is only computable on rows that have one. It is the first instrument
+    that looks INSIDE the set the policy detector passes.
+    """
+    orphaned = batch.get("sf_eval_pv_orphan")
+    checked = batch.get("sf_eval_pv_checked")
+    if orphaned is None or checked is None:
+        ref = batch["wdl_t"] if "wdl_t" in batch else next(iter(batch.values()))
+        zero = ref.new_zeros((), dtype=torch.float32)
+        return zero, zero.clone()
+    return orphaned.to(torch.float32).sum(), checked.to(torch.float32).sum()
+
+
 def normalize_distribution(probs: torch.Tensor, *, eps: float = 1e-8) -> torch.Tensor:
     """Renormalize a distribution along the last axis so each row sums to 1.
 
@@ -729,6 +834,10 @@ def compute_loss(
     sf_no_multipv_rows, sf_multipv_checked_rows = sf_multipv_presence_counts(
         batch, has_sf_wdl=has_sf_wdl,
     )
+    sf_wdl_degenerate_rows, sf_wdl_orphaned_rows, sf_wdl_rows = sf_wdl_health_counts(
+        batch, has_sf_wdl=has_sf_wdl,
+    )
+    sf_eval_pv_orphan_rows, sf_eval_pv_checked_rows = sf_eval_pv_orphan_counts(batch)
     batch_rows = net_mask.new_full((), float(net_mask.shape[0]))
     m_wdl_onehot = masked_mean(wdl_onehot_ce, net_mask)
     m_blended_wdl = masked_mean(blended_wdl_ce, net_mask)
@@ -824,6 +933,18 @@ def compute_loss(
   # `sf_multipv_checked_frac` in train/trainer.py.
         "sf_no_multipv_rows": sf_no_multipv_rows,
         "sf_multipv_checked_rows": sf_multipv_checked_rows,
+  # SF-label contamination detector, VALUE half — the same channel and the same
+  # sums-then-divide-once treatment. `sf_wdl_rows` is their denominator and is
+  # deliberately NOT `sf_multipv_checked_rows`, so a missing POLICY field
+  # cannot blind the value-side rates. See `sf_wdl_health_counts` and
+  # `sf_eval_pv_orphan_counts`; mapped to `sf_wdl_degenerate_frac` /
+  # `sf_wdl_orphaned_frac` / `sf_eval_pv_orphan_frac` / `sf_eval_pv_checked_frac`
+  # in train/trainer.py.
+        "sf_wdl_degenerate_rows": sf_wdl_degenerate_rows,
+        "sf_wdl_orphaned_rows": sf_wdl_orphaned_rows,
+        "sf_wdl_rows": sf_wdl_rows,
+        "sf_eval_pv_orphan_rows": sf_eval_pv_orphan_rows,
+        "sf_eval_pv_checked_rows": sf_eval_pv_checked_rows,
         "batch_rows": batch_rows,
         "sf_move_ce": m_sf_move,
         "sf_eval_ce": m_sf_eval,
