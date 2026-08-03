@@ -169,8 +169,10 @@ def main() -> None:
     p.add_argument("--gumbel-c-scale", type=float, default=PLAY_SEARCH_DEFAULTS["c_scale"], help="gumbel value-transform scale (mode gumbel; production-tuned 0.025)")
     p.add_argument("--gumbel-c-visit", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit"], help="gumbel c_visit depth-ramp base (mode gumbel)")
     p.add_argument("--gumbel-topk", type=int, default=PLAY_SEARCH_DEFAULTS["topk"], help="gumbel root candidates (mode gumbel)")
-    p.add_argument("--gumbel-c-puct", type=float, default=PLAY_SEARCH_DEFAULTS["c_puct"], help="gumbel c_puct (mode gumbel)")
-    p.add_argument("--gumbel-fpu", type=float, default=PLAY_SEARCH_DEFAULTS["fpu_reduction"], help="gumbel fpu_reduction (mode gumbel)")
+  # --gumbel-c-puct / --gumbel-fpu removed 2026-08-03: both are inert in a
+  # Gumbel search (mcts.gumbel.INERT_GUMBEL_KNOBS; play-path audit F2), so a
+  # sweep over them returned a perfectly reproducible null that read as a
+  # measurement.
     p.add_argument("--gumbel-qexp", type=float, default=1.0,
                    help="gumbel q_visit_exp: exponent on max_visit in q_scale=c_scale*(c_visit+max_visit^exp). "
                         "1.0=linear (default); <1=sublinear (less sim-count-dependent optimum)")
@@ -284,8 +286,7 @@ def main() -> None:
                 from chess_anti_engine.mcts.gumbel import GumbelConfig
                 gcfg = GumbelConfig(
                     topk=args.gumbel_topk, c_scale=args.gumbel_c_scale,
-                    c_visit=args.gumbel_c_visit, c_puct=args.gumbel_c_puct,
-                    fpu_reduction=args.gumbel_fpu, q_visit_exp=args.gumbel_qexp,
+                    c_visit=args.gumbel_c_visit, q_visit_exp=args.gumbel_qexp,
                     q_global_scale=args.gumbel_global_scale,
                     q_visit_floor=args.gumbel_qfloor,
                     halving_div=args.gumbel_halving_div,

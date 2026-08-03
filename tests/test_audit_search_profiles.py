@@ -24,7 +24,11 @@ from types import ModuleType
 import numpy as np
 import pytest
 
-from chess_anti_engine.mcts.gumbel import PLAY_SEARCH_DEFAULTS, GumbelConfig
+from chess_anti_engine.mcts.gumbel import (
+    INERT_GUMBEL_KNOBS,
+    PLAY_SEARCH_DEFAULTS,
+    GumbelConfig,
+)
 
 
 def _load_audit_targets() -> ModuleType:
@@ -185,23 +189,26 @@ def test_the_candidate_legend_no_longer_calls_the_play_row_the_training_target(
 # --- Review findings on PR #246 ------------------------------------------
 
 
-def test_the_play_profile_carries_the_descent_knobs_too(
-    audit_targets: ModuleType, flat: dict[str, object],
+def test_the_search_profile_carries_no_knob_the_gumbel_search_ignores(
+    audit_targets: ModuleType,
 ) -> None:
-    """c_puct / cpuct_factor / fpu_reduction differ between PLAY and training.
+    """Replaces test_the_play_profile_carries_the_descent_knobs_too.
 
-    Taking only the root-transform subset of PLAY_SEARCH_DEFAULTS left row (b)
-    a hybrid: play root transform, training descent. Those fields act on tree
-    descent, so it measured a search neither path runs.
+    That test asserted the profile carried c_puct / cpuct_factor / cpuct_base /
+    fpu_reduction, on the premise that "those fields act on tree descent, so
+    omitting them measured a search neither path runs". The premise is FALSE:
+    all four drive the PUCT descent, which is unreachable while
+    ``GumbelConfig.full_tree`` is True — and it always is (play-path audit
+    2026-08-03, F2). ``_build`` turns every profile into a ``GumbelConfig``, so
+    carrying them made the PLAY and training rows look more different than the
+    search they actually run. The honest invariant is the opposite one.
     """
-    play = audit_targets.build_search_profiles(
-        flat, play_sims=256, play_topk=None,
-    )["search"]
+    fields = set(audit_targets._SearchProfile.__dataclass_fields__)
 
-    assert play.c_puct == PLAY_SEARCH_DEFAULTS["c_puct"]
-    assert play.cpuct_factor == PLAY_SEARCH_DEFAULTS["cpuct_factor"]
-    assert play.cpuct_base == PLAY_SEARCH_DEFAULTS["cpuct_base"]
-    assert play.fpu_reduction == PLAY_SEARCH_DEFAULTS["fpu_reduction"]
+    assert not (fields & INERT_GUMBEL_KNOBS), (
+        f"_SearchProfile carries {sorted(fields & INERT_GUMBEL_KNOBS)}, which no "
+        "Gumbel search can act on"
+    )
 
 
 def test_the_play_profile_defaults_to_the_play_topk(

@@ -31,6 +31,7 @@ from chess_anti_engine.inference_dispatcher import (
     bootstrap_cudagraph_tls,
 )
 from chess_anti_engine.mcts.gumbel import (
+    PLAY_PUCT_DEFAULTS,
     PLAY_SEARCH_DEFAULTS,
     PLAY_SEARCH_VLOSS_WEIGHT,
     GumbelConfig,
@@ -702,23 +703,30 @@ def main() -> int:
                         "2026-06-16 (was 0.1; +270 Elo). q_scale=c_scale*(c_visit+max_visit) "
                         "explodes at high sims, so 0.1 over-trusted the overconfident value head.")
     p.add_argument("--c-visit", type=float, default=PLAY_SEARCH_DEFAULTS["c_visit"], help="Gumbel c_visit constant (default: 50.0)")
+  # PUCT-descent knobs (walker pool / multi-GPU PUCV). They do NOT reach the
+  # Gumbel search -- see mcts.gumbel.INERT_GUMBEL_KNOBS -- which is why their
+  # defaults come from PLAY_PUCT_DEFAULTS and not PLAY_SEARCH_DEFAULTS.
     p.add_argument(
-        "--c-puct", type=float, default=PLAY_SEARCH_DEFAULTS["c_puct"],
+        "--c-puct", type=float, default=PLAY_PUCT_DEFAULTS["c_puct"],
         help="PUCT init (Lc0 CPuct, default: 1.75). With --cpuct-factor>0 this is "
-             "the init term in c(N)=c_puct+factor*log((N+base)/base).",
+             "the init term in c(N)=c_puct+factor*log((N+base)/base). PUCT walkers "
+             "only -- inert in the Gumbel search.",
     )
     p.add_argument(
         "--cpuct-factor", type=float,
-        default=float(PLAY_SEARCH_DEFAULTS.get("cpuct_factor", 3.89) or 0.0),
-        help="Lc0 CPuctFactor (default: 3.89). 0 = fixed c_puct (no log ramp).",
+        default=float(PLAY_PUCT_DEFAULTS["cpuct_factor"]),
+        help="Lc0 CPuctFactor (default: 3.89). 0 = fixed c_puct (no log ramp). "
+             "PUCT walkers only -- inert in the Gumbel search.",
     )
     p.add_argument(
         "--cpuct-base", type=float,
-        default=float(PLAY_SEARCH_DEFAULTS.get("cpuct_base", 38739.0) or 38739.0),
-        help="Lc0 CPuctBase in log((N+base)/base) (default: 38739).",
+        default=float(PLAY_PUCT_DEFAULTS["cpuct_base"]),
+        help="Lc0 CPuctBase in log((N+base)/base) (default: 38739). PUCT walkers "
+             "only -- inert in the Gumbel search.",
     )
-    p.add_argument("--fpu-reduction", type=float, default=PLAY_SEARCH_DEFAULTS["fpu_reduction"],
-                   help="first-play-urgency reduction for unvisited children (default: 1.2)")
+    p.add_argument("--fpu-reduction", type=float, default=PLAY_PUCT_DEFAULTS["fpu_reduction"],
+                   help="first-play-urgency reduction for unvisited children "
+                        "(default: 0.33). PUCT walkers only -- inert in the Gumbel search.")
   # Gumbel root/descent split params (merged dormant in #68; C path only —
   # run_gumbel_root_many_c). All default to legacy: a GumbelConfig built with
   # the defaults below reproduces the pre-#68 single-floor/linear behavior.
