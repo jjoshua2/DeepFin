@@ -28110,3 +28110,38 @@ remediation batches after #324 lands — (E) UCI safety (U2+U1+U5/U6+U7), (F)
 tune lifecycle (T1+T4 observable+T2), (G) model instruments (M4-2, M4-3,
 polar-convergence metric). P1-class decisions (difficulty scale) and the
 Aurora coefficient change remain pre-registration-gated.
+
+#### M4-1 RESOLVED (2026-08-03, MODEL_OPT_AUDIT.md addendum): the coefficients ARE Polar Express — the failure is CONDITIONING, and fp16 saturates at 12 steps
+
+The quintic-coefficients hypothesis from the wave-4 entry is **refuted**:
+`_POLAR_EXPRESS_COEFFS_RAW` is 8 distinct triples decaying bit-exactly to the
+NS5 fixed point — a shape no constant iteration produces; pre-normalization
+(X0 = M/||M||_F, fp32, before the work-dtype cast) is present and correct. The
+0.032≈0.036 match with the paper's quintic error was coincidence.
+
+**The real cause is a hard bound:** p(x)≈a·x for small x, so an N-step
+composition lifts σ_min by at most Π aₖ. PE-8 delivers 6,363; the square
+512×512 momentum at its measured κ≈3,477 needs 3.05e4 (fails by 4.8×), while
+the rectangular tensors at κ≈9.8 need 119 (53× headroom) — **the rectangular
+tensors are ~350× better conditioned, which is the entire square/rectangular
+split.** No 8-step quintic scheme can fix it (Chebyshev ceiling argument in the
+addendum) — "swap coefficients at unchanged step count" is NOT available.
+
+**Precision (the direct question): 8 steps fails in ALL THREE precisions**
+(fp32 0.312 / bf16 0.333 / fp16 0.317) — precision is not the discriminator,
+step count is. Once steps suffice, precision sets the ceiling, and **in
+production fp16, 12/16/24 steps are indistinguishable: `polar_steps: 12` is the
+saturation point** (corrects the fp32-derived "16" in the original finding).
+
+**Recommendation (A8 draft pre-registration in the addendum): square-tensors-
+only `polar_steps` 8→12** — 0.317→0.998 in fp16, rectangular untouched, ≈+17%
+of polar work — plus the free `polar_safety` fix (the safety adjustment is
+applied twice at step 1, costing 9.4% of reach; 1.01→1.00 measured +7.6%).
+Standard-Muon treatment for the squares would be WORSE (NS5 Π a = 485, 13×
+short). CANS-12 untested (coefficients unverifiable offline; cost-matched cubic
+ceiling is HIGHER, 3¹²=5.3e5 — experiment pre-wired in
+`md_polar_conditioning.py`, deciding cell κ 3,000–6,000). Owed before any
+change ships: re-run on REAL out_proj momentum on GPU fp16 (Gaussian surrogates
+may overstate κ), the polar-convergence metric ships WITH the change (a guard
+must share the criterion's instrument), and the per-shape key is
+restart-gated (unknown key rejects the whole live reload).
