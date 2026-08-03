@@ -21335,6 +21335,206 @@ must be empty before the next restart, or the live tree restarts onto the
 No yardstick and no kill threshold here on purpose: nothing in (A) is an
 experiment, and nothing in (B) has been launched. Each (B) item needs its own
 entry with a pre-committed readout before it goes live.
+## 2026-08-02 — INSTRUMENT PROMOTION (no experiment): audit-v2 enters the repo as `--input-encoding {fen_only,stored}`
+
+**Not an experiment. No hypothesis, no yardstick, no kill threshold, nothing
+launched.** The audit-v2 rig that produced the 2026-08-02 audit-v2 entries lived
+in a scratchpad bank; this promotes it to `scripts/` + `chess_anti_engine/eval/`
+so the numbers the ledger already cites are reproducible from the repo. Those
+verdicts are unchanged by this and are NOT re-adjudicated here.
+
+⚑ **Cross-reference note.** This entry lands on `main` via PR #314. The
+audit-v2 entries it refers to ("the entries above") are on the LIVE branch
+`ops/live-20260725` — the 2026-08-02 pre-registration, verdict, lineage and SWA
+entries around lines 25180 / 25259 / 25376 / 25511 — and do not exist on `main`
+until the branches meet. Read this entry against the live branch until then.
+
+### What landed
+
+| path | what |
+|---|---|
+| `chess_anti_engine/eval/audit_history.py` | `pov_flip_slot` / `child_input_planes`, the encoding switch, `MatchedAuditRows` |
+| `scripts/match_audit_rows.py` | position-key join -> the matched-rows index |
+| `scripts/verify_audit_history_transform.py` | the bit-exactness verifier + test-fixture emitter |
+| `scripts/score_audit_v2.py` | the 3-arm (`v1`/`v1_stm`/`v2`) per-position scorer |
+| `scripts/value_regret.py`, `scripts/audit_targets.py` | `--input-encoding`, default `fen_only` |
+| `tests/test_audit_history_encoding.py` + `tests/data/audit_history_pairs.npz` | 25 tests, 16 real stored pairs |
+
+### ⚑ RULE 1 — v1 AND v2 NUMBERS NEVER MIX
+
+`fen_only` and `stored` are DIFFERENT RULERS of the same set, and a ruler change
+invalidates its records. Every report line, dumped record and table row from
+either now carries its encoding (`[enc=... b=...]`, `[arm=v2 enc=stored ...]`,
+`(a) net raw policy [enc=stored]`). A figure without that tag cannot be placed
+in a table, a trend or a threshold. The ledger's published arm names `v1` /
+`v1_stm` / `v2` were deliberately NOT renamed — `v1 ≡ fen_only`,
+`v2 ≡ stored` — because renaming them would silently break every
+cross-reference in the entries above.
+
+`audit_targets.py` is the sharp edge: `--input-encoding` moves ONLY row (a),
+the net's raw policy. Rows (b)/(d)/(e) are searches that encode internally from
+the board and stay `fen_only` under both settings; row (c) is pure Stockfish.
+The report says so per row rather than in a header that would be false for four
+rows out of five. The root network WDL behind value row (iv) is likewise kept
+on the search's encoding, so (iv) never becomes a stored/FEN-only hybrid.
+
+### ⚑ RULE 2 — `value_regret.py` IS BATCH-SIZE DEPENDENT (new instrument trap)
+
+Measured 2026-08-02, same checkpoint, same positions, same encoding:
+
+| ckpt | `--batch-size 128` | `--batch-size 256` | delta |
+|---|---|---|---|
+| boot512 | 61.19 cp | 60.53 cp | **0.66 cp** |
+| iter477 | 74.35 cp | 74.64 cp | 0.29 cp |
+
+Mechanism is the one already flagged for raw policy regret (~0.8 cp between 64
+and 256): batch composition changes the GPU reduction order, and a 1-ply ARGMAX
+over child values turns a float-level wobble into a different chosen move.
+**0.66 cp exceeds several effects this ruler has been used to judge.** Pin the
+batch across every arm of a comparison and state it; it is now echoed on every
+line, and `score_audit_v2.py --value-batch` defaults to the PINNED 256 rather
+than to a value no banked readout used.
+
+### Verification, re-derived here rather than inherited
+
+- **Join**: 4000/4000 audit rows recovered, 1463 shards, 24 s. Canonicalisation
+  proof: current-frame piece planes and castling planes 104..107 bit-identical
+  to the FEN-only encoding. History-plane occupancy 0.0 -> 0.713.
+- **⚑ Correction to how `legal_move_sets_identical` was first described here.**
+  It reads true on 4000/4000, but it is NOT independent validation of the join:
+  the join already accepts a row only when `position_key(decode(row))` equals
+  the audit `key`, and `position_key` determines legal moves, so for any row
+  that passed the join the check is IMPLIED. What it independently proves is
+  that the audit set's own `key` agrees with its own `fen` (the legal moves are
+  compared against `Board(fen)` while the join matched on `key`) — a guard on
+  AUDIT-SET SELF-CONSISTENCY, which is worth having because a set whose `key`
+  and `fen` disagreed would attach every per-UCI label to the wrong position.
+  Calling it "the invariant that licenses the labels" overstated it, and doing
+  so in a PR largely about checks that cannot fail for the reason their name
+  implies is exactly the error this record exists to catch.
+- **`pov_flip_slot`**, FULL snapshot (the bank verified 4,077 pairs; this is all
+  of them): **396,733 pairs, 2,777,131/2,777,131 piece-history slots exact,
+  396,733/396,733 colour flags exact.** Repetition planes 2,776,608/2,777,131
+  (523 misses, 0.019% — repetitions older than the parent's 8-slot window, which
+  no shift can recover; measured, not assumed away).
+
+### ⚑ DEFECT FOUND AND FIXED IN THE BANKED RIG
+
+`match_audit_rows.py` reported a single boolean `meta_planes_104_111_identical`.
+It reads **false on a perfectly sound join**, because plane 108 is the colour
+flag and its differing on ~51% of rows IS audit-v2. A check that cannot fail for
+the reason its name implies is this codebase's signature defect, and the bank's
+README had already drifted to claiming something narrower (104..107) than what
+the code checked. Replaced with per-block fields that each name what they prove
+(`canonicalisation_castling_104_107_identical`, `rows_differing_stm_flag_108`,
+`rows_differing_ep_110`, ...) plus `legal_move_sets_identical`, which is the
+invariant that actually licenses the labels — and the script now EXITS NONZERO
+if it fails rather than printing a false and moving on. Two further guards
+added: shards not in the production layout are skipped and counted rather than
+silently spliced, and a non-canonical audit FEN is refused rather than quietly
+failing to match.
+
+### Wiring proof (the standing bias: a value accepted and then ignored)
+
+Three mutations, each run against the committed tests:
+
+| mutation | tests that FAILED |
+|---|---|
+| stored branch returns the FEN-only child (row accepted, ignored) | `test_value_regret_stored_feeds_spliced_history`, `test_value_regret_stored_differs_from_fen_only` |
+| `fen_only` branch splices plane 108 (default no longer bit-identical) | `test_fen_only_child_is_identity` x2 |
+| `audit_targets._net_candidates` ignores `stored_x` | `test_audit_targets_stored_encoding_reaches_the_raw_policy_forward` |
+| **F** — `score_audit_v2.root_planes` `v1` arm returns the STORED row | `test_score_audit_v2_v1_arm_is_the_fen_only_identity` x6, `test_score_audit_v2_v2_arm_is_the_stored_encoding` x6 |
+| **G** — `match_audit_rows.require_canonical` never flags anything | `test_require_canonical_refuses_a_black_to_move_audit_board` |
+| **H** — the inferred stamp keeps the scalar shape (the false-refusal above) | `test_unstamped_audit_targets_dump_compares_to_a_default_run` |
+| **I** — the shape expansion fills `null` candidates | `test_unstamped_audit_targets_dump_compares_to_a_default_run`, `test_match_stamp_shape_preserves_null_candidates` |
+
+⚑ **F and G were found by the independent reviewer, not by me, and F is the
+serious one.** `score_audit_v2.py` is the file that produced every published
+`arm v2` number and it had NO tests; pointing its `v1` BASELINE at the stored
+row makes every v1-vs-v2 contrast read exactly **0.00** with the whole suite and
+the lint gate still green. That is the same failure shape as mutation B, one
+file over, in the one file whose entire job is the contrast. Fixed twice over:
+the `v1`/`v2` branches now DELEGATE to the shared encoding switch instead of
+carrying a second copy, and the arms are pinned by test — including that
+`v1_stm` differs from `fen_only` at *exactly* plane 108 and nowhere else, so the
+attribution arm cannot drift into either neighbour.
+
+⚑ The FIRST version of the fen_only mutation PASSED, and the reason is worth
+keeping: audit boards are white-to-move canonical, so every 1-ply child is black
+to move and already carries colour flag 1.0 — forcing it to 1.0 was a no-op on
+this set. The test now also runs on children that come out white to move.
+A default-preservation test that only sees one side of a flag proves nothing.
+
+### RULE 1 IS A GATE, NOT ONLY A LABEL
+
+`scripts/paired_compare.py` is where every ledger verdict's paired delta is
+computed, and it joins two dumps by position key while ignoring everything else
+in the record — so it would happily join a `fen_only` dump to a `stored` one and
+report the RULER as if it were the checkpoint difference. A stamp nothing reads
+is a value accepted and then ignored, so the stamps are now CHECKED:
+`require_same_ruler` compares `input_encoding` and `batch_size` across the two
+dumps and REFUSES on disagreement, refuses a dump that mixes rulers within
+itself, and warns (rather than refusing) when a dump is too old to declare
+either. Mutating the gate to a no-op fails 5 tests; renaming the stamp in
+`value_regret.py` fails `test_value_regret_dump_carries_its_ruler`, which pins
+the field names against the producer rather than assuming them.
+
+⚑ **AND THE INFERRED STAMP MUST ADOPT THE COUNTERPART'S SHAPE.** The two
+producers stamp differently: `value_regret.py` writes a scalar, `audit_targets.py`
+writes one encoding PER CANDIDATE (a dict), because its `--input-encoding` moves
+only row (a). The first cut of the inference below could only name the scalar,
+and a scalar never equals a dict — so it FALSE-REFUSED an unstamped
+`audit_targets` dump against a fresh DEFAULT-encoding one: same ruler on both
+sides, no override flag. Not hypothetical — 103 banked unstamped `audit_targets`
+dumps exist under `scratchpad/` and several documented readouts join exactly
+that pair, so every one of them would have needed a GPU re-run. Caught by the
+reviewer, not by me; my test for this case only ever fed the scalar producer.
+`_match_stamp_shape` expands the inferred scalar to the counterpart's key set
+(`sf_soft` stays `null`, so it cannot manufacture a disagreement), and a
+`stored` counterpart still differs on `raw` and is still refused. **⚑ The
+general lesson: a gate with TWO producers needs a test per producer. The gap was
+a shape the gate's tests never fed it — the same defect the stamping exists to
+prevent, one level up.**
+
+⚑ **An unstamped dump counts as `input_encoding=fen_only`, and that is the
+point.** Every dump written before this PR is `fen_only` by construction, since
+`stored` did not exist to produce one. Treating absence as "unknown" left the
+single join the gate exists to stop — a legacy `fen_only` dump against a new
+`stored` one — on the warn path with exit 0, i.e. the highest-risk comparison
+was the one it did not refuse, while the stamped-vs-stamped case it did refuse
+is the one a careful operator was least likely to get wrong. `batch_size` is
+NOT inferred: old dumps genuinely varied (the standing VALUE yardstick pins
+`--batch-size 128` against a CLI default of 256), so a guess there would refuse
+legitimate comparisons.
+
+### The matched-rows index is a BUILD ARTIFACT, not checked in
+
+Same treatment as `data/audit_set_v1.jsonl` and the shallow-SF cache, neither of
+which is tracked. ~3.8 MB, re-derives in 24 s:
+
+```
+PYTHONPATH=. python3 scripts/match_audit_rows.py \
+    --audit-set data/audit_set_v1.jsonl \
+    --snapshot runs/parallel_candidate_replay_snapshots/current_live_20260602_202037_v2threats
+```
+
+Default read path is `<audit-set>.matched_rows.npz`; a `stored` run without it
+exits with that exact command. **If that snapshot is ever pruned, the `stored`
+ruler becomes unreproducible** — it is the only surviving source of the history,
+and nothing in this PR protects it.
+
+### Known limits, stated rather than discovered later
+
+- A derived child does NOT get its own current-frame repetition plane (12): it
+  depends on positions older than the parent's window. 0.019% of slots.
+- `--input-encoding stored` refuses dynamic-relation checkpoints (relations are
+  rebuilt from the bare board and would contradict the spliced history) and
+  refuses checkpoints not on `lc0_root_legacy_meta` + `v2_threats`.
+- The VALUE ruler still has no smooth analogue of expected regret, so the
+  METHOD RULE above ("use EXPECTED, not top-1, for paired contrasts") can only
+  be honoured on the policy leg. Unchanged by this PR; building one remains the
+  prerequisite for any future value-vs-policy lead test.
+
 
 ## INSTRUMENT 2026-08-03 — three per-iteration era-forgetting probes (`probe_era_*`, `probe_inwindow_*`, `probe_gap_*`), all default OFF
 
