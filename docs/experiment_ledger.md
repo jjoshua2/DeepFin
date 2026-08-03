@@ -22396,3 +22396,138 @@ number measured before that merge was measured against a stale `.so`. The
 worktree's extensions were rebuilt and the whole verification re-run on the
 merged tree rather than assuming the merge was inert — the same rule as
 `c_extension_rebuild_after_pull`, applied to a PR's own evidence.
+
+---
+
+## GATE-BLOCKING FIX 2026-08-03 — the server's upload compactor drops 8 of 56 `ShardMeta` fields, including BOTH inputs to the promotion gate's PID-confound instrument (audit wave 3, K1 / G3-1)
+
+**Type: correctness fix, no training-target change. Deploy-gated on a server
+restart** (the compactor runs in the server process; a running server keeps the
+old module — `running_scripts_keep_the_old_file`).
+
+**The defect.** `_flush_buffered_upload_to_inbox` (`server/app.py`) rebuilt
+`ShardMeta` from a hand-written kwarg list that set 48 of the dataclass's 56
+fields. The other 8 silently took their dataclass defaults, and
+`_BufferedUploadAccumulator` had no slot for four of them at all, so the loss
+happened at ACCUMULATE time, not just at flush. Compaction is unconditional
+(`compact_target_positions = max(1, ...)`, and the live trial's `processed/`
+holds only `_compacted/`), so this is **100% of production shards**:
+
+| dropped field | was | consumer that died |
+|---|---|---|
+| `opponent_wdl_regret_limit` | `None` on 447/447 ingested shards | the gate's confound leg |
+| `sf_nodes` | `None` | per-shard difficulty provenance |
+| `sf_d6_sum` / `sf_d6_n` | `None` | `sf_eval_delta6` (`0.0` on every live row) |
+| `run_id` | `None` | trial provenance on a compacted shard |
+| `policy_encoding` / `policy_size` | rewritten by the shard writer | — (no live effect) |
+| `version` | writer-owned; correct as-is | — |
+
+Downstream: `_process_shard`'s `if shard_regret is not None:` never fired,
+`gate_{cur,prev}_regret_games` stayed 0, `_arm_mean_regret` returned NaN,
+`AnchoredSample.confound_elo` propagated it, and `_confound_fit` saw n=0.
+**`gate_sample_confound_elo` was NaN on 109 of 109 live rows** (iters 370–478).
+The ledger's blocking finding (1) — "the anchored delta may be a CONTROLLED
+VARIABLE of the PID" — is recorded above as CLOSED AS BUILT with the kill rule
+"|corr(predicted confound, measured delta)| ≥ 0.5 → do NOT enable". That rule
+has only ever been evaluated over an empty set. **It is not closed; this fix is
+what makes it evaluable.** The 24/24 mutations that were killed in that review
+were all run against shards that HAD the field — the reviewer exercised the
+consumer with an input the producer's output never carried.
+
+The same paragraph's claim that "difficulty is part of upload-buffer identity
+(flush on change)" is true of the WORKER's buffer and was false of the SERVER's:
+the compaction merge key was `(trial, model_sha, history|repfix)` and omitted
+difficulty entirely.
+
+**The fix.**
+1. All 8 fields carried, each with explicit aggregation semantics.
+   `sf_d6_sum`/`sf_d6_n` join the summed classes. `opponent_wdl_regret_limit`,
+   `sf_nodes`, `policy_encoding` and `policy_size` become
+   `_COMPACTION_IDENTITY_FIELDS`: part of the merge key (matching the worker's
+   flush-on-change semantics) AND asserted uniform inside the accumulator, with
+   both sides coerced through one helper so the guard cannot disagree with the
+   criterion. `run_id` is set from the accumulator's trial, which the upload
+   route has already proved equal to any non-empty shard `run_id`. `version`,
+   `username`, `generated_at_unix` and `positions` are writer-owned by
+   construction — a compacted shard is a NEW shard, written by this process,
+   from these samples, possibly merging several uploaders.
+2. The kwarg list is GONE. The flush builds its kwargs from
+   `_SHARD_META_FIELD_KINDS`, a table that must classify every `ShardMeta`
+   field; `server/app.py` raises at IMPORT if the table and the dataclass
+   disagree. A hand-written list cannot fail on an ABSENT key, which is the
+   entire mechanism of this defect.
+3. An upload whose identity values cannot be typed is REJECTED (the existing
+   `{"stored": False, "rejected": True}` shape), and the equivalent pending
+   shard is quarantined on recovery — rather than 500-ing the keying or being
+   silently dropped.
+
+**Why 110 green tests missed it.**
+`tests/test_promotion_gate.py::test_ingest_splits_anchored_counts_by_publishing_model`
+hand-writes shards into the inbox with `meta["opponent_wdl_regret_limit"]`
+already set. The whole suite tested the CONSUMER against an input the PRODUCER
+never emitted. `tests/test_shard_meta_compaction_completeness.py` closes that:
+it enumerates `dataclasses.fields(ShardMeta)` (never a hand-list — a diff-based
+check is blind to exactly the absent key that caused this), gives every field a
+distinguishable non-default value, drives it through the real
+accumulate→flush path, and separately walks worker producer → HTTP upload →
+compactor → `_ingest_distributed_selfplay`.
+
+**Mutation results** (all run; each is the defect being re-introduced):
+
+```
+M1  omit sf_d6_n from the flush build         -> 3 tests red
+M2  omit opponent_wdl_regret_limit from flush -> 2 tests red
+        ...and tests/test_promotion_gate.py stays 110/110 GREEN, which is
+        the direct demonstration of why the old suite could not see K1
+M3  add an unclassified field to ShardMeta    -> server.app raises at IMPORT
+M4  drop difficulty from the merge key        -> 1 test red
+```
+
+**VERIFICATION OBSERVABLE for the restart** (do NOT read an exit code — an exit
+code is an OR over axes, and the readout's prev_share leg can fail or pass
+independently of this):
+
+1. **First post-restart ingested shard.** On the first compacted shard written
+   after the server restarts onto this code, `opponent_wdl_regret_limit` must be
+   a finite float and `sf_nodes` a positive int:
+   ```
+   PYTHONPATH=. python3 -c "import glob,json,sys; p=sorted(glob.glob('runs/pbt2_small/server/trials/*/processed/_compacted/*.zarr/.zattrs'))[-1]; d=json.load(open(p)); print(p, d.get('opponent_wdl_regret_limit'), d.get('sf_nodes'), d.get('sf_d6_n')); sys.exit(0 if isinstance(d.get('opponent_wdl_regret_limit'), float) else 1)"
+   ```
+   PASS = a float, not `None`. This reads out in ONE compaction window (~90s),
+   long before any training row.
+2. **Within 3 iterations**, `gate_sample_confound_elo` must be finite on every
+   new `progress.csv` row, and `sf_eval_delta6` must be non-zero. Assert the
+   AXIS STATE, not the readout's exit status:
+   ```
+   PYTHONPATH=. python3 scripts/gate_shadow_readout.py <trial>/progress.csv
+   ```
+   and require **`n_confound >= 3`** over the window before ANY verdict on
+   blocking finding (1) is recorded. `confound=unreported` is a FAILED
+   instrument, not a passing leg.
+3. **KILL for this fix**: if the first post-restart compacted shard still shows
+   `None`, the fix is not in effect — check the server was restarted onto this
+   commit (`merged_on_live_branch_still_never_ran`), not just that the PR
+   merged.
+
+Note this fix does not by itself re-open the gate: it makes the gate's
+pre-registered confound KILL rule *readable*. The rule must then actually be run
+over a full 40-row window before the gate is enabled.
+
+**Revert point.** None taken. No weights, optimizer, PID or replay state is
+touched. The only behaviour changes on a production path are (a) compacted
+shards carry 8 more meta fields, (b) the compaction merge key gains 4
+dimensions — difficulty ships in the same `recommended_worker` manifest as the
+model sha, which is already in the key, so expected extra fragmentation is
+~zero, and idle accumulators still age-flush at `upload_compact_max_age_seconds`
+(90s), so the key cannot grow unbounded — and (c) two new upload-rejection
+reasons that are unreachable from any shard our own worker writes. Revert is
+`git revert`.
+
+**Confounds.** Historical shards already in the replay window keep their `None`
+difficulty forever; `_process_shard` correctly treats absent as UNKNOWN (a `0.0`
+regret would read as unhandicapped Stockfish), so the confound leg's denominator
+grows only from post-restart shards. Any confound readout taken before the
+window has turned over is measured on a partial sample — state `n_confound` with
+the number.
+
+**Review status.** UNREVIEWED at open. Reviewer ≠ author.

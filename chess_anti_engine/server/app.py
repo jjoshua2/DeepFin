@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 import logging
@@ -230,6 +231,7 @@ _AGGREGATE_COUNTER_FIELDS: tuple[str, ...] = (
     "curriculum_games", "curriculum_adjudicated_games", "curriculum_draw_games",
     "plies_win", "plies_draw", "plies_loss",
     "checkmate_games", "stalemate_games",
+    "sf_d6_n",
     "diff_focus_records", "diff_focus_kept",
     "diff_focus_keep_limited", "diff_focus_sample_weight_limited",
     "gumbel_policy_diag_n",
@@ -238,6 +240,7 @@ _AGGREGATE_COUNTER_FIELDS: tuple[str, ...] = (
 )
 
 _AGGREGATE_FLOAT_FIELDS: tuple[str, ...] = (
+    "sf_d6_sum",
     "diff_focus_keep_prob_sum",
     "diff_focus_sample_weight_sum",
     "diff_focus_priority_sum",
@@ -248,6 +251,27 @@ _AGGREGATE_FLOAT_FIELDS: tuple[str, ...] = (
     "gumbel_policy_eff_moves_sum",
     "gumbel_policy_candidate_mass_sum",
     "gumbel_policy_non_candidate_top_prob_sum",
+)
+
+# Per-shard IDENTITY values: not aggregable, and NOT safe to take from an
+# arbitrary member of the merge group. Every one of these is part of the
+# accumulator key (``_upload_identity_acc_key``), so a group is uniform in all
+# of them by construction and the compacted shard can carry the value verbatim.
+#
+# ``opponent_wdl_regret_limit`` / ``sf_nodes`` are the opponent difficulty the
+# games were played at. The worker already treats the pair as buffer identity
+# (``worker_buffer._difficulty_matches`` flushes on a change) so a raw shard's
+# value is exact rather than an average; the server now matches that, which is
+# what makes the promotion gate's PID-confound leg readable at all.
+#
+# ``input_history_encoding`` / ``history_rep_fix`` are handled separately
+# below: they predate this table and carry bespoke "absent means unknown" /
+# "absent means off" semantics that the generic path would flatten.
+_COMPACTION_IDENTITY_FIELDS: tuple[str, ...] = (
+    "policy_encoding",
+    "policy_size",
+    "opponent_wdl_regret_limit",
+    "sf_nodes",
 )
 
 _MAX_OUTCOME_STAT_KEYS = 128
@@ -278,6 +302,118 @@ def _bounded_report_field(value: Any) -> str:
     return text
 
 
+# How the compactor treats each ``ShardMeta`` field when it merges N uploaded
+# shards into one. EVERY field must appear exactly once; the module-level
+# assertion below refuses to import otherwise.
+#
+# This table exists because the previous compactor hand-wrote 48 of the 56
+# ShardMeta kwargs and silently defaulted the other 8. Two of the eight
+# (``opponent_wdl_regret_limit``, ``sf_nodes``) are the promotion gate's only
+# instrument for its own dominant confound, and because compaction is
+# unconditional they were ``None`` on 100% of production shards — the gate's
+# pre-registered KILL leg read an empty set for 68 consecutive iterations. A
+# hand-written kwarg list cannot fail when a field is ABSENT from it, so the
+# list is gone: the summed classes below drive the kwargs directly, and this
+# table makes an unclassified field a hard import error rather than a silent
+# default.
+_SHARD_META_FIELD_KINDS: dict[str, str] = {
+    # Summed across the merged shards.
+    **dict.fromkeys(_AGGREGATE_COUNTER_FIELDS, "sum_int"),
+    **dict.fromkeys(_AGGREGATE_FLOAT_FIELDS, "sum_float"),
+    # Per-shard identity: in the accumulator key, carried verbatim.
+    **dict.fromkeys(_COMPACTION_IDENTITY_FIELDS, "identity"),
+    "input_history_encoding": "identity",
+    "history_rep_fix": "identity",
+    "model_sha256": "identity",
+    # Identity too — in the key, so a merge group cannot mix policy widths —
+    # but the value PERSISTED is canonicalized by the shard writer, which
+    # derives encoding and width from the policy arrays themselves and raises
+    # if the meta disagrees with them. Passing the accumulator's value in is
+    # therefore a cross-check of the uploads' declaration against the merged
+    # arrays, not the source of what lands on disk.
+    "policy_encoding": "identity_writer_canonicalized",
+    "policy_size": "identity_writer_canonicalized",
+    # Extremum over the merged shards (only meaningful where records > 0).
+    "diff_focus_priority_min": "extremum",
+    "diff_focus_priority_max": "extremum",
+    # Key-collapsed counters merged key-by-key.
+    "outcome_stats": "merged_dict",
+    # Determined by ``model_sha256``, which is in the key, so "last wins" is a
+    # no-op for any group a worker can actually produce. Deliberately NOT an
+    # identity assert: republishing identical weights under a new step is a
+    # bookkeeping oddity, not data corruption, and must not reject an upload.
+    "model_step": "last_wins",
+    # Owned by the writer, not carried from the inputs. The compacted shard is
+    # a NEW shard: it is serialized by this process, at this time, from this
+    # many samples, on behalf of the trial it is being written for. The
+    # contributing shards' values are either wrong for it (``username`` — a
+    # compacted shard can merge several workers, so no single uploader owns it)
+    # or would be a stale copy (``version``, ``generated_at_unix``,
+    # ``positions``, ``run_id``).
+    "version": "writer_owned",
+    "username": "writer_owned",
+    "generated_at_unix": "writer_owned",
+    "positions": "writer_owned",
+    "run_id": "writer_owned",
+}
+
+
+def _assert_shard_meta_fields_classified() -> None:
+    """Fail loudly if ``ShardMeta`` grew a field the compactor does not handle.
+
+    Import-time on purpose. The alternative — discovering it from a column of
+    ``None`` in a downstream metric months later — is exactly how the
+    promotion gate's confound instrument came to be dead for 68 iterations.
+    """
+    declared = {f.name for f in dataclasses.fields(ShardMeta)}
+    classified = set(_SHARD_META_FIELD_KINDS)
+    missing = sorted(declared - classified)
+    extra = sorted(classified - declared)
+    if missing or extra:
+        raise RuntimeError(
+            "server upload compactor is out of sync with ShardMeta: "
+            f"unclassified fields={missing} stale entries={extra}. Add each new "
+            "field to _SHARD_META_FIELD_KINDS with its aggregation semantics."
+        )
+
+
+_assert_shard_meta_fields_classified()
+
+
+def _coerce_identity_value(name: str, raw: Any) -> Any:
+    """Normalize one identity value out of an upload's meta dict.
+
+    Shared by the accumulator key and the accumulator's uniformity assert so
+    the guard cannot disagree with the criterion it is guarding. ``None``
+    (field absent, e.g. a shard written before the field existed) is a value in
+    its own right and is preserved: "no regret limit recorded" and "regret
+    limit 0.0" are different opponents, not the same one written two ways.
+
+    Raises ``ValueError``/``TypeError`` on an uncoercible value; callers on the
+    upload path reject such a shard rather than letting it through untyped.
+    """
+    if raw is None:
+        return None
+    if name in ("policy_size", "sf_nodes"):
+        return int(raw)
+    if name == "opponent_wdl_regret_limit":
+        return float(raw)
+    return str(raw)
+
+
+def _compaction_identity_error(meta: dict[str, Any]) -> str | None:
+    """Reason to reject an upload whose identity fields cannot be typed."""
+    for name in _COMPACTION_IDENTITY_FIELDS:
+        try:
+            _coerce_identity_value(name, meta.get(name))
+        except (TypeError, ValueError):
+            return (
+                f"shard meta field {name} is not usable as compaction identity: "
+                f"{_bounded_report_field(repr(meta.get(name)))}"
+            )
+    return None
+
+
 @dataclass
 class _BufferedUploadAccumulator:
     trial_id: str | None
@@ -305,6 +441,8 @@ class _BufferedUploadAccumulator:
     plies_loss: int = 0
     checkmate_games: int = 0
     stalemate_games: int = 0
+    sf_d6_sum: float = 0.0
+    sf_d6_n: int = 0
     diff_focus_records: int = 0
     diff_focus_kept: int = 0
     diff_focus_keep_prob_sum: float = 0.0
@@ -333,6 +471,15 @@ class _BufferedUploadAccumulator:
     # None until the first upload; absent in shard meta means the flag
     # predates the field, which provably means off.
     history_rep_fix: bool | None = None
+    # Per-shard identity values (``_COMPACTION_IDENTITY_FIELDS``), captured
+    # from the first upload and asserted equal on every later one. ``None`` is
+    # a legitimate captured value, so ``identity_captured`` — not a None check
+    # — is what distinguishes "nothing absorbed yet" from "absorbed a None".
+    identity_captured: bool = False
+    policy_encoding: str | None = None
+    policy_size: int | None = None
+    opponent_wdl_regret_limit: float | None = None
+    sf_nodes: int | None = None
     # Disk-resident extracted shards that contributed to this accumulator and
     # have NOT yet been folded into a compacted shard. Deleted only after the
     # compacted shard has been written to disk so a crash mid-flush leaves the
@@ -401,8 +548,64 @@ class _BufferedUploadAccumulator:
                 "cannot compact uploads with mixed history_rep_fix "
                 f"{bool(self.history_rep_fix)} and {rep_fix}"
             )
+        self._absorb_identity(meta)
         _merge_outcome_stats(self.outcome_stats, meta.get("outcome_stats"))
         self.last_update_unix = float(now_unix)
+
+    def _absorb_identity(self, meta: dict[str, Any]) -> None:
+        """Capture (first upload) or verify (later uploads) the identity fields.
+
+        The mismatch raise is unreachable from the upload path: every field
+        here is in ``_upload_identity_acc_key``, so two shards that disagree
+        land in different accumulators. It is kept as the structural backstop
+        for a future edit that adds a field to one side only — the failure it
+        prevents is a compacted shard whose recorded difficulty belongs to
+        only some of the games inside it, which is worse than a rejected
+        upload because nothing downstream can detect it.
+        """
+        incoming = {
+            name: _coerce_identity_value(name, meta.get(name))
+            for name in _COMPACTION_IDENTITY_FIELDS
+        }
+        if not self.identity_captured:
+            for name, value in incoming.items():
+                setattr(self, name, value)
+            self.identity_captured = True
+            return
+        for name, value in incoming.items():
+            current = getattr(self, name)
+            if current != value:
+                raise ValueError(
+                    f"cannot compact uploads with mixed {name} "
+                    f"{current!r} and {value!r}"
+                )
+
+
+def _upload_identity_acc_key(meta: dict[str, Any]) -> str:
+    """Third element of the compaction accumulator key: per-shard identity.
+
+    Module level, not an app closure, so the invariant it encodes can be
+    asserted directly by a test rather than inferred from the shards that come
+    out the far end.
+
+    ``history_rep_fix`` changes the encoded planes under the same history mode,
+    so it is part of compaction identity (absent means off), and the rest of
+    ``_COMPACTION_IDENTITY_FIELDS`` joins it here. Difficulty in particular
+    MUST be in the key: the worker flushes its own upload buffer when
+    difficulty changes, so a raw shard's value is exact rather than an average,
+    and a server that merged two difficulties under one model sha would hand
+    the promotion gate a number that is true of neither half of the games.
+    Coerced through the same helper the accumulator's uniformity assert uses,
+    so the key and the guard cannot disagree about whether two values are the
+    same value.
+    """
+    raw = meta.get("input_history_encoding")
+    history = "<missing>" if raw is None else str(raw)
+    identity = tuple(
+        _coerce_identity_value(name, meta.get(name))
+        for name in _COMPACTION_IDENTITY_FIELDS
+    )
+    return f"{history}|repfix={bool(meta.get('history_rep_fix') or False)}|{identity!r}"
 
 
 def _buffered_upload_ready(
@@ -431,61 +634,40 @@ def _flush_buffered_upload_to_inbox(
     compacted_dir = inbox_root / "_compacted"
     compacted_dir.mkdir(parents=True, exist_ok=True)
     samples = list(acc.samples)
+    # Built from ``_SHARD_META_FIELD_KINDS``, not a hand-written kwarg list: a
+    # ShardMeta field the compactor forgets is an import error, not a column of
+    # None in production. See the table for the per-class semantics.
+    fields_out: dict[str, Any] = {}
+    for name in _AGGREGATE_COUNTER_FIELDS:
+        fields_out[name] = int(getattr(acc, name))
+    for name in _AGGREGATE_FLOAT_FIELDS:
+        fields_out[name] = float(getattr(acc, name))
+    for name in _COMPACTION_IDENTITY_FIELDS:
+        fields_out[name] = getattr(acc, name)
+    has_diff_focus = int(acc.diff_focus_records) > 0
     meta = ShardMeta(
+        # writer_owned. ``version`` is deliberately left at the ShardMeta
+        # default: the arrays below are re-serialized by THIS writer, so the
+        # compacted shard's format version is the current one regardless of
+        # what the contributing uploads were written by.
         username="server_compactor",
+        run_id=acc.trial_id,
         generated_at_unix=int(now_unix),
+        positions=int(acc.positions),
+        # identity (bespoke absent-value semantics; see add_upload)
         model_sha256=str(acc.model_sha256) or None,
-        model_step=acc.model_step,
         input_history_encoding=acc.input_history_encoding,
         history_rep_fix=bool(acc.history_rep_fix or False),
-        games=int(acc.games),
-        positions=int(acc.positions),
-        wins=int(acc.wins),
-        draws=int(acc.draws),
-        losses=int(acc.losses),
-        total_game_plies=int(acc.total_game_plies),
-        adjudicated_games=int(acc.adjudicated_games),
-        tb_adjudicated_games=int(acc.tb_adjudicated_games),
-        total_draw_games=int(acc.total_draw_games),
-        selfplay_games=int(acc.selfplay_games),
-        selfplay_adjudicated_games=int(acc.selfplay_adjudicated_games),
-        selfplay_draw_games=int(acc.selfplay_draw_games),
-        curriculum_games=int(acc.curriculum_games),
-        curriculum_adjudicated_games=int(acc.curriculum_adjudicated_games),
-        curriculum_draw_games=int(acc.curriculum_draw_games),
-        plies_win=int(acc.plies_win),
-        plies_draw=int(acc.plies_draw),
-        plies_loss=int(acc.plies_loss),
-        checkmate_games=int(acc.checkmate_games),
-        stalemate_games=int(acc.stalemate_games),
-        diff_focus_records=int(acc.diff_focus_records),
-        diff_focus_kept=int(acc.diff_focus_kept),
-        diff_focus_keep_prob_sum=float(acc.diff_focus_keep_prob_sum),
-        diff_focus_keep_limited=int(acc.diff_focus_keep_limited),
-        diff_focus_sample_weight_sum=float(acc.diff_focus_sample_weight_sum),
-        diff_focus_sample_weight_limited=int(acc.diff_focus_sample_weight_limited),
-        diff_focus_priority_sum=float(acc.diff_focus_priority_sum),
-        diff_focus_priority_sq_sum=float(acc.diff_focus_priority_sq_sum),
-        diff_focus_priority_min=(
-            float(acc.diff_focus_priority_min) if int(acc.diff_focus_records) > 0 else 0.0
-        ),
-        diff_focus_priority_max=(
-            float(acc.diff_focus_priority_max) if int(acc.diff_focus_records) > 0 else 0.0
-        ),
-        gumbel_policy_diag_n=int(acc.gumbel_policy_diag_n),
-        gumbel_policy_top_prob_sum=float(acc.gumbel_policy_top_prob_sum),
-        gumbel_policy_action_prob_sum=float(acc.gumbel_policy_action_prob_sum),
-        gumbel_policy_entropy_sum=float(acc.gumbel_policy_entropy_sum),
-        gumbel_policy_eff_moves_sum=float(acc.gumbel_policy_eff_moves_sum),
-        gumbel_policy_candidate_mass_sum=float(acc.gumbel_policy_candidate_mass_sum),
-        gumbel_policy_non_candidate_top_prob_sum=float(
-            acc.gumbel_policy_non_candidate_top_prob_sum,
-        ),
-        gumbel_policy_argmax_is_candidate_sum=int(acc.gumbel_policy_argmax_is_candidate_sum),
-        gumbel_policy_argmax_is_action_sum=int(acc.gumbel_policy_argmax_is_action_sum),
-        gumbel_policy_legal_count_sum=int(acc.gumbel_policy_legal_count_sum),
-        gumbel_policy_candidate_count_sum=int(acc.gumbel_policy_candidate_count_sum),
+        # last_wins
+        model_step=acc.model_step,
+        # extremum — undefined with no contributing records, and 0.0 rather
+        # than +/-inf because inf does not survive the JSON meta round-trip.
+        diff_focus_priority_min=float(acc.diff_focus_priority_min) if has_diff_focus else 0.0,
+        diff_focus_priority_max=float(acc.diff_focus_priority_max) if has_diff_focus else 0.0,
+        # merged_dict
         outcome_stats=dict(acc.outcome_stats),
+        # sum_int / sum_float / identity
+        **fields_out,
     )
     # ``flush_token`` doubles as the compacted shard's uniqueness suffix and
     # the link back to ``_in_flight/<flush_token>/``. Recovery globs for this
@@ -625,13 +807,6 @@ def create_app(
     def _arena_inbox_root(trial_id: str | None) -> Path:
         tid = _normalize_trial_id(trial_id)
         return arena_inbox if tid is None else (_trial_root(tid) / "arena_inbox")
-
-    def _upload_history_acc_key(meta: dict[str, Any]) -> str:
-        raw = meta.get("input_history_encoding")
-        history = "<missing>" if raw is None else str(raw)
-        # history_rep_fix changes the encoded planes under the same history
-        # mode, so it is part of compaction identity (absent means off).
-        return f"{history}|repfix={bool(meta.get('history_rep_fix') or False)}"
 
     def _invalidate_queued_games_cache(trial_id: str | None) -> None:
         with queued_games_cache_lock:
@@ -776,7 +951,7 @@ def create_app(
 
             ready_keys: list[tuple[str | None, str, str]] = []
             for key, acc in upload_accumulators.items():
-                trial_key, _model_sha, _history_key = key
+                trial_key, _model_sha, _identity_key = key
                 if normalized_trial_id is not None and trial_key != normalized_trial_id:
                     continue
                 if force_all:
@@ -842,7 +1017,7 @@ def create_app(
                     return dict(cached_totals)
         totals: dict[str, int] = {}
         with upload_lock:
-            for (acc_tid, acc_sha, _history_key), acc in upload_accumulators.items():
+            for (acc_tid, acc_sha, _identity_key), acc in upload_accumulators.items():
                 if acc_tid != tid:
                     continue
                 sha = str(acc_sha or "")
@@ -1523,6 +1698,15 @@ def create_app(
                 "rejected": True,
                 "reason": "shard run_id does not match upload trial",
             }
+        # Identity values are keyed and asserted below; a value that cannot be
+        # typed would either crash the keying (500 -> worker retry storm) or
+        # have to be silently dropped, which is the defect this whole path
+        # exists to make impossible. Reject the shard instead.
+        identity_reason = _compaction_identity_error(meta)
+        if identity_reason is not None:
+            tmp.unlink(missing_ok=True)
+            delete_shard_path(tmp_zarr)
+            return {"stored": False, "rejected": True, "reason": identity_reason}
 
         positions = int(shard_arrs["x"].shape[0])
         tmp.unlink(missing_ok=True)
@@ -1565,7 +1749,7 @@ def create_app(
         with upload_lock:
             if upload_seen_key not in recent_upload_shas:
                 model_sha = str(meta.get("model_sha256") or sha)
-                acc_key = (trial_key, model_sha, _upload_history_acc_key(meta))
+                acc_key = (trial_key, model_sha, _upload_identity_acc_key(meta))
                 acc = upload_accumulators.get(acc_key)
                 if acc is None:
                     acc = _BufferedUploadAccumulator(
@@ -2008,6 +2192,17 @@ def create_app(
                 log.exception("failed to materialize pending shard %s; quarantining", entry)
                 _quarantine_unloadable_pending(entry=entry, trial_key=trial_key, exc=exc)
                 continue
+            identity_reason = _compaction_identity_error(meta_dict)
+            if identity_reason is not None:
+                # Same rule as the upload path: an untypable identity value is
+                # a bad shard, not something to key around. Quarantine rather
+                # than skip so it cannot be rescanned every restart.
+                log.warning("pending shard %s has bad identity meta; quarantining: %s",
+                            entry, identity_reason)
+                _quarantine_unloadable_pending(
+                    entry=entry, trial_key=trial_key, exc=ValueError(identity_reason),
+                )
+                continue
             model_sha = str(meta_dict.get("model_sha256") or "")
             if not model_sha:
                 # Without a model_sha we cannot key the accumulator the same
@@ -2018,7 +2213,7 @@ def create_app(
                 mtime = float(entry.stat().st_mtime)
             except OSError:
                 mtime = float(time.time())
-            acc_key = (trial_key, model_sha, _upload_history_acc_key(meta_dict))
+            acc_key = (trial_key, model_sha, _upload_identity_acc_key(meta_dict))
             acc = upload_accumulators.get(acc_key)
             if acc is None:
                 acc = _BufferedUploadAccumulator(
