@@ -27857,3 +27857,94 @@ absolute levels. And every FE checkpoint remains significantly worse than boot51
 **Also owed and already delivered** (ledger 00be40af1): the H2 banked-EMA neutral
 audit — `H2_ema500` **53.92 cp** (−1.961 ns vs raw), `H2_ema2000` **52.92 cp**
 (−2.959 SIG vs raw). Both remain significantly worse than boot512 (+5.98, +4.99).
+
+### PRE-REGISTRATION — LOW-DOSE WAVE (FE10 seeds 1-3, FE05 seeds 0-1)
+
+Written and committed BEFORE any run in this wave launched. Chained to start only
+after the 6b extension (`FE20_s2`, `FE20_s3`) has drained, so it can never take a
+slot from committed work. Same rig, same frozen corpus, same three rulers, same
+game-clustered bootstrap, same verdict steps (7,040 / 8,448), same bars
+(`oow` 0.638, `era` 0.394, `inw` 0.307), `nice -n 19`.
+
+#### Hypothesis
+
+**The trade-off curve BENDS at low dose: era recovery survives while the in-window
+cost goes to zero.** The FE wave measured, at matched learning @8448, era recovery
+falling with dose (0.10: +1.039 / 0.20: +0.839 / 0.35: +0.614) while cost rose
+(+0.107 / +0.854 / +1.430). If that continues down, a small rehearsal fraction buys
+most of the forgetting recovery for almost none of the learning — the first genuine
+bend, rather than a slide along a fixed exchange rate, in three waves.
+
+**`FE10` is n=1.** This wave powers it to n=4 and maps one rung below it.
+
+#### Runs
+
+| run | dose | seeds | role |
+|---|---|---|---|
+| `FE10_s1`, `FE10_s2`, `FE10_s3` | 0.10 | 1, 2, 3 | power the n=1 signal to n=4 (with existing `FE10_s0`) |
+| `FE05_s0`, `FE05_s1` | 0.05 | 0, 1 | descriptive dose-mapping ONLY |
+
+Raw arms carry the decision. EMA post-hooks (0.9995, 0.99975) run as **free
+observers** — proven non-perturbing by the 6b hash result (`FE20_s0` raw is
+bit-identical to `F_s0`, same `final.pt` sha256), so they cost only eval time and
+cannot contaminate the raw trajectory.
+
+**`FE05` cannot promote**: 2 seeds cannot satisfy the seed-agreement clause below.
+Stated now, as it was for `FE10` in the FE pre-registration.
+
+#### THE PROMOTION RULE — exact clause, pre-committed
+
+**`FE10` (0.10 rehearsal, raw arm) promotes as the restart's DATA-AXIS LEVER iff all
+three hold, at matched learning against `A_s{seed}`:**
+
+- **(a) ERA** — `era` improves beyond **0.394 cp** with a paired game-clustered 95%
+  CI excluding 0, at **BOTH** verdict steps (7,040 and 8,448), in **at least 3 of the
+  4 seeds** (s0, s1, s2, s3).
+- **(b) INW** — in-window learning given up is **within 0.307 cp** at **BOTH**
+  verdict steps, in **at least 3 of the 4 seeds**.
+- **(c) OOW** — the **seed-pooled** `oow` contrast (per-row contrasts averaged across
+  the 4 seeds, then game-clustered bootstrapped) improves beyond **0.638 cp with its
+  CI excluding 0, at step 8,448**, AND its point estimate at 7,040 is **not positive**.
+
+**Why (c) is judged at 8,448 with 7,040 as a direction guard, rather than at both
+steps.** The `oow` effect grows over training (`FE10_s0`: −0.015 at 7,040, −0.652 at
+8,448), so a both-steps rule would be a gate that essentially cannot pass, which is
+the failure mode this repo warns about. The terminal step decides; the earlier step
+only has to not contradict.
+
+**DISCLOSURE: this rule is written with `FE10_s0` already visible, and `FE10_s0`
+FAILS it.** Scored alone, s0 satisfies (a) — era −1.253 S and −1.039 S — and
+satisfies (b) — 0.073 and 0.107, both inside 0.307 — but **fails (c)**: its 8,448
+`oow` point estimate (−0.652) clears the bar while its CI [−1.343, +0.053] includes
+0. The rule is therefore not rigged to ratify the result that motivated it; the
+three new seeds have to actually deliver the out-of-window effect.
+
+#### The negative reading, pre-committed
+
+**If (a) fails — era significance does not replicate at both steps in at least 3 of
+4 seeds — then the n=1 free-lunch reading was a SEED DRAW, and the low-dose bend is
+WITHDRAWN.** The FE verdict's §5 gets an addendum saying exactly that, the
+"trade-off curve bends at low dose" claim is retracted rather than softened, and the
+data axis joins the composition, optimizer, capacity and averaging families as
+closed. No partial credit: (a) is the clause the whole hypothesis rests on.
+
+If (a) and (b) hold but (c) fails, the finding is recorded as **"forgetting recovery
+is available at near-zero in-window cost, but it does not convert to out-of-window
+strength"** — real, publishable inside the ledger, and NOT a promotion.
+
+#### The exchange rate is deliberately NOT the instrument here
+
+`E` stays defined as in corrections 6a/6c — signed numerator, ratio of sums, step
+8,448 only, `n/a` when the arm gave up under 0.30 cp. **At these doses it will
+almost certainly read `n/a` by construction, and that is the point**: a free lunch
+has an unbounded exchange rate, so the ratio is the wrong instrument exactly where
+the hypothesis lives. This wave is judged on the LEVEL clauses above. `E` is
+reported where defined, for continuity with the FE table, and decides nothing.
+
+#### Kill rule
+
+Unchanged and already enforced in-code: realized rehearsal fraction more than 1 pp
+from target aborts the run at chunk 1 (0.05 -> 13/256 = 0.0508 and 0.10 -> 26/256 =
+0.1016 both sit inside the band); any rehearsal/era-ruler game overlap aborts at
+startup; EMA divergence 0 at the first eval fails the wave. An individual run dies
+if its chunk-8 `oow` is worse than `A`'s by more than 3x the 0.638 bar.
