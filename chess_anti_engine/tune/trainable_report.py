@@ -886,6 +886,14 @@ _TRAIN_METRIC_DEFAULTS: dict[str, float | int] = {
     "grad_norm_aurora": 0.0, "grad_norm_adamw": 0.0,
     "grad_nonfinite_skip_rate": 0.0,
     "opt_lr_mean": 0.0, "opt_lr_max": 0.0,
+    "aurora_uw_count": 0.0, "aurora_uw_lr": 0.0,
+    "aurora_uw_ratio_median": 0.0,
+    "aurora_uw_effective_ratio_min": 0.0,
+    "aurora_uw_effective_ratio_median": 0.0,
+    "aurora_polar_steps_configured": 0.0, "aurora_polar_sv_samples": 0.0,
+    "aurora_polar_sv_errors": 0.0,
+    "aurora_polar_sv_ratio_square": 0.0, "aurora_polar_sv_ratio_rect": 0.0,
+    "aurora_polar_orth_err_square": 0.0, "aurora_polar_orth_err_rect": 0.0,
 }
 
 
@@ -1015,6 +1023,37 @@ def _train_metrics_dict(metrics) -> dict:
         # sqrt_release ramp and is ~9x smaller (I19).
         "opt_lr_mean": float(metrics.opt_lr_mean),
         "opt_lr_max": float(metrics.opt_lr_max),
+        # Aurora update/weight ratios. These were TrainMetrics fields that
+        # `_train_metrics_dict` never listed, so they reached TensorBoard only
+        # -- event files that rotate per Ray session, which is the same reason
+        # the grad-norm family above had to be promoted. `aurora_uw_count` is
+        # the wiring column: 48 is the production matrix group, 0.0 means no
+        # step collected. ⚑ `aurora_uw_effective_ratio_*` is sampled at the
+        # sqrt_release sawtooth FLOOR and is ~10x under a typical step by
+        # construction (M4-2) -- divide it by `aurora_uw_lr` and multiply by
+        # `opt_lr_mean` before reading it as "how big is one step".
+        "aurora_uw_count": float(metrics.aurora_uw_count),
+        "aurora_uw_lr": float(metrics.aurora_uw_lr),
+        "aurora_uw_ratio_median": float(metrics.aurora_uw_ratio_median),
+        "aurora_uw_effective_ratio_min": float(metrics.aurora_uw_effective_ratio_min),
+        "aurora_uw_effective_ratio_median": float(
+            metrics.aurora_uw_effective_ratio_median
+        ),
+        # Polar residual of the update Aurora applied, at the step count that
+        # produced it. `aurora_polar_steps_configured` is the proof-of-effect
+        # column for any change to `aurora_polar_steps`: it is read off the
+        # optimizer's own param group during the step, not off the yaml.
+        # `_sv_ratio_*` -> 1.0 and `_orth_err_*` -> 0.0 as the polar factor
+        # converges. Nothing reported polar convergence before this (M4-1 was
+        # invisible for the life of the run); `aurora_polar_sv_samples` < 2
+        # means a shape class went unsampled, so its 0.0 is "not measured".
+        "aurora_polar_steps_configured": float(metrics.aurora_polar_steps_configured),
+        "aurora_polar_sv_samples": float(metrics.aurora_polar_sv_samples),
+        "aurora_polar_sv_errors": float(metrics.aurora_polar_sv_errors),
+        "aurora_polar_sv_ratio_square": float(metrics.aurora_polar_sv_ratio_square),
+        "aurora_polar_sv_ratio_rect": float(metrics.aurora_polar_sv_ratio_rect),
+        "aurora_polar_orth_err_square": float(metrics.aurora_polar_orth_err_square),
+        "aurora_polar_orth_err_rect": float(metrics.aurora_polar_orth_err_rect),
     }
 
 
