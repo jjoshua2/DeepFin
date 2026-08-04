@@ -352,6 +352,12 @@ YARDSTICK_POSITIONS = 1500
 # post-#335. A5's commitment is to get the residual under 0.02s.
 MAX_UNINJECTED_STALL_S = 0.02
 
+# Injected read delay for the RMW gate. Wide enough that 8 concurrent uploads
+# are provably all inside `load_users` at once, so the lost update is
+# deterministic rather than scheduler-dependent. Serialised, the same 8 pay
+# 8 x this and still record 8.
+RMW_READ_DELAY_S = 0.05
+
 
 @pytest.mark.anyio
 async def test_a_real_upload_does_not_stall_the_loop_beyond_the_a5_bound(tmp_path) -> None:
@@ -496,7 +502,7 @@ async def test_the_hot_poll_routes_do_not_read_the_disk_on_the_loop(tmp_path) ->
 
 
 @pytest.mark.anyio
-async def test_concurrent_uploads_do_not_lose_stat_updates(tmp_path) -> None:
+async def test_concurrent_uploads_do_not_lose_stat_updates(tmp_path, monkeypatch) -> None:
     """NEGATIVE CONTROL for A5: the loop was serialising three RMW cycles.
 
     Banked from the #336 review, which found this and measured it. Three
@@ -510,8 +516,21 @@ async def test_concurrent_uploads_do_not_lose_stat_updates(tmp_path) -> None:
     tears — the file just quietly ends up with fewer increments than there were
     uploads, which is this codebase's signature defect wearing a new hat.
 
-    Reviewer's measurement, 5 runs a side, 8 concurrent uploads:
-    base ``[8, 8, 8, 8, 8]``, unlocked head ``[5, 4, 8, 7, 6]``.
+    ⚑ THE FIRST FORMULATION OF THIS GATE WAS PROBABILISTIC and is not what
+    ships here. Racing 8 uploads bare caught the defect in ~11 of 13 runs:
+    whether two threads overlap between the read and the write is up to the
+    scheduler, so a green run proved nothing and the gate could pass on a
+    broken tree. The deterministic formulation, verified by the #336 reviewer
+    at 5/5 red on the defect and 5/5 green on the fix, WIDENS the window
+    instead of hoping for it -- ``auth.load_users`` sleeps 50 ms, so every
+    request is still inside its read when the others take theirs. The lock
+    closes the window whatever its width; the sleep only removes the coin
+    flip. It is injected before ``create_app`` because ``create_app`` binds
+    ``load_users`` into its closure at line 968.
+
+    Reviewer's measurement of the original bare-race form, 5 runs a side, 8
+    concurrent uploads: base ``[8, 8, 8, 8, 8]``, unlocked head
+    ``[5, 4, 8, 7, 6]``.
 
     ⚑ EVERY OTHER TEST IN THE SUITE UPLOADS SEQUENTIALLY, which is why none of
     them caught it. The assertion is an exact count, not a bound: 8 uploads
@@ -523,12 +542,25 @@ async def test_concurrent_uploads_do_not_lose_stat_updates(tmp_path) -> None:
     import httpx
 
     from chess_anti_engine.server import app as app_mod
+    from chess_anti_engine.server import auth as auth_mod
     from chess_anti_engine.server.auth import load_users
 
     n_uploads = 8
     server_root = tmp_path / "server"
     server_root.mkdir()
     _seed_user(server_root)
+
+    real_load_users = auth_mod.load_users
+
+    def _slow_load_users(*args, **kwargs):
+        # Holds every caller inside the READ so the writes provably overlap.
+        # Serialised access sleeps 8 x 50ms and still records 8; unserialised
+        # access sleeps once and records 1.
+        result = real_load_users(*args, **kwargs)
+        time.sleep(RMW_READ_DELAY_S)
+        return result
+
+    monkeypatch.setattr(auth_mod, "load_users", _slow_load_users)
     app = app_mod.create_app(
         server_root=str(server_root),
         users_db="users.json",
