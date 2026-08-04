@@ -32864,3 +32864,43 @@ operation cannot silently revert it ([[uncommitted_live_yaml_edits_lose_proven_w
 committed pointer refers to a file that exists only on this machine; a fresh clone
 starts with seeding silently disabled (`load` degrades to no-seed). Tracking the FEN
 asset (or an exception for data/blindspot_*) is the durable fix — user decision.
+
+**CORRECTION (2026-08-04 ~04:00) — the COLD-START INCIDENT paragraph above misattributes
+the mechanism. Caught by the fix-PR authoring agent's independent check before any code
+shipped; verified against the live yaml, params.json, and progress.csv row 1.**
+
+What is RETRACTED: "the stale-game cap is below iteration 1's matching-games target and
+deadlocked the loop." Wrong three ways: (1) the realized 1870 is EXPLICIT
+(`configs/pbt2_small.yaml:455`, carried by the minimal core; params.json agrees) — the
+auto formula at `distributed_runtime.py:493-497` is behind `if < 0` and NEVER RAN; my
+ceil() attribution was an inference error. (2) `games_per_iter` is 440, so the cap sits
+4.25× ABOVE the per-iteration need, not below it. (3) row 1 ingested 806 matching games
+(target 440) — the wait was not starved by the cap.
+
+What is SUSTAINED (directly observed this session, from worker logs that no longer
+exist): the 00:34:22 pause line ("stale backlog target reached: 1928/1870 games for
+model 2fffc555") and worker_00's drop lines from 00:37:20 (4,264 by ~01:25). ⚠ The
+01:47:22 worker revive TRUNCATED all four worker logs, destroying the incident-window
+evidence — an agent reading the disk afterwards correctly found zero drop lines; absence
+of evidence there is evidence destruction, not absence of the event.
+
+Best-supported mechanism now: the worker→server UPLOAD path stalled at ~00:23 (65
+upload POSTs total, then none; server inbox empty; ingested shards frozen at 2) for a
+cause the truncated logs can no longer establish. Workers kept playing against a stalled
+consumer, hit the 1870 cap at 00:34 (a SYMPTOM — the brake doing its job), and
+worker_00's full buffer dropped completed games (the pause-orders-uploads reading is
+REFUTED on code: `worker.py:2751` drains pending shards BEFORE the pause check — the
+drops indicate the upload/flush path itself was wedged, consistent with the stall
+predating the pause by 11 minutes). The MID-ITERATION REVIVE machinery (PR #232 family)
+reset the workers at 01:47:22 and everything flowed: iteration 1 completed ~01:50 with
+806 matching games, published, and cadence normalized. This resembles
+the stale-worker ingest wedge far more than a backpressure design flaw — and the revive
+resolving it autonomously is that machinery's first live save.
+
+REAL LATENT BUG (fix worth shipping, explicitly NOT tonight's cause): with the yaml key
+unset, the auto path computes ceil(440 × 0.6) = 264 < 440 — a config that relies on the
+default WOULD cold-start-deadlock. Fix = floor the auto-derived target at iteration 1's
+`_games_per_iter_for_iteration(tc, 1)` (games_per_iter_start under a ramp). Second fix:
+the revive must ROTATE worker logs, not truncate — tonight it destroyed the evidence
+needed to diagnose the primary stall. Both re-briefed to the authoring agent. The
+memory/first-row-checks records are corrected in the same pass.
