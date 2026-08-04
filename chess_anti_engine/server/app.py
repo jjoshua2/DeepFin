@@ -262,15 +262,28 @@ class _LeaseAssignLock:
 
         So: trust `created_at_unix` only when it is a finite number that is not
         in the future, and fall back to `st_mtime` in every other case,
-        including a non-empty holder. Age is clamped non-negative -- a clock
-        that ran backwards must read as "brand new", never as a negative age
-        that some future comparison treats as enormous.
+        including a non-empty holder. `OverflowError` is caught alongside the
+        finite check because JSON integers are UNBOUNDED -- `10 ** 400` parses
+        happily and then raises inside `float()`, which is not a value error
+        this method may propagate: it would leave the lease route raising a
+        persistent 500 on exactly the corrupt lock file the fallback exists to
+        route around.
+
+        The mtime age is clamped non-negative -- a clock that ran backwards
+        must read as "brand new" (busy, which the caller retries) and never as
+        a negative age that a later comparison could turn into "ancient". The
+        `created_at_unix` branch needs no clamp: `stamp <= now` already
+        guarantees a non-negative difference, and a `max()` that provably
+        cannot fire is decoration that no test can pin.
         """
         raw = holder.get("created_at_unix")
         if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-            stamp = float(raw)
+            try:
+                stamp = float(raw)
+            except (OverflowError, ValueError):
+                stamp = math.nan
             if math.isfinite(stamp) and stamp <= now:
-                return max(0.0, now - stamp), "created_at_unix"
+                return now - stamp, "created_at_unix"
         try:
             return max(0.0, now - self.path.stat().st_mtime), "file mtime"
         except OSError:
