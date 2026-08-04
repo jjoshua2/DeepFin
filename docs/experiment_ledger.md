@@ -24270,3 +24270,232 @@ what is safely removable, not a target.
 incoming change, and re-apply the deletion; then re-run
 `pytest tests/test_trainer_warmup.py tests/test_trainable_config_ops.py` plus
 no-arg `./scripts/lint.sh` before merging.
+---
+
+## 2026-08-03 — B6(c) CLOSED: the PRODUCTION broker stops counting unanswered rows as served (task #142)
+
+**Closes the "THE B6(c) FAMILY IS OPEN, NOT CLOSED" thread opened by #325.**
+That entry named a THIRD instance and deliberately left it alone because it is
+the live production broker and #325's readout window was already spoken for.
+This is that instance, and it is **3 of 3 known**. Instrument-only: no training
+row, no target, no config key changes — a metric stops lying about failures.
+
+**The defect.** `SlotBroker.serve_forever` adds
+`sum(s.batch_size for s in ready)` to `metrics["positions"]` BEFORE calling
+`_process_batch`, which hands slots back UNANSWERED on three paths:
+
+| # | path | site (as merged) | what it releases |
+|---|------|------------------|------------------|
+| 1 | `BrokerModelUnavailable` | `_process_batch` handler | the whole mode group — the publish manifest is missing past its 30 s deadline or carries no sha |
+| 2 | generic batch failure | `_process_batch` handler | the whole mode group — the broker survives one bad batch by design rather than taking inference from the fleet |
+| 3 | malformed compact-legal metadata | `_process_batch_mode`, per SLOT | one slot, so a batch is partly served and partly refused |
+
+On all three the slot goes to `_STATE_IDLE` and the client re-submits, so no
+model evaluated those rows — yet `pos/s` counted them. **A broker answering
+nothing at all reported full throughput**, and it is worst on path 1, which is
+the cold-boot failure and repeats every serve loop until a model appears. That
+number is what an operator reads to decide whether the fleet is healthy.
+
+**The fix**, matching B6(c) in the sibling path verbatim: `_process_batch_mode`
+returns the rows it declined, `_process_batch` adds the whole group on either
+failure path and returns the total, and the serve loop subtracts it.
+`batches`/`slots` stay DISPATCH counts on purpose — they answer "how much did
+the loop try to batch", which a refusal does not change; `positions` alone
+means "rows a model evaluated".
+
+Two details that are load-bearing, each pinned by its own test:
+
+* **The row count is read BEFORE `_release_slots_for_retry`.** That call sets
+  `_STATE_IDLE`, after which the client may re-submit into the same shared slot
+  with a different `batch_size`; reading afterwards subtracts a count belonging
+  to the NEXT request. `test_modelless_rows_are_counted_before_the_release`
+  simulates exactly that client and is the mutation-M4 target.
+* **The callee's return is accumulated in the `else` clause, not at the call
+  site inside the `try`.** Inside, a `_process_batch_mode` that returned `None`
+  would raise `TypeError` into the generic handler, be **swallowed as "one bad
+  batch"**, and silently walk `_consecutive_batch_failures` toward a broker
+  exit. `lint.sh` (no args) found the live version of this: three existing tests
+  stub `_process_batch_mode` with a `-> None` return, now `-> int` / `0`. The
+  house defect — a value accepted and then silently ignored — inside the fix for
+  the house defect, caught by the gate rather than by reasoning.
+
+**Red→green.** 9 of the 10 tests in `tests/test_broker_served_count.py` FAIL on
+`origin/main` (`e02121691`) and pass on the fix. The tenth,
+`test_the_serve_loop_counts_served_rows`, is the positive control and MUST pass
+on main — it is the arm that dies if the dispatch-time accumulation is deleted
+instead of corrected, which is the mirror-image defect.
+
+**7 mutations, 7 KILLED**, each by a NAMED test: M1 drop the loop's
+subtraction; M2a drop the loop's accumulation; M2b drop `_process_batch`'s
+accumulation of the callee's count; M3a/M3b/M3c drop the count on exactly one
+of the three paths (the "subtract on only 2 of 3" mutation, one per path); M4
+move the read below the release. Harness rules followed: mutations applied and
+restored from an IN-MEMORY copy, sweep refuses a dirty tree, `git diff` asserted
+empty and HEAD unchanged afterwards. **M4 initially reported `SECOND PATTERN NOT
+FOUND` rather than passing** — its anchor (release + failure-counter pair)
+occurs in BOTH handlers, so an ambiguous match was refused loudly instead of
+reading as a kill; re-anchored on the throttled-log tail.
+
+⚑⚑ **AMENDED 2026-08-03 AFTER THE INDEPENDENT REVIEW (#330 comment 5173998880,
+REQUEST CHANGES). Everything from here to the end of this entry replaces what
+was originally written, and the original was WRONG in a way worth keeping.**
+The code fix above was confirmed in full (all 8 reviewer probes green, my 7
+mutations re-run 7/7, the printed-line proof done through the real printer).
+The block was this section: the family-closure claim, and the instrument behind
+it.
+
+**METHOD LESSON — a grep for increments cannot find missing increments.**
+I closed the family by grepping `inference.py` for every counter increment
+(`+= 1`, `+= sum`, `+= int`, `+= len`) and checking each one. But **this defect
+class IS THE ABSENCE OF AN INCREMENT.** An increment grep can only enumerate
+sites that already count; the broken sites are precisely the ones it cannot
+see. It is the negative-control error in a new costume: I validated the
+instrument against the cases it was built from.
+
+**The enumerating instrument is the sites that RELEASE work, not the sites that
+count it** — `_release_slots_for_retry(` and `state = _STATE_IDLE` — each then
+checked against whether a dispatch-time counter had already counted those rows.
+The whole slot protocol lives in `inference.py` (grep confirms no other
+production module references `_STATE_IDLE` or `_release_slots_for_retry`), so
+that enumeration is exhaustive for this family.
+
+### Release-site enumeration (the corrected claim, from the right instrument)
+
+| site | context | releases DISPATCHED work? | counting disposition |
+|---|---|---|---|
+| `:1892` | `SlotBroker` slot allocation | no — nothing dispatched yet | n/a |
+| `:2105` | `_process_batch` `BrokerModelUnavailable` | **yes** | COUNTED (this PR, path 1) |
+| `:2132` | `_process_batch` generic batch failure | **yes** | COUNTED (this PR, path 2) |
+| `:2170` | `_release_slots_for_retry` body | the mechanism; callers above | n/a |
+| `:2336` | `_process_batch_mode` malformed legal metadata | **yes** | COUNTED (this PR, path 3) |
+| `:3100` | `SlotInferenceClient` stale-response reject | client side; its counter is completion-based with a `failed` flag (B6) | not dispatch-counted |
+| `:3104` | `SlotInferenceClient` successful read | no — success path returning the slot | n/a |
+| `:3577` | `SharedSlotBroker` slot allocation | no | n/a |
+| `:3813` | `SharedSlotBroker._process_parallel` **NO-MODEL trial** | **yes** | ⚑ **WAS MISSING — instance 4, fixed in this PR** |
+| `:3838` | `_process_parallel` unsupported `request_mode` | **yes** | COUNTED (#325 B6(c)) |
+
+**Instance 4 is real and reachable.** The no-model branch sets every one of a
+trial's ready slots to `_STATE_IDLE` and `continue`s with no increment, while
+`serve_forever` counts them at dispatch (`:3997-3998`) and subtracts only the
+return (`:4004`). A trial whose weights had not loaded yet had **every row
+reported as served pos/s**. Dormant at today's settings
+(`pbt2_small.yaml:869`, `distributed_inference_shared_broker: false`) but the
+shared broker is part of the **#322 restart-gated deploy**, so this path can go
+live at a restart. Reproduced by probe (refused=0 while the slot is released),
+fixed with the same shape and the same read-before-release ordering as path 1.
+`refused_rows` is renamed `unanswered_rows`: the name stopped matching its
+contents the moment the no-model path joined it, and **a counter whose name is
+narrower than what it holds is how the missing case stayed invisible** — the
+serve-loop comment naming only the mode path is what made the gap read as
+intentional.
+
+**Instance 5, the `FIRST_BATCH_DONE` boot marker — also fixed here** (the
+reviewer's non-blocking suggestion, taken rather than deferred). It printed the
+DISPATCHED row count after `_process_batch` without consulting the outcome and
+set `_first_batch_logged` either way, so a broker whose first batch was wholly
+released — the cold-boot no-model case, the one this marker is watched for —
+announced `FIRST_BATCH_DONE` with a full row count. It now reports rows
+actually served, and a wholly unanswered batch is not a first batch: the flag
+stays down and the marker fires on the first batch genuinely served. **Checked
+before changing it:** nothing in the repo reads `FIRST_BATCH_DONE` or
+`_first_batch_logged`, and readiness is signalled by `ACCEPTING_REQUESTS`
+(untouched), so the suppression cannot hang a launcher.
+
+**A THIRD disposition the enumeration exposed, and fixed:** the clamp. Not a
+release site at all, but still counted-at-dispatch-never-evaluated —
+`_process_batch_mode` clamped to `max_batch` while the other row-count sites
+summed the raw `batch_size`, so a client writing above layout capacity had the
+excess reported as throughput. **There are FOUR row-count sites on the
+`SlotBroker` path, not two:** the gather (`:2249`), the serve loop's dispatch
+count (`:2749`), and both `_process_batch` failure handlers (`:2091`, `:2121`).
+All four now call one `_slot_rows` helper.
+
+⚑⚑ **CORRECTED 2026-08-03 by the delta re-review (#330 comment 5174306780),
+and this correction is the sharpest lesson in the entry.** The first version of
+this fix converted only two of the four sites — the gather and the dispatch
+count — and the helper's own docstring said "both", which is precisely what let
+the two handlers go on reading raw. **That made the residual WORSE than before
+the helper existed**, because it inverted the sign:
+
+```
+before _slot_rows:      dispatch 12 (raw)     - handler 12 (raw)     =  0
+after, handlers raw:    dispatch  8 (clamped) - handler 12 (raw)     = -4
+fixed (all four):       dispatch  8 (clamped) - handler  8 (clamped) =  0
+```
+
+Reproduced on head `656b33a05` at `batch_size=12` on an 8-row slot: `positions
+== -4` on BOTH failure paths, where the un-helpered head `f39bb8336` read 0.
+**A PARTIAL application of "a guard must share its criterion's instrument" is
+worse than no application at all** — the sites that adopted the shared
+instrument made the sites that did not actively wrong, and the error changed
+sign rather than shrinking. Unreachable through the sanctioned client (which
+raises at `:2980`/`:3015`) and a negative count is loud rather than silent, so
+it was non-blocking; fixed anyway rather than shipping a closure claim with an
+asterisk. The helper's docstring now states the site COUNT, so the next edit
+has to notice if it adds a fifth. Pinned by a parametrized regression test over
+both failure paths that asserts the sign invariant directly, and by mutations
+M10/M11.
+
+The clamp work was beyond the reviewer's original list, taken because it is one
+line per site and it is the difference between "closed" and "closed except for
+this". Note for the record that taking it is also what created the sign
+inversion above: an opportunistic extra fix earned its own defect, and only a
+second independent review caught it.
+
+**`SharedSlotBroker` needs no equivalent change and that is checked, not
+assumed:** it has no clamp anywhere — the gather (`:3869`), both unanswered
+counts (`:3811`, `:3837`) and the dispatch count (`:3998`) all read raw
+`batch_size`, so all four agree with each other.
+
+**FAMILY STATUS — now claimed from the release-site enumeration, not the
+increment grep.** Every release site above is either fixed, or provably not
+dispatch-counted, with its reason stated. Five instances known and all five
+now fixed: `MultiSlotInferenceClient` (B6), `_process_parallel`'s unsupported
+mode (B6(c)), `SlotBroker.serve_forever`'s three paths (this PR),
+`_process_parallel`'s no-model trial (this PR), `FIRST_BATCH_DONE` (this PR),
+plus the clamp. The two non-instances the increment grep did find, recorded so
+the next reader does not re-litigate them: `MultiSlotInferenceClient._inflight`
+(a gauge, decremented unconditionally in the same release path) and
+`_record_bucket_hist` (runs after the malformed filter, so it counts real
+forwards). **Anyone re-opening this family should re-run the RELEASE-site grep,
+not the increment grep.**
+
+**14 mutations, 14 KILLED**, each by a named test — the original 7 plus M5/M6
+(instance 4: drop the increment; read it after the release), M7/M8 (instance 5:
+report dispatched rows again; fire on a wholly unanswered batch again), M9 (the
+clamp: dispatch counts the raw claimed batch_size again) and M10/M11 (each of
+the two failure handlers, independently, reverts to the raw count — so neither
+site can regress behind the other's coverage).
+
+⚑ **The stale-anchor guard fired FOUR times across this PR and was right every
+time.** M4's anchor was ambiguous in round one; M1/M2a went stale in round two
+when the edits landed on those exact lines; M3a/M3b/M4 went stale in round three
+when the handlers became multi-line calls. Every one reported **PATTERN NOT
+FOUND rather than reading as a pass**. Round three also caught a bug in the
+*patch script that maintains the harness*: it asserted each anchor occurred once,
+but M3a and M4 deliberately share an anchor, so the count was 2 and the script
+aborted before writing — which meant the sweep ran the OLD harness and reported
+three NOT-FOUND lines instead of silently skipping them. A harness that fails
+loudly protects its own maintenance, not just the code under test.
+
+Red on the previous head `f39bb8336`: 6 of the 8 new tests fail there; the
+other two are positive controls that must pass (a served trial subtracts
+nothing; the marker still fires once the broker genuinely serves).
+
+Verified: `./scripts/lint.sh` (no args) exit 0 — read as a real exit code, not
+through `| tail`; **163 tests green** across `test_broker_served_count`,
+`test_inference_broker`, `test_inference_slot_protocol`,
+`test_broker_no_zero_fill`, `test_broker_malformed_legal_meta`,
+`test_broker_hang`, `test_shared_broker_request_mode`,
+`test_multislot_wedged_slot`, `test_worker_broker_stats_line`,
+`test_worker_slot_planes_guard`, `test_inference_cache`,
+`test_aot_broker_integration`. (The original entry said 128 — that count simply
+omitted `test_aot_broker_integration`, which was run separately; the reviewer
+collected 153 on the pre-amendment head. 161 is this head's number.)
+
+**Landing order note:** this entry is a pure EOF append that was rebased over
+PR #331, which merged after this PR's first head. #331's wave-4 simplification
+entry sits ABOVE this one, matching merge order; no existing line was modified
+by the rebase (`git diff origin/main -- docs/experiment_ledger.md` shows
+insertions only). **Not reviewed by its author** — the re-review verdict is
+REQUEST CHANGES and the reviewer gets this delta.
