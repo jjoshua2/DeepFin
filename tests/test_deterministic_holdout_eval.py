@@ -597,3 +597,58 @@ def test_has_inflight_tracks_the_real_start_collect_lifecycle() -> None:
   # than starting a real eval thread.
     ev._inflight_iter = -1
     assert ev.has_inflight() is False
+
+
+def test_the_holdout_mutators_are_both_ordered_against_the_eval() -> None:
+    """Enumerate the writers, so a third one cannot be added unnoticed.
+
+    The async eval reads `holdout_buf` from its own thread; every writer of
+    that buffer has to be ordered against it somewhere. Today there are two,
+    handled in two different places for a structural reason:
+
+      `_ingest_train_arrays`          -> the START-side guard in
+                                         `_run_holdout_evaluation` (this file)
+      `_maybe_reset_holdout_on_drift` -> drains at its own site, because
+                                         whether it fires is unknowable at
+                                         start() time
+
+    This asserts the SET of writers, not the handling -- the two behaviours are
+    pinned by their own tests. A new `.clear()`/`add_many_arrays` on a holdout
+    buffer fails here and sends the author to pick one of the two places.
+
+    LIMIT, stated rather than implied: the scan keys on a receiver NAMED
+    `*holdout*`, so a write through a differently-named alias (`hb = holdout_buf;
+    hb.clear()`) is invisible to it. It is a tripwire for the ordinary case, not
+    a proof of absence -- which is why the two real behaviours are pinned by
+    behavioural tests and this only guards the enumeration.
+    """
+    import ast
+    import inspect
+
+    import chess_anti_engine.tune.distributed_runtime as dr
+    import chess_anti_engine.tune.trainable as tr
+
+    found: set[str] = set()
+    for module in (tr, dr):
+        tree = ast.parse(inspect.getsource(module))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Call):
+                    continue
+                f = node.func
+                if not isinstance(f, ast.Attribute) or f.attr not in {
+                    "clear", "add_many_arrays", "add_many", "add",
+                }:
+                    continue
+                target = f.value
+                if isinstance(target, ast.Name) and "holdout" in target.id:
+                    found.add(fn.name)
+
+    assert found == {"_ingest_train_arrays", "_maybe_reset_holdout_on_drift"}, (
+        "the set of holdout-buffer writers changed. Every writer must be "
+        "ordered against the async eval thread: either the start-side guard in "
+        "_run_holdout_evaluation, or a drain at the writer's own site the way "
+        f"_maybe_reset_holdout_on_drift does. Found: {sorted(found)}"
+    )

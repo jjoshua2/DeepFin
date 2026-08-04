@@ -338,6 +338,7 @@ def test_drift_reset_still_clears_a_restored_holdout(tmp_path: Path) -> None:
         tc=_tc(reset_holdout_on_drift=True, drift_threshold=1.0),
         holdout_frozen=restore.holdout_frozen,
         holdout_generation=restore.holdout_generation,
+        async_test_eval=None,
     )
 
     assert len(buf) == 0
@@ -353,6 +354,7 @@ def test_drift_below_threshold_leaves_a_restored_holdout_alone(tmp_path: Path) -
         tc=_tc(reset_holdout_on_drift=True, drift_threshold=1.0),
         holdout_frozen=restore.holdout_frozen,
         holdout_generation=restore.holdout_generation,
+        async_test_eval=None,
     )
 
     assert len(buf) == 20
@@ -483,3 +485,157 @@ def test_the_trial_loop_seeds_its_holdout_flags_from_the_restore() -> None:
 
     assert "holdout_frozen = bool(restore.holdout_frozen)" in src
     assert "holdout_generation = int(restore.holdout_generation)" in src
+
+
+# --- audit L2 residual: the drift reset is the SECOND holdout mutator ------
+
+
+class _FakeAsyncEval:
+    """Records the order of collect() against the buffer clear()."""
+
+    def __init__(self, *, inflight: bool, buf=None, order: list[str] | None = None) -> None:
+        self._inflight = bool(inflight)
+        self._buf = buf
+        self.order = order if order is not None else []
+        self.collect_timeouts: list[float] = []
+
+    def has_inflight(self) -> bool:
+        return self._inflight
+
+    def collect(self, timeout: float):
+        self.collect_timeouts.append(float(timeout))
+        self.order.append(f"collect(len={0 if self._buf is None else len(self._buf)})")
+        self._inflight = False
+        return "GENERATION_G_RESULT", 41
+
+
+def test_the_drift_reset_drains_the_inflight_eval_before_clearing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """RED on main, which clears the buffer out from under the eval thread.
+
+    The reset runs after the previous iteration's ``start()`` and before the
+    ``collect()`` that ends it, so the eval thread can be mid-pass on the very
+    buffer being cleared. Two consequences, both closed by draining first:
+    the concurrent clear (``clear()`` rebinds ``_chunks``, so instead of
+    ``deque mutated during iteration`` the pass reads the new ``_size`` of 0
+    and raises ``ValueError: ArrayReplayBuffer is empty``), and -- the silent
+    one -- a completed generation-G measurement being collected after the bump
+    and reported under generation G+1.
+    """
+    save_holdout_rows(ckpt_dir=tmp_path, holdout_buf=_buffer(64, rows=20))
+    buf, restore = _restore_into(tmp_path, frozen=True, generation=5)
+
+    order: list[str] = []
+    ev = _FakeAsyncEval(inflight=True, buf=buf, order=order)
+
+    class _OrderedBuf:
+        """Delegates to the real buffer, recording when clear() lands."""
+
+        def __init__(self, inner) -> None:
+            self._inner = inner
+
+        def clear(self) -> None:
+            order.append(f"clear(len={len(self._inner)})")
+            self._inner.clear()
+
+        def __len__(self) -> int:
+            return len(self._inner)
+
+    frozen, generation = _maybe_reset_holdout_on_drift(
+        holdout_buf=_OrderedBuf(buf), drift=_drift(9.0),
+        tc=_tc(reset_holdout_on_drift=True, drift_threshold=1.0),
+        holdout_frozen=restore.holdout_frozen,
+        holdout_generation=restore.holdout_generation,
+        async_test_eval=ev,
+    )
+
+    assert order == ["collect(len=20)", "clear(len=20)"], (
+        f"the eval must be drained BEFORE the clear, not after; saw {order}"
+    )
+    assert ev.has_inflight() is False, "the in-flight eval was left outstanding"
+    assert (len(buf), frozen, generation) == (0, False, 6)
+  # The discarded reading has to be explainable from stdout: an operator
+  # seeing test_* vanish on the reset row needs the reason in the log.
+    out = capsys.readouterr().out
+    assert "holdout drift reset" in out
+    assert "audit L2" in out
+
+
+def test_a_reset_with_no_eval_outstanding_does_not_pay_the_collect_timeout(
+    tmp_path: Path,
+) -> None:
+    """``collect()`` blocks for its FULL timeout on a cleared event.
+
+    Calling it unconditionally would stall every reset by
+    ``distributed_async_test_eval_timeout_s`` waiting on an event nobody is
+    going to set -- the same trap ``has_inflight()`` was added for on the
+    start side.
+    """
+    save_holdout_rows(ckpt_dir=tmp_path, holdout_buf=_buffer(64, rows=20))
+    buf, restore = _restore_into(tmp_path, frozen=True, generation=5)
+    ev = _FakeAsyncEval(inflight=False, buf=buf)
+
+    frozen, generation = _maybe_reset_holdout_on_drift(
+        holdout_buf=buf, drift=_drift(9.0),
+        tc=_tc(reset_holdout_on_drift=True, drift_threshold=1.0),
+        holdout_frozen=restore.holdout_frozen,
+        holdout_generation=restore.holdout_generation,
+        async_test_eval=ev,
+    )
+
+    assert ev.collect_timeouts == [], "collect() was called with nothing in flight"
+    assert (len(buf), frozen, generation) == (0, False, 6)
+
+
+def test_a_reset_that_does_not_fire_never_touches_the_eval(tmp_path: Path) -> None:
+    """Below threshold there is no mutation, so there is nothing to order
+    against -- and discarding a good eval there would cost a row for free."""
+    save_holdout_rows(ckpt_dir=tmp_path, holdout_buf=_buffer(64, rows=20))
+    buf, restore = _restore_into(tmp_path, frozen=True, generation=5)
+    ev = _FakeAsyncEval(inflight=True, buf=buf)
+
+    _maybe_reset_holdout_on_drift(
+        holdout_buf=buf, drift=_drift(0.1),
+        tc=_tc(reset_holdout_on_drift=True, drift_threshold=1.0),
+        holdout_frozen=restore.holdout_frozen,
+        holdout_generation=restore.holdout_generation,
+        async_test_eval=ev,
+    )
+
+    assert ev.collect_timeouts == [], "a no-op reset discarded a live eval"
+    assert ev.has_inflight() is True
+    assert len(buf) == 20
+
+
+def test_clearing_under_an_in_flight_full_pass_is_what_the_drain_prevents() -> None:
+    """The mechanism, driven directly on the real buffer.
+
+    Pins WHY the drain is needed rather than trusting the description: a
+    ``clear()`` landing during a bounds-snapshotted full pass does not raise
+    ``RuntimeError: deque mutated during iteration`` (``clear()`` REBINDS the
+    deque, so an in-progress iterator over the old one survives) -- it raises
+    ``ValueError: ArrayReplayBuffer is empty`` from the next slice, because
+    ``rows_slice_arrays`` reads the new ``_size`` of 0. If this ever starts
+    raising something else, the drain is still right but the comment is stale.
+    """
+    buf = _buffer(64, rows=20)
+    bounds = buf.batch_row_bounds(8)
+    assert len(bounds) > 2, "need a multi-batch pass for a mid-pass clear"
+
+    rows_seen = 0
+
+    def _walk() -> None:
+        nonlocal rows_seen
+        for i, (start, stop) in enumerate(bounds):
+            if i == 1:
+                buf.clear()
+            rows_seen += int(buf.rows_slice_arrays(start, stop)["x"].shape[0])
+
+    with pytest.raises(ValueError, match="ArrayReplayBuffer is empty"):
+        _walk()
+
+    assert rows_seen == 8, (
+        "the batches before the clear read normally -- which is exactly why "
+        "this is not caught by the deque-mutation guard"
+    )
