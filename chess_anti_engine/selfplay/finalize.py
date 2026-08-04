@@ -855,10 +855,12 @@ def _build_replay_samples(
         result=result,
         total_plies_played=total_plies_played,
     )
-    _seed_list_path = getattr(getattr(state, "opening", None), "opening_fen_list_path", None)
     opening_source_code_val = opening_source_code(opening_source)
+  # No seed-list path: the id is the start position's content hash in every
+  # run mode (audit A24). Passing a path used to make a local run tag a seed
+  # differently from a distributed one, splitting one seed in two downstream.
     seed_id, seed_family_id = resolve_seed_ids(
-        start_fen, _seed_list_path, source_code=opening_source_code_val,
+        start_fen, source_code=opening_source_code_val,
     )
     suffix_sf_regret = _suffix_sf_regret_features(records, is_selfplay=is_selfplay_slot)
     want_sf_p0_regret = bool(
