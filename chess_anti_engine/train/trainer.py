@@ -69,8 +69,6 @@ from chess_anti_engine.replay.shard import (
 
 from .aurora import AuroraWithAuxAdam
 from .compile_probe import CompileProbe, apply_compile
-from .cosmos import COSMOS
-from .cosmos_fast import COSMOSFast
 from .losses import (
     align_policy_target,
     apply_policy_mask_to_logits,
@@ -1520,8 +1518,6 @@ def trainer_kwargs_from_config(config: dict, *, log_dir: Path | None = None) -> 
         "aurora_polar_dtype": str(config.get("aurora_polar_dtype", "auto")),
         "aurora_polar_safety": _f("aurora_polar_safety", 1.01),
         "aurora_cuda_graphs": bool(config.get("aurora_cuda_graphs", True)),
-        "cosmos_rank": _f("cosmos_rank", 64, int),
-        "cosmos_gamma": _f("cosmos_gamma", 0.2),
         "swa_start": _f("swa_start", 0, int),
         "swa_freq": _f("swa_freq", 50, int),
         "w_policy": _f("w_policy", 1.0),
@@ -1611,8 +1607,6 @@ class Trainer:
         aurora_polar_dtype: str = "auto",
         aurora_polar_safety: float = 1.01,
         aurora_cuda_graphs: bool = True,
-        cosmos_rank: int = 64,
-        cosmos_gamma: float = 0.2,
         swa_start: int = 0,
         swa_freq: int = 50,
         mirror_prob: float = 0.5,
@@ -1786,46 +1780,6 @@ class Trainer:
                     aurora_polar_safety=float(aurora_polar_safety),
                     aurora_cuda_graphs=bool(aurora_cuda_graphs),
                 )
-        elif optimizer == "cosmos_fast":
-            hd, hnd, ad, and_ = _split_decay_groups(
-                self.model,
-                hidden_filter=_matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False),
-            )
-            matrix_wd = float(matrix_weight_decay)
-            aux_wd = float(aux_weight_decay)
-            param_groups = [
-                {"params": hd, "weight_decay": matrix_wd, "use_cosmos_fast": True},
-                {"params": hnd, "weight_decay": 0.0, "use_cosmos_fast": True},
-                {"params": ad, "weight_decay": aux_wd, "use_cosmos_fast": False},
-                {"params": and_, "weight_decay": 0.0, "use_cosmos_fast": False},
-            ]
-            use_soda_weight_decay = _mark_soda(param_groups)
-            self.opt = COSMOSFast(
-                param_groups,
-                lr=lr,
-                rank=int(cosmos_rank),
-                gamma=float(cosmos_gamma),
-            )
-        elif optimizer == "cosmos" and matrix_optimizer_scope not in ("default", "", "legacy"):
-            hd, hnd, ad, and_ = _split_decay_groups(
-                self.model,
-                hidden_filter=_matrix_optimizer_filter(matrix_optimizer_scope, include_embed_default=False),
-            )
-            matrix_wd = float(matrix_weight_decay)
-            aux_wd = float(aux_weight_decay)
-            param_groups = [
-                {"params": hd, "weight_decay": matrix_wd, "use_cosmos": True},
-                {"params": hnd, "weight_decay": 0.0, "use_cosmos": False},
-                {"params": ad, "weight_decay": aux_wd, "use_cosmos": False},
-                {"params": and_, "weight_decay": 0.0, "use_cosmos": False},
-            ]
-            use_soda_weight_decay = _mark_soda(param_groups)
-            self.opt = COSMOS(
-                param_groups,
-                lr=lr,
-                rank=int(cosmos_rank),
-                gamma=float(cosmos_gamma),
-            )
         else:
   # Selective weight decay: apply only to non-bias, non-LayerNorm parameters.
             if weight_decay_mode == "soda" and soda_scope == "hidden_matrix_only":
@@ -1862,15 +1816,6 @@ class Trainer:
         elif optimizer == "adamw":
             self.opt = torch.optim.AdamW(param_groups, lr=lr)
         elif optimizer == "muon" or optimizer == "aurora":
-            pass
-        elif optimizer == "cosmos":
-            if matrix_optimizer_scope in ("default", "", "legacy"):
-                self.opt = COSMOS(
-                    param_groups,
-                    lr=lr,
-                    weight_decay=0.0 if weight_decay_mode == "soda" else 1e-4,
-                )
-        elif optimizer == "cosmos_fast":
             pass
         elif optimizer == "soap":
   # SOAP: Shampoo-like second-order optimizer. Prefer a local
@@ -1924,7 +1869,7 @@ class Trainer:
                 )
         else:
             raise ValueError(
-                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, muon, aurora, cosmos, cosmos_fast, soap"
+                f"Unknown optimizer {optimizer!r}. Supported: nadamw, adamw, muon, aurora, soap"
             )
 
         if use_soda_weight_decay:

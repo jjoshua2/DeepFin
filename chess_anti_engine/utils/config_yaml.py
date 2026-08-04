@@ -193,7 +193,6 @@ _TRAIN_KEYS = (
     "aurora_uw_floor",
     "aurora_pp_iterations", "aurora_pp_beta", "aurora_polar_steps",
     "aurora_polar_method", "aurora_polar_dtype", "aurora_polar_safety",
-    "cosmos_rank", "cosmos_gamma",
     "lr", "batch_size", "train_steps", "train_window_fraction",
     "train_views_per_ingested_position",
     "no_amp", "feature_dropout_p", "rebuild_sf_targets", "sf_policy_sparse_ce",

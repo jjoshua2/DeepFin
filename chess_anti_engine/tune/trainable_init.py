@@ -309,7 +309,7 @@ def _restore_from_salvage_pool(
 
 
 def _apply_donor_config_overlay(config: dict, donor_cfg: dict, trainer) -> None:
-    """Copy lr/cosmos_gamma/loss-weights from donor manifest row into config + trainer.
+    """Copy lr/loss-weights from donor manifest row into config + trainer.
 
     Dual-write pattern: ``config[k] = donor_cfg[k]`` so live YAML reload
     preserves the donor's values across iter boundaries; ``setattr`` (via
@@ -317,7 +317,7 @@ def _apply_donor_config_overlay(config: dict, donor_cfg: dict, trainer) -> None:
     iteration. ``rescale_current_lr=False`` because the trainer was just
     built — no scheduler progress to rescale against.
     """
-    for k in ("lr", "cosmos_gamma", *_TRAINER_WEIGHT_KEYS):
+    for k in ("lr", *_TRAINER_WEIGHT_KEYS):
         if k in donor_cfg:
             config[k] = donor_cfg[k]
     _apply_lr_gamma_weights(trainer, config, rescale_current_lr=False)

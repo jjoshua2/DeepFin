@@ -1035,9 +1035,9 @@ def _collect_mutation_bounds(base_config: dict) -> dict[str, list[float]]:
 
 
 def _optimizer_candidates_from_config(base_config: dict, *, include_nadamw: bool = True) -> list[str]:
-    default = ["nadamw", "adamw", "muon", "aurora", "cosmos", "cosmos_fast", "soap"]
+    default = ["nadamw", "adamw", "muon", "aurora", "soap"]
     if not include_nadamw:
-        default = ["adamw", "muon", "aurora", "cosmos", "cosmos_fast", "soap"]
+        default = ["adamw", "muon", "aurora", "soap"]
     raw = base_config.get("search_optimizer_choices")
     if isinstance(raw, (list, tuple)):
         vals = [str(v).strip().lower() for v in raw if str(v).strip()]
