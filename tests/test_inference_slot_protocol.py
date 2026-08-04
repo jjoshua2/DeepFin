@@ -342,8 +342,10 @@ def test_the_tag_is_read_before_every_other_slot_field(tmp_path: Path) -> None:
                     reads.append(name)
                 return getattr(object.__getattribute__(self, "_inner"), name)
 
+        # 0 = this stand-in declined no rows; _process_batch adds the return to
+        # the unanswered-row count it owes the serve loop (task #142).
         broker._process_batch_mode = (  # type: ignore[method-assign]
-            lambda ready, *, mode, request_ids: None
+            lambda ready, *, mode, request_ids: 0
         )
         # The spy deliberately duck-types _InferenceSlot rather than subclassing
         # it: __slots__ + numpy views over shm make a real subclass awkward, and

@@ -1080,7 +1080,7 @@ def test_process_batch_releases_slots_instead_of_dying_on_a_failing_batch(
 
         def _boom(
             ready: list[_InferenceSlot], *, mode: int, request_ids: list[int],
-        ) -> None:
+        ) -> int:
             del ready, mode, request_ids
             raise ValueError("could not broadcast input array")
 
@@ -1106,7 +1106,7 @@ def test_process_batch_gives_up_after_persistent_failures(tmp_path: Path) -> Non
 
         def _boom(
             ready: list[_InferenceSlot], *, mode: int, request_ids: list[int],
-        ) -> None:
+        ) -> int:
             del ready, mode, request_ids
             raise ValueError("dead cuda context")
 

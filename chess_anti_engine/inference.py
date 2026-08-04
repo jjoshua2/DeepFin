@@ -2018,7 +2018,23 @@ class SlotBroker:
 
   # -- batch processing --
 
-    def _process_batch(self, ready: list[_InferenceSlot]) -> None:
+    def _process_batch(self, ready: list[_InferenceSlot]) -> int:
+        """Evaluate the ready slots, grouped by request_mode.
+
+        Returns the number of ROWS handed back UNANSWERED. ``serve_forever``
+        adds ``sum(s.batch_size for s in ready)`` to its ``positions`` total
+        BEFORE calling this, and three paths in here release slots without an
+        answer: ``BrokerModelUnavailable``, a generic batch failure, and
+        malformed compact-legal metadata (the last one inside
+        ``_process_batch_mode``, which returns its own count for the same
+        reason). Without the return, a broker that answered nothing at all
+        still reported full ``pos/s`` -- the failure reads as throughput.
+
+        Third and last of the three known instances of that family: B6 fixed
+        it in ``MultiSlotInferenceClient`` and B6(c) in
+        ``SharedSlotBroker._process_parallel``; this is the production broker
+        (task #142).
+        """
         # The request tag is read HERE, before request_mode, because this is the
         # first field of the slot the broker touches. Reading mode first and the
         # tag later would leave a window in which a re-submitting client writes
@@ -2033,12 +2049,22 @@ class SlotBroker:
         by_mode: dict[int, list[tuple[_InferenceSlot, int]]] = {}
         for slot, req_id, mode in snapshot:
             by_mode.setdefault(mode, []).append((slot, req_id))
+        unanswered_rows = 0
         for mode, entries in by_mode.items():
             slots = [s for s, _ in entries]
             request_ids = [r for _, r in entries]
             try:
-                self._process_batch_mode(slots, mode=mode, request_ids=request_ids)
+                mode_unanswered = self._process_batch_mode(
+                    slots, mode=mode, request_ids=request_ids,
+                )
             except BrokerModelUnavailable as exc:
+                # Counted BEFORE the release, and this ordering is load-bearing:
+                # _release_slots_for_retry sets _STATE_IDLE, after which the
+                # client is free to re-submit into the same shared slot with a
+                # different batch_size. Reading afterwards would subtract a row
+                # count belonging to the NEXT request. Same rule below and in
+                # _process_batch_mode's malformed-metadata branch.
+                unanswered_rows += sum(int(s.batch_size) for s in slots)
                 # Same recovery as any other failed batch, but logged as one
                 # throttled line rather than a traceback: this path repeats
                 # every serve loop until a model appears, and 50 identical
@@ -2061,6 +2087,12 @@ class SlotBroker:
                     )
                     raise
             except Exception:
+                # Before the release, for the reason given above. A partial
+                # failure -- _process_batch_mode released some malformed slots
+                # and then raised -- loses its own return value, so counting
+                # the whole group here is what keeps those rows counted; the
+                # group is unanswered either way.
+                unanswered_rows += sum(int(s.batch_size) for s in slots)
                 # One bad batch must not take down the broker. Every worker in
                 # the fleet depends on this process and nothing relaunches it
                 # until the next selfplay phase begins, so a crash here costs a
@@ -2085,6 +2117,16 @@ class SlotBroker:
                     raise
             else:
                 self._consecutive_batch_failures = 0
+                # The rows _process_batch_mode itself declined (malformed
+                # compact-legal metadata) while the group otherwise succeeded.
+                # Accumulated HERE rather than at the call site inside the try:
+                # there, a callee that returned None would raise TypeError into
+                # the generic handler above, be swallowed as "one bad batch",
+                # and silently walk _consecutive_batch_failures toward a broker
+                # exit. Outside the try it is loud, which is what a wrong return
+                # type deserves.
+                unanswered_rows += mode_unanswered
+        return unanswered_rows
 
     def _release_slots_for_retry(self, slots: list[_InferenceSlot]) -> None:
         """Hand slots back to their clients unanswered so they re-submit.
@@ -2123,7 +2165,13 @@ class SlotBroker:
 
     def _process_batch_mode(
         self, ready: list[_InferenceSlot], *, mode: int, request_ids: list[int],
-    ) -> None:
+    ) -> int:
+        """Evaluate one request_mode's slots.
+
+        Returns the number of ROWS released unanswered for malformed
+        compact-legal metadata, which ``_process_batch`` forwards to the serve
+        loop's ``positions`` total. See that method's docstring for why.
+        """
         _timing = getattr(self, "_timing_metrics", None)
         _t_pack0 = time.perf_counter()
         # Under a watchdog stage (audit I3): torch.load, .to(device), the AOT
@@ -2167,6 +2215,7 @@ class SlotBroker:
         legal_counts_by_slot: list[np.ndarray] = []
         legal_flat_by_slot: list[np.ndarray] = []
         total = 0
+        unanswered_rows = 0
         # ``request_ids`` was snapshotted by _process_batch before it read any
         # other field of these slots; see the ordering note on the header map.
         for slot, req_id in zip(ready, request_ids, strict=True):
@@ -2251,6 +2300,12 @@ class SlotBroker:
                             "answering with a stale policy (%d total)",
                             bad_reason, self._malformed_legal_meta_total,
                         )
+                    # These rows were counted at dispatch by serve_forever and
+                    # no model will evaluate them, so report them back (task
+                    # #142). ``bsz`` rather than a re-read of slot.batch_size:
+                    # the release below lets the client overwrite that field,
+                    # and bsz is the value this batch actually worked from.
+                    unanswered_rows += bsz
                     self._release_slots_for_retry([slot])
                     continue
                 legal_counts_by_slot.append(counts)
@@ -2272,7 +2327,7 @@ class SlotBroker:
                 slot.request_mode = _MODE_DENSE_F32
                 slot.request_id = req_id
                 slot.state = _STATE_RESPONSE
-            return
+            return unanswered_rows
         forward_total = _compiled_padded_batch_size(total, capacity=self._pinned_input.shape[0])
         pin_input = self._pinned_input_bf16 if use_bf16_input else self._pinned_input
         compact_offsets: list[tuple[int, int]] = []
@@ -2491,6 +2546,7 @@ class SlotBroker:
             forward_ok = True
         finally:
             self._hang_watchdog.mark_forward_done(success=forward_ok, token=hang_token)
+        return unanswered_rows
 
   # -- main loop --
 
@@ -2667,7 +2723,12 @@ class SlotBroker:
                 # (forward duration would otherwise skew the diagnostic).
                 if _ARRIVAL_TRACE_ENABLED:
                     self._emit_arrival_trace(ready)
-                self._process_batch(ready)
+  # positions was added at DISPATCH above; _process_batch returns the rows
+  # it handed back UNANSWERED (no model, batch failure, malformed legal
+  # metadata), so subtracting them makes `pos/s` mean rows a model
+  # evaluated. batches/slots stay dispatch counts deliberately: they answer
+  # "how much did the loop try to batch", which a refusal does not change.
+                metrics["positions"] -= self._process_batch(ready)
                 if not self._first_batch_logged:
                     self._first_batch_logged = True
                     print(
