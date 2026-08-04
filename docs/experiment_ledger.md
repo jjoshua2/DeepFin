@@ -32940,3 +32940,13 @@ a repro fails on current main: fix PR is being authored repro-first (two concurr
 uploads + an event-loop responsiveness probe; if the repro cannot be made to fail, the mechanism
 is refuted and the fix unjustified). Deploy is restart-gated (server restarts with training);
 trial 0f888 keeps current behavior. Task #144.
+
+**A4 addendum (~11:0x):** the pre-registered discriminator has now run — PR #335's repro
+FAILS on unmodified origin/main (one flush-sized upload stalls the event loop 0.797s vs a
+0.25s bound, critical section on MainThread) and passes with the fix (locked block moved to
+the threadpool via run_in_threadpool; lock stays threading.Lock to preserve exclusion with
+the sync sites). **The MECHANISM is confirmed. Attribution of the 00:23 incident to it
+remains a candidate** — the repro proves the failure mode exists, not that it fired that
+night. Deploy restart-gated. Reviewer note kept: the author deleted its own ASGI-poller
+test after proving it passes on broken code (a poller on the blocked loop cannot time the
+blockage) — a gate that cannot fail, correctly removed.
