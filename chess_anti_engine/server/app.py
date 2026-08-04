@@ -63,6 +63,25 @@ def _compacted_token_suffix(flush_token: str) -> str:
 # so concurrent multi-worker polls cannot double-dole (see PR #209 review).
 SEED_DOLE_REARM_FILENAME = "seed_dole_rearm.json"
 
+# Why a manifest read produced no manifest. "Absent" is the legitimate
+# pre-first-publish state; "unreadable" means the file is there and corrupt.
+# The worker-compat gate admits on the first and refuses to decide on the
+# second, so collapsing them (as the old `_load_manifest` did) is what turned
+# version enforcement off silently.
+MANIFEST_OK = "ok"
+MANIFEST_ABSENT = "absent"
+MANIFEST_UNREADABLE = "unreadable"
+
+# Machine-readable rejection reasons (A12). The human `reason` string stays for
+# logs and existing clients; `reason_code` is what a monitor should switch on,
+# because compat rejections deliberately ride an HTTP 200 (see
+# `_compat_rejection`) and the prose is free to change.
+COMPAT_MANIFEST_UNREADABLE = "manifest_unreadable"
+COMPAT_BAD_PROTOCOL_HEADER = "bad_protocol_header"
+COMPAT_PROTOCOL_MISMATCH = "protocol_mismatch"
+COMPAT_BAD_VERSION_HEADER = "bad_version_header"
+COMPAT_WORKER_TOO_OLD = "worker_too_old"
+
 # Same name as the logger `create_app` builds, so the two share configuration.
 # Needed separately because `_SeedDoleGate` is module-level and `create_app`'s
 # `log` is a local.
@@ -1391,14 +1410,83 @@ def create_app(
                     flushed += 1
         return flushed
 
-    def _load_manifest(trial_id: str | None = None) -> dict[str, Any] | None:
+    # Compat-gate observability (A11). The gate's whole failure mode was that a
+    # day spent admitting unversioned workers looked exactly like a day spent
+    # enforcing correctly, so every decision is counted and the totals ride the
+    # log lines. Guarded by a lock because the routes that touch them run in
+    # Starlette's threadpool and `d[k] += 1` is not atomic.
+    _manifest_read_counters: dict[str, int] = {
+        "absent": 0,
+        "unreadable": 0,
+        "admitted_without_manifest": 0,
+        "admitted_no_requirements": 0,
+        "rejected": 0,
+    }
+    _manifest_read_counters_sig: dict[str, str] = {"last": ""}
+    _manifest_absent_seen: set[str] = set()
+    _compat_counter_lock = threading.Lock()
+
+    def _bump_compat(key: str) -> dict[str, int]:
+        """Increment one compat counter and return a snapshot of all of them."""
+        with _compat_counter_lock:
+            _manifest_read_counters[key] += 1
+            return dict(_manifest_read_counters)
+
+    def _load_manifest_status(
+        trial_id: str | None = None,
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Load the manifest and say WHY it is missing when it is.
+
+        The two failure modes are not interchangeable and the compat gate
+        treats them oppositely: ``MANIFEST_ABSENT`` is the legitimate
+        pre-first-publish state, while ``MANIFEST_UNREADABLE`` means the file
+        exists and could not be parsed. The manifest is written through
+        ``atomic_write_text`` (``tune/distributed_runtime.py``), so a reader
+        never observes a partial write — persistent unreadability is real
+        corruption or a wrong-directory resolution, not a race.
+        """
         mf = _publish_root(trial_id) / "manifest.json"
         if not mf.exists():
-            return None
+            _bump_compat("absent")
+            key = str(_normalize_trial_id(trial_id) or "")
+            with _compat_counter_lock:
+                first = key not in _manifest_absent_seen
+                _manifest_absent_seen.add(key)
+            if first:
+                # Once per trial: legitimate before the first publish, but it
+                # opens the compat gate, so the transition must be visible.
+                log.info(
+                    "manifest not published yet for trial=%s (%s) — worker "
+                    "version/protocol enforcement is OPEN until it appears",
+                    key or "<default>", mf,
+                )
+            return None, MANIFEST_ABSENT
         try:
-            return dict(json.loads(mf.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError):
-            return None  # manifest mid-write or missing
+            return dict(json.loads(mf.read_text(encoding="utf-8"))), MANIFEST_OK
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            counters = _bump_compat("unreadable")
+            sig = f"{mf}:{type(exc).__name__}:{exc}"
+            with _compat_counter_lock:
+                novel = sig != _manifest_read_counters_sig.get("last")
+                _manifest_read_counters_sig["last"] = sig
+            if novel:
+                # Warn on each distinct fault rather than each request: a busy
+                # fleet polls this many times a second and a flood would bury
+                # the line that matters.
+                log.warning(
+                    "manifest UNREADABLE at %s: %s: %s — worker compat cannot be "
+                    "decided; affected requests fail CLOSED with 503 "
+                    "(unreadable=%d absent=%d admitted_without_manifest=%d)",
+                    mf, type(exc).__name__, exc, counters["unreadable"],
+                    counters["absent"], counters["admitted_without_manifest"],
+                )
+            return None, MANIFEST_UNREADABLE
+
+    def _load_manifest(trial_id: str | None = None) -> dict[str, Any] | None:
+        """Manifest or None. Callers that must distinguish absent from corrupt
+        (the compat gate) use :func:`_load_manifest_status` instead."""
+        manifest, _status = _load_manifest_status(trial_id)
+        return manifest
 
     def _iter_visible_inbox_shards(inbox_root: Path) -> list[Path]:
         """List upload shards visible to learner ingest, excluding staging dirs."""
@@ -1571,7 +1659,14 @@ def create_app(
                             entry["last_cpu_count"] = int(cpu_count)
             entry["last_updated_unix"] = now_unix
             stats[gpu_model] = entry
-            atomic_write_text(stats_path, json.dumps(stats, indent=2, sort_keys=True))
+            # durable=False: this runs on EVERY /upload_shard, and fsync costs
+            # ~11 ms median (tail past 1.8 s) for a file this size on the
+            # project's ext4 root. The content is throughput telemetry —
+            # recomputed from the next upload onward — not restart-recovery
+            # state, so a crash may discard the last entry at no cost.
+            atomic_write_text(
+                stats_path, json.dumps(stats, indent=2, sort_keys=True), durable=False,
+            )
 
     def _record_trial_throughput(
         *,
@@ -1608,29 +1703,53 @@ def create_app(
             entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
             entry["last_updated_unix"] = now_unix
             stats[tid] = entry
-            atomic_write_text(trial_stats_path, json.dumps(stats, indent=2, sort_keys=True))
+            # durable=False for the same reason as `_record_gpu_throughput`:
+            # per-upload telemetry, not recovery state.
+            atomic_write_text(
+                trial_stats_path,
+                json.dumps(stats, indent=2, sort_keys=True),
+                durable=False,
+            )
 
     def _check_worker_compat(
         *,
         trial_id: str | None = None,
         worker_version: str | None,
         worker_protocol: str | None,
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, str]:
         """Check whether a worker is allowed to participate.
+
+        Returns ``(ok, human_reason, reason_code)``.
 
         This is intentionally driven by the learner-published manifest so the learner
         can upgrade protocol requirements without server CLI changes.
+
+        Fail-open on a MISSING manifest is deliberate (a worker cannot be judged
+        against requirements that were never published) and is now counted and
+        announced. Fail-CLOSED on an UNREADABLE one is the A11 fix: a worker
+        that cannot prove compatibility must not upload, because the concrete
+        consequence is a stale worker writing v1 146-plane shards into a
+        v2_threats replay buffer, which no downstream stage rejects.
         """
-        mf = _load_manifest(trial_id)
+        mf, status = _load_manifest_status(trial_id)
+        if status == MANIFEST_UNREADABLE:
+            return (
+                False,
+                "server cannot read its own manifest; worker compatibility "
+                "is undecidable — retry",
+                COMPAT_MANIFEST_UNREADABLE,
+            )
         if mf is None:
-            return True, ""
+            _bump_compat("admitted_without_manifest")
+            return True, "", ""
 
         min_v = mf.get("min_worker_version")
         req_proto = mf.get("protocol_version")
 
   # Backward-compat: if fields are missing, don't enforce.
         if min_v is None and req_proto is None:
-            return True, ""
+            _bump_compat("admitted_no_requirements")
+            return True, "", ""
 
         wv = str(worker_version or "0.0.0")
         wp = str(worker_protocol or "0")
@@ -1640,18 +1759,68 @@ def create_app(
                 req_p = int(req_proto)
                 got_p = int(wp)
             except Exception:
-                return False, f"bad protocol version header (got {wp!r})"
+                return (
+                    False,
+                    f"bad protocol version header (got {wp!r})",
+                    COMPAT_BAD_PROTOCOL_HEADER,
+                )
             if got_p != req_p:
-                return False, f"protocol mismatch: worker={got_p} required={req_p}"
+                return (
+                    False,
+                    f"protocol mismatch: worker={got_p} required={req_p}",
+                    COMPAT_PROTOCOL_MISMATCH,
+                )
 
         if min_v is not None:
             try:
                 if version_lt(wv, str(min_v)):
-                    return False, f"worker too old: worker={wv} min_required={min_v}"
+                    return (
+                        False,
+                        f"worker too old: worker={wv} min_required={min_v}",
+                        COMPAT_WORKER_TOO_OLD,
+                    )
             except Exception:
-                return False, f"bad worker version header (got {wv!r})"
+                return (
+                    False,
+                    f"bad worker version header (got {wv!r})",
+                    COMPAT_BAD_VERSION_HEADER,
+                )
 
-        return True, ""
+        return True, "", ""
+
+    def _compat_rejection(
+        *, route: str, trial_id: str | None, reason: str, code: str,
+        worker_version: str | None, worker_protocol: str | None,
+    ) -> dict[str, Any]:
+        """Body for a compat-rejected upload — or a 503 when undecidable.
+
+        **The 200 is load-bearing, not an oversight (A12).** The worker treats
+        ``200 + rejected:true`` as TERMINAL: `_upload_response_rejection_reason`
+        returns None for any non-200, so a 4xx would stop the shard being
+        quarantined and `_upload_response_allows_pending_delete` would also
+        return False — the worker would retry the same incompatible shard
+        forever. Machine-readable `reason_code` is added instead, and the
+        rejection is logged server-side, which is what the finding actually
+        needed.
+
+        The undecidable case is the opposite: a transient inability to read the
+        manifest must NOT terminally destroy a healthy worker's shard, so it
+        raises 503, which the worker's `else: break` path treats as keep-and-
+        retry.
+        """
+        if code == COMPAT_MANIFEST_UNREADABLE:
+            raise HTTPException(status_code=503, detail=reason)
+        counters = _bump_compat("rejected")
+        log.warning(
+            "worker compat REJECT on %s: trial=%s code=%s reason=%s "
+            "(worker_version=%s protocol=%s) — the shard is terminally "
+            "rejected; totals: rejected=%d admitted_without_manifest=%d "
+            "unreadable=%d",
+            route, _normalize_trial_id(trial_id) or "<default>", code, reason,
+            worker_version, worker_protocol, counters["rejected"],
+            counters["admitted_without_manifest"], counters["unreadable"],
+        )
+        return {"stored": False, "rejected": True, "reason": reason, "reason_code": code}
 
     basic = HTTPBasic()
 
@@ -1686,14 +1855,17 @@ def create_app(
         x_cae_worker_lease_id: str | None,
         x_cae_machine_id: str | None,
     ) -> dict[str, Any]:
-        ok, reason = _check_worker_compat(
+        ok, reason, code = _check_worker_compat(
             trial_id=trial_id,
             worker_version=x_cae_worker_version,
             worker_protocol=x_cae_protocol_version,
         )
         if not ok:
-            log.warning("rejecting bad-shard report from user=%s: %s", username, reason)
-            return {"stored": False, "rejected": True, "reason": reason}
+            return _compat_rejection(
+                route=f"report_bad_shard(user={username})", trial_id=trial_id,
+                reason=reason, code=code, worker_version=x_cae_worker_version,
+                worker_protocol=x_cae_protocol_version,
+            )
         qdir = _quarantine_root(trial_id) / "client_reports"
         qdir.mkdir(parents=True, exist_ok=True)
         now_unix = time.time()
@@ -1739,13 +1911,27 @@ def create_app(
         if not mf.exists():
             raise HTTPException(status_code=404, detail="manifest not published yet")
 
-        ok, reason = _check_worker_compat(
+        ok, reason, code = _check_worker_compat(
             trial_id=trial_id,
             worker_version=x_cae_worker_version,
             worker_protocol=x_cae_protocol_version,
         )
         if not ok:
+  # 503 vs 426 is the difference between a pause and a funeral. The worker
+  # treats 426 as fatal (`_handle_upgrade_required` -> SystemExit), so
+  # answering an unreadable manifest with 426 would kill every healthy worker
+  # in the fleet over a transient read error. 503 lands in `_poll_manifest`'s
+  # `status_code != 200` branch: sleep and retry.
+            if code == COMPAT_MANIFEST_UNREADABLE:
+                raise HTTPException(status_code=503, detail=reason)
   # 426 (Upgrade Required) communicates "update your client".
+            log.warning(
+                "worker compat REJECT on manifest poll: trial=%s code=%s reason=%s "
+                "(worker_version=%s protocol=%s)",
+                _normalize_trial_id(trial_id) or "<default>", code, reason,
+                x_cae_worker_version, x_cae_protocol_version,
+            )
+            _bump_compat("rejected")
             raise HTTPException(status_code=426, detail=reason)
 
         manifest = json.loads(mf.read_text(encoding="utf-8"))
@@ -2058,14 +2244,17 @@ def create_app(
         x_cae_batch_elapsed_s: str | None = Header(None, alias="X-CAE-Batch-Elapsed-S"),
         x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
     ) -> Any:
-        ok, reason = _check_worker_compat(
+        ok, reason, code = _check_worker_compat(
             trial_id=trial_id,
             worker_version=x_cae_worker_version,
             worker_protocol=x_cae_protocol_version,
         )
         if not ok:
-            log.warning("rejecting shard upload from user=%s: %s", username, reason)
-            return {"stored": False, "rejected": True, "reason": reason}
+            return _compat_rejection(
+                route=f"upload_shard(user={username})", trial_id=trial_id,
+                reason=reason, code=code, worker_version=x_cae_worker_version,
+                worker_protocol=x_cae_protocol_version,
+            )
   # Size guard: FastAPI doesn't enforce this automatically.
         max_bytes = int(max_upload_mb) * 1024 * 1024
         inbox_root = _inbox_root(trial_id)
@@ -2342,7 +2531,11 @@ def create_app(
                     users = load_users(users_path)
                     machine_id = str(x_cae_machine_id).strip() if x_cae_machine_id else None
                     record_upload(users, username=username, bytes_uploaded=int(n), positions=positions, machine_id=machine_id)
-                    save_users(users_path, users)
+                    # durable=False: per-upload counter bookkeeping, like the
+                    # two throughput files above. `record_upload` touches only
+                    # uploads/total_bytes/machines — credentials are written by
+                    # the admin helpers in `auth.py`, which stay durable.
+                    save_users(users_path, users, durable=False)
             except Exception:
       # Stats failure should not fail the upload.
                 pass
@@ -2448,14 +2641,17 @@ def create_app(
         x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
     ) -> Any:
-        ok, reason = _check_worker_compat(
+        ok, reason, code = _check_worker_compat(
             trial_id=trial_id,
             worker_version=x_cae_worker_version,
             worker_protocol=x_cae_protocol_version,
         )
         if not ok:
-            log.warning("rejecting arena upload from user=%s: %s", username, reason)
-            return {"stored": False, "rejected": True, "reason": reason}
+            return _compat_rejection(
+                route=f"upload_arena_result(user={username})", trial_id=trial_id,
+                reason=reason, code=code, worker_version=x_cae_worker_version,
+                worker_protocol=x_cae_protocol_version,
+            )
   # Basic schema validation
         def _req_int(k: str) -> int:
             if k not in payload:
