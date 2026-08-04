@@ -24499,3 +24499,190 @@ entry sits ABOVE this one, matching merge order; no existing line was modified
 by the rebase (`git diff origin/main -- docs/experiment_ledger.md` shows
 insertions only). **Not reviewed by its author** — the re-review verdict is
 REQUEST CHANGES and the reviewer gets this delta.
+
+---
+
+## FIX 2026-08-04 — the cold-start backpressure floor (latent, did NOT fire tonight) and worker-log rotation at relaunch
+
+**Both fixes are RESTART-GATED. Trial 0f888 keeps the old behaviour until the
+next restart, and that is EXPECTED — neither is a hotfix for the running
+trial.** `_publish_distributed_trial_state` and `_launch_distributed_worker` are
+constructor-path code read at trial launch and worker launch respectively; a
+live-yaml reload does not re-enter either. Nothing here changes a training row,
+a target, or a config default: (A) only raises an auto-derived value that
+production does not use, and (C) only moves files aside before a process that
+was going to be launched anyway.
+
+**Framing comes from the CORRECTION appended to the 2026-08-04 RESTART entry
+(`~04:00`, live branch `ops/live-20260725`; that entry and its correction are
+not on `main`, so a reader here will not find them above).** That correction
+retracts the cold-start mechanism this PR was originally briefed to fix. The
+retraction is upstream of everything below and is why (A) is filed as latent
+rather than causal.
+
+### (A) The auto-derived stale-pause target can sit below iteration 1's need
+
+**LATENT. It did not fire on 2026-08-04 and this fix would have changed nothing
+that night.** Production sets `distributed_stale_pause_target_games: 1870`
+EXPLICITLY (`configs/pbt2_small.yaml`, params.json agrees), the auto formula at
+`distributed_runtime.py:493-497` is behind `if < 0` and never ran, and 1870 sits
+4.25× ABOVE the 440-game need rather than below it — row 1 ingested 806 matching
+games against a 440 target. Filed on its own merits only.
+
+The real defect, for a config that relies on the default: the trainer's
+iteration-1 ingest waits for `_games_per_iter_for_iteration(tc, 1)` MATCHING
+games, matching means the accepted-SHA set, and from cold that set has exactly
+ONE member (there is no previous publish). The server pauses the fleet once that
+one sha reaches `stale_pause_target_games` queued games and releases it only on
+a NEW sha. With the key unset the auto target is `ceil(440 × 0.60) = 264` — the
+fleet stops at 264 while the trainer waits for 440, and only finishing the
+iteration can release it. **A resume cannot reach this state**: prev-sha games
+count as matching, which is what makes the class cold-start-only.
+
+Fix: floor the auto value at iteration 1's need, gated three ways.
+
+* **Only when `trainer_step <= 0`** — the cold start. No training step taken
+  means no second sha can have been published, so the trainer's accepted set has
+  exactly one member. It covers the bootstrap publish and iteration 1's
+  republish of the same weights, self-clears the moment training advances the
+  step, and excludes a resume for free (its step is restored non-zero), which is
+  correct: prev-sha games count as matching there.
+* **Only the auto path.** An explicit target is a recorded operator decision —
+  production's 1870 is ledger'd and deliberate — and is published verbatim, even
+  when it is BELOW the need. Widening the floor to the explicit path would
+  silently override a recorded decision, and the correction is explicit that the
+  explicit value was never the bug. Pinned by a test at both 1870 and 100.
+* **The floor only RAISES.** A `min` here would hand the fleet a far tighter
+  brake than the steady-state design intends; pinned.
+
+It reads the **RAMPED** value: under a ramp iteration 1 needs
+`games_per_iter_start`, not `games_per_iter`. The two differ for exactly the
+configs a hand-copied version gets wrong, so the floor reproduces the trainer's
+chain WHOLE — `TrialConfig.from_dict(config)` then
+`_games_per_iter_for_iteration(tc, 1)`, which is literally how
+`trainable_phases.py:930` derives `total_games`. The test asserts the EXACT
+floored value (400 on a start=400/target=440 ramp), because a `>= need`
+assertion passes just as happily for the wrong `games_per_iter` reading.
+
+⚑⚑ **METHOD NOTE — sharing the ARITHMETIC is not sharing the INSTRUMENT, and the
+second revision of this fix was a silent no-op inside its own target population.**
+Caught by the independent reviewer, not by me. That revision did split the ramp
+arithmetic into a shared `games_per_iter_for_iteration_values()` helper — and
+then fed it from `config.get("games_per_iter_start", 0)`, while
+`TrialConfig.from_dict` defaults that key to `games_per_iter`
+(`trial_config.py:540`). So for a config with a ramp configured and
+`games_per_iter_start` **absent** — a shape none of the seven tests covered,
+because every one of them set the key explicitly — the trainer waited for 440
+matching games while the floor computed a need of **1**, published
+`max(264, 1) = 264`, and left the deadlock fully in place. Reproduced
+independently on head `47aa5f0b8`: `_first_iteration_games_need({'games_per_iter':
+440, 'games_per_iter_ramp_iters': 10})` returns `1` where the trainer's chain
+returns `440`. The shared-arithmetic helper is now REVERTED (it bought nothing
+and cost the defaulting) and the guard calls the trainer's own two-step chain.
+Two tests enforce it, one at the publish path and one on the helper across six
+key-presence shapes, and both assert against the trainer's chain rather than a
+literal — a literal would encode today's `TrialConfig` default and go stale
+silently. The general form, which generalises the standing *a guard must share
+its criterion's instrument* rule: **the instrument is not just the formula, it is
+the formula plus how every input defaults; a guard that agrees with its criterion
+on the configs somebody wrote tests for and disagrees on the ones they did not is
+the failure the rule names.** ⚑ And the local corollary: seven green tests that
+all set the same key explicitly are seven samples of one shape.
+
+⚑⚑ **METHOD NOTE — the first revision of this fix asserted "steady state is
+unchanged" and did not enforce it, and the claim was FALSE.** Without the
+`trainer_step` gate the floor fired at every auto publish, moving the
+steady-state target from 500 to 1000 at games_per_iter=1000 / prev_frac=0.5 —
+silently changing when backpressure engages in a regime where the deadlock is
+unreachable. **CI caught it**: three pre-existing cases in
+`test_distributed_selfplay_backpressure` publish at `trainer_step=123` and went
+red. The claim is now a gate with its own paired test (cold fires / stepped does
+not) and its own mutation, rather than a sentence in a ledger entry. The general
+form is worth keeping: *an unconditional fix for a conditional bug is a
+behaviour change everywhere the bug was not*, and the entry asserting otherwise
+is exactly the kind of self-issued clearance this ledger exists to catch.
+
+### (C) A worker relaunch overwrote the log instead of rotating it
+
+**INSTRUMENTATION, not a cause.** The 2026-08-04 primary stall — the
+worker→server upload path wedging at ~00:23 — is **STILL UNDIAGNOSED, and this
+PR does not diagnose it.** It is undiagnosed *because* the evidence is gone: the
+01:47:22 revive left `worker_00/worker.log` holding a single `worker starting
+version=` line at 01:47:22 with the 00:19-01:47 window absent. The 00:34:22
+pause line and worker_00's ~4,264 upload-buffer drop lines from 00:37:20 were
+read live that session and cannot be re-read. ⚑ **An agent auditing the disk
+afterwards correctly found zero drop lines — that is evidence DESTRUCTION, not
+absence of the event, and it is exactly the reading error this fix exists to
+prevent next time.**
+
+⚑ **The truncating writer is NOT identified, and this fix does not claim to
+identify it.** `logging.FileHandler` defaults to append, `_spawn_with_reap`
+opens the `.out` with `"ab"`, `os.execv` on self-update reuses the same argv,
+and `scripts/train.sh` documents the append behaviour as the very reason its
+drain logic must truncate its READING at `worker starting version=`. Yet the
+file was truncated in place — the artifact directory's mtime never moved, so
+nothing was recreated. Rotation is chosen **because** it does not depend on
+winning that argument: the previous generation is renamed to a different
+filename before the replacement process can open anything, so whatever truncates
+`worker.log` afterwards truncates a fresh empty file.
+
+Honest limit, stated so nobody over-reads it: this preserves the log across
+every launch that goes through `_launch_distributed_worker` (the revive at
+`revive_dead_selfplay_processes`, and the phase-boundary ensure). An in-place
+truncation by something that does NOT go through the launcher would still lose
+the CURRENT generation — but the prior one survives, which is the whole
+difference between undiagnosable and diagnosable. Two generations, not one,
+because one revive is not the interesting case: tonight's stall began ~00:23 and
+was revived at 01:47, so a second revive before anyone read the logs would have
+taken the original evidence anyway. Rotation runs BEFORE the spawn (pinned) —
+rotating after would race the replacement's first writes into the rotated file.
+It never raises: the revive exists to bring a dead worker back, and a guard that
+can take down the thing it guards is worse than the gap it closes (pinned by
+forcing `Path.replace` to raise and asserting the launch still happens).
+
+Checked rather than assumed: `_avg_batch_from_worker_logs` already resets its
+per-file offset when a log shrinks (`if sz < last`), and it globs the exact name
+`worker.log`, so rotated generations are neither re-read nor double-counted.
+
+### Verification
+
+Red→green: **12 of the 19 new tests fail on `origin/main`** (`04b6e6854`) —
+6 of 9 in the floor suite, 6 of 10 in the rotation suite — measured rather than
+assumed (`12 failed, 7 passed`). The other 7 are positive controls that must
+pass there: the explicit-key passthrough, the floor-does-not-cap case, the
+steady-state gate, no-empty-rotations, the rotation-failure-does-not-block case,
+and the healthy-fleet negative control. **15 mutation runs over 14 distinct
+edits, 15 KILLED**, each by a named test, covering: drop the floor; floor at the
+wrong iteration; floor caps instead of raises; floor overrides the explicit key;
+floor fires in steady state (the missing `trainer_step` gate CI caught); read
+the raw dict instead of the trainer's chain (the reviewer's defaulting
+divergence, read through both of its tests — one edit, two runs); no rotation;
+rotate after the spawn; copy instead of move; one generation; rotate empty
+files; skip the stdout capture; let a rotation failure propagate; the revive
+relaunches LIVE workers too. Harness rules held (in-memory restore, dirty-tree
+refusal, post-sweep `git diff` empty and HEAD unchanged).
+
+⚑ Two earlier numbers in this entry were themselves wrong and are corrected
+here. "9 of 17" was wrong in **both** terms: the suites collected **16**, not 17
+(7 + 9), and the count has since moved because the reviewer's finding added
+tests. A miscounted denominator in a red→green claim is the same class of defect
+as everything else in this entry — a number stated rather than read off the
+instrument — so it is recorded rather than quietly overwritten.
+
+⚑ One positive control was also **not the control it claimed to be**:
+`test_the_revive_path_reaches_the_rotation` grepped
+`inspect.getsource(revive_dead_selfplay_processes)` for the substring
+`"_launch_distributed_worker("`. That test could not fail for the reason it
+existed — the substring survives a revive that calls the launcher with the wrong
+index, or behind a branch that never runs, and stays green if the launcher stops
+rotating altogether. It is now behavioural: drive the real revive against a
+corpse at index 3 of a 4-long list and read `worker_03/worker.log.1` off the
+disk. It is consequently **red on `origin/main`**, which is why it moved out of
+the positive-control list and into the red count. Paired with a new negative
+control (a healthy fleet must rotate nothing — the revive runs hundreds of times
+per iteration inside the ingest wait loop) and its own mutation.
+
+`./scripts/lint.sh` (no args) exit 0, read as a real exit code. Suites green
+across the files that touch `distributed_runtime`, `trainable_metrics` or the
+revive path, including `test_distributed_selfplay_backpressure`. **Not reviewed
+by its author** — a separate reviewer follows.
