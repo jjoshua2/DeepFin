@@ -33008,3 +33008,14 @@ Watch continues; the deciding instrument remains the ~5-day arena.
   (exit lag expected). Judged on the probe series, not any window-mean CI.
 - All other watch items clean at iter 173: views 4.31, desync measured-clean
   (0.9972/0), gate shadow noise about zero, holdout_generation 0, disk 50%.
+
+## 2026-08-04 ~19:30 — CORRECTION: the dxg wedge DRAINED without reboot; ratchet relaunched by hand
+
+- Fresh `nvidia-smi` returns in <20s and a NEW CUDA context inits in 1.7s (torch
+  matmul probe) — the 16:00 entry's "none is possible until reboot" is falsified.
+  Unlike 07-25 (a3aa9447e: did NOT drain), this episode recovered on its own;
+  dxg noise persists in dmesg, so treat the device as fragile until the reboot
+  (still planned tonight/tomorrow).
+- `daily_gate_ratchet.sh --max-attempts 0` relaunched by hand ~19:30 — first
+  vs_boot512 row of the 0f888 lineage expected within the hour. The banked
+  iter169 snapshot remains available for a second retro point.
