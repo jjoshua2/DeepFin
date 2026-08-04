@@ -332,6 +332,10 @@ class Engine:
   # searched tree. Surfaced as an `info string` on every increment so a match
   # log carries the evidence; see the `bestmove_fallback_used` property.
         self._bestmove_fallback_used = 0
+  # Times the C search DECLINED the root and the move came from the raw prior
+  # with no simulation. Deliberately separate from the fault counter above —
+  # see `_report_declined_root`.
+        self._prior_only_roots = 0
         self._board = chess.Board()
         self._search_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -1379,6 +1383,7 @@ class Engine:
                 include_ponder=self._options.ponder,
                 allow_terminal_shortcuts=not is_ponder and not limits.is_open_ended(),
             )
+            self._report_declined_root(result)
             if not is_ponder and last_emitted_nodes[0] != result.nodes:
                 self._emit_info(
                     nodes=result.nodes,
@@ -1412,6 +1417,41 @@ class Engine:
             return SearchResult(
                 bestmove_uci=fallback, ponder_uci=None, nodes=0, pv=(), score_cp=0, tbhits=0,
             )
+
+    def _report_declined_root(self, result: SearchResult) -> None:
+        """Announce and count a bestmove the search REFUSED to produce.
+
+        Distinct from `bestmove_fallback_used` on purpose. A raise is a *fault*
+        — evaluator, walker, CUDA, OOM — and `bestmove_fallback_used` is a
+        health signal whose only acceptable value is 0. A declined root is not a
+        fault: `CBoard.is_game_over()` legitimately refuses claimable draws, and
+        threefold is reached through the move stack, so in real match play this
+        fires every time we shuffle into a repetition. Folding the two together
+        would make the fault counter tick during ordinary play and destroy the
+        one thing it is for. Two counters; both emit an `info string`, and both
+        return `nodes=0` so the behavioural proxy sees either.
+        """
+        reason = getattr(result, "root_declined", None)
+        if not isinstance(reason, str):
+            return
+        self._prior_only_roots += 1
+        _println(
+            f"info string prior_only_root={self._prior_only_roots} reason={reason} "
+            f"move={result.bestmove_uci} nodes=0 "
+            "(the C search declined this root; move is the raw policy prior, "
+            "NOT searched)"
+        )
+
+    @property
+    def prior_only_roots(self) -> int:
+        """How many `go`s this process answered from an unsearched root prior.
+
+        Session total, like `bestmove_fallback_used`. Unlike it, a non-zero
+        value is not automatically a defect — it is the count of plies played
+        without search, which is what an operator needs to know when the engine
+        is shuffling in a repetition.
+        """
+        return self._prior_only_roots
 
     def _bestmove_fallback(
         self, board: chess.Board, searchmoves: tuple[str, ...],

@@ -195,6 +195,12 @@ class SearchResult:
   # of `score cp`. Sign: positive = root STM mates, negative = gets mated.
   # Units: UCI moves (ceil(plies/2) with sign).
     score_mate: int | None = None
+  # Set (to a human reason) when the C Gumbel path REFUSED to build a tree for
+  # this root, so `bestmove` is the raw cached policy prior and NO simulation
+  # ran. `nodes` is 0 on such a result. `Engine` turns this into an
+  # `info string` + a counter: an unsearched move that looks like a searched one
+  # in a match log is exactly the class of defect this file keeps producing.
+    root_declined: str | None = None
 
 
 class InfoCallback(Protocol):
@@ -1291,7 +1297,10 @@ class SearchWorker:
         if self._tree is None or self._root_id is None:
   # No tree to read: the C Gumbel path declined this root (see the
   # `root_ids[0] < 0` note in `_run_gumbel_chunk`). The cached root prior is
-  # still in memory and names a far better move than "first legal".
+  # still in memory and names a far better move than "first legal" — but the
+  # move is UNSEARCHED, so it must not be reported as if it were searched.
+  # `nodes` is 0 (the caller has already discarded the fabricated chunk count)
+  # and `root_declined` carries the reason up to `Engine`, which prints it.
             policy_move = self._root_policy_move(board, allowed_root_indices)
             return SearchResult(
                 bestmove_uci=policy_move.uci() if policy_move is not None else "0000",
@@ -1301,6 +1310,7 @@ class SearchWorker:
                 score_cp=q_to_cp(0.5 * (last_value + 1.0)),
                 tbhits=tb_probe.hits if tb_probe is not None else 0,
                 score_mate=None,
+                root_declined=_declined_root_reason(board),
             )
         bestmove_idx, pv_indices = _best_move_and_pv(
             self._tree, self._root_id,
@@ -1838,6 +1848,13 @@ class SearchWorker:
   # stop now and let `_build_final_search_result` answer from the cached root
   # prior instead of walking a -1 node id.
             if self._root_id is None:
+  # `_run_one_chunk` reports `chunk` as completed for the gumbel path whether or
+  # not a single simulation ran (`return ..., chunk`), so the nodes accumulated
+  # for a declined root are fabricated: they made a 0-sim answer print as
+  # `nodes 2048 nps 1024000` and read as an ordinary searched move in a match
+  # log. Discard them — 0 is the truth, and it is what makes this move findable
+  # in a banked per-move CSV.
+                total_nodes = 0
                 break
   # Per-chunk instrumentation hook (offline analysis of the accumulating tree —
   # the states the abort actually decides between). Fired after each chunk with
@@ -2247,6 +2264,28 @@ def _try_tb_root_bestmove(
         tbhits=1,
         score_mate=None,
     )
+
+
+def _declined_root_reason(board: chess.Board) -> str:
+    """Why `CBoard.is_game_over()` refused to expand this root.
+
+    Mirrors `cboard_is_game_over` (`_cboard_impl.h`), which returns true for
+    **claimable** draws — positions that still have legal moves and must still
+    be played. Only the reason string differs between these; the consequence
+    (no tree, answer from the prior) is the same, and naming it is the point:
+    "threefold repetition" tells an operator the engine is shuffling unsearched,
+    which is a different problem from a 50-move counter running out.
+
+    Threefold is reached through the MOVE STACK, so it fires for any position
+    the game actually repeated into — not a rare class in real match play.
+    """
+    if board.is_repetition(3):
+        return "threefold repetition"
+    if board.halfmove_clock >= 100:
+        return f"50-move counter at {board.halfmove_clock}"
+    if board.is_insufficient_material():
+        return "insufficient material"
+    return "CBoard.is_game_over()"
 
 
 def _try_immediate_checkmate(

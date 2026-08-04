@@ -25,7 +25,12 @@ import numpy as np
 import pytest
 
 from chess_anti_engine.mcts.gumbel import GumbelConfig
-from chess_anti_engine.moves import POLICY_SIZE, move_to_index
+from chess_anti_engine.moves import (
+    MODEL_POLICY_SIZE,
+    POLICY_SIZE,
+    compact_policy_index,
+    move_to_index,
+)
 from chess_anti_engine.uci.engine import Engine, EngineOptions, _MIN_HASH_MB
 from chess_anti_engine.uci.protocol import CmdPosition, CmdSetOption, parse_command
 from chess_anti_engine.uci.search import SearchResult, SearchWorker
@@ -47,12 +52,29 @@ _DECLINED_ROOTS = {
 }
 
 
+def _encode_index(dense_idx: int, width: int) -> int:
+    """Dense (4672) action index → the slot a head of ``width`` would put it in."""
+    if int(width) == POLICY_SIZE:
+        return int(dense_idx)
+    if int(width) == MODEL_POLICY_SIZE:
+        return int(compact_policy_index(int(dense_idx)))
+    raise AssertionError(f"unsupported policy width {width}")
+
+
 class _FixedEvaluator:
     """Returns a fixed policy/WDL for any batch; optionally raises after N calls.
 
     Deliberately NOT a ``MagicMock``: ``run_gumbel_root_many_c`` probes the
     evaluator with ``getattr`` for a dozen optional fast paths, and a mock
     answers "yes" to all of them.
+
+    ``width`` selects the policy head's output space. ``POLICY_SIZE`` (4672) is
+    the dense action space; **``MODEL_POLICY_SIZE`` (1858) is what the
+    production `lc0_1858` head actually emits**, and it is the only width for
+    which `_policy_logits_to_full` is not a no-op. A dense-only stub cannot see
+    whether that conversion happened — a mutant that indexes the raw head output
+    leaves every dense test green and returns the first legal move on the real
+    net.
     """
 
     def __init__(
@@ -60,10 +82,11 @@ class _FixedEvaluator:
         *,
         preferred: dict[int, float] | None = None,
         raise_after: int | None = None,
+        width: int = POLICY_SIZE,
     ) -> None:
-        self._logits = np.zeros(POLICY_SIZE, dtype=np.float32)
+        self._logits = np.zeros(int(width), dtype=np.float32)
         for idx, value in (preferred or {}).items():
-            self._logits[idx] = value
+            self._logits[_encode_index(idx, width)] = value
         self._raise_after = raise_after
         self.calls = 0
 
@@ -97,15 +120,23 @@ def _index(board: chess.Board, uci: str) -> int:
 # --- U2: the fallback plays the net's move, not the first legal one ---------
 
 
-def test_search_exception_falls_back_to_root_policy_argmax(capsys) -> None:
+@pytest.mark.parametrize("width", [POLICY_SIZE, MODEL_POLICY_SIZE])
+def test_search_exception_falls_back_to_root_policy_argmax(width: int, capsys) -> None:
     """The audit's repro: the evaluator raises AFTER the root eval is cached.
 
     Red on main: the engine answers `g1h3`. The distinguishing power is the
     whole point — `e2e4` and the first legal move are different moves, so a
     reverted fix cannot pass this by accident.
+
+    Run at BOTH head widths. The 1858 arm is the production one and is the only
+    arm that can see `_policy_logits_to_full`: dropping that call leaves the
+    dense arm green while the compact arm answers `g1h3` — the U2 defect
+    restored on the real net.
     """
     board = chess.Board()
-    evaluator = _FixedEvaluator(preferred={_index(board, "e2e4"): 12.0}, raise_after=1)
+    evaluator = _FixedEvaluator(
+        preferred={_index(board, "e2e4"): 12.0}, raise_after=1, width=width,
+    )
     engine = Engine(worker=_worker(evaluator))
     limits = SearchLimits(deadline_ms=None, max_nodes=64, searchmoves=())
 
@@ -181,11 +212,12 @@ def test_fallback_survives_a_worker_that_raises_in_the_policy_path(capsys) -> No
     assert "root-policy fallback unavailable" in capsys.readouterr().out
 
 
-def test_root_policy_bestmove_honours_searchmoves() -> None:
+@pytest.mark.parametrize("width", [POLICY_SIZE, MODEL_POLICY_SIZE])
+def test_root_policy_bestmove_honours_searchmoves(width: int) -> None:
     board = chess.Board()
     evaluator = _FixedEvaluator(preferred={
         _index(board, "e2e4"): 12.0, _index(board, "d2d4"): 6.0,
-    })
+    }, width=width)
     worker = _worker(evaluator)
     worker._ensure_root_eval_cached(board, None)
 
@@ -233,6 +265,119 @@ def test_run_answers_declined_roots_without_raising(
         assert result.bestmove_uci == "0000", name
 
 
+def test_declined_root_reports_zero_nodes_and_a_reason() -> None:
+    """A move the search REFUSED to produce must not look like a searched one.
+
+    The gumbel path counts ``chunk`` as completed whether or not a simulation
+    ran, so a declined root used to print `nodes 2048 nps 1024000` for zero
+    work — an ordinary searched move as far as any match log is concerned.
+    `nodes == 0` is also the behavioural proxy the ledger's U2 null rests on,
+    so it has to be true.
+    """
+    import threading
+
+    board = chess.Board(_DECLINED_ROOTS["fifty_move_with_legal_moves"])
+    worker = _worker(_FixedEvaluator(), n_walkers=1)
+
+    result = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(400),
+        max_nodes=64,
+    )
+
+    assert result.nodes == 0
+    assert result.root_declined == "50-move counter at 100"
+    assert result.bestmove_uci in {m.uci() for m in board.legal_moves}
+
+
+def test_threefold_reached_through_the_move_stack_is_named() -> None:
+    """The class that actually fires in play: we shuffled into a repetition.
+
+    The engine holds the game history (`position ... moves`), so from this ply
+    on every move is the raw prior with no search until the repetition clears.
+    That must be announced, not silent.
+    """
+    import threading
+
+    board = chess.Board()
+    for uci in ("g1f3", "g8f6", "f3g1", "f6g8") * 2:
+        board.push_uci(uci)
+    assert board.is_repetition(3)
+    assert board.legal_moves.count() > 0
+
+    worker = _worker(_FixedEvaluator(), n_walkers=1)
+    result = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(400),
+        max_nodes=64,
+    )
+
+    assert result.root_declined == "threefold repetition"
+    assert result.nodes == 0
+    assert result.bestmove_uci in {m.uci() for m in board.legal_moves}
+
+
+def test_engine_announces_and_counts_a_declined_root(capsys) -> None:
+    """`Engine` turns the flag into the `info string` a match log can carry."""
+    worker = MagicMock()
+    worker.run = MagicMock(return_value=SearchResult(
+        bestmove_uci="e2c2", ponder_uci=None, nodes=0, pv=("e2c2",),
+        score_cp=0, tbhits=0, root_declined="threefold repetition",
+    ))
+    engine = Engine(worker=worker)
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
+
+    for _ in range(2):
+        engine._run_one_phase(limits, is_ponder=False, board=chess.Board())
+
+    out = capsys.readouterr().out
+    assert "info string prior_only_root=1 reason=threefold repetition" in out
+    assert "info string prior_only_root=2 reason=threefold repetition" in out
+    assert "move=e2c2 nodes=0" in out
+    assert "NOT searched" in out
+    assert engine.prior_only_roots == 2
+  # A declined root is NOT a fault: it must not tick the health counter whose
+  # only acceptable value is zero.
+    assert engine.bestmove_fallback_used == 0
+
+
+def test_prior_only_counter_is_zero_on_a_clean_search(capsys) -> None:
+    """Negative control for the second counter."""
+    worker = MagicMock()
+    worker.run = MagicMock(return_value=SearchResult(
+        bestmove_uci="e2e4", ponder_uci=None, nodes=99, pv=("e2e4",),
+        score_cp=10, tbhits=0,
+    ))
+    engine = Engine(worker=worker)
+    limits = SearchLimits(deadline_ms=None, max_nodes=None, searchmoves=())
+
+    for _ in range(3):
+        engine._run_one_phase(limits, is_ponder=False, board=chess.Board())
+
+    assert engine.prior_only_roots == 0
+    assert "prior_only_root" not in capsys.readouterr().out
+
+
+def test_a_searched_root_carries_no_declined_flag() -> None:
+    """Control: an ordinary position reports real nodes and no reason."""
+    import threading
+
+    board = chess.Board()
+    worker = _worker(_FixedEvaluator(), n_walkers=1)
+
+    result = worker.run(
+        board,
+        stop_event=threading.Event(),
+        deadline=Deadline(2000),
+        max_nodes=32,
+    )
+
+    assert result.root_declined is None
+    assert result.nodes > 0
+
+
 def test_run_on_a_mated_root_returns_immediately() -> None:
     """0 legal moves must not burn the deadline (the walker pool used to spin
     every walker into the terminal root and report ~35k 'nodes')."""
@@ -253,7 +398,10 @@ def test_run_on_a_mated_root_returns_immediately() -> None:
     assert result.score_mate == 0
 
 
-def test_declined_root_plays_the_policy_argmax_not_the_first_legal_move() -> None:
+@pytest.mark.parametrize("width", [POLICY_SIZE, MODEL_POLICY_SIZE])
+def test_declined_root_plays_the_policy_argmax_not_the_first_legal_move(
+    width: int,
+) -> None:
     """A claimable-draw root is playable, so the answer must be the net's move."""
     import threading
 
@@ -261,7 +409,8 @@ def test_declined_root_plays_the_policy_argmax_not_the_first_legal_move() -> Non
     legal = [m.uci() for m in board.legal_moves]
     target = next(m for m in legal if m != legal[0])
     worker = _worker(
-        _FixedEvaluator(preferred={_index(board, target): 12.0}), n_walkers=1,
+        _FixedEvaluator(preferred={_index(board, target): 12.0}, width=width),
+        n_walkers=1,
     )
 
     result = worker.run(
@@ -295,6 +444,31 @@ def test_movestogo_one_gets_almost_the_whole_clock() -> None:
 # past both so the ceiling is the only thing setting the deadline — otherwise
 # these read as controls while testing nothing.
 _CEILING_BINDING_SCALE = 100.0
+
+
+def test_movestogo_one_keeps_the_half_clock_ceiling_in_the_baseline_arm() -> None:
+    """`optimum_fraction <= 0` is the OFF sentinel, and it turns off BOTH the
+    soft abort and the batch-time clock margin — the guard that actually keeps
+    an un-interruptible GPU chunk off the flag. Spending 95% of a 1 s clock with
+    neither behind it reintroduces the time-forfeit class. It would also break
+    that branch's promise to reproduce the pre-time-management allocation
+    exactly, which is what makes it a usable A/B baseline arm."""
+    baseline = limits_from_go(
+        GoArgs(wtime_ms=1_000, movestogo=1),
+        side_to_move_is_white=True,
+        move_overhead_ms=30,
+        optimum_fraction=0.0,
+    )
+    shipped = limits_from_go(
+        GoArgs(wtime_ms=1_000, movestogo=1),
+        side_to_move_is_white=True,
+        move_overhead_ms=30,
+        optimum_fraction=0.7,
+    )
+
+    assert baseline.optimum_ms is None
+    assert baseline.deadline_ms == 470  # bit-identical to origin/main
+    assert shipped.deadline_ms == 670
 
 
 def test_movestogo_above_one_keeps_the_half_clock_ceiling() -> None:

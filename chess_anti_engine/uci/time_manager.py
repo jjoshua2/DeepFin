@@ -168,8 +168,20 @@ def limits_from_go(
   # `> 0` matters: `movestogo 0` is a GUI saying "no repeating control", and the
   # allocation above already ignores it in favour of the long-horizon pieces
   # estimate — exactly the case the ceiling is FOR.
+  #
+  # Gated on `optimum_fraction > 0` for two reasons. (1) Safety: what actually
+  # keeps an un-interruptible GPU chunk off the flag is the batch-time clock
+  # margin, and that is inert exactly when `optimum_ms is None`
+  # (`search.py::_clock_time_margin_ms`) — so in the OFF-sentinel arm a 95%
+  # ceiling spends 920 of a 1000 ms clock with neither the soft abort nor the
+  # overrun guard behind it. (2) Contract: that branch promises to "reproduce
+  # the pre-time-management allocation EXACTLY" so a baseline binary is a true
+  # A/B; moving it at `movestogo=1` would silently make the baseline arm not the
+  # old engine, which is the U4 defect over again.
             last_of_allotment = (
-                args.movestogo is not None and 0 < args.movestogo <= 1
+                optimum_fraction > 0.0
+                and args.movestogo is not None
+                and 0 < args.movestogo <= 1
             )
             ceiling = remaining * (
                 _LAST_MOVE_FRACTION_OF_REMAINING if last_of_allotment
