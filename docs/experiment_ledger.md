@@ -24557,12 +24557,37 @@ Fix: floor the auto value at iteration 1's need, gated three ways.
 
 It reads the **RAMPED** value: under a ramp iteration 1 needs
 `games_per_iter_start`, not `games_per_iter`. The two differ for exactly the
-configs a hand-copied version gets wrong, so the arithmetic moved into one
-`games_per_iter_for_iteration_values()` helper that both the trainer's target and
-this floor call — a backpressure target and the wait it must clear have to share
-their instrument. The test asserts the EXACT floored value (400 on a
-start=400/target=440 ramp), because a `>= need` assertion passes just as happily
-for the wrong `games_per_iter` reading.
+configs a hand-copied version gets wrong, so the floor reproduces the trainer's
+chain WHOLE — `TrialConfig.from_dict(config)` then
+`_games_per_iter_for_iteration(tc, 1)`, which is literally how
+`trainable_phases.py:930` derives `total_games`. The test asserts the EXACT
+floored value (400 on a start=400/target=440 ramp), because a `>= need`
+assertion passes just as happily for the wrong `games_per_iter` reading.
+
+⚑⚑ **METHOD NOTE — sharing the ARITHMETIC is not sharing the INSTRUMENT, and the
+second revision of this fix was a silent no-op inside its own target population.**
+Caught by the independent reviewer, not by me. That revision did split the ramp
+arithmetic into a shared `games_per_iter_for_iteration_values()` helper — and
+then fed it from `config.get("games_per_iter_start", 0)`, while
+`TrialConfig.from_dict` defaults that key to `games_per_iter`
+(`trial_config.py:540`). So for a config with a ramp configured and
+`games_per_iter_start` **absent** — a shape none of the seven tests covered,
+because every one of them set the key explicitly — the trainer waited for 440
+matching games while the floor computed a need of **1**, published
+`max(264, 1) = 264`, and left the deadlock fully in place. Reproduced
+independently on head `47aa5f0b8`: `_first_iteration_games_need({'games_per_iter':
+440, 'games_per_iter_ramp_iters': 10})` returns `1` where the trainer's chain
+returns `440`. The shared-arithmetic helper is now REVERTED (it bought nothing
+and cost the defaulting) and the guard calls the trainer's own two-step chain.
+Two tests enforce it, one at the publish path and one on the helper across six
+key-presence shapes, and both assert against the trainer's chain rather than a
+literal — a literal would encode today's `TrialConfig` default and go stale
+silently. The general form, which generalises the standing *a guard must share
+its criterion's instrument* rule: **the instrument is not just the formula, it is
+the formula plus how every input defaults; a guard that agrees with its criterion
+on the configs somebody wrote tests for and disagrees on the ones they did not is
+the failure the rule names.** ⚑ And the local corollary: seven green tests that
+all set the same key explicitly are seven samples of one shape.
 
 ⚑⚑ **METHOD NOTE — the first revision of this fix asserted "steady state is
 unchanged" and did not enforce it, and the claim was FALSE.** Without the
@@ -24621,18 +24646,43 @@ per-file offset when a log shrinks (`if sz < last`), and it globs the exact name
 
 ### Verification
 
-Red→green: **9 of the 17 new tests fail on `origin/main`** (`04b6e6854`),
-measured rather than assumed; the other 8 are positive controls that must pass
-there — the explicit-key passthrough, the floor-does-not-cap case, the
+Red→green: **12 of the 19 new tests fail on `origin/main`** (`04b6e6854`) —
+6 of 9 in the floor suite, 6 of 10 in the rotation suite — measured rather than
+assumed (`12 failed, 7 passed`). The other 7 are positive controls that must
+pass there: the explicit-key passthrough, the floor-does-not-cap case, the
 steady-state gate, no-empty-rotations, the rotation-failure-does-not-block case,
-and the structural check that the revive relaunches through the launcher. **12 mutations, 12 KILLED**, each by a named
-test, covering: drop the floor; floor at the wrong iteration; floor caps instead
-of raises; floor overrides the explicit key; floor fires in steady state (the
-missing `trainer_step` gate CI caught); no rotation; rotate after the spawn;
-copy instead of move; one generation; rotate empty files; skip the stdout
-capture; let a rotation failure propagate. Harness rules held (in-memory
-restore, dirty-tree refusal, post-sweep `git diff` empty and HEAD unchanged).
+and the healthy-fleet negative control. **15 mutation runs over 14 distinct
+edits, 15 KILLED**, each by a named test, covering: drop the floor; floor at the
+wrong iteration; floor caps instead of raises; floor overrides the explicit key;
+floor fires in steady state (the missing `trainer_step` gate CI caught); read
+the raw dict instead of the trainer's chain (the reviewer's defaulting
+divergence, read through both of its tests — one edit, two runs); no rotation;
+rotate after the spawn; copy instead of move; one generation; rotate empty
+files; skip the stdout capture; let a rotation failure propagate; the revive
+relaunches LIVE workers too. Harness rules held (in-memory restore, dirty-tree
+refusal, post-sweep `git diff` empty and HEAD unchanged).
+
+⚑ Two earlier numbers in this entry were themselves wrong and are corrected
+here. "9 of 17" was wrong in **both** terms: the suites collected **16**, not 17
+(7 + 9), and the count has since moved because the reviewer's finding added
+tests. A miscounted denominator in a red→green claim is the same class of defect
+as everything else in this entry — a number stated rather than read off the
+instrument — so it is recorded rather than quietly overwritten.
+
+⚑ One positive control was also **not the control it claimed to be**:
+`test_the_revive_path_reaches_the_rotation` grepped
+`inspect.getsource(revive_dead_selfplay_processes)` for the substring
+`"_launch_distributed_worker("`. That test could not fail for the reason it
+existed — the substring survives a revive that calls the launcher with the wrong
+index, or behind a branch that never runs, and stays green if the launcher stops
+rotating altogether. It is now behavioural: drive the real revive against a
+corpse at index 3 of a 4-long list and read `worker_03/worker.log.1` off the
+disk. It is consequently **red on `origin/main`**, which is why it moved out of
+the positive-control list and into the red count. Paired with a new negative
+control (a healthy fleet must rotate nothing — the revive runs hundreds of times
+per iteration inside the ingest wait loop) and its own mutation.
 
 `./scripts/lint.sh` (no args) exit 0, read as a real exit code. Suites green
-across the nineteen files that touch `distributed_runtime`, `trainable_metrics`
-or the revive path. **Not reviewed by its author** — a separate reviewer follows.
+across the files that touch `distributed_runtime`, `trainable_metrics` or the
+revive path, including `test_distributed_selfplay_backpressure`. **Not reviewed
+by its author** — a separate reviewer follows.

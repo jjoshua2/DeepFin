@@ -45,6 +45,20 @@ of relying on a suite that happened to cover it.
 ⚑ Expected values here are HARDCODED rather than computed from the helper under
 test. A test that re-derives the number from the same function it is checking
 cannot fail when that function is wrong.
+
+⚑ The ONE exception is
+``test_the_floor_matches_the_trainers_own_need_when_start_is_ABSENT``, and it is
+the exception for the reason the rest of the file is not. Every case above sets
+``games_per_iter_start`` explicitly, and that is precisely the shape in which the
+second revision of this fix was a silent no-op: it read the dict directly with
+``config.get("games_per_iter_start", 0)`` while ``TrialConfig.from_dict``
+defaults that key to ``games_per_iter`` (``trial_config.py:540``). Under a ramp
+with the key absent the trainer waited for 440 and the floor computed a need of
+1, so ``max(264, 1)`` left the deadlock untouched -- inside the fix's own target
+population, uncaught by all seven cases. The quantity under test there is not a
+number, it is *agreement with the trainer's chain*, so the trainer's chain is the
+correct oracle; a literal would encode today's default and go stale silently.
+That test carries its own anti-vacuity assertion instead.
 """
 
 from __future__ import annotations
@@ -56,6 +70,8 @@ import torch
 
 from chess_anti_engine.model import ModelConfig
 from chess_anti_engine.tune.distributed_runtime import _publish_distributed_trial_state
+from chess_anti_engine.tune.trainable_metrics import _games_per_iter_for_iteration
+from chess_anti_engine.tune.trial_config import TrialConfig
 
 
 class _FakeTrainer:
@@ -287,3 +303,74 @@ def test_the_floor_still_fires_on_the_bootstrap_publish(tmp_path: Path) -> None:
         "from cold there is only one sha, so the target must reach iteration "
         "1's full need"
     )
+
+
+def test_the_floor_matches_the_trainers_own_need_when_start_is_ABSENT(
+    tmp_path: Path,
+) -> None:
+    """A ramp with ``games_per_iter_start`` UNSET -- the shape nothing covered.
+
+    RED on the previous head (``47aa5f0b8``), not just on origin/main, and that
+    is the point: the floor was there, it ran, and it did nothing. It read the
+    dict with ``config.get("games_per_iter_start", 0)``, so with the key absent
+    it computed a need of 1 and published ``max(264, 1) == 264`` while the
+    trainer waited for 440. A guard that shares its criterion's ARITHMETIC but
+    not its DEFAULTING is still a different instrument.
+
+    The oracle is the trainer's own chain rather than a literal, deliberately:
+    what must hold is agreement with ``trainable_phases.py``'s ``total_games``,
+    and a literal 440 would silently encode today's ``TrialConfig`` default.
+    """
+    config = {"games_per_iter": 440, "games_per_iter_ramp_iters": 10}
+
+  # The criterion, derived exactly as trainable_phases.py:930 derives it.
+    need = _games_per_iter_for_iteration(TrialConfig.from_dict(config), 1)
+
+  # Anti-vacuity: if the TrialConfig default ever changed such that the need
+  # fell to or below the unfloored ceil(440*0.60)=264, the assertion below
+  # would pass without the floor doing anything. Fail loudly instead.
+    assert need > 264, (
+        "this case only tests the floor while iteration 1's need exceeds the "
+        f"unfloored 264; the trainer's chain now yields {need}, so the case "
+        "needs re-picking rather than quietly passing"
+    )
+
+    bp = _publish(tmp_path, config)
+
+    assert bp["stale_pause_target_games"] == need, (
+        "with games_per_iter_start absent the floor must still reach the need "
+        f"the trainer actually waits for ({need}); reading the raw dict yields "
+        "1 and republishes the unfloored 264, which is the deadlock"
+    )
+
+
+def test_the_need_helper_cannot_diverge_from_the_trainers_chain() -> None:
+    """Pin the helper itself against ``TrialConfig`` defaulting, key by key.
+
+    The publish-path test above proves the floor reaches the need on one shape.
+    This proves the derivation cannot drift on the shapes that differ ONLY in
+    which keys are present -- the axis the divergence lived on. Every case with
+    a key omitted is red against a ``config.get(key, 0)`` implementation.
+
+    ``_first_iteration_games_need`` is imported HERE rather than at module
+    scope on purpose: the symbol does not exist on origin/main, and a
+    module-level import would turn every case in this file into a collection
+    error there. Keeping it local means the file's red-on-main count stays a
+    per-test measurement instead of one import failure standing in for nine.
+    """
+    from chess_anti_engine.tune.distributed_runtime import _first_iteration_games_need
+
+    for config in (
+        {"games_per_iter": 440, "games_per_iter_ramp_iters": 10},
+        {"games_per_iter": 440},
+        {"games_per_iter": 440, "games_per_iter_start": 100, "games_per_iter_ramp_iters": 10},
+        {"games_per_iter": 440, "games_per_iter_start": 100},
+        {"games_per_iter_ramp_iters": 10},
+        {},
+    ):
+        expected = _games_per_iter_for_iteration(TrialConfig.from_dict(config), 1)
+        assert _first_iteration_games_need(config) == expected, (
+            f"{config!r}: the floor's need must be the trainer's need; "
+            "differing only in how an absent key defaults is exactly how the "
+            "previous revision became a no-op"
+        )

@@ -42,7 +42,8 @@ from chess_anti_engine.tune._utils import (
     terminate_process as _stop_process,
 )
 from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
-from chess_anti_engine.tune.trainable_metrics import games_per_iter_for_iteration_values
+from chess_anti_engine.tune.trainable_metrics import _games_per_iter_for_iteration
+from chess_anti_engine.tune.trial_config import TrialConfig
 from chess_anti_engine.utils import sha256_file
 from chess_anti_engine.utils.atomic import atomic_copy2, atomic_write_text
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
@@ -439,18 +440,22 @@ def build_recommended_worker(
 def _first_iteration_games_need(config: dict) -> int:
     """Matching games iteration 1's ingest wait will hold out for.
 
-    Delegates to the SAME helper the trainer's target comes from
-    (``trainable_phases.py`` -> ``_games_per_iter_for_iteration(tc, 1)``), so
-    the backpressure floor and the wait it must clear cannot drift. Under a
-    ramp this is ``games_per_iter_start``, NOT ``games_per_iter`` -- the two
-    differ for exactly the configs a hand-copied version would get wrong.
+    Reproduces the trainer's chain WHOLE -- ``TrialConfig.from_dict(config)``
+    then ``_games_per_iter_for_iteration(tc, 1)`` -- which is exactly how
+    ``trainable_phases.py`` derives ``total_games``. The guard and the
+    criterion it must clear therefore share one instrument end to end, key
+    defaulting included.
+
+    Reading the dict directly is what an earlier revision of this function
+    did, and it was a silent no-op: ``TrialConfig.from_dict`` defaults
+    ``games_per_iter_start`` to ``games_per_iter`` (``trial_config.py:540``),
+    while a ``config.get(..., 0)`` defaults it to 0. Under a ramp with the
+    key absent -- a shape no test covered -- the trainer waited for 440 games
+    and the floor computed a need of 1, so ``max(264, 1)`` left the deadlock
+    fully in place. Sharing the arithmetic is not enough; the guard must
+    share the defaulting too.
     """
-    return games_per_iter_for_iteration_values(
-        games_per_iter=int(config.get("games_per_iter", 0) or 0),
-        games_per_iter_start=int(config.get("games_per_iter_start", 0) or 0),
-        games_per_iter_ramp_iters=int(config.get("games_per_iter_ramp_iters", 0) or 0),
-        iteration_idx=1,
-    )
+    return _games_per_iter_for_iteration(TrialConfig.from_dict(config), 1)
 
 
 def _publish_distributed_trial_state(

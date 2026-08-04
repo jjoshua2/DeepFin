@@ -222,21 +222,104 @@ def test_rotation_failure_does_not_block_the_relaunch(
     assert root_out.exists(), "the worker must still have been launched"
 
 
-def test_the_revive_path_reaches_the_rotation() -> None:
-    """The defect is in the REVIVE, so pin that it goes through the launcher.
+class _DeadProc:
+    """A worker corpse: ``poll()`` returns an exit code, so the revive fires."""
 
-    ``revive_dead_selfplay_processes`` is the site that destroyed the evidence;
-    rotation living in ``_launch_distributed_worker`` only helps if the revive
-    actually calls it. Structural rather than behavioural because the revive
-    needs a live process table, but it fails if someone gives the revive its own
-    spawn path.
+    returncode: int | None = 1
+
+    def poll(self) -> int | None:
+        return 1
+
+
+def test_the_revive_path_reaches_the_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The defect is in the REVIVE, so drive the REVIVE and read the disk.
+
+    ``revive_dead_selfplay_processes`` is the site that destroyed the evidence
+    on 2026-08-04; rotation living in ``_launch_distributed_worker`` only helps
+    if the revive actually reaches it.
+
+    ⚑ This was a ``inspect.getsource`` grep for ``"_launch_distributed_worker("``
+    in a previous revision. That test could not fail for the reason it exists:
+    the substring survives a revive that calls the launcher on the wrong path,
+    passes the wrong worker index, or has the call sitting behind a branch that
+    never runs -- and it stays green if the launcher stops rotating altogether.
+    Drive the real function against a corpse and assert the file moved.
     """
-    import inspect
+    root = tmp_path / "distributed_workers" / "worker_03"
+    root.mkdir(parents=True)
+    (root / "worker.log").write_text("the 00:19-01:47 window\n", encoding="utf-8")
 
-    src = inspect.getsource(dr.revive_dead_selfplay_processes)
-    assert "_launch_distributed_worker(" in src, (
-        "the revive must relaunch through the launcher that rotates logs"
+    def _fake_cmd(**_kwargs: Any) -> list[str]:
+        return ["/bin/true"]
+
+    def _fake_spawn(*, cmd: list[str], log_path: Path, **_kwargs: Any):
+        del cmd, log_path
+        return _StubProc()
+
+    monkeypatch.setattr(dr, "_build_distributed_worker_cmd", _fake_cmd)
+    monkeypatch.setattr(dr, "_spawn_with_reap", _fake_spawn)
+
+  # Index 3 with a 4-long list: the corpse must be revived in its OWN slot, so
+  # a revive that relaunches index 0 rotates the wrong directory and fails.
+    worker_procs: list[Any] = [_StubProc(), _StubProc(), _StubProc(), _DeadProc()]
+
+    revived = dr.revive_dead_selfplay_processes(
+        config={},
+        trial_id="t0",
+        trial_dir=tmp_path,
+        publish_dir=tmp_path / "publish",
+        broker_proc_box=[None],
+        worker_procs=worker_procs,
     )
+
+    assert revived is True, "a corpse in the list must be reported as revived"
+    assert (root / "worker.log.1").read_text(encoding="utf-8") == (
+        "the 00:19-01:47 window\n"
+    ), (
+        "the revive must relaunch through the launcher that rotates logs; the "
+        "previous generation is the evidence the 2026-08-04 revive destroyed"
+    )
+    assert not (root / "worker.log").exists() or (
+        (root / "worker.log").read_text(encoding="utf-8") == ""
+    ), "the live log must start empty after the rotation, not carry the old text"
+
+
+def test_a_healthy_fleet_rotates_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Negative control for the test above.
+
+    ``revive_dead_selfplay_processes`` runs hundreds of times per iteration
+    inside the ingest wait loop. If it rotated on every call, a healthy worker's
+    log would be shredded across generations within one iteration and the two-
+    generation window would cover seconds instead of a run. Without this case a
+    mutation that rotates unconditionally passes the positive test.
+    """
+    root = tmp_path / "distributed_workers" / "worker_00"
+    root.mkdir(parents=True)
+    (root / "worker.log").write_text("healthy\n", encoding="utf-8")
+
+    monkeypatch.setattr(dr, "_build_distributed_worker_cmd", lambda **_k: ["/bin/true"])
+    monkeypatch.setattr(dr, "_spawn_with_reap", lambda **_k: _StubProc())
+
+    worker_procs: list[Any] = [_StubProc()]
+
+    revived = dr.revive_dead_selfplay_processes(
+        config={},
+        trial_id="t0",
+        trial_dir=tmp_path,
+        publish_dir=tmp_path / "publish",
+        broker_proc_box=[None],
+        worker_procs=worker_procs,
+    )
+
+    assert revived is False
+    assert not (root / "worker.log.1").exists(), (
+        "a live worker must not have its log rotated out from under it"
+    )
+    assert (root / "worker.log").read_text(encoding="utf-8") == "healthy\n"
 
 
 def test_rotation_runs_before_the_spawn(
