@@ -32809,3 +32809,44 @@ a separate KILL. Holdout-series records are not comparable across the boundary.
 + PID + 713-shard window manifest) + `hand_copied_state/` (gate_state.json, best.json,
 best/, top-level best.json — T11 hand-copy). The OLD lineage remains intact in trial
 13a9f (protected).
+
+**FIRST-ROW READOUT (2026-08-04 ~02:35, rows 1-2 of trial 0f888) — the bundle is IN
+EFFECT; one cold-start incident, self-resolved, mechanism banked.**
+
+Checks PASSED on effect-level observables (not echoes): T1 `train_views_actual` 4.3035
+∈ [4.0, 4.6] (views 4.3 LIVE); T2 realized SF share 0.45; T3 `feature_dropout_p` 0.0 —
+first time proven in effect; T4 reco `sf_nodes` 50000 (clamp floor, fresh PID); T5
+buffer init `cross_trial=False len(buf)=0` (no donor import); T7
+`shard_recency_exponent=1.0`; P1/P2 both probe sets loaded with build digests
+(001b991bedc3521d / 44887335e5ea4f52), P3 all 11 probe columns present, probe_ms ~580;
+G1 `gate_mode_code` 1.0 (shadow ARMED, first run ever), G2 reason 1
+(insufficient_iters), G3 cur=0 expected, G8 would_demote 0; C5 value-half desync
+detector ALIVE AND CLEAN — `sf_eval_pv_checked_frac` 0.9987 with `orphan_frac` 0.0
+(healthy = checked high + orphan 0; NOT the both-zero unmeasured state); C6 zero
+`[mcts] search guards FIRED` lines; C8 v2 slot protocol attached with no timeouts;
+grad columns present (I9): iter-1 median 3.60, clip 5.2% — the FRESH-state regime, vs
+the old run's warm 8.7/100% always-clip. Boot512's 28 policy tensors verified
+BIT-IDENTICAL in the first publish (the zero_policy_heads pair worked). Fresh-trial
+notes: `holdout_generation` 0 (fresh record — the #326 one-bump handover check applies
+to resumed lineages; the KILL remains generation CLIMBING per-iteration);
+`wdl_regret` 0.197 = the configured fresh-PID start 0.20, T2's <0.10 bound presumes
+the warmed regime; `test_loss` 5.00 on the new lineage's own holdout — not comparable
+to the old 7.238 series, as ledger'd. WATCH: iter-2 adaptive clip rate 92% (hard-clip
+0%) — the un-checkpointed zclip EMA re-learning its scale; I11's pre-registration
+governs any action.
+
+**COLD-START INCIDENT (00:34-~01:5x), self-resolved, no intervention:** from a fresh
+start the stale-game backpressure cap (`ceil(games_per_iter ×
+distributed_prev_model_max_fraction)` = 1870, distributed_runtime.py:494) is BELOW
+iteration 1's matching-games target, and with only ONE published sha ever (boot512's
+2fffc555…) workers self-paused at the cap while the trainer sat in its ingest wait —
+a deadlock the resume path cannot hit (games from the PREVIOUS sha count as matching;
+from cold there is none). worker_00's pause gated its uploader but not its in-flight
+games, so its 5000-position upload buffer overflowed and dropped completed games for
+~50 min (data loss only). The wait broke on the soft/partial path; iteration 1 took
+1901s, published a new sha, counters reset, fleet resumed; iteration 2 ran 722s (in
+the 620-750s historical band) with ingest flowing (2 → 81 shards). FOLLOW-UPS (post
+stabilization, own entries): (a) exempt the bootstrap sha from the stale cap or floor
+the auto target at iteration-1's need — every future cold start hits this; (b) the
+worker pause should gate game STARTS, not uploads — the current shape wastes the tail
+of every pause.
