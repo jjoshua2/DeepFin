@@ -73,14 +73,27 @@ def load_users(path: str | Path) -> dict[str, UserRecord]:
     }
 
 
-def save_users(path: str | Path, users: dict[str, UserRecord]) -> None:
+def save_users(
+    path: str | Path, users: dict[str, UserRecord], *, durable: bool = True,
+) -> None:
+    """Write the users DB.
+
+    ``durable=False`` is for the upload-stats path only, which rewrites this
+    file on EVERY accepted shard and changes nothing but counters
+    (``uploads`` / ``total_bytes`` / ``machines``). Credential changes —
+    :func:`add_user`, :func:`upsert_user`, :func:`set_disabled` — keep the
+    default: losing a just-created password to an unclean shutdown locks a
+    worker out of the fleet, which is not a cost worth ~11 ms per upload.
+    """
     data: dict[str, Any] = {}
     for u, rec in users.items():
   # exclude username field (key is username)
         d = rec.__dict__.copy()
         d.pop("username", None)
         data[u] = d
-    atomic_write_text(Path(path), json.dumps(data, indent=2, sort_keys=True))
+    atomic_write_text(
+        Path(path), json.dumps(data, indent=2, sort_keys=True), durable=durable,
+    )
 
 
 def record_upload(
