@@ -557,7 +557,6 @@ class TransformerBlock(nn.Module):
         num_heads: int,
         *,
         ffn_mult: float = 2,
-        dropout: float = 0.0,
         use_nla: bool = False,
         qkv_projection: str = "fused",
         use_qk_rmsnorm: bool = False,
@@ -568,7 +567,6 @@ class TransformerBlock(nn.Module):
         self.embed_dim = int(embed_dim)
         self.num_heads = int(num_heads)
         self.head_dim = self.embed_dim // self.num_heads
-        self.dropout = float(dropout)
         self.residual_branch_scale = float(residual_branch_scale)
 
         self.qkv_projection = str(qkv_projection).lower().strip()
@@ -632,7 +630,6 @@ class TransformerBlock(nn.Module):
         out = F.scaled_dot_product_attention(
             q, k, v,
             attn_mask=smolgen_bias,
-            dropout_p=self.dropout if self.training else 0.0,
         )  # (B,H,T,hd)
         out = out.transpose(1, 2).contiguous().view(b, t, d)  # (B,T,D)
         out = self.out_proj(out)
@@ -652,7 +649,6 @@ class TransformerConfig:
     embed_dim_by_layer: tuple[int, ...] | list[int] | None = None
     ffn_mult: float = 2
     ffn_mult_by_layer: tuple[float, ...] | list[float] | None = None
-    dropout: float = 0.0
     use_smolgen: bool = True
     use_nla: bool = False
     use_qk_rmsnorm: bool = False
@@ -980,7 +976,6 @@ class ChessNet(nn.Module):
                     self.embed_dim_by_layer[layer_idx],
                     cfg.num_heads,
                     ffn_mult=self.ffn_mult_by_layer[layer_idx],
-                    dropout=cfg.dropout,
                     use_nla=cfg.use_nla,
                     qkv_projection=self.qkv_projection,
                     use_qk_rmsnorm=cfg.use_qk_rmsnorm,
