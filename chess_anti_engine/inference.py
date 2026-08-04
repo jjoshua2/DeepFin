@@ -27,6 +27,7 @@ from chess_anti_engine.broker_hang import (
     DEFAULT_HANG_ABORT_S as _DEFAULT_HANG_ABORT_S,
     HANG_ABORT_ENV as _HANG_ABORT_ENV,
     BrokerHangWatchdog,
+    pin_nvml_cuda_check,
     resolve_boot_hang_abort_seconds,
     resolve_hang_abort_seconds,
 )
@@ -4109,6 +4110,11 @@ def main() -> int:
         _add_hang_abort_arg(ap)
         args = ap.parse_args()
         args.mode = "per-trial"
+
+    # Keep the CUDA availability probe off the driver-init path; see
+    # `pin_nvml_cuda_check`. Matters here for a broker launched directly rather
+    # than through scripts/train.sh, which exports the same variable.
+    pin_nvml_cuda_check()
 
     hang_abort_seconds = resolve_hang_abort_seconds(float(args.hang_abort_seconds))
 

@@ -35,6 +35,20 @@ AUTO_BEST_REGRET_DIR="${TRAIN_AUTO_BEST_REGRET_DIR:-data/best_regret_checkpoints
 
 cd "$(dirname "$0")/.."
 
+# ⚑ LOAD-BEARING (audit R3). torch's `cuda.is_available()` takes one of two
+# paths: with this set it asks NVML, without it it calls `cudaGetDeviceCount`,
+# which initializes the CUDA driver via `cuInit` -- the call that never returns
+# on a wedged WSL2 dxg bridge. So without this, merely *probing whether a GPU
+# exists* is a hang point, before any watchdog stage is open.
+#
+# It was set in the live run only because it was inherited from the operator's
+# interactive shell; it appeared in no tracked file, so a run started from
+# systemd/cron would have lost it silently. Exported here so every child --
+# ray, the trainable, the broker and every worker -- gets it. The worker and
+# broker entry points also `setdefault` it in code (`pin_nvml_cuda_check`) for
+# the case where they are launched directly rather than through this script.
+export PYTORCH_NVML_BASED_CUDA_CHECK="${PYTORCH_NVML_BASED_CUDA_CHECK:-1}"
+
 clear_pause_markers() {
     if [ "${TRAIN_KEEP_PAUSE_MARKERS:-0}" = "1" ]; then
         return 0
