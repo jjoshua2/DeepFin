@@ -32950,3 +32950,23 @@ remains a candidate** — the repro proves the failure mode exists, not that it 
 night. Deploy restart-gated. Reviewer note kept: the author deleted its own ASGI-poller
 test after proving it passes on broken code (a poller on the blocked loop cannot time the
 blockage) — a gate that cannot fail, correctly removed.
+
+### 2026-08-04 ~12:0x — WATCH addendum, trial 0f888 iter ~148: nodes ramp started; gate shadow gone negative
+
+**Milestone: the PID nodes ramp is live.** Regret pinned at its 0.0075 floor since ~iter 128;
+`sf_nodes` 50000 → ~107k over iters ~143-148; winrate EMA 0.624 and falling toward the 0.5
+target; iteration time up ~200s → 531s (SF cost, expected). Difficulty is now moving on the
+nodes axis exactly per DIFFICULTY = REGRET + NODES.
+
+**Gate shadow, first sustained negative window:** `gate_delta_elo` drifted −8.1 → −16.1 →
+−13.3 over iters 141-148, CI excluding zero on 4 consecutive rows (iter 148: −13.3
+[−25.6, −1.0]); `gate_sample_confound_elo` ~0. Two readings, stated without a verdict:
+(a) the onset coincides with the nodes ramp, which changes the selfplay data regime — a
+confound the gate's own confound column does not capture; (b) this instrument is WATCH-ONLY
+under the bundle pre-registration — the deciding yardstick remains the ~5-day ratchet arena
+Elo(published − boot512), and no action rule is armed on the shadow. Next checks: whether
+the trend persists once the ramp settles, and `gate_would_demote` behavior.
+
+**A8 corroborated live:** the dole knobs echo in config (`opening_fen_dole_per_iter: 1`) but
+the runtime log contains ZERO dole lines — "working silently" and "never firing" are
+indistinguishable, which is exactly audit finding A8 (task #148).
