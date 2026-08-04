@@ -76,54 +76,6 @@ def _refuse_mixed_identity_markers(
         )
 
 
-def balance_wdl(
-    samples: list[ReplaySample],
-    rng: np.random.Generator,
-    *,
-    max_ratio: float = 1.5,
-) -> list[ReplaySample]:
-    """Downsample the majority WDL class to prevent value head collapse.
-
-    If one WDL outcome dominates (e.g. 90% losses early in training), the
-    value head learns to predict that outcome everywhere, which poisons MCTS.
-
-    This caps any single WDL class to at most ``max_ratio`` times the size of
-    the smallest non-empty class. Default 1.5 keeps roughly balanced data
-    while still allowing the model to see a natural skew.
-
-    Returns a new list (does not modify the input).
-    """
-    if not samples:
-        return samples
-
-    buckets: dict[int, list[ReplaySample]] = {0: [], 1: [], 2: []}
-    for s in samples:
-        wdl = int(s.wdl_target)
-        if wdl in buckets:
-            buckets[wdl].append(s)
-
-    sizes = [len(v) for v in buckets.values() if len(v) > 0]
-    if len(sizes) <= 1:
-        return samples  # only one class present, nothing to balance
-
-    min_size = min(sizes)
-    cap = max(1, int(min_size * max_ratio))
-
-    out: list[ReplaySample] = []
-    for wdl_class in (0, 1, 2):
-        bucket = buckets[wdl_class]
-        if len(bucket) <= cap:
-            out.extend(bucket)
-        else:
-            idxs = rng.choice(len(bucket), size=cap, replace=False)
-            out.extend([bucket[int(i)] for i in idxs])
-
-    # Index permutation instead of rng.shuffle(list): typeshed's ArrayLike
-    # bound for shuffle flip-flops across numpy versions.
-    order = rng.permutation(len(out))
-    return [out[int(i)] for i in order]
-
-
 class ArrayReplayBuffer:
     def __init__(self, capacity: int, *, rng: np.random.Generator):
         self.capacity = int(capacity)
