@@ -894,7 +894,7 @@ def test_gate_observes_the_iteration_even_when_training_is_skipped(
         gate_prev_w=50, gate_prev_d=10, gate_prev_l=40,
     )
     result = _run_training_and_gating(
-        tc=tc, trainer=_StubTrainer(), buf=[], holdout_buf=[],
+        tc=tc, trainer=_StubTrainer(), buf=[], holdout_buf=[], holdout_frozen=True,
         config={}, model_cfg=None, device="cpu",
         ds=DifficultyState(wdl_regret=0.089, sf_nodes=50_000),
         sims=64, sp=sp,
@@ -931,7 +931,8 @@ def test_running_the_gating_phase_advances_the_hold_latch(tmp_path: Path) -> Non
     )
     result = _run_training_and_gating(
         tc=TrialConfig(batch_size=512), trainer=_StubTrainer(),
-        buf=[], holdout_buf=[], config={}, model_cfg=None, device="cpu",
+        buf=[], holdout_buf=[], holdout_frozen=True, config={}, model_cfg=None,
+        device="cpu",
         ds=DifficultyState(wdl_regret=0.089, sf_nodes=50_000), sims=64, sp=sp,
         positions_ingested=0, imported_samples_this_iter=0,
         gate=gate, gate_match_idx=0,
@@ -2521,7 +2522,8 @@ def test_invalid_sample_is_recorded_but_excluded_from_the_window(
     )
     result = _run_training_and_gating(
         tc=TrialConfig(batch_size=512), trainer=_StubTrainer(),
-        buf=[], holdout_buf=[], config={}, model_cfg=None, device="cpu",
+        buf=[], holdout_buf=[], holdout_frozen=True, config={}, model_cfg=None,
+        device="cpu",
         ds=DifficultyState(wdl_regret=0.089, sf_nodes=50_000), sims=64, sp=sp,
         positions_ingested=0, imported_samples_this_iter=0,
         gate=gate, gate_match_idx=0,
@@ -2628,6 +2630,7 @@ def test_selfplay_phase_forwards_the_hold_to_the_publish(
         _shard_paths: ClassVar[list[Path]] = []
         def flush(self) -> None: ...
         def __len__(self) -> int: return 0
+        def _snapshot_shards(self) -> list[Path]: return list(self._shard_paths)
 
     controller = _controller(tmp_path)
     controller.hold_path = tmp_path / "gate_promoted_model.pt"
@@ -3665,7 +3668,8 @@ def test_the_gating_phase_puts_the_measured_difficulty_gap_on_the_sample(
     )
     result = _run_training_and_gating(
         tc=TrialConfig(batch_size=512), trainer=_StubTrainer(),
-        buf=[], holdout_buf=[], config={}, model_cfg=None, device="cpu",
+        buf=[], holdout_buf=[], holdout_frozen=True, config={}, model_cfg=None,
+        device="cpu",
         ds=DifficultyState(wdl_regret=0.09, sf_nodes=500_000,
                            regret_fit_slope=10.886),
         sims=64, sp=sp, positions_ingested=0, imported_samples_this_iter=0,
@@ -3971,7 +3975,8 @@ def test_a_failing_gate_state_write_is_counted_and_reported(
         for _ in range(3):
             result = _run_training_and_gating(
                 tc=TrialConfig(batch_size=512), trainer=_StubTrainer(),
-                buf=[], holdout_buf=[], config={}, model_cfg=None, device="cpu",
+                buf=[], holdout_buf=[], holdout_frozen=True, config={}, model_cfg=None,
+        device="cpu",
                 ds=DifficultyState(wdl_regret=0.089, sf_nodes=50_000),
                 sims=64, sp=sp, positions_ingested=0,
                 imported_samples_this_iter=0, gate=gate, gate_match_idx=0,
@@ -4688,3 +4693,78 @@ def test_the_first_publish_of_a_process_does_not_re_anchor(tmp_path: Path) -> No
         decision=DECISION_PROMOTE, reason="promote_no_regression",
         mode=MODE_ENFORCE, games_cur=197, games_prev=38))
     assert revived.anchor_refresh_is_due() is True
+
+
+# --------------------------------------------------------------------------
+# audit L3: the selfplay phase must read the shard list through the buffer's
+#           LOCKED accessor, not the raw deque.
+# --------------------------------------------------------------------------
+def test_the_selfplay_phase_never_touches_the_raw_shard_deque(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED on main, which iterates ``buf._shard_paths`` directly, twice.
+
+    ``_shard_paths`` is guarded by ``DiskReplayBuffer._prefetch_lock`` and the
+    buffer's own prefetch thread iterates it under that lock; ``_snapshot_shards()``
+    is the accessor that exists for exactly this read. Unlocked iteration is
+    safe today only because the sole mutator happens to run on this same
+    thread -- the A18 shape. This buffer makes the unlocked read OBSERVABLE
+    rather than asserting on source text: the attribute raises, so the test
+    fails for the reason it exists.
+    """
+    import chess_anti_engine.tune.trainable_phases as phases
+
+    monkeypatch.setattr(phases, "_publish_iteration_model", lambda **kw: "sha-pub")
+    monkeypatch.setattr(phases, "_ensure_distributed_workers", lambda **kw: [])
+    monkeypatch.setattr(phases, "_ensure_inference_broker", lambda **kw: None)
+    monkeypatch.setattr(
+        phases, "_ingest_distributed_selfplay",
+        lambda **kw: {**_empty_ingest_summary(), "matching_games": 12},
+    )
+  # The sibling export walks the *new* shard paths; nothing about this test
+  # concerns it, and it would try to read files that do not exist.
+    monkeypatch.setattr(phases, "_export_selfplay_shards_for_siblings", lambda **kw: None)
+
+    class _LockedOnlyBuf:
+        capacity = 1000
+
+        def __init__(self) -> None:
+            self._paths = [tmp_path / "shard_0000.zarr"]
+            self.snapshot_calls = 0
+
+        @property
+        def _shard_paths(self) -> list[Path]:
+            raise AssertionError(
+                "unlocked read of the raw _shard_paths deque (audit L3); "
+                "use _snapshot_shards()"
+            )
+
+        def _snapshot_shards(self) -> list[Path]:
+            self.snapshot_calls += 1
+            return list(self._paths)
+
+        def flush(self) -> None: ...
+        def enforce_window(self) -> None: ...
+        def __len__(self) -> int: return 500
+
+    buf = _LockedOnlyBuf()
+    sp, _sha, _win = phases._run_selfplay_phase(
+        tc=TrialConfig(batch_size=512), config={}, trainer=_StubTrainer(),
+        model_cfg=None, buf=buf, holdout_buf=[], holdout_frozen=True,
+        rng=np.random.default_rng(0),
+        distributed_dirs={"publish_dir": tmp_path, "inbox_dir": tmp_path,
+                          "processed_dir": tmp_path},
+        distributed_server_root=tmp_path, distributed_worker_procs=[],
+        broker_proc_box=[None], prev_published_model_sha="sha-prev",
+        ds=DifficultyState(wdl_regret=0.089, sf_nodes=50_000), sims=64,
+        iteration_idx=7, iteration_zero_based=7, trial_id="t0",
+        trial_dir=tmp_path, selfplay_shards_dir=tmp_path,
+        replay_shard_dir=tmp_path, current_window=1000,
+        in_salvage_startup_grace=False, hold=None,
+    )
+
+    assert sp.should_retry is False, "the phase must run past the retry early-out"
+    assert buf.snapshot_calls == 2, (
+        "both shard-list reads (before ingest, and the new-shard diff after) "
+        f"must go through the locked accessor; saw {buf.snapshot_calls}"
+    )

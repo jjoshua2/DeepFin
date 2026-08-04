@@ -226,6 +226,24 @@ class AsyncTestEval:
                     self._exc = exc
             self._result_event.set()
 
+    def has_inflight(self) -> bool:
+        """True when a ``start()`` is outstanding and ``collect()`` has work.
+
+        ``collect()`` blocks on ``_result_event`` for its FULL timeout when
+        nothing was started, so a caller that conditionally skips ``start()``
+        must not blindly call it on the next iteration -- 120s of dead wall
+        clock per skipped iteration, charged to the training loop. The
+        conditions that skip a start already exist (a holdout below
+        ``batch_size``, and the unfrozen-holdout skip added for audit L2), so
+        this predicate is what makes skipping cheap rather than expensive.
+
+        The very first skip is harmless without it -- ``_thread`` is still
+        None because it is created lazily inside ``start()``, and ``collect()``
+        short-circuits on that -- but any skip AFTER a successful start is not.
+        """
+        with self._lock:
+            return self._inflight_iter >= 0
+
     def collect(self, timeout: float = 120.0) -> tuple[Any, int]:
         """Wait for the in-flight eval and return ``(metrics, source_iter)``.
 

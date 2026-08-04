@@ -458,6 +458,39 @@ def _first_iteration_games_need(config: dict) -> int:
     return _games_per_iter_for_iteration(TrialConfig.from_dict(config), 1)
 
 
+def _seed_dole_gate_claims_iteration(
+    *, server_root: Path, trial_id: str, training_iteration: int,
+) -> bool:
+    """True when ``seed_dole_gate.json`` already records this iteration claimed.
+
+    Split out of ``_publish_distributed_trial_state`` so the read can be
+    ORDERED before the manifest write while its use stays with the rearm block
+    (audit L5) -- and so the ordering is testable without driving a publish.
+
+    The server writes the gate with tmp+rename, so this unlocked cross-process
+    read can never see a torn file; what it CAN see is a claim that landed
+    after the caller made this iteration visible, which is what the ordering
+    prevents. Suffix matching on the trial key and the fail-closed ``except``
+    are carried over verbatim from the inline version.
+    """
+    gate_path = Path(server_root) / "seed_dole_gate.json"
+    try:
+        if not gate_path.exists():
+            return False
+        gate = json.loads(gate_path.read_text(encoding="utf-8"))
+        tid = str(trial_id or "").strip()
+        last = gate.get(tid)
+        if last is None and tid:
+            for k, v in gate.items():
+                ks = str(k)
+                if ks == tid or ks.endswith(tid) or tid.endswith(ks):
+                    last = v
+                    break
+        return int(last if last is not None else -1) == int(training_iteration)
+    except Exception:
+        return False
+
+
 def _publish_distributed_trial_state(
     *,
     trainer: Trainer,
@@ -678,6 +711,30 @@ def _publish_distributed_trial_state(
             "version": str(PACKAGE_VERSION),
         }
 
+  # READ THE GATE BEFORE THE MANIFEST IS WRITTEN (audit L5). The rearm block
+  # below asks "was this iteration already claimed", and the manifest write on
+  # the next statement is the ONLY way a worker learns this iteration exists.
+  # Read afterwards, that predicate silently became "claimed at any point,
+  # including 400us ago BECAUSE OF THIS VERY PUBLISH": a worker polls the fresh
+  # manifest, wins claim(N), the server persists the gate, and the read then
+  # arms a rearm that a SECOND worker consumes -- handing the whole seed list
+  # out twice for one iteration, the exact double-dole the block exists to
+  # prevent. The server consumes the rearm under ``_SeedDoleGate._lock`` and
+  # this producer never held it, so no care on the consumer side can close it.
+  #
+  # Hoisting is the fix rather than locking, because before the manifest exists
+  # any claim recorded in the gate is NECESSARILY from an earlier publish -- a
+  # previous process (mid-iteration resume) or an earlier attempt at this same
+  # iteration (retry republish). That is exactly the set of cases that should
+  # arm, so ordering buys the discriminator for free. THE ADJACENCY IS
+  # LOAD-BEARING: anything inserted between this read and the write below
+  # reopens the window it closes.
+    seed_dole_gate_claimed = _seed_dole_gate_claims_iteration(
+        server_root=Path(server_root),
+        trial_id=str(trial_id),
+        training_iteration=int(training_iteration),
+    )
+
     atomic_write_text(
         publish_dir / "manifest.json",
         json.dumps(manifest, sort_keys=True, indent=2),
@@ -688,25 +745,15 @@ def _publish_distributed_trial_state(
     # stay burned). Do NOT arm on every normal selfplay open — that races with
     # multi-worker first-claim and double-doles (PR #209 review). Consumed under
     # the gate lock in server claim().
+    #
+    # The gate read this decision rests on is taken ABOVE, BEFORE the manifest
+    # write -- see the comment there for why the ordering is the whole fix
+    # (audit L5). Everything else about the predicate is unchanged.
     rearm_path = publish_dir / "seed_dole_rearm.json"
     dole_n = int(config.get("opening_fen_dole_per_iter", 0) or 0)
     arm_rearm = False
     if (not pause_selfplay) and dole_n > 0 and manifest.get("opening_fen_list"):
-        gate_path = Path(server_root) / "seed_dole_gate.json"
-        try:
-            if gate_path.exists():
-                gate = json.loads(gate_path.read_text(encoding="utf-8"))
-                tid = str(trial_id or "").strip()
-                last = gate.get(tid)
-                if last is None and tid:
-                    for k, v in gate.items():
-                        ks = str(k)
-                        if ks == tid or ks.endswith(tid) or tid.endswith(ks):
-                            last = v
-                            break
-                arm_rearm = int(last if last is not None else -1) == int(training_iteration)
-        except Exception:
-            arm_rearm = False
+        arm_rearm = seed_dole_gate_claimed
     if arm_rearm:
         atomic_write_text(
             rearm_path,
@@ -1812,7 +1859,11 @@ def _process_shard_with_prev_cap(
     ``effective_accepted`` (drops prev SHA once its quota is reached).
 
     ``prev_matching_games_box`` is a single-element list used as a mutable counter
-    shared between the prefetcher-drain and the poll loop.
+    carried across the prefetcher-drain and the poll loop. Both of those run on
+    the TRAINER THREAD, which is the only writer of this counter, of ``summary``
+    and of ``effective_accepted`` — the box is a closure cell, NOT a cross-thread
+    handoff, and none of these three unguarded read-modify-writes is safe against
+    one (audit L6). The prefetcher thread only decodes; registration stays here.
     """
     games_before = summary["matching_games"]
     shard_sha = _process_shard(
