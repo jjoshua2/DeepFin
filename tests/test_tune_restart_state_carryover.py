@@ -472,15 +472,17 @@ def test_the_restart_delete_check_is_wired_into_train_trial() -> None:
 
     seed = _call_to("seed_yaml_reload_baseline")
     keys_arg = {kw.arg: kw.value for kw in seed.keywords}.get("keys")
-    assert isinstance(keys_arg, ast.Attribute) and keys_arg.attr == "restored_yaml_keys", (
+    assert isinstance(keys_arg, ast.Attribute), (
         "the startup check must compare against the RESTORED key set; anything "
         "else re-reads what this process already loaded and can never differ"
     )
+    assert keys_arg.attr == "restored_yaml_keys", ast.dump(keys_arg)
 
     save = _call_to("_save_trial_checkpoint")
     banked = {kw.arg: kw.value for kw in save.keywords}.get("yaml_keys")
     assert isinstance(banked, ast.Call), "yaml_keys must be banked at every checkpoint"
-    assert isinstance(banked.func, ast.Name) and banked.func.id == "last_reload_yaml_keys", (
+    assert isinstance(banked.func, ast.Name), ast.dump(banked)
+    assert banked.func.id == "last_reload_yaml_keys", (
         "the banked set must come from the reloader's own record of the last "
         "SUCCESSFUL parse, not from config (which carries ghost keys)"
     )
