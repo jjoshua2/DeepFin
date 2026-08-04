@@ -93,9 +93,21 @@ def test_migration_carries_counters_and_strips_them_from_the_credential_file(
 def test_migration_does_not_double_count(tmp_path: Path) -> None:
     """The requirement that makes this safe to run at every startup.
 
-    Two mechanisms, and the test drives both: the stats file short-circuits a
-    repeat, AND the carry is an ASSIGNMENT rather than an addition, so even a
-    migration forced to run twice against the legacy source cannot inflate.
+    Two mechanisms make it safe and either alone would suffice: the stats file
+    short-circuits a repeat, and the carry is an ASSIGNMENT rather than an
+    addition. What this test pins is their CONJUNCTION — the totals are
+    unchanged after repeat migrations, both with the short-circuit in play and
+    with it defeated.
+
+    ⚑ It does NOT separate them, and no test can. The `stats_p.exists()`
+    short-circuit means migration only ever runs against a non-existent stats
+    file, so deleting that file to defeat the short-circuit also deletes
+    anything there was to add to: assignment and addition are indistinguishable
+    in the only scenario migration reaches. Concretely, rewriting the carry to
+    ADD to existing stats SURVIVES this suite (reviewer's MU-D). That is not a
+    gap, because the redundancy is the point — but the earlier wording here
+    claimed a decomposition the test does not deliver, and on a migration that
+    runs at every startup the comment should not over-promise.
     """
     users_path = tmp_path / "users.json"
     stats_path = user_stats_path_for(users_path)
@@ -106,12 +118,12 @@ def test_migration_does_not_double_count(tmp_path: Path) -> None:
         assert migrate_user_stats(users_path, stats_path) == 0  # short-circuit
     assert load_user_stats(stats_path)["u"].uploads == 7
 
-    # Now force the second mechanism: restore the legacy source and delete the
-    # stats file, so the short-circuit cannot help.
+    # Second leg: restore the legacy source and delete the stats file, so the
+    # short-circuit cannot help and the migration genuinely re-runs.
     _legacy_users_json(users_path, uploads=7)
     stats_path.unlink()
     assert migrate_user_stats(users_path, stats_path) == 1
-    assert load_user_stats(stats_path)["u"].uploads == 7, "assignment, not addition"
+    assert load_user_stats(stats_path)["u"].uploads == 7, "totals must not inflate"
 
 
 def test_migration_survives_a_crash_between_its_two_writes(tmp_path: Path) -> None:

@@ -391,10 +391,23 @@ def test_users_returns_a_defensive_copy(tmp_path: Path) -> None:
     one keystroke away and would have poisoned the cache without touching the
     file — which the stamp design is structurally blind to: no write, no new
     inode, no re-read, wrong data forever.
+
+    ⚑ BOTH RETURN PATHS, because they are separate copies and each leaks on its
+    own. The CACHED-HIT path is what finding C was about — it used to
+    `return self._users` by reference — and guarding only the miss let
+    `if self._stamp == stamp: return dict(self._users)` be reverted with the
+    whole suite still green. The MISS path leaks too, which is less obvious: it
+    stores `self._users = users` and then returns that same object, so handing
+    it back uncopied is the identical hazard one call earlier.
+
+    Measured, not assumed — each copy reverted alone fails this test:
+      * hit-path only  -> FAILED (the reviewer's MU-A, which used to survive)
+      * miss-path only -> FAILED
     """
     _seed(tmp_path)
     cache = auth_mod.VerifiedCredentialCache(tmp_path / "users.json")
 
+    # Leg 1 — the MISS path (first call, nothing cached yet).
     first = cache.users()
     first.pop("u")
     first["intruder"] = UserRecord(
@@ -404,4 +417,17 @@ def test_users_returns_a_defensive_copy(tmp_path: Path) -> None:
     second = cache.users()
     assert "u" in second, "a caller emptied the cached DB through the returned dict"
     assert "intruder" not in second, "a caller injected a credential into the cache"
+
+    # Leg 2 — the CACHED-HIT path. `second` above was served from the cache
+    # (the file has not changed), so mutating it is the exact hazard.
+    reads_before = cache.db_reads
+    second.pop("u")
+    second["intruder"] = UserRecord(
+        username="intruder", salt_b64="x", hash_b64="y", iterations=1,
+    )
+
+    third = cache.users()
+    assert cache.db_reads == reads_before, "not a cache hit; this leg proves nothing"
+    assert "u" in third, "a caller emptied the cache through a HIT-path result"
+    assert "intruder" not in third, "a caller injected a credential through a HIT"
     assert cache.verify("u", "p") is not None
