@@ -1,0 +1,488 @@
+"""What a restart carries, and what it used to drop on the floor.
+
+Audit T1 (the opponent-strength EMA dies at every process start) and T10
+(``salvage-export`` copies the checkpoint dir and leaves the trial's durable
+state behind, so a salvage restart begins with an empty promotion-gate window
+while an ordinary ``--resume`` keeps its own).
+
+Both are the house defect: a value that is written, loaded, and then ignored.
+So every test here asserts the value ARRIVES on the production path, not that a
+function returns something.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+import torch
+from torch import nn
+
+from chess_anti_engine.tune._utils import (
+    DURABLE_BEST_STATE,
+    DURABLE_GATE_STATE,
+    SIDECAR_TRIAL_META,
+    load_optional_json,
+)
+from chess_anti_engine.tune.salvage import _export_one_seed, _ReplayPlan, _SeedExportPlan
+from chess_anti_engine.tune.trainable import (
+    _load_best_state,
+    _startup_gate_state,
+    _startup_opp_strength_ema,
+)
+from chess_anti_engine.tune.trainable_config_ops import (
+    _reload_yaml_into_config,
+    reset_yaml_reload_key_tracking,
+    seed_yaml_reload_baseline,
+)
+from chess_anti_engine.tune.trainable_init import (
+    _apply_restored_trial_meta,
+    _restore_from_salvage_pool,
+)
+from chess_anti_engine.tune.trainable_report import _save_trial_checkpoint
+from chess_anti_engine.tune.trial_config import RestoreResult
+
+
+# --- audit T1: the opponent-strength EMA ----------------------------------
+
+
+def _save_checkpoint(
+    ckpt_dir: Path, *, opp_strength_ema: float, yaml_keys: list[str] | None = None,
+) -> None:
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    _save_trial_checkpoint(
+        trainer=SimpleNamespace(save=lambda p: Path(p).write_bytes(b"weights")),
+        buf=SimpleNamespace(flush=lambda: None),
+        ckpt_dir=ckpt_dir,
+        rng=np.random.default_rng(0),
+        trial_id="t1",
+        trial_dir=ckpt_dir.parent,
+        config={"optimizer": "aurora"},
+        base_seed=7,
+        restore=RestoreResult(),
+        iteration_idx=1985,
+        current_window=1_500_000,
+        holdout_buf=None,
+        holdout_frozen=True,
+        holdout_generation=2,
+        holdout_ruler="v1:full_pass:0123456789abcdef",
+        opp_strength_ema=opp_strength_ema,
+        yaml_keys=yaml_keys or [],
+        Checkpoint=SimpleNamespace(from_directory=lambda d: d),
+    )
+
+
+def test_the_checkpoint_carries_the_ema_and_the_restore_reads_it(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Round trip through the two production functions a resume runs: the
+    writer that builds trial_meta.json and the reader that fills RestoreResult.
+    """
+    monkeypatch.setattr(
+        "chess_anti_engine.tune.trainable_report.save_holdout_rows",
+        lambda **_kw: None,
+    )
+    ckpt_dir = tmp_path / "checkpoint_001985"
+    _save_checkpoint(ckpt_dir, opp_strength_ema=327.1906)
+
+    meta = load_optional_json(ckpt_dir / SIDECAR_TRIAL_META)
+    assert meta is not None
+    assert meta["opp_strength_ema"] == 327.1906
+
+    rr = RestoreResult()
+    _apply_restored_trial_meta(rr, meta)
+    assert rr.opp_strength_ema == 327.1906
+
+
+def test_a_resume_continues_the_ema_instead_of_re_seeding_it() -> None:
+    """The line that discarded it. ``_run_pid_and_eval`` re-seeds the series
+    from this iteration's raw opponent_strength when it is handed 0.0, so
+    anything that zeroes this value IS the re-seed."""
+    resumed = _startup_opp_strength_ema(
+        restore=RestoreResult(startup_source="checkpoint", opp_strength_ema=327.1906),
+        best_json_ema=1.0,
+    )
+    assert resumed == 327.1906
+    assert resumed != 0.0
+
+
+def test_best_json_is_the_fallback_when_the_checkpoint_predates_the_field(
+    tmp_path: Path,
+) -> None:
+    """Checkpoints written before the EMA rode in trial_meta.json leave the
+    restore with nothing, and best.json's copy -- until now read and thrown
+    away -- is the next best record."""
+    best_state_path = tmp_path / DURABLE_BEST_STATE
+    best_state_path.write_text(
+        json.dumps({"best_loss": 4.9, "opp_strength_ema": 313.95}), encoding="utf-8",
+    )
+    _best_loss, best_json_ema, _source = _load_best_state(best_state_path)
+
+    resolved = _startup_opp_strength_ema(
+        restore=RestoreResult(startup_source="checkpoint"), best_json_ema=best_json_ema,
+    )
+    assert resolved == 313.95
+
+
+def test_a_fresh_start_still_re_seeds() -> None:
+    """NEGATIVE CONTROL: with nothing to restore from, the old behaviour must
+    survive -- 0.0 is what tells the loop to seed the series from iteration 1.
+    A fix that invented a value here would put a number nobody measured into
+    the scheduler's objective."""
+    assert _startup_opp_strength_ema(
+        restore=RestoreResult(startup_source="fresh"), best_json_ema=0.0,
+    ) == 0.0
+
+
+def test_an_exploit_donor_outranks_the_checkpoints_own_ema() -> None:
+    """A PB2 exploit clone inherits the DONOR's series (the only writer of this
+    field before this change), and that must keep winning over the recipient's
+    own checkpoint value."""
+    assert _startup_opp_strength_ema(
+        restore=RestoreResult(startup_source="exploit_restore", opp_strength_ema=290.0),
+        best_json_ema=327.19,
+    ) == 290.0
+
+
+def test_a_corrupt_ema_in_trial_meta_is_ignored_rather_than_propagated() -> None:
+    rr = RestoreResult()
+    _apply_restored_trial_meta(rr, {"opp_strength_ema": "not-a-number"})
+    assert rr.opp_strength_ema is None
+    rr2 = RestoreResult()
+    _apply_restored_trial_meta(rr2, {"opp_strength_ema": float("nan")})
+    assert rr2.opp_strength_ema is None
+
+
+# --- audit T10: salvage-export and the durable state ----------------------
+
+
+_GATE_STATE = {
+    "matches": 41,
+    "holds": 2,
+    "window": [{"elo": 3.1}, {"elo": -1.2}],
+    "hold": {"active": True, "anchor_refresh_failures": 3},
+}
+
+
+def _trial_dir_with_durable_state(tmp_path: Path) -> tuple[Path, Path]:
+    """A trial dir shaped like a live one: a checkpoint dir plus the durable
+    files that live one level above it."""
+    td = tmp_path / "runs" / "13a9f_00000"
+    ckpt_dir = td / "checkpoint_001985"
+    ckpt_dir.mkdir(parents=True)
+    (ckpt_dir / "trainer.pt").write_bytes(b"weights")
+    (ckpt_dir / "pid_state.json").write_text(json.dumps({"wdl_regret": 40.0}), encoding="utf-8")
+    (ckpt_dir / "trial_meta.json").write_text(
+        json.dumps({"global_iter": 1985, "opp_strength_ema": 327.19}), encoding="utf-8",
+    )
+    (td / DURABLE_GATE_STATE).write_text(json.dumps(_GATE_STATE), encoding="utf-8")
+    (td / DURABLE_BEST_STATE).write_text(
+        json.dumps({"best_loss": 4.87, "source": "test_loss"}), encoding="utf-8",
+    )
+    return td, ckpt_dir
+
+
+def _export(tmp_path: Path, td: Path, ckpt_dir: Path) -> tuple[Path, dict]:
+    out_dir = tmp_path / "pool"
+    seeds_dir = out_dir / "seeds"
+    seeds_dir.mkdir(parents=True)
+    entry = _export_one_seed(
+        slot=0,
+        picked_metric=323.6,
+        picked_it=1985,
+        td=td,
+        plan=_SeedExportPlan(
+            ckpt_dir=ckpt_dir,
+            ckpt_source="result_row_checkpoint",
+            row=None,
+            training_iteration=1985,
+            stale_result_rows=False,
+            newest_ckpt_name=ckpt_dir.name,
+            row_ckpt_name=ckpt_dir.name,
+        ),
+        metric_key="training_iteration",
+        seeds_dir=seeds_dir,
+        out_dir=out_dir,
+        copy_replay=False,
+        replay_plan=_ReplayPlan(source=None, tried=()),
+    )
+    return out_dir, entry
+
+
+def test_salvage_export_banks_the_gate_and_best_state(tmp_path: Path) -> None:
+    """The export copied the checkpoint's five files and nothing else, so the
+    promotion gate's window, its hold budget and its anchor-failure counter
+    were dropped by the one restart mode an operator chooses deliberately."""
+    td, ckpt_dir = _trial_dir_with_durable_state(tmp_path)
+    out_dir, entry = _export(tmp_path, td, ckpt_dir)
+
+    slot_dir = out_dir / entry["seed_dir"]
+    assert json.loads((slot_dir / DURABLE_GATE_STATE).read_text()) == _GATE_STATE
+    assert json.loads((slot_dir / DURABLE_BEST_STATE).read_text())["best_loss"] == 4.87
+
+    # The manifest says what came along AND what did not: a pool that quietly
+    # lacks the anchor is how a restart discovers state loss after the fact.
+    assert entry["durable_state_exported"] == [DURABLE_GATE_STATE, DURABLE_BEST_STATE]
+    assert "gate_promoted_model.pt" in entry["durable_state_not_exported"]
+
+
+def test_export_of_a_trial_with_no_gate_state_is_not_an_error(tmp_path: Path) -> None:
+    """NEGATIVE CONTROL: the gate is off in production today, so most trials
+    have no gate_state.json at all. Absence must export cleanly and say so."""
+    td, ckpt_dir = _trial_dir_with_durable_state(tmp_path)
+    (td / DURABLE_GATE_STATE).unlink()
+    out_dir, entry = _export(tmp_path, td, ckpt_dir)
+
+    assert entry["durable_state_exported"] == [DURABLE_BEST_STATE]
+    assert not (out_dir / entry["seed_dir"] / DURABLE_GATE_STATE).exists()
+
+
+class _TinyTrainer:
+    """Enough of a Trainer for the model-only salvage branch."""
+
+    def __init__(self) -> None:
+        self.model = nn.Linear(2, 2)
+        self.step = 0
+
+    def reset_optimizer_reference_weights(self) -> None:
+        return None
+
+
+def test_an_exported_pool_restores_the_gate_window_end_to_end(tmp_path: Path) -> None:
+    """Export a pool, then drive the SALVAGE RESTORE over it and take the same
+    decision ``train_trial`` takes at startup. This is the whole T10 loop: a
+    salvage restart now finds the window a resume would have kept."""
+    td, ckpt_dir = _trial_dir_with_durable_state(tmp_path)
+    trainer = _TinyTrainer()
+    torch.save(
+        {"model": trainer.model.state_dict(), "peak_lr": 3e-5},
+        ckpt_dir / "trainer.pt",
+    )
+    out_dir, entry = _export(tmp_path, td, ckpt_dir)
+    (out_dir / "manifest.json").write_text(
+        json.dumps({"metric": "training_iteration", "entries": [entry]}), encoding="utf-8",
+    )
+
+    trial_dir = tmp_path / "new_trial" / "abcde_00000"
+    trial_dir.mkdir(parents=True)
+    rr = RestoreResult()
+    _restore_from_salvage_pool(
+        config={
+            "salvage_seed_pool_dir": str(out_dir),
+            "lr": 3e-5,
+            "salvage_restore_full_trainer_state": False,
+  # Production's value (configs/pbt2_small.yaml). The EMA follows this switch —
+  # see test_the_salvage_ema_follows_the_pid_state_switch.
+            "salvage_restore_pid_state": True,
+        },
+        trainer=_TinyTrainer(),
+        device="cpu",
+        trial_id="abcde_00000",
+        trial_dir=trial_dir,
+        rr=rr,
+    )
+    assert rr.restored_gate_state == _GATE_STATE
+    # The EMA rides in the checkpoint's trial_meta.json, which the pool copies,
+    # so a salvage restart continues the scheduler's metric too (T1).
+    assert rr.opp_strength_ema == 327.19
+
+    # And the startup decision uses it, because this trial has no state of its own.
+    assert _startup_gate_state(
+        gate_state_path=trial_dir / DURABLE_GATE_STATE, restore=rr,
+    ) == _GATE_STATE
+
+
+def test_a_resume_never_takes_a_window_from_a_pool(tmp_path: Path) -> None:
+    """NEGATIVE CONTROL, and the one that matters: a trial's OWN gate state
+    must win. Seeding over it would hand a running experiment a window earned
+    by different weights."""
+    own = {"matches": 7, "holds": 0}
+    own_path = tmp_path / DURABLE_GATE_STATE
+    own_path.write_text(json.dumps(own), encoding="utf-8")
+
+    assert _startup_gate_state(
+        gate_state_path=own_path,
+        restore=RestoreResult(restored_gate_state=_GATE_STATE),
+    ) == own
+    # Neither source: an empty dict, which is what a fresh start has always had.
+    assert _startup_gate_state(
+        gate_state_path=tmp_path / "absent.json", restore=RestoreResult(),
+    ) == {}
+
+
+def test_a_corrupt_own_gate_file_is_not_treated_as_absence(tmp_path: Path) -> None:
+    """Review N3. ``load_optional_json`` cannot tell "no file" from "unreadable
+    file", and a crash mid-write produces the second. Keying the pool fallback
+    off its None would hand this trial another lineage's window at exactly the
+    moment its own state was damaged."""
+    own_path = tmp_path / DURABLE_GATE_STATE
+    own_path.write_text('{"matches": 41, "wind', encoding="utf-8")  # truncated
+
+    assert _startup_gate_state(
+        gate_state_path=own_path,
+        restore=RestoreResult(restored_gate_state=_GATE_STATE),
+    ) == {}
+
+
+def test_the_salvage_ema_follows_the_pid_state_switch(tmp_path: Path) -> None:
+    """Review N4. `opp_strength_ema` is opponent_strength smoothed, and
+    opponent_strength is difficulty x winrate. An operator who sets
+    `salvage_restore_pid_state: false` is dropping the donor's difficulty on
+    purpose; importing its EMA anyway would anchor the scheduler's objective for
+    ~10 iterations to a difficulty this process is not running."""
+    td, ckpt_dir = _trial_dir_with_durable_state(tmp_path)
+    trainer = _TinyTrainer()
+    torch.save({"model": trainer.model.state_dict(), "peak_lr": 3e-5}, ckpt_dir / "trainer.pt")
+    out_dir, entry = _export(tmp_path, td, ckpt_dir)
+    (out_dir / "manifest.json").write_text(
+        json.dumps({"metric": "training_iteration", "entries": [entry]}), encoding="utf-8",
+    )
+
+    def _restore(*, restore_pid: bool) -> RestoreResult:
+        trial_dir = tmp_path / f"trial_{restore_pid}" / "abcde_00000"
+        trial_dir.mkdir(parents=True)
+        rr = RestoreResult()
+        _restore_from_salvage_pool(
+            config={
+                "salvage_seed_pool_dir": str(out_dir),
+                "lr": 3e-5,
+                "salvage_restore_full_trainer_state": False,
+                "salvage_restore_pid_state": restore_pid,
+            },
+            trainer=_TinyTrainer(), device="cpu",
+            trial_id="abcde_00000", trial_dir=trial_dir, rr=rr,
+        )
+        return rr
+
+    assert _restore(restore_pid=True).opp_strength_ema == 327.19
+    # Not 0.0: None means "nothing restored", which is what makes the loop
+    # re-seed from its own first iteration instead of importing a stranger's.
+    assert _restore(restore_pid=False).opp_strength_ema is None
+
+
+# --- review B2: the delete observable across a restart --------------------
+
+
+def test_the_checkpoint_banks_the_yaml_key_set(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "chess_anti_engine.tune.trainable_report.save_holdout_rows", lambda **_kw: None,
+    )
+    ckpt_dir = tmp_path / "checkpoint_001985"
+    _save_checkpoint(ckpt_dir, opp_strength_ema=1.0, yaml_keys=["batch_size", "lr"])
+
+    meta = load_optional_json(ckpt_dir / SIDECAR_TRIAL_META)
+    assert meta is not None
+    assert meta["yaml_keys"] == ["batch_size", "lr"]
+
+    rr = RestoreResult()
+    _apply_restored_trial_meta(rr, meta)
+    assert rr.restored_yaml_keys == frozenset({"batch_size", "lr"})
+
+
+def test_a_key_deleted_while_the_trial_was_down_is_reported_at_startup(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """THE RESTART LEG (review B2). Pause -> delete the line -> restart is the
+    operator path that actually happens, and it was the one the warning could
+    not see: the startup reload seeds the in-process baseline from the NEW yaml,
+    while `--resume` hands back a saved trial config that still carries the
+    value. The banked key set is the missing baseline."""
+    reset_yaml_reload_key_tracking()
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text("train:\n  lr: 0.0007\n", encoding="utf-8")
+
+    # The restarted process: startup reload against the EDITED yaml, then the
+    # restored trial config, which still carries the deleted key's value.
+    config: dict = {"rebuild_sf_targets": True}
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        seed_yaml_reload_baseline(
+            yaml_path=str(yaml_path),
+            keys=frozenset({"lr", "rebuild_sf_targets"}),  # what the previous process ran
+            config=config,
+        )
+
+    messages = [r.getMessage() for r in caplog.records if "no longer set by" in r.getMessage()]
+    assert len(messages) == 1, messages
+    assert "rebuild_sf_targets" in messages[0]
+    assert "delete does not revert" in messages[0]
+    assert "the checkpoint this process resumed from" in messages[0]
+    # Observability only: the value is still in effect, exactly as before.
+    assert config["rebuild_sf_targets"] is True
+
+
+def test_the_startup_baseline_is_silent_when_nothing_was_deleted(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """NEGATIVE CONTROL for the restart leg: an ordinary restart onto an
+    unchanged yaml, a restart onto a yaml with a key ADDED, a fresh start and a
+    checkpoint that predates the banking must all stay quiet."""
+    reset_yaml_reload_key_tracking()
+    yaml_path = tmp_path / "cfg.yaml"
+    yaml_path.write_text("train:\n  lr: 0.0007\n  rebuild_sf_targets: true\n", encoding="utf-8")
+    config: dict = {}
+    _reload_yaml_into_config(config, str(yaml_path))
+
+    with caplog.at_level(logging.WARNING, logger="chess_anti_engine.tune.trainable_config_ops"):
+        seed_yaml_reload_baseline(
+            yaml_path=str(yaml_path), keys={"lr", "rebuild_sf_targets"}, config=config,
+        )
+        seed_yaml_reload_baseline(yaml_path=str(yaml_path), keys={"lr"}, config=config)
+        seed_yaml_reload_baseline(yaml_path=str(yaml_path), keys=frozenset(), config=config)
+        seed_yaml_reload_baseline(yaml_path=None, keys={"lr"}, config=config)
+
+    assert [r.getMessage() for r in caplog.records if "no longer set by" in r.getMessage()] == []
+
+
+def test_the_restart_delete_check_is_wired_into_train_trial() -> None:
+    """DOES IT TAKE EFFECT ON THE PRODUCTION PATH?
+
+    The tests above drive `seed_yaml_reload_baseline` and
+    `_save_trial_checkpoint` directly, which proves the mechanism and NOT the
+    wiring — deleting either call site from ``train_trial`` left every one of
+    them green (found by mutating my own fix). This is the repo's signature
+    defect in miniature: a value that is computed and then never reaches the
+    thing that needed it.
+
+    Asserted on the parsed source rather than by running the trial, because
+    ``train_trial`` needs Ray, a GPU and a fleet. Two calls have to be there:
+    the startup comparison against the checkpoint's banked key set, and the
+    checkpoint write that banks the current one for the NEXT process. Either
+    one missing makes the restart leg silent again.
+    """
+    import ast
+    import inspect
+
+    from chess_anti_engine.tune import trainable
+
+    tree = ast.parse(inspect.getsource(trainable.train_trial))
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+
+    def _call_to(name: str) -> ast.Call:
+        found = [
+            c for c in calls
+            if isinstance(c.func, ast.Name) and c.func.id == name
+        ]
+        assert len(found) == 1, f"expected exactly one {name}(...) call, got {len(found)}"
+        return found[0]
+
+    seed = _call_to("seed_yaml_reload_baseline")
+    keys_arg = {kw.arg: kw.value for kw in seed.keywords}.get("keys")
+    assert isinstance(keys_arg, ast.Attribute), (
+        "the startup check must compare against the RESTORED key set; anything "
+        "else re-reads what this process already loaded and can never differ"
+    )
+    assert keys_arg.attr == "restored_yaml_keys", ast.dump(keys_arg)
+
+    save = _call_to("_save_trial_checkpoint")
+    banked = {kw.arg: kw.value for kw in save.keywords}.get("yaml_keys")
+    assert isinstance(banked, ast.Call), "yaml_keys must be banked at every checkpoint"
+    assert isinstance(banked.func, ast.Name), ast.dump(banked)
+    assert banked.func.id == "last_reload_yaml_keys", (
+        "the banked set must come from the reloader's own record of the last "
+        "SUCCESSFUL parse, not from config (which carries ghost keys)"
+    )

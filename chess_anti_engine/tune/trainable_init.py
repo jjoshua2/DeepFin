@@ -10,6 +10,7 @@ Four phases that run once at trial startup (before the main loop):
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,7 @@ from chess_anti_engine.moves import policy_size_for_encoding
 from chess_anti_engine.replay import ArrayReplayBuffer, DiskReplayBuffer
 from chess_anti_engine.replay.shard import copy_or_link_shard, iter_shard_paths, load_shard_arrays
 from chess_anti_engine.tune._utils import (
+    DURABLE_GATE_STATE,
     SIDECAR_PID_STATE,
     SIDECAR_RNG_STATE,
     SIDECAR_TRIAL_META,
@@ -230,9 +232,26 @@ def _restore_from_salvage_pool(
 
     restored_rng_state = load_optional_json(Path(picked_dir) / SIDECAR_RNG_STATE)
     restored_trial_meta = load_optional_json(Path(picked_dir) / SIDECAR_TRIAL_META)
+  # Pools exported before this carry no gate_state.json, which reads as None
+  # and leaves the gate exactly where it was: an empty window.
+    rr.restored_gate_state = load_optional_json(Path(picked_dir) / DURABLE_GATE_STATE)
     rr.holdout_state_dir = Path(picked_dir)
     if isinstance(restored_trial_meta, dict):
         _apply_restored_holdout_scalars(rr, restored_trial_meta)
+  # ⚑ The donor's EMA rides ONLY when the operator also asked for the donor's
+  # PID state (review N4). `opp_strength_ema` is opponent_strength smoothed,
+  # and opponent_strength is difficulty x winrate -- so importing it while
+  # `salvage_restore_pid_state` is false would anchor the scheduler's own
+  # objective, for ~10 iterations at alpha 0.3, to a difficulty this process
+  # deliberately is NOT running. Production sets the flag true
+  # (configs/pbt2_small.yaml), so this changes nothing today; it stops a future
+  # default flip from reintroducing the mismatch silently.
+        if bool(config.get("salvage_restore_pid_state", False)):
+            _apply_restored_opp_strength_ema(rr, restored_trial_meta)
+  # The yaml key baseline is deliberately NOT adopted from a pool: a salvage
+  # slot was written by a different experiment, so today's yaml differing from
+  # its key set says nothing about an operator's recent edit. Only an ordinary
+  # resume, which continues the SAME trial, carries it (review B2).
         rr.global_iter = int(restored_trial_meta.get("global_iter", rr.global_iter))
         rr.restored_window = int(restored_trial_meta.get("current_window", rr.restored_window))
         rr.restored_owner_trial_dir = str(
@@ -326,12 +345,47 @@ def _apply_restored_holdout_scalars(rr: RestoreResult, restored_trial_meta: dict
     rr.holdout_ruler = str(restored_trial_meta.get("holdout_ruler", "") or "")
 
 
+def _apply_restored_yaml_keys(rr: RestoreResult, restored_trial_meta: dict) -> None:
+    """Carry the previous process's yaml key set across the restart (review B2).
+
+    Names only, and only the ones that are strings: this feeds a comparison, so
+    a malformed entry must shrink the baseline rather than crash a restore.
+    """
+    banked = restored_trial_meta.get("yaml_keys")
+    if not isinstance(banked, list):
+        return
+    rr.restored_yaml_keys = frozenset(k for k in banked if isinstance(k, str))
+
+
+def _apply_restored_opp_strength_ema(rr: RestoreResult, restored_trial_meta: dict) -> None:
+    """Carry the opponent-strength EMA across the restart (audit T1).
+
+    Read on BOTH restore paths, from the same file the holdout scalars ride in.
+    Absent (every checkpoint written before this existed) or non-finite leaves
+    ``rr.opp_strength_ema`` at None, which the loop reads as "no restored EMA"
+    and falls back to ``best.json`` and then to the re-seed. A stored 0.0 is
+    honoured as a value rather than treated as absence, because the loop's
+    ``== 0.0`` re-seed is exactly the behaviour this restores around: the EMA of
+    a trial whose opponent strength really is 0 must not be re-seeded either.
+    """
+    if "opp_strength_ema" not in restored_trial_meta:
+        return
+    try:
+        value = float(restored_trial_meta["opp_strength_ema"])
+    except (TypeError, ValueError):
+        return
+    if math.isfinite(value):
+        rr.opp_strength_ema = value
+
+
 def _apply_restored_trial_meta(rr: RestoreResult, restored_trial_meta: dict | None) -> tuple[str, str]:
     """Pull owner/salvage/global-iter fields from checkpoint metadata into ``rr``.
     Returns (owner_trial_id, owner_optimizer)."""
     if not isinstance(restored_trial_meta, dict):
         return "", ""
     _apply_restored_holdout_scalars(rr, restored_trial_meta)
+    _apply_restored_opp_strength_ema(rr, restored_trial_meta)
+    _apply_restored_yaml_keys(rr, restored_trial_meta)
     rr.restored_owner_trial_dir = str(restored_trial_meta.get("owner_trial_dir", ""))
     rr.salvage_origin_used = bool(restored_trial_meta.get("salvage_origin_used", rr.salvage_origin_used))
     rr.salvage_origin_slot = int(restored_trial_meta.get("salvage_origin_slot", rr.salvage_origin_slot))

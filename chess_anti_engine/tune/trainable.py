@@ -20,6 +20,8 @@ from chess_anti_engine.train import (
     trainer_kwargs_from_config,
 )
 from chess_anti_engine.tune._utils import (
+    DURABLE_BEST_STATE,
+    DURABLE_GATE_STATE,
     load_optional_json,
     resolve_local_override_root as _resolve_local_override_root,
 )
@@ -43,6 +45,8 @@ from chess_anti_engine.tune.trainable_config_ops import (
     _resolve_sims,
     _sync_trainer_weights,
     _wait_if_paused,
+    last_reload_yaml_keys,
+    seed_yaml_reload_baseline,
 )
 from chess_anti_engine.tune.trainable_init import (
     _init_era_probes,
@@ -71,7 +75,7 @@ from chess_anti_engine.tune.trainable_report import (
     _save_trial_checkpoint,
     _update_best_model,
 )
-from chess_anti_engine.tune.trial_config import DifficultyState, TrialConfig
+from chess_anti_engine.tune.trial_config import DifficultyState, RestoreResult, TrialConfig
 
 import re as _re
 import contextlib
@@ -155,6 +159,12 @@ def _load_best_state(best_state_path: Path) -> tuple[float, float, str]:
     An older best.json without the field is treated as ``train_loss``, the
     conservative reading: it lets the first holdout evaluation take over the
     ruler rather than being locked out by a number it cannot beat.
+
+    ``opp_strength_ema`` is the FALLBACK source for the opponent-strength EMA:
+    the checkpoint's trial_meta.json is preferred because it is rewritten every
+    iteration while this file is rewritten only when a best-model candidate is
+    accepted. It stops being decorative here (audit T1) -- until then it was
+    read and then overwritten by the restore result one line later.
     """
     d = load_optional_json(best_state_path) or {}
     source = str(d.get("source", "train_loss"))
@@ -163,6 +173,86 @@ def _load_best_state(best_state_path: Path) -> tuple[float, float, str]:
         float(d.get("opp_strength_ema", 0.0)),
         source if source in ("test_loss", "train_loss") else "train_loss",
     )
+
+
+def _startup_opp_strength_ema(*, restore: RestoreResult, best_json_ema: float) -> float:
+    """Decide which opponent-strength EMA this process continues from (T1).
+
+    The restore wins ONLY when it carries one -- the checkpoint's
+    trial_meta.json, or a PB2 donor's result row. Otherwise ``best.json``'s
+    copy stands, and only when neither exists does the loop fall back to its
+    ``== 0.0`` re-seed from the first iteration's raw ``opponent_strength``.
+
+    ``train_trial`` used to assign ``restore.opp_strength_ema``
+    UNCONDITIONALLY, one line after loading best.json's value, and that field
+    was 0.0 on every path except the exploit clone -- which ``num_samples: 1``
+    makes unreachable. So the EMA was re-seeded at every process start, on the
+    single row the post-restart winrate truncation makes least trustworthy
+    (6/6 live process segments). It is the tune scheduler's own objective
+    (``GPBTPairwiseScheduler._metric``), the ``--salvage-metric`` family, and
+    the sibling-share ranking metric, so the discontinuity sat in the number
+    the run is steered by.
+
+    Prints its source because "the EMA is continuous now" is not observable
+    from the value alone: a re-seed and a restore look identical on a row where
+    the EMA happens to be near the raw strength.
+    """
+    if restore.opp_strength_ema is not None:
+        resolved, source = float(restore.opp_strength_ema), f"restore/{restore.startup_source}"
+    elif best_json_ema != 0.0:
+        resolved, source = float(best_json_ema), "best.json"
+    else:
+        resolved, source = float(best_json_ema), "none (the loop will re-seed from iteration 1)"
+    print(
+        f"[trial] opponent-strength EMA at startup: {resolved:.4f} source={source}",
+        flush=True,
+    )
+    return resolved
+
+
+def _startup_gate_state(*, gate_state_path: Path, restore: RestoreResult) -> dict:
+    """The promotion gate's state for this process, own file first (T10).
+
+    A trial with its own ``gate_state.json`` uses it and nothing else: an
+    ordinary ``--resume`` must never be handed a window from somewhere else.
+    Only when there is none -- the first process of a salvage-restarted
+    experiment -- does the pool's exported copy seed the gate, which is what
+    stops a salvage restart from silently starting with an empty window while a
+    resume keeps its own.
+
+    Safe without the anchor, which pools deliberately do not carry:
+    ``GateHoldController.create`` RELEASES a restored hold whose
+    ``gate_promoted_model.pt`` is absent rather than serving something else.
+
+    A PRESENT-BUT-UNREADABLE own file is treated as own state, not as absence
+    (review N3). ``load_optional_json`` returns None for a missing path and for
+    a JSONDecodeError alike, so keying the pool fallback off its result would
+    let a truncated own file -- a crash mid-write is exactly how one is produced
+    -- hand this trial another lineage's window. Empty is the safe reading: the
+    gate refills its window, which is what a corrupt file already meant.
+    """
+    own = load_optional_json(gate_state_path)
+    if own is not None:
+        return own
+    if gate_state_path.exists():
+        print(
+            f"[trial] promotion-gate state at {gate_state_path} exists but did "
+            f"not parse; starting from an EMPTY window rather than adopting "
+            f"anything else",
+            flush=True,
+        )
+        return {}
+    if restore.restored_gate_state is None:
+        return {}
+    seeded = restore.restored_gate_state
+    print(
+        f"[trial] promotion-gate state seeded from the salvage pool: "
+        f"matches={seeded.get('matches', 0)} holds={seeded.get('holds', 0)}. "
+        f"The anchor is not exported with a pool, so a restored hold releases "
+        f"rather than serving a model this pool does not carry.",
+        flush=True,
+    )
+    return seeded
 
 
 def _assert_distributed_configured(tc: TrialConfig) -> None:
@@ -586,19 +676,8 @@ def train_trial(config: dict):
   # Compact status CSV — reset on each process start so checkpoint-restore rows don't accumulate.
     _STATUS_CSV_PATH = _init_status_csv(trial_dir)
 
-    gate_state_path = durable_dir / "gate_state.json"
-    _gate_state = load_optional_json(gate_state_path) or {}
-    gate_match_idx = int(_gate_state.get("matches", 0))
-  # Anchored promotion gate. Constructed from the LAUNCH config: window shape
-  # and mode are construction-time, so a live yaml edit does not silently
-  # change what a half-filled window means (see the live-reload rules in
-  # CLAUDE.md). ``gate_config_from_dict`` also raises on a non-zero
-  # ``gate_games``, so the removed 1-sim vs-Stockfish gate cannot be turned
-  # back on by editing the yaml.
-    gate = PromotionGate(cfg=gate_config_from_dict(config))
-    gate.load_state_dict(_gate_state)
-
-    best_state_path = durable_dir / "best.json"
+    gate_state_path = durable_dir / DURABLE_GATE_STATE
+    best_state_path = durable_dir / DURABLE_BEST_STATE
     best_dir = durable_dir / "best"
     best_dir.mkdir(parents=True, exist_ok=True)
     best_loss, opp_strength_ema, best_source = _load_best_state(best_state_path)
@@ -616,7 +695,19 @@ def train_trial(config: dict):
     )
     restored_pid_state = restore.restored_pid_state
     global_iter = restore.global_iter
-    opp_strength_ema = restore.opp_strength_ema
+    opp_strength_ema = _startup_opp_strength_ema(
+        restore=restore, best_json_ema=opp_strength_ema,
+    )
+
+  # The delete-observable's restart leg (review B2). The in-process baseline was
+  # seeded by THIS process's startup reload, i.e. from the yaml as it is now, so
+  # a key removed while the trial was down matched nothing. The checkpoint banks
+  # the key set the previous process was running; comparing against it here is
+  # what makes `pause -> edit the yaml -> restart` -- the operator path that
+  # actually happens -- report the same sentence a live deletion does.
+    seed_yaml_reload_baseline(
+        yaml_path=_yaml_path, keys=restore.restored_yaml_keys, config=config,
+    )
 
     best_loss, best_source = _reset_best_on_cross_trial_restore(
         restore=restore, best_loss=best_loss, best_source=best_source,
@@ -625,6 +716,19 @@ def train_trial(config: dict):
 
   # Rebuild tc — _restore_checkpoint_or_salvage may overlay donor config.
     tc = TrialConfig.from_dict(config)
+
+  # Resolved AFTER the restore, which is the only way a salvage restart can
+  # find a gate window at all (audit T10). The donor-config overlay the restore
+  # may apply touches lr/gamma/loss weights only, so the gate is still built
+  # from the LAUNCH config here: window shape and mode are construction-time,
+  # so a live yaml edit does not silently change what a half-filled window
+  # means (see the live-reload rules in CLAUDE.md). ``gate_config_from_dict``
+  # also raises on a non-zero ``gate_games``, so the removed 1-sim
+  # vs-Stockfish gate cannot be turned back on by editing the yaml.
+    _gate_state = _startup_gate_state(gate_state_path=gate_state_path, restore=restore)
+    gate_match_idx = int(_gate_state.get("matches", 0))
+    gate = PromotionGate(cfg=gate_config_from_dict(config))
+    gate.load_state_dict(_gate_state)
 
   # Every piece of gate-side mutable loop state lives in this object, not in
   # locals: the anchor path (None while the gate is off, so a disabled feature
@@ -958,6 +1062,8 @@ def train_trial(config: dict):
                 holdout_frozen=holdout_frozen,
                 holdout_generation=holdout_generation,
                 holdout_ruler=holdout_ruler,
+                opp_strength_ema=opp_strength_ema,
+                yaml_keys=last_reload_yaml_keys(_yaml_path),
                 Checkpoint=Checkpoint,
             )
 
