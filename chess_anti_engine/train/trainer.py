@@ -2141,6 +2141,106 @@ class Trainer:
         """
         self.zclip.initialized, self.zclip.mean, self.zclip.var, self.zclip.buffer = snapshot
 
+    def zclip_state_dict(self) -> dict[str, Any]:
+        """zclip's adaptive state, as plain JSON-able scalars for a checkpoint.
+
+        Built from `_zclip_stats_snapshot` rather than reading `self.zclip`
+        again, so "zclip's adaptive state" has ONE definition in this file. A
+        second field list here would drift the moment the upstream class grows
+        one, and the failure would be silent: the missing field simply resets
+        every restart, which is the very bug this method exists to close.
+        """
+        initialized, mean, var, buffer = self._zclip_stats_snapshot()
+        return {
+            "initialized": bool(initialized),
+            "mean": None if mean is None else float(mean),
+            "var": None if var is None else float(var),
+            "buffer": [float(v) for v in buffer],
+            "warmup_steps": int(getattr(self.zclip, "warmup_steps", 0)),
+        }
+
+    def load_zclip_state(self, state: Any) -> bool:
+        """Restore zclip's EMA from a checkpoint payload. True when it took.
+
+        Returns False -- leaving the fresh warmup state exactly as the
+        constructor built it -- for every reason a restore should not happen,
+        and says which in the log. The caller reports the outcome either way;
+        a restore that quietly does nothing is the failure mode this whole
+        change is about.
+
+        ⚑ A non-finite `mean` or `var` is REFUSED rather than restored. Per
+        `_restore_zclip_stats`: one nan in the EMA is permanent, because every
+        later `z = (norm - nan) / std` is nan, `nan > z_thresh` is False, and
+        `_compute_clip_val` returns None for the rest of the run -- the
+        adaptive clipper is off while the fixed cap goes on reporting
+        normally. Persisting the state means a poisoned EMA would otherwise
+        survive the restart that used to clear it, so this path can only be
+        added together with the refusal.
+        """
+        log = logging.getLogger(__name__)
+        if state is None:
+            log.info(
+                "zclip: checkpoint carries no adaptive state; starting a fresh "
+                "%d-step EMA warmup (expected for checkpoints written before "
+                "this key existed)",
+                int(getattr(self.zclip, "warmup_steps", 0)),
+            )
+            return False
+        if not isinstance(state, dict):
+            log.warning(
+                "zclip: checkpoint adaptive state is %s, not a dict; starting "
+                "a fresh EMA warmup", type(state).__name__,
+            )
+            return False
+
+        try:
+            initialized = bool(state["initialized"])
+            raw_mean = state.get("mean")
+            raw_var = state.get("var")
+            mean = None if raw_mean is None else float(raw_mean)
+            var = None if raw_var is None else float(raw_var)
+            buffer = [float(v) for v in (state.get("buffer") or [])]
+        except (KeyError, TypeError, ValueError) as exc:
+            log.warning(
+                "zclip: checkpoint adaptive state is malformed (%s); starting "
+                "a fresh EMA warmup", exc,
+            )
+            return False
+
+        if initialized and (mean is None or var is None):
+            log.warning(
+                "zclip: checkpoint claims an initialized EMA but carries "
+                "mean=%r var=%r; starting a fresh EMA warmup", mean, var,
+            )
+            return False
+        finite = [v for v in (mean, var, *buffer) if v is not None]
+        if not all(math.isfinite(v) for v in finite):
+            log.warning(
+                "zclip: REFUSING a non-finite checkpoint EMA (mean=%r var=%r); "
+                "a nan here disables the adaptive clipper permanently while "
+                "the fixed cap keeps reporting normally. Starting a fresh EMA "
+                "warmup", mean, var,
+            )
+            return False
+
+        self._restore_zclip_stats((initialized, mean, var, buffer))
+        if initialized and mean is not None and var is not None:
+            log.info(
+                "zclip: restored adaptive EMA from checkpoint "
+                "(mean=%.4f var=%.4f std=%.4f); the adaptive branch is live "
+                "from the first step of this run instead of after a %d-step "
+                "warmup", mean, var, var ** 0.5,
+                int(getattr(self.zclip, "warmup_steps", 0)),
+            )
+        else:
+            log.info(
+                "zclip: restored a PARTIAL warmup buffer from checkpoint "
+                "(%d/%d norms collected); the EMA was not yet initialized "
+                "when the checkpoint was written",
+                len(buffer), int(getattr(self.zclip, "warmup_steps", 0)),
+            )
+        return True
+
     def _zclip_step(self, *, collect_stats: bool) -> tuple[float, dict[str, float] | None]:
         if not collect_stats:
             return float(self.zclip.step(self._grad_clip_target)), None
@@ -3369,6 +3469,12 @@ class Trainer:
             "scheduler": self._scheduler.state_dict(),
             "step": self.step,
             "peak_lr": float(self._peak_lr),
+  # zclip's EMA is trained state, not configuration: without it every
+  # restart re-enters the 25-step warmup during which the adaptive branch
+  # cannot fire at all (`ZClip.step` returns before `_compute_clip_val`
+  # while `initialized` is False), so the run drops into a hard-cap-only
+  # regime and then re-converges the EMA from wherever warmup put it.
+            "zclip": self.zclip_state_dict(),
         }
         if self._model_config is not None:
             state["arch"] = {
@@ -3559,6 +3665,21 @@ class Trainer:
             self._peak_lr = float(ckpt["peak_lr"])
         else:
             self._peak_lr = self._reference_lr_from_bases()
+  # Gated on `optimizer_state_loaded` for the same reason the scheduler is:
+  # that branch only fails when the model's parameter layout no longer
+  # matches the donor's, and an EMA of gradient norms taken over a
+  # DIFFERENT set of parameters is not a description of this run's
+  # gradients. Fresh warmup is the honest state there.
+        zclip_restored = False
+        if optimizer_state_loaded:
+            zclip_restored = self.load_zclip_state(ckpt.get("zclip"))
+        else:
+            logging.getLogger(__name__).info(
+                "zclip: not restoring the adaptive EMA -- the optimizer state "
+                "was reinitialised for a new parameter layout, so the "
+                "checkpoint's gradient-norm statistics describe a different "
+                "model. Starting a fresh EMA warmup",
+            )
         if "swa_model" in ckpt and self._swa_model is not None:
             try:
                 # Checkpoints store SWA weights wrap-agnostic (module.*), but a
@@ -3576,6 +3697,15 @@ class Trainer:
                     "SWA model state incompatible, reinitialising: %s", exc,
                 )
         self.step = int(ckpt.get("step", 0))
+  # Emitted AFTER `self.step` is set so the point lands on the resumed step
+  # rather than on 0. This is the observation that distinguishes "restored"
+  # from "accepted and ignored" on a real restart without reading a log:
+  # `zclip/restored` is 1.0 at the resume step, and `zclip/ema_mean` is the
+  # previous run's EMA rather than whatever a fresh warmup would produce.
+        self.writer.add_scalar("zclip/restored", 1.0 if zclip_restored else 0.0, self.step)
+        if zclip_restored and self.zclip.initialized:
+            self.writer.add_scalar("zclip/ema_mean", float(self.zclip.mean or 0.0), self.step)
+            self.writer.add_scalar("zclip/ema_var", float(self.zclip.var or 0.0), self.step)
 
     def export_swa(self, path: Path, dataloader: Any = None) -> None:
         """Export the SWA-averaged model weights.
