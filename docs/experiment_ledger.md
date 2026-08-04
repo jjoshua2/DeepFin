@@ -32996,3 +32996,15 @@ Watch continues; the deciding instrument remains the ~5-day arena.
   timing is the user's call: it interrupts the run exactly at window-eviction onset
   (the forgetting-hinge readout), and the next restart deploys #332–#346 (live branch
   must first merge origin/main to empty diff).
+
+## 2026-08-04 ~17:40 — WINDOW EVICTION ONSET (iter ~170): the forgetting-hinge readout window is OPEN
+
+- `replay` 1,499,096 vs cap 1,500,000; `replay_window_growth_positions` 0,
+  `growth_frac_used` 1.0 — the window is pinned; ~32k rows/iter now exit.
+- Pre-registered readout: the old lineage's proven hinge (decay onset tracks
+  WINDOW-EXIT, [[forgetting_hinge_proven_window_exit]]) either fires in
+  `probe_era_policy_eregret` / the gap probe over the next ~day or it does not.
+  At onset: era 0.0851-0.0855, gap 0.0026-0.0046 — flat, no hinge signature yet
+  (exit lag expected). Judged on the probe series, not any window-mean CI.
+- All other watch items clean at iter 173: views 4.31, desync measured-clean
+  (0.9972/0), gate shadow noise about zero, holdout_generation 0, disk 50%.
