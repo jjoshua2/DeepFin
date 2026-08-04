@@ -24270,3 +24270,100 @@ what is safely removable, not a target.
 incoming change, and re-apply the deletion; then re-run
 `pytest tests/test_trainer_warmup.py tests/test_trainable_config_ops.py` plus
 no-arg `./scripts/lint.sh` before merging.
+---
+
+## 2026-08-03 — B6(c) CLOSED: the PRODUCTION broker stops counting unanswered rows as served (task #142)
+
+**Closes the "THE B6(c) FAMILY IS OPEN, NOT CLOSED" thread opened by #325.**
+That entry named a THIRD instance and deliberately left it alone because it is
+the live production broker and #325's readout window was already spoken for.
+This is that instance, and it is **3 of 3 known**. Instrument-only: no training
+row, no target, no config key changes — a metric stops lying about failures.
+
+**The defect.** `SlotBroker.serve_forever` adds
+`sum(s.batch_size for s in ready)` to `metrics["positions"]` BEFORE calling
+`_process_batch`, which hands slots back UNANSWERED on three paths:
+
+| # | path | site (as merged) | what it releases |
+|---|------|------------------|------------------|
+| 1 | `BrokerModelUnavailable` | `_process_batch` handler | the whole mode group — the publish manifest is missing past its 30 s deadline or carries no sha |
+| 2 | generic batch failure | `_process_batch` handler | the whole mode group — the broker survives one bad batch by design rather than taking inference from the fleet |
+| 3 | malformed compact-legal metadata | `_process_batch_mode`, per SLOT | one slot, so a batch is partly served and partly refused |
+
+On all three the slot goes to `_STATE_IDLE` and the client re-submits, so no
+model evaluated those rows — yet `pos/s` counted them. **A broker answering
+nothing at all reported full throughput**, and it is worst on path 1, which is
+the cold-boot failure and repeats every serve loop until a model appears. That
+number is what an operator reads to decide whether the fleet is healthy.
+
+**The fix**, matching B6(c) in the sibling path verbatim: `_process_batch_mode`
+returns the rows it declined, `_process_batch` adds the whole group on either
+failure path and returns the total, and the serve loop subtracts it.
+`batches`/`slots` stay DISPATCH counts on purpose — they answer "how much did
+the loop try to batch", which a refusal does not change; `positions` alone
+means "rows a model evaluated".
+
+Two details that are load-bearing, each pinned by its own test:
+
+* **The row count is read BEFORE `_release_slots_for_retry`.** That call sets
+  `_STATE_IDLE`, after which the client may re-submit into the same shared slot
+  with a different `batch_size`; reading afterwards subtracts a count belonging
+  to the NEXT request. `test_modelless_rows_are_counted_before_the_release`
+  simulates exactly that client and is the mutation-M4 target.
+* **The callee's return is accumulated in the `else` clause, not at the call
+  site inside the `try`.** Inside, a `_process_batch_mode` that returned `None`
+  would raise `TypeError` into the generic handler, be **swallowed as "one bad
+  batch"**, and silently walk `_consecutive_batch_failures` toward a broker
+  exit. `lint.sh` (no args) found the live version of this: three existing tests
+  stub `_process_batch_mode` with a `-> None` return, now `-> int` / `0`. The
+  house defect — a value accepted and then silently ignored — inside the fix for
+  the house defect, caught by the gate rather than by reasoning.
+
+**Red→green.** 9 of the 10 tests in `tests/test_broker_served_count.py` FAIL on
+`origin/main` (`e02121691`) and pass on the fix. The tenth,
+`test_the_serve_loop_counts_served_rows`, is the positive control and MUST pass
+on main — it is the arm that dies if the dispatch-time accumulation is deleted
+instead of corrected, which is the mirror-image defect.
+
+**7 mutations, 7 KILLED**, each by a NAMED test: M1 drop the loop's
+subtraction; M2a drop the loop's accumulation; M2b drop `_process_batch`'s
+accumulation of the callee's count; M3a/M3b/M3c drop the count on exactly one
+of the three paths (the "subtract on only 2 of 3" mutation, one per path); M4
+move the read below the release. Harness rules followed: mutations applied and
+restored from an IN-MEMORY copy, sweep refuses a dirty tree, `git diff` asserted
+empty and HEAD unchanged afterwards. **M4 initially reported `SECOND PATTERN NOT
+FOUND` rather than passing** — its anchor (release + failure-counter pair)
+occurs in BOTH handlers, so an ambiguous match was refused loudly instead of
+reading as a kill; re-anchored on the throttled-log tail.
+
+⚑ **A FOURTH instance was found by grep and is NOT fixed here** (reported, not
+widened into this PR). `serve_forever`'s `FIRST_BATCH_DONE` boot line
+(`inference.py:2732-2740`, the `if not self._first_batch_logged:` block) prints `positions=sum(s.batch_size for s in ready)` AFTER
+`_process_batch` **without consulting the outcome**, and sets
+`_first_batch_logged` either way — so a broker whose very first batch was
+released unanswered still announces `FIRST_BATCH_DONE`, and the row count is
+re-read after the release (so it may describe the client's NEXT request). Same
+"a failure reads as work done" class, different mechanism: completion-time and
+unconditional, not dispatch-time. It is a one-shot boot marker rather than a
+throughput counter, which is why it is a separate item and not a regression of
+this fix.
+
+**Family status: the DISPATCH-TIME counting form is CLOSED** — grep over
+`inference.py` for every counter increment (`+= 1`, `+= sum`, `+= int`,
+`+= len`) finds exactly the three known instances, all now fixed
+(`MultiSlotInferenceClient` B6, `SharedSlotBroker._process_parallel` B6(c),
+`SlotBroker.serve_forever` here); the only other candidates are
+`MultiSlotInferenceClient._inflight` (a gauge, decremented unconditionally in
+the same release path) and `_record_bucket_hist` (called after the malformed
+filter, so it counts real forwards). The COMPLETION-TIME unconditional form has
+one open instance, the `FIRST_BATCH_DONE` line above.
+
+Verified: `./scripts/lint.sh` (no args) exit 0 — read as a real exit code, not
+through `| tail`; 128 tests green across `test_broker_served_count`,
+`test_inference_broker`, `test_inference_slot_protocol`,
+`test_broker_no_zero_fill`, `test_broker_malformed_legal_meta`,
+`test_broker_hang`, `test_shared_broker_request_mode`,
+`test_multislot_wedged_slot`, `test_worker_broker_stats_line`,
+`test_worker_slot_planes_guard`, `test_inference_cache`, plus
+`test_aot_broker_integration`. **Not reviewed by its author** — a separate
+reviewer is required before merge.
