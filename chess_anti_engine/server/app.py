@@ -728,6 +728,7 @@ def create_app(
             UploadFile,
         )
         from fastapi.responses import FileResponse, JSONResponse
+        from starlette.concurrency import run_in_threadpool
         from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
   # Important: this module uses `from __future__ import annotations`, so FastAPI/Pydantic
@@ -1721,7 +1722,6 @@ def create_app(
         tmp.unlink(missing_ok=True)
         upload_seen_key = (trial_key, sha)
         now_unix = time.time()
-        stored = False
         # Atomically promote the extracted zarr group to the pending dir
         # before acknowledging the upload. ``Path.replace`` is atomic on the
         # same filesystem (the staging path and pending_dir share
@@ -1755,7 +1755,42 @@ def create_app(
         if zarr_root != tmp_zarr:
             delete_shard_path(tmp_zarr)
         tmp_zarr = None
-        with upload_lock:
+
+        def _accumulate_under_lock() -> bool:
+            """The upload critical section. Runs in a THREAD, never on the loop.
+
+            ⚑ ``upload_lock`` is a ``threading.Lock`` and this used to be taken
+            inline in ``_upload_shard_impl``, which is an ``async def``. A
+            blocking acquire in a coroutine does not yield -- it holds the one
+            event-loop thread -- and the body below is not cheap: it calls
+            ``arrays_to_samples`` on the whole shard and, on the flush path,
+            ``_try_flush_and_pop``, which writes a compacted shard to disk.
+            So for the length of every compaction the server was not merely
+            slow, it was serving NOTHING: no lease, no health, no manifest, no
+            publish, no arena upload. It presents as wedged.
+
+            The lock stays a ``threading.Lock`` on purpose. The other two
+            acquisitions (the stale-flush sweep and the queued-games count) are
+            plain ``def``s that Starlette already runs in its threadpool, and a
+            ``def`` cannot ``await`` an ``asyncio.Lock``; converting the lock
+            would silently drop mutual exclusion between this path and those
+            two. Running this block through ``run_in_threadpool`` instead puts
+            the coroutine's acquisition on exactly the same footing as theirs.
+
+            Nothing in here touches the event loop or request-scope state:
+            ``file`` has already been fully drained to disk above, and the body
+            works on plain locals (``meta``, ``shard_arrs``, ``pending_path``)
+            plus the module-level dicts the lock exists to protect. The one
+            nested acquisition, ``_invalidate_queued_games_cache`` ->
+            ``queued_games_cache_lock``, keeps its existing order.
+
+            Returns whether the upload was newly accumulated.
+            """
+            with upload_lock:
+                return _accumulate_locked()
+
+        def _accumulate_locked() -> bool:
+            stored_local = False
             if upload_seen_key not in recent_upload_shas:
                 model_sha = str(meta.get("model_sha256") or sha)
                 acc_key = (trial_key, model_sha, _upload_identity_acc_key(meta))
@@ -1775,7 +1810,7 @@ def create_app(
                 )
                 acc.pending_paths.append(pending_path)
                 recent_upload_shas[upload_seen_key] = now_unix
-                stored = True
+                stored_local = True
                 _invalidate_queued_games_cache(trial_key)
                 if _buffered_upload_ready(
                     acc=acc,
@@ -1790,6 +1825,9 @@ def create_app(
                 # on restart.
                 delete_shard_path(pending_path)
                 _invalidate_queued_games_cache(trial_key)
+            return stored_local
+
+        stored = await run_in_threadpool(_accumulate_under_lock)
 
         lease = None
         if x_cae_worker_lease_id is not None:
