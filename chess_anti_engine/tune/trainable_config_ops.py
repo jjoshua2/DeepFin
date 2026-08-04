@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from chess_anti_engine.config_keys import is_inert_dead_config_value, TRAINER_WEIGHT_KEYS
@@ -513,12 +513,6 @@ _CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
 #   puzzle_epd      -- `_load_puzzle_suite` loads the EPD file once. The
 #                      `puzzle_interval` / `puzzle_simulations` throttles ARE
 #                      live and deliberately stay live.
-#   eval_games      -- `_init_eval_stockfish` returns None for <= 0 at startup,
-#                      and `eval_sf` is never rebuilt. The loop's own
-#                      `tc.eval_games <= 0 or eval_sf is None` can therefore
-#                      only ever DISABLE: enabling eval live silently keeps
-#                      reporting eval_win/draw/loss = 0. Frozen so the enable
-#                      says "restart" instead of nothing.
 #   eval_sf_nodes   -- the eval engine's node limit, fixed when that engine is
 #                      constructed (or not constructed at all).
 #   sf_pid_enabled  -- `_init_pid` returns None when it is false at launch, and
@@ -528,6 +522,24 @@ _CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
 #                      once; the loop polls the resolved paths.
 #
 # NOT here, decided rather than overlooked:
+#   eval_games      -- ⚑ IT WAS HERE, AND THAT WAS WRONG (review of PR F, B1).
+#                      The first version of this set froze it on the reasoning
+#                      that `_init_eval_stockfish` returns None for <= 0 at
+#                      startup and `eval_sf` is never rebuilt, so a live edit
+#                      "can only ever DISABLE". That is true of the ENABLE
+#                      direction and false of the key: `_run_eval_games` also
+#                      reads it as a MAGNITUDE (`games=tc.eval_games`,
+#                      trainable_phases.py), off a `tc` the loop rebuilds every
+#                      iteration, so for a trial launched with eval_games > 0
+#                      an edit to the COUNT takes effect live -- measured on
+#                      main. Freezing it removed a working knob, which is the
+#                      same objection that (correctly) keeps `log_level` out of
+#                      this set. What remains true and is NOT fixed here: with
+#                      eval_games 0 at launch, turning eval on live is still a
+#                      silent no-op, because nothing rebuilds `eval_sf`. That is
+#                      a wiring gap in `_init_eval_stockfish`, not a reload
+#                      class, and freezing the key papered over it while
+#                      breaking the direction that worked.
 #   log_level       -- startup-only for the TRIAL's own logger, but it is in
 #                      `_WORKER_LAUNCH_CONFIG_KEYS`, so a live edit changes the
 #                      worker launch signature and the next relaunch honours
@@ -548,7 +560,6 @@ _CONSTRUCTION_ONLY_PROBE_KEYS = frozenset({
 _STARTUP_ONLY_TRIAL_KEYS = frozenset({
     "iterations",
     "puzzle_epd",
-    "eval_games",
     "eval_sf_nodes",
     "sf_pid_enabled",
     "pause_file",
@@ -816,7 +827,59 @@ def reset_yaml_reload_key_tracking() -> None:
     _LAST_RELOAD_YAML_KEYS.clear()
 
 
-def _warn_on_keys_dropped_from_yaml(*, yaml_path: str, fresh: Mapping[str, object], config: Mapping[str, object]) -> None:
+def last_reload_yaml_keys(yaml_path: str | None) -> frozenset[str]:
+    """The key set of the last successful load of *yaml_path*, for persisting.
+
+    Empty when nothing has been loaded yet. The checkpoint writer banks this so
+    the NEXT process can compare against the yaml this one was running -- see
+    ``seed_yaml_reload_baseline``.
+    """
+    if not yaml_path:
+        return frozenset()
+    return _LAST_RELOAD_YAML_KEYS.get(yaml_path, frozenset())
+
+
+def seed_yaml_reload_baseline(
+    *, yaml_path: str | None, keys: Iterable[str], config: Mapping[str, object],
+) -> None:
+    """Adopt a PREVIOUS PROCESS's yaml key set and report what has gone missing.
+
+    Closes the restart-shaped hole in the delete warning (review B2). The
+    in-process baseline is seeded by this process's own startup reload, i.e.
+    from the yaml as it is NOW, so a key deleted while the trial was down was
+    invisible: `--resume` restores the saved trial config (which still carries
+    the value, because neither the experiment-state overlay nor the reloader
+    ever removes a key) and the first live reload compares the new yaml against
+    a baseline that also lacks the key. Pause -> edit -> restart is the common
+    operator path, and it was the one path the warning could not see.
+
+    Called once at startup with the key set banked in the restored checkpoint's
+    trial_meta.json. The comparison is the same one the live path makes, so the
+    operator gets the same sentence.
+
+    Silent, and leaves the baseline alone, when there is nothing to adopt: a
+    fresh start, or a checkpoint written before this was banked.
+    """
+    banked = frozenset(keys)
+    if not (yaml_path and banked):
+        return
+    current = _LAST_RELOAD_YAML_KEYS.get(yaml_path)
+    if current is None:
+        return
+    _warn_on_keys_dropped_from_yaml(
+        yaml_path=yaml_path, fresh=current, config=config, previous=banked,
+        since="the checkpoint this process resumed from",
+    )
+
+
+def _warn_on_keys_dropped_from_yaml(
+    *,
+    yaml_path: str,
+    fresh: Mapping[str, object] | Iterable[str],
+    config: Mapping[str, object],
+    previous: frozenset[str] | None = None,
+    since: str = "the previous reload",
+) -> None:
     """Name every key the yaml stopped setting while the trial still runs it.
 
     The reload is ADD/UPDATE-only: it iterates the fresh yaml and writes
@@ -833,8 +896,26 @@ def _warn_on_keys_dropped_from_yaml(*, yaml_path: str, fresh: Mapping[str, objec
     default, or a value from a config that no longer exists) is not knowable
     from the yaml — so it needs its own pre-registered entry. What is knowable,
     and what this says, is that the deletion did nothing.
+
+    ⚑ IT FIRES ONCE PER DELETION, not once per iteration. The baseline moves to
+    the new key set immediately afterwards, so the second reload has nothing to
+    compare (review N5). That is the same noise trade the other three loud
+    branches make, and it is a real limit of the observable: one WARNING in a
+    665 s iteration is easy to lose in a multi-hour stdout stream. The durable
+    form would be a report column, which rotates progress.csv and belongs with
+    whoever next changes the report schema.
+
+    ⚑ Two baselines feed this, and the restart one is why ``previous`` is an
+    argument rather than a module lookup: it defaults to the in-process record
+    of the last successful load, and ``seed_yaml_reload_baseline`` passes the
+    set banked in the checkpoint so a deletion made while the trial was DOWN is
+    reported too (review B2). Still invisible: a deletion made while down when
+    the resumed checkpoint predates the banking, a salvage restart (a pool's key
+    set describes another experiment and is deliberately not adopted), and a
+    deletion of a key the trial does not carry at all.
     """
-    previous = _LAST_RELOAD_YAML_KEYS.get(yaml_path)
+    if previous is None:
+        previous = _LAST_RELOAD_YAML_KEYS.get(yaml_path)
     if previous is None:
         return
     missing = object()
@@ -845,11 +926,11 @@ def _warn_on_keys_dropped_from_yaml(*, yaml_path: str, fresh: Mapping[str, objec
   # is in effect, so nothing was silently kept.
             continue
         log.warning(
-            "YAML reload: %s is no longer set by %s but the trial is STILL "
-            "RUNNING %r — delete does not revert; write the old value "
-            "explicitly. (`%s: null` is dropped before the reloader sees it, "
-            "so it reads as a delete too.)",
-            key, yaml_path, current, key,
+            "YAML reload: %s is no longer set by %s (it was, as of %s) but the "
+            "trial is STILL RUNNING %r — delete does not revert; write the old "
+            "value explicitly. (`%s: null` is dropped before the reloader sees "
+            "it, so it reads as a delete too.)",
+            key, yaml_path, since, current, key,
         )
 
 

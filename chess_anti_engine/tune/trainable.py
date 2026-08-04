@@ -45,6 +45,8 @@ from chess_anti_engine.tune.trainable_config_ops import (
     _resolve_sims,
     _sync_trainer_weights,
     _wait_if_paused,
+    last_reload_yaml_keys,
+    seed_yaml_reload_baseline,
 )
 from chess_anti_engine.tune.trainable_init import (
     _init_era_probes,
@@ -221,10 +223,25 @@ def _startup_gate_state(*, gate_state_path: Path, restore: RestoreResult) -> dic
     Safe without the anchor, which pools deliberately do not carry:
     ``GateHoldController.create`` RELEASES a restored hold whose
     ``gate_promoted_model.pt`` is absent rather than serving something else.
+
+    A PRESENT-BUT-UNREADABLE own file is treated as own state, not as absence
+    (review N3). ``load_optional_json`` returns None for a missing path and for
+    a JSONDecodeError alike, so keying the pool fallback off its result would
+    let a truncated own file -- a crash mid-write is exactly how one is produced
+    -- hand this trial another lineage's window. Empty is the safe reading: the
+    gate refills its window, which is what a corrupt file already meant.
     """
     own = load_optional_json(gate_state_path)
     if own is not None:
         return own
+    if gate_state_path.exists():
+        print(
+            f"[trial] promotion-gate state at {gate_state_path} exists but did "
+            f"not parse; starting from an EMPTY window rather than adopting "
+            f"anything else",
+            flush=True,
+        )
+        return {}
     if restore.restored_gate_state is None:
         return {}
     seeded = restore.restored_gate_state
@@ -682,6 +699,16 @@ def train_trial(config: dict):
         restore=restore, best_json_ema=opp_strength_ema,
     )
 
+  # The delete-observable's restart leg (review B2). The in-process baseline was
+  # seeded by THIS process's startup reload, i.e. from the yaml as it is now, so
+  # a key removed while the trial was down matched nothing. The checkpoint banks
+  # the key set the previous process was running; comparing against it here is
+  # what makes `pause -> edit the yaml -> restart` -- the operator path that
+  # actually happens -- report the same sentence a live deletion does.
+    seed_yaml_reload_baseline(
+        yaml_path=_yaml_path, keys=restore.restored_yaml_keys, config=config,
+    )
+
     best_loss, best_source = _reset_best_on_cross_trial_restore(
         restore=restore, best_loss=best_loss, best_source=best_source,
         best_dir=best_dir, best_state_path=best_state_path,
@@ -1036,6 +1063,7 @@ def train_trial(config: dict):
                 holdout_generation=holdout_generation,
                 holdout_ruler=holdout_ruler,
                 opp_strength_ema=opp_strength_ema,
+                yaml_keys=last_reload_yaml_keys(_yaml_path),
                 Checkpoint=Checkpoint,
             )
 

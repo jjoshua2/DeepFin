@@ -238,7 +238,20 @@ def _restore_from_salvage_pool(
     rr.holdout_state_dir = Path(picked_dir)
     if isinstance(restored_trial_meta, dict):
         _apply_restored_holdout_scalars(rr, restored_trial_meta)
-        _apply_restored_opp_strength_ema(rr, restored_trial_meta)
+  # ⚑ The donor's EMA rides ONLY when the operator also asked for the donor's
+  # PID state (review N4). `opp_strength_ema` is opponent_strength smoothed,
+  # and opponent_strength is difficulty x winrate -- so importing it while
+  # `salvage_restore_pid_state` is false would anchor the scheduler's own
+  # objective, for ~10 iterations at alpha 0.3, to a difficulty this process
+  # deliberately is NOT running. Production sets the flag true
+  # (configs/pbt2_small.yaml), so this changes nothing today; it stops a future
+  # default flip from reintroducing the mismatch silently.
+        if bool(config.get("salvage_restore_pid_state", False)):
+            _apply_restored_opp_strength_ema(rr, restored_trial_meta)
+  # The yaml key baseline is deliberately NOT adopted from a pool: a salvage
+  # slot was written by a different experiment, so today's yaml differing from
+  # its key set says nothing about an operator's recent edit. Only an ordinary
+  # resume, which continues the SAME trial, carries it (review B2).
         rr.global_iter = int(restored_trial_meta.get("global_iter", rr.global_iter))
         rr.restored_window = int(restored_trial_meta.get("current_window", rr.restored_window))
         rr.restored_owner_trial_dir = str(
@@ -332,6 +345,18 @@ def _apply_restored_holdout_scalars(rr: RestoreResult, restored_trial_meta: dict
     rr.holdout_ruler = str(restored_trial_meta.get("holdout_ruler", "") or "")
 
 
+def _apply_restored_yaml_keys(rr: RestoreResult, restored_trial_meta: dict) -> None:
+    """Carry the previous process's yaml key set across the restart (review B2).
+
+    Names only, and only the ones that are strings: this feeds a comparison, so
+    a malformed entry must shrink the baseline rather than crash a restore.
+    """
+    banked = restored_trial_meta.get("yaml_keys")
+    if not isinstance(banked, list):
+        return
+    rr.restored_yaml_keys = frozenset(k for k in banked if isinstance(k, str))
+
+
 def _apply_restored_opp_strength_ema(rr: RestoreResult, restored_trial_meta: dict) -> None:
     """Carry the opponent-strength EMA across the restart (audit T1).
 
@@ -360,6 +385,7 @@ def _apply_restored_trial_meta(rr: RestoreResult, restored_trial_meta: dict | No
         return "", ""
     _apply_restored_holdout_scalars(rr, restored_trial_meta)
     _apply_restored_opp_strength_ema(rr, restored_trial_meta)
+    _apply_restored_yaml_keys(rr, restored_trial_meta)
     rr.restored_owner_trial_dir = str(restored_trial_meta.get("owner_trial_dir", ""))
     rr.salvage_origin_used = bool(restored_trial_meta.get("salvage_origin_used", rr.salvage_origin_used))
     rr.salvage_origin_slot = int(restored_trial_meta.get("salvage_origin_slot", rr.salvage_origin_slot))

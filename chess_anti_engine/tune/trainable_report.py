@@ -12,6 +12,7 @@ import math
 import shutil
 import time
 import traceback
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -263,6 +264,7 @@ def _save_trial_checkpoint(
     holdout_generation: int,
     holdout_ruler: str,
     opp_strength_ema: float,
+    yaml_keys: Iterable[str],
     Checkpoint,
 ):
     """Flush replay buffer and save a lightweight checkpoint.
@@ -287,6 +289,13 @@ def _save_trial_checkpoint(
     checkpoint. The value stored is the EMA in effect when the checkpoint was
     written — this iteration's PID update runs after the save — so a resume
     continues the series one update behind instead of restarting it.
+
+    `yaml_keys` is the flat key set of the yaml this process last loaded
+    successfully. It is banked for one purpose: the next process compares the
+    yaml it finds against it, so a key DELETED while the trial was down is
+    reported instead of silently keeping its restored value (review B2). Key
+    NAMES only, never values — the values are the yaml's job, and copying them
+    here would create a second source of truth for the live config.
     """
     buf.flush()
     trainer.save(ckpt_dir / "trainer.pt")
@@ -312,6 +321,7 @@ def _save_trial_checkpoint(
                 "holdout_generation": int(holdout_generation),
                 "holdout_ruler": str(holdout_ruler),
                 "opp_strength_ema": float(opp_strength_ema),
+                "yaml_keys": sorted(yaml_keys),
             }, sort_keys=True, indent=2),
         )
     except (OSError, TypeError, ValueError) as exc:

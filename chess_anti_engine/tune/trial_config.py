@@ -1126,6 +1126,11 @@ class RestoreResult:
   # ruler change across the restart bumps the generation instead of hiding
   # inside it. "" on any checkpoint written before this was recorded.
     holdout_ruler: str = ""
+  # The flat yaml key set the process that wrote the restored checkpoint was
+  # running, banked in its trial_meta.json. Empty for a fresh start and for any
+  # checkpoint written before it was banked; the startup check treats empty as
+  # "no baseline" and stays silent rather than reporting every key as deleted.
+    restored_yaml_keys: frozenset[str] = frozenset()
   # The promotion gate's `gate_state.json` as found in a salvage seed slot, for
   # a trial whose own durable dir has none. None on every other path -- an
   # ordinary `--resume` reads the trial's own file and never consults this
