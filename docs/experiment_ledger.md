@@ -32978,3 +32978,21 @@ transient), not with onset of the old slide. PID effectively converged: regret a
 floor, nodes stabilized ~93-100k, winrate EMA 0.543 vs the 0.5 target; iteration time ~757s
 (SF cost at the higher node count — the expected price of a net that forced difficulty up 2×).
 Watch continues; the deciding instrument remains the ~5-day arena.
+
+## 2026-08-04 ~16:00 — dxg wedge is BACK; ratchet (the deciding instrument) is down, training unaffected
+
+- `nvidia-smi` hangs >120s; dmesg shows the July-25 fingerprint (`dxgvmb_send_sync_msg:
+  wait_for_completion failed: fffffe00`, `query_adapter_info Ioctl failed: -512`,
+  `vmbus_sendpacket failed`). Existing CUDA contexts run normally — trial 0f888 wrote
+  iter 170 during the diagnosis. New CUDA clients hang at device init.
+- This retro-explains today's ratchet failure: both 03:11/03:35 attempts backstop-killed
+  at "loading candidate" (CUDA init), `attempts.csv` reasons `vs_prev:backstop|vs_boot512:backstop`.
+  **2026-08-04 has NO strength measurement, and none is possible until reboot.** The
+  Elo(published − boot512) deciding series has zero rows for the 0f888 lineage.
+- Mitigation: banked `checkpoint_000169` (weights+opt+pid+holdout, 656M) to
+  `data/ratchet/snapshots/ck_2026-08-04_iter169_banked_during_dxg_wedge` so today's
+  point can be retro-measured after reboot. Bank one snapshot per ~12h until reboot.
+- Prior art: a3aa9447e — the wedge does NOT drain; reboot was the resolution. Reboot
+  timing is the user's call: it interrupts the run exactly at window-eviction onset
+  (the forgetting-hinge readout), and the next restart deploys #332–#346 (live branch
+  must first merge origin/main to empty diff).
