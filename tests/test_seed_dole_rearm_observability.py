@@ -115,6 +115,31 @@ def test_stale_iteration_warns_with_both_numbers(
     assert not (pub / SEED_DOLE_REARM_FILENAME).exists()
 
 
+def test_claim_carries_the_trial_key_into_the_rearm_log(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The trial key must survive the hop from `claim` into the consumer.
+
+    `claim` reaches `_consume_rearm_unlocked` through `run_in_threadpool` and a
+    `functools.partial`, so `trial_key` is passed at a seam the direct-call
+    tests above bypass: they hand it in themselves. Drop `trial_key=trial_key`
+    from that partial and every rearm line silently loses its `trial=` field --
+    on a multi-trial server that is the difference between an actionable
+    warning and an unattributable one. Only this test fails when it is dropped.
+    """
+    pub = _pub(tmp_path)
+    gate = _SeedDoleGate()
+    assert asyncio.run(gate.claim("trial_00007", 5, publish_dir=pub)) is True
+    _write_rearm(pub, json.dumps({"training_iteration": 5}))
+
+    with caplog.at_level(logging.INFO, logger=_LOGGER):
+        assert asyncio.run(gate.claim("trial_00007", 5, publish_dir=pub)) is True
+
+    consumed = [m for m in _messages(caplog, logging.INFO) if "rearm CONSUMED" in m]
+    assert len(consumed) == 1, consumed
+    assert "trial=trial_00007" in consumed[0], consumed[0]
+
+
 def test_stale_rearm_does_not_lose_a_later_dole(tmp_path: Path) -> None:
     """The stale branch discards a re-arm, never a claim: `claim` still grants
     a strictly newer iteration through its ordinary `iteration > last` path.
@@ -294,9 +319,18 @@ def test_manifest_grant_logs_iteration_and_seed_count(
 
 def test_manifest_declines_are_not_logged_as_grants(tmp_path: Path,
                                                     caplog: pytest.LogCaptureFixture) -> None:
-    """Negative control for the line above: with doling OFF the same polls must
-    produce NO grant line. Without this, a line emitted unconditionally would
-    still pass the test above and mean nothing."""
+    """A trial that declines at the FIRST guard logs nothing at all.
+
+    What this pins, precisely: `opening_fen_dole_per_iter == 0` returns before
+    `claim` is ever called, so an operator who greps a trial and finds no
+    `dole GRANTED` line can read that as "doling is off for this trial", not as
+    "the grant site is reached but silent".
+
+    It does NOT kill an `if granted:` -> `if True:` mutation -- these polls
+    never reach that line. That mutation is killed by the `len(granted) == 1`
+    assertion in the test above: with doling ON, polls 2 and 3 DO reach the
+    line with `granted=False`, so an unconditional log would emit three.
+    """
     from chess_anti_engine.server.app import create_app
     from chess_anti_engine.worker import _manifest_poll_headers
     from tests.test_distributed_selfplay_backpressure import (
