@@ -23788,11 +23788,25 @@ otherwise, the instrument is not installed and the A8 A/B must not be launched.
 Wave-4 remediation batch F, routed by the AUDIT WAVE 4 entry (fae465951) from
 `scratchpad/code_audit_20260803/TUNE_AUDIT.md`. **Not training-affecting: no
 yardstick, no readout window, no pre-registration.** Nothing here changes a
-loss, a target, a sampling distribution or a search shape; three of the four are
-observability or restart-state carriage, and the one behaviour change (T2)
-DECLINES to overlay six keys whose consumers never re-read them. Each fix is
-listed with the deploy-time observable that proves it took effect, because a
-lifecycle fix that quietly did not land is the exact defect being fixed.
+loss, a target, a sampling distribution or a search shape. Most of it is
+observability or restart-state carriage, and there are THREE behaviour changes,
+each described in its own section below and none of them touching the training
+target: T2 DECLINES to overlay FIVE keys whose consumers never re-read them
+(`iterations`, `puzzle_epd`, `eval_sf_nodes`, `sf_pid_enabled`, `pause_file`);
+N3 makes a present-but-unreadable `gate_state.json` yield an empty window
+instead of falling through to a salvage pool's; N4 makes the salvage
+opponent-strength EMA follow `salvage_restore_pid_state`, which production sets
+true, so nothing moves today. Each fix is listed with the deploy-time observable
+that proves it took effect, because a lifecycle fix that quietly did not land is
+the exact defect being fixed.
+
+⚑ This opening paragraph said "six keys" and "the one behaviour change" until
+the delta review caught it: both numbers were the pre-review shape of the PR
+(`eval_games` was the sixth key and is now correctly unfrozen — see the T2
+section — and N3/N4 arrived with the review response). Amended in place rather
+than appended, because the paragraph is a summary of the sections beneath it and
+a summary that disagrees with them is worse than no summary; nothing measured
+changed, and no other entry was touched.
 
 **T1 — `opp_strength_ema` survives a restart.** It was written to `best.json`,
 read at startup, and overwritten one line later by `RestoreResult.opp_strength_ema`,
