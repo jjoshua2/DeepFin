@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import threading
 import time
 from pathlib import Path
@@ -443,7 +444,24 @@ async def test_the_hot_poll_routes_do_not_read_the_disk_on_the_loop(tmp_path) ->
     server_root = tmp_path / "server"
     (server_root / "publish").mkdir(parents=True)
     _seed_user(server_root)
-    (server_root / "publish" / "manifest.json").write_text("{}", encoding="utf-8")
+    # ⚑ A REALISTIC MANIFEST, NOT `{}`. With an empty file this gate passed on
+    # unfixed code 2 runs in 3 (review #336): the read was too small to stall
+    # anything, so the test could not discriminate. A production manifest
+    # carries the full realized worker config -- ~200 keys plus the dole FEN
+    # seed list -- and reading and json-parsing that is the work the loop was
+    # doing on every poll. Sized to the live manifest, not padded arbitrarily.
+    manifest = {
+        "model_sha256": "0" * 64,
+        "model_step": 123456,
+        "trial_id": "trial_0f888",
+        **{f"search_knob_{i}": (i * 1.5) for i in range(200)},
+        "dole_fen_seeds": [
+            f"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 {i}" for i in range(500)
+        ],
+    }
+    (server_root / "publish" / "manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
 
     app = app_mod.create_app(server_root=str(server_root), users_db="users.json")
 
@@ -474,4 +492,78 @@ async def test_the_hot_poll_routes_do_not_read_the_disk_on_the_loop(tmp_path) ->
         f"the manifest poll route stalled the loop for {worst:.4f}s over 20 "
         f"requests (bound {MAX_UNINJECTED_STALL_S}s); it is reading the "
         f"manifest off disk on the event-loop thread"
+    )
+
+
+@pytest.mark.anyio
+async def test_concurrent_uploads_do_not_lose_stat_updates(tmp_path) -> None:
+    """NEGATIVE CONTROL for A5: the loop was serialising three RMW cycles.
+
+    Banked from the #336 review, which found this and measured it. Three
+    unlocked read-modify-write cycles run on the upload path — the two
+    throughput stats files and ``load_users`` -> ``record_upload`` ->
+    ``save_users``. While the tail of ``_upload_shard_impl`` ran on the event
+    loop they could not interleave: one thread, no ``await`` between the read
+    and the write. Moving the tail into the threadpool removed that implicit
+    serialisation, and concurrent uploads began overwriting each other's
+    counts. ``atomic_write_text`` makes each WRITE atomic, so nothing ever
+    tears — the file just quietly ends up with fewer increments than there were
+    uploads, which is this codebase's signature defect wearing a new hat.
+
+    Reviewer's measurement, 5 runs a side, 8 concurrent uploads:
+    base ``[8, 8, 8, 8, 8]``, unlocked head ``[5, 4, 8, 7, 6]``.
+
+    ⚑ EVERY OTHER TEST IN THE SUITE UPLOADS SEQUENTIALLY, which is why none of
+    them caught it. The assertion is an exact count, not a bound: 8 uploads
+    must record 8.
+
+    ⚑ A18's precondition is single EXECUTION CONTEXT, not single process. This
+    change kept the process count at one and still broke it.
+    """
+    import httpx
+
+    from chess_anti_engine.server import app as app_mod
+    from chess_anti_engine.server.auth import load_users
+
+    n_uploads = 8
+    server_root = tmp_path / "server"
+    server_root.mkdir()
+    _seed_user(server_root)
+    app = app_mod.create_app(
+        server_root=str(server_root),
+        users_db="users.json",
+        upload_compact_shard_size=2000,  # stay in the buffer; the stats tail is the subject
+    )
+    tars = [
+        _build_zarr_tar(
+            tmp_path / f"c{i}",
+            samples=[_sample(i)],
+            model_sha256=hashlib.sha256(f"m{i}".encode()).hexdigest(),
+        )
+        for i in range(n_uploads)
+    ]
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t", timeout=60.0) as client:
+        results = await asyncio.gather(*[
+            client.post(
+                "/v1/upload_shard",
+                files={"file": (f"{i}.zarr.tar", tar, "application/octet-stream")},
+                headers=_headers(),
+            )
+            for i, tar in enumerate(tars)
+        ])
+
+    for r in results:
+        assert r.status_code == 200, r.text
+        assert r.json().get("stored") is True, r.json()
+
+    users = load_users(server_root / "users.json")
+    rec = users["u"]
+    recorded = int(getattr(rec, "uploads", 0))
+    print(f"RMW PROBE uploads recorded = {recorded} of {n_uploads}")
+    assert recorded == n_uploads, (
+        f"{n_uploads} concurrent uploads all returned stored=true but only "
+        f"{recorded} were recorded; the read-modify-write cycle on users.json "
+        f"is unserialised now that the upload tail runs in the threadpool"
     )

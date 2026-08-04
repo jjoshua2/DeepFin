@@ -87,7 +87,19 @@ class _SeedDoleGate:
 
     def __init__(self, state_path: Path | None = None) -> None:
         self._state_path = state_path
-        self._lock = asyncio.Lock()
+        # ⚑ CREATED LAZILY, IN THE LOOP THAT FIRST USES IT. An `asyncio.Lock`
+        # binds to a running loop, and constructing it here binds it to
+        # whatever loop happened to be running when the gate was made -- or to
+        # none. That was survivable while `claim` never awaited inside the
+        # `async with`, because an uncontended acquire returns without touching
+        # the loop; adding the threadpool hops (A9) made the binding real and
+        # broke every test that drives one gate from two loops
+        # (`asyncio.Lock bound to a different event loop`). Rebuilding when the
+        # running loop changes keeps the critical section exactly as wide as it
+        # was: one loop's concurrent polls still contend on one lock, which is
+        # the only case that has to be mutually exclusive.
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop: Any = None
         self._last_iter: dict[str, int] = {}
         if state_path is not None and state_path.exists():
             try:
@@ -131,6 +143,21 @@ class _SeedDoleGate:
             with contextlib.suppress(OSError):
                 tmp.unlink(missing_ok=True)
 
+    def _loop_lock(self) -> asyncio.Lock:
+        """The lock, bound to the loop currently running.
+
+        Rebuilt if the running loop changed since it was made. Two different
+        loops never share a gate in production -- there is exactly one server
+        loop -- so this only rebuilds at first use and in tests, and a rebuild
+        cannot drop a concurrent holder, because a holder can only exist on the
+        loop it was acquired in.
+        """
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
+
     async def claim(
         self,
         trial_key: str,
@@ -170,7 +197,7 @@ class _SeedDoleGate:
         # module-level import would silently take that property away.
         from starlette.concurrency import run_in_threadpool
 
-        async with self._lock:
+        async with self._loop_lock():
             rearm = bool(allow_rearm)
             if publish_dir is not None:
                 # File wins over the kwarg when both are set; under the lock so
@@ -798,6 +825,29 @@ def create_app(
     upload_accumulators: dict[tuple[str | None, str, str], _BufferedUploadAccumulator] = {}
     recent_upload_shas: dict[tuple[str | None, str], float] = {}
     upload_lock = threading.Lock()
+    # ⚑ THE EVENT LOOP WAS SERIALISING THESE FOR FREE, AND A5 TOOK THAT AWAY.
+    # Three unlocked read-modify-write cycles run on the upload path -- the two
+    # throughput stats files and `load_users`/`record_upload`/`save_users`.
+    # While `_upload_shard_impl` ran them on the loop thread they could not
+    # interleave: one thread, no `await` between the read and the write. A5
+    # moved the tail into the threadpool, so concurrent uploads now read the
+    # same file, mutate their own copy, and write it back over each other.
+    # `atomic_write_text` makes each WRITE atomic, so nothing tears -- the file
+    # just quietly ends up with fewer increments than there were uploads.
+    # Measured by review on 8 concurrent uploads: base 8/8 every run, this
+    # branch without this lock [5, 4, 8, 7, 6].
+    #
+    # It nests with nothing: the stats tail runs after `_accumulate_under_lock`
+    # has returned, so `upload_lock` is already released and there is no
+    # ordering question between the two.
+    #
+    # ⚑ METHOD NOTE, worth more than the fix: A18 records single-PROCESS as the
+    # precondition for these cycles being safe. The real precondition is single
+    # EXECUTION CONTEXT, and the loop was providing it invisibly. This change
+    # kept the process count at one and still broke it. Anything that moves
+    # work off the loop must first enumerate what the loop was accidentally
+    # serialising.
+    stats_write_lock = threading.Lock()
     queued_games_cache: dict[str | None, tuple[float, dict[str, int]]] = {}
     queued_games_cache_lock = threading.Lock()
     seed_dole_gate = _SeedDoleGate(state_path=root / "seed_dole_gate.json")
@@ -1183,36 +1233,39 @@ def create_app(
         games: int,
         elapsed_s: float | None,
     ) -> None:
-        if elapsed_s is None or elapsed_s <= 0.0:
-            return
-        gpu_model = _primary_gpu_model(lease=lease)
-        now_unix = int(time.time())
-        stats = _load_json_stats(stats_path)
-        entry = stats.get(gpu_model)
-        if not isinstance(entry, dict):
-            entry = {}
-        entry["gpu_model"] = gpu_model
-        entry["samples"] = int(entry.get("samples", 0)) + 1
-        entry["total_positions"] = int(entry.get("total_positions", 0)) + int(positions)
-        entry["total_games"] = int(entry.get("total_games", 0)) + int(games)
-        entry["total_elapsed_s"] = float(entry.get("total_elapsed_s", 0.0)) + float(elapsed_s)
-        total_elapsed_s = max(1e-9, float(entry["total_elapsed_s"]))
-        entry["avg_positions_per_s"] = float(entry["total_positions"]) / total_elapsed_s
-        entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
-        entry["last_trial_id"] = _normalize_trial_id(trial_id)
-        if isinstance(lease, dict):
-            worker_info = lease.get("worker_info")
-            if isinstance(worker_info, dict):
-                hostname = str(worker_info.get("hostname") or "").strip()
-                if hostname:
-                    entry["last_hostname"] = hostname
-                cpu_count = worker_info.get("cpu_count")
-                if cpu_count is not None:
-                    with contextlib.suppress(Exception):
-                        entry["last_cpu_count"] = int(cpu_count)
-        entry["last_updated_unix"] = now_unix
-        stats[gpu_model] = entry
-        atomic_write_text(stats_path, json.dumps(stats, indent=2, sort_keys=True))
+        # Serialised against the other RMW cycles on this path; see
+        # `stats_write_lock`.
+        with stats_write_lock:
+            if elapsed_s is None or elapsed_s <= 0.0:
+                return
+            gpu_model = _primary_gpu_model(lease=lease)
+            now_unix = int(time.time())
+            stats = _load_json_stats(stats_path)
+            entry = stats.get(gpu_model)
+            if not isinstance(entry, dict):
+                entry = {}
+            entry["gpu_model"] = gpu_model
+            entry["samples"] = int(entry.get("samples", 0)) + 1
+            entry["total_positions"] = int(entry.get("total_positions", 0)) + int(positions)
+            entry["total_games"] = int(entry.get("total_games", 0)) + int(games)
+            entry["total_elapsed_s"] = float(entry.get("total_elapsed_s", 0.0)) + float(elapsed_s)
+            total_elapsed_s = max(1e-9, float(entry["total_elapsed_s"]))
+            entry["avg_positions_per_s"] = float(entry["total_positions"]) / total_elapsed_s
+            entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
+            entry["last_trial_id"] = _normalize_trial_id(trial_id)
+            if isinstance(lease, dict):
+                worker_info = lease.get("worker_info")
+                if isinstance(worker_info, dict):
+                    hostname = str(worker_info.get("hostname") or "").strip()
+                    if hostname:
+                        entry["last_hostname"] = hostname
+                    cpu_count = worker_info.get("cpu_count")
+                    if cpu_count is not None:
+                        with contextlib.suppress(Exception):
+                            entry["last_cpu_count"] = int(cpu_count)
+            entry["last_updated_unix"] = now_unix
+            stats[gpu_model] = entry
+            atomic_write_text(stats_path, json.dumps(stats, indent=2, sort_keys=True))
 
     def _record_trial_throughput(
         *,
@@ -1221,32 +1274,35 @@ def create_app(
         games: int,
         elapsed_s: float | None,
     ) -> None:
-        tid = _normalize_trial_id(trial_id)
-        if tid is None or elapsed_s is None or elapsed_s <= 0.0:
-            return
-        stats = _load_json_stats(trial_stats_path)
-        entry = stats.get(tid)
-        if not isinstance(entry, dict):
-            entry = {}
-        now_unix = int(time.time())
-        entry["trial_id"] = tid
-        entry["samples"] = int(entry.get("samples", 0)) + 1
-        entry["total_positions"] = int(entry.get("total_positions", 0)) + int(positions)
-        entry["total_games"] = int(entry.get("total_games", 0)) + int(games)
-        entry["total_elapsed_s"] = float(entry.get("total_elapsed_s", 0.0)) + float(elapsed_s)
-        total_elapsed_s = max(1e-9, float(entry["total_elapsed_s"]))
-        batch_positions_per_s = float(positions) / max(1e-9, float(elapsed_s))
-        batch_games_per_s = float(games) / max(1e-9, float(elapsed_s))
-        alpha = 0.30
-        prev_pos = float(entry.get("ema_positions_per_s", batch_positions_per_s) or batch_positions_per_s)
-        prev_games = float(entry.get("ema_games_per_s", batch_games_per_s) or batch_games_per_s)
-        entry["ema_positions_per_s"] = (1.0 - alpha) * prev_pos + alpha * batch_positions_per_s
-        entry["ema_games_per_s"] = (1.0 - alpha) * prev_games + alpha * batch_games_per_s
-        entry["avg_positions_per_s"] = float(entry["total_positions"]) / total_elapsed_s
-        entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
-        entry["last_updated_unix"] = now_unix
-        stats[tid] = entry
-        atomic_write_text(trial_stats_path, json.dumps(stats, indent=2, sort_keys=True))
+        # Serialised against the other RMW cycles on this path; see
+        # `stats_write_lock`.
+        with stats_write_lock:
+            tid = _normalize_trial_id(trial_id)
+            if tid is None or elapsed_s is None or elapsed_s <= 0.0:
+                return
+            stats = _load_json_stats(trial_stats_path)
+            entry = stats.get(tid)
+            if not isinstance(entry, dict):
+                entry = {}
+            now_unix = int(time.time())
+            entry["trial_id"] = tid
+            entry["samples"] = int(entry.get("samples", 0)) + 1
+            entry["total_positions"] = int(entry.get("total_positions", 0)) + int(positions)
+            entry["total_games"] = int(entry.get("total_games", 0)) + int(games)
+            entry["total_elapsed_s"] = float(entry.get("total_elapsed_s", 0.0)) + float(elapsed_s)
+            total_elapsed_s = max(1e-9, float(entry["total_elapsed_s"]))
+            batch_positions_per_s = float(positions) / max(1e-9, float(elapsed_s))
+            batch_games_per_s = float(games) / max(1e-9, float(elapsed_s))
+            alpha = 0.30
+            prev_pos = float(entry.get("ema_positions_per_s", batch_positions_per_s) or batch_positions_per_s)
+            prev_games = float(entry.get("ema_games_per_s", batch_games_per_s) or batch_games_per_s)
+            entry["ema_positions_per_s"] = (1.0 - alpha) * prev_pos + alpha * batch_positions_per_s
+            entry["ema_games_per_s"] = (1.0 - alpha) * prev_games + alpha * batch_games_per_s
+            entry["avg_positions_per_s"] = float(entry["total_positions"]) / total_elapsed_s
+            entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
+            entry["last_updated_unix"] = now_unix
+            stats[tid] = entry
+            atomic_write_text(trial_stats_path, json.dumps(stats, indent=2, sort_keys=True))
 
     def _check_worker_compat(
         *,
@@ -1935,10 +1991,11 @@ def create_app(
 
       # Update user stats.
             try:
-                users = load_users(users_path)
-                machine_id = str(x_cae_machine_id).strip() if x_cae_machine_id else None
-                record_upload(users, username=username, bytes_uploaded=int(n), positions=positions, machine_id=machine_id)
-                save_users(users_path, users)
+                with stats_write_lock:
+                    users = load_users(users_path)
+                    machine_id = str(x_cae_machine_id).strip() if x_cae_machine_id else None
+                    record_upload(users, username=username, bytes_uploaded=int(n), positions=positions, machine_id=machine_id)
+                    save_users(users_path, users)
             except Exception:
       # Stats failure should not fail the upload.
                 pass
