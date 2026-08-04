@@ -28547,3 +28547,110 @@ Outcome clauses are unchanged from the pre-registration (aebc3cf45): NULL remain
 pre-declared and plausible; null ships 12 as free insurance, regression keeps 8,
 improvement counts only if SIG on pooled seeds. Outcomes stay unread until this leg
 is settled.
+
+### VERDICT — A8 v2 stage-2: **WAVE ABORTED.** The re-based leg failed, and the
+### derivation REFUTED the reasoning that justified re-basing it.
+
+Pre-registration aebc3cf45; re-base amendment 678479216 (item 7: last amendment, a
+failure aborts for real). All numbers below re-verified from banked dumps after an
+API drop, not from mid-flight output.
+
+#### The offline derivation — and it falsifies my own hypothesis
+
+Designated square tensor (512x512, `nesterov=False`, so the captured
+`momentum_buffer` IS the polar path's input), control momentum, chunks 1-5, through
+production `_aurora_update` at the arms' live dtype:
+
+| chunk | PE-8 `sv_ratio` | PE-12 `sv_ratio` | ratio |
+|---|---|---|---|
+| 1 | 0.014534 | 0.177988 | 12.25 |
+| 2 | 0.001552 | 0.019232 | 12.39 |
+| 3 | 0.004170 | 0.051578 | 12.37 |
+| 4 | 0.001250 | 0.015503 | 12.40 |
+| 5 | 0.006331 | 0.078189 | 12.35 |
+
+**Median 12.369. Derived bar = 0.5 x 12.369 = 6.184.** Not degenerate (>= 2.0).
+
+**I re-based this leg on the theory that this rig's momentum regime differs from
+`checkpoint_000478`'s. The derivation says it does not.** #327 measured a centre of
+**12.07** across designations (range 11.40-12.36); this rig's own momentum gives
+**12.369**, with a per-chunk spread of **1.2%**. The regimes agree to within 2.5%.
+**The original >= 8.0 bar was appropriate for this rig all along, and my stated
+reason for moving it was wrong.** The re-base was procedurally legitimate — argued
+from instrument structure, committed before outcomes — but its premise is falsified
+by the very measurement designed to test it.
+
+#### The amended leg
+
+| seed | control | arm | live ratio | vs bar 6.184 |
+|---|---|---|---|---|
+| 0 | 0.0176 | 0.0899 | **5.11** | **FAIL** |
+| 1 | 0.0052 | 0.0645 | **12.40** | PASS |
+
+The amendment's item 4 is singular ("live arm/control square `sv_ratio` median >=
+that derived bar") and was written when only seed 0 existed. Seed 0 fails. Read as
+written, or read as "both seeds", the leg **FAILS**; only a pooled-or-any-seed
+reading would pass, and **I will not resolve an ambiguity I introduced in the
+direction that unlocks outcomes.** Per item 7: **the wave aborts. No second
+re-base.**
+
+#### What actually went wrong — an instrument finding for #327
+
+Seed 1 landing on **12.40** against an offline **12.369** is the tell. The live
+column and the offline derivation are not measuring the same thing:
+
+* **Offline** compares PE-8 and PE-12 on **ONE shared momentum**. Spread 1.2%.
+* **Live** compares the arm's PE-12 on the **ARM's** momentum against the control's
+  PE-8 on the **CONTROL's** momentum. After step 1 those trajectories diverge, so
+  numerator and denominator come from different matrices. Per-chunk spread **22x**
+  (1.16 / 2.61 / 4.71 / 5.33 / 25.06 on seed 0).
+
+**#327's premise — "the arm/control RATIO on the SAME designated tensor is the
+statistic that survives the choice of tensor" — is true for a same-momentum
+comparison and does NOT transfer to a live cross-run column.** The designated tensor
+is the same *parameter slot*, not the same *tensor value*. Seed 0 and seed 1 are the
+same statistic sampled twice: one landed on the expected value, one did not. A
+5-sample median of a 22x-spread quantity was never going to be a reliable bar.
+
+**Concrete recommendation for the column:** drop the cross-run square `sv_ratio`
+ratio as a gate leg. The three legs that were rock-steady across both seeds are
+`orth_err` ratio (0.336 / 0.329), rect arm `sv_ratio` (0.9984 / 0.9984) and rect arm
+`orth_err` (0.0016 / 0.0017). If a square `sv_ratio` check is wanted, derive it
+offline on one shared momentum, as done here.
+
+#### What SURVIVES the abort: the setting deploys correctly
+
+The outcome verdict is void. The **deployment** evidence is not, and it is strong:
+
+* **Binary leg exact on all four runs** — `aurora_polar_steps_configured` 12.0 on
+  both arm runs and 8.0 on both control runs, `sv_samples` 2.0, `sv_errors` 0.0,
+  read off the live optimizer param group.
+* **square `orth_err` ratio** 0.336 / 0.329 (bar <= 0.70) — passes both seeds.
+* **rect arm** 0.9984 / 0.0016-0.0017 (bars >= 0.99, <= 0.005) — passes both seeds.
+* **Offline derivation independently confirms** PE-12 delivers a ~12.4x `sv_ratio`
+  improvement over PE-8 on this rig's own momentum.
+
+So: **`aurora_polar_steps: 12` provably reaches the optimizer, through
+`trainer_kwargs_from_config`, and changes polar convergence in the expected direction
+and magnitude.** What is unknown is whether that changes learning.
+
+#### Discipline record
+
+**No outcome metric was read at any point.** No `inw`, `oow`, `era`, no neutral
+audit, no CE. The gate was never passed, so the outcome clauses were never unlocked.
+The banked data is therefore still *blind* and retains its value for a properly
+pre-registered re-analysis under a corrected instrument.
+
+#### Disposition and recommendation
+
+* **Four runs banked and complete**: 48 polar rows each, per-row dumps at 10 eval
+  points, weights at chunks 32/40/48 plus final. Retained. Not usable for an outcome
+  verdict under this wave; usable for a future wave only under fresh pre-registration.
+* **Seed-1 kill/keep is moot** — both seed-1 runs completed at 23:24, before the
+  question arose. Keeping was right regardless: seed 1 is what exposed the noise
+  diagnosis.
+* **`aurora_polar_steps` open decision: KEEP 8.** The PENDING marker resolves to
+  no-change-without-evidence. "12 ships as free insurance" was explicitly conditional
+  on reading a NULL outcome, and no outcome was read. Shipping 12 now would be
+  citing a verdict this wave did not produce. The deployment evidence above means a
+  future A8 needs no new plumbing work — only a sound confirming leg.
