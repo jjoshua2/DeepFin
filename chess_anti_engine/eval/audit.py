@@ -264,6 +264,49 @@ def expected_and_top1_regret(
     return float((p * regrets).sum()), float(regrets[int(np.argmax(p))])
 
 
+def expected_blunder_rates(
+    probs: np.ndarray, regrets: np.ndarray, taus: tuple[float, ...],
+) -> tuple[float, ...]:
+    """Probability mass a distribution puts on moves losing more than each tau.
+
+    ``E_p[1{regret > tau}]`` per threshold, in the SAME order as ``taus``.
+    Returns ``()`` for empty ``taus`` — callers use that to keep the default
+    reporting path untouched.
+
+    WHY THIS EXISTS ALONGSIDE ``expected_and_top1_regret``: that metric is
+    LINEAR in the per-move cp cost, so at a fixed entropy its minimizer is
+    exactly the Gibbs distribution in that cost. A candidate target built as a
+    softmax over cp therefore beats a differently-shaped one BY CONSTRUCTION,
+    whatever its merits — measured 2026-08-04 (ledger `b260373c5`): the same
+    two distributions swap places when the identical comparison is re-scored in
+    win-probability units, because that ruler's conjugate is the other arm.
+
+    This statistic is a 0/1 functional, whose fixed-entropy minimizer is a
+    two-level distribution and therefore conjugate to NEITHER a cp-softmax nor
+    a WDL-softmax. That is what makes it usable to compare two target shapes.
+    It is also the direct expression of collapse avoidance: the mass a policy
+    prior puts on moves that lose the game outright.
+
+    Degenerate distributions follow ``expected_and_top1_regret``'s convention
+    (non-positive total ⇒ treat as uniform), so the two metrics never disagree
+    about what a row's distribution was.
+    """
+    if not taus:
+        return ()
+    p = np.asarray(probs, dtype=np.float64)
+    total = float(p.sum())
+    p = np.full_like(p, 1.0 / max(1, p.size)) if total <= 0.0 else p / total
+    r = np.asarray(regrets, dtype=np.float64)
+    # Clamped to [0, 1]: when EVERY listed move clears the threshold the subset
+    # sum is the whole normalized vector, which lands 1 ulp above 1.0 often
+    # enough to matter (3 of 50 random draws). These values are reported as
+    # probabilities and joined by paired_compare, so returning 1.0000000000000002
+    # would be a needlessly leaky invariant.
+    return tuple(
+        float(min(1.0, max(0.0, p[r > float(tau)].sum()))) for tau in taus
+    )
+
+
 # Criticality = deep-SF cp gap between the best and 2nd-best listed move. Shared
 # by audit_targets / bt4_audit / audit_compare_buckets so a joined comparison
 # can't put the same position in different buckets.

@@ -27,6 +27,12 @@ import torch
 if TYPE_CHECKING:
     import requests
 
+from chess_anti_engine.broker_hang import (
+    WORKER_HANG_ABORT_EXIT_CODE,
+    BrokerHangWatchdog,
+    pin_nvml_cuda_check,
+    resolve_worker_boot_hang_abort_seconds,
+)
 from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.inference import (
@@ -154,6 +160,16 @@ def _require_compact_policy_encoding(raw: object) -> str:
             f"{POLICY_ENCODING_LC0_1858} only (stale server manifest?)",
         )
     return enc
+
+
+def _bounded_poll_detail(response: Any) -> str:
+    """A short, safe rendering of a failed poll's body for one log line."""
+    try:
+        body = response.text
+    except Exception:
+        return "<unreadable body>"
+    text = " ".join(str(body).split())
+    return text[:200] if text else "<empty body>"
 
 
 def _upload_response_allows_pending_delete(response: Any) -> bool:
@@ -347,10 +363,16 @@ def _configure_worker_torch_env() -> None:
     - TORCH_COMPILE_THREADS: cap inductor's compile-worker fan-out (each
       subprocess can accumulate >1GB of compiled kernels).
     - TF32: enable for fp32 ops outside autocast BF16 scope.
+    - PYTORCH_NVML_BASED_CUDA_CHECK: keep `torch.cuda.is_available()` off the
+      driver-init path (audit R3).
     """
     import os
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     os.environ.setdefault("TORCH_COMPILE_THREADS", "1")
+    # Route the CUDA availability probe around `cuInit`, which never returns on
+    # a wedged dxg bridge. Load-bearing and previously inherited from the
+    # launching shell only -- see `pin_nvml_cuda_check` for the full why.
+    pin_nvml_cuda_check()
     import torch
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
@@ -807,12 +829,21 @@ class WorkerSession:
         arena_dir = work_dir / "arena"
         self.arena_pending_dir = arena_dir / "pending"
         self.arena_uploaded_dir = arena_dir / "uploaded"
+  # ⚑ Separate from `uploaded`, which means "this result reached the server".
+  # Unparseable pending files used to be moved into `uploaded` to stop a retry
+  # storm -- correct motivation, wrong destination: a file that reached NOBODY
+  # then sat there indistinguishable from a genuine upload, so any tooling
+  # that counts uploads by listing the directory over-reported. Arena results
+  # feed Elo readings and promotion decisions, and this project has been
+  # burned before by rulers that silently lost rows.
+        self.arena_rejected_dir = arena_dir / "rejected"
 
         self.pending_dir.mkdir(parents=True, exist_ok=True)
         self.uploaded_dir.mkdir(parents=True, exist_ok=True)
         self.resume_dir.mkdir(parents=True, exist_ok=True)
         self.arena_pending_dir.mkdir(parents=True, exist_ok=True)
         self.arena_uploaded_dir.mkdir(parents=True, exist_ok=True)
+        self.arena_rejected_dir.mkdir(parents=True, exist_ok=True)
 
   # Local throughput override that can be tuned and persisted.
         self.games_per_batch_local = int(args.games_per_batch) if args.games_per_batch is not None else None
@@ -862,6 +893,13 @@ class WorkerSession:
 
   # Engine: initialize with placeholder settings; we will align nodes from manifest each loop.
   # MultiPV, hash size, and SyzygyPath are process-level; rebuild when they change.
+  # ⚑ AND THIS LINE MUST STAY ABOVE THE BOOT WATCHDOG BLOCK BELOW. That block
+  # installs `_boot_hang_exit` as the watchdog's `exit_fn`, and `_boot_hang_exit`
+  # reads `self.sf` to kill the Stockfish children before `os._exit`. The
+  # watchdog thread is live from `start()`, so on a first-session wedge the
+  # handler can run before anything else assigns `self.sf` -- it is this `None`
+  # that makes that safe, not the handler's `suppress(Exception)`, which would
+  # silently swallow the AttributeError and leak the engines it exists to kill.
         self.sf: StockfishPool | StockfishUCI | None = None
         self.sf_multipv_active: int | None = None
         self.sf_hash_mb_active: int | None = None
@@ -887,6 +925,7 @@ class WorkerSession:
         self._slot_planes_unknown_warned = False
         self.pause_selfplay_active = False
         self.manifest_state = _MANIFEST_STATE_ACTIVE
+        self._manifest_poll_failures = 0
         self.manifest_state_elapsed_s: float | None = None
         self.upload_buf = _BufferedUpload()
         self.last_successful_send_s = time.time()
@@ -972,6 +1011,45 @@ class WorkerSession:
         self._selfplay_session_active = False
         self._stall_watchdog_started = False
         self._gil_probe = GilContentionProbe(interval_s=0.010)
+        # ⚑ AUDIT R1: no watchdog covered the CUDA-init calls the worker makes
+        # while holding a server lease. `_start_selfplay_stall_watchdog` arms
+        # only once `_selfplay_session_active` is True, which happens AFTER
+        # `model.to(self.device)` and `_build_evaluator` -- the two calls that
+        # block forever on a wedged dxg bridge. A worker that wedged there sat
+        # silently holding a 1h server lease, its shm slots and its Stockfish
+        # children, with no log line and no exit.
+        #
+        # ⚑ WHAT THIS BOUNDS, EXACTLY. The detector fires only while a `stage()`
+        # is open, so its coverage is the three stages and nothing else:
+        # `model_to_device`, `compile_inference_model`, `build_evaluator`.
+        # It is NOT a bound on the lease-held span. These run inside the lease
+        # and outside any stage, and are deliberately left uncovered:
+        # `_upload_pending_shards`, `_upload_pending_arena_results`,
+        # `_sync_assets` (model download + torch.load), `_begin_resume_session`,
+        # `_build_selfplay_configs`, `warm_opening_book_cache`,
+        # `_sync_stockfish`. None of them is a CUDA driver call, which is the
+        # failure R1 is about; they are network and disk work whose legitimate
+        # duration varies with link speed, so a 1800s bound on them would turn a
+        # slow model download into a crash loop. If one of THOSE hangs the
+        # symptom is a stalled fleet, not a wedged device, and it belongs to a
+        # different instrument.
+        #
+        # Non-obvious consequence worth stating: THE ARENA PATH IS COVERED FOR
+        # TWO OF THE THREE STAGES. `model_to_device` and
+        # `compile_inference_model` live in `_load_and_compile_model`, which
+        # `_run_arena` also calls, so an arena task's model load is watched.
+        # Only `build_evaluator` is selfplay-only (`_run_selfplay`).
+        #
+        # Same detector as the broker (one implementation, two `component`
+        # values). Live from construction, so it also covers a wedge that
+        # happens before the first poll.
+        self._boot_hang_watchdog = BrokerHangWatchdog(
+            threshold_s=resolve_worker_boot_hang_abort_seconds(),
+            component="worker",
+            exit_code=WORKER_HANG_ABORT_EXIT_CODE,
+            exit_fn=self._boot_hang_exit,
+        )
+        self._boot_hang_watchdog.start()
   # Model-freshness watch: a dedicated daemon thread owns manifest polling so
   # model freshness never depends on any selfplay thread staying alive (see
   # _start_model_watch_thread). The lock keeps it from running concurrently
@@ -984,6 +1062,23 @@ class WorkerSession:
         self._manifest_path: Path | None = None
         self._manifest_mtime: float | None = None
         self._active_reco: dict | None = None
+  # Counters for the swallow paths below, so "this fired, N times" is a
+  # number somebody can read rather than a guess reconstructed offline.
+  # ⚑ Deliberately IN-PROCESS and surfaced through the warning lines that
+  # increment them, not pushed to the server. The worker has no heartbeat or
+  # stats channel today -- its only upward posts are shard/arena uploads, the
+  # lease, and `/report_bad_shard` -- so a server-visible counter would mean a
+  # new endpoint plus server-side handling, which is a larger change than the
+  # defect warrants and would need its own review. The greppable log line is
+  # what converts this class from "invisible" to "one grep", which was the
+  # point; wiring telemetry can follow separately if it earns it.
+        self._reco_corrupt_count = 0
+        self._arena_rejected_count = 0
+  # Last corrupt (regret, nodes) pair already warned about. `_active_difficulty`
+  # runs once per COMPLETED GAME, so an unconditional warning there would be a
+  # per-game flood on a stuck-corrupt manifest; this rate-limits to one line
+  # per distinct offending value, which is what makes it greppable.
+        self._reco_corrupt_last: tuple[Any, Any] | None = None
   # Session-start asset SHAs (SF binary, opening books) — a mid-run change to
   # these can't be live-applied, so it forces a restart. Set in _run_selfplay.
         self._active_assets: tuple | None = None
@@ -1411,7 +1506,11 @@ class WorkerSession:
         ckpt = torch.load(str(path), map_location="cpu")
         sd = ckpt.get("model", ckpt)
         load_state_dict_tolerant(model, sd, label=label)
-        model.to(self.device)
+        # `.to(device)` is the first driver-touching call on this path and the
+        # one observed to wedge (audit R1). It runs while a server lease is
+        # already held, so an unbounded block here is a silently stalled worker.
+        with self._boot_hang_watchdog.stage("model_to_device"):
+            model.to(self.device)
         model.eval()
   # Selfplay only needs policy_own + wdl; skip 8 unused heads.
         if hasattr(model, "_inference_only"):
@@ -1423,12 +1522,13 @@ class WorkerSession:
             compile_t0 = time.time()
             self.log.info("compile starting %s sha=%s", label, sha_short)
             _compile_mode = str(self.args.compile_mode)
-            model = _maybe_compile_inference_model(
-                model,
-                device=str(self.device),
-                mode=_compile_mode,
-                use_fp8=bool(getattr(self.args, "inference_fp8", False)),
-            )
+            with self._boot_hang_watchdog.stage("compile_inference_model"):
+                model = _maybe_compile_inference_model(
+                    model,
+                    device=str(self.device),
+                    mode=_compile_mode,
+                    use_fp8=bool(getattr(self.args, "inference_fp8", False)),
+                )
             self.log.info("compile finished %s sha=%s elapsed_s=%.2f", label, sha_short, float(time.time() - compile_t0))
         return model
 
@@ -1474,6 +1574,33 @@ class WorkerSession:
 
         ``(None, None)`` before any reco has been applied: absent means
         UNKNOWN, never 0.0.
+
+        ⚑ CORRUPT is not ABSENT, and until this warning existed the two were
+        the same observation. A non-numeric ``opponent_wdl_regret_limit`` or
+        ``sf_nodes`` -- a string, a nested dict, a ``"None"`` literal, a float
+        in the field this ``int()``s -- returned ``(None, None)``, byte
+        identical to the legitimate "the server did not send these keys",
+        with no log and no counter. The return value is still ``(None, None)``,
+        because for METADATA purposes unknown is the honest answer; what
+        changes is that it is now audible.
+
+        ⚑ Scope, because the audit that raised this rated it HIGH on the
+        premise that it silently reverts the worker to default DIFFICULTY, and
+        that premise does not survive reading the call site. This method has
+        two production callers, and NEITHER sets the difficulty: the
+        per-game one (``_on_completed_game``) stamps the pair onto the
+        SHARD'S METADATA, and the session-start log line added alongside this
+        docstring reads it to print what the session adopted. The difficulty
+        the games are
+        actually played at comes from ``_build_selfplay_configs``, which reads
+        the same two keys independently and casts them UNGUARDED -- a corrupt
+        value raises there and takes the session down loudly. So the blast
+        radius is provenance, not curriculum: shards recorded "difficulty
+        unknown" while the server had in fact published a value. That still
+        matters (the promotion gate's anchored current-vs-previous delta is
+        checked against this field, and this project has been burned by rulers
+        that silently lost rows), but it is a metrics defect, not a
+        training-data one.
         """
         reco = getattr(self, "_active_reco", None)
         if not isinstance(reco, dict):
@@ -1483,7 +1610,20 @@ class WorkerSession:
         try:
             regret = float(raw_regret) if raw_regret is not None else None
             nodes = int(raw_nodes) if raw_nodes is not None else None
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            self._reco_corrupt_count += 1
+            offending = (raw_regret, raw_nodes)
+            if offending != self._reco_corrupt_last:
+                self._reco_corrupt_last = offending
+                self.log.warning(
+                    "reco difficulty is CORRUPT, not absent: "
+                    "opponent_wdl_regret_limit=%r sf_nodes=%r (%s). Shards "
+                    "from these games will record difficulty as UNKNOWN, which "
+                    "reads identically to a server that published no reco -- "
+                    "the promotion gate's anchored delta cannot be checked "
+                    "against them. Occurrences this session: %d",
+                    raw_regret, raw_nodes, exc, self._reco_corrupt_count,
+                )
             return None, None
         return regret, nodes
 
@@ -2257,10 +2397,27 @@ class WorkerSession:
             timeout_s = float(raw)
         except ValueError:
             timeout_s = 300.0
+            self.log.warning(
+                "CAE_WORKER_STALL_TIMEOUT_S=%r is not a number; using the "
+                "default %.1fs instead. The value you exported is NOT in "
+                "effect", raw, timeout_s,
+            )
         if timeout_s <= 0.0:
+            self.log.info("stall watchdog DISABLED (realized timeout_s=%.1f)", timeout_s)
             return
         self._stall_watchdog_started = True
         poll_s = min(30.0, max(5.0, timeout_s / 10.0))
+  # ⚑ Print the REALIZED values, always -- not only on the rejection path.
+  # This is a safety device: running it at 300s when the operator exported
+  # 600s means it fires on healthy work, and until this line existed there was
+  # no observation anywhere that distinguished "600 in force" from "600
+  # rejected, using 300". Same family as this repo's standing "a yaml edit +
+  # restart may NOT be in effect" / "dead config keys pin to realized" rules,
+  # reproduced in the env-var path.
+        self.log.info(
+            "stall watchdog started: timeout_s=%.1f poll_s=%.1f "
+            "(CAE_WORKER_STALL_TIMEOUT_S=%r)", timeout_s, poll_s, raw,
+        )
 
         def _loop() -> None:
             while True:
@@ -2307,9 +2464,20 @@ class WorkerSession:
             poll_s = float(raw)
         except ValueError:
             poll_s = 5.0
+            self.log.warning(
+                "CAE_WORKER_MODEL_WATCH_S=%r is not a number; using the "
+                "default %.1fs instead. The value you exported is NOT in "
+                "effect", raw, poll_s,
+            )
         if poll_s <= 0.0:
+            self.log.info("model watch DISABLED (realized poll_s=%.1f)", poll_s)
             return
         self._model_watch_started = True
+  # Realized value, on every start -- see the stall watchdog above.
+        self.log.info(
+            "model watch started: poll_s=%.1f (CAE_WORKER_MODEL_WATCH_S=%r)",
+            poll_s, raw,
+        )
 
         def _loop() -> None:
             while True:
@@ -2587,9 +2755,20 @@ class WorkerSession:
         for jp in sorted(self.arena_pending_dir.glob("*.json")):
             try:
                 payload = json.loads(jp.read_text(encoding="utf-8"))
-            except Exception:
-  # bad local file; quarantine to uploaded to avoid retry storms
-                jp.replace(self.arena_uploaded_dir / jp.name)
+            except Exception as exc:
+  # Bad local file. Still moved out of `pending` in one rename, which is
+  # what keeps the retry storm away -- only the DESTINATION changes.
+  # `uploaded` means "reached the server"; this one did not reach anyone,
+  # and filing it there made the directory's name a lie for that entry
+  # and inflated any upload count taken by listing it.
+                self._arena_rejected_count += 1
+                self.log.warning(
+                    "arena result %s is unreadable (%s); moving to %s "
+                    "(total rejected this session: %d). It was NOT uploaded "
+                    "and will not be retried",
+                    jp.name, exc, self.arena_rejected_dir, self._arena_rejected_count,
+                )
+                jp.replace(self.arena_rejected_dir / jp.name)
                 continue
             payload_trial_id = str(payload.get("trial_id") or "").strip()
             if payload_trial_id and payload_trial_id != current_trial_id:
@@ -2766,8 +2945,29 @@ class WorkerSession:
         if r.status_code == 426:
             self._handle_upgrade_required(r)
         if r.status_code != 200:
+  # A worker that cannot poll is a worker doing nothing, and this branch
+  # used to sleep in complete silence. Paired with the server's 503 for an
+  # undecidable compat gate, that made "the fleet is stalled" invisible
+  # from BOTH ends. Same cadence idiom as the server side: first, then
+  # every 100th, so a routine blip is one line and a stuck fleet keeps
+  # saying so.
+            self._manifest_poll_failures += 1
+            if self._manifest_poll_failures == 1 or self._manifest_poll_failures % 100 == 0:
+                self.log.warning(
+                    "manifest poll returned HTTP %d (%s); sleeping %.1fs and "
+                    "retrying — no selfplay runs until it succeeds "
+                    "(consecutive failures: %d)",
+                    r.status_code, _bounded_poll_detail(r),
+                    float(self.args.poll_seconds), self._manifest_poll_failures,
+                )
             time.sleep(float(self.args.poll_seconds))
             return None
+        if self._manifest_poll_failures:
+            self.log.info(
+                "manifest poll recovered after %d consecutive failure(s)",
+                self._manifest_poll_failures,
+            )
+            self._manifest_poll_failures = 0
 
         manifest = r.json()
         compat = self._check_manifest_compat(manifest)
@@ -3979,6 +4179,20 @@ class WorkerSession:
         reco = manifest.get("recommended_worker") or {}
         self._active_reco = self._snapshot_reco(reco)
         self._active_assets = self._asset_fingerprint(manifest)
+  # The realized difficulty this session will stamp on its shards. The LIVE
+  # apply path already prints its pair ("live reco (N state(s)): ... regret=
+  # ... sf_nodes=..."); session start did not, so a worker that started on a
+  # corrupt reco had no line anywhere naming what it adopted. Reads the same
+  # `_active_difficulty` the shard metadata does, so the log and the recorded
+  # value cannot disagree -- printing the raw reco here instead would show
+  # what the SERVER published rather than what these games are played at,
+  # which is the whole distinction that field exists to make.
+        _start_regret, _start_nodes = self._active_difficulty()
+        self.log.info(
+            "session-start reco applied: regret=%s sf_nodes=%s",
+            f"{_start_regret:.4f}" if _start_regret is not None else "unknown",
+            _start_nodes if _start_nodes is not None else "unknown",
+        )
         model_sha = self.model_sha
 
         need_local_model = self.inference_client is None
@@ -3996,7 +4210,10 @@ class WorkerSession:
                     bool(self.args.compile_inference),
                     bool(self.args.aot_dir),
                 )
-                self._direct_evaluator = self._build_evaluator(self.model)
+                # AOT package load / dispatcher warmup / pinned allocation all
+                # happen in here, every one of them a driver call.
+                with self._boot_hang_watchdog.stage("build_evaluator"):
+                    self._direct_evaluator = self._build_evaluator(self.model)
                 self.log.info("local evaluator ready type=%s", type(self._direct_evaluator).__name__)
             self._resync_evaluator_to_model()
 
@@ -4088,7 +4305,78 @@ class WorkerSession:
 
         self._flush_and_upload_after_shard(manifest, model_sha)
 
+    def _boot_hang_exit(self, code: int) -> None:
+        """Hard-exit from the hang watchdog, killing Stockfish children first.
+
+        **Why `os._exit` and not something gentler.** The main thread is blocked
+        inside a CUDA driver call that never returns. `sys.exit` from this
+        (watchdog) thread only unwinds this thread; a self-SIGTERM lands in
+        `_install_shutdown_handlers`, which by design only sets flags that the
+        blocked main thread will never read. `os._exit` is the only mechanism
+        that reliably ends the process, and it is what the broker already uses.
+
+        **What that costs, and what is done about it.** `os._exit` skips every
+        `finally`, so `run()`'s `self._cleanup()` does NOT run. Taking the
+        resources one at a time:
+
+        * **Stockfish children — would leak, so they are killed here.** This is
+          audit R2: they are spawned without a process group and their bare
+          cmdline is unmatchable by `terminate_matching_processes`, so an
+          orphan survives until reboot holding ~2.6 GB RSS each. SIGKILL by pid
+          is used rather than `self.sf.close()` because close() sends `quit`
+          and waits on per-engine locks -- a watchdog must not be able to block.
+        * **Shared-memory slots — no residue.** The worker only ever ATTACHES
+          (`create=False`) and `_detach_attached_shm_from_resource_tracker`
+          removes it from the resource tracker, so the worker neither owns nor
+          unlinks a segment. Process death drops the mapping; the broker keeps
+          the segment for the replacement worker.
+        * **Server lease — residue, and accepted.** There is no release
+          endpoint (`grep release_lease` finds none), and a lease taken by a
+          process whose GPU context is dead cannot be handed back cleanly
+          anyway. It expires by TTL (`lease_seconds`, 3600s) and
+          `prune_expired_leases` reclaims it. That is strictly better than the
+          status quo, where the wedged worker held it indefinitely because it
+          never exited at all.
+        * **The log file** is opened by the launcher, which owns closing it.
+
+        """
+        with suppress(Exception):
+            self._kill_stockfish_children()
+        os._exit(int(code))
+
+    def _kill_stockfish_children(self) -> int:
+        """SIGKILL every live Stockfish child by pid. Returns how many were signalled.
+
+        Deliberately lock-free and wait-free: it runs from the hang watchdog,
+        where blocking would defeat the whole mechanism.
+        """
+        sf = self.sf
+        if sf is None:
+            return 0
+        engines = getattr(sf, "_engines", None)
+        candidates = list(engines) if isinstance(engines, list) else [sf]
+        killed = 0
+        for engine in candidates:
+            proc = getattr(engine, "proc", None)
+            pid = getattr(proc, "pid", None)
+            if proc is None or not pid:
+                continue
+            if proc.poll() is not None:
+                continue  # already exited; counting it would overstate the kill
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+                killed += 1
+            except (OSError, ProcessLookupError):
+                continue
+        if killed:
+            self.log.critical(
+                "hang abort: SIGKILLed %d Stockfish child process(es) that "
+                "os._exit would otherwise have orphaned", killed,
+            )
+        return killed
+
     def _cleanup(self) -> None:
+        self._boot_hang_watchdog.stop()
         self._gil_probe.close()
         if self.inference_client is not None and hasattr(self.inference_client, "close"):
             with suppress(Exception):

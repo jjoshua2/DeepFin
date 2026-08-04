@@ -5,6 +5,7 @@ from pathlib import Path
 
 import torch
 
+from chess_anti_engine.broker_hang import pin_nvml_cuda_check
 from chess_anti_engine.tune.salvage import export_seed_pool as _run_salvage
 from chess_anti_engine.utils import flatten_run_config_defaults, load_yaml_file
 from chess_anti_engine.utils.architecture import DEFAULT_PHASE_PIECE_THRESHOLDS
@@ -63,6 +64,21 @@ def _build_tune_config_dict(args: argparse.Namespace) -> dict:
 
 
 def main() -> None:
+  # ⚑ AUDIT R3 -- FIRST, before anything can probe the device.
+  #
+  # `_build_tune_config_dict` calls `torch.cuda.is_available()` unconditionally
+  # (this file, in the `device` default), as do `tune/trainable.py` and
+  # `tune/trainable_init.py` in the Ray actors, which inherit this environment.
+  # On a wedged WSL2 dxg bridge the `cudaGetDeviceCount` path of that call
+  # enters `cuInit` and NEVER RETURNS, so the driver hangs before argparse
+  # finishes and nothing downstream -- including the worker's own hang watchdog
+  # -- has been constructed yet to notice.
+  #
+  # `scripts/train.sh` exports the same variable, but CLAUDE.md documents
+  # `python3 -m chess_anti_engine.run --config ... --mode tune` as a supported
+  # launch, and that path never touches the script. This is the pin for it.
+    pin_nvml_cuda_check()
+
   # Enable TF32 for any float32 ops outside autocast BF16 scope.
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True

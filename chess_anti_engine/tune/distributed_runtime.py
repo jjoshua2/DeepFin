@@ -41,7 +41,12 @@ from chess_anti_engine.tune._utils import (
 from chess_anti_engine.tune._utils import (
     terminate_process as _stop_process,
 )
-from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
+from chess_anti_engine.tune.process_cleanup import (
+    terminate_engines_owned_by,
+    terminate_matching_processes,
+)
+from chess_anti_engine.tune.trainable_metrics import _games_per_iter_for_iteration
+from chess_anti_engine.tune.trial_config import TrialConfig
 from chess_anti_engine.utils import sha256_file
 from chess_anti_engine.utils.atomic import atomic_copy2, atomic_write_text
 from chess_anti_engine.version import PACKAGE_VERSION, PROTOCOL_VERSION
@@ -435,6 +440,60 @@ def build_recommended_worker(
     }
 
 
+def _first_iteration_games_need(config: dict) -> int:
+    """Matching games iteration 1's ingest wait will hold out for.
+
+    Reproduces the trainer's chain WHOLE -- ``TrialConfig.from_dict(config)``
+    then ``_games_per_iter_for_iteration(tc, 1)`` -- which is exactly how
+    ``trainable_phases.py`` derives ``total_games``. The guard and the
+    criterion it must clear therefore share one instrument end to end, key
+    defaulting included.
+
+    Reading the dict directly is what an earlier revision of this function
+    did, and it was a silent no-op: ``TrialConfig.from_dict`` defaults
+    ``games_per_iter_start`` to ``games_per_iter`` (``trial_config.py:540``),
+    while a ``config.get(..., 0)`` defaults it to 0. Under a ramp with the
+    key absent -- a shape no test covered -- the trainer waited for 440 games
+    and the floor computed a need of 1, so ``max(264, 1)`` left the deadlock
+    fully in place. Sharing the arithmetic is not enough; the guard must
+    share the defaulting too.
+    """
+    return _games_per_iter_for_iteration(TrialConfig.from_dict(config), 1)
+
+
+def _seed_dole_gate_claims_iteration(
+    *, server_root: Path, trial_id: str, training_iteration: int,
+) -> bool:
+    """True when ``seed_dole_gate.json`` already records this iteration claimed.
+
+    Split out of ``_publish_distributed_trial_state`` so the read can be
+    ORDERED before the manifest write while its use stays with the rearm block
+    (audit L5) -- and so the ordering is testable without driving a publish.
+
+    The server writes the gate with tmp+rename, so this unlocked cross-process
+    read can never see a torn file; what it CAN see is a claim that landed
+    after the caller made this iteration visible, which is what the ordering
+    prevents. Suffix matching on the trial key and the fail-closed ``except``
+    are carried over verbatim from the inline version.
+    """
+    gate_path = Path(server_root) / "seed_dole_gate.json"
+    try:
+        if not gate_path.exists():
+            return False
+        gate = json.loads(gate_path.read_text(encoding="utf-8"))
+        tid = str(trial_id or "").strip()
+        last = gate.get(tid)
+        if last is None and tid:
+            for k, v in gate.items():
+                ks = str(k)
+                if ks == tid or ks.endswith(tid) or tid.endswith(ks):
+                    last = v
+                    break
+        return int(last if last is not None else -1) == int(training_iteration)
+    except Exception:
+        return False
+
+
 def _publish_distributed_trial_state(
     *,
     trainer: Trainer,
@@ -495,6 +554,41 @@ def _publish_distributed_trial_state(
             float(config.get("games_per_iter", 0))
             * max(0.0, float(config.get("distributed_prev_model_max_fraction", 0.0)))
         )
+  # COLD-START FLOOR (latent bug; did NOT fire on 2026-08-04 -- see the
+  # ledger CORRECTION: production sets this key explicitly to 1870, so the
+  # formula above never ran and the cap sat ABOVE the need, not below it).
+  #
+  # For a config that DOES rely on the default, the frac-based value is below
+  # iteration 1's need by construction whenever the fraction is < 1:
+  # ceil(440 * 0.6) = 264 against a 440-game wait. From cold there is exactly
+  # one published sha, so the server pauses the fleet at 264 while the
+  # trainer waits for 440, and only a NEW sha -- which needs the iteration to
+  # finish -- can release it.
+  #
+  # ``trainer_step <= 0`` IS the cold-start test, and the scope matters:
+  # no training step has been taken, so no second sha can have been published
+  # and the trainer's accepted set has exactly one member. It covers the
+  # bootstrap publish and iteration 1's republish of the same weights, then
+  # self-clears the moment training advances the step. A RESUME is excluded
+  # for free (its step is restored non-zero), which is correct -- prev-sha
+  # games count as matching there, and that is what makes the whole class
+  # cold-start-only.
+  #
+  # ⚑ Gating on the step is not a refinement, it is the fix being correct.
+  # An unconditional floor also raises the target in STEADY state, where no
+  # deadlock is possible, which silently moves when backpressure engages --
+  # caught by test_distributed_selfplay_backpressure's steady-state cases
+  # (trainer_step=123: 500 must stay 500, not become 1000) after an earlier
+  # revision of this block claimed "steady state is unchanged" without
+  # enforcing it.
+  #
+  # The floor also only ever RAISES, and only on the auto path: an explicit
+  # target is a recorded operator decision (production's 1870 is ledger'd)
+  # and is published verbatim.
+        if int(trainer_step) <= 0:
+            stale_pause_target_games = max(
+                stale_pause_target_games, _first_iteration_games_need(config),
+            )
 
     worker_wheel_raw = str(config.get("worker_wheel_path", "")).strip()
     if worker_wheel_raw:
@@ -620,6 +714,30 @@ def _publish_distributed_trial_state(
             "version": str(PACKAGE_VERSION),
         }
 
+  # READ THE GATE BEFORE THE MANIFEST IS WRITTEN (audit L5). The rearm block
+  # below asks "was this iteration already claimed", and the manifest write on
+  # the next statement is the ONLY way a worker learns this iteration exists.
+  # Read afterwards, that predicate silently became "claimed at any point,
+  # including 400us ago BECAUSE OF THIS VERY PUBLISH": a worker polls the fresh
+  # manifest, wins claim(N), the server persists the gate, and the read then
+  # arms a rearm that a SECOND worker consumes -- handing the whole seed list
+  # out twice for one iteration, the exact double-dole the block exists to
+  # prevent. The server consumes the rearm under ``_SeedDoleGate._lock`` and
+  # this producer never held it, so no care on the consumer side can close it.
+  #
+  # Hoisting is the fix rather than locking, because before the manifest exists
+  # any claim recorded in the gate is NECESSARILY from an earlier publish -- a
+  # previous process (mid-iteration resume) or an earlier attempt at this same
+  # iteration (retry republish). That is exactly the set of cases that should
+  # arm, so ordering buys the discriminator for free. THE ADJACENCY IS
+  # LOAD-BEARING: anything inserted between this read and the write below
+  # reopens the window it closes.
+    seed_dole_gate_claimed = _seed_dole_gate_claims_iteration(
+        server_root=Path(server_root),
+        trial_id=str(trial_id),
+        training_iteration=int(training_iteration),
+    )
+
     atomic_write_text(
         publish_dir / "manifest.json",
         json.dumps(manifest, sort_keys=True, indent=2),
@@ -630,25 +748,15 @@ def _publish_distributed_trial_state(
     # stay burned). Do NOT arm on every normal selfplay open — that races with
     # multi-worker first-claim and double-doles (PR #209 review). Consumed under
     # the gate lock in server claim().
+    #
+    # The gate read this decision rests on is taken ABOVE, BEFORE the manifest
+    # write -- see the comment there for why the ordering is the whole fix
+    # (audit L5). Everything else about the predicate is unchanged.
     rearm_path = publish_dir / "seed_dole_rearm.json"
     dole_n = int(config.get("opening_fen_dole_per_iter", 0) or 0)
     arm_rearm = False
     if (not pause_selfplay) and dole_n > 0 and manifest.get("opening_fen_list"):
-        gate_path = Path(server_root) / "seed_dole_gate.json"
-        try:
-            if gate_path.exists():
-                gate = json.loads(gate_path.read_text(encoding="utf-8"))
-                tid = str(trial_id or "").strip()
-                last = gate.get(tid)
-                if last is None and tid:
-                    for k, v in gate.items():
-                        ks = str(k)
-                        if ks == tid or ks.endswith(tid) or tid.endswith(ks):
-                            last = v
-                            break
-                arm_rearm = int(last if last is not None else -1) == int(training_iteration)
-        except Exception:
-            arm_rearm = False
+        arm_rearm = seed_dole_gate_claimed
     if arm_rearm:
         atomic_write_text(
             rearm_path,
@@ -713,6 +821,56 @@ def _worker_launch_signature(
     )
 
 
+  # How many previous worker-log generations to keep beside the live file.
+  # 2 because one revive is not the interesting case: the 2026-08-04 stall
+  # began ~00:23 and was revived at 01:47, so a SECOND revive before anyone
+  # read the logs would have taken the original evidence with it.
+_WORKER_LOG_GENERATIONS = 2
+
+
+def _rotate_worker_logs(*paths: Path) -> None:
+    """Move existing worker logs aside so a (re)launch cannot overwrite them.
+
+    ⚑ Banked from the 2026-08-04 cold start, where this cost us the diagnosis.
+    The 01:47:22 revive left ``worker_00/worker.log`` holding a single
+    ``worker starting version=`` line at 01:47:22 and nothing from the
+    00:19-01:47 incident window -- the 00:34:22 pause line and ~4,264
+    upload-buffer drop lines from 00:37:20 were read live and can never be read
+    again. The primary failure (the upload path wedging at ~00:23) is still
+    UNDIAGNOSED for exactly that reason.
+
+    The truncating writer was NOT identified, and this fix deliberately does
+    not depend on identifying it: ``logging.FileHandler`` defaults to append
+    (``worker.py``), ``_spawn_with_reap`` opens the .out with ``"ab"``,
+    ``os.execv`` on self-update reuses the same argv, and ``scripts/train.sh``
+    documents the append behaviour as the reason its drain must truncate its
+    READING at ``worker starting version=`` -- yet the file was truncated in
+    place (the artifact directory's mtime never moved, so nothing was
+    recreated). Renaming the previous generation to a different filename
+    BEFORE the replacement process can open anything makes whatever truncates
+    ``worker.log`` afterwards truncate a fresh, empty file instead.
+
+    Never raises: the revive exists to bring a dead worker back, and a guard
+    that can take down the thing it guards is worse than the gap it closes.
+    """
+    for path in paths:
+        try:
+  # An empty file carries no evidence, and rotating it would push a real
+  # generation out of the window for nothing.
+            if not path.exists() or path.stat().st_size <= 0:
+                continue
+            for gen in range(_WORKER_LOG_GENERATIONS - 1, 0, -1):
+                older = path.with_name(f"{path.name}.{gen}")
+                if older.exists():
+                    older.replace(path.with_name(f"{path.name}.{gen + 1}"))
+            path.replace(path.with_name(f"{path.name}.1"))
+        except OSError:
+            log.warning(
+                "could not rotate worker log %s; relaunching anyway (the "
+                "previous generation may be overwritten)", path, exc_info=True,
+            )
+
+
 def _launch_distributed_worker(
     *,
     config: dict,
@@ -724,6 +882,10 @@ def _launch_distributed_worker(
     worker_artifact_root.mkdir(parents=True, exist_ok=True)
     worker_log = worker_artifact_root / "worker.log"
     worker_out = worker_artifact_root / "worker.out"
+  # BEFORE the spawn, not after: rotating afterwards would race the
+  # replacement's first writes into the rotated file and leave the live log
+  # holding a fragment -- the same unreadable interleaving, one step later.
+    _rotate_worker_logs(worker_log, worker_out)
 
     server_root_raw = str(config.get("distributed_server_root") or "").strip()
     if server_root_raw:
@@ -1140,7 +1302,28 @@ def launch_shared_inference_broker(
 
 def _stop_worker_processes(procs: list[subprocess.Popen[bytes]]) -> None:
     for proc in procs:
+        worker_pid = int(proc.pid)
         _stop_process(proc)
+        # ⚑ AUDIT R2. `_stop_process` escalates to SIGKILL on the WORKER only,
+        # which leaves its Stockfish engines running: they are in their own
+        # process group now, their cmdline is unmatchable by `reap_terms`, and
+        # SIGKILL runs no `finally`. PDEATHSIG covers the common case, but it is
+        # thread-scoped and Linux-only, so this is the belt to its braces --
+        # anything still stamped with the dead worker's pid is by definition an
+        # orphan. Cheap: it only scans /proc when a worker is being stopped.
+        #
+        # The marker is a pid, and `_stop_process` has already reaped this one,
+        # so in principle the kernel could recycle it before this scan. For a
+        # mis-reap the recycled pid would have to belong to a NEW worker that
+        # had already stamped and spawned engines inside that window --
+        # effectively unreachable, and noted rather than fixed because the
+        # alternative keys (ancestry, cmdline) are the ones R2 ruled out.
+        orphans = terminate_engines_owned_by(worker_pid)
+        if orphans:
+            log.warning(
+                "reaped %d orphaned Stockfish engine(s) %s left by worker pid %d "
+                "(PDEATHSIG did not fire)", len(orphans), orphans, worker_pid,
+            )
 
 
 def _ensure_distributed_workers(
@@ -1700,7 +1883,11 @@ def _process_shard_with_prev_cap(
     ``effective_accepted`` (drops prev SHA once its quota is reached).
 
     ``prev_matching_games_box`` is a single-element list used as a mutable counter
-    shared between the prefetcher-drain and the poll loop.
+    carried across the prefetcher-drain and the poll loop. Both of those run on
+    the TRAINER THREAD, which is the only writer of this counter, of ``summary``
+    and of ``effective_accepted`` — the box is a closure cell, NOT a cross-thread
+    handoff, and none of these three unguarded read-modify-writes is safe against
+    one (audit L6). The prefetcher thread only decodes; registration stays here.
     """
     games_before = summary["matching_games"]
     shard_sha = _process_shard(

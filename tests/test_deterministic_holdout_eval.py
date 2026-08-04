@@ -390,11 +390,17 @@ class _RecordingTrainer:
 
 
 class _RecordingAsyncEval:
-    def __init__(self) -> None:
+    def __init__(self, *, inflight: bool = True) -> None:
         self.started: list[dict[str, Any]] = []
+        self.collects = 0
+        self._inflight = bool(inflight)
+
+    def has_inflight(self) -> bool:
+        return self._inflight
 
     def collect(self, timeout: float):
         del timeout
+        self.collects += 1
         return "PRIOR", 40
 
     def start(self, **kwargs: Any) -> None:
@@ -416,7 +422,7 @@ def test_the_sync_holdout_path_runs_a_full_pass() -> None:
     trainer = _RecordingTrainer()
     metrics, source_iter = _run_holdout_evaluation(
         trainer=trainer, holdout_buf=_buffer(), tc=_tc(), model_cfg=None,
-        device="cpu", config={}, iteration_idx=41,
+        device="cpu", config={}, iteration_idx=41, holdout_frozen=True,
     )
 
     assert trainer.full_pass_calls == [BATCH]
@@ -433,7 +439,8 @@ def test_the_async_holdout_path_runs_a_full_pass() -> None:
     async_eval = _RecordingAsyncEval()
     metrics, source_iter = _run_holdout_evaluation(
         trainer=_RecordingTrainer(), holdout_buf=_buffer(), tc=_tc(), model_cfg=None,
-        device="cpu", config={}, iteration_idx=41, async_test_eval=async_eval,
+        device="cpu", config={}, iteration_idx=41, holdout_frozen=True,
+        async_test_eval=async_eval,
     )
 
     assert (metrics, source_iter) == ("PRIOR", 40)
@@ -455,7 +462,138 @@ def test_the_async_path_still_strips_cudagraphs_from_the_eval_thread() -> None:
     _run_holdout_evaluation(
         trainer=_RecordingTrainer(), holdout_buf=_buffer(), tc=_tc(), model_cfg=None,
         device="cpu", config={"use_compile": True, "compile_mode": "reduce-overhead"},
-        iteration_idx=41, async_test_eval=async_eval,
+        iteration_idx=41, holdout_frozen=True, async_test_eval=async_eval,
     )
 
     assert async_eval.started[0]["compile_mode"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# audit L2: the async holdout eval must not be handed a buffer the trainer
+# thread can still append to.
+# ---------------------------------------------------------------------------
+
+
+def _tc_growable(*, holdout_fraction: float = 0.02):
+    from chess_anti_engine.tune.trial_config import TrialConfig
+
+    return TrialConfig.from_dict({
+        "batch_size": BATCH, "test_steps": LEGACY_SAMPLED_BATCHES,
+        "input_extra_features": "v1", "policy_encoding": "az_4672",
+        "holdout_fraction": holdout_fraction, "freeze_holdout_at": 2000,
+    })
+
+
+def test_the_async_eval_is_skipped_while_the_holdout_can_still_grow(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """RED on main, which starts the eval thread on a mutating buffer.
+
+    The fresh-start shape: `holdout_frozen` is False and `holdout_fraction` is
+    positive, so the NEXT iteration's `_ingest_train_arrays` will append to the
+    very `ArrayReplayBuffer` the eval thread walks. `start()` passes it by
+    reference, so the pass either raises `deque mutated during iteration` or --
+    worse, because it is silent -- reads a short, index-shifted slice, since
+    `_iter_full_pass_batches` snapshots its bounds once and `rows_slice_arrays`
+    clamps.
+    """
+    from chess_anti_engine.tune.trainable_phases import _run_holdout_evaluation
+
+    async_eval = _RecordingAsyncEval()
+    metrics, source_iter = _run_holdout_evaluation(
+        trainer=_RecordingTrainer(), holdout_buf=_buffer(), tc=_tc_growable(),
+        model_cfg=None, device="cpu", config={}, iteration_idx=41,
+        holdout_frozen=False, async_test_eval=async_eval,
+    )
+
+    assert async_eval.started == [], (
+        "a mutating holdout was handed to the eval thread (audit L2)"
+    )
+  # The already-in-flight result is still collected and still returned: only
+  # the row whose eval was never STARTED loses its columns.
+    assert (metrics, source_iter) == ("PRIOR", 40)
+  # ...and the absence is explainable from stdout, which is what train.sh
+  # captures. An unexplained missing test_* column is the failure this log
+  # line exists to prevent.
+    out = capsys.readouterr().out
+    assert "SKIPPING the async holdout eval" in out
+    assert "audit L2" in out
+
+
+def test_the_async_eval_runs_once_the_holdout_is_frozen() -> None:
+    """The other half of the red/green pair: the guard is not a blanket off."""
+    from chess_anti_engine.tune.trainable_phases import _run_holdout_evaluation
+
+    async_eval = _RecordingAsyncEval()
+    _run_holdout_evaluation(
+        trainer=_RecordingTrainer(), holdout_buf=_buffer(), tc=_tc_growable(),
+        model_cfg=None, device="cpu", config={}, iteration_idx=41,
+        holdout_frozen=True, async_test_eval=async_eval,
+    )
+
+    assert len(async_eval.started) == 1
+    assert async_eval.started[0]["full_pass"] is True
+
+
+def test_a_zero_holdout_fraction_is_not_treated_as_mutable() -> None:
+    """The guard shares the MUTATOR's predicate, not a proxy for it.
+
+    `_ingest_train_arrays` appends on `holdout_frac > 0.0 and not frozen`. With
+    `holdout_fraction: 0` nothing can ever be appended, so an unfrozen holdout
+    is still safe -- a guard keyed on `holdout_frozen` alone would disable the
+    async ruler for the whole run under that config, silently and forever.
+    """
+    from chess_anti_engine.tune.trainable_phases import _run_holdout_evaluation
+
+    async_eval = _RecordingAsyncEval()
+    _run_holdout_evaluation(
+        trainer=_RecordingTrainer(), holdout_buf=_buffer(),
+        tc=_tc_growable(holdout_fraction=0.0),
+        model_cfg=None, device="cpu", config={}, iteration_idx=41,
+        holdout_frozen=False, async_test_eval=async_eval,
+    )
+
+    assert len(async_eval.started) == 1, (
+        "an immutable holdout was needlessly denied the async path"
+    )
+
+
+def test_a_skipped_start_does_not_make_the_next_collect_block() -> None:
+    """`collect()` waits its FULL timeout on a cleared event.
+
+    Without the `has_inflight()` check the iteration after a skip pays
+    `distributed_async_test_eval_timeout_s` (120s in production) of dead wall
+    clock for nothing -- the skip would cost more than the race it avoids.
+    """
+    from chess_anti_engine.tune.trainable_phases import _run_holdout_evaluation
+
+    async_eval = _RecordingAsyncEval(inflight=False)
+    metrics, source_iter = _run_holdout_evaluation(
+        trainer=_RecordingTrainer(), holdout_buf=_buffer(), tc=_tc_growable(),
+        model_cfg=None, device="cpu", config={}, iteration_idx=42,
+        holdout_frozen=True, async_test_eval=async_eval,
+    )
+
+    assert async_eval.collects == 0, "collect() was called with nothing in flight"
+    assert (metrics, source_iter) == (None, -1)
+  # ...and the start still happened; skipping the collect must not skip the eval.
+    assert len(async_eval.started) == 1
+
+
+def test_has_inflight_tracks_the_real_start_collect_lifecycle() -> None:
+    """The predicate above is only worth anything if it matches the real class.
+
+    A stub could agree with a wrong implementation forever, so assert against
+    `AsyncTestEval` itself: False before any start, True while outstanding,
+    False again once collected.
+    """
+    from chess_anti_engine.train.async_eval import AsyncTestEval
+
+    ev = AsyncTestEval()
+    assert ev.has_inflight() is False
+    ev._inflight_iter = 7
+    assert ev.has_inflight() is True
+  # collect() resets it; drive the reset the same way collect() does rather
+  # than starting a real eval thread.
+    ev._inflight_iter = -1
+    assert ev.has_inflight() is False

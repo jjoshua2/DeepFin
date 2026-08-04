@@ -4,7 +4,16 @@ import argparse
 import getpass
 from pathlib import Path
 
-from .auth import ensure_user, load_users, set_disabled, upsert_user
+from .auth import (
+    UserStats,
+    ensure_user,
+    load_user_stats,
+    load_users,
+    migrate_user_stats,
+    set_disabled,
+    upsert_user,
+    user_stats_path_for,
+)
 
 
 def _prompt_password() -> str:
@@ -61,12 +70,20 @@ def main() -> None:
 
     if args.cmd == "list":
         users = load_users(db)
+  # Counters live beside the credential file since the users.json split.
+  # Migrating here too means `manage_users list` reports correctly even if it
+  # is the first thing run against a pre-split DB, rather than showing zeros
+  # until the server happens to start.
+        stats_path = user_stats_path_for(db)
+        migrate_user_stats(db, stats_path)
+        stats = load_user_stats(stats_path)
         for u in sorted(users.keys()):
             rec = users[u]
             status = "disabled" if rec.disabled else "enabled"
-            print(f"{u}\t{status}\tuploads={rec.uploads}\tpositions={rec.total_positions}")
-            for machine, stats in sorted(rec.machines.items()):
-                print(f"  {machine}\tuploads={stats.get('uploads', 0)}\tpositions={stats.get('positions', 0)}")
+            st = stats.get(u, UserStats())
+            print(f"{u}\t{status}\tuploads={st.uploads}\tpositions={st.total_positions}")
+            for machine, mstats in sorted(st.machines.items()):
+                print(f"  {machine}\tuploads={mstats.get('uploads', 0)}\tpositions={mstats.get('positions', 0)}")
         return
 
 

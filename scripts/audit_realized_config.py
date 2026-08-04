@@ -499,6 +499,8 @@ def classify_config_provenance(
     restart_keys: Iterable[str],
     searched_keys: Iterable[str] = (),
     construction_only_keys: Iterable[str] = (),
+    driver_launch_fixed_keys: Iterable[str] = (),
+    driver_dual_clock_keys: Iterable[str] = (),
     dead_keys: Mapping[str, object] | Iterable[str] = (),
     yaml_is_newer_than_row: bool = False,
 ) -> tuple[list[str], list[str]]:
@@ -553,6 +555,24 @@ def classify_config_provenance(
     refuses these rather than applying them. It is swept over the UNION of the
     yaml and the realized row rather than their intersection — see the loop.
 
+    ``driver_launch_fixed_keys`` / ``driver_dual_clock_keys`` are the SIXTH and
+    SEVENTH classes, injected the same way and for the same reason
+    (``trainable_config_ops.driver_launch_fixed_config_keys()`` /
+    ``driver_dual_clock_config_keys()``). Neither is a subset of
+    ``restart_keys``, and that is the point: the driver reads these once, in
+    ``run.py``/``harness.py``, and the trial actor never re-reads them, so a
+    live reload cannot apply them AND NEITHER CAN A TRIAL RESTART. Before they
+    were wired in, an edited ``distributed_server_port`` reported
+    ``RELOAD-NOT-APPLIED-UNRESOLVED ... re-run after the next iteration`` — i.e.
+    "wait, it will land". It never lands. Telling an operator to wait for a
+    reload that cannot happen is the same class of wrong answer as the
+    ``shuffle_buffer_size`` verdict that put ``construction_only_keys`` here.
+
+    They are checked BEFORE ``restart``/``construction_only`` because a key can
+    be both (the two opening-book paths are launch-fixed on the driver axis and
+    restart-required on the trial axis), and "restart the trial" is the wrong
+    instruction for it: only re-running ``run.py`` applies it.
+
     ``yaml_is_newer_than_row`` downgrades every yaml-vs-realized difference to a
     printed note. The realized row is minutes old by construction, so a yaml
     edited after it has simply not been read yet — reporting that as a rejected
@@ -561,6 +581,8 @@ def classify_config_provenance(
     """
     restart = set(restart_keys)
     construction_only = set(construction_only_keys)
+    driver_launch_fixed = set(driver_launch_fixed_keys)
+    driver_dual_clock = set(driver_dual_clock_keys)
     dead_inert = dict(dead_keys) if isinstance(dead_keys, Mapping) else {}
     dead = set(dead_keys)
     searched = set(searched_keys)
@@ -637,6 +659,29 @@ def classify_config_provenance(
         live = realized[key]
         if key in dead:
             continue  # sweept over the UNION, above -- not here
+        if key in driver_launch_fixed or key in driver_dual_clock:
+  # ⚑ CHECKED BEFORE restart/construction_only ON PURPOSE -- see the docstring.
+  # A driver key can also be restart-required on the trial axis, and the
+  # PENDING-RESTART verdict would then tell an operator to do the one thing
+  # that does not help.
+            if not _same_value(on_disk, live):
+                if key in driver_dual_clock:
+                    _diverged(
+                        "DRIVER-DUAL-CLOCK", key, on_disk, live,
+                        f"{key}: read on TWO clocks — the trial re-reads it per "
+                        f"iteration but the driver baked {live!r} in at launch, so "
+                        f"the two now disagree and only re-running run.py "
+                        f"reconciles them",
+                    )
+                else:
+                    _diverged(
+                        "DRIVER-LAUNCH-FIXED", key, on_disk, live,
+                        f"{key}: the yaml says {on_disk!r} but the driver read "
+                        f"{live!r} once at launch and no trial-side consumer "
+                        f"re-reads it — neither a live reload NOR a trial restart "
+                        f"applies this; re-run run.py",
+                    )
+            continue
         if key in restart or key in construction_only:
             if not _same_value(on_disk, live):
                 extra = (
@@ -721,6 +766,8 @@ def audit_config_provenance(
     from chess_anti_engine.tune.trainable_config_ops import (
         construction_only_config_keys,
         dead_config_key_inert_values,
+        driver_dual_clock_config_keys,
+        driver_launch_fixed_config_keys,
         restart_required_config_keys,
     )
 
@@ -775,6 +822,8 @@ def audit_config_provenance(
         restart_keys=restart_required_config_keys(),
         searched_keys=searched,
         construction_only_keys=construction_only_config_keys(),
+        driver_launch_fixed_keys=driver_launch_fixed_config_keys(),
+        driver_dual_clock_keys=driver_dual_clock_config_keys(),
         dead_keys=dead_config_key_inert_values(),
         yaml_is_newer_than_row=yaml_is_newer,
     )

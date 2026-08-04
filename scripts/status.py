@@ -291,12 +291,19 @@ def main() -> None:
     if users_json.exists():
         try:
             users = json.loads(users_json.read_text())
+            # Counters moved out of users.json into a sibling stats file. Fall
+            # back to the users file for a DB that has not been migrated yet,
+            # so this keeps working either side of the split.
+            stats_json = users_json.with_name(f"{users_json.stem}.stats.json")
+            stats = json.loads(stats_json.read_text()) if stats_json.exists() else {}
             print(f"\n  Contributors ({users_json}):")
             for uname, u in sorted(users.items()):
-                total_pos = int(u.get("total_positions", 0))
-                uploads = int(u.get("uploads", 0))
+                from_stats = stats.get(uname)
+                counters = from_stats if isinstance(from_stats, dict) else u
+                total_pos = int(counters.get("total_positions", 0))
+                uploads = int(counters.get("uploads", 0))
                 print(f"    {uname:<20}  uploads={uploads:<6}  positions={total_pos:>12,}")
-                for machine, m in sorted(u.get("machines", {}).items()):
+                for machine, m in sorted(counters.get("machines", {}).items()):
                     mpos = int(m.get("positions", 0))
                     mup  = int(m.get("uploads", 0))
                     print(f"      {machine:<18}  uploads={mup:<6}  positions={mpos:>12,}")

@@ -316,6 +316,37 @@ def _load_puzzle_suite(tc: TrialConfig):
         return None
 
 
+# Keys already warned about, so the line is one per TRANSITION rather than one
+# per iteration -- a per-iteration flood is how a warning stops being read.
+# Cleared when the key goes back to true, so a flip-flop is fully reported.
+#
+# ⚑ PER PROCESS, NOT PER TRIAL. Keyed by config key alone, so a second trial in
+# the same actor process would find the flag already set and stay silent. Inert
+# in production (`max_concurrent_trials: 1`, one trial per actor) and left that
+# way deliberately: keying by trial id would mean threading one through a helper
+# that has no other use for it, to fix a case the production config cannot
+# reach. If concurrent trials per actor ever ship, key this by
+# `(trial_id, key)` -- it is the only change needed.
+_DECLINED_OFF_WARNED: set[str] = set()
+
+
+def _warn_declined_off(key: str, enabled: bool, obj: object, iteration_idx: int) -> None:
+    """Say so when a live yaml edit turned a one-way key off and was ignored."""
+    if enabled or obj is None:
+        _DECLINED_OFF_WARNED.discard(key)
+        return
+    if key in _DECLINED_OFF_WARNED:
+        return
+    _DECLINED_OFF_WARNED.add(key)
+    logging.getLogger("chess_anti_engine.iter").warning(
+        "[trial]%s is false in the live config but its object is already "
+        "running (iter %d): this key is live ONLY in the on direction, so the "
+        "edit is ACCEPTED AND IGNORED until the trial restarts. Restart the "
+        "trial to apply it.",
+        key, iteration_idx,
+    )
+
+
 def _lazy_construct_iter_helpers(
     *, shard_prefetcher, async_test_eval, tc: TrialConfig,
     distributed_dirs: dict, iteration_idx: int,
@@ -325,20 +356,60 @@ def _lazy_construct_iter_helpers(
     Lazily constructed inside the iter loop so live YAML reload can flip
     them on; constructing at trial-setup time misses --resume strips of
     these keys from tuner.pkl param_space.
+
+    ⚑ THESE TWO KEYS ARE LIVE IN ONE DIRECTION ONLY (audit angle C, C1). The
+    `is None` guard is the whole gate: once the object exists, `tc.distributed_*`
+    is never consulted again -- the iter loop passes the object on
+    unconditionally -- so `true -> false` in the live yaml is accepted, reads
+    back correct from the trial's own config, and does nothing until a restart.
+    Neither key is in `restart_required_config_keys()`, so a provenance report
+    reads yaml == realized as healthy precisely when the edit is inert.
+
+    That is not academic: the mitigation an operator reaches for under memory
+    pressure is `distributed_prefetch_shards: false` (the queue holds ~102 MB
+    per shard -- audit A19), and it cannot take effect on a run whose restarts
+    cost a day. Tearing the objects down mid-iteration is NOT the fix here --
+    the prefetcher owns decoded shards the ingest phase is about to consume and
+    `AsyncTestEval` owns an in-flight snapshot eval, so a live stop would have
+    to drain both, which is a behaviour change to a running trial rather than an
+    observability one. So: make the declined OFF AUDIBLE, once per transition.
+    `_warn_declined_off` is the single observation that distinguishes "the edit
+    took" from "the edit was accepted and ignored" -- there was none before.
     """
     if shard_prefetcher is None and tc.distributed_prefetch_shards:
         from chess_anti_engine.tune.distributed_runtime import _iter_shard_paths_nested
         from chess_anti_engine.tune.prefetch import BackgroundShardPrefetcher
+        max_queued_bytes = int(tc.distributed_prefetch_max_queued_mb) * 1024 * 1024
         shard_prefetcher = BackgroundShardPrefetcher(
             inbox_dir=distributed_dirs["inbox_dir"],
             path_iter=_iter_shard_paths_nested,
+            max_queued_bytes=max_queued_bytes,
         )
         shard_prefetcher.start()
-        logging.getLogger("chess_anti_engine.iter").info("[trial]BackgroundShardPrefetcher started (iter %d)", iteration_idx)
+  # REALIZED budget, read back off the constructed object rather than
+  # printed from the config value handed in. A key that is accepted and
+  # then not applied is this codebase's signature defect; printing the
+  # input would report success either way, so the log would be evidence of
+  # nothing. `_max_queued_bytes` is what `_scan_once` actually compares.
+        logging.getLogger("chess_anti_engine.iter").info(
+            "[trial]BackgroundShardPrefetcher started (iter %d) "
+            "max_queued=%.0f MB (distributed_prefetch_max_queued_mb=%d)",
+            iteration_idx,
+            shard_prefetcher._max_queued_bytes / (1024 * 1024),
+            int(tc.distributed_prefetch_max_queued_mb),
+        )
     if async_test_eval is None and tc.distributed_async_test_eval:
         from chess_anti_engine.train.async_eval import AsyncTestEval
         async_test_eval = AsyncTestEval()
         logging.getLogger("chess_anti_engine.iter").info("[trial]AsyncTestEval enabled (iter %d)", iteration_idx)
+    _warn_declined_off(
+        "distributed_prefetch_shards", tc.distributed_prefetch_shards,
+        shard_prefetcher, iteration_idx,
+    )
+    _warn_declined_off(
+        "distributed_async_test_eval", tc.distributed_async_test_eval,
+        async_test_eval, iteration_idx,
+    )
     return shard_prefetcher, async_test_eval
 
 
@@ -993,6 +1064,11 @@ def train_trial(config: dict):
             t_train_start = time.monotonic()
             tr = _run_training_and_gating(
                 tc=tc, trainer=trainer, buf=buf, holdout_buf=holdout_buf,
+  # POST-freeze-check value, and it has to be: the async eval started at the
+  # end of THIS iteration is read by the eval thread during the NEXT
+  # iteration's ingest, and this is the flag that ingest will use to decide
+  # whether to append to the holdout (audit L2).
+                holdout_frozen=holdout_frozen,
                 config=config, model_cfg=model_cfg,
                 device=device,
                 ds=ds,

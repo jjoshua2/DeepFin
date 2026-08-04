@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import hashlib
 import json
+import math
 import logging
 import os
 import re
 import secrets
+import socket
 import threading
 import time
 from dataclasses import dataclass, field
@@ -60,6 +63,326 @@ def _compacted_token_suffix(flush_token: str) -> str:
 # so concurrent multi-worker polls cannot double-dole (see PR #209 review).
 SEED_DOLE_REARM_FILENAME = "seed_dole_rearm.json"
 
+# Why a manifest read produced no manifest. "Absent" is the legitimate
+# pre-first-publish state; "unreadable" means the file is there and corrupt.
+# The worker-compat gate admits on the first and refuses to decide on the
+# second, so collapsing them (as the old `_load_manifest` did) is what turned
+# version enforcement off silently.
+MANIFEST_OK = "ok"
+MANIFEST_ABSENT = "absent"
+MANIFEST_UNREADABLE = "unreadable"
+
+# Machine-readable rejection reasons (A12). The human `reason` string stays for
+# logs and existing clients; `reason_code` is what a monitor should switch on,
+# because compat rejections deliberately ride an HTTP 200 (see
+# `_compat_rejection`) and the prose is free to change.
+COMPAT_MANIFEST_UNREADABLE = "manifest_unreadable"
+COMPAT_BAD_PROTOCOL_HEADER = "bad_protocol_header"
+COMPAT_PROTOCOL_MISMATCH = "protocol_mismatch"
+COMPAT_BAD_VERSION_HEADER = "bad_version_header"
+COMPAT_WORKER_TOO_OLD = "worker_too_old"
+
+# Same name as the logger `create_app` builds, so the two share configuration.
+# Needed separately because `_SeedDoleGate` is module-level and `create_app`'s
+# `log` is a local.
+_log = logging.getLogger("chess_anti_engine.server")
+
+# Outcomes of one rearm-file consumption attempt. Returned alongside the
+# match result so the gate can count them without re-deriving the reason.
+REARM_ABSENT = "absent"
+REARM_CONSUMED = "consumed"
+REARM_STALE = "stale"
+REARM_BAD = "bad"
+REARM_UNREADABLE = "unreadable"
+
+
+def _consume_rearm_file(
+    path: Path, training_iteration: int, *, trial_key: str = "",
+) -> tuple[bool, str]:
+    """Consume a rearm file once; return ``(matched, outcome)``.
+
+    The file is claimed by rename so two concurrent consumers cannot both act
+    on it, then removed — EXCEPT when it could not be parsed, in which case it
+    is quarantined as ``seed_dole_rearm.json.bad-<unix>`` instead of being
+    destroyed. A malformed rearm is the one case where the bytes are the only
+    evidence of what went wrong, and the previous code deleted them in a
+    ``finally`` on every path.
+
+    Every outcome is logged. Before this, all four non-match paths were a bare
+    ``return False`` with a suppressed unlink, so "the dole never fired" and
+    "the dole fired normally" produced byte-identical (empty) evidence.
+    """
+    who = f"trial={trial_key} " if trial_key else ""
+    tmp = path.with_suffix(path.suffix + ".consuming")
+    try:
+        path.rename(tmp)
+    except FileNotFoundError:
+        return False, REARM_ABSENT
+    except OSError as exc:
+        # Previously indistinguishable from "no rearm present".
+        _log.warning(
+            "seed-dole rearm UNREADABLE (%sclaim failed): %s: %s — dole NOT rearmed "
+            "for iteration %d", who, type(exc).__name__, exc, int(training_iteration),
+        )
+        return False, REARM_UNREADABLE
+
+    quarantine: Path | None = None
+    try:
+        try:
+            raw = tmp.read_text(encoding="utf-8")
+            data = json.loads(raw) if raw.strip() else {}
+            want = int(data.get("training_iteration", -1))
+        except Exception as exc:
+            quarantine = path.with_suffix(path.suffix + f".bad-{int(time.time())}")
+            _log.warning(
+                "seed-dole rearm MALFORMED (%s%s: %s) — dole NOT rearmed for "
+                "iteration %d; file kept at %s",
+                who, type(exc).__name__, exc, int(training_iteration), quarantine,
+            )
+            return False, REARM_BAD
+        if want == int(training_iteration):
+            _log.info(
+                "seed-dole rearm CONSUMED: %siteration=%d — this iteration's seed "
+                "dole is re-opened for the next poll to win",
+                who, int(training_iteration),
+            )
+            return True, REARM_CONSUMED
+        # Not a loss of the dole: `claim` still grants a LATER iteration through
+        # the normal `training_iteration > last` path, so only the re-arm of the
+        # file's own (older) iteration is dropped. Logged because the trainable
+        # wrote it expecting it to fire.
+        _log.warning(
+            "seed-dole rearm SKIPPED as stale: %sfile iteration=%d, poll "
+            "iteration=%d — rearm discarded (a later iteration still claims "
+            "normally)", who, want, int(training_iteration),
+        )
+        return False, REARM_STALE
+    finally:
+        if quarantine is not None:
+            try:
+                tmp.rename(quarantine)
+            except OSError as exc:
+                _log.warning(
+                    "seed-dole rearm quarantine failed (%s): %s: %s — removing",
+                    who, type(exc).__name__, exc,
+                )
+                with contextlib.suppress(OSError):
+                    tmp.unlink(missing_ok=True)
+        else:
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
+
+
+_LOCK_HOST = socket.gethostname()
+
+
+class _LeaseAssignBusy(RuntimeError):
+    """The lease-assign lock is held by a live holder and did not free up.
+
+    Raised instead of stealing. The route turns it into a 503 + Retry-After:
+    a worker retries its next poll for free, whereas two workers assigned the
+    same trial slot is not recoverable at all. Failing CLOSED is the whole
+    point of audit A17.
+    """
+
+
+class _LeaseAssignLock:
+    """Cross-process mutual exclusion for lease assignment, with a STALENESS test.
+
+    ⚑ THE OLD BODY DID NOT EXCLUDE, AND FAILED OPEN (audit A17). It was
+    `while True` with no failure exit: past the deadline it unlinked the
+    lock file every 50ms *unconditionally*, so a holder that was merely
+    SLOW had its lock deleted out from under it. The next `O_EXCL` create
+    then succeeded, both holders had `_held = True` and both ran the
+    critical section; each unlinked on exit, so a third caller walked
+    straight in. Reproduced deterministically -- see
+    `tests/test_server_lease_assign_lock.py`.
+
+    Three changes, and the first is the whole fix:
+
+    * **A steal requires EVIDENCE.** The lock file carries the holder's pid
+      and creation time. We take it only when the holder process is gone
+      (`os.kill(pid, 0)` raises `ProcessLookupError`) or the file is older
+      than `stale_after_s`. A slow-but-alive holder is never stolen from; a
+      crashed one does not wedge the server until someone restarts it.
+    * **The deadline FAILS the acquisition** instead of forcing it. Without
+      staleness evidence we raise `_LeaseAssignBusy`, which the route turns
+      into a 503 with `Retry-After` -- a worker retries a poll happily, and
+      a wrong lease assignment is not recoverable at all.
+    * **Release checks ownership.** `__exit__` unlinks only if the file
+      still carries OUR token, so a holder that was legitimately stolen
+      from (it really had crashed... or it was paused past
+      `stale_after_s`) cannot delete its successor's lock on the way out.
+      This is the half that turns a single stolen lock into a cascade.
+
+    `stale_after_s` defaults to 10x `timeout_s`, i.e. a generous multiple of
+    the expected section time: assignment is a few small file reads and a
+    write. Every steal is logged with the evidence that justified it,
+    because a steal is either a crash recovery or a bug and the log line is
+    how anyone tells which.
+
+    A18: this is a file lock used from SYNC routes (`lease_trial` is a
+    `def`, run in Starlette's threadpool). Nothing here goes near the event
+    loop, and nothing here should be made `async` -- the blocking retry
+    sleep is correct precisely because it is not on the loop.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        timeout_s: float = 10.0,
+        stale_after_s: float | None = None,
+    ) -> None:
+        self.path = path
+        self.timeout_s = float(timeout_s)
+        self.stale_after_s = (
+            float(stale_after_s) if stale_after_s is not None else 10.0 * float(timeout_s)
+        )
+        self._held = False
+        # Identifies THIS acquisition, not this process: two acquisitions in
+        # one process must not be able to release each other.
+        self._token = secrets.token_hex(8)
+
+    def _read_holder(self) -> dict[str, Any]:
+        """The lock file's contents, or {} if it has none we can use.
+
+        A legacy pre-fix lock file held `f"{pid}\n"`, which is valid JSON and
+        decodes to an int, so it lands in the `{}` branch below and is judged
+        on file age. There is deliberately no `JSONDecodeError` special case
+        for it: an earlier revision of this method had one and it was DEAD --
+        the decode it claimed to rescue never fails.
+        """
+        try:
+            raw = self.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _lock_age(self, holder: dict[str, Any], now: float) -> tuple[float, str] | None:
+        """Seconds since the lock was taken, and where the clock came from.
+
+        ⚑ THE AGE TEST IS THE ONLY BACKSTOP THE STALENESS CHECK HAS, so it must
+        ALWAYS have a clock source. An earlier revision consulted `st_mtime`
+        only when the holder dict was EMPTY, which left a hole: a NON-empty
+        holder whose `created_at_unix` was missing, non-numeric or in the
+        future had no usable age, so with a live-looking pid (a recycled one,
+        say) it was never stealable AT ALL -- the reviewer aged such a file to
+        10,000s with `stale_after_s = 1.0` and it stayed busy permanently.
+        That is a total outage of the lease path, on precisely the crashed-
+        holder case this class exists to recover from, and each blocked poll
+        holds a threadpool token for the full timeout while it happens. The
+        future-timestamp variant is reachable on WSL2 clock jumps.
+
+        So: trust `created_at_unix` only when it is a finite number that is not
+        in the future, and fall back to `st_mtime` in every other case,
+        including a non-empty holder. `OverflowError` is caught alongside the
+        finite check because JSON integers are UNBOUNDED -- `10 ** 400` parses
+        happily and then raises inside `float()`, which is not a value error
+        this method may propagate: it would leave the lease route raising a
+        persistent 500 on exactly the corrupt lock file the fallback exists to
+        route around.
+
+        The mtime age is clamped non-negative -- a clock that ran backwards
+        must read as "brand new" (busy, which the caller retries) and never as
+        a negative age that a later comparison could turn into "ancient". The
+        `created_at_unix` branch needs no clamp: `stamp <= now` already
+        guarantees a non-negative difference, and a `max()` that provably
+        cannot fire is decoration that no test can pin.
+        """
+        raw = holder.get("created_at_unix")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            try:
+                stamp = float(raw)
+            except (OverflowError, ValueError):
+                stamp = math.nan
+            if math.isfinite(stamp) and stamp <= now:
+                return now - stamp, "created_at_unix"
+        try:
+            return max(0.0, now - self.path.stat().st_mtime), "file mtime"
+        except OSError:
+            return None
+
+    def _staleness_reason(self, now: float) -> str | None:
+        """Why the existing lock may be taken, or None if it may not be."""
+        holder = self._read_holder()
+        aged = self._lock_age(holder, now)
+        age_txt = "unknown" if aged is None else f"{aged[0]:.1f}s"
+        pid = holder.get("pid")
+        if isinstance(pid, int) and pid > 0 and holder.get("host") in (None, _LOCK_HOST):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return f"holder pid {pid} is gone (age {age_txt})"
+            except PermissionError:
+                pass  # alive, owned by another user
+            except OSError:
+                pass
+        if aged is not None and aged[0] > self.stale_after_s:
+            held_by = f"holder pid {pid}" if pid else "an unreadable holder"
+            return (
+                f"{held_by} did not release: lock age {aged[0]:.1f}s "
+                f"(by {aged[1]}) > {self.stale_after_s:.1f}s"
+            )
+        return None
+
+    def __enter__(self) -> _LeaseAssignLock:
+        deadline = time.time() + self.timeout_s
+        while True:
+            try:
+                fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "pid": os.getpid(),
+                        "host": _LOCK_HOST,
+                        "token": self._token,
+                        "created_at_unix": time.time(),
+                    }))
+                self._held = True
+                return self
+            except FileExistsError as exists_exc:
+                now = time.time()
+                reason = self._staleness_reason(now)
+                if reason is not None:
+                    _log.warning(
+                        "stealing stale lease-assign lock %s: %s", self.path, reason,
+                    )
+                    with contextlib.suppress(OSError):
+                        self.path.unlink(missing_ok=True)
+                    continue
+                if now >= deadline:
+                    raise _LeaseAssignBusy(
+                        f"lease assignment is busy: {self.path} held by "
+                        f"{self._read_holder() or 'an unreadable holder'} and not "
+                        f"stale after {self.timeout_s:.1f}s"
+                    ) from exists_exc
+                time.sleep(0.05)
+
+    def close(self) -> None:
+        """Release. For callers that entered manually and use `contextlib.closing`
+        because they need to catch `_LeaseAssignBusy` around the acquisition."""
+        self.__exit__(None, None, None)
+
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
+        if not self._held:
+            return
+        self._held = False
+        # Only OUR lock. If we were stolen from, the file now belongs to a
+        # live successor and unlinking it would restart the cascade this
+        # class exists to stop.
+        if self._read_holder().get("token") != self._token:
+            _log.warning(
+                "lease-assign lock %s was taken from us before release; "
+                "leaving the current holder's file alone", self.path,
+            )
+            return
+        with contextlib.suppress(OSError):
+            self.path.unlink(missing_ok=True)
+
 
 class _SeedDoleGate:
     """Per-iteration blind-spot FEN-seed doling gate.
@@ -87,8 +410,25 @@ class _SeedDoleGate:
 
     def __init__(self, state_path: Path | None = None) -> None:
         self._state_path = state_path
-        self._lock = asyncio.Lock()
+        # ⚑ CREATED LAZILY, IN THE LOOP THAT FIRST USES IT. An `asyncio.Lock`
+        # binds to a running loop, and constructing it here binds it to
+        # whatever loop happened to be running when the gate was made -- or to
+        # none. That was survivable while `claim` never awaited inside the
+        # `async with`, because an uncontended acquire returns without touching
+        # the loop; adding the threadpool hops (A9) made the binding real and
+        # broke every test that drives one gate from two loops
+        # (`asyncio.Lock bound to a different event loop`). Rebuilding when the
+        # running loop changes keeps the critical section exactly as wide as it
+        # was: one loop's concurrent polls still contend on one lock, which is
+        # the only case that has to be mutually exclusive.
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop: Any = None
         self._last_iter: dict[str, int] = {}
+        # Cumulative rearm outcomes; see `counters()` for why they are not
+        # persisted into the durable gate file.
+        self.rearm_consumed = 0
+        self.rearm_skipped = 0
+        self.rearm_bad = 0
         if state_path is not None and state_path.exists():
             try:
                 loaded = json.loads(state_path.read_text(encoding="utf-8"))
@@ -109,27 +449,60 @@ class _SeedDoleGate:
 
     def _consume_rearm_unlocked(
         self, publish_dir: Path | None, training_iteration: int,
+        *, trial_key: str = "",
     ) -> bool:
-        """Consume rearm file; caller MUST hold ``self._lock``."""
+        """Consume rearm file; caller MUST hold ``self._lock``.
+
+        Delegates to the module-level :func:`_consume_rearm_file` — the same
+        implementation :func:`consume_seed_dole_rearm` uses — and tallies the
+        outcome. The two used to be separate copies of the same body and could
+        drift apart silently.
+        """
         if publish_dir is None:
             return False
-        path = Path(publish_dir) / SEED_DOLE_REARM_FILENAME
-        tmp = path.with_suffix(path.suffix + ".consuming")
-        try:
-            path.rename(tmp)
-        except FileNotFoundError:
-            return False
-        except OSError:
-            return False
-        try:
-            raw = tmp.read_text(encoding="utf-8")
-            data = json.loads(raw) if raw.strip() else {}
-            return int(data.get("training_iteration", -1)) == int(training_iteration)
-        except Exception:
-            return False
-        finally:
-            with contextlib.suppress(OSError):
-                tmp.unlink(missing_ok=True)
+        matched, outcome = _consume_rearm_file(
+            Path(publish_dir) / SEED_DOLE_REARM_FILENAME,
+            training_iteration,
+            trial_key=trial_key,
+        )
+        if outcome == REARM_CONSUMED:
+            self.rearm_consumed += 1
+        elif outcome == REARM_STALE:
+            self.rearm_skipped += 1
+        elif outcome in (REARM_BAD, REARM_UNREADABLE):
+            self.rearm_bad += 1
+        return matched
+
+    def counters(self) -> dict[str, int]:
+        """Cumulative rearm outcomes since process start.
+
+        In memory only, and deliberately so: the durable file beside this gate
+        (``seed_dole_gate.json``) decides whether an iteration may be re-doled,
+        and widening its schema to carry telemetry would put a counter write on
+        the path that must not lose a claim. These values are emitted into the
+        dole log line instead, so a single ``grep`` recovers both the event and
+        the running totals.
+        """
+        return {
+            "dole_rearm_consumed": int(self.rearm_consumed),
+            "dole_rearm_skipped": int(self.rearm_skipped),
+            "dole_rearm_bad": int(self.rearm_bad),
+        }
+
+    def _loop_lock(self) -> asyncio.Lock:
+        """The lock, bound to the loop currently running.
+
+        Rebuilt if the running loop changed since it was made. Two different
+        loops never share a gate in production -- there is exactly one server
+        loop -- so this only rebuilds at first use and in tests, and a rebuild
+        cannot drop a concurrent holder, because a holder can only exist on the
+        loop it was acquired in.
+        """
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop is not loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
 
     async def claim(
         self,
@@ -147,42 +520,62 @@ class _SeedDoleGate:
         the batch. Rearm consumption and the claim decision share one lock so
         concurrent multi-worker polls cannot double-dole.
         """
-        async with self._lock:
+        # A9: this runs on `/v1/lease_trial`, which every worker polls, and
+        # the body does rename + read_text + unlink + write_text + replace.
+        # Those are blocking FS calls, and they were on the event-loop thread
+        # inside an `async def`: the busiest route on the server stalled the
+        # loop for a filesystem round-trip on every poll.
+        #
+        # ⚑ THE LOCK STAYS AN `asyncio.Lock`, AND IT STAYS OUT HERE. Both FS
+        # steps are pushed into the threadpool INDIVIDUALLY, from inside the
+        # `async with`, rather than moving the whole body into one thread
+        # function. Moving the body would mean acquiring an `asyncio.Lock`
+        # from a worker thread, which is not merely awkward -- `asyncio.Lock`
+        # is not thread-safe and has no blocking acquire, so it cannot be
+        # held across a thread boundary at all. Awaiting inside the `async
+        # with` keeps the critical section exactly as wide as it was: the
+        # rearm consumption and the claim decision are still one section, so
+        # concurrent multi-worker polls still cannot double-dole. The only
+        # change is which thread does the syscalls.
+        # Imported here, not at module scope: this module guards its
+        # fastapi imports inside `create_app` so it stays importable in the
+        # lite `[worker]` install, and starlette arrives with fastapi. A
+        # module-level import would silently take that property away.
+        from starlette.concurrency import run_in_threadpool
+
+        async with self._loop_lock():
             rearm = bool(allow_rearm)
             if publish_dir is not None:
                 # File wins over the kwarg when both are set; under the lock so
                 # rename + claim decision is one critical section.
-                rearm = self._consume_rearm_unlocked(publish_dir, training_iteration)
+                rearm = await run_in_threadpool(
+                    functools.partial(
+                        self._consume_rearm_unlocked,
+                        publish_dir,
+                        training_iteration,
+                        trial_key=trial_key,
+                    ),
+                )
             last = int(self._last_iter.get(trial_key, -1))
             if rearm and last == int(training_iteration):
                 last = int(training_iteration) - 1
                 self._last_iter[trial_key] = last
             if int(training_iteration) > last:
                 self._last_iter[trial_key] = int(training_iteration)
-                self._persist()
+                await run_in_threadpool(self._persist)
                 return True
             return False
 
 
 def consume_seed_dole_rearm(publish_dir: Path, training_iteration: int) -> bool:
-    """Test helper: consume a rearm file outside the gate (prefer claim+publish_dir)."""
-    path = Path(publish_dir) / SEED_DOLE_REARM_FILENAME
-    tmp = path.with_suffix(path.suffix + ".consuming")
-    try:
-        path.rename(tmp)
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return False
-    try:
-        raw = tmp.read_text(encoding="utf-8")
-        data = json.loads(raw) if raw.strip() else {}
-        return int(data.get("training_iteration", -1)) == int(training_iteration)
-    except Exception:
-        return False
-    finally:
-        with contextlib.suppress(OSError):
-            tmp.unlink(missing_ok=True)
+    """Test helper: consume a rearm file outside the gate (prefer claim+publish_dir).
+
+    Shares :func:`_consume_rearm_file` with the gate so the two cannot drift.
+    """
+    matched, _outcome = _consume_rearm_file(
+        Path(publish_dir) / SEED_DOLE_REARM_FILENAME, training_iteration,
+    )
+    return matched
 
 
 def resolve_publish_artifact_path(publish_root: Path, filename: str) -> Path | None:
@@ -728,6 +1121,7 @@ def create_app(
             UploadFile,
         )
         from fastapi.responses import FileResponse, JSONResponse
+        from starlette.concurrency import run_in_threadpool
         from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
   # Important: this module uses `from __future__ import annotations`, so FastAPI/Pydantic
@@ -742,7 +1136,14 @@ def create_app(
 
     from chess_anti_engine.replay.shard import load_shard_arrays
 
-    from .auth import load_users, record_upload, save_users, verify_password
+    from .auth import (
+        VerifiedCredentialCache,
+        load_user_stats,
+        migrate_user_stats,
+        record_upload,
+        save_user_stats,
+        user_stats_path_for,
+    )
     from .lease import (
         assign_trial_lease,
         available_trial_ids,
@@ -756,6 +1157,21 @@ def create_app(
     quarantine = root / quarantine_dir
     arena_inbox = root / "arena_inbox"
     users_path = root / users_db
+  # Per-process. `_auth_user` is a sync `def` dependency, so this is touched
+  # only from threadpool threads; its own lock covers that. Coherent with the
+  # `stats_write_lock` cycle below WITHOUT participating in it: that cycle
+  # rewrites the file through `atomic_write_text`, so a reader sees the whole
+  # old or the whole new content, and the stamp change makes the next read
+  # pick up the new one. Taking `stats_write_lock` here would put every
+  # authenticated request behind every upload's stats write, which is a worse
+  # version of the problem this cache is fixing.
+    auth_cache = VerifiedCredentialCache(users_path)
+  # Per-user upload counters, split out of `users.json` so an accepted shard
+  # never rewrites a credential. Migration runs once at startup and is a no-op
+  # once the stats file exists; it assigns rather than adds, so a repeat cannot
+  # double-count.
+    user_stats_path = user_stats_path_for(users_path)
+    migrate_user_stats(users_path, user_stats_path)
 
     inbox.mkdir(parents=True, exist_ok=True)
     quarantine.mkdir(parents=True, exist_ok=True)
@@ -772,6 +1188,31 @@ def create_app(
     upload_accumulators: dict[tuple[str | None, str, str], _BufferedUploadAccumulator] = {}
     recent_upload_shas: dict[tuple[str | None, str], float] = {}
     upload_lock = threading.Lock()
+    # ⚑ THE EVENT LOOP WAS SERIALISING THESE FOR FREE, AND A5 TOOK THAT AWAY.
+    # Three unlocked read-modify-write cycles run on the upload path -- the two
+    # throughput stats files and `load_user_stats`/`record_upload`/
+    # `save_user_stats` (which was `load_users`/`save_users` before the
+    # credential/counter split -- same cycle, different file).
+    # While `_upload_shard_impl` ran them on the loop thread they could not
+    # interleave: one thread, no `await` between the read and the write. A5
+    # moved the tail into the threadpool, so concurrent uploads now read the
+    # same file, mutate their own copy, and write it back over each other.
+    # `atomic_write_text` makes each WRITE atomic, so nothing tears -- the file
+    # just quietly ends up with fewer increments than there were uploads.
+    # Measured by review on 8 concurrent uploads: base 8/8 every run, this
+    # branch without this lock [5, 4, 8, 7, 6].
+    #
+    # It nests with nothing: the stats tail runs after `_accumulate_under_lock`
+    # has returned, so `upload_lock` is already released and there is no
+    # ordering question between the two.
+    #
+    # ⚑ METHOD NOTE, worth more than the fix: A18 records single-PROCESS as the
+    # precondition for these cycles being safe. The real precondition is single
+    # EXECUTION CONTEXT, and the loop was providing it invisibly. This change
+    # kept the process count at one and still broke it. Anything that moves
+    # work off the loop must first enumerate what the loop was accidentally
+    # serialising.
+    stats_write_lock = threading.Lock()
     queued_games_cache: dict[str | None, tuple[float, dict[str, int]]] = {}
     queued_games_cache_lock = threading.Lock()
     seed_dole_gate = _SeedDoleGate(state_path=root / "seed_dole_gate.json")
@@ -983,14 +1424,86 @@ def create_app(
                     flushed += 1
         return flushed
 
-    def _load_manifest(trial_id: str | None = None) -> dict[str, Any] | None:
+    # Compat-gate observability (A11). The gate's whole failure mode was that a
+    # day spent admitting unversioned workers looked exactly like a day spent
+    # enforcing correctly, so every decision is counted and the totals ride the
+    # log lines. Guarded by a lock because the routes that touch them run in
+    # Starlette's threadpool and `d[k] += 1` is not atomic.
+    _manifest_read_counters: dict[str, int] = {
+        "absent": 0,
+        "unreadable": 0,
+        "admitted_without_manifest": 0,
+        "admitted_no_requirements": 0,
+        "rejected": 0,
+    }
+    _manifest_read_counters_sig: dict[str, str] = {"last": ""}
+    _manifest_absent_seen: set[str] = set()
+    _compat_counter_lock = threading.Lock()
+
+    def _bump_compat(key: str) -> dict[str, int]:
+        """Increment one compat counter and return a snapshot of all of them."""
+        with _compat_counter_lock:
+            _manifest_read_counters[key] += 1
+            return dict(_manifest_read_counters)
+
+    def _load_manifest_status(
+        trial_id: str | None = None,
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Load the manifest and say WHY it is missing when it is.
+
+        The two failure modes are not interchangeable and the compat gate
+        treats them oppositely: ``MANIFEST_ABSENT`` is the legitimate
+        pre-first-publish state, while ``MANIFEST_UNREADABLE`` means the file
+        exists and could not be parsed. The manifest is written through
+        ``atomic_write_text`` (``tune/distributed_runtime.py``), so a reader
+        never observes a partial write — persistent unreadability is real
+        corruption or a wrong-directory resolution, not a race.
+        """
         mf = _publish_root(trial_id) / "manifest.json"
         if not mf.exists():
-            return None
+            _bump_compat("absent")
+            key = str(_normalize_trial_id(trial_id) or "")
+            with _compat_counter_lock:
+                first = key not in _manifest_absent_seen
+                _manifest_absent_seen.add(key)
+            if first:
+                # Once per trial: legitimate before the first publish, but it
+                # opens the compat gate, so the transition must be visible.
+                log.info(
+                    "manifest not published yet for trial=%s (%s) — worker "
+                    "version/protocol enforcement is OPEN until it appears",
+                    key or "<default>", mf,
+                )
+            return None, MANIFEST_ABSENT
         try:
-            return dict(json.loads(mf.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError):
-            return None  # manifest mid-write or missing
+            return dict(json.loads(mf.read_text(encoding="utf-8"))), MANIFEST_OK
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            counters = _bump_compat("unreadable")
+            sig = f"{mf}:{type(exc).__name__}:{exc}"
+            with _compat_counter_lock:
+                novel = sig != _manifest_read_counters_sig.get("last")
+                _manifest_read_counters_sig["last"] = sig
+            # Warn on a new fault, and then on a count cadence — the
+            # `prefetch.py` idiom. Signature-only rate limiting was wrong for
+            # the case that matters most: an UNCHANGING fault warned once,
+            # ever, so the steady state was a stalled fleet with its only
+            # evidence hours up the log. A flood is still avoided because a
+            # busy fleet polls far faster than every 100th line.
+            if novel or int(counters["unreadable"]) % 100 == 0:
+                log.warning(
+                    "manifest UNREADABLE at %s: %s: %s — worker compat cannot be "
+                    "decided; affected requests fail CLOSED with 503 "
+                    "(unreadable=%d absent=%d admitted_without_manifest=%d)",
+                    mf, type(exc).__name__, exc, counters["unreadable"],
+                    counters["absent"], counters["admitted_without_manifest"],
+                )
+            return None, MANIFEST_UNREADABLE
+
+    def _load_manifest(trial_id: str | None = None) -> dict[str, Any] | None:
+        """Manifest or None. Callers that must distinguish absent from corrupt
+        (the compat gate) use :func:`_load_manifest_status` instead."""
+        manifest, _status = _load_manifest_status(trial_id)
+        return manifest
 
     def _iter_visible_inbox_shards(inbox_root: Path) -> list[Path]:
         """List upload shards visible to learner ingest, excluding staging dirs."""
@@ -1098,32 +1611,6 @@ def create_app(
         out["backpressure"] = out_backpressure
         return out
 
-    class _LeaseAssignLock:
-        def __init__(self, path: Path, *, timeout_s: float = 10.0) -> None:
-            self.path = path
-            self.timeout_s = float(timeout_s)
-            self._held = False
-
-        def __enter__(self) -> _LeaseAssignLock:
-            deadline = time.time() + float(self.timeout_s)
-            while True:
-                try:
-                    fd = os.open(str(self.path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(f"{os.getpid()}\n")
-                    self._held = True
-                    return self
-                except FileExistsError:
-                    if time.time() >= deadline:
-                        with contextlib.suppress(Exception):
-                            self.path.unlink(missing_ok=True)
-                    time.sleep(0.05)
-
-        def __exit__(self, _exc_type, _exc, _tb) -> None:
-            if self._held:
-                with contextlib.suppress(Exception):
-                    self.path.unlink(missing_ok=True)
-
     def _load_json_stats(path: Path) -> dict[str, Any]:
         if not path.exists():
             return {}
@@ -1157,36 +1644,46 @@ def create_app(
         games: int,
         elapsed_s: float | None,
     ) -> None:
-        if elapsed_s is None or elapsed_s <= 0.0:
-            return
-        gpu_model = _primary_gpu_model(lease=lease)
-        now_unix = int(time.time())
-        stats = _load_json_stats(stats_path)
-        entry = stats.get(gpu_model)
-        if not isinstance(entry, dict):
-            entry = {}
-        entry["gpu_model"] = gpu_model
-        entry["samples"] = int(entry.get("samples", 0)) + 1
-        entry["total_positions"] = int(entry.get("total_positions", 0)) + int(positions)
-        entry["total_games"] = int(entry.get("total_games", 0)) + int(games)
-        entry["total_elapsed_s"] = float(entry.get("total_elapsed_s", 0.0)) + float(elapsed_s)
-        total_elapsed_s = max(1e-9, float(entry["total_elapsed_s"]))
-        entry["avg_positions_per_s"] = float(entry["total_positions"]) / total_elapsed_s
-        entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
-        entry["last_trial_id"] = _normalize_trial_id(trial_id)
-        if isinstance(lease, dict):
-            worker_info = lease.get("worker_info")
-            if isinstance(worker_info, dict):
-                hostname = str(worker_info.get("hostname") or "").strip()
-                if hostname:
-                    entry["last_hostname"] = hostname
-                cpu_count = worker_info.get("cpu_count")
-                if cpu_count is not None:
-                    with contextlib.suppress(Exception):
-                        entry["last_cpu_count"] = int(cpu_count)
-        entry["last_updated_unix"] = now_unix
-        stats[gpu_model] = entry
-        atomic_write_text(stats_path, json.dumps(stats, indent=2, sort_keys=True))
+        # Serialised against the other RMW cycles on this path; see
+        # `stats_write_lock`.
+        with stats_write_lock:
+            if elapsed_s is None or elapsed_s <= 0.0:
+                return
+            gpu_model = _primary_gpu_model(lease=lease)
+            now_unix = int(time.time())
+            stats = _load_json_stats(stats_path)
+            entry = stats.get(gpu_model)
+            if not isinstance(entry, dict):
+                entry = {}
+            entry["gpu_model"] = gpu_model
+            entry["samples"] = int(entry.get("samples", 0)) + 1
+            entry["total_positions"] = int(entry.get("total_positions", 0)) + int(positions)
+            entry["total_games"] = int(entry.get("total_games", 0)) + int(games)
+            entry["total_elapsed_s"] = float(entry.get("total_elapsed_s", 0.0)) + float(elapsed_s)
+            total_elapsed_s = max(1e-9, float(entry["total_elapsed_s"]))
+            entry["avg_positions_per_s"] = float(entry["total_positions"]) / total_elapsed_s
+            entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
+            entry["last_trial_id"] = _normalize_trial_id(trial_id)
+            if isinstance(lease, dict):
+                worker_info = lease.get("worker_info")
+                if isinstance(worker_info, dict):
+                    hostname = str(worker_info.get("hostname") or "").strip()
+                    if hostname:
+                        entry["last_hostname"] = hostname
+                    cpu_count = worker_info.get("cpu_count")
+                    if cpu_count is not None:
+                        with contextlib.suppress(Exception):
+                            entry["last_cpu_count"] = int(cpu_count)
+            entry["last_updated_unix"] = now_unix
+            stats[gpu_model] = entry
+            # durable=False: this runs on EVERY /upload_shard, and fsync costs
+            # ~11 ms median (tail past 1.8 s) for a file this size on the
+            # project's ext4 root. The content is throughput telemetry —
+            # recomputed from the next upload onward — not restart-recovery
+            # state, so a crash may discard the last entry at no cost.
+            atomic_write_text(
+                stats_path, json.dumps(stats, indent=2, sort_keys=True), durable=False,
+            )
 
     def _record_trial_throughput(
         *,
@@ -1195,54 +1692,81 @@ def create_app(
         games: int,
         elapsed_s: float | None,
     ) -> None:
-        tid = _normalize_trial_id(trial_id)
-        if tid is None or elapsed_s is None or elapsed_s <= 0.0:
-            return
-        stats = _load_json_stats(trial_stats_path)
-        entry = stats.get(tid)
-        if not isinstance(entry, dict):
-            entry = {}
-        now_unix = int(time.time())
-        entry["trial_id"] = tid
-        entry["samples"] = int(entry.get("samples", 0)) + 1
-        entry["total_positions"] = int(entry.get("total_positions", 0)) + int(positions)
-        entry["total_games"] = int(entry.get("total_games", 0)) + int(games)
-        entry["total_elapsed_s"] = float(entry.get("total_elapsed_s", 0.0)) + float(elapsed_s)
-        total_elapsed_s = max(1e-9, float(entry["total_elapsed_s"]))
-        batch_positions_per_s = float(positions) / max(1e-9, float(elapsed_s))
-        batch_games_per_s = float(games) / max(1e-9, float(elapsed_s))
-        alpha = 0.30
-        prev_pos = float(entry.get("ema_positions_per_s", batch_positions_per_s) or batch_positions_per_s)
-        prev_games = float(entry.get("ema_games_per_s", batch_games_per_s) or batch_games_per_s)
-        entry["ema_positions_per_s"] = (1.0 - alpha) * prev_pos + alpha * batch_positions_per_s
-        entry["ema_games_per_s"] = (1.0 - alpha) * prev_games + alpha * batch_games_per_s
-        entry["avg_positions_per_s"] = float(entry["total_positions"]) / total_elapsed_s
-        entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
-        entry["last_updated_unix"] = now_unix
-        stats[tid] = entry
-        atomic_write_text(trial_stats_path, json.dumps(stats, indent=2, sort_keys=True))
+        # Serialised against the other RMW cycles on this path; see
+        # `stats_write_lock`.
+        with stats_write_lock:
+            tid = _normalize_trial_id(trial_id)
+            if tid is None or elapsed_s is None or elapsed_s <= 0.0:
+                return
+            stats = _load_json_stats(trial_stats_path)
+            entry = stats.get(tid)
+            if not isinstance(entry, dict):
+                entry = {}
+            now_unix = int(time.time())
+            entry["trial_id"] = tid
+            entry["samples"] = int(entry.get("samples", 0)) + 1
+            entry["total_positions"] = int(entry.get("total_positions", 0)) + int(positions)
+            entry["total_games"] = int(entry.get("total_games", 0)) + int(games)
+            entry["total_elapsed_s"] = float(entry.get("total_elapsed_s", 0.0)) + float(elapsed_s)
+            total_elapsed_s = max(1e-9, float(entry["total_elapsed_s"]))
+            batch_positions_per_s = float(positions) / max(1e-9, float(elapsed_s))
+            batch_games_per_s = float(games) / max(1e-9, float(elapsed_s))
+            alpha = 0.30
+            prev_pos = float(entry.get("ema_positions_per_s", batch_positions_per_s) or batch_positions_per_s)
+            prev_games = float(entry.get("ema_games_per_s", batch_games_per_s) or batch_games_per_s)
+            entry["ema_positions_per_s"] = (1.0 - alpha) * prev_pos + alpha * batch_positions_per_s
+            entry["ema_games_per_s"] = (1.0 - alpha) * prev_games + alpha * batch_games_per_s
+            entry["avg_positions_per_s"] = float(entry["total_positions"]) / total_elapsed_s
+            entry["avg_games_per_s"] = float(entry["total_games"]) / total_elapsed_s
+            entry["last_updated_unix"] = now_unix
+            stats[tid] = entry
+            # durable=False for the same reason as `_record_gpu_throughput`:
+            # per-upload telemetry, not recovery state.
+            atomic_write_text(
+                trial_stats_path,
+                json.dumps(stats, indent=2, sort_keys=True),
+                durable=False,
+            )
 
     def _check_worker_compat(
         *,
         trial_id: str | None = None,
         worker_version: str | None,
         worker_protocol: str | None,
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, str]:
         """Check whether a worker is allowed to participate.
+
+        Returns ``(ok, human_reason, reason_code)``.
 
         This is intentionally driven by the learner-published manifest so the learner
         can upgrade protocol requirements without server CLI changes.
+
+        Fail-open on a MISSING manifest is deliberate (a worker cannot be judged
+        against requirements that were never published) and is now counted and
+        announced. Fail-CLOSED on an UNREADABLE one is the A11 fix: a worker
+        that cannot prove compatibility must not upload, because the concrete
+        consequence is a stale worker writing v1 146-plane shards into a
+        v2_threats replay buffer, which no downstream stage rejects.
         """
-        mf = _load_manifest(trial_id)
+        mf, status = _load_manifest_status(trial_id)
+        if status == MANIFEST_UNREADABLE:
+            return (
+                False,
+                "server cannot read its own manifest; worker compatibility "
+                "is undecidable — retry",
+                COMPAT_MANIFEST_UNREADABLE,
+            )
         if mf is None:
-            return True, ""
+            _bump_compat("admitted_without_manifest")
+            return True, "", ""
 
         min_v = mf.get("min_worker_version")
         req_proto = mf.get("protocol_version")
 
   # Backward-compat: if fields are missing, don't enforce.
         if min_v is None and req_proto is None:
-            return True, ""
+            _bump_compat("admitted_no_requirements")
+            return True, "", ""
 
         wv = str(worker_version or "0.0.0")
         wp = str(worker_protocol or "0")
@@ -1252,30 +1776,90 @@ def create_app(
                 req_p = int(req_proto)
                 got_p = int(wp)
             except Exception:
-                return False, f"bad protocol version header (got {wp!r})"
+                return (
+                    False,
+                    f"bad protocol version header (got {wp!r})",
+                    COMPAT_BAD_PROTOCOL_HEADER,
+                )
             if got_p != req_p:
-                return False, f"protocol mismatch: worker={got_p} required={req_p}"
+                return (
+                    False,
+                    f"protocol mismatch: worker={got_p} required={req_p}",
+                    COMPAT_PROTOCOL_MISMATCH,
+                )
 
         if min_v is not None:
             try:
                 if version_lt(wv, str(min_v)):
-                    return False, f"worker too old: worker={wv} min_required={min_v}"
+                    return (
+                        False,
+                        f"worker too old: worker={wv} min_required={min_v}",
+                        COMPAT_WORKER_TOO_OLD,
+                    )
             except Exception:
-                return False, f"bad worker version header (got {wv!r})"
+                return (
+                    False,
+                    f"bad worker version header (got {wv!r})",
+                    COMPAT_BAD_VERSION_HEADER,
+                )
 
-        return True, ""
+        return True, "", ""
+
+    def _compat_rejection(
+        *, route: str, trial_id: str | None, reason: str, code: str,
+        worker_version: str | None, worker_protocol: str | None,
+    ) -> dict[str, Any]:
+        """Body for a compat-rejected upload — or a 503 when undecidable.
+
+        **The 200 is load-bearing, not an oversight (A12).** The worker treats
+        ``200 + rejected:true`` as TERMINAL: `_upload_response_rejection_reason`
+        returns None for any non-200, so a 4xx would stop the shard being
+        quarantined and `_upload_response_allows_pending_delete` would also
+        return False — the worker would retry the same incompatible shard
+        forever. Machine-readable `reason_code` is added instead, and the
+        rejection is logged server-side, which is what the finding actually
+        needed.
+
+        The undecidable case is the opposite: a transient inability to read the
+        manifest must NOT terminally destroy a healthy worker's shard, so it
+        raises 503, which the worker's `else: break` path treats as keep-and-
+        retry.
+        """
+        if code == COMPAT_MANIFEST_UNREADABLE:
+            raise HTTPException(status_code=503, detail=reason)
+        counters = _bump_compat("rejected")
+        log.warning(
+            "worker compat REJECT on %s: trial=%s code=%s reason=%s "
+            "(worker_version=%s protocol=%s) — the shard is terminally "
+            "rejected; totals: rejected=%d admitted_without_manifest=%d "
+            "unreadable=%d",
+            route, _normalize_trial_id(trial_id) or "<default>", code, reason,
+            worker_version, worker_protocol, counters["rejected"],
+            counters["admitted_without_manifest"], counters["unreadable"],
+        )
+        return {"stored": False, "rejected": True, "reason": reason, "reason_code": code}
 
     basic = HTTPBasic()
 
     def _auth_user(creds: HTTPBasicCredentials = Depends(basic)) -> str:
-        users = load_users(users_path)
-        rec = users.get(str(creds.username))
+        """Authenticate, without re-running PBKDF2 on a credential we already
+        checked. See `VerifiedCredentialCache` for why that is sound and for
+        what it deliberately does not cache (rejections).
+
+        The rejection ORDER is unchanged: unknown user -> 401, disabled -> 403,
+        bad password -> 401. `disabled` is read from the current record, so
+        revoking a user takes effect on their next request.
+        """
+        rec = auth_cache.verify(str(creds.username), str(creds.password))
         if rec is None:
-            raise HTTPException(status_code=401, detail="unknown user")
+            known = auth_cache.users().get(str(creds.username))
+            if known is None:
+                raise HTTPException(status_code=401, detail="unknown user")
+            if known.disabled:
+                raise HTTPException(status_code=403, detail="user disabled")
+            raise HTTPException(status_code=401, detail="bad password")
         if rec.disabled:
             raise HTTPException(status_code=403, detail="user disabled")
-        if not verify_password(str(creds.password), rec):
-            raise HTTPException(status_code=401, detail="bad password")
         return str(creds.username)
 
     def _record_bad_shard_report(
@@ -1288,14 +1872,17 @@ def create_app(
         x_cae_worker_lease_id: str | None,
         x_cae_machine_id: str | None,
     ) -> dict[str, Any]:
-        ok, reason = _check_worker_compat(
+        ok, reason, code = _check_worker_compat(
             trial_id=trial_id,
             worker_version=x_cae_worker_version,
             worker_protocol=x_cae_protocol_version,
         )
         if not ok:
-            log.warning("rejecting bad-shard report from user=%s: %s", username, reason)
-            return {"stored": False, "rejected": True, "reason": reason}
+            return _compat_rejection(
+                route=f"report_bad_shard(user={username})", trial_id=trial_id,
+                reason=reason, code=code, worker_version=x_cae_worker_version,
+                worker_protocol=x_cae_protocol_version,
+            )
         qdir = _quarantine_root(trial_id) / "client_reports"
         qdir.mkdir(parents=True, exist_ok=True)
         now_unix = time.time()
@@ -1341,13 +1928,27 @@ def create_app(
         if not mf.exists():
             raise HTTPException(status_code=404, detail="manifest not published yet")
 
-        ok, reason = _check_worker_compat(
+        ok, reason, code = _check_worker_compat(
             trial_id=trial_id,
             worker_version=x_cae_worker_version,
             worker_protocol=x_cae_protocol_version,
         )
         if not ok:
+  # 503 vs 426 is the difference between a pause and a funeral. The worker
+  # treats 426 as fatal (`_handle_upgrade_required` -> SystemExit), so
+  # answering an unreadable manifest with 426 would kill every healthy worker
+  # in the fleet over a transient read error. 503 lands in `_poll_manifest`'s
+  # `status_code != 200` branch: sleep and retry.
+            if code == COMPAT_MANIFEST_UNREADABLE:
+                raise HTTPException(status_code=503, detail=reason)
   # 426 (Upgrade Required) communicates "update your client".
+            log.warning(
+                "worker compat REJECT on manifest poll: trial=%s code=%s reason=%s "
+                "(worker_version=%s protocol=%s)",
+                _normalize_trial_id(trial_id) or "<default>", code, reason,
+                x_cae_worker_version, x_cae_protocol_version,
+            )
+            _bump_compat("rejected")
             raise HTTPException(status_code=426, detail=reason)
 
         manifest = json.loads(mf.read_text(encoding="utf-8"))
@@ -1389,11 +1990,28 @@ def create_app(
         # Rearm file (if any) is consumed inside claim under the gate lock so
         # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
         # polls return above and never reach claim — they cannot burn rearm.
-        return await seed_dole_gate.claim(
+        granted = await seed_dole_gate.claim(
             trial_key,
             training_iteration,
             publish_dir=_publish_root(trial_id),
         )
+        # THE observation that proves the dole took effect. Everything upstream
+        # of this line is a reason to decline, and each of those returns False
+        # silently; without this, "seeding is working" and "seeding never fired
+        # once" are the same empty log. Emitted only on the grant, so it is one
+        # line per iteration per trial, not per poll. Seed count comes from the
+        # reco the worker is about to act on — the rearm file itself carries
+        # only `training_iteration` (writer: distributed_runtime.py), so there
+        # is no count to read there.
+        if granted:
+            _log.info(
+                "seed dole GRANTED: trial=%s iteration=%d seeds=%d (%s)",
+                trial_key or "<default>",
+                training_iteration,
+                int(reco.get("opening_fen_dole_per_iter", 0) or 0),
+                " ".join(f"{k}={v}" for k, v in seed_dole_gate.counters().items()),
+            )
+        return granted
 
     async def _serve_manifest(
         trial_id: str | None,
@@ -1401,7 +2019,16 @@ def create_app(
         x_cae_worker_version: str | None,
         x_cae_protocol_version: str | None,
     ) -> Any:
-        manifest = _get_manifest_impl(
+        # A16: `/v1/manifest` is the most frequently polled route on the
+        # server -- every worker hits it on every poll -- and
+        # `_get_manifest_impl` reads the manifest json (and stats it) from
+        # disk. On an `async def` that read is on the loop thread, so the
+        # busiest route is also a per-poll stall. The file-serving GETs next
+        # to it are already correct (`def` + Starlette's threadpool); this
+        # brings the manifest to the same footing without changing the
+        # response.
+        manifest = await run_in_threadpool(
+            _get_manifest_impl,
             trial_id,
             x_cae_worker_version=x_cae_worker_version,
             x_cae_protocol_version=x_cae_protocol_version,
@@ -1578,7 +2205,21 @@ def create_app(
         payload: dict[str, Any] = Body(default_factory=dict),
         username: str = Depends(_auth_user),
     ) -> Any:
-        with _LeaseAssignLock(leases_root / ".assign.lock"):
+        try:
+            lease_lock = _LeaseAssignLock(leases_root / ".assign.lock")
+            lease_lock.__enter__()
+        except _LeaseAssignBusy as exc:
+            # 503 + Retry-After, not a 500: the server is healthy and the
+            # worker should poll again shortly. A traceback here would read as
+            # a server fault and, worse, the pre-A17 code would have silently
+            # double-assigned instead of saying anything at all.
+            log.warning("lease assignment busy, asking the worker to retry: %s", exc)
+            raise HTTPException(
+                status_code=503,
+                detail="lease assignment is busy; retry shortly",
+                headers={"Retry-After": "1"},
+            ) from exc
+        with contextlib.closing(lease_lock):
             lease_seconds = 3600
             requested_lease_id = str(payload.get("lease_id") or "").strip()
             requested_trial_id = _normalize_trial_id(payload.get("trial_id"))
@@ -1620,20 +2261,32 @@ def create_app(
         x_cae_batch_elapsed_s: str | None = Header(None, alias="X-CAE-Batch-Elapsed-S"),
         x_cae_machine_id: str | None = Header(None, alias="X-CAE-Machine-ID"),
     ) -> Any:
-        ok, reason = _check_worker_compat(
+        ok, reason, code = _check_worker_compat(
             trial_id=trial_id,
             worker_version=x_cae_worker_version,
             worker_protocol=x_cae_protocol_version,
         )
         if not ok:
-            log.warning("rejecting shard upload from user=%s: %s", username, reason)
-            return {"stored": False, "rejected": True, "reason": reason}
+            return _compat_rejection(
+                route=f"upload_shard(user={username})", trial_id=trial_id,
+                reason=reason, code=code, worker_version=x_cae_worker_version,
+                worker_protocol=x_cae_protocol_version,
+            )
   # Size guard: FastAPI doesn't enforce this automatically.
         max_bytes = int(max_upload_mb) * 1024 * 1024
         inbox_root = _inbox_root(trial_id)
         quarantine_root = _quarantine_root(trial_id)
-        inbox_root.mkdir(parents=True, exist_ok=True)
-        quarantine_root.mkdir(parents=True, exist_ok=True)
+
+        def _ensure_upload_dirs() -> None:
+            inbox_root.mkdir(parents=True, exist_ok=True)
+            quarantine_root.mkdir(parents=True, exist_ok=True)
+
+        # The only blocking work that has to happen BEFORE the drain -- the
+        # temp file lives under `inbox_root` -- so it gets its own hop rather
+        # than being left on the loop as "cheap". `mkdir(exist_ok=True)` is
+        # cheap on a warm local dir and is not cheap on a cold or networked
+        # one, and the yardstick below has no room for either.
+        await run_in_threadpool(_ensure_upload_dirs)
 
         upload_name = str(file.filename or "")
         if not upload_name.endswith(UPLOAD_TAR_SUFFIX):
@@ -1662,177 +2315,256 @@ def create_app(
                 f.write(chunk)
         sha = h.hexdigest()
 
-        tmp_zarr: Path | None = None
-        try:
-            tmp_zarr = inbox_root / f"tmp_{os.getpid()}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
-            zarr_root = extract_uploaded_shard_tar(
-                tmp,
-                tmp_zarr,
-                max_extract_bytes=int(max_upload_uncompressed_bytes),
-            )
-            shard_arrs_lazy, meta = load_shard_arrays(zarr_root, lazy=True)
-            validate_array_declarations(
-                shard_arrs_lazy,
-                max_positions=int(max_upload_positions),
-                max_uncompressed_bytes=int(max_upload_uncompressed_bytes),
-            )
-            shard_arrs, meta = load_shard_arrays(zarr_root)
-        except Exception as e:
-  # Quarantine so we can inspect bad uploads without causing worker retry storms.
-            qdir = quarantine_root / "invalid"
-            qdir.mkdir(parents=True, exist_ok=True)
-            qpath = qdir / tmp.name
+        def _finish_upload() -> Any:
+            """Everything after the drain, on ONE thread (audit A5).
+
+            ⚑ THE DRAIN IS THE ONLY PART THAT CAN STAY. `_upload_shard_impl`
+            must `await file.read(...)`, so the streaming hash-and-write loop
+            above is on the loop by necessity -- and it is the one blocking
+            stretch that already yields, once per chunk. Everything AFTER it is
+            straight-line blocking work: untar, validate, two `load_shard_arrays`
+            passes, `zarr_root.replace`, six recursive `delete_shard_path`
+            calls, the accumulate/flush section, `load_users`/`save_users`.
+            #335 moved only the locked block and left ~20 such sites here,
+            worth a measured 0.110s of loop stall per upload on a 1500-position
+            shard (0.287s before #335) -- per upload, with no contention needed,
+            scaling with shard size.
+
+            One thread, not several: each `run_in_threadpool` hop is a
+            round-trip through the loop and a chance to interleave, and the
+            steps here are strictly sequential over the same temp files. The
+            handoff is also the natural error boundary -- every `return
+            {"stored": False, ...}` rejection and the extract/validate
+            `try/except` live INSIDE this function, so the quarantine paths and
+            the exception behaviour are byte-identical to the inline version;
+            `run_in_threadpool` re-raises anything else in the coroutine
+            exactly where it was raised before.
+
+            `_accumulate_under_lock` is called DIRECTLY rather than via another
+            `run_in_threadpool`: we are already off the loop, and hopping again
+            would put the lock back under a second threadpool slot for no
+            reason. The `threading.Lock` contention semantics merged in #335 are
+            unchanged -- same lock, same block, still held on a worker thread.
+
+            Nothing here touches the request object. `file` is fully drained by
+            the time this runs (the assertion #335's review made explicitly),
+            and the only request-derived values used are the plain strings and
+            ints captured above.
+            """
+
+            tmp_zarr: Path | None = None
             try:
-                tmp.replace(qpath)
-                (qpath.with_suffix(qpath.suffix + ".reason.txt")).write_text(
-                    f"{type(e).__name__}: {e}", encoding="utf-8"
+                tmp_zarr = inbox_root / f"tmp_{os.getpid()}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
+                zarr_root = extract_uploaded_shard_tar(
+                    tmp,
+                    tmp_zarr,
+                    max_extract_bytes=int(max_upload_uncompressed_bytes),
                 )
-            except Exception:
-                tmp.unlink(missing_ok=True)
-            if tmp_zarr is not None:
-                delete_shard_path(tmp_zarr)
-
-            return {
-                "stored": False,
-                "rejected": True,
-                "reason": f"invalid shard: {type(e).__name__}: {e}",
-            }
-
-        trial_key = _normalize_trial_id(trial_id)
-        if not shard_run_id_matches_upload_trial(trial_key, meta.get("run_id")):
-            tmp.unlink(missing_ok=True)
-            delete_shard_path(tmp_zarr)
-            return {
-                "stored": False,
-                "rejected": True,
-                "reason": "shard run_id does not match upload trial",
-            }
-        # Identity values are keyed and asserted below; a value that cannot be
-        # typed would either crash the keying (500 -> worker retry storm) or
-        # have to be silently dropped, which is the defect this whole path
-        # exists to make impossible. Reject the shard instead.
-        identity_reason = _compaction_identity_error(meta)
-        if identity_reason is not None:
-            tmp.unlink(missing_ok=True)
-            delete_shard_path(tmp_zarr)
-            return {"stored": False, "rejected": True, "reason": identity_reason}
-
-        positions = int(shard_arrs["x"].shape[0])
-        tmp.unlink(missing_ok=True)
-        upload_seen_key = (trial_key, sha)
-        now_unix = time.time()
-        stored = False
-        # Atomically promote the extracted zarr group to the pending dir
-        # before acknowledging the upload. ``Path.replace`` is atomic on the
-        # same filesystem (the staging path and pending_dir share
-        # inbox_root). If we fail to promote, drop the temp shard and
-        # reject the upload — workers retry on non-stored responses.
-        #
-        # ``extract_uploaded_shard_tar`` returns the actual zarr group root,
-        # which may be ``tmp_zarr`` itself or a single nested child dir
-        # holding ``.zgroup``. Promote that exact directory so the pending
-        # path is a directly loadable shard.
-        pending_dir = inbox_root / _PENDING_DIR_NAME
-        pending_dir.mkdir(parents=True, exist_ok=True)
-        # Full sha (not sha[:8]) so recovery can repopulate
-        # ``recent_upload_shas`` from the filename alone — without that, a
-        # worker retry after a crash would not be deduped against the
-        # already-recovered samples.
-        pending_path = pending_dir / (
-            f"{int(now_unix)}_{sha}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
-        )
-        try:
-            zarr_root.replace(pending_path)
-        except Exception as exc:
-            delete_shard_path(tmp_zarr)
-            log.exception("failed to promote extracted shard to pending dir")
-            return {
-                "stored": False,
-                "rejected": True,
-                "reason": f"pending stage failed: {type(exc).__name__}: {exc}",
-            }
-        # Clean up the (now empty) wrapper dir if extraction nested a child.
-        if zarr_root != tmp_zarr:
-            delete_shard_path(tmp_zarr)
-        tmp_zarr = None
-        with upload_lock:
-            if upload_seen_key not in recent_upload_shas:
-                model_sha = str(meta.get("model_sha256") or sha)
-                acc_key = (trial_key, model_sha, _upload_identity_acc_key(meta))
-                acc = upload_accumulators.get(acc_key)
-                if acc is None:
-                    acc = _BufferedUploadAccumulator(
-                        trial_id=trial_key,
-                        model_sha256=model_sha,
-                        created_at_unix=now_unix,
-                        last_update_unix=now_unix,
+                shard_arrs_lazy, meta = load_shard_arrays(zarr_root, lazy=True)
+                validate_array_declarations(
+                    shard_arrs_lazy,
+                    max_positions=int(max_upload_positions),
+                    max_uncompressed_bytes=int(max_upload_uncompressed_bytes),
+                )
+                shard_arrs, meta = load_shard_arrays(zarr_root)
+            except Exception as e:
+      # Quarantine so we can inspect bad uploads without causing worker retry storms.
+                qdir = quarantine_root / "invalid"
+                qdir.mkdir(parents=True, exist_ok=True)
+                qpath = qdir / tmp.name
+                try:
+                    tmp.replace(qpath)
+                    (qpath.with_suffix(qpath.suffix + ".reason.txt")).write_text(
+                        f"{type(e).__name__}: {e}", encoding="utf-8"
                     )
-                    upload_accumulators[acc_key] = acc
-                acc.add_upload(
-                    samples=arrays_to_samples(shard_arrs),
-                    meta=meta,
-                    now_unix=now_unix,
-                )
-                acc.pending_paths.append(pending_path)
-                recent_upload_shas[upload_seen_key] = now_unix
-                stored = True
-                _invalidate_queued_games_cache(trial_key)
-                if _buffered_upload_ready(
-                    acc=acc,
-                    now_unix=now_unix,
-                    target_positions=compact_target_positions,
-                    max_age_s=compact_max_age_seconds,
-                ):
-                    _try_flush_and_pop(acc_key, inbox_root=inbox_root, acc=acc, now_unix=now_unix)
-            else:
-                # Duplicate upload (already accumulated). The pending shard we
-                # just promoted is redundant — drop it so it isn't re-seeded
-                # on restart.
-                delete_shard_path(pending_path)
-                _invalidate_queued_games_cache(trial_key)
+                except Exception:
+                    tmp.unlink(missing_ok=True)
+                if tmp_zarr is not None:
+                    delete_shard_path(tmp_zarr)
 
-        lease = None
-        if x_cae_worker_lease_id is not None:
-            lease = load_lease(leases_root=leases_root, lease_id=str(x_cae_worker_lease_id).strip())
-        batch_elapsed_s: float | None = None
-        if x_cae_batch_elapsed_s is not None:
+                return {
+                    "stored": False,
+                    "rejected": True,
+                    "reason": f"invalid shard: {type(e).__name__}: {e}",
+                }
+
+            trial_key = _normalize_trial_id(trial_id)
+            if not shard_run_id_matches_upload_trial(trial_key, meta.get("run_id")):
+                tmp.unlink(missing_ok=True)
+                delete_shard_path(tmp_zarr)
+                return {
+                    "stored": False,
+                    "rejected": True,
+                    "reason": "shard run_id does not match upload trial",
+                }
+            # Identity values are keyed and asserted below; a value that cannot be
+            # typed would either crash the keying (500 -> worker retry storm) or
+            # have to be silently dropped, which is the defect this whole path
+            # exists to make impossible. Reject the shard instead.
+            identity_reason = _compaction_identity_error(meta)
+            if identity_reason is not None:
+                tmp.unlink(missing_ok=True)
+                delete_shard_path(tmp_zarr)
+                return {"stored": False, "rejected": True, "reason": identity_reason}
+
+            positions = int(shard_arrs["x"].shape[0])
+            tmp.unlink(missing_ok=True)
+            upload_seen_key = (trial_key, sha)
+            now_unix = time.time()
+            # Atomically promote the extracted zarr group to the pending dir
+            # before acknowledging the upload. ``Path.replace`` is atomic on the
+            # same filesystem (the staging path and pending_dir share
+            # inbox_root). If we fail to promote, drop the temp shard and
+            # reject the upload — workers retry on non-stored responses.
+            #
+            # ``extract_uploaded_shard_tar`` returns the actual zarr group root,
+            # which may be ``tmp_zarr`` itself or a single nested child dir
+            # holding ``.zgroup``. Promote that exact directory so the pending
+            # path is a directly loadable shard.
+            pending_dir = inbox_root / _PENDING_DIR_NAME
+            pending_dir.mkdir(parents=True, exist_ok=True)
+            # Full sha (not sha[:8]) so recovery can repopulate
+            # ``recent_upload_shas`` from the filename alone — without that, a
+            # worker retry after a crash would not be deduped against the
+            # already-recovered samples.
+            pending_path = pending_dir / (
+                f"{int(now_unix)}_{sha}_{secrets.token_hex(8)}{LOCAL_SHARD_SUFFIX}"
+            )
             try:
-                batch_elapsed_s = float(x_cae_batch_elapsed_s)
+                zarr_root.replace(pending_path)
+            except Exception as exc:
+                delete_shard_path(tmp_zarr)
+                log.exception("failed to promote extracted shard to pending dir")
+                return {
+                    "stored": False,
+                    "rejected": True,
+                    "reason": f"pending stage failed: {type(exc).__name__}: {exc}",
+                }
+            # Clean up the (now empty) wrapper dir if extraction nested a child.
+            if zarr_root != tmp_zarr:
+                delete_shard_path(tmp_zarr)
+            tmp_zarr = None
+
+            def _accumulate_under_lock() -> bool:
+                """The upload critical section. Runs in a THREAD, never on the loop.
+
+                ⚑ ``upload_lock`` is a ``threading.Lock`` and this used to be taken
+                inline in ``_upload_shard_impl``, which is an ``async def``. A
+                blocking acquire in a coroutine does not yield -- it holds the one
+                event-loop thread -- and the body below is not cheap: it calls
+                ``arrays_to_samples`` on the whole shard and, on the flush path,
+                ``_try_flush_and_pop``, which writes a compacted shard to disk.
+                So for the length of every compaction the server was not merely
+                slow, it was serving NOTHING: no lease, no health, no manifest, no
+                publish, no arena upload. It presents as wedged.
+
+                The lock stays a ``threading.Lock`` on purpose. The other two
+                acquisitions (the stale-flush sweep and the queued-games count) are
+                plain ``def``s that Starlette already runs in its threadpool, and a
+                ``def`` cannot ``await`` an ``asyncio.Lock``; converting the lock
+                would silently drop mutual exclusion between this path and those
+                two. Running this block through ``run_in_threadpool`` instead puts
+                the coroutine's acquisition on exactly the same footing as theirs.
+
+                Nothing in here touches the event loop or request-scope state:
+                ``file`` has already been fully drained to disk above, and the body
+                works on plain locals (``meta``, ``shard_arrs``, ``pending_path``)
+                plus the module-level dicts the lock exists to protect. The one
+                nested acquisition, ``_invalidate_queued_games_cache`` ->
+                ``queued_games_cache_lock``, keeps its existing order.
+
+                Returns whether the upload was newly accumulated.
+                """
+                with upload_lock:
+                    return _accumulate_locked()
+
+            def _accumulate_locked() -> bool:
+                stored_local = False
+                if upload_seen_key not in recent_upload_shas:
+                    model_sha = str(meta.get("model_sha256") or sha)
+                    acc_key = (trial_key, model_sha, _upload_identity_acc_key(meta))
+                    acc = upload_accumulators.get(acc_key)
+                    if acc is None:
+                        acc = _BufferedUploadAccumulator(
+                            trial_id=trial_key,
+                            model_sha256=model_sha,
+                            created_at_unix=now_unix,
+                            last_update_unix=now_unix,
+                        )
+                        upload_accumulators[acc_key] = acc
+                    acc.add_upload(
+                        samples=arrays_to_samples(shard_arrs),
+                        meta=meta,
+                        now_unix=now_unix,
+                    )
+                    acc.pending_paths.append(pending_path)
+                    recent_upload_shas[upload_seen_key] = now_unix
+                    stored_local = True
+                    _invalidate_queued_games_cache(trial_key)
+                    if _buffered_upload_ready(
+                        acc=acc,
+                        now_unix=now_unix,
+                        target_positions=compact_target_positions,
+                        max_age_s=compact_max_age_seconds,
+                    ):
+                        _try_flush_and_pop(acc_key, inbox_root=inbox_root, acc=acc, now_unix=now_unix)
+                else:
+                    # Duplicate upload (already accumulated). The pending shard we
+                    # just promoted is redundant — drop it so it isn't re-seeded
+                    # on restart.
+                    delete_shard_path(pending_path)
+                    _invalidate_queued_games_cache(trial_key)
+                return stored_local
+
+            stored = _accumulate_under_lock()
+
+            lease = None
+            if x_cae_worker_lease_id is not None:
+                lease = load_lease(leases_root=leases_root, lease_id=str(x_cae_worker_lease_id).strip())
+            batch_elapsed_s: float | None = None
+            if x_cae_batch_elapsed_s is not None:
+                try:
+                    batch_elapsed_s = float(x_cae_batch_elapsed_s)
+                except Exception:
+                    batch_elapsed_s = None
+
+            _record_gpu_throughput(
+                lease=lease,
+                trial_id=trial_id,
+                positions=int(positions),
+                games=int(meta.get("games") or 0),
+                elapsed_s=batch_elapsed_s,
+            )
+            _record_trial_throughput(
+                trial_id=trial_id,
+                positions=int(positions),
+                games=int(meta.get("games") or 0),
+                elapsed_s=batch_elapsed_s,
+            )
+
+      # Update user stats. Counters only -- `users.json` is not opened here,
+      # so an upload can neither lose a credential to a non-durable write nor
+      # lose a concurrent `set_disabled` to this read-modify-write cycle.
+            try:
+                with stats_write_lock:
+                    user_stats = load_user_stats(user_stats_path)
+                    machine_id = str(x_cae_machine_id).strip() if x_cae_machine_id else None
+                    record_upload(user_stats, username=username, bytes_uploaded=int(n), positions=positions, machine_id=machine_id)
+                    save_user_stats(user_stats_path, user_stats)
             except Exception:
-                batch_elapsed_s = None
+      # Stats failure should not fail the upload.
+                pass
 
-        _record_gpu_throughput(
-            lease=lease,
-            trial_id=trial_id,
-            positions=int(positions),
-            games=int(meta.get("games") or 0),
-            elapsed_s=batch_elapsed_s,
-        )
-        _record_trial_throughput(
-            trial_id=trial_id,
-            positions=int(positions),
-            games=int(meta.get("games") or 0),
-            elapsed_s=batch_elapsed_s,
-        )
+            return {
+                "stored": bool(stored),
+                "trial_id": _normalize_trial_id(trial_id),
+                "sha256": sha,
+                "bytes": int(n),
+                "positions": int(positions),
+                "meta": meta,
+            }
 
-  # Update user stats.
-        try:
-            users = load_users(users_path)
-            machine_id = str(x_cae_machine_id).strip() if x_cae_machine_id else None
-            record_upload(users, username=username, bytes_uploaded=int(n), positions=positions, machine_id=machine_id)
-            save_users(users_path, users)
-        except Exception:
-  # Stats failure should not fail the upload.
-            pass
-
-        return {
-            "stored": bool(stored),
-            "trial_id": _normalize_trial_id(trial_id),
-            "sha256": sha,
-            "bytes": int(n),
-            "positions": int(positions),
-            "meta": meta,
-        }
+        return await run_in_threadpool(_finish_upload)
 
     @app.post("/v1/upload_shard")
     async def upload_shard(
@@ -1924,14 +2656,17 @@ def create_app(
         x_cae_worker_version: str | None = Header(None, alias="X-CAE-Worker-Version"),
         x_cae_protocol_version: str | None = Header(None, alias="X-CAE-Protocol-Version"),
     ) -> Any:
-        ok, reason = _check_worker_compat(
+        ok, reason, code = _check_worker_compat(
             trial_id=trial_id,
             worker_version=x_cae_worker_version,
             worker_protocol=x_cae_protocol_version,
         )
         if not ok:
-            log.warning("rejecting arena upload from user=%s: %s", username, reason)
-            return {"stored": False, "rejected": True, "reason": reason}
+            return _compat_rejection(
+                route=f"upload_arena_result(user={username})", trial_id=trial_id,
+                reason=reason, code=code, worker_version=x_cae_worker_version,
+                worker_protocol=x_cae_protocol_version,
+            )
   # Basic schema validation
         def _req_int(k: str) -> int:
             if k not in payload:
@@ -1972,7 +2707,12 @@ def create_app(
         sha = hashlib.sha256(body).hexdigest()
         out = user_dir / f"{sha}.json"
         if not out.exists():
-            out.write_bytes(body)
+            # A6: same defect class as A5 -- a blocking write on the loop
+            # thread. Arena results are small, but the route is an
+            # `async def` and the write is unbounded by anything except the
+            # size guard above, so it stalls every other route for its
+            # duration.
+            await run_in_threadpool(out.write_bytes, body)
 
         return {
             "stored": True,
