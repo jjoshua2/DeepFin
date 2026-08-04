@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import hashlib
 import json
 import logging
@@ -60,6 +61,96 @@ def _compacted_token_suffix(flush_token: str) -> str:
 # so concurrent multi-worker polls cannot double-dole (see PR #209 review).
 SEED_DOLE_REARM_FILENAME = "seed_dole_rearm.json"
 
+# Same name as the logger `create_app` builds, so the two share configuration.
+# Needed separately because `_SeedDoleGate` is module-level and `create_app`'s
+# `log` is a local.
+_log = logging.getLogger("chess_anti_engine.server")
+
+# Outcomes of one rearm-file consumption attempt. Returned alongside the
+# match result so the gate can count them without re-deriving the reason.
+REARM_ABSENT = "absent"
+REARM_CONSUMED = "consumed"
+REARM_STALE = "stale"
+REARM_BAD = "bad"
+REARM_UNREADABLE = "unreadable"
+
+
+def _consume_rearm_file(
+    path: Path, training_iteration: int, *, trial_key: str = "",
+) -> tuple[bool, str]:
+    """Consume a rearm file once; return ``(matched, outcome)``.
+
+    The file is claimed by rename so two concurrent consumers cannot both act
+    on it, then removed — EXCEPT when it could not be parsed, in which case it
+    is quarantined as ``seed_dole_rearm.json.bad-<unix>`` instead of being
+    destroyed. A malformed rearm is the one case where the bytes are the only
+    evidence of what went wrong, and the previous code deleted them in a
+    ``finally`` on every path.
+
+    Every outcome is logged. Before this, all four non-match paths were a bare
+    ``return False`` with a suppressed unlink, so "the dole never fired" and
+    "the dole fired normally" produced byte-identical (empty) evidence.
+    """
+    who = f"trial={trial_key} " if trial_key else ""
+    tmp = path.with_suffix(path.suffix + ".consuming")
+    try:
+        path.rename(tmp)
+    except FileNotFoundError:
+        return False, REARM_ABSENT
+    except OSError as exc:
+        # Previously indistinguishable from "no rearm present".
+        _log.warning(
+            "seed-dole rearm UNREADABLE (%sclaim failed): %s: %s — dole NOT rearmed "
+            "for iteration %d", who, type(exc).__name__, exc, int(training_iteration),
+        )
+        return False, REARM_UNREADABLE
+
+    quarantine: Path | None = None
+    try:
+        try:
+            raw = tmp.read_text(encoding="utf-8")
+            data = json.loads(raw) if raw.strip() else {}
+            want = int(data.get("training_iteration", -1))
+        except Exception as exc:
+            quarantine = path.with_suffix(path.suffix + f".bad-{int(time.time())}")
+            _log.warning(
+                "seed-dole rearm MALFORMED (%s%s: %s) — dole NOT rearmed for "
+                "iteration %d; file kept at %s",
+                who, type(exc).__name__, exc, int(training_iteration), quarantine,
+            )
+            return False, REARM_BAD
+        if want == int(training_iteration):
+            _log.info(
+                "seed-dole rearm CONSUMED: %siteration=%d — this iteration's seed "
+                "dole is re-opened for the next poll to win",
+                who, int(training_iteration),
+            )
+            return True, REARM_CONSUMED
+        # Not a loss of the dole: `claim` still grants a LATER iteration through
+        # the normal `training_iteration > last` path, so only the re-arm of the
+        # file's own (older) iteration is dropped. Logged because the trainable
+        # wrote it expecting it to fire.
+        _log.warning(
+            "seed-dole rearm SKIPPED as stale: %sfile iteration=%d, poll "
+            "iteration=%d — rearm discarded (a later iteration still claims "
+            "normally)", who, want, int(training_iteration),
+        )
+        return False, REARM_STALE
+    finally:
+        if quarantine is not None:
+            try:
+                tmp.rename(quarantine)
+            except OSError as exc:
+                _log.warning(
+                    "seed-dole rearm quarantine failed (%s): %s: %s — removing",
+                    who, type(exc).__name__, exc,
+                )
+                with contextlib.suppress(OSError):
+                    tmp.unlink(missing_ok=True)
+        else:
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
+
 
 class _SeedDoleGate:
     """Per-iteration blind-spot FEN-seed doling gate.
@@ -101,6 +192,11 @@ class _SeedDoleGate:
         self._lock: asyncio.Lock | None = None
         self._lock_loop: Any = None
         self._last_iter: dict[str, int] = {}
+        # Cumulative rearm outcomes; see `counters()` for why they are not
+        # persisted into the durable gate file.
+        self.rearm_consumed = 0
+        self.rearm_skipped = 0
+        self.rearm_bad = 0
         if state_path is not None and state_path.exists():
             try:
                 loaded = json.loads(state_path.read_text(encoding="utf-8"))
@@ -121,27 +217,45 @@ class _SeedDoleGate:
 
     def _consume_rearm_unlocked(
         self, publish_dir: Path | None, training_iteration: int,
+        *, trial_key: str = "",
     ) -> bool:
-        """Consume rearm file; caller MUST hold ``self._lock``."""
+        """Consume rearm file; caller MUST hold ``self._lock``.
+
+        Delegates to the module-level :func:`_consume_rearm_file` — the same
+        implementation :func:`consume_seed_dole_rearm` uses — and tallies the
+        outcome. The two used to be separate copies of the same body and could
+        drift apart silently.
+        """
         if publish_dir is None:
             return False
-        path = Path(publish_dir) / SEED_DOLE_REARM_FILENAME
-        tmp = path.with_suffix(path.suffix + ".consuming")
-        try:
-            path.rename(tmp)
-        except FileNotFoundError:
-            return False
-        except OSError:
-            return False
-        try:
-            raw = tmp.read_text(encoding="utf-8")
-            data = json.loads(raw) if raw.strip() else {}
-            return int(data.get("training_iteration", -1)) == int(training_iteration)
-        except Exception:
-            return False
-        finally:
-            with contextlib.suppress(OSError):
-                tmp.unlink(missing_ok=True)
+        matched, outcome = _consume_rearm_file(
+            Path(publish_dir) / SEED_DOLE_REARM_FILENAME,
+            training_iteration,
+            trial_key=trial_key,
+        )
+        if outcome == REARM_CONSUMED:
+            self.rearm_consumed += 1
+        elif outcome == REARM_STALE:
+            self.rearm_skipped += 1
+        elif outcome in (REARM_BAD, REARM_UNREADABLE):
+            self.rearm_bad += 1
+        return matched
+
+    def counters(self) -> dict[str, int]:
+        """Cumulative rearm outcomes since process start.
+
+        In memory only, and deliberately so: the durable file beside this gate
+        (``seed_dole_gate.json``) decides whether an iteration may be re-doled,
+        and widening its schema to carry telemetry would put a counter write on
+        the path that must not lose a claim. These values are emitted into the
+        dole log line instead, so a single ``grep`` recovers both the event and
+        the running totals.
+        """
+        return {
+            "dole_rearm_consumed": int(self.rearm_consumed),
+            "dole_rearm_skipped": int(self.rearm_skipped),
+            "dole_rearm_bad": int(self.rearm_bad),
+        }
 
     def _loop_lock(self) -> asyncio.Lock:
         """The lock, bound to the loop currently running.
@@ -203,7 +317,12 @@ class _SeedDoleGate:
                 # File wins over the kwarg when both are set; under the lock so
                 # rename + claim decision is one critical section.
                 rearm = await run_in_threadpool(
-                    self._consume_rearm_unlocked, publish_dir, training_iteration,
+                    functools.partial(
+                        self._consume_rearm_unlocked,
+                        publish_dir,
+                        training_iteration,
+                        trial_key=trial_key,
+                    ),
                 )
             last = int(self._last_iter.get(trial_key, -1))
             if rearm and last == int(training_iteration):
@@ -217,24 +336,14 @@ class _SeedDoleGate:
 
 
 def consume_seed_dole_rearm(publish_dir: Path, training_iteration: int) -> bool:
-    """Test helper: consume a rearm file outside the gate (prefer claim+publish_dir)."""
-    path = Path(publish_dir) / SEED_DOLE_REARM_FILENAME
-    tmp = path.with_suffix(path.suffix + ".consuming")
-    try:
-        path.rename(tmp)
-    except FileNotFoundError:
-        return False
-    except OSError:
-        return False
-    try:
-        raw = tmp.read_text(encoding="utf-8")
-        data = json.loads(raw) if raw.strip() else {}
-        return int(data.get("training_iteration", -1)) == int(training_iteration)
-    except Exception:
-        return False
-    finally:
-        with contextlib.suppress(OSError):
-            tmp.unlink(missing_ok=True)
+    """Test helper: consume a rearm file outside the gate (prefer claim+publish_dir).
+
+    Shares :func:`_consume_rearm_file` with the gate so the two cannot drift.
+    """
+    matched, _outcome = _consume_rearm_file(
+        Path(publish_dir) / SEED_DOLE_REARM_FILENAME, training_iteration,
+    )
+    return matched
 
 
 def resolve_publish_artifact_path(publish_root: Path, filename: str) -> Path | None:
@@ -1471,11 +1580,28 @@ def create_app(
         # Rearm file (if any) is consumed inside claim under the gate lock so
         # concurrent multi-worker polls cannot double-dole. Paused/arena/dole-off
         # polls return above and never reach claim — they cannot burn rearm.
-        return await seed_dole_gate.claim(
+        granted = await seed_dole_gate.claim(
             trial_key,
             training_iteration,
             publish_dir=_publish_root(trial_id),
         )
+        # THE observation that proves the dole took effect. Everything upstream
+        # of this line is a reason to decline, and each of those returns False
+        # silently; without this, "seeding is working" and "seeding never fired
+        # once" are the same empty log. Emitted only on the grant, so it is one
+        # line per iteration per trial, not per poll. Seed count comes from the
+        # reco the worker is about to act on — the rearm file itself carries
+        # only `training_iteration` (writer: distributed_runtime.py), so there
+        # is no count to read there.
+        if granted:
+            _log.info(
+                "seed dole GRANTED: trial=%s iteration=%d seeds=%d (%s)",
+                trial_key or "<default>",
+                training_iteration,
+                int(reco.get("opening_fen_dole_per_iter", 0) or 0),
+                " ".join(f"{k}={v}" for k, v in seed_dole_gate.counters().items()),
+            )
+        return granted
 
     async def _serve_manifest(
         trial_id: str | None,
