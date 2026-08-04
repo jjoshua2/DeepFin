@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
 import numpy as np
 import torch
 
@@ -1095,3 +1096,158 @@ def test_opening_fen_list_path_inplace_edit_detected(tmp_path: Path) -> None:
     second = _get_app_bytes(app, "/v1/trials/trial_00000/opening_fen_list")
     assert second == fen_path.read_bytes()
     assert second != first
+
+
+# ---------------------------------------------------------------------------
+# audit L5: the seed-dole gate must be read BEFORE the manifest publishes the
+#           iteration a worker would claim.
+# ---------------------------------------------------------------------------
+
+
+def test_the_seed_dole_gate_is_read_before_the_manifest_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RED on main, which reads the gate ~130 lines AFTER publishing.
+
+    The rearm predicate is "was this iteration already claimed". The manifest
+    write is the only way a worker learns the iteration exists, so a gate read
+    that happens after it cannot distinguish a claim from a previous process
+    (arm) from a claim caused BY this publish (must not arm) -- and the latter
+    hands the whole seed list out twice for one iteration. Ordering is the
+    discriminator, so ordering is what this test pins.
+    """
+    import chess_anti_engine.tune.distributed_runtime as dr
+
+    order: list[str] = []
+    real_gate = dr._seed_dole_gate_claims_iteration
+    real_write = dr.atomic_write_text
+
+    def _spy_gate(**kw):
+        order.append("gate")
+        return real_gate(**kw)
+
+    def _spy_write(path, text, **kw):
+        if Path(path).name == "manifest.json":
+            order.append("manifest")
+        return real_write(path, text, **kw)
+
+    monkeypatch.setattr(dr, "_seed_dole_gate_claims_iteration", _spy_gate)
+    monkeypatch.setattr(dr, "atomic_write_text", _spy_write)
+
+    _dole_publish(tmp_path, gate_iteration=7, iteration=7)
+
+    assert order[:2] == ["gate", "manifest"], (
+        f"the gate must be read before the manifest is published; saw {order}"
+    )
+
+
+def test_a_claim_landing_after_the_publish_cannot_arm_the_rearm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The race, driven directly.
+
+    The worker's claim is simulated by writing the gate at the instant the
+    manifest lands -- which is exactly when a real worker could first poll it.
+    On main the later gate read sees that claim and arms; with the read hoisted
+    it cannot, because it already happened.
+    """
+    import chess_anti_engine.tune.distributed_runtime as dr
+
+    real_write = dr.atomic_write_text
+
+    def _claim_on_publish(path, text, **kw):
+        out = real_write(path, text, **kw)
+        if Path(path).name == "manifest.json":
+  # A worker polls the brand-new manifest and wins claim(7); the server
+  # persists the gate. Sub-millisecond in production, deterministic here.
+            (tmp_path / "seed_dole_gate.json").write_text(
+                json.dumps({"trial_00000": 7}), encoding="utf-8",
+            )
+        return out
+
+    monkeypatch.setattr(dr, "atomic_write_text", _claim_on_publish)
+
+    rearm = _dole_publish(tmp_path, gate_iteration=None, iteration=7)
+    assert not rearm.exists(), (
+        "a claim caused by this publish armed the rearm -- the whole seed list "
+        "would be doled twice for iteration 7 (audit L5)"
+    )
+
+
+def test_a_claim_already_on_disk_still_arms_the_resume_rearm(tmp_path: Path) -> None:
+    """The other half: the fix is an ordering, not a disabling.
+
+    A trial that died mid-iteration 7 left the claim burned before this process
+    existed, so the gate shows 7 before the manifest is written and the resumed
+    publish must still re-arm. Same for a retry republish of iteration 7 --
+    both are covered by `test_manifest_rearms_dole_after_same_iter_republish`
+    at the app level, which must stay green.
+    """
+    rearm = _dole_publish(tmp_path, gate_iteration=7, iteration=7)
+    assert rearm.exists(), "the resume rearm no longer fires (audit L5)"
+    assert json.loads(rearm.read_text(encoding="utf-8")) == {"training_iteration": 7}
+
+
+def test_the_hoisted_gate_read_keeps_the_stale_and_absent_cases_closed(
+    tmp_path: Path,
+) -> None:
+    """The predicate itself is unchanged; only when it runs moved."""
+    assert not _dole_publish(tmp_path, gate_iteration=None, iteration=7).exists(), (
+        "armed with no claim on the gate at all"
+    )
+    assert not _dole_publish(tmp_path, gate_iteration=3, iteration=7).exists(), (
+        "armed off a STALE gate iteration"
+    )
+
+
+def test_a_non_arming_publish_still_clears_a_stale_rearm(tmp_path: Path) -> None:
+    """The cleanup half of the branch must survive the change.
+
+    An armed rearm no worker consumed has to be removed by the next publish, or
+    it stays consumable at the wrong iteration -- the double-dole again.
+    """
+    assert _dole_publish(tmp_path, gate_iteration=7, iteration=7).exists()
+    assert not _dole_publish(tmp_path, gate_iteration=7, iteration=8).exists(), (
+        "a stale rearm survived a later publish"
+    )
+
+
+def _dole_publish(
+    tmp_path: Path, *, gate_iteration: int | None, iteration: int = 7,
+) -> Path:
+    """Publish once with the seed-dole preconditions satisfied.
+
+    Returns the rearm path so the caller can assert on its presence.
+    """
+    fen_list = tmp_path / "seeds.txt"
+    fen_list.write_text(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\n", encoding="utf-8",
+    )
+    gate_path = tmp_path / "seed_dole_gate.json"
+    if gate_iteration is None:
+        gate_path.unlink(missing_ok=True)
+    else:
+        gate_path.write_text(
+            json.dumps({"trial_00000": int(gate_iteration)}), encoding="utf-8",
+        )
+    _publish_distributed_trial_state(
+        trainer=_FakeTrainer(),
+        config={
+            "opening_fen_dole_per_iter": 8,
+            "opening_fen_list_path": str(fen_list),
+        },
+        model_cfg=_model_cfg(),
+        server_root=tmp_path,
+        trial_id="trial_00000",
+        training_iteration=int(iteration),
+        trainer_step=123,
+        sf_nodes=1000,
+        mcts_simulations=64,
+        pause_selfplay=False,
+        pause_reason="",
+    )
+    pub = tmp_path / "trials" / "trial_00000" / "publish"
+    assert json.loads((pub / "manifest.json").read_text(encoding="utf-8")).get(
+        "opening_fen_list",
+    ), "test setup: the manifest must advertise a seed list for arming to be possible"
+    return pub / "seed_dole_rearm.json"

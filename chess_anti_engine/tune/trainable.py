@@ -1006,6 +1006,11 @@ def train_trial(config: dict):
             t_train_start = time.monotonic()
             tr = _run_training_and_gating(
                 tc=tc, trainer=trainer, buf=buf, holdout_buf=holdout_buf,
+  # POST-freeze-check value, and it has to be: the async eval started at the
+  # end of THIS iteration is read by the eval thread during the NEXT
+  # iteration's ingest, and this is the flag that ingest will use to decide
+  # whether to append to the holdout (audit L2).
+                holdout_frozen=holdout_frozen,
                 config=config, model_cfg=model_cfg,
                 device=device,
                 ds=ds,

@@ -451,7 +451,7 @@ def _run_net_gating(
 
 def _run_holdout_evaluation(
     *, trainer, holdout_buf, tc: TrialConfig, model_cfg, device: str, config: dict,
-    iteration_idx: int, async_test_eval=None,
+    iteration_idx: int, holdout_frozen: bool, async_test_eval=None,
 ) -> tuple[TrainMetrics | None, int]:
     """Run synchronous or async holdout eval. Async path: collect last iter's
     result, then start the next one. Returns (metrics, source_iter).
@@ -466,11 +466,77 @@ def _run_holdout_evaluation(
     minimum SET size rather than the "enough rows to fill one draw" it used to
     be: below it the ruler is too small to compare against itself anyway, which
     is the G5 refill window.
+
+    THE ASYNC PATH REQUIRES AN IMMUTABLE HOLDOUT (audit L2). ``start()`` hands
+    ``holdout_buf`` to the eval thread BY REFERENCE while the next iteration's
+    ``_ingest_distributed_selfplay`` appends to that same object from the
+    trainer thread whenever ``holdout_frozen`` is False -- the model gets a CPU
+    snapshot for exactly this reason (``async_eval.AsyncTestEval.start``) and
+    the buffer never did. ``_iter_full_pass_batches`` names the exposure and
+    calls it "inert in production because a frozen holdout takes no new rows";
+    that is true in steady state and FALSE for the first iterations of every
+    ``--fresh`` start, which is when the eval thread also pays its one-time
+    inductor compile and so straddles the longest stretch of ingest. Measured
+    on trial 0f888 the window was one iteration (holdout_frozen 0->1 at iter 2).
+
+    Two failure modes, one loud and one silent. Loud: the ingest's
+    ``deque.append``/``popleft`` inside ``ArrayReplayBuffer`` raises
+    ``RuntimeError: deque mutated during iteration`` (or a ``strict=True`` zip
+    ``ValueError`` when caught between the two ``popleft``s) in the eval
+    thread's ``_gather_rows``, which ``_loop`` swallows into a dropped row.
+    Silent, and the reason this is a skip rather than a tolerated race: the
+    full pass computes its row bounds ONCE up front and ``rows_slice_arrays``
+    CLAMPS, so a buffer that grew or trimmed mid-pass yields a short,
+    index-shifted read with no error -- a ruler scoring a different set than
+    the row's ``holdout_buf_size`` reports.
+
+    Skipping the START (rather than asserting, or falling back to a sync pass
+    in the same row) is what fits here. An assert would crash a fresh start on
+    an INSTRUMENT, and the surrounding style already treats an unusable ruler
+    as a skip -- the ``len(holdout_buf) >= tc.batch_size`` guard directly above
+    is the same shape, and ``_run_era_probes_if_due`` likewise degrades to nan
+    rather than taking the iteration down. Running a sync pass instead would
+    put a second, differently-produced ruler in the same column for one row;
+    an absent ``test_*`` is honestly absent, a mixed one is not. The collect of
+    any already-in-flight result still happens, so only the row whose eval was
+    never started loses its columns.
     """
     if async_test_eval is not None:
-        test_metrics, source_iter = async_test_eval.collect(
-            timeout=tc.distributed_async_test_eval_timeout_s,
-        )
+  # Only wait when something is actually outstanding: collect() blocks for
+  # its full timeout on a cleared event, so an iteration after a skipped
+  # start would otherwise burn tc.distributed_async_test_eval_timeout_s
+  # (120s in production) doing nothing.
+        if async_test_eval.has_inflight():
+            test_metrics, source_iter = async_test_eval.collect(
+                timeout=tc.distributed_async_test_eval_timeout_s,
+            )
+        else:
+            test_metrics, source_iter = None, -1
+  # The SAME predicate the mutator uses, not a proxy for it:
+  # ``_ingest_train_arrays`` appends to the holdout on exactly
+  # ``holdout_frac > 0.0 and (not holdout_frozen)``. A guard that checked only
+  # ``holdout_frozen`` would skip forever under ``holdout_fraction: 0`` (where
+  # nothing can be appended and the async path is perfectly safe), and one that
+  # checked only the fraction would not see the freeze at all.
+        holdout_can_grow = float(tc.holdout_fraction) > 0.0 and not holdout_frozen
+        if len(holdout_buf) >= tc.batch_size and holdout_can_grow:
+            print(
+                f"[trial] iteration {int(iteration_idx)}: SKIPPING the async holdout "
+                f"eval -- the holdout can still be appended to "
+                f"(rows={len(holdout_buf)} holdout_fraction={float(tc.holdout_fraction)} "
+                f"frozen={bool(holdout_frozen)} freeze_holdout_at={int(tc.freeze_holdout_at)}), "
+                f"so the next iteration's ingest would mutate the very buffer the eval "
+                f"thread reads. test_* is absent for this row by design (audit L2)",
+                flush=True,
+            )
+            log.warning(
+                "iteration %d: async holdout eval SKIPPED -- holdout still mutable "
+                "(rows=%d, holdout_fraction=%.4f, frozen=%s, freeze_holdout_at=%d); "
+                "test_* absent for this row (audit L2)",
+                int(iteration_idx), len(holdout_buf), float(tc.holdout_fraction),
+                bool(holdout_frozen), int(tc.freeze_holdout_at),
+            )
+            return test_metrics, source_iter
         if len(holdout_buf) >= tc.batch_size:
   # Strip cudagraphs from the eval-thread snap. PyTorch's cudagraph_trees
   # stashes ``tree_manager_containers`` in TLS at module-import time on the
@@ -513,6 +579,7 @@ def _run_training_and_gating(
     trainer,
     buf,
     holdout_buf,
+    holdout_frozen: bool,
     config: dict,
     model_cfg,
     device: str,
@@ -595,7 +662,8 @@ def _run_training_and_gating(
     test_metrics, test_metrics_source_iter = _run_holdout_evaluation(
         trainer=trainer, holdout_buf=holdout_buf,
         tc=tc, model_cfg=model_cfg, device=device, config=config,
-        iteration_idx=iteration_idx, async_test_eval=async_test_eval,
+        iteration_idx=iteration_idx, holdout_frozen=bool(holdout_frozen),
+        async_test_eval=async_test_eval,
     )
 
     return TrainingResult(
@@ -958,7 +1026,18 @@ def _run_selfplay_phase(
         publish_dir=distributed_dirs["publish_dir"],
         proc=broker_proc_box[0],
     )
-    _shards_before_ingest = set(buf._shard_paths)
+  # ``_snapshot_shards()``, not the raw ``_shard_paths`` deque: that deque is
+  # guarded by ``DiskReplayBuffer._prefetch_lock`` and the buffer's own prefetch
+  # thread iterates it under that lock. Reading it unlocked here is safe ONLY
+  # because the sole mutator (``_append_shard_record`` / ``_pop_oldest_shard_record``,
+  # reached from ingest and window-trim) happens to be this same thread -- the
+  # A18 shape, where correctness rests on an execution context rather than on
+  # the lock that exists for it. ``tune/prefetch.py`` has already moved shard
+  # DECODE off this thread and hand-maintains a "registration stays on the
+  # trainer thread" invariant to keep this true; the day that invariant moves,
+  # an unlocked iteration here raises ``RuntimeError: deque mutated during
+  # iteration`` mid-selfplay-phase. The locked accessor is free (audit L3).
+    _shards_before_ingest = set(buf._snapshot_shards())
 
   # Ensuring the fleet only here, at the phase boundary, is what turned the
   # 2026-07-24 broker crash into a 50-minute outage: the wait loop below can
@@ -1024,7 +1103,9 @@ def _run_selfplay_phase(
         )
 
     buf.flush()
-    _new_selfplay_shards = [p for p in buf._shard_paths if p not in _shards_before_ingest]
+    _new_selfplay_shards = [
+        p for p in buf._snapshot_shards() if p not in _shards_before_ingest
+    ]
 
   # sf_eval_delta6: mean |winrate(t+6) - winrate(t)| from SF evals — measures
   # how dynamic SF-evaluated positions are over a 6-ply lookahead. Workers
