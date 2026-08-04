@@ -32970,3 +32970,11 @@ the trend persists once the ramp settles, and `gate_would_demote` behavior.
 **A8 corroborated live:** the dole knobs echo in config (`opening_fen_dole_per_iter: 1`) but
 the runtime log contains ZERO dole lines — "working silently" and "never firing" are
 indistinguishable, which is exactly audit finding A8 (task #148).
+
+**Gate-shadow follow-up (~15:1x, iter 165):** the CI-negative window (iters 145-148, min −16.1)
+RELAXED as the nodes ramp settled — last 10 rows drift −10.3 → −1.3 with every CI spanning zero
+(iter 165: −1.3 [−14.4, +11.8]). Consistent with the confound reading (difficulty-regime
+transient), not with onset of the old slide. PID effectively converged: regret at the 0.0075
+floor, nodes stabilized ~93-100k, winrate EMA 0.543 vs the 0.5 target; iteration time ~757s
+(SF cost at the higher node count — the expected price of a net that forced difficulty up 2×).
+Watch continues; the deciding instrument remains the ~5-day arena.
