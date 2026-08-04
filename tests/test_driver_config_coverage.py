@@ -565,10 +565,20 @@ def test_the_operator_entry_point_reports_a_driver_key_as_launch_fixed(
     the script's `main` calls — and asserts the operator-visible line. Unwire
     either kwarg and this goes red.
 
-    The row timestamp is deliberately AHEAD of the yaml mtime: `yaml_is_newer`
-    would downgrade every difference to `-UNRESOLVED`, which is the branch that
-    printed the wrong answer in the first place, and asserting on it would pass
-    whether or not the sets were wired.
+    BOTH kwargs are exercised, and separately. An earlier revision asserted only
+    on launch-fixed keys, so deleting `driver_dual_clock_keys=` alone left the
+    suite green -- one pin covering two independent wires is one pin short.
+    `tune_num_to_keep` is here to make the second wire load-bearing on its own.
+
+    The row timestamp is deliberately AHEAD of the yaml mtime so the assertions
+    land on the CLEAN-PATH label -- `DRIVER-LAUNCH-FIXED` / `DRIVER-DUAL-CLOCK`,
+    the strings an operator reads when they audit a running trial whose yaml has
+    already been picked up. An earlier version of this docstring justified it by
+    claiming the `yaml_is_newer` branch would pass vacuously; that was WRONG on
+    both counts, measured by the reviewer: that branch is labelled
+    `DRIVER-LAUNCH-FIXED-UNRESOLVED`, so it still carries the classification and
+    would discriminate perfectly well if asserted on. The choice is about which
+    label matters, not about one of them being untestable.
     """
     import importlib.util
     import sys
@@ -588,7 +598,9 @@ def test_the_operator_entry_point_reports_a_driver_key_as_launch_fixed(
     yaml_path.write_text(
         "tune:\n"
         "  distributed_server_port: 45999\n"
-        "  cpus_per_trial: 4\n",
+        "  cpus_per_trial: 4\n"
+  # Dual-clock, so `driver_dual_clock_keys=` is load-bearing on its own.
+        "  tune_num_to_keep: 9\n",
         encoding="utf-8",
     )
     rows = [
@@ -599,6 +611,7 @@ def test_the_operator_entry_point_reports_a_driver_key_as_launch_fixed(
             "config": {
                 "distributed_server_port": 45453,
                 "cpus_per_trial": 1,
+                "tune_num_to_keep": 6,
                 "_yaml_config_path": str(yaml_path),
             },
         }
@@ -609,9 +622,13 @@ def test_the_operator_entry_point_reports_a_driver_key_as_launch_fixed(
 
     assert "DRIVER-LAUNCH-FIXED distributed_server_port" in printed, printed
     assert "DRIVER-LAUNCH-FIXED cpus_per_trial" in printed, printed
+  # The second wire. Without this line, deleting `driver_dual_clock_keys=` from
+  # the entry point leaves the whole suite green.
+    assert "DRIVER-DUAL-CLOCK tune_num_to_keep" in printed, printed
     assert "PENDING-RESTART" not in printed, (
         "a driver key must not be reported as restart-required: restarting the "
         "TRIAL does not apply it, only re-running run.py does"
     )
-    assert len(findings) == 2, findings
-    assert all("re-run run.py" in f for f in findings), findings
+    assert len(findings) == 3, findings
+    assert any("re-run run.py" in f for f in findings), findings
+    assert any("TWO clocks" in f for f in findings), findings
