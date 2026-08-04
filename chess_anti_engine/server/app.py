@@ -1118,7 +1118,7 @@ def create_app(
 
     from chess_anti_engine.replay.shard import load_shard_arrays
 
-    from .auth import load_users, record_upload, save_users, verify_password
+    from .auth import VerifiedCredentialCache, load_users, record_upload, save_users
     from .lease import (
         assign_trial_lease,
         available_trial_ids,
@@ -1132,6 +1132,15 @@ def create_app(
     quarantine = root / quarantine_dir
     arena_inbox = root / "arena_inbox"
     users_path = root / users_db
+  # Per-process. `_auth_user` is a sync `def` dependency, so this is touched
+  # only from threadpool threads; its own lock covers that. Coherent with the
+  # `stats_write_lock` cycle below WITHOUT participating in it: that cycle
+  # rewrites the file through `atomic_write_text`, so a reader sees the whole
+  # old or the whole new content, and the stamp change makes the next read
+  # pick up the new one. Taking `stats_write_lock` here would put every
+  # authenticated request behind every upload's stats write, which is a worse
+  # version of the problem this cache is fixing.
+    auth_cache = VerifiedCredentialCache(users_path)
 
     inbox.mkdir(parents=True, exist_ok=True)
     quarantine.mkdir(parents=True, exist_ok=True)
@@ -1647,14 +1656,24 @@ def create_app(
     basic = HTTPBasic()
 
     def _auth_user(creds: HTTPBasicCredentials = Depends(basic)) -> str:
-        users = load_users(users_path)
-        rec = users.get(str(creds.username))
+        """Authenticate, without re-running PBKDF2 on a credential we already
+        checked. See `VerifiedCredentialCache` for why that is sound and for
+        what it deliberately does not cache (rejections).
+
+        The rejection ORDER is unchanged: unknown user -> 401, disabled -> 403,
+        bad password -> 401. `disabled` is read from the current record, so
+        revoking a user takes effect on their next request.
+        """
+        rec = auth_cache.verify(str(creds.username), str(creds.password))
         if rec is None:
-            raise HTTPException(status_code=401, detail="unknown user")
+            known = auth_cache.users().get(str(creds.username))
+            if known is None:
+                raise HTTPException(status_code=401, detail="unknown user")
+            if known.disabled:
+                raise HTTPException(status_code=403, detail="user disabled")
+            raise HTTPException(status_code=401, detail="bad password")
         if rec.disabled:
             raise HTTPException(status_code=403, detail="user disabled")
-        if not verify_password(str(creds.password), rec):
-            raise HTTPException(status_code=401, detail="bad password")
         return str(creds.username)
 
     def _record_bad_shard_report(
