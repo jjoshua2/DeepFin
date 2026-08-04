@@ -27,6 +27,12 @@ import torch
 if TYPE_CHECKING:
     import requests
 
+from chess_anti_engine.broker_hang import (
+    WORKER_HANG_ABORT_EXIT_CODE,
+    BrokerHangWatchdog,
+    pin_nvml_cuda_check,
+    resolve_worker_boot_hang_abort_seconds,
+)
 from chess_anti_engine.mcts.gumbel import DEFAULT_VOLATILITY_ANCHOR, SELFPLAY_GUMBEL_C_SCALE
 from chess_anti_engine.encoding import input_plane_count
 from chess_anti_engine.inference import (
@@ -357,10 +363,16 @@ def _configure_worker_torch_env() -> None:
     - TORCH_COMPILE_THREADS: cap inductor's compile-worker fan-out (each
       subprocess can accumulate >1GB of compiled kernels).
     - TF32: enable for fp32 ops outside autocast BF16 scope.
+    - PYTORCH_NVML_BASED_CUDA_CHECK: keep `torch.cuda.is_available()` off the
+      driver-init path (audit R3).
     """
     import os
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     os.environ.setdefault("TORCH_COMPILE_THREADS", "1")
+    # Route the CUDA availability probe around `cuInit`, which never returns on
+    # a wedged dxg bridge. Load-bearing and previously inherited from the
+    # launching shell only -- see `pin_nvml_cuda_check` for the full why.
+    pin_nvml_cuda_check()
     import torch
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
@@ -992,6 +1004,39 @@ class WorkerSession:
         self._selfplay_session_active = False
         self._stall_watchdog_started = False
         self._gil_probe = GilContentionProbe(interval_s=0.010)
+        # ⚑ AUDIT R1: no watchdog covered the CUDA-init calls the worker makes
+        # while holding a server lease. `_start_selfplay_stall_watchdog` arms
+        # only once `_selfplay_session_active` is True, which happens AFTER
+        # `model.to(self.device)` and `_build_evaluator` -- the two calls that
+        # block forever on a wedged dxg bridge. A worker that wedged there sat
+        # silently holding a 1h server lease, its shm slots and its Stockfish
+        # children, with no log line and no exit.
+        #
+        # ⚑ WHAT THIS BOUNDS, EXACTLY. The detector fires only while a `stage()`
+        # is open, so its coverage is the three stages and nothing else:
+        # `model_to_device`, `compile_inference_model`, `build_evaluator`.
+        # It is NOT a bound on the lease-held span. These run inside the lease
+        # and outside any stage, and are deliberately left uncovered:
+        # `_upload_pending_shards`, `_upload_pending_arena_results`,
+        # `_sync_assets` (model download + torch.load), `_begin_resume_session`,
+        # `_build_selfplay_configs`, `warm_opening_book_cache`,
+        # `_sync_stockfish`. None of them is a CUDA driver call, which is the
+        # failure R1 is about; they are network and disk work whose legitimate
+        # duration varies with link speed, so a 1800s bound on them would turn a
+        # slow model download into a crash loop. If one of THOSE hangs the
+        # symptom is a stalled fleet, not a wedged device, and it belongs to a
+        # different instrument.
+        #
+        # Same detector as the broker (one implementation, two `component`
+        # values). Live from construction, so it also covers a wedge that
+        # happens before the first poll.
+        self._boot_hang_watchdog = BrokerHangWatchdog(
+            threshold_s=resolve_worker_boot_hang_abort_seconds(),
+            component="worker",
+            exit_code=WORKER_HANG_ABORT_EXIT_CODE,
+            exit_fn=self._boot_hang_exit,
+        )
+        self._boot_hang_watchdog.start()
   # Model-freshness watch: a dedicated daemon thread owns manifest polling so
   # model freshness never depends on any selfplay thread staying alive (see
   # _start_model_watch_thread). The lock keeps it from running concurrently
@@ -1448,7 +1493,11 @@ class WorkerSession:
         ckpt = torch.load(str(path), map_location="cpu")
         sd = ckpt.get("model", ckpt)
         load_state_dict_tolerant(model, sd, label=label)
-        model.to(self.device)
+        # `.to(device)` is the first driver-touching call on this path and the
+        # one observed to wedge (audit R1). It runs while a server lease is
+        # already held, so an unbounded block here is a silently stalled worker.
+        with self._boot_hang_watchdog.stage("model_to_device"):
+            model.to(self.device)
         model.eval()
   # Selfplay only needs policy_own + wdl; skip 8 unused heads.
         if hasattr(model, "_inference_only"):
@@ -1460,12 +1509,13 @@ class WorkerSession:
             compile_t0 = time.time()
             self.log.info("compile starting %s sha=%s", label, sha_short)
             _compile_mode = str(self.args.compile_mode)
-            model = _maybe_compile_inference_model(
-                model,
-                device=str(self.device),
-                mode=_compile_mode,
-                use_fp8=bool(getattr(self.args, "inference_fp8", False)),
-            )
+            with self._boot_hang_watchdog.stage("compile_inference_model"):
+                model = _maybe_compile_inference_model(
+                    model,
+                    device=str(self.device),
+                    mode=_compile_mode,
+                    use_fp8=bool(getattr(self.args, "inference_fp8", False)),
+                )
             self.log.info("compile finished %s sha=%s elapsed_s=%.2f", label, sha_short, float(time.time() - compile_t0))
         return model
 
@@ -4147,7 +4197,10 @@ class WorkerSession:
                     bool(self.args.compile_inference),
                     bool(self.args.aot_dir),
                 )
-                self._direct_evaluator = self._build_evaluator(self.model)
+                # AOT package load / dispatcher warmup / pinned allocation all
+                # happen in here, every one of them a driver call.
+                with self._boot_hang_watchdog.stage("build_evaluator"):
+                    self._direct_evaluator = self._build_evaluator(self.model)
                 self.log.info("local evaluator ready type=%s", type(self._direct_evaluator).__name__)
             self._resync_evaluator_to_model()
 
@@ -4239,7 +4292,78 @@ class WorkerSession:
 
         self._flush_and_upload_after_shard(manifest, model_sha)
 
+    def _boot_hang_exit(self, code: int) -> None:
+        """Hard-exit from the hang watchdog, killing Stockfish children first.
+
+        **Why `os._exit` and not something gentler.** The main thread is blocked
+        inside a CUDA driver call that never returns. `sys.exit` from this
+        (watchdog) thread only unwinds this thread; a self-SIGTERM lands in
+        `_install_shutdown_handlers`, which by design only sets flags that the
+        blocked main thread will never read. `os._exit` is the only mechanism
+        that reliably ends the process, and it is what the broker already uses.
+
+        **What that costs, and what is done about it.** `os._exit` skips every
+        `finally`, so `run()`'s `self._cleanup()` does NOT run. Taking the
+        resources one at a time:
+
+        * **Stockfish children — would leak, so they are killed here.** This is
+          audit R2: they are spawned without a process group and their bare
+          cmdline is unmatchable by `terminate_matching_processes`, so an
+          orphan survives until reboot holding ~2.6 GB RSS each. SIGKILL by pid
+          is used rather than `self.sf.close()` because close() sends `quit`
+          and waits on per-engine locks -- a watchdog must not be able to block.
+        * **Shared-memory slots — no residue.** The worker only ever ATTACHES
+          (`create=False`) and `_detach_attached_shm_from_resource_tracker`
+          removes it from the resource tracker, so the worker neither owns nor
+          unlinks a segment. Process death drops the mapping; the broker keeps
+          the segment for the replacement worker.
+        * **Server lease — residue, and accepted.** There is no release
+          endpoint (`grep release_lease` finds none), and a lease taken by a
+          process whose GPU context is dead cannot be handed back cleanly
+          anyway. It expires by TTL (`lease_seconds`, 3600s) and
+          `prune_expired_leases` reclaims it. That is strictly better than the
+          status quo, where the wedged worker held it indefinitely because it
+          never exited at all.
+        * **The log file** is opened by the launcher, which owns closing it.
+
+        """
+        with suppress(Exception):
+            self._kill_stockfish_children()
+        os._exit(int(code))
+
+    def _kill_stockfish_children(self) -> int:
+        """SIGKILL every live Stockfish child by pid. Returns how many were signalled.
+
+        Deliberately lock-free and wait-free: it runs from the hang watchdog,
+        where blocking would defeat the whole mechanism.
+        """
+        sf = self.sf
+        if sf is None:
+            return 0
+        engines = getattr(sf, "_engines", None)
+        candidates = list(engines) if isinstance(engines, list) else [sf]
+        killed = 0
+        for engine in candidates:
+            proc = getattr(engine, "proc", None)
+            pid = getattr(proc, "pid", None)
+            if proc is None or not pid:
+                continue
+            if proc.poll() is not None:
+                continue  # already exited; counting it would overstate the kill
+            try:
+                os.kill(int(pid), signal.SIGKILL)
+                killed += 1
+            except (OSError, ProcessLookupError):
+                continue
+        if killed:
+            self.log.critical(
+                "hang abort: SIGKILLed %d Stockfish child process(es) that "
+                "os._exit would otherwise have orphaned", killed,
+            )
+        return killed
+
     def _cleanup(self) -> None:
+        self._boot_hang_watchdog.stop()
         self._gil_probe.close()
         if self.inference_client is not None and hasattr(self.inference_client, "close"):
             with suppress(Exception):

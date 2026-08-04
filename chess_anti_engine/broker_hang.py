@@ -1,9 +1,14 @@
-"""Hang self-abort for the inference broker (torch-free).
+"""Hang self-abort for GPU-touching processes (torch-free).
 
 A wedged CUDA / WSL2 dxg vmbus context blocks forever inside a CUDA call with
-no exception. The broker process stays alive, so the per-iteration supervisor
-sees a live PID and never respawns. This module tracks in-flight work and
-hard-exits (``os._exit(42)``) so the supervisor can restart a healthy process.
+no exception. The process stays alive, so the per-iteration supervisor sees a
+live PID and never respawns. This module tracks in-flight work and hard-exits
+so the supervisor can restart a healthy process.
+
+Two callers, one implementation: the inference **broker** (exit 42) covers its
+forwards and boot stages, and the selfplay **worker** (exit 43) covers the init
+span between taking a server lease and having a live evaluator (audit R1). They
+differ only in the name in the log line and the code in the exit status.
 
 Two things about the pre-2026-08-03 version made it unable to fire on the
 scenario in the paragraph above (audit I3), and both are fixed here:
@@ -31,7 +36,7 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Mapping, MutableMapping
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +50,60 @@ HANG_ABORT_ENV = "CAE_BROKER_HANG_ABORT_S"
 BOOT_HANG_ABORT_ENV = "CAE_BROKER_BOOT_HANG_ABORT_S"
 HANG_ABORT_EXIT_CODE = 42
 HANG_ABORT_POLL_S = 10.0
+
+# The worker runs the same watchdog over its own init span. A DISTINCT code so
+# a supervisor (and a human reading `ps`/exit status) can tell "the broker's
+# CUDA context wedged" from "a worker's did" without parsing logs.
+WORKER_HANG_ABORT_EXIT_CODE = 43
+WORKER_HANG_ABORT_ENV = "CAE_WORKER_BOOT_HANG_ABORT_S"
+# Same reasoning as DEFAULT_BOOT_HANG_ABORT_S: the span this covers is a model
+# load + optional torch.compile, which is legitimately minutes on a cold cache.
+DEFAULT_WORKER_BOOT_HANG_ABORT_S = 1800.0
+# `server/app.py`'s lease TTL. Mirrored (not imported) because the worker must
+# not depend on the server package, and used only to WARN when the worker's
+# threshold is configured past it -- see resolve_worker_boot_hang_abort_seconds.
+SERVER_LEASE_SECONDS = 3600.0
+
+NVML_CUDA_CHECK_ENV = "PYTORCH_NVML_BASED_CUDA_CHECK"
+
+
+def pin_nvml_cuda_check(env: MutableMapping[str, str] | None = None) -> bool:
+    """Route ``torch.cuda.is_available()`` around ``cuInit``. Returns True if set here.
+
+    ⚑ LOAD-BEARING, AND IT USED TO BE INHERITED BY ACCIDENT (audit R3). torch's
+    ``is_available()`` has two implementations::
+
+        if _nvml_based_avail():          # PYTORCH_NVML_BASED_CUDA_CHECK == "1"
+            return device_count() > 0    #   NVML — does not touch the driver
+        else:
+            return torch._C._cuda_getDeviceCount() > 0
+
+    and torch's own comment on the second branch says it "uses the CUDA Runtime
+    API ``cudaGetDeviceCount`` which in turn initializes the CUDA Driver API via
+    ``cuInit``". ``cuInit`` is exactly the call that never returns on a wedged
+    WSL2 dxg bridge, so on the default branch a *probe for whether a GPU exists*
+    is itself a hang point — before any watchdog stage is open.
+
+    The live run had this set, which is why the probe has never hung in practice.
+    But `git grep` found it in **no tracked file**: it came from the interactive
+    shell that started Ray. A run launched from systemd, cron, or a volunteer's
+    machine would silently lose it. Pinning it here makes the property the code's
+    rather than the environment's.
+
+    ``setdefault`` semantics: an operator who deliberately exports ``0`` to force
+    the driver-based check keeps it. torch reads this with ``os.getenv`` at CALL
+    time (not at import), so setting it any time before the first
+    ``torch.cuda.is_available()`` is effective — including after ``import torch``.
+
+    Not a complete fix: torch's NVML branch falls back to the ``cuInit`` path when
+    NVML discovery itself fails, which a sufficiently wedged bridge may cause.
+    That residual is what the watchdog in this module covers.
+    """
+    target = os.environ if env is None else env
+    if target.get(NVML_CUDA_CHECK_ENV):
+        return False
+    target[NVML_CUDA_CHECK_ENV] = "1"
+    return True
 
 
 def resolve_hang_abort_seconds(
@@ -88,6 +147,50 @@ def resolve_boot_hang_abort_seconds(
     if raw is not None and str(raw).strip() != "":
         return float(raw)
     return float(default_seconds)
+
+
+def resolve_worker_boot_hang_abort_seconds(
+    *,
+    env: Mapping[str, str] | None = None,
+    default_seconds: float = DEFAULT_WORKER_BOOT_HANG_ABORT_S,
+) -> float:
+    """Worker init-span threshold; ``CAE_WORKER_BOOT_HANG_ABORT_S`` overrides.
+
+    ``0`` (or any non-positive value) disables the watchdog entirely, matching
+    the broker's documented escape hatch and ``CAE_WORKER_STALL_TIMEOUT_S=0``
+    for the worker's existing in-session stall watchdog. A malformed value is
+    NOT silently treated as "disabled" -- that is the one reading an operator
+    would never intend -- it falls back to the default.
+    """
+    env_map = os.environ if env is None else env
+    raw = env_map.get(WORKER_HANG_ABORT_ENV)
+    if raw is None or str(raw).strip() == "":
+        return float(default_seconds)
+    try:
+        seconds = float(raw)
+    except ValueError:
+        log.warning(
+            "%s=%r is not a number; using the %.0fs default",
+            WORKER_HANG_ABORT_ENV, raw, float(default_seconds),
+        )
+        return float(default_seconds)
+    if seconds > SERVER_LEASE_SECONDS:
+        # ⚑ The recovery story depends on this ordering. A worker that aborts
+        # while its lease is still ALIVE reclaims that same lease on respawn,
+        # because `assign_trial_lease` matches on the PERSISTED `worker_id`.
+        # Past the TTL the lease has been pruned and the trial has spent the
+        # whole window with a wedged worker holding it -- which is the
+        # unbounded-lease hole this watchdog exists to close, re-opened by
+        # configuration. Warn rather than clamp: an operator who deliberately
+        # raises this is the one person who might mean it, and a silent clamp
+        # would be a knob that does not do what it says.
+        log.warning(
+            "%s=%.0fs exceeds the %.0fs server lease TTL: a worker that aborts "
+            "after the lease expires cannot reclaim it, so the trial sits "
+            "leaseless. Use a value below the TTL, or 0 to disable.",
+            WORKER_HANG_ABORT_ENV, seconds, SERVER_LEASE_SECONDS,
+        )
+    return seconds
 
 
 def should_hang_abort(
@@ -136,7 +239,16 @@ class BrokerHangWatchdog:
         exit_fn: Callable[[int], None] | None = None,
         clock: Callable[[], float] | None = None,
         sleep_fn: Callable[[float], None] | None = None,
+        component: str = "broker",
+        exit_code: int = HANG_ABORT_EXIT_CODE,
     ) -> None:
+        # `component` and `exit_code` exist so the WORKER can run this same
+        # detector over its own init span (audit R1) without a second copy of
+        # the logic. A duplicated watchdog is how one of them silently stops
+        # matching the other; what differs between the two callers is the name
+        # in the log line and the code in the exit status, nothing else.
+        self._component = str(component)
+        self._exit_code = int(exit_code)
         self._threshold_s = float(threshold_s)
         self._boot_threshold_s = (
             float(threshold_s) if boot_threshold_s is None else float(boot_threshold_s)
@@ -235,7 +347,7 @@ class BrokerHangWatchdog:
         self._stop = False
         self._thread = threading.Thread(
             target=self._run,
-            name="broker-hang-watchdog",
+            name=f"{self._component}-hang-watchdog",
             daemon=True,
         )
         self._thread.start()
@@ -254,11 +366,11 @@ class BrokerHangWatchdog:
                     return
             except Exception:
                 # A broken watchdog must not kill a healthy broker.
-                log.exception("broker hang watchdog tick failed (ignored)")
+                log.exception("%s hang watchdog tick failed (ignored)", self._component)
             try:
                 self._sleep(self._poll_interval_s)
             except Exception:
-                log.exception("broker hang watchdog sleep failed (ignored)")
+                log.exception("%s hang watchdog sleep failed (ignored)", self._component)
 
     def _maybe_abort(self) -> bool:
         with self._lock:
@@ -288,14 +400,15 @@ class BrokerHangWatchdog:
             self._aborted = True
         # ONE critical line then hard-exit — no cleanup (CUDA context is dead).
         log.critical(
-            "broker hang abort: %s in flight for %.1fs (batch_size=%d, armed=%s, "
+            "%s hang abort: %s in flight for %.1fs (batch_size=%d, armed=%s, "
             "threshold=%.1fs) — GPU context likely dead — see the WSL2 dxg vmbus "
             "wedge; supervisor will respawn",
+            self._component,
             label or "work",
             float(age_s if age_s is not None else 0.0),
             int(batch_size),
             armed,
             float(threshold if armed else boot_threshold),
         )
-        self._exit_fn(HANG_ABORT_EXIT_CODE)
+        self._exit_fn(self._exit_code)
         return True
