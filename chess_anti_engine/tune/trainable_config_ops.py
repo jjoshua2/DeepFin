@@ -769,6 +769,150 @@ def construction_only_config_keys() -> frozenset[str]:
     )
 
 
+# ---------------------------------------------------------------------------
+# Driver-side keys (audit angle C, tranche 12: C2/C3/C4/C5).
+#
+# ⚑ EVERY SET ABOVE IS DERIVED BY RUNNING THE TRIAL-ACTOR RELOADER, so it
+# structurally cannot see a key whose only consumer lives in the DRIVER
+# process. `run.py` builds one `base_config` dict, `harness.run_tune` reads it
+# once to construct the Tuner and to spawn the uvicorn server and the inference
+# broker, and the trial actor never sees those reads at all. A live yaml edit is
+# accepted, overlaid into the trial's config, reads back correct -- and cannot
+# move a bound socket or a command line that was baked at launch.
+#
+# `restart_required_config_keys()`'s docstring states the consequence exactly:
+# "for every key NOT in here, the live yaml is re-read each iteration and wins".
+# That is the wrong story for these, and the gap was already half-known --
+# `num_samples`, `max_concurrent_trials` and `gpus_per_trial` are in
+# `_TOPOLOGY_KEYS`, while `cpus_per_trial`, read from the same dict in the same
+# `tune.Tuner(...)` call, was in nothing. The prose at `_STARTUP_ONLY_TRIAL_KEYS`
+# named three more (`tune_scheduler`, `pb2_perturbation_interval`,
+# `tune_keep_last_experiments`) and stopped at prose.
+#
+# So: declare the class, and let `tests/test_driver_config_coverage.py` re-derive
+# the membership by walking harness.py/run.py for `base_config.get("...")`. A key
+# added to the driver without a classification FAILS that test. That is the same
+# self-invalidating shape as `tests/test_reco_coverage.py`, which is what has
+# kept the worker's published key set honest.
+
+# Read ONCE by the driver, before or during Tuner/server/broker construction.
+# A live edit cannot act, and -- unlike a restart-required key -- a restart of
+# the TRIAL cannot act either: only re-running `run.py` can.
+_DRIVER_LAUNCH_FIXED_KEYS = frozenset({
+  # uvicorn command line, harness.py `_launch_distributed_server` (called once).
+    "distributed_server_host",
+    "distributed_server_port",
+    "distributed_server_public_url",
+    "distributed_server_root_override",
+    "distributed_min_workers_per_trial",
+    "distributed_max_worker_delta_per_rebalance",
+    "distributed_upload_compact_shard_size",
+    "distributed_upload_compact_max_age_seconds",
+  # ⚑ FIRST-PROVISIONING-ONLY, which is stronger than launch-fixed and is why
+  # these are called out rather than lumped in. `_prepare_distributed_worker_auth`
+  # gates BOTH the `upsert_user` and the `.password` file write on
+  # `not user_existed`, so against an existing server_root -- every run after the
+  # first -- the yaml value reaches no consumer at any value. That is deliberate
+  # (an admin rotation via manage_users.py must not be clobbered by yaml drift,
+  # and the file stays symmetric with the user so workers can never be handed a
+  # secret the server has not got). Rotate with manage_users.py; editing the yaml
+  # alone is accepted and changes nothing, forever.
+    "distributed_worker_username",
+    "distributed_worker_password",
+    "distributed_worker_password_env",
+  # Ray driver: resources, scheduler choice and search space, all consumed
+  # inside the single `tune.Tuner(...)` construction.
+    "cpus_per_trial",
+    "tune_metric",
+    "tune_mode",
+    "tune_scheduler",
+    "tune_keep_last_experiments",
+    "pb2_perturbation_interval",
+    "pbt_synch",
+    "asha_optimizer_only",
+    "asha_optimizer_repeats",
+    "gpbt_inertia_weight",
+    "gpbt_winner_weight",
+    "gpbt_quantile_fraction",
+    "gpbt_resample_probability",
+    "search_optimizer",
+    "search_optimizer_choices",
+    "search_smolgen",
+    "search_nla",
+    "search_feature_dropout_p",
+    "search_w_volatility",
+    "search_volatility_source",
+})
+
+# Read on BOTH clocks: once by the driver AND again per-iteration by the trial.
+# ⚑ NO SINGLE CLASSIFICATION OF THESE IS CORRECT, which is the whole reason the
+# set exists. A live edit moves the trial-side consumer and leaves the driver-side
+# one on the launch value, so the two silently disagree; calling them "live" hides
+# half the truth and calling them "launch-fixed" hides the other half.
+#
+#   tune_num_to_keep  -- harness.py `RunConfig` checkpoint retention (launch)
+#                        vs `_prune_trial_checkpoints(keep_last=tc.tune_num_to_keep)`
+#                        in trainable_phases.py (per-iteration).
+#   shard_size        -- the server's `--upload-compact-shard-size` DEFAULT
+#                        (launch, and it is the live default because
+#                        distributed_upload_compact_shard_size is unset) vs the
+#                        trainer's replay writer in trainable_init.py.
+#   distributed_workers_per_trial -- the boot floor in run.py/harness.py (launch)
+#                        vs `_ensure_distributed_workers`, which respawns with
+#                        updated config each iteration (live).
+#   device / seed / iterations -- driver-level resource and search-space
+#                        decisions; the trial reads them too.
+_DRIVER_DUAL_CLOCK_KEYS = frozenset({
+    "tune_num_to_keep",
+    "shard_size",
+    "distributed_workers_per_trial",
+    "device",
+    "seed",
+    "iterations",
+})
+
+# Written INTO base_config by the driver itself (harness.py:463-469), never read
+# from the yaml. Classifying them as config keys at all would be wrong.
+_DRIVER_DERIVED_KEYS = frozenset({
+    "distributed_server_root",
+    "distributed_server_url",
+    "distributed_worker_password_file",
+})
+
+
+def driver_launch_fixed_config_keys() -> frozenset[str]:
+    """Keys the DRIVER reads once; no trial-side consumer re-reads them.
+
+    Neither a live reload nor a trial restart applies these -- only re-running
+    `run.py` does. Reporting one as live-reloadable (the current default for
+    "not in restart_required_config_keys()") tells an operator their edit is in
+    effect when it is not, and reporting it as restart-required tells them the
+    wrong restart.
+
+    Deliberately NOT folded into `restart_required_config_keys()`: that set's
+    contract is "a live reload refuses to apply this to a RUNNING TRIAL", and it
+    is consumed by `_reload_yaml_into_config`'s branching. These keys never reach
+    the reloader at all, so putting them there would make that function's
+    derivation test claim a branch that does not exist.
+    """
+    return _DRIVER_LAUNCH_FIXED_KEYS
+
+
+def driver_dual_clock_config_keys() -> frozenset[str]:
+    """Keys read once by the driver AND per-iteration by the trial.
+
+    A live edit moves the trial-side consumer only, so the two disagree until
+    someone re-runs `run.py`. Callers that must name one authority for a key
+    should refuse on this set rather than pick a side.
+    """
+    return _DRIVER_DUAL_CLOCK_KEYS
+
+
+def driver_derived_config_keys() -> frozenset[str]:
+    """Keys the driver WRITES into its own config dict; not yaml surface."""
+    return _DRIVER_DERIVED_KEYS
+
+
 def restart_required_config_keys() -> frozenset[str]:
     """Yaml keys a live reload refuses to apply to a running trial.
 
