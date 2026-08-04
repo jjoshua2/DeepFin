@@ -294,6 +294,58 @@ def test_manifest_keys_terminal_position(tmp_path):
     assert str(content_seed_id(terminal)) in derived
 
 
+# ⚑ GOLDEN LITERALS. Measured on 32cfd3f41; every value here is a hand-copied
+# number, never `content_seed_id(...)`. That is the whole point: every other
+# assertion in this file computes its expected value from the function under
+# test, so a change to the digest moves both sides together and cannot be
+# detected -- a mutation flipping blake2b digest_size 4 -> 8 SURVIVED all 13
+# tests before this was added. Since this PR promotes the hash from a fallback
+# to THE identity that longitudinal joins key on, a silent renumbering is the
+# same defect class the PR exists to fix. Regenerate these only with a
+# deliberate corpus migration, never to make a red test pass.
+_FROZEN_CONTENT_IDS = [
+    ("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 1571381670),
+    ("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1", 432067302),
+    ("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 2146149001),
+    ("8/8/8/4k3/8/4K3/4P3/8 w - - 0 1", 943532275),
+]
+
+
+@pytest.mark.parametrize(("fen", "expected"), _FROZEN_CONTENT_IDS)
+def test_the_content_hash_is_a_FROZEN_number(fen, expected):
+    """The identity everything joins on. Pinned to literals so a change to the
+    digest cannot ship green.
+
+    Four FENs rather than one so the pin is not a single point: a mutation that
+    happened to preserve one value would have to preserve four. They span a
+    piece-dense position, an en-passant square, castling rights and a bare
+    endgame, so `position_key`'s field selection is exercised too.
+    """
+    assert content_seed_id(fen) == expected
+
+
+def test_the_frozen_ids_survive_clock_normalisation():
+    """`position_key` keeps the first four FEN fields, so halfmove/fullmove
+    clocks must not move the id -- asserted against the LITERAL, not against
+    another call, or a change to the normalisation would move both sides.
+    """
+    assert content_seed_id(
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 40 99",
+    ) == 1571381670
+
+
+def test_the_frozen_ids_are_distinct_and_in_shard_range():
+    """Anti-vacuity for the pin above.
+
+    A degenerate hash returning a constant would satisfy every equality in
+    `_FROZEN_CONTENT_IDS` if the literals were ever regenerated from it. They
+    must stay distinct, and inside the shard's non-negative int32 dtype.
+    """
+    values = [v for _fen, v in _FROZEN_CONTENT_IDS]
+    assert len(set(values)) == len(values)
+    assert all(0 <= v <= 0x7FFFFFFF for v in values)
+
+
 def test_content_hash_id_fits_the_shard_dtype_and_ignores_clocks():
     # Was `test_content_hash_fallback_distributed`: with the manifest override
     # gone the hash is no longer a "fallback", it is the only scheme. What is
