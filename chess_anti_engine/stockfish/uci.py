@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import pty
 import select
+import signal
 import subprocess
 import termios
 import threading
@@ -51,6 +53,70 @@ class StockfishDesyncError(RuntimeError):
     the engine (``StockfishPool`` does this automatically). Wrong-and-silent is
     downgraded to absent-and-loud, which is the only safe direction here.
     """
+
+
+# ── audit R2: making an engine reapable ──────────────────────────────────────
+#
+# A Stockfish child used to be unfindable once orphaned. It is spawned without a
+# process group, so a group kill could not reach it; its cmdline is the bare
+# binary path (`/…/publish/stockfish` — no module name, no `--trial-id`), so
+# `terminate_matching_processes` could never match it whatever `reap_terms` it
+# was given; and the only thing that closed it was `_cleanup`, reachable solely
+# through a `finally` that `os._exit` and SIGKILL both skip. An orphan therefore
+# survived until reboot holding ~2.6 GB RSS, 8 per worker.
+
+#: Environment stamped on every engine so an orphan is identifiable.
+#: ⚑ ENV, NOT ANCESTRY. The case that matters is precisely the one where the
+#: parent is gone — an orphan is reparented to init, so ppid/pgid tell you
+#: nothing, while `/proc/<pid>/environ` is fixed at exec and survives. Same
+#: reason the cmdline cannot be used: it is the engine binary's, not ours.
+CAE_ENGINE_MARKER_ENV = "CAE_ENGINE_OWNER"
+
+
+def _child_env() -> dict[str, str]:
+    """Engine environment: inherit ours, plus the ownership marker.
+
+    The marker value identifies the OWNING PROCESS, not the trial: a box can run
+    several trials and several workers, and a reaper must be able to clean up
+    after one dead worker without killing a live worker's engines.
+    """
+    env = dict(os.environ)
+    env[CAE_ENGINE_MARKER_ENV] = f"{os.getpid()}"
+    return env
+
+
+def _child_reap_guard() -> None:
+    """Run IN THE CHILD between fork and exec: die when the parent dies.
+
+    ``PR_SET_PDEATHSIG`` (Linux, prctl option 1) asks the kernel to signal this
+    process when its parent goes away. That is what covers the exits no
+    ``finally`` can: SIGKILL, and the ``os._exit`` both hang watchdogs use.
+
+    ⚑ PDEATHSIG IS THREAD-SCOPED. It fires when the parent *thread* that forked
+    exits, not when the parent process does. `StockfishPool._replace_engine`
+    can spawn from a `ThreadPoolExecutor` thread, so this would be a live hazard
+    — an engine killed mid-run — if those threads were short-lived. They are
+    not: `ThreadPoolExecutor` does not retire idle workers, so a pool thread
+    lives until `close()`, by which point the engine is being torn down anyway.
+    Recorded rather than left implicit, because a future switch to an executor
+    with an idle timeout would turn this into a mysterious mid-run engine death.
+
+    The `getppid` re-check closes the classic race where the parent dies between
+    fork and the prctl call, which would otherwise leave the very orphan this
+    exists to prevent.
+
+    Best-effort by design: this runs after fork in a single-threaded child, so
+    raising here would fail the spawn. A platform without prctl simply keeps the
+    pre-existing behaviour, and the env marker still makes the child findable.
+    """
+    try:
+        parent = os.getppid()
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        libc.prctl(1, signal.SIGKILL, 0, 0, 0)  # 1 == PR_SET_PDEATHSIG
+        if os.getppid() != parent:
+            os._exit(0)
+    except Exception:
+        pass
 
 
 @dataclass
@@ -255,6 +321,23 @@ class StockfishUCI:
             stdin=slave_fd,
             stdout=slave_fd,
             stderr=subprocess.DEVNULL,
+            # ⚑ AUDIT R2: BOTH of these, and neither replaces the other.
+            #
+            # `start_new_session` puts the engine in its own process group, so
+            # `close()` can kill the GROUP -- a group of one today, but the kill
+            # is then correct by construction rather than by the assumption that
+            # Stockfish never forks.
+            #
+            # It also detaches the engine from the worker's process group, which
+            # on its own would be a REGRESSION: a supervisor doing
+            # `kill -- -<worker pgid>` used to take the engines with it. The
+            # PDEATHSIG in `_child_reap_guard` is what replaces that, and it is
+            # strictly stronger -- the kernel kills the child when the parent
+            # dies for ANY reason, including SIGKILL and the `os._exit` the hang
+            # watchdogs use, neither of which runs a `finally`.
+            start_new_session=True,
+            preexec_fn=_child_reap_guard,  # noqa: PLW1509 - see the function
+            env=_child_env(),
         )
         if self.nice > 0:
             current_nice = os.getpriority(os.PRIO_PROCESS, self.proc.pid)
@@ -291,9 +374,17 @@ class StockfishUCI:
             except OSError:
                 pass  # already closed
             try:
-                self.proc.kill()
-            except ProcessLookupError:
-                pass  # already exited
+                # Kill the GROUP, not just the pid: `start_new_session=True`
+                # gave this engine its own group, so this cannot reach the
+                # worker or its siblings, and it does reach anything the engine
+                # might have spawned. Falls back to the plain kill if the group
+                # is already gone.
+                os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                try:
+                    self.proc.kill()
+                except ProcessLookupError:
+                    pass  # already exited
             try:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:

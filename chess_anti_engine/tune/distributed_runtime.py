@@ -41,7 +41,10 @@ from chess_anti_engine.tune._utils import (
 from chess_anti_engine.tune._utils import (
     terminate_process as _stop_process,
 )
-from chess_anti_engine.tune.process_cleanup import terminate_matching_processes
+from chess_anti_engine.tune.process_cleanup import (
+    terminate_engines_owned_by,
+    terminate_matching_processes,
+)
 from chess_anti_engine.tune.trainable_metrics import _games_per_iter_for_iteration
 from chess_anti_engine.tune.trial_config import TrialConfig
 from chess_anti_engine.utils import sha256_file
@@ -1252,7 +1255,21 @@ def launch_shared_inference_broker(
 
 def _stop_worker_processes(procs: list[subprocess.Popen[bytes]]) -> None:
     for proc in procs:
+        worker_pid = int(proc.pid)
         _stop_process(proc)
+        # ⚑ AUDIT R2. `_stop_process` escalates to SIGKILL on the WORKER only,
+        # which leaves its Stockfish engines running: they are in their own
+        # process group now, their cmdline is unmatchable by `reap_terms`, and
+        # SIGKILL runs no `finally`. PDEATHSIG covers the common case, but it is
+        # thread-scoped and Linux-only, so this is the belt to its braces --
+        # anything still stamped with the dead worker's pid is by definition an
+        # orphan. Cheap: it only scans /proc when a worker is being stopped.
+        orphans = terminate_engines_owned_by(worker_pid)
+        if orphans:
+            log.warning(
+                "reaped %d orphaned Stockfish engine(s) %s left by worker pid %d "
+                "(PDEATHSIG did not fire)", len(orphans), orphans, worker_pid,
+            )
 
 
 def _ensure_distributed_workers(
