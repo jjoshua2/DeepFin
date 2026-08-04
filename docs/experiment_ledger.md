@@ -28264,3 +28264,99 @@ RESULTS:
 VERDICT (pre-committed cell iii governs; the R5-WIN + R4-TIE outcome satisfies both ii and iii and iii is the more specific and conservative): SCREEN SUSTAINED WITH CAVEAT. The cp-ranked target remains a better teacher where it matters — decisive-position blunder mass roughly halved — but the banked headline must NEVER be quoted as "11.8 cp better": that number is denominated in the unit the candidate minimizes by construction. Quote blunder-mass units. Deployment remains a separate pre-registered decision (unchanged).
 
 Method disclosure: the screen agent's own parity gate tripped on its first run (its script re-normalized an already-normalized float32 vector); the script was fixed to bit-parity 0.00e+00 on all five arms and the threshold was NOT loosened. Artifacts: scratchpad/cp_target_screen_20260804/ (PRECOMMIT.md, RESULTS.md, ruler_spec_test.py, wiring_check.py, per-position CSVs 2000 rows × 8 arms × 6 rulers per half, replication dumps). This addendum appends; the 07-31 entry is unmodified.
+
+### VERDICT — LOW-DOSE WAVE: FE10 does NOT promote. **The low-dose bend is WITHDRAWN.**
+### And it retracts my own "inverted dose-response" reading from the FE verdict.
+
+Pre-registered decee3589; missing controls added 086b247a4 (committed before any FE10
+result was inspected). All four `FE10` seeds are scored against **seed-matched**
+`A_s0..A_s3`, so the conservative pooled-A fallback never had to be used and the
+asymmetric-fallback clause is moot.
+
+#### The pre-registered clauses — all three FAIL
+
+| seed | @7040 gave up | @7040 era | @8448 gave up | @8448 era |
+|---|---|---|---|---|
+| **s0** | **+0.073 IN** | **−1.253 SIG** | **+0.107 IN** | **−1.039 SIG** |
+| s1 | +0.208 IN | −0.448 ns | +0.445 OUT | −0.272 ns |
+| s2 | −0.449 OUT | −0.518 ns | +0.466 OUT | −0.576 ns |
+| s3 | +0.595 OUT | −0.386 ns | +0.647 OUT | −0.873 SIG |
+
+- **(a) ERA** beyond 0.394 with CI excluding 0 at BOTH steps: **seed 0 only — 1 of 4**,
+  needed >=3. **FAIL.**
+- **(b) INW** within 0.307 at BOTH steps: **seed 0 only — 1 of 4**, needed >=3. **FAIL.**
+- **(c) pooled OOW**: @8448 **−0.225 [−0.619, +0.152] ns** (bar 0.638, CI includes 0);
+  @7040 **+0.020 — positive**, violating the direction guard. **FAIL.**
+
+**`FE10` PROMOTES: NO.**
+
+#### The pre-committed negative reading applies, verbatim
+
+decee3589 stated: *"If (a) fails ... then the n=1 free-lunch reading was a SEED DRAW,
+and the low-dose bend is WITHDRAWN ... retracted rather than softened."*
+
+**Clause (a) failed 1 of 4. The low-dose bend is WITHDRAWN.**
+
+Seed 0 was an outlier **on both legs simultaneously**, which is exactly why it looked
+like a free lunch: its era gain (−1.039) is 1.5-3.8x the other three (−0.272, −0.576,
+−0.873), *and* its cost (+0.107) is 4-6x smaller than theirs (+0.445, +0.466, +0.647).
+Neither leg replicated. The 4-seed mean cost is **+0.416 — outside the `inw` bar** the
+n=1 point sat comfortably inside.
+
+#### RETRACTION — the "INVERTED dose-response" in the FE verdict (f7194ad40 §4) was the same artifact
+
+That entry reported recovery falling monotonically with dose (1.04 > 0.84 > 0.61) and
+called 0.35 "actively harmful". The 1.04 was the n=1 `FE10_s0` point. With every dose
+now seed-pooled against matched controls:
+
+| dose | n | era gain @8448 [95% CI] | `inw` cost | pooled `oow` |
+|---|---|---|---|---|
+| 0.05 | 2 | **+0.709 [+0.320, +1.103] SIG** | +0.229 | +0.085 ns |
+| 0.10 | 4 | **+0.690 [+0.351, +1.036] SIG** | +0.416 | −0.225 ns |
+| 0.20 | 2 | **+0.839 [+0.271, +1.402] SIG** | +0.854 | +0.039 ns |
+| 0.35 | 2 | +0.614 [−0.030, +1.272] ns | +1.430 | +0.456 ns |
+
+**Era recovery is FLAT at ~0.7 cp across a 7x dose range.** It is not inverted, and it
+does not rise with dose either. The monotone fall I reported was one outlier seed at
+one dose. Retracted.
+
+What survives from that reading, in weaker form: **cost rises ~6x across the range
+(0.23 -> 1.43) while recovery does not move**, so low dose is strictly more
+*efficient* — same ceiling, less learning surrendered. 0.35 remains the worst cell
+(only non-significant era gain, highest cost), but "actively harmful" overstated it.
+
+#### The finding that actually stands, and it is a hard negative
+
+**`oow` never moves. At any dose. In any seed. Ever.** All four pooled `oow` readings
+are ns, three of the four have the WRONG sign, and the best of them (−0.225 at dose
+0.10) is a third of its bar. This is the pre-registered fallback wording, now
+established across four doses with matched controls rather than asserted from one arm:
+
+> **Forgetting recovery is available cheaply — ~0.7 cp for as little as 0.23 cp of
+> in-window learning — and it does not convert to out-of-window strength.**
+
+Rehearsal does exactly what a rehearsal buffer should: it stops the net forgetting the
+old era. That recovery is real, significant at three of four doses, and cheap. It buys
+**nothing** on held-out games from the current era. The forgetting axis and the
+generalisation axis are decoupled.
+
+#### What this closes
+
+The data axis is now closed on the same terms as the others. Across four waves:
+composition (dead), optimizer/regularization (dead), capacity (dead, reversed),
+averaging/EMA (dead — `ema4000` refuted, `ema2000` fails its `inw` clause), rehearsal
+dose 0.05-0.35 (recovers forgetting, converts to nothing), and the rehearsal x EMA
+interaction (loop-invariant, levers substitute). **No training-regime intervention
+tested in this experiment converts the search-derived targets into out-of-window
+improvement.** That is the answer to the original question, and it is negative.
+
+#### Instrument notes
+
+- N15 resolved: control-run cadence is 59-101 s/chunk, versus the 117-173 s/chunk
+  contaminated window. Arm A is faster than the FE arms by construction (one eval
+  variant, no rehearsal gather, no EMA shadows), so this is not comparable to the FE
+  baseline directly — but it is nowhere near the contaminated range.
+- `interp_frac` ranged 0.20-0.96 across the 8 `FE10` contrasts; the denser eval grid
+  on `A_s2`/`A_s3` is what kept those interpolations short.
+- `FE05` is descriptive only (2 seeds, cannot satisfy seed agreement) and is reported
+  in the dose table above, not as a verdict.
