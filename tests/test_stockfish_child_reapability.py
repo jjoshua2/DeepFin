@@ -190,6 +190,43 @@ def test_the_guard_never_raises() -> None:
     _child_reap_guard()  # in-process, parent is alive; must simply return
 
 
+def test_libc_is_resolved_before_the_fork_not_inside_the_child() -> None:
+    """The guard runs post-fork, where only async-signal-safe work is legal, and
+    `dlopen` is not: a loader lock held by another thread at the instant of the
+    fork is inherited HELD by a child that can never release it, and the spawn
+    hangs forever. So the handle must already exist at import.
+    """
+    import ast
+
+    from chess_anti_engine.stockfish import uci as uci_mod
+
+    assert uci_mod._LIBC is not None, "libc did not load on a Linux test host"
+
+    tree = ast.parse(Path(uci_mod.__file__).read_text())
+    guard = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_child_reap_guard"
+    )
+    loads = [
+        node
+        for node in ast.walk(guard)
+        if isinstance(node, ast.Call) and "CDLL" in ast.unparse(node.func)
+    ]
+    assert not loads, "the guard dlopens after fork — that can deadlock the spawn"
+
+
+def test_the_guard_is_a_no_op_when_libc_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-glibc/non-Linux: no prctl, but the spawn must still succeed — the env
+    marker alone still makes the child findable."""
+    from chess_anti_engine.stockfish import uci as uci_mod
+
+    monkeypatch.setattr(uci_mod, "_LIBC", None)
+    uci_mod._child_reap_guard()
+
+
 # ── the env marker, and why it is the reaper's key ───────────────────────────
 
 

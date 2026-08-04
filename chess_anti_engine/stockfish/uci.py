@@ -85,6 +85,25 @@ def _child_env() -> dict[str, str]:
     return env
 
 
+def _load_libc() -> ctypes.CDLL | None:
+    """libc, loaded at IMPORT time so the child never has to dlopen it.
+
+    ⚑ `_child_reap_guard` runs after `fork()` in a process that may have been
+    multi-threaded a moment earlier, where only async-signal-safe work is
+    legal. `dlopen` is not: it takes the loader lock, and if some other thread
+    held that lock at the instant of the fork, the child inherits it held by a
+    thread that no longer exists and the spawn deadlocks forever. Resolving the
+    symbol here, in the parent, reduces the guard to a bare syscall.
+    """
+    try:
+        return ctypes.CDLL("libc.so.6", use_errno=True)
+    except OSError:
+        return None  # not glibc, or not Linux; the guard degrades to a no-op
+
+
+_LIBC = _load_libc()
+
+
 def _child_reap_guard() -> None:
     """Run IN THE CHILD between fork and exec: die when the parent dies.
 
@@ -105,14 +124,15 @@ def _child_reap_guard() -> None:
     fork and the prctl call, which would otherwise leave the very orphan this
     exists to prevent.
 
-    Best-effort by design: this runs after fork in a single-threaded child, so
-    raising here would fail the spawn. A platform without prctl simply keeps the
-    pre-existing behaviour, and the env marker still makes the child findable.
+    Best-effort by design: raising here fails the spawn, so nothing in this
+    function may throw. A platform without prctl simply keeps the pre-existing
+    behaviour, and the env marker still makes the child findable.
     """
+    if _LIBC is None:
+        return
     try:
         parent = os.getppid()
-        libc = ctypes.CDLL("libc.so.6", use_errno=True)
-        libc.prctl(1, signal.SIGKILL, 0, 0, 0)  # 1 == PR_SET_PDEATHSIG
+        _LIBC.prctl(1, signal.SIGKILL, 0, 0, 0)  # 1 == PR_SET_PDEATHSIG
         if os.getppid() != parent:
             os._exit(0)
     except Exception:
