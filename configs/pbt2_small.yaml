@@ -837,6 +837,10 @@ tune:
   # Disk usage controls
   # NOTE: PB2/PBT needs older checkpoints to be available for cloning/exploit.
   # Keeping too few checkpoints can cause missing-checkpoint restore errors.
+  # TWO CLOCKS (audit C4): Ray's RunConfig retention is read once by the driver
+  # at launch; the trial's own _prune_trial_checkpoints re-reads this every
+  # iteration. A live edit moves the trial-side pruner ONLY -- the two then
+  # disagree until run.py is re-run. See driver_dual_clock_config_keys().
   tune_num_to_keep: 6               # keep last 6 checkpoints per trial (disk space)
   tune_keep_last_experiments: 2     # keep last 2 experiments under work_dir/tune
 
@@ -847,13 +851,30 @@ tune:
   gpbt_resample_probability: 0.20
   num_samples: 1
   max_concurrent_trials: 1
+  # LAUNCH-FIXED (audit C2): read once into tune.Tuner's resource spec. Neither
+  # a live reload nor a trial restart applies an edit -- only re-running run.py.
   cpus_per_trial: 1
   gpus_per_trial: 1.0
   distributed_workers_per_trial: 4  # Shared broker needs more producers to keep the single GPU queue fed.
   distributed_worker_sf_workers: 8  # 2026-07-18: SMT32 retune; production-shaped A/B +38.2% games/s vs 4/w. sf_nice keeps SF from preempting search/dispatch.
   distributed_worker_min_games_per_batch: 200  # Bigger forwards: better GPU util + lower per-gumbel overhead
   distributed_worker_max_games_per_batch: 512
+  # ⚑ DO NOT EDIT THE USERNAME ON A LIVE RUN. It is in _WORKER_LAUNCH_CONFIG_KEYS
+  # (distributed_runtime.py), which _ensure_distributed_workers hashes EVERY
+  # iteration, so an edit RELAUNCHES THE WHOLE FLEET within one iteration -- with
+  # a username the server has never provisioned, because the auth setup below
+  # only ever creates a user on the FIRST run against a given server root. The
+  # result is every worker up, authenticating, and getting 401. Change it only
+  # between runs, and create the user with manage_users.py first.
   distributed_worker_username: josh
+  # FIRST-PROVISIONING-ONLY (audit C3), and unlike the username this one really
+  # is inert. _prepare_distributed_worker_auth gates BOTH the upsert_user call
+  # and the .password file write on `not user_existed`, so against an existing
+  # server root -- every run after the first -- the password reaches no consumer
+  # at any value. Deliberate: an admin rotation via manage_users.py must not be
+  # clobbered by yaml drift, and the password file stays symmetric with the user
+  # record so a worker can never be handed a secret the server does not have.
+  # TO ROTATE, USE manage_users.py; editing this line alone does nothing.
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true   # Worker compile (max-autotune) has been stable for many iters of training. Was briefly disabled 2026-04-27 to test whether compile was producing wrong outputs after a bad salvage; it wasn't — actual root cause was a corrupted pid_state.json in the iter 403 pool I'd manually built (had iter 408-era values rather than iter 403's).
   distributed_worker_compile_mode: reduce-overhead  # 2026-07-14: max-autotune's GPU benchmarking hung the compile twice on the flaky WSL bridge (never reached first inference in 20+ min). reduce-overhead compiles in ~1-2min from cache (no autotune benchmark), uses cudagraphs (good for small-batch selfplay), and makes wedge-restarts fast. Revert to max-autotune once the bridge is stable if a throughput readout justifies it.
@@ -879,6 +900,11 @@ tune:
   # overlap iter-boundary work onto the prior iter's selfplay phase. Saves
   # ~80-150s/iter (zarr decode) + ~30-50s/iter (test eval). Snapshot in
   # async_eval reuses trainer's compile mode so shared inductor cache hits.
+  # ⚑ LIVE IN THE `on` DIRECTION ONLY (audit C1). Both objects are lazily
+  # constructed by the iter loop behind an `is None` guard, so false -> true
+  # applies live, and true -> false is ACCEPTED AND IGNORED until the trial
+  # restarts (the running object is passed on unconditionally). The trial logs
+  # one warning per such transition; if you need one of these off now, restart.
   distributed_prefetch_shards: true
   distributed_async_test_eval: true
   distributed_async_test_eval_timeout_s: 120.0
@@ -905,6 +931,9 @@ tune:
   # 0.80*440 = 352 games, i.e. at 2700s we take what we have if >=352 rather
   # than stalling toward the 8100s ceiling.
   distributed_min_games_fraction: 0.80
+  # LAUNCH-FIXED (audit C2): baked into the uvicorn command line by
+  # _launch_distributed_server, which runs once per run.py invocation. A live
+  # edit cannot move a bound socket, and a TRIAL restart will not either.
   distributed_server_port: 45453
   distributed_server_host: 0.0.0.0
   distributed_server_public_url: http://192.168.1.212:45453
@@ -940,6 +969,11 @@ tune:
   shuffle_buffer_size: 100000
   shuffle_refresh_interval: 4
   shuffle_refresh_shards: 5
+  # TWO CLOCKS, ACROSS A PROCESS BOUNDARY (audit C5): this is the trainer's
+  # replay-writer shard size (re-read every iteration) AND -- because
+  # distributed_upload_compact_shard_size is unset -- the default the server was
+  # spawned with for upload compaction (launch-fixed). Editing it live re-aims
+  # the writer while the running uvicorn keeps compacting at the launch value.
   shard_size: 2000            # Samples per on-disk shard (~1 MB compressed)
   # On PB2 exploit (cross-trial restore), replace most recent local bad data and
   # import only latest-generation shards from strong sibling trials.
