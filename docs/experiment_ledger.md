@@ -24336,34 +24336,120 @@ FOUND` rather than passing** — its anchor (release + failure-counter pair)
 occurs in BOTH handlers, so an ambiguous match was refused loudly instead of
 reading as a kill; re-anchored on the throttled-log tail.
 
-⚑ **A FOURTH instance was found by grep and is NOT fixed here** (reported, not
-widened into this PR). `serve_forever`'s `FIRST_BATCH_DONE` boot line
-(`inference.py:2732-2740`, the `if not self._first_batch_logged:` block) prints `positions=sum(s.batch_size for s in ready)` AFTER
-`_process_batch` **without consulting the outcome**, and sets
-`_first_batch_logged` either way — so a broker whose very first batch was
-released unanswered still announces `FIRST_BATCH_DONE`, and the row count is
-re-read after the release (so it may describe the client's NEXT request). Same
-"a failure reads as work done" class, different mechanism: completion-time and
-unconditional, not dispatch-time. It is a one-shot boot marker rather than a
-throughput counter, which is why it is a separate item and not a regression of
-this fix.
+⚑⚑ **AMENDED 2026-08-03 AFTER THE INDEPENDENT REVIEW (#330 comment 5173998880,
+REQUEST CHANGES). Everything from here to the end of this entry replaces what
+was originally written, and the original was WRONG in a way worth keeping.**
+The code fix above was confirmed in full (all 8 reviewer probes green, my 7
+mutations re-run 7/7, the printed-line proof done through the real printer).
+The block was this section: the family-closure claim, and the instrument behind
+it.
 
-**Family status: the DISPATCH-TIME counting form is CLOSED** — grep over
-`inference.py` for every counter increment (`+= 1`, `+= sum`, `+= int`,
-`+= len`) finds exactly the three known instances, all now fixed
-(`MultiSlotInferenceClient` B6, `SharedSlotBroker._process_parallel` B6(c),
-`SlotBroker.serve_forever` here); the only other candidates are
-`MultiSlotInferenceClient._inflight` (a gauge, decremented unconditionally in
-the same release path) and `_record_bucket_hist` (called after the malformed
-filter, so it counts real forwards). The COMPLETION-TIME unconditional form has
-one open instance, the `FIRST_BATCH_DONE` line above.
+**METHOD LESSON — a grep for increments cannot find missing increments.**
+I closed the family by grepping `inference.py` for every counter increment
+(`+= 1`, `+= sum`, `+= int`, `+= len`) and checking each one. But **this defect
+class IS THE ABSENCE OF AN INCREMENT.** An increment grep can only enumerate
+sites that already count; the broken sites are precisely the ones it cannot
+see. It is the negative-control error in a new costume: I validated the
+instrument against the cases it was built from.
+
+**The enumerating instrument is the sites that RELEASE work, not the sites that
+count it** — `_release_slots_for_retry(` and `state = _STATE_IDLE` — each then
+checked against whether a dispatch-time counter had already counted those rows.
+The whole slot protocol lives in `inference.py` (grep confirms no other
+production module references `_STATE_IDLE` or `_release_slots_for_retry`), so
+that enumeration is exhaustive for this family.
+
+### Release-site enumeration (the corrected claim, from the right instrument)
+
+| site | context | releases DISPATCHED work? | counting disposition |
+|---|---|---|---|
+| `:1884` | `SlotBroker` slot allocation | no — nothing dispatched yet | n/a |
+| `:2095` | `_process_batch` `BrokerModelUnavailable` | **yes** | COUNTED (this PR, path 1) |
+| `:2120` | `_process_batch` generic batch failure | **yes** | COUNTED (this PR, path 2) |
+| `:2158` | `_release_slots_for_retry` body | the mechanism; callers above | n/a |
+| `:2324` | `_process_batch_mode` malformed legal metadata | **yes** | COUNTED (this PR, path 3) |
+| `:3088` | `SlotInferenceClient` stale-response reject | client side; its counter is completion-based with a `failed` flag (B6) | not dispatch-counted |
+| `:3092` | `SlotInferenceClient` successful read | no — success path returning the slot | n/a |
+| `:3565` | `SharedSlotBroker` slot allocation | no | n/a |
+| `:3801` | `SharedSlotBroker._process_parallel` **NO-MODEL trial** | **yes** | ⚑ **WAS MISSING — instance 4, fixed in this PR** |
+| `:3826` | `_process_parallel` unsupported `request_mode` | **yes** | COUNTED (#325 B6(c)) |
+
+**Instance 4 is real and reachable.** The no-model branch sets every one of a
+trial's ready slots to `_STATE_IDLE` and `continue`s with no increment, while
+`serve_forever` counts them at dispatch (`:3985-3986`) and subtracts only the
+return (`:3992`). A trial whose weights had not loaded yet had **every row
+reported as served pos/s**. Dormant at today's settings
+(`pbt2_small.yaml:869`, `distributed_inference_shared_broker: false`) but the
+shared broker is part of the **#322 restart-gated deploy**, so this path can go
+live at a restart. Reproduced by probe (refused=0 while the slot is released),
+fixed with the same shape and the same read-before-release ordering as path 1.
+`refused_rows` is renamed `unanswered_rows`: the name stopped matching its
+contents the moment the no-model path joined it, and **a counter whose name is
+narrower than what it holds is how the missing case stayed invisible** — the
+serve-loop comment naming only the mode path is what made the gap read as
+intentional.
+
+**Instance 5, the `FIRST_BATCH_DONE` boot marker — also fixed here** (the
+reviewer's non-blocking suggestion, taken rather than deferred). It printed the
+DISPATCHED row count after `_process_batch` without consulting the outcome and
+set `_first_batch_logged` either way, so a broker whose first batch was wholly
+released — the cold-boot no-model case, the one this marker is watched for —
+announced `FIRST_BATCH_DONE` with a full row count. It now reports rows
+actually served, and a wholly unanswered batch is not a first batch: the flag
+stays down and the marker fires on the first batch genuinely served. **Checked
+before changing it:** nothing in the repo reads `FIRST_BATCH_DONE` or
+`_first_batch_logged`, and readiness is signalled by `ACCEPTING_REQUESTS`
+(untouched), so the suppression cannot hang a launcher.
+
+**A THIRD disposition the enumeration exposed, and fixed:** the clamp. Not a
+release site at all, but still counted-at-dispatch-never-evaluated —
+`_process_batch_mode` clamped to `max_batch` while the serve loop summed the
+raw `batch_size`, so a client writing above layout capacity had the excess
+reported as throughput. Both sites now call one `_slot_rows` helper; a guard
+must share its criterion's instrument. Beyond the reviewer's list, taken
+because it is one line and it is the difference between "closed" and "closed
+except for this".
+
+**FAMILY STATUS — now claimed from the release-site enumeration, not the
+increment grep.** Every release site above is either fixed, or provably not
+dispatch-counted, with its reason stated. Five instances known and all five
+now fixed: `MultiSlotInferenceClient` (B6), `_process_parallel`'s unsupported
+mode (B6(c)), `SlotBroker.serve_forever`'s three paths (this PR),
+`_process_parallel`'s no-model trial (this PR), `FIRST_BATCH_DONE` (this PR),
+plus the clamp. The two non-instances the increment grep did find, recorded so
+the next reader does not re-litigate them: `MultiSlotInferenceClient._inflight`
+(a gauge, decremented unconditionally in the same release path) and
+`_record_bucket_hist` (runs after the malformed filter, so it counts real
+forwards). **Anyone re-opening this family should re-run the RELEASE-site grep,
+not the increment grep.**
+
+**12 mutations, 12 KILLED**, each by a named test — the original 7 plus M5/M6
+(instance 4: drop the increment; read it after the release), M7/M8 (instance 5:
+report dispatched rows again; fire on a wholly unanswered batch again) and M9
+(the clamp: count the raw claimed batch_size again). Two of the original
+patterns (M1, M2a) went stale when this round edited those exact lines and the
+harness reported **PATTERN NOT FOUND rather than letting them read as passes** —
+the #325 M14 lesson doing its job twice in one PR, since M4's ambiguous anchor
+did the same in the first round.
+
+Red on the previous head `f39bb8336`: 6 of the 8 new tests fail there; the
+other two are positive controls that must pass (a served trial subtracts
+nothing; the marker still fires once the broker genuinely serves).
 
 Verified: `./scripts/lint.sh` (no args) exit 0 — read as a real exit code, not
-through `| tail`; 128 tests green across `test_broker_served_count`,
+through `| tail`; **161 tests green** across `test_broker_served_count`,
 `test_inference_broker`, `test_inference_slot_protocol`,
 `test_broker_no_zero_fill`, `test_broker_malformed_legal_meta`,
 `test_broker_hang`, `test_shared_broker_request_mode`,
 `test_multislot_wedged_slot`, `test_worker_broker_stats_line`,
-`test_worker_slot_planes_guard`, `test_inference_cache`, plus
-`test_aot_broker_integration`. **Not reviewed by its author** — a separate
-reviewer is required before merge.
+`test_worker_slot_planes_guard`, `test_inference_cache`,
+`test_aot_broker_integration`. (The original entry said 128 — that count simply
+omitted `test_aot_broker_integration`, which was run separately; the reviewer
+collected 153 on the pre-amendment head. 161 is this head's number.)
+
+**Landing order note:** this entry is a pure EOF append that was rebased over
+PR #331, which merged after this PR's first head. #331's wave-4 simplification
+entry sits ABOVE this one, matching merge order; no existing line was modified
+by the rebase (`git diff origin/main -- docs/experiment_ledger.md` shows
+insertions only). **Not reviewed by its author** — the re-review verdict is
+REQUEST CHANGES and the reviewer gets this delta.
