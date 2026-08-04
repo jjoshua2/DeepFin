@@ -436,3 +436,51 @@ def test_the_startup_baseline_is_silent_when_nothing_was_deleted(
         seed_yaml_reload_baseline(yaml_path=None, keys={"lr"}, config=config)
 
     assert [r.getMessage() for r in caplog.records if "no longer set by" in r.getMessage()] == []
+
+
+def test_the_restart_delete_check_is_wired_into_train_trial() -> None:
+    """DOES IT TAKE EFFECT ON THE PRODUCTION PATH?
+
+    The tests above drive `seed_yaml_reload_baseline` and
+    `_save_trial_checkpoint` directly, which proves the mechanism and NOT the
+    wiring — deleting either call site from ``train_trial`` left every one of
+    them green (found by mutating my own fix). This is the repo's signature
+    defect in miniature: a value that is computed and then never reaches the
+    thing that needed it.
+
+    Asserted on the parsed source rather than by running the trial, because
+    ``train_trial`` needs Ray, a GPU and a fleet. Two calls have to be there:
+    the startup comparison against the checkpoint's banked key set, and the
+    checkpoint write that banks the current one for the NEXT process. Either
+    one missing makes the restart leg silent again.
+    """
+    import ast
+    import inspect
+
+    from chess_anti_engine.tune import trainable
+
+    tree = ast.parse(inspect.getsource(trainable.train_trial))
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+
+    def _call_to(name: str) -> ast.Call:
+        found = [
+            c for c in calls
+            if isinstance(c.func, ast.Name) and c.func.id == name
+        ]
+        assert len(found) == 1, f"expected exactly one {name}(...) call, got {len(found)}"
+        return found[0]
+
+    seed = _call_to("seed_yaml_reload_baseline")
+    keys_arg = {kw.arg: kw.value for kw in seed.keywords}.get("keys")
+    assert isinstance(keys_arg, ast.Attribute) and keys_arg.attr == "restored_yaml_keys", (
+        "the startup check must compare against the RESTORED key set; anything "
+        "else re-reads what this process already loaded and can never differ"
+    )
+
+    save = _call_to("_save_trial_checkpoint")
+    banked = {kw.arg: kw.value for kw in save.keywords}.get("yaml_keys")
+    assert isinstance(banked, ast.Call), "yaml_keys must be banked at every checkpoint"
+    assert isinstance(banked.func, ast.Name) and banked.func.id == "last_reload_yaml_keys", (
+        "the banked set must come from the reloader's own record of the last "
+        "SUCCESSFUL parse, not from config (which carries ghost keys)"
+    )
