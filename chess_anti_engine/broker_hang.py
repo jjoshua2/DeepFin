@@ -59,6 +59,10 @@ WORKER_HANG_ABORT_ENV = "CAE_WORKER_BOOT_HANG_ABORT_S"
 # Same reasoning as DEFAULT_BOOT_HANG_ABORT_S: the span this covers is a model
 # load + optional torch.compile, which is legitimately minutes on a cold cache.
 DEFAULT_WORKER_BOOT_HANG_ABORT_S = 1800.0
+# `server/app.py`'s lease TTL. Mirrored (not imported) because the worker must
+# not depend on the server package, and used only to WARN when the worker's
+# threshold is configured past it -- see resolve_worker_boot_hang_abort_seconds.
+SERVER_LEASE_SECONDS = 3600.0
 
 NVML_CUDA_CHECK_ENV = "PYTORCH_NVML_BASED_CUDA_CHECK"
 
@@ -163,13 +167,30 @@ def resolve_worker_boot_hang_abort_seconds(
     if raw is None or str(raw).strip() == "":
         return float(default_seconds)
     try:
-        return float(raw)
+        seconds = float(raw)
     except ValueError:
         log.warning(
             "%s=%r is not a number; using the %.0fs default",
             WORKER_HANG_ABORT_ENV, raw, float(default_seconds),
         )
         return float(default_seconds)
+    if seconds > SERVER_LEASE_SECONDS:
+        # ⚑ The recovery story depends on this ordering. A worker that aborts
+        # while its lease is still ALIVE reclaims that same lease on respawn,
+        # because `assign_trial_lease` matches on the PERSISTED `worker_id`.
+        # Past the TTL the lease has been pruned and the trial has spent the
+        # whole window with a wedged worker holding it -- which is the
+        # unbounded-lease hole this watchdog exists to close, re-opened by
+        # configuration. Warn rather than clamp: an operator who deliberately
+        # raises this is the one person who might mean it, and a silent clamp
+        # would be a knob that does not do what it says.
+        log.warning(
+            "%s=%.0fs exceeds the %.0fs server lease TTL: a worker that aborts "
+            "after the lease expires cannot reclaim it, so the trial sits "
+            "leaseless. Use a value below the TTL, or 0 to disable.",
+            WORKER_HANG_ABORT_ENV, seconds, SERVER_LEASE_SECONDS,
+        )
+    return seconds
 
 
 def should_hang_abort(

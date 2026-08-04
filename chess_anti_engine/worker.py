@@ -1004,13 +1004,28 @@ class WorkerSession:
         self._selfplay_session_active = False
         self._stall_watchdog_started = False
         self._gil_probe = GilContentionProbe(interval_s=0.010)
-        # ⚑ AUDIT R1: nothing bounded the span between taking a server lease and
-        # having a live evaluator. `_start_selfplay_stall_watchdog` is armed only
-        # once `_selfplay_session_active` is True, which happens AFTER
-        # `model.to(self.device)` and `_build_evaluator` -- the two calls most
-        # likely to block forever on a wedged dxg bridge. A worker that wedged
-        # there sat silently holding a 1h server lease, its shm slots and its
-        # Stockfish children, with no log line and no exit.
+        # ⚑ AUDIT R1: no watchdog covered the CUDA-init calls the worker makes
+        # while holding a server lease. `_start_selfplay_stall_watchdog` arms
+        # only once `_selfplay_session_active` is True, which happens AFTER
+        # `model.to(self.device)` and `_build_evaluator` -- the two calls that
+        # block forever on a wedged dxg bridge. A worker that wedged there sat
+        # silently holding a 1h server lease, its shm slots and its Stockfish
+        # children, with no log line and no exit.
+        #
+        # ⚑ WHAT THIS BOUNDS, EXACTLY. The detector fires only while a `stage()`
+        # is open, so its coverage is the three stages and nothing else:
+        # `model_to_device`, `compile_inference_model`, `build_evaluator`.
+        # It is NOT a bound on the lease-held span. These run inside the lease
+        # and outside any stage, and are deliberately left uncovered:
+        # `_upload_pending_shards`, `_upload_pending_arena_results`,
+        # `_sync_assets` (model download + torch.load), `_begin_resume_session`,
+        # `_build_selfplay_configs`, `warm_opening_book_cache`,
+        # `_sync_stockfish`. None of them is a CUDA driver call, which is the
+        # failure R1 is about; they are network and disk work whose legitimate
+        # duration varies with link speed, so a 1800s bound on them would turn a
+        # slow model download into a crash loop. If one of THOSE hangs the
+        # symptom is a stalled fleet, not a wedged device, and it belongs to a
+        # different instrument.
         #
         # Same detector as the broker (one implementation, two `component`
         # values). Live from construction, so it also covers a wedge that

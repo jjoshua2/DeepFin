@@ -4,9 +4,17 @@ CUDA availability probe must not be a hang point.
 R1 — the worker took a server lease in `_poll_manifest`, then ran
 `model.to(self.device)` and `_build_evaluator`, both of which block forever on a
 wedged WSL2 dxg bridge. Its only watchdog (`_start_selfplay_stall_watchdog`) is
-armed after those calls and is gated on `_selfplay_session_active`, so the whole
-span was uncovered: a wedged worker sat silently holding a 1 h lease, its shm
+armed after those calls and is gated on `_selfplay_session_active`, so those
+calls were uncovered: a wedged worker sat silently holding a 1 h lease, its shm
 slots and its Stockfish children, producing no log line and never exiting.
+
+⚑ SCOPE. What is bounded is THREE CUDA-init stages — `model_to_device`,
+`compile_inference_model`, `build_evaluator` — not the lease-held span. The
+detector fires only while a stage is open, so the lease-held network and disk
+work (`_sync_assets`, `_sync_stockfish`, the pending-shard uploads,
+`warm_opening_book_cache`) is deliberately outside it; see the comment at the
+construction site for why. Read the tests below with that scope in mind: none
+of them claims the lease is bounded.
 
 R3 — `torch.cuda.is_available()` is itself a driver-init call unless
 `PYTORCH_NVML_BASED_CUDA_CHECK=1`. It was set in production only because it was
@@ -19,6 +27,7 @@ and a `torch.cuda` call would hang the suite.
 
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -31,6 +40,7 @@ from chess_anti_engine.broker_hang import (
     DEFAULT_WORKER_BOOT_HANG_ABORT_S,
     HANG_ABORT_EXIT_CODE,
     NVML_CUDA_CHECK_ENV,
+    SERVER_LEASE_SECONDS,
     WORKER_HANG_ABORT_ENV,
     WORKER_HANG_ABORT_EXIT_CODE,
     BrokerHangWatchdog,
@@ -283,11 +293,72 @@ def test_pin_does_not_override_an_explicit_operator_choice() -> None:
     assert env[NVML_CUDA_CHECK_ENV] == "0"
 
 
-def test_the_worker_entry_point_pins_it_before_torch_is_probed() -> None:
+def _first_statements(module_file: str, func_name: str) -> list[str]:
+    tree = ast.parse(Path(module_file).read_text())
+    func = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == func_name
+    )
+    return [ast.unparse(stmt) for stmt in func.body]
+
+
+@pytest.mark.parametrize(
+    ("module", "func"),
+    [("chess_anti_engine.worker", "main"), ("chess_anti_engine.run", "main")],
+)
+def test_every_entry_point_pins_before_anything_can_probe_cuda(
+    module: str, func: str,
+) -> None:
+    """THE ordering property, on both entry points.
+
+    `test_the_worker_entry_point_sets_the_pin` only shows the variable ends up
+    set; it says nothing about whether a `torch.cuda` call got there first, and
+    on a wedged dxg bridge that call never returns, so "eventually pinned" is
+    worth nothing. Assert the pin is the FIRST statement and that nothing
+    touching `torch.cuda` precedes it.
+
+    `run.py` is here because CLAUDE.md documents
+    `python3 -m chess_anti_engine.run --config … --mode tune` as a supported
+    launch that never touches `scripts/train.sh`, and its `device` default
+    probes CUDA unconditionally -- as do the two Ray-actor probes in
+    `tune/trainable.py` and `tune/trainable_init.py`, which inherit this env.
+    """
+    import importlib
+
+    mod = importlib.import_module(module)
+    assert mod.__file__ is not None
+    body = _first_statements(mod.__file__, func)
+    pin_calls = [i for i, stmt in enumerate(body) if "pin_nvml_cuda_check()" in stmt]
+    if not pin_calls:
+        # The worker pins inside its own env-configuration helper.
+        pin_calls = [
+            i for i, stmt in enumerate(body) if "_configure_worker_torch_env()" in stmt
+        ]
+    assert pin_calls, f"{module}.{func} never pins {NVML_CUDA_CHECK_ENV}\n{body[:5]}"
+    assert pin_calls[0] == 0, (
+        f"{module}.{func} pins at statement {pin_calls[0]}, not first: {body[:pin_calls[0] + 1]}"
+    )
+
+
+def test_the_run_entry_point_pins_the_variable_the_probe_reads() -> None:
+    """`run.py`'s pin has to be the same variable torch consults, resolved
+    through the shared helper rather than a hand-rolled `os.environ` write that
+    could drift from it."""
+    from chess_anti_engine import run as run_mod
+
+    assert run_mod.pin_nvml_cuda_check is pin_nvml_cuda_check
+    env: dict[str, str] = {}
+    assert pin_nvml_cuda_check(env) is True
+    assert env[NVML_CUDA_CHECK_ENV] == "1"
+
+
+def test_the_worker_entry_point_sets_the_pin() -> None:
     """The regression that matters: torch reads this with `os.getenv` at CALL
     time, so it is enough to set it before the first `is_available()` -- but
     only if something actually sets it. Driven as a subprocess with the variable
-    scrubbed, so it cannot pass on an inherited value.
+    scrubbed, so it cannot pass on an inherited value. (Ordering is pinned
+    separately, above -- this test only shows the value lands.)
     """
     code = (
         "import os; os.environ.pop('PYTORCH_NVML_BASED_CUDA_CHECK', None);\n"
@@ -331,33 +402,130 @@ def test_each_blocking_init_call_is_inside_its_stage(stage: str, guarded_call: s
     """A watchdog wired to nothing is the "gate that cannot fail" shape: every
     unit test above would still pass with no stage open anywhere in production.
 
-    Checks the guarded call appears within a few lines AFTER its `stage(...)`
-    line -- structural rather than exact-text, so reformatting does not break it
-    but deleting the stage does.
+    ⚑ SCOPE, not proximity. An earlier version asserted the call appeared within
+    8 lines AFTER the `stage(...)` line, and the reviewer showed that passes on
+
+        with self._boot_hang_watchdog.stage("build_evaluator"):
+            pass
+        self._direct_evaluator = self._build_evaluator(self.model)
+
+    -- the stage opens and closes around nothing, the call it names runs
+    unwatched, and the test is green. So this walks the `With` node's own
+    subtree: inside the block, or it does not count.
     """
     from chess_anti_engine import worker as worker_mod
 
-    lines = Path(worker_mod.__file__).read_text().splitlines()
-    opens = [i for i, ln in enumerate(lines) if f'stage("{stage}")' in ln]
-    assert len(opens) == 1, f"expected exactly one stage({stage!r}); found {len(opens)}"
-    window = "\n".join(lines[opens[0]: opens[0] + 8])
-    assert guarded_call in window, (
-        f"stage({stage!r}) does not wrap {guarded_call!r}; the watchdog would "
-        f"cover nothing on this path\n{window}"
+    tree = ast.parse(Path(worker_mod.__file__).read_text())
+    blocks = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.With)
+        and any(
+                f"stage({stage!r})" in ast.unparse(item.context_expr)
+                for item in node.items
+            )
+    ]
+    assert len(blocks) == 1, f"expected exactly one stage({stage!r}); found {len(blocks)}"
+    body = "\n".join(ast.unparse(stmt) for stmt in blocks[0].body)
+    assert guarded_call in body, (
+        f"stage({stage!r}) does not WRAP {guarded_call!r} -- the call is outside "
+        f"the with-block, so the watchdog covers nothing on this path\n{body}"
     )
 
 
-def test_the_watchdog_is_live_before_the_lease_is_taken() -> None:
+def test_the_watchdog_is_constructed_and_started_inside_init() -> None:
     """R1 is about the span STARTING at lease acquisition, so the detector has
-    to exist earlier than that -- i.e. be constructed in `__init__`, not lazily
-    at session start like the stall watchdog it complements."""
+    to exist earlier than that -- constructed in `__init__`, not lazily at
+    session start like the stall watchdog it complements.
+
+    ⚑ AST SCOPE, not byte offsets. An earlier version compared
+    `src.index(...)` positions, and the reviewer showed that stays green when
+    construction and `start()` are moved into a method NOTHING CALLS: the
+    offsets still order correctly, no worker ever builds a watchdog, and R1 is
+    entirely back. Both statements must be descendants of `__init__` itself.
+    """
     from chess_anti_engine import worker as worker_mod
 
-    src = Path(worker_mod.__file__).read_text()
-    init_at = src.index("self._boot_hang_watchdog = BrokerHangWatchdog(")
-    start_at = src.index("self._boot_hang_watchdog.start()")
-    poll_at = src.index("def _poll_manifest(")
-    assert init_at < start_at < poll_at, (
-        "the boot watchdog must be constructed and started in __init__, before "
-        "any code path that can take a server lease"
+    tree = ast.parse(Path(worker_mod.__file__).read_text())
+    inits = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+        and any("_boot_hang_watchdog" in ast.unparse(n) for n in ast.walk(node))
+    ]
+    assert len(inits) == 1, f"expected one __init__ touching the watchdog, got {len(inits)}"
+    body = "\n".join(ast.unparse(stmt) for stmt in inits[0].body)
+    assert "self._boot_hang_watchdog = BrokerHangWatchdog(" in body, body
+    assert "self._boot_hang_watchdog.start()" in body, body
+
+
+def test_the_lease_is_never_taken_from_init() -> None:
+    """The other half of the ordering: `__init__` starts the watchdog and does
+    NOT take a lease, so every lease acquisition is necessarily downstream of a
+    live watchdog.
+
+    ⚑ Why this is checked structurally rather than by driving a real
+    `WorkerSession`: its `__init__` opens files under `work_dir` and starts
+    threads, and a construction attempt with stubbed args does not return — so
+    an "execution order" test here would hang the suite rather than observe
+    anything. The AST-scope test above is what kills the mutation that matters
+    (construction moved into a method nothing calls); this pins the complement.
+    """
+    from chess_anti_engine import worker as worker_mod
+
+    tree = ast.parse(Path(worker_mod.__file__).read_text())
+    inits = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+        and any("_boot_hang_watchdog" in ast.unparse(n) for n in ast.walk(node))
+    ]
+    assert len(inits) == 1, (
+        f"expected one __init__ touching the watchdog, got {len(inits)} -- if this "
+        "is 0, the watchdog moved out of __init__ and nothing constructs it"
     )
+    calls = [ast.unparse(n.func) for n in ast.walk(inits[0]) if isinstance(n, ast.Call)]
+    assert "self._negotiate_lease" not in calls, (
+        "__init__ takes a lease itself; the watchdog's start() would no longer "
+        "be guaranteed to precede it"
+    )
+
+
+def test_a_threshold_past_the_lease_ttl_is_not_clamped(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The reviewer's TTL inversion. The recovery story is that an aborting
+    worker reclaims its OWN lease on respawn -- `assign_trial_lease` matches the
+    persisted `worker_id` -- which only works while the lease is still alive.
+    Configured past the 3600s TTL that property silently inverts: the trial
+    spends the whole window with a wedged worker holding a lease nobody can
+    reclaim, which is the hole this watchdog exists to close.
+
+    WARN, do not clamp. An operator who raises this deliberately is the one
+    person who might mean it, and a silent clamp is a knob that does not do what
+    it says -- this repo's signature defect.
+    """
+    caplog.set_level("WARNING")
+    seconds = resolve_worker_boot_hang_abort_seconds(
+        env={WORKER_HANG_ABORT_ENV: str(SERVER_LEASE_SECONDS + 1.0)},
+    )
+    assert seconds == SERVER_LEASE_SECONDS + 1.0
+    warnings = [r.getMessage() for r in caplog.records if "lease TTL" in r.getMessage()]
+    assert warnings, [r.getMessage() for r in caplog.records]
+
+
+def test_a_threshold_inside_the_lease_ttl_is_silent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Negative control: the warning must not fire for the shipped default, or
+    it is noise an operator learns to ignore."""
+    caplog.set_level("WARNING")
+    resolve_worker_boot_hang_abort_seconds(env={WORKER_HANG_ABORT_ENV: "1800"})
+    assert not [r for r in caplog.records if "lease TTL" in r.getMessage()]
+
+
+def test_the_default_is_inside_the_lease_ttl() -> None:
+    """The property the warning defends, asserted on the shipped default -- so a
+    future bump of DEFAULT_WORKER_BOOT_HANG_ABORT_S past the TTL fails here
+    rather than only warning at runtime."""
+    assert DEFAULT_WORKER_BOOT_HANG_ABORT_S < SERVER_LEASE_SECONDS
