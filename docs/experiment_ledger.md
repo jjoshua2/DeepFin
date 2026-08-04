@@ -24689,7 +24689,7 @@ by its author** — a separate reviewer follows.
 
 ---
 
-## 2026-08-04 — zclip's adaptive EMA is not checkpointed, so every restart re-warms it (PR TBD, task #94)
+## 2026-08-04 — zclip's adaptive EMA is not checkpointed, so every restart re-warms it (PR #334, task #94)
 
 **Verdict: LIVE-UNREAD.** RESTART-GATED, and one restart later than it looks —
 see the timing note below. Trial 0f888 is unaffected while it runs.
