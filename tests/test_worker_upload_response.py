@@ -202,3 +202,117 @@ def test_shard_upload_sends_locally_invalid_shard_for_server_quarantine(tmp_path
     assert len(reason_files) == 1
     assert "invalid shard" in reason_files[0].read_text(encoding="utf-8")
     assert session._requests.calls == 1
+
+
+# ── #344 review finding A, worker half: a stalled poll must not be silent ────
+
+
+def _poll_session(responses: list[_Resp]) -> Any:
+    """A `WorkerSession` reduced to what `_poll_manifest`'s non-200 path reads.
+
+    Built with `object.__new__` (the `_bare_session` idiom already used in
+    `test_reco_coverage.py`) because a real session needs a server, a model and
+    a GPU. The branch under test runs before any of that.
+    """
+    from chess_anti_engine.worker import WorkerSession
+
+    session: Any = object.__new__(WorkerSession)
+    session.log = logging.getLogger("test.worker_poll")
+    session.args = SimpleNamespace(poll_seconds=0.0)
+    session._manifest_poll_failures = 0
+    session.manifest_state = "active"
+    session.manifest_state_elapsed_s = None
+    session.worker_id = "w"
+    session.lease_id = ""
+    session.fixed_trial_id = "trial_00000"
+    session.leased_trial_id = None
+    session.trial_api_prefix = "/v1/trials/trial_00000"
+    session.inference_client = object()
+    session.machine_id = "m"
+    session.cfg = {}
+    session._upload_pending_shards = lambda **_kw: None
+    session._upload_pending_arena_results = lambda: None
+    session._server_url_for = lambda p: "http://server" + str(p)
+    session._requests = SimpleNamespace(get=lambda *_a, **_k: responses.pop(0))
+    return session
+
+
+def test_a_failed_manifest_poll_is_logged(caplog) -> None:
+    """The server answers an undecidable compat gate with 503 so the worker
+    keeps its shard and retries. That is correct — but this branch used to
+    `time.sleep` and return in COMPLETE silence, so a fleet stalled behind a
+    corrupt manifest was invisible from the worker end as well as the server
+    end. A worker that cannot poll is a worker doing nothing.
+    """
+    from chess_anti_engine.worker import WorkerSession
+
+    session = _poll_session([_Resp(503, {"detail": "cannot read manifest"})])
+    with caplog.at_level(logging.INFO, logger="test.worker_poll"):
+        assert WorkerSession._poll_manifest(session) is None
+
+    msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("manifest poll returned HTTP 503" in m for m in msgs), msgs
+    assert any("no selfplay runs until it succeeds" in m for m in msgs), msgs
+
+
+def test_repeated_poll_failures_do_not_flood_but_keep_reporting(caplog) -> None:
+    """Same cadence as the server side: first, then every 100th. One line per
+    poll would be a flood; one line ever would be the defect."""
+    from chess_anti_engine.worker import WorkerSession
+
+    session = _poll_session([_Resp(503, {}) for _ in range(250)])
+    with caplog.at_level(logging.INFO, logger="test.worker_poll"):
+        for _ in range(250):
+            assert WorkerSession._poll_manifest(session) is None
+
+    failures = [
+        r.getMessage() for r in caplog.records
+        if r.levelno >= logging.WARNING and "manifest poll returned" in r.getMessage()
+    ]
+    assert len(failures) == 3, len(failures)   # 1, 100, 200
+    assert "consecutive failures: 200" in failures[-1], failures[-1]
+
+
+def test_a_recovered_poll_says_so(caplog) -> None:
+    """Without this, the log shows a fleet going down and never coming back —
+    the operator cannot tell a resolved incident from an ongoing one."""
+    from chess_anti_engine.worker import WorkerSession
+
+    session = _poll_session([
+        _Resp(503, {}),
+        _Resp(200, {"training_iteration": 1}),
+    ])
+    session._check_manifest_compat = lambda _m: SimpleNamespace(
+        protocol_mismatch=False, version_too_old=False,
+        req_proto=None, min_worker_version=None,
+    )
+    session._maybe_self_update_from_manifest = lambda _m, _c: None
+    session._check_pause_selfplay = lambda _m: False
+
+    with caplog.at_level(logging.INFO, logger="test.worker_poll"):
+        assert WorkerSession._poll_manifest(session) is None
+        assert WorkerSession._poll_manifest(session) is not None
+
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("recovered after 1 consecutive failure" in m for m in msgs), msgs
+    assert session._manifest_poll_failures == 0
+
+
+def test_a_healthy_poll_logs_nothing(caplog) -> None:
+    """Negative control. Every worker polls this route constantly; a line on
+    the success path would be the flood the cadence exists to avoid, and would
+    make the failure lines above unfindable."""
+    from chess_anti_engine.worker import WorkerSession
+
+    session = _poll_session([_Resp(200, {"training_iteration": 1}) for _ in range(5)])
+    session._check_manifest_compat = lambda _m: SimpleNamespace(
+        protocol_mismatch=False, version_too_old=False,
+        req_proto=None, min_worker_version=None,
+    )
+    session._maybe_self_update_from_manifest = lambda _m, _c: None
+    session._check_pause_selfplay = lambda _m: False
+
+    with caplog.at_level(logging.DEBUG, logger="test.worker_poll"):
+        for _ in range(5):
+            assert WorkerSession._poll_manifest(session) is not None
+    assert [r.getMessage() for r in caplog.records] == []

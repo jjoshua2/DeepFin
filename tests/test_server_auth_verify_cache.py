@@ -25,6 +25,7 @@ from chess_anti_engine.server import auth as auth_mod
 from chess_anti_engine.server.auth import (
     UserRecord,
     hash_password,
+    load_users,
     save_users,
     set_disabled,
     upsert_user,
@@ -119,14 +120,18 @@ def test_a_changed_password_invalidates_the_cached_allow(
     assert counter.calls >= 1, "a changed credential must be re-verified for real"
 
 
-def test_a_disabled_user_is_rejected_on_the_next_request(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_disabled_user_is_rejected_on_the_next_request(tmp_path: Path) -> None:
     """Revocation has no grace period. `disabled` is read from the CURRENT
     record on every request and is never part of what the cache stores —
-    folding it in is how a revoked user keeps working until a restart."""
+    folding it in is how a revoked user keeps working until a restart.
+
+    The `_Pbkdf2Counter` this used to build was never asserted on, which made
+    it look like the test pinned that the rejection happened on a cache HIT
+    when it pinned nothing of the sort. That claim is made properly by
+    `test_a_revoked_user_is_rejected_on_the_cached_path`; carrying a fixture
+    that reads as evidence and is not is worse than not having it.
+    """
     _seed(tmp_path)
-    _Pbkdf2Counter(monkeypatch)
     client = _client(tmp_path)
     assert _ping(client).status_code not in (401, 403)
 
@@ -190,12 +195,18 @@ def test_an_unknown_user_never_reaches_pbkdf2(
 def test_upload_stats_writes_do_not_flush_the_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The reason the cache is not keyed on the file stamp alone.
+    """Why the cache is keyed on the credential MATERIAL, not on the file stamp.
 
-    `record_upload` + `save_users` rewrites users.json on every upload, so a
-    stamp-keyed cache would be flushed by ordinary traffic that cannot
-    possibly have changed a password. Simulated here by rewriting the file
-    with the counters bumped and the credential material untouched.
+    Historically this was load-bearing for cost: `record_upload` + `save_users`
+    rewrote users.json on every upload, so a stamp-keyed cache would have been
+    flushed by ordinary traffic that cannot possibly have changed a password.
+    Since the counter split, uploads do not touch users.json at all — see
+    `test_an_upload_does_not_touch_the_credential_file`.
+
+    The test stays, and is worth more than its original framing: it pins that
+    ANY rewrite leaving the material identical is a cache hit. That is the leg
+    that survives if some future caller starts rewriting users.json for an
+    unrelated reason, which is exactly the assumption that just changed once.
     """
     _seed(tmp_path)
     counter = _Pbkdf2Counter(monkeypatch)
@@ -242,4 +253,181 @@ def test_a_missing_users_db_is_empty_not_an_error(tmp_path: Path) -> None:
     assert cache.verify("u", "p") is None
 
     _seed(tmp_path)
+    assert cache.verify("u", "p") is not None
+
+
+# ── #343 review, finding A: the anti-poisoning guards were unobserved ────────
+#
+# The reviewer's mutation run showed both legs SURVIVING: dropping `st_ino`
+# from the stamp, and removing the re-stat entirely (read-then-cache). The
+# code was right; nothing would have noticed it becoming wrong. For an auth
+# cache the regression these prevent is old content pinned under a current
+# stamp — a revoked user or a changed password working indefinitely, with no
+# self-correction. Both tests below are the mechanisms the reviewer specified.
+
+
+def test_a_write_during_the_read_is_not_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The re-stat leg. Force a write to land WHILE `load_users` is running.
+
+    Read-then-stat would pair the OLD content with the NEW stamp and every
+    later request would agree the stamp is current — poisoned permanently.
+    Stat-read-re-stat leaves the stamps unequal, so the result is returned
+    without being cached and the next call re-reads.
+    """
+    _seed(tmp_path)
+    users_path = tmp_path / "users.json"
+    cache = auth_mod.VerifiedCredentialCache(users_path)
+
+    real_load = auth_mod.load_users
+    fired = {"n": 0}
+
+    def racing_load(path):  # type: ignore[no-untyped-def]
+        out = real_load(path)
+        if fired["n"] == 0:
+            fired["n"] = 1
+            # The write the reader is about to lose the race to.
+            set_disabled(users_path, username="u", disabled=True)
+        return out
+
+    monkeypatch.setattr(auth_mod, "load_users", racing_load)
+    users = cache.users()
+
+    assert fired["n"] == 1, "the racing write never fired; the test proves nothing"
+    # Returned data is the pre-write snapshot -- that is fine and expected.
+    assert users["u"].disabled is False
+    # What must NOT happen is that snapshot being cached under the new stamp.
+    assert cache._stamp is None, "stale content was cached under a current stamp"
+
+    monkeypatch.setattr(auth_mod, "load_users", real_load)
+    assert cache.users()["u"].disabled is True, "the cache never self-corrected"
+
+
+def test_an_identical_rewrite_still_changes_the_stamp(tmp_path: Path) -> None:
+    """The `st_ino` leg.
+
+    Every write goes through `atomic_write_text` -> `os.replace`, so the inode
+    is always new. Without `st_ino` in the stamp, a rewrite with identical
+    length landing in the same mtime nanosecond would be invisible, and the
+    cache would keep serving pre-write credentials. Drop `inode` from
+    `_DbStamp` and this fails.
+    """
+    _seed(tmp_path)
+    users_path = tmp_path / "users.json"
+    before = auth_mod._DbStamp.of(users_path)
+
+    raw = users_path.read_text(encoding="utf-8")
+    save_users(users_path, load_users(users_path))
+    assert users_path.read_text(encoding="utf-8") == raw, "content must be identical"
+
+    after = auth_mod._DbStamp.of(users_path)
+    assert after != before, "an identical rewrite left the stamp unchanged"
+    assert after.inode != before.inode
+    assert after.size == before.size, "size cannot be what distinguished them"
+
+
+def test_a_revoked_user_is_rejected_on_the_cached_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What `test_a_disabled_user_is_rejected_on_the_next_request` looked like
+    it pinned and did not: that the rejection happens WITHOUT re-running
+    PBKDF2, i.e. on a genuine cache hit rather than because the cache happened
+    to miss. A change that made every request a miss would leave that test
+    green while testing the wrong path."""
+    _seed(tmp_path)
+    counter = _Pbkdf2Counter(monkeypatch)
+    client = _client(tmp_path)
+    assert _ping(client).status_code not in (401, 403)
+    assert counter.reset() == 1
+
+    set_disabled(tmp_path / "users.json", username="u", disabled=True)
+
+    assert _ping(client).status_code == 403
+    assert counter.calls == 0, (
+        f"the revoked request spent {counter.calls} PBKDF2 run(s); it was a cache "
+        f"MISS, so this does not show revocation working on the cached path"
+    )
+
+
+def test_the_retained_verification_digest_is_keyed(tmp_path: Path) -> None:
+    """#343 finding D. What the cache retains must be useless outside this
+    process.
+
+    An unsalted sha256(password) is an offline-crackable digest of a LIVE
+    credential that outlives the plaintext — the plaintext is freed with the
+    request, this lived for the process lifetime, so a memory dump taken hours
+    later yielded a crackable digest for every active credential. Keyed with a
+    per-process random key it yields nothing without the key, which dies with
+    the process.
+    """
+    import hashlib
+
+    _seed(tmp_path)
+    cache = auth_mod.VerifiedCredentialCache(tmp_path / "users.json")
+    assert cache.verify("u", "p") is not None
+    stored = cache._verified["u"][0]
+
+    assert stored != hashlib.sha256(b"p").digest(), "retained digest is unsalted"
+    assert len(stored) == 32, "still a fixed-length constant-time comparison"
+
+    # Two caches in the same process must not agree either, or the key is not
+    # actually per-instance random.
+    other = auth_mod.VerifiedCredentialCache(tmp_path / "users.json")
+    assert other.verify("u", "p") is not None
+    assert other._verified["u"][0] != stored
+
+    # And the behaviour it exists for is unchanged: same secret still hits.
+    before = cache.pbkdf2_verifications
+    assert cache.verify("u", "p") is not None
+    assert cache.pbkdf2_verifications == before, "keying broke the cache hit"
+    assert cache.verify("u", "wrong") is None
+
+
+def test_users_returns_a_defensive_copy(tmp_path: Path) -> None:
+    """#343 finding C. `users()` handed out the cached dict by reference.
+
+    Nothing mutated it at the time, but `record_upload(cache.users(), ...)` was
+    one keystroke away and would have poisoned the cache without touching the
+    file — which the stamp design is structurally blind to: no write, no new
+    inode, no re-read, wrong data forever.
+
+    ⚑ BOTH RETURN PATHS, because they are separate copies and each leaks on its
+    own. The CACHED-HIT path is what finding C was about — it used to
+    `return self._users` by reference — and guarding only the miss let
+    `if self._stamp == stamp: return dict(self._users)` be reverted with the
+    whole suite still green. The MISS path leaks too, which is less obvious: it
+    stores `self._users = users` and then returns that same object, so handing
+    it back uncopied is the identical hazard one call earlier.
+
+    Measured, not assumed — each copy reverted alone fails this test:
+      * hit-path only  -> FAILED (the reviewer's MU-A, which used to survive)
+      * miss-path only -> FAILED
+    """
+    _seed(tmp_path)
+    cache = auth_mod.VerifiedCredentialCache(tmp_path / "users.json")
+
+    # Leg 1 — the MISS path (first call, nothing cached yet).
+    first = cache.users()
+    first.pop("u")
+    first["intruder"] = UserRecord(
+        username="intruder", salt_b64="x", hash_b64="y", iterations=1,
+    )
+
+    second = cache.users()
+    assert "u" in second, "a caller emptied the cached DB through the returned dict"
+    assert "intruder" not in second, "a caller injected a credential into the cache"
+
+    # Leg 2 — the CACHED-HIT path. `second` above was served from the cache
+    # (the file has not changed), so mutating it is the exact hazard.
+    reads_before = cache.db_reads
+    second.pop("u")
+    second["intruder"] = UserRecord(
+        username="intruder", salt_b64="x", hash_b64="y", iterations=1,
+    )
+
+    third = cache.users()
+    assert cache.db_reads == reads_before, "not a cache hit; this leg proves nothing"
+    assert "u" in third, "a caller emptied the cache through a HIT-path result"
+    assert "intruder" not in third, "a caller injected a credential through a HIT"
     assert cache.verify("u", "p") is not None

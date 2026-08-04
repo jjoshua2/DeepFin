@@ -200,14 +200,52 @@ def test_absent_manifest_still_admits_and_announces_it(
 def test_absent_announcement_is_once_per_trial(tmp_path: Path,
                                                caplog: pytest.LogCaptureFixture) -> None:
     """Legitimate and continuous until the first publish, so it must not be a
-    per-request line."""
+    per-request line -- but it must appear EXACTLY once, not zero times.
+
+    This drove `/v1/manifest`, which 404s on a missing file BEFORE reaching the
+    gate, so the announcement never fired and `<= 1` passed on zero: the
+    assertion could not fail in either direction. It now drives a route that
+    actually reaches `_check_worker_compat`, and asserts `== 1`, so it fails
+    both if the line floods and if it disappears.
+    """
     server_root = _server(tmp_path)
     client = _client(server_root)
     with caplog.at_level(logging.INFO, logger=_LOGGER):
-        for _ in range(5):
-            client.get("/v1/manifest", headers=_headers())
+        for _ in range(25):
+            _upload(client, headers=_headers())
     absent = [m for m in _msgs(caplog, logging.INFO) if "manifest not published yet" in m]
-    assert len(absent) <= 1, absent
+    assert len(absent) == 1, absent
+
+
+def test_a_persistently_unreadable_manifest_keeps_saying_so(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#344 review finding A: the steady state was silent on BOTH ends.
+
+    The warning was rate-limited on a signature (`path:ExcType:message`), so an
+    UNCHANGING fault warned once, ever. Meanwhile the worker logged nothing on
+    a non-200 poll. So a stalled fleet's only evidence was a single line at the
+    moment of onset, which may have scrolled away hours earlier -- the same
+    shape as the defect A11 exists to fix.
+
+    Now it re-announces on a count cadence (the `prefetch.py` idiom), so the
+    condition keeps producing evidence for as long as it lasts.
+    """
+    server_root = _server(tmp_path)
+    _publish(server_root, _CORRUPT)
+    client = _client(server_root)
+
+    with caplog.at_level(logging.INFO, logger=_LOGGER):
+        for _ in range(250):
+            client.get("/v1/manifest", headers=_headers())
+
+    unreadable = [m for m in _msgs(caplog, logging.WARNING) if "manifest UNREADABLE" in m]
+    # First, then every 100th: onset + 100 + 200.
+    assert len(unreadable) == 3, len(unreadable)
+    # Still not a flood -- one line per request would be 250.
+    assert len(unreadable) < 10
+    # The running total rides each line, so any one of them dates the onset.
+    assert "unreadable=200" in unreadable[-1], unreadable[-1]
 
 
 def test_healthy_manifest_still_enforces_and_still_admits(tmp_path: Path) -> None:

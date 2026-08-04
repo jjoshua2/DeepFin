@@ -156,6 +156,16 @@ def _require_compact_policy_encoding(raw: object) -> str:
     return enc
 
 
+def _bounded_poll_detail(response: Any) -> str:
+    """A short, safe rendering of a failed poll's body for one log line."""
+    try:
+        body = response.text
+    except Exception:
+        return "<unreadable body>"
+    text = " ".join(str(body).split())
+    return text[:200] if text else "<empty body>"
+
+
 def _upload_response_allows_pending_delete(response: Any) -> bool:
     """True when a worker may delete its local pending shard after upload.
 
@@ -896,6 +906,7 @@ class WorkerSession:
         self._slot_planes_unknown_warned = False
         self.pause_selfplay_active = False
         self.manifest_state = _MANIFEST_STATE_ACTIVE
+        self._manifest_poll_failures = 0
         self.manifest_state_elapsed_s: float | None = None
         self.upload_buf = _BufferedUpload()
         self.last_successful_send_s = time.time()
@@ -2871,8 +2882,29 @@ class WorkerSession:
         if r.status_code == 426:
             self._handle_upgrade_required(r)
         if r.status_code != 200:
+  # A worker that cannot poll is a worker doing nothing, and this branch
+  # used to sleep in complete silence. Paired with the server's 503 for an
+  # undecidable compat gate, that made "the fleet is stalled" invisible
+  # from BOTH ends. Same cadence idiom as the server side: first, then
+  # every 100th, so a routine blip is one line and a stuck fleet keeps
+  # saying so.
+            self._manifest_poll_failures += 1
+            if self._manifest_poll_failures == 1 or self._manifest_poll_failures % 100 == 0:
+                self.log.warning(
+                    "manifest poll returned HTTP %d (%s); sleeping %.1fs and "
+                    "retrying — no selfplay runs until it succeeds "
+                    "(consecutive failures: %d)",
+                    r.status_code, _bounded_poll_detail(r),
+                    float(self.args.poll_seconds), self._manifest_poll_failures,
+                )
             time.sleep(float(self.args.poll_seconds))
             return None
+        if self._manifest_poll_failures:
+            self.log.info(
+                "manifest poll recovered after %d consecutive failure(s)",
+                self._manifest_poll_failures,
+            )
+            self._manifest_poll_failures = 0
 
         manifest = r.json()
         compat = self._check_manifest_compat(manifest)
