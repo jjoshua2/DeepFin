@@ -28484,3 +28484,66 @@ weights.
 checkpoints — `H2_ema500` **53.92 cp**, `H2_ema2000` **52.92 cp** — was completed and
 banked in ledger 00be40af1 and restated in 6dbccc872. If a DIFFERENT pair of EMA
 checkpoints is meant, name them and I will run those.
+
+#### AMENDMENT — A8 v2 square `sv_ratio` leg RE-BASED for this momentum regime
+
+**Self-disclosure, up front.** Written AFTER the gate reading and BEFORE any outcome
+metric was computed or inspected. Argued from instrument structure only. The
+procedure and bars below are committed before the derivation is run; step 3's number
+is mechanical once it runs.
+
+**The original leg's FAIL is recorded, not erased:** live arm/control square
+`sv_ratio` median over chunks 1-5, seed 0 = **5.11 against a >= 8.0 bar. FAIL.**
+That reading stands in the record permanently. The bar is re-based; the measurement
+is not revised.
+
+**Why re-basing rather than aborting.** The gate exists to catch a silent no-op,
+whose signature is `steps_configured` == 8 with all ratios ~= 1.0. The observation is
+the opposite on 4 of 5 legs, including the binary proof-of-effect leg #327's reviewer
+verified by intervention: `steps_configured` 12 vs 8 read off the live param group,
+square `orth_err` ratio 0.336, rect `sv_ratio` 0.399 -> 0.998 (2.6x), rect `orth_err`
+0.0372 -> 0.0017 (23x). The failing leg is the single-tensor statistic **already
+re-based once for exactly this class of error** — #327's own words, *"A correctly
+installed instrument on a correctly applied arm would have failed my gate, for the
+wrong reason"* — now meeting a third momentum regime, with a per-chunk ratio of
+1.16 / 2.61 / 4.71 / 5.33 / 25.06, a **22x spread** that makes its 5-sample median
+uninformative on its face.
+
+**Procedure, pre-committed:**
+
+1. Capture the designated square tensor's momentum — the FIRST square parameter of
+   the Aurora group, which is the same tensor the live column samples — from the
+   **control** arm at chunks 1-5. Specifically the tensor fed INTO
+   `_aurora_update_for_param` (`state["momentum_buffer"]`, after the nesterov lerp),
+   since the live column measures `polar_convergence` of that call's OUTPUT.
+   The rig is deterministic (proven in 6b: `FE20` raw was bit-identical to `F`,
+   matching `final.pt` sha256), so a 5-chunk re-run at the control's seed reproduces
+   that momentum exactly rather than approximating it.
+2. Offline, through the production `_aurora_update_for_param` in the arms' live work
+   dtype (fp16 on CUDA, `aurora_polar_method: polar_express`, `safety 1.01` — matched
+   to what the arms actually run), compute `polar_convergence` `sv_ratio` at
+   **PE-8** and **PE-12** on that captured momentum, per chunk. This is #327's own
+   calibration procedure applied to this rig's population instead of
+   `checkpoint_000478`'s.
+3. **Derived bar = 0.5 x median over the 5 chunks of (PE-12 `sv_ratio` / PE-8
+   `sv_ratio`).** The 0.5 factor is a safety margin absorbing live-vs-offline and
+   fp16 variance, and is stated as exactly that — not tuned, not chosen after seeing
+   the live ratio.
+4. **Amended leg:** live arm/control square `sv_ratio` median (chunks 1-5) **>= the
+   derived bar**.
+5. **DEGENERATE CLAUSE, decided now:** if the offline derivation itself reads
+   **< 2.0** — i.e. this momentum does not separate 8 from 12 on `sv_ratio` at all —
+   the leg is declared **UNINFORMATIVE IN THIS REGIME**: not passed, not failed. The
+   gate then rests on the four passing legs plus the offline verification, and that
+   is disclosed prominently in the verdict rather than buried.
+6. **This can still fail in the case the gate exists for.** Had the arm silently run
+   8, the offline derivation would show the expected 8-vs-12 separation while the
+   live column read ~= 1.0, and the amended leg would fail. Re-basing the bar does
+   not disarm the no-op detector; it moves the bar onto this rig's own population.
+7. **This is the LAST amendment.** If the re-based leg fails, the wave aborts for
+   real. No second re-base.
+
+Outcome clauses are unchanged from the pre-registration (aebc3cf45): NULL remains
+pre-declared and plausible; null ships 12 as free insurance, regression keeps 8,
+improvement counts only if SIG on pooled seeds. Outcomes stay unread until this leg
+is settled.
