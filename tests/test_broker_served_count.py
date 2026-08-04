@@ -687,3 +687,61 @@ def test_an_oversized_batch_size_is_not_counted_beyond_capacity(
         )
     finally:
         broker.shutdown()
+
+
+@pytest.mark.parametrize("path", ["no_model", "batch_failure"])
+def test_an_oversized_batch_size_is_not_counted_on_the_failure_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str,
+) -> None:
+    """The clamp must be applied at ALL FOUR row-count sites, not just two.
+
+    ⚑ This one is a regression test for a defect THIS PR INTRODUCED, which is
+    why it is worth keeping rather than folding into the test above. The first
+    `_slot_rows` commit converted the gather and the serve loop's dispatch count
+    but left both `_process_batch` failure handlers reading raw `batch_size`.
+    That INVERTED the residual instead of removing it:
+
+        before `_slot_rows`:  dispatch 12 (raw)     - handler 12 (raw)     =  0
+        after,  handlers raw: dispatch  8 (clamped) - handler 12 (raw)     = -4
+        fixed:                dispatch  8 (clamped) - handler  8 (clamped) =  0
+
+    A partial application of "a guard must share its criterion's instrument"
+    was worse than not applying it at all -- the two sites that shared the
+    instrument made the two that did not actively wrong. So this asserts on
+    both failure paths, and asserts the sign invariant directly: a served-rows
+    counter that can go negative is broken whatever the magnitude.
+
+    `max_batch_per_slot` is 8, so a slot claiming 12 rows can contribute 8.
+    """
+    if path == "no_model":
+        broker = _modelless(tmp_path, monkeypatch)
+    else:
+        broker = _serving(tmp_path, monkeypatch)
+
+        def _boom(
+            _self: SlotBroker,
+            _ready: list[_InferenceSlot],
+            *,
+            mode: int,
+            request_ids: list[int],
+        ) -> int:
+            raise ValueError(f"dead cuda context mode={mode} ids={request_ids}")
+
+        monkeypatch.setattr(SlotBroker, "_process_batch_mode", _boom)
+
+    try:
+        slot = _arm_dense(broker, batch_size=8)
+        slot.batch_size = 12  # over capacity, past _arm_dense's own bound
+
+        metrics = _run_one_serve_iteration(broker, monkeypatch)
+
+        assert metrics["batches"] == 1, "sanity: the batch WAS dispatched"
+        assert metrics["positions"] >= 0, (
+            f"served rows went NEGATIVE ({metrics['positions']}): the dispatch "
+            f"count and the failure handler are using different row counts"
+        )
+        assert metrics["positions"] == 0, (
+            "nothing was served on this path, so the count must be exactly 0"
+        )
+    finally:
+        broker.shutdown()

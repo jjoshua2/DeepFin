@@ -111,14 +111,22 @@ def require_model_planes(model: torch.nn.Module, channels: int, *, where: str) -
 def _slot_rows(slot: _InferenceSlot, max_batch: int) -> int:
     """Rows this broker will actually evaluate for ``slot``.
 
-    ONE definition, used by both the gather loop that evaluates the rows and
-    the serve loop that counts them. They used to differ: the gather clamped to
-    ``max_batch`` while the serve loop summed the raw ``slot.batch_size``, so a
-    client writing a batch_size above the layout's capacity had the excess
-    counted as served throughput and never evaluated. Small and only reachable
-    through a client-side protocol violation, but it is the same
-    "counted at dispatch, not evaluated" defect the rest of task #142 is about,
-    and a guard must share its criterion's instrument.
+    ONE definition for ALL FOUR row-count sites on the ``SlotBroker`` path: the
+    gather loop that evaluates the rows, the serve loop that counts them at
+    dispatch, and the two ``_process_batch`` failure handlers that hand them
+    back. They used to differ: the gather clamped to ``max_batch`` while the
+    other three summed the raw ``slot.batch_size``, so a client writing a
+    batch_size above the layout's capacity had the excess counted as served
+    throughput and never evaluated.
+
+    ⚑ The first version of this helper covered only the gather and the serve
+    loop, and its docstring said "both" -- which is how the two handlers went on
+    reading raw. That made the residual WORSE than before the helper existed:
+    dispatch counted the clamped 8 while a handler subtracted the claimed 12, so
+    a wholly failed batch reported -4 rows instead of 0. A partial application
+    of "share the instrument" inverted the error it was meant to remove. Four
+    sites, one definition, and the count is stated here so the next edit has to
+    notice if it adds a fifth.
     """
     return max(0, min(int(slot.batch_size), int(max_batch)))
 
@@ -2079,7 +2087,9 @@ class SlotBroker:
                 # different batch_size. Reading afterwards would subtract a row
                 # count belonging to the NEXT request. Same rule below and in
                 # _process_batch_mode's malformed-metadata branch.
-                unanswered_rows += sum(int(s.batch_size) for s in slots)
+                unanswered_rows += sum(
+                    _slot_rows(s, self._layout.max_batch) for s in slots
+                )
                 # Same recovery as any other failed batch, but logged as one
                 # throttled line rather than a traceback: this path repeats
                 # every serve loop until a model appears, and 50 identical
@@ -2107,7 +2117,9 @@ class SlotBroker:
                 # and then raised -- loses its own return value, so counting
                 # the whole group here is what keeps those rows counted; the
                 # group is unanswered either way.
-                unanswered_rows += sum(int(s.batch_size) for s in slots)
+                unanswered_rows += sum(
+                    _slot_rows(s, self._layout.max_batch) for s in slots
+                )
                 # One bad batch must not take down the broker. Every worker in
                 # the fleet depends on this process and nothing relaunches it
                 # until the next selfplay phase begins, so a crash here costs a
