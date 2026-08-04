@@ -32850,3 +32850,17 @@ stabilization, own entries): (a) exempt the bootstrap sha from the stale cap or 
 the auto target at iteration-1's need — every future cold start hits this; (b) the
 worker pause should gate game STARTS, not uploads — the current shape wastes the tail
 of every pause.
+
+**CONFOUND ADDENDUM (2026-08-04 ~02:30, user-made live edit):** `opening_fen_list_path`
+repointed `blindspot_fens_retire_478.txt` (371 FENs) → `blindspot_fens_retire_0.txt`
+(507 FENs, built 02:30) in the LIVE yaml, in effect from ~iteration 10 (live reload;
+seeding active: `opening_fen_dole_per_iter: 1`, `opening_fen_dole_max_fraction: 0.08`;
+worker telemetry confirms fenlist seeds playing). This is a second data-affecting
+change inside the restart readout window — small dose, but it belongs on the bundle's
+Confounds line: the fresh-window composition includes blind-spot seeds from the NEW
+pool from ~iter 10 onward. Committed to the live branch the same night so a branch
+operation cannot silently revert it ([[uncommitted_live_yaml_edits_lose_proven_wins]]).
+⚠ `data/blindspot_fens_retire_0.txt` itself is gitignored (data/, .gitignore:34) — the
+committed pointer refers to a file that exists only on this machine; a fresh clone
+starts with seeding silently disabled (`load` degrades to no-seed). Tracking the FEN
+asset (or an exception for data/blindspot_*) is the durable fix — user decision.
