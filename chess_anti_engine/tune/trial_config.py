@@ -404,6 +404,14 @@ class TrialConfig:
     # Background shard prefetcher: zarr decompress moves to a daemon thread
     # during train phase. Default off until measured in production.
     distributed_prefetch_shards: bool = False
+    # Byte budget for the prefetch queue (audit A19). The producer is
+    # shard-arrival rate and the consumer is once-per-iteration, so without
+    # this the queue is unbounded: a 2000-row shard decodes to ~102 MB, i.e.
+    # ~10.2 GB at 100 queued. 768 MB is ~7.5 shards -- generous for steady
+    # state, where the queue holds the 1-3 shards that land during one train
+    # phase. Over budget the prefetcher stops decoding and leaves shards on
+    # disk for the iter-time ingest path; nothing is dropped.
+    distributed_prefetch_max_queued_mb: int = 768
     # Run holdout test eval in a daemon thread on a snapshot of the
     # post-train model — overlaps eval (~30-50s) with the next iter's
     # selfplay phase. Trade-off: test_metrics in row N reports loss for
@@ -804,6 +812,7 @@ class TrialConfig:
             distributed_pause_selfplay_during_training=bool(config.get("distributed_pause_selfplay_during_training", False)),
             processed_max_age_seconds=float(config.get("processed_max_age_seconds", 43200.0)),
             distributed_prefetch_shards=bool(config.get("distributed_prefetch_shards", False)),
+            distributed_prefetch_max_queued_mb=int(config.get("distributed_prefetch_max_queued_mb", 768)),
             distributed_async_test_eval=bool(config.get("distributed_async_test_eval", False)),
             distributed_async_test_eval_timeout_s=float(config.get("distributed_async_test_eval_timeout_s", 120.0)),
 

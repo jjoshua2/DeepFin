@@ -329,12 +329,25 @@ def _lazy_construct_iter_helpers(
     if shard_prefetcher is None and tc.distributed_prefetch_shards:
         from chess_anti_engine.tune.distributed_runtime import _iter_shard_paths_nested
         from chess_anti_engine.tune.prefetch import BackgroundShardPrefetcher
+        max_queued_bytes = int(tc.distributed_prefetch_max_queued_mb) * 1024 * 1024
         shard_prefetcher = BackgroundShardPrefetcher(
             inbox_dir=distributed_dirs["inbox_dir"],
             path_iter=_iter_shard_paths_nested,
+            max_queued_bytes=max_queued_bytes,
         )
         shard_prefetcher.start()
-        logging.getLogger("chess_anti_engine.iter").info("[trial]BackgroundShardPrefetcher started (iter %d)", iteration_idx)
+  # REALIZED budget, read back off the constructed object rather than
+  # printed from the config value handed in. A key that is accepted and
+  # then not applied is this codebase's signature defect; printing the
+  # input would report success either way, so the log would be evidence of
+  # nothing. `_max_queued_bytes` is what `_scan_once` actually compares.
+        logging.getLogger("chess_anti_engine.iter").info(
+            "[trial]BackgroundShardPrefetcher started (iter %d) "
+            "max_queued=%.0f MB (distributed_prefetch_max_queued_mb=%d)",
+            iteration_idx,
+            shard_prefetcher._max_queued_bytes / (1024 * 1024),
+            int(tc.distributed_prefetch_max_queued_mb),
+        )
     if async_test_eval is None and tc.distributed_async_test_eval:
         from chess_anti_engine.train.async_eval import AsyncTestEval
         async_test_eval = AsyncTestEval()
