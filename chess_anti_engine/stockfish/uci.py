@@ -382,6 +382,14 @@ class StockfishUCI:
         # the child a group leader, so its pgid IS its pid -- and asking
         # `os.getpgid` at close time would be asking about a pid that may have
         # been reaped and recycled. See `close()`.
+        #
+        # ⚑ AND THE POSITION IS LOAD-BEARING: immediately after `Popen`, before
+        # the nice block and before the UCI handshake. The handshake below ends
+        # in `except BaseException: self.close()`, and `close()` reads
+        # `self._pgid` -- so any statement that can raise between here and there
+        # would turn a handshake failure into an `AttributeError` raised from
+        # inside the failure handler, losing the original error and leaking the
+        # engine. Do not move this down.
         self._pgid = self.proc.pid
         if self.nice > 0:
             current_nice = os.getpriority(os.PRIO_PROCESS, self.proc.pid)
