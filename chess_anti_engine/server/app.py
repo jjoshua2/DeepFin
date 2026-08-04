@@ -173,7 +173,6 @@ def _consume_rearm_file(
                 tmp.unlink(missing_ok=True)
 
 
-_LOG = logging.getLogger("chess_anti_engine.server")
 _LOCK_HOST = socket.gethostname()
 
 
@@ -349,7 +348,7 @@ class _LeaseAssignLock:
                 now = time.time()
                 reason = self._staleness_reason(now)
                 if reason is not None:
-                    _LOG.warning(
+                    _log.warning(
                         "stealing stale lease-assign lock %s: %s", self.path, reason,
                     )
                     with contextlib.suppress(OSError):
@@ -376,7 +375,7 @@ class _LeaseAssignLock:
         # live successor and unlinking it would restart the cascade this
         # class exists to stop.
         if self._read_holder().get("token") != self._token:
-            _LOG.warning(
+            _log.warning(
                 "lease-assign lock %s was taken from us before release; "
                 "leaving the current holder's file alone", self.path,
             )
@@ -1137,7 +1136,14 @@ def create_app(
 
     from chess_anti_engine.replay.shard import load_shard_arrays
 
-    from .auth import VerifiedCredentialCache, load_users, record_upload, save_users
+    from .auth import (
+        VerifiedCredentialCache,
+        load_user_stats,
+        migrate_user_stats,
+        record_upload,
+        save_user_stats,
+        user_stats_path_for,
+    )
     from .lease import (
         assign_trial_lease,
         available_trial_ids,
@@ -1160,6 +1166,12 @@ def create_app(
   # authenticated request behind every upload's stats write, which is a worse
   # version of the problem this cache is fixing.
     auth_cache = VerifiedCredentialCache(users_path)
+  # Per-user upload counters, split out of `users.json` so an accepted shard
+  # never rewrites a credential. Migration runs once at startup and is a no-op
+  # once the stats file exists; it assigns rather than adds, so a repeat cannot
+  # double-count.
+    user_stats_path = user_stats_path_for(users_path)
+    migrate_user_stats(users_path, user_stats_path)
 
     inbox.mkdir(parents=True, exist_ok=True)
     quarantine.mkdir(parents=True, exist_ok=True)
@@ -1178,7 +1190,9 @@ def create_app(
     upload_lock = threading.Lock()
     # ⚑ THE EVENT LOOP WAS SERIALISING THESE FOR FREE, AND A5 TOOK THAT AWAY.
     # Three unlocked read-modify-write cycles run on the upload path -- the two
-    # throughput stats files and `load_users`/`record_upload`/`save_users`.
+    # throughput stats files and `load_user_stats`/`record_upload`/
+    # `save_user_stats` (which was `load_users`/`save_users` before the
+    # credential/counter split -- same cycle, different file).
     # While `_upload_shard_impl` ran them on the loop thread they could not
     # interleave: one thread, no `await` between the read and the write. A5
     # moved the tail into the threadpool, so concurrent uploads now read the
@@ -1469,10 +1483,13 @@ def create_app(
             with _compat_counter_lock:
                 novel = sig != _manifest_read_counters_sig.get("last")
                 _manifest_read_counters_sig["last"] = sig
-            if novel:
-                # Warn on each distinct fault rather than each request: a busy
-                # fleet polls this many times a second and a flood would bury
-                # the line that matters.
+            # Warn on a new fault, and then on a count cadence — the
+            # `prefetch.py` idiom. Signature-only rate limiting was wrong for
+            # the case that matters most: an UNCHANGING fault warned once,
+            # ever, so the steady state was a stalled fleet with its only
+            # evidence hours up the log. A flood is still avoided because a
+            # busy fleet polls far faster than every 100th line.
+            if novel or int(counters["unreadable"]) % 100 == 0:
                 log.warning(
                     "manifest UNREADABLE at %s: %s: %s — worker compat cannot be "
                     "decided; affected requests fail CLOSED with 503 "
@@ -2525,17 +2542,15 @@ def create_app(
                 elapsed_s=batch_elapsed_s,
             )
 
-      # Update user stats.
+      # Update user stats. Counters only -- `users.json` is not opened here,
+      # so an upload can neither lose a credential to a non-durable write nor
+      # lose a concurrent `set_disabled` to this read-modify-write cycle.
             try:
                 with stats_write_lock:
-                    users = load_users(users_path)
+                    user_stats = load_user_stats(user_stats_path)
                     machine_id = str(x_cae_machine_id).strip() if x_cae_machine_id else None
-                    record_upload(users, username=username, bytes_uploaded=int(n), positions=positions, machine_id=machine_id)
-                    # durable=False: per-upload counter bookkeeping, like the
-                    # two throughput files above. `record_upload` touches only
-                    # uploads/total_bytes/machines — credentials are written by
-                    # the admin helpers in `auth.py`, which stay durable.
-                    save_users(users_path, users, durable=False)
+                    record_upload(user_stats, username=username, bytes_uploaded=int(n), positions=positions, machine_id=machine_id)
+                    save_user_stats(user_stats_path, user_stats)
             except Exception:
       # Stats failure should not fail the upload.
                 pass

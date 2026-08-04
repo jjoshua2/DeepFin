@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import hmac
 import json
+import logging
 import os
 import threading
 import time
@@ -13,9 +15,17 @@ from typing import Any
 
 from chess_anti_engine.utils.atomic import atomic_write_text
 
+_log = logging.getLogger("chess_anti_engine.server")
+
 
 @dataclass
 class UserRecord:
+    """A credential. Nothing here changes except by an explicit admin action.
+
+    Upload counters used to live on this record, which meant every accepted
+    shard rewrote the credential file. See :class:`UserStats`.
+    """
+
     username: str
   # PBKDF2-SHA256
     salt_b64: str
@@ -24,14 +34,44 @@ class UserRecord:
 
     disabled: bool = False
 
-  # Aggregate stats
+
+@dataclass
+class UserStats:
+    """Per-user upload counters. Telemetry — a crash may discard the last write.
+
+    Split out of :class:`UserRecord` because keeping the two in one file forced
+    a choice with no good answer: every accepted shard rewrote the whole file,
+    so either credentials paid an fsync per upload, or (as shipped in #344)
+    credentials were rewritten NON-durably several times an iteration and an
+    unclean shutdown could cost a just-created password. Separate files make
+    both questions independent — this one is written per upload and
+    non-durably, ``users.json`` only on an admin action and always durably.
+    """
+
     uploads: int = 0
     total_bytes: int = 0
     total_positions: int = 0
     last_upload_at_unix: int | None = None
-
   # Per-machine stats: machine_id -> {uploads, positions, last_upload_at_unix}
-    machines: dict = field(default_factory=dict)
+    machines: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+# Counter keys that used to live in `users.json`. Read once by
+# `migrate_user_stats`, then filtered out of every load so a legacy file still
+# parses into the slimmed `UserRecord`.
+_LEGACY_STAT_KEYS = frozenset({
+    "uploads", "total_bytes", "total_positions", "last_upload_at_unix", "machines",
+})
+
+
+def user_stats_path_for(users_path: str | Path) -> Path:
+    """The stats file paired with a users DB (``users.json`` -> ``users.stats.json``).
+
+    Derived from the DB name rather than fixed, so two servers sharing a
+    directory with different ``--users-db`` names do not collide.
+    """
+    p = Path(users_path)
+    return p.with_name(f"{p.stem}.stats.json")
 
 
 def _b64e(b: bytes) -> str:
@@ -67,24 +107,26 @@ def load_users(path: str | Path) -> dict[str, UserRecord]:
     if not isinstance(data, dict):
         raise ValueError("users db must be a dict")
 
-    return {
-        str(username): UserRecord(username=str(username), **v)
-        for username, v in data.items()
-        if isinstance(v, dict)
-    }
+    out: dict[str, UserRecord] = {}
+    for username, v in data.items():
+        if not isinstance(v, dict):
+            continue
+  # Drop ONLY the counter keys that used to live here, so a pre-split
+  # file still parses. Anything else unexpected still raises TypeError
+  # rather than being silently ignored.
+        fields = {k: val for k, val in v.items() if k not in _LEGACY_STAT_KEYS}
+        out[str(username)] = UserRecord(username=str(username), **fields)
+    return out
 
 
-def save_users(
-    path: str | Path, users: dict[str, UserRecord], *, durable: bool = True,
-) -> None:
-    """Write the users DB.
+def save_users(path: str | Path, users: dict[str, UserRecord]) -> None:
+    """Write the users DB. Always durable — losing a just-created password to
+    an unclean shutdown locks a worker out of the fleet.
 
-    ``durable=False`` is for the upload-stats path only, which rewrites this
-    file on EVERY accepted shard and changes nothing but counters
-    (``uploads`` / ``total_bytes`` / ``machines``). Credential changes —
-    :func:`add_user`, :func:`upsert_user`, :func:`set_disabled` — keep the
-    default: losing a just-created password to an unclean shutdown locks a
-    worker out of the fleet, which is not a cost worth ~11 ms per upload.
+    There is deliberately no ``durable=False`` escape hatch any more. The one
+    caller that wanted it was the per-upload counter write, and counters now
+    live in their own file (:func:`save_user_stats`); re-adding the parameter
+    would re-open the hole where an upload rewrites credentials non-durably.
     """
     data: dict[str, Any] = {}
     for u, rec in users.items():
@@ -92,22 +134,140 @@ def save_users(
         d = rec.__dict__.copy()
         d.pop("username", None)
         data[u] = d
+    atomic_write_text(Path(path), json.dumps(data, indent=2, sort_keys=True))
+
+
+def load_user_stats(path: str | Path) -> dict[str, UserStats]:
+    """Read the per-user counter file. A missing or corrupt file is empty.
+
+    Corrupt is tolerated HERE, unlike the users DB, because these are counters:
+    the alternative is refusing uploads over unreadable telemetry. It is logged
+    so the degradation is not silent.
+    """
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _log.warning(
+            "user stats file %s is unreadable (%s: %s); counters restart from "
+            "zero — uploads are unaffected", p, type(exc).__name__, exc,
+        )
+        return {}
+    if not isinstance(data, dict):
+        _log.warning("user stats file %s is not a dict; counters restart from zero", p)
+        return {}
+    out: dict[str, UserStats] = {}
+    for username, v in data.items():
+        if not isinstance(v, dict):
+            continue
+        out[str(username)] = UserStats(
+            uploads=int(v.get("uploads", 0) or 0),
+            total_bytes=int(v.get("total_bytes", 0) or 0),
+            total_positions=int(v.get("total_positions", 0) or 0),
+            last_upload_at_unix=(
+                int(v["last_upload_at_unix"])
+                if v.get("last_upload_at_unix") is not None else None
+            ),
+            machines=dict(v.get("machines") or {}),
+        )
+    return out
+
+
+def save_user_stats(
+    path: str | Path, stats: dict[str, UserStats], *, durable: bool = False,
+) -> None:
+    """Write the per-user counter file.
+
+    ``durable`` defaults to FALSE: this is written on every accepted shard, an
+    fsync costs ~11 ms median on the project's ext4 root (tail past 1.8 s), and
+    the content is counters that a crash may discard. Nothing recovery-critical
+    lives here — that was the point of splitting it out of ``users.json``.
+    """
+    data = {u: dataclasses.asdict(s) for u, s in stats.items()}
     atomic_write_text(
         Path(path), json.dumps(data, indent=2, sort_keys=True), durable=durable,
     )
 
 
+def migrate_user_stats(users_path: str | Path, stats_path: str | Path) -> int:
+    """One-time move of legacy counters out of ``users.json``. Returns the
+    number of users whose counters were carried over.
+
+    Idempotent by construction: it ASSIGNS the legacy values rather than adding
+    them, and it returns immediately once the stats file exists. So neither a
+    repeat call nor a crash mid-migration can double-count.
+
+    Order is deliberate — the stats file is written (durably, the one time it
+    is) BEFORE the legacy keys are stripped from ``users.json``. A crash
+    between the two leaves the counters in both places, which the next load
+    resolves in favour of the stats file; the reverse order could lose them.
+    """
+    users_p, stats_p = Path(users_path), Path(stats_path)
+    if stats_p.exists() or not users_p.exists():
+        return 0
+    try:
+        raw = json.loads(users_p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _log.warning(
+            "cannot read %s to migrate upload counters (%s: %s); counters start "
+            "from zero", users_p, type(exc).__name__, exc,
+        )
+        return 0
+    if not isinstance(raw, dict):
+        return 0
+
+    carried: dict[str, UserStats] = {}
+    for username, v in raw.items():
+        if not isinstance(v, dict) or not (_LEGACY_STAT_KEYS & set(v)):
+            continue
+        carried[str(username)] = UserStats(
+            uploads=int(v.get("uploads", 0) or 0),
+            total_bytes=int(v.get("total_bytes", 0) or 0),
+            total_positions=int(v.get("total_positions", 0) or 0),
+            last_upload_at_unix=(
+                int(v["last_upload_at_unix"])
+                if v.get("last_upload_at_unix") is not None else None
+            ),
+            machines=dict(v.get("machines") or {}),
+        )
+    if not carried:
+        return 0
+
+    save_user_stats(stats_p, carried, durable=True)
+    stripped = {
+        u: {k: val for k, val in v.items() if k not in _LEGACY_STAT_KEYS}
+        for u, v in raw.items() if isinstance(v, dict)
+    }
+    atomic_write_text(users_p, json.dumps(stripped, indent=2, sort_keys=True))
+    _log.info(
+        "migrated upload counters for %d user(s) out of %s into %s; the "
+        "credential file is no longer written by uploads",
+        len(carried), users_p, stats_p,
+    )
+    return len(carried)
+
+
 def record_upload(
-    users: dict[str, UserRecord],
+    stats: dict[str, UserStats],
     *,
     username: str,
     bytes_uploaded: int,
     positions: int | None,
     machine_id: str | None = None,
 ) -> None:
-    rec = users.get(username)
+    """Accumulate one upload into ``stats`` in place.
+
+    Unlike the pre-split version this creates the entry when absent: the stats
+    file starts empty after migration and is not seeded with the user list. The
+    caller has already authenticated ``username``, so this cannot mint counters
+    for an unknown user.
+    """
+    rec = stats.get(str(username))
     if rec is None:
-        return
+        rec = UserStats()
+        stats[str(username)] = rec
     now = int(time.time())
     rec.uploads = int(rec.uploads) + 1
     rec.total_bytes = int(rec.total_bytes) + int(bytes_uploaded)
@@ -152,9 +312,13 @@ def upsert_user(
     password: str,
     disabled: bool = False,
 ) -> None:
-    """Create or update (re-hash) a user's password."""
+    """Create or update (re-hash) a user's password.
+
+    No longer has to carry counters across the rewrite: they live in the stats
+    file and this function does not touch it, so a password change cannot zero
+    a contributor's upload history by forgetting a field.
+    """
     users = load_users(users_path)
-    existing = users.get(username)
     salt_b64, hash_b64, iterations = hash_password(password)
     users[username] = UserRecord(
         username=username,
@@ -162,11 +326,6 @@ def upsert_user(
         iterations=iterations,
         hash_b64=hash_b64,
         disabled=bool(disabled),
-        uploads=existing.uploads if existing else 0,
-        total_bytes=existing.total_bytes if existing else 0,
-        total_positions=existing.total_positions if existing else 0,
-        last_upload_at_unix=existing.last_upload_at_unix if existing else None,
-        machines=dict(existing.machines) if existing else {},
     )
     save_users(users_path, users)
 
@@ -236,11 +395,11 @@ class VerifiedCredentialCache:
       request, never from the cache, so a revoked user is rejected on the next
       request with no grace period;
     * user deleted -> absent from the current DB -> rejected;
-    * an upload -> `record_upload` bumps counters and `save_users` rewrites
-      the file, so the STAMP changes but the material does not. This is why
-      the cache is not keyed on the file stamp alone: uploads rewrite this
-      file constantly, and a stamp-keyed cache would be flushed by traffic
-      that cannot possibly have changed a password.
+    * an upload -> counters live in their own file since the users.json split,
+      so an upload does not touch this file at all and the stamp does not
+      move. The material check is kept anyway: it is what makes invalidation
+      SOUND rather than merely likely, and it is the leg that survives if some
+      future caller starts rewriting users.json for an unrelated reason.
 
     ⚑ NO NEGATIVE CACHING. A wrong password re-runs PBKDF2 every time. That is
     the expensive direction on purpose: caching rejections would let an
@@ -266,10 +425,20 @@ class VerifiedCredentialCache:
         self._lock = threading.Lock()
         self._stamp: _DbStamp | None = None
         self._users: dict[str, UserRecord] = {}
-  # username -> (sha256(secret), salt_b64, hash_b64, iterations)
+  # Per-PROCESS random key, so what this cache retains is useless outside
+  # this process. A bare sha256(password) is an offline-crackable digest of
+  # a live credential that outlives the plaintext (which is freed with the
+  # request) for the process lifetime; keyed, a memory dump taken later
+  # yields nothing without the key, which dies with the process. Behaviour
+  # is unchanged -- it is still a constant-length constant-time comparison.
+        self._digest_key = os.urandom(32)
+  # username -> (keyed digest of secret, salt_b64, hash_b64, iterations)
         self._verified: dict[str, tuple[bytes, str, str, int]] = {}
         self.pbkdf2_verifications = 0
         self.db_reads = 0
+
+    def _secret_digest(self, secret: str) -> bytes:
+        return hmac.new(self._digest_key, str(secret).encode("utf-8"), hashlib.sha256).digest()
 
     def users(self) -> dict[str, UserRecord]:
         """The current users DB, re-read only when the file has changed.
@@ -280,11 +449,19 @@ class VerifiedCredentialCache:
         a write racing the read leaves the stamps unequal, so the fresh data
         is returned WITHOUT being cached and the next call re-reads. The cost
         of losing that race is one extra file read.
+
+        ⚑ Returns a COPY. Handing out `self._users` let a caller mutate the
+        cached DB in place -- `record_upload(cache.users(), ...)` was the
+        obvious one before the counter split -- which poisons the cache
+        without touching the file, and the stamp design is structurally blind
+        to that: no write, no new inode, no re-read, wrong data forever. A
+        shallow copy is enough for the dict itself; `verify` still returns the
+        live record because the caller only reads `disabled` off it.
         """
         stamp = _DbStamp.of(self.path)
         with self._lock:
             if self._stamp == stamp:
-                return self._users
+                return dict(self._users)
         users = {} if not stamp.exists else load_users(self.path)
         self.db_reads += 1
         if _DbStamp.of(self.path) != stamp:
@@ -292,7 +469,7 @@ class VerifiedCredentialCache:
         with self._lock:
             self._stamp = stamp
             self._users = users
-        return users
+        return dict(users)
 
     def verify(self, username: str, secret: str) -> UserRecord | None:
         """The record for these credentials, or None if they do not authorise.
@@ -304,7 +481,7 @@ class VerifiedCredentialCache:
         rec = self.users().get(str(username))
         if rec is None:
             return None
-        digest = hashlib.sha256(str(secret).encode("utf-8")).digest()
+        digest = self._secret_digest(secret)
         with self._lock:
             cached = self._verified.get(str(username))
         if cached is not None:

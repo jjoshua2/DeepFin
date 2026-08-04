@@ -254,48 +254,67 @@ def test_only_the_per_upload_telemetry_writers_are_exempted() -> None:
                         and kw.value.value is False:
                     key = str(path.relative_to(root))
                     found[key] = found.get(key, 0) + 1
-    # Exactly the three per-upload counter writers: `_record_gpu_throughput`,
-    # `_record_trial_throughput`, and the `record_upload`/`save_users` pair in
-    # `_upload_shard_impl`. Counted by file rather than by line so the test does
-    # not go red on unrelated edits above them.
-    assert found == {"server/app.py": 3}, found
+    # Exactly the two throughput files, `_record_gpu_throughput` and
+    # `_record_trial_throughput`. The third per-upload writer became
+    # `save_user_stats`, whose whole file is counters, so it carries the
+    # decision in its DEFAULT rather than at each call site -- asserted next to
+    # this. Counted by file rather than by line so the test does not go red on
+    # unrelated edits above them.
+    assert found == {"server/app.py": 2}, found
 
 
-def test_credential_writes_stay_durable_while_upload_counters_do_not(
+def test_credential_writes_are_durable_and_have_no_escape_hatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`users.json` carries BOTH credentials and per-upload counters, and only
-    one of them is disposable.
+    """#344 review finding B, closed at the source.
 
-    This exemption was found by counting real fsyncs on an upload request, not
-    by reading the call graph -- `save_users` runs on every accepted shard via
-    `record_upload`, which is not obvious from either end. Losing a counter
-    increment to a crash costs nothing; losing a just-created password locks a
-    worker out of the fleet.
+    #344 exempted the per-upload `save_users` call. But `users.json` was ONE
+    file: that write rewrote the credentials too, so the newest on-disk
+    credentials were exactly as unflushed as the counters, and an unclean
+    shutdown could still cost a just-created password -- the outcome the
+    durable default was chosen to prevent. Counters now live in their own
+    file, so `save_users` has no non-durable caller and no `durable`
+    parameter at all: the hole cannot be reopened by passing a flag.
     """
+    import inspect
+
     from chess_anti_engine.server.auth import (
         UserRecord,
         ensure_user,
         hash_password,
+        save_user_stats,
         save_users,
+        set_disabled,
+        upsert_user,
     )
+
+    assert "durable" not in inspect.signature(save_users).parameters
 
     users_path = tmp_path / "users.json"
     salt, hsh, iters = hash_password("p")
     rec = UserRecord(username="u", salt_b64=salt, hash_b64=hsh, iterations=iters)
 
     spy = _FsyncSpy(monkeypatch)
-    save_users(users_path, {"u": rec}, durable=False)
+    save_users(users_path, {"u": rec})
+    assert spy.saw(users_path), "save_users must be durable"
+
+    # Every admin mutation, not just the one that is easy to remember.
+    for label, fn in (
+        ("ensure_user", lambda: ensure_user(users_path, username="v", password="pw")),
+        ("upsert_user", lambda: upsert_user(users_path, username="v", password="pw2")),
+        ("set_disabled", lambda: set_disabled(users_path, username="v", disabled=True)),
+    ):
+        spy = _FsyncSpy(monkeypatch)
+        fn()
+        assert spy.saw(users_path), f"{label} must be durable"
+
+    # And the counter file carries the exemption in its default, so a caller
+    # that forgets the kwarg gets the cheap write rather than the 11 ms one.
+    assert inspect.signature(save_user_stats).parameters["durable"].default is False
+    stats_path = tmp_path / "users.stats.json"
+    spy = _FsyncSpy(monkeypatch)
+    save_user_stats(stats_path, {})
     assert len(spy) == 0, spy.inodes
-
-    spy = _FsyncSpy(monkeypatch)
-    save_users(users_path, {"u": rec})  # default
-    assert spy.saw(users_path), "default save_users must be durable"
-
-    # The admin path must not silently inherit the exemption.
-    spy = _FsyncSpy(monkeypatch)
-    ensure_user(users_path, username="v", password="pw")
-    assert spy.saw(users_path), "ensure_user must be durable"
 
 
 def test_atomic_module_docstring_states_the_durability_contract() -> None:
