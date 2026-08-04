@@ -859,15 +859,22 @@ tune:
   distributed_worker_sf_workers: 8  # 2026-07-18: SMT32 retune; production-shaped A/B +38.2% games/s vs 4/w. sf_nice keeps SF from preempting search/dispatch.
   distributed_worker_min_games_per_batch: 200  # Bigger forwards: better GPU util + lower per-gumbel overhead
   distributed_worker_max_games_per_batch: 512
-  # FIRST-PROVISIONING-ONLY (audit C3). _prepare_distributed_worker_auth gates
-  # BOTH the upsert_user call and the .password file write on `not user_existed`,
-  # so against an existing server root -- every run after the first -- these
-  # reach no consumer at any value. That is deliberate: an admin rotation via
-  # manage_users.py must not be clobbered by yaml drift, and the password file
-  # stays symmetric with the user record so a worker can never be handed a
-  # secret the server does not have. TO ROTATE, USE manage_users.py; editing
-  # these lines alone is accepted and changes nothing, forever.
+  # ⚑ DO NOT EDIT THE USERNAME ON A LIVE RUN. It is in _WORKER_LAUNCH_CONFIG_KEYS
+  # (distributed_runtime.py), which _ensure_distributed_workers hashes EVERY
+  # iteration, so an edit RELAUNCHES THE WHOLE FLEET within one iteration -- with
+  # a username the server has never provisioned, because the auth setup below
+  # only ever creates a user on the FIRST run against a given server root. The
+  # result is every worker up, authenticating, and getting 401. Change it only
+  # between runs, and create the user with manage_users.py first.
   distributed_worker_username: josh
+  # FIRST-PROVISIONING-ONLY (audit C3), and unlike the username this one really
+  # is inert. _prepare_distributed_worker_auth gates BOTH the upsert_user call
+  # and the .password file write on `not user_existed`, so against an existing
+  # server root -- every run after the first -- the password reaches no consumer
+  # at any value. Deliberate: an admin rotation via manage_users.py must not be
+  # clobbered by yaml drift, and the password file stays symmetric with the user
+  # record so a worker can never be handed a secret the server does not have.
+  # TO ROTATE, USE manage_users.py; editing this line alone does nothing.
   distributed_worker_password: chess_worker_2026
   distributed_worker_use_compile: true   # Worker compile (max-autotune) has been stable for many iters of training. Was briefly disabled 2026-04-27 to test whether compile was producing wrong outputs after a bad salvage; it wasn't — actual root cause was a corrupted pid_state.json in the iter 403 pool I'd manually built (had iter 408-era values rather than iter 403's).
   distributed_worker_compile_mode: reduce-overhead  # 2026-07-14: max-autotune's GPU benchmarking hung the compile twice on the flaky WSL bridge (never reached first inference in 20+ min). reduce-overhead compiles in ~1-2min from cache (no autotune benchmark), uses cudagraphs (good for small-batch selfplay), and makes wedge-restarts fast. Revert to max-autotune once the bridge is stable if a throughput readout justifies it.

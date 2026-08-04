@@ -808,6 +808,15 @@ _DRIVER_LAUNCH_FIXED_KEYS = frozenset({
     "distributed_max_worker_delta_per_rebalance",
     "distributed_upload_compact_shard_size",
     "distributed_upload_compact_max_age_seconds",
+  # Read through a LOOP VARIABLE (`base_config.get(cfg_key)`), which is why the
+  # coverage test has to account for non-literal reads rather than skip them.
+  # Both are also `restart_required` on the TRIAL axis, and that is not a
+  # contradiction: the driver bakes the path into the uvicorn command line at
+  # launch, and `/v1/opening_book` keeps serving that file for the life of the
+  # server, while the trial declines a live edit. Two independent reasons the
+  # same edit does nothing, on two different clocks.
+    "opening_book_path",
+    "opening_book_path_2",
   # ⚑ FIRST-PROVISIONING-ONLY, which is stronger than launch-fixed and is why
   # these are called out rather than lumped in. `_prepare_distributed_worker_auth`
   # gates BOTH the `upsert_user` and the `.password` file write on
@@ -817,7 +826,11 @@ _DRIVER_LAUNCH_FIXED_KEYS = frozenset({
   # and the file stays symmetric with the user so workers can never be handed a
   # secret the server has not got). Rotate with manage_users.py; editing the yaml
   # alone is accepted and changes nothing, forever.
-    "distributed_worker_username",
+  #
+  # ⚑ `distributed_worker_username` IS NOT ONE OF THESE -- see
+  # `_DRIVER_DUAL_CLOCK_KEYS`. Round 1 of this PR put it here and wrote that
+  # claim into the production yaml; it is false and the failure mode is a fleet
+  # outage. The password keys really are inert; the username is not.
     "distributed_worker_password",
     "distributed_worker_password_env",
   # Ray driver: resources, scheduler choice and search space, all consumed
@@ -835,7 +848,8 @@ _DRIVER_LAUNCH_FIXED_KEYS = frozenset({
     "gpbt_winner_weight",
     "gpbt_quantile_fraction",
     "gpbt_resample_probability",
-    "search_optimizer",
+  # `search_optimizer` is NOT here: trainable_init.py:197 reads it per restore
+  # to decide `model_only_restore`. See `_DRIVER_DUAL_CLOCK_KEYS`.
     "search_optimizer_choices",
     "search_smolgen",
     "search_nla",
@@ -868,11 +882,41 @@ _DRIVER_DUAL_CLOCK_KEYS = frozenset({
     "distributed_workers_per_trial",
     "device",
     "seed",
-    "iterations",
+  # ⚑ THE DANGEROUS ONE, and round 1 of this PR got it wrong in the direction
+  # that costs the most. `distributed_worker_username` is in
+  # `_WORKER_LAUNCH_CONFIG_KEYS` (distributed_runtime.py), which
+  # `_ensure_distributed_workers` hashes EVERY ITERATION: a live edit therefore
+  # relaunches the whole fleet -- with a username the server has never heard of,
+  # because `_prepare_distributed_worker_auth` provisions the user only on the
+  # first run against a given server root. So the live edit is not free and is
+  # not inert; it is a fleet-wide 401. The two clocks here disagree in the worst
+  # possible way: the worker side applies it immediately and the server side
+  # never does.
+    "distributed_worker_username",
+  # Driver: one grid_search decision inside the single `tune.Tuner(...)` build.
+  # Trial: `trainable_init.py:197` reads it on every restore path to decide
+  # `model_only_restore` when a checkpoint carries another trial's optimizer.
+    "search_optimizer",
 })
 
-# Written INTO base_config by the driver itself (harness.py:463-469), never read
-# from the yaml. Classifying them as config keys at all would be wrong.
+# ⚑ `iterations` IS DELIBERATELY NOT IN THE SET ABOVE. Round 1 put it there and
+# the justification did not survive contact: dual-clock asserts that a live edit
+# MOVES the trial-side consumer while the driver keeps the launch value, and for
+# `iterations` the reloader REFUSES the edit (it is in
+# `_STARTUP_ONLY_TRIAL_KEYS`), so neither clock moves and the two cannot
+# disagree. `restart_required_config_keys()` is the whole story for it. The
+# general rule this cost us: dual-clock and restart-required are CONTRADICTORY,
+# and `test_the_classification_sets_do_not_overlap` now asserts that pair
+# directly. Launch-fixed and restart-required are NOT contradictory -- they are
+# orthogonal axes (the driver reads at launch; the trial refuses live), which is
+# the true shape of the two opening-book paths.
+
+# Written INTO base_config by the driver itself -- the `base_config.update({...})`
+# at the end of `_launch_distributed_server` -- and never read from the yaml.
+# Classifying them as config keys at all would be wrong. That update writes five
+# keys; the other two (`distributed_server_public_url`,
+# `distributed_worker_username`) are NOT here, because the yaml does supply them
+# and the driver merely normalises them in place.
 _DRIVER_DERIVED_KEYS = frozenset({
     "distributed_server_root",
     "distributed_server_url",

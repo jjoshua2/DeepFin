@@ -319,6 +319,14 @@ def _load_puzzle_suite(tc: TrialConfig):
 # Keys already warned about, so the line is one per TRANSITION rather than one
 # per iteration -- a per-iteration flood is how a warning stops being read.
 # Cleared when the key goes back to true, so a flip-flop is fully reported.
+#
+# ⚑ PER PROCESS, NOT PER TRIAL. Keyed by config key alone, so a second trial in
+# the same actor process would find the flag already set and stay silent. Inert
+# in production (`max_concurrent_trials: 1`, one trial per actor) and left that
+# way deliberately: keying by trial id would mean threading one through a helper
+# that has no other use for it, to fix a case the production config cannot
+# reach. If concurrent trials per actor ever ship, key this by
+# `(trial_id, key)` -- it is the only change needed.
 _DECLINED_OFF_WARNED: set[str] = set()
 
 

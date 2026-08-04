@@ -38,20 +38,68 @@ _ROOT = Path(__file__).resolve().parents[1] / "chess_anti_engine"
 _HARNESS = _ROOT / "tune" / "harness.py"
 _RUN = _ROOT / "run.py"
 
-# The dict names that hold the driver's copy of the flattened yaml. `cfg` is
-# `_prepare_distributed_worker_auth`'s parameter name for the same dict; it is
-# in here because that function is where the three first-provisioning-only auth
-# keys are read, which is finding C3.
-_DRIVER_CONFIG_NAMES = frozenset({"base_config", "base", "cfg"})
+# The dict names that hold the driver's copy of the flattened yaml, and -- for
+# `cfg` -- the ONE function that name is allowed to mean it in.
+#
+# ⚑ `cfg` IS SCOPED. It is `_prepare_distributed_worker_auth`'s parameter name
+# for the driver config (that function is where the auth keys of finding C3 are
+# read), but `cfg` is also a perfectly ordinary local elsewhere in these files
+# -- `harness.py`'s resume overlay uses `cfg[key]` for a TRIAL dict. Matching it
+# unscoped made this test demand a driver classification for trial keys, which
+# is a false positive that trains people to add keys to the wrong set.
+_DRIVER_CONFIG_NAMES = frozenset({"base_config", "base"})
+_SCOPED_CONFIG_NAMES: dict[str, frozenset[str]] = {
+    "cfg": frozenset({"_prepare_distributed_worker_auth"}),
+}
+
+# Reads through a non-literal key, by `file:line`, each with the reason it can
+# stay dynamic. ⚑ THE WALK CANNOT RESOLVE THESE, so without this allowlist a new
+# `base_config.get(some_var)` would be silently invisible to the coverage test
+# -- the reviewer demonstrated exactly that with `_k = "unclassified"`. Listing
+# them by line makes a new dynamic read FAIL until someone accounts for it.
+_NON_LITERAL_READS: dict[str, str] = {
+    "harness.py:442": (
+        "the opening-book loop: `for cfg_key, flag in (...)` over "
+        "opening_book_path / opening_book_path_2, both classified "
+        "driver-launch-fixed"
+    ),
+}
 
 
 def _config_keys_read_by(path: Path) -> dict[str, int]:
     """Literal keys read from a driver config dict, key -> first line number."""
+    return _walk_driver_reads(path)[0]
+
+
+def _enclosing_functions(tree: ast.AST) -> dict[int, str]:
+    """Map every line inside a function body to that function's name."""
+    owner: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            end = getattr(node, "end_lineno", node.lineno) or node.lineno
+            for line in range(node.lineno, end + 1):
+                owner[line] = node.name
+    return owner
+
+
+def _walk_driver_reads(path: Path) -> tuple[dict[str, int], dict[str, str]]:
+    """``(literal key -> first line, "file:line" -> source text)`` for reads of a
+    driver config dict. The second element is the NON-LITERAL reads."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
+    owner = _enclosing_functions(tree)
     found: dict[str, int] = {}
+    dynamic: dict[str, str] = {}
 
     def _record(name: str, lineno: int) -> None:
         found.setdefault(name, lineno)
+
+    def _is_driver_dict(node: ast.expr, lineno: int) -> bool:
+        if not isinstance(node, ast.Name):
+            return False
+        if node.id in _DRIVER_CONFIG_NAMES:
+            return True
+        allowed = _SCOPED_CONFIG_NAMES.get(node.id)
+        return allowed is not None and owner.get(lineno, "") in allowed
 
     for node in ast.walk(tree):
         # base_config.get("key"[, default])
@@ -59,13 +107,13 @@ def _config_keys_read_by(path: Path) -> dict[str, int]:
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "get"
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id in _DRIVER_CONFIG_NAMES
+            and _is_driver_dict(node.func.value, node.lineno)
             and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and isinstance(node.args[0].value, str)
         ):
-            _record(node.args[0].value, node.lineno)
+            if isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+                _record(node.args[0].value, node.lineno)
+            else:
+                dynamic[f"{path.name}:{node.lineno}"] = ast.unparse(node)
         # base_config["key"], READ only. A Store is the driver computing a
         # derived value into its own dict (run.py:44-56) -- that is not a yaml
         # key being consumed, and demanding a classification for it would make
@@ -73,26 +121,34 @@ def _config_keys_read_by(path: Path) -> dict[str, int]:
         elif (
             isinstance(node, ast.Subscript)
             and isinstance(node.ctx, ast.Load)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in _DRIVER_CONFIG_NAMES
-            and isinstance(node.slice, ast.Constant)
-            and isinstance(node.slice.value, str)
+            and _is_driver_dict(node.value, node.lineno)
         ):
-            _record(node.slice.value, node.lineno)
-    return found
+            if isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+                _record(node.slice.value, node.lineno)
+            else:
+                dynamic[f"{path.name}:{node.lineno}"] = ast.unparse(node)
+    return found, dynamic
 
 
-def _classification_of(key: str) -> str | None:
-    for label, keys in (
-        ("driver-launch-fixed", driver_launch_fixed_config_keys()),
-        ("driver-dual-clock", driver_dual_clock_config_keys()),
-        ("driver-derived", driver_derived_config_keys()),
-        ("restart-required", restart_required_config_keys()),
-        ("construction-only", construction_only_config_keys()),
-    ):
-        if key in keys:
-            return label
-    return None
+def _classifications_of(key: str) -> list[str]:
+    """EVERY set the key is in, never the first match.
+
+    First-match resolution is how round 1 shipped `iterations` in three sets and
+    reported one of them: a masking lookup makes the overlap test the only thing
+    standing between a double-booked key and a confident wrong answer, and that
+    test was not pairwise-complete either.
+    """
+    return [
+        label
+        for label, keys in (
+            ("driver-launch-fixed", driver_launch_fixed_config_keys()),
+            ("driver-dual-clock", driver_dual_clock_config_keys()),
+            ("driver-derived", driver_derived_config_keys()),
+            ("restart-required", restart_required_config_keys()),
+            ("construction-only", construction_only_config_keys()),
+        )
+        if key in keys
+    ]
 
 
 @pytest.mark.parametrize("path", [_HARNESS, _RUN], ids=["harness", "run"])
@@ -105,7 +161,7 @@ def test_every_driver_config_read_is_classified(path: Path) -> None:
     unclassified = [
         f"{path.name}:{lineno} {key}"
         for key, lineno in sorted(_config_keys_read_by(path).items())
-        if key.startswith("_") is False and _classification_of(key) is None
+        if key.startswith("_") is False and not _classifications_of(key)
     ]
     assert not unclassified, (
         "these driver-side config keys are in no classification set, so a "
@@ -133,26 +189,106 @@ def test_the_walk_actually_finds_the_driver_reads() -> None:
 
 def test_an_unclassified_driver_key_fails_the_check() -> None:
     """And the gate can fail: an invented key is not classified."""
-    assert _classification_of("a_key_nobody_declared") is None
-    assert _classification_of("distributed_server_port") == "driver-launch-fixed"
+    assert _classifications_of("a_key_nobody_declared") == []
+    assert _classifications_of("distributed_server_port") == ["driver-launch-fixed"]
+
+
+def test_every_non_literal_driver_read_is_accounted_for() -> None:
+    """The walk cannot resolve `base_config.get(some_var)`, so it must COUNT them.
+
+    ⚑ WITHOUT THIS THE COVERAGE TEST HAS A HOLE IT CANNOT SEE: a dynamic read is
+    silently skipped, so `_k = "unclassified"; base_config.get(_k)` passes. The
+    reviewer demonstrated it. Accounting by `file:line` means a NEW dynamic read
+    fails here until someone writes down why it may stay dynamic — which is the
+    same self-invalidating contract as the literal half.
+
+    The one entry today is real and is a genuine C4/C5 key: `harness.py:442`
+    reads the two opening-book paths through a loop variable and bakes them into
+    the uvicorn command line, so `/v1/opening_book` serves the launch file for
+    the life of the server.
+    """
+    seen: dict[str, str] = {}
+    for path in (_HARNESS, _RUN):
+        seen.update(_walk_driver_reads(path)[1])
+    unaccounted = set(seen) - set(_NON_LITERAL_READS)
+    vanished = set(_NON_LITERAL_READS) - set(seen)
+    assert not unaccounted | vanished, (
+        f"non-literal driver config reads changed.\n"
+        f"  new/unaccounted: {sorted(unaccounted)}\n"
+        f"  gone (update the allowlist): {sorted(vanished)}\n"
+        f"A dynamic read is INVISIBLE to test_every_driver_config_read_is_"
+        f"classified, so each one must be named here with the reason it stays."
+    )
+
+
+def test_the_opening_book_paths_are_classified_on_the_driver_axis() -> None:
+    """The dynamic read of H4 points at two keys, and they must land somewhere.
+
+    Launch-fixed on the DRIVER axis and restart-required on the TRIAL axis is
+    not a contradiction — two independent reasons the same edit does nothing.
+    """
+    for key in ("opening_book_path", "opening_book_path_2"):
+        assert key in driver_launch_fixed_config_keys()
+        assert key in restart_required_config_keys()
 
 
 def test_the_classification_sets_do_not_overlap() -> None:
     """A key in two sets has two answers, which is no answer.
 
-    `restart_required_config_keys()` is deliberately excluded from the
-    driver-side sets: its contract is "the live reloader refuses to apply this
-    to a running trial", and these keys never reach the reloader at all.
+    ⚑ PAIRWISE-COMPLETE OVER ALL FIVE SETS, with the two legitimate overlaps
+    named as exemptions rather than left out of the loop. Round 1 checked only
+    `launch & restart_required` and therefore could not see `iterations` sitting
+    in dual-clock AND restart-required AND construction-only.
+
+    The two exemptions, and why each is not a contradiction:
+
+    * `construction_only ⊆ restart_required` — asserted as a subset, because
+      that is what `construction_only_config_keys()`'s own docstring promises.
+    * `driver_launch_fixed × {restart_required, construction_only}` — orthogonal
+      AXES, not competing answers: the driver reads the key once at launch, and
+      the trial separately refuses a live edit. The opening-book paths are
+      exactly this.
+
+    `driver_dual_clock × restart_required` gets NO exemption: dual-clock asserts
+    the trial-side consumer moves on a live edit and restart-required asserts it
+    does not. That pair is the `iterations` bug, so it must stay red.
     """
-    launch = driver_launch_fixed_config_keys()
-    dual = driver_dual_clock_config_keys()
-    derived = driver_derived_config_keys()
-    assert not (launch & dual), sorted(launch & dual)
-    assert not (launch & derived), sorted(launch & derived)
-    assert not (dual & derived), sorted(dual & derived)
-    assert not (launch & restart_required_config_keys()), sorted(
-        launch & restart_required_config_keys()
+    sets = {
+        "driver_launch_fixed": driver_launch_fixed_config_keys(),
+        "driver_dual_clock": driver_dual_clock_config_keys(),
+        "driver_derived": driver_derived_config_keys(),
+        "restart_required": restart_required_config_keys(),
+        "construction_only": construction_only_config_keys(),
+    }
+    exempt = {
+        ("construction_only", "restart_required"),
+        ("driver_launch_fixed", "restart_required"),
+        ("construction_only", "driver_launch_fixed"),
+    }
+    names = sorted(sets)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            if (a, b) in exempt:
+                continue
+            assert not (sets[a] & sets[b]), (
+                f"{a} & {b} = {sorted(sets[a] & sets[b])} — a key in both has "
+                f"two answers. If the overlap is legitimate, add the pair to "
+                f"`exempt` WITH the reason in this docstring."
+            )
+    assert sets["construction_only"] <= sets["restart_required"], sorted(
+        sets["construction_only"] - sets["restart_required"]
     )
+
+
+def test_iterations_is_restart_required_not_dual_clock() -> None:
+    """Pins the specific wrong answer round 1 shipped.
+
+    Dual-clock means "a live edit moves the trial-side consumer". The reloader
+    REFUSES `iterations`, so neither clock moves and the sets cannot disagree —
+    `restart_required` is the whole story.
+    """
+    assert "iterations" not in driver_dual_clock_config_keys()
+    assert "iterations" in restart_required_config_keys()
 
 
 # ---------------------------------------------------------------------------
@@ -208,12 +344,32 @@ def test_the_auth_keys_are_first_provisioning_only() -> None:
     harness = _HARNESS.read_text(encoding="utf-8")
     assert harness.count("if not user_existed") >= 1
     assert "if not user_existed and not password_file.exists():" in harness
-    for key in (
-        "distributed_worker_username",
-        "distributed_worker_password",
-        "distributed_worker_password_env",
-    ):
+    for key in ("distributed_worker_password", "distributed_worker_password_env"):
         assert key in driver_launch_fixed_config_keys()
+
+
+def test_the_username_is_not_inert_and_is_not_classified_as_inert() -> None:
+    """H1. Round 1 called `distributed_worker_username` first-provisioning-only
+    and wrote "changes nothing, forever" into the production yaml. False, and
+    expensively so: the username is in `_WORKER_LAUNCH_CONFIG_KEYS`, which
+    `_ensure_distributed_workers` hashes every iteration, so a live edit
+    RELAUNCHES THE WHOLE FLEET — with a username the server never provisioned,
+    because `_prepare_distributed_worker_auth` only ever provisions on the first
+    run against a server root. Live edit = fleet-wide 401.
+
+    Pinned from the worker-launch tuple itself, so this goes red if someone
+    removes the username from it and makes the round-1 story true again.
+    """
+    from chess_anti_engine.tune import distributed_runtime
+
+    assert "distributed_worker_username" in distributed_runtime._WORKER_LAUNCH_CONFIG_KEYS
+    assert "distributed_worker_username" in driver_dual_clock_config_keys()
+    assert "distributed_worker_username" not in driver_launch_fixed_config_keys()
+    # ...and the yaml must not carry the round-1 claim next to it.
+    yaml_text = (_ROOT.parent / "configs" / "pbt2_small.yaml").read_text(encoding="utf-8")
+    block = yaml_text[yaml_text.index("distributed_worker_username") - 1400:]
+    block = block[: block.index("distributed_worker_password:")]
+    assert "changes nothing, forever" not in block
 
 
 # ---------------------------------------------------------------------------
@@ -278,3 +434,95 @@ def test_the_lazy_helper_calls_the_declined_off_warning() -> None:
     assert body.count("_warn_declined_off(") == 2, body.count("_warn_declined_off(")
     for key in ("distributed_prefetch_shards", "distributed_async_test_eval"):
         assert f'"{key}", tc.{key}' in body, f"{key} not passed to the warning"
+
+
+def test_the_declined_off_warning_fires_through_the_real_helper() -> None:
+    """L2. Drives `_lazy_construct_iter_helpers` end to end.
+
+    ⚑ THE WIRING TEST ABOVE COUNTS SOURCE STRINGS, so it cannot see reachability:
+    a call MOVED INSIDE the `if ... is None:` construction branch would keep the
+    count at 2, keep every other test green, and never fire in the declined case
+    — which is the only case that matters. This drives the real helper with a
+    real `TrialConfig` instead.
+    """
+    import logging
+
+    from chess_anti_engine.tune import trainable as trainable_mod
+    from chess_anti_engine.tune.trial_config import TrialConfig
+
+    off = TrialConfig.from_dict(
+        {"distributed_prefetch_shards": False, "distributed_async_test_eval": False}
+    )
+    running_prefetcher, running_eval = object(), object()
+
+    trainable_mod._DECLINED_OFF_WARNED.clear()
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # pyright: ignore[reportAttributeAccessIssue]
+    log = logging.getLogger("chess_anti_engine.iter")
+    log.addHandler(handler)
+    try:
+        out: tuple[object, object] = (running_prefetcher, running_eval)
+        for iteration in range(3):
+            out = trainable_mod._lazy_construct_iter_helpers(
+                shard_prefetcher=out[0],
+                async_test_eval=out[1],
+                tc=off,
+                distributed_dirs={},
+                iteration_idx=iteration,
+            )
+        # The edit really is ignored: the same objects come back out.
+        assert out == (running_prefetcher, running_eval)
+        warned = [r for r in records if r.levelno >= logging.WARNING]
+        assert len(warned) == 2, [r.getMessage() for r in warned]
+
+        # Negative control on the same path: nothing constructed yet -> silent.
+        records.clear()
+        trainable_mod._DECLINED_OFF_WARNED.clear()
+        for iteration in range(3):
+            still_none = trainable_mod._lazy_construct_iter_helpers(
+                shard_prefetcher=None, async_test_eval=None, tc=off,
+                distributed_dirs={}, iteration_idx=iteration,
+            )
+            assert still_none == (None, None)
+        assert not [r for r in records if r.levelno >= logging.WARNING]
+    finally:
+        log.removeHandler(handler)
+
+
+def test_a_driver_key_reports_launch_fixed_not_wait_for_the_reload() -> None:
+    """H5. The sets must change what an OPERATOR sees, not just what a test does.
+
+    Before wiring, `classify_config_provenance` reported an edited
+    `distributed_server_port` as `RELOAD-NOT-APPLIED-UNRESOLVED ... re-run after
+    the next iteration` — "wait, it will land". It never lands. That report being
+    wrong is the entire justification the new sets give for existing.
+    """
+    import importlib.util
+    import sys
+
+    root = _ROOT.parent
+    spec = importlib.util.spec_from_file_location(
+        "_arc_probe", root / "scripts" / "audit_realized_config.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_arc_probe"] = module
+    spec.loader.exec_module(module)
+
+    report, findings = module.classify_config_provenance(
+        {},
+        {"distributed_server_port": 45999, "cpus_per_trial": 4},
+        {"distributed_server_port": 45453, "cpus_per_trial": 1},
+        restart_keys=restart_required_config_keys(),
+        construction_only_keys=construction_only_config_keys(),
+        driver_launch_fixed_keys=driver_launch_fixed_config_keys(),
+        driver_dual_clock_keys=driver_dual_clock_config_keys(),
+    )
+    text = "\n".join(report)
+    assert "DRIVER-LAUNCH-FIXED distributed_server_port" in text, text
+    assert "DRIVER-LAUNCH-FIXED cpus_per_trial" in text, text
+    assert "PENDING-RESTART" not in text, "restart is the wrong instruction here"
+    assert len(findings) == 2
+    assert all("re-run run.py" in f for f in findings), findings
