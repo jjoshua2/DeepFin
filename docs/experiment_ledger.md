@@ -23957,3 +23957,228 @@ running — production sets the flag true, so nothing moves today), and
 `_startup_gate_state` now distinguishes a PRESENT-BUT-UNREADABLE own
 `gate_state.json` from an absent one, so a truncated file (how a crash
 mid-write presents) cannot route a trial into another lineage's window.
+#### PR E (wave-4 remediation) — UCI match-play safety: U2 + U1 + U3 + U5/U6 + U7
+
+**NOT training-affecting.** Every line lands under `chess_anti_engine/uci/`
+(`engine.py`, `search.py`, `protocol.py`, `time_manager.py`). Selfplay, the
+replay pipeline, loss weights and every training target are untouched — the
+shared C entry point `run_gumbel_root_many_c` is NOT modified, only how the UCI
+`SearchWorker` reads its return value. No pre-registration and no yardstick is
+required by the experiment protocol; these are correctness fixes with unit
+tests, not experiments. Routed by `fae465951` ("(E) UCI safety (U2+U1+U5/U6+U7)");
+U3 is included because it is one condition in the same file family.
+
+**U2 (headline), and the reason this batch was ranked first:** any in-search
+exception was answered with `next(iter(board.legal_moves))` — python-chess
+square order, effectively a random move — while `_ensure_root_eval_cached` had
+already computed and retained the root policy logits that name a decent one.
+The fallback now reads that cached prior (`SearchWorker.root_policy_bestmove`),
+re-validates the answer against the real board, and emits
+`info string bestmove_fallback_used=N source=root_policy|first_legal move=<uci>
+exception=<class>`. `Engine.bestmove_fallback_used` is a session counter; zero
+is the only healthy value.
+
+**U2's pre-committed yardstick was an EXISTENCE CHECK over banked match logs,
+and it returns a NULL result with a caveat that matters more than the null:**
+
+* `grep -rlI "info string search error" runs/matches/` → **0 files.**
+* But the corpus *cannot record that line*. Positive control: of 74 banked match
+  logs, **6** contain the string `info string` at all, and in all 6 it is inside
+  a truncated asyncio exception repr (`b"info string...ns\nreadyok\n"`) from the
+  handshake — not search output. `scripts/match_vs_uci.py` writes only its own
+  `[match] ...` summary lines and configures no logging; engine stdout is
+  consumed by python-chess's UCI protocol and never persisted. **"No evidence
+  found" here is not evidence of absence — the instrument does not exist.**
+* Behavioural proxy, which the corpus *can* record: the fallback emits
+  `info ... nodes 0`, which `match_vs_uci.py` records as **`nodes == 0`**.
+  Enumerating per-move files by their HEADER rather than by filename —
+  **35 files** (31 `*_moves.csv` + 4 `*/moves.jsonl`, which are CSV-formatted
+  despite the extension), **45,681 rows**, **25,492 DeepFin rows** —
+  **0 DeepFin rows have `nodes == 0`.** Separately, 538 DeepFin rows carry no
+  `nodes` value at all; they are exactly two files from one 2026-06-01 run
+  (497 + 41), **all with elapsed 0.466–1.007 s** (min 0.4655 s), **0 under
+  50 ms**, so they are missing info-line captures, not ~1 ms fallback moves.
+  **No behavioural trace of the first-legal fallback in any banked match.** The
+  audit's instruction ("ship the fix anyway, it is 5 lines, and stop
+  investigating") stands, and the counter is what makes the NEXT occurrence
+  findable.
+* **AMENDED 2026-08-03 after independent review of PR #329 (comment
+  5173120786), and the correction is worth more than the number.** This entry
+  first stated the proxy as *"rows carrying no `nodes` value"* over *29 files /
+  20,547 rows*. **The predicate was wrong**: the fallback writes `nodes 0`, and
+  `match_vs_uci.py` records that as the string `"0"`, not as an empty field — so
+  the predicate I ran could not have detected a fallback move even if one
+  existed. It found the 538 missing-nodes rows, which are a *different*
+  phenomenon, and I reported their absence-of-fast-rows as if it were the test.
+  The reviewer ran the right predicate (0 rows) and also could not reproduce my
+  counts (finding 27 files / 13,628 rows). **Both counts were wrong, mine and
+  the reviewer's**, because both globbed filenames: mine missed 2 CSVs, the
+  reviewer's missed the 4 `moves.jsonl` files that are per-move CSVs under a
+  `.jsonl` name. Enumerating by header settles it at 35 / 25,492. The null
+  survives and is stronger, but it survives on a predicate I had not actually
+  run — a verdict read off an instrument that could not fail. Left in place
+  rather than silently corrected.
+* Consequence for the Cheese loss profile: this mechanism is **not exonerated
+  and not implicated** — it was never observable. The 80%-of-losses-is-one-
+  collapse finding keeps its other candidate causes.
+
+**U1** (`root_ids[0] == -1` stored verbatim → `ValueError: node_id out of range`
+→ the U2 handler) is CONFIRMED end-to-end on the real engine binary, and it is
+the one exception source we can demonstrate. Same script, same tiny CPU
+checkpoint, `--walkers 1`, `position fen 8/8/8/4k3/8/4K3/4R3/8 w - - 100 60`
+(halfmove 100, **12 legal moves**, an ordinary playable position — only a
+*claim* would end it):
+
+```
+origin/main : info string search error: ValueError('node_id out of range')
+              bestmove e3f3      <- exactly next(iter(board.legal_moves))
+this branch : bestmove e2g2      <- no error line
+```
+
+**U5** on the same binary, `position fen 6k1/5ppp/8/8/8/8/5PPP/R5K1 w - -`
+(4-field FEN, mate in one is `a1a8`):
+
+```
+origin/main : bestmove b2b4      <- ILLEGAL in that position, legal at startpos
+this branch : bestmove a1a8      <- the mate
+```
+
+`b2b4` is the proof, not the weights: it cannot be played on the intended board
+at all, so main was demonstrably searching the start position.
+
+**U6/U7** on the same binary:
+
+```
+info string position: ignored 2 of 4 move(s) from 'e1e8' onward (illegal in ...)
+info string Hash 256 is below the advertised minimum 1024; using 1024
+```
+
+both absent on `origin/main`, which accepted `Hash 256` verbatim — and below
+~17 MB `advance_root` refuses cross-move reuse from move one.
+
+**U3**: `movestogo 1` was allocated ≤50% of the clock because
+`_MAX_FRACTION_OF_REMAINING` was applied *after* the movestogo division. The
+ceiling bounds a LONG-horizon estimate; the last move before a fresh allotment
+is definitionally not that. 60 s clock, `movestogo 1`: 29,970 ms → 57,000 ms.
+`movestogo 0` (a GUI saying "no repeating control") is explicitly excluded — the
+allocation ignores it in favour of the pieces estimate, which is exactly the
+case the ceiling is for.
+
+**Evidence discipline.** 41 tests in `tests/test_uci_match_safety.py`; **27 are
+red on `origin/main`** (the other 14 are deliberate controls: walkers=2 already
+answered the declined roots, 6-field FENs and `startpos` already parsed, a
+complete move list already said nothing, `Hash 4096` was already taken
+verbatim). An 11-row mutation table breaks each fix one plausible way —
+including reverting U2's fallback to first-legal on a position where the two
+answers differ — and **11/11 are caught**. Mutation M7 (`movestogo 0` read as
+the last move) initially **ESCAPED**: the three "ceiling still applies" controls
+asserted `deadline <= 50%` while the unscaled allocation was far below either
+ceiling, so they were true whichever ceiling applied — a control that could not
+fail. Fixed by scaling the budget past both ceilings and asserting equality.
+Negative control for the counter: three clean searches leave
+`bestmove_fallback_used == 0` and print no such line.
+
+**Two existing tests were changed**, and a reviewer should look at them first:
+`test_clock_ceiling_caps_half_remaining` and
+`test_time_budget_scale_still_capped_at_half_remaining` both asserted the 50%
+ceiling **at `movestogo=1`** — i.e. they pinned the U3 defect. They were
+re-pointed at a long-horizon case, which is what their own comments described.
+
+**Explicitly out of scope**, per the wave-4 routing: **U4** (the
+time-management sweep — an experiment, not a fix; its baseline-arm rule
+"never use `optimum_fraction=0`, use `abort_factor=1.0,time_budget_scale=1.0`"
+is already recorded in `fae465951`), **W3/#135** (root-parallel vloss —
+unreachable at 1 GPU), **I5/#136** (eval cache — moot at
+`eval_cache_entries: 0`). U8–U13 are not in this batch.
+
+**Residual risk.**
+1. The `bestmove_fallback_used` line has never been observed in a real
+   subprocess session, because on this branch its only CPU-inducible trigger
+   (U1) no longer fires and CUDA/OOM faults cannot be induced CPU-only. It is
+   exercised by driving the real `Engine._run_one_phase` against a real
+   `SearchWorker` whose evaluator raises after the root eval — the production
+   path minus the subprocess boundary. Stated as a gap, not covered.
+2. **DECLINED ROOTS ARE PLAYED UNSEARCHED, and that is a live match-play
+   condition, not an edge case.** `CBoard.is_game_over()` declines **threefold
+   repetition reached through the move stack**, and the engine holds the game
+   history (`position ... moves`) — so from the ply we shuffle into a
+   repetition, *every* move is the raw policy prior with **zero simulations**
+   until a pawn move / capture / the repetition clears. Same for
+   `halfmove_clock >= 100` and insufficient material. This is not introduced
+   here (on `main` those roots raised and were answered with a RANDOM legal
+   move, which is strictly worse), and it is not fixed here — the fix would be
+   in the C predicate, which is a **training-affecting** change to
+   `gumbel_c.py` and belongs in its own pre-registered entry. What this PR adds
+   is that it is no longer **silent**: `info string prior_only_root=N
+   reason=... nodes=0 (... NOT searched)`, a separate `Engine.prior_only_roots`
+   counter, and an honest `nodes=0` instead of the fabricated chunk count
+   (`_run_one_chunk` returns `chunk` as completed for the gumbel path whether or
+   not a sim ran, so a 0-sim answer used to print `nodes 2048 nps 1024000`).
+   **This is the shuffle-in-a-won-position regime the value-head work ties to
+   the Cheese collapse profile, so the counter should be read on the next
+   Cheese gauntlet.**
+
+**Review round (2026-08-03, comment 5173120786 — REQUEST CHANGES, then
+addressed).** The independent reviewer reproduced every claim above on a
+fixed-seed checkpoint shared by both arms (stronger than my per-invocation
+random init), swept `limits_from_go` over 336 cells and confirmed that the cells
+that change are **all `movestogo=1`**, fuzzed 3,021 `position` commands and
+found **0 cases where `main` resolved a real board and this branch changed it**,
+and confirmed on a real 1858-wide head that `_policy_logits_to_full` +
+`move_to_index` is the correct pair. Three additive items came back:
+
+* **B1 — the declined-root path was silent AND reported work it did not do.**
+  `main` at least printed the search-error line; this branch printed nothing,
+  touched no counter, and emitted `info depth 1 nodes 2048 nps 1024000 ... pv
+  e2c2` for **zero** simulations. Fixed: `SearchResult.root_declined` carries
+  the reason, `nodes` is 0, and `Engine` prints `info string prior_only_root=N
+  ...`. **Decision: a SECOND counter, not `bestmove_fallback_used`** — a raise
+  is a fault whose only healthy value is 0, while a declined root fires during
+  ordinary repetition play; merging them would make the fault counter tick in
+  normal games and destroy the one thing it is for. Both emit an `info string`
+  and both return `nodes=0`, so one proxy sees either.
+* **B2 — the tests could not see the production policy encoding.** The stub
+  emitted dense 4672; production's head is `lc0_1858`, the only width for which
+  `_policy_logits_to_full` is not a no-op. The reviewer's 12th mutation (index
+  the raw head output — **the U2 defect restored on the real net**) left all 41
+  tests GREEN. The three U2-critical tests now run at BOTH widths; under that
+  mutant **only the `[1858]` arms fail**, which is the whole point. Now M12 of
+  15, and killed. *This is the negative-control lesson again: a suite that only
+  feeds the non-production encoding cannot fail on the production one.*
+* **N1 — DECISION: GATE the 0.95 `movestogo=1` ceiling on
+  `optimum_fraction > 0`.** The batch-time clock margin, the guard that actually
+  keeps an un-interruptible chunk off the flag, is inert exactly when
+  `optimum_ms is None`; ungated, the OFF-sentinel arm spent 920 of a 1000 ms
+  clock with neither the soft abort nor the overrun guard behind it. That branch
+  also promises to reproduce the pre-time-management allocation EXACTLY, so
+  moving it would have made the A/B **baseline arm no longer the old engine** —
+  U4 all over again, introduced by the fix for U3. Baseline arm is now
+  bit-identical to `main` (470 ms on the reviewer's 1 s cell), asserted.
+
+**CORRECTED 2026-08-03 (docs-only, caught by the delta pass).** The sentence
+above originally read *"56 cells change and every one is `movestogo=1`"*. **56
+describes the PRE-N1 head (`089d044c2`), not what ships.** N1 gated the raised
+ceiling on `optimum_fraction > 0`, which removed the off-sentinel half of that
+set. Re-swept the same 336-cell grid across three arms (`origin/main`, the
+pre-N1 head, and the shipped head) rather than adjusting the number by
+argument:
+
+```
+pre-N1 head 089d044c2 : 56 of 336 cells differ from origin/main
+                          movestogo=1, optimum_fraction=0.7 : 28
+                          movestogo=1, optimum_fraction=0.0 : 28
+SHIPPED head c3edb1555: 28 of 336 cells differ from origin/main
+                          movestogo=1, optimum_fraction=0.7 : 28
+```
+
+**Shipped is 28, all of them `movestogo=1` at `optimum_fraction=0.7`; all 168
+off-sentinel cells are bit-identical to `main`.** Quoting a reviewer's
+measurement of an earlier head as if it described the merge candidate is the
+same class of error as this entry's own N2 amendment — a number carried forward
+across a change that invalidated it. Corrected in place with the disclosure.
+
+Mutation table is now **15/15 caught** (M12–M15 added), plus the reviewer's
+M16 pinning the two-counter split. Method note for the next batch: the mutation
+harness reverted each mutation with `git checkout --`, which silently
+**discarded a full round of uncommitted edits** in the same files. It now
+restores from an in-memory copy.

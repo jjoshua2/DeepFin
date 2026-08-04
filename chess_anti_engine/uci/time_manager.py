@@ -16,6 +16,10 @@ _MIN_DEADLINE_MS = 20
 # We never spend more than this fraction of remaining time on a single move,
 # regardless of increment or movestogo claims.
 _MAX_FRACTION_OF_REMAINING = 0.5
+# Ceiling for the LAST move of a `movestogo` allotment, where a fresh allotment
+# arrives immediately afterwards so there is nothing left to save for. Still
+# below 1.0 so a GUI clock skew / pipe latency cannot flag us on the handover.
+_LAST_MOVE_FRACTION_OF_REMAINING = 0.95
 # Lc0-style allocation: divide the (reserved) base over an AGGRESSIVE estimate of
 # the moves left, planning to deplete it by the hard middlegame, and rely on the
 # visit-margin abort to bank most of that budget back on the many easy/booked
@@ -155,7 +159,34 @@ def limits_from_go(
                 budget = time_budget_scale * (
                     usable / moves_left + _INCREMENT_SPEND_FRACTION * inc_v
                 )
-            ceiling = remaining * _MAX_FRACTION_OF_REMAINING
+  # The ceiling exists to stop a LONG-HORIZON estimate from dumping the clock
+  # into one move. `movestogo <= 1` is definitionally not that case: a fresh
+  # allotment arrives right after this move, so halving the budget here threw
+  # away half the thinking time on the most time-pressured move of a repeating
+  # control. Raise the ceiling for the last move of an allotment; the reserve
+  # and the move-overhead subtraction below still keep it off the flag.
+  # `> 0` matters: `movestogo 0` is a GUI saying "no repeating control", and the
+  # allocation above already ignores it in favour of the long-horizon pieces
+  # estimate — exactly the case the ceiling is FOR.
+  #
+  # Gated on `optimum_fraction > 0` for two reasons. (1) Safety: what actually
+  # keeps an un-interruptible GPU chunk off the flag is the batch-time clock
+  # margin, and that is inert exactly when `optimum_ms is None`
+  # (`search.py::_clock_time_margin_ms`) — so in the OFF-sentinel arm a 95%
+  # ceiling spends 920 of a 1000 ms clock with neither the soft abort nor the
+  # overrun guard behind it. (2) Contract: that branch promises to "reproduce
+  # the pre-time-management allocation EXACTLY" so a baseline binary is a true
+  # A/B; moving it at `movestogo=1` would silently make the baseline arm not the
+  # old engine, which is the U4 defect over again.
+            last_of_allotment = (
+                optimum_fraction > 0.0
+                and args.movestogo is not None
+                and 0 < args.movestogo <= 1
+            )
+            ceiling = remaining * (
+                _LAST_MOVE_FRACTION_OF_REMAINING if last_of_allotment
+                else _MAX_FRACTION_OF_REMAINING
+            )
             deadline_ms = max(_MIN_DEADLINE_MS, int(min(budget, ceiling)))
 
   # Reserve time for UCI command + GUI overhead (bestmove emission, pipe
