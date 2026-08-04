@@ -12,6 +12,7 @@ import math
 import shutil
 import time
 import traceback
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -262,6 +263,8 @@ def _save_trial_checkpoint(
     holdout_frozen: bool,
     holdout_generation: int,
     holdout_ruler: str,
+    opp_strength_ema: float,
+    yaml_keys: Iterable[str],
     Checkpoint,
 ):
     """Flush replay buffer and save a lightweight checkpoint.
@@ -276,6 +279,23 @@ def _save_trial_checkpoint(
     promotion across two rulers happened at iter 165. Storing it here — beside
     the generation and the rows, in the file both restore paths already read —
     is what lets the next restart notice.
+
+    `opp_strength_ema` rides here for the same reason and none other: it is the
+    scheduler's own objective metric (`GPBTPairwiseScheduler._metric`), it is
+    what salvage and the sibling-share ranking sort on, and until this it died
+    at every process start (audit T1). `best.json` also carries it, but that
+    file is only rewritten when a best-model candidate is ACCEPTED, so it can be
+    hundreds of iterations stale; trial_meta.json is rewritten with every
+    checkpoint. The value stored is the EMA in effect when the checkpoint was
+    written — this iteration's PID update runs after the save — so a resume
+    continues the series one update behind instead of restarting it.
+
+    `yaml_keys` is the flat key set of the yaml this process last loaded
+    successfully. It is banked for one purpose: the next process compares the
+    yaml it finds against it, so a key DELETED while the trial was down is
+    reported instead of silently keeping its restored value (review B2). Key
+    NAMES only, never values — the values are the yaml's job, and copying them
+    here would create a second source of truth for the live config.
     """
     buf.flush()
     trainer.save(ckpt_dir / "trainer.pt")
@@ -300,6 +320,8 @@ def _save_trial_checkpoint(
                 "holdout_frozen": bool(holdout_frozen),
                 "holdout_generation": int(holdout_generation),
                 "holdout_ruler": str(holdout_ruler),
+                "opp_strength_ema": float(opp_strength_ema),
+                "yaml_keys": sorted(yaml_keys),
             }, sort_keys=True, indent=2),
         )
     except (OSError, TypeError, ValueError) as exc:

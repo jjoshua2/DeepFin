@@ -23783,6 +23783,180 @@ proof-of-effect on the first live iteration: `aurora_polar_sv_samples` == 2.0,
 production restart that has not changed the step count. If those three read
 otherwise, the instrument is not installed and the A8 A/B must not be launched.
 
+#### PR F (2026-08-03) — tune lifecycle: T1 opp_strength_ema restore, T4 reload-delete observable, T2 derived startup-only class, T10 salvage gate state
+
+Wave-4 remediation batch F, routed by the AUDIT WAVE 4 entry (fae465951) from
+`scratchpad/code_audit_20260803/TUNE_AUDIT.md`. **Not training-affecting: no
+yardstick, no readout window, no pre-registration.** Nothing here changes a
+loss, a target, a sampling distribution or a search shape. Most of it is
+observability or restart-state carriage, and there are THREE behaviour changes,
+each described in its own section below and none of them touching the training
+target: T2 DECLINES to overlay FIVE keys whose consumers never re-read them
+(`iterations`, `puzzle_epd`, `eval_sf_nodes`, `sf_pid_enabled`, `pause_file`);
+N3 makes a present-but-unreadable `gate_state.json` yield an empty window
+instead of falling through to a salvage pool's; N4 makes the salvage
+opponent-strength EMA follow `salvage_restore_pid_state`, which production sets
+true, so nothing moves today. Each fix is listed with the deploy-time observable
+that proves it took effect, because a lifecycle fix that quietly did not land is
+the exact defect being fixed.
+
+⚑ This opening paragraph said "six keys" and "the one behaviour change" until
+the delta review caught it: both numbers were the pre-review shape of the PR
+(`eval_games` was the sixth key and is now correctly unfrozen — see the T2
+section — and N3/N4 arrived with the review response). Amended in place rather
+than appended, because the paragraph is a summary of the sections beneath it and
+a summary that disagrees with them is worse than no summary; nothing measured
+changed, and no other entry was touched.
+
+**T1 — `opp_strength_ema` survives a restart.** It was written to `best.json`,
+read at startup, and overwritten one line later by `RestoreResult.opp_strength_ema`,
+a field only a PB2 exploit clone ever assigned — unreachable at `num_samples: 1`.
+So `_run_pid_and_eval`'s `== 0.0` branch re-seeded the EMA from the first
+post-restart iteration's raw `opponent_strength` on 6 of 6 live process
+segments, on the row the winrate-truncation rule already flags as +0.110 biased.
+It is `GPBTPairwiseScheduler._metric`, the `--salvage-metric` family, and the
+sibling-share ranking metric. Now: written into the checkpoint's
+`trial_meta.json` (rewritten every iteration; `best.json` only on an accept, so
+it can be hundreds of iterations stale), read on both restore paths, best.json
+as fallback, and a fresh start still re-seeds.
+**Observable at the next restart:** `[trial] opponent-strength EMA at startup:
+<value> source=restore/checkpoint`, and then the first row of the new process
+segment must have `opponent_strength_ema != opponent_strength`. The negative
+control is already banked: 6/6 segments currently fail that check.
+⚑ The stored value is the EMA as of the checkpoint write, and this iteration's
+PID update runs AFTER the save, so a resume continues one update behind. That
+is a lag, not a reset.
+
+**T4 — a key DELETED from the live yaml now says so.** The reload iterates the
+fresh yaml and only ever writes `config[k] = v`; there is no removal pass, and
+`flatten_run_config_defaults` drops `key: null` before the reloader sees it, so
+both spellings of "turn this off" are no-ops that match none of the three loud
+branches (all of which key off a key the yaml still names). Semantics are
+UNCHANGED — reverting would need a revert target the yaml cannot supply, and its
+own entry. The reloader now remembers the last successfully parsed key set per
+yaml path and logs one WARNING per key that disappeared while the trial is still
+running its value, naming the value and saying "delete does not revert; write
+the old value explicitly". A rejected reload does not move the baseline, so the
+deletion made while fixing a broken yaml is still reported.
+**Observable:** `YAML reload: <key> is no longer set by <path> (it was, as of
+<when>) but the trial is STILL RUNNING <value>`. Silent on a clean reload, on a
+value change and on an add — asserted as a negative control, because a warning
+that fires in normal operation is one an operator learns to scroll past.
+
+⚑ **THE FIRST VERSION COULD NOT SEE THE RESTART, WHICH IS THE PATH DELETIONS
+ACTUALLY TAKE** (found by the independent reviewer, with a repro). The baseline
+lived only in the process, and this process's own startup reload seeds it from
+the yaml as it is NOW — while `--resume` restores the saved trial config, which
+still carries the deleted key's value because neither the experiment-state
+overlay nor the reloader ever removes one. So *pause → edit → restart* kept the
+value AND said nothing: exactly the scenario the warning exists for, and with
+training paused, the next thing an operator does. Closed rather than disclosed:
+`_save_trial_checkpoint` banks the flat yaml KEY SET (names only, no values) in
+the same `trial_meta.json` T1 uses, the restore carries it, and
+`seed_yaml_reload_baseline` compares it against the yaml this process found,
+emitting the same sentence with "as of the checkpoint this process resumed
+from". Remaining blind spots, stated rather than implied: a deletion made while
+down when the resumed checkpoint predates the banking (every checkpoint written
+before this lands), a deletion of a key the trial never carried, and a salvage
+restart — a pool comes from another experiment, so its key set says nothing
+about an operator's recent edit and is deliberately not adopted. And the
+warning fires ONCE per deletion, not once per iteration: the durable form is a
+report column, which rotates progress.csv and belongs with the next schema
+change.
+
+**T2 — the construction-only classification is now DERIVED.** FIVE startup-only
+trial keys join the frozen class (`iterations`, `puzzle_epd`, `eval_sf_nodes`,
+`sf_pid_enabled`, `pause_file`); before this, a live edit to any of them landed
+in `config`, echoed back correct in the result row, and reached nobody — and
+`scripts/audit_realized_config.py` reported them under "the running value is
+correct". `sf_pid_enabled` is the one that matters: a boolean an operator would
+flip during a diagnosis, failing silently in the safe-looking direction because
+`_init_pid` returned None at launch and nothing rebuilds it.
+`tests/test_startup_only_config_keys.py`
+derives the class from the AST (reachability from `train_trial`'s startup region
+minus everything the `while` loop reaches, `TrialConfig.from_dict` excluded as
+parsing rather than consuming) and pins the unclassified residue exactly, so a
+startup-only key added tomorrow fails a test instead of joining the broken class
+in silence.
+**Observable:** `YAML reload: sf_pid_enabled changed (False -> True) but
+requires restart — skipping`, and the provenance audit prints
+`PENDING-RESTART sf_pid_enabled` instead of a clean bill.
+
+⚑⚑ **AN INSTRUMENT YOU OVERRIDE BY HAND IS AN INSTRUMENT YOU DO NOT HAVE.**
+This entry as first written froze **six** keys, and the sixth — `eval_games` —
+was not startup-only. `_run_eval_games` reads it as a MAGNITUDE
+(`games=tc.eval_games`, `trainable_phases.py`) off a `tc` the loop rebuilds
+every iteration, so for a trial launched with `eval_games > 0` the live COUNT
+edit worked on main and the freeze removed it — the same objection that
+(correctly) keeps `log_level` out of the set. The reasoning in the frozen set's
+comment ("can only ever DISABLE") described the ENABLE direction and was
+asserted of the key. What makes this worth a ledger paragraph rather than a
+quiet fix is the failure mode: **both instruments in this PR flagged it and both
+were overridden by hand.** The AST derivation refused to derive `eval_games` —
+so a `_CLASSIFIED_BUT_NOT_DERIVED = {"eval_games"}` exemption was written to
+make the test pass — and `test_construction_only_keys_have_no_live_consumer`
+would have named `trainable_phases.py`, so the whole startup-only class was
+exempted from its scan. Each override was individually plausible and jointly
+they turned two guards into decoration. The correction: the key is out, the
+exemption is deleted, the no-live-consumer scan now covers the startup-only
+keys (matching config READS, not bare word mentions, against a per-key list of
+declared readers), and
+`test_the_startup_only_scan_names_the_key_that_slipped_through` fails if that
+scan ever stops naming `trainable_phases.py` for `eval_games`. Caught by an
+independent reviewer, not by me. Still true and NOT fixed: with
+`eval_games: 0` at launch (production), enabling eval live remains a silent
+no-op, because nothing rebuilds `eval_sf` — a wiring gap in
+`_init_eval_stockfish`, which freezing the key papered over while breaking the
+direction that worked.
+**Scoped out, decided not deferred:** the ~31 `sf_pid_*` lever gains are
+genuinely construction-only inside `pid_from_config` (`refresh_live_params`
+re-reads only ~10 of the family) and the derivation flags every one, but
+freezing 31 knobs of the LIVE difficulty controller is a change to a running
+experiment's control surface and needs its own entry. `log_level` is deliberately
+NOT frozen: it is in `_WORKER_LAUNCH_CONFIG_KEYS`, so a live edit does reach the
+next worker relaunch. `tune_scheduler` / `pb2_perturbation_interval` /
+`tune_keep_last_experiments` are DRIVER-side and, per T6, a `--resume` restart
+does not apply the first two either — calling them "restart required" would be
+false in a new way.
+
+**T10 — a salvage pool carries the gate window.** `salvage-export` copied the
+checkpoint dir's five files and nothing from `durable_dir`, so a salvage restart
+began with an EMPTY promotion-gate window while an ordinary `--resume` kept its
+own, and nothing said the two modes differed. Pools now carry `gate_state.json`,
+which the trial consumes ONLY when it has no state of its own (a resume must
+never be handed a window earned by other weights). Safe without the anchor,
+which pools deliberately do not carry: `GateHoldController.create` releases a
+restored hold whose `gate_promoted_model.pt` is absent. `best.json` is banked
+but NOT consumed — the `best/` weights it describes are not exported, so
+restoring it would leave the new trial defending a number whose model is gone.
+The manifest entry now records `durable_state_exported` AND
+`durable_state_not_exported`, so a pool is self-describing about what a restart
+from it will not have.
+**Observable on a salvage restart:** `[trial] promotion-gate state seeded from
+the salvage pool: matches=<n> holds=<n>`, plus `durable_state_exported` in the
+pool's `manifest.json` at export time.
+
+Every fix has at least one BEHAVIOURAL test that fails on `origin/main` — the
+claim the evidence supports; the headline count is shim-dependent (the reviewer
+reproduced 12/26 against my 13/25 with differently-written shims for the symbols
+main lacks, same per-item conclusion). Mutations, one per fix direction
+including the two dangerous inversions (warn about every key; let a pool's gate
+state outrank the trial's own), each killed by a NAMED test — with one
+correction from the review: main's exact EMA semantics
+(`float(restore.opp_strength_ema or 0.0)`) is killed only by
+`test_best_json_is_the_fallback_when_the_checkpoint_predates_the_field`; the two
+tests originally credited hand the helper a `RestoreResult` that already carries
+an EMA, which on main only an exploit clone produces, so they are controls, not
+discriminators. Repo-wide `./scripts/lint.sh` exit 0.
+
+Two smaller review items taken rather than argued: the salvage EMA now follows
+`salvage_restore_pid_state` (importing a difficulty-derived scalar while the
+operator explicitly dropped the donor's difficulty anchored the scheduler's own
+objective, for ~10 iterations at alpha 0.3, to a difficulty the process is not
+running — production sets the flag true, so nothing moves today), and
+`_startup_gate_state` now distinguishes a PRESENT-BUT-UNREADABLE own
+`gate_state.json` from an absent one, so a truncated file (how a crash
+mid-write presents) cannot route a trial into another lineage's window.
 #### PR E (wave-4 remediation) — UCI match-play safety: U2 + U1 + U3 + U5/U6 + U7
 
 **NOT training-affecting.** Every line lands under `chess_anti_engine/uci/`

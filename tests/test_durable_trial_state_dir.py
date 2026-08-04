@@ -270,7 +270,7 @@ def test_the_best_record_is_read_from_the_durable_dir_before_the_reset() -> None
 
     src = inspect.getsource(trainable.train_trial)
     durable_assign = src.index("durable_dir = _durable_trial_dir(")
-    best_path_assign = src.index('best_state_path = durable_dir / "best.json"')
+    best_path_assign = src.index("best_state_path = durable_dir / DURABLE_BEST_STATE")
     load = src.index("_load_best_state(best_state_path)")
     reset = src.index("_reset_best_on_cross_trial_restore(")
 
