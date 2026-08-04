@@ -1062,6 +1062,26 @@ class DiskReplayBuffer:
         regardless of pool size, so it fixes nothing distributional, and it
         would hand every read-only probe a multi-GB pool at construction.
         """
+  # The comment below is a claim about CONSTRUCTION ORDER, and it is load
+  # bearing: `_prefetch_rng` belongs to the prefetch thread, and
+  # `np.random.Generator` has no internal lock. `__init__` calls
+  # `_scan_existing_shards()` (the only caller of this method) strictly before
+  # `_ensure_prefetch_thread()`, so today there is genuinely no concurrent
+  # user. Nothing enforced that, and the refactor that breaks it is an
+  # innocuous-looking one -- "start the prefetch thread earlier so the pool is
+  # warm sooner" -- after which this draw and `_load_refresh_chunks` on the
+  # prefetch thread advance the same bit-generator state non-atomically. The
+  # result is torn or duplicated shard indices, i.e. a silently different
+  # training-data composition, presenting as an unreproducible sampling
+  # distribution rather than as a crash. Assert rather than document.
+        assert self._prefetch_thread is None, (
+            "_seed_shuffle_pool draws from _prefetch_rng on the MAIN thread, "
+            "which is only safe because __init__ runs _scan_existing_shards() "
+            "before _ensure_prefetch_thread(). That ordering has been broken: "
+            "two threads now share one np.random.Generator, which is not "
+            "thread-safe, and the corruption lands in which shards enter the "
+            "shuffle pool. Restore the ordering, or give this call its own rng."
+        )
         picked: list[int] = []
         rows_per_pick: list[int] = []
         loaded = self._load_refresh_chunks(
@@ -1069,7 +1089,8 @@ class DiskReplayBuffer:
             refresh_shards=self._refresh_shards * 2,
   # Not self.rng: the sampling stream stays exactly where it was, and this
   # prefill is the prefetch thread's work done early. The thread does not
-  # start until after this scan, so there is no concurrent user yet.
+  # start until after this scan, so there is no concurrent user yet (asserted
+  # above).
             rng=self._prefetch_rng,
             context="shuffle seed",
             chosen_out=picked,
