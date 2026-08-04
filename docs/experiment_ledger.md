@@ -24460,21 +24460,30 @@ the next reader does not re-litigate them: `MultiSlotInferenceClient._inflight`
 forwards). **Anyone re-opening this family should re-run the RELEASE-site grep,
 not the increment grep.**
 
-**12 mutations, 12 KILLED**, each by a named test — the original 7 plus M5/M6
+**14 mutations, 14 KILLED**, each by a named test — the original 7 plus M5/M6
 (instance 4: drop the increment; read it after the release), M7/M8 (instance 5:
-report dispatched rows again; fire on a wholly unanswered batch again) and M9
-(the clamp: count the raw claimed batch_size again). Two of the original
-patterns (M1, M2a) went stale when this round edited those exact lines and the
-harness reported **PATTERN NOT FOUND rather than letting them read as passes** —
-the #325 M14 lesson doing its job twice in one PR, since M4's ambiguous anchor
-did the same in the first round.
+report dispatched rows again; fire on a wholly unanswered batch again), M9 (the
+clamp: dispatch counts the raw claimed batch_size again) and M10/M11 (each of
+the two failure handlers, independently, reverts to the raw count — so neither
+site can regress behind the other's coverage).
+
+⚑ **The stale-anchor guard fired FOUR times across this PR and was right every
+time.** M4's anchor was ambiguous in round one; M1/M2a went stale in round two
+when the edits landed on those exact lines; M3a/M3b/M4 went stale in round three
+when the handlers became multi-line calls. Every one reported **PATTERN NOT
+FOUND rather than reading as a pass**. Round three also caught a bug in the
+*patch script that maintains the harness*: it asserted each anchor occurred once,
+but M3a and M4 deliberately share an anchor, so the count was 2 and the script
+aborted before writing — which meant the sweep ran the OLD harness and reported
+three NOT-FOUND lines instead of silently skipping them. A harness that fails
+loudly protects its own maintenance, not just the code under test.
 
 Red on the previous head `f39bb8336`: 6 of the 8 new tests fail there; the
 other two are positive controls that must pass (a served trial subtracts
 nothing; the marker still fires once the broker genuinely serves).
 
 Verified: `./scripts/lint.sh` (no args) exit 0 — read as a real exit code, not
-through `| tail`; **161 tests green** across `test_broker_served_count`,
+through `| tail`; **163 tests green** across `test_broker_served_count`,
 `test_inference_broker`, `test_inference_slot_protocol`,
 `test_broker_no_zero_fill`, `test_broker_malformed_legal_meta`,
 `test_broker_hang`, `test_shared_broker_request_mode`,
