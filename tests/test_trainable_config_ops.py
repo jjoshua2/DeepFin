@@ -17,7 +17,6 @@ from chess_anti_engine.tune.trial_config import TrialConfig
 
 class _FakeOpt:
     def __init__(self) -> None:
-        self.gamma = 0.0
         self.param_groups = [
             {"use_aurora": True},
             {"use_aurora": False},
@@ -156,7 +155,6 @@ def test_apply_lr_gamma_weights_syncs_all_trainer_loss_kwargs() -> None:
         trainer,
         {
             "lr": 0.123,
-            "cosmos_gamma": 0.456,
             "w_policy": 1.1,
             "w_soft": 1.2,
             "w_future": 1.3,
@@ -179,7 +177,6 @@ def test_apply_lr_gamma_weights_syncs_all_trainer_loss_kwargs() -> None:
     )
 
     assert trainer.peak_lr_calls == [(0.123, True)]
-    assert trainer.opt.gamma == 0.456
     assert trainer.w_policy == 1.1
     assert trainer.w_soft == 1.2
     assert trainer.w_future == 1.3
@@ -393,7 +390,7 @@ def test_optimizer_construction_keys_cover_structural() -> None:
     # changing those on resume is as safe as changing lr.
     structural = {
         "optimizer", "matrix_optimizer_scope", "weight_decay_mode",
-        "soda_scope", "soda_start_step", "cosmos_rank",
+        "soda_scope", "soda_start_step",
     }
     value_only = {
         "matrix_lr_multiplier", "matrix_weight_decay", "aux_weight_decay",
@@ -402,8 +399,8 @@ def test_optimizer_construction_keys_cover_structural() -> None:
     }
     assert structural <= _OPTIMIZER_CONSTRUCTION_KEYS
     assert not (value_only & _OPTIMIZER_CONSTRUCTION_KEYS)
-    # cosmos_rank in particular changes low-rank moment shapes -> must block.
-    assert "cosmos_rank" in _OPTIMIZER_CONSTRUCTION_KEYS
+    # soda_start_step in particular changes the per-group anchor schedule -> must block.
+    assert "soda_start_step" in _OPTIMIZER_CONSTRUCTION_KEYS
 
 
 def test_startup_yaml_reload_does_not_inject_optimizer_construction_keys(tmp_path) -> None:
@@ -417,7 +414,7 @@ def test_startup_yaml_reload_does_not_inject_optimizer_construction_keys(tmp_pat
 optimizer: aurora
 matrix_optimizer_scope: mlp_out
 weight_decay_mode: decoupled
-cosmos_rank: 128
+soda_start_step: 128
 num_samples: 4
 train:
   lr: 0.0007
@@ -431,9 +428,9 @@ train:
     assert config["lr"] == 0.0007
     # Safe infra key still propagates.
     assert config["num_samples"] == 4
-    # Optimizer-construction keys are NOT injected (incl. cosmos_rank, which
-    # changes low-rank moment shapes).
-    for key in ("optimizer", "matrix_optimizer_scope", "weight_decay_mode", "cosmos_rank"):
+    # Optimizer-construction keys are NOT injected (incl. soda_start_step, which
+    # changes the per-group weight-decay anchor schedule).
+    for key in ("optimizer", "matrix_optimizer_scope", "weight_decay_mode", "soda_start_step"):
         assert key not in config, f"{key} must not be auto-filled on resume"
 
 

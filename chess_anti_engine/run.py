@@ -341,7 +341,7 @@ def main() -> None:
         type=str,
         nargs="+",
         default=None,
-        help="Restrict optimizer search/mutation to this subset, e.g. --search-optimizer-choices adamw cosmos_fast.",
+        help="Restrict optimizer search/mutation to this subset, e.g. --search-optimizer-choices adamw muon.",
     )
     ap.add_argument("--asha-optimizer-only", action="store_true",
                     help="ASHA: isolate optimizer as the only search dimension and use a deterministic optimizer grid.")
@@ -616,10 +616,8 @@ def main() -> None:
                     help="Volatility target source: raw (network raw WDL) or search (search-adjusted WDL).")
     ap.add_argument("--feature-dropout-p", type=float, default=0.3)
     ap.add_argument("--work-dir", type=str, default="runs")
-    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw", "muon", "aurora", "cosmos", "cosmos_fast", "soap"],
-                    help="Optimizer: nadamw, adamw, muon, aurora, cosmos, cosmos_fast, or soap")
-    ap.add_argument("--cosmos-rank", type=int, default=64, help="COSMOS/COSMOSFast low-rank subspace rank")
-    ap.add_argument("--cosmos-gamma", type=float, default=0.2, help="COSMOS/COSMOSFast residual branch weight")
+    ap.add_argument("--optimizer", type=str, default="nadamw", choices=["nadamw", "adamw", "muon", "aurora", "soap"],
+                    help="Optimizer: nadamw, adamw, muon, aurora, or soap")
     ap.add_argument("--no-amp", action="store_true", help="Disable AMP (BF16 autocast on CUDA)")
     ap.add_argument("--accum-steps", type=int, default=1, help="Gradient accumulation micro-batches")
     ap.add_argument("--warmup-steps", type=int, default=1500, help="Linear LR warmup steps")

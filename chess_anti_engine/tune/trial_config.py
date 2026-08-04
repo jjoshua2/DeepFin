@@ -140,7 +140,6 @@ class TrialConfig:
   # --- Training ---
     lr: float = 0.0003
     optimizer: str = "nadamw"
-    cosmos_gamma: float = 0.0
     batch_size: int = 128
     accum_steps: int = 1
     train_steps: int = 25
@@ -522,7 +521,6 @@ class TrialConfig:
   # --- Training ---
             lr=float(config["lr"]) if "lr" in config else 0.0003,
             optimizer=str(config.get("optimizer", "nadamw")),
-            cosmos_gamma=float(config["cosmos_gamma"]) if "cosmos_gamma" in config else 0.0,
             batch_size=int(config.get("batch_size", 128)),
             accum_steps=int(config.get("accum_steps", 1)),
             train_steps=int(config.get("train_steps", 25)),

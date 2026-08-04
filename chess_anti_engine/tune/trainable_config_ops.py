@@ -380,7 +380,7 @@ _MODEL_BUILD_KEYS = frozenset(f.name for f in dataclasses.fields(ModelConfig))
 # locks this split so a newly-added STRUCTURE knob can't silently slip back in.
 _OPTIMIZER_CONSTRUCTION_KEYS = frozenset({
     "optimizer", "matrix_optimizer_scope", "weight_decay_mode",
-    "soda_scope", "soda_start_step", "cosmos_rank",
+    "soda_scope", "soda_start_step",
 })
 
 # Construction-bound keys: changing one on resume rebuilds the model OR the
@@ -1078,7 +1078,7 @@ def _reload_yaml_into_config(config: dict, yaml_path: str | None, *, live_reload
 
 
 def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_lr: bool) -> None:
-    """Push lr / cosmos_gamma / loss-weight keys from config into trainer.
+    """Push lr / loss-weight keys from config into trainer.
 
     ``rescale_current_lr=True`` is the iter-loop call (PB2 perturbations
     take effect immediately). ``False`` is the one-shot init call from
@@ -1100,8 +1100,6 @@ def _apply_lr_gamma_weights(trainer: Trainer, config: dict, *, rescale_current_l
             min_scale=config.get("lr_release_min_scale"),
             release_shape=config.get("lr_release_shape"),
         )
-    if "cosmos_gamma" in config and hasattr(trainer.opt, "gamma"):
-        trainer.opt.gamma = float(config["cosmos_gamma"])
     aurora_group_updates: dict[str, object] = {}
     if "aurora_pp_iterations" in config:
         aurora_group_updates["aurora_pp_iterations"] = int(config["aurora_pp_iterations"])

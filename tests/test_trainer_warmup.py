@@ -1010,21 +1010,6 @@ def test_muon_matrix_scope_can_target_mlp_without_embed(tmp_path: Path) -> None:
     assert id(named_params["embed.weight"]) in fallback_param_ids
 
 
-def test_cosmos_fast_matrix_scope_can_target_mlp_with_adam_fallback(tmp_path: Path) -> None:
-    trainer = _make_scoped_trainer(tmp_path, "cosmos_fast", "mlp_only")
-    cosmos_groups = [pg for pg in trainer.opt.param_groups if pg.get("use_cosmos_fast", False)]
-    fallback_groups = [pg for pg in trainer.opt.param_groups if not pg.get("use_cosmos_fast", False)]
-    named_params = dict(trainer.model.named_parameters())
-    cosmos_param_ids = {id(param) for pg in cosmos_groups for param in pg["params"]}
-    fallback_param_ids = {id(param) for pg in fallback_groups for param in pg["params"]}
-
-    assert id(named_params["blocks.0.ffn.weight"]) in cosmos_param_ids
-    assert id(named_params["blocks.0.out_proj.weight"]) in fallback_param_ids
-    assert id(named_params["head.weight"]) in fallback_param_ids
-    assert float(cosmos_groups[0]["weight_decay"]) == 3e-5
-    assert any(float(pg["weight_decay"]) == 7e-5 for pg in fallback_groups)
-
-
 def test_aurora_matrix_scope_can_target_mlp_out_v_without_qk(tmp_path: Path) -> None:
     trainer = _make_scoped_trainer(tmp_path, "aurora", "mlp_out_v")
     aurora_groups = [pg for pg in trainer.opt.param_groups if pg.get("use_aurora", False)]
@@ -1038,21 +1023,6 @@ def test_aurora_matrix_scope_can_target_mlp_out_v_without_qk(tmp_path: Path) -> 
     assert id(named_params["blocks.0.v_proj.weight"]) in aurora_param_ids
     assert id(named_params["blocks.0.q_proj.weight"]) in fallback_param_ids
     assert id(named_params["blocks.0.k_proj.weight"]) in fallback_param_ids
-
-
-def test_cosmos_matrix_scope_can_target_mlp_with_adam_fallback(tmp_path: Path) -> None:
-    trainer = _make_scoped_trainer(tmp_path, "cosmos", "mlp_only")
-    cosmos_groups = [pg for pg in trainer.opt.param_groups if pg.get("use_cosmos", True)]
-    fallback_groups = [pg for pg in trainer.opt.param_groups if not pg.get("use_cosmos", True)]
-    named_params = dict(trainer.model.named_parameters())
-    cosmos_param_ids = {id(param) for pg in cosmos_groups for param in pg["params"]}
-    fallback_param_ids = {id(param) for pg in fallback_groups for param in pg["params"]}
-
-    assert id(named_params["blocks.0.ffn.weight"]) in cosmos_param_ids
-    assert id(named_params["blocks.0.out_proj.weight"]) in fallback_param_ids
-    assert id(named_params["head.weight"]) in fallback_param_ids
-    assert float(cosmos_groups[0]["weight_decay"]) == 3e-5
-    assert any(float(pg["weight_decay"]) == 7e-5 for pg in fallback_groups)
 
 
 def test_soap_matrix_scope_can_target_mlp_with_adam_fallback(tmp_path: Path) -> None:

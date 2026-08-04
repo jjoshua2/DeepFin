@@ -24182,3 +24182,91 @@ M16 pinning the two-counter split. Method note for the next batch: the mutation
 harness reverted each mutation with `git checkout --`, which silently
 **discarded a full round of uncommitted edits** in the same files. It now
 restores from an in-memory copy.
+
+#### WAVE-4 SIMPLIFICATION BATCH (2026-08-03) — 3 of 7 shortlist items deleted, 4 refused; the audits' own dead-proofs are 3-for-7 point-in-time correct
+
+Branch `chore/wave4-simplification` off `origin/main e02121691`. **Not
+training-affecting: no config key changes meaning, no default value moves, no
+yaml line is touched, and every deletion is code that provably cannot execute
+at any shipping config.** Training is PAUSED; this batch is not a restart
+blocker and does not consume a readout window. One commit per audit item so the
+reviewer can bisect. UNREVIEWED by the author — reviewer is a separate agent per
+the reviewer-≠-author rule.
+
+**Total: 865 lines deleted, 59 inserted (net −806).**
+
+**DELETED (3 items):**
+
+- **MODEL_OPT_AUDIT S1 / M4-4 — `TransformerConfig.dropout` and the block-dropout
+  path. −5 LOC.** `ModelConfig` has no `dropout` field, so no yaml key reaches
+  it; the only production construction site never passes one. After the commit
+  `grep -rn 'dropout=' --include=*.py` (excluding `feature_dropout` /
+  `resid_channel_dropout`, different knobs) returns zero hits. `dropout_p` is
+  dropped from the SDPA call, whose default is 0.0 — the value it always
+  received.
+- **MODEL_OPT_AUDIT S3 — `replay/buffer.py::balance_wdl`. −50/+2.** The only
+  references in the entire repo were the definition and the two re-export lines
+  in `replay/__init__.py`. It operates on `list[ReplaySample]`, which the
+  disk-backed production path never builds; live WDL balancing is
+  `sample_batch_arrays`' own per-class draw.
+- **MODEL_OPT_AUDIT S4 (PARTIAL) — COSMOS + COSMOSFast retired. −810/+57.** No
+  config in the repo selects `cosmos`/`cosmos_fast`; `cosmos_rank`/`cosmos_gamma`
+  appear in no config, nor in the restart package. The 14 configs carrying
+  `search_optimizer_choices: [cosmos_fast]` (production included) are inert: that
+  value is read only by `_optimizer_candidates_from_config`, whose result is
+  consumed exclusively under `if base_config.get("search_optimizer", False)`, and
+  `search_optimizer` is false in every config except `bt4_aurora_asha.yaml`,
+  which searches `[aurora, adamw]`. Muon's `_zeropower_via_newton_schulz5` lived
+  in `cosmos_fast` and is MOVED VERBATIM into `muon.py`, its only consumer.
+
+**REFUSED (4 items) — with the observation that refused them:**
+
+- **`soda` (named in the same shortlist line as cosmos): NOT DEAD, and not an
+  optimizer.** It is a weight-decay MODE reachable on the live trainer path via
+  the allowlisted `weight_decay_mode: soda` (`trainer.py:1667`), driven by
+  `scripts/offline_replay_epoch.py --weight-decay-mode soda` and
+  `scripts/arch_sweep_soda_weight_decay.sh`. The audit's classification was
+  wrong. Kept in full.
+- **TUNE_AUDIT S3 (`gate_*` corpses, ~25 LOC): the dead-proof is FALSIFIED
+  today.** The audit states "`configs/pbt2_small.yaml` ships **none** of them";
+  the live yaml ships all four at lines 1076–1079, and
+  `scratchpad/restart_package_20260804/proposed_pbt2_small.yaml` PINS
+  `gate_games: 0` / `gate_threshold: 0.5` / `gate_mcts_sims: 1` with explicit
+  comments (only `gate_interval` is deleted there). Removing them from
+  `_TUNE_KEYS` makes `_check_unknown` raise on the whole file
+  (`config_yaml.py:412`) — the all-or-nothing validator — so this deletion would
+  refuse the live yaml AND the restart yaml at load. Also `gate_games != 0`
+  raising at startup is load-bearing per the restart file's own annotation.
+- **TUNE_AUDIT S1 (population/exploit half of `replay_exchange.py`, ~500 LOC):
+  restart-package dependency.** The restart yaml sets 13 `exploit_replay_*` keys,
+  including the FLIP that is brief blocker #4 —
+  `exploit_replay_refresh_enabled: false`, documented there as "THIS KEY IS THE
+  ONLY KILL SWITCH" for the −252-Elo cross-era window import. Deleting the
+  consumers of a key whose whole purpose at this restart is to be read and
+  obeyed is the opposite of behaviour-neutral.
+- **TUNE_AUDIT S2 (scheduler builders collapse, ~125 LOC): reachable via shipped
+  configs.** `configs/bt4_aurora_asha.yaml` sets `tune_scheduler: asha` and
+  `configs/default.yaml` sets `pb2`. The audit's dead-proof covers only the
+  production yaml. Deleting `_build_asha`/`_build_pb2` would turn both configs
+  into a startup crash. Separately, the restart yaml sets `search_smolgen`,
+  `search_nla` and `search_optimizer`, so the `search_*` branches and
+  `_optimizer_candidates_from_config` must keep their consumers regardless.
+- **UCI_AUDIT S1 (ponder path, ~150 LOC): refused by construction.** The audit
+  says it is "not inert — it is *reachable and broken*" (U10 history loss). This
+  batch deletes only what cannot run; fix-or-hard-refuse is a behaviour decision
+  that belongs in its own pre-registered change, not in a simplification batch.
+
+**Method note for the next simplification batch: verify the audit's dead-proof
+against today's tree, not against the audit's prose.** 3 of the 7 shortlist
+items had a proof that no longer held (S3's "ships none of them" was false; S1's
+keys became restart-load-bearing after the audit; S2's "only gpbt_pl" ignored two
+checked-in configs), and one item (`soda`) was misclassified at the audit's own
+time of writing. The shortlist's LOC estimates are therefore an upper bound on
+what is safely removable, not a target.
+
+**Landing order:** if `main` moves before merge, the only plausible conflicts are
+`chess_anti_engine/train/trainer.py` (optimizer dispatch) and
+`chess_anti_engine/tune/trainable_config_ops.py` (key sets). Rebase, keep the
+incoming change, and re-apply the deletion; then re-run
+`pytest tests/test_trainer_warmup.py tests/test_trainable_config_ops.py` plus
+no-arg `./scripts/lint.sh` before merging.
