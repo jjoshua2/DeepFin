@@ -11,6 +11,7 @@ import csv
 import dataclasses
 import inspect
 import json
+import logging
 import math
 import random
 import statistics as st
@@ -3465,8 +3466,17 @@ def test_worker_reads_difficulty_from_the_reco_it_actually_applied() -> None:
     assert difficulty_of(_PartialReco()) == (None, 5_000)
 
     class _Junk:
+        # A corrupt value still reports UNKNOWN difficulty -- but it is no
+        # longer SILENT about it, so the stub needs the counter/logger the
+        # warning path touches (a real WorkerSession sets both in __init__).
+        # See tests/test_swallowed_error_hardening.py for the corrupt-vs-absent
+        # distinction itself; what is pinned HERE is only that corrupt still
+        # reports unknown rather than a fabricated number.
         _active_reco: ClassVar[dict[str, object]] = {
             "opponent_wdl_regret_limit": "not-a-number", "sf_nodes": 5_000}
+        _reco_corrupt_count = 0
+        _reco_corrupt_last = None
+        log = logging.getLogger("test_promotion_gate_junk")
 
     assert difficulty_of(_Junk()) == (None, None)
 

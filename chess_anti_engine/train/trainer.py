@@ -23,7 +23,26 @@ try:
     from torch.utils.tensorboard import SummaryWriter as _ImportedSummaryWriter
 
     _SummaryWriter: Any = _ImportedSummaryWriter
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
+  # ⚑ ImportError ONLY, and the narrowing is the point. This used to be
+  # `except Exception`, which caught not just the intended "tensorboard is not
+  # installed" but ANY failure inside a tensorboard that IS installed -- a
+  # version incompatibility, a broken transitive dep, a protobuf mismatch.
+  # The fallback's methods are `pass`, so the run then produced no event files
+  # and said nothing, and every `self.writer.add_scalar(...)` in this file was
+  # a silent no-op. This repo has a documented incident where flat live
+  # progress signals let a real degradation go unread; a metrics writer that
+  # can quietly become a no-op is the same family. A genuine breakage now
+  # propagates at import instead of being absorbed as "not installed", and the
+  # intended case still works and now says so.
+    import logging as _logging
+
+    _logging.getLogger(__name__).warning(
+        "tensorboard is not installed: SummaryWriter falls back to a no-op and "
+        "NO scalar metrics will be recorded for this run (install the `train` "
+        "extra to restore them)",
+    )
+
     class _FallbackSummaryWriter:
         def __init__(self, *_args: Any, **_kwargs: Any) -> None:  # skylos: ignore (stub signature parity)
             pass
@@ -1834,7 +1853,27 @@ class Trainer:
             if matrix_optimizer_scope in ("default", "", "legacy"):
                 try:
                     self.opt = SOAP(param_groups, lr=lr)
-                except TypeError:
+                except TypeError as exc:
+  # ⚑ LOG, do not silently degrade. On this branch every parameter
+  # gets the same flat `lr` and no group-specific weight decay: the
+  # per-group split the caller configured is DISCARDED. Nothing
+  # recorded that, so a later analysis would cite a decay/grouping
+  # setting that never applied -- the same shape as the
+  # `matrix_weight_decay is decorative` finding.
+  # The fallback is kept rather than made fatal because production
+  # runs `aurora`, not `soap` (see configs/pbt2_small.yaml), so
+  # raising here would convert a dormant path into a hard failure
+  # for a research config nobody is running, for no benefit today.
+  # If SOAP is ever promoted, this warning is the thing that stops
+  # every group-wise conclusion drawn from it being unfalsifiable.
+                    logging.getLogger(__name__).warning(
+                        "SOAP rejected param_groups (%s): falling back to a "
+                        "FLAT parameter list. Per-group lr and weight decay "
+                        "are NOT in effect for this run -- %d group(s) were "
+                        "discarded. Do not draw group-wise conclusions from "
+                        "it without fixing the SOAP signature first.",
+                        exc, len(param_groups),
+                    )
                     self.opt = SOAP(self.model.parameters(), lr=lr)
             else:
                 hd, hnd, ad, and_ = _split_decay_groups(
