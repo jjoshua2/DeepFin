@@ -32904,3 +32904,17 @@ default WOULD cold-start-deadlock. Fix = floor the auto-derived target at iterat
 the revive must ROTATE worker logs, not truncate — tonight it destroyed the evidence
 needed to diagnose the primary stall. Both re-briefed to the authoring agent. The
 memory/first-row-checks records are corrected in the same pass.
+
+**WATCH ADDENDUM (2026-08-04 ~04:40, iter 41):** G6 PASSES — `gate_sample_confound_elo`
+went FINITE from ~iter 28 (reading real values every row since; latest −5.2) — the
+cheapest falsification of #323's "closed as built" survives, and the difficulty key is
+splitting. T6 PASSES — the new trial's saved config carries `salvage_seed_pool_dir: ''`
+(ghost pool purged). State: views in-band 41/41 rows; gate shadow window
+Elo(published − boot anchor) −0.76 [−7.6, +6.0] — level with the starting point, as a
+healthy early window should be; PID regret 0.199 → 0.077 (difficulty rising, controller
+live); desync detectors steady (checked ~0.999 / orphan 0); zero tracebacks, zero
+search-guard fires; 6 checkpoints. WATCH (not action): grad_norm_median climbed
+3.6 → plateau ~6.1-6.3, adaptive clip 1.0, hard-clip 0.0 — same growth shape as the old
+run's warm-state emergence, governed by I11's pre-registration; the discriminating read
+is whether the median crosses the 6.5 cap and hard-clip engages. C1 (compactor rate
+signature) still owed at a fuller window.
