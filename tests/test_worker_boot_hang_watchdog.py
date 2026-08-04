@@ -315,8 +315,12 @@ def test_every_entry_point_pins_before_anything_can_probe_cuda(
     `test_the_worker_entry_point_sets_the_pin` only shows the variable ends up
     set; it says nothing about whether a `torch.cuda` call got there first, and
     on a wedged dxg bridge that call never returns, so "eventually pinned" is
-    worth nothing. Assert the pin is the FIRST statement and that nothing
-    touching `torch.cuda` precedes it.
+    worth nothing. Two things are asserted, and the second is the one an
+    earlier docstring claimed without implementing: the pin is the FIRST
+    statement of the entry point, AND no `torch.cuda` call runs at MODULE
+    scope. Statement-index-0 alone is not the property -- `run.py` does
+    `import torch` at module level, and a module-scope probe would run at
+    import, before any entry point exists to pin anything.
 
     `run.py` is here because CLAUDE.md documents
     `python3 -m chess_anti_engine.run --config … --mode tune` as a supported
@@ -324,11 +328,19 @@ def test_every_entry_point_pins_before_anything_can_probe_cuda(
     probes CUDA unconditionally -- as do the two Ray-actor probes in
     `tune/trainable.py` and `tune/trainable_init.py`, which inherit this env.
     """
-    import importlib
+    # ⚑ RESOLVE THE PATH, DO NOT IMPORT. `importlib.import_module` EXECUTES
+    # module scope -- and a module-scope `torch.cuda` call is exactly what the
+    # second half of this test looks for, so on a wedged bridge the import
+    # itself hangs and the test never reports the defect it exists to find.
+    # Measured: splicing a probe into `run.py`'s module scope hung an importing
+    # version of this test until the timeout killed it, instead of failing.
+    # `find_spec` resolves the origin without running the module.
+    import importlib.util
 
-    mod = importlib.import_module(module)
-    assert mod.__file__ is not None
-    body = _first_statements(mod.__file__, func)
+    spec = importlib.util.find_spec(module)
+    assert spec is not None
+    assert spec.origin is not None
+    body = _first_statements(spec.origin, func)
     pin_calls = [i for i, stmt in enumerate(body) if "pin_nvml_cuda_check()" in stmt]
     if not pin_calls:
         # The worker pins inside its own env-configuration helper.
@@ -338,6 +350,23 @@ def test_every_entry_point_pins_before_anything_can_probe_cuda(
     assert pin_calls, f"{module}.{func} never pins {NVML_CUDA_CHECK_ENV}\n{body[:5]}"
     assert pin_calls[0] == 0, (
         f"{module}.{func} pins at statement {pin_calls[0]}, not first: {body[:pin_calls[0] + 1]}"
+    )
+
+    # And the half that statement-index-0 cannot see: module scope runs at
+    # IMPORT, before any entry point, so a `torch.cuda` call there is pinned by
+    # nothing at all.
+    tree = ast.parse(Path(spec.origin).read_text())
+    module_level = [
+        ast.unparse(node)
+        for stmt in tree.body
+        for node in ast.walk(stmt)
+        if not isinstance(stmt, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+        and isinstance(node, ast.Call)
+        and "torch.cuda" in ast.unparse(node.func)
+    ]
+    assert not module_level, (
+        f"{module} probes CUDA at module scope: {module_level} -- that runs at "
+        f"import, so {func}'s pin can never precede it"
     )
 
 
@@ -459,6 +488,47 @@ def test_the_watchdog_is_constructed_and_started_inside_init() -> None:
     assert "self._boot_hang_watchdog.start()" in body, body
 
 
+def _methods_reaching(module_file: str, target: str) -> set[str]:
+    """Every method of ``target``'s class that reaches it through ``self.`` calls.
+
+    A closure over the class's own call graph, so an ordering claim can be made
+    about REACHABILITY rather than about one name. The target itself is
+    excluded from the result only in the sense that callers are what matter --
+    it is included, so a direct call is caught by the same check.
+
+    Conservative by construction: it sees only `self.<name>(...)` edges, so
+    dispatch through a stored callable or `getattr` is invisible. That is the
+    right direction for this use (it can miss an edge, never invent one), and
+    the caller asserts a known edge is present so a walk that finds nothing
+    cannot pass as a clean result.
+    """
+    tree = ast.parse(Path(module_file).read_text())
+    owner = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef)
+        and any(
+            isinstance(m, ast.FunctionDef) and m.name == target for m in node.body
+        )
+    )
+    edges: dict[str, set[str]] = {}
+    for method in owner.body:
+        if not isinstance(method, ast.FunctionDef):
+            continue
+        edges[method.name] = {
+            ast.unparse(n.func).removeprefix("self.")
+            for n in ast.walk(method)
+            if isinstance(n, ast.Call) and ast.unparse(n.func).startswith("self.")
+        }
+
+    reaching = {target}
+    while True:
+        grown = {name for name, callees in edges.items() if callees & reaching}
+        if grown <= reaching:
+            return reaching
+        reaching |= grown
+
+
 def test_the_lease_is_never_taken_from_init() -> None:
     """The other half of the ordering: `__init__` starts the watchdog and does
     NOT take a lease, so every lease acquisition is necessarily downstream of a
@@ -484,10 +554,25 @@ def test_the_lease_is_never_taken_from_init() -> None:
         f"expected one __init__ touching the watchdog, got {len(inits)} -- if this "
         "is 0, the watchdog moved out of __init__ and nothing constructs it"
     )
-    calls = [ast.unparse(n.func) for n in ast.walk(inits[0]) if isinstance(n, ast.Call)]
-    assert "self._negotiate_lease" not in calls, (
-        "__init__ takes a lease itself; the watchdog's start() would no longer "
-        "be guaranteed to precede it"
+    # ⚑ TRANSITIVE, not by name. Excluding only `self._negotiate_lease` made
+    # this half a proof: its sole caller is `_poll_manifest`, so a
+    # `self._poll_manifest()` in `__init__` would take a lease and leave this
+    # green -- and with it the whole ordering claim. Walk the class's own call
+    # graph and exclude everything that REACHES the lease, at any depth.
+    reaching = _methods_reaching(worker_mod.__file__, "_negotiate_lease")
+    assert "_poll_manifest" in reaching, (
+        "the reachability walk found nothing; if _poll_manifest no longer "
+        f"reaches the lease this test has stopped measuring anything: {reaching}"
+    )
+    called = {
+        ast.unparse(n.func).removeprefix("self.")
+        for n in ast.walk(inits[0])
+        if isinstance(n, ast.Call) and ast.unparse(n.func).startswith("self.")
+    }
+    leaky = sorted(called & reaching)
+    assert not leaky, (
+        f"__init__ calls {leaky}, which reach _negotiate_lease -- a lease can "
+        "now be taken before the watchdog's start() is guaranteed to have run"
     )
 
 
@@ -529,3 +614,38 @@ def test_the_default_is_inside_the_lease_ttl() -> None:
     future bump of DEFAULT_WORKER_BOOT_HANG_ABORT_S past the TTL fails here
     rather than only warning at runtime."""
     assert DEFAULT_WORKER_BOOT_HANG_ABORT_S < SERVER_LEASE_SECONDS
+
+
+def test_self_sf_is_initialised_before_the_watchdog_can_call_the_exit_handler() -> None:
+    """R3: an ordering the exit path depends on and nothing enforced.
+
+    `_boot_hang_exit` is installed as `exit_fn` at construction, the watchdog
+    thread is live from `start()`, and the handler reads `self.sf` to kill the
+    Stockfish children before `os._exit`. On a first-session wedge it can run
+    before anything else assigns `self.sf` -- safe only because `self.sf = None`
+    happens ABOVE the watchdog block. Swap the two and `suppress(Exception)`
+    silently eats the AttributeError and leaks the engines the handler exists
+    to kill: a handler that cannot fail, doing nothing.
+    """
+    from chess_anti_engine import worker as worker_mod
+
+    tree = ast.parse(Path(worker_mod.__file__).read_text())
+    inits = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+        and any("_boot_hang_watchdog" in ast.unparse(n) for n in ast.walk(node))
+    ]
+    assert len(inits) == 1
+    body = [ast.unparse(stmt) for stmt in inits[0].body]
+    sf_at = next(
+        i for i, stmt in enumerate(body) if stmt.startswith("self.sf: ")
+    )
+    watchdog_at = next(
+        i for i, stmt in enumerate(body)
+        if "self._boot_hang_watchdog = BrokerHangWatchdog(" in stmt
+    )
+    assert sf_at < watchdog_at, (
+        f"self.sf is initialised at statement {sf_at}, after the watchdog at "
+        f"{watchdog_at} -- _boot_hang_exit would AttributeError and leak engines"
+    )

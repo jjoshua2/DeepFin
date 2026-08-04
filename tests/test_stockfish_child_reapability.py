@@ -36,6 +36,17 @@ from chess_anti_engine.tune.process_cleanup import (
     terminate_engines_owned_by,
 )
 
+# ⚑ MODULE-WIDE, not per-test. Every mechanism here is Linux-only -- prctl for
+# PDEATHSIG, procfs for the env marker and the zombie state -- and even the
+# AST-only tests are about Linux-only code. Two tests carried this decorator
+# individually and three later ones quietly did not, which is how a non-Linux
+# contributor gets failures where the convention promised skips. One marker
+# means a new test cannot forget it.
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="prctl/procfs are Linux-only",
+)
+
 _STUB = "import time; time.sleep(600)"
 
 
@@ -66,6 +77,30 @@ def _wait_gone(pid: int, timeout_s: float = 10.0) -> bool:
             return True
         time.sleep(0.05)
     return False
+
+
+def _assert_is_zombie(pid: int) -> None:
+    """Require ``pid`` to be a real unreaped corpse, state ``Z``.
+
+    ⚑ `_wait_gone` returns True for BOTH "zombie" and "fully gone", so a test
+    that only waits and then asserts "not alive" would pass having exercised
+    nothing: the whole difference between the two `_pid_exists` implementations
+    exists only while the entry is in state `Z`. Any test whose subject is the
+    zombie path has to say so out loud rather than rely on an unstated fact
+    about its own runner (that pytest is the parent and has not waited).
+    """
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_bytes()
+    except OSError as exc:  # the entry is gone: reaped, or never existed
+        raise AssertionError(
+            f"pid {pid} has no /proc entry, so it was fully reaped rather than "
+            f"left as a zombie -- the zombie path was never exercised ({exc})",
+        ) from exc
+    close = stat.rfind(b")")
+    assert stat[close + 2 : close + 3] == b"Z", (
+        f"pid {pid} is not an unreaped zombie, so the zombie path was never "
+        f"exercised: {stat[:80]!r}"
+    )
 
 
 # ── process group ────────────────────────────────────────────────────────────
@@ -124,7 +159,6 @@ def test_a_group_kill_cannot_reach_the_parent() -> None:
 # ── PDEATHSIG ────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="prctl is Linux-only")
 def test_pdeathsig_kills_the_engine_when_its_parent_is_SIGKILLed() -> None:
     """THE headline scenario, end to end.
 
@@ -162,7 +196,6 @@ def test_pdeathsig_kills_the_engine_when_its_parent_is_SIGKILLed() -> None:
             os.kill(engine_pid, signal.SIGKILL)
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="prctl is Linux-only")
 def test_without_the_guard_the_child_is_orphaned() -> None:
     """Negative control for the test above. Same harness, no `preexec_fn` — the
     child MUST survive, or the previous test proves nothing about PDEATHSIG."""
@@ -374,11 +407,9 @@ def test_a_reaped_engine_is_reported_killed_even_as_an_unwaited_zombie() -> None
         assert killed == [proc.pid], killed
         assert elapsed < 2.0, f"waited {elapsed:.1f}s on a corpse"
         # Prove the zombie path was the one exercised: we are the parent and
-        # have not waited, so the entry must still be there in state Z. (Read
+        # have not waited, so the entry must still be there in state Z. (Reads
         # /proc rather than proc.poll(), which would reap it.)
-        stat = Path(f"/proc/{proc.pid}/stat").read_bytes()
-        close = stat.rfind(b")")
-        assert stat[close + 2 : close + 3] == b"Z", stat[:80]
+        _assert_is_zombie(proc.pid)
     finally:
         with contextlib.suppress(OSError):
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -409,6 +440,11 @@ def test_graceful_restarts_pid_probe_agrees_about_zombies() -> None:
     proc.kill()
     _wait_gone(proc.pid)  # dead but unwaited: a zombie, because we are its parent
     try:
+        # ⚑ Say it out loud. `_wait_gone` is true for "zombie" AND for "fully
+        # gone", and on a vanished entry BOTH implementations return False --
+        # so without this the assertions below would pass having tested
+        # nothing. The divergence being pinned exists only in state Z.
+        _assert_is_zombie(proc.pid)
         assert shared(proc.pid) is False
         assert module._pid_exists(proc.pid) is False, (
             "graceful_restart still reports a zombie as alive"
@@ -546,6 +582,35 @@ def test_the_spawn_records_the_pgid_it_will_later_kill() -> None:
         if isinstance(node, ast.Assign) and "self._pgid" in ast.unparse(node.targets[0])
     ]
     assert assigns == ["self._pgid = self.proc.pid"], assigns
+
+
+def test_the_pgid_is_recorded_immediately_after_the_spawn() -> None:
+    """The POSITION is load-bearing, not just the assignment.
+
+    The UCI handshake later in `__init__` ends in
+    `except BaseException: self.close()`, and `close()` reads `self._pgid`. Any
+    statement that can raise between the spawn and this assignment turns a
+    handshake failure into an `AttributeError` raised from inside the failure
+    handler -- the original error lost, and the engine leaked. Pinned so a
+    reorder fails here instead of at 3am.
+    """
+    import ast
+
+    from chess_anti_engine.stockfish import uci as uci_mod
+
+    tree = ast.parse(Path(uci_mod.__file__).read_text())
+    init = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+        and any("subprocess.Popen" in ast.unparse(c) for c in ast.walk(node))
+    )
+    body = [ast.unparse(stmt) for stmt in init.body]
+    spawn = next(i for i, stmt in enumerate(body) if "subprocess.Popen(" in stmt)
+    assert body[spawn + 1] == "self._pgid = self.proc.pid", (
+        "the pgid must be recorded in the statement immediately after the "
+        f"spawn; found {body[spawn + 1]!r}"
+    )
 
 
 def _calls_in(path: str, func_name: str) -> list[str]:

@@ -893,6 +893,13 @@ class WorkerSession:
 
   # Engine: initialize with placeholder settings; we will align nodes from manifest each loop.
   # MultiPV, hash size, and SyzygyPath are process-level; rebuild when they change.
+  # ⚑ AND THIS LINE MUST STAY ABOVE THE BOOT WATCHDOG BLOCK BELOW. That block
+  # installs `_boot_hang_exit` as the watchdog's `exit_fn`, and `_boot_hang_exit`
+  # reads `self.sf` to kill the Stockfish children before `os._exit`. The
+  # watchdog thread is live from `start()`, so on a first-session wedge the
+  # handler can run before anything else assigns `self.sf` -- it is this `None`
+  # that makes that safe, not the handler's `suppress(Exception)`, which would
+  # silently swallow the AttributeError and leak the engines it exists to kill.
         self.sf: StockfishPool | StockfishUCI | None = None
         self.sf_multipv_active: int | None = None
         self.sf_hash_mb_active: int | None = None
@@ -1026,6 +1033,12 @@ class WorkerSession:
         # slow model download into a crash loop. If one of THOSE hangs the
         # symptom is a stalled fleet, not a wedged device, and it belongs to a
         # different instrument.
+        #
+        # Non-obvious consequence worth stating: THE ARENA PATH IS COVERED FOR
+        # TWO OF THE THREE STAGES. `model_to_device` and
+        # `compile_inference_model` live in `_load_and_compile_model`, which
+        # `_run_arena` also calls, so an arena task's model load is watched.
+        # Only `build_evaluator` is selfplay-only (`_run_selfplay`).
         #
         # Same detector as the broker (one implementation, two `component`
         # values). Live from construction, so it also covers a wedge that
