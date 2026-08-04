@@ -20,6 +20,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -27,8 +28,8 @@ import pytest
 
 from chess_anti_engine.stockfish.uci import (
     CAE_ENGINE_MARKER_ENV,
+    StockfishUCI,
     _child_env,
-    _child_reap_guard,
 )
 from chess_anti_engine.tune.process_cleanup import (
     list_pids_with_env,
@@ -134,9 +135,11 @@ def test_pdeathsig_kills_the_engine_when_its_parent_is_SIGKILLed() -> None:
     """
     parent_code = (
         "import subprocess, sys, time;"
+        "import os, functools;"
         "from chess_anti_engine.stockfish.uci import _child_reap_guard;"
+        "g = functools.partial(_child_reap_guard, os.getpid());"
         "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'],"
-        "                     start_new_session=True, preexec_fn=_child_reap_guard);"
+        "                     start_new_session=True, preexec_fn=g);"
         "print(c.pid, flush=True); time.sleep(600)"
     )
     env = dict(os.environ)
@@ -184,23 +187,54 @@ def test_without_the_guard_the_child_is_orphaned() -> None:
             os.kill(engine_pid, signal.SIGKILL)
 
 
-def test_the_guard_never_raises() -> None:
-    """It runs between fork and exec in the child; an exception there fails the
-    spawn. It must degrade to a no-op on a platform without prctl."""
-    _child_reap_guard()  # in-process, parent is alive; must simply return
+def test_the_guard_does_no_loader_work_and_never_raises() -> None:
+    """The guard must be a bare call through an ALREADY-RESOLVED pointer.
 
+    Two properties in one measurement, because they have the same cause. It runs
+    post-fork, where only async-signal-safe work is legal: `dlopen` AND `dlsym`
+    take the loader lock, and a lock held by another thread at the instant of
+    the fork is inherited HELD by a child that can never release it — the spawn
+    then hangs forever. Loading the library at import is only half of that,
+    because `ctypes.CDLL.__getattr__` resolves a symbol lazily on first access
+    and caches it ON THE INSTANCE: a lookup inside the guard happens in the
+    child, so the parent's cache never warms and it recurs on EVERY spawn.
 
-def test_libc_is_resolved_before_the_fork_not_inside_the_child() -> None:
-    """The guard runs post-fork, where only async-signal-safe work is legal, and
-    `dlopen` is not: a loader lock held by another thread at the instant of the
-    fork is inherited HELD by a child that can never release it, and the spawn
-    hangs forever. So the handle must already exist at import.
+    So this instruments `CDLL.__getattr__` and requires the guard to trigger it
+    ZERO times — the reviewer's own measurement, turned into a test.
+
+    ⚑ Runs in a subprocess deliberately. Calling the guard in-process arms
+    `PR_SET_PDEATHSIG=SIGKILL` on the pytest runner itself and never disarms it,
+    so any later parent-exit would SIGKILL the suite mid-run.
     """
+    probe = (
+        "import ctypes, os, sys;"
+        "import chess_anti_engine.stockfish.uci as u;"
+        "assert u._PRCTL is not None, 'libc did not load on a Linux host';"
+        "calls = [];"
+        "orig = ctypes.CDLL.__getattr__;"
+        "ctypes.CDLL.__getattr__ = lambda self, name: (calls.append(name), orig(self, name))[1];"
+        "u._child_reap_guard(os.getppid());"  # our real parent: the guard must not self-exit
+        "print('LOOKUPS', calls)"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+    done = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, env=env,
+        timeout=60, check=False,
+    )
+    assert done.returncode == 0, done.stderr  # the guard must never raise
+    assert "LOOKUPS []" in done.stdout, (
+        f"the guard did loader work after fork: {done.stdout.strip()} {done.stderr}"
+    )
+
+
+def test_the_guard_calls_prctl_through_the_module_level_pointer() -> None:
+    """Structural companion: nothing in the guard may touch ctypes at all. The
+    behavioural test above would not notice a NEW `CDLL(...)` load whose symbol
+    happened to be pre-cached, and this is the cheaper regression tripwire."""
     import ast
 
     from chess_anti_engine.stockfish import uci as uci_mod
-
-    assert uci_mod._LIBC is not None, "libc did not load on a Linux test host"
 
     tree = ast.parse(Path(uci_mod.__file__).read_text())
     guard = next(
@@ -208,23 +242,62 @@ def test_libc_is_resolved_before_the_fork_not_inside_the_child() -> None:
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef) and node.name == "_child_reap_guard"
     )
-    loads = [
-        node
+    touches = [
+        ast.unparse(node)
         for node in ast.walk(guard)
-        if isinstance(node, ast.Call) and "CDLL" in ast.unparse(node.func)
+        if isinstance(node, ast.Name | ast.Attribute) and "ctypes" in ast.unparse(node)
     ]
-    assert not loads, "the guard dlopens after fork — that can deadlock the spawn"
+    assert not touches, f"the guard does loader work after fork: {touches}"
 
 
-def test_the_guard_is_a_no_op_when_libc_is_unavailable(
+def test_the_guard_is_a_no_op_when_prctl_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Non-glibc/non-Linux: no prctl, but the spawn must still succeed — the env
-    marker alone still makes the child findable."""
+    marker alone still makes the child findable. (Safe in-process: with `_PRCTL`
+    None the guard returns before arming anything on the runner.)"""
     from chess_anti_engine.stockfish import uci as uci_mod
 
-    monkeypatch.setattr(uci_mod, "_LIBC", None)
-    uci_mod._child_reap_guard()
+    monkeypatch.setattr(uci_mod, "_PRCTL", None)
+    uci_mod._child_reap_guard(os.getppid())
+
+    # And prove it armed nothing on the RUNNER. An in-process guard call that
+    # reached prctl would leave PDEATHSIG=SIGKILL set on pytest forever, so any
+    # later parent-exit SIGKILLs the suite mid-run.
+    import ctypes
+
+    out = ctypes.c_int(0)
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    libc.prctl(2, ctypes.byref(out), 0, 0, 0)  # 2 == PR_GET_PDEATHSIG
+    assert out.value == 0, f"pytest is left armed with PDEATHSIG={out.value}"
+
+
+def test_the_guard_exits_when_the_parent_is_already_gone() -> None:
+    """H4: the re-check must compare against the pid captured BEFORE the fork.
+
+    Comparing against a `getppid()` read inside the child closes only half the
+    race — if the parent died first, that read already returns 1, the comparison
+    can never differ, and the child arms PDEATHSIG against init and lives
+    forever. Simulated by passing an `expected_parent` we are demonstrably not
+    the child of, which is exactly the post-reparent state.
+    """
+    probe = (
+        "import os, sys;"
+        "import chess_anti_engine.stockfish.uci as u;"
+        "u._child_reap_guard(999999);"
+        "print('SURVIVED')"
+    )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+    done = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, env=env,
+        timeout=60, check=False,
+    )
+    assert "SURVIVED" not in done.stdout, (
+        "the guard armed PDEATHSIG against a parent it does not have and "
+        "carried on — this is the orphan it exists to prevent"
+    )
+    assert done.returncode == 0, done.stderr  # os._exit(0), not a crash
 
 
 # ── the env marker, and why it is the reaper's key ───────────────────────────
@@ -312,6 +385,40 @@ def test_a_reaped_engine_is_reported_killed_even_as_an_unwaited_zombie() -> None
         proc.wait(timeout=10)
 
 
+def test_graceful_restarts_pid_probe_agrees_about_zombies() -> None:
+    """`scripts/graceful_restart.py` carries its own same-named `_pid_exists` —
+    it is documented as a no-PYTHONPATH invocation, so it must stay stdlib-only
+    and cannot import the shared helper. Two same-named helpers with opposite
+    semantics is how the next reader gets it wrong, so pin that they agree: on a
+    zombie tuner the old answer burns the full 30s wait and then reports "did
+    not exit after SIGTERM" about a process that did exit.
+    """
+    import importlib.util
+
+    from chess_anti_engine.tune.process_cleanup import _pid_exists as shared
+
+    spec = importlib.util.spec_from_file_location(
+        "_gr_probe", Path(__file__).resolve().parents[1] / "scripts" / "graceful_restart.py",
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    proc = _spawn_stub()
+    proc.kill()
+    _wait_gone(proc.pid)  # dead but unwaited: a zombie, because we are its parent
+    try:
+        assert shared(proc.pid) is False
+        assert module._pid_exists(proc.pid) is False, (
+            "graceful_restart still reports a zombie as alive"
+        )
+        assert shared(os.getpid()) is True
+        assert module._pid_exists(os.getpid()) is True
+    finally:
+        proc.wait(timeout=10)
+
+
 def test_reaping_an_owner_with_no_engines_is_a_no_op() -> None:
     assert terminate_engines_owned_by(999_999_9) == []
 
@@ -345,8 +452,123 @@ def test_the_engine_spawn_uses_all_three_mechanisms() -> None:
     assert len(spawns) == 1, f"expected one engine spawn, found {len(spawns)}"
     kwargs = {kw.arg: ast.unparse(kw.value) for kw in spawns[0].keywords}
     assert kwargs.get("start_new_session") == "True", kwargs
-    assert kwargs.get("preexec_fn") == "_child_reap_guard", kwargs
+    assert kwargs.get("preexec_fn", "").startswith("partial("), kwargs
+    assert "_child_reap_guard" in kwargs.get("preexec_fn", ""), kwargs
     assert kwargs.get("env") == "_child_env()", kwargs
+
+
+# ── close() is re-entrant, and must not signal a reaped pid ──────────────────
+
+
+class _ClosableEngine:
+    """The REAL `StockfishUCI.close`, bound to a stub with a real child process.
+
+    Constructing a `StockfishUCI` needs the Stockfish binary and a UCI
+    handshake; this exercises the shipped `close` body itself against a sleep
+    stub, so the test is about production code rather than a re-implementation.
+    """
+
+    close = StockfishUCI.close
+
+    def __init__(self) -> None:
+        self.proc = _spawn_stub()
+        self._pgid = self.proc.pid  # what __init__ records, for the same reason
+        self._lock = threading.Lock()
+        self._tty_fd = os.open(os.devnull, os.O_RDONLY)
+        self.sent: list[str] = []
+
+    def _send(self, line: str) -> None:
+        self.sent.append(line)
+
+
+def test_close_kills_the_engine_and_is_safe_to_call_twice() -> None:
+    """Double-close is reachable by construction: `_replace_engine`'s
+    already-swapped branch closes an engine a previous call already closed.
+    `Popen.kill()` — what the group kill replaced — was unconditionally safe on
+    a reaped process, and that property must not be lost."""
+    engine = _ClosableEngine()
+    pid = engine.proc.pid
+    engine.close()
+    assert _wait_gone(pid), "close() did not kill the engine"
+    engine.close()  # must not raise, and must not signal anything
+    engine.close()
+
+
+def test_close_does_not_signal_a_pid_it_has_already_reaped() -> None:
+    """THE regression H1 names. After `wait()` the kernel may recycle the pid,
+    so a second `close()` that signals it can SIGKILL a LIVE STRANGER's whole
+    process group as our uid — the trainer and the server are in range. The
+    guard is `poll()`, exactly what `Popen.send_signal` does.
+    """
+    engine = _ClosableEngine()
+    engine.close()
+    assert engine.proc.poll() is not None, "the child was not reaped by close()"
+
+    signalled: list[tuple[int, int]] = []
+    real_killpg = os.killpg
+    try:
+        os.killpg = lambda pgid, sig: signalled.append((pgid, sig))  # type: ignore[assignment]
+        engine.close()
+    finally:
+        os.killpg = real_killpg
+    assert signalled == [], f"close() signalled a reaped pid: {signalled}"
+
+
+def test_the_recorded_pgid_is_the_child_pid_and_is_never_looked_up() -> None:
+    """`start_new_session=True` makes the child a group leader, so its pgid IS
+    its pid. Recording it at spawn is what removes the `os.getpgid` round-trip
+    on a pid that may no longer be ours."""
+    engine = _ClosableEngine()
+    try:
+        assert engine._pgid == engine.proc.pid
+        assert os.getpgid(engine.proc.pid) == engine._pgid
+    finally:
+        engine.close()
+
+
+def test_the_spawn_records_the_pgid_it_will_later_kill() -> None:
+    """Structural: the tests above build `_pgid` themselves, so they would all
+    pass if `__init__` never recorded it."""
+    import ast
+
+    from chess_anti_engine.stockfish import uci as uci_mod
+
+    tree = ast.parse(Path(uci_mod.__file__).read_text())
+    init = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+        and any("subprocess.Popen" in ast.unparse(c) for c in ast.walk(node))
+    )
+    assigns = [
+        ast.unparse(node)
+        for node in ast.walk(init)
+        if isinstance(node, ast.Assign) and "self._pgid" in ast.unparse(node.targets[0])
+    ]
+    assert assigns == ["self._pgid = self.proc.pid"], assigns
+
+
+def _calls_in(path: str, func_name: str) -> list[str]:
+    """Every call expression inside a named function, as source text.
+
+    ⚑ AST, not substring. A `"…" in <source slice>` assertion passes on a
+    COMMENTED-OUT line — `# os.killpg(` contains `os.killpg(` — so it cannot
+    tell "the code runs" from "the text is present". Parsing means only real
+    call nodes count.
+    """
+    import ast
+
+    tree = ast.parse(Path(path).read_text())
+    target = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == func_name
+    )
+    return [
+        ast.unparse(node.func)
+        for node in ast.walk(target)
+        if isinstance(node, ast.Call)
+    ]
 
 
 def test_close_kills_the_process_group() -> None:
@@ -354,10 +576,12 @@ def test_close_kills_the_process_group() -> None:
     the engine spawned behind, which is the whole reason for the new session."""
     from chess_anti_engine.stockfish import uci as uci_mod
 
-    src = Path(uci_mod.__file__).read_text()
-    close_at = src.index("    def close(self) -> None:")
-    body = src[close_at: close_at + 1400]
-    assert "os.killpg(" in body, "close() does not kill the process group"
+    calls = _calls_in(uci_mod.__file__, "close")
+    assert "os.killpg" in calls, f"close() does not kill the process group: {calls}"
+    assert "os.getpgid" not in calls, (
+        "close() looks up the pgid at close time — on a reaped-and-recycled pid "
+        "that is a stranger's group. Use the pgid recorded at spawn."
+    )
 
 
 def test_the_worker_stop_path_reaps_orphaned_engines() -> None:
@@ -365,9 +589,7 @@ def test_the_worker_stop_path_reaps_orphaned_engines() -> None:
     belt: after stopping a worker, anything still carrying its pid is an orphan."""
     from chess_anti_engine.tune import distributed_runtime as dr
 
-    src = Path(dr.__file__).read_text()
-    stop_at = src.index("def _stop_worker_processes(")
-    body = src[stop_at: stop_at + 1200]
-    assert "terminate_engines_owned_by(" in body, (
-        "_stop_worker_processes does not reap the stopped worker's engines"
+    calls = _calls_in(dr.__file__, "_stop_worker_processes")
+    assert "terminate_engines_owned_by" in calls, (
+        f"_stop_worker_processes does not reap the stopped worker's engines: {calls}"
     )

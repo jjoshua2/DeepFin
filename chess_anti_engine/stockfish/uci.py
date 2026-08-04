@@ -9,9 +9,10 @@ import subprocess
 import termios
 import threading
 import time
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import partial
 
 import numpy as np
 
@@ -85,26 +86,38 @@ def _child_env() -> dict[str, str]:
     return env
 
 
-def _load_libc() -> ctypes.CDLL | None:
-    """libc, loaded at IMPORT time so the child never has to dlopen it.
+def _load_prctl() -> Callable[..., int] | None:
+    """Resolve ``prctl`` at IMPORT time — the LIBRARY *and* the SYMBOL.
 
     ⚑ `_child_reap_guard` runs after `fork()` in a process that may have been
     multi-threaded a moment earlier, where only async-signal-safe work is
-    legal. `dlopen` is not: it takes the loader lock, and if some other thread
-    held that lock at the instant of the fork, the child inherits it held by a
-    thread that no longer exists and the spawn deadlocks forever. Resolving the
-    symbol here, in the parent, reduces the guard to a bare syscall.
+    legal. Loader work is not: `dlopen`/`dlsym` take the loader lock, and a lock
+    held by another thread at the instant of the fork is inherited HELD by a
+    child that can never release it — the spawn then hangs forever, a worse
+    failure than the orphan this is all for.
+
+    Loading the library is only half of that. `ctypes.CDLL.__getattr__` resolves
+    a symbol LAZILY on first attribute access and caches it on the instance, so
+    reaching for `libc.prctl` inside the guard would do the `dlsym` in the child
+    — and
+    because the cache then lives in the child, the parent's copy never warms and
+    it would happen on EVERY spawn, forever. Touching the attribute here binds
+    it in the parent once; the guard is then a call through a resolved pointer.
     """
     try:
-        return ctypes.CDLL("libc.so.6", use_errno=True)
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
     except OSError:
         return None  # not glibc, or not Linux; the guard degrades to a no-op
+    try:
+        return libc.prctl  # the dlsym happens HERE, pre-fork
+    except AttributeError:
+        return None
 
 
-_LIBC = _load_libc()
+_PRCTL = _load_prctl()
 
 
-def _child_reap_guard() -> None:
+def _child_reap_guard(expected_parent: int) -> None:
     """Run IN THE CHILD between fork and exec: die when the parent dies.
 
     ``PR_SET_PDEATHSIG`` (Linux, prctl option 1) asks the kernel to signal this
@@ -120,20 +133,24 @@ def _child_reap_guard() -> None:
     Recorded rather than left implicit, because a future switch to an executor
     with an idle timeout would turn this into a mysterious mid-run engine death.
 
-    The `getppid` re-check closes the classic race where the parent dies between
-    fork and the prctl call, which would otherwise leave the very orphan this
-    exists to prevent.
+    ``expected_parent`` is the spawning process's pid, captured BEFORE the fork,
+    and the re-check compares against it. Comparing against a `getppid()` read
+    inside the child instead would close only half the race: if the parent died
+    before that first read, the value is already 1, the comparison can never
+    differ, and the child happily arms PDEATHSIG against init and lives forever
+    — the exact orphan this exists to prevent.
 
     Best-effort by design: raising here fails the spawn, so nothing in this
     function may throw. A platform without prctl simply keeps the pre-existing
     behaviour, and the env marker still makes the child findable.
     """
-    if _LIBC is None:
+    if _PRCTL is None:
         return
     try:
-        parent = os.getppid()
-        _LIBC.prctl(1, signal.SIGKILL, 0, 0, 0)  # 1 == PR_SET_PDEATHSIG
-        if os.getppid() != parent:
+        _PRCTL(1, signal.SIGKILL, 0, 0, 0)  # 1 == PR_SET_PDEATHSIG
+        if os.getppid() != expected_parent:
+            # Reparented already: PDEATHSIG was armed against the wrong parent
+            # and will never fire. Exit rather than become the orphan.
             os._exit(0)
     except Exception:
         pass
@@ -356,9 +373,16 @@ class StockfishUCI:
             # dies for ANY reason, including SIGKILL and the `os._exit` the hang
             # watchdogs use, neither of which runs a `finally`.
             start_new_session=True,
-            preexec_fn=_child_reap_guard,  # noqa: PLW1509 - see the function
+            preexec_fn=partial(  # noqa: PLW1509 - see _child_reap_guard
+                _child_reap_guard, os.getpid(),
+            ),
             env=_child_env(),
         )
+        # ⚑ Recorded now, never looked up later. `start_new_session=True` makes
+        # the child a group leader, so its pgid IS its pid -- and asking
+        # `os.getpgid` at close time would be asking about a pid that may have
+        # been reaped and recycled. See `close()`.
+        self._pgid = self.proc.pid
         if self.nice > 0:
             current_nice = os.getpriority(os.PRIO_PROCESS, self.proc.pid)
             target_nice = _stockfish_child_nice(current_nice, self.nice)
@@ -393,18 +417,29 @@ class StockfishUCI:
                 os.close(self._tty_fd)
             except OSError:
                 pass  # already closed
-            try:
-                # Kill the GROUP, not just the pid: `start_new_session=True`
-                # gave this engine its own group, so this cannot reach the
-                # worker or its siblings, and it does reach anything the engine
-                # might have spawned. Falls back to the plain kill if the group
-                # is already gone.
-                os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
+            # Kill the GROUP, not just the pid: `start_new_session=True` gave
+            # this engine its own group, so this cannot reach the worker or its
+            # siblings, and it does reach anything the engine might have
+            # spawned.
+            #
+            # ⚑ ONLY WHILE THE PROCESS IS UNREAPED, and using the pgid recorded
+            # at SPAWN. `close()` is re-entrant by construction --
+            # `StockfishPool._replace_engine`'s already-swapped branch closes an
+            # engine a previous call already closed -- and `Popen.kill()`, which
+            # this replaced, was unconditionally safe on a reaped process.
+            # Signalling a reaped pid is not: the kernel may have recycled it,
+            # so `os.getpgid(self.proc.pid)` can return a LIVE STRANGER's group
+            # and the next line SIGKILLs it, as our uid, with the trainer and
+            # the server in range. `poll()` is the same guard `send_signal`
+            # applies, and the recorded pgid means no lookup happens at all.
+            if self.proc.poll() is None:
                 try:
-                    self.proc.kill()
-                except ProcessLookupError:
-                    pass  # already exited
+                    os.killpg(self._pgid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    try:
+                        self.proc.kill()
+                    except ProcessLookupError:
+                        pass  # already exited
             try:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:

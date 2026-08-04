@@ -1264,6 +1264,13 @@ def _stop_worker_processes(procs: list[subprocess.Popen[bytes]]) -> None:
         # thread-scoped and Linux-only, so this is the belt to its braces --
         # anything still stamped with the dead worker's pid is by definition an
         # orphan. Cheap: it only scans /proc when a worker is being stopped.
+        #
+        # The marker is a pid, and `_stop_process` has already reaped this one,
+        # so in principle the kernel could recycle it before this scan. For a
+        # mis-reap the recycled pid would have to belong to a NEW worker that
+        # had already stamped and spawned engines inside that window --
+        # effectively unreachable, and noted rather than fixed because the
+        # alternative keys (ancestry, cmdline) are the ones R2 ruled out.
         orphans = terminate_engines_owned_by(worker_pid)
         if orphans:
             log.warning(

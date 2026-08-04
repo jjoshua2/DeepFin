@@ -205,14 +205,44 @@ def _find_tuner_pid() -> int | None:
     return None
 
 
+_PROCFS = Path("/proc")
+
+
 def _pid_exists(pid: int) -> bool:
+    """Is ``pid`` a live process — counting a zombie as gone.
+
+    ⚑ DELIBERATE DUPLICATE of ``chess_anti_engine.tune.process_cleanup._pid_exists``,
+    kept in sync by hand. This script is documented (README, AGENTS.md) as
+    ``python3 scripts/graceful_restart.py`` with no ``PYTHONPATH=.``, so it must
+    stay stdlib-only; importing the shared helper would break the documented
+    invocation. If you change one, change the other.
+
+    The zombie case is the reason both read the process state instead of
+    trusting ``os.kill(pid, 0)``, which succeeds against a corpse. The caller
+    below asks "did the SIGTERM take": on a zombie tuner the bare kill-probe
+    says "still running", so it burns the full 30 s and then reports
+    "did not exit after SIGTERM; not resuming" about a process that did exit.
+    """
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
+        return True  # someone else's process; alive as far as we can tell
+    try:
+        stat = (_PROCFS / str(int(pid)) / "stat").read_bytes()
+    except OSError:
+        # Entry gone under a real procfs means the process is gone. With no
+        # procfs at all, keep the os.kill answer rather than reporting every
+        # live process dead.
+        return not _PROCFS.is_dir()
+    # "<pid> (<comm>) <state> ..." — comm is arbitrary bytes and may contain
+    # spaces and parentheses, so the state follows the LAST ')'. Anything
+    # unparseable reads as alive, the conservative direction.
+    close = stat.rfind(b")")
+    if close < 0:
         return True
-    return True
+    return stat[close + 2 : close + 3] != b"Z"
 
 
 def _required_paused_count(active_count: int, wait_arg: int) -> int:
